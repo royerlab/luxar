@@ -60,6 +60,15 @@ if (urlParams.theme) {
 
 const src = urlParams.src ?? config.defaultZarrPath;
 
+// Resolve the canvas element here — main.ts is the only place that maps
+// the standalone-app HTML structure to a DOM node. SceneManager and
+// downstream components receive the canvas as a parameter.
+const canvas = document.getElementById('app') as HTMLCanvasElement | null;
+if (!canvas) {
+  showError("Canvas element with id 'app' not found in the page.");
+  throw new Error("Required canvas element 'app' not found");
+}
+
 // Initialize and start the application
 const app = new LuxarApp();
 
@@ -108,6 +117,7 @@ if (isDebugMode) {
 
 app
   .init({
+    canvas,
     src,
     debug: isDebugMode,
     loaderConfig: {

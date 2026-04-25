@@ -182,9 +182,18 @@ export class SceneManager extends THREE.EventDispatcher<{
    */
   private debug: boolean = false;
 
-  async init(options?: { debug?: boolean }): Promise<void> {
-    this.debug = options?.debug ?? false;
-    this.setupCanvas();
+  /**
+   * Initialize the renderer pipeline.
+   *
+   * @param options.canvas - The HTMLCanvasElement to render into. Callers
+   *   resolve this themselves (`document.getElementById(...)` in the
+   *   standalone app's main.ts; arbitrary container child for embedders).
+   *   SceneManager performs no DOM lookups of its own.
+   * @param options.debug - Verbose hardware/runtime logging.
+   */
+  async init(options: { canvas: HTMLCanvasElement; debug?: boolean }): Promise<void> {
+    this.canvasElement = options.canvas;
+    this.debug = options.debug ?? false;
     this.setupRenderer();
     this.setupContextLossHandling(); // Setup context loss recovery
     this.setupScene();
@@ -195,20 +204,6 @@ export class SceneManager extends THREE.EventDispatcher<{
     // Call doUpdateSize() directly during initialization (no debounce needed)
     // This ensures immediate sizing without waiting for requestAnimationFrame
     this.doUpdateSize(window.innerWidth, window.innerHeight);
-  }
-
-  /**
-   * Get and validate the canvas element
-   */
-  private setupCanvas(): void {
-    const element = document.getElementById(config.canvasId) as HTMLCanvasElement;
-    if (!element) {
-      showError(
-        `Canvas element with id '${config.canvasId}' not found. Please check the HTML structure.`
-      );
-      throw new Error('Required canvas element not found');
-    }
-    this.canvasElement = element;
   }
 
   /**

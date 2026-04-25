@@ -72,6 +72,7 @@ describe('LuxarApp', () => {
   let mockAnimationController: any;
   let mockInputHandler: any;
   let mockRenderingControls: any;
+  let mockCanvas: HTMLCanvasElement;
 
   beforeEach(() => {
     // Clear all mocks
@@ -133,6 +134,11 @@ describe('LuxarApp', () => {
     // Reset fetch mock
     mockFetch.mockResolvedValue({ ok: false });
 
+    // Minimal mock canvas — `document` is stubbed above so createElement
+    // isn't available. SceneManager is mocked, so the reference is only
+    // stored, never inspected.
+    mockCanvas = {} as HTMLCanvasElement;
+
     // Create new app instance
     app = new LuxarApp();
   });
@@ -152,7 +158,7 @@ describe('LuxarApp', () => {
         initOrder.push('sceneManager');
       });
 
-      await app.init('http://example.com/data.zarr');
+      await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
 
       expect(initOrder).toContain('sceneManager');
       expect(SceneManager).toHaveBeenCalled();
@@ -163,7 +169,7 @@ describe('LuxarApp', () => {
 
     it('should create SceneManager first', async () => {
       mockFetch.mockResolvedValue({ ok: true });
-      await app.init('http://example.com/data.zarr');
+      await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
 
       expect(SceneManager).toHaveBeenCalledTimes(1);
       expect(mockSceneManager.init).toHaveBeenCalled();
@@ -171,7 +177,7 @@ describe('LuxarApp', () => {
 
     it('should create AnimationController after SceneManager', async () => {
       mockFetch.mockResolvedValue({ ok: true });
-      await app.init('http://example.com/data.zarr');
+      await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
 
       expect(AnimationController).toHaveBeenCalledWith(
         mockSceneManager.controls,
@@ -181,7 +187,7 @@ describe('LuxarApp', () => {
 
     it('should create InputHandler with proper dependencies', async () => {
       mockFetch.mockResolvedValue({ ok: true });
-      await app.init('http://example.com/data.zarr');
+      await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
 
       expect(InputHandler).toHaveBeenCalledWith(mockSceneManager, mockAnimationController);
       expect(mockInputHandler.init).toHaveBeenCalled();
@@ -189,7 +195,7 @@ describe('LuxarApp', () => {
 
     it('should create RenderingControls with postProcessing and sceneManager', async () => {
       mockFetch.mockResolvedValue({ ok: true });
-      await app.init('http://example.com/data.zarr');
+      await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
 
       expect(RenderingControls).toHaveBeenCalledWith(
         mockSceneManager.postProcessing,
@@ -199,7 +205,7 @@ describe('LuxarApp', () => {
 
     it('should cross-link components properly', async () => {
       mockFetch.mockResolvedValue({ ok: true });
-      await app.init('http://example.com/data.zarr');
+      await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
 
       expect(mockRenderingControls.setAnimationController).toHaveBeenCalledWith(
         mockAnimationController
@@ -218,46 +224,46 @@ describe('LuxarApp', () => {
         callOrder.push('loadSceneData');
       });
 
-      await app.init('http://example.com/data.zarr');
+      await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
 
       expect(callOrder.indexOf('startAnimation')).toBeLessThan(callOrder.indexOf('loadSceneData'));
     });
 
     it('should set isInitialized to true after successful init', async () => {
       mockFetch.mockResolvedValue({ ok: true });
-      await app.init('http://example.com/data.zarr');
+      await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
 
       expect(app.initialized).toBe(true);
     });
 
     it('should setup beforeunload dispose handler', async () => {
       mockFetch.mockResolvedValue({ ok: true });
-      await app.init('http://example.com/data.zarr');
+      await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
 
       expect(mockAddEventListener).toHaveBeenCalledWith('beforeunload', expect.any(Function));
     });
 
     it('throws if init() is called twice without an intervening dispose()', async () => {
       mockFetch.mockResolvedValue({ ok: true });
-      await app.init('http://example.com/data.zarr');
+      await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
 
-      await expect(app.init('http://example.com/data.zarr')).rejects.toThrow(
+      await expect(app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' })).rejects.toThrow(
         /already initialized/i
       );
     });
 
     it('allows init() again after dispose()', async () => {
       mockFetch.mockResolvedValue({ ok: true });
-      await app.init('http://example.com/data.zarr');
+      await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
       app.dispose();
 
-      await expect(app.init('http://example.com/data.zarr')).resolves.toBeUndefined();
+      await expect(app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' })).resolves.toBeUndefined();
       expect(app.initialized).toBe(true);
     });
 
     it('should setup focus handling', async () => {
       mockFetch.mockResolvedValue({ ok: true });
-      await app.init('http://example.com/data.zarr');
+      await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
 
       expect(mockAddEventListener).toHaveBeenCalledWith('focus', expect.any(Function));
       expect(mockAddEventListener).toHaveBeenCalledWith('visibilitychange', expect.any(Function));
@@ -266,21 +272,21 @@ describe('LuxarApp', () => {
 
   describe('dataset detection logic', () => {
     it('should show browser for empty source', async () => {
-      await app.init('');
+      await app.init({ canvas: mockCanvas, src: '' });
 
       expect(DatasetBrowser).toHaveBeenCalled();
       expect(mockSceneManager.loadSceneData).not.toHaveBeenCalled();
     });
 
     it('should show browser for missing source', async () => {
-      await app.init();
+      await app.init({ canvas: mockCanvas });
 
       expect(DatasetBrowser).toHaveBeenCalled();
       expect(mockSceneManager.loadSceneData).not.toHaveBeenCalled();
     });
 
     it('should show browser for directory URLs ending with /', async () => {
-      await app.init('http://example.com/datasets/');
+      await app.init({ canvas: mockCanvas, src: 'http://example.com/datasets/' });
 
       expect(DatasetBrowser).toHaveBeenCalled();
       expect(mockSceneManager.loadSceneData).not.toHaveBeenCalled();
@@ -288,7 +294,7 @@ describe('LuxarApp', () => {
 
     it('should load directly for valid zarr datasets', async () => {
       mockFetch.mockResolvedValue({ ok: true });
-      await app.init('http://example.com/data.zarr');
+      await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
 
       expect(mockFetch).toHaveBeenCalledWith(
         'http://example.com/data.zarr/.zgroup',
@@ -303,7 +309,7 @@ describe('LuxarApp', () => {
 
     it('should show browser for paths without extensions', async () => {
       mockFetch.mockResolvedValue({ ok: false });
-      await app.init('http://example.com/datasets');
+      await app.init({ canvas: mockCanvas, src: 'http://example.com/datasets' });
 
       expect(DatasetBrowser).toHaveBeenCalled();
       expect(mockSceneManager.loadSceneData).not.toHaveBeenCalled();
@@ -311,14 +317,14 @@ describe('LuxarApp', () => {
 
     it('should handle fetch errors gracefully in detection', async () => {
       mockFetch.mockRejectedValue(new Error('Network error'));
-      await app.init('http://example.com/data.zarr');
+      await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
 
       // Should continue with browser or direct load based on extension check
       expect(app.initialized).toBe(true);
     });
 
     it('should show browser for whitespace-only source', async () => {
-      await app.init('   ');
+      await app.init({ canvas: mockCanvas, src: '   ' });
 
       expect(DatasetBrowser).toHaveBeenCalled();
     });
@@ -327,7 +333,7 @@ describe('LuxarApp', () => {
   describe('component integration', () => {
     beforeEach(async () => {
       mockFetch.mockResolvedValue({ ok: true });
-      await app.init('http://example.com/data.zarr');
+      await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
     });
 
     it('should connect rendering controls to animation controller', () => {
@@ -363,7 +369,7 @@ describe('LuxarApp', () => {
       const error = new Error('Failed to initialize scene manager');
       mockSceneManager.init.mockRejectedValue(error);
 
-      await expect(app.init('http://example.com/data.zarr')).rejects.toThrow(
+      await expect(app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' })).rejects.toThrow(
         'Failed to initialize scene manager'
       );
 
@@ -375,14 +381,14 @@ describe('LuxarApp', () => {
       mockSceneManager.loadSceneData.mockRejectedValue(new Error('Load failed'));
 
       // Should throw because loadSceneData error propagates
-      await expect(app.init('http://example.com/data.zarr')).rejects.toThrow('Load failed');
+      await expect(app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' })).rejects.toThrow('Load failed');
     });
 
     it('should not cleanup on error to preserve error messages', async () => {
       mockSceneManager.init.mockRejectedValue(new Error('Init failed'));
 
       try {
-        await app.init('http://example.com/data.zarr');
+        await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
       } catch {
         // Expected to throw
       }
@@ -395,7 +401,7 @@ describe('LuxarApp', () => {
       mockSceneManager.init.mockRejectedValue(new Error('Init failed'));
 
       try {
-        await app.init('http://example.com/data.zarr');
+        await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
       } catch {
         // Expected to throw
       }
@@ -408,7 +414,7 @@ describe('LuxarApp', () => {
         throw new Error('Animation controller failed');
       });
 
-      await expect(app.init('http://example.com/data.zarr')).rejects.toThrow(
+      await expect(app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' })).rejects.toThrow(
         'Animation controller failed'
       );
     });
@@ -418,7 +424,7 @@ describe('LuxarApp', () => {
         throw new Error('Input handler failed');
       });
 
-      await expect(app.init('http://example.com/data.zarr')).rejects.toThrow(
+      await expect(app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' })).rejects.toThrow(
         'Input handler failed'
       );
     });
@@ -427,7 +433,7 @@ describe('LuxarApp', () => {
   describe('dispose', () => {
     beforeEach(async () => {
       mockFetch.mockResolvedValue({ ok: true });
-      await app.init('http://example.com/data.zarr');
+      await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
       vi.clearAllMocks();
     });
 
@@ -516,7 +522,7 @@ describe('LuxarApp', () => {
   describe('focus handling', () => {
     beforeEach(async () => {
       mockFetch.mockResolvedValue({ ok: true });
-      await app.init('http://example.com/data.zarr');
+      await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
     });
 
     it('should register focus event listener', () => {
@@ -575,14 +581,14 @@ describe('LuxarApp', () => {
 
   describe('dataset browser', () => {
     it('should clear error when opening browser', async () => {
-      await app.init('');
+      await app.init({ canvas: mockCanvas, src: '' });
 
       expect(mockClearError).toHaveBeenCalled();
     });
 
     it('should register open-dataset-browser event listener', async () => {
       mockFetch.mockResolvedValue({ ok: true });
-      await app.init('http://example.com/data.zarr');
+      await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
 
       expect(mockAddEventListener).toHaveBeenCalledWith(
         'open-dataset-browser',
@@ -595,7 +601,7 @@ describe('LuxarApp', () => {
         .spyOn(window.history, 'replaceState')
         .mockImplementation(() => {});
 
-      await app.init({ src: '', updateBrowserUrl: false });
+      await app.init({ canvas: mockCanvas, src: '', updateBrowserUrl: false });
 
       const browserCall = (DatasetBrowser as any).mock.calls.at(-1);
       expect(browserCall).toBeDefined();
@@ -613,7 +619,7 @@ describe('LuxarApp', () => {
         .spyOn(window.history, 'replaceState')
         .mockImplementation(() => {});
 
-      await app.init({ src: '' });
+      await app.init({ canvas: mockCanvas, src: '' });
 
       const browserCall = (DatasetBrowser as any).mock.calls.at(-1);
       const onSelect = browserCall[0].onDatasetSelect as (url: string) => Promise<void>;
@@ -631,7 +637,7 @@ describe('LuxarApp', () => {
       (window.location as any).search = '';
       mockFetch.mockResolvedValue({ ok: true });
 
-      await app.init('http://example.com/data.zarr');
+      await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
 
       expect((window as any).__luxarDebug).toBeUndefined();
     });
@@ -639,7 +645,7 @@ describe('LuxarApp', () => {
     it('should setup debug interface when debug option is passed', async () => {
       mockFetch.mockResolvedValue({ ok: true });
 
-      await app.init({ src: 'http://example.com/data.zarr', debug: true });
+      await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr', debug: true });
 
       expect((window as any).__luxarDebug).toBeDefined();
       expect((window as any).__luxarDebug.scene).toBe(mockSceneManager.scene);
@@ -662,7 +668,7 @@ describe('LuxarApp', () => {
         return mockAnimationController;
       });
 
-      await app.init('http://example.com/data.zarr');
+      await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
 
       expect(initOrder.indexOf('sceneManager.init')).toBeLessThan(
         initOrder.indexOf('AnimationController')
@@ -693,7 +699,7 @@ describe('LuxarApp', () => {
         initOrder.push('startAnimation');
       });
 
-      await app.init('http://example.com/data.zarr');
+      await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
 
       const startAnimationIndex = initOrder.indexOf('startAnimation');
       expect(initOrder.indexOf('SceneManager')).toBeLessThan(startAnimationIndex);

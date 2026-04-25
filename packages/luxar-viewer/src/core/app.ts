@@ -34,6 +34,12 @@ import type { LoaderConfig } from '../data/data-loader-types';
  * integrations where `window.location` is not the right source.
  */
 export interface LuxarAppOptions {
+  /**
+   * Canvas element to render into. The standalone app's main.ts resolves
+   * this via `document.getElementById('app')`; embedders pass any
+   * HTMLCanvasElement they own.
+   */
+  canvas: HTMLCanvasElement;
   /** Dataset URL. Defaults to {@link config.defaultZarrPath}. */
   src?: string;
   /** Expose `window.__luxarDebug` and verbose hardware logging. */
@@ -78,8 +84,11 @@ export class LuxarApp {
    * Snapshot of init-time options. Populated by `init()` and read by
    * setupDebugInterface, dataset-browser callbacks, and other components
    * that need URL-derived flags without re-reading `window.location`.
+   *
+   * Definitely-assigned: every method that reads `this.options` runs after
+   * `init()`, which assigns the field as its first action.
    */
-  private options: LuxarAppOptions = {};
+  private options!: LuxarAppOptions;
 
   /**
    * Initialize the complete Luxar application.
@@ -95,11 +104,9 @@ export class LuxarApp {
    * animation loop starts BEFORE data loading, providing visual feedback
    * even during long load operations.
    *
-   * @param options - Init-time options. Either a string (legacy/short-form
-   *                  treated as `{src}`) or a {@link LuxarAppOptions} object.
-   *                  When omitted, defaults are used and URL parameters are
-   *                  not consulted — main.ts is responsible for reading them
-   *                  and passing the result.
+   * @param options - Init-time options. URL parameters are not consulted
+   *                  here — main.ts is responsible for reading them and
+   *                  passing the result.
    *
    * @returns Promise that resolves when initialization is complete and
    *          dataset loading has started (may still be loading in background).
@@ -112,20 +119,23 @@ export class LuxarApp {
    * @example
    * ```typescript
    * const app = new LuxarApp();
-   * await app.init({ src: 'https://example.com/cells.zarr' });
+   * await app.init({
+   *   canvas: document.getElementById('app') as HTMLCanvasElement,
+   *   src: 'https://example.com/cells.zarr',
+   * });
    * ```
    *
    * @see {@link SceneManager} for rendering pipeline setup
    * @see README.md - initialization sequence section for detailed init flow
    */
-  async init(options?: LuxarAppOptions | string): Promise<void> {
+  async init(options: LuxarAppOptions): Promise<void> {
     if (this.isInitialized) {
       throw new Error(
         'LuxarApp is already initialized. Call dispose() before initializing again.'
       );
     }
 
-    this.options = typeof options === 'string' ? { src: options } : (options ?? {});
+    this.options = options;
 
     try {
       // Inform users about expected console messages
@@ -142,7 +152,10 @@ export class LuxarApp {
 
       // Initialize scene manager first
       this.sceneManager = new SceneManager();
-      await this.sceneManager.init({ debug: this.options.debug });
+      await this.sceneManager.init({
+        canvas: this.options.canvas,
+        debug: this.options.debug,
+      });
 
       // Initialize animation controller with HDR post-processing
       this.animationController = new AnimationController(
