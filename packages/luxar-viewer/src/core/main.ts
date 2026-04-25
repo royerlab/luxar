@@ -29,7 +29,6 @@ import { readUrlParams } from '../config/url-params';
 import { StorageKeys } from '../utils/storage-keys';
 import { showError } from '../ui/helpers';
 import { ThemeManager } from '../themes/theme-manager';
-import type { LuxarCamera } from '../scene/camera-utils';
 
 // Validate configuration at startup
 const configValid = validateAndLog(config);
@@ -73,39 +72,8 @@ if (!canvas) {
 // Initialize and start the application
 const app = new LuxarApp();
 
-// Type-safe debug interface (only in development builds)
-// Note: This interface is extended in app.ts after initialization
-// to include runtime components (scene, camera, etc.)
-declare global {
-  interface Window {
-    __luxarDebug?: {
-      // Base properties (available from main.ts)
-      app: LuxarApp;
-      consoleInterceptor: typeof consoleInterceptor;
-      version: string;
-
-      // Runtime properties (added by app.ts after initialization)
-      scene?: THREE.Scene;
-      camera?: LuxarCamera;
-      renderer?: THREE.WebGLRenderer;
-      controls?: any; // ControlsManager not imported here
-      postProcessing?: any; // PostProcessingManager not imported here
-      animationController?: any;
-      inputHandler?: any;
-      renderingControls?: any;
-      getState?: () => any;
-      renderOnce?: () => void;
-      getSceneLoader?: () => Promise<any>;
-      runtimeReady?: boolean;
-    };
-  }
-}
-
-// Import THREE for type definitions
-import * as THREE from 'three';
-
-// Only expose debug interface in development/debug mode
-// Check for debug flag in URL or localStorage
+// Only expose debug interface in development/debug mode.
+// The Window['__luxarDebug'] type lives in src/types/window.d.ts.
 const isDebugMode = urlParams.debug || localStorage.getItem(StorageKeys.debug) === 'true';
 if (isDebugMode) {
   window.__luxarDebug = {

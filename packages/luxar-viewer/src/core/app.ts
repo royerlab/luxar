@@ -25,6 +25,7 @@ import { PickingSystem, type PickResult } from '../rendering/picking/picking-sys
 import { LabelLoader } from '../data/label-loader';
 import { ImageLabelLoader } from '../data/image-label-loader';
 import type { LoaderConfig } from '../data/data-loader-types';
+import { consoleInterceptor } from '../utils/console-interceptor';
 
 /**
  * Init-time options for {@link LuxarApp.init}.
@@ -737,10 +738,16 @@ export class LuxarApp {
 
     log.info(Modules.LUXAR, 'Extending debug interface with runtime components');
 
-    // Extend existing debug interface (preserve app, consoleInterceptor, version from main.ts)
-    const existing = (window as any).__luxarDebug || {};
+    // Extend whatever main.ts seeded (app/consoleInterceptor/version). When
+    // LuxarApp is instantiated outside the standalone-app entry point
+    // (tests, embeds), main.ts hasn't run; fall back to a fresh base.
+    const existing = window.__luxarDebug ?? {
+      app: this,
+      consoleInterceptor: consoleInterceptor,
+      version: '1.0.0',
+    };
 
-    (window as any).__luxarDebug = {
+    window.__luxarDebug = {
       // Preserve existing properties from main.ts
       ...existing,
 
