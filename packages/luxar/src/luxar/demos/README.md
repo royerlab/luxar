@@ -202,6 +202,15 @@ Beautiful procedural forest using L-system grammars to showcase the **Lines** no
 
 ---
 
+#### demo_hilbert_curve_3d.py - 3D Hilbert Space-Filling Curve (Lines Demo)
+The 3D Hilbert curve — a continuous, self-similar polyline that visits every cell of a 2^n × 2^n × 2^n grid exactly once with consecutive cells always sharing a face. Vectorized Skilling algorithm produces orders 1 through max_order (default 6 = 262k vertices), each rendered as a single thin polyline with HSV hue swept along the traversal index. A slider on the `order` dim steps through the recursion so you can watch each level subdivide and rotate.
+
+**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_hilbert_curve_3d.py [--max-order=6]`
+
+**Demonstrates**: Single ultra-long `polyline` Lines node (262k+ vertices, 262k segments), thin constant width with color gradient along traversal, runtime-verified Hamiltonian path on the integer lattice, slider-driven recursion exploration (each order on its own slot of a non-displayed `order` dim), Skilling's vectorized 3D Hilbert algorithm.
+
+---
+
 #### demo_network_performance.py - Network Performance Testing
 Large multi-cluster dataset (1M points) for testing viewer performance under network constraints.
 
@@ -727,6 +736,7 @@ hatch run python packages/luxar/src/luxar/demos/demo_nd_transforms.py
 # --- Feature Showcases ---
 hatch run python packages/luxar/src/luxar/demos/demo_sharpness_showcase.py
 hatch run python packages/luxar/src/luxar/demos/demo_lsystem_forest.py
+hatch run python packages/luxar/src/luxar/demos/demo_hilbert_curve_3d.py
 hatch run python packages/luxar/src/luxar/demos/demo_network_performance.py
 
 # --- Embedding / UMAP ---
