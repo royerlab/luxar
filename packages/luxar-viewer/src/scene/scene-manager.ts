@@ -255,14 +255,10 @@ export class SceneManager extends THREE.EventDispatcher<{
       ...config.webgl.renderer,
     });
 
-    // Configure page for immersive fullscreen 3D experience
-    // Remove default margins to eliminate whitespace around canvas
-    document.body.style.margin = '0';
-
-    // Hide scrollbars since 3D scene uses entire viewport
-    document.body.style.overflow = 'hidden';
-
-    // NOTE: We don't append renderer.domElement because we're using the existing HTML canvas
+    // NOTE: We don't append renderer.domElement because we're using the
+    // existing HTML canvas. Page-chrome styling (body margin/overflow,
+    // background) is the responsibility of the host page (index.html for
+    // the standalone app), not of SceneManager.
 
     // Report hardware point size limits when debug logging is requested.
     if (this.debug) {
