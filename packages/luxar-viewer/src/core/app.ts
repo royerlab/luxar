@@ -24,6 +24,23 @@ import * as zarr from 'zarrita';
 import { PickingSystem, type PickResult } from '../rendering/picking/picking-system';
 import { LabelLoader } from '../data/label-loader';
 import { ImageLabelLoader } from '../data/image-label-loader';
+import type { LoaderConfig } from '../data/data-loader-types';
+
+/**
+ * Init-time options for {@link LuxarApp.init}.
+ *
+ * Typically constructed by `main.ts` from `readUrlParams()`, but any caller
+ * can provide values directly — useful for tests, embedding, and notebook
+ * integrations where `window.location` is not the right source.
+ */
+export interface LuxarAppOptions {
+  /** Dataset URL. Defaults to {@link config.defaultZarrPath}. */
+  src?: string;
+  /** Expose `window.__luxarDebug` and verbose hardware logging. */
+  debug?: boolean;
+  /** Cache and prefetch flags forwarded to the data loader. */
+  loaderConfig?: LoaderConfig;
+}
 
 export class LuxarApp {
   private sceneManager!: SceneManager;
@@ -49,6 +66,13 @@ export class LuxarApp {
   private boundDatasetBrowserHandler: (() => void) | null = null;
 
   /**
+   * Snapshot of init-time options. Populated by `init()` and read by
+   * setupDebugInterface, dataset-browser callbacks, and other components
+   * that need URL-derived flags without re-reading `window.location`.
+   */
+  private options: LuxarAppOptions = {};
+
+  /**
    * Initialize the complete Luxar application.
    *
    * Sets up the complete visualization pipeline including:
@@ -62,12 +86,11 @@ export class LuxarApp {
    * animation loop starts BEFORE data loading, providing visual feedback
    * even during long load operations.
    *
-   * @param src - URL or path to the Zarr dataset. Can be:
-   *              - HTTP URL: 'https://example.com/data.zarr'
-   *              - Directory path ending with '/': Shows dataset browser
-   *              - Omitted: Uses config.defaultZarrPath
-   *              - Query params supported: '?no-cache', '?cache-debug', '?clear-cache',
-   *                '?debug', '?no-prefetch'
+   * @param options - Init-time options. Either a string (legacy/short-form
+   *                  treated as `{src}`) or a {@link LuxarAppOptions} object.
+   *                  When omitted, defaults are used and URL parameters are
+   *                  not consulted — main.ts is responsible for reading them
+   *                  and passing the result.
    *
    * @returns Promise that resolves when initialization is complete and
    *          dataset loading has started (may still be loading in background).
@@ -79,42 +102,21 @@ export class LuxarApp {
    *
    * @example
    * ```typescript
-   * // Basic initialization with URL
    * const app = new LuxarApp();
-   * await app.init('https://example.com/cells.zarr');
-   * // App is now running, data loading in background
-   * ```
-   *
-   * @example
-   * ```typescript
-   * // Show dataset browser
-   * const app = new LuxarApp();
-   * await app.init('https://example.com/datasets/');
-   * // User can browse and select datasets
-   * ```
-   *
-   * @example
-   * ```typescript
-   * // With error handling
-   * const app = new LuxarApp();
-   * try {
-   *   await app.init(datasetUrl);
-   *   console.log('✅ Luxar initialized successfully');
-   * } catch (error) {
-   *   console.error('❌ Initialization failed:', error);
-   *   // Fallback or retry logic
-   * }
+   * await app.init({ src: 'https://example.com/cells.zarr' });
    * ```
    *
    * @see {@link SceneManager} for rendering pipeline setup
    * @see README.md - initialization sequence section for detailed init flow
    */
-  async init(src?: string): Promise<void> {
+  async init(options?: LuxarAppOptions | string): Promise<void> {
     if (this.isInitialized) {
       throw new Error(
         'LuxarApp is already initialized. Call dispose() before initializing again.'
       );
     }
+
+    this.options = typeof options === 'string' ? { src: options } : (options ?? {});
 
     try {
       // Inform users about expected console messages
@@ -127,12 +129,11 @@ export class LuxarApp {
         'These are expected and do not indicate a problem - the app checks for optional features that may not exist.'
       );
 
-      // Use provided source or default
-      const sceneSrc = src ?? config.defaultZarrPath;
+      const sceneSrc = this.options.src ?? config.defaultZarrPath;
 
       // Initialize scene manager first
       this.sceneManager = new SceneManager();
-      await this.sceneManager.init();
+      await this.sceneManager.init({ debug: this.options.debug });
 
       // Initialize animation controller with HDR post-processing
       this.animationController = new AnimationController(
@@ -299,15 +300,22 @@ export class LuxarApp {
 
     this.datasetBrowser = new DatasetBrowser({
       container: document.body,
+      currentSrc: this.options.src,
       onDatasetSelect: async (fullUrl: string) => {
         // The browser now passes full URLs directly, preserving directory context
         // Strip any trailing slashes to ensure consistent URL format
         const cleanUrl = fullUrl.replace(/\/+$/, '');
 
-        // Update URL parameter
+        // Reflect the chosen dataset in the URL bar so the page is shareable.
+        // (Standalone-app behavior; embedded callers can override later by
+        // intercepting the window.history mutation.)
         const params = new URLSearchParams(window.location.search);
         params.set('src', cleanUrl);
         window.history.replaceState({}, '', `${window.location.pathname}?${params}`);
+
+        // Track the new src in our options snapshot so a subsequent browser
+        // open lands in the right directory.
+        this.options = { ...this.options, src: cleanUrl };
 
         // Load the dataset
         await this.loadDataset(cleanUrl);
@@ -333,7 +341,7 @@ export class LuxarApp {
     this.renderingControls.setSceneId(src);
 
     // Load scene data (animation loop will continue even if this fails)
-    await this.sceneManager.loadSceneData(src);
+    await this.sceneManager.loadSceneData(src, this.options.loaderConfig);
 
     // Pass zarr viewer_config to rendering controls (available after scene loads).
     // If no localStorage settings exist for this scene, apply zarr defaults.
@@ -699,11 +707,7 @@ export class LuxarApp {
    * Only enabled when ?debug URL parameter is present
    */
   private setupDebugInterface(): void {
-    // Check if debug mode is enabled via URL parameter
-    const urlParams = new URLSearchParams(window.location.search);
-    const debugEnabled = urlParams.has('debug');
-
-    if (!debugEnabled) {
+    if (!this.options.debug) {
       return;
     }
 

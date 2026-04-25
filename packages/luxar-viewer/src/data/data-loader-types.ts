@@ -157,6 +157,21 @@ export interface LoaderConfig {
 
   /** Enable data loading monitor UI */
   enableMonitor?: boolean;
+
+  /** Disable both L1/L2 cache tiers and L0 decompressed cache. */
+  noCache?: boolean;
+
+  /** Verbose cache logging. */
+  cacheDebug?: boolean;
+
+  /** Clear caches on init. */
+  clearCache?: boolean;
+
+  /** Disable adjacent-chunk prefetching. */
+  noPrefetch?: boolean;
+
+  /** Verbose prefetch logging. */
+  prefetchDebug?: boolean;
 }
 
 /**

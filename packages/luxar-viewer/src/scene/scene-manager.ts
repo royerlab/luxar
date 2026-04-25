@@ -10,6 +10,7 @@
 import * as THREE from 'three';
 import { ControlsManager } from '../controls/controls-manager';
 import { loadScene } from '../data';
+import type { LoaderConfig } from '../data/data-loader-types';
 import { showLoadingIndicator, hideLoadingIndicator, showError } from '../ui/helpers';
 import { config } from '../config';
 import { extractCameraOverrides, extractBackgroundColor } from '../config/viewer-config-utils';
@@ -175,7 +176,14 @@ export class SceneManager extends THREE.EventDispatcher<{
    * // Now ready to load scenes and render
    * ```
    */
-  async init(): Promise<void> {
+  /**
+   * When true, additional hardware/runtime info is logged at startup.
+   * Set via {@link init}'s `debug` flag (forwarded from `?debug` URL parameter).
+   */
+  private debug: boolean = false;
+
+  async init(options?: { debug?: boolean }): Promise<void> {
+    this.debug = options?.debug ?? false;
     this.setupCanvas();
     this.setupRenderer();
     this.setupContextLossHandling(); // Setup context loss recovery
@@ -261,9 +269,8 @@ export class SceneManager extends THREE.EventDispatcher<{
 
     // NOTE: We don't append renderer.domElement because we're using the existing HTML canvas
 
-    // Report hardware point size limits in debug mode
-    const debugParams = new URLSearchParams(window.location.search);
-    if (debugParams.has('debug')) {
+    // Report hardware point size limits when debug logging is requested.
+    if (this.debug) {
       const glContext = this.renderer.getContext();
       const pointSizeRange = glContext.getParameter(glContext.ALIASED_POINT_SIZE_RANGE);
       log.info(
@@ -488,9 +495,13 @@ export class SceneManager extends THREE.EventDispatcher<{
   }
 
   /**
-   * Load scene data from Zarr source
+   * Load scene data from Zarr source.
+   *
+   * Cache and prefetch flags propagate through `loaderConfig` from
+   * LuxarApp (originally derived from `?no-cache`/`?cache-debug`/etc URL
+   * parameters in main.ts).
    */
-  async loadSceneData(src: string): Promise<void> {
+  async loadSceneData(src: string, loaderConfig?: LoaderConfig): Promise<void> {
     showLoadingIndicator();
 
     try {
@@ -505,7 +516,7 @@ export class SceneManager extends THREE.EventDispatcher<{
         this.updateMaterialsForCurrentCamera();
       }
 
-      const root = await loadScene(src);
+      const root = await loadScene(src, loaderConfig);
       hideLoadingIndicator();
       this.scene.add(root);
       this.invalidateBoundsCache();

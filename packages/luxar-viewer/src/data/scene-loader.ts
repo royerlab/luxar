@@ -324,15 +324,14 @@ export class SceneLoader {
       this.dispose();
     }
 
-    // Initialize L0 decompressed chunk cache if enabled
-    // This caches decoded zarr chunks to avoid ~2ms Blosc decompression overhead on cache hits
-    // L0 respects same URL params as L1/L2: ?no-cache, ?cache-debug, ?clear-cache
-    const urlParams = new URLSearchParams(
-      typeof window !== 'undefined' ? window.location?.search : ''
-    );
-    const noCache = urlParams.has('no-cache');
-    const cacheDebug = urlParams.has('cache-debug');
-    const clearCache = urlParams.has('clear-cache');
+    // Cache flags (`?no-cache`, `?cache-debug`, `?clear-cache`, `?no-prefetch`,
+    // `?prefetch-debug`) are routed via LoaderConfig from main.ts; SceneLoader
+    // does not consult window.location directly.
+    const noCache = this.config.noCache ?? false;
+    const cacheDebug = this.config.cacheDebug ?? false;
+    const clearCache = this.config.clearCache ?? false;
+    const noPrefetch = this.config.noPrefetch ?? false;
+    const prefetchDebug = this.config.prefetchDebug ?? false;
 
     if (appConfig.cache.l0Enabled && !noCache) {
       this.l0Cache = new DecompressedChunkCache({
@@ -359,19 +358,21 @@ export class SceneLoader {
 
     // Open zarr store with caching
     let rawStore: Readable;
-    if (appConfig.cache.enabled) {
+    if (appConfig.cache.enabled && !noCache) {
       const cachingStore = new TwoLevelCachingStore(this.normalizeURL(url), {
         l1MaxSize: appConfig.cache.l1MaxSizeMB * 1024 * 1024,
         l2MaxSize: appConfig.cache.l2MaxSizeMB * 1024 * 1024,
-        debug: appConfig.cache.debug,
+        debug: cacheDebug || appConfig.cache.debug,
+        noCache,
+        clearCache,
       });
       await cachingStore.init();
 
       // Attach prefetcher to enable transparent adjacent chunk prefetching
-      // (Respects ?no-prefetch URL parameter for debugging)
       const prefetcher = new ChunkPrefetcher(cachingStore, {
         maxConcurrent: 4,
-        enabled: true,
+        enabled: !noPrefetch,
+        debug: prefetchDebug,
       });
       cachingStore.setPrefetcher(prefetcher);
 

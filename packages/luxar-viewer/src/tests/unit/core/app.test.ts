@@ -294,7 +294,10 @@ describe('LuxarApp', () => {
         'http://example.com/data.zarr/.zgroup',
         expect.objectContaining({ method: 'HEAD' })
       );
-      expect(mockSceneManager.loadSceneData).toHaveBeenCalledWith('http://example.com/data.zarr');
+      expect(mockSceneManager.loadSceneData).toHaveBeenCalledWith(
+        'http://example.com/data.zarr',
+        undefined
+      );
       expect(DatasetBrowser).not.toHaveBeenCalled();
     });
 
@@ -598,21 +601,10 @@ describe('LuxarApp', () => {
       expect((window as any).__luxarDebug).toBeUndefined();
     });
 
-    it('should setup debug interface with ?debug param', async () => {
-      (window.location as any).search = '?debug';
+    it('should setup debug interface when debug option is passed', async () => {
       mockFetch.mockResolvedValue({ ok: true });
 
-      // Mock URLSearchParams
-      vi.stubGlobal(
-        'URLSearchParams',
-        class {
-          has(key: string) {
-            return key === 'debug';
-          }
-        }
-      );
-
-      await app.init('http://example.com/data.zarr');
+      await app.init({ src: 'http://example.com/data.zarr', debug: true });
 
       expect((window as any).__luxarDebug).toBeDefined();
       expect((window as any).__luxarDebug.scene).toBe(mockSceneManager.scene);

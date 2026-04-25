@@ -12,8 +12,10 @@ export interface TwoLevelCachingStoreOptions {
   l2MaxSize?: number;
   /** Enable debug logging (default: false) */
   debug?: boolean;
-  /** URL parameters for testability (optional, defaults to window.location.search) */
-  urlParams?: URLSearchParams;
+  /** Disable both cache tiers (e.g. driven by `?no-cache`). Default false. */
+  noCache?: boolean;
+  /** Clear caches on init (e.g. driven by `?clear-cache`). Default false. */
+  clearCache?: boolean;
 }
 
 /**
@@ -47,18 +49,9 @@ export class TwoLevelCachingStore implements AsyncReadable {
   constructor(baseUrl: string, options?: TwoLevelCachingStoreOptions) {
     this.baseUrl = baseUrl;
 
-    // URL params (testable via options.urlParams, defaults to window.location)
-    const params =
-      options?.urlParams ??
-      new URLSearchParams(typeof window !== 'undefined' ? window.location?.search : '');
-
-    const noCache = params.has('no-cache');
-    const cacheDebug = params.has('cache-debug');
-    const clearCache = params.has('clear-cache');
-
-    this.enabled = !noCache;
-    this.debug = cacheDebug || options?.debug || false;
-    this.shouldClearOnInit = clearCache;
+    this.enabled = !(options?.noCache ?? false);
+    this.debug = options?.debug ?? false;
+    this.shouldClearOnInit = options?.clearCache ?? false;
 
     // Initialize L1 (always, even if disabled)
     const l1Size = options?.l1MaxSize ?? TwoLevelCachingStore.DEFAULT_L1_SIZE;

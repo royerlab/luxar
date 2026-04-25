@@ -284,16 +284,13 @@ describe('ChunkPrefetcher - Unit Tests', () => {
       expect(mockStore.get).not.toHaveBeenCalled();
     });
 
-    it('should respect ?no-prefetch URL parameter', () => {
-      const params = new URLSearchParams('?no-prefetch');
+    it('does not prefetch when constructed with enabled=false', () => {
       const noPrefetchPrefetcher = new ChunkPrefetcher(mockStore as any, {
-        enabled: true,
-        urlParams: params,
+        enabled: false,
       });
 
       noPrefetchPrefetcher.onAccess('data/0.0');
 
-      // Should not prefetch anything with ?no-prefetch
       expect(mockStore.get).not.toHaveBeenCalled();
     });
 

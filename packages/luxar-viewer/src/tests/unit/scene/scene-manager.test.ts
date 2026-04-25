@@ -393,7 +393,7 @@ describe('SceneManager', () => {
       await sceneManager.loadSceneData(testUrl);
 
       expect(mockShowLoadingIndicator).toHaveBeenCalled();
-      expect(mockLoadScene).toHaveBeenCalledWith(testUrl);
+      expect(mockLoadScene).toHaveBeenCalledWith(testUrl, undefined);
       expect(mockHideLoadingIndicator).toHaveBeenCalled();
     });
 

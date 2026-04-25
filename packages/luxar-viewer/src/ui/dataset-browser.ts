@@ -13,6 +13,10 @@ export interface DatasetBrowserConfig {
   /** Callback when a dataset is selected. Receives the full URL (not just the path). */
   onDatasetSelect: (fullUrl: string) => void;
   onClose?: () => void;
+  /** Currently loaded dataset URL, used to determine the initial directory. */
+  currentSrc?: string;
+  /** Fallback origin for relative path resolution (defaults to `window.location.origin`). */
+  origin?: string;
 }
 
 /**
@@ -26,22 +30,25 @@ export class DatasetBrowser {
   private onClose?: () => void;
   private currentDataset?: string;
 
+  /** Origin used for relative path resolution; captured at construction. */
+  private readonly origin: string;
+
   constructor(config: DatasetBrowserConfig) {
     this.container = config.container;
     this.onDatasetSelect = config.onDatasetSelect;
     this.onClose = config.onClose;
+    this.origin =
+      config.origin ?? (typeof window !== 'undefined' ? window.location.origin : '');
 
-    // Parse base URL from current location
-    const params = new URLSearchParams(window.location.search);
-    const src = params.get('src') || '';
+    const src = (config.currentSrc ?? '').trim();
 
     // Determine base URL and initial path for browsing
     let baseUrl: string;
     let initialPath: string;
 
-    if (!src || src.trim() === '') {
+    if (!src) {
       // No dataset specified - show browser at root, will display manual entry
-      baseUrl = window.location.origin + '/';
+      baseUrl = this.origin + '/';
       initialPath = ''; // Don't navigate - just show the browser UI
     } else if (src.includes('.zarr/') || src.endsWith('.zarr')) {
       // We're inside or at a zarr dataset - navigate to parent directory
@@ -68,7 +75,7 @@ export class DatasetBrowser {
         }
       } catch {
         // If URL parsing fails, fall back to sensible defaults
-        baseUrl = window.location.origin + '/';
+        baseUrl = this.origin + '/';
         initialPath = '';
       }
     } else {
@@ -88,7 +95,7 @@ export class DatasetBrowser {
    * Extract base URL from a full URL.
    */
   private extractBaseUrl(url: string): string {
-    if (!url) return window.location.origin + '/';
+    if (!url) return this.origin + '/';
 
     try {
       const parsed = new URL(url);

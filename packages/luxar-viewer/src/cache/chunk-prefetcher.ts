@@ -13,9 +13,6 @@ export interface ChunkPrefetcherOptions {
 
   /** Enable debug logging (default: false) */
   debug?: boolean;
-
-  /** URL parameters for testability (optional, defaults to window.location.search) */
-  urlParams?: URLSearchParams;
 }
 
 /**
@@ -59,18 +56,9 @@ export class ChunkPrefetcher {
 
   constructor(store: TwoLevelCachingStore, options?: ChunkPrefetcherOptions) {
     this.store = store;
-
-    // URL params (testable via options.urlParams, defaults to window.location)
-    const params =
-      options?.urlParams ??
-      new URLSearchParams(typeof window !== 'undefined' ? window.location?.search : '');
-
-    const noPrefetch = params.has('no-prefetch');
-    const prefetchDebug = params.has('prefetch-debug');
-
     this.maxConcurrent = options?.maxConcurrent ?? 4;
-    this.enabled = !noPrefetch && (options?.enabled ?? true);
-    this.debug = prefetchDebug || options?.debug || false;
+    this.enabled = options?.enabled ?? true;
+    this.debug = options?.debug ?? false;
 
     if (!this.enabled) {
       this.log('Prefetching disabled');

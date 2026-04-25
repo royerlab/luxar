@@ -25,6 +25,7 @@ _codecRegistry
 import { LuxarApp } from './app';
 import { config } from '../config';
 import { validateAndLog } from '../config/validation';
+import { readUrlParams } from '../config/url-params';
 import { showError } from '../ui/helpers';
 import { ThemeManager } from '../themes/theme-manager';
 import type { LuxarCamera } from '../scene/camera-utils';
@@ -35,20 +36,19 @@ if (!configValid) {
   log.error(Modules.MAIN, 'Application starting with invalid configuration - errors may occur');
 }
 
+// Single source of truth for URL-derived flags. Components downstream do not
+// re-read window.location — values flow through LuxarAppOptions / LoaderConfig.
+const urlParams = readUrlParams();
+
 // Initialize theme system early (before any UI components are created)
 const themeManager = ThemeManager.getInstance();
 
-// Parse URL parameters
-const params = new URLSearchParams(window.location.search);
-
-// Support ?theme=light URL parameter
-const themeParam = params.get('theme');
-if (themeParam) {
+if (urlParams.theme) {
   try {
-    themeManager.setTheme(themeParam);
-    log.custom(LogEmoji.START, Modules.LUXAR, `Theme set from URL: ${themeParam}`);
+    themeManager.setTheme(urlParams.theme);
+    log.custom(LogEmoji.START, Modules.LUXAR, `Theme set from URL: ${urlParams.theme}`);
   } catch {
-    log.warning(Modules.LUXAR, `Invalid theme in URL: ${themeParam}, using default`);
+    log.warning(Modules.LUXAR, `Invalid theme in URL: ${urlParams.theme}, using default`);
   }
 } else {
   log.custom(
@@ -58,8 +58,7 @@ if (themeParam) {
   );
 }
 
-// Parse scene source parameter
-const src = params.get('src') ?? config.defaultZarrPath;
+const src = urlParams.src ?? config.defaultZarrPath;
 
 // Initialize and start the application
 const app = new LuxarApp();
@@ -97,7 +96,7 @@ import * as THREE from 'three';
 
 // Only expose debug interface in development/debug mode
 // Check for debug flag in URL or localStorage
-const isDebugMode = params.has('debug') || localStorage.getItem('luxar_debug') === 'true';
+const isDebugMode = urlParams.debug || localStorage.getItem('luxar_debug') === 'true';
 if (isDebugMode) {
   window.__luxarDebug = {
     app,
@@ -107,10 +106,22 @@ if (isDebugMode) {
   log.custom(LogEmoji.CONSOLE, Modules.LUXAR, 'Debug interface available at window.__luxarDebug');
 }
 
-app.init(src).catch((error) => {
-  log.error(Modules.LUXAR, 'Failed to start Luxar application:', error);
-
-  // Show error to user if it wasn't already handled by lower-level error handlers
-  // This ensures any initialization errors that don't get displayed are still shown
-  showError('Failed to start the application. Please check the console for details.');
-});
+app
+  .init({
+    src,
+    debug: isDebugMode,
+    loaderConfig: {
+      noCache: urlParams.noCache,
+      cacheDebug: urlParams.cacheDebug,
+      clearCache: urlParams.clearCache,
+      noPrefetch: urlParams.noPrefetch,
+      prefetchDebug: urlParams.prefetchDebug,
+    },
+  })
+  .catch((error) => {
+    log.error(Modules.LUXAR, 'Failed to start Luxar application:', error);
+    // Show error to user if it wasn't already handled by lower-level error
+    // handlers — guarantees init failures are surfaced even when no nested
+    // error UI fired.
+    showError('Failed to start the application. Please check the console for details.');
+  });
