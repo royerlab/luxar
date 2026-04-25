@@ -408,27 +408,45 @@ export class SceneDimsManager {
 }
 
 /**
- * Global singleton instance of the scene dimension manager.
+ * Page-level singleton instance of the scene dimension manager.
  *
- * This singleton ensures that all components in the application share
- * the same dimensional coordinate system. Import and use this instance
- * rather than creating new SceneDimsManager instances.
+ * Construction is **deferred until first access** via a Proxy: importing
+ * this symbol no longer triggers the constructor side-effect. Tests can
+ * call {@link __resetSceneDimsManagerForTests} to start fresh between
+ * cases. All call-site syntax (`sceneDimsManager.getDims()`, etc.)
+ * remains identical to a directly-exported instance.
  *
  * @example
  * ```typescript
  * import { sceneDimsManager } from './scene-dims-manager';
  *
- * // Initialize from loaded scene
  * sceneDimsManager.initFromScene(scene);
- *
- * // Register for dimension changes
- * sceneDimsManager.addListener(() => {
- *   console.log('Dimensions changed!');
- *   updatePointsSlice();
- * });
- *
- * // Navigate through time dimension
+ * sceneDimsManager.addListener(() => updatePointsSlice());
  * sceneDimsManager.setDimensionValue(0, 5.2);
  * ```
  */
-export const sceneDimsManager = new SceneDimsManager();
+let _sceneDimsManagerInstance: SceneDimsManager | undefined;
+
+export const sceneDimsManager: SceneDimsManager = new Proxy({} as SceneDimsManager, {
+  get(_target, prop, _receiver) {
+    _sceneDimsManagerInstance ??= new SceneDimsManager();
+    const value = Reflect.get(_sceneDimsManagerInstance, prop, _sceneDimsManagerInstance);
+    return typeof value === 'function' ? value.bind(_sceneDimsManagerInstance) : value;
+  },
+  set(_target, prop, value, _receiver) {
+    _sceneDimsManagerInstance ??= new SceneDimsManager();
+    return Reflect.set(_sceneDimsManagerInstance, prop, value, _sceneDimsManagerInstance);
+  },
+  has(_target, prop) {
+    _sceneDimsManagerInstance ??= new SceneDimsManager();
+    return prop in _sceneDimsManagerInstance;
+  },
+});
+
+/**
+ * Discard the current singleton so the next access constructs a fresh
+ * instance. Intended for tests; safe to leave un-called in production.
+ */
+export const __resetSceneDimsManagerForTests = (): void => {
+  _sceneDimsManagerInstance = undefined;
+};

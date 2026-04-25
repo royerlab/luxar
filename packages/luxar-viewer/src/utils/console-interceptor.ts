@@ -261,7 +261,11 @@ class ConsoleInterceptor {
   }
 }
 
-// Create and export singleton instance immediately
+// Construct eagerly at import time. main.ts imports this module first so
+// the constructor's console.* monkey-patching takes effect before any
+// other code logs anything. Lazy/Proxy-based deferral would defeat that
+// purpose — every other singleton in the codebase is lazy, but this one
+// genuinely needs the import-time side-effect.
 export const consoleInterceptor = ConsoleInterceptor.getInstance();
 
 // Also export the type for the singleton

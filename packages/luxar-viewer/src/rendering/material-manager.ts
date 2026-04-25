@@ -362,5 +362,35 @@ export class MaterialManager {
   }
 }
 
-// Global material manager instance
-export const materialManager = new MaterialManager();
+/**
+ * Page-level singleton instance of the material manager.
+ *
+ * Construction is **deferred until first access** via a Proxy. Tests can
+ * call {@link __resetMaterialManagerForTests} to start fresh between
+ * cases. Call-site syntax is unchanged from a directly-exported instance.
+ */
+let _materialManagerInstance: MaterialManager | undefined;
+
+export const materialManager: MaterialManager = new Proxy({} as MaterialManager, {
+  get(_target, prop, _receiver) {
+    _materialManagerInstance ??= new MaterialManager();
+    const value = Reflect.get(_materialManagerInstance, prop, _materialManagerInstance);
+    return typeof value === 'function' ? value.bind(_materialManagerInstance) : value;
+  },
+  set(_target, prop, value, _receiver) {
+    _materialManagerInstance ??= new MaterialManager();
+    return Reflect.set(_materialManagerInstance, prop, value, _materialManagerInstance);
+  },
+  has(_target, prop) {
+    _materialManagerInstance ??= new MaterialManager();
+    return prop in _materialManagerInstance;
+  },
+});
+
+/**
+ * Discard the current singleton so the next access constructs a fresh
+ * instance. Intended for tests; safe to leave un-called in production.
+ */
+export const __resetMaterialManagerForTests = (): void => {
+  _materialManagerInstance = undefined;
+};
