@@ -124,6 +124,17 @@ Ethereal underwater visualization with animated jellyfish, flowing tentacles, gl
 
 ---
 
+#### demo_flywire_connectome.py - FlyWire Adult Drosophila Connectome
+First complete wiring diagram of an adult animal brain: ~139k neurons as Points at their soma positions (in µm) and top-N neuron-to-neuron connections as tapered Lines inside the real brain envelope.
+
+**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_flywire_connectome.py [--min-synapses=20] [--max-edges=300000]`
+
+**Requires**: Internet access on first run (auto-downloads ~850 MB of connectivity data from Zenodo to `~/.cache/luxar/flywire/`; subsequent runs are offline).
+
+**Demonstrates**: Biological **network visualization** (Points + Lines in the same scene), real EM-reconstructed 3D soma coordinates, dominant-presynaptic-neurotransmitter inference via argmax of per-NT probability columns, **one toggleable Lines layer per neurotransmitter** (acetylcholine / GABA / glutamate / dopamine / serotonin / octopamine) so users can isolate excitatory, inhibitory, or neuromodulatory circuits from the viewer's Layers panel, width-tapered directed connections, super-class legend with 10 neuron categories, large spatially-embedded graph (~139k nodes, up to 300k edges). Data: FlyWire 783 release ([Schlegel et al. 2024 Nature](https://github.com/flyconnectome/flywire_annotations), [Dorkenwald et al. Zenodo 10676866](https://zenodo.org/records/10676866)).
+
+---
+
 #### demo_particle_collision.py - Particle Collision Detector
 Realistic visualization of particle physics collisions inspired by CERN's ATLAS and CMS detectors, showing helical particle tracks, jets, and energy deposits.
 
@@ -284,6 +295,28 @@ Visualizes 95k integrated single cells from zebrafish with categorical attribute
 
 ---
 
+#### demo_chromatrace_choir_umap.py - Chromatrace CHOIR 3D UMAP (Cell-Type Atlas)
+3D UMAP of ~60k single cells annotated with CHOIR bio-terms (88 fine-grained cell types) and bio-groups (8 broad lineages: Neuroectoderm, Neural Crest, Craniofacial Mesenchyme, Cardiac/Vascular, Mesoderm, Endoderm, Epidermis, Other). Two runtime-switchable color views with curated CHOIR palette and grouped HTML legend.
+
+**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_chromatrace_choir_umap.py [--data /path/to/zip-or-folder]`
+
+**Requires**: User-provided `choir_umap_3d_viewer.zip` bundle (parquet + colormap JSON) — auto-detected in `~/Downloads/` or `~/.cache/luxar/chromatrace/`.
+
+**Demonstrates**: Categorical attribute switching with two color views, curated upstream palette mapping, grouped two-column HTML legend, custom hover overlay (suppresses default top-right tooltip), large categorical dimension (88 unique cell types).
+
+---
+
+#### demo_chromatrace_choir_umap_sequence.py - Chromatrace CHOIR UMAP — Cell-Type Walkthrough
+Variant of the Chromatrace demo with an 89-step slider stepping through each fine-grained CHOIR bio-term one at a time. Within each bio-group, cell types are reordered (nearest-neighbor + 2-opt TSP on UMAP centroids) so consecutive slots are spatially adjacent. Backdrop layer keeps the full UMAP outline visible across all slots; highlight layer shows only the active type in its CHOIR palette color.
+
+**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_chromatrace_choir_umap_sequence.py [--no-tsp] [--data /path/to/zip-or-folder]`
+
+**Requires**: Same `choir_umap_3d_viewer.zip` bundle as `demo_chromatrace_choir_umap.py`.
+
+**Demonstrates**: `extend_to_all` for shared backdrop across slider slots (60k points instead of 89×60k), per-slot `visible_range` overlays, two-layer toggleable scene (Backdrop + Highlight), explicit `CameraConfig` to bypass auto-fit on a high-cardinality non-spatial dim, TSP-optimized intra-group ordering for smooth cross-slot transitions.
+
+---
+
 ### Data-Driven Demos (External Datasets)
 
 #### demo_gaia_milky_way_3m.py - Milky Way Stars (Gaia DR3, 3M Stars)
@@ -327,6 +360,28 @@ Microtubule cytoskeleton at nanometer resolution using real STORM super-resoluti
 **Requires**: Internet access (downloads STORM localization data).
 
 **Demonstrates**: STORM/PALM super-resolution data (~20 nm resolution), localization uncertainty as Gaussian splat size, 3D astigmatism-based z encoding, photon count-based coloring, microtubule cytoskeleton structure.
+
+---
+
+#### demo_huri_interactome.py - HuRI Human Reference Interactome (Network)
+~8k human proteins as Points and ~50k direct Y2H protein-protein interactions as Lines, laid out in 3D by graph structure alone (spectral embedding + UMAP). Nodes colored by Louvain community or HGNC chromosome; intra-community edges colored by community, cross-community "bridge" edges in dim gray. Rich edge hovers show the pair, intra/cross label, and — when available — the shared CORUM complex.
+
+**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_huri_interactome.py`
+
+**Requires**: Internet access (downloads ~35 MB one-time: HuRI + HGNC + optional CORUM), `networkx>=3.0`, `umap-learn`, `scipy`, `pandas`, `requests`.
+
+**Demonstrates**: First-class **network** visualization in Luxar (Points + Lines together), graph-derived layout (normalized Laplacian eigenvectors → UMAP), Louvain community detection, categorical attribute switching between two color views, edge-level hover labels with biological context (CORUM shared complexes), symmetric edge rendering (undirected, equal both endpoints).
+
+---
+
+#### demo_caida_as_topology.py - CAIDA AS Topology (The Internet as a Graph)
+~80k Autonomous Systems as Points and ~350k BGP relationships as Lines, laid out in 3D from graph structure alone. Auto-fetches the latest CAIDA serial-2 snapshot. Edges are styled by RELATIONSHIP TYPE — warm amber tapered lines for provider-customer (thick at provider, thin at customer, encoding direction), cool cyan uniform lines for peers. Nodes colored by Louvain community or country (CAIDA as2org). Tier-1 ASes (no upstream providers) get a size bump so the backbone pops. Edge hovers narrate the relationship ("Tier-1 transit" / "Tier-1 peering" / "Provider → Customer" / etc.) with both endpoints' org names and countries.
+
+**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_caida_as_topology.py`
+
+**Requires**: Internet access (auto-downloads ~60 MB from CAIDA on first run), `networkx>=3.0`, `umap-learn`, `scipy`, `pandas`, `requests`.
+
+**Demonstrates**: Large-scale **directed network** visualization (~80k nodes), aesthetic-tuned graph layout pipeline (50-dim spectral embedding → UMAP with n_neighbors=30, metric='cosine', spread=2.0 → PCA realignment for consistent orientation), edges styled by relationship kind (tapered-directional vs symmetric), tier-1 backbone detection from graph topology, per-edge narrative hover labels, auto-discovery of latest upstream dataset snapshots.
 
 ---
 
@@ -682,12 +737,16 @@ hatch run python packages/luxar/src/luxar/demos/demo_zebrahub_integrated_cells.p
 hatch run python packages/luxar/src/luxar/demos/demo_human_multiome_peak_umap.py
 hatch run python packages/luxar/src/luxar/demos/demo_mouse_multiome_peak_umap.py
 hatch run python packages/luxar/src/luxar/demos/demo_zebrahub_multiome_peak_umap.py
+hatch run python packages/luxar/src/luxar/demos/demo_chromatrace_choir_umap.py
+hatch run python packages/luxar/src/luxar/demos/demo_chromatrace_choir_umap_sequence.py
 
 # --- Data-Driven (External Datasets) ---
 hatch run python packages/luxar/src/luxar/demos/demo_gaia_milky_way_3m.py
 hatch run python packages/luxar/src/luxar/demos/demo_gaia_milky_way_8m.py
 hatch run python packages/luxar/src/luxar/demos/demo_earthquakes_3d.py
 hatch run python packages/luxar/src/luxar/demos/demo_storm_3d_microtubules.py
+hatch run python packages/luxar/src/luxar/demos/demo_huri_interactome.py
+hatch run python packages/luxar/src/luxar/demos/demo_caida_as_topology.py
 
 # --- GSplats: 2D ---
 hatch run python packages/luxar/src/luxar/demos/demo_gsplats_2d_codex_pancreas.py
