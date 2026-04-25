@@ -65,7 +65,7 @@ class FitConfig:
     gradient_clip: Optional[float]           # Gradient clipping value (None = no clipping)
 
     # Loss function
-    loss_type: str                           # Loss function: "mse", "poisson", or "l1"
+    loss_type: str                           # Loss function: "l1" (default), "mse", or "poisson"
     asymmetric_penalty: Optional[float]      # Over-prediction penalty factor (default 1.0)
     l1_amp: Optional[float]                  # L1 regularization on amplitudes (default: 0.1 * lr)
     l1_diag: Optional[float]                 # L1 regularization on diagonal elements (default: 0.01 * lr)
@@ -213,7 +213,7 @@ def prepare_fit_config(
     init_sigma_vox: Optional[float] = None,  # None = use scale-informed init_L from seeding
     n_iters: int = 1000,
     lr: float = 0.01,
-    loss_type: str = "mse",
+    loss_type: str = "l1",
     asymmetric_penalty: Optional[float] = 1.0,
     l1_amp: Optional[float] = None,
     l1_diag: Optional[float] = None,

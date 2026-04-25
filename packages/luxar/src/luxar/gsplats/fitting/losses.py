@@ -75,7 +75,7 @@ def create_loss_function(
         elif loss_type.lower() == "l1":
             data = _compute_l1_loss(pred, V_t, asymmetric_penalty)
         else:
-            # MSE loss (default)
+            # MSE loss (fallback for loss_type == "mse")
             data = _compute_mse_loss(pred, V_t, asymmetric_penalty)
 
         # Add L1 regularization on amplitudes if specified
@@ -169,7 +169,6 @@ def _compute_mse_loss(
     pred: torch.Tensor, target: torch.Tensor, asymmetric_penalty: float | None
 ) -> torch.Tensor:
     """Compute MSE (Mean Squared Error) loss."""
-    # MSE loss (default)
     squared_error = (pred - target) ** 2
     if asymmetric_penalty is not None:
         # Asymmetric MSE: heavily penalize over-prediction (pred > target)

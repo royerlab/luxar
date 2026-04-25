@@ -208,7 +208,7 @@ class TestLossConfig:
     def test_default_values(self) -> None:
         """Test LossConfig default values."""
         cfg = LossConfig()
-        assert cfg.loss_type == "mse"
+        assert cfg.loss_type == "l1"
         assert cfg.asymmetric_penalty == 1.0
         assert cfg.l1_amp is None
         assert cfg.l1_diag is None
