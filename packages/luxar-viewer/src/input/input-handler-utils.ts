@@ -705,7 +705,7 @@ export function calculateFovChange(
  * suppressed, false when they should execute normally.
  *
  * @param event - Keyboard event to check for blocking conditions
- * @param activeModals - Array of modal IDs currently open (e.g., ['help-overlay', 'settings'])
+ * @param activeModals - Array of modal IDs currently open (e.g., ['luxar-help-overlay', 'settings'])
  * @returns true if shortcut should be blocked (don't execute), false if it
  *          should proceed normally
  *

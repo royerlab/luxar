@@ -491,7 +491,7 @@ test.describe('Keyboard Input System - Context Passthrough', () => {
 
     // Check if help is visible
     const helpVisible = await page.evaluate(() => {
-      const helpOverlay = document.querySelector('#help-overlay, .help-overlay');
+      const helpOverlay = document.querySelector('#luxar-help-overlay, .help-overlay');
       return !!helpOverlay;
     });
 

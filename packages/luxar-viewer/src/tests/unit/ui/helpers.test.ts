@@ -14,13 +14,13 @@ beforeEach(() => {
 
 afterEach(() => {
   // Clean up any help overlays
-  const helpOverlay = document.getElementById('help-overlay');
+  const helpOverlay = document.getElementById('luxar-help-overlay');
   if (helpOverlay) {
     helpOverlay.remove();
   }
 
   // Clean up error messages
-  const errorMessage = document.getElementById('error-message');
+  const errorMessage = document.getElementById('luxar-error-message');
   if (errorMessage) {
     errorMessage.remove();
   }
@@ -36,23 +36,23 @@ describe('UI Helpers - Critical Fixes', () => {
   describe('showHelpOverlay - Memory Leak Prevention', () => {
     it('should not create multiple overlays when called repeatedly', () => {
       showHelpOverlay();
-      const firstOverlay = document.getElementById('help-overlay');
+      const firstOverlay = document.getElementById('luxar-help-overlay');
       expect(firstOverlay).toBeTruthy();
 
       // Try to create another one
       showHelpOverlay();
-      const allOverlays = document.querySelectorAll('#help-overlay');
+      const allOverlays = document.querySelectorAll('#luxar-help-overlay');
 
       // Should still be only one
       expect(allOverlays.length).toBe(1);
-      expect(document.getElementById('help-overlay')).toBe(firstOverlay);
+      expect(document.getElementById('luxar-help-overlay')).toBe(firstOverlay);
     });
 
     it('should properly clean up global click listener when closed via hideHelpOverlay', () => {
       const removeEventSpy = vi.spyOn(document, 'removeEventListener');
 
       showHelpOverlay();
-      const overlay = document.getElementById('help-overlay');
+      const overlay = document.getElementById('luxar-help-overlay');
       expect(overlay).toBeTruthy();
 
       // Advance timers to trigger the click listener addition
@@ -62,7 +62,7 @@ describe('UI Helpers - Critical Fixes', () => {
       hideHelpOverlay();
 
       // Check overlay is removed
-      expect(document.getElementById('help-overlay')).toBeNull();
+      expect(document.getElementById('luxar-help-overlay')).toBeNull();
 
       // Verify removeEventListener was called for 'click'
       const clickRemovals = removeEventSpy.mock.calls.filter((call) => call[0] === 'click');
@@ -89,7 +89,7 @@ describe('UI Helpers - Critical Fixes', () => {
       closeBtn?.click();
 
       // Overlay should be removed
-      expect(document.getElementById('help-overlay')).toBeNull();
+      expect(document.getElementById('luxar-help-overlay')).toBeNull();
 
       // Verify removeEventListener was called for 'click'
       const clickRemovals = removeEventSpy.mock.calls.filter((call) => call[0] === 'click');
@@ -100,13 +100,13 @@ describe('UI Helpers - Critical Fixes', () => {
 
     it('should have proper ARIA attributes', () => {
       showHelpOverlay();
-      const overlay = document.getElementById('help-overlay');
+      const overlay = document.getElementById('luxar-help-overlay');
 
       expect(overlay?.getAttribute('role')).toBe('dialog');
       expect(overlay?.getAttribute('aria-modal')).toBe('true');
-      expect(overlay?.getAttribute('aria-labelledby')).toBe('help-overlay-title');
+      expect(overlay?.getAttribute('aria-labelledby')).toBe('luxar-help-overlay-title');
 
-      const title = document.getElementById('help-overlay-title');
+      const title = document.getElementById('luxar-help-overlay-title');
       expect(title).toBeTruthy();
       expect(title?.textContent).toContain('Luxar Controls');
     });
@@ -115,19 +115,19 @@ describe('UI Helpers - Critical Fixes', () => {
   describe('showError - ARIA Attributes', () => {
     it('should have proper ARIA attributes for alertdialog', () => {
       showError('Test error message');
-      const errorDialog = document.getElementById('error-message');
+      const errorDialog = document.getElementById('luxar-error-message');
 
       expect(errorDialog?.getAttribute('role')).toBe('alertdialog');
       expect(errorDialog?.getAttribute('aria-modal')).toBe('true');
-      expect(errorDialog?.getAttribute('aria-labelledby')).toBe('error-title');
-      expect(errorDialog?.getAttribute('aria-describedby')).toBe('error-message-text');
+      expect(errorDialog?.getAttribute('aria-labelledby')).toBe('luxar-error-title');
+      expect(errorDialog?.getAttribute('aria-describedby')).toBe('luxar-error-message-text');
     });
 
     it('should have properly linked title and message', () => {
       showError('Custom error message');
 
-      const title = document.getElementById('error-title');
-      const message = document.getElementById('error-message-text');
+      const title = document.getElementById('luxar-error-title');
+      const message = document.getElementById('luxar-error-message-text');
 
       expect(title).toBeTruthy();
       expect(message).toBeTruthy();
@@ -138,10 +138,10 @@ describe('UI Helpers - Critical Fixes', () => {
       showError('First error');
       showError('Second error');
 
-      const errors = document.querySelectorAll('#error-message');
+      const errors = document.querySelectorAll('#luxar-error-message');
       expect(errors.length).toBe(1);
 
-      const messageText = document.getElementById('error-message-text');
+      const messageText = document.getElementById('luxar-error-message-text');
       expect(messageText?.textContent).toBe('Second error');
     });
   });
@@ -149,10 +149,10 @@ describe('UI Helpers - Critical Fixes', () => {
   describe('clearError', () => {
     it('should remove error message', () => {
       showError('Test error');
-      expect(document.getElementById('error-message')).toBeTruthy();
+      expect(document.getElementById('luxar-error-message')).toBeTruthy();
 
       clearError();
-      expect(document.getElementById('error-message')).toBeNull();
+      expect(document.getElementById('luxar-error-message')).toBeNull();
     });
 
     it('should be safe to call when no error exists', () => {
@@ -163,10 +163,10 @@ describe('UI Helpers - Critical Fixes', () => {
   describe('hideHelpOverlay', () => {
     it('should remove help overlay', () => {
       showHelpOverlay();
-      expect(document.getElementById('help-overlay')).toBeTruthy();
+      expect(document.getElementById('luxar-help-overlay')).toBeTruthy();
 
       hideHelpOverlay();
-      expect(document.getElementById('help-overlay')).toBeNull();
+      expect(document.getElementById('luxar-help-overlay')).toBeNull();
     });
 
     it('should be safe to call when no overlay exists', () => {

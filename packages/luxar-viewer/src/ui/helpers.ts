@@ -96,7 +96,7 @@ function trapFocus(container: HTMLElement): () => void {
  */
 export function showLoadingIndicator(): HTMLElement {
   const loadingDiv = document.createElement('div');
-  loadingDiv.id = 'loading-indicator';
+  loadingDiv.id = 'luxar-loading-indicator';
   loadingDiv.className = 'luxar-loading-indicator';
 
   const spinner = document.createElement('div');
@@ -105,7 +105,7 @@ export function showLoadingIndicator(): HTMLElement {
   const text = document.createElement('div');
   text.className = 'luxar-loading-indicator__text';
   text.textContent = 'Loading scene...';
-  text.id = 'loading-text';
+  text.id = 'luxar-loading-text';
 
   loadingDiv.appendChild(spinner);
   loadingDiv.appendChild(text);
@@ -127,7 +127,7 @@ export function showLoadingIndicator(): HTMLElement {
  * ```
  */
 export function hideLoadingIndicator() {
-  const loadingDiv = document.getElementById('loading-indicator');
+  const loadingDiv = document.getElementById('luxar-loading-indicator');
   if (loadingDiv) {
     loadingDiv.remove();
   }
@@ -171,21 +171,21 @@ export function hideLoadingIndicator() {
  */
 export function showError(message: string) {
   // Remove any existing error messages first
-  const existingError = document.getElementById('error-message');
+  const existingError = document.getElementById('luxar-error-message');
   if (existingError) {
     existingError.remove();
   }
 
   // Create error dialog with CSS classes
   const errorDiv = document.createElement('div');
-  errorDiv.id = 'error-message';
+  errorDiv.id = 'luxar-error-message';
   errorDiv.className = 'luxar-error-dialog error-message'; // luxar-error-dialog for styling, error-message for E2E tests
 
   // ARIA attributes for accessibility
   errorDiv.setAttribute('role', 'alertdialog');
   errorDiv.setAttribute('aria-modal', 'true');
-  errorDiv.setAttribute('aria-labelledby', 'error-title');
-  errorDiv.setAttribute('aria-describedby', 'error-message-text');
+  errorDiv.setAttribute('aria-labelledby', 'luxar-error-title');
+  errorDiv.setAttribute('aria-describedby', 'luxar-error-message-text');
 
   // Error icon + title
   const header = document.createElement('div');
@@ -196,7 +196,7 @@ export function showError(message: string) {
   icon.textContent = '⚠️';
 
   const title = document.createElement('div');
-  title.id = 'error-title';
+  title.id = 'luxar-error-title';
   title.className = 'luxar-error-dialog__title';
   title.textContent = 'Unable to Load Dataset';
 
@@ -205,7 +205,7 @@ export function showError(message: string) {
 
   // Main error message
   const messageText = document.createElement('div');
-  messageText.id = 'error-message-text';
+  messageText.id = 'luxar-error-message-text';
   messageText.className = 'luxar-error-dialog__message';
   messageText.textContent = message;
 
@@ -311,19 +311,19 @@ export function showError(message: string) {
  */
 export function cleanupUI() {
   // Remove spinner CSS styles
-  const spinnerStyles = document.getElementById('spinner-styles');
+  const spinnerStyles = document.getElementById('luxar-spinner-styles');
   if (spinnerStyles) {
     spinnerStyles.remove();
   }
 
   // Remove any lingering loading indicators
-  const loadingDiv = document.getElementById('loading-indicator');
+  const loadingDiv = document.getElementById('luxar-loading-indicator');
   if (loadingDiv) {
     loadingDiv.remove();
   }
 
   // Remove any lingering error messages
-  const errorDiv = document.getElementById('error-message');
+  const errorDiv = document.getElementById('luxar-error-message');
   if (errorDiv) {
     errorDiv.remove();
   }
@@ -351,24 +351,24 @@ export function cleanupUI() {
  */
 export function showHelpOverlay() {
   // Prevent opening multiple overlays - if one exists, do nothing
-  const existingHelp = document.getElementById('help-overlay');
+  const existingHelp = document.getElementById('luxar-help-overlay');
   if (existingHelp) {
     return; // Don't create a new one, just return
   }
 
   const helpDiv = document.createElement('div');
-  helpDiv.id = 'help-overlay';
+  helpDiv.id = 'luxar-help-overlay';
   helpDiv.className = 'luxar-help-overlay';
   helpDiv.setAttribute('role', 'dialog');
   helpDiv.setAttribute('aria-modal', 'true');
-  helpDiv.setAttribute('aria-labelledby', 'help-overlay-title');
+  helpDiv.setAttribute('aria-labelledby', 'luxar-help-overlay-title');
 
   // Create header with title and close button
   const header = document.createElement('div');
   header.className = 'luxar-help-overlay__header';
 
   const title = document.createElement('h3');
-  title.id = 'help-overlay-title';
+  title.id = 'luxar-help-overlay-title';
   title.className = 'luxar-help-overlay__title';
   title.textContent = 'Luxar Controls & Shortcuts';
 
@@ -560,7 +560,7 @@ export function showHelpOverlay() {
       activeHelpFocusTrapRelease = null;
     }
 
-    const help = document.getElementById('help-overlay');
+    const help = document.getElementById('luxar-help-overlay');
     if (help) {
       // Remove global click listener first
       document.removeEventListener('click', handleDocumentClick);
@@ -591,7 +591,7 @@ export function showHelpOverlay() {
   // Add global click listener after a short delay to prevent immediate closure
   setTimeout(() => {
     // Only add if the help div still exists and hasn't been closed
-    if (!isClosing && document.getElementById('help-overlay')) {
+    if (!isClosing && document.getElementById('luxar-help-overlay')) {
       document.addEventListener('click', handleDocumentClick);
     }
   }, UI_CONFIG.timings.helpClickDelayMs);
@@ -610,7 +610,7 @@ export function showHelpOverlay() {
  * ```
  */
 export function hideHelpOverlay() {
-  const helpDiv = document.getElementById('help-overlay');
+  const helpDiv = document.getElementById('luxar-help-overlay');
   if (helpDiv) {
     // Release focus trap before removing element
     if (activeHelpFocusTrapRelease) {
@@ -632,7 +632,7 @@ export function hideHelpOverlay() {
  * or when dismissing errors programmatically.
  */
 export function clearError() {
-  const errorDiv = document.getElementById('error-message');
+  const errorDiv = document.getElementById('luxar-error-message');
   if (errorDiv) {
     errorDiv.remove();
   }

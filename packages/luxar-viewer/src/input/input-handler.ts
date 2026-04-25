@@ -1095,7 +1095,7 @@ export class InputHandler {
    * @private
    */
   private toggleHelp(): void {
-    const helpOverlay = document.getElementById('help-overlay');
+    const helpOverlay = document.getElementById('luxar-help-overlay');
     if (helpOverlay) {
       hideHelpOverlay();
     } else {
@@ -1535,7 +1535,7 @@ export class InputHandler {
     clearError();
 
     // Close dataset browser
-    const datasetBrowser = document.getElementById('dataset-browser');
+    const datasetBrowser = document.getElementById('luxar-dataset-browser');
     if (datasetBrowser) {
       datasetBrowser.remove();
     }

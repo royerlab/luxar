@@ -142,20 +142,20 @@ export class DatasetBrowser {
    */
   private createPanel(): HTMLElement {
     const panel = document.createElement('div');
-    panel.id = 'dataset-browser';
+    panel.id = 'luxar-dataset-browser';
     panel.className = 'luxar-dataset-browser dataset-browser'; // luxar-dataset-browser for styling, dataset-browser for E2E tests
 
     // ARIA attributes for accessibility
     panel.setAttribute('role', 'dialog');
     panel.setAttribute('aria-modal', 'true');
-    panel.setAttribute('aria-labelledby', 'dataset-browser-title');
+    panel.setAttribute('aria-labelledby', 'luxar-dataset-browser-title');
 
     // Header
     const header = document.createElement('div');
     header.className = 'luxar-dataset-browser__header';
 
     const title = document.createElement('h2');
-    title.id = 'dataset-browser-title';
+    title.id = 'luxar-dataset-browser-title';
     title.className = 'luxar-dataset-browser__title';
     title.textContent = 'Select Dataset';
 
@@ -171,7 +171,7 @@ export class DatasetBrowser {
 
     // Compact help banner with essential guidance
     const welcomeBanner = document.createElement('div');
-    welcomeBanner.id = 'browser-welcome';
+    welcomeBanner.id = 'luxar-dataset-browser-welcome';
     welcomeBanner.className = 'luxar-dataset-browser__banner';
 
     welcomeBanner.innerHTML = `
@@ -189,17 +189,17 @@ export class DatasetBrowser {
 
     // Breadcrumb navigation
     const breadcrumb = document.createElement('div');
-    breadcrumb.id = 'breadcrumb';
+    breadcrumb.id = 'luxar-dataset-browser-breadcrumb';
     breadcrumb.className = 'luxar-dataset-browser__breadcrumb';
 
     // Content area
     const content = document.createElement('div');
-    content.id = 'browser-content';
+    content.id = 'luxar-dataset-browser-content';
     content.className = 'luxar-dataset-browser__content';
 
     // Status bar
     const statusBar = document.createElement('div');
-    statusBar.id = 'browser-status';
+    statusBar.id = 'luxar-dataset-browser-status';
     statusBar.className = 'luxar-dataset-browser__status';
 
     panel.appendChild(header);
@@ -279,7 +279,7 @@ export class DatasetBrowser {
    * Update breadcrumb navigation.
    */
   private updateBreadcrumb(currentPath: string): void {
-    const breadcrumb = this.panel.querySelector('#breadcrumb') as HTMLElement;
+    const breadcrumb = this.panel.querySelector('#luxar-dataset-browser-breadcrumb') as HTMLElement;
     breadcrumb.innerHTML = '';
 
     // Root link

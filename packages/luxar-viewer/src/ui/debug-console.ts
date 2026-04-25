@@ -639,7 +639,7 @@ export class DebugConsole {
     this.panel.remove();
 
     // Remove styles
-    const style = document.getElementById('debug-console-styles');
+    const style = document.getElementById('luxar-debug-console-styles');
     style?.remove();
 
     log.info(Modules.DEBUG_CONSOLE, 'Debug console disposed');

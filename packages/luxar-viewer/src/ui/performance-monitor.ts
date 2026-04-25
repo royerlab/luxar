@@ -84,8 +84,8 @@ export class PerformanceMonitor {
         outline: none !important;
       }
     `;
-    if (!document.getElementById('stats-custom-styles')) {
-      style.id = 'stats-custom-styles';
+    if (!document.getElementById('luxar-stats-custom-styles')) {
+      style.id = 'luxar-stats-custom-styles';
       document.head.appendChild(style);
     }
 
@@ -198,7 +198,7 @@ export class PerformanceMonitor {
       this.stats.dom.parentNode.removeChild(this.stats.dom);
     }
     // Clean up the injected style element
-    const styleEl = document.getElementById('stats-custom-styles');
+    const styleEl = document.getElementById('luxar-stats-custom-styles');
     if (styleEl) {
       styleEl.remove();
     }
