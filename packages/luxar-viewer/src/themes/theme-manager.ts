@@ -71,12 +71,11 @@ export class ThemeManager {
   }
 
   /**
-   * Reset the singleton instance (for testing only)
+   * Dispose the current instance and clear the singleton slot.
    *
-   * WARNING: This should only be used in test environments to reset state
-   * between tests. Never call this in production code.
-   *
-   * @internal
+   * Call this on app shutdown (so the next `getInstance()` builds a fresh
+   * manager) or between tests (to isolate state). The instance reference is
+   * cleared; the next `getInstance()` will lazily construct a new one.
    */
   public static resetInstance(): void {
     if (ThemeManager.instance) {

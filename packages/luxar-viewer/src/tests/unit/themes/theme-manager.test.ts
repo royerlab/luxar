@@ -306,5 +306,15 @@ describe('ThemeManager', () => {
 
       expect(() => manager.getCurrentTheme()).toThrow();
     });
+
+    it('removes the body-level glass filter SVG when liquid-glass theme is disposed', () => {
+      const manager = ThemeManager.getInstance();
+      manager.setTheme('liquid-glass');
+      expect(document.getElementById('luxar-glass-filters')).not.toBeNull();
+
+      manager.dispose();
+
+      expect(document.getElementById('luxar-glass-filters')).toBeNull();
+    });
   });
 });
