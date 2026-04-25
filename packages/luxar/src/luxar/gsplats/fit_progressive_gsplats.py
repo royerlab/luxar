@@ -13,7 +13,7 @@ settings.  Tuned via two rounds of systematic autoresearch iteration (73+
 experiments) across 3 diverse microscopy datasets.  Key findings:
 
 **Pass 0 (dense volume)**:
-  Uses the single-pass optimised defaults (MSE loss, symmetric penalty,
+  Uses the single-pass optimized defaults (L1 loss, symmetric penalty,
   truncation 2.75, no gradient clipping).  The only override is
   ``asymmetric_penalty = min(caller, 3.0)`` which adds a mild under-prediction
   bias to produce clean positive residuals for subsequent passes.
