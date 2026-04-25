@@ -345,25 +345,36 @@ describe('LuxarFlyControls', () => {
   });
 
   describe('external input management', () => {
-    it('should support external input management', () => {
-      controls.setExternalInputManagement(true);
+    it('does not register window keyboard listeners when externalInputManagement is true', () => {
+      const addSpy = vi.spyOn(window, 'addEventListener');
+      const externalControls = new LuxarFlyControls(camera, domElement, {
+        externalInputManagement: true,
+      });
 
-      // Should remove internal event listeners
-      expect((controls as any).externalInputManagement).toBe(true);
+      const keyboardEvents = addSpy.mock.calls.filter(
+        ([type]) => type === 'keydown' || type === 'keyup'
+      );
+      expect(keyboardEvents).toHaveLength(0);
 
-      // Can still handle events when called directly
-      const event = new KeyboardEvent('keydown', { key: 'w' });
-      controls.handleKeyDown(event);
+      // Forwarded keys still drive movement state.
+      externalControls.handleKeyDown(new KeyboardEvent('keydown', { key: 'w' }));
+      expect((externalControls as any).moveState.forward).toBe(1);
 
-      const moveState = (controls as any).moveState;
-      expect(moveState.forward).toBe(1);
+      externalControls.dispose();
+      addSpy.mockRestore();
     });
 
-    it('should restore internal management', () => {
-      controls.setExternalInputManagement(true);
-      controls.setExternalInputManagement(false);
+    it('registers window keyboard listeners when externalInputManagement is false (default)', () => {
+      const addSpy = vi.spyOn(window, 'addEventListener');
+      const internalControls = new LuxarFlyControls(camera, domElement);
 
-      expect((controls as any).externalInputManagement).toBe(false);
+      const keyboardEvents = addSpy.mock.calls.filter(
+        ([type]) => type === 'keydown' || type === 'keyup'
+      );
+      expect(keyboardEvents.length).toBeGreaterThanOrEqual(2);
+
+      internalControls.dispose();
+      addSpy.mockRestore();
     });
   });
 
