@@ -40,6 +40,15 @@ export interface LuxarAppOptions {
   debug?: boolean;
   /** Cache and prefetch flags forwarded to the data loader. */
   loaderConfig?: LoaderConfig;
+  /**
+   * Reflect the loaded dataset URL in the browser address bar via
+   * `history.replaceState` so the page can be reloaded or shared.
+   *
+   * Defaults to `true` (matches the standalone app's behavior). Embedded
+   * callers must set this to `false` — otherwise picking a dataset from
+   * the browser will rewrite the host page's URL.
+   */
+  updateBrowserUrl?: boolean;
 }
 
 export class LuxarApp {
@@ -307,11 +316,13 @@ export class LuxarApp {
         const cleanUrl = fullUrl.replace(/\/+$/, '');
 
         // Reflect the chosen dataset in the URL bar so the page is shareable.
-        // (Standalone-app behavior; embedded callers can override later by
-        // intercepting the window.history mutation.)
-        const params = new URLSearchParams(window.location.search);
-        params.set('src', cleanUrl);
-        window.history.replaceState({}, '', `${window.location.pathname}?${params}`);
+        // Gated on `updateBrowserUrl` (default true for the standalone app)
+        // so embedded callers don't get their host page's URL rewritten.
+        if (this.options.updateBrowserUrl ?? true) {
+          const params = new URLSearchParams(window.location.search);
+          params.set('src', cleanUrl);
+          window.history.replaceState({}, '', `${window.location.pathname}?${params}`);
+        }
 
         // Track the new src in our options snapshot so a subsequent browser
         // open lands in the right directory.

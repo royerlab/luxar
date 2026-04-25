@@ -589,6 +589,41 @@ describe('LuxarApp', () => {
         expect.any(Function)
       );
     });
+
+    it('does not call history.replaceState when updateBrowserUrl is false', async () => {
+      const replaceStateSpy = vi
+        .spyOn(window.history, 'replaceState')
+        .mockImplementation(() => {});
+
+      await app.init({ src: '', updateBrowserUrl: false });
+
+      const browserCall = (DatasetBrowser as any).mock.calls.at(-1);
+      expect(browserCall).toBeDefined();
+      const onSelect = browserCall[0].onDatasetSelect as (url: string) => Promise<void>;
+
+      replaceStateSpy.mockClear();
+      await onSelect('http://example.com/picked.zarr');
+
+      expect(replaceStateSpy).not.toHaveBeenCalled();
+      replaceStateSpy.mockRestore();
+    });
+
+    it('calls history.replaceState by default', async () => {
+      const replaceStateSpy = vi
+        .spyOn(window.history, 'replaceState')
+        .mockImplementation(() => {});
+
+      await app.init({ src: '' });
+
+      const browserCall = (DatasetBrowser as any).mock.calls.at(-1);
+      const onSelect = browserCall[0].onDatasetSelect as (url: string) => Promise<void>;
+
+      replaceStateSpy.mockClear();
+      await onSelect('http://example.com/picked.zarr');
+
+      expect(replaceStateSpy).toHaveBeenCalledTimes(1);
+      replaceStateSpy.mockRestore();
+    });
   });
 
   describe('debug interface', () => {
