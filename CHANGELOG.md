@@ -18,6 +18,18 @@ All notable changes to Luxar are documented in this file.
 - A `group` node with `layer=True` is now exposed in the Layers panel as a composite layer whose controls fan out to every data descendant (points/lines/gsplats)
 - Viewer's `LayerStateManager` was previously silently ignoring groups — fixed
 
+#### Changed — GSplats API
+
+**API default loss flipped from MSE to L1.** `fit_gaussian_splats()`,
+`GaussianSplatFitter.fit()`, and `LossConfig` now default to
+`loss_type="l1"` (was `"mse"`). The change is motivated by the
+loss-comparison study (Supp. Doc. 5; `analysis/loss_comparison/`),
+which shows L1 reaches equal-or-higher held-out PSNR than MSE on every
+microscopy dataset tested, by up to +1.03 dB on the cleanest data and
++0.78 dB on the noisiest. Callers that explicitly pass `loss_type="mse"`
+or `"poisson"` are unaffected. Test `LossConfig.test_default_values`
+updated to assert `"l1"`.
+
 #### Added — Layer API
 
 - `Node.layer` is now a settable property (previously creation-only): `points.layer = True`

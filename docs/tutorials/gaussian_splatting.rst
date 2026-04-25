@@ -72,7 +72,7 @@ Basic Gaussian Splat Fitting
        image,
        n_iters=300,           # More iterations = better fit
        lr=0.01,               # Learning rate
-       loss_type="l1",        # L1 loss is robust to outliers (default is "mse")
+       loss_type="l1",        # default; alternatives: "mse", "poisson"
        seed_method="edges",   # Edge-based initialization
    )
 

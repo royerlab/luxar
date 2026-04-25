@@ -108,7 +108,7 @@ class GaussianSplatFitter:
         init_sigma_vox: Optional[float] = None,
         n_iters: int = 1000,
         lr: float = 0.01,
-        loss_type: str = "mse",
+        loss_type: str = "l1",
         asymmetric_penalty: Optional[float] = 1.0,
         l1_amp: Optional[float] = None,
         l1_diag: Optional[float] = None,
@@ -254,7 +254,7 @@ def fit_gaussian_splats(
     init_sigma_vox: Optional[float] = None,
     n_iters: int = 1000,
     lr: float = 0.01,
-    loss_type: str = "mse",
+    loss_type: str = "l1",
     asymmetric_penalty: Optional[float] = 1.0,
     l1_amp: Optional[float] = None,
     l1_diag: Optional[float] = None,
@@ -356,14 +356,18 @@ def fit_gaussian_splats(
         max_abs_error convergence criterion to work effectively.
     lr : float, default=0.01
         Learning rate for Adam optimizer.
-    loss_type : str, default="mse"
-        Loss function: "mse" (directly optimises PSNR, default), "poisson" (better
-        for count/photon data), or "l1" (robust to outliers, preserves sharp features).
+    loss_type : str, default="l1"
+        Loss function: "l1" (default; robust to outliers, preserves sharp features),
+        "mse" (directly minimizes MSE at a critical point — but in finite-iteration
+        Adam fitting, L1 reaches equal-or-higher PSNR on every microscopy dataset
+        tested in the loss-comparison study, Supp. Doc. 5), or "poisson" (natural
+        for count/photon data; uses 1.1-10x fewer iterations than MSE on most
+        datasets, at the cost of up to ~0.5 dB held-out PSNR vs L1 on noisy data).
     asymmetric_penalty : float, default=1.0
         Over-prediction penalty factor for asymmetric loss. Multiplies loss for regions
         where pred > target by this factor. Set to None to disable asymmetric loss.
-        Default 1.0 (symmetric) — optimal for MSE loss on dense volumes.
-        Progressive fitting uses 10.0 for residual passes to prevent locked-in overshoot.
+        Default 1.0 (symmetric); progressive fitting uses 10.0 for residual passes to
+        prevent locked-in overshoot.
     l1_amp : float, default=None (auto: 0.1 * lr)
         L1 regularization coefficient on splat amplitudes for sparsity.
         If None, automatically set to 10% of learning rate for consistent

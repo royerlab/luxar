@@ -42,14 +42,19 @@ class OptimConfig:
 class LossConfig:
     """Loss function configuration for fit_gaussian_splats().
 
+    Default loss is "l1": across the loss-comparison study (Supp. Doc. 5),
+    L1 reaches equal-or-higher held-out PSNR than MSE on every microscopy
+    dataset tested. Pass ``loss_type="mse"`` or ``loss_type="poisson"`` to
+    override.
+
     Example::
 
         from luxar.gsplats.fitting.config import LossConfig
-        cfg = LossConfig(loss_type="mse", asymmetric_penalty=5.0)
+        cfg = LossConfig(loss_type="poisson", asymmetric_penalty=5.0)
         result = fit_gaussian_splats(volume, loss=cfg)
     """
 
-    loss_type: str = "mse"
+    loss_type: str = "l1"
     asymmetric_penalty: Optional[float] = 1.0
     l1_amp: Optional[float] = None
     l1_diag: Optional[float] = None

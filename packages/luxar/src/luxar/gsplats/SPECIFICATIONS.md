@@ -347,7 +347,7 @@ The implementation uses a **modular 6-stage pipeline** (see [fitting/SPECIFICATI
 This modular design separates concerns, improves testability, and makes the codebase maintainable.
 The root-level functions delegate to the `fitting/` sub-package for actual implementation.
 
-### Primary Function: `fit_gaussian_splats(V, seeds=None, norm_percentile=0.0, init_sigma_vox=0.5, n_iters=1000, lr=0.01, loss_type="mse", asymmetric_penalty=1.0, l1_amp=None, l1_diag=None, max_abs_error=None, seed_method="auto", ...)`
+### Primary Function: `fit_gaussian_splats(V, seeds=None, norm_percentile=0.0, init_sigma_vox=0.5, n_iters=1000, lr=0.01, loss_type="l1", asymmetric_penalty=1.0, l1_amp=None, l1_diag=None, max_abs_error=None, seed_method="auto", ...)`
 
 **Functional Signature**:
 ```python
@@ -358,7 +358,7 @@ def fit_gaussian_splats(
     init_sigma_vox: float = 0.5,  # Default changed to 0.5 for single-voxel splats
     n_iters: int = 1000,
     lr: float = 0.01,
-    loss_type: str = "mse",
+    loss_type: str = "l1",
     asymmetric_penalty: Optional[float] = 1.0,
     l1_amp: Optional[float] = None,
     seed_method: str = "auto",  # DEFAULT: edges (60%) + grid (40%)

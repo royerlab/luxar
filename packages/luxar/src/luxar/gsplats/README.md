@@ -21,7 +21,7 @@ pip install "luxar[gsplats]"
 - **Device Optimized**: CUDA acceleration with automatic device selection (CPU preferred on Apple Silicon)
 - **Oriented Gaussians**: Full covariance matrices via Cholesky decomposition for arbitrary orientations
 - **Convergence-Driven Dynamic Operations**: Adaptive splat management based on convergence criteria with seeding and pruning
-- **Asymmetric Loss Functions**: Configurable penalty for over-prediction addresses additive model constraints (MSE and Poisson)
+- **Asymmetric Loss Functions**: Configurable penalty for over-prediction (applies to all three losses: L1, MSE, Poisson) addresses additive model constraints
 - **Standard PyTorch Adam**: Fast vectorized optimization with gradient dilution compensation (significantly faster than per-splat alternatives)
 - **Adaptive Thresholds**: Amplitude validation scales with local residual magnitude to prevent optimization plateaus
 - **Automatic Optimization**: Early stopping saves a substantial fraction of iterations without quality loss
@@ -129,7 +129,7 @@ result = fit_gaussian_splats(
     n_iters=300,                          # Maximum iterations
     lr=0.01,                              # Stable learning rate
     asymmetric_penalty=1.0,               # Over-prediction penalty factor (default)
-    loss_type="mse",                      # "mse", "poisson", or "l1" for robust features
+    loss_type="l1",                       # default; alternatives: "mse", "poisson"
     # max_abs_error auto-set to 0.01 (1% of normalized range)
     # l1_amp auto-set to 0.1 * lr for proportional amplitude regularization
     # l1_diag auto-set to 0.01 * lr for mild diagonal regularization
@@ -322,7 +322,8 @@ The implementation includes asymmetric loss functions that address the fundament
 - **Over-prediction** (`pred > target`): Hard to fix, requires reducing/moving existing splats
 
 **The Solution**: Asymmetric loss with configurable penalty for over-prediction (default: 1.0)
-- **MSE**: `mean(where(pred > target, F * (pred - target)², (pred - target)²))` where F = `asymmetric_penalty`
+- **L1**: `mean(where(pred > target, F * |pred - target|, |pred - target|))` where F = `asymmetric_penalty`
+- **MSE**: `mean(where(pred > target, F * (pred - target)², (pred - target)²))`
 - **Poisson**: Similar penalty applied to Poisson deviance
 
 ### Benefits
@@ -336,21 +337,21 @@ The implementation includes asymmetric loss functions that address the fundament
 
 The package supports three loss functions, each optimized for different data characteristics:
 
-### **MSE (Mean Squared Error)** - Default
-- **Best for**: Smooth data with Gaussian noise, general-purpose reconstruction
-- **Characteristics**: Fast convergence, well-behaved gradients, penalizes large errors heavily
-- **Use when**: Working with natural images, smooth volumetric data, or when in doubt
-
-### **Poisson**
-- **Best for**: Count/photon data, fluorescence microscopy, low-light imaging
-- **Characteristics**: Optimal for Poisson noise statistics, handles non-negative intensities naturally
-- **Use when**: Working with camera data, microscopy images, or any counting processes
-
-### **L1 (Mean Absolute Error)**
-- **Best for**: Data with outliers, sharp features, challenging datasets requiring robustness
+### **L1 (Mean Absolute Error)** - Default
+- **Best for**: Microscopy and most image-reconstruction tasks where the held-out (signal-recovery) metric matters
 - **Characteristics**: Robust to outliers, preserves edges, encourages sparse residuals
-- **Use when**: Images with sharp boundaries, noisy data, or when MSE over-smooths features
+- **Use when**: General-purpose default — verified empirically (Supp. Doc. 5) to reach equal-or-higher held-out PSNR than MSE on every microscopy dataset tested
 - **Special synergy**: L1 + asymmetric penalty provides exceptional stability
+
+### **Poisson (Deviance)**
+- **Best for**: Count/photon data, fluorescence microscopy, low-light imaging — and any setting where convergence speed is the dominant constraint
+- **Characteristics**: Optimal for Poisson noise statistics; uses 1.1-10× fewer iterations than MSE on most datasets
+- **Use when**: Working with camera data, microscopy images, or counting processes; or when fitting time matters and the up-to-0.5 dB held-out PSNR gap vs L1 on noisy data is acceptable
+
+### **MSE (Mean Squared Error)**
+- **Best for**: Sanity checks, comparison baselines, smooth/dense data where outlier sensitivity is not a concern
+- **Characteristics**: Standard textbook loss; PSNR-optimal *at* a critical point of the objective (which finite-iteration Adam fits do not reach)
+- **Use when**: You have a specific reason to want MSE — note that L1 typically reaches equal-or-higher PSNR in this fitting regime
 
 **All loss functions support asymmetric penalties** for optimal performance with additive Gaussian models.
 
@@ -764,7 +765,7 @@ Main fitting function with automatic optimizations.
 - `seeds`: Initial candidate positions (N, d), int count, or float compression ratio
 - `n_iters`: Maximum iterations (default: 1000)
 - `lr`: Learning rate (default: 0.01)
-- `loss_type`: "mse", "poisson", or "l1" (default: "mse")
+- `loss_type`: "l1" (default), "mse", or "poisson" — see Supp. Doc. 5 for the empirical comparison that motivates the L1 default
 - `l1_amp`: L1 regularization on amplitudes (default: 0.1 * lr)
 - `l1_diag`: L1 regularization on diagonal elements (default: 0.01 * lr)
 - `sigma_min_diag`: Minimum Gaussian size per axis
@@ -1119,7 +1120,7 @@ hatch run pytest packages/luxar/src/luxar/gsplats/tests/test_tiled_fitting.py -v
 1. **Device Selection**: Use GPU when available (significant speedup)
 2. **Early Stopping**: Keep enabled for substantial iteration reduction
 3. **Candidate Tuning**: Balance quality vs speed with `peaks_per_scale`
-4. **Loss Function**: Use Poisson for photon/count data, MSE for general
+4. **Loss Function**: L1 is the default; switch to Poisson when convergence speed matters
 5. **Regularization**: Add L1 penalty for sparser, faster solutions
 6. **Compilation**: Enable on CUDA for additional speedup
 7. **Tiled Fitting**: Use `fit_tiled()` for volumes exceeding GPU memory
