@@ -78,7 +78,7 @@ from luxar.utils.paths import get_demos_output_dir
 # -----------------------------------------------------------------------------
 
 DEFAULT_MAX_ORDER = 6  # Order 6 = 262,144 vertices (largest comfortable size)
-LINE_WIDTH = 0.003     # In normalized cube units; thin enough not to drown the curve
+LINE_WIDTH = 0.0015    # In normalized cube units; thin enough not to drown the curve
 
 
 # -----------------------------------------------------------------------------
