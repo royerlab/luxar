@@ -259,7 +259,7 @@ test.describe('nD Navigation - Dimension Sliders UI', () => {
 
     // Check if sliders exist and might be visible
     const slidersInfo = await page.evaluate(() => {
-      const sliders = document.querySelector('.dimension-sliders');
+      const sliders = document.querySelector('.luxar-dimension-sliders');
       return {
         exists: sliders !== null,
         visible: sliders !== null && (sliders as HTMLElement).offsetParent !== null,
@@ -289,7 +289,7 @@ test.describe('nD Navigation - Dimension Sliders UI', () => {
     await waitForNextRender(page);
 
     const slidersVisible = await page.evaluate(() => {
-      const sliders = document.querySelector('.dimension-sliders');
+      const sliders = document.querySelector('.luxar-dimension-sliders');
       return sliders !== null && (sliders as HTMLElement).offsetParent !== null;
     });
 

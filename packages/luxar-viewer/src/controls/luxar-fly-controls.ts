@@ -39,6 +39,10 @@ export interface LuxarFlyControlsConfig {
   inertialMode?: boolean; // True for low damping, false for high damping
   damping?: number; // Translation damping: 0.9-0.99 for inertial mode
   rotationDamping?: number; // Rotation damping: 0.9-0.99 for inertial mode
+  // When true, keyboard listeners are not attached — the caller is responsible
+  // for forwarding key events via handleKeyDown/handleKeyUp. Mouse events are
+  // always handled internally for free-look functionality.
+  externalInputManagement?: boolean;
 }
 
 export class LuxarFlyControls extends THREE.EventDispatcher<{
@@ -100,11 +104,21 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
   private camera: LuxarCamera;
   private domElement: HTMLElement;
 
-  // Event listeners to clean up
-  private boundHandlers: { [key: string]: any } = {};
+  // Bound DOM event handlers, captured for clean removal in dispose().
+  private boundHandlers: {
+    keydown: (e: KeyboardEvent) => void;
+    keyup: (e: KeyboardEvent) => void;
+    mousedown: (e: MouseEvent) => void;
+    mouseup: (e: MouseEvent) => void;
+    mousemove: (e: MouseEvent) => void;
+    wheel: (e: WheelEvent) => void;
+    contextmenu: (e: Event) => void;
+  };
 
-  // Flag to track if we're using external input management
-  private externalInputManagement: boolean = false;
+  // When true, keyboard input is forwarded by the caller (e.g.
+  // InputContextManager) rather than registered on `window`. Set at
+  // construction; not mutable afterward.
+  private readonly externalInputManagement: boolean;
 
   constructor(camera: LuxarCamera, domElement: HTMLElement, config?: LuxarFlyControlsConfig) {
     super();
@@ -121,6 +135,7 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
       this.damping = config.damping ?? this.damping;
       this.rotationDamping = config.rotationDamping ?? this.rotationDamping;
     }
+    this.externalInputManagement = config?.externalInputManagement ?? false;
 
     // Initialize orientation from current camera
     this.initializeFromCamera();
@@ -128,24 +143,23 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
     // Save initial state so reset() has a valid baseline
     this.saveState();
 
-    // Only add event listeners if not using external input management
-    // This will be controlled by setExternalInputManagement()
-    this.bindEventHandlers();
+    this.boundHandlers = this.bindEventHandlers();
     this.addEventListeners();
   }
 
-  private bindEventHandlers(): void {
-    this.boundHandlers.keydown = this.onKeyDown.bind(this);
-    this.boundHandlers.keyup = this.onKeyUp.bind(this);
-    this.boundHandlers.mousedown = this.onMouseDown.bind(this);
-    this.boundHandlers.mouseup = this.onMouseUp.bind(this);
-    this.boundHandlers.mousemove = this.onMouseMove.bind(this);
-    this.boundHandlers.wheel = this.onWheel.bind(this);
-    this.boundHandlers.contextmenu = (e: Event) => e.preventDefault();
+  private bindEventHandlers(): typeof this.boundHandlers {
+    return {
+      keydown: this.onKeyDown.bind(this),
+      keyup: this.onKeyUp.bind(this),
+      mousedown: this.onMouseDown.bind(this),
+      mouseup: this.onMouseUp.bind(this),
+      mousemove: this.onMouseMove.bind(this),
+      wheel: this.onWheel.bind(this),
+      contextmenu: (e: Event) => e.preventDefault(),
+    };
   }
 
   private addEventListeners(): void {
-    // Only add keyboard listeners if not using external input management
     if (!this.externalInputManagement) {
       window.addEventListener('keydown', this.boundHandlers.keydown);
       window.addEventListener('keyup', this.boundHandlers.keyup);
@@ -160,50 +174,18 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
     this.domElement.addEventListener('contextmenu', this.boundHandlers.contextmenu);
   }
 
-  /**
-   * Remove event listeners
-   */
   private removeEventListeners(): void {
-    // Remove keyboard listeners (only if currently attached)
     if (this.keyListenersAttached) {
       window.removeEventListener('keydown', this.boundHandlers.keydown);
       window.removeEventListener('keyup', this.boundHandlers.keyup);
       this.keyListenersAttached = false;
     }
 
-    // Remove mouse listeners
     this.domElement.removeEventListener('mousedown', this.boundHandlers.mousedown);
     window.removeEventListener('mouseup', this.boundHandlers.mouseup);
     window.removeEventListener('mousemove', this.boundHandlers.mousemove);
     this.domElement.removeEventListener('wheel', this.boundHandlers.wheel);
     this.domElement.removeEventListener('contextmenu', this.boundHandlers.contextmenu);
-  }
-
-  /**
-   * Set whether keyboard input is managed externally (by InputContextManager)
-   * When true, the control won't register its own keyboard event listeners
-   * Note: Mouse events are always handled internally for free-look functionality
-   */
-  public setExternalInputManagement(external: boolean): void {
-    if (external !== this.externalInputManagement) {
-      this.externalInputManagement = external;
-
-      if (external) {
-        // Remove only keyboard event listeners
-        if (this.keyListenersAttached) {
-          window.removeEventListener('keydown', this.boundHandlers.keydown);
-          window.removeEventListener('keyup', this.boundHandlers.keyup);
-          this.keyListenersAttached = false;
-        }
-      } else {
-        // Add keyboard event listeners back
-        if (!this.keyListenersAttached) {
-          window.addEventListener('keydown', this.boundHandlers.keydown);
-          window.addEventListener('keyup', this.boundHandlers.keyup);
-          this.keyListenersAttached = true;
-        }
-      }
-    }
   }
 
   /**
@@ -269,21 +251,14 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
         break;
       case 'q':
         this.lookState.roll = -1; // Q for roll left
-        // Debug logging - commented out for production
-        // log.info(Modules.CONTROLS, 'Q pressed - roll left', this.lookState.roll);
         break;
       case 'e':
         this.lookState.roll = 1; // E for roll right
-        // Debug logging - commented out for production
-        // log.info(Modules.CONTROLS, 'E pressed - roll right', this.lookState.roll);
         break;
     }
 
-    // Speed boost with Shift key
     if (event.key === 'Shift') {
       this.speedBoost = true;
-      // Debug logging - commented out for production
-      // log.info(Modules.CONTROLS, 'Shift pressed - speed boost ON');
     }
 
     // Arrow keys for camera look direction
@@ -568,10 +543,6 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
         _v3.addScaledVector(_v1, -this.lookState.horizontal * this.rotationSpeed);
         // Roll: rotate around camera's local forward axis
         _v3.addScaledVector(_v2, this.lookState.roll * this.rotationSpeed);
-        if (this.lookState.roll !== 0) {
-          // Debug logging - commented out for production
-          // log.info(Modules.CONTROLS, 'Applying roll torque:', this.lookState.roll * this.rotationSpeed);
-        }
 
         // Add torque to world-space angular velocity
         this.angularVelocity.addScaledVector(_v3, delta);

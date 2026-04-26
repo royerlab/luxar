@@ -36,7 +36,7 @@ test.describe('First-Time User Experience', () => {
     await page.waitForSelector('.dataset-browser', { timeout: 5000 });
 
     // Welcome banner should be present
-    const welcomeBanner = page.locator('#browser-welcome');
+    const welcomeBanner = page.locator('#luxar-dataset-browser-welcome');
     await expect(welcomeBanner).toBeVisible();
 
     // Should contain helpful text (updated to match compact banner)
@@ -51,7 +51,7 @@ test.describe('First-Time User Experience', () => {
 
     await page.waitForSelector('.dataset-browser', { timeout: 5000 });
 
-    const welcomeBanner = page.locator('#browser-welcome');
+    const welcomeBanner = page.locator('#luxar-dataset-browser-welcome');
     await expect(welcomeBanner).toBeVisible();
 
     const text = await welcomeBanner.textContent();

@@ -634,10 +634,9 @@ export class InputHandler {
   /**
    * Handle fullscreen mode enter/exit events.
    *
-   * Adjusts canvas styling when entering or exiting fullscreen to ensure
-   * proper display. Adds multiple size update passes to handle browser
-   * transition timing issues. Sets background color for aesthetic fullscreen
-   * experience.
+   * Adjusts canvas inline styles so the canvas fills the entire viewport
+   * while in fullscreen, and clears those styles on exit. Page-level
+   * background is the host page's responsibility (see index.html).
    *
    * Fullscreen is triggered by Space key (when not focused on UI element).
    *
@@ -656,12 +655,9 @@ export class InputHandler {
       // Ensure the canvas has full opacity and no filters
       canvas.style.opacity = '1';
       canvas.style.filter = 'none';
-      // Ensure document background doesn't interfere
-      document.documentElement.style.backgroundColor = '#111111';
     } else {
       // Exiting fullscreen - completely clear all inline styles
       canvas.removeAttribute('style');
-      document.documentElement.style.backgroundColor = '';
     }
 
     // Single resize after browser has applied fullscreen layout.
@@ -1099,7 +1095,7 @@ export class InputHandler {
    * @private
    */
   private toggleHelp(): void {
-    const helpOverlay = document.getElementById('help-overlay');
+    const helpOverlay = document.getElementById('luxar-help-overlay');
     if (helpOverlay) {
       hideHelpOverlay();
     } else {
@@ -1539,7 +1535,7 @@ export class InputHandler {
     clearError();
 
     // Close dataset browser
-    const datasetBrowser = document.getElementById('dataset-browser');
+    const datasetBrowser = document.getElementById('luxar-dataset-browser');
     if (datasetBrowser) {
       datasetBrowser.remove();
     }
@@ -1568,8 +1564,7 @@ export class InputHandler {
     }
 
     // Close performance stats
-    const statsElement = document.querySelector('.stats') as HTMLElement;
-    if (statsElement && statsElement.style.display !== 'none') {
+    if (this.animationController.performanceStats.visible) {
       this.animationController.performanceStats.hide();
     }
   }

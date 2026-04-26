@@ -184,13 +184,13 @@ describe('ThemeManager', () => {
       const manager = ThemeManager.getInstance();
       manager.setTheme('light');
 
-      const savedTheme = localStorage.getItem('luxar-theme');
+      const savedTheme = localStorage.getItem('luxar.theme');
       expect(savedTheme).toBe('light');
     });
 
     it('should load saved theme on initialization', () => {
       // Set theme in localStorage before creating manager
-      localStorage.setItem('luxar-theme', 'frosted-glass');
+      localStorage.setItem('luxar.theme', 'frosted-glass');
 
       const manager = ThemeManager.getInstance();
       const current = manager.getCurrentTheme();
@@ -199,7 +199,7 @@ describe('ThemeManager', () => {
     });
 
     it('should fallback to frosted-glass theme if saved theme is invalid', () => {
-      localStorage.setItem('luxar-theme', 'invalid');
+      localStorage.setItem('luxar.theme', 'invalid');
 
       const manager = ThemeManager.getInstance();
       const current = manager.getCurrentTheme();
@@ -305,6 +305,16 @@ describe('ThemeManager', () => {
       manager.dispose();
 
       expect(() => manager.getCurrentTheme()).toThrow();
+    });
+
+    it('removes the body-level glass filter SVG when liquid-glass theme is disposed', () => {
+      const manager = ThemeManager.getInstance();
+      manager.setTheme('liquid-glass');
+      expect(document.getElementById('luxar-glass-filters')).not.toBeNull();
+
+      manager.dispose();
+
+      expect(document.getElementById('luxar-glass-filters')).toBeNull();
     });
   });
 });

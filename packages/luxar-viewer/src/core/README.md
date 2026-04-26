@@ -55,10 +55,10 @@ The architecture follows a hierarchical initialization pattern where each compon
 
 ```typescript
 class LuxarApp {
-  async init(src?: string): Promise<void> {
+  async init(options: LuxarAppOptions): Promise<void> {
     // 1. Scene Management Foundation
     this.sceneManager = new SceneManager();
-    await this.sceneManager.init();
+    await this.sceneManager.init({ canvas: options.canvas, debug: options.debug });
 
     // 2. Animation System Setup
     this.animationController = new AnimationController(/*...*/);
@@ -78,6 +78,7 @@ class LuxarApp {
     this.animationController.startAnimation();
 
     // 7. Dataset Loading or Browser Display
+    const src = options.src ?? config.defaultZarrPath;
     if (await this.shouldShowBrowser(src)) {
       this.showDatasetBrowser();
     } else {
@@ -85,7 +86,7 @@ class LuxarApp {
     }
 
     // 8. System Event Handling
-    this.setupCleanup();
+    this.setupDisposeOnUnload();
     this.setupDatasetBrowserShortcut();
     this.setupFocusHandling();
   }
@@ -98,10 +99,10 @@ class LuxarApp {
 - **Error Isolation**: Component failures don't prevent other systems from initializing
 - **Progressive Enhancement**: Core 3D functionality works even if data loading fails
 
-### Cleanup and Resource Management
+### Disposal and Resource Management
 
 ```typescript
-cleanup(): void {
+dispose(): void {
   // 1. Stop animation loop (prevents further rendering)
   this.animationController?.dispose();
 
@@ -115,9 +116,9 @@ cleanup(): void {
   this.sceneManager?.dispose();
 
   // 5. Remove global event listeners
-  if (this.boundCleanup) {
-    window.removeEventListener('beforeunload', this.boundCleanup);
-    this.boundCleanup = null;
+  if (this.boundDispose) {
+    window.removeEventListener('beforeunload', this.boundDispose);
+    this.boundDispose = null;
   }
 }
 ```
@@ -129,9 +130,9 @@ cleanup(): void {
 The app coordinates scene management with other systems:
 
 ```typescript
-// Initialize scene foundation
+// Initialize scene foundation (canvas comes in via LuxarAppOptions)
 this.sceneManager = new SceneManager();
-await this.sceneManager.init();
+await this.sceneManager.init({ canvas: options.canvas });
 
 // Pass scene components to animation controller
 this.animationController = new AnimationController(
@@ -262,14 +263,14 @@ private showDatasetBrowser(): void {
 The `init()` method uses a single top-level try/catch. All initialization steps (scene manager, animation controller, input handler, rendering controls, and dataset loading) run inside this block. If any step fails, the error propagates to the caller:
 
 ```typescript
-async init(src?: string): Promise<void> {
+async init(options: LuxarAppOptions): Promise<void> {
   try {
     // All initialization in sequence inside one try block:
     // 1. Scene manager + animation controller
     // 2. Input handler + rendering controls
     // 3. Start animation loop
     // 4. Dataset loading or browser display
-    // 5. Cleanup/focus handlers
+    // 5. Dispose/focus handlers
   } catch (error) {
     // Single catch handles all initialization failures
     throw error;
@@ -280,7 +281,7 @@ async init(src?: string): Promise<void> {
 The caller (in `main.ts`) catches and displays errors:
 
 ```typescript
-app.init(src).catch((error) => {
+app.init({ canvas, src }).catch((error) => {
   console.error('Failed to start Luxar application:', error);
   showError('Failed to start the application. Please check the console for details.');
 });
@@ -290,7 +291,7 @@ app.init(src).catch((error) => {
 
 ```typescript
 // Global error handler for unhandled initialization failures
-app.init(src).catch((error) => {
+app.init({ canvas, src }).catch((error) => {
   console.error('Failed to start Luxar application:', error);
   showError('Failed to start the application. Please check the console for details.');
 });
@@ -389,7 +390,7 @@ try {
   }
 
   // Manual cleanup if needed
-  app.cleanup();
+  app.dispose();
 }
 ```
 
@@ -469,19 +470,19 @@ This ensures zero CPU/GPU usage when the tab is not visible, even if continuous 
 
 ```typescript
 // ✅ Good: Single try/catch in init(), let errors propagate to caller
-async init(src?: string): Promise<void> {
+async init(options: LuxarAppOptions): Promise<void> {
   try {
     // All steps in sequence; any failure propagates
-    await this.sceneManager.init();
+    await this.sceneManager.init({ canvas: options.canvas });
     // ... other initialization ...
-    await this.loadDataset(src);
+    await this.loadDataset(options.src ?? config.defaultZarrPath);
   } catch (error) {
     throw error;
   }
 }
 
 // ✅ Good: Caller displays errors to user
-app.init(src).catch((error) => {
+app.init({ canvas, src }).catch((error) => {
   showError('Failed to start the application.');
 });
 
@@ -492,8 +493,8 @@ const src = params.get('src') ?? config.defaultZarrPath;
 ### Resource Management
 
 ```typescript
-// ✅ Good: Comprehensive cleanup
-cleanup(): void {
+// ✅ Good: Comprehensive disposal
+dispose(): void {
   // Stop animation first (prevents new work)
   this.animationController?.dispose();
 
@@ -503,18 +504,18 @@ cleanup(): void {
   this.sceneManager?.dispose();
 
   // Remove global listeners
-  if (this.boundCleanup) {
-    window.removeEventListener('beforeunload', this.boundCleanup);
-    this.boundCleanup = null;
+  if (this.boundDispose) {
+    window.removeEventListener('beforeunload', this.boundDispose);
+    this.boundDispose = null;
   }
 }
 
 // ✅ Good: Store bound reference for proper cleanup
-private boundCleanup: (() => void) | null = null;
+private boundDispose: (() => void) | null = null;
 
-private setupCleanup(): void {
-  this.boundCleanup = this.cleanup.bind(this);
-  window.addEventListener('beforeunload', this.boundCleanup);
+private setupDisposeOnUnload(): void {
+  this.boundDispose = this.dispose.bind(this);
+  window.addEventListener('beforeunload', this.boundDispose);
 }
 ```
 

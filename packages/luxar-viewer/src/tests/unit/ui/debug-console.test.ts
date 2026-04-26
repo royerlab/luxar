@@ -169,11 +169,8 @@ describe('DebugConsole - Critical Fixes', () => {
 
       debugConsole.dispose();
 
-      // Panel should be removed
+      // Panel should be removed.
       expect(document.querySelector('.luxar-debug-console')).toBeNull();
-
-      // Styles should be removed
-      expect(document.getElementById('luxar-debug-console-styles')).toBeNull();
     });
   });
 });

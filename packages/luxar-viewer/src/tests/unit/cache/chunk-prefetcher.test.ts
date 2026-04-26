@@ -284,17 +284,15 @@ describe('ChunkPrefetcher - Unit Tests', () => {
       expect(mockStore.get).not.toHaveBeenCalled();
     });
 
-    it('should respect ?no-prefetch URL parameter', () => {
-      const params = new URLSearchParams('?no-prefetch');
-      const noPrefetchPrefetcher = new ChunkPrefetcher(mockStore as any, {
-        enabled: true,
-        urlParams: params,
-      });
+    it('prefetches adjacent chunks when constructed with enabled=true (parity with disabled case)', () => {
+      // Confirms the disabled case in the previous test isn't a no-op for some
+      // unrelated reason — same setup but enabled=true must trigger prefetch.
+      const enabledPrefetcher = new ChunkPrefetcher(mockStore as any, { enabled: true });
+      enabledPrefetcher.registerArrayBounds('data', [2048, 2048], [1024, 1024]);
 
-      noPrefetchPrefetcher.onAccess('data/0.0');
+      enabledPrefetcher.onAccess('data/0.0');
 
-      // Should not prefetch anything with ?no-prefetch
-      expect(mockStore.get).not.toHaveBeenCalled();
+      expect(mockStore.get).toHaveBeenCalled();
     });
 
     it('should use custom maxConcurrent', async () => {

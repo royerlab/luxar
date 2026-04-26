@@ -107,22 +107,6 @@ export function mergeSettings(
 }
 
 /**
- * Generates a storage key for settings persistence
- *
- * @param sceneId - Unique scene identifier
- * @param prefix - Key prefix (default 'luxar-rendering-settings')
- * @returns Storage key string
- */
-export function generateSettingsKey(
-  sceneId: string,
-  prefix: string = 'luxar-rendering-settings'
-): string {
-  // Sanitize scene ID to prevent injection
-  const sanitized = sceneId.replace(/[^a-zA-Z0-9-_]/g, '_');
-  return `${prefix}-${sanitized}`;
-}
-
-/**
  * Serializes settings for storage
  *
  * @param settings - Settings to serialize

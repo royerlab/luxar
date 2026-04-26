@@ -363,7 +363,6 @@ interface AppConfig {
   cache: CacheConfig;
   dimensionAnimation: DimensionAnimationConfig;
   defaultZarrPath: string;
-  canvasId: string;
 }
 
 interface RenderingSettings {

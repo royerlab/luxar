@@ -6,7 +6,6 @@ import { describe, it, expect } from 'vitest';
 import {
   validateRenderingSettings,
   mergeSettings,
-  generateSettingsKey,
   serializeSettings,
   deserializeSettings,
   isValidColor,
@@ -109,18 +108,6 @@ describe('rendering-controls-utils', () => {
 
       expect(result.bloomThreshold).toBe(0.05);
       expect(result.toneMapping).toBe('Neutral');
-    });
-  });
-
-  describe('generateSettingsKey', () => {
-    it('should generate a proper storage key', () => {
-      const key = generateSettingsKey('test-scene');
-      expect(key).toBe('luxar-rendering-settings-test-scene');
-    });
-
-    it('should sanitize scene ID', () => {
-      const key = generateSettingsKey('test@scene!');
-      expect(key).toBe('luxar-rendering-settings-test_scene_');
     });
   });
 
