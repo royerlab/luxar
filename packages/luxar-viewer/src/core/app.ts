@@ -1079,7 +1079,7 @@ export class LuxarApp {
 
       // Tear down the theme manager (disconnects glass-refraction MutationObserver,
       // removes injected SVG filters, clears CSS custom properties).
-      ThemeManager.resetInstance();
+      ThemeManager.disposeInstance();
 
       // Clean up UI resources
       cleanupUI();

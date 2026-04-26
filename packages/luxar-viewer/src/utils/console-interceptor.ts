@@ -245,9 +245,14 @@ class ConsoleInterceptor {
   }
 
   /**
-   * Restore original console methods (for cleanup)
+   * Restore the original console methods and stop intercepting.
+   *
+   * After dispose(), captureMessage() is no longer reachable through
+   * `console.log` etc. The buffer is preserved (callers can still read
+   * `getBufferedMessages()`), and the singleton slot is left intact —
+   * call {@link ConsoleInterceptor.disposeInstance} to clear it.
    */
-  restore(): void {
+  dispose(): void {
     if (!this.isIntercepting) return;
 
     console.log = this.originalConsole.log;

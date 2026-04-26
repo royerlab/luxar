@@ -9,7 +9,7 @@ import { ThemeManager } from '../../../themes/theme-manager';
 describe('ThemeManager', () => {
   beforeEach(() => {
     // Reset singleton before each test
-    ThemeManager.resetInstance();
+    ThemeManager.disposeInstance();
     // Clear localStorage
     localStorage.clear();
     // Clear any existing CSS variables
@@ -18,7 +18,7 @@ describe('ThemeManager', () => {
 
   afterEach(() => {
     // Clean up
-    ThemeManager.resetInstance();
+    ThemeManager.disposeInstance();
     localStorage.clear();
   });
 
@@ -29,9 +29,9 @@ describe('ThemeManager', () => {
       expect(instance1).toBe(instance2);
     });
 
-    it('should reset instance when resetInstance() is called', () => {
+    it('should clear singleton when disposeInstance() is called', () => {
       const instance1 = ThemeManager.getInstance();
-      ThemeManager.resetInstance();
+      ThemeManager.disposeInstance();
       const instance2 = ThemeManager.getInstance();
       expect(instance1).not.toBe(instance2);
     });
@@ -280,7 +280,7 @@ describe('ThemeManager', () => {
       expect(callback).toHaveBeenCalledTimes(1);
 
       // Dispose and create new instance
-      ThemeManager.resetInstance();
+      ThemeManager.disposeInstance();
       const newManager = ThemeManager.getInstance();
       newManager.setTheme('dark');
 

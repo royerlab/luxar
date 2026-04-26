@@ -162,9 +162,12 @@ export class SceneLoaderManager {
   }
 
   /**
-   * Reset the singleton instance (mainly for testing)
+   * Dispose the current instance and clear the singleton slot.
+   *
+   * Used at app shutdown and between tests. The next `getInstance()` call
+   * lazily constructs a fresh manager.
    */
-  static reset(): void {
+  static disposeInstance(): void {
     if (SceneLoaderManager.instance) {
       SceneLoaderManager.instance.destroyAll();
       SceneLoaderManager.instance = null;

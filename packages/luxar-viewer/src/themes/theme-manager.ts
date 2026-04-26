@@ -86,7 +86,7 @@ export class ThemeManager {
    * manager) or between tests (to isolate state). The instance reference is
    * cleared; the next `getInstance()` will lazily construct a new one.
    */
-  public static resetInstance(): void {
+  public static disposeInstance(): void {
     if (ThemeManager.instance) {
       ThemeManager.instance.dispose();
       ThemeManager.instance = null;
