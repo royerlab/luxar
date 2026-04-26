@@ -26,6 +26,7 @@ import { LabelLoader } from '../data/label-loader';
 import { ImageLabelLoader } from '../data/image-label-loader';
 import type { LoaderConfig } from '../data/data-loader-types';
 import { consoleInterceptor } from '../utils/console-interceptor';
+import { EventGroup } from '../utils/event-group';
 
 /**
  * Init-time options for {@link LuxarApp.init}.
@@ -74,7 +75,12 @@ export class LuxarApp {
   private pickingSystem?: PickingSystem;
   private labelLoader?: LabelLoader;
   private imageLabelLoader?: ImageLabelLoader;
-  private pickingCleanup?: () => void;
+  /**
+   * Per-init EventGroup for picking-system listeners (canvas mousemove,
+   * window resize, controls/scene-manager subscriptions). Re-disposed and
+   * rebuilt on each scene load.
+   */
+  private pickingEvents = new EventGroup();
   private isInitialized = false;
   /**
    * Re-entrance guard for {@link dispose}. Set while a dispose is in flight
@@ -89,10 +95,12 @@ export class LuxarApp {
    * components (potentially double-freeing GPU resources). Reset by `init()`.
    */
   private isDisposed = false;
-  private boundDispose: (() => void) | null = null;
-  private boundFocusHandler: (() => void) | null = null;
-  private boundVisibilityHandler: (() => void) | null = null;
-  private boundDatasetBrowserHandler: (() => void) | null = null;
+  /**
+   * App-level event listeners (beforeunload, focus, visibilitychange,
+   * open-dataset-browser, plus the picking system's mousemove + control
+   * change subscriptions). Disposed in one call from {@link dispose}.
+   */
+  private events = new EventGroup();
 
   /**
    * Snapshot of init-time options. Populated by `init()` and read by
@@ -560,11 +568,11 @@ export class LuxarApp {
    * Wires up: PickingSystem → LabelLoader/ImageLabelLoader → OverlayManager.updateHoverContent.
    */
   private async initPicking(): Promise<void> {
-    // Clean up previous picking if reloading
-    if (this.pickingCleanup) {
-      this.pickingCleanup();
-      this.pickingCleanup = undefined;
-    }
+    // Re-init: tear down listeners from any previous picking session.
+    // (initPicking() also resets pickingEvents at the listener registration
+    // site below, but doing it here too lets us early-return on no-labels
+    // without leaking the previous session's listeners.)
+    this.pickingEvents.dispose();
     this.pickingSystem?.dispose();
     this.labelLoader?.dispose();
     this.imageLabelLoader?.dispose();
@@ -650,15 +658,19 @@ export class LuxarApp {
       sceneLoader.nodeFactory.registerExistingSceneNodes(root);
     }
 
-    // Register mousemove on canvas
+    // DOM events go through EventGroup.on(); Three.js EventDispatcher events
+    // (controls, sceneManager) use add() with a manual remove closure since
+    // their addEventListener/removeEventListener signatures aren't EventTarget.
     const canvas = this.sceneManager.renderer.domElement;
     const handler = (e: MouseEvent) => this.pickingSystem?.onMouseMove(e);
-    canvas.addEventListener('mousemove', handler);
+    this.pickingEvents.on(canvas, 'mousemove', handler);
 
-    // Invalidate pick buffer on camera changes and window resize
     const dirtyHandler = () => this.pickingSystem?.markDirty();
     this.sceneManager.controls.addEventListener('change', dirtyHandler);
-    window.addEventListener('resize', dirtyHandler);
+    this.pickingEvents.add(() =>
+      this.sceneManager.controls.removeEventListener('change', dirtyHandler)
+    );
+    this.pickingEvents.on(window, 'resize', dirtyHandler);
 
     // Suppress picking during orbit/pan/zoom — no expensive offscreen renders
     // while the user is navigating, and fade out stale hover labels.
@@ -672,21 +684,17 @@ export class LuxarApp {
     };
     controls.addEventListener('start', interactionStart);
     controls.addEventListener('end', interactionEnd);
+    this.pickingEvents.add(() => controls.removeEventListener('start', interactionStart));
+    this.pickingEvents.add(() => controls.removeEventListener('end', interactionEnd));
 
     // Update picking camera when perspective ↔ orthographic swap occurs
     const cameraChangedHandler = () => {
       this.pickingSystem?.setCamera(this.sceneManager.camera);
     };
     this.sceneManager.addEventListener('camera-changed', cameraChangedHandler);
-
-    this.pickingCleanup = () => {
-      canvas.removeEventListener('mousemove', handler);
-      this.sceneManager.controls.removeEventListener('change', dirtyHandler);
-      controls.removeEventListener('start', interactionStart);
-      controls.removeEventListener('end', interactionEnd);
-      this.sceneManager.removeEventListener('camera-changed', cameraChangedHandler);
-      window.removeEventListener('resize', dirtyHandler);
-    };
+    this.pickingEvents.add(() =>
+      this.sceneManager.removeEventListener('camera-changed', cameraChangedHandler)
+    );
 
     log.info(Modules.APP, 'GPU picking system initialized (labels detected)');
   }
@@ -695,20 +703,18 @@ export class LuxarApp {
    * Register a beforeunload handler that disposes the app on page unload.
    */
   private setupDisposeOnUnload(): void {
-    this.boundDispose = this.dispose.bind(this);
-    window.addEventListener('beforeunload', this.boundDispose);
+    this.events.on(window, 'beforeunload', () => this.dispose());
   }
 
   /**
    * Setup keyboard shortcut for opening dataset browser
    */
   private setupDatasetBrowserShortcut(): void {
-    this.boundDatasetBrowserHandler = () => {
+    this.events.on(window, 'open-dataset-browser', () => {
       if (!this.datasetBrowser) {
         this.showDatasetBrowser();
       }
-    };
-    window.addEventListener('open-dataset-browser', this.boundDatasetBrowserHandler);
+    });
   }
 
   /**
@@ -716,14 +722,14 @@ export class LuxarApp {
    * This prevents stale renders when switching between windows/tabs
    */
   private setupFocusHandling(): void {
-    this.boundFocusHandler = () => {
+    this.events.on(window, 'focus', () => {
       // Suppress focus-triggered renders during recording — they can interfere
       // with the deterministic capture loop or cause resize side effects
       if (this.recordingPanel?.isCurrentlyRecording()) return;
       this.animationController.startAnimation();
       log.info(Modules.LUXAR, 'Window focused - triggering render refresh');
-    };
-    this.boundVisibilityHandler = () => {
+    });
+    this.events.on(document, 'visibilitychange', () => {
       // Don't stop animation during recording (offline capture needs the loop alive)
       if (this.recordingPanel?.isCurrentlyRecording()) return;
       if (document.hidden) {
@@ -733,9 +739,7 @@ export class LuxarApp {
         this.animationController.startAnimation();
         log.info(Modules.LUXAR, 'Document became visible - resuming animation');
       }
-    };
-    window.addEventListener('focus', this.boundFocusHandler);
-    document.addEventListener('visibilitychange', this.boundVisibilityHandler);
+    });
   }
 
   /**
@@ -1044,11 +1048,10 @@ export class LuxarApp {
         this.layersPanel = undefined;
       }
 
-      // Clean up picking system
-      if (this.pickingCleanup) {
-        this.pickingCleanup();
-        this.pickingCleanup = undefined;
-      }
+      // Clean up picking system listeners (DOM mousemove, controls/scene
+      // event subscriptions). pickingEvents is reusable: dispose() leaves it
+      // in an empty state ready for the next initPicking() call.
+      this.pickingEvents.dispose();
       if (this.pickingSystem) {
         this.pickingSystem.dispose();
         this.pickingSystem = undefined;
@@ -1084,25 +1087,10 @@ export class LuxarApp {
       // Clean up UI resources
       cleanupUI();
 
-      // Remove focus and visibility listeners
-      if (this.boundFocusHandler) {
-        window.removeEventListener('focus', this.boundFocusHandler);
-        this.boundFocusHandler = null;
-      }
-      if (this.boundVisibilityHandler) {
-        document.removeEventListener('visibilitychange', this.boundVisibilityHandler);
-        this.boundVisibilityHandler = null;
-      }
-      if (this.boundDatasetBrowserHandler) {
-        window.removeEventListener('open-dataset-browser', this.boundDatasetBrowserHandler);
-        this.boundDatasetBrowserHandler = null;
-      }
-
-      // Remove beforeunload listener with stored reference
-      if (this.boundDispose) {
-        window.removeEventListener('beforeunload', this.boundDispose);
-        this.boundDispose = null;
-      }
+      // Tear down all app-level event listeners (focus, visibility, beforeunload,
+      // open-dataset-browser, and any picking-system subscriptions added later
+      // via this.events.add()) in one call.
+      this.events.dispose();
     } catch (error) {
       log.error(Modules.LUXAR, 'Error during dispose:', error);
     } finally {
