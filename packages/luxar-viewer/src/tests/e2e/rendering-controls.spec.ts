@@ -80,9 +80,11 @@ test.describe('Camera and Navigation Settings', () => {
 
     const state = await getLuxarState(page);
 
-    // Default FOV should be around 47 degrees (50mm Normal)
-    expect(state.cameraFov).toBeGreaterThan(40);
-    expect(state.cameraFov).toBeLessThan(55);
+    // Default FOV is documented in src/config/index.ts under the '50mm Normal'
+    // preset. Bind locally and assert tight tolerance so a default change
+    // surfaces clearly.
+    const EXPECTED_50MM_FOV = 47;
+    expect(Math.abs(state.cameraFov - EXPECTED_50MM_FOV)).toBeLessThan(0.5);
   });
 
   test('should apply FOV changes', async ({ page }) => {
