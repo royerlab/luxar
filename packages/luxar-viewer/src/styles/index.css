@@ -1,16 +1,17 @@
 /**
- * Luxar Styles - Main Entry Point
+ * Luxar Styles — Library entry point (embed-safe).
  *
- * This file imports all CSS modules in the correct order.
- * CSS custom properties (--luxar-*) are injected by ThemeManager.
+ * Importing this file is safe for third-party host pages: every rule below
+ * is scoped to a `.luxar-*` class, a `[data-theme=...]` attribute, or a
+ * component-local selector. **No global selectors live here** (no `body`,
+ * `html`, `*`, `::-webkit-scrollbar`, `:focus-visible`, etc.) — those are
+ * confined to `standalone.css`, which the standalone-app entry imports
+ * separately.
+ *
+ * Theme variables (`--luxar-*`) are injected at runtime by `ThemeManager`.
  */
 
-/* 1. CSS Reset - normalize browser defaults */
-@import './reset.css';
-
-/* 2. Base Styles - typography, layout, utilities */
-@import './base/typography.css';
-@import './base/layout.css';
+/* Utility classes (.luxar-flex, .luxar-text-primary, …) */
 @import './base/utilities.css';
 
 /* 3. Component Styles - individual UI components */

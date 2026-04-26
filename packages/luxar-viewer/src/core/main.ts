@@ -8,6 +8,10 @@
 // surface, LuxarApp construction). Embedded callers skip this file
 // entirely and construct LuxarApp from src/index.ts directly.
 
+// Standalone-only chrome (html/body sizing, CSS reset, scrollbars) AND the
+// library's component/utility/theme styles. Embedders never import
+// standalone.css — only `luxar-viewer/styles.css` (= index.css).
+import '../styles/standalone.css';
 import '../styles/index.css';
 import { bootstrapStandalone } from './bootstrap';
 import { showError } from '../ui/helpers';
