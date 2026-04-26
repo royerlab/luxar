@@ -68,6 +68,13 @@ declare global {
         clearL2: () => Promise<void>;
         clearAll: () => Promise<void>;
       };
+
+      /**
+       * Last viewer state exported via the keyboard shortcut handler in
+       * input-handler.ts (in addition to the clipboard copy). Surfaced for
+       * Playwright agent flows that want a stable reference across runs.
+       */
+      lastExportedState?: unknown;
     };
   }
 }
