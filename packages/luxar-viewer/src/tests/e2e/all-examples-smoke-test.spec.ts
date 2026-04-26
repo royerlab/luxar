@@ -142,13 +142,31 @@ test.describe('ALL Examples - Systematic Smoke Tests', () => {
       if (!allowZeroPoints) {
         expect(state.totalPoints).toBeGreaterThan(0);
       }
-      // Some datasets are lines-only and have no pointClouds — check scene has content
+      // Some datasets are lines-only or gsplats-only and have no pointClouds.
+      // For those, verify the scene has at least one renderable node of any
+      // supported type (points, lines, or gsplats). The previous assertion of
+      // `totalPoints + pointClouds.length >= 0` was structurally always-true
+      // when both sides were zero.
       if (state.pointClouds && state.pointClouds.length > 0) {
         expect(state.pointClouds.length).toBeGreaterThan(0);
       } else if (!allowZeroPoints) {
-        // For non-zero-points datasets, at least the scene should have some content
-        // (lines, gsplats, or groups — not necessarily pointClouds)
-        expect(state.totalPoints + (state.pointClouds?.length ?? 0)).toBeGreaterThanOrEqual(0);
+        const renderableCount = await page.evaluate(() => {
+          const debug = (window as any).__luxarDebug;
+          if (!debug?.scene) return 0;
+          let count = 0;
+          debug.scene.traverse((obj: any) => {
+            const nodeType = obj?.userData?.nodeType;
+            if (
+              obj.type === 'Points' ||
+              nodeType === 'lines' ||
+              nodeType === 'gsplats'
+            ) {
+              count += 1;
+            }
+          });
+          return count;
+        });
+        expect(renderableCount).toBeGreaterThan(0);
       }
 
       // Check for WebGL errors (CRITICAL for rendering issues)
