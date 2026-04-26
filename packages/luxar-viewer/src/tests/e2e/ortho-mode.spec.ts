@@ -90,8 +90,12 @@ test.describe('Orthographic Camera Mode', () => {
   });
 
   test.skip('should zoom in ortho mode via scroll wheel', async ({ page }) => {
-    // SKIP: Synthetic WheelEvent dispatch doesn't trigger orbit controls' wheel handler
-    // in Playwright. Real browser wheel events work correctly. This is a Playwright limitation.
+    // PERMANENT SKIP — neither synthetic WheelEvent dispatch nor real
+    // Playwright `page.mouse.wheel()` (after `canvas#app.hover()`) triggers
+    // the ortho zoom path: camera.zoom stays at 1.0. The orbit-controls
+    // wheel handler may listen on a parent target or require a specific
+    // pointer-event-source that headless Chromium doesn't synthesize.
+    // Functionality works correctly under real browser interaction.
     // Switch to ortho mode (V twice)
     await page.keyboard.press('v');
     await waitForNextRender(page);
@@ -161,7 +165,9 @@ test.describe('Orthographic Camera Mode', () => {
   });
 
   test.skip('should update scale bar on zoom', async ({ page }) => {
-    // SKIP: Depends on scroll wheel zoom which doesn't work with synthetic WheelEvents.
+    // PERMANENT SKIP — same root cause as 'should zoom in ortho mode via
+    // scroll wheel': neither synthetic nor real Playwright wheel events
+    // trigger the ortho-controls zoom path in headless Chromium.
     // Switch to ortho mode for predictable zoom behavior
     await page.keyboard.press('v');
     await waitForNextRender(page);

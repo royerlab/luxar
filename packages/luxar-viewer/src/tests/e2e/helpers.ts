@@ -743,6 +743,83 @@ export async function waitForAnimationStep(
   }
 }
 
+/**
+ * Wait for cache state to settle (no changes across consecutive polls).
+ *
+ * Used for OPFS write settling: the L2 store debounces writes asynchronously,
+ * so reading stats immediately after a load returns mid-flight values. Two
+ * (or more) consecutive identical reads of the cache size signature indicate
+ * pending writes have flushed.
+ *
+ * Returns gracefully if the L2 layer is unavailable (no OPFS in this browser).
+ */
+export async function waitForCacheStable(
+  page: Page,
+  options: { stableReads?: number; pollMs?: number; timeout?: number } = {}
+): Promise<void> {
+  const stableReads = options.stableReads ?? 2;
+  const pollMs = options.pollMs ?? 250;
+  const timeout = options.timeout ?? 8000;
+  const deadline = Date.now() + timeout;
+
+  type Sig = string;
+  const readSignature = async (): Promise<Sig | 'no-l2'> =>
+    page.evaluate(async () => {
+      const debug = (window as any).__luxarDebug;
+      const stats = await debug?.cache?.getStats?.();
+      if (!stats || stats.error) return 'no-l2';
+      const l1 = stats.l1 ?? {};
+      const l2 = stats.l2;
+      if (!l2 || (l2.size === 0 && l2.count === 0 && l2.writes === 0)) return 'no-l2';
+      return `${l1.metadataCount ?? 0}|${l1.chunksCount ?? 0}|${l2.size}|${l2.count}`;
+    });
+
+  let prev: Sig | 'no-l2' | null = null;
+  let consecutiveMatches = 0;
+
+  while (Date.now() < deadline) {
+    const sig = await readSignature();
+    if (sig === 'no-l2') return; // L2 unavailable → nothing to wait for
+    if (sig === prev) {
+      consecutiveMatches += 1;
+      if (consecutiveMatches >= stableReads - 1) return;
+    } else {
+      consecutiveMatches = 0;
+    }
+    prev = sig;
+    await page.waitForTimeout(pollMs);
+  }
+}
+
+/**
+ * Wait until a predicate over accumulated WebGL errors returns true.
+ *
+ * `getWebGLErrors` *drains* the GL queue on each call, so this helper
+ * accumulates errors across polls into a closure-local buffer and tests the
+ * predicate against the union. Use for "wait until at least one error of type
+ * X appears" patterns. For the inverse ("there should be no errors"), use
+ * `waitForRenderStable` then a single `getWebGLErrors` read.
+ */
+export async function waitForWebGLError(
+  page: Page,
+  predicate: (errors: string[]) => boolean,
+  options: { timeout?: number; pollMs?: number } = {}
+): Promise<string[]> {
+  const timeout = options.timeout ?? 5000;
+  const pollMs = options.pollMs ?? 100;
+  const deadline = Date.now() + timeout;
+  const accumulated: string[] = [];
+
+  while (Date.now() < deadline) {
+    const errs = await getWebGLErrors(page);
+    accumulated.push(...errs);
+    if (predicate(accumulated)) return accumulated;
+    await page.waitForTimeout(pollMs);
+  }
+
+  return accumulated;
+}
+
 export async function assertNoConsoleErrors(
   page: Page,
   allowedPatterns: RegExp[] = []

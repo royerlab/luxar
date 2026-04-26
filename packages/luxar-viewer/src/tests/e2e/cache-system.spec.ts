@@ -18,6 +18,7 @@ import {
   getLuxarState,
   assertNoConsoleErrors,
   waitForNextRender,
+  waitForCacheStable,
 } from './helpers';
 
 // Use 3D dataset - 4D datasets may have 0 points visible depending on slice position
@@ -271,8 +272,8 @@ test.describe('Three-Level Cache System (L0/L1/L2)', () => {
     await page.goto(`/?src=${DATASET}&debug&cache-debug`);
     await waitForLuxarReady(page);
 
-    // Wait a bit for OPFS writes to complete (they're async/debounced)
-    await page.waitForTimeout(2000);
+    // Wait for OPFS writes to settle (async/debounced)
+    await waitForCacheStable(page);
 
     // Verify L2 cache has data (if OPFS is available)
     const cacheStats = await page.evaluate(async () => {
@@ -294,7 +295,7 @@ test.describe('Three-Level Cache System (L0/L1/L2)', () => {
     await waitForLuxarReady(page);
 
     // Wait for OPFS to persist
-    await page.waitForTimeout(2000);
+    await waitForCacheStable(page);
 
     const datasets = await page.evaluate(async () => {
       const debug = (window as any).__luxarDebug;

@@ -485,6 +485,10 @@ test-all:  ## Run all tests (Python, Rust/WASM, and TypeScript with fresh fixtur
 		echo "   Run 'make setup-cuda' to enable CUDA testing"; \
 	fi
 
+# GPU contention warning: do not run `test-python` and `test-cuda` in
+# parallel processes — both invoke PyTorch/CUDA on the same device, which
+# produces non-deterministic test failures (observed: ~200 spurious CUDA
+# extension comparison failures when run concurrently). Run sequentially.
 test-python:  ## Run Python tests only
 	hatch run test
 
@@ -1931,6 +1935,10 @@ clean-cuda:  ## Clean CUDA build artifacts
 	rm -rf $(CUDA_EXT_DIR)/__pycache__/
 	@echo "✅ CUDA artifacts cleaned!"
 
+# GPU contention warning: do not run `test-cuda` concurrently with
+# `test-python` (Python test suite includes CUDA tests as a subset). Both
+# claim the same GPU and produce non-deterministic comparison failures.
+# Run sequentially.
 test-cuda:  ## Run CUDA extension tests
 	$(CHECK_MACOS_CUDA)
 	@echo "🧪 Running CUDA extension tests..."

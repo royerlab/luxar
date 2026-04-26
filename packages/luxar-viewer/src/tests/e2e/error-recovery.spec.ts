@@ -129,10 +129,21 @@ test.describe('Error Recovery - Network Failures', () => {
 
     await page.goto('/?src=http://invalid-host-12345.example.com/data.zarr&debug');
 
-    // Should show error after timeout
-    await page.waitForTimeout(8000);
+    // Wait for the recovery UI (error message OR dataset browser fallback) to
+    // appear. The actual network timeout can take several seconds; poll until
+    // the DOM shows we've handled it or the budget elapses.
+    await page
+      .waitForFunction(
+        () =>
+          document.querySelector('.error-message') !== null ||
+          document.querySelector('.dataset-browser') !== null,
+        null,
+        { timeout: 15000 }
+      )
+      .catch(() => {
+        /* fall through to assertion for a meaningful failure message */
+      });
 
-    // Should have error message or fallback to browser
     const hasRecovery = await page.evaluate(() => {
       return (
         document.querySelector('.error-message') !== null ||
@@ -173,11 +184,24 @@ test.describe('Error Recovery - Network Failures', () => {
 
     await page.goto(`/?src=${DATASET}&debug`);
 
-    // Wait for the viewer to handle the partial load
-    await page.waitForTimeout(10000);
+    // Wait for the viewer to handle the partial load: either it recovers
+    // (initialized === true) or it surfaces an error / falls back to the
+    // dataset browser. Poll the disjunction until met or budget elapses.
+    await page
+      .waitForFunction(
+        () =>
+          document.querySelector('.error-message') !== null ||
+          document.querySelector('.luxar-error-dialog') !== null ||
+          document.querySelector('.dataset-browser') !== null ||
+          document.querySelector('.luxar-dataset-browser') !== null ||
+          (window as any).__luxarDebug?.getState?.()?.initialized === true,
+        null,
+        { timeout: 15000 }
+      )
+      .catch(() => {
+        /* fall through to assertion for a meaningful failure message */
+      });
 
-    // The app should not have crashed with unhandled exceptions
-    // It should show an error, dataset browser, or still be initialized (partial load)
     const handled = await page.evaluate(() => {
       return (
         document.querySelector('.error-message') !== null ||

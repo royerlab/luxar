@@ -11,7 +11,7 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { waitForLuxarReady } from './helpers';
+import { waitForLuxarReady, waitForNextRender } from './helpers';
 
 // Test all example datasets for WebGL errors
 const DATASETS = [
@@ -56,8 +56,9 @@ test.describe('WebGL Error Detection - Critical', () => {
       }
     );
 
-    // Wait a bit more to catch any delayed errors
-    await page.waitForTimeout(2000);
+    // Render several more frames to flush any delayed GL errors into the
+    // console listener.
+    await waitForNextRender(page, 5);
 
     // Check for WebGL errors
     if (webglErrors.length > 0) {
@@ -92,7 +93,8 @@ test.describe('WebGL Error Detection - Critical', () => {
         { timeout: 10000 }
       );
 
-      await page.waitForTimeout(1000);
+      // Render several more frames to flush delayed GL errors
+      await waitForNextRender(page, 3);
 
       if (webglErrors.length > 0) {
         console.log(`\n🚨 WebGL errors in ${dataset}:`);
@@ -169,7 +171,8 @@ test.describe('WebGL Error Detection - Critical', () => {
       }
     });
 
-    await page.waitForTimeout(2000);
+    // Wait for the GL command buffer to drain through several real frames
+    await waitForNextRender(page, 10);
 
     if (vertexBufferErrors.length > 0) {
       console.log('\n🚨 CRITICAL: Vertex buffer errors detected!');
@@ -285,7 +288,8 @@ test.describe('WebGL Error Detection - All Datasets', () => {
         { timeout: 10000 }
       );
 
-      await page.waitForTimeout(1000);
+      // Render several more frames to flush delayed GL errors
+      await waitForNextRender(page, 3);
 
       const glErrors = webglErrors.filter((err) => err.includes('GL_INVALID'));
 
