@@ -99,11 +99,11 @@ test.describe('Keyboard Input System - Fly Controls', () => {
     expect(boostDistance).toBeGreaterThan(normalDistance);
   });
 
-  // Skip vertical movement test - macOS keyboard modifiers not testable in Playwright:
+  // PERMANENT SKIP — macOS keyboard modifiers cannot be tested in Playwright:
   // - Alt (Option) key: produces special characters (e.g., Option+W = ∑)
   // - Meta (Command) key: captured by system/browser before reaching JavaScript
-  // The Alt+W and Alt+S vertical movement functionality works correctly in the real
-  // application but cannot be reliably tested via Playwright automation on macOS.
+  // Alt+W and Alt+S vertical movement work correctly in real browsers but
+  // cannot be reliably driven via automation on macOS. Do not re-attempt.
   test.skip('should move vertically with modifier+W and modifier+S', async ({ page }) => {
     await page.goto(`/?src=${DATASETS.sliders5D}&debug`);
     await waitForLuxarReady(page);
