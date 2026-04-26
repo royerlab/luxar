@@ -45,8 +45,11 @@ export class PerformanceMonitor {
     // Panel types: 0=FPS (green), 1=Frame Time ms (yellow), 2=Memory MB (purple)
     this.stats.showPanel(0);
 
-    // Get the DOM element that stats.js creates internally
+    // Get the DOM element that stats.js creates internally. The library
+    // does not set an id or class on this element, so we tag it ourselves
+    // — the injected <style> block below scopes its rules via this id.
     const statsElement = this.stats.dom;
+    statsElement.id = 'luxar-stats';
 
     // Position the panel in bottom-left corner with fixed positioning
     // This ensures it stays visible during camera movements and zoom
@@ -70,22 +73,20 @@ export class PerformanceMonitor {
     // Remove focus outlines to prevent blue selection box
     statsElement.style.outline = 'none';
 
-    // Add CSS to prevent blue selection on all child elements
-    const style = document.createElement('style');
-    style.textContent = `
-      #stats {
-        outline: none !important;
-      }
-      #stats * {
-        outline: none !important;
-        user-select: none !important;
-      }
-      #stats canvas {
-        outline: none !important;
-      }
-    `;
+    // Suppress focus outlines and text-selection on the stats panel and
+    // its (canvas) children. The selectors are scoped to #luxar-stats
+    // (set above) so they cannot leak into the host page.
     if (!document.getElementById('luxar-stats-custom-styles')) {
+      const style = document.createElement('style');
       style.id = 'luxar-stats-custom-styles';
+      style.textContent = `
+        #luxar-stats { outline: none !important; }
+        #luxar-stats * {
+          outline: none !important;
+          user-select: none !important;
+        }
+        #luxar-stats canvas { outline: none !important; }
+      `;
       document.head.appendChild(style);
     }
 

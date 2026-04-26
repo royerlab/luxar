@@ -1564,8 +1564,7 @@ export class InputHandler {
     }
 
     // Close performance stats
-    const statsElement = document.querySelector('.stats') as HTMLElement;
-    if (statsElement && statsElement.style.display !== 'none') {
+    if (this.animationController.performanceStats.visible) {
       this.animationController.performanceStats.hide();
     }
   }

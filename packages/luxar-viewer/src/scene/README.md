@@ -77,8 +77,9 @@ class SceneManager {
 **Usage Example:**
 
 ```typescript
+const canvas = document.getElementById('app') as HTMLCanvasElement;
 const sceneManager = new SceneManager();
-await sceneManager.init();
+await sceneManager.init({ canvas });
 
 // Add objects to scene
 sceneManager.addToScene(pointCloud);
@@ -655,8 +656,9 @@ import { AnimationController } from './scene/animation-controller';
 import { sceneDimsManager } from './scene/scene-dims-manager';
 
 // Initialize scene
+const canvas = document.getElementById('app') as HTMLCanvasElement;
 const sceneManager = new SceneManager();
-await sceneManager.init();
+await sceneManager.init({ canvas });
 const animationController = new AnimationController(
   sceneManager.controls,
   sceneManager.postProcessing

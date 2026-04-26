@@ -310,11 +310,9 @@ export function showError(message: string) {
  * ```
  */
 export function cleanupUI() {
-  // Remove spinner CSS styles
-  const spinnerStyles = document.getElementById('luxar-spinner-styles');
-  if (spinnerStyles) {
-    spinnerStyles.remove();
-  }
+  // Note: loading-indicator/spinner styles live in
+  // src/styles/components/error-dialog.css and are loaded by Vite — there
+  // is no inline <style> element to clean up here.
 
   // Remove any lingering loading indicators
   const loadingDiv = document.getElementById('luxar-loading-indicator');

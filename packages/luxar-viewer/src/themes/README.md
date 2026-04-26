@@ -112,7 +112,9 @@ Filter parameters are configurable: `blurRadius`, `refractionScale`, `chromaticS
 
 ## Persistence
 
-User theme preference is stored in `localStorage` under the key `luxar-theme`. Gracefully degrades in private/incognito mode (logs a warning, continues without persistence).
+User theme preference is stored in `localStorage` under the key `luxar.theme`
+(see `StorageKeys.theme` in `src/utils/storage-keys.ts`). Gracefully degrades
+in private/incognito mode (logs a warning, continues without persistence).
 
 ## File Structure
 
