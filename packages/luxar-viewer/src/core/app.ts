@@ -879,99 +879,59 @@ export class LuxarApp {
         return SceneLoaderManager.getInstance();
       },
 
-      // Cache-specific helpers
+      // Cache-specific helpers — thin wrappers over the SceneLoader cache API.
       cache: {
-        // Get current cache statistics (L0, L1, L2)
         getStats: () => {
-          const manager = SceneLoaderManager.getInstance();
-          const loader = manager.getDefaultLoader();
-          if (!loader) {
-            return { error: 'No active loader found' };
-          }
-
-          // Get L1/L2 stats from caching store
-          const l1l2Stats = (loader as any).cachingStore
-            ? (loader as any).cachingStore.getStats()
-            : { l1: null, l2: null };
-
-          // Get L0 stats from decompressed chunk cache
-          const l0Cache = (loader as any).l0Cache;
-          const l0Stats = l0Cache ? l0Cache.getStats() : null;
-
-          return {
-            l0: l0Stats,
-            l1: l1l2Stats.l1,
-            l2: l1l2Stats.l2,
-          };
+          const loader = SceneLoaderManager.getInstance().getDefaultLoader();
+          if (!loader) return { error: 'No active loader found' };
+          return loader.getCacheStats();
         },
 
-        // List all cached datasets
-        listDatasets: () => {
-          const manager = SceneLoaderManager.getInstance();
-          const loader = manager.getDefaultLoader();
-          if (!loader || !(loader as any).cachingStore) {
+        listDatasets: async () => {
+          const loader = SceneLoaderManager.getInstance().getDefaultLoader();
+          if (!loader || !loader.hasCachingStore) {
             return { error: 'No active cache found' };
           }
-          return (loader as any).cachingStore.listDatasets();
+          return loader.listCachedDatasets();
         },
 
-        // Clear L0 decompressed chunk cache only
         clearL0: () => {
-          const manager = SceneLoaderManager.getInstance();
-          const loader = manager.getDefaultLoader();
-          const l0Cache = loader ? (loader as any).l0Cache : null;
-          if (!l0Cache) {
+          const loader = SceneLoaderManager.getInstance().getDefaultLoader();
+          if (!loader) {
             log.warning(Modules.CACHE, 'No L0 cache found');
             return;
           }
-          l0Cache.clear();
+          loader.clearL0Cache();
           log.info(Modules.CACHE, 'L0 cache cleared');
         },
 
-        // Clear L1 cache only
         clearL1: () => {
-          const manager = SceneLoaderManager.getInstance();
-          const loader = manager.getDefaultLoader();
-          if (!loader || !(loader as any).cachingStore) {
+          const loader = SceneLoaderManager.getInstance().getDefaultLoader();
+          if (!loader || !loader.hasCachingStore) {
             log.warning(Modules.CACHE, 'No active cache found');
             return;
           }
-          (loader as any).cachingStore.clearL1();
+          loader.clearL1Cache();
           log.info(Modules.CACHE, 'L1 cache cleared');
         },
 
-        // Clear L2 cache only
         clearL2: async () => {
-          const manager = SceneLoaderManager.getInstance();
-          const loader = manager.getDefaultLoader();
-          if (!loader || !(loader as any).cachingStore) {
+          const loader = SceneLoaderManager.getInstance().getDefaultLoader();
+          if (!loader || !loader.hasCachingStore) {
             log.warning(Modules.CACHE, 'No active cache found');
             return;
           }
-          await (loader as any).cachingStore.clearL2();
+          await loader.clearL2Cache();
           log.info(Modules.CACHE, 'L2 cache cleared');
         },
 
-        // Clear all caches (L0, L1, L2)
         clearAll: async () => {
-          const manager = SceneLoaderManager.getInstance();
-          const loader = manager.getDefaultLoader();
+          const loader = SceneLoaderManager.getInstance().getDefaultLoader();
           if (!loader) {
             log.warning(Modules.CACHE, 'No active loader found');
             return;
           }
-
-          // Clear L0 decompressed chunk cache
-          const l0Cache = (loader as any).l0Cache;
-          if (l0Cache) {
-            l0Cache.clear();
-          }
-
-          // Clear L1/L2 caching store
-          if ((loader as any).cachingStore) {
-            await (loader as any).cachingStore.clearAll();
-          }
-
+          await loader.clearAllCaches();
           log.info(Modules.CACHE, 'All caches cleared (L0, L1, L2)');
         },
       },
