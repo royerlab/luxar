@@ -201,9 +201,9 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
       inertialMode: this.config.flyInertialMode,
       damping: this.config.flyDamping,
       rotationDamping: this.config.flyRotationDamping,
+      // Keyboard is routed through InputContextManager — see input/README.md.
+      externalInputManagement: true,
     });
-
-    controls.setExternalInputManagement(true);
 
     controls.addEventListener('change', () => this.dispatchEvent({ type: 'change' }));
     controls.addEventListener('start', () => this.dispatchEvent({ type: 'start' }));

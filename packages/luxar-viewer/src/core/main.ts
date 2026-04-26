@@ -25,9 +25,10 @@ _codecRegistry
 import { LuxarApp } from './app';
 import { config } from '../config';
 import { validateAndLog } from '../config/validation';
+import { readUrlParams } from '../config/url-params';
+import { StorageKeys } from '../utils/storage-keys';
 import { showError } from '../ui/helpers';
 import { ThemeManager } from '../themes/theme-manager';
-import type { LuxarCamera } from '../scene/camera-utils';
 
 // Validate configuration at startup
 const configValid = validateAndLog(config);
@@ -35,20 +36,19 @@ if (!configValid) {
   log.error(Modules.MAIN, 'Application starting with invalid configuration - errors may occur');
 }
 
+// Single source of truth for URL-derived flags. Components downstream do not
+// re-read window.location — values flow through LuxarAppOptions / LoaderConfig.
+const urlParams = readUrlParams();
+
 // Initialize theme system early (before any UI components are created)
 const themeManager = ThemeManager.getInstance();
 
-// Parse URL parameters
-const params = new URLSearchParams(window.location.search);
-
-// Support ?theme=light URL parameter
-const themeParam = params.get('theme');
-if (themeParam) {
+if (urlParams.theme) {
   try {
-    themeManager.setTheme(themeParam);
-    log.custom(LogEmoji.START, Modules.LUXAR, `Theme set from URL: ${themeParam}`);
+    themeManager.setTheme(urlParams.theme);
+    log.custom(LogEmoji.START, Modules.LUXAR, `Theme set from URL: ${urlParams.theme}`);
   } catch {
-    log.warning(Modules.LUXAR, `Invalid theme in URL: ${themeParam}, using default`);
+    log.warning(Modules.LUXAR, `Invalid theme in URL: ${urlParams.theme}, using default`);
   }
 } else {
   log.custom(
@@ -58,46 +58,23 @@ if (themeParam) {
   );
 }
 
-// Parse scene source parameter
-const src = params.get('src') ?? config.defaultZarrPath;
+const src = urlParams.src ?? config.defaultZarrPath;
+
+// Resolve the canvas element here — main.ts is the only place that maps
+// the standalone-app HTML structure to a DOM node. SceneManager and
+// downstream components receive the canvas as a parameter.
+const canvas = document.getElementById('app') as HTMLCanvasElement | null;
+if (!canvas) {
+  showError("Canvas element with id 'app' not found in the page.");
+  throw new Error("Required canvas element 'app' not found");
+}
 
 // Initialize and start the application
 const app = new LuxarApp();
 
-// Type-safe debug interface (only in development builds)
-// Note: This interface is extended in app.ts after initialization
-// to include runtime components (scene, camera, etc.)
-declare global {
-  interface Window {
-    __luxarDebug?: {
-      // Base properties (available from main.ts)
-      app: LuxarApp;
-      consoleInterceptor: typeof consoleInterceptor;
-      version: string;
-
-      // Runtime properties (added by app.ts after initialization)
-      scene?: THREE.Scene;
-      camera?: LuxarCamera;
-      renderer?: THREE.WebGLRenderer;
-      controls?: any; // ControlsManager not imported here
-      postProcessing?: any; // PostProcessingManager not imported here
-      animationController?: any;
-      inputHandler?: any;
-      renderingControls?: any;
-      getState?: () => any;
-      renderOnce?: () => void;
-      getSceneLoader?: () => Promise<any>;
-      runtimeReady?: boolean;
-    };
-  }
-}
-
-// Import THREE for type definitions
-import * as THREE from 'three';
-
-// Only expose debug interface in development/debug mode
-// Check for debug flag in URL or localStorage
-const isDebugMode = params.has('debug') || localStorage.getItem('luxar_debug') === 'true';
+// Only expose debug interface in development/debug mode.
+// The Window['__luxarDebug'] type lives in src/types/window.d.ts.
+const isDebugMode = urlParams.debug || localStorage.getItem(StorageKeys.debug) === 'true';
 if (isDebugMode) {
   window.__luxarDebug = {
     app,
@@ -107,10 +84,23 @@ if (isDebugMode) {
   log.custom(LogEmoji.CONSOLE, Modules.LUXAR, 'Debug interface available at window.__luxarDebug');
 }
 
-app.init(src).catch((error) => {
-  log.error(Modules.LUXAR, 'Failed to start Luxar application:', error);
-
-  // Show error to user if it wasn't already handled by lower-level error handlers
-  // This ensures any initialization errors that don't get displayed are still shown
-  showError('Failed to start the application. Please check the console for details.');
-});
+app
+  .init({
+    canvas,
+    src,
+    debug: isDebugMode,
+    loaderConfig: {
+      noCache: urlParams.noCache,
+      cacheDebug: urlParams.cacheDebug,
+      clearCache: urlParams.clearCache,
+      noPrefetch: urlParams.noPrefetch,
+      prefetchDebug: urlParams.prefetchDebug,
+    },
+  })
+  .catch((error) => {
+    log.error(Modules.LUXAR, 'Failed to start Luxar application:', error);
+    // Show error to user if it wasn't already handled by lower-level error
+    // handlers — guarantees init failures are surfaced even when no nested
+    // error UI fired.
+    showError('Failed to start the application. Please check the console for details.');
+  });

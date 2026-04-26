@@ -531,9 +531,6 @@ export const config: AppConfig = {
   // Default path to demo Zarr data when no source is specified
   // Empty string = show dataset browser instead of attempting to load non-existent dataset
   defaultZarrPath: '',
-
-  // HTML element ID for the canvas where 3D rendering occurs
-  canvasId: 'app',
 } as const;
 
 // Export types

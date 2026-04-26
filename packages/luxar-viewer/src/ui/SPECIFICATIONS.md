@@ -559,12 +559,17 @@ class RenderingControls {
 
 ### 5.4 Settings Persistence
 
-**Storage Key Generation**:
+**Storage Key Generation**: rendering settings are persisted under the
+`luxar.rendering.<sanitized-sceneId>` namespace via the central
+`StorageKeys` registry in `src/utils/storage-keys.ts`. All localStorage
+keys the viewer reads or writes are dot-namespaced under `luxar.*`, with
+scene-id segments sanitized by replacing non-alphanumeric characters
+(other than `-` and `_`) with underscores.
 
 ```typescript
-function generateSettingsKey(sceneId: string): string {
-  return `luxar-rendering-settings-${sceneId}`;
-}
+import { StorageKeys } from '../utils/storage-keys';
+
+const key = StorageKeys.rendering(sceneId); // 'luxar.rendering.<sanitized-sceneId>'
 ```
 
 **Serialization**:
@@ -1046,12 +1051,12 @@ function cleanupUI(): void; // Removes all UI elements
 ```typescript
 function showError(message: string): void {
   // 1. Remove existing error (prevent duplicates)
-  const existing = document.getElementById('error-message');
+  const existing = document.getElementById('luxar-error-message');
   if (existing) existing.remove();
 
   // 2. Create error dialog
   const errorDiv = document.createElement('div');
-  errorDiv.id = 'error-message';
+  errorDiv.id = 'luxar-error-message';
 
   // 3. Build content structure
   errorDiv.innerHTML = `

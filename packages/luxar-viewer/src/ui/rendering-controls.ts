@@ -11,12 +11,9 @@ import { ThemeManager } from '../themes/theme-manager';
 
 import type { RenderingControllers } from '../controls/types';
 import { isOrbitControls } from '../controls/types';
-import {
-  generateSettingsKey,
-  serializeSettings,
-  deserializeSettings,
-} from './rendering-controls-utils';
+import { serializeSettings, deserializeSettings } from './rendering-controls-utils';
 import { log, Modules } from '../utils/log';
+import { StorageKeys } from '../utils/storage-keys';
 import { setupNavigationControls } from './rendering-controls/navigation-setup';
 import { setupCameraControls } from './rendering-controls/camera-setup';
 import { setupHDRControls } from './rendering-controls/hdr-setup';
@@ -429,7 +426,7 @@ export class RenderingControls {
 
     // Clear saved settings for this scene (before applying, so user sees clean state)
     if (this.sceneId) {
-      const key = generateSettingsKey(this.sceneId);
+      const key = StorageKeys.rendering(this.sceneId);
       localStorage.removeItem(key);
     }
 
@@ -1019,7 +1016,7 @@ export class RenderingControls {
   private saveSettings(): void {
     if (!this.sceneId) return;
 
-    const key = generateSettingsKey(this.sceneId);
+    const key = StorageKeys.rendering(this.sceneId);
     localStorage.setItem(key, serializeSettings(this.settings));
   }
 
@@ -1032,7 +1029,7 @@ export class RenderingControls {
     // Snapshot is session-only; clear it when loading persisted settings
     this.cinematicSnapshot = null;
 
-    const key = generateSettingsKey(this.sceneId);
+    const key = StorageKeys.rendering(this.sceneId);
     const stored = localStorage.getItem(key);
     this.hasStoredLocalSettings = !!stored;
 

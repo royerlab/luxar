@@ -264,12 +264,12 @@ describe('DimensionSliders - Binary Toggle Controls', () => {
     });
 
     // First toggle (DAPI, currentStep=0 → shows "Off", no --on class)
-    const firstToggle = document.getElementById('dim-toggle-3')!;
+    const firstToggle = document.getElementById('luxar-dim-toggle-3')!;
     expect(firstToggle.textContent).toBe('Off');
     expect(firstToggle.classList.contains('luxar-dimension-toggle--on')).toBe(false);
 
     // Second toggle (GFP, currentStep=1 → shows "On", has --on class)
-    const secondToggle = document.getElementById('dim-toggle-4')!;
+    const secondToggle = document.getElementById('luxar-dim-toggle-4')!;
     expect(secondToggle.textContent).toBe('On');
     expect(secondToggle.classList.contains('luxar-dimension-toggle--on')).toBe(true);
 

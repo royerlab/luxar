@@ -200,7 +200,7 @@ test.describe('Mouse Interactions', () => {
 
     // Verify the help overlay appeared
     const helpVisible = await page.evaluate(() => {
-      const overlay = document.getElementById('help-overlay');
+      const overlay = document.getElementById('luxar-help-overlay');
       if (!overlay) return false;
       return overlay.classList.contains('luxar-help-overlay');
     });

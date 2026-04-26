@@ -49,8 +49,7 @@ export const config: AppConfig = {
     dataLoading: { ... },
     webgl: { ... },
     cache: { ... },
-    defaultZarrPath: '',
-    canvasId: 'app'
+    defaultZarrPath: ''
 }
 
 // config/types.ts - Type definitions
@@ -68,7 +67,6 @@ export interface AppConfig {
     webgl: WebGLConfig
     cache: CacheConfig
     defaultZarrPath: string
-    canvasId: string
 }
 ```
 

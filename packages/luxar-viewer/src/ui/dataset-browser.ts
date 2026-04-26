@@ -13,6 +13,10 @@ export interface DatasetBrowserConfig {
   /** Callback when a dataset is selected. Receives the full URL (not just the path). */
   onDatasetSelect: (fullUrl: string) => void;
   onClose?: () => void;
+  /** Currently loaded dataset URL, used to determine the initial directory. */
+  currentSrc?: string;
+  /** Fallback origin for relative path resolution (defaults to `window.location.origin`). */
+  origin?: string;
 }
 
 /**
@@ -26,22 +30,25 @@ export class DatasetBrowser {
   private onClose?: () => void;
   private currentDataset?: string;
 
+  /** Origin used for relative path resolution; captured at construction. */
+  private readonly origin: string;
+
   constructor(config: DatasetBrowserConfig) {
     this.container = config.container;
     this.onDatasetSelect = config.onDatasetSelect;
     this.onClose = config.onClose;
+    this.origin =
+      config.origin ?? (typeof window !== 'undefined' ? window.location.origin : '');
 
-    // Parse base URL from current location
-    const params = new URLSearchParams(window.location.search);
-    const src = params.get('src') || '';
+    const src = (config.currentSrc ?? '').trim();
 
     // Determine base URL and initial path for browsing
     let baseUrl: string;
     let initialPath: string;
 
-    if (!src || src.trim() === '') {
+    if (!src) {
       // No dataset specified - show browser at root, will display manual entry
-      baseUrl = window.location.origin + '/';
+      baseUrl = this.origin + '/';
       initialPath = ''; // Don't navigate - just show the browser UI
     } else if (src.includes('.zarr/') || src.endsWith('.zarr')) {
       // We're inside or at a zarr dataset - navigate to parent directory
@@ -68,7 +75,7 @@ export class DatasetBrowser {
         }
       } catch {
         // If URL parsing fails, fall back to sensible defaults
-        baseUrl = window.location.origin + '/';
+        baseUrl = this.origin + '/';
         initialPath = '';
       }
     } else {
@@ -88,7 +95,7 @@ export class DatasetBrowser {
    * Extract base URL from a full URL.
    */
   private extractBaseUrl(url: string): string {
-    if (!url) return window.location.origin + '/';
+    if (!url) return this.origin + '/';
 
     try {
       const parsed = new URL(url);
@@ -135,20 +142,20 @@ export class DatasetBrowser {
    */
   private createPanel(): HTMLElement {
     const panel = document.createElement('div');
-    panel.id = 'dataset-browser';
+    panel.id = 'luxar-dataset-browser';
     panel.className = 'luxar-dataset-browser dataset-browser'; // luxar-dataset-browser for styling, dataset-browser for E2E tests
 
     // ARIA attributes for accessibility
     panel.setAttribute('role', 'dialog');
     panel.setAttribute('aria-modal', 'true');
-    panel.setAttribute('aria-labelledby', 'dataset-browser-title');
+    panel.setAttribute('aria-labelledby', 'luxar-dataset-browser-title');
 
     // Header
     const header = document.createElement('div');
     header.className = 'luxar-dataset-browser__header';
 
     const title = document.createElement('h2');
-    title.id = 'dataset-browser-title';
+    title.id = 'luxar-dataset-browser-title';
     title.className = 'luxar-dataset-browser__title';
     title.textContent = 'Select Dataset';
 
@@ -164,7 +171,7 @@ export class DatasetBrowser {
 
     // Compact help banner with essential guidance
     const welcomeBanner = document.createElement('div');
-    welcomeBanner.id = 'browser-welcome';
+    welcomeBanner.id = 'luxar-dataset-browser-welcome';
     welcomeBanner.className = 'luxar-dataset-browser__banner';
 
     welcomeBanner.innerHTML = `
@@ -182,17 +189,17 @@ export class DatasetBrowser {
 
     // Breadcrumb navigation
     const breadcrumb = document.createElement('div');
-    breadcrumb.id = 'breadcrumb';
+    breadcrumb.id = 'luxar-dataset-browser-breadcrumb';
     breadcrumb.className = 'luxar-dataset-browser__breadcrumb';
 
     // Content area
     const content = document.createElement('div');
-    content.id = 'browser-content';
+    content.id = 'luxar-dataset-browser-content';
     content.className = 'luxar-dataset-browser__content';
 
     // Status bar
     const statusBar = document.createElement('div');
-    statusBar.id = 'browser-status';
+    statusBar.id = 'luxar-dataset-browser-status';
     statusBar.className = 'luxar-dataset-browser__status';
 
     panel.appendChild(header);
@@ -209,8 +216,8 @@ export class DatasetBrowser {
    * Navigate to a path and update the UI.
    */
   private async navigate(path: string): Promise<void> {
-    const content = this.panel.querySelector('#browser-content') as HTMLElement;
-    const statusBar = this.panel.querySelector('#browser-status') as HTMLElement;
+    const content = this.panel.querySelector('#luxar-dataset-browser-content') as HTMLElement;
+    const statusBar = this.panel.querySelector('#luxar-dataset-browser-status') as HTMLElement;
 
     // Show loading state
     content.innerHTML = '<div class="luxar-dataset-browser__loading">Loading...</div>';
@@ -272,7 +279,7 @@ export class DatasetBrowser {
    * Update breadcrumb navigation.
    */
   private updateBreadcrumb(currentPath: string): void {
-    const breadcrumb = this.panel.querySelector('#breadcrumb') as HTMLElement;
+    const breadcrumb = this.panel.querySelector('#luxar-dataset-browser-breadcrumb') as HTMLElement;
     breadcrumb.innerHTML = '';
 
     // Root link
@@ -319,7 +326,7 @@ export class DatasetBrowser {
    * Display directory entries.
    */
   private displayEntries(entries: DirectoryEntry[]): void {
-    const content = this.panel.querySelector('#browser-content') as HTMLElement;
+    const content = this.panel.querySelector('#luxar-dataset-browser-content') as HTMLElement;
     content.innerHTML = '';
 
     if (entries.length === 0) {
@@ -418,7 +425,7 @@ export class DatasetBrowser {
    * Show manual entry form for servers that don't support listing.
    */
   private showManualEntry(): void {
-    const content = this.panel.querySelector('#browser-content') as HTMLElement;
+    const content = this.panel.querySelector('#luxar-dataset-browser-content') as HTMLElement;
 
     content.innerHTML = `
       <div class="luxar-dataset-browser__manual-entry">

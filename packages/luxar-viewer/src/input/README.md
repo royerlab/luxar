@@ -28,6 +28,82 @@ input/
 
 ---
 
+## Three-layer architecture (read this first)
+
+`input-handler.ts` is **not** the place where every input event in Luxar is
+handled — its scope is viewer-level. Input handling is deliberately split
+across three layers, each owning a different scope. Pick the right layer
+when adding a new listener.
+
+### Layer 1 — `input/input-handler.ts` (viewer-wide)
+
+Owns concerns that span the whole viewer surface:
+
+- Window-level events: `resize`, `wheel`, `keydown`/`keyup`, `fullscreenchange`.
+- Global keyboard shortcuts: `H` (help), `P` (perf), `R` (rendering controls),
+  `N` (sliders), `T` (recording), dimension navigation `[`/`]`/`1–9`,
+  control-mode switches `V`/`I`/`F`.
+- Wheel-based zoom and FOV adjust (Ctrl+wheel).
+- Fullscreen enter/exit canvas styling.
+
+It hosts the `InputContextManager` (Layer 1's keyboard dispatcher) which is
+the **only** place that should attach a `window` `keydown`/`keyup` listener
+in the entire viewer.
+
+### Layer 2 — `controls/luxar-fly-controls.ts` (camera motion)
+
+Camera-control input — WASD, mouse-look, arrow keys, roll on Shift+wheel.
+
+Fly-controls keyboard listeners are **mediated by Layer 1's
+`InputContextManager`**, not registered independently. When constructed
+with `externalInputManagement: true` (which `controls-manager.ts` always
+does), the controls do not attach `window` keyboard listeners; instead
+Layer 1 calls `controls.handleKeyDown(event)` / `handleKeyUp(event)` from
+inside its key dispatcher. Mouse-look stays local because it's tied to the
+canvas DOM element.
+
+This seam is what prevents "two listeners both fire keydown" bugs while
+fly mode is active.
+
+### Layer 3 — UI-local handlers (in `ui/*.ts`)
+
+UI components attach their own listeners for genuinely *local* concerns
+that have no business going through a viewer-wide handler:
+
+- `ui/helpers.ts` — close help overlay on outside-click.
+- `ui/dimension-sliders.ts` — context-menu close on outside-click /
+  Escape inside a popup.
+- `ui/rendering-controls.ts` — mousedown-capture for click-outside-panel.
+- `ui/debug-console.ts` — mousemove/mouseup for drag-resize.
+
+These listeners are scoped to the component's lifecycle (added in `init`,
+removed in `dispose`), and they don't duplicate any Layer 1 concern. A
+viewer-wide handler has no idea which of three popups should close on an
+outside click — that's strictly local knowledge.
+
+### Rule of thumb
+
+Adding a new listener? Pick the layer by *who knows what*:
+
+- **Affects the whole viewer** (resize, global shortcut, fullscreen) → Layer 1.
+- **Camera motion** → Layer 2 (and register through `InputContextManager`,
+  not `window`).
+- **Local to one panel/overlay** (click-outside, drag handle, focus trap) →
+  Layer 3, in the component's own dispose lifecycle.
+
+Watch out in particular for:
+
+- Two `keydown` listeners on `window` from different layers — Layer 1's
+  `InputContextManager` is the *only* place that should attach a global
+  `keydown`.
+- Document-level click handlers competing for "outside click" semantics —
+  if two popups can be open simultaneously and both want the next click,
+  use `OverlayManager` to mediate rather than racing handlers.
+
+The rest of this README zooms into Layer 1 specifically.
+
+---
+
 ## Components
 
 ### 1. Input Handler

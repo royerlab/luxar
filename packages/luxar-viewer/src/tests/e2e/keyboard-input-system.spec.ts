@@ -220,7 +220,7 @@ test.describe('Keyboard Input System - keyupHandler Feature', () => {
     // Get all panel states before
     const statesBefore = await page.evaluate(() => {
       return {
-        help: !!document.getElementById('help-overlay'),
+        help: !!document.getElementById('luxar-help-overlay'),
         rendering: !!document.querySelector('.luxar-gui'),
         performance: !!document.querySelector('[role="status"][aria-label*="Performance"]'),
       };
@@ -235,7 +235,7 @@ test.describe('Keyboard Input System - keyupHandler Feature', () => {
     // Get panel states after
     const statesAfter = await page.evaluate(() => {
       return {
-        help: !!document.getElementById('help-overlay'),
+        help: !!document.getElementById('luxar-help-overlay'),
         rendering: !!document.querySelector('.luxar-gui'),
         performance: !!document.querySelector('[role="status"][aria-label*="Performance"]'),
       };
@@ -491,7 +491,7 @@ test.describe('Keyboard Input System - Context Passthrough', () => {
 
     // Check if help is visible
     const helpVisible = await page.evaluate(() => {
-      const helpOverlay = document.querySelector('#help-overlay, .help-overlay');
+      const helpOverlay = document.querySelector('#luxar-help-overlay, .help-overlay');
       return !!helpOverlay;
     });
 
@@ -606,7 +606,7 @@ test.describe('Keyboard Input System - Escape Key', () => {
 
     // Verify help is visible
     const helpVisible = await page.evaluate(() => {
-      return !!document.getElementById('help-overlay');
+      return !!document.getElementById('luxar-help-overlay');
     });
     expect(helpVisible).toBe(true);
 
@@ -616,7 +616,7 @@ test.describe('Keyboard Input System - Escape Key', () => {
 
     // Verify help is closed
     const helpClosed = await page.evaluate(() => {
-      return !!document.getElementById('help-overlay');
+      return !!document.getElementById('luxar-help-overlay');
     });
     expect(helpClosed).toBe(false);
   });
@@ -714,7 +714,7 @@ test.describe('Keyboard Input System - Case Sensitivity', () => {
 
     // Help should appear (case-insensitive)
     const helpVisible = await page.evaluate(() => {
-      return !!document.getElementById('help-overlay');
+      return !!document.getElementById('luxar-help-overlay');
     });
 
     expect(helpVisible).toBe(true);

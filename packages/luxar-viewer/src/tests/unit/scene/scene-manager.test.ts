@@ -191,10 +191,10 @@ const mockCanvas = {
   removeEventListener: vi.fn(),
 };
 
-// Mock document.getElementById - returns null unless it's 'app' (the default canvas ID)
+// Mock document.getElementById - returns null unless it's 'app' (the canvas id used by main.ts)
 vi.stubGlobal('document', {
   getElementById: vi.fn((id) => {
-    if (id === 'app') return mockCanvas; // 'app' is the default canvasId in config
+    if (id === 'app') return mockCanvas; // 'app' is the canvas id resolved by main.ts
     return null; // All other IDs return null (loading-indicator, error-message, etc.)
   }),
   head: {
@@ -339,7 +339,7 @@ describe('SceneManager', () => {
 
   describe('initialization', () => {
     it('should initialize all components', async () => {
-      await sceneManager.init();
+      await sceneManager.init({ canvas: mockCanvas as any });
 
       expect(sceneManager.renderer).toBeDefined();
       expect(sceneManager.scene).toBeDefined();
@@ -349,14 +349,14 @@ describe('SceneManager', () => {
     });
 
     it('should setup scene with correct properties', async () => {
-      await sceneManager.init();
+      await sceneManager.init({ canvas: mockCanvas as any });
 
       expect(sceneManager.scene).toBeInstanceOf(THREE.Scene);
       expect(sceneManager.scene.background).toBeInstanceOf(THREE.Color);
     });
 
     it('should setup camera with perspective projection', async () => {
-      await sceneManager.init();
+      await sceneManager.init({ canvas: mockCanvas as any });
 
       expect(sceneManager.camera).toBeInstanceOf(THREE.PerspectiveCamera);
       expect((sceneManager.camera as THREE.PerspectiveCamera).fov).toBe(47);
@@ -368,23 +368,17 @@ describe('SceneManager', () => {
       // Spy on private doUpdateSize method using type assertion
       const doUpdateSizeSpy = vi.spyOn(sceneManager as any, 'doUpdateSize');
 
-      await sceneManager.init();
+      await sceneManager.init({ canvas: mockCanvas as any });
 
       // Should call doUpdateSize directly (immediate sizing, no debounce)
       expect(doUpdateSizeSpy).toHaveBeenCalledWith(window.innerWidth, window.innerHeight);
     });
 
-    it('should handle missing canvas element gracefully', async () => {
-      (document.getElementById as any).mockReturnValueOnce(null);
-
-      await expect(sceneManager.init()).rejects.toThrow('Required canvas element not found');
-      // Note: showError is called in setupCanvas, but the test throws before we can verify
-    });
   });
 
   describe('scene loading', () => {
     beforeEach(async () => {
-      await sceneManager.init();
+      await sceneManager.init({ canvas: mockCanvas as any });
     });
 
     it('should load scene from URL', async () => {
@@ -393,7 +387,7 @@ describe('SceneManager', () => {
       await sceneManager.loadSceneData(testUrl);
 
       expect(mockShowLoadingIndicator).toHaveBeenCalled();
-      expect(mockLoadScene).toHaveBeenCalledWith(testUrl);
+      expect(mockLoadScene).toHaveBeenCalledWith(testUrl, undefined);
       expect(mockHideLoadingIndicator).toHaveBeenCalled();
     });
 
@@ -425,7 +419,7 @@ describe('SceneManager', () => {
 
   describe('rendering', () => {
     beforeEach(async () => {
-      await sceneManager.init();
+      await sceneManager.init({ canvas: mockCanvas as any });
     });
 
     it('should update size when canvas dimensions change', () => {
@@ -440,7 +434,7 @@ describe('SceneManager', () => {
 
   describe('resource management', () => {
     beforeEach(async () => {
-      await sceneManager.init();
+      await sceneManager.init({ canvas: mockCanvas as any });
     });
 
     it('should dispose all resources', () => {
@@ -481,7 +475,7 @@ describe('SceneManager', () => {
 
   describe('helper methods', () => {
     beforeEach(async () => {
-      await sceneManager.init();
+      await sceneManager.init({ canvas: mockCanvas as any });
     });
 
     it('should add objects to scene', () => {
@@ -519,7 +513,7 @@ describe('SceneManager', () => {
 
   describe('centering and focus methods', () => {
     beforeEach(async () => {
-      await sceneManager.init();
+      await sceneManager.init({ canvas: mockCanvas as any });
     });
 
     it('should get current center correctly', () => {
@@ -576,7 +570,7 @@ describe('SceneManager', () => {
 
   describe('error handling', () => {
     beforeEach(async () => {
-      await sceneManager.init();
+      await sceneManager.init({ canvas: mockCanvas as any });
     });
 
     it('should handle renderer operations without errors', () => {
@@ -603,7 +597,7 @@ describe('SceneManager', () => {
 
   describe('position bounds from metadata', () => {
     beforeEach(async () => {
-      await sceneManager.init();
+      await sceneManager.init({ canvas: mockCanvas as any });
     });
 
     it('should return null when no position bounds in scene', () => {

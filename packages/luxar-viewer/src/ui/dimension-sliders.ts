@@ -227,7 +227,7 @@ export class DimensionSliders {
    */
   private createSlidersContainer(): HTMLElement {
     const container = document.createElement('div');
-    container.id = 'dimension-sliders';
+    container.id = 'luxar-dimension-sliders';
     container.className = 'luxar-dimension-sliders';
 
     this.container.appendChild(container);
@@ -425,7 +425,7 @@ export class DimensionSliders {
 
     // Create dropdown matching Luxar UI style
     const dropdown = document.createElement('select');
-    dropdown.id = `dim-dropdown-${dimIndex}`;
+    dropdown.id = `luxar-dim-dropdown-${dimIndex}`;
     dropdown.className = 'luxar-dimension-dropdown__select';
 
     // Note: Hover/focus states now handled by CSS :hover and :focus pseudo-classes
@@ -561,7 +561,7 @@ export class DimensionSliders {
     // Single button toggle — shows current value, click swaps to other
     const toggle = document.createElement('div');
     toggle.className = 'luxar-dimension-toggle';
-    toggle.id = `dim-toggle-${dimIndex}`;
+    toggle.id = `luxar-dim-toggle-${dimIndex}`;
     toggle.setAttribute('role', 'switch');
     toggle.setAttribute('aria-label', `${name}: click to toggle`);
     toggle.tabIndex = 0;
@@ -686,7 +686,7 @@ export class DimensionSliders {
     }
 
     const valueLabel = document.createElement('span');
-    valueLabel.id = `dim-value-${dimIndex}`;
+    valueLabel.id = `luxar-dim-value-${dimIndex}`;
     valueLabel.className = 'luxar-dimension-slider__value';
 
     label.appendChild(dimName);
@@ -698,13 +698,13 @@ export class DimensionSliders {
 
     // Progress bar background
     const progressBar = document.createElement('div');
-    progressBar.id = `progress-${dimIndex}`;
+    progressBar.id = `luxar-dim-progress-${dimIndex}`;
     progressBar.className = 'luxar-dimension-slider__progress';
 
     // Create range input
     const slider = document.createElement('input');
     slider.type = 'range';
-    slider.id = `dim-slider-${dimIndex}`;
+    slider.id = `luxar-dim-slider-${dimIndex}`;
     slider.className = 'luxar-dimension-slider__input';
 
     // Configure slider based on discrete/continuous
@@ -723,7 +723,7 @@ export class DimensionSliders {
 
     // Custom thumb indicator
     const thumb = document.createElement('div');
-    thumb.id = `thumb-${dimIndex}`;
+    thumb.id = `luxar-dim-thumb-${dimIndex}`;
     thumb.className = 'luxar-dimension-slider__thumb';
 
     // Set initial value
@@ -826,7 +826,7 @@ export class DimensionSliders {
   private updateSliderVisuals(dimIndex: number, value: number, isDiscrete: boolean): void {
     const dimMeta = this.dims.metadata?.[dimIndex];
     const unit = this.dimensionUnits[dimIndex] || '';
-    const valueLabel = document.getElementById(`dim-value-${dimIndex}`);
+    const valueLabel = document.getElementById(`luxar-dim-value-${dimIndex}`);
 
     if (valueLabel) {
       const categories = dimMeta?.categories;
@@ -869,13 +869,13 @@ export class DimensionSliders {
     const fraction = range === 0 ? 0.5 : (value - min) / range;
 
     // Update progress bar
-    const progressBar = document.getElementById(`progress-${dimIndex}`);
+    const progressBar = document.getElementById(`luxar-dim-progress-${dimIndex}`);
     if (progressBar) {
       progressBar.style.width = `${fraction * 100}%`;
     }
 
     // Update thumb position
-    const thumb = document.getElementById(`thumb-${dimIndex}`);
+    const thumb = document.getElementById(`luxar-dim-thumb-${dimIndex}`);
     if (thumb) {
       const containerWidth = thumb.parentElement?.offsetWidth || 300;
       const thumbWidth = 16;

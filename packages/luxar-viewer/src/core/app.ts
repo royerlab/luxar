@@ -24,6 +24,39 @@ import * as zarr from 'zarrita';
 import { PickingSystem, type PickResult } from '../rendering/picking/picking-system';
 import { LabelLoader } from '../data/label-loader';
 import { ImageLabelLoader } from '../data/image-label-loader';
+import type { LoaderConfig } from '../data/data-loader-types';
+import { consoleInterceptor } from '../utils/console-interceptor';
+
+/**
+ * Init-time options for {@link LuxarApp.init}.
+ *
+ * Typically constructed by `main.ts` from `readUrlParams()`, but any caller
+ * can provide values directly — useful for tests, embedding, and notebook
+ * integrations where `window.location` is not the right source.
+ */
+export interface LuxarAppOptions {
+  /**
+   * Canvas element to render into. The standalone app's main.ts resolves
+   * this via `document.getElementById('app')`; embedders pass any
+   * HTMLCanvasElement they own.
+   */
+  canvas: HTMLCanvasElement;
+  /** Dataset URL. Defaults to {@link config.defaultZarrPath}. */
+  src?: string;
+  /** Expose `window.__luxarDebug` and verbose hardware logging. */
+  debug?: boolean;
+  /** Cache and prefetch flags forwarded to the data loader. */
+  loaderConfig?: LoaderConfig;
+  /**
+   * Reflect the loaded dataset URL in the browser address bar via
+   * `history.replaceState` so the page can be reloaded or shared.
+   *
+   * Defaults to `true` (matches the standalone app's behavior). Embedded
+   * callers must set this to `false` — otherwise picking a dataset from
+   * the browser will rewrite the host page's URL.
+   */
+  updateBrowserUrl?: boolean;
+}
 
 export class LuxarApp {
   private sceneManager!: SceneManager;
@@ -43,10 +76,20 @@ export class LuxarApp {
   private imageLabelLoader?: ImageLabelLoader;
   private pickingCleanup?: () => void;
   private isInitialized = false;
-  private boundCleanup: (() => void) | null = null;
+  private boundDispose: (() => void) | null = null;
   private boundFocusHandler: (() => void) | null = null;
   private boundVisibilityHandler: (() => void) | null = null;
   private boundDatasetBrowserHandler: (() => void) | null = null;
+
+  /**
+   * Snapshot of init-time options. Populated by `init()` and read by
+   * setupDebugInterface, dataset-browser callbacks, and other components
+   * that need URL-derived flags without re-reading `window.location`.
+   *
+   * Definitely-assigned: every method that reads `this.options` runs after
+   * `init()`, which assigns the field as its first action.
+   */
+  private options!: LuxarAppOptions;
 
   /**
    * Initialize the complete Luxar application.
@@ -62,12 +105,9 @@ export class LuxarApp {
    * animation loop starts BEFORE data loading, providing visual feedback
    * even during long load operations.
    *
-   * @param src - URL or path to the Zarr dataset. Can be:
-   *              - HTTP URL: 'https://example.com/data.zarr'
-   *              - Directory path ending with '/': Shows dataset browser
-   *              - Omitted: Uses config.defaultZarrPath
-   *              - Query params supported: '?no-cache', '?cache-debug', '?clear-cache',
-   *                '?debug', '?no-prefetch'
+   * @param options - Init-time options. URL parameters are not consulted
+   *                  here — main.ts is responsible for reading them and
+   *                  passing the result.
    *
    * @returns Promise that resolves when initialization is complete and
    *          dataset loading has started (may still be loading in background).
@@ -79,41 +119,24 @@ export class LuxarApp {
    *
    * @example
    * ```typescript
-   * // Basic initialization with URL
    * const app = new LuxarApp();
-   * await app.init('https://example.com/cells.zarr');
-   * // App is now running, data loading in background
-   * ```
-   *
-   * @example
-   * ```typescript
-   * // Show dataset browser
-   * const app = new LuxarApp();
-   * await app.init('https://example.com/datasets/');
-   * // User can browse and select datasets
-   * ```
-   *
-   * @example
-   * ```typescript
-   * // With error handling
-   * const app = new LuxarApp();
-   * try {
-   *   await app.init(datasetUrl);
-   *   console.log('✅ Luxar initialized successfully');
-   * } catch (error) {
-   *   console.error('❌ Initialization failed:', error);
-   *   // Fallback or retry logic
-   * }
+   * await app.init({
+   *   canvas: document.getElementById('app') as HTMLCanvasElement,
+   *   src: 'https://example.com/cells.zarr',
+   * });
    * ```
    *
    * @see {@link SceneManager} for rendering pipeline setup
    * @see README.md - initialization sequence section for detailed init flow
    */
-  async init(src?: string): Promise<void> {
+  async init(options: LuxarAppOptions): Promise<void> {
     if (this.isInitialized) {
-      log.info(Modules.APP, 'Re-initializing app (cleaning up previous state)');
-      this.cleanup();
+      throw new Error(
+        'LuxarApp is already initialized. Call dispose() before initializing again.'
+      );
     }
+
+    this.options = options;
 
     try {
       // Inform users about expected console messages
@@ -126,12 +149,14 @@ export class LuxarApp {
         'These are expected and do not indicate a problem - the app checks for optional features that may not exist.'
       );
 
-      // Use provided source or default
-      const sceneSrc = src ?? config.defaultZarrPath;
+      const sceneSrc = this.options.src ?? config.defaultZarrPath;
 
       // Initialize scene manager first
       this.sceneManager = new SceneManager();
-      await this.sceneManager.init();
+      await this.sceneManager.init({
+        canvas: this.options.canvas,
+        debug: this.options.debug,
+      });
 
       // Initialize animation controller with HDR post-processing
       this.animationController = new AnimationController(
@@ -217,8 +242,8 @@ export class LuxarApp {
         await this.loadDataset(sceneSrc);
       }
 
-      // Setup cleanup on page unload
-      this.setupCleanup();
+      // Dispose on page unload (cleans up listeners, workers, GPU resources).
+      this.setupDisposeOnUnload();
 
       // Setup dataset browser keyboard shortcut
       this.setupDatasetBrowserShortcut();
@@ -232,8 +257,8 @@ export class LuxarApp {
       this.isInitialized = true;
     } catch (error) {
       log.error(Modules.APP, 'Failed to initialize Luxar app:', error);
-      // Don't call cleanup() here as it removes error messages that were just displayed
-      // The error UI should remain visible to inform the user
+      // Don't dispose() here — it would remove the error UI the user still
+      // needs to see. Caller decides whether to dispose and retry.
       throw error;
     }
   }
@@ -298,15 +323,24 @@ export class LuxarApp {
 
     this.datasetBrowser = new DatasetBrowser({
       container: document.body,
+      currentSrc: this.options.src,
       onDatasetSelect: async (fullUrl: string) => {
         // The browser now passes full URLs directly, preserving directory context
         // Strip any trailing slashes to ensure consistent URL format
         const cleanUrl = fullUrl.replace(/\/+$/, '');
 
-        // Update URL parameter
-        const params = new URLSearchParams(window.location.search);
-        params.set('src', cleanUrl);
-        window.history.replaceState({}, '', `${window.location.pathname}?${params}`);
+        // Reflect the chosen dataset in the URL bar so the page is shareable.
+        // Gated on `updateBrowserUrl` (default true for the standalone app)
+        // so embedded callers don't get their host page's URL rewritten.
+        if (this.options.updateBrowserUrl ?? true) {
+          const params = new URLSearchParams(window.location.search);
+          params.set('src', cleanUrl);
+          window.history.replaceState({}, '', `${window.location.pathname}?${params}`);
+        }
+
+        // Track the new src in our options snapshot so a subsequent browser
+        // open lands in the right directory.
+        this.options = { ...this.options, src: cleanUrl };
 
         // Load the dataset
         await this.loadDataset(cleanUrl);
@@ -332,7 +366,7 @@ export class LuxarApp {
     this.renderingControls.setSceneId(src);
 
     // Load scene data (animation loop will continue even if this fails)
-    await this.sceneManager.loadSceneData(src);
+    await this.sceneManager.loadSceneData(src, this.options.loaderConfig);
 
     // Pass zarr viewer_config to rendering controls (available after scene loads).
     // If no localStorage settings exist for this scene, apply zarr defaults.
@@ -638,11 +672,11 @@ export class LuxarApp {
   }
 
   /**
-   * Setup cleanup on page unload
+   * Register a beforeunload handler that disposes the app on page unload.
    */
-  private setupCleanup(): void {
-    this.boundCleanup = this.cleanup.bind(this);
-    window.addEventListener('beforeunload', this.boundCleanup);
+  private setupDisposeOnUnload(): void {
+    this.boundDispose = this.dispose.bind(this);
+    window.addEventListener('beforeunload', this.boundDispose);
   }
 
   /**
@@ -698,20 +732,22 @@ export class LuxarApp {
    * Only enabled when ?debug URL parameter is present
    */
   private setupDebugInterface(): void {
-    // Check if debug mode is enabled via URL parameter
-    const urlParams = new URLSearchParams(window.location.search);
-    const debugEnabled = urlParams.has('debug');
-
-    if (!debugEnabled) {
+    if (!this.options.debug) {
       return;
     }
 
     log.info(Modules.LUXAR, 'Extending debug interface with runtime components');
 
-    // Extend existing debug interface (preserve app, consoleInterceptor, version from main.ts)
-    const existing = (window as any).__luxarDebug || {};
+    // Extend whatever main.ts seeded (app/consoleInterceptor/version). When
+    // LuxarApp is instantiated outside the standalone-app entry point
+    // (tests, embeds), main.ts hasn't run; fall back to a fresh base.
+    const existing = window.__luxarDebug ?? {
+      app: this,
+      consoleInterceptor: consoleInterceptor,
+      version: '1.0.0',
+    };
 
-    (window as any).__luxarDebug = {
+    window.__luxarDebug = {
       // Preserve existing properties from main.ts
       ...existing,
 
@@ -959,9 +995,15 @@ export class LuxarApp {
   }
 
   /**
-   * Clean up all application resources
+   * Dispose all application resources.
+   *
+   * Tears down the animation loop, scene, input handlers, UI panels, and
+   * registered listeners. Idempotent: safe to call repeatedly. After
+   * dispose(), the LuxarApp instance is in an uninitialized state — call
+   * init() again to re-create resources, or discard the instance.
    */
-  cleanup(): void {
+  dispose(): void {
+    if (!this.isInitialized) return;
     try {
       // Stop animation first
       if (this.animationController) {
@@ -1042,6 +1084,10 @@ export class LuxarApp {
         this.sceneManager.dispose();
       }
 
+      // Tear down the theme manager (disconnects glass-refraction MutationObserver,
+      // removes injected SVG filters, clears CSS custom properties).
+      ThemeManager.resetInstance();
+
       // Clean up UI resources
       cleanupUI();
 
@@ -1060,14 +1106,14 @@ export class LuxarApp {
       }
 
       // Remove beforeunload listener with stored reference
-      if (this.boundCleanup) {
-        window.removeEventListener('beforeunload', this.boundCleanup);
-        this.boundCleanup = null;
+      if (this.boundDispose) {
+        window.removeEventListener('beforeunload', this.boundDispose);
+        this.boundDispose = null;
       }
 
       this.isInitialized = false;
     } catch (error) {
-      log.error(Modules.LUXAR, 'Error during cleanup:', error);
+      log.error(Modules.LUXAR, 'Error during dispose:', error);
     }
   }
 

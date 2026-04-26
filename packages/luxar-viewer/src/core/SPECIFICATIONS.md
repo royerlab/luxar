@@ -35,10 +35,10 @@ The `luxar-viewer.core` package provides application initialization, component o
 **Sequence**:
 
 ```typescript
-async function init(src?: string): Promise<void> {
+async function init(options: LuxarAppOptions): Promise<void> {
   // 1. Foundation: Scene management
   this.sceneManager = new SceneManager();
-  await this.sceneManager.init();
+  await this.sceneManager.init({ canvas: options.canvas, debug: options.debug });
 
   // 2. Animation system (depends on scene)
   this.animationController = new AnimationController(
@@ -189,15 +189,16 @@ async function loadDataset(src: string): Promise<void> {
 **Implementation**:
 
 ```typescript
-async function init(src?: string): Promise<void> {
+async function init(options: LuxarAppOptions): Promise<void> {
   try {
     // Critical: Scene initialization (failure is fatal)
-    await this.sceneManager.init();
+    await this.sceneManager.init({ canvas: options.canvas, debug: options.debug });
 
     // Start animation before data loading (enables progress rendering)
     this.animationController.startAnimation();
 
     // Load data or show browser
+    const src = options.src ?? config.defaultZarrPath;
     if (await this.shouldShowBrowser(src)) {
       this.showDatasetBrowser();
     } else {
@@ -237,14 +238,14 @@ function showError(message: string): void {
 
 ## 5. Resource Cleanup
 
-### 5.1 Cleanup Sequence
+### 5.1 Dispose Sequence
 
 **Purpose**: Properly dispose all resources to prevent memory leaks.
 
 **Order** (reverse of initialization):
 
 ```typescript
-function cleanup(): void {
+function dispose(): void {
   // 1. Stop animation (prevents new work)
   this.animationController?.dispose();
 
@@ -262,7 +263,7 @@ function cleanup(): void {
   this.sceneManager?.dispose();
 
   // 6. Remove global listeners
-  window.removeEventListener('beforeunload', this.cleanup);
+  window.removeEventListener('beforeunload', this.boundDispose);
   window.removeEventListener('resize', this.handleResize);
 }
 ```
@@ -320,20 +321,21 @@ interface LuxarApp {
   currentDataset: string | null;
 
   // Methods
-  init(src?: string): Promise<void>;
+  init(options: LuxarAppOptions): Promise<void>;
   loadDataset(src: string): Promise<void>;
-  cleanup(): void;
+  dispose(): void;
 }
 ```
 
-### InitializationConfig
+### LuxarAppOptions
 
 ```typescript
-interface InitializationConfig {
-  canvasId: string;
-  defaultDataset?: string;
-  enableDebug?: boolean;
-  autoStart?: boolean;
+interface LuxarAppOptions {
+  canvas: HTMLCanvasElement;     // Render target (resolved by main.ts)
+  src?: string;                  // Dataset URL (defaults to config.defaultZarrPath)
+  debug?: boolean;               // Enable window.__luxarDebug + verbose logging
+  loaderConfig?: LoaderConfig;   // Cache and prefetch flags
+  updateBrowserUrl?: boolean;    // Mirror selected dataset into the URL bar (default true)
 }
 ```
 
@@ -796,20 +798,21 @@ interface LuxarApp {
   currentDataset: string | null;
 
   // Methods
-  init(src?: string): Promise<void>;
+  init(options: LuxarAppOptions): Promise<void>;
   loadDataset(src: string): Promise<void>;
-  cleanup(): void;
+  dispose(): void;
 }
 ```
 
-### InitializationConfig
+### LuxarAppOptions
 
 ```typescript
-interface InitializationConfig {
-  canvasId: string;
-  defaultDataset?: string;
-  enableDebug?: boolean;
-  autoStart?: boolean;
+interface LuxarAppOptions {
+  canvas: HTMLCanvasElement;     // Render target (resolved by main.ts)
+  src?: string;                  // Dataset URL (defaults to config.defaultZarrPath)
+  debug?: boolean;               // Enable window.__luxarDebug + verbose logging
+  loaderConfig?: LoaderConfig;   // Cache and prefetch flags
+  updateBrowserUrl?: boolean;    // Mirror selected dataset into the URL bar (default true)
 }
 ```
 

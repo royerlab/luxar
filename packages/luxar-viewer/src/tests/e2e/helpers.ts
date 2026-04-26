@@ -859,7 +859,7 @@ export async function assertNoConsoleErrors(
 export async function dismissDatasetBrowser(page: Page): Promise<void> {
   const dismissed = await page.evaluate(() => {
     const browser = document.querySelector(
-      '.luxar-dataset-browser, .dataset-browser, #dataset-browser'
+      '.luxar-dataset-browser, .dataset-browser, #luxar-dataset-browser'
     );
     if (browser && getComputedStyle(browser).display !== 'none') {
       (browser as HTMLElement).remove();

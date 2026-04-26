@@ -108,7 +108,6 @@ describe('TwoLevelCachingStore', () => {
     store = new TwoLevelCachingStore('https://example.com/data.zarr', {
       l1MaxSize: 20 * 1024 * 1024, // 20MB (must exceed SegmentedLRU MIN_METADATA_SIZE of 10MB)
       l2MaxSize: 4096, // 4KB
-      urlParams: new URLSearchParams(''), // Don't read from window
     });
     await store.init();
 
@@ -127,7 +126,7 @@ describe('TwoLevelCachingStore', () => {
 
     it('should respect URL parameters', async () => {
       const noCacheStore = new TwoLevelCachingStore('https://example.com/test.zarr', {
-        urlParams: new URLSearchParams('?no-cache'),
+        noCache: true,
       });
       await noCacheStore.init();
 
@@ -138,7 +137,7 @@ describe('TwoLevelCachingStore', () => {
 
     it('should enable debug mode via URL parameter', async () => {
       const debugStore = new TwoLevelCachingStore('https://example.com/test.zarr', {
-        urlParams: new URLSearchParams('?cache-debug'),
+        debug: true,
       });
       await debugStore.init();
 
@@ -525,7 +524,7 @@ describe('TwoLevelCachingStore', () => {
   describe('URL Parameter Handling', () => {
     it('should disable caching with ?no-cache', async () => {
       const noCacheStore = new TwoLevelCachingStore('https://example.com/test.zarr', {
-        urlParams: new URLSearchParams('?no-cache'),
+        noCache: true,
       });
       await noCacheStore.init();
 
@@ -545,7 +544,7 @@ describe('TwoLevelCachingStore', () => {
       const consoleLog = vi.spyOn(console, 'info');
 
       const debugStore = new TwoLevelCachingStore('https://example.com/test.zarr', {
-        urlParams: new URLSearchParams('?cache-debug'),
+        debug: true,
       });
       await debugStore.init();
 
@@ -562,7 +561,7 @@ describe('TwoLevelCachingStore', () => {
       await store.dispose();
 
       const clearStore = new TwoLevelCachingStore('https://example.com/data.zarr', {
-        urlParams: new URLSearchParams('?clear-cache'),
+        clearCache: true,
       });
       await clearStore.init();
 
@@ -720,9 +719,7 @@ describe('TwoLevelCachingStore', () => {
       mocks.fetchedUrls.length = 0;
 
       // Store created with NO trailing slash
-      const storeNoSlash = new TwoLevelCachingStore('https://example.com/data.zarr', {
-        urlParams: new URLSearchParams(''),
-      });
+      const storeNoSlash = new TwoLevelCachingStore('https://example.com/data.zarr');
       await storeNoSlash.init();
       mocks.fetchedUrls.length = 0;
 
@@ -738,9 +735,7 @@ describe('TwoLevelCachingStore', () => {
       mocks.fetchedUrls.length = 0;
 
       // Store created WITH trailing slash (as normalizeURL would produce)
-      const storeWithSlash = new TwoLevelCachingStore('https://example.com/data.zarr/', {
-        urlParams: new URLSearchParams(''),
-      });
+      const storeWithSlash = new TwoLevelCachingStore('https://example.com/data.zarr/');
       await storeWithSlash.init();
       mocks.fetchedUrls.length = 0;
 
@@ -756,9 +751,7 @@ describe('TwoLevelCachingStore', () => {
       mocks.fetchedUrls.length = 0;
 
       // Store with trailing slash + key with leading slash = potential triple slash
-      const storeWithSlash = new TwoLevelCachingStore('https://example.com/data.zarr/', {
-        urlParams: new URLSearchParams(''),
-      });
+      const storeWithSlash = new TwoLevelCachingStore('https://example.com/data.zarr/');
       await storeWithSlash.init();
       mocks.fetchedUrls.length = 0;
 
@@ -776,9 +769,7 @@ describe('TwoLevelCachingStore', () => {
       mocks.fetchedUrls.length = 0;
 
       // Store with MULTIPLE trailing slashes (edge case)
-      const storeMultiSlash = new TwoLevelCachingStore('https://example.com/data.zarr///', {
-        urlParams: new URLSearchParams(''),
-      });
+      const storeMultiSlash = new TwoLevelCachingStore('https://example.com/data.zarr///');
       await storeMultiSlash.init();
       mocks.fetchedUrls.length = 0;
 
@@ -791,9 +782,7 @@ describe('TwoLevelCachingStore', () => {
     it('should handle multiple leading slashes in key', async () => {
       mocks.fetchedUrls.length = 0;
 
-      const storeWithSlash = new TwoLevelCachingStore('https://example.com/data.zarr/', {
-        urlParams: new URLSearchParams(''),
-      });
+      const storeWithSlash = new TwoLevelCachingStore('https://example.com/data.zarr/');
       await storeWithSlash.init();
       mocks.fetchedUrls.length = 0;
 
@@ -807,9 +796,7 @@ describe('TwoLevelCachingStore', () => {
       mocks.fetchedUrls.length = 0;
 
       // Store with trailing slash
-      const storeWithSlash = new TwoLevelCachingStore('https://example.com/data.zarr/', {
-        urlParams: new URLSearchParams(''),
-      });
+      const storeWithSlash = new TwoLevelCachingStore('https://example.com/data.zarr/');
       await storeWithSlash.init();
 
       // .zattrs should be fetched correctly during init
