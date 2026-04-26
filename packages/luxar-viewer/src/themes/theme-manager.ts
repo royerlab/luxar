@@ -48,6 +48,14 @@ export class ThemeManager {
   private glassRefractionObserverCleanup: (() => void) | null = null;
 
   /**
+   * Handle for the requestAnimationFrame call that defers
+   * `injectGlassRefractionLayers()` until the next frame. Tracked so that a
+   * `dispose()` racing the deferred injection can cancel it — otherwise the
+   * rAF fires after teardown and re-injects DOM that nothing will clean up.
+   */
+  private pendingRefractionRAF: number | null = null;
+
+  /**
    * Private constructor (singleton pattern)
    */
   private constructor() {
@@ -108,6 +116,12 @@ export class ThemeManager {
 
     // Remove data-theme attribute
     document.documentElement.removeAttribute('data-theme');
+
+    // Cancel any pending rAF that would inject refraction layers AFTER cleanup.
+    if (this.pendingRefractionRAF !== null) {
+      cancelAnimationFrame(this.pendingRefractionRAF);
+      this.pendingRefractionRAF = null;
+    }
 
     // Clean up glass refraction observer and layers
     if (this.glassRefractionObserverCleanup) {
@@ -241,6 +255,12 @@ export class ThemeManager {
       this.glassRefractionObserverCleanup();
       this.glassRefractionObserverCleanup = null;
     }
+    // Cancel any in-flight refraction-layer injection from a previous
+    // liquid-glass apply — otherwise it would fire after we switched away.
+    if (this.pendingRefractionRAF !== null) {
+      cancelAnimationFrame(this.pendingRefractionRAF);
+      this.pendingRefractionRAF = null;
+    }
 
     // Set data-theme attribute for theme-specific CSS overrides
     root.setAttribute('data-theme', theme.id);
@@ -250,8 +270,10 @@ export class ThemeManager {
       injectGlassFilters(); // Uses default params, adjustable in glass-filters.ts
 
       // Inject real DOM elements for glass refraction (SVG filters don't work on pseudo-elements)
-      // Use requestAnimationFrame to ensure DOM is ready
-      requestAnimationFrame(() => {
+      // Use requestAnimationFrame to ensure DOM is ready. Track the handle so
+      // dispose() can cancel a still-pending injection.
+      this.pendingRefractionRAF = requestAnimationFrame(() => {
+        this.pendingRefractionRAF = null;
         injectGlassRefractionLayers();
       });
 

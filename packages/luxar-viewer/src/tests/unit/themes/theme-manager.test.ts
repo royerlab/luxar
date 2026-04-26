@@ -316,5 +316,77 @@ describe('ThemeManager', () => {
 
       expect(document.getElementById('luxar-glass-filters')).toBeNull();
     });
+
+    it('cancels pending refraction-layer rAF when disposed before the frame fires', () => {
+      let nextHandle = 1;
+      const issuedHandles: number[] = [];
+      const cancelledHandles: number[] = [];
+
+      const rafSpy = vi
+        .spyOn(window, 'requestAnimationFrame')
+        .mockImplementation((_cb: FrameRequestCallback) => {
+          const handle = nextHandle++;
+          issuedHandles.push(handle);
+          return handle;
+        });
+      const cafSpy = vi
+        .spyOn(window, 'cancelAnimationFrame')
+        .mockImplementation((h: number) => {
+          cancelledHandles.push(h);
+        });
+
+      const manager = ThemeManager.getInstance();
+      manager.setTheme('liquid-glass');
+
+      // rAF was scheduled but the callback hasn't run yet.
+      expect(rafSpy).toHaveBeenCalledTimes(1);
+      expect(issuedHandles.length).toBe(1);
+
+      manager.dispose();
+
+      // The pending handle must have been cancelled.
+      expect(cancelledHandles).toContain(issuedHandles[0]);
+
+      // Sanity: fire the rAF callback manually post-dispose. It still runs (we
+      // mocked rAF to just capture, never schedule), but dispose() removed
+      // both the SVG filters and the refraction layers it would have injected.
+      const capturedCallback = rafSpy.mock.calls[0][0] as FrameRequestCallback;
+      capturedCallback(performance.now());
+      expect(document.getElementById('luxar-glass-filters')).toBeNull();
+
+      rafSpy.mockRestore();
+      cafSpy.mockRestore();
+    });
+
+    it('cancels pending refraction-layer rAF when switching away from liquid-glass', () => {
+      let nextHandle = 1;
+      const issuedHandles: number[] = [];
+      const cancelledHandles: number[] = [];
+
+      const rafSpy = vi
+        .spyOn(window, 'requestAnimationFrame')
+        .mockImplementation((_cb: FrameRequestCallback) => {
+          const handle = nextHandle++;
+          issuedHandles.push(handle);
+          return handle;
+        });
+      const cafSpy = vi
+        .spyOn(window, 'cancelAnimationFrame')
+        .mockImplementation((h: number) => {
+          cancelledHandles.push(h);
+        });
+
+      const manager = ThemeManager.getInstance();
+      manager.setTheme('liquid-glass');
+      const liquidGlassHandle = issuedHandles[0];
+
+      // Switch to a non-glass theme before the rAF fires.
+      manager.setTheme('dark');
+
+      expect(cancelledHandles).toContain(liquidGlassHandle);
+
+      rafSpy.mockRestore();
+      cafSpy.mockRestore();
+    });
   });
 });
