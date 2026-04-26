@@ -31,7 +31,8 @@ declare global {
      * sessions.
      *
      * Populated in two stages:
-     * - main.ts attaches `app`, `consoleInterceptor`, `version` immediately.
+     * - bootstrapStandalone() (or any caller that opts in) attaches
+     *   `app`, `consoleInterceptor`, `version` before `init()` runs.
      * - LuxarApp.setupDebugInterface() extends with runtime references
      *   after `init()` completes, and sets `runtimeReady = true`.
      */

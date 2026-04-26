@@ -121,7 +121,6 @@ export class EventGroup {
         // A failing cleanup must not stop the rest from running. Log via
         // platform console — not the project log utility — to avoid pulling
         // in a dependency that itself relies on event-group cleanup.
-        // eslint-disable-next-line no-console
         console.error('[EventGroup] cleanup threw:', err);
       }
     }

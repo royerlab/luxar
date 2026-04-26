@@ -785,15 +785,18 @@ export class LuxarApp {
   /**
    * Setup debug interface for testing and AI-assisted development
    *
-   * This extends the existing debug interface (created in main.ts) with
-   * runtime components that are only available after initialization:
+   * This extends the existing debug interface (seeded by bootstrapStandalone()
+   * before init() runs) with runtime components that are only available after
+   * initialization:
    * - Three.js scene, camera, renderer
    * - Controls and animation state
    * - Helper functions for testing
    *
-   * Preserves existing properties (app, consoleInterceptor, version) from main.ts
+   * Preserves existing properties (app, consoleInterceptor, version) from
+   * the bootstrap-side seeding.
    *
-   * Only enabled when ?debug URL parameter is present
+   * Only enabled when `LuxarAppOptions.debug` is set (the standalone bootstrap
+   * derives that from the `?debug` URL param or persisted `luxar.debug` flag).
    */
   private setupDebugInterface(): void {
     if (!this.options.debug) {
@@ -802,9 +805,9 @@ export class LuxarApp {
 
     log.info(Modules.LUXAR, 'Extending debug interface with runtime components');
 
-    // Extend whatever main.ts seeded (app/consoleInterceptor/version). When
+    // Extend whatever bootstrap seeded (app/consoleInterceptor/version). When
     // LuxarApp is instantiated outside the standalone-app entry point
-    // (tests, embeds), main.ts hasn't run; fall back to a fresh base.
+    // (tests, embeds), bootstrap hasn't run; fall back to a fresh base.
     const existing = window.__luxarDebug ?? {
       app: this,
       consoleInterceptor: consoleInterceptor,
