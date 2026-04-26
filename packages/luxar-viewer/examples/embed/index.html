@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Embed Demo — Luxar Viewer in a host page</title>
+
+    <!--
+      Host-page styling that the embed must NOT clobber. If the viewer's
+      CSS (`luxar-viewer/styles.css`) was leaking global rules, the page
+      heading would lose its margin and serif font.
+    -->
+    <style>
+      body {
+        margin: 32px;
+        font-family: 'Georgia', 'Times New Roman', serif;
+        background: #f4ecd8;
+        color: #2b2b2b;
+      }
+      h1 {
+        font-size: 28px;
+        border-bottom: 2px solid #8b4513;
+        padding-bottom: 8px;
+        margin-bottom: 16px;
+      }
+      ul {
+        padding-left: 24px;
+        list-style: disc;
+      }
+      .host-card {
+        max-width: 720px;
+      }
+      .viewer-frame {
+        margin-top: 24px;
+        width: 720px;
+        height: 480px;
+        border: 1px solid #c4b59a;
+        background: #111;
+        position: relative;
+      }
+      .viewer-frame canvas {
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+      .actions {
+        margin-top: 12px;
+      }
+      .actions button {
+        font: inherit;
+        padding: 6px 12px;
+        background: #8b4513;
+        color: #f4ecd8;
+        border: none;
+        cursor: pointer;
+      }
+      .actions button:hover {
+        background: #6f3710;
+      }
+    </style>
+
+    <!--
+      `three` is a peer dependency of luxar-viewer. In a real app you'd
+      install it from npm and let your bundler resolve the import. For
+      this static example we use an importmap pointing at jsdelivr so the
+      page works with `python -m http.server`.
+    -->
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.163.0/build/three.module.js"
+        }
+      }
+    </script>
+
+    <link rel="stylesheet" href="../../dist/lib/luxar-viewer.css" />
+  </head>
+  <body>
+    <div class="host-card">
+      <h1>My Beautiful Host Page</h1>
+      <p>
+        This page mounts the Luxar viewer inside the box below. The page's serif
+        font, beige background, and bulleted list should remain intact — that's
+        the embeddability contract.
+      </p>
+      <ul>
+        <li>Importing <code>luxar-viewer/styles.css</code> must not change
+          the host page's margins, fonts, or scrollbars.</li>
+        <li>Importing <code>{ LuxarApp } from 'luxar-viewer'</code> must
+          not patch the host page's <code>console.*</code>.</li>
+        <li>Calling <code>app.dispose()</code> must remove the viewer
+          completely and leave the host page's state untouched.</li>
+      </ul>
+
+      <div id="viewer-frame" class="viewer-frame">
+        <canvas id="luxar-canvas"></canvas>
+      </div>
+
+      <div class="actions">
+        <button id="dispose-btn">Dispose viewer</button>
+        <button id="reinit-btn">Re-initialize</button>
+      </div>
+    </div>
+
+    <script type="module" src="./embed.js"></script>
+  </body>
+</html>
