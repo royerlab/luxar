@@ -1236,8 +1236,8 @@ export class InputHandler {
       });
 
     // Also store on debug interface for programmatic access
-    if ((window as any).__luxarDebug) {
-      (window as any).__luxarDebug.lastExportedState = state;
+    if (window.__luxarDebug) {
+      window.__luxarDebug.lastExportedState = state;
     }
   }
 
@@ -1312,9 +1312,8 @@ export class InputHandler {
    * @private
    */
   private toggleInertialMode(): void {
-    const controls = this.sceneManager.controls.getControls();
-    if (controls && 'setInertialMode' in controls) {
-      const flyControls = controls as any; // Type assertion for fly controls
+    const flyControls = this.sceneManager.controls.getFlyControls();
+    if (flyControls) {
       const currentInertial = flyControls.inertialMode;
       flyControls.setInertialMode(!currentInertial);
 

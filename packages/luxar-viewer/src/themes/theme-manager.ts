@@ -48,6 +48,14 @@ export class ThemeManager {
   private glassRefractionObserverCleanup: (() => void) | null = null;
 
   /**
+   * Handle for the requestAnimationFrame call that defers
+   * `injectGlassRefractionLayers()` until the next frame. Tracked so that a
+   * `dispose()` racing the deferred injection can cancel it — otherwise the
+   * rAF fires after teardown and re-injects DOM that nothing will clean up.
+   */
+  private pendingRefractionRAF: number | null = null;
+
+  /**
    * Private constructor (singleton pattern)
    */
   private constructor() {
@@ -78,7 +86,7 @@ export class ThemeManager {
    * manager) or between tests (to isolate state). The instance reference is
    * cleared; the next `getInstance()` will lazily construct a new one.
    */
-  public static resetInstance(): void {
+  public static disposeInstance(): void {
     if (ThemeManager.instance) {
       ThemeManager.instance.dispose();
       ThemeManager.instance = null;
@@ -108,6 +116,12 @@ export class ThemeManager {
 
     // Remove data-theme attribute
     document.documentElement.removeAttribute('data-theme');
+
+    // Cancel any pending rAF that would inject refraction layers AFTER cleanup.
+    if (this.pendingRefractionRAF !== null) {
+      cancelAnimationFrame(this.pendingRefractionRAF);
+      this.pendingRefractionRAF = null;
+    }
 
     // Clean up glass refraction observer and layers
     if (this.glassRefractionObserverCleanup) {
@@ -241,6 +255,12 @@ export class ThemeManager {
       this.glassRefractionObserverCleanup();
       this.glassRefractionObserverCleanup = null;
     }
+    // Cancel any in-flight refraction-layer injection from a previous
+    // liquid-glass apply — otherwise it would fire after we switched away.
+    if (this.pendingRefractionRAF !== null) {
+      cancelAnimationFrame(this.pendingRefractionRAF);
+      this.pendingRefractionRAF = null;
+    }
 
     // Set data-theme attribute for theme-specific CSS overrides
     root.setAttribute('data-theme', theme.id);
@@ -250,8 +270,10 @@ export class ThemeManager {
       injectGlassFilters(); // Uses default params, adjustable in glass-filters.ts
 
       // Inject real DOM elements for glass refraction (SVG filters don't work on pseudo-elements)
-      // Use requestAnimationFrame to ensure DOM is ready
-      requestAnimationFrame(() => {
+      // Use requestAnimationFrame to ensure DOM is ready. Track the handle so
+      // dispose() can cancel a still-pending injection.
+      this.pendingRefractionRAF = requestAnimationFrame(() => {
+        this.pendingRefractionRAF = null;
         injectGlassRefractionLayers();
       });
 
@@ -286,140 +308,151 @@ export class ThemeManager {
   }
 
   /**
-   * Set CSS custom properties from theme
+   * Build the flat `--luxar-*` -> CSS-value map for a theme.
+   *
+   * Numbers (font weights, line heights, opacity, z-index) are stringified
+   * here. Optional theme fields that resolve to undefined are kept in the
+   * map and skipped at write time — this preserves the historical behavior
+   * where, e.g., `theme.colors.text.disabled` only landed in the DOM when
+   * the theme actually defined it.
+   */
+  private themeToCSSVariables(theme: Theme): Record<string, string | undefined> {
+    return {
+      // Background colors
+      '--luxar-bg-primary': theme.colors.background.primary,
+      '--luxar-bg-secondary': theme.colors.background.secondary,
+      '--luxar-bg-tertiary': theme.colors.background.tertiary,
+      '--luxar-bg-overlay': theme.colors.background.overlay,
+
+      // Text colors
+      '--luxar-text-primary': theme.colors.text.primary,
+      '--luxar-text-secondary': theme.colors.text.secondary,
+      '--luxar-text-muted': theme.colors.text.muted,
+      '--luxar-text-disabled': theme.colors.text.disabled,
+      '--luxar-text-inverse': theme.colors.text.inverse,
+
+      // Semantic colors
+      '--luxar-success': theme.colors.semantic.success,
+      '--luxar-warning': theme.colors.semantic.warning,
+      '--luxar-error': theme.colors.semantic.error,
+      '--luxar-info': theme.colors.semantic.info,
+      '--luxar-highlight': theme.colors.semantic.highlight,
+
+      // Interactive colors
+      '--luxar-interactive-default': theme.colors.interactive.default,
+      '--luxar-interactive-hover': theme.colors.interactive.hover,
+      '--luxar-interactive-active': theme.colors.interactive.active,
+      '--luxar-interactive-focus': theme.colors.interactive.focus,
+      '--luxar-interactive-disabled': theme.colors.interactive.disabled,
+
+      // Border colors
+      '--luxar-border-default': theme.colors.border.default,
+      '--luxar-border-subtle': theme.colors.border.subtle,
+      '--luxar-border-strong': theme.colors.border.strong,
+      '--luxar-border-focus': theme.colors.border.focus,
+
+      // Visualization colors
+      '--luxar-viz-hot': theme.colors.visualization.hot,
+      '--luxar-viz-warm': theme.colors.visualization.warm,
+      '--luxar-viz-cold': theme.colors.visualization.cold,
+      '--luxar-viz-neutral': theme.colors.visualization.neutral,
+
+      // Typography — font families
+      '--luxar-font-base': theme.typography.fontFamily.base,
+      '--luxar-font-mono': theme.typography.fontFamily.mono,
+      '--luxar-font-display': theme.typography.fontFamily.display,
+
+      // Typography — font sizes
+      '--luxar-text-xs': theme.typography.fontSize.xs,
+      '--luxar-text-sm': theme.typography.fontSize.sm,
+      '--luxar-text-base': theme.typography.fontSize.base,
+      '--luxar-text-md': theme.typography.fontSize.md,
+      '--luxar-text-lg': theme.typography.fontSize.lg,
+      '--luxar-text-xl': theme.typography.fontSize.xl,
+      '--luxar-text-2xl': theme.typography.fontSize['2xl'],
+      '--luxar-text-3xl': theme.typography.fontSize['3xl'],
+
+      // Typography — font weights
+      '--luxar-font-normal': String(theme.typography.fontWeight.normal),
+      '--luxar-font-medium': String(theme.typography.fontWeight.medium),
+      '--luxar-font-semibold': String(theme.typography.fontWeight.semibold),
+      '--luxar-font-bold': String(theme.typography.fontWeight.bold),
+
+      // Typography — line heights
+      '--luxar-line-tight': String(theme.typography.lineHeight.tight),
+      '--luxar-line-normal': String(theme.typography.lineHeight.normal),
+      '--luxar-line-relaxed': String(theme.typography.lineHeight.relaxed),
+
+      // Spacing
+      '--luxar-spacing-0': theme.spacing[0],
+      '--luxar-spacing-1': theme.spacing[1],
+      '--luxar-spacing-2': theme.spacing[2],
+      '--luxar-spacing-3': theme.spacing[3],
+      '--luxar-spacing-4': theme.spacing[4],
+      '--luxar-spacing-5': theme.spacing[5],
+      '--luxar-spacing-6': theme.spacing[6],
+      '--luxar-spacing-8': theme.spacing[8],
+      '--luxar-spacing-10': theme.spacing[10],
+      '--luxar-spacing-12': theme.spacing[12],
+      '--luxar-spacing-16': theme.spacing[16],
+      '--luxar-spacing-20': theme.spacing[20],
+
+      // Border radius
+      '--luxar-radius-none': theme.effects.borderRadius.none,
+      '--luxar-radius-sm': theme.effects.borderRadius.sm,
+      '--luxar-radius-md': theme.effects.borderRadius.md,
+      '--luxar-radius-lg': theme.effects.borderRadius.lg,
+      '--luxar-radius-full': theme.effects.borderRadius.full,
+
+      // Shadows
+      '--luxar-shadow-sm': theme.effects.shadow.sm,
+      '--luxar-shadow-md': theme.effects.shadow.md,
+      '--luxar-shadow-lg': theme.effects.shadow.lg,
+      '--luxar-shadow-xl': theme.effects.shadow.xl,
+
+      // Blur
+      '--luxar-blur-none': theme.effects.blur.none,
+      '--luxar-blur-sm': theme.effects.blur.sm,
+      '--luxar-blur-md': theme.effects.blur.md,
+      '--luxar-blur-lg': theme.effects.blur.lg,
+
+      // Opacity
+      '--luxar-opacity-disabled': String(theme.effects.opacity.disabled),
+      '--luxar-opacity-secondary': String(theme.effects.opacity.secondary),
+      '--luxar-opacity-hover': String(theme.effects.opacity.hover),
+      '--luxar-opacity-full': String(theme.effects.opacity.full),
+
+      // Transitions
+      '--luxar-transition-fast': theme.effects.transition.fast,
+      '--luxar-transition-normal': theme.effects.transition.normal,
+      '--luxar-transition-slow': theme.effects.transition.slow,
+
+      // Z-index
+      '--luxar-z-base': String(theme.zIndex.base),
+      '--luxar-z-dropdown': String(theme.zIndex.dropdown),
+      '--luxar-z-modal': String(theme.zIndex.modal),
+      '--luxar-z-popover': String(theme.zIndex.popover),
+      '--luxar-z-tooltip': String(theme.zIndex.tooltip),
+    };
+  }
+
+  /**
+   * Set CSS custom properties from theme.
+   *
+   * Iterates the flat variable map from {@link themeToCSSVariables}; entries
+   * with `undefined` values are skipped, preserving the existing behavior of
+   * not setting properties for unset optional theme fields.
    *
    * @param root - Document root element
    * @param theme - Theme to inject
    */
   private setCSSVariables(root: HTMLElement, theme: Theme): void {
-    // Background colors
-    root.style.setProperty('--luxar-bg-primary', theme.colors.background.primary);
-    root.style.setProperty('--luxar-bg-secondary', theme.colors.background.secondary);
-    root.style.setProperty('--luxar-bg-tertiary', theme.colors.background.tertiary);
-    root.style.setProperty('--luxar-bg-overlay', theme.colors.background.overlay);
-
-    // Text colors
-    root.style.setProperty('--luxar-text-primary', theme.colors.text.primary);
-    root.style.setProperty('--luxar-text-secondary', theme.colors.text.secondary);
-    root.style.setProperty('--luxar-text-muted', theme.colors.text.muted);
-    if (theme.colors.text.disabled) {
-      root.style.setProperty('--luxar-text-disabled', theme.colors.text.disabled);
+    const variables = this.themeToCSSVariables(theme);
+    for (const [property, value] of Object.entries(variables)) {
+      if (value !== undefined) {
+        root.style.setProperty(property, value);
+      }
     }
-    if (theme.colors.text.inverse) {
-      root.style.setProperty('--luxar-text-inverse', theme.colors.text.inverse);
-    }
-
-    // Semantic colors
-    root.style.setProperty('--luxar-success', theme.colors.semantic.success);
-    root.style.setProperty('--luxar-warning', theme.colors.semantic.warning);
-    root.style.setProperty('--luxar-error', theme.colors.semantic.error);
-    root.style.setProperty('--luxar-info', theme.colors.semantic.info);
-    if (theme.colors.semantic.highlight) {
-      root.style.setProperty('--luxar-highlight', theme.colors.semantic.highlight);
-    }
-
-    // Interactive colors
-    root.style.setProperty('--luxar-interactive-default', theme.colors.interactive.default);
-    root.style.setProperty('--luxar-interactive-hover', theme.colors.interactive.hover);
-    root.style.setProperty('--luxar-interactive-active', theme.colors.interactive.active);
-    root.style.setProperty('--luxar-interactive-focus', theme.colors.interactive.focus);
-    root.style.setProperty('--luxar-interactive-disabled', theme.colors.interactive.disabled);
-
-    // Border colors
-    root.style.setProperty('--luxar-border-default', theme.colors.border.default);
-    root.style.setProperty('--luxar-border-subtle', theme.colors.border.subtle);
-    root.style.setProperty('--luxar-border-strong', theme.colors.border.strong);
-    if (theme.colors.border.focus) {
-      root.style.setProperty('--luxar-border-focus', theme.colors.border.focus);
-    }
-
-    // Visualization colors
-    root.style.setProperty('--luxar-viz-hot', theme.colors.visualization.hot);
-    root.style.setProperty('--luxar-viz-warm', theme.colors.visualization.warm);
-    root.style.setProperty('--luxar-viz-cold', theme.colors.visualization.cold);
-    root.style.setProperty('--luxar-viz-neutral', theme.colors.visualization.neutral);
-
-    // Typography - Font families
-    root.style.setProperty('--luxar-font-base', theme.typography.fontFamily.base);
-    root.style.setProperty('--luxar-font-mono', theme.typography.fontFamily.mono);
-    if (theme.typography.fontFamily.display) {
-      root.style.setProperty('--luxar-font-display', theme.typography.fontFamily.display);
-    }
-
-    // Typography - Font sizes
-    root.style.setProperty('--luxar-text-xs', theme.typography.fontSize.xs);
-    root.style.setProperty('--luxar-text-sm', theme.typography.fontSize.sm);
-    root.style.setProperty('--luxar-text-base', theme.typography.fontSize.base);
-    root.style.setProperty('--luxar-text-md', theme.typography.fontSize.md);
-    root.style.setProperty('--luxar-text-lg', theme.typography.fontSize.lg);
-    root.style.setProperty('--luxar-text-xl', theme.typography.fontSize.xl);
-    root.style.setProperty('--luxar-text-2xl', theme.typography.fontSize['2xl']);
-    root.style.setProperty('--luxar-text-3xl', theme.typography.fontSize['3xl']);
-
-    // Typography - Font weights
-    root.style.setProperty('--luxar-font-normal', theme.typography.fontWeight.normal.toString());
-    root.style.setProperty('--luxar-font-medium', theme.typography.fontWeight.medium.toString());
-    root.style.setProperty(
-      '--luxar-font-semibold',
-      theme.typography.fontWeight.semibold.toString()
-    );
-    root.style.setProperty('--luxar-font-bold', theme.typography.fontWeight.bold.toString());
-
-    // Typography - Line heights
-    root.style.setProperty('--luxar-line-tight', theme.typography.lineHeight.tight.toString());
-    root.style.setProperty('--luxar-line-normal', theme.typography.lineHeight.normal.toString());
-    root.style.setProperty('--luxar-line-relaxed', theme.typography.lineHeight.relaxed.toString());
-
-    // Spacing
-    root.style.setProperty('--luxar-spacing-0', theme.spacing[0]);
-    root.style.setProperty('--luxar-spacing-1', theme.spacing[1]);
-    root.style.setProperty('--luxar-spacing-2', theme.spacing[2]);
-    root.style.setProperty('--luxar-spacing-3', theme.spacing[3]);
-    root.style.setProperty('--luxar-spacing-4', theme.spacing[4]);
-    root.style.setProperty('--luxar-spacing-5', theme.spacing[5]);
-    root.style.setProperty('--luxar-spacing-6', theme.spacing[6]);
-    root.style.setProperty('--luxar-spacing-8', theme.spacing[8]);
-    root.style.setProperty('--luxar-spacing-10', theme.spacing[10]);
-    root.style.setProperty('--luxar-spacing-12', theme.spacing[12]);
-    root.style.setProperty('--luxar-spacing-16', theme.spacing[16]);
-    root.style.setProperty('--luxar-spacing-20', theme.spacing[20]);
-
-    // Border radius
-    root.style.setProperty('--luxar-radius-none', theme.effects.borderRadius.none);
-    root.style.setProperty('--luxar-radius-sm', theme.effects.borderRadius.sm);
-    root.style.setProperty('--luxar-radius-md', theme.effects.borderRadius.md);
-    root.style.setProperty('--luxar-radius-lg', theme.effects.borderRadius.lg);
-    root.style.setProperty('--luxar-radius-full', theme.effects.borderRadius.full);
-
-    // Shadows
-    root.style.setProperty('--luxar-shadow-sm', theme.effects.shadow.sm);
-    root.style.setProperty('--luxar-shadow-md', theme.effects.shadow.md);
-    root.style.setProperty('--luxar-shadow-lg', theme.effects.shadow.lg);
-    root.style.setProperty('--luxar-shadow-xl', theme.effects.shadow.xl);
-
-    // Blur
-    root.style.setProperty('--luxar-blur-none', theme.effects.blur.none);
-    root.style.setProperty('--luxar-blur-sm', theme.effects.blur.sm);
-    root.style.setProperty('--luxar-blur-md', theme.effects.blur.md);
-    root.style.setProperty('--luxar-blur-lg', theme.effects.blur.lg);
-
-    // Opacity
-    root.style.setProperty('--luxar-opacity-disabled', theme.effects.opacity.disabled.toString());
-    root.style.setProperty('--luxar-opacity-secondary', theme.effects.opacity.secondary.toString());
-    root.style.setProperty('--luxar-opacity-hover', theme.effects.opacity.hover.toString());
-    root.style.setProperty('--luxar-opacity-full', theme.effects.opacity.full.toString());
-
-    // Transitions
-    root.style.setProperty('--luxar-transition-fast', theme.effects.transition.fast);
-    root.style.setProperty('--luxar-transition-normal', theme.effects.transition.normal);
-    root.style.setProperty('--luxar-transition-slow', theme.effects.transition.slow);
-
-    // Z-index
-    root.style.setProperty('--luxar-z-base', theme.zIndex.base.toString());
-    root.style.setProperty('--luxar-z-dropdown', theme.zIndex.dropdown.toString());
-    root.style.setProperty('--luxar-z-modal', theme.zIndex.modal.toString());
-    root.style.setProperty('--luxar-z-popover', theme.zIndex.popover.toString());
-    root.style.setProperty('--luxar-z-tooltip', theme.zIndex.tooltip.toString());
   }
 
   /**

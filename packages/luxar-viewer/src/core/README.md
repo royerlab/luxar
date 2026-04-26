@@ -35,17 +35,22 @@ The core package serves as the central orchestrator for the Luxar application, m
 
 ```typescript
 core/
-├── main.ts    # Application entry point and global setup
-└── app.ts     # Main application class and lifecycle management
+├── main.ts        # Standalone-app HTML entry point (~20 lines)
+├── bootstrap.ts   # Pre-init sequence (theme, console patch, codec warm,
+│                  #   debug surface) + factory the standalone app uses
+└── app.ts         # LuxarApp — the core embed surface (`init` / `dispose`)
 ```
 
 **Component Dependency Flow**:
 
 ```
-main.ts → LuxarApp → SceneManager → AnimationController
-                  → InputHandler ← RenderingControls
-                  → DatasetBrowser (conditional)
+main.ts → bootstrapStandalone() → LuxarApp.init() → SceneManager → AnimationController
+                                                  → InputHandler ← RenderingControls
+                                                  → DatasetBrowser (conditional)
 ```
+
+Embedded callers skip `main.ts` and `bootstrapStandalone()` entirely — they
+construct `LuxarApp` themselves and call `init({ canvas, src, ... })`.
 
 The architecture follows a hierarchical initialization pattern where each component is responsible for its own setup while the core coordinates the overall sequence.
 
@@ -304,8 +309,8 @@ app.init({ canvas, src }).catch((error) => {
 The app exposes a debug interface when in development mode:
 
 ```typescript
-// main.ts debug setup
-const isDebugMode = params.has('debug') || localStorage.getItem('luxar_debug') === 'true';
+// bootstrap.ts debug setup
+const isDebugMode = urlParams.debug || localStorage.getItem('luxar.debug') === 'true';
 
 if (isDebugMode) {
   window.__luxarDebug = {

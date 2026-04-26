@@ -26,6 +26,9 @@ import { LabelLoader } from '../data/label-loader';
 import { ImageLabelLoader } from '../data/image-label-loader';
 import type { LoaderConfig } from '../data/data-loader-types';
 import { consoleInterceptor } from '../utils/console-interceptor';
+import { EventGroup } from '../utils/event-group';
+import { setWasmJsUrl } from '../wasm';
+import { setDataWorkerUrl } from '../workers/worker-pool';
 
 /**
  * Init-time options for {@link LuxarApp.init}.
@@ -56,6 +59,25 @@ export interface LuxarAppOptions {
    * the browser will rewrite the host page's URL.
    */
   updateBrowserUrl?: boolean;
+
+  /**
+   * Absolute URL to the WASM JS shim (`luxar_wasm.js`).
+   *
+   * Defaults to `new URL('../wasm/luxar_wasm.js', import.meta.url)` —
+   * resolved relative to the bundled JS, which works for Vite, Rollup,
+   * webpack 5, and most modern bundlers. Embedders whose bundlers don't
+   * support `import.meta.url` for asset URLs (or who ship the WASM files
+   * from a non-default location) override this.
+   */
+  wasmPath?: string;
+
+  /**
+   * Absolute URL to the data-worker module bundle.
+   *
+   * Defaults to `new URL('./data-worker.ts', import.meta.url)`. Override
+   * if your bundler can't resolve worker URLs that way.
+   */
+  workerPath?: string;
 }
 
 export class LuxarApp {
@@ -74,12 +96,32 @@ export class LuxarApp {
   private pickingSystem?: PickingSystem;
   private labelLoader?: LabelLoader;
   private imageLabelLoader?: ImageLabelLoader;
-  private pickingCleanup?: () => void;
+  /**
+   * Per-init EventGroup for picking-system listeners (canvas mousemove,
+   * window resize, controls/scene-manager subscriptions). Re-disposed and
+   * rebuilt on each scene load.
+   */
+  private pickingEvents = new EventGroup();
   private isInitialized = false;
-  private boundDispose: (() => void) | null = null;
-  private boundFocusHandler: (() => void) | null = null;
-  private boundVisibilityHandler: (() => void) | null = null;
-  private boundDatasetBrowserHandler: (() => void) | null = null;
+  /**
+   * Re-entrance guard for {@link dispose}. Set while a dispose is in flight
+   * so a `beforeunload` callback that fires mid-dispose (or any nested call)
+   * is a no-op rather than running the teardown a second time.
+   */
+  private isDisposing = false;
+  /**
+   * Idempotency guard for {@link dispose}. Once teardown completes, further
+   * `dispose()` calls are no-ops — fields still reference disposed instances,
+   * so without this flag we would invoke `dispose()` on already-disposed
+   * components (potentially double-freeing GPU resources). Reset by `init()`.
+   */
+  private isDisposed = false;
+  /**
+   * App-level event listeners (beforeunload, focus, visibilitychange,
+   * open-dataset-browser, plus the picking system's mousemove + control
+   * change subscriptions). Disposed in one call from {@link dispose}.
+   */
+  private events = new EventGroup();
 
   /**
    * Snapshot of init-time options. Populated by `init()` and read by
@@ -136,7 +178,29 @@ export class LuxarApp {
       );
     }
 
+    // Browser-environment guard. SceneManager and InputHandler reach for
+    // window/document/localStorage unconditionally, so a friendly upfront
+    // error beats a cryptic ReferenceError half-way through init for SSR
+    // or non-browser callers.
+    if (typeof window === 'undefined' || typeof document === 'undefined') {
+      throw new Error(
+        'LuxarApp requires a browser environment (window and document must be defined).'
+      );
+    }
+
+    // Reset the idempotency guard so a fresh init followed by dispose works
+    // even if the same instance was previously initialized and disposed.
+    this.isDisposed = false;
     this.options = options;
+
+    // Forward asset-URL overrides to the WASM and worker modules. Skipped
+    // when the option is undefined so the modules use their default
+    // `import.meta.url`-based resolution. NOTE: the override is module-level
+    // and sticks across init() calls — once set, a subsequent init() without
+    // the option does not reset to the default. In practice we only support
+    // one LuxarApp per page in v1, so this is fine.
+    if (options.wasmPath) setWasmJsUrl(options.wasmPath);
+    if (options.workerPath) setDataWorkerUrl(options.workerPath);
 
     try {
       // Inform users about expected console messages
@@ -257,8 +321,12 @@ export class LuxarApp {
       this.isInitialized = true;
     } catch (error) {
       log.error(Modules.APP, 'Failed to initialize Luxar app:', error);
-      // Don't dispose() here — it would remove the error UI the user still
-      // needs to see. Caller decides whether to dispose and retry.
+      // Tear down whatever partial state was constructed before the throw.
+      // dispose() is now defensive (per-field `if (this.x)` guards) so it
+      // safely handles a half-built app. The caller's error handler is
+      // expected to surface a fresh, top-level error UI; any in-progress
+      // error UI from sub-loaders is wiped along with everything else.
+      this.dispose();
       throw error;
     }
   }
@@ -540,11 +608,11 @@ export class LuxarApp {
    * Wires up: PickingSystem → LabelLoader/ImageLabelLoader → OverlayManager.updateHoverContent.
    */
   private async initPicking(): Promise<void> {
-    // Clean up previous picking if reloading
-    if (this.pickingCleanup) {
-      this.pickingCleanup();
-      this.pickingCleanup = undefined;
-    }
+    // Re-init: tear down listeners from any previous picking session.
+    // (initPicking() also resets pickingEvents at the listener registration
+    // site below, but doing it here too lets us early-return on no-labels
+    // without leaking the previous session's listeners.)
+    this.pickingEvents.dispose();
     this.pickingSystem?.dispose();
     this.labelLoader?.dispose();
     this.imageLabelLoader?.dispose();
@@ -630,15 +698,19 @@ export class LuxarApp {
       sceneLoader.nodeFactory.registerExistingSceneNodes(root);
     }
 
-    // Register mousemove on canvas
+    // DOM events go through EventGroup.on(); Three.js EventDispatcher events
+    // (controls, sceneManager) use add() with a manual remove closure since
+    // their addEventListener/removeEventListener signatures aren't EventTarget.
     const canvas = this.sceneManager.renderer.domElement;
     const handler = (e: MouseEvent) => this.pickingSystem?.onMouseMove(e);
-    canvas.addEventListener('mousemove', handler);
+    this.pickingEvents.on(canvas, 'mousemove', handler);
 
-    // Invalidate pick buffer on camera changes and window resize
     const dirtyHandler = () => this.pickingSystem?.markDirty();
     this.sceneManager.controls.addEventListener('change', dirtyHandler);
-    window.addEventListener('resize', dirtyHandler);
+    this.pickingEvents.add(() =>
+      this.sceneManager.controls.removeEventListener('change', dirtyHandler)
+    );
+    this.pickingEvents.on(window, 'resize', dirtyHandler);
 
     // Suppress picking during orbit/pan/zoom — no expensive offscreen renders
     // while the user is navigating, and fade out stale hover labels.
@@ -652,21 +724,17 @@ export class LuxarApp {
     };
     controls.addEventListener('start', interactionStart);
     controls.addEventListener('end', interactionEnd);
+    this.pickingEvents.add(() => controls.removeEventListener('start', interactionStart));
+    this.pickingEvents.add(() => controls.removeEventListener('end', interactionEnd));
 
     // Update picking camera when perspective ↔ orthographic swap occurs
     const cameraChangedHandler = () => {
       this.pickingSystem?.setCamera(this.sceneManager.camera);
     };
     this.sceneManager.addEventListener('camera-changed', cameraChangedHandler);
-
-    this.pickingCleanup = () => {
-      canvas.removeEventListener('mousemove', handler);
-      this.sceneManager.controls.removeEventListener('change', dirtyHandler);
-      controls.removeEventListener('start', interactionStart);
-      controls.removeEventListener('end', interactionEnd);
-      this.sceneManager.removeEventListener('camera-changed', cameraChangedHandler);
-      window.removeEventListener('resize', dirtyHandler);
-    };
+    this.pickingEvents.add(() =>
+      this.sceneManager.removeEventListener('camera-changed', cameraChangedHandler)
+    );
 
     log.info(Modules.APP, 'GPU picking system initialized (labels detected)');
   }
@@ -675,20 +743,18 @@ export class LuxarApp {
    * Register a beforeunload handler that disposes the app on page unload.
    */
   private setupDisposeOnUnload(): void {
-    this.boundDispose = this.dispose.bind(this);
-    window.addEventListener('beforeunload', this.boundDispose);
+    this.events.on(window, 'beforeunload', () => this.dispose());
   }
 
   /**
    * Setup keyboard shortcut for opening dataset browser
    */
   private setupDatasetBrowserShortcut(): void {
-    this.boundDatasetBrowserHandler = () => {
+    this.events.on(window, 'open-dataset-browser', () => {
       if (!this.datasetBrowser) {
         this.showDatasetBrowser();
       }
-    };
-    window.addEventListener('open-dataset-browser', this.boundDatasetBrowserHandler);
+    });
   }
 
   /**
@@ -696,14 +762,14 @@ export class LuxarApp {
    * This prevents stale renders when switching between windows/tabs
    */
   private setupFocusHandling(): void {
-    this.boundFocusHandler = () => {
+    this.events.on(window, 'focus', () => {
       // Suppress focus-triggered renders during recording — they can interfere
       // with the deterministic capture loop or cause resize side effects
       if (this.recordingPanel?.isCurrentlyRecording()) return;
       this.animationController.startAnimation();
       log.info(Modules.LUXAR, 'Window focused - triggering render refresh');
-    };
-    this.boundVisibilityHandler = () => {
+    });
+    this.events.on(document, 'visibilitychange', () => {
       // Don't stop animation during recording (offline capture needs the loop alive)
       if (this.recordingPanel?.isCurrentlyRecording()) return;
       if (document.hidden) {
@@ -713,23 +779,24 @@ export class LuxarApp {
         this.animationController.startAnimation();
         log.info(Modules.LUXAR, 'Document became visible - resuming animation');
       }
-    };
-    window.addEventListener('focus', this.boundFocusHandler);
-    document.addEventListener('visibilitychange', this.boundVisibilityHandler);
+    });
   }
 
   /**
    * Setup debug interface for testing and AI-assisted development
    *
-   * This extends the existing debug interface (created in main.ts) with
-   * runtime components that are only available after initialization:
+   * This extends the existing debug interface (seeded by bootstrapStandalone()
+   * before init() runs) with runtime components that are only available after
+   * initialization:
    * - Three.js scene, camera, renderer
    * - Controls and animation state
    * - Helper functions for testing
    *
-   * Preserves existing properties (app, consoleInterceptor, version) from main.ts
+   * Preserves existing properties (app, consoleInterceptor, version) from
+   * the bootstrap-side seeding.
    *
-   * Only enabled when ?debug URL parameter is present
+   * Only enabled when `LuxarAppOptions.debug` is set (the standalone bootstrap
+   * derives that from the `?debug` URL param or persisted `luxar.debug` flag).
    */
   private setupDebugInterface(): void {
     if (!this.options.debug) {
@@ -738,9 +805,9 @@ export class LuxarApp {
 
     log.info(Modules.LUXAR, 'Extending debug interface with runtime components');
 
-    // Extend whatever main.ts seeded (app/consoleInterceptor/version). When
+    // Extend whatever bootstrap seeded (app/consoleInterceptor/version). When
     // LuxarApp is instantiated outside the standalone-app entry point
-    // (tests, embeds), main.ts hasn't run; fall back to a fresh base.
+    // (tests, embeds), bootstrap hasn't run; fall back to a fresh base.
     const existing = window.__luxarDebug ?? {
       app: this,
       consoleInterceptor: consoleInterceptor,
@@ -859,99 +926,59 @@ export class LuxarApp {
         return SceneLoaderManager.getInstance();
       },
 
-      // Cache-specific helpers
+      // Cache-specific helpers — thin wrappers over the SceneLoader cache API.
       cache: {
-        // Get current cache statistics (L0, L1, L2)
         getStats: () => {
-          const manager = SceneLoaderManager.getInstance();
-          const loader = manager.getDefaultLoader();
-          if (!loader) {
-            return { error: 'No active loader found' };
-          }
-
-          // Get L1/L2 stats from caching store
-          const l1l2Stats = (loader as any).cachingStore
-            ? (loader as any).cachingStore.getStats()
-            : { l1: null, l2: null };
-
-          // Get L0 stats from decompressed chunk cache
-          const l0Cache = (loader as any).l0Cache;
-          const l0Stats = l0Cache ? l0Cache.getStats() : null;
-
-          return {
-            l0: l0Stats,
-            l1: l1l2Stats.l1,
-            l2: l1l2Stats.l2,
-          };
+          const loader = SceneLoaderManager.getInstance().getDefaultLoader();
+          if (!loader) return { error: 'No active loader found' };
+          return loader.getCacheStats();
         },
 
-        // List all cached datasets
-        listDatasets: () => {
-          const manager = SceneLoaderManager.getInstance();
-          const loader = manager.getDefaultLoader();
-          if (!loader || !(loader as any).cachingStore) {
+        listDatasets: async () => {
+          const loader = SceneLoaderManager.getInstance().getDefaultLoader();
+          if (!loader || !loader.hasCachingStore) {
             return { error: 'No active cache found' };
           }
-          return (loader as any).cachingStore.listDatasets();
+          return loader.listCachedDatasets();
         },
 
-        // Clear L0 decompressed chunk cache only
         clearL0: () => {
-          const manager = SceneLoaderManager.getInstance();
-          const loader = manager.getDefaultLoader();
-          const l0Cache = loader ? (loader as any).l0Cache : null;
-          if (!l0Cache) {
+          const loader = SceneLoaderManager.getInstance().getDefaultLoader();
+          if (!loader) {
             log.warning(Modules.CACHE, 'No L0 cache found');
             return;
           }
-          l0Cache.clear();
+          loader.clearL0Cache();
           log.info(Modules.CACHE, 'L0 cache cleared');
         },
 
-        // Clear L1 cache only
         clearL1: () => {
-          const manager = SceneLoaderManager.getInstance();
-          const loader = manager.getDefaultLoader();
-          if (!loader || !(loader as any).cachingStore) {
+          const loader = SceneLoaderManager.getInstance().getDefaultLoader();
+          if (!loader || !loader.hasCachingStore) {
             log.warning(Modules.CACHE, 'No active cache found');
             return;
           }
-          (loader as any).cachingStore.clearL1();
+          loader.clearL1Cache();
           log.info(Modules.CACHE, 'L1 cache cleared');
         },
 
-        // Clear L2 cache only
         clearL2: async () => {
-          const manager = SceneLoaderManager.getInstance();
-          const loader = manager.getDefaultLoader();
-          if (!loader || !(loader as any).cachingStore) {
+          const loader = SceneLoaderManager.getInstance().getDefaultLoader();
+          if (!loader || !loader.hasCachingStore) {
             log.warning(Modules.CACHE, 'No active cache found');
             return;
           }
-          await (loader as any).cachingStore.clearL2();
+          await loader.clearL2Cache();
           log.info(Modules.CACHE, 'L2 cache cleared');
         },
 
-        // Clear all caches (L0, L1, L2)
         clearAll: async () => {
-          const manager = SceneLoaderManager.getInstance();
-          const loader = manager.getDefaultLoader();
+          const loader = SceneLoaderManager.getInstance().getDefaultLoader();
           if (!loader) {
             log.warning(Modules.CACHE, 'No active loader found');
             return;
           }
-
-          // Clear L0 decompressed chunk cache
-          const l0Cache = (loader as any).l0Cache;
-          if (l0Cache) {
-            l0Cache.clear();
-          }
-
-          // Clear L1/L2 caching store
-          if ((loader as any).cachingStore) {
-            await (loader as any).cachingStore.clearAll();
-          }
-
+          await loader.clearAllCaches();
           log.info(Modules.CACHE, 'All caches cleared (L0, L1, L2)');
         },
       },
@@ -1003,7 +1030,20 @@ export class LuxarApp {
    * init() again to re-create resources, or discard the instance.
    */
   dispose(): void {
-    if (!this.isInitialized) return;
+    // Idempotency: a second dispose() after a successful one is a no-op.
+    // Component fields still reference their (already disposed) instances,
+    // so without this guard we would call dispose() on disposed components.
+    if (this.isDisposed) return;
+    // Re-entrance guard: if a beforeunload (or any nested) call fires while
+    // we are already tearing down, do nothing.
+    if (this.isDisposing) return;
+    this.isDisposing = true;
+
+    // Flip initialized at entry so any concurrent observer of `app.initialized`
+    // sees the correct state from the first instant of teardown, even if
+    // teardown throws partway through.
+    this.isInitialized = false;
+
     try {
       // Stop animation first
       if (this.animationController) {
@@ -1051,11 +1091,10 @@ export class LuxarApp {
         this.layersPanel = undefined;
       }
 
-      // Clean up picking system
-      if (this.pickingCleanup) {
-        this.pickingCleanup();
-        this.pickingCleanup = undefined;
-      }
+      // Clean up picking system listeners (DOM mousemove, controls/scene
+      // event subscriptions). pickingEvents is reusable: dispose() leaves it
+      // in an empty state ready for the next initPicking() call.
+      this.pickingEvents.dispose();
       if (this.pickingSystem) {
         this.pickingSystem.dispose();
         this.pickingSystem = undefined;
@@ -1086,34 +1125,20 @@ export class LuxarApp {
 
       // Tear down the theme manager (disconnects glass-refraction MutationObserver,
       // removes injected SVG filters, clears CSS custom properties).
-      ThemeManager.resetInstance();
+      ThemeManager.disposeInstance();
 
       // Clean up UI resources
       cleanupUI();
 
-      // Remove focus and visibility listeners
-      if (this.boundFocusHandler) {
-        window.removeEventListener('focus', this.boundFocusHandler);
-        this.boundFocusHandler = null;
-      }
-      if (this.boundVisibilityHandler) {
-        document.removeEventListener('visibilitychange', this.boundVisibilityHandler);
-        this.boundVisibilityHandler = null;
-      }
-      if (this.boundDatasetBrowserHandler) {
-        window.removeEventListener('open-dataset-browser', this.boundDatasetBrowserHandler);
-        this.boundDatasetBrowserHandler = null;
-      }
-
-      // Remove beforeunload listener with stored reference
-      if (this.boundDispose) {
-        window.removeEventListener('beforeunload', this.boundDispose);
-        this.boundDispose = null;
-      }
-
-      this.isInitialized = false;
+      // Tear down all app-level event listeners (focus, visibility, beforeunload,
+      // open-dataset-browser, and any picking-system subscriptions added later
+      // via this.events.add()) in one call.
+      this.events.dispose();
     } catch (error) {
       log.error(Modules.LUXAR, 'Error during dispose:', error);
+    } finally {
+      this.isDisposing = false;
+      this.isDisposed = true;
     }
   }
 

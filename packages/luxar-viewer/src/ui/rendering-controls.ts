@@ -424,10 +424,16 @@ export class RenderingControls {
     // Update settings object in place to maintain GUI bindings
     Object.assign(this.settings, defaults);
 
-    // Clear saved settings for this scene (before applying, so user sees clean state)
+    // Clear saved settings for this scene (before applying, so user sees clean state).
+    // Wrapped in try/catch so a host page with localStorage disabled (private
+    // mode strict, sandboxed iframe) doesn't break the reset flow.
     if (this.sceneId) {
-      const key = StorageKeys.rendering(this.sceneId);
-      localStorage.removeItem(key);
+      try {
+        const key = StorageKeys.rendering(this.sceneId);
+        localStorage.removeItem(key);
+      } catch (err) {
+        log.warning(Modules.RENDERING_CONTROLS, 'Failed to clear saved rendering settings', err);
+      }
     }
 
     // Apply camera settings to scene manager (before post-processing)
@@ -1016,8 +1022,13 @@ export class RenderingControls {
   private saveSettings(): void {
     if (!this.sceneId) return;
 
-    const key = StorageKeys.rendering(this.sceneId);
-    localStorage.setItem(key, serializeSettings(this.settings));
+    try {
+      const key = StorageKeys.rendering(this.sceneId);
+      localStorage.setItem(key, serializeSettings(this.settings));
+    } catch (err) {
+      // Ignore quota / disabled-storage errors — settings just don't persist.
+      log.warning(Modules.RENDERING_CONTROLS, 'Failed to save rendering settings to localStorage', err);
+    }
   }
 
   /**
@@ -1029,8 +1040,13 @@ export class RenderingControls {
     // Snapshot is session-only; clear it when loading persisted settings
     this.cinematicSnapshot = null;
 
-    const key = StorageKeys.rendering(this.sceneId);
-    const stored = localStorage.getItem(key);
+    let stored: string | null = null;
+    try {
+      const key = StorageKeys.rendering(this.sceneId);
+      stored = localStorage.getItem(key);
+    } catch (err) {
+      log.warning(Modules.RENDERING_CONTROLS, 'Failed to read rendering settings from localStorage', err);
+    }
     this.hasStoredLocalSettings = !!stored;
 
     if (stored) {

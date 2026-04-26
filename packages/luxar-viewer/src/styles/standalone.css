@@ -1,0 +1,18 @@
+/**
+ * Luxar Styles — Standalone-only entry.
+ *
+ * These rules touch host-page state (`html`, `body`, `*`, `::-webkit-scrollbar`,
+ * `:focus-visible`, `ul`, `ol`, `a`, `button`, `input`, etc.) and would clobber
+ * a third-party page's styling if shipped in the library entry point.
+ *
+ * The standalone app's `main.ts` imports both this file AND `index.css`.
+ * Embedders publish only `index.css` and skip this file entirely (their host
+ * page already provides its own page chrome).
+ *
+ * If you add a library-side rule that starts with a global selector
+ * (`html`, `body`, `*`, `::pseudo`, etc.), put it here, not in index.css.
+ */
+
+@import './reset.css';
+@import './base/typography.css';
+@import './base/layout.css';

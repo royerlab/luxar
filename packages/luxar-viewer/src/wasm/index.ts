@@ -30,6 +30,29 @@ import { log, Modules } from '../utils/log';
 export type { WasmModule } from './types';
 
 /**
+ * Optional override for the WASM JS shim URL.
+ *
+ * The default resolution (`new URL('../wasm/luxar_wasm.js', import.meta.url)`)
+ * works for the standalone Vite app and most consumer bundlers (Vite,
+ * Rollup, webpack 5). Bundlers that don't support the `import.meta.url`
+ * pattern, or consumers that ship the WASM files from a non-default
+ * location, can call {@link setWasmJsUrl} once at startup with an explicit
+ * absolute URL.
+ *
+ * Set via `LuxarAppOptions.wasmPath` from `LuxarApp.init`.
+ */
+let wasmJsUrlOverride: string | undefined;
+
+/**
+ * Override the URL used to load the WASM JS shim. Pass an absolute URL
+ * (e.g. `new URL('/static/luxar/wasm/luxar_wasm.js', location.origin).href`).
+ * Call before {@link initWasm}.
+ */
+export function setWasmJsUrl(url: string): void {
+  wasmJsUrlOverride = url;
+}
+
+/**
  * Initialize WASM module.
  *
  * Attempts to load the compiled WASM module, falls back to TypeScript
@@ -44,12 +67,17 @@ export type { WasmModule } from './types';
  */
 export async function initWasm(): Promise<WasmModule> {
   try {
-    // Compute WASM module URL relative to this bundle file.
-    // At build time, this module is bundled into assets/index-*.js and the WASM
-    // files live at wasm/ (sibling of assets/). Using a variable prevents Vite
-    // from trying to resolve the path as a source asset at build time.
+    // Compute WASM module URL relative to this bundle file. At build time,
+    // this module is bundled into assets/index-*.js and the WASM files live
+    // at wasm/ (sibling of assets/). Using a variable prevents Vite from
+    // trying to resolve the path as a source asset at build time.
+    //
+    // Embedders whose bundlers don't support `import.meta.url` resolution
+    // can override the URL via {@link setWasmJsUrl} (forwarded by
+    // LuxarAppOptions.wasmPath).
     const wasmRelativePath = '../wasm/luxar_wasm.js';
-    const wasmJsUrl = new URL(wasmRelativePath, import.meta.url).href;
+    const wasmJsUrl =
+      wasmJsUrlOverride ?? new URL(wasmRelativePath, import.meta.url).href;
 
     // Use Function constructor to avoid TypeScript compile-time module resolution
     // This allows the code to compile even when WASM module doesn't exist yet

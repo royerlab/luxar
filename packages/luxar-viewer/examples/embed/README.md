@@ -1,0 +1,75 @@
+# Embed Demo
+
+Minimal example showing how to mount the Luxar viewer inside a third-party
+host page. The page intentionally has its own non-trivial styling (serif
+font, beige background, custom margins, bulleted list) so that any
+regression on the embed-isolation contract is visible at a glance.
+
+## What this proves
+
+1. **CSS isolation** — `luxar-viewer/styles.css` adds component styles for
+   the viewer's UI overlays but does not touch `body`, `html`, `*`, lists,
+   buttons, or scrollbars. The host page's styling is intact.
+2. **No console hijack** — `import { LuxarApp } from 'luxar-viewer'` is
+   side-effect-free: it does not monkey-patch `console.*`. Only an
+   explicit call to `consoleInterceptor.patch()` (which embedders almost
+   never want) does that.
+3. **Clean dispose** — `app.dispose()` removes all viewer DOM, listeners,
+   GPU resources, and CSS variables. The host page can mount and unmount
+   the viewer freely.
+
+## Run
+
+From `packages/luxar-viewer`:
+
+```bash
+pnpm build:lib                       # builds dist/lib/{luxar-viewer.js,.css,types}
+cd examples/embed
+python -m http.server 8765
+open http://localhost:8765/
+```
+
+(The page uses an `<script type="importmap">` to point `three` at jsdelivr
+so it works without npm-resolution. In a real app you install `three`
+from npm and let your bundler resolve it.)
+
+## The minimal embedding code
+
+```html
+<canvas id="luxar-canvas"></canvas>
+<script type="importmap">
+  { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.163.0/build/three.module.js" } }
+</script>
+<link rel="stylesheet" href="/path/to/luxar-viewer.css" />
+<script type="module">
+  import { LuxarApp } from '/path/to/luxar-viewer.js';
+
+  const app = new LuxarApp();
+  await app.init({
+    canvas: document.getElementById('luxar-canvas'),
+    src: 'https://example.com/data.zarr',
+    updateBrowserUrl: false,   // don't rewrite the host URL on dataset change
+  });
+
+  // Later:
+  // app.dispose();
+</script>
+```
+
+## Tested embed surface
+
+| Option           | Type             | Default | Why an embedder cares                                                 |
+| ---------------- | ---------------- | ------- | --------------------------------------------------------------------- |
+| `canvas`         | HTMLCanvasElement| —       | The canvas the viewer renders into. Required.                         |
+| `src`            | string           | config  | Initial Zarr URL.                                                     |
+| `debug`          | boolean          | false   | Exposes `window.__luxarDebug` for Playwright / dev console.           |
+| `loaderConfig`   | LoaderConfig     | —       | Cache and prefetch flags.                                             |
+| `updateBrowserUrl` | boolean        | true    | **Set to false in embeds** so the host URL isn't rewritten.           |
+| `wasmPath`       | string           | —       | Override for bundlers that don't resolve `import.meta.url` for WASM.  |
+| `workerPath`     | string           | —       | Same, but for the data worker.                                        |
+
+## Phase 2
+
+Multi-instance (multiple viewers on the same host page), `:root`-scoped
+themes, Shadow DOM wrappers, and React/web-component bindings are
+explicitly out of scope for this v1 embed. They land in a follow-up batch.
