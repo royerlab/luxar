@@ -1,0 +1,55 @@
+/**
+ * Luxar Viewer — public package entry point.
+ *
+ * Importing this module is **side-effect-free**:
+ * - No console patching.
+ * - No CSS injection (consumers import `luxar-viewer/styles.css` separately).
+ * - No DOM mutation.
+ * - No singleton instantiation.
+ *
+ * That's the contract that lets a third-party host page do
+ * `import { LuxarApp } from 'luxar-viewer'` without surprising changes to
+ * its environment.
+ *
+ * The minimal embed shape:
+ *
+ * ```ts
+ * import { LuxarApp } from 'luxar-viewer';
+ * import 'luxar-viewer/styles.css';   // optional but typical
+ *
+ * const canvas = document.querySelector('canvas#viewer') as HTMLCanvasElement;
+ * const app = new LuxarApp();
+ * await app.init({
+ *   canvas,
+ *   src: 'https://example.com/cells.zarr',
+ *   updateBrowserUrl: false,         // do NOT rewrite host page URL
+ * });
+ *
+ * // Later, when the host wants to tear the viewer down:
+ * app.dispose();
+ * ```
+ *
+ * For consumers who want the standalone-app behavior verbatim (URL parsing,
+ * theme from `?theme`, debug from `?debug`, codec warming, console patching),
+ * use {@link bootstrapStandalone} instead of LuxarApp directly.
+ */
+
+// Core API.
+export { LuxarApp, type LuxarAppOptions } from './core/app';
+export { bootstrapStandalone, type BootstrapOptions } from './core/bootstrap';
+
+// URL parsing — useful for embedders that want to honor a few of the
+// standalone-app's URL flags without taking the whole bootstrap path.
+export { readUrlParams, type UrlParams } from './config/url-params';
+
+// Storage namespacing — exposed so an embedder can clear Luxar-owned keys
+// (e.g. on uninstall) without grepping the codebase for prefixes.
+export { StorageKeys } from './utils/storage-keys';
+
+// Loader configuration — shape of the cache/prefetch flags accepted by
+// LuxarAppOptions.loaderConfig.
+export type { LoaderConfig } from './data/data-loader-types';
+
+// Optional: zarr viewer-config shape (data authors may want to type their
+// own viewer_config metadata against this).
+export type { ZarrViewerConfig } from './types/zarr';
