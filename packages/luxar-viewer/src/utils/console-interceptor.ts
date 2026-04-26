@@ -148,13 +148,15 @@ class ConsoleInterceptor {
       stack,
     };
 
-    // Ring buffer implementation - overwrite oldest when full
+    // Ring buffer: while filling, append. Once full, overwrite at bufferIndex
+    // and advance modulo maxBufferSize. The push branch must wrap on the
+    // exact fill boundary (length === maxBufferSize) so the next overwrite
+    // hits index 0 (the oldest entry) rather than maxBufferSize (out of
+    // bounds, which previously grew the array by one and stranded index 0).
     if (this.messageBuffer.length < this.maxBufferSize) {
-      // Buffer not full yet, just append
       this.messageBuffer.push(message);
-      this.bufferIndex = this.messageBuffer.length;
+      this.bufferIndex = this.messageBuffer.length % this.maxBufferSize;
     } else {
-      // Buffer full, overwrite oldest message
       this.messageBuffer[this.bufferIndex] = message;
       this.bufferIndex = (this.bufferIndex + 1) % this.maxBufferSize;
       this.hasWrapped = true;
