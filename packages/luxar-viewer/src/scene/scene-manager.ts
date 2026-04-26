@@ -945,8 +945,9 @@ export class SceneManager extends THREE.EventDispatcher<{
    * Center camera and controls on the origin
    */
   private centerOnOrigin(): void {
-    // Get current camera distance from target
-    const currentDistance = this.camera.position.distanceTo((this.controls as any).target);
+    // Get current camera distance from target. getFocusTarget() returns a
+    // clone, so it is safe to use as a one-shot read.
+    const currentDistance = this.camera.position.distanceTo(this.controls.getFocusTarget());
 
     // Reset target to origin
     const origin = new THREE.Vector3(0, 0, 0);
@@ -956,8 +957,8 @@ export class SceneManager extends THREE.EventDispatcher<{
     this.camera.lookAt(origin);
     this.camera.updateMatrixWorld(true);
 
-    // Update controls target
-    (this.controls as any).target.copy(origin);
+    // Update controls target through the typed setter.
+    this.controls.setTarget(origin);
     this.controls.update();
 
     // Save the new origin-centered state as the default

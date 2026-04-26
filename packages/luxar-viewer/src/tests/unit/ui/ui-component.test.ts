@@ -73,12 +73,12 @@ class TestComponent extends UIComponent<{ title: string }> {
 describe('UIComponent', () => {
   beforeEach(() => {
     document.body.innerHTML = '';
-    ThemeManager.resetInstance();
+    ThemeManager.disposeInstance();
   });
 
   afterEach(() => {
     document.body.innerHTML = '';
-    ThemeManager.resetInstance();
+    ThemeManager.disposeInstance();
   });
 
   describe('Lifecycle', () => {

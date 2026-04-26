@@ -51,7 +51,13 @@ class ConsoleInterceptor {
   private isIntercepting = false;
 
   private constructor() {
-    // Store original console methods immediately
+    // Capture the platform's original console methods at construction time so
+    // we can later restore them. Construction does NOT patch console — call
+    // {@link patch} explicitly to start intercepting.
+    //
+    // This deliberate separation matters for embedding: importing this
+    // module from a published library must not silently monkey-patch the
+    // host page's console.
     this.originalConsole = {
       log: console.log.bind(console),
       warn: console.warn.bind(console),
@@ -59,13 +65,14 @@ class ConsoleInterceptor {
       info: console.info.bind(console),
       debug: console.debug.bind(console),
     };
-
-    // Start interception immediately
-    this.startInterception();
   }
 
   /**
-   * Get singleton instance
+   * Get singleton instance.
+   *
+   * Construction is lazy and side-effect-free. The singleton stores the
+   * platform's original console methods, but does NOT patch them — call
+   * {@link patch} on the returned instance to start intercepting.
    */
   static getInstance(): ConsoleInterceptor {
     if (!ConsoleInterceptor.instance) {
@@ -75,9 +82,32 @@ class ConsoleInterceptor {
   }
 
   /**
-   * Start intercepting console methods
+   * Dispose the singleton instance, unpatching console first if necessary.
+   *
+   * After this call, the next {@link getInstance} returns a fresh interceptor
+   * with an empty buffer. Used at app shutdown and between tests.
    */
-  private startInterception(): void {
+  static disposeInstance(): void {
+    if (ConsoleInterceptor.instance) {
+      ConsoleInterceptor.instance.dispose();
+      ConsoleInterceptor.instance = undefined as unknown as ConsoleInterceptor;
+    }
+  }
+
+  /**
+   * Whether console.* is currently being intercepted by this instance.
+   */
+  get isPatched(): boolean {
+    return this.isIntercepting;
+  }
+
+  /**
+   * Start intercepting console methods. Idempotent — safe to call repeatedly.
+   *
+   * After patch(), every console.log/warn/error/info/debug call also lands in
+   * the ring buffer. Reverse with {@link dispose}.
+   */
+  patch(): void {
     if (this.isIntercepting) return;
     this.isIntercepting = true;
 
@@ -148,13 +178,15 @@ class ConsoleInterceptor {
       stack,
     };
 
-    // Ring buffer implementation - overwrite oldest when full
+    // Ring buffer: while filling, append. Once full, overwrite at bufferIndex
+    // and advance modulo maxBufferSize. The push branch must wrap on the
+    // exact fill boundary (length === maxBufferSize) so the next overwrite
+    // hits index 0 (the oldest entry) rather than maxBufferSize (out of
+    // bounds, which previously grew the array by one and stranded index 0).
     if (this.messageBuffer.length < this.maxBufferSize) {
-      // Buffer not full yet, just append
       this.messageBuffer.push(message);
-      this.bufferIndex = this.messageBuffer.length;
+      this.bufferIndex = this.messageBuffer.length % this.maxBufferSize;
     } else {
-      // Buffer full, overwrite oldest message
       this.messageBuffer[this.bufferIndex] = message;
       this.bufferIndex = (this.bufferIndex + 1) % this.maxBufferSize;
       this.hasWrapped = true;
@@ -243,9 +275,14 @@ class ConsoleInterceptor {
   }
 
   /**
-   * Restore original console methods (for cleanup)
+   * Restore the original console methods and stop intercepting.
+   *
+   * After dispose(), captureMessage() is no longer reachable through
+   * `console.log` etc. The buffer is preserved (callers can still read
+   * `getBufferedMessages()`), and the singleton slot is left intact —
+   * call {@link ConsoleInterceptor.disposeInstance} to clear it.
    */
-  restore(): void {
+  dispose(): void {
     if (!this.isIntercepting) return;
 
     console.log = this.originalConsole.log;
@@ -261,12 +298,32 @@ class ConsoleInterceptor {
   }
 }
 
-// Construct eagerly at import time. main.ts imports this module first so
-// the constructor's console.* monkey-patching takes effect before any
-// other code logs anything. Lazy/Proxy-based deferral would defeat that
-// purpose — every other singleton in the codebase is lazy, but this one
-// genuinely needs the import-time side-effect.
-export const consoleInterceptor = ConsoleInterceptor.getInstance();
+/**
+ * Lazy proxy for the singleton. Property access on this object resolves to
+ * the live `ConsoleInterceptor` (constructed on first use). Importing the
+ * symbol is itself side-effect-free — no console patching, no allocations.
+ *
+ * Patch the host console explicitly via `consoleInterceptor.patch()` from
+ * the bootstrap path that wants buffered console output (e.g. main.ts for
+ * the standalone app, LuxarApp.init({ debug: true }) for embedded use).
+ */
+export const consoleInterceptor: ConsoleInterceptor = new Proxy(
+  {} as ConsoleInterceptor,
+  {
+    get(_target, prop, receiver) {
+      const instance = ConsoleInterceptor.getInstance();
+      const value = Reflect.get(instance, prop, receiver);
+      return typeof value === 'function' ? value.bind(instance) : value;
+    },
+    set(_target, prop, value, receiver) {
+      const instance = ConsoleInterceptor.getInstance();
+      return Reflect.set(instance, prop, value, receiver);
+    },
+    has(_target, prop) {
+      return prop in ConsoleInterceptor.getInstance();
+    },
+  }
+);
 
 // Also export the type for the singleton
 export type { ConsoleInterceptor };

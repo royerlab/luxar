@@ -31,7 +31,8 @@ declare global {
      * sessions.
      *
      * Populated in two stages:
-     * - main.ts attaches `app`, `consoleInterceptor`, `version` immediately.
+     * - bootstrapStandalone() (or any caller that opts in) attaches
+     *   `app`, `consoleInterceptor`, `version` before `init()` runs.
      * - LuxarApp.setupDebugInterface() extends with runtime references
      *   after `init()` completes, and sets `runtimeReady = true`.
      */
@@ -68,6 +69,13 @@ declare global {
         clearL2: () => Promise<void>;
         clearAll: () => Promise<void>;
       };
+
+      /**
+       * Last viewer state exported via the keyboard shortcut handler in
+       * input-handler.ts (in addition to the clipboard copy). Surfaced for
+       * Playwright agent flows that want a stable reference across runs.
+       */
+      lastExportedState?: unknown;
     };
   }
 }

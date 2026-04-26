@@ -184,6 +184,69 @@ export class SceneLoader {
     return this._sceneGraph;
   }
 
+  // ============================================================
+  // Cache surface
+  //
+  // SceneLoader owns the L0 (decompressed-chunk) cache and the L1/L2
+  // TwoLevelCachingStore. These methods expose a typed, public API that
+  // tools (debug interface, embedders) can call without reaching into
+  // private fields. Each method gracefully no-ops if the cache layer is
+  // unavailable (e.g. when `noCache` is set in LoaderConfig).
+  // ============================================================
+
+  /**
+   * Snapshot of all cache levels (L0, L1, L2) in the form historically
+   * exposed by `__luxarDebug.cache.getStats()`.
+   */
+  getCacheStats(): {
+    l0: ReturnType<DecompressedChunkCache['getStats']> | null;
+    l1: ReturnType<TwoLevelCachingStore['getStats']>['l1'] | null;
+    l2: ReturnType<TwoLevelCachingStore['getStats']>['l2'] | null;
+  } {
+    const l1l2 = this.cachingStore?.getStats();
+    return {
+      l0: this.l0Cache?.getStats() ?? null,
+      l1: l1l2?.l1 ?? null,
+      l2: l1l2?.l2 ?? null,
+    };
+  }
+
+  /** List datasets currently held by the L1/L2 caching store. */
+  async listCachedDatasets(): Promise<
+    ReturnType<TwoLevelCachingStore['listDatasets']> extends Promise<infer R> ? R : never
+  > {
+    if (!this.cachingStore) return [];
+    return this.cachingStore.listDatasets();
+  }
+
+  /** True if the L1/L2 caching store is configured for this loader. */
+  get hasCachingStore(): boolean {
+    return this.cachingStore !== null;
+  }
+
+  /** Clear the in-memory L0 decompressed-chunk cache. No-op if absent. */
+  clearL0Cache(): void {
+    this.l0Cache?.clear();
+  }
+
+  /** Clear the in-memory L1 metadata/chunk cache. No-op if absent. */
+  clearL1Cache(): void {
+    this.cachingStore?.clearL1();
+  }
+
+  /** Clear the persistent L2 OPFS cache. No-op if absent. */
+  async clearL2Cache(): Promise<void> {
+    await this.cachingStore?.clearL2();
+  }
+
+  /** Clear all cache levels (L0 + L1 + L2). */
+  async clearAllCaches(): Promise<void> {
+    this.l0Cache?.clear();
+    if (this.cachingStore) {
+      await this.cachingStore.clearAll();
+    }
+  }
+
   /**
    * Return a node-attrs record with rendering attributes replaced by the
    * effective values composed along the scene-graph ancestry (root → leaf).

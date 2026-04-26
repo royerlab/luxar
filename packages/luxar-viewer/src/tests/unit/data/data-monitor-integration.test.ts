@@ -113,8 +113,8 @@ vi.mock('three', () => ({
 describe('Data Monitor Integration', () => {
   beforeEach(() => {
     // Reset singletons
-    DataMonitorManager.reset();
-    SceneLoaderManager.reset();
+    DataMonitorManager.disposeInstance();
+    SceneLoaderManager.disposeInstance();
 
     // Setup DOM
     document.body.innerHTML = '<div id="test-container"></div>';
@@ -122,8 +122,8 @@ describe('Data Monitor Integration', () => {
 
   afterEach(() => {
     // Clean up
-    DataMonitorManager.reset();
-    SceneLoaderManager.reset();
+    DataMonitorManager.disposeInstance();
+    SceneLoaderManager.disposeInstance();
     document.body.innerHTML = '';
   });
 

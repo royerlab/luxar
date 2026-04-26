@@ -384,7 +384,7 @@ describe('LuxarApp', () => {
       await expect(app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' })).rejects.toThrow('Load failed');
     });
 
-    it('should not cleanup on error to preserve error messages', async () => {
+    it('disposes partial state when init() throws so the caller can retry', async () => {
       mockSceneManager.init.mockRejectedValue(new Error('Init failed'));
 
       try {
@@ -393,8 +393,30 @@ describe('LuxarApp', () => {
         // Expected to throw
       }
 
-      // Cleanup should NOT be called (preserves error UI)
-      expect(mockCleanupUI).not.toHaveBeenCalled();
+      // Auto-dispose runs in init's catch block. cleanupUI() and the scene
+      // manager's dispose() are both safe to call on partial state thanks
+      // to per-field guards inside dispose().
+      expect(mockCleanupUI).toHaveBeenCalledTimes(1);
+      expect(mockSceneManager.dispose).toHaveBeenCalled();
+      expect(app.initialized).toBe(false);
+    });
+
+    it('allows init() to succeed after a previous init() throw', async () => {
+      mockSceneManager.init.mockRejectedValueOnce(new Error('Transient init failure'));
+
+      await expect(
+        app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' })
+      ).rejects.toThrow('Transient init failure');
+
+      // Recovery: second init with the same instance should work because
+      // dispose() ran in the first init's catch and reset state.
+      mockSceneManager.init.mockResolvedValueOnce(undefined);
+      mockFetch.mockResolvedValue({ ok: true });
+
+      await expect(
+        app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' })
+      ).resolves.toBeUndefined();
+      expect(app.initialized).toBe(true);
     });
 
     it('should preserve error state when init fails', async () => {
@@ -495,6 +517,41 @@ describe('LuxarApp', () => {
 
       // Should not throw on second call
       expect(app.initialized).toBe(false);
+    });
+
+    it('disposes each component exactly once across re-entrant calls', () => {
+      // First dispose runs everything.
+      app.dispose();
+
+      expect(mockAnimationController.dispose).toHaveBeenCalledTimes(1);
+      expect(mockInputHandler.dispose).toHaveBeenCalledTimes(1);
+      expect(mockRenderingControls.dispose).toHaveBeenCalledTimes(1);
+      expect(mockSceneManager.dispose).toHaveBeenCalledTimes(1);
+
+      // Second dispose: components are still referenced (not nulled out) but
+      // the isDisposing/isInitialized guards short-circuit before any
+      // child dispose is invoked again. Without that guard, animationController.dispose
+      // etc. would be called twice and could double-free GPU resources.
+      app.dispose();
+
+      expect(mockAnimationController.dispose).toHaveBeenCalledTimes(1);
+      expect(mockInputHandler.dispose).toHaveBeenCalledTimes(1);
+      expect(mockRenderingControls.dispose).toHaveBeenCalledTimes(1);
+      expect(mockSceneManager.dispose).toHaveBeenCalledTimes(1);
+    });
+
+    it('reports initialized=false from the very first instant of teardown', () => {
+      // animationController.dispose runs first inside the dispose chain;
+      // observe app.initialized from inside it. Pre-A3, this would still be true
+      // because isInitialized flipped at the END of the try block.
+      let initializedDuringTeardown: boolean | null = null;
+      mockAnimationController.dispose.mockImplementation(() => {
+        initializedDuringTeardown = app.initialized;
+      });
+
+      app.dispose();
+
+      expect(initializedDuringTeardown).toBe(false);
     });
 
     it('should dispose animation controller first', () => {

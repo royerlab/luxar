@@ -8,14 +8,14 @@ import { SceneLoaderManager, DataMonitorManager, dispose } from '../../../data';
 describe('Global State Management', () => {
   beforeEach(() => {
     // Reset managers before each test
-    SceneLoaderManager.reset();
-    DataMonitorManager.reset();
+    SceneLoaderManager.disposeInstance();
+    DataMonitorManager.disposeInstance();
   });
 
   afterEach(() => {
     // Clean up after each test
-    SceneLoaderManager.reset();
-    DataMonitorManager.reset();
+    SceneLoaderManager.disposeInstance();
+    DataMonitorManager.disposeInstance();
   });
 
   describe('SceneLoaderManager', () => {
@@ -65,7 +65,7 @@ describe('Global State Management', () => {
       expect(manager.getLoaderCount()).toBe(1);
 
       // Reset should clear everything
-      SceneLoaderManager.reset();
+      SceneLoaderManager.disposeInstance();
 
       // New instance should be empty
       const newManager = SceneLoaderManager.getInstance();
@@ -217,7 +217,7 @@ describe('Global State Management', () => {
       expect(manager.getMonitorCount()).toBe(1);
 
       // Reset should clear everything
-      DataMonitorManager.reset();
+      DataMonitorManager.disposeInstance();
 
       // New instance should be empty
       const newManager = DataMonitorManager.getInstance();

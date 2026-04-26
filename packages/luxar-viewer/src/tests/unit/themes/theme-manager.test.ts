@@ -9,7 +9,7 @@ import { ThemeManager } from '../../../themes/theme-manager';
 describe('ThemeManager', () => {
   beforeEach(() => {
     // Reset singleton before each test
-    ThemeManager.resetInstance();
+    ThemeManager.disposeInstance();
     // Clear localStorage
     localStorage.clear();
     // Clear any existing CSS variables
@@ -18,7 +18,7 @@ describe('ThemeManager', () => {
 
   afterEach(() => {
     // Clean up
-    ThemeManager.resetInstance();
+    ThemeManager.disposeInstance();
     localStorage.clear();
   });
 
@@ -29,9 +29,9 @@ describe('ThemeManager', () => {
       expect(instance1).toBe(instance2);
     });
 
-    it('should reset instance when resetInstance() is called', () => {
+    it('should clear singleton when disposeInstance() is called', () => {
       const instance1 = ThemeManager.getInstance();
-      ThemeManager.resetInstance();
+      ThemeManager.disposeInstance();
       const instance2 = ThemeManager.getInstance();
       expect(instance1).not.toBe(instance2);
     });
@@ -280,7 +280,7 @@ describe('ThemeManager', () => {
       expect(callback).toHaveBeenCalledTimes(1);
 
       // Dispose and create new instance
-      ThemeManager.resetInstance();
+      ThemeManager.disposeInstance();
       const newManager = ThemeManager.getInstance();
       newManager.setTheme('dark');
 
@@ -315,6 +315,78 @@ describe('ThemeManager', () => {
       manager.dispose();
 
       expect(document.getElementById('luxar-glass-filters')).toBeNull();
+    });
+
+    it('cancels pending refraction-layer rAF when disposed before the frame fires', () => {
+      let nextHandle = 1;
+      const issuedHandles: number[] = [];
+      const cancelledHandles: number[] = [];
+
+      const rafSpy = vi
+        .spyOn(window, 'requestAnimationFrame')
+        .mockImplementation((_cb: FrameRequestCallback) => {
+          const handle = nextHandle++;
+          issuedHandles.push(handle);
+          return handle;
+        });
+      const cafSpy = vi
+        .spyOn(window, 'cancelAnimationFrame')
+        .mockImplementation((h: number) => {
+          cancelledHandles.push(h);
+        });
+
+      const manager = ThemeManager.getInstance();
+      manager.setTheme('liquid-glass');
+
+      // rAF was scheduled but the callback hasn't run yet.
+      expect(rafSpy).toHaveBeenCalledTimes(1);
+      expect(issuedHandles.length).toBe(1);
+
+      manager.dispose();
+
+      // The pending handle must have been cancelled.
+      expect(cancelledHandles).toContain(issuedHandles[0]);
+
+      // Sanity: fire the rAF callback manually post-dispose. It still runs (we
+      // mocked rAF to just capture, never schedule), but dispose() removed
+      // both the SVG filters and the refraction layers it would have injected.
+      const capturedCallback = rafSpy.mock.calls[0][0] as FrameRequestCallback;
+      capturedCallback(performance.now());
+      expect(document.getElementById('luxar-glass-filters')).toBeNull();
+
+      rafSpy.mockRestore();
+      cafSpy.mockRestore();
+    });
+
+    it('cancels pending refraction-layer rAF when switching away from liquid-glass', () => {
+      let nextHandle = 1;
+      const issuedHandles: number[] = [];
+      const cancelledHandles: number[] = [];
+
+      const rafSpy = vi
+        .spyOn(window, 'requestAnimationFrame')
+        .mockImplementation((_cb: FrameRequestCallback) => {
+          const handle = nextHandle++;
+          issuedHandles.push(handle);
+          return handle;
+        });
+      const cafSpy = vi
+        .spyOn(window, 'cancelAnimationFrame')
+        .mockImplementation((h: number) => {
+          cancelledHandles.push(h);
+        });
+
+      const manager = ThemeManager.getInstance();
+      manager.setTheme('liquid-glass');
+      const liquidGlassHandle = issuedHandles[0];
+
+      // Switch to a non-glass theme before the rAF fires.
+      manager.setTheme('dark');
+
+      expect(cancelledHandles).toContain(liquidGlassHandle);
+
+      rafSpy.mockRestore();
+      cafSpy.mockRestore();
     });
   });
 });
