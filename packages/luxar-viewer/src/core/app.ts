@@ -157,6 +157,16 @@ export class LuxarApp {
       );
     }
 
+    // Browser-environment guard. SceneManager and InputHandler reach for
+    // window/document/localStorage unconditionally, so a friendly upfront
+    // error beats a cryptic ReferenceError half-way through init for SSR
+    // or non-browser callers.
+    if (typeof window === 'undefined' || typeof document === 'undefined') {
+      throw new Error(
+        'LuxarApp requires a browser environment (window and document must be defined).'
+      );
+    }
+
     // Reset the idempotency guard so a fresh init followed by dispose works
     // even if the same instance was previously initialized and disposed.
     this.isDisposed = false;
