@@ -635,12 +635,10 @@ export class DebugConsole {
       this.boundResizeMouseUp = null;
     }
 
-    // Remove panel from DOM
+    // Remove panel from DOM. Styles live in src/styles/components/
+    // debug-console.css and are loaded by Vite — there is no inline
+    // <style> element to clean up here.
     this.panel.remove();
-
-    // Remove styles
-    const style = document.getElementById('luxar-debug-console-styles');
-    style?.remove();
 
     log.info(Modules.DEBUG_CONSOLE, 'Debug console disposed');
   }
