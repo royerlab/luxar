@@ -98,7 +98,7 @@ test.describe('Dimension Initialization - Policy Compliance', () => {
       const dims = debug?.app?.inputHandler?.sceneDimsManager?.getDims();
 
       // Find first non-displayed dimension slider
-      const sliders = Array.from(document.querySelectorAll('[id^="dim-slider-"]'));
+      const sliders = Array.from(document.querySelectorAll('[id^="luxar-dim-slider-"]'));
       if (sliders.length === 0) {
         // No sliders found - this could mean no non-displayed dimensions
         return { noSliders: true, dims };
@@ -108,7 +108,7 @@ test.describe('Dimension Initialization - Policy Compliance', () => {
       const sliderValue = parseFloat(firstSlider.value);
 
       // Get corresponding dimension index from ID
-      const dimIndex = parseInt(firstSlider.id.replace('dim-slider-', ''));
+      const dimIndex = parseInt(firstSlider.id.replace('luxar-dim-slider-', ''));
 
       return {
         noSliders: false,
@@ -142,7 +142,7 @@ test.describe('Dimension Initialization - Policy Compliance', () => {
 
     // Find and interact with first slider
     await page.evaluate(() => {
-      const sliders = Array.from(document.querySelectorAll('[id^="dim-slider-"]'));
+      const sliders = Array.from(document.querySelectorAll('[id^="luxar-dim-slider-"]'));
       if (sliders.length > 0) {
         const slider = sliders[0] as HTMLInputElement;
         // Move slider slightly (should cause minimal change if initialized correctly)

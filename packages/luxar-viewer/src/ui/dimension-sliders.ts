@@ -425,7 +425,7 @@ export class DimensionSliders {
 
     // Create dropdown matching Luxar UI style
     const dropdown = document.createElement('select');
-    dropdown.id = `dim-dropdown-${dimIndex}`;
+    dropdown.id = `luxar-dim-dropdown-${dimIndex}`;
     dropdown.className = 'luxar-dimension-dropdown__select';
 
     // Note: Hover/focus states now handled by CSS :hover and :focus pseudo-classes
@@ -561,7 +561,7 @@ export class DimensionSliders {
     // Single button toggle — shows current value, click swaps to other
     const toggle = document.createElement('div');
     toggle.className = 'luxar-dimension-toggle';
-    toggle.id = `dim-toggle-${dimIndex}`;
+    toggle.id = `luxar-dim-toggle-${dimIndex}`;
     toggle.setAttribute('role', 'switch');
     toggle.setAttribute('aria-label', `${name}: click to toggle`);
     toggle.tabIndex = 0;
@@ -704,7 +704,7 @@ export class DimensionSliders {
     // Create range input
     const slider = document.createElement('input');
     slider.type = 'range';
-    slider.id = `dim-slider-${dimIndex}`;
+    slider.id = `luxar-dim-slider-${dimIndex}`;
     slider.className = 'luxar-dimension-slider__input';
 
     // Configure slider based on discrete/continuous
