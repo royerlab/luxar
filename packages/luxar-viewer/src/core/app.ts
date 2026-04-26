@@ -27,6 +27,8 @@ import { ImageLabelLoader } from '../data/image-label-loader';
 import type { LoaderConfig } from '../data/data-loader-types';
 import { consoleInterceptor } from '../utils/console-interceptor';
 import { EventGroup } from '../utils/event-group';
+import { setWasmJsUrl } from '../wasm';
+import { setDataWorkerUrl } from '../workers/worker-pool';
 
 /**
  * Init-time options for {@link LuxarApp.init}.
@@ -57,6 +59,25 @@ export interface LuxarAppOptions {
    * the browser will rewrite the host page's URL.
    */
   updateBrowserUrl?: boolean;
+
+  /**
+   * Absolute URL to the WASM JS shim (`luxar_wasm.js`).
+   *
+   * Defaults to `new URL('../wasm/luxar_wasm.js', import.meta.url)` —
+   * resolved relative to the bundled JS, which works for Vite, Rollup,
+   * webpack 5, and most modern bundlers. Embedders whose bundlers don't
+   * support `import.meta.url` for asset URLs (or who ship the WASM files
+   * from a non-default location) override this.
+   */
+  wasmPath?: string;
+
+  /**
+   * Absolute URL to the data-worker module bundle.
+   *
+   * Defaults to `new URL('./data-worker.ts', import.meta.url)`. Override
+   * if your bundler can't resolve worker URLs that way.
+   */
+  workerPath?: string;
 }
 
 export class LuxarApp {
@@ -171,6 +192,12 @@ export class LuxarApp {
     // even if the same instance was previously initialized and disposed.
     this.isDisposed = false;
     this.options = options;
+
+    // Forward asset-URL overrides to the WASM and worker modules. Setters
+    // are no-ops if the option is undefined; the modules then fall back to
+    // the default `import.meta.url`-based resolution.
+    if (options.wasmPath) setWasmJsUrl(options.wasmPath);
+    if (options.workerPath) setDataWorkerUrl(options.workerPath);
 
     try {
       // Inform users about expected console messages

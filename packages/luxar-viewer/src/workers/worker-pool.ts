@@ -16,6 +16,27 @@ export interface WorkerInstance {
   activeQueries: number;
 }
 
+/**
+ * Optional override for the data-worker module URL.
+ *
+ * The default `new Worker(new URL('./data-worker.ts', import.meta.url))`
+ * pattern works under Vite, Rollup, and webpack 5. Bundlers that don't
+ * resolve `import.meta.url` for workers, or consumers that ship the
+ * worker bundle from a non-default location, can call
+ * {@link setDataWorkerUrl} once at startup with an explicit absolute URL.
+ *
+ * Set via `LuxarAppOptions.workerPath` from `LuxarApp.init`.
+ */
+let dataWorkerUrlOverride: string | undefined;
+
+/**
+ * Override the URL used to construct data workers. Pass an absolute URL
+ * to a module-format worker bundle. Call before the first worker is created.
+ */
+export function setDataWorkerUrl(url: string): void {
+  dataWorkerUrlOverride = url;
+}
+
 export class WorkerPool {
   private workers: WorkerInstance[] = [];
   private initPromise: Promise<void> | null = null;
@@ -56,11 +77,13 @@ export class WorkerPool {
         const workerCount = this.getConfiguredWorkerCount();
         log.info(Modules.WORKER_POOL, `Creating ${workerCount} data worker(s)...`);
 
-        // Create all workers in parallel
+        // Create all workers in parallel.
+        // dataWorkerUrlOverride lets embedders whose bundlers don't support
+        // `new Worker(new URL(...))` point at an explicitly-built worker bundle.
+        const workerUrl =
+          dataWorkerUrlOverride ?? new URL('./data-worker.ts', import.meta.url);
         const workerPromises = Array.from({ length: workerCount }, async (_, index) => {
-          const worker = new Worker(new URL('./data-worker.ts', import.meta.url), {
-            type: 'module',
-          });
+          const worker = new Worker(workerUrl, { type: 'module' });
 
           const api = wrap<DataWorkerAPI>(worker);
 
