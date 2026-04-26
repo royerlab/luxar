@@ -23,6 +23,54 @@ A GPU-accelerated WebGL renderer for arbitrarily large n-dimensional scientific 
 - **🔄 nD Transforms**: Inverse-query transforms for non-displayed dimensions (affine and categorical)
 - **🎯 Material Caching**: Optimized material management with intelligent caching strategy
 
+## 📦 Embedding (single viewer per page)
+
+`luxar-viewer` ships as a side-effect-free ES module. Importing the
+package does not patch your `console`, inject CSS into your `body`, or
+mutate `:root` — the viewer only touches DOM you give it via the `canvas`
+option, plus the body-level UI overlays it owns.
+
+```bash
+npm install luxar-viewer three   # three is a peer dep
+```
+
+```ts
+import { LuxarApp } from 'luxar-viewer';
+import 'luxar-viewer/styles.css';   // component styles, prefixed under .luxar-*
+
+const canvas = document.querySelector<HTMLCanvasElement>('#viewer-canvas')!;
+const app = new LuxarApp();
+await app.init({
+  canvas,
+  src: 'https://example.com/data.zarr',
+  updateBrowserUrl: false,           // don't rewrite host URL on dataset change
+});
+
+// Later (e.g. when the host route unmounts):
+app.dispose();                       // removes all listeners, GPU resources, UI
+```
+
+### `LuxarAppOptions`
+
+| Option              | Type             | Default | Notes                                                                                              |
+| ------------------- | ---------------- | ------- | -------------------------------------------------------------------------------------------------- |
+| `canvas`            | `HTMLCanvasElement` | —    | The canvas the viewer renders into. Required.                                                       |
+| `src`               | `string`         | config  | Initial Zarr URL. Empty/missing shows the dataset browser.                                          |
+| `debug`             | `boolean`        | `false` | Exposes `window.__luxarDebug` for Playwright / dev console.                                         |
+| `loaderConfig`      | `LoaderConfig`   | —       | Cache and prefetch flags (`noCache`, `cacheDebug`, `clearCache`, `noPrefetch`, `prefetchDebug`).    |
+| `updateBrowserUrl`  | `boolean`        | `true`  | **Set `false` in embeds.** Otherwise picking a dataset rewrites the host page URL.                  |
+| `wasmPath`          | `string`         | —       | Override for bundlers that don't resolve `import.meta.url` for WASM (webpack 4, Parcel 1, etc.).     |
+| `workerPath`        | `string`         | —       | Same, for the data worker.                                                                          |
+
+### What's NOT supported in v1
+
+- **Multiple viewers on the same page.** `ThemeManager`, the worker pool, and several UI components are still page-singletons. Mounting two `LuxarApp` instances at once will share state.
+- **Shadow DOM isolation.** The viewer uses regular DOM. The CSS is prefixed under `.luxar-*` classnames, but a host page that already styles `.luxar-foo` will collide.
+- **SSR / non-browser rendering.** `LuxarApp.init()` throws a friendly error if `window`/`document` are unavailable.
+
+A runnable example with a non-trivial host page lives in
+[`examples/embed/`](./examples/embed/).
+
 ## 🚀 Quick Start
 
 ### Prerequisites
