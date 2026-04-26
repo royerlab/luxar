@@ -75,8 +75,8 @@ describe('Library CSS scope (embed safety)', () => {
 
     if (offenders.length > 0) {
       throw new Error(
-        `styles/index.css must not include global selectors that affect ` +
-          `host pages. Move these to styles/standalone.css:\n` +
+        'styles/index.css must not include global selectors that affect ' +
+          'host pages. Move these to styles/standalone.css:\n' +
           offenders.map((o) => '  - ' + o).join('\n')
       );
     }
