@@ -129,27 +129,33 @@ test.describe('Test Fixture Rendering', () => {
 
       const geometry = points.geometry;
       const colorAttr = geometry.attributes.color;
+      const posAttr = geometry.attributes.position;
       // Use drawRange to get actual point count (buffer may be larger due to reuse)
       const drawRangeCount = geometry.drawRange?.count;
       const actualCount =
         drawRangeCount !== undefined && drawRangeCount !== Infinity
           ? Math.min(drawRangeCount, colorAttr.count)
           : colorAttr.count;
-      // Only sample color values within the draw range (3 components per point)
-      const array = Array.from(colorAttr.array.subarray(0, actualCount * 3)) as number[];
-
-      // Extract red channel values (every 3rd value starting at 0)
-      const redChannels: number[] = [];
-      for (let i = 0; i < array.length; i += 3) {
-        redChannels.push(array[i]);
-      }
+      const colorArr = Array.from(
+        colorAttr.array.subarray(0, actualCount * 3)
+      ) as number[];
+      // The fixture stores points along the X axis with index == x-position, so
+      // sort by x to recover the input ordering (the loader/spatial index does
+      // not preserve insertion order).
+      const itemsPerVertex = posAttr.itemSize ?? 3;
+      const posArr = Array.from(
+        posAttr.array.subarray(0, actualCount * itemsPerVertex)
+      ) as number[];
+      const indices = Array.from({ length: actualCount }, (_, i) => i);
+      indices.sort((a, b) => posArr[a * itemsPerVertex] - posArr[b * itemsPerVertex]);
+      const redChannels = indices.map((i) => colorArr[i * 3]);
 
       return {
         count: actualCount,
         arrayType: colorAttr.array.constructor.name,
         redMin: Math.min(...redChannels),
         redMax: Math.max(...redChannels),
-        redChannels: redChannels,
+        redChannels,
       };
     });
 
@@ -163,7 +169,8 @@ test.describe('Test Fixture Rendering', () => {
     expect(colorData?.redMax).toBeGreaterThan(5.0);
     expect(colorData?.redMax).toBeLessThanOrEqual(10.5);
 
-    // Verify monotonic increase (linspace property)
+    // Verify monotonic increase (linspace property), reading colors in
+    // x-position order rather than buffer order.
     const reds = (colorData?.redChannels as number[]) || [];
     for (let i = 1; i < reds.length; i++) {
       expect(reds[i]).toBeGreaterThanOrEqual(reds[i - 1] - 0.01); // Allow tiny float errors

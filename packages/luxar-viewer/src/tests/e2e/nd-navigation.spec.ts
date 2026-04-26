@@ -105,10 +105,11 @@ test.describe('nD Navigation - Dimension Selection', () => {
 
     const backwardState = await getLuxarState(page);
 
-    // Verify navigation completed successfully
+    // Verify navigation completed successfully. Use isFinite to reject NaN,
+    // which the previous typeof === 'number' check would have permitted.
     expect(backwardState.initialized).toBe(true);
+    expect(Number.isFinite(backwardState.totalPoints)).toBe(true);
     expect(backwardState.totalPoints).toBeGreaterThanOrEqual(0);
-    expect(typeof backwardState.totalPoints).toBe('number');
   });
 });
 

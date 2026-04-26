@@ -25,8 +25,6 @@ import {
 const DATASETS = {
   // 5D dataset with discrete channel dimension
   sliders5D: 'http://localhost:9000/datasets/examples/dimension_sliders_5d_example.zarr',
-  // 4D time-animated dataset
-  timeAnimated: 'http://localhost:9000/datasets/examples/time_animated_example.zarr',
 };
 
 test.describe('Dimension Initialization - Policy Compliance', () => {

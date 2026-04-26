@@ -51,11 +51,14 @@ test.describe('Data Loading Monitor Metrics', () => {
 
     // Scene point count should be positive and match state roughly
     expect(scenePointCount).toBeGreaterThan(0);
-    // State totalPoints and scene count should be in same ballpark
+    // State totalPoints and scene count should agree within 2x. Both are
+    // single-frame reads of the same scene; large divergence indicates a
+    // real reporting bug. (Was previously 0.1-10x, which permitted
+    // essentially any non-zero count.)
     if (state.totalPoints > 0 && scenePointCount > 0) {
       const ratio = scenePointCount / state.totalPoints;
-      expect(ratio).toBeGreaterThan(0.1);
-      expect(ratio).toBeLessThan(10);
+      expect(ratio).toBeGreaterThan(0.5);
+      expect(ratio).toBeLessThan(2);
     }
   });
 

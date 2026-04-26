@@ -444,6 +444,31 @@ npx playwright test keyboard-input-system.spec.ts controls-interaction.spec.ts
 
 # Visual regression
 npx playwright test visual-regression.spec.ts theme-visual-regression.spec.ts
+
+# Geometry & rendering
+npx playwright test geometry-types.spec.ts blending-modes.spec.ts colormap-system.spec.ts \
+  post-processing-pipeline.spec.ts rendering-controls.spec.ts ortho-mode.spec.ts
+
+# Data & I/O
+npx playwright test data-integrity.spec.ts dataset-switching.spec.ts real-dataset-loading.spec.ts \
+  url-parameters.spec.ts python-typescript-integration.spec.ts luxar-serve-integration.spec.ts
+
+# Spatial, cache & nD transforms
+npx playwright test spatial-index-accuracy.spec.ts cache-system.spec.ts nd-transforms.spec.ts \
+  position-bounds-clipping.spec.ts
+
+# UI panels & mouse
+npx playwright test custom-gui-library.spec.ts layers-panel.spec.ts recording-panel.spec.ts \
+  mouse-interactions.spec.ts
+
+# Errors & robustness
+npx playwright test error-recovery.spec.ts webgl-errors.spec.ts
+
+# Performance & monitoring
+npx playwright test performance-tracking.spec.ts data-monitor-metrics.spec.ts
+
+# Demos & first-time UX
+npx playwright test all-examples-smoke-test.spec.ts demo-validation.spec.ts first-time-ux.spec.ts
 ```
 
 **Key E2E rules**:

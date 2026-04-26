@@ -10,7 +10,12 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { waitForLuxarReady, waitForNextRender, dismissDatasetBrowser } from './helpers';
+import {
+  waitForLuxarReady,
+  waitForNextRender,
+  dismissDatasetBrowser,
+  assertNoConsoleErrors,
+} from './helpers';
 
 test.describe('Recording Panel', () => {
   test.beforeEach(async ({ page }) => {
@@ -18,6 +23,13 @@ test.describe('Recording Panel', () => {
     await waitForLuxarReady(page);
     // Dismiss the dataset browser modal so keyboard shortcuts reach the app
     await dismissDatasetBrowser(page);
+  });
+
+  // Every test that interacts with the viewer should fail on JS exceptions.
+  // Without this, a renderer/recorder crash can be silent while the panel
+  // toggle still works.
+  test.afterEach(async ({ page }) => {
+    await assertNoConsoleErrors(page);
   });
 
   test('should toggle recording panel with T key', async ({ page }) => {

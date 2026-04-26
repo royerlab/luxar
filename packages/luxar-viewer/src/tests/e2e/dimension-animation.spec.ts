@@ -18,7 +18,6 @@ import {
   getLuxarState,
   waitForDataLoaded,
   waitForNextRender,
-  waitForAnimationStep,
   waitForNavigationComplete,
   focusCanvas,
 } from './helpers';
@@ -330,11 +329,16 @@ test.describe('Dimension Animation - Keyboard Shortcuts', () => {
     await page.keyboard.press('4');
     await waitForNextRender(page, 1);
 
-    // Navigate forward a few steps (wait for spatial query to complete)
+    // Navigate forward a few steps. Capture value BEFORE each press so the
+    // change-watcher has a true "previous" baseline (otherwise it can read the
+    // already-updated value and wait forever).
+    let prevValue = await getDimensionValue(page, 3);
     await page.keyboard.press(']');
-    await waitForAnimationStep(page, 3);
+    await waitForDimensionValueChange(page, 3, prevValue);
+
+    prevValue = await getDimensionValue(page, 3);
     await page.keyboard.press(']');
-    await waitForAnimationStep(page, 3);
+    await waitForDimensionValueChange(page, 3, prevValue);
 
     // Get current value (should not be at start)
     const beforeValue = await getDimensionValue(page, 3);
