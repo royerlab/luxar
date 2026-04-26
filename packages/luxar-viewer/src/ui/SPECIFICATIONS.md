@@ -559,12 +559,16 @@ class RenderingControls {
 
 ### 5.4 Settings Persistence
 
-**Storage Key Generation**:
+**Storage Key Generation**: rendering settings are persisted under the
+`luxar.rendering.<sanitized-sceneId>` namespace via the central
+`StorageKeys` registry in `src/utils/storage-keys.ts` (see also `Storage`
+section of that module). All localStorage keys the viewer reads or
+writes are dot-namespaced under `luxar.*`.
 
 ```typescript
-function generateSettingsKey(sceneId: string): string {
-  return `luxar-rendering-settings-${sceneId}`;
-}
+import { StorageKeys } from '../utils/storage-keys';
+
+const key = StorageKeys.rendering(sceneId); // 'luxar.rendering.<sanitized-sceneId>'
 ```
 
 **Serialization**:

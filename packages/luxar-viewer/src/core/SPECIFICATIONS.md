@@ -326,14 +326,15 @@ interface LuxarApp {
 }
 ```
 
-### InitializationConfig
+### LuxarAppOptions
 
 ```typescript
-interface InitializationConfig {
-  canvasId: string;
-  defaultDataset?: string;
-  enableDebug?: boolean;
-  autoStart?: boolean;
+interface LuxarAppOptions {
+  canvas: HTMLCanvasElement;     // Render target (resolved by main.ts)
+  src?: string;                  // Dataset URL (defaults to config.defaultZarrPath)
+  debug?: boolean;               // Enable window.__luxarDebug + verbose logging
+  loaderConfig?: LoaderConfig;   // Cache and prefetch flags
+  updateBrowserUrl?: boolean;    // Mirror selected dataset into the URL bar (default true)
 }
 ```
 
@@ -802,14 +803,15 @@ interface LuxarApp {
 }
 ```
 
-### InitializationConfig
+### LuxarAppOptions
 
 ```typescript
-interface InitializationConfig {
-  canvasId: string;
-  defaultDataset?: string;
-  enableDebug?: boolean;
-  autoStart?: boolean;
+interface LuxarAppOptions {
+  canvas: HTMLCanvasElement;     // Render target (resolved by main.ts)
+  src?: string;                  // Dataset URL (defaults to config.defaultZarrPath)
+  debug?: boolean;               // Enable window.__luxarDebug + verbose logging
+  loaderConfig?: LoaderConfig;   // Cache and prefetch flags
+  updateBrowserUrl?: boolean;    // Mirror selected dataset into the URL bar (default true)
 }
 ```
 
