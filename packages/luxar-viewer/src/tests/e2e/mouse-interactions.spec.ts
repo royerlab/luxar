@@ -18,6 +18,7 @@ import {
   waitForNextRender,
   focusCanvas,
   ctrlScroll,
+  assertNoConsoleErrors,
 } from './helpers';
 
 const DATASET = 'http://localhost:9000/datasets/examples/build_example_structured.zarr';
@@ -28,6 +29,12 @@ test.describe('Mouse Interactions', () => {
     await waitForLuxarReady(page);
     await waitForPointsLoaded(page);
     await focusCanvas(page);
+  });
+
+  // Catch silent JS exceptions during scroll/zoom interactions; a renderer
+  // crash that doesn't reach the test assertions would otherwise pass.
+  test.afterEach(async ({ page }) => {
+    await assertNoConsoleErrors(page);
   });
 
   test('should change FOV with Ctrl+scroll', async ({ page }) => {
