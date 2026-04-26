@@ -519,6 +519,41 @@ describe('LuxarApp', () => {
       expect(app.initialized).toBe(false);
     });
 
+    it('disposes each component exactly once across re-entrant calls', () => {
+      // First dispose runs everything.
+      app.dispose();
+
+      expect(mockAnimationController.dispose).toHaveBeenCalledTimes(1);
+      expect(mockInputHandler.dispose).toHaveBeenCalledTimes(1);
+      expect(mockRenderingControls.dispose).toHaveBeenCalledTimes(1);
+      expect(mockSceneManager.dispose).toHaveBeenCalledTimes(1);
+
+      // Second dispose: components are still referenced (not nulled out) but
+      // the isDisposing/isInitialized guards short-circuit before any
+      // child dispose is invoked again. Without that guard, animationController.dispose
+      // etc. would be called twice and could double-free GPU resources.
+      app.dispose();
+
+      expect(mockAnimationController.dispose).toHaveBeenCalledTimes(1);
+      expect(mockInputHandler.dispose).toHaveBeenCalledTimes(1);
+      expect(mockRenderingControls.dispose).toHaveBeenCalledTimes(1);
+      expect(mockSceneManager.dispose).toHaveBeenCalledTimes(1);
+    });
+
+    it('reports initialized=false from the very first instant of teardown', () => {
+      // animationController.dispose runs first inside the dispose chain;
+      // observe app.initialized from inside it. Pre-A3, this would still be true
+      // because isInitialized flipped at the END of the try block.
+      let initializedDuringTeardown: boolean | null = null;
+      mockAnimationController.dispose.mockImplementation(() => {
+        initializedDuringTeardown = app.initialized;
+      });
+
+      app.dispose();
+
+      expect(initializedDuringTeardown).toBe(false);
+    });
+
     it('should dispose animation controller first', () => {
       app.dispose();
 

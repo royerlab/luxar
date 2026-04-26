@@ -82,6 +82,13 @@ export class LuxarApp {
    * is a no-op rather than running the teardown a second time.
    */
   private isDisposing = false;
+  /**
+   * Idempotency guard for {@link dispose}. Once teardown completes, further
+   * `dispose()` calls are no-ops — fields still reference disposed instances,
+   * so without this flag we would invoke `dispose()` on already-disposed
+   * components (potentially double-freeing GPU resources). Reset by `init()`.
+   */
+  private isDisposed = false;
   private boundDispose: (() => void) | null = null;
   private boundFocusHandler: (() => void) | null = null;
   private boundVisibilityHandler: (() => void) | null = null;
@@ -142,6 +149,9 @@ export class LuxarApp {
       );
     }
 
+    // Reset the idempotency guard so a fresh init followed by dispose works
+    // even if the same instance was previously initialized and disposed.
+    this.isDisposed = false;
     this.options = options;
 
     try {
@@ -1013,10 +1023,19 @@ export class LuxarApp {
    * init() again to re-create resources, or discard the instance.
    */
   dispose(): void {
+    // Idempotency: a second dispose() after a successful one is a no-op.
+    // Component fields still reference their (already disposed) instances,
+    // so without this guard we would call dispose() on disposed components.
+    if (this.isDisposed) return;
     // Re-entrance guard: if a beforeunload (or any nested) call fires while
     // we are already tearing down, do nothing.
     if (this.isDisposing) return;
     this.isDisposing = true;
+
+    // Flip initialized at entry so any concurrent observer of `app.initialized`
+    // sees the correct state from the first instant of teardown, even if
+    // teardown throws partway through.
+    this.isInitialized = false;
 
     try {
       // Stop animation first
@@ -1124,12 +1143,11 @@ export class LuxarApp {
         window.removeEventListener('beforeunload', this.boundDispose);
         this.boundDispose = null;
       }
-
-      this.isInitialized = false;
     } catch (error) {
       log.error(Modules.LUXAR, 'Error during dispose:', error);
     } finally {
       this.isDisposing = false;
+      this.isDisposed = true;
     }
   }
 
