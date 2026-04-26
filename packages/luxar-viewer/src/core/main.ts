@@ -4,9 +4,12 @@
 // Import CSS styles FIRST (before any JavaScript runs)
 import '../styles/index.css';
 
-// CRITICAL: Import console interceptor FIRST before any other code
-// This ensures we capture ALL console output from the very beginning
+// CRITICAL: Import console interceptor FIRST and patch console before any
+// other code logs anything. The interceptor's module is side-effect-free
+// at import time (so a published library does NOT silently monkey-patch a
+// host page's console); patching is opt-in for the standalone app.
 import { consoleInterceptor } from '../utils/console-interceptor';
+consoleInterceptor.patch();
 
 // Log that we're starting (this will be captured)
 import { log, Modules, LogEmoji } from '../utils/log';

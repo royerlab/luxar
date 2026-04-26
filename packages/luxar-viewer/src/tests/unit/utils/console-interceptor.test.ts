@@ -7,12 +7,19 @@
  * oldest messages are dropped FIFO.
  */
 
-import { describe, expect, it, beforeEach } from 'vitest';
+import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import { consoleInterceptor } from '../../../utils/console-interceptor';
 
 describe('ConsoleInterceptor ring buffer', () => {
   beforeEach(() => {
+    // Importing the module is side-effect-free; patch explicitly so
+    // console.log calls below are captured.
+    consoleInterceptor.patch();
     consoleInterceptor.clearBuffer();
+  });
+
+  afterEach(() => {
+    consoleInterceptor.dispose();
   });
 
   it('appends messages while under capacity', () => {
@@ -69,5 +76,45 @@ describe('ConsoleInterceptor ring buffer', () => {
     const messages = consoleInterceptor.getBufferedMessages();
     expect(stats.total).toBe(messages.length);
     expect(stats.total).toBe(max);
+  });
+});
+
+describe('ConsoleInterceptor opt-in patching (embedability)', () => {
+  it('does not patch console.* until patch() is called', () => {
+    // Start from a clean slate so this test does not rely on previous order.
+    consoleInterceptor.dispose();
+    expect(consoleInterceptor.isPatched).toBe(false);
+
+    consoleInterceptor.patch();
+    expect(consoleInterceptor.isPatched).toBe(true);
+
+    consoleInterceptor.dispose();
+    expect(consoleInterceptor.isPatched).toBe(false);
+  });
+
+  it('captures messages while patched and stops on dispose()', () => {
+    consoleInterceptor.dispose();
+    consoleInterceptor.clearBuffer();
+
+    // Pre-patch: console.log does NOT land in the buffer.
+    console.log('pre-patch');
+    expect(consoleInterceptor.getBufferedMessages().length).toBe(0);
+
+    consoleInterceptor.patch();
+    consoleInterceptor.clearBuffer();
+
+    console.log('captured-1');
+    console.log('captured-2');
+    expect(consoleInterceptor.getBufferedMessages().map((m) => m.args[0])).toEqual([
+      'captured-1',
+      'captured-2',
+    ]);
+
+    consoleInterceptor.dispose();
+    consoleInterceptor.clearBuffer();
+
+    // Post-dispose: console.log no longer goes through the interceptor.
+    console.log('post-dispose');
+    expect(consoleInterceptor.getBufferedMessages().length).toBe(0);
   });
 });
