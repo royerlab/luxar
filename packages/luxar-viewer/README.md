@@ -714,7 +714,10 @@ import { LuxarApp } from './src/core/app.js';
 import { config } from './src/config/index.js';
 
 const app = new LuxarApp();
-await app.init('/path/to/dataset.zarr');
+await app.init({
+  canvas: document.getElementById('app'),
+  src: '/path/to/dataset.zarr',
+});
 
 // Access components (available after init)
 const { sceneManager, animationController, renderingControls } = app.components;

@@ -831,8 +831,8 @@ if (loader) {
 }
 
 // Reset for testing
-SceneLoaderManager.reset();
-DataMonitorManager.reset();
+SceneLoaderManager.disposeInstance();
+DataMonitorManager.disposeInstance();
 ```
 
 ---

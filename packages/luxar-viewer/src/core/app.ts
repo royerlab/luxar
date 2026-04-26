@@ -193,9 +193,12 @@ export class LuxarApp {
     this.isDisposed = false;
     this.options = options;
 
-    // Forward asset-URL overrides to the WASM and worker modules. Setters
-    // are no-ops if the option is undefined; the modules then fall back to
-    // the default `import.meta.url`-based resolution.
+    // Forward asset-URL overrides to the WASM and worker modules. Skipped
+    // when the option is undefined so the modules use their default
+    // `import.meta.url`-based resolution. NOTE: the override is module-level
+    // and sticks across init() calls — once set, a subsequent init() without
+    // the option does not reset to the default. In practice we only support
+    // one LuxarApp per page in v1, so this is fine.
     if (options.wasmPath) setWasmJsUrl(options.wasmPath);
     if (options.workerPath) setDataWorkerUrl(options.workerPath);
 

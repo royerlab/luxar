@@ -85,8 +85,9 @@ export interface BootstrapOptions {
  * 6. Construct LuxarApp, attach the debug surface (if `?debug`), and call
  *    `init()` — surfacing errors via `showError()` if init throws.
  *
- * Always preserves the standalone-app's pre-existing semantics; tests for
- * this function live in tests/unit/core/main.test.ts (TODO).
+ * Always preserves the standalone-app's pre-existing semantics. Tests live
+ * in `tests/unit/core/bootstrap.test.ts` and cover each opt-in flag, the
+ * theme/URL/localStorage-driven debug-mode resolution, and the error path.
  */
 export async function bootstrapStandalone(opts: BootstrapOptions): Promise<LuxarApp> {
   const urlParams = opts.urlParams ?? readUrlParams();
@@ -139,8 +140,16 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     );
   }
 
-  const isDebugMode =
-    urlParams.debug || localStorage.getItem(StorageKeys.debug) === 'true';
+  // Read the persisted debug flag defensively. A host page running in
+  // private-mode-strict or a sandboxed iframe without storage access may
+  // throw on getItem(); fall back to the URL flag alone in that case.
+  let storedDebug: string | null = null;
+  try {
+    storedDebug = localStorage.getItem(StorageKeys.debug);
+  } catch {
+    /* Storage disabled — debug mode then comes only from `?debug`. */
+  }
+  const isDebugMode = urlParams.debug || storedDebug === 'true';
 
   const appOptions: LuxarAppOptions = {
     canvas: opts.canvas,
