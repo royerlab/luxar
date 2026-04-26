@@ -76,6 +76,12 @@ export class LuxarApp {
   private imageLabelLoader?: ImageLabelLoader;
   private pickingCleanup?: () => void;
   private isInitialized = false;
+  /**
+   * Re-entrance guard for {@link dispose}. Set while a dispose is in flight
+   * so a `beforeunload` callback that fires mid-dispose (or any nested call)
+   * is a no-op rather than running the teardown a second time.
+   */
+  private isDisposing = false;
   private boundDispose: (() => void) | null = null;
   private boundFocusHandler: (() => void) | null = null;
   private boundVisibilityHandler: (() => void) | null = null;
@@ -257,8 +263,12 @@ export class LuxarApp {
       this.isInitialized = true;
     } catch (error) {
       log.error(Modules.APP, 'Failed to initialize Luxar app:', error);
-      // Don't dispose() here — it would remove the error UI the user still
-      // needs to see. Caller decides whether to dispose and retry.
+      // Tear down whatever partial state was constructed before the throw.
+      // dispose() is now defensive (per-field `if (this.x)` guards) so it
+      // safely handles a half-built app. The caller's error handler is
+      // expected to surface a fresh, top-level error UI; any in-progress
+      // error UI from sub-loaders is wiped along with everything else.
+      this.dispose();
       throw error;
     }
   }
@@ -1003,7 +1013,11 @@ export class LuxarApp {
    * init() again to re-create resources, or discard the instance.
    */
   dispose(): void {
-    if (!this.isInitialized) return;
+    // Re-entrance guard: if a beforeunload (or any nested) call fires while
+    // we are already tearing down, do nothing.
+    if (this.isDisposing) return;
+    this.isDisposing = true;
+
     try {
       // Stop animation first
       if (this.animationController) {
@@ -1114,6 +1128,8 @@ export class LuxarApp {
       this.isInitialized = false;
     } catch (error) {
       log.error(Modules.LUXAR, 'Error during dispose:', error);
+    } finally {
+      this.isDisposing = false;
     }
   }
 
