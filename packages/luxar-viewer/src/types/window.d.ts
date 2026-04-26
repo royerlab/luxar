@@ -14,7 +14,6 @@
 import type { LuxarApp } from '../core/app';
 import type { ConsoleInterceptor } from '../utils/console-interceptor';
 import type { LuxarCamera } from '../scene/camera-utils';
-import type { SceneManager } from '../scene/scene-manager';
 import type { AnimationController } from '../scene/animation-controller';
 import type { InputHandler } from '../input/input-handler';
 import type { RenderingControls } from '../ui/rendering-controls';
@@ -51,7 +50,6 @@ declare global {
       inputHandler?: InputHandler;
       renderingControls?: RenderingControls;
       recordingPanel?: RecordingPanel;
-      sceneManager?: SceneManager;
       sceneDimsManager?: SceneDimsManager;
       runtimeReady?: boolean;
 

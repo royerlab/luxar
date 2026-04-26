@@ -216,8 +216,8 @@ export class DatasetBrowser {
    * Navigate to a path and update the UI.
    */
   private async navigate(path: string): Promise<void> {
-    const content = this.panel.querySelector('#browser-content') as HTMLElement;
-    const statusBar = this.panel.querySelector('#browser-status') as HTMLElement;
+    const content = this.panel.querySelector('#luxar-dataset-browser-content') as HTMLElement;
+    const statusBar = this.panel.querySelector('#luxar-dataset-browser-status') as HTMLElement;
 
     // Show loading state
     content.innerHTML = '<div class="luxar-dataset-browser__loading">Loading...</div>';
@@ -326,7 +326,7 @@ export class DatasetBrowser {
    * Display directory entries.
    */
   private displayEntries(entries: DirectoryEntry[]): void {
-    const content = this.panel.querySelector('#browser-content') as HTMLElement;
+    const content = this.panel.querySelector('#luxar-dataset-browser-content') as HTMLElement;
     content.innerHTML = '';
 
     if (entries.length === 0) {
@@ -425,7 +425,7 @@ export class DatasetBrowser {
    * Show manual entry form for servers that don't support listing.
    */
   private showManualEntry(): void {
-    const content = this.panel.querySelector('#browser-content') as HTMLElement;
+    const content = this.panel.querySelector('#luxar-dataset-browser-content') as HTMLElement;
 
     content.innerHTML = `
       <div class="luxar-dataset-browser__manual-entry">

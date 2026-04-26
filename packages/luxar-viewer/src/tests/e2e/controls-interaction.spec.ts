@@ -38,7 +38,7 @@ test.describe('Luxar Controls & Keyboard Shortcuts', () => {
 
     // Verify the help overlay appeared using its actual DOM id and class
     const helpVisible = await page.evaluate(() => {
-      const overlay = document.getElementById('help-overlay');
+      const overlay = document.getElementById('luxar-help-overlay');
       if (!overlay) return false;
       return overlay.classList.contains('luxar-help-overlay');
     });
@@ -46,7 +46,7 @@ test.describe('Luxar Controls & Keyboard Shortcuts', () => {
 
     // Verify the overlay has the expected title
     const title = await page.evaluate(() => {
-      const el = document.getElementById('help-overlay-title');
+      const el = document.getElementById('luxar-help-overlay-title');
       return el?.textContent ?? '';
     });
     expect(title).toContain('Luxar Controls');
@@ -56,7 +56,7 @@ test.describe('Luxar Controls & Keyboard Shortcuts', () => {
     await waitForNextRender(page);
 
     const helpGone = await page.evaluate(() => {
-      return document.getElementById('help-overlay') === null;
+      return document.getElementById('luxar-help-overlay') === null;
     });
     expect(helpGone).toBe(true);
   });

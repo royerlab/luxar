@@ -191,10 +191,10 @@ const mockCanvas = {
   removeEventListener: vi.fn(),
 };
 
-// Mock document.getElementById - returns null unless it's 'app' (the default canvas ID)
+// Mock document.getElementById - returns null unless it's 'app' (the canvas id used by main.ts)
 vi.stubGlobal('document', {
   getElementById: vi.fn((id) => {
-    if (id === 'app') return mockCanvas; // 'app' is the default canvasId in config
+    if (id === 'app') return mockCanvas; // 'app' is the canvas id resolved by main.ts
     return null; // All other IDs return null (loading-indicator, error-message, etc.)
   }),
   head: {

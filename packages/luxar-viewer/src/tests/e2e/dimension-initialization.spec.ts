@@ -186,7 +186,7 @@ test.describe('Dimension Initialization - Initial Update Trigger', () => {
 
     // Verify dimension sliders are visible and initialized
     const slidersVisible = await page.evaluate(() => {
-      const container = document.getElementById('dimension-sliders');
+      const container = document.getElementById('luxar-dimension-sliders');
       return container && container.style.display !== 'none';
     });
 
