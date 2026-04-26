@@ -239,6 +239,9 @@ test.describe('Performance - Memory & Rendering', () => {
       return (performance as any).memory?.usedJSHeapSize || 0;
     });
 
+    // Intentional fixed sleep: this IS the idle-memory measurement window.
+    // An event-driven wait would defeat the test (we WANT to observe whether
+    // the heap grows over a known wall-clock interval with no input).
     await page.waitForTimeout(3000);
 
     const finalMemory = await page.evaluate(() => {
@@ -322,7 +325,10 @@ test.describe('Performance - Memory & Rendering', () => {
 
     const initialFPS = await measureFPS();
 
-    // Wait and navigate a bit
+    // Intentional fixed sleeps: this test measures FPS *over time* to detect
+    // gradual degradation. The 5s gap is the inter-sample window; replacing it
+    // with an event-driven wait would defeat the purpose. The 1s after the
+    // 'v' (control-mode toggle) is settling for the new control state.
     await page.waitForTimeout(5000);
     await page.keyboard.press('v');
     await page.waitForTimeout(1000);
