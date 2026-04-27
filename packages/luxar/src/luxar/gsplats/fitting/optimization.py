@@ -346,6 +346,28 @@ def run_optimization_loop(
                 )
             _record_movie_frame(model, _movie_pred, V_t, movie_frames, config, it)
 
+        # User-supplied per-iteration callback (e.g. validation-set scoring).
+        # Fires alongside eval so pred_eval is fresh; cadence is the larger
+        # of _EVAL_INTERVAL and config.iter_callback_every.
+        if (
+            config.iter_callback is not None
+            and need_eval
+            and pred_eval is not None
+            and it % max(_EVAL_INTERVAL, config.iter_callback_every) == 0
+        ):
+            with torch.no_grad():
+                callback_info = {
+                    "loss": float(loss_detached.item()),
+                    "best_loss": best_loss,
+                    "max_abs_error": current_max_abs_error,
+                    "rel_l2": current_rel_l2,
+                    "n_splats": (
+                        model.n_splats() if hasattr(model, "n_splats")
+                        else preprocessed_data.N
+                    ),
+                }
+                config.iter_callback(it, pred_eval.detach(), callback_info)
+
         # Free eval prediction to reclaim GPU memory for next training iteration
         if need_eval and pred_eval is not None:
             del pred_eval

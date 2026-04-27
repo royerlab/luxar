@@ -5,7 +5,7 @@ Configuration dataclasses for Gaussian splat fitting pipeline.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Sequence
 
 import numpy as np
 import torch
@@ -14,6 +14,25 @@ from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
 
 if TYPE_CHECKING:
     from luxar.gsplats.gsplat_data import GSplatData
+
+
+# Type alias for the per-iteration callback. The callback is invoked from
+# within the optimisation loop alongside the existing periodic eval, so
+# pred and target tensors are already up to date.
+#
+# Arguments:
+#   iteration: int          1-based iteration index
+#   pred:      torch.Tensor current model prediction (volume tensor; on the
+#                            fitter's device, in [0, 1] normalised intensity).
+#                            Detached from the graph; safe to pass to render
+#                            utilities or compute metrics on.
+#   info:      dict         current-iteration metrics:
+#                              - "loss":          float (current iter loss)
+#                              - "best_loss":     float (best loss seen so far)
+#                              - "max_abs_error": float (training-volume max abs err)
+#                              - "rel_l2":        float (relative L2)
+#                              - "n_splats":      int   (current model splat count)
+IterCallback = Callable[[int, torch.Tensor, Dict[str, Any]], None]
 
 
 @dataclass(frozen=True)
@@ -201,6 +220,16 @@ class FitConfig:
     # Volume is anti-alias filtered (Gaussian, sigma=factor/2) and decimated before fitting.
     # Splat parameters are automatically rescaled to original coordinates after fitting.
     downscale: Optional[tuple[int, ...]] = None
+
+    # Per-iteration callback. Invoked alongside the existing periodic eval
+    # (every iter_callback_every iters or every _EVAL_INTERVAL iters,
+    # whichever is larger). When None, no callback is fired.
+    # See ``IterCallback`` type alias above for the expected signature.
+    # Use cases: validation-set scoring, custom snapshot logging, stop-on-
+    # external-criterion. The callback runs inside ``torch.no_grad()`` and
+    # must not raise.
+    iter_callback: Optional[IterCallback] = None
+    iter_callback_every: int = 25  # call cadence (capped to >= eval interval)
 
 
 @dataclass
