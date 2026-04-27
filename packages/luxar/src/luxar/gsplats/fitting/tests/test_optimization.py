@@ -260,6 +260,59 @@ def test_movie_recording_disabled(simple_2d_setup) -> None:
     assert results.movie_frames is None
 
 
+def test_iter_callback_invoked(simple_2d_setup) -> None:
+    """The iter_callback fires at the configured cadence with expected args."""
+    config, preprocessed_data = simple_2d_setup
+    config.n_iters = 100
+
+    captured = []
+
+    def callback(iteration, pred, info):
+        captured.append({
+            "iteration": iteration,
+            "pred_shape": tuple(pred.shape),
+            "info_keys": set(info.keys()),
+            "loss": info["loss"],
+        })
+
+    config.iter_callback = callback
+    config.iter_callback_every = 25
+
+    components = initialize_optimization(config, preprocessed_data)
+    loss_fn = create_loss_function(config, preprocessed_data, components.model)
+    run_optimization_loop(components, loss_fn, config, preprocessed_data)
+
+    # Expect at least 4 calls (n_iters=100, every=25 -> iters 25, 50, 75, 100)
+    # and at most as many as eval iterations.
+    assert len(captured) >= 4, f"Expected >=4 callback calls, got {len(captured)}"
+    expected_keys = {"loss", "best_loss", "max_abs_error", "rel_l2", "n_splats"}
+    for c in captured:
+        assert expected_keys.issubset(c["info_keys"]), (
+            f"info dict missing keys: {expected_keys - c['info_keys']}"
+        )
+        assert c["pred_shape"] == preprocessed_data.V_normalized.shape, (
+            f"pred shape mismatch: {c['pred_shape']} vs {preprocessed_data.V_normalized.shape}"
+        )
+        assert c["iteration"] % 25 == 0, (
+            f"callback fired at iter {c['iteration']}, not a multiple of 25"
+        )
+        assert c["loss"] >= 0
+
+
+def test_iter_callback_none_zero_overhead(simple_2d_setup) -> None:
+    """When iter_callback is None, the loop runs unchanged."""
+    config, preprocessed_data = simple_2d_setup
+    config.n_iters = 30
+    config.iter_callback = None
+
+    components = initialize_optimization(config, preprocessed_data)
+    loss_fn = create_loss_function(config, preprocessed_data, components.model)
+    results = run_optimization_loop(components, loss_fn, config, preprocessed_data)
+
+    # No assertion on side-effects; just confirm it runs without error.
+    assert results.actual_iters > 0
+
+
 def test_dynamic_operations_disabled(simple_2d_setup) -> None:
     """Test optimization with dynamic operations disabled."""
     config, preprocessed_data = simple_2d_setup
