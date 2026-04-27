@@ -56,6 +56,8 @@ def prepare_fit_config(
     output_space: str = "real",
     sort_splats_enabled: bool = True,
     sort_splats_interval: int = 1000,
+    iter_callback: Optional[Any] = None,
+    iter_callback_every: int = 25,
     **seed_kwargs: Any,
 ) -> FitConfig:
     """
@@ -260,6 +262,12 @@ def prepare_fit_config(
     if sort_splats_interval < 1:
         raise ValueError("sort_splats_interval must be >= 1")
 
+    # Validate iter_callback
+    if iter_callback is not None and not callable(iter_callback):
+        raise ValueError("iter_callback must be callable or None")
+    if iter_callback_every < 1:
+        raise ValueError("iter_callback_every must be >= 1")
+
     return FitConfig(
         V=V,
         seeds=seeds,
@@ -311,4 +319,7 @@ def prepare_fit_config(
         # Z-order sorting
         sort_splats_enabled=sort_splats_enabled,
         sort_splats_interval=sort_splats_interval,
+        # Per-iteration callback
+        iter_callback=iter_callback,
+        iter_callback_every=iter_callback_every,
     )

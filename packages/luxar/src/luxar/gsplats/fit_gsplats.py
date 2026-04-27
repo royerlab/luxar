@@ -137,6 +137,8 @@ class GaussianSplatFitter:
         output_space: str = "real",
         sort_splats_enabled: bool = True,
         sort_splats_interval: int = 1000,
+        iter_callback: Optional[Any] = None,
+        iter_callback_every: int = 25,
         **seed_kwargs: Any,
     ) -> GSplatData:
         """
@@ -210,6 +212,8 @@ class GaussianSplatFitter:
             output_space=output_space,
             sort_splats_enabled=sort_splats_enabled,
             sort_splats_interval=sort_splats_interval,
+            iter_callback=iter_callback,
+            iter_callback_every=iter_callback_every,
             **seed_kwargs,
         )
 
@@ -299,6 +303,9 @@ def fit_gaussian_splats(
     # Z-order sorting for memory locality
     sort_splats_enabled: bool = True,
     sort_splats_interval: int = 1000,
+    # Per-iteration callback (e.g. validation-set scoring during fitting)
+    iter_callback: Optional[Any] = None,
+    iter_callback_every: int = 25,
     **seed_kwargs: Any,
 ) -> GSplatData:
     """
@@ -584,6 +591,8 @@ def fit_gaussian_splats(
             output_space=output_space,
             sort_splats_enabled=sort_splats_enabled,
             sort_splats_interval=sort_splats_interval,
+            iter_callback=iter_callback,
+            iter_callback_every=iter_callback_every,
             **seed_kwargs,
         )
 
