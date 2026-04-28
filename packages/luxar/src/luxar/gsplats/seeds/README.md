@@ -71,7 +71,7 @@ seeds = generate_seeds(image, method="grid", spacing=10.0)
 # Edge-based seeding
 seeds = generate_seeds(image, method="edges", edge_threshold_rel=0.15)
 
-# GPU acceleration (10-50x faster for large volumes)
+# GPU acceleration (much faster for large volumes; speedup depends on GPU)
 seeds = generate_seeds(image, device='auto')  # Auto-detect GPU
 seeds = generate_seeds(image, device='cuda')  # Explicit NVIDIA GPU
 seeds = generate_seeds(image, device='mps')   # Apple Metal GPU
@@ -307,7 +307,7 @@ print(f"Final splats: {len(result.amplitudes)}")
 
 ## GPU Acceleration
 
-All seeding methods support GPU acceleration using PyTorch for 10-50x speedups on large volumes (>100³).
+All seeding methods support GPU acceleration using PyTorch for substantial speedups on large volumes (>100³) — often orders of magnitude depending on GPU and problem size.
 
 ### Quick Start
 
@@ -325,6 +325,8 @@ seeds = generate_seeds(volume, device='cuda:1')
 ```
 
 ### GPU Operations
+
+> Per-operation speedup ranges below are typical observed values on test volumes; actual results vary by GPU model, problem size, and dimensionality. Treat them as indicative, not guarantees.
 
 GPU acceleration is applied to:
 - **Sobel gradients**: 10-50x faster (supports arbitrary dimensions)
@@ -347,7 +349,7 @@ GPU acceleration is applied to:
 ### Performance Optimization
 
 ```python
-# For large 3D volumes (512³+), GPU provides ~20x speedup
+# For large 3D volumes (512³+), GPU provides substantial speedup (GPU-dependent)
 seeds = generate_seeds(large_volume, method='edges', device='cuda')
 
 # Small volumes (<50³) auto-use CPU (GPU overhead not worth it)
@@ -507,7 +509,7 @@ hatch run pytest packages/luxar/src/luxar/gsplats/seeds/tests/test_generate_seed
 
 - **v2.2 (2025-01)**: GPU acceleration
   - Added PyTorch GPU acceleration for all seeding methods
-  - 10-50x speedup for large volumes (>100³)
+  - Substantial speedup for large volumes (>100³), often orders of magnitude depending on GPU
   - Automatic fallback for unsupported dimensions
   - Backward compatible (device=None defaults to CPU)
   - Pure PyTorch implementation (no external dependencies)

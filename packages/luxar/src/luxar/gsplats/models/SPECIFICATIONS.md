@@ -118,7 +118,7 @@ def n_splats() -> int:
 **Device Selection**:
 - Auto-detects best device: CUDA → CPU
 - MPS supported via standard PyTorch path
-- **Metal backend** (Apple Silicon): For 3D volumes on MPS, use `GaussianSplatModelMetal` for 10-50× speedup. See [metal/SPECIFICATIONS.md](gsplats/metal/SPECIFICATIONS.md)
+- **Metal backend** (Apple Silicon): For 3D volumes on MPS, use `GaussianSplatModelMetal` for substantial speedup (chip-dependent). See [metal/SPECIFICATIONS.md](gsplats/metal/SPECIFICATIONS.md)
 - Explicitly set via `device` parameter if needed
 
 **Parameter Constraints**:

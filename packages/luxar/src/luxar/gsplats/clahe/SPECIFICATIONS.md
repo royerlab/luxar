@@ -322,7 +322,7 @@ def compute_clahe_sampling_probabilities(V, tile_size, clip_limit, nbins):
 - **Histogram computation**: GPU-accelerated via `torch.histc`
 - **Tensor operations**: All operations (`cumsum`, `searchsorted`, `clamp`, etc.) GPU-accelerated
 - **Tile iteration**: Sequential (no parallelization across tiles - potential optimization opportunity)
-- **Expected speedup**: 5-10× on GPU vs CPU for large volumes
+- **Expected speedup**: substantial on GPU vs CPU for large volumes (magnitude depends on GPU and problem size)
 - **Memory transfer**: Minimal - only `V_min`, `V_max` transferred to CPU via `.item()`
 
 ## Testing Requirements

@@ -199,8 +199,8 @@ samples = torch.multinomial(probs, 1000)
 ### GPU Acceleration
 
 CLAHE benefits significantly from GPU acceleration:
-- **CPU**: ~100-200 ms for 512×512 image
-- **GPU**: ~10-20 ms for 512×512 image (5-10× speedup)
+- **CPU**: ~100-200 ms for 512×512 image (reference)
+- **GPU**: substantially faster (latency and speedup depend on GPU and image size)
 
 ```python
 import torch
@@ -210,7 +210,7 @@ from luxar.gsplats.clahe import apply_clahe
 image_gpu = image.cuda()
 
 # CLAHE on GPU
-enhanced = apply_clahe(image_gpu, tile_size=16)  # 5-10× faster
+enhanced = apply_clahe(image_gpu, tile_size=16)  # substantially faster on GPU
 ```
 
 ## Limitations

@@ -178,6 +178,8 @@ result = fit_gaussian_splats(
 
 ## Performance Expectations
 
+> Speedups below are typical observed ranges on test volumes; actual results vary by problem size, dimensionality, and driver/runtime. Treat them as indicative, not guarantees.
+
 Target speedups (compared to CPU PyTorch):
 - **M4 Max**: 10-50x faster
 - **M3**: 8-30x faster

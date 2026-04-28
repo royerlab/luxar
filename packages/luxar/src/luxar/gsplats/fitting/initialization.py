@@ -178,7 +178,7 @@ def initialize_optimization(
                 )
                 if config.verbose:
                     aprint(
-                        "✓ Model class: GaussianSplatModelMetal (3-7x faster on Apple Silicon)"
+                        "✓ Model class: GaussianSplatModelMetal (substantially faster on Apple Silicon; speedup depends on chip)"
                     )
         except ImportError:
             if config.verbose:
@@ -222,7 +222,7 @@ def initialize_optimization(
                 )
                 if config.verbose:
                     aprint(
-                        "✓ Model class: GaussianSplatModelCUDA (10-50x faster on NVIDIA GPUs)"
+                        "✓ Model class: GaussianSplatModelCUDA (often orders of magnitude faster on NVIDIA GPUs; depends on hardware)"
                     )
             else:
                 aprint(
@@ -263,11 +263,11 @@ def initialize_optimization(
         if device_type == "cpu":
             aprint(
                 "WARNING: Gaussian splat fitting running on CPU — "
-                "this is 10-50x SLOWER than GPU! "
+                "this can be orders of magnitude SLOWER than GPU (hardware-dependent)! "
                 "For serious work, use device='cuda' or device='mps'."
             )
             warnings.warn(
-                "Gaussian splat fitting running on CPU — this is 10-50x SLOWER than GPU. "
+                "Gaussian splat fitting running on CPU — this can be orders of magnitude SLOWER than GPU (hardware-dependent). "
                 "For production use, install GPU support.",
                 UserWarning,
                 stacklevel=2,

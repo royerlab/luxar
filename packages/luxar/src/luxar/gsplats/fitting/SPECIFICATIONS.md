@@ -1070,7 +1070,7 @@ l1_diag = 0.01 * lr    # 1% of base LR
 
 **Supported Devices**:
 - **CPU**: Always available, universal fallback
-- **CUDA**: Preferred for GPU acceleration (10-100× speedup)
+- **CUDA**: Preferred for GPU acceleration (substantial speedup, often orders of magnitude — GPU-dependent)
 - **MPS**: Apple Silicon GPU (experimental, may be slower than CPU for some operations)
 
 **Auto-Detection**:
@@ -1192,7 +1192,7 @@ if device is None:
 - 10000 splats: ~20s per iteration (GPU)
 
 **Speedups**:
-- GPU vs CPU: 10-100× depending on volume size
+- GPU vs CPU: substantial — often orders of magnitude, depending on GPU model and volume size
 - Gradient dilution: Enables higher dimensions without excessive iterations
 
 ## Extension Points

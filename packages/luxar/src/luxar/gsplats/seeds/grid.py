@@ -67,8 +67,8 @@ def seed_from_grid(
         - 'mps': Apple Metal (if available)
         - 'auto': Auto-detect best device
 
-        GPU acceleration provides 10-30x speedup for amplitude interpolation
-        on large volumes (>100³).
+        GPU acceleration provides substantial speedup for amplitude interpolation
+        on large volumes (>100³); the magnitude depends on GPU and problem size.
 
     Returns
     -------

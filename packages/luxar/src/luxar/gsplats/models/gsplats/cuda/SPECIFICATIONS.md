@@ -173,6 +173,8 @@ nvcc -DLUXAR_CUDA_COMPAT_MODE=1 ...
 
 **Performance Targets by Dimension**:
 
+> Speedup ranges below are typical observed values on test workloads; actual results vary by GPU model, problem size, and dimensionality. Treat them as indicative, not guarantees.
+
 | Dimension | Speedup vs PyTorch CPU | Target Throughput |
 |-----------|------------------------|-------------------|
 | **2D** | **100-200×** | >10B voxels/sec |
@@ -182,7 +184,7 @@ nvcc -DLUXAR_CUDA_COMPAT_MODE=1 ...
 
 ### Primary Goals
 
-1. **Performance**: 50-200× speedup for 2D/3D, 10-50× for 4D+
+1. **Performance**: substantial speedup over CPU PyTorch — often orders of magnitude for 2D/3D, depending on GPU and problem size
 2. **Memory Efficiency**: 4× less memory than naive implementations (following gsplat patterns)
 3. **Numerical Accuracy**: Forward pass within **1e-5 relative error**, backward within **1e-4**
    - Note: Bit-accuracy is impractical due to floating-point atomics and thread scheduling

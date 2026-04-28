@@ -75,7 +75,7 @@ Tracking lines require a Zenodo download even in default mode.
 Use --recompute to re-fit from scratch (requires network + CUDA GPU).
 
 Requirements:
-    - CUDA GPU strongly recommended (fitting is ~100x slower on CPU)
+    - CUDA GPU strongly recommended (fitting on CPU can be orders of magnitude slower, depending on hardware)
     - PyTorch for NLM denoising (included in luxar[gsplats])
 
 Output:

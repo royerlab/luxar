@@ -134,7 +134,7 @@ The `generate_seeds()` function in `seeds/generate.py` is the recommended entry 
 
 ### GPU Acceleration (`gpu_ops.py`)
 
-All seeding methods accept an optional `device` parameter (`'cuda'`, `'mps'`, `'auto'`) for GPU acceleration via PyTorch. Provides 10-50x speedup for large volumes (>100 cubed). Operations: Sobel gradients (all dimensions), peak detection (2D/3D), amplitude interpolation (2D/3D).
+All seeding methods accept an optional `device` parameter (`'cuda'`, `'mps'`, `'auto'`) for GPU acceleration via PyTorch. Provides substantial speedup for large volumes (>100 cubed) — often orders of magnitude depending on GPU and problem size. Operations: Sobel gradients (all dimensions), peak detection (2D/3D), amplitude interpolation (2D/3D).
 
 
 ## 2. Gaussian Splat Model (`models/gsplats/gsplat_model.py`)

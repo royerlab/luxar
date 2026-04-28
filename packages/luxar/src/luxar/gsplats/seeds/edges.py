@@ -51,7 +51,7 @@ def seed_from_edges(
         - 'mps': Apple Metal (if available)
         - 'auto': Auto-detect best device
 
-        GPU acceleration provides 10-50x speedup for large volumes (>100³).
+        GPU acceleration provides substantial speedup for large volumes (>100³) — often orders of magnitude depending on GPU and problem size.
         Small volumes (<50³) automatically use CPU due to overhead.
 
     Returns
