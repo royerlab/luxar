@@ -199,8 +199,8 @@ def render_gsplats_to_volume(
     .. deprecated:: 0.2.0
         This function is deprecated and will be removed in a future version.
         Use :func:`luxar.gsplats.rendering.render_to_volume` or the
-        :meth:`GSplatData.render_to_volume` method instead for 100-1000x
-        faster GPU-accelerated rendering.
+        :meth:`GSplatData.render_to_volume` method instead for substantially
+        faster GPU-accelerated rendering (often orders of magnitude, GPU-dependent).
 
     This is a legacy NumPy implementation that is very slow (O(N_splats × N_voxels))
     and runs on CPU only. The new GPU-accelerated renderer is much faster.
@@ -223,7 +223,7 @@ def render_gsplats_to_volume(
     warnings.warn(
         "render_gsplats_to_volume() is deprecated and will be removed in a future version. "
         "Use luxar.gsplats.rendering.render_to_volume() or GSplatData.render_to_volume() "
-        "instead for 100-1000x faster GPU-accelerated rendering.",
+        "instead for substantially faster GPU-accelerated rendering (often orders of magnitude, GPU-dependent).",
         DeprecationWarning,
         stacklevel=2,
     )

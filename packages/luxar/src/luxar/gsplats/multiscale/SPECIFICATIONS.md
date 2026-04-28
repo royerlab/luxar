@@ -962,7 +962,7 @@ Per iteration:
 
 1. **Start with few scales**: [1, 2, 4] before adding [1, 2, 4, 8]
 2. **Reduce iterations for large volumes**: 300-500 usually sufficient
-3. **Use CUDA**: 10-50× speedup over CPU
+3. **Use CUDA**: substantial speedup over CPU (often orders of magnitude, GPU-dependent)
 4. **Lower precision**: `torch.float16` can reduce memory (experimental)
 
 ## Optimization Movie Visualization

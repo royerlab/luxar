@@ -4,7 +4,7 @@
 Demonstrates Gaussian Splatting compression of real 3D microscopy data with
 interactive web visualization.
 
-Note: This demo uses Metal acceleration on Apple Silicon for 5-7x speedup.
+Note: This demo uses Metal acceleration on Apple Silicon for substantial speedup (chip-dependent).
 Some PyTorch ops on MPS aren't supported yet, so we enable CPU fallback.
 
 ================================================================================
@@ -267,7 +267,7 @@ def load_dapi_data():
 def fit_dapi_gsplats(volume):
     """Fit gsplats to DAPI volume (no cache check — caller handles that)."""
     with asection("GSplats Fitting"):
-        # Auto-detect best device (Metal on Apple Silicon for 5-7x speedup!)
+        # Auto-detect best device (Metal on Apple Silicon for substantial speedup, chip-dependent)
         global DEVICE
         if DEVICE is None:
             import torch
@@ -275,7 +275,7 @@ def fit_dapi_gsplats(volume):
             if is_metal_available() and torch.backends.mps.is_available():
                 DEVICE = "mps"
                 aprint(
-                    "Metal acceleration detected - will use MPS device for 5-7x speedup!"
+                    "Metal acceleration detected - will use MPS device for substantial speedup (chip-dependent)!"
                 )
                 aprint("   (MPS->CPU fallback enabled for unsupported PyTorch ops)")
             elif torch.cuda.is_available():
@@ -467,7 +467,7 @@ def view_with_napari(volume, gsplats_data):
         aprint("  Both in original voxel coordinates - should align perfectly!")
 
         # Render gsplats to volume for comparison BEFORE opening napari
-        # Using GPU-accelerated renderer (100-1000x faster than old NumPy implementation)
+        # Using GPU-accelerated renderer (substantially faster than old NumPy implementation; often orders of magnitude on GPU)
         aprint("Rendering gsplats to volume (GPU-accelerated)...")
         rendered = gsplats_data.render_to_volume(
             shape=tuple(dim_len * 2 for dim_len in volume.shape)

@@ -1916,7 +1916,8 @@ class GSplatData(_SplatArrayMixin):
 
         Notes
         -----
-        - For 8K splats on 128³ volume: ~100-1000x faster than NumPy implementation
+        - For 8K splats on 128³ volume: substantially faster than NumPy
+          implementation (often orders of magnitude on GPU; varies by hardware)
         - Automatically chunks large volumes to prevent out-of-memory errors
         - Uses specialized fast paths for 2D/3D rendering
         """

@@ -575,7 +575,8 @@ def _subsample_seeds_spatially_diverse(
     remaining_indices.remove(first_idx)
 
     # Iteratively select farthest seed using batch distance computation
-    # For medium selections (1000-10000), use GPU if available for 10-100x speedup
+    # For medium selections (1000-10000), use GPU if available for
+    # substantial speedup (often orders of magnitude, GPU-dependent)
     use_gpu = target_count > 1000
 
     if use_gpu:

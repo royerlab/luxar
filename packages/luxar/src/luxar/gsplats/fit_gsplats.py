@@ -62,8 +62,8 @@ class GaussianSplatFitter:
         self.use_cuda = use_cuda
 
         # Auto-detect best performing device based on platform and available hardware:
-        # - macOS + Apple Silicon: MPS with Metal acceleration (3-7x speedup)
-        # - Linux + NVIDIA GPU: CUDA with custom kernels (10-50x speedup)
+        # - macOS + Apple Silicon: MPS with Metal acceleration (substantial speedup, chip-dependent)
+        # - Linux + NVIDIA GPU: CUDA with custom kernels (often orders of magnitude faster, GPU-dependent)
         # - Fallback: CPU
         if device is not None:
             self.device = torch.device(device)
@@ -82,13 +82,13 @@ class GaussianSplatFitter:
 
             aprint(
                 "WARNING: Gaussian splat fitting will run on CPU — "
-                "this is 10-50x SLOWER than GPU! "
+                "this can be orders of magnitude SLOWER than GPU (hardware-dependent)! "
                 "For serious work, use device='cuda' (NVIDIA) or device='mps' (Apple Silicon). "
                 "To install CUDA support: make setup-cuda && make build-cuda"
             )
             warnings.warn(
                 "Gaussian splat fitting will run on CPU. "
-                "This is 10-50x SLOWER than GPU. "
+                "This can be orders of magnitude SLOWER than GPU (hardware-dependent). "
                 "For serious work, use device='cuda' (NVIDIA) or device='mps' (Apple Silicon). "
                 "To install CUDA support: make setup-cuda && make build-cuda",
                 UserWarning,
@@ -479,10 +479,12 @@ def fit_gaussian_splats(
         removed when this limit is exceeded, preventing memory exhaustion during long optimizations.
     use_metal : bool, default=True
         Enable Metal acceleration on Apple Silicon (macOS + MPS device).
-        Provides 3-7x speedup for 3D volumes. Automatically disabled if not available.
+        Provides substantial speedup for 3D volumes (chip-dependent).
+        Automatically disabled if not available.
     use_cuda : bool, default=True
         Enable custom CUDA kernels on NVIDIA GPUs.
-        Provides 10-50x speedup for 2D-8D volumes. Automatically disabled if not available.
+        Provides substantial speedup for 2D-8D volumes (often orders of
+        magnitude, GPU-dependent). Automatically disabled if not available.
     cull_retention : float or None, default=0.95
         Post-fit cumulative culling.  Keeps the top splats that account for
         this fraction of the total amplitude (0--1).  At 0.95, roughly 5% of

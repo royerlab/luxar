@@ -11,7 +11,8 @@ This module provides GPU implementations of core operations used in seeding:
 All operations use pure PyTorch (no kornia/faiss dependencies) for minimal
 dependencies and easier maintenance.
 
-Expected speedups: 10-50x for large 3D/4D volumes on CUDA GPUs.
+Expected speedups: substantial for large 3D/4D volumes on CUDA GPUs —
+often orders of magnitude depending on GPU and problem size.
 """
 
 import warnings
@@ -205,8 +206,8 @@ def _compute_nd_sobel_magnitude_gpu(V_tensor: torch.Tensor) -> torch.Tensor:
     Uses the full separable Sobel kernel matching ``scipy.ndimage.sobel``:
     for each axis, apply the differentiation kernel ``[-1, 0, 1]`` along
     that axis and the smoothing kernel ``[1, 2, 1]`` (unnormalized) along
-    all perpendicular axes. This is ~10-50x faster than scipy on large
-    volumes.
+    all perpendicular axes. This is substantially faster than scipy on
+    large volumes (often orders of magnitude, GPU-dependent).
 
     Parameters
     ----------
@@ -264,7 +265,8 @@ def local_maxima_gpu(
     """
     Find local maxima in n-dimensional image on GPU using max pooling.
 
-    This is ~20-100x faster than scipy.ndimage.maximum_filter for large volumes.
+    This is substantially faster than scipy.ndimage.maximum_filter for large
+    volumes (often orders of magnitude on GPU; varies by hardware).
 
     Parameters
     ----------
@@ -352,7 +354,8 @@ def soft_blur_nd_gpu(img: torch.Tensor) -> torch.Tensor:
     Apply soft separable blur on GPU to reduce noise before peak detection.
 
     Uses a 3-point kernel [0.25, 0.5, 0.25] applied separably along each axis.
-    This is ~5-20x faster than scipy.ndimage.convolve1d for large volumes.
+    This is substantially faster than scipy.ndimage.convolve1d for large
+    volumes (GPU-dependent).
 
     Parameters
     ----------
@@ -388,7 +391,8 @@ def sample_amplitudes_gpu(
     """
     Sample amplitudes from volume at given coordinates using GPU interpolation.
 
-    This is ~10-30x faster than scipy.ndimage.map_coordinates for large volumes.
+    This is substantially faster than scipy.ndimage.map_coordinates for large
+    volumes (often orders of magnitude on GPU; varies by hardware).
 
     Parameters
     ----------

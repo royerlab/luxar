@@ -2,7 +2,8 @@
 Metal-accelerated Gaussian splatting renderer for Apple Silicon.
 
 This package provides a high-performance Metal compute backend for Gaussian splatting,
-achieving 10-50x speedup over CPU PyTorch on M-series chips.
+achieving substantial speedup over CPU PyTorch on M-series chips (chip-dependent;
+see metal/README.md for per-chip observed ranges).
 
 The Metal extension is automatically compiled on first use if not already built.
 Requirements:

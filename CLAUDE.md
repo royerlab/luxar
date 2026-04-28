@@ -280,7 +280,7 @@ luxar gsplat view splats.gsplats.zarr          # Quick web viewer
 from luxar.gsplats.seeds import generate_seeds
 from luxar.gsplats import fit_gaussian_splats
 
-# GPU-accelerated seeding (10-50x faster for large volumes)
+# GPU-accelerated seeding (much faster for large volumes; speedup depends on GPU)
 seeds = generate_seeds(volume, device='auto')   # Auto-detect GPU
 seeds = generate_seeds(volume, device='cuda')   # Explicit NVIDIA GPU
 seeds = generate_seeds(volume, device='mps')    # Apple Metal GPU
@@ -301,7 +301,7 @@ hatch run python scripts/benchmarks/benchmark_seeding_gpu.py
 - Peak detection: 2D/3D only (auto-fallback for others)
 - Interpolation: 2D/3D only (auto-fallback for others)
 - Deduplication: All dimensions
-- Expected speedup: 10-50x for large volumes (>100³)
+- Expected speedup: substantial on large volumes (>100³), often orders of magnitude depending on GPU
 
 ### Make Command Nomenclature
 
@@ -702,7 +702,7 @@ Before PR/merge:
 5. **Keep docs in sync** - Update READMEs and specs with code changes
 6. **Use existing patterns** - Follow codebase conventions
 7. **Multiple Agents at Work** - Other agents are likely at work on the same codebase and files, be mindful and careful to not delete/destroy/stash the work of the other agents.
-8. **Ask Questions when Unsure** - Ask the user questions when you are genuinely unsure about a course of action.
+8. **Ask Questions when Unsure** - Ask the user questions when you are genuinely unsure about a course of action. **ALWAYS use the `AskUserQuestion` interactive tool** for any decision point — never pose choices as inline prose. If the tool isn't loaded, load it via `ToolSearch` first.
 
 ### Naming Conventions
 - Example files: `*_example.py` or `*_example.zarr`

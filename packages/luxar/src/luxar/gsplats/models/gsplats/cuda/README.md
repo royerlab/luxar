@@ -6,7 +6,7 @@ This module provides GPU-accelerated Gaussian splatting for NVIDIA GPUs using cu
 
 ## Overview
 
-The CUDA backend is designed to provide 10-100x speedup over CPU PyTorch for Gaussian splatting operations. It supports:
+The CUDA backend provides substantial speedup over CPU PyTorch for Gaussian splatting operations — often orders of magnitude, depending on GPU model and problem size. It supports:
 
 - **2D-8D rendering**: Not just 3D, but arbitrary dimensions up to 8D
 - **Splat-centric architecture**: Each CUDA block processes one splat (no tile binning)

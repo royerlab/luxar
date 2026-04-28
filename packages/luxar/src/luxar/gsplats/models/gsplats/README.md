@@ -85,8 +85,8 @@ volume = render_gaussians(
 
 For GPU-accelerated rendering, see the backend-specific subpackages:
 
-- **CUDA** (`cuda/`): NVIDIA GPU acceleration (2D-8D), 10-100x speedup
-- **Metal** (`metal/`): Apple Silicon acceleration (3D only), 10-50x speedup
+- **CUDA** (`cuda/`): NVIDIA GPU acceleration (2D-8D), substantial speedup (often orders of magnitude, GPU-dependent)
+- **Metal** (`metal/`): Apple Silicon acceleration (3D only), substantial speedup (chip-dependent)
 
 Both backends provide drop-in replacements (`GaussianSplatModelCUDA`, `GaussianSplatModelMetal`) with the same API.
 

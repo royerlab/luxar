@@ -68,8 +68,9 @@ def seed_from_decomposition(
         - 'mps': Apple Metal (if available)
         - 'auto': Auto-detect best device
 
-        GPU acceleration provides 20x speedup for decomposition and peak
-        detection on large volumes (>100³).
+        GPU acceleration provides substantial speedup for decomposition and
+        peak detection on large volumes (>100³); the magnitude depends on GPU
+        and problem size.
 
     Returns
     -------

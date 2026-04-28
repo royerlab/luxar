@@ -22,7 +22,7 @@ This subpackage provides seed Gaussian splat generation from n-dimensional image
 
 **GPU Acceleration:**
 - All methods accept `device` parameter for PyTorch GPU acceleration
-- 10-50x speedup for large volumes (>100^3) on CUDA/MPS devices
+- Substantial speedup for large volumes (>100^3) on CUDA/MPS devices — often orders of magnitude depending on GPU and problem size
 
 ## Package Structure
 

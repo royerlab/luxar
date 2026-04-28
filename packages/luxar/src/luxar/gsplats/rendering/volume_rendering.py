@@ -192,7 +192,8 @@ def render_to_volume(
     Notes
     -----
     - The rendering uses the fast PyTorch renderer with specialized 2D/3D fast paths
-    - For 8K splats on 128³ volume: ~100-1000x faster than NumPy implementation
+    - For 8K splats on 128³ volume: substantially faster than NumPy
+      implementation (often orders of magnitude on GPU; varies by hardware)
     - Supports nD rendering with automatic chunking to prevent OOM
     - Uses standard Gaussian falloff: exp(-0.5 * ||y||^2)
     """
