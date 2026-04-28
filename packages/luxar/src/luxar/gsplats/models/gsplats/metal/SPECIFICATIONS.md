@@ -235,6 +235,8 @@ output = MetalSplatFunction.apply(
 
 ### Expected Speedups (vs CPU PyTorch)
 
+> Speedups below are typical observed ranges on test volumes; actual results vary by problem size, dimensionality, and driver/runtime. Treat them as indicative, not guarantees.
+
 | Chip | Speedup Range |
 |------|--------------|
 | M4 Max | 10-50× |

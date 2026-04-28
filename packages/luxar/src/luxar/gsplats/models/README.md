@@ -84,8 +84,8 @@ User-friendly wrappers that accept `GSplatData` objects:
 
 ### Accelerated Backends
 
-- **CUDA** (`gsplats/cuda/`): NVIDIA GPU acceleration (2D-8D), 10-100x speedup. See `gsplats/cuda/README.md`.
-- **Metal** (`gsplats/metal/`): Apple Silicon acceleration (3D only), 10-50x speedup. See `gsplats/metal/README.md`.
+- **CUDA** (`gsplats/cuda/`): NVIDIA GPU acceleration (2D-8D), substantial speedup (often orders of magnitude, GPU-dependent). See `gsplats/cuda/README.md`.
+- **Metal** (`gsplats/metal/`): Apple Silicon acceleration (3D only), substantial speedup (chip-dependent). See `gsplats/metal/README.md`.
 
 ### Numerical Utilities (`utils/`)
 

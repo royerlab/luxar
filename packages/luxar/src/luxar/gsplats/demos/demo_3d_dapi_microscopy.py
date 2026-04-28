@@ -5,7 +5,7 @@
 **What this demo demonstrates:**
 - **GPU-accelerated Non-Local Means (NLM) denoising** with auto-calibrated h
 - 3D Gaussian splatting on real DAPI-stained nuclear microscopy data
-- **Metal acceleration on Apple Silicon (3-7x speedup automatically!)**
+- **Metal acceleration on Apple Silicon (substantial speedup automatically; chip-dependent)**
 - Remote zarr data loading from Image Data Resource (IDR)
 - Automatic downscaling to manageable size (128³ voxels)
 - OME-ZARR format handling (5D: T×C×Z×Y×X)
@@ -75,8 +75,8 @@ DAPI_CHANNEL = 1  # DAPI is typically channel 1 (0-indexed)
 TARGET_SIZE = None  # Downscale to this size for manageable computation
 TIME_POINT = 0  # Use first time point
 # Hardware acceleration (enabled by default, auto-detected)
-USE_METAL = True  # Enable Metal acceleration on Apple Silicon (3-7x faster!)
-USE_CUDA = True  # Enable CUDA acceleration on NVIDIA GPUs (10-50x faster!)
+USE_METAL = True  # Enable Metal acceleration on Apple Silicon (substantially faster; chip-dependent)
+USE_CUDA = True  # Enable CUDA acceleration on NVIDIA GPUs (often orders of magnitude faster; GPU-dependent)
 # NLM denoising parameters
 NLM_PATCH_SIZE = 3
 NLM_PATCH_DISTANCE = 5
@@ -385,16 +385,16 @@ with asection("3D DAPI Gaussian Splatting Demo"):
         aprint("Napari closed — continuing with splat fitting...")
 
     # Device auto-detection: fitter will automatically select best backend:
-    # - Linux + NVIDIA GPU: CUDA with custom kernels (10-50x speedup)
-    # - macOS + Apple Silicon: MPS with Metal acceleration (3-7x speedup)
+    # - Linux + NVIDIA GPU: CUDA with custom kernels (often orders of magnitude faster, GPU-dependent)
+    # - macOS + Apple Silicon: MPS with Metal acceleration (substantial speedup, chip-dependent)
     # - Fallback: CPU
     if DEVICE is None:
         import torch
 
         if USE_CUDA and torch.cuda.is_available():
-            aprint("🚀 CUDA available - will use custom CUDA kernels (10-50x speedup!)")
+            aprint("🚀 CUDA available - will use custom CUDA kernels (substantial speedup, GPU-dependent!)")
         elif USE_METAL and is_metal_available() and torch.backends.mps.is_available():
-            aprint("🚀 Metal available - will use MPS device (3-7x speedup!)")
+            aprint("🚀 Metal available - will use MPS device (substantial speedup, chip-dependent!)")
         else:
             aprint("Using CPU device (no GPU acceleration available)")
     else:
@@ -403,8 +403,8 @@ with asection("3D DAPI Gaussian Splatting Demo"):
     with asection(f"Fitting 3D Gaussian splats ({N_ITERS} iterations)"):
         # Fit oriented (full-covariance) 3D Gaussians with auto-seed generation
         # Hardware acceleration is automatic:
-        # - CUDA kernels on NVIDIA GPUs (10-50x speedup)
-        # - Metal kernels on Apple Silicon (3-7x speedup)
+        # - CUDA kernels on NVIDIA GPUs (often orders of magnitude faster, GPU-dependent)
+        # - Metal kernels on Apple Silicon (substantial speedup, chip-dependent)
         result = fit_gaussian_splats(
             V,
             seeds=NUM_SPLATS,  # initial seed count

@@ -493,7 +493,7 @@ luxar gsplat <subcommand> [OPTIONS]     # Gaussian splatting tools (fit, convert
 
 ## GPU Acceleration (Optional)
 
-Gaussian splat fitting runs on CPU by default. For 10-50x faster fitting, install with GPU support:
+Gaussian splat fitting runs on CPU by default. For much faster fitting (often orders of magnitude, GPU-dependent), install with GPU support:
 
 ```bash
 # Install gsplats dependencies (PyTorch, scipy, etc.)
@@ -507,9 +507,9 @@ make build-cuda
 
 | Component | CPU | CUDA GPU | Apple Metal (MPS) |
 |-----------|-----|----------|-------------------|
-| Splat fitting | Supported (slow) | 10-50x faster | Supported |
+| Splat fitting | Supported (slow) | Much faster (often orders of magnitude, GPU-dependent) | Supported |
 | NLM denoising | Supported | Faster with `make build-cuda` | Not supported |
-| Seeding | Supported | 10-50x faster for large volumes | Supported |
+| Seeding | Supported | Much faster for large volumes (GPU-dependent) | Supported |
 | **Viewer rendering** | N/A | N/A | N/A |
 
 > **Note:** The viewer uses **WebGL** (your browser's GPU) for rendering — no CUDA needed.

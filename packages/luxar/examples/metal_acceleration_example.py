@@ -2,8 +2,8 @@
 """
 Example: Using Metal Acceleration for Gaussian Splatting
 
-Demonstrates how to use the Metal-accelerated backend for 3-7x speedup
-on Apple Silicon (M-series chips).
+Demonstrates how to use the Metal-accelerated backend for substantial speedup
+on Apple Silicon (M-series chips); actual speedup depends on chip and workload.
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ def main():
         # Check if Metal is available
         if is_metal_available():
             aprint("✓ Metal backend available")
-            aprint("  Will use Metal acceleration for 3-7x speedup!")
+            aprint("  Will use Metal acceleration for substantial speedup (chip-dependent)!")
         else:
             aprint("✗ Metal backend not available")
             aprint("  Using CPU PyTorch (slower but works everywhere)")
@@ -76,7 +76,7 @@ def main():
 
         # Performance note
         if device == "mps":
-            aprint("\n💡 Note: Metal acceleration provided 3-7x speedup over CPU!")
+            aprint("\n💡 Note: Metal acceleration provided substantial speedup over CPU!")
             aprint("   For even larger volumes (128³+), expect even better speedup.")
         else:
             aprint("\n💡 Note: To enable Metal acceleration:")

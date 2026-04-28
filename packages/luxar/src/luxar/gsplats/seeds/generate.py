@@ -63,7 +63,7 @@ def generate_seeds(
             - 'mps': Apple Metal (if available)
             - 'auto': Auto-detect best device
 
-            GPU acceleration provides 10-50x speedup for large volumes (>100³).
+            GPU acceleration provides substantial speedup for large volumes (>100³) — often orders of magnitude depending on GPU and problem size.
             Applied to all selected seeding methods.
 
         **Decomposition Parameters** (method="decomposition"):
