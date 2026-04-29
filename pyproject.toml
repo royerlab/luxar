@@ -129,10 +129,21 @@ path = "packages/luxar/src/luxar/__init__.py"
 # Build configuration
 [tool.hatch.build.targets.wheel]
 packages = ["packages/luxar/src/luxar"]
-# The viewer dist is bundled into the wheel via force-include.
-# Run `make build-viewer` before `hatch build` to include it.
+# The viewer dist is bundled into the wheel via force-include below.
+# Run `make build-viewer` before `hatch build` to populate it.
 # For editable/development installs, cli/utils.py resolves the viewer
 # from the source tree instead — no bundling needed.
+#
+# Native launcher binaries (cli/_launchers/*) and icon assets
+# (cli/_launcher_assets/*) are inside the package and ride along
+# automatically when present at build time. Run `make build-launchers`
+# before `hatch build` to populate the binaries.
+exclude = [
+    # Drop dotfiles that ride along with package directories — they
+    # are only meaningful in the source tree.
+    "**/.gitignore",
+    "**/.gitkeep",
+]
 
 [tool.hatch.build.targets.wheel.force-include]
 "packages/luxar-viewer/dist" = "luxar/_viewer_dist"

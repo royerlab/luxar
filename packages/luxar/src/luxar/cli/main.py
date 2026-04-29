@@ -1094,18 +1094,48 @@ def export(
     port: int = typer.Option(
         8000, "--port", "-p", help="Port for local server (with --open)"
     ),
+    native: Optional[str] = typer.Option(
+        None,
+        "--native",
+        help=(
+            "Comma-separated native bundles to produce instead of the "
+            "Python serve.py folder. Choices: macos, linux-amd64, linux-arm64. "
+            "Example: --native macos,linux-amd64"
+        ),
+    ),
+    name: Optional[str] = typer.Option(
+        None,
+        "--name",
+        help="Bundle name (defaults to the zarr stem). Used with --native.",
+    ),
 ) -> None:
     """Export a zarr scene + viewer as a standalone offline folder.
 
     Creates a self-contained folder with the viewer, dataset, and a serve
     script. Anyone can view the scene with just Python 3 and a browser.
 
+    With --native, produces double-clickable native bundles instead of the
+    Python serve.py folder. Requires `make build-launchers` to have been
+    run first.
+
     Examples:
         luxar export my_scene.zarr -o my_export/
         luxar export my_scene.zarr -o my_export/ --overwrite
         luxar export my_scene.zarr -o my_export/ --open
+        luxar export my_scene.zarr -o out/ --native macos
+        luxar export my_scene.zarr -o out/ --native macos,linux-amd64,linux-arm64
     """
     try:
+        if native:
+            _run_native_export(
+                source=source,
+                output=output,
+                overwrite=overwrite,
+                native=native,
+                name=name,
+            )
+            return
+
         from .export import export_scene
 
         with asection("Luxar Export"):
@@ -1141,6 +1171,98 @@ def export(
     except Exception as e:
         aprint(f"❌ Error exporting scene: {e}")
         raise typer.Exit(1)
+
+
+def _run_native_export(
+    *,
+    source: Path,
+    output: Path,
+    overwrite: bool,
+    native: str,
+    name: Optional[str],
+) -> None:
+    """Helper for ``luxar export --native``: validate args, then bundle.
+
+    All preconditions (zarr validity, platform spelling, viewer dist
+    presence, *every* requested launcher binary) are checked BEFORE any
+    destructive filesystem action runs, so a partial or missing build
+    can never wipe a pre-existing output directory passed with
+    --overwrite.
+    """
+    import shutil
+
+    from .native_app import (
+        SUPPORTED_PLATFORMS,
+        bundle_linux_folder,
+        bundle_macos_app,
+        get_launcher_path,
+    )
+    from .utils import check_viewer_built, get_viewer_dist_path, validate_zarr_store
+
+    is_valid, error = validate_zarr_store(source)
+    if not is_valid:
+        raise ValueError(f"Invalid zarr store: {error}")
+
+    requested = [p.strip() for p in native.split(",") if p.strip()]
+    unknown = [p for p in requested if p not in SUPPORTED_PLATFORMS]
+    if unknown:
+        raise ValueError(
+            f"Unknown --native platform(s): {', '.join(unknown)}. "
+            f"Choices: {', '.join(SUPPORTED_PLATFORMS)}"
+        )
+    if not requested:
+        raise ValueError("--native requires at least one platform")
+
+    if not check_viewer_built():
+        raise FileNotFoundError(
+            "Viewer not built. Run: cd packages/luxar-viewer && pnpm build"
+        )
+
+    # Pre-validate every requested launcher binary before touching the
+    # output directory. This prevents the rmtree-then-fail-on-second-
+    # platform footgun where --overwrite would wipe the user's old
+    # export only to discover a missing binary mid-flight.
+    for plat in requested:
+        get_launcher_path(plat)  # raises LauncherNotBuiltError on miss
+
+    if output.exists():
+        if not overwrite:
+            raise FileExistsError(f"Output directory already exists: {output}")
+        shutil.rmtree(output)
+    output.mkdir(parents=True, exist_ok=True)
+
+    # source.stem already drops the .zarr suffix; no replace needed.
+    bundle_name = name or source.stem or "LuxarScene"
+    viewer_dist = get_viewer_dist_path()
+
+    with asection(f"Luxar Export (native: {', '.join(requested)})"):
+        produced: list[Path] = []
+        for plat in requested:
+            if plat == "macos":
+                produced.append(
+                    bundle_macos_app(
+                        viewer_dist=viewer_dist,
+                        zarr_data=source,
+                        output=output,
+                        app_name=bundle_name,
+                    )
+                )
+            elif plat.startswith("linux-"):
+                arch = plat.split("-", 1)[1]
+                produced.append(
+                    bundle_linux_folder(
+                        arch=arch,
+                        viewer_dist=viewer_dist,
+                        zarr_data=source,
+                        output=output,
+                        app_name=bundle_name,
+                    )
+                )
+
+        aprint("")
+        aprint("✅ Native bundles produced:")
+        for p in produced:
+            aprint(f"   {p}")
 
 
 # ─────────────────────────────── profiles ────────────────────────────────────

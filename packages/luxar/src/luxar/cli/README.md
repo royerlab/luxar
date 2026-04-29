@@ -26,6 +26,7 @@ luxar info my_data.zarr --stats
 - Add `--no-open` to any command to skip browser launch
 - Use `luxar profiles` to list network simulation profiles
 - Use `luxar serve --help` for all serving options
+- Use `luxar export --native macos` (or `linux-amd64`/`linux-arm64`) for double-clickable native bundles backed by an embedded Go launcher (requires `make build-launchers` first)
 
 ## Module Structure
 
@@ -35,6 +36,7 @@ luxar info my_data.zarr --stats
 - `gsplat_config.py` - Config system: presets, YAML loading, volume loaders, helpers
 - `utils.py` - Utility functions for CLI operations
 - `export.py` - Standalone scene export (viewer + data + serve script)
+- `native_app.py` - Native bundle producers (macOS `.app`, Linux portable folder) for `luxar export --native`
 - `network_simulation.py` - Network simulation middleware and profile definitions
 
 ## Available Commands
@@ -94,6 +96,24 @@ luxar export my_scene.zarr -o my_export/ --open --port 9000  # Custom port
 ```
 
 **Options**: `--output/-o` (required), `--overwrite`, `--open` (serve and launch browser), `--port/-p` (port for local server, default 8000).
+
+#### `luxar export --native` (double-clickable bundles)
+Produce a double-clickable native bundle instead of the Python `serve.py` folder. The bundle wraps the viewer + zarr around a Go-compiled launcher binary that opens an embedded WebView (WKWebView on macOS, WebKitGTK on Linux).
+
+```bash
+luxar export my_scene.zarr -o out/ --native macos                       # macOS .app
+luxar export my_scene.zarr -o out/ --native linux-amd64                  # Linux folder (x86_64)
+luxar export my_scene.zarr -o out/ --native macos,linux-amd64,linux-arm64 \
+                                          --name MyScene                # All three at once
+```
+
+**Options** (in addition to the parent command's): `--native PLATFORMS` (comma-separated; choices: `macos`, `linux-amd64`, `linux-arm64`), `--name NAME` (defaults to the zarr stem).
+
+**Prerequisites**: run `make build-launchers` first to populate `cli/_launchers/` with the host-platform binary. CGO blocks pure cross-compilation, so Linux + Windows binaries must be built on hosts of the matching OS (typically via CI).
+
+**Runtime fallback**: setting `LUXAR_LAUNCHER_NO_WEBVIEW=1` makes the launcher open the user's default browser instead of an embedded WebView — useful for headless smoke tests and minimal Linux installs without `libwebkit2gtk`.
+
+See `cli/SPECIFICATIONS.md` for the full output structure and behavior contract, and `packages/luxar-launcher/README.md` for the launcher source itself.
 
 
 ### GSplat Processing Commands

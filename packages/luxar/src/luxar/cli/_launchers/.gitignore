@@ -1,0 +1,8 @@
+# Built launcher binaries are produced by `make build-launchers` and not
+# checked in. Source lives in packages/luxar-launcher/.
+darwin-universal
+darwin-arm64
+darwin-amd64
+linux-amd64
+linux-arm64
+windows-amd64.exe
