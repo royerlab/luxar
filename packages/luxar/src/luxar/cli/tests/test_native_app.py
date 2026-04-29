@@ -292,9 +292,9 @@ class TestCLINativeFlag:
     ) -> None:
         output = tmp_path / "native_out"
         with (
-            patch("luxar.cli.main.check_viewer_built", return_value=True),
+            patch("luxar.cli.utils.check_viewer_built", return_value=True),
             patch(
-                "luxar.cli.main.get_viewer_dist_path", return_value=fake_viewer_dist
+                "luxar.cli.utils.get_viewer_dist_path", return_value=fake_viewer_dist
             ),
             _patch_launchers(fake_launchers_dir),
         ):
@@ -336,9 +336,9 @@ class TestCLINativeFlag:
         empty_launchers.mkdir()
 
         with (
-            patch("luxar.cli.main.check_viewer_built", return_value=True),
+            patch("luxar.cli.utils.check_viewer_built", return_value=True),
             patch(
-                "luxar.cli.main.get_viewer_dist_path", return_value=fake_viewer_dist
+                "luxar.cli.utils.get_viewer_dist_path", return_value=fake_viewer_dist
             ),
             patch("luxar.cli.native_app.LAUNCHERS_DIR", empty_launchers),
         ):
@@ -372,9 +372,9 @@ class TestCLINativeFlag:
         zarr filename without the `.zarr` extension)."""
         output = tmp_path / "native_out"
         with (
-            patch("luxar.cli.main.check_viewer_built", return_value=True),
+            patch("luxar.cli.utils.check_viewer_built", return_value=True),
             patch(
-                "luxar.cli.main.get_viewer_dist_path", return_value=fake_viewer_dist
+                "luxar.cli.utils.get_viewer_dist_path", return_value=fake_viewer_dist
             ),
             _patch_launchers(fake_launchers_dir),
         ):
