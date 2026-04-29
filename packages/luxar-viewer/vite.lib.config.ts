@@ -17,6 +17,10 @@ import { defineConfig } from 'vite';
 import { resolve } from 'path';
 
 export default defineConfig({
+  // Library consumers control their own deployment path; emit relative URLs
+  // so workers/assets resolve via `import.meta.url` rather than from the
+  // document root.
+  base: './',
   build: {
     outDir: 'dist/lib',
     emptyOutDir: true,

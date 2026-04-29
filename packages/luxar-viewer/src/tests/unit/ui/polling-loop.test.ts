@@ -7,9 +7,9 @@ import { PollingLoop } from '../../../ui/components/polling-loop';
 describe('PollingLoop', () => {
   let loop: PollingLoop;
   let tickCount: number;
-  let onTickMock: ReturnType<typeof vi.fn>;
-  let onStartMock: ReturnType<typeof vi.fn>;
-  let onStopMock: ReturnType<typeof vi.fn>;
+  let onTickMock: ReturnType<typeof vi.fn<() => void>>;
+  let onStartMock: ReturnType<typeof vi.fn<() => void>>;
+  let onStopMock: ReturnType<typeof vi.fn<() => void>>;
 
   beforeEach(() => {
     vi.useFakeTimers();
