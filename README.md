@@ -461,10 +461,14 @@ with LuxarZarrCompiler("output.zarr") as compiler:
 luxar demo [OPTIONS]                    # Create demo visualization
 luxar serve PATH [OPTIONS]              # Serve Zarr dataset
 luxar info PATH [--stats]               # Dataset information
-luxar export SOURCE -o DIR              # Export standalone viewer + data bundle
+luxar export SOURCE -o DIR              # Export standalone folder (Python 3 + browser)
+luxar export SOURCE -o DIR --native macos|linux-amd64|linux-arm64
+                                        # Double-clickable native bundle (.app / portable folder)
 luxar profiles                          # List network simulation profiles
 luxar gsplat <subcommand> [OPTIONS]     # Gaussian splatting tools (fit, convert, render, merge, ...)
 ```
+
+See [`docs/tutorials/distributing_scenes.rst`](docs/tutorials/distributing_scenes.rst) for the full distribution story (folder export, native bundles, sharing across OSes, Gatekeeper handling).
 
 **Serve Options:**
 - `--viewer` / `--no-viewer` - Launch viewer alongside server

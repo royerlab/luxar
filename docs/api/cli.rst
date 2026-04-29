@@ -94,6 +94,19 @@ Export Luxar scenes as standalone offline viewer bundles.
    :members:
    :undoc-members:
 
+Native Bundles
+--------------
+
+Producers for double-clickable native bundles wrapped around the Go-compiled
+launcher binary (``packages/luxar-launcher``). Used internally by the
+``luxar export --native`` subcommand to emit ``.app`` bundles on macOS and
+portable folders on Linux. The bundle layout, ``Info.plist`` generator, and
+launcher-binary lookup all live in this module.
+
+.. automodule:: luxar.cli.native_app
+   :members:
+   :undoc-members:
+
 GSplat Commands
 ---------------
 
