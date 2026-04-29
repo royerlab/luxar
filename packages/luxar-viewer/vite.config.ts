@@ -9,8 +9,9 @@ export default defineConfig({
     target: 'esnext', // Required for Workers and WASM support
     rollupOptions: {
       output: {
-        manualChunks: {
-          three: ['three'],
+        manualChunks: (id) => {
+          if (id.includes('node_modules/three/')) return 'three';
+          return undefined;
         },
       },
     },

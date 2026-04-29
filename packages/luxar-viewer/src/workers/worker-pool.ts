@@ -7,6 +7,11 @@
 
 import { wrap, Remote } from 'comlink';
 import type { DataWorkerAPI } from './data-worker';
+// Vite's `?worker` import emits a bundled, transpiled, hashed worker chunk and
+// returns a default-exported Worker constructor. This sidesteps the broken
+// `new Worker(new URL('./data-worker.ts', import.meta.url))` pattern under
+// vite 8 + rolldown rc.17, which ships the raw `.ts` source as an asset.
+import DataWorker from './data-worker?worker';
 import { log, Modules } from '../utils/log';
 import { config } from '../config';
 
@@ -79,11 +84,11 @@ export class WorkerPool {
 
         // Create all workers in parallel.
         // dataWorkerUrlOverride lets embedders whose bundlers don't support
-        // `new Worker(new URL(...))` point at an explicitly-built worker bundle.
-        const workerUrl =
-          dataWorkerUrlOverride ?? new URL('./data-worker.ts', import.meta.url);
+        // vite's `?worker` import point at an explicitly-built worker bundle.
         const workerPromises = Array.from({ length: workerCount }, async (_, index) => {
-          const worker = new Worker(workerUrl, { type: 'module' });
+          const worker = dataWorkerUrlOverride
+            ? new Worker(dataWorkerUrlOverride, { type: 'module' })
+            : new DataWorker();
 
           const api = wrap<DataWorkerAPI>(worker);
 
