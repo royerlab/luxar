@@ -157,6 +157,69 @@ luxar export my_scene.zarr -o my_export/ --overwrite
 luxar export my_scene.zarr -o my_export/ --open
 ```
 
+> By default `luxar export` produces a Python `serve.py`-based folder. For double-clickable native bundles (`.app` on macOS, portable folder on Linux), use the `--native` flag — see [`luxar export --native`](#luxar-export---native) below.
+
+---
+
+### `luxar export --native`
+
+**Purpose**: Produce double-clickable native bundles instead of the default Python `serve.py` folder. Each bundle wraps the viewer + zarr around a Go-compiled launcher binary that opens the viewer in an embedded system WebView (WKWebView on macOS, WebKitGTK on Linux). The end user double-clicks the result; no Python or browser involvement is required on their machine.
+
+This subcommand of `luxar export` is selected by passing `--native PLATFORMS`; all other behavior (validation, `--overwrite`, source resolution) is shared with the parent command.
+
+**Parameters**:
+- `source`: Path to the zarr dataset (required, positional — same as parent)
+- `--output, -o`: Output folder (required — same as parent)
+- `--overwrite`: Overwrite existing output folder (default: False — same as parent)
+- `--native PLATFORMS`: Comma-separated list of native targets to produce. Choices: `macos`, `linux-amd64`, `linux-arm64`. Required to select this subcommand.
+- `--name NAME`: Bundle name (defaults to the zarr stem, e.g. `my_scene.zarr` → `my_scene`)
+
+**Behavior**:
+1. Validate the source is a valid zarr store
+2. Parse and validate the requested `--native` platforms (reject unknown spellings)
+3. Verify the viewer has been built (error if not)
+4. **Pre-validate that every requested launcher binary exists** in `cli/_launchers/` (raise `LauncherNotBuiltError` with a "run `make build-launchers`" hint if any are missing). This pre-check runs *before* any destructive filesystem action so `--overwrite` cannot wipe a prior export when a binary is missing.
+5. Handle the output directory (FileExistsError without `--overwrite`; `rmtree` then `mkdir` with it)
+6. For each requested platform, call the matching producer:
+   - `macos` → `bundle_macos_app()` (writes `<name>.app/Contents/{Info.plist, MacOS/launcher, Resources/{viewer, data, AppIcon.icns}}` and a sibling `<name>-README.txt`)
+   - `linux-{amd64,arm64}` → `bundle_linux_folder()` (writes `<name>-linux-<arch>/{luxar-launcher, viewer/, data/, <name>.png, README.txt}`)
+
+**Output structure (macOS)**:
+```
+output/
+  MyScene-README.txt           # Sibling README (xattr -cr recovery, etc.)
+  MyScene.app/
+    Contents/
+      Info.plist               # Bundle metadata (CFBundleIconFile = AppIcon)
+      MacOS/
+        launcher               # Universal Mach-O (arm64 + amd64), +x
+      Resources/
+        AppIcon.icns           # Multi-resolution app icon
+        viewer/                # Luxar viewer (HTML, JS, CSS, WASM)
+        data/                  # Zarr dataset (copied as-is)
+```
+
+**Output structure (Linux)**:
+```
+output/
+  MyScene-linux-amd64/
+    luxar-launcher             # Statically linked ELF, +x
+    viewer/                    # Luxar viewer
+    data/                      # Zarr dataset
+    MyScene.png                # Icon (FreeDesktop convention)
+    README.txt                 # Quick start + libwebkit2gtk dep + LUXAR_LAUNCHER_NO_WEBVIEW=1
+```
+
+**Runtime fallback**: setting `LUXAR_LAUNCHER_NO_WEBVIEW=1` makes the launcher open the user's default browser instead of an embedded WebView — useful for headless smoke tests and minimal Linux installs without `libwebkit2gtk`.
+
+**Example**:
+```bash
+luxar export my_scene.zarr -o out/ --native macos
+luxar export my_scene.zarr -o out/ --native linux-amd64,linux-arm64
+luxar export my_scene.zarr -o out/ --native macos,linux-amd64,linux-arm64 \
+                                  --name MyScene --overwrite
+```
+
 ---
 
 ### `luxar gsplat`

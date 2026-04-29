@@ -138,6 +138,45 @@ make build-viewer
             └─ Runs wasm-pack build
 ```
 
+### Native Launcher Setup Details
+
+The native launcher backs `luxar export --native macos|linux-amd64|linux-arm64`, which produces double-clickable native bundles. The launcher is a small Go program (`packages/luxar-launcher/main.go`, ~150 lines) that opens the bundled viewer inside a system WebView and serves the bundled zarr over a local HTTP server.
+
+**What `make install-go` does:**
+1. macOS: installs Go via Homebrew (no sudo)
+2. Linux: downloads the official Go tarball into `~/.local/go/` (no sudo); user adds `~/.local/go/bin` to PATH
+3. Skips the install if a `go` binary is already on PATH
+
+**What `make build-launchers` does:**
+1. Locates `go` (PATH or `~/.local/go/bin/go`)
+2. Builds the launcher with **`CGO_ENABLED=1`** because the WebView library links against system WebKit
+3. On macOS: builds `darwin-arm64` + `darwin-amd64` then `lipo`-merges into `darwin-universal`. Fails loudly if amd64 build fails (no silent rename — universal binary must actually be universal)
+4. On Linux: builds `linux-<host-arch>` (requires `libwebkit2gtk-4.1-dev` + `pkg-config`)
+5. Drops binaries into `packages/luxar/src/luxar/cli/_launchers/`
+
+**Critical constraint: CGO blocks pure cross-compilation.** Unlike Rust/WASM (where pure-Go cross-compile from any host worked previously), the launcher cannot be built for Linux from a macOS host or vice-versa without a CGO cross-toolchain (Zig, etc.). For full cross-platform release artifacts, build each OS on its own CI matrix runner.
+
+**System library dependencies (end-user runtime):**
+- macOS: `WebKit.framework` — system-provided, present on every Mac, no install needed
+- Linux: `libwebkit2gtk-4.1` (or `4.0` on older distros) — present on every modern desktop Linux distribution; missing only on minimal/server installs
+
+**Wheel packaging:** `_launchers/` and `_launcher_assets/` (icons) live inside the Python package, so they ride along into wheel builds automatically when present. Run `make build-launchers` before `hatch build` to populate the binaries; without it the wheel installs but `luxar export --native` raises `LauncherNotBuiltError` with a clear "run `make build-launchers`" hint.
+
+**Build flow:**
+```
+make build-launchers
+  ├─ Resolves go binary (PATH or ~/.local/go/bin)
+  ├─ macOS:  GOOS=darwin GOARCH=arm64 CGO_ENABLED=1 go build → darwin-arm64
+  │          GOOS=darwin GOARCH=amd64 CGO_ENABLED=1 go build → darwin-amd64
+  │          lipo -create  → darwin-universal
+  │          lipo -info    → verify (refuses to ship arm64-only as "universal")
+  └─ Linux:  GOOS=linux GOARCH=$(uname -m) CGO_ENABLED=1 go build → linux-<arch>
+```
+
+**Runtime fallback:** end users can set `LUXAR_LAUNCHER_NO_WEBVIEW=1` to make the launcher open the system default browser instead of the embedded WebView. Useful for headless smoke tests and minimal Linux installs without `libwebkit2gtk`.
+
+See `packages/luxar-launcher/README.md` for source-level details and `packages/luxar/src/luxar/cli/SPECIFICATIONS.md` for the full bundle output structure.
+
 ### Environment Detection
 
 The Makefile automatically detects:

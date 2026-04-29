@@ -72,6 +72,7 @@ Features
    tutorials/programmatic_server
    tutorials/gaussian_splatting
    tutorials/performance_optimization
+   tutorials/distributing_scenes
 
 .. toctree::
    :maxdepth: 2

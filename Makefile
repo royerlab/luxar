@@ -16,7 +16,8 @@
         check-deps install-node install-pnpm install-hatch \
         setup-cuda check-cuda-deps build-cuda build-cuda-slurm clean-cuda test-cuda benchmark-cuda \
         build-nlm-cuda clean-nlm-cuda test-nlm-cuda \
-        benchmark-wasm
+        benchmark-wasm \
+        install-go build-launchers clean-launchers
 
 # ============================================================================
 # OS Detection and Configuration
@@ -177,6 +178,34 @@ check-deps:  ## Check all development dependencies and their versions
 		echo "✅ wasm-pack: $$(wasm-pack --version)"; \
 	else \
 		echo "⚪ wasm-pack not installed (run 'make install-rust' if needed)"; \
+	fi
+	@echo ""
+	@echo "=== Optional Dependencies (for native launchers) ==="
+	@echo ""
+	@# Go toolchain (used by `make build-launchers`)
+	@GO_BIN=""; \
+	if command -v go >/dev/null 2>&1; then \
+		GO_BIN=go; \
+	elif [ -x "$$HOME/.local/go/bin/go" ]; then \
+		GO_BIN="$$HOME/.local/go/bin/go"; \
+	fi; \
+	if [ -n "$$GO_BIN" ]; then \
+		echo "✅ Go: $$($$GO_BIN version | sed 's/^go version //')"; \
+	else \
+		echo "⚪ Go not installed (run 'make install-go' if you need 'make build-launchers')"; \
+	fi
+	@# Launcher binaries
+	@LAUNCHER_DIR="packages/luxar/src/luxar/cli/_launchers"; \
+	BUILT=""; \
+	for tgt in darwin-universal linux-amd64 linux-arm64; do \
+		if [ -x "$$LAUNCHER_DIR/$$tgt" ]; then \
+			BUILT="$$BUILT $$tgt"; \
+		fi; \
+	done; \
+	if [ -n "$$BUILT" ]; then \
+		echo "✅ Native launchers built:$$BUILT"; \
+	else \
+		echo "⚪ Native launchers not built (run 'make build-launchers')"; \
 	fi
 	@echo ""
 	@echo "=== Optional Dependencies (for CUDA builds) ==="
@@ -356,6 +385,8 @@ help:  ## Show this help message
 	@echo "Optional accelerators:"
 	@echo "  make install-rust     - Install Rust/WASM for viewer builds"
 	@echo "  make setup-cuda     - Install CUDA dependencies + build extension"
+	@echo "  make install-go       - Install Go for native launcher builds"
+	@echo "  make build-launchers  - Build native launchers (luxar export --native)"
 	@echo ""
 	@echo "System: $(OS) (package manager: $(PKG_MANAGER))"
 	@echo "Node.js requirement: $(MIN_NODE_MAJOR).$(MIN_NODE_MINOR)+"
@@ -558,13 +589,14 @@ clean-docs:  ## Clean built documentation
 	@echo "✅ Documentation artifacts cleaned (Sphinx + TypeDoc)"
 
 # Clean up
-clean-all:  ## Clean all artifacts (Python, TypeScript, WASM, CUDA, datasets, cache)
+clean-all:  ## Clean all artifacts (Python, TypeScript, WASM, CUDA, launchers, datasets, cache)
 	@echo "🧹 Cleaning all artifacts..."
 	@echo ""
 	$(MAKE) clean-python
 	$(MAKE) clean-viewer
 	$(MAKE) clean-wasm
 	$(MAKE) clean-cuda
+	$(MAKE) clean-launchers
 	$(MAKE) clean-examples
 	$(MAKE) clean-cache
 	@echo ""
@@ -790,6 +822,23 @@ clean-setup:  ## Remove ALL dev tools to simulate a fresh machine (USE WITH CAUT
 	if [ "$$NVM_REMOVED" = "0" ] && [ "$$HOMEBREW_NODE" = "0" ]; then \
 		echo "   ⚪ nvm not installed, skipping"; \
 	fi
+	@echo ""
+	@echo "🧹 [12.5/12] Removing Go toolchain (if installed by us)..."
+	@if [ -d "$$HOME/.local/go" ]; then \
+		rm -rf "$$HOME/.local/go"; \
+		echo "   ✓ Removed ~/.local/go"; \
+	elif command -v go >/dev/null 2>&1; then \
+		GO_PATH=$$(which go 2>/dev/null); \
+		if echo "$$GO_PATH" | grep -q "brew\|Homebrew\|Cellar"; then \
+			echo "   ⚠️  Go installed via Homebrew (not removed automatically)"; \
+			echo "   To remove: brew uninstall go"; \
+		else \
+			echo "   ⚠️  Go found at $$GO_PATH — not removed (system or other manager)"; \
+		fi; \
+	else \
+		echo "   ⚪ Go not installed, skipping"; \
+	fi
+	@$(MAKE) clean-launchers 2>/dev/null || true
 	@echo ""
 	@echo "🧹 [12/12] Removing pnpm cache..."
 	@if [ -d "$(HOME)/.local/share/pnpm" ]; then \
@@ -1063,6 +1112,8 @@ setup-dev:  ## Complete development setup (auto-installs missing dependencies)
 	@echo "Optional accelerators:"
 	@echo "  make install-rust   - Enable WASM acceleration (viewer)"
 	@echo "  make setup-cuda   - Install CUDA dependencies + build extension"
+	@echo "  make install-go     - Install Go (for native launcher builds)"
+	@echo "  make build-launchers - Build native launchers (luxar export --native)"
 	@echo ""
 	@echo "💡 Use 'hatch shell' to activate the Python environment"
 
@@ -1489,6 +1540,135 @@ clean-wasm:  ## Clean WASM build artifacts
 	rm -rf packages/luxar-viewer/public/wasm/
 	rm -rf packages/luxar-viewer/src/wasm/rust/target/
 	@echo "✅ WASM artifacts cleaned!"
+
+# ============================================================================
+# Native launchers (luxar export --native)
+# ============================================================================
+#
+# A small Go program in packages/luxar-launcher/ produces the per-OS
+# binaries that back `luxar export --native macos|linux`. Source is checked
+# in; binaries are built locally and gitignored under
+# packages/luxar/src/luxar/cli/_launchers/.
+
+LAUNCHER_SRC_DIR := packages/luxar-launcher
+LAUNCHER_OUT_DIR := packages/luxar/src/luxar/cli/_launchers
+
+install-go:  ## Install Go toolchain (no sudo: brew on macOS, official tarball on Linux)
+	@# Single shell command so PATH updates persist within the recipe.
+	@echo "🐹 Setting up Go toolchain..."; \
+	echo ""; \
+	if command -v go >/dev/null 2>&1; then \
+		echo "✅ Go is already installed: $$(go version)"; \
+		exit 0; \
+	fi; \
+	if [ -x "$$HOME/.local/go/bin/go" ]; then \
+		echo "✅ Go is already installed: $$($$HOME/.local/go/bin/go version) (in ~/.local/go)"; \
+		echo "⚠️  Add ~/.local/go/bin to PATH: export PATH=\"$$HOME/.local/go/bin:$$PATH\""; \
+		exit 0; \
+	fi; \
+	if [ "$(OS)" = "macos" ]; then \
+		if ! command -v brew >/dev/null 2>&1; then \
+			echo "📥 Installing Homebrew first..."; \
+			/bin/bash -c "$$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"; \
+		fi; \
+		echo "📥 Installing Go via Homebrew..."; \
+		brew install go; \
+		echo "✅ Go installed: $$(go version)"; \
+	elif [ "$(OS)" = "linux" ]; then \
+		GO_VERSION=$${GO_VERSION:-1.22.10}; \
+		ARCH=$$(uname -m); \
+		case "$$ARCH" in \
+			x86_64|amd64) GOARCH=amd64 ;; \
+			aarch64|arm64) GOARCH=arm64 ;; \
+			*) echo "❌ Unsupported Linux architecture: $$ARCH"; exit 1 ;; \
+		esac; \
+		TARBALL="go$${GO_VERSION}.linux-$${GOARCH}.tar.gz"; \
+		echo "📥 Installing Go $$GO_VERSION for linux-$$GOARCH (no sudo, into ~/.local/go)..."; \
+		mkdir -p "$$HOME/.local"; \
+		rm -rf "$$HOME/.local/go"; \
+		curl -fsSL "https://go.dev/dl/$$TARBALL" -o "/tmp/$$TARBALL"; \
+		tar -C "$$HOME/.local" -xzf "/tmp/$$TARBALL"; \
+		rm -f "/tmp/$$TARBALL"; \
+		echo "✅ Go installed: $$($$HOME/.local/go/bin/go version)"; \
+		echo "⚠️  Add ~/.local/go/bin to PATH: export PATH=\"$$HOME/.local/go/bin:$$PATH\""; \
+	else \
+		echo "❌ Unsupported OS: $(OS). Install Go manually from https://go.dev/dl/"; \
+		exit 1; \
+	fi
+
+build-launchers:  ## Build native launchers for the host platform (requires Go + CGO)
+	@# The launcher embeds the viewer in a system WebView (WKWebView /
+	@# WebView2 / WebKitGTK), so it requires CGO at build time and the
+	@# matching system library at runtime. CGO breaks pure-Go cross-
+	@# compilation: each target OS must be built on a host of that OS
+	@# (or with a CGO cross-toolchain like Zig). This target builds for
+	@# the host OS only; CI will produce the other binaries on their
+	@# respective runners. Set LUXAR_LAUNCHER_NO_WEBVIEW=1 at runtime if
+	@# you want the legacy "open default browser" behavior.
+	@GO_BIN=""; \
+	if command -v go >/dev/null 2>&1; then \
+		GO_BIN=go; \
+	elif [ -x "$$HOME/.local/go/bin/go" ]; then \
+		GO_BIN="$$HOME/.local/go/bin/go"; \
+	else \
+		echo "❌ Go not found. Run 'make install-go' first."; \
+		exit 1; \
+	fi; \
+	echo "🐹 Building native launcher with $$GO_BIN ($$($$GO_BIN version | sed 's/^go version //'))"; \
+	mkdir -p $(LAUNCHER_OUT_DIR); \
+	cd $(LAUNCHER_SRC_DIR); \
+	if [ "$(OS)" = "macos" ]; then \
+		echo "  • darwin/arm64 (CGO=1, WKWebView)..."; \
+		GOOS=darwin GOARCH=arm64 CGO_ENABLED=1 $$GO_BIN build -trimpath -ldflags="-s -w" -o ../../$(LAUNCHER_OUT_DIR)/darwin-arm64 .; \
+		echo "  • darwin/amd64 (CGO=1, WKWebView)..."; \
+		if ! GOOS=darwin GOARCH=amd64 CGO_ENABLED=1 $$GO_BIN build -trimpath -ldflags="-s -w" -o ../../$(LAUNCHER_OUT_DIR)/darwin-amd64 .; then \
+			echo ""; \
+			echo "❌ darwin/amd64 build failed (likely missing universal SDK)."; \
+			echo ""; \
+			echo "   The arm64-only launcher at $(LAUNCHER_OUT_DIR)/darwin-arm64"; \
+			echo "   would NOT run on Intel Macs. Refusing to silently mislabel"; \
+			echo "   it as 'darwin-universal'."; \
+			echo ""; \
+			echo "   Either install Xcode's full universal SDK and re-run, or"; \
+			echo "   ship the arm64-only binary explicitly via your CI matrix."; \
+			rm -f $(LAUNCHER_OUT_DIR)/darwin-arm64; \
+			exit 1; \
+		fi; \
+		cd - >/dev/null; \
+		echo "  • lipo darwin universal..."; \
+		lipo -create -output $(LAUNCHER_OUT_DIR)/darwin-universal \
+			$(LAUNCHER_OUT_DIR)/darwin-arm64 \
+			$(LAUNCHER_OUT_DIR)/darwin-amd64; \
+		rm -f $(LAUNCHER_OUT_DIR)/darwin-arm64 $(LAUNCHER_OUT_DIR)/darwin-amd64; \
+		echo "  • verify universal..."; \
+		lipo -info $(LAUNCHER_OUT_DIR)/darwin-universal | grep -q "x86_64 arm64\|arm64 x86_64" \
+			|| { echo "❌ lipo verification failed"; rm -f $(LAUNCHER_OUT_DIR)/darwin-universal; exit 1; }; \
+		echo ""; \
+		echo "ℹ️  Linux + Windows binaries: build on a Linux/Windows host (CGO blocks pure cross-compile)"; \
+	elif [ "$(OS)" = "linux" ]; then \
+		ARCH=$$(uname -m); \
+		case "$$ARCH" in \
+			x86_64|amd64) GOARCH=amd64 ;; \
+			aarch64|arm64) GOARCH=arm64 ;; \
+			*) echo "❌ Unsupported Linux architecture: $$ARCH"; exit 1 ;; \
+		esac; \
+		echo "  • linux/$$GOARCH (CGO=1, WebKitGTK)..."; \
+		echo "    Requires: libwebkit2gtk-4.1-dev (or 4.0-dev on older distros)"; \
+		GOOS=linux GOARCH=$$GOARCH CGO_ENABLED=1 $$GO_BIN build -trimpath -ldflags="-s -w" -o ../../$(LAUNCHER_OUT_DIR)/linux-$$GOARCH .; \
+		cd - >/dev/null; \
+	else \
+		echo "❌ Unsupported host OS: $(OS)"; \
+		exit 1; \
+	fi; \
+	echo ""; \
+	echo "✅ Native launchers built:"; \
+	ls -lh $(LAUNCHER_OUT_DIR) | awk 'NR>1 && $$NF != "README.md" && $$NF != ".gitignore" {printf "   %-22s %s\n", $$NF, $$5}'
+
+clean-launchers:  ## Clean native launcher binaries
+	@echo "🧹 Cleaning native launcher binaries..."
+	@find $(LAUNCHER_OUT_DIR) -maxdepth 1 -type f \
+		! -name 'README.md' ! -name '.gitignore' -delete 2>/dev/null || true
+	@echo "✅ Launcher binaries cleaned!"
 
 # ============================================================================
 # CUDA Backend (Gaussian Splatting)
