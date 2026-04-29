@@ -9,24 +9,26 @@
 
 import { describe, it, expect, vi } from 'vitest';
 
+// vi.mock is always hoisted; vitest 4 warns on (and a future major will reject)
+// non-top-level placement. Keep the factory at module scope and create the
+// mock object inside the factory to avoid TDZ issues.
+vi.mock('../../../workers/worker-pool', () => {
+  const mockWorker = {
+    querySpatialIndex: vi.fn().mockResolvedValue(new Uint32Array([0, 1, 2])),
+    computeNDVisibilityPoints: vi.fn().mockResolvedValue(new Uint32Array([0, 1])),
+  };
+  return {
+    getWorkerPool: vi.fn().mockReturnValue({
+      getWorker: vi.fn().mockResolvedValue(mockWorker),
+    }),
+  };
+});
+
 describe('Worker Integration Tests (Mocked)', () => {
   describe('Worker Pool Initialization', () => {
     it('should initialize worker when useWebWorkers=true', async () => {
       // Verify config structure exists
       const { config } = await import('../../../config');
-
-      // Mock worker pool
-      const mockWorker = {
-        querySpatialIndex: vi.fn().mockResolvedValue(new Uint32Array([0, 1, 2])),
-        computeNDVisibilityPoints: vi.fn().mockResolvedValue(new Uint32Array([0, 1])),
-      };
-
-      // Mock getWorkerPool
-      vi.mock('../../../workers/worker-pool', () => ({
-        getWorkerPool: vi.fn().mockReturnValue({
-          getWorker: vi.fn().mockResolvedValue(mockWorker),
-        }),
-      }));
 
       // This test verifies the INTEGRATION POINT exists
       // Actual worker execution tested in E2E (browser environment)

@@ -340,6 +340,7 @@ describe('InputHandler Utilities', () => {
 describe('InputHandler Type Definitions', () => {
   it(
     'should export InputHandler class',
+    { timeout: 15_000 },
     async () => {
       // Dynamic import to avoid triggering complex dependencies.
       // The import pulls in the full dependency graph (THREE.js, scene managers,
@@ -347,7 +348,6 @@ describe('InputHandler Type Definitions', () => {
       const module = await import('../../../input/input-handler');
       expect(module.InputHandler).toBeDefined();
       expect(typeof module.InputHandler).toBe('function');
-    },
-    { timeout: 15_000 }
+    }
   );
 });

@@ -155,11 +155,10 @@ vi.mock('../../../scene/scene-dims-manager', () => ({
 import { RecordingPanel } from '../../../ui/recording-panel';
 import { showToast } from '../../../ui/helpers';
 
-// Mock URL.createObjectURL/revokeObjectURL (not available in jsdom)
-if (typeof URL.createObjectURL === 'undefined') {
-  URL.createObjectURL = vi.fn().mockReturnValue('blob:mock-url');
-  URL.revokeObjectURL = vi.fn();
-}
+// Mock URL.createObjectURL/revokeObjectURL. jsdom may provide a stub by
+// default, but tests need it to be a spy so call assertions work.
+URL.createObjectURL = vi.fn().mockReturnValue('blob:mock-url');
+URL.revokeObjectURL = vi.fn();
 
 // Helper to create mock SceneManager
 function createMockSceneManager() {
