@@ -640,7 +640,7 @@ def write_laniakea_scene(
             ),
             background_color="#1d252b",
             tone_mapping="ACES",
-            exposure=0.45,
+            exposure=-4.5,
             bloom_enabled=True,
             bloom_strength=0.65,
             bloom_radius=0.45,
