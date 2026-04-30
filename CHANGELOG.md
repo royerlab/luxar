@@ -6,6 +6,11 @@ All notable changes to Luxar are documented in this file.
 
 ### April 2026
 
+#### Added — Cosmicflows-4 Laniakea demo
+
+- New `demo_cosmicflows_laniakea.py` recreates the Cosmicflows-4 / Laniakea flow visualization with 55,486 local-universe galaxies and a full preset that reproduces 29,555 RK4 streamlines from the public `manlius/laniakea` data pipeline.
+- Downloads and caches the EDD galaxy table, CF4 velocity field, and basin-of-attraction grid; writes galaxies as Points and each basin's flow as toggleable indexed Lines with HDR additive rendering.
+
 #### Added — Native bundles for distributable scenes
 
 **`luxar export --native macos|linux-amd64|linux-arm64`**
