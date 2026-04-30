@@ -256,6 +256,7 @@ if __name__ == "__main__":
 | `demo_gaia_milky_way_3m.py` | 3 million real stars from Gaia DR3 catalog |
 | `demo_gaia_milky_way_8m.py` | 8 million real stars from pre-computed CSV dataset |
 | `demo_earthquakes_3d.py` | Global earthquake visualization from USGS on 3D Earth sphere |
+| `demo_cosmicflows_laniakea.py` | Cosmicflows-4 galaxies and RK4 velocity-field streamlines in supergalactic coordinates |
 | `demo_storm_3d_microtubules.py` | 3D STORM super-resolution microscopy of microtubules |
 
 ### Embeddings & High-Dimensional Data

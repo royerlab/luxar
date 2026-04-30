@@ -361,6 +361,17 @@ Real-time earthquake data from USGS plotted on a 3D Earth sphere with vertical s
 
 ---
 
+#### demo_cosmicflows_laniakea.py - Cosmicflows-4 Laniakea Flow Field
+Recreates the Cosmicflows-4 / Laniakea visualization by Simone Conradi and Manlio De Domenico: 55,486 local-universe galaxies plus colored streamlines tracing matter flow through basins of attraction.
+
+**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_cosmicflows_laniakea.py [--preset preview|full]`
+
+**Requires**: Internet access on first run (downloads ~26 MB from the public `manlius/laniakea` GitHub data cache; reused from `~/.cache/luxar/laniakea/`). The full preset reproduces the reported 29,555 valid streamlines and writes a large line dataset; `--preset preview` is faster for iteration.
+
+**Demonstrates**: Real astronomical catalogs, supergalactic coordinates, basin-of-attraction coloring, vectorized RK4 streamline integration, large indexed Lines layers, HDR additive rendering, layer toggles per basin. Data: Cosmicflows-4 / EDD and the open [`manlius/laniakea`](https://github.com/manlius/laniakea) pipeline.
+
+---
+
 #### demo_storm_3d_microtubules.py - 3D STORM Super-Resolution Microscopy
 Microtubule cytoskeleton at nanometer resolution using real STORM super-resolution microscopy localizations as Gaussian splats.
 
