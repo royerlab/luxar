@@ -150,7 +150,7 @@ timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
 ### Configuration Constants
 
-- `DEFAULT_CHUNK_SIZE` - From typing_utils.constants
+- `DEFAULT_CHUNK_BYTES = TARGET_CHUNK_BYTES` - Default chunk target in bytes
 - `DEFAULT_VERSION = "0.1"` - Current Luxar format version
 - `SUPPORTED_VERSIONS = ("0.1", "0.2", "0.3")` - For format compatibility
 - `DEFAULT_LOG_LEVEL = "INFO"` - For arbol
@@ -254,6 +254,11 @@ total = n_points * memory_per_point
   - These features are now handled by `EncodingMode` in `luxar.encoding`
   - Updated config.py section to reflect actual implementation
   - Added reference to encoding/SPECIFICATIONS.md for dtype selection
+
+- **v1.0.8** (2026-05-01): Deprecated legacy element-count chunk constants
+  - Removed deprecated chunk constants from `__all__`/eager imports
+  - Direct `typing_utils.constants.DEFAULT_CHUNK_SIZE`/`CHUNK_SIZE_*` access now emits `DeprecationWarning`
+  - Internal compiler chunking now derives element counts from `TARGET_CHUNK_BYTES`
 
 - **v1.0.7** (2025-11-28): Chunk size documentation enhancement
   - Added "SINGLE SOURCE OF TRUTH" emphasis for chunk size constants

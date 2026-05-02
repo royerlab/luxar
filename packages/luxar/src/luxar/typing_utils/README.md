@@ -55,7 +55,7 @@ Constant values used throughout Luxar.
 **Categories:**
 - **Version**: `LUXAR_VERSION_CURRENT`, `DEFAULT_ZARR_VERSION`
 - **Rendering**: `OPACITY_MIN/MAX`, `GAMMA_MIN/MAX`, `DEFAULT_BLENDING_MODE`, `SHARPNESS_MIN/MAX`
-- **Chunks**: `TARGET_CHUNK_BYTES`, `MIN_CHUNK_BYTES`, `MAX_CHUNK_BYTES` (byte-based, preferred), legacy `CHUNK_SIZE_MIN/DEFAULT/MAX` (element-based, deprecated)
+- **Chunks**: `TARGET_CHUNK_BYTES`, `MIN_CHUNK_BYTES`, `MAX_CHUNK_BYTES` (byte-based single source of truth). Legacy element-count constants are deprecated lazy attributes and emit `DeprecationWarning`.
 - **Memory**: `KB_TO_BYTES`, `MB_TO_BYTES`, `GB_TO_BYTES`
 - **Limits**: `MAX_POINTS_RECOMMENDED`, `MAX_POINTS_WARNING`, `MIN_POINT_RADIUS`, `MAX_POINT_RADIUS`
 - **Categorical**: `MIN_CATEGORIES`, `MAX_CATEGORY_LABEL_LENGTH`, `CATEGORICAL_STEP`
@@ -68,7 +68,7 @@ Constant values used throughout Luxar.
 Configuration settings, defaults, and validation functions.
 
 **Key Constants:**
-- `DEFAULT_CHUNK_SIZE`, `MIN_CHUNK_SIZE`, `MAX_CHUNK_SIZE` - Chunk size bounds
+- `DEFAULT_CHUNK_BYTES`, `MIN_CHUNK_SIZE`, `MAX_CHUNK_SIZE` - Byte-based chunk target/bounds (`*_CHUNK_SIZE` aliases are retained for compatibility)
 - `DEFAULT_VERSION`, `SUPPORTED_VERSIONS` - Luxar version management
 - `SUPPORTED_COMPRESSION`, `SUPPORTED_UNITS` - Supported values
 - `MAX_RECOMMENDED_POINTS`, `LARGE_DATASET_WARNING` - Performance thresholds
@@ -158,7 +158,7 @@ if unit in ["nm", "um", "mm"]:
 ```python
 from luxar.typing_utils import (
     MAX_POINTS_WARNING,
-    DEFAULT_CHUNK_SIZE,
+    TARGET_CHUNK_BYTES,
     OPACITY_MIN, OPACITY_MAX
 )
 

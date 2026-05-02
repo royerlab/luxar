@@ -10,6 +10,8 @@ Tests cover:
 
 import pytest
 
+import luxar.typing_utils as typing_utils
+from luxar.typing_utils import constants
 from luxar.typing_utils.config import (
     DEFAULT_CHUNK_SIZE,
     DEFAULT_COMPRESSION,
@@ -36,10 +38,25 @@ class TestConfigConstants:
     """Tests for configuration constants."""
 
     def test_chunk_size_defaults(self) -> None:
-        """Test chunk size constants are reasonable."""
+        """Test chunk size constants are reasonable byte counts."""
         assert MIN_CHUNK_SIZE > 0
         assert MAX_CHUNK_SIZE > MIN_CHUNK_SIZE
         assert MIN_CHUNK_SIZE <= DEFAULT_CHUNK_SIZE <= MAX_CHUNK_SIZE
+        assert DEFAULT_CHUNK_SIZE == constants.TARGET_CHUNK_BYTES
+        assert MIN_CHUNK_SIZE == constants.MIN_CHUNK_BYTES
+        assert MAX_CHUNK_SIZE == constants.MAX_CHUNK_BYTES
+
+    def test_deprecated_chunk_constants_warn_on_direct_access(self) -> None:
+        """Legacy element-count chunk constants should warn when used directly."""
+        with pytest.warns(DeprecationWarning, match="DEFAULT_CHUNK_SIZE"):
+            assert constants.DEFAULT_CHUNK_SIZE == 32_768
+
+    def test_deprecated_chunk_constant_warns_at_package_top_level(
+        self,
+    ) -> None:
+        """Legacy package-level access remains available but warns."""
+        with pytest.warns(DeprecationWarning, match="DEFAULT_CHUNK_SIZE"):
+            assert typing_utils.DEFAULT_CHUNK_SIZE == 32_768
 
     def test_version_defaults(self) -> None:
         """Test version constants."""
