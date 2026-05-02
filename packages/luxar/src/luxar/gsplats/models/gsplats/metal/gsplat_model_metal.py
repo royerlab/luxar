@@ -200,11 +200,9 @@ class MetalSplatFunction(torch.autograd.Function):
         # [Z, Y, X] coordinate order and row-major packed upper triangle.
         Ls_for_conic = Ls.detach()
         if use_metal_conic:
-            conic_zyx = metal_splatting_backend.compute_conic_metal(
-                Ls.contiguous()
-            ).detach()
+            conic_zyx = metal_splatting_backend.compute_conic_metal(Ls.contiguous())
         else:
-            conic_zyx = cholesky_to_conic(Ls_for_conic).detach().contiguous()
+            conic_zyx = cholesky_to_conic(Ls_for_conic)
 
         output = cast(
             torch.Tensor,
