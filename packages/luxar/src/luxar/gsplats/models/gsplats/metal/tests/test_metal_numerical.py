@@ -297,7 +297,7 @@ class TestMetalGradients:
             sigma_min_diag=[0.3, 0.3, 0.3],
             truncate=2.0,
             intensity_floor=1e-6,
-            device="cpu",  # gradcheck requires CPU
+            device="mps",
         )
 
         # Get parameters
@@ -325,7 +325,7 @@ class TestMetalGradients:
             aprint(f"  gradcheck error: {e}")
             pass_gradcheck = False
 
-        # Note: Numerical gradcheck on GPU compute is notoriously finicky
+        # Note: Numerical gradcheck on custom GPU compute is notoriously finicky
         # If this fails, it doesn't necessarily mean gradients are wrong
         # The integration tests and convergence tests are more reliable.
         # Using xfail (not skip) so failures are visible in CI reports.
@@ -361,7 +361,7 @@ class TestMetalGradients:
         target[16, 16, 16] = 1.0
 
         # Forward and backward
-        output = MetalSplatFunction.apply(centers, L, amps, shape, 3.0, 1e-5, 4, False)
+        output = MetalSplatFunction.apply(centers, L, amps, shape, 3.0, 1e-5, False)
         loss = ((output - target) ** 2).sum()
         loss.backward()
 
@@ -421,7 +421,6 @@ class TestMetalGradients:
             shape,
             3.0,
             1e-5,
-            4,
             False,
         )
         loss_metal = ((output_metal - target.to("mps")) ** 2).sum()
@@ -466,9 +465,7 @@ class TestMetalGradients:
         # Run optimization
         lr = 0.5
         for _ in range(30):
-            output = MetalSplatFunction.apply(
-                centers, L, amps, shape, 3.0, 1e-5, 4, False
-            )
+            output = MetalSplatFunction.apply(centers, L, amps, shape, 3.0, 1e-5, False)
             loss = ((output - target) ** 2).sum()
             loss.backward()
 

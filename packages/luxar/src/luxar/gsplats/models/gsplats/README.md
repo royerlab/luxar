@@ -86,9 +86,9 @@ volume = render_gaussians(
 For GPU-accelerated rendering, see the backend-specific subpackages:
 
 - **CUDA** (`cuda/`): NVIDIA GPU acceleration (2D-8D), substantial speedup (often orders of magnitude, GPU-dependent)
-- **Metal** (`metal/`): Apple Silicon acceleration (3D only), substantial speedup (chip-dependent)
+- **Metal** (`metal/`): Apple Silicon acceleration for 3D MPS volumes using splat-centric Metal kernels, with PyTorch rendering for other supported MPS dimensions; substantial speedup is chip- and workload-dependent
 
-Both backends provide drop-in replacements (`GaussianSplatModelCUDA`, `GaussianSplatModelMetal`) with the same API.
+Both backends provide model classes (`GaussianSplatModelCUDA`, `GaussianSplatModelMetal`) with matching parameter-management APIs. CUDA provides custom kernels for 2D-8D; Metal accepts 2D-8D MPS models but only dispatches to custom splat-centric Metal kernels for 3D float32 tensors.
 
 ## File Structure
 

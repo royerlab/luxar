@@ -4,6 +4,23 @@ All notable changes to Luxar are documented in this file.
 
 ## [Unreleased]
 
+### May 2026
+
+#### Changed — Metal gsplat backend parity, reliability, and performance
+
+- Refactored `GaussianSplatModelMetal` into an MPS-only `GaussianSplatModel` subclass that mirrors the CUDA/base model interface for parameter management (`current_params`, `append_`, `prune_`, `replace_with`, state dicts, constraints) while using custom Metal kernels for 3D MPS tensors and PyTorch rendering for other supported 2D-8D MPS shapes.
+- Rewrote the custom 3D Metal renderer from a tile-binned voxel-centric pipeline to a CUDA-style splat-centric pipeline: one Metal threadgroup owns one splat in forward and one splat gradient row in backward.
+- Removed the old Metal hot-path tile machinery (`preprocess_3d`, `bin_3d`, tile counts/offsets/content, PyTorch prefix sum, CPU `.item()` allocation sync) and removed the packed-conic `[Z,Y,X]`↔`[X,Y,Z]` reorder; kernels now consume native `[Z,Y,X]` packed conics.
+- Replaced voxel-centric global parameter-gradient atomics in backward with threadgroup reductions and one write per splat gradient. On the `128³ @ 32k splats` M4 Max benchmark this reduced forward+backward from roughly 133 ms to roughly 4.4-4.8 ms while keeping CPU-reference error around `max_abs_diff≈1.8e-5`.
+- Fixed native Metal loading by passing the absolute `default.metallib` path into the extension and rebuilding stale Metal artifacts automatically when sources change.
+- Added/updated Metal tests covering 2D/4D PyTorch rendering, CPU/device-transfer rejection, explicit FP16/dtype rejection, dynamic splat operations, clean nested state dict compatibility, native `[Z,Y,X]` conic ordering, and splat-centric gradient behavior.
+
+#### Added — HuRI PPI flow-field demo
+
+- New `demo_ppi_flow_field.py` turns the HuRI protein-protein interaction graph into a signed-flow UMAP landscape: PageRank orients interactions low→high, a signed sparse adjacency/flow-profile matrix drives the 3D embedding, and protein nodes are forward-advected through a smoothed vector field.
+- Vector field construction uses KD-tree edge-sample candidate lookup, exact point-to-segment distances for candidate edges, regularized inverse-cubic weighting, Gaussian component smoothing, and vectorized RK4 integration. The default `full` preset builds the requested 256³ grid; `--preset preview` builds a faster 128³ grid.
+- Added `networkx>=3.0` to demo development dependencies for HuRI/CAIDA/PPI graph analysis demos.
+
 ### April 2026
 
 #### Added — Cosmicflows-4 Laniakea demo

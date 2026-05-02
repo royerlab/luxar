@@ -77,7 +77,7 @@ class CustomBuildExtension(BuildExtension):
             return
 
         # Compile Metal shaders first
-        compile_metal_shaders()  # type: ignore[unreachable]  # reachable on macOS
+        compile_metal_shaders()
 
         # Then build C++ extension
         super().run()

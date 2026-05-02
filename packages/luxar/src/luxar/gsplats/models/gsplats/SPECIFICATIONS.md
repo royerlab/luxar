@@ -1,7 +1,7 @@
 # luxar.gsplats.models.gsplats — Technical Specification
 
-**Version**: 1.0.0
-**Last Updated**: 2026-04-28
+**Version**: 1.1.0
+**Last Updated**: 2026-05-02
 
 ## Purpose
 
@@ -202,7 +202,7 @@ raw_a        = stable_inverse_softplus(amps)
 | **PyTorch CUDA** | nD (2-∞) | ✓ | ✓ | FP32 | CUDA | Default GPU path; 2D/3D fast paths apply |
 | **PyTorch MPS** | 2-3D | ✓ | ✓ | FP32 | MPS | `group_by_box` falls back to CPU |
 | **CUDA C++ extension** | 2-8D | ✓ | ✓ | FP32 + FP16 | CUDA | Splat-centric kernel; 10–100× over PyTorch CUDA |
-| **Metal extension** | 3D | ✓ | ✓ | FP32 | MPS | Tile-based binning; Apple Silicon native |
+| **Metal extension** | 3D custom, 2D-8D model API | ✓ | ✓ | FP32 | MPS | Splat-centric 3D MPS kernels; PyTorch rendering for non-3D MPS shapes |
 
 ### Dispatch
 
@@ -211,7 +211,7 @@ raw_a        = stable_inverse_softplus(amps)
 The accelerator backends are opt-in via dedicated model classes:
 
 - `GaussianSplatModelCUDA` (in `cuda/gsplat_model_cuda.py`) — uses `CUDASplatFunction` (CUDA C++ extension if available; falls back to PyTorch CUDA otherwise).
-- `GaussianSplatModelMetal` (in `metal/gsplat_model_metal.py`) — uses `MetalSplatFunction` (Metal extension if available; falls back to PyTorch MPS).
+- `GaussianSplatModelMetal` (in `metal/gsplat_model_metal.py`) — MPS-only subclass that uses `MetalSplatFunction` for 3D MPS tensors and the PyTorch renderer for non-3D MPS shapes while preserving the same dynamic splat-management API.
 
 The CLI (`luxar gsplat fit`) selects the backend via the `--device` flag (`auto`, `cuda`, `cpu`, `mps`) plus the build status of the relevant extension.
 
@@ -291,32 +291,34 @@ Lives under `metal/`. Key files:
 
 ```
 metal/
-├── __init__.py
-├── kernels.metal              # Metal Shading Language kernels (preprocess, bin, rasterize)
+├── __init__.py                # availability checks, stale-extension rebuilds
+├── src/kernels.metal          # 3D Metal Shading Language kernels
+├── src/bindings.mm            # C++/Objective-C++ dispatcher and pybind11 API
 ├── setup.py                   # Metal C++ extension build
 ├── gsplat_model_metal.py      # GaussianSplatModelMetal + MetalSplatFunction
-└── tests/                     # backend, conic, perf, optimizer compatibility, …
+└── tests/                     # backend, conic, interface, perf, optimizer compatibility, …
 ```
 
-### Metal kernel pipeline (3D, tile-based)
+### Metal kernel pipeline (3D, splat-centric)
 
 ```metal
+kernel void zero_float_buffer(...);
+
 kernel void compute_conic_from_L_3d(
     device const float* Ls       [[buffer(0)]],   // (N, 3, 3) [Z, Y, X]
-    device       float* conic    [[buffer(1)]],   // (N, 6) [X, Y, Z]
+    device       float* conic    [[buffer(1)]],   // (N, 6) [Z, Y, X] packed
     constant     uint& n_splats  [[buffer(2)]]
 );
 
-kernel void preprocess_count_splats( ... );        // per-tile splat counts
-kernel void bin_splats( ... );                     // per-tile splat lists
-kernel void rasterize( ... );                      // accumulate Gaussians into output
+kernel void rasterize_forward_splat_centric_3d(...);   // one threadgroup per splat
+kernel void rasterize_backward_splat_centric_3d(...);  // one threadgroup per splat gradient
 ```
 
-Tile size is configurable (default 4 voxels per side). Atomic float accumulation uses `atomic_compare_exchange_weak_explicit` for the rasterize kernel (Metal < 2.3 lacks native atomic float add).
+The previous Metal tile pipeline was removed.  There are no tile counts, tile offsets, tile-content buffers, PyTorch prefix sums, or CPU `.item()` synchronizations in the hot path.  Forward uses atomic float adds into the output volume because multiple splats can hit the same voxel.  Backward uses threadgroup reductions and writes each splat's gradients once, with no global parameter-gradient atomics.
 
-### Coordinate convention quirk
+### Coordinate convention
 
-PyTorch / NumPy use `[Z, Y, X]` order (first dim = depth). Metal kernels accept the conic in `[X, Y, Z]` upper-triangle order — the `compute_conic_from_L_3d` kernel reorders during the L → Σ⁻¹ derivation. This is a deliberate, tested choice; the `tests/test_coordinate_transforms.py` regression locks it in.
+PyTorch / NumPy use `[Z, Y, X]` order (first dim = depth).  Current Metal kernels use the same order directly.  The 3D conic is packed as `[c_zz, c_zy, c_zx, c_yy, c_yx, c_xx]`, matching `cholesky_to_conic()` and the CUDA row-major upper-triangle convention.  No `[Z,Y,X] <-> [X,Y,Z]` conic reorder remains in the Metal hot path.
 
 ### Build
 
@@ -399,11 +401,10 @@ Violations raise `ValueError` from the constructor.
 Relative ordering across backends (3D, typical splat counts):
 
 ```
-CUDA C++ extension  ≪  Metal (Apple Silicon)  ≈  PyTorch CUDA (3D fast path)
-                                                     ≪  PyTorch CPU
+CUDA C++ extension  ≪  Metal splat-centric (Apple Silicon)  ≪  PyTorch CPU
 ```
 
-Concrete throughput depends heavily on splat count, volume shape, and GPU model — see `make benchmark-cuda` (CUDA backend) and the regression suite under `cuda/tests/test_performance.py` / `metal/tests/test_performance.py` for current numbers on the host. The CUDA C++ extension is consistently the fastest path; PyTorch CUDA's 3D fast path is competitive enough for everyday fitting; the generic-nD path is order-of-magnitude slower and is intended for 4D+ workloads where there's no alternative; CPU is reserved for development and testing.
+Concrete throughput depends heavily on splat count, volume shape, and GPU model — see `make benchmark-cuda` (CUDA backend) and the regression suite under `cuda/tests/test_performance.py` / `metal/tests/test_performance.py` for current numbers on the host. The CUDA C++ extension remains the fastest path; the Metal extension now follows the same splat-centric ownership model for 3D MPS FP32 tensors but does not yet reach CUDA-class throughput. The generic-nD path is order-of-magnitude slower and is intended for 4D+ workloads where there is no custom backend; CPU is reserved for development and testing.
 
 Memory: `calculate_optimal_chunk_size` targets 60 % of free GPU memory by default; the LRU grid cache is bounded at `_GRID_CACHE_MAX_ENTRIES = 64` (a few MB typical) and can be cleared explicitly via `clear_grid_cache()` between large jobs.
 
@@ -413,11 +414,11 @@ The `group_by_box` step is O(N log N) due to a sort+group; `group_by_box_gpu` us
 
 ## Cross-Language Compatibility
 
-1. **Coordinate convention** — all PyTorch/NumPy paths use `[Z, Y, X]` order (NumPy convention). Metal kernels redocument this and reorder where needed; the conic packing follows `[X, Y, Z]` upper-triangle internally before being undone at the shader boundary.
+1. **Coordinate convention** — all PyTorch/NumPy paths use `[Z, Y, X]` order (NumPy convention). CUDA and current Metal kernels both consume packed conics in row-major upper-triangle order for that same axis order; for 3D this is `[c_zz, c_zy, c_zx, c_yy, c_yx, c_xx]`.
 2. **Cholesky packing** — `L_off` is row-major over strictly-lower-triangular indices `(i, j) with i > j`; this convention is implicit in `_build_L` and locked in by the regression suite rather than documented in the source comments. The CUDA backend takes the conic (`Σ⁻¹`) packed as `(N, d(d+1)/2)`; the bindings layer (`cuda/bindings.cpp` and `cuda/gsplat_model_cuda.py`) derives the conic from `L` before launch, so callers using the model class don't see the packing convention directly.
 3. **FP16 promotion rule** — CUDA kernels accept FP16 inputs but always emit FP32 gradients to keep the optimizer step stable.
 4. **Truncation rescaling** — the `1 / (1 − exp(−½ · truncate²))` factor is computed identically on every backend; the regression suite locks the per-splat output to within 1 ULP across PyTorch / CUDA / Metal at FP32.
-5. **Atomic accumulation** — CUDA uses `atomicAdd(float)`; Metal uses `atomic_compare_exchange_weak_explicit` (Metal < 2.3 fallback).
+5. **Atomic accumulation** — CUDA uses `atomicAdd(float)`; current Metal uses `atomic_float` fetch-add for forward output accumulation and avoids global parameter-gradient atomics in backward.
 
 ---
 
@@ -433,9 +434,9 @@ The `group_by_box` step is O(N log N) due to a sort+group; `group_by_box_gpu` us
 
 ## Changelog
 
+- **v1.1.0** (2026-05-02): Updated the Metal backend description for the splat-centric performance rewrite: no tile-binned hot path, native `[Z,Y,X]` conic packing, atomic output accumulation, and threadgroup-reduced backward gradients.
 - **v1.0.0** (2026-04-28): Initial specification
   - Documented the full Cholesky-parameterized splat density model, the truncated Gaussian rescaling, and the per-axis AABB radii.
   - Documented the four-tensor parameter layout (`raw_mu`, `raw_L_diag`, `L_off`, `raw_a`) and the activations / constraints applied at `forward()` time.
   - Documented the rendering pipeline: 2D/3D explicit forward-substitution fast paths, generic nD via `solve_triangular`, AABB grouping, intensity-floor culling, LRU grid cache, memory chunking.
-  - Documented the CUDA backend (D ∈ {2,…,8}, FP32 + FP16, `forward_wrapper` / `backward_wrapper` pybind API) and the Metal backend (3D, tile-based, atomic-float accumulation).
-  - Captured the [Z,Y,X] vs [X,Y,Z] coordinate-convention quirk between PyTorch and Metal kernels.
+  - Documented the CUDA backend (D ∈ {2,…,8}, FP32 + FP16, `forward_wrapper` / `backward_wrapper` pybind API) and the then-current Metal backend.
