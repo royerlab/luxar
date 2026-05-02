@@ -181,6 +181,23 @@ class TestGaussianSplatModelInitialization:
             model_cuda = GaussianSplatModel(**setup, device=torch.device("cuda"))
             assert model_cuda.raw_mu.device.type == "cuda"
 
+    def test_auto_device_honors_accelerator_opt_outs(
+        self, simple_2d_setup, monkeypatch
+    ) -> None:
+        """Auto device selection should respect use_cuda/use_metal flags."""
+        setup = simple_2d_setup
+
+        class FakeMPSBackend:
+            def is_available(self) -> bool:
+                return True
+
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+        monkeypatch.setattr(torch.backends, "mps", FakeMPSBackend(), raising=False)
+
+        model = GaussianSplatModel(**setup, use_cuda=False, use_metal=False)
+
+        assert model.raw_mu.device.type == "cpu"
+
     def test_parameter_validation(self) -> None:
         """Test parameter validation during initialization."""
         shape = (10, 10)

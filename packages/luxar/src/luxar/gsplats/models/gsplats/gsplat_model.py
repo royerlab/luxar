@@ -21,6 +21,7 @@ from luxar.gsplats.models.utils.inverse_softplus import (
     stable_inverse_softplus,
     stable_inverse_softplus_torch,
 )
+from luxar.gsplats.utils import resolve_torch_device
 
 
 class GaussianSplatModel(nn.Module):
@@ -68,8 +69,12 @@ class GaussianSplatModel(nn.Module):
         eccentricity is the variance ratio, axis ratio = sqrt(eccentricity)).
     truncate : float, default=3.0
         Truncation radius in standard deviations for computational efficiency.
-    device : torch.device, optional
-        PyTorch device for computations.
+    device : str or torch.device, optional
+        PyTorch device for computations. Explicit values override auto-detection.
+    use_cuda : bool, default=True
+        Allow CUDA during auto-detection when ``device`` is not provided.
+    use_metal : bool, default=True
+        Allow MPS/Metal during auto-detection when ``device`` is not provided.
     """
 
     # Class-level type annotations for register_buffer attributes.
@@ -94,7 +99,9 @@ class GaussianSplatModel(nn.Module):
         max_eccentricity: Optional[float] = None,  # Max ratio of longest/shortest axis
         truncate: float = 3.0,
         voxel_size: Optional[np.ndarray] = None,
-        device: Optional[torch.device] = None,
+        device: Optional[str | torch.device] = None,
+        use_cuda: bool = True,
+        use_metal: bool = True,
     ) -> None:
         super().__init__()
         self.shape = tuple(shape)
@@ -104,16 +111,15 @@ class GaussianSplatModel(nn.Module):
         d = self.dim
 
         # Auto-detect best available accelerator consistently with the fitting API:
-        # CUDA → MPS/Metal → CPU.
-        if device is None:
-            if torch.cuda.is_available():
-                device = torch.device("cuda")
-            elif torch.backends.mps.is_available():
-                device = torch.device("mps")
-            else:
-                device = torch.device("cpu")
+        # CUDA → MPS/Metal → CPU, honoring explicit accelerator opt-out flags.
+        resolved_device = resolve_torch_device(
+            device,
+            use_cuda=use_cuda,
+            use_metal=use_metal,
+        )
 
-        aprint(f"GaussianSplatModel: using device '{device}'")
+        aprint(f"GaussianSplatModel: using device '{resolved_device}'")
+        device = resolved_device
 
         # Store voxel_size for physical-space constraint enforcement
         # register_buffer ensures it moves with .to() calls
