@@ -29,6 +29,7 @@ import { consoleInterceptor } from '../utils/console-interceptor';
 import { EventGroup } from '../utils/event-group';
 import { setWasmJsUrl } from '../wasm';
 import { setDataWorkerUrl } from '../workers/worker-pool';
+import { replaceBrowserDataSourceUrl } from '../config/url-params';
 
 /**
  * Init-time options for {@link LuxarApp.init}.
@@ -54,9 +55,8 @@ export interface LuxarAppOptions {
    * Reflect the loaded dataset URL in the browser address bar via
    * `history.replaceState` so the page can be reloaded or shared.
    *
-   * Defaults to `true` (matches the standalone app's behavior). Embedded
-   * callers must set this to `false` — otherwise picking a dataset from
-   * the browser will rewrite the host page's URL.
+   * Defaults to `false` for programmatic/embedded safety. The standalone
+   * bootstrap sets this to `true` explicitly.
    */
   updateBrowserUrl?: boolean;
 
@@ -173,9 +173,7 @@ export class LuxarApp {
    */
   async init(options: LuxarAppOptions): Promise<void> {
     if (this.isInitialized) {
-      throw new Error(
-        'LuxarApp is already initialized. Call dispose() before initializing again.'
-      );
+      throw new Error('LuxarApp is already initialized. Call dispose() before initializing again.');
     }
 
     // Browser-environment guard. SceneManager and InputHandler reach for
@@ -397,13 +395,11 @@ export class LuxarApp {
         // Strip any trailing slashes to ensure consistent URL format
         const cleanUrl = fullUrl.replace(/\/+$/, '');
 
-        // Reflect the chosen dataset in the URL bar so the page is shareable.
-        // Gated on `updateBrowserUrl` (default true for the standalone app)
-        // so embedded callers don't get their host page's URL rewritten.
-        if (this.options.updateBrowserUrl ?? true) {
-          const params = new URLSearchParams(window.location.search);
-          params.set('src', cleanUrl);
-          window.history.replaceState({}, '', `${window.location.pathname}?${params}`);
+        // Reflect the chosen dataset in the URL bar only for callers that opt in.
+        // The standalone bootstrap opts in; programmatic/embedded usage defaults
+        // to no host-page URL mutation.
+        if (this.options.updateBrowserUrl === true) {
+          replaceBrowserDataSourceUrl(cleanUrl);
         }
 
         // Track the new src in our options snapshot so a subsequent browser
@@ -670,8 +666,7 @@ export class LuxarApp {
           // Fetch text label and image URL in parallel
           const [label, imageUrl] = await Promise.all([
             this.labelLoader?.getLabel(nodePath, result.elementId) ?? Promise.resolve(null),
-            this.imageLabelLoader?.getImageUrl(nodePath, result.elementId) ??
-              Promise.resolve(null),
+            this.imageLabelLoader?.getImageUrl(nodePath, result.elementId) ?? Promise.resolve(null),
           ]);
           const hasContent = label || imageUrl;
           this.overlayManager?.updateHoverContent(

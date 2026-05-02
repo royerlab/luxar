@@ -102,10 +102,7 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   if (validateConfig) {
     const ok = validateAndLog(config);
     if (!ok) {
-      log.error(
-        Modules.MAIN,
-        'Application starting with invalid configuration - errors may occur'
-      );
+      log.error(Modules.MAIN, 'Application starting with invalid configuration - errors may occur');
     }
   }
 
@@ -113,8 +110,7 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     // Trigger the registry thunk so the browser fetches/parses the 601KB
     // blosc WASM in parallel with the rest of init.
     codecRegistry
-      .get('blosc')
-      ?.()
+      .get('blosc')?.()
       ?.catch(() => {
         /* Best-effort warmup; failure is non-fatal — zarrita will retry on demand. */
       });
@@ -127,10 +123,7 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
       themeManager.setTheme(urlParams.theme);
       log.custom(LogEmoji.START, Modules.LUXAR, `Theme set from URL: ${urlParams.theme}`);
     } catch {
-      log.warning(
-        Modules.LUXAR,
-        `Invalid theme in URL: ${urlParams.theme}, using default`
-      );
+      log.warning(Modules.LUXAR, `Invalid theme in URL: ${urlParams.theme}, using default`);
     }
   } else {
     log.custom(
@@ -155,6 +148,7 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     canvas: opts.canvas,
     src: urlParams.src ?? config.defaultZarrPath,
     debug: isDebugMode,
+    updateBrowserUrl: true,
     loaderConfig: {
       noCache: urlParams.noCache,
       cacheDebug: urlParams.cacheDebug,
@@ -176,20 +170,14 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
       consoleInterceptor,
       version: '1.0.0',
     };
-    log.custom(
-      LogEmoji.CONSOLE,
-      Modules.LUXAR,
-      'Debug interface available at window.__luxarDebug'
-    );
+    log.custom(LogEmoji.CONSOLE, Modules.LUXAR, 'Debug interface available at window.__luxarDebug');
   }
 
   try {
     await app.init(appOptions);
   } catch (error) {
     log.error(Modules.LUXAR, 'Failed to start Luxar application:', error);
-    showError(
-      'Failed to start the application. Please check the console for details.'
-    );
+    showError('Failed to start the application. Please check the console for details.');
     throw error;
   }
 

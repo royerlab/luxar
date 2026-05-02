@@ -173,8 +173,7 @@ async function loadDataset(src: string): Promise<void> {
   // 5. Trigger render
   this.animationController.startAnimation();
 
-  // 6. Update URL
-  this.updateURLParameter('src', src);
+  // URL updates are dataset-browser-only and opt-in via updateBrowserUrl.
 }
 ```
 
@@ -335,7 +334,7 @@ interface LuxarAppOptions {
   src?: string;                  // Dataset URL (defaults to config.defaultZarrPath)
   debug?: boolean;               // Enable window.__luxarDebug + verbose logging
   loaderConfig?: LoaderConfig;   // Cache and prefetch flags
-  updateBrowserUrl?: boolean;    // Mirror selected dataset into the URL bar (default true)
+  updateBrowserUrl?: boolean;    // Mirror selected dataset into URL bar (default false; standalone sets true)
 }
 ```
 
@@ -812,7 +811,7 @@ interface LuxarAppOptions {
   src?: string;                  // Dataset URL (defaults to config.defaultZarrPath)
   debug?: boolean;               // Enable window.__luxarDebug + verbose logging
   loaderConfig?: LoaderConfig;   // Cache and prefetch flags
-  updateBrowserUrl?: boolean;    // Mirror selected dataset into the URL bar (default true)
+  updateBrowserUrl?: boolean;    // Mirror selected dataset into URL bar (default false; standalone sets true)
 }
 ```
 

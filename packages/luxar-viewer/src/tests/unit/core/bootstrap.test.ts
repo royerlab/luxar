@@ -229,6 +229,7 @@ describe('bootstrapStandalone', () => {
       const arg = mocks.init.mock.calls.at(-1)?.[0];
       expect(arg.canvas).toBe(CANVAS);
       expect(arg.src).toBe('https://example.com/data.zarr');
+      expect(arg.updateBrowserUrl).toBe(true);
       expect(arg.loaderConfig).toMatchObject({
         noCache: true,
         cacheDebug: true,

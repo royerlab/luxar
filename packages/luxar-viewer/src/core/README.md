@@ -50,7 +50,9 @@ main.ts → bootstrapStandalone() → LuxarApp.init() → SceneManager → Anima
 ```
 
 Embedded callers skip `main.ts` and `bootstrapStandalone()` entirely — they
-construct `LuxarApp` themselves and call `init({ canvas, src, ... })`.
+construct `LuxarApp` themselves and call `init({ canvas, src, ... })`. Embedded
+`LuxarApp` instances do not rewrite the host page URL unless
+`updateBrowserUrl: true` is passed explicitly.
 
 The architecture follows a hierarchical initialization pattern where each component is responsible for its own setup while the core coordinates the overall sequence.
 
@@ -246,13 +248,15 @@ private showDatasetBrowser(): void {
   this.datasetBrowser = new DatasetBrowser({
     container: document.body,
     onDatasetSelect: async (path: string) => {
-      // Update URL parameters
-      const params = new URLSearchParams(window.location.search);
-      params.set('src', constructFullURL(path));
-      window.history.replaceState({}, '', `${window.location.pathname}?${params}`);
+      const fullURL = constructFullURL(path);
+
+      // Optional: standalone bootstrap opts in, embeds default out.
+      if (this.options.updateBrowserUrl === true) {
+        replaceBrowserDataSourceUrl(fullURL);
+      }
 
       // Load selected dataset
-      await this.loadDataset(constructFullURL(path));
+      await this.loadDataset(fullURL);
     },
     onClose: () => {
       this.datasetBrowser = undefined;
@@ -541,20 +545,20 @@ this.inputHandler.setRenderingControls(this.renderingControls);
 ### URL and State Management
 
 ```typescript
-// ✅ Good: Automatic URL synchronization
+// ✅ Good: Opt-in URL synchronization through the centralized helper
 onDatasetSelect: async (path: string) => {
-  // Update browser URL to reflect current dataset
-  const params = new URLSearchParams(window.location.search);
-  params.set('src', fullURL);
-  window.history.replaceState({}, '', `${window.location.pathname}?${params}`);
+  const fullURL = constructFullURL(path);
+  if (this.options.updateBrowserUrl === true) {
+    replaceBrowserDataSourceUrl(fullURL);
+  }
 
   // Load dataset
   await this.loadDataset(fullURL);
 };
 
-// ✅ Good: URL parameter parsing
-const params = new URLSearchParams(window.location.search);
-const src = params.get('src') ?? config.defaultZarrPath;
+// ✅ Good: URL parameter parsing is centralized in bootstrap/readUrlParams
+const urlParams = readUrlParams();
+const src = urlParams.src ?? config.defaultZarrPath;
 ```
 
 The core package provides the essential coordination and lifecycle management that transforms individual Luxar components into a cohesive, reliable visualization application.
