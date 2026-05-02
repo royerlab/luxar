@@ -1,290 +1,349 @@
 # Metal Backend Specification
 
-**Version**: 1.0.0
-**Last Updated**: 2025-12-23
+**Version**: 2.0.0
+**Last Updated**: 2026-05-02
 
 ## Overview
 
-The Metal backend provides GPU-accelerated Gaussian splatting for Apple Silicon (M1/M2/M3/M4) Macs using Metal compute shaders. It replaces the PyTorch rendering path for 3D volumes with a highly optimized pixel-parallel implementation.
+The Metal backend provides Apple Silicon acceleration for Luxar Gaussian splats.
+The custom native kernel path is intentionally narrow and explicit:
 
-**Prerequisites**:
-- macOS with Apple Silicon
-- Xcode (full installation, not just Command Line Tools)
-- PyTorch with MPS support
-
-**Related Specifications**:
-- **Main Rendering**: [models/SPECIFICATIONS.md](../SPECIFICATIONS.md) - PyTorch rendering specification
-- **Fitting Pipeline**: [fitting/SPECIFICATIONS.md](../../../fitting/SPECIFICATIONS.md) - Integration with fitting
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    Python Layer                                  │
-│  GaussianSplatModelMetal → MetalSplatFunction                   │
-│  (torch.autograd.Function for gradient computation)              │
-└─────────────────────────────────────────────────────────────────┘
-                      │
-                      ▼
-┌─────────────────────────────────────────────────────────────────┐
-│              PyTorch: L → Conic Conversion                       │
-│  cholesky_inverse(L) → Σ⁻¹  [O(N), CPU/MPS]                     │
-└─────────────────────────────────────────────────────────────────┘
-                      │
-                      ▼
-┌─────────────────────────────────────────────────────────────────┐
-│              C++ Dispatcher (bindings.mm)                        │
-│  dispatch_forward_3d() / dispatch_backward_3d()                  │
-└─────────────────────────────────────────────────────────────────┘
-                      │
-                      ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                Metal Compute Kernels                             │
-│  Forward:  preprocess → bin → rasterize_fwd_3d                   │
-│  Backward: rasterize_bwd_3d (with tile data from forward)        │
-└─────────────────────────────────────────────────────────────────┘
+```text
+3D volume shape + MPS device + float32 tensors
 ```
 
-## Coordinate Conventions
+`GaussianSplatModelMetal` is an MPS-only `GaussianSplatModel` subclass.  It
+preserves the base/CUDA parameter-management API (`current_params`, `append_`,
+`prune_`, `replace_with`, state dicts, constraints) and dispatches to custom
+Metal kernels only for 3D MPS tensors.  2D and 4D-8D MPS shapes use Luxar's
+PyTorch renderer.
 
-**Critical**: The Metal backend handles coordinate transformations between PyTorch and Metal conventions.
+## Native Architecture
 
-### PyTorch/NumPy Convention: [Z, Y, X]
-- Array indexing: `volume[z, y, x]`
-- Centers: `[z_coord, y_coord, x_coord]`
-- Cholesky L: Row indices correspond to [Z, Y, X]
-- Conic upper triangle: `[c_zz, c_yz, c_xz, c_yy, c_xy, c_xx]`
+```text
+Python layer
+  GaussianSplatModelMetal.forward()
+  MetalSplatFunction.forward/backward()
+  cholesky_to_conic() or compute_conic_metal()
 
-### Metal Kernel Convention: [X, Y, Z] for distance computation
-- Grid dispatch: `gid = (x, y, z)`
-- Pixel position: `float3 px = float3(gid.z, gid.y, gid.x)` converts to [Z,Y,X]
-- Conic reordered: `[c_xx, c_xy, c_xz, c_yy, c_yz, c_zz]`
+C++/Objective-C++ extension: src/bindings.mm
+  compute_conic_metal(Ls) -> conic
+  forward_splat_3d(centers, conic, amps, shape, truncate, floor) -> output
+  backward_splat_3d(grad_output, centers, conic, amps, shape, truncate, floor)
+      -> (d_centers, d_conic, d_amps)
 
-### Conversion Mapping
+Metal shaders: src/kernels.metal
+  zero_float_buffer
+  compute_conic_from_L_3d
+  rasterize_forward_splat_centric_3d
+  rasterize_backward_splat_centric_3d
+```
+
+The previous tile-binned pipeline (`preprocess_3d`, `bin_3d`, tile counts,
+tile offsets, tile content, PyTorch prefix sum, CPU `.item()` allocation size)
+has been removed from the hot path.
+
+## Coordinate and Packing Conventions
+
+All Metal kernels use the same order as PyTorch/NumPy volumes:
+
+```text
+axis 0: Z / depth
+axis 1: Y / height
+axis 2: X / width
+```
+
+For 3D, packed conics are row-major upper-triangle entries in that order:
+
+```text
+[c00, c01, c02, c11, c12, c22]
+= [c_zz, c_zy, c_zx, c_yy, c_yx, c_xx]
+```
+
+No `[Z,Y,X] <-> [X,Y,Z]` conic permutation is used.  This is a deliberate change
+from the older tile-binned Metal renderer.
+
+## Forward Algorithm
+
+### Host-side dispatch
+
+`forward_splat_3d` validates:
+
+- `shape == (D, H, W)` and all dimensions are positive.
+- `centers.shape == (N, 3)`, `conic.shape == (N, 6)`, `amps.shape == (N,)`.
+- All tensors are contiguous, MPS, and `float32`.
+- `N` and `D*H*W` fit in `uint32_t` for the current kernels.
+
+It allocates an MPS float32 output tensor, then encodes in one command buffer:
+
+1. `zero_float_buffer` over `D*H*W` elements.
+2. `rasterize_forward_splat_centric_3d` with one threadgroup per splat.
+
+### Kernel ownership model
+
+```text
+threadgroup_position_in_grid.x = splat_id
+thread_index_in_threadgroup    = worker thread within that splat
+THREADGROUP_SIZE               = 256
+```
+
+Thread 0 loads the splat into threadgroup memory:
+
+```text
+center[3]
+conic[6]
+amplitude
+shifted-Gaussian constants
+AABB lower corner and extent
+effective truncation radius
+```
+
+All 256 threads then stride over the splat's local AABB.  For each voxel:
+
+```text
+d = [z, y, x] - center
+D² = dᵀ C d
+if D² <= effective_truncate²:
+    I = amp * scale * max(exp(-0.5 * D²) - C_shift, 0)
+    if I >= intensity_floor:
+        atomic_add(output[z, y, x], I)
+```
+
+Forward needs output atomics because different splats may contribute to the same
+voxel.  The kernel uses Metal `atomic_float` fetch-add.
+
+## Backward Algorithm
+
+### Host-side dispatch
+
+`backward_splat_3d` validates the same splat tensors plus a contiguous MPS
+float32 `grad_output` of shape `(D, H, W)`.  For nonzero `N`, it allocates empty
+MPS gradient tensors:
+
+```text
+d_centers: (N, 3)
+d_conic:   (N, 6)
+d_amps:    (N,)
+```
+
+Every splat row is written exactly once by the kernel, so zero initialization is
+not required for nonzero `N`.
+
+### Kernel ownership model
+
+Backward uses the same splat ownership as forward:
+
+```text
+one threadgroup = one splat gradient row
+```
+
+Each thread accumulates local scalar values in registers:
+
+```text
+local_d_amp
+local_d_center_z, local_d_center_y, local_d_center_x
+local_d_conic_0 ... local_d_conic_5
+```
+
+For each voxel in that splat's AABB, the kernel recomputes the forward intensity
+and applies the chain rule:
+
+```text
+∂I/∂a  = I / max(a, 1e-10)
+∂I/∂D² = -0.5 * (I + a * scale * C_shift)
+outer  = dLoss/dI * ∂I/∂D²
+```
+
+For conic layout `[c00, c01, c02, c11, c12, c22]` and displacement
+`d = [dz, dy, dx]`:
+
+```text
+D² = c00*dz² + c11*dy² + c22*dx²
+   + 2*(c01*dz*dy + c02*dz*dx + c12*dy*dx)
+
+∂D²/∂center = -2 * C * d
+∂D²/∂c00 = dz²
+∂D²/∂c01 = 2*dz*dy
+∂D²/∂c02 = 2*dz*dx
+∂D²/∂c11 = dy²
+∂D²/∂c12 = 2*dy*dx
+∂D²/∂c22 = dx²
+```
+
+The threadgroup then performs a tree reduction in threadgroup memory and thread
+0 writes:
+
+```text
+d_centers[splat_id, :]
+d_conic[splat_id, :]
+d_amps[splat_id]
+```
+
+No global parameter-gradient atomics are used.
+
+## AABB and Truncation
+
+The Metal kernels match the optimized CUDA AABB strategy.  AABB radii are derived
+from the conic matrix by extracting the covariance diagonal via cofactors:
+
+```text
+det = c00*(c11*c22 - c12²) - c01*(c01*c22 - c02*c12)
+    + c02*(c01*c12 - c02*c11)
+
+sigma_z = sqrt(max((c11*c22 - c12²) / |det|, 0))
+sigma_y = sqrt(max((c00*c22 - c02²) / |det|, 0))
+sigma_x = sqrt(max((c00*c11 - c01²) / |det|, 0))
+```
+
+The base truncation is tightened by `intensity_floor`:
+
+```text
+C_shift = exp(-0.5 * truncate²)
+scale   = 1 / (1 - C_shift)
+threshold = intensity_floor / max(amplitude * scale, 1e-10) + C_shift
+
+if threshold >= 1:
+    splat contributes nothing
+else:
+    t_eff = min(truncate, sqrt(-2 * log(threshold)))
+```
+
+AABB bounds use the CUDA-compatible integer-radius rule:
+
+```text
+radius_i = ceil(t_eff * sigma_i)
+lo_i = max(0, floor(center_i) - radius_i)
+hi_i = min(shape_i - 1, ceil(center_i) + radius_i)
+```
+
+## Python Autograd Boundary
+
+`MetalSplatFunction.forward` saves:
+
+```text
+centers
+Ls_for_conic
+conic_zyx
+amps
+```
+
+The native backward returns gradients with respect to `centers`, `conic`, and
+`amps`.  Python then applies the chain rule back to Cholesky factors:
+
 ```python
-# PyTorch [Z,Y,X] → Metal [X,Y,Z] conic reorder
-# PyTorch: [c_zz, c_yz, c_xz, c_yy, c_xy, c_xx] indices [0,1,2,3,4,5]
-# Metal:   [c_xx, c_xy, c_xz, c_yy, c_yz, c_zz] indices [5,4,2,3,1,0]
-conic_metal = conic_pytorch[:, [5, 4, 2, 3, 1, 0]]
-
-# This permutation is self-inverse:
-conic_pytorch = conic_metal[:, [5, 4, 2, 3, 1, 0]]
-```
-
-**Note**: Centers remain in [Z,Y,X] order throughout - only conic matrices are reordered.
-
-## Metal Kernels
-
-### Forward Pass Kernels
-
-1. **preprocess_3d**: Count splats per tile based on AABB
-   - Computes axis-aligned bounding boxes
-   - Counts splats overlapping each tile
-   - O(N × tiles)
-
-2. **bin_3d**: Build per-tile splat lists
-   - Allocates tile content buffer
-   - Populates splat IDs per tile
-   - O(N × tiles)
-
-3. **rasterize_fwd_3d**: Pixel-parallel rendering
-   - One thread per voxel
-   - Iterates through tile's splat list
-   - Accumulates Gaussian contributions
-   - O(P × splats_per_tile)
-
-### Backward Pass Kernel
-
-**rasterize_bwd_3d**: Gradient computation
-
-Computes gradients for all parameters:
-- Centers (μ)
-- Conic matrix (Σ⁻¹)
-- Amplitudes (a)
-- Sharpness (s)
-
-**Mathematical Formulation**:
-
-The shifted Gaussian intensity (C⁰ continuous at truncation boundary) is:
-```
-C     = exp(-0.5 × T²)              // boundary value
-scale = 1 / (1 - C)                 // peak-preserving rescale
-I(x)  = a × scale × max(0, exp(-0.5 × D^(s/2)) - C)
-```
-where `D² = d^T × Σ⁻¹ × d` (Mahalanobis distance squared) and `d = x - μ`. The shift by C eliminates the discontinuity from hard truncation at T sigma.
-
-**Gradient Derivations** (within truncation boundary, where `G = exp(-0.5 × D^(s/2)) > C`):
-
-1. **Amplitude gradient**:
-   ```
-   ∂I/∂a = I/a = scale × (G - C)
-   ```
-
-2. **Sharpness gradient**:
-   ```
-   ∂I/∂s = a × scale × G × (-0.25) × D^s × ln(D²)
-   ```
-   (C is constant w.r.t. s, so only the exp term contributes)
-
-3. **Distance gradient**:
-   ```
-   ∂I/∂D² = -0.5 × a × scale × G × (s/2) × D^(s-2)
-          = -0.5 × (I + a × scale × C)   [for s=2]
-   ```
-
-4. **Center gradient** (CRITICAL - this was the bug fix location):
-   ```
-   ∂D²/∂d = 2 × Σ⁻¹ × d
-   ∂d/∂μ = -I  (negative identity matrix)
-
-   Therefore:
-   ∂I/∂μ = ∂I/∂D² × ∂D²/∂d × ∂d/∂μ
-         = grad_dist × (2 × Σ⁻¹ × d) × (-1)
-   ```
-
-   **All three dimensions get multiplied by -1** because `d = x - μ` implies `∂d/∂μ = -I`.
-
-5. **Conic gradient**:
-   ```
-   ∂D²/∂c_ij = d_i × d_j  (for diagonal elements)
-             = 2 × d_i × d_j  (for off-diagonal elements)
-   ```
-
-### Gradient Bug Fix (2025-12-23)
-
-**Issue**: The original implementation had incorrect signs for Y and X center gradients.
-
-**Root Cause**: The code incorrectly used `+1.0f` instead of `-1.0f` for Y and X dimensions in the chain rule for `∂d/∂μ`.
-
-**Fix Location**: `kernels.metal` lines 469-474
-
-**Before** (incorrect):
-```metal
-val_centers.x = grad_dist * d_D2_d_d.x * -1.0f;  // Z: correct
-val_centers.y = grad_dist * d_D2_d_d.y * +1.0f;  // Y: WRONG
-val_centers.z = grad_dist * d_D2_d_d.z * +1.0f;  // X: WRONG
-```
-
-**After** (correct):
-```metal
-val_centers.x = grad_dist * d_D2_d_d.x * -1.0f;  // Z
-val_centers.y = grad_dist * d_D2_d_d.y * -1.0f;  // Y
-val_centers.z = grad_dist * d_D2_d_d.z * -1.0f;  // X
-```
-
-**Symptom**: During optimization, splats would become extremely elongated in Y/X dimensions and appear in incorrect locations.
-
-**Guard Tests**: Three new tests in `test_metal_numerical.py` prevent regression:
-- `test_gradient_sign_correctness`: Verifies gradient signs point toward target
-- `test_gradient_values_match_cpu_reference`: Compares Metal vs CPU gradients
-- `test_optimization_convergence`: Verifies optimization converges correctly
-
-## Python Interface
-
-### GaussianSplatModelMetal
-
-Drop-in replacement for `GaussianSplatModel` that uses Metal rendering.
-
-```python
-from luxar.gsplats.models.gsplats.metal import GaussianSplatModelMetal
-
-model = GaussianSplatModelMetal(
-    shape=(64, 64, 64),          # 3D volume shape
-    centers0=centers,            # Initial centers (N, 3)
-    L0=L,                        # Initial Cholesky factors (N, 3, 3)
-    amps0=amps,                  # Initial amplitudes (N,)
-    sigma_min_diag=(1.0, 1.0, 1.0),  # Minimum diagonal values
-    sigma_max_diag=None,         # Maximum diagonal values (optional)
-    truncate=3.0,                # Truncation radius in sigmas
-    intensity_floor=1e-5,        # Early culling threshold
-    tile_size=4,                 # Tile size for binning (4³ = 64 voxels)
-    use_metal_conic=False,       # Use Metal for L→Conic conversion
-    device='mps',                # Must be MPS or CPU
+with torch.enable_grad():
+    conic_recomputed = cholesky_to_conic(Ls_for_conic)
+(d_Ls,) = torch.autograd.grad(
+    outputs=conic_recomputed,
+    inputs=Ls_for_conic,
+    grad_outputs=d_conic,
 )
 ```
 
-### MetalSplatFunction
+This keeps the conic-to-Cholesky VJP correct while the expensive voxel/splat
+loops run in Metal.
 
-Custom `torch.autograd.Function` that handles forward/backward with Metal.
+## Optional Metal L -> Conic
 
-```python
-output = MetalSplatFunction.apply(
-    centers,      # (N, 3) tensor, requires_grad=True
-    Ls,           # (N, 3, 3) Cholesky factors
-    amps,         # (N,) amplitudes
-    sharpness,    # (N,) sharpness values
-    shape,        # (D, H, W) output shape
-    truncate,     # Truncation radius
-    intensity_floor,  # Early culling threshold
-    tile_size,    # Tile size for binning
-    use_metal_conic,  # Whether to use Metal conic computation
-)
-```
+`compute_conic_metal(Ls)` computes the 3D packed conic in native `[Z,Y,X]` order.
+It is used only when `GaussianSplatModelMetal(..., use_metal_conic=True)` is set.
+Backward still uses the Python `cholesky_to_conic` graph for the VJP.
 
 ## Performance Characteristics
 
-### Computational Complexity
+For `128³ @ 32k splats`, `L = 2I`, `truncate = 3`, on Apple M4 Max:
 
-**Forward Pass**:
-- Preprocessing: O(N × tiles)
-- Binning: O(N × tiles)
-- Rasterization: O(P × avg_splats_per_tile)
+| Implementation | Forward | Forward+Backward |
+| --- | ---: | ---: |
+| Previous tile-binned Metal | ~2.3-2.5 ms (~0.9 GVox/s) | ~133 ms (~0.016 GVox/s) |
+| Current splat-centric Metal | ~1.7-1.9 ms (~1.1-1.2 GVox/s) | ~4.4-4.8 ms (~0.46-0.48 GVox/s) |
 
-**Backward Pass**:
-- Rasterization: O(P × avg_splats_per_tile) with atomic gradient accumulation
+The largest improvement is backward because the old voxel-centric kernel used
+global CAS atomics for every voxel-splat gradient contribution.  The new kernel
+uses local threadgroup reductions and one write per splat gradient.
 
-### Expected Speedups (vs CPU PyTorch)
+CUDA remains much faster for large production workloads; CUDA has 2D-8D
+specialization, FP16 input paths, more mature occupancy behavior, and highly
+optimized NVIDIA atomics.  The current Metal backend is structurally aligned with
+CUDA but not yet CUDA-throughput-equivalent.
 
-> Speedups below are typical observed ranges on test volumes; actual results vary by problem size, dimensionality, and driver/runtime. Treat them as indicative, not guarantees.
+## Public API
 
-| Chip | Speedup Range |
-|------|--------------|
-| M4 Max | 10-50× |
-| M3 | 8-30× |
-| M2 | 5-20× |
-| M1 | 3-15× |
+```python
+GaussianSplatModelMetal(
+    shape=(D, H, W),          # 2D-8D accepted; custom Metal only for 3D
+    centers0=centers,
+    L0=L,
+    amps0=amps,
+    sigma_min_diag=(...),
+    sigma_max_diag=None,
+    amp_max=None,
+    max_eccentricity=None,
+    truncate=3.0,
+    intensity_floor=1e-5,
+    use_fp16=False,           # rejected if True
+    use_metal_conic=False,
+    voxel_size=None,
+    device="mps",
+)
+```
 
-Actual speedup depends on volume size, splat count, and splat density.
+`MetalSplatFunction.apply` arguments:
 
-### Tile Size Optimization
+```python
+output = MetalSplatFunction.apply(
+    centers,
+    Ls,
+    amps,
+    shape,
+    truncate,
+    intensity_floor,
+    use_metal_conic,
+)
+```
 
-The `tile_size` parameter affects binning granularity:
-- `tile_size=4`: 64 voxels/tile (default, good balance)
-- `tile_size=8`: 512 voxels/tile (fewer tiles, more splats/tile)
-- `tile_size=2`: 8 voxels/tile (more tiles, fewer splats/tile)
+## Validation and Limitations
 
-## Limitations
-
-1. **3D only**: Metal backend requires exactly 3 dimensions. For nD, PyTorch fallback is used.
-2. **MPS device required**: Tensors must be on MPS device.
-3. **float32 only**: No mixed precision support.
-4. **Maximum splats**: Limited by GPU memory for tile data structures.
+- CPU and CUDA devices are rejected explicitly.
+- Non-float32 paths are rejected explicitly.
+- `use_fp16=True` is rejected.
+- `.to("cpu")`, `.cpu()`, `.cuda()`, `.half()`, `.bfloat16()`, `.double()`, and
+  non-float32 `.to()` requests are rejected.
+- Dynamic `append_`, `replace_with`, and `prune_` require MPS tensors.
+- Custom kernels run only for 3D.  2D and 4D-8D MPS shapes use the PyTorch
+  renderer with the same model-management API.
 
 ## Testing Requirements
 
-### Unit Tests (`tests/test_metal_numerical.py`)
+Run:
 
-1. **Gradient correctness**:
-   - `test_gradient_sign_correctness`: Verify gradient signs
-   - `test_gradient_values_match_cpu_reference`: Compare with CPU
-   - `test_optimization_convergence`: Verify optimization works
+```bash
+hatch run pytest packages/luxar/src/luxar/gsplats/models/gsplats/metal/tests -q
+hatch run pytest packages/luxar/src/luxar/gsplats/models/gsplats/tests -q
+hatch run pytest packages/luxar/src/luxar/gsplats/fitting/tests/test_initialization.py -q
+```
 
-2. **Forward pass**:
-   - `test_forward_matches_cpu`: Output matches PyTorch rendering
+Important coverage:
 
-3. **Backward pass**:
-   - `test_gradcheck_3d`: PyTorch gradcheck (may skip on GPU)
-
-### Coordinate Transform Tests (`tests/test_coordinate_transforms.py`)
-
-- `test_centers_reorder_roundtrip`: [Z,Y,X] → [X,Y,Z] → [Z,Y,X]
-- `test_conic_reorder_roundtrip`: Conic reorder is self-inverse
-- `test_conic_computation_consistency`: Metal vs PyTorch conic
+- Metal extension loading and stale rebuilds.
+- Native `[Z,Y,X]` coordinate and packed-conic convention.
+- L->conic correctness.
+- Forward output vs PyTorch reference.
+- Gradient signs, values, and optimization convergence.
+- Interface parity: dynamic splat ops, state dicts, device/dtype rejection,
+  zero-splat pruning, and non-3D MPS PyTorch rendering.
 
 ## Changelog
 
-- **v1.0.0** (2025-12-23): Initial documented release
-  - Fixed center gradient sign bug (Y/X dimensions)
-  - Added comprehensive gradient tests
-  - Full coordinate convention documentation
-  - Performance benchmarks for M-series chips
+- **v2.0.0** (2026-05-02): Splat-centric performance rewrite.
+  - Removed tile-binned preprocessing/binning/prefix-sum pipeline from the hot path.
+  - Added splat-centric forward with one threadgroup per splat and atomic output accumulation.
+  - Added splat-centric backward with threadgroup reductions and no global parameter-gradient atomics.
+  - Removed packed-conic coordinate reorder; Metal now uses native `[Z,Y,X]` order.
+  - Updated native API to `forward_splat_3d` / `backward_splat_3d`.
+- **v1.1.0** (2026-05-02): CUDA-parity and reliability update.
+  - Rebuilt `GaussianSplatModelMetal` as an MPS-only `GaussianSplatModel` subclass.
+  - Added 2D-8D constructor support with PyTorch rendering outside the custom 3D path.
+  - Added stale-extension rebuild detection and explicit `default.metallib` path handoff.
+  - Added interface-parity regression tests.
+- **v1.0.0** (2025-12-23): Initial documented release.
