@@ -249,9 +249,14 @@ kernel void rasterize_forward_splat_centric_3d(
         float k00 = 1.0f / (l00 + 1e-9f);
         float k11 = 1.0f / (l11 + 1e-9f);
         float k22 = 1.0f / (l22 + 1e-9f);
-        float k10 = -l10 * k00 * k11;
-        float k21 = -l21 * k11 * k22;
-        float k20 = -(l20 * k00 + l21 * k10) * k22;
+        float k10 = 0.0f;
+        float k21 = 0.0f;
+        float k20 = 0.0f;
+        if (l10 != 0.0f || l20 != 0.0f || l21 != 0.0f) {
+            k10 = -l10 * k00 * k11;
+            k21 = -l21 * k11 * k22;
+            k20 = -(l20 * k00 + l21 * k10) * k22;
+        }
 
         s_conic[0] = k00 * k00 + k10 * k10 + k20 * k20;
         s_conic[1] = k10 * k11 + k20 * k21;
@@ -392,9 +397,14 @@ kernel void rasterize_backward_splat_centric_3d(
         float k00 = 1.0f / (l00 + 1e-9f);
         float k11 = 1.0f / (l11 + 1e-9f);
         float k22 = 1.0f / (l22 + 1e-9f);
-        float k10 = -l10 * k00 * k11;
-        float k21 = -l21 * k11 * k22;
-        float k20 = -(l20 * k00 + l21 * k10) * k22;
+        float k10 = 0.0f;
+        float k21 = 0.0f;
+        float k20 = 0.0f;
+        if (l10 != 0.0f || l20 != 0.0f || l21 != 0.0f) {
+            k10 = -l10 * k00 * k11;
+            k21 = -l21 * k11 * k22;
+            k20 = -(l20 * k00 + l21 * k10) * k22;
+        }
 
         s_conic[0] = k00 * k00 + k10 * k10 + k20 * k20;
         s_conic[1] = k10 * k11 + k20 * k21;
