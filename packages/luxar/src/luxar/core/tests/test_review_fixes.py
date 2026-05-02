@@ -221,7 +221,56 @@ class TestSceneDimensionsProperty:
                 _ = scene.dimensions
 
 
-# ── Fix 5: GSplatData re-exported at top level ───────────────────────
+# ── Fix 5: Scene.to_zarr exports finalized backing store ─────────────
+
+
+class TestSceneToZarrExport:
+    """Guard: Scene.to_zarr must be a functional export API, not a stub."""
+
+    def test_to_zarr_finalizes_and_copies_store(self, tmp_path: Path) -> None:
+        source = tmp_path / "source.zarr"
+        export = tmp_path / "exported.zarr"
+
+        with LuxarZarrCompiler(source) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_points(
+                "pts", np.zeros((3, 3), dtype=np.float32), labels=["a", "b", "c"]
+            )
+
+            scene.to_zarr(export)
+
+        assert export.exists()
+        store = zarr.open_group(str(export), mode="r")
+        assert store.attrs["type"] == "scene"
+        assert "scene_dimensions" in store.attrs
+        assert "content_hash" in store.attrs
+        assert "pts" in store
+        assert store["pts/positions"].shape == (3, 3)
+        # Finalization should auto-inject hover overlay before copying.
+        assert "overlays/__hover_text" in store
+
+    def test_to_zarr_refuses_existing_destination(self, tmp_path: Path) -> None:
+        source = tmp_path / "source.zarr"
+        export = tmp_path / "exported.zarr"
+        export.mkdir()
+
+        with LuxarZarrCompiler(source) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+
+            with pytest.raises(FileExistsError, match="Destination already exists"):
+                scene.to_zarr(export)
+
+    def test_to_zarr_refuses_destination_inside_source(self, tmp_path: Path) -> None:
+        source = tmp_path / "source.zarr"
+
+        with LuxarZarrCompiler(source) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+
+            with pytest.raises(ValueError, match="cannot be inside source"):
+                scene.to_zarr(source / "nested.zarr")
+
+
+# ── Fix 6: GSplatData re-exported at top level ───────────────────────
 
 
 class TestGSplatDataTopLevelExport:

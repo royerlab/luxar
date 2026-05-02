@@ -629,6 +629,11 @@ The core module is designed to work with Luxar's progressive writing system:
 3. **Data Writing**: Data written immediately to Zarr via writer
 4. **Memory Efficiency**: Data never kept in memory after writing
 
+`Scene.to_zarr(path)` is an export/copy helper for this progressive model: it
+finalizes the current backing store and copies the on-disk Zarr directory to
+`path`. Because finalization closes the writer, do not add more nodes to a scene
+after calling `to_zarr()`; use a new `LuxarZarrCompiler` for additional writes.
+
 ### Scene Graph Structure
 
 ```
