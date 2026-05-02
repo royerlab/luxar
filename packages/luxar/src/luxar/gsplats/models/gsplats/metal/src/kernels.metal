@@ -26,10 +26,11 @@ inline float shift_c(float truncate) {
 
 inline float gaussian_intensity(
     float dist_sq,
-    float amp_scale,
-    float shift_C
+    float amp,
+    float shift_C,
+    float inv_one_minus_C
 ) {
-    return amp_scale * (fast::exp(-0.5f * dist_sq) - shift_C);
+    return amp * inv_one_minus_C * (fast::exp(-0.5f * dist_sq) - shift_C);
 }
 
 inline float effective_truncate_sq(
@@ -223,7 +224,6 @@ kernel void rasterize_forward_splat_centric_3d(
     threadgroup float s_center[3];
     threadgroup float s_conic[6];
     threadgroup float s_amp;
-    threadgroup float s_amp_scale;
     threadgroup float s_shift_C;
     threadgroup float s_inv_one_minus_C;
     threadgroup float s_truncate_sq;
@@ -266,7 +266,6 @@ kernel void rasterize_forward_splat_centric_3d(
 
         s_shift_C = shift_C;
         s_inv_one_minus_C = inv_one_minus_C;
-        s_amp_scale = s_amp * s_inv_one_minus_C;
         s_truncate_sq = effective_truncate_sq(
             truncate, s_amp, intensity_floor, s_shift_C, s_inv_one_minus_C);
         float t_eff = effective_truncation(
@@ -317,7 +316,8 @@ kernel void rasterize_forward_splat_centric_3d(
             continue;
         }
 
-        float intensity = gaussian_intensity(dist_sq, s_amp_scale, s_shift_C);
+        float intensity = gaussian_intensity(
+            dist_sq, s_amp, s_shift_C, s_inv_one_minus_C);
         if (intensity < intensity_floor) {
             continue;
         }
@@ -357,7 +357,6 @@ kernel void rasterize_backward_splat_centric_3d(
     threadgroup float s_L[6];
     threadgroup float s_conic[6];
     threadgroup float s_amp;
-    threadgroup float s_amp_scale;
     threadgroup float s_shift_C;
     threadgroup float s_inv_one_minus_C;
     threadgroup float s_truncate_sq;
@@ -410,7 +409,6 @@ kernel void rasterize_backward_splat_centric_3d(
 
         s_shift_C = shift_C;
         s_inv_one_minus_C = inv_one_minus_C;
-        s_amp_scale = s_amp * s_inv_one_minus_C;
         s_truncate_sq = effective_truncate_sq(
             truncate, s_amp, intensity_floor, s_shift_C, s_inv_one_minus_C);
         float t_eff = effective_truncation(
@@ -477,14 +475,15 @@ kernel void rasterize_backward_splat_centric_3d(
                 continue;
             }
 
-            float intensity = gaussian_intensity(dist_sq, s_amp_scale, s_shift_C);
+            float intensity = gaussian_intensity(
+                dist_sq, s_amp, s_shift_C, s_inv_one_minus_C);
             if (intensity < intensity_floor) {
                 continue;
             }
 
             local_amp += dL_dI * intensity / max(s_amp, 1e-10f);
 
-            float unshifted = intensity + s_amp_scale * s_shift_C;
+            float unshifted = intensity + s_amp * s_inv_one_minus_C * s_shift_C;
             float outer = dL_dI * unshifted * (-0.5f);
 
             float dD2_dz = 2.0f * (c00 * dz + c01 * dy + c02 * dx);
