@@ -8,10 +8,12 @@ Following the principle from TESTING_GUIDELINES.md: mock only external dependenc
 import socket
 import threading
 import time
+from pathlib import Path
 
 import numpy as np
 import pytest
 import requests
+from fastapi.testclient import TestClient
 
 from luxar import Dimensions, LuxarZarrCompiler
 from luxar.cli.utils import find_available_port
@@ -141,15 +143,51 @@ class TestServeIntegration:
         assert array_meta["dtype"] in ["<f4", ">f4", "float32"]
 
     def test_cors_headers(self, test_server):
-        """Test that CORS headers are set correctly."""
+        """Test that local CORS origins are allowed by default."""
         # CORS headers appear when Origin header is present (cross-origin request)
         origin = "http://localhost:5173"
         headers = {"Origin": origin}
         response = requests.get(f"{test_server}/health", headers=headers)
         assert "Access-Control-Allow-Origin" in response.headers
-        # With allow_credentials=True, the CORS spec forbids wildcard "*" —
-        # the middleware echoes back the specific requesting origin instead.
-        assert response.headers["Access-Control-Allow-Origin"] in ("*", origin)
+        assert response.headers["Access-Control-Allow-Origin"] == origin
+
+    def test_non_local_cors_origin_rejected_by_default(self, sample_scene):
+        """Default CORS policy should only allow loopback browser clients."""
+        from luxar.cli.main import create_server_app
+
+        client = TestClient(create_server_app(str(sample_scene)))
+        response = client.get("/health", headers={"Origin": "https://evil.example"})
+        assert "Access-Control-Allow-Origin" not in response.headers
+
+    def test_wildcard_cors_requires_explicit_opt_in(self, sample_scene):
+        """Wildcard CORS is still available, but credentials are disabled."""
+        from luxar.cli.main import create_server_app
+
+        client = TestClient(create_server_app(str(sample_scene), cors_origin="*"))
+        response = client.get("/health", headers={"Origin": "https://example.org"})
+        assert response.headers["Access-Control-Allow-Origin"] == "*"
+        assert response.headers.get("Access-Control-Allow-Credentials") != "true"
+
+    def test_directory_listing_blocks_parent_traversal(self, tmp_path):
+        """Custom directory listings must not escape the served root."""
+        from luxar.cli.main import create_server_app
+
+        serve_root = tmp_path / "served"
+        serve_root.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "secret.txt").write_text("secret")
+
+        client = TestClient(create_server_app(str(serve_root)))
+        response = client.get("/%2e%2e/outside/", headers={"Accept": "application/json"})
+        assert response.status_code == 403
+
+    def test_sensitive_system_path_requires_opt_in(self):
+        """Serving filesystem roots is blocked unless explicitly allowed."""
+        from luxar.cli.main import create_server_app
+
+        with pytest.raises(ValueError, match="Refusing to serve sensitive system path"):
+            create_server_app(Path(Path.cwd().anchor))
 
     def test_404_for_nonexistent_path(self, test_server):
         """Test that nonexistent paths return 404."""
