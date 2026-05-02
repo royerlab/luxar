@@ -8,6 +8,7 @@
 #import <torch/torch.h>
 
 #include <algorithm>
+#include <cmath>
 #include <dlfcn.h>
 #include <limits>
 #include <map>
@@ -360,8 +361,12 @@ torch::Tensor dispatch_forward_splat_3d(
 
         uint32_t n_splats = static_cast<uint32_t>(centers.size(0));
         [enc setBytes:&n_splats length:sizeof(uint32_t) atIndex:5];
+        float shift_C = std::exp(-0.5f * truncate * truncate);
+        float inv_one_minus_C = 1.0f / (1.0f - shift_C);
         [enc setBytes:&truncate length:sizeof(float) atIndex:6];
         [enc setBytes:&intensity_floor length:sizeof(float) atIndex:7];
+        [enc setBytes:&shift_C length:sizeof(float) atIndex:8];
+        [enc setBytes:&inv_one_minus_C length:sizeof(float) atIndex:9];
 
         MTLSize groups = MTLSizeMake(n_splats, 1, 1);
         MTLSize threadsPerGroup = MTLSizeMake(kThreadgroupSize, 1, 1);
@@ -436,8 +441,12 @@ std::vector<torch::Tensor> dispatch_backward_splat_3d(
 
     uint32_t n_splats = static_cast<uint32_t>(N);
     [enc setBytes:&n_splats length:sizeof(uint32_t) atIndex:8];
+    float shift_C = std::exp(-0.5f * truncate * truncate);
+    float inv_one_minus_C = 1.0f / (1.0f - shift_C);
     [enc setBytes:&truncate length:sizeof(float) atIndex:9];
     [enc setBytes:&intensity_floor length:sizeof(float) atIndex:10];
+    [enc setBytes:&shift_C length:sizeof(float) atIndex:11];
+    [enc setBytes:&inv_one_minus_C length:sizeof(float) atIndex:12];
 
     MTLSize groups = MTLSizeMake(n_splats, 1, 1);
     MTLSize threadsPerGroup = MTLSizeMake(kThreadgroupSize, 1, 1);

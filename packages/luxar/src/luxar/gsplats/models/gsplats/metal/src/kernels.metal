@@ -211,6 +211,8 @@ kernel void rasterize_forward_splat_centric_3d(
     constant uint& n_splats [[buffer(5)]],
     constant float& truncate [[buffer(6)]],
     constant float& intensity_floor [[buffer(7)]],
+    constant float& shift_C [[buffer(8)]],
+    constant float& inv_one_minus_C [[buffer(9)]],
     uint3 tg_pos [[threadgroup_position_in_grid]],
     uint tid [[thread_index_in_threadgroup]]
 ) {
@@ -262,8 +264,8 @@ kernel void rasterize_forward_splat_centric_3d(
         float sigma_x = fast::sqrt(l20 * l20 + l21 * l21 + l22 * l22);
         s_amp = amps[splat_id];
 
-        s_shift_C = shift_c(truncate);
-        s_inv_one_minus_C = 1.0f / (1.0f - s_shift_C);
+        s_shift_C = shift_C;
+        s_inv_one_minus_C = inv_one_minus_C;
         s_truncate_sq = effective_truncate_sq(
             truncate, s_amp, intensity_floor, s_shift_C, s_inv_one_minus_C);
         float t_eff = effective_truncation(
@@ -341,6 +343,8 @@ kernel void rasterize_backward_splat_centric_3d(
     constant uint& n_splats [[buffer(8)]],
     constant float& truncate [[buffer(9)]],
     constant float& intensity_floor [[buffer(10)]],
+    constant float& shift_C [[buffer(11)]],
+    constant float& inv_one_minus_C [[buffer(12)]],
     uint3 tg_pos [[threadgroup_position_in_grid]],
     uint tid [[thread_index_in_threadgroup]]
 ) {
@@ -403,8 +407,8 @@ kernel void rasterize_backward_splat_centric_3d(
         float sigma_x = fast::sqrt(l20 * l20 + l21 * l21 + l22 * l22);
         s_amp = amps[splat_id];
 
-        s_shift_C = shift_c(truncate);
-        s_inv_one_minus_C = 1.0f / (1.0f - s_shift_C);
+        s_shift_C = shift_C;
+        s_inv_one_minus_C = inv_one_minus_C;
         s_truncate_sq = effective_truncate_sq(
             truncate, s_amp, intensity_floor, s_shift_C, s_inv_one_minus_C);
         float t_eff = effective_truncation(
