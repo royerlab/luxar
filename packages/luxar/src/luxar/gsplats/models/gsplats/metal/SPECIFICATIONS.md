@@ -272,6 +272,7 @@ GaussianSplatModelMetal(
     truncate=3.0,
     intensity_floor=1e-5,
     use_fp16=False,           # rejected if True
+    use_metal_conic=False,       # retained helper flag; hot path computes conics inline
     voxel_size=None,
     device="mps",
 )
@@ -287,6 +288,7 @@ output = MetalSplatFunction.apply(
     shape,
     truncate,
     intensity_floor,
+    use_metal_conic,
 )
 ```
 
