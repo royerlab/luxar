@@ -56,6 +56,21 @@ def _extension_is_stale(extension: Path) -> bool:
     )
 
 
+def _mark_build_outputs_fresh(extension: Path) -> None:
+    """Touch generated artifacts so distutils no-op rebuilds do not stay stale."""
+    sources = [src for src in _extension_sources() if src.exists()]
+    kernels = _SRC_DIR / "kernels.metal"
+    if kernels.exists():
+        sources.append(kernels)
+    newest_source_mtime = max((src.stat().st_mtime for src in sources), default=0.0)
+    fresh_mtime = max(newest_source_mtime + 1e-3, extension.stat().st_mtime)
+    os.utime(extension, (fresh_mtime, fresh_mtime))
+
+    metallib = _SRC_DIR / "default.metallib"
+    if metallib.exists():
+        os.utime(metallib, (fresh_mtime, fresh_mtime))
+
+
 def _check_xcode_setup() -> Tuple[bool, str]:
     """
     Check if Xcode is properly set up for Metal compilation.
@@ -229,6 +244,7 @@ def _auto_build_extension() -> Tuple[bool, str]:
             # Verify build succeeded
             built_extension = _find_extension()
             if built_extension and built_extension.exists():
+                _mark_build_outputs_fresh(built_extension)
                 msg = _BUILD_SUCCESS_MESSAGE.format(extension_path=built_extension)
                 aprint(msg)
                 return True, msg
