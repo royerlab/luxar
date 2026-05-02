@@ -10,8 +10,7 @@
 #include <metal_atomic>
 using namespace metal;
 
-#define FORWARD_THREADGROUP_SIZE 256u
-#define BACKWARD_THREADGROUP_SIZE 64u
+#define THREADGROUP_SIZE 64u
 
 // ============================================================================
 // Helpers
@@ -299,7 +298,7 @@ kernel void rasterize_forward_splat_centric_3d(
     uint H = shape_dhw.y;
     uint W = shape_dhw.z;
 
-    for (int local = int(tid); local < total; local += int(FORWARD_THREADGROUP_SIZE)) {
+    for (int local = int(tid); local < total; local += int(THREADGROUP_SIZE)) {
         int z = s_lo[0] + local / extent_yx;
         int rem = local - (z - s_lo[0]) * extent_yx;
         int y = s_lo[1] + rem / s_extent[2];
@@ -365,9 +364,9 @@ kernel void rasterize_backward_splat_centric_3d(
     threadgroup int s_extent[3];
     threadgroup int s_total_voxels = 0;
 
-    threadgroup float tg_amp[BACKWARD_THREADGROUP_SIZE];
-    threadgroup float tg_centers[BACKWARD_THREADGROUP_SIZE * 3];
-    threadgroup float tg_conic[BACKWARD_THREADGROUP_SIZE * 6];
+    threadgroup float tg_amp[THREADGROUP_SIZE];
+    threadgroup float tg_centers[THREADGROUP_SIZE * 3];
+    threadgroup float tg_conic[THREADGROUP_SIZE * 6];
 
     if (tid == 0) {
         int base3 = int(splat_id) * 3;
@@ -450,7 +449,7 @@ kernel void rasterize_backward_splat_centric_3d(
         uint H = shape_dhw.y;
         uint W = shape_dhw.z;
 
-        for (int local = int(tid); local < total; local += int(BACKWARD_THREADGROUP_SIZE)) {
+        for (int local = int(tid); local < total; local += int(THREADGROUP_SIZE)) {
             int z = s_lo[0] + local / extent_yx;
             int rem = local - (z - s_lo[0]) * extent_yx;
             int y = s_lo[1] + rem / s_extent[2];
@@ -517,7 +516,7 @@ kernel void rasterize_backward_splat_centric_3d(
 
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
-    for (uint stride = BACKWARD_THREADGROUP_SIZE >> 1; stride > 0; stride >>= 1) {
+    for (uint stride = THREADGROUP_SIZE >> 1; stride > 0; stride >>= 1) {
         if (tid < stride) {
             tg_amp[tid] += tg_amp[tid + stride];
             tg_centers[tid * 3 + 0] += tg_centers[(tid + stride) * 3 + 0];
