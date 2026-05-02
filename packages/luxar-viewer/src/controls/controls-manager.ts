@@ -41,11 +41,20 @@ interface ControlsManagerEventMap {
   end: {};
 }
 
+type ActiveControls = LuxarOrbitControls | LuxarFlyControls;
+
+interface ForwardedControlHandlers {
+  change: () => void;
+  start: () => void;
+  end: () => void;
+}
+
 export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventMap> {
   private camera: LuxarCamera;
   private domElement: HTMLElement;
   // Current control instance
-  private currentControls: LuxarOrbitControls | LuxarFlyControls | null = null;
+  private currentControls: ActiveControls | null = null;
+  private currentControlHandlers: ForwardedControlHandlers | null = null;
   private currentType: ControlType = 'orbit';
 
   // Configuration - uses defaults from config
@@ -147,7 +156,7 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   }
 
   /** Get current controls instance. */
-  public getControls(): LuxarOrbitControls | LuxarFlyControls | null {
+  public getControls(): ActiveControls | null {
     return this.currentControls;
   }
 
@@ -183,13 +192,9 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
     // Shift+scroll = view-axis rotation (roll)
     controls.enableViewAxisRotation();
 
-    // Event forwarding
-    controls.addEventListener('change', () => this.dispatchEvent({ type: 'change' }));
-    controls.addEventListener('start', () => this.dispatchEvent({ type: 'start' }));
-    controls.addEventListener('end', () => this.dispatchEvent({ type: 'end' }));
-
     // Target is set in restoreCameraState() after creation
     this.currentControls = controls;
+    this.attachControlEventForwarders(controls);
     this.clock.getDelta();
   }
 
@@ -205,11 +210,8 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
       externalInputManagement: true,
     });
 
-    controls.addEventListener('change', () => this.dispatchEvent({ type: 'change' }));
-    controls.addEventListener('start', () => this.dispatchEvent({ type: 'start' }));
-    controls.addEventListener('end', () => this.dispatchEvent({ type: 'end' }));
-
     this.currentControls = controls;
+    this.attachControlEventForwarders(controls);
     this.clock.start();
   }
 
@@ -241,11 +243,8 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
     controls.enableViewAxisRotation();
 
     // Target is set in restoreCameraState() after creation
-    controls.addEventListener('change', () => this.dispatchEvent({ type: 'change' }));
-    controls.addEventListener('start', () => this.dispatchEvent({ type: 'start' }));
-    controls.addEventListener('end', () => this.dispatchEvent({ type: 'end' }));
-
     this.currentControls = controls;
+    this.attachControlEventForwarders(controls);
     this.clock.getDelta();
   }
 
@@ -284,8 +283,27 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
     // Fly controls automatically initialize from current camera state
   }
 
+  private attachControlEventForwarders(controls: ActiveControls): void {
+    const handlers: ForwardedControlHandlers = {
+      change: () => this.dispatchEvent({ type: 'change' }),
+      start: () => this.dispatchEvent({ type: 'start' }),
+      end: () => this.dispatchEvent({ type: 'end' }),
+    };
+
+    controls.addEventListener('change', handlers.change);
+    controls.addEventListener('start', handlers.start);
+    controls.addEventListener('end', handlers.end);
+    this.currentControlHandlers = handlers;
+  }
+
   private disposeCurrentControls(): void {
     if (this.currentControls) {
+      if (this.currentControlHandlers) {
+        this.currentControls.removeEventListener('change', this.currentControlHandlers.change);
+        this.currentControls.removeEventListener('start', this.currentControlHandlers.start);
+        this.currentControls.removeEventListener('end', this.currentControlHandlers.end);
+        this.currentControlHandlers = null;
+      }
       this.currentControls.dispose();
       this.currentControls = null;
     }
