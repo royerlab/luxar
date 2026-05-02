@@ -32,8 +32,9 @@ The build compiles:
 1. `src/kernels.metal` -> `src/default.metallib`
 2. `src/bindings.mm` -> `metal_splatting_backend*.so`
 
-The package passes the absolute `default.metallib` path into the native extension
-and invalidates stale extension/metallib artifacts when sources change.
+The package passes the absolute `default.metallib` path into the native extension,
+invalidates stale extension/metallib artifacts when sources change, and touches
+outputs after no-op distutils rebuilds so repeated imports do not auto-compile.
 
 ## Architecture
 
