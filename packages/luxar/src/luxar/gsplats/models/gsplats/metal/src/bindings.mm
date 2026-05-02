@@ -334,12 +334,11 @@ torch::Tensor dispatch_forward_splat_3d(
     // Zero the output in the same command buffer as the splat scatter pass.
     {
         id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
-        [enc setComputePipelineState:ctx->getPipeline("zero_float_buffer4")];
+        [enc setComputePipelineState:ctx->getPipeline("zero_float_buffer")];
         setBufferWithOffset(enc, output, 0);
         [enc setBytes:&total_pixels length:sizeof(uint32_t) atIndex:1];
-        uint32_t zero_threads = (total_pixels + 3u) / 4u;
-        MTLSize threads = MTLSizeMake(zero_threads, 1, 1);
-        MTLSize group = MTLSizeMake(std::min<uint32_t>(kThreadgroupSize, zero_threads), 1, 1);
+        MTLSize threads = MTLSizeMake(total_pixels, 1, 1);
+        MTLSize group = MTLSizeMake(std::min<uint32_t>(kThreadgroupSize, total_pixels), 1, 1);
         [enc dispatchThreads:threads threadsPerThreadgroup:group];
         [enc endEncoding];
     }
