@@ -31,6 +31,30 @@ class ValidationError(ValueError):
         super().__init__(full_message)
 
 
+def _validate_numeric_finite_values(array: NDArray[Any], context: str) -> None:
+    """Validate that an array has numeric dtype and contains only finite values."""
+    if not np.issubdtype(array.dtype, np.number):
+        raise ValidationError(
+            f"{context}: Expected numeric array, got dtype {array.dtype}",
+            "Convert your data to a numeric dtype such as np.float32",
+        )
+
+    try:
+        finite_mask = np.isfinite(array)
+    except TypeError as exc:
+        raise ValidationError(
+            f"{context}: Expected numeric finite values, got dtype {array.dtype}",
+            "Convert your data to a numeric dtype and remove invalid values",
+        ) from exc
+
+    if not bool(np.all(finite_mask)):
+        invalid_count = int(np.size(array) - np.count_nonzero(finite_mask))
+        raise ValidationError(
+            f"{context}: Contains {invalid_count} NaN or Inf value(s)",
+            "Remove or replace invalid values before writing, e.g. np.nan_to_num(data)",
+        )
+
+
 def validate_positions_for_writing(
     positions: NDArray[Any], context: str = "positions"
 ) -> Tuple[int, int]:
@@ -83,6 +107,8 @@ def validate_positions_for_writing(
             f"{context}: Points have 0 dimensions",
             "Each point must have at least 1 dimension (e.g., 1D, 2D, 3D)",
         )
+
+    _validate_numeric_finite_values(positions, context)
 
     if n_dims > 10:
         import warnings
@@ -141,6 +167,8 @@ def validate_colors_for_writing(
             raise ValidationError(
                 f"{context}: Expected shape {expected_shape} or {broadcast_shape}, got {colors.shape}"
             )
+
+    _validate_numeric_finite_values(colors, context)
 
     # Check for invalid values
     if np.any(colors < 0):
@@ -201,6 +229,8 @@ def validate_radii_for_writing(
             f"Provide exactly {n_points} radii values or use shape (1,) for broadcasting",
         )
 
+    _validate_numeric_finite_values(radii, context)
+
     # Check for invalid values
     if np.any(radii <= 0):
         min_val: float = float(np.min(radii))
@@ -254,6 +284,8 @@ def validate_sharpness_for_writing(
             f"number of points ({n_points}) and is not 1 (broadcast)",
             f"Provide exactly {n_points} sharpness values or use shape (1,) for broadcasting",
         )
+
+    _validate_numeric_finite_values(sharpness, context)
 
     # Check for invalid values
     if np.any(sharpness <= 0):

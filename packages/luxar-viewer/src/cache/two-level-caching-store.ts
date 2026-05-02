@@ -34,6 +34,7 @@ export class TwoLevelCachingStore implements AsyncReadable {
 
   private static readonly DEFAULT_L1_SIZE = config.cache.l1MaxSizeMB * 1024 * 1024;
   private static readonly DEFAULT_L2_SIZE = config.cache.l2MaxSizeMB * 1024 * 1024;
+  private static readonly validationQueues = new Map<string, Promise<void>>();
 
   // Invalidation callbacks (e.g., L0 DecompressedChunkCache clearing on L1/L2 invalidation)
   private invalidationCallbacks: (() => void)[] = [];
@@ -152,8 +153,10 @@ export class TwoLevelCachingStore implements AsyncReadable {
       await this.clearAll();
     }
 
-    // Validate cache using content hash
-    await this.validateCache();
+    // Validate cache using content hash. Validation is serialized per dataset
+    // ID so rapid same-URL dataset switches cannot let an older validation
+    // finish after a newer one and restore stale content_hash metadata.
+    await this.validateCache(datasetId);
   }
 
   /**
@@ -303,7 +306,23 @@ export class TwoLevelCachingStore implements AsyncReadable {
   /**
    * Validate cache using content hash. Clears cache if content changed.
    */
-  private async validateCache(): Promise<void> {
+  private async validateCache(datasetId: string): Promise<void> {
+    const previousValidation = TwoLevelCachingStore.validationQueues.get(datasetId);
+    const validation = (previousValidation ?? Promise.resolve())
+      .catch(() => undefined)
+      .then(() => this.doValidateCache());
+
+    TwoLevelCachingStore.validationQueues.set(datasetId, validation);
+    try {
+      await validation;
+    } finally {
+      if (TwoLevelCachingStore.validationQueues.get(datasetId) === validation) {
+        TwoLevelCachingStore.validationQueues.delete(datasetId);
+      }
+    }
+  }
+
+  private async doValidateCache(): Promise<void> {
     try {
       // Fetch current content_hash directly from server (bypass cache)
       const remoteHash = await this.getRemoteContentHash();

@@ -348,6 +348,55 @@ describe('TwoLevelCachingStore', () => {
       // If validation used cache, fetchCount would be unchanged
       expect(fetchCount).toBeGreaterThan(initialFetchCount);
     });
+
+    it('serializes concurrent validations for the same dataset id', async () => {
+      // Without a per-dataset validation queue, the second validation can finish
+      // first and set a newer hash, then the slower first validation can finish
+      // later and restore stale metadata.
+      const l2Store = (store as any).l2Store;
+      l2Store.setContentHash('initial-hash');
+
+      let releaseFirstFetch!: () => void;
+      const firstFetchGate = new Promise<void>((resolve) => {
+        releaseFirstFetch = resolve;
+      });
+      let zattrsFetches = 0;
+
+      global.fetch = vi.fn(async (url: string) => {
+        if (url.includes('.zattrs')) {
+          const fetchIndex = zattrsFetches++;
+          if (fetchIndex === 0) {
+            await firstFetchGate;
+          }
+          const contentHash = fetchIndex === 0 ? 'older-hash' : 'newer-hash';
+          return {
+            ok: true,
+            async arrayBuffer() {
+              return new TextEncoder().encode(JSON.stringify({ content_hash: contentHash })).buffer;
+            },
+          } as Response;
+        }
+        return {
+          ok: true,
+          async arrayBuffer() {
+            return new Uint8Array([1, 2, 3]).buffer;
+          },
+        } as Response;
+      }) as any;
+
+      const firstValidation = (store as any).validateCache('same-dataset');
+      const secondValidation = (store as any).validateCache('same-dataset');
+
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(zattrsFetches).toBe(1);
+
+      releaseFirstFetch();
+      await Promise.all([firstValidation, secondValidation]);
+
+      expect(zattrsFetches).toBe(2);
+      expect(l2Store.getContentHash()).toBe('newer-hash');
+    });
   });
 
   describe('Cache Management', () => {

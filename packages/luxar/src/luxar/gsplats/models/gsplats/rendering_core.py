@@ -109,12 +109,11 @@ def cached_base_and_offsets(
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Returns:
-      base: (d, P) float tensor with coordinates [0..h_i-1] mesh, flattened.
+      base: (d, P) float tensor with integer voxel coordinates [0..h_i-1], flattened.
       lin_offsets: (P,) long tensor of row-major flat offsets for this box_shape.
 
-    Note: Uses integer coordinates [0, 1, 2, ...] for backwards compatibility.
-    The CUDA backend uses pixel-centered coordinates (i + 0.5) which is
-    more physically accurate but produces small numerical differences.
+    Note: Luxar currently samples Gaussian splats at integer voxel coordinates.
+    Keep this convention in sync with the CUDA backend in kernels_core.cuh.
     """
     key = (
         device.type,

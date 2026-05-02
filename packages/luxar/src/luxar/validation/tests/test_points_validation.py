@@ -37,6 +37,51 @@ def test_mismatched_colors(tmp_path) -> None:
             scene.add_points("Nope", pos, col, parent=scene)
 
 
+@pytest.mark.parametrize(
+    "field,kwargs,error_pattern",
+    [
+        (
+            "positions_nan",
+            {"positions": np.array([[0.0, np.nan, 1.0]], dtype=np.float32)},
+            "positions: Contains 1 NaN or Inf",
+        ),
+        (
+            "positions_inf",
+            {"positions": np.array([[0.0, np.inf, 1.0]], dtype=np.float32)},
+            "positions: Contains 1 NaN or Inf",
+        ),
+        (
+            "colors_nan",
+            {"colors": np.array([[1.0, np.nan, 0.0]], dtype=np.float32)},
+            "colors: Contains 1 NaN or Inf",
+        ),
+        (
+            "radii_inf",
+            {"radii": np.array([np.inf], dtype=np.float32)},
+            "radii: Contains 1 NaN or Inf",
+        ),
+        (
+            "sharpness_nan",
+            {"sharpness": np.array([np.nan], dtype=np.float32)},
+            "sharpness: Contains 1 NaN or Inf",
+        ),
+    ],
+)
+def test_non_finite_point_attributes_rejected(
+    tmp_path, field: str, kwargs: dict[str, np.ndarray], error_pattern: str
+) -> None:
+    """NaN/Inf values should fail before corrupting stored Zarr arrays."""
+    store = tmp_path / f"bad_{field}.zarr"
+    positions = kwargs.pop(
+        "positions", np.array([[0.0, 1.0, 2.0]], dtype=np.float32)
+    )
+
+    with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:
+        compiler.create_scene(dimensions=Dimensions.default_3d())
+        with pytest.raises(ValidationError, match=error_pattern):
+            compiler.write_points("bad", positions, **kwargs)
+
+
 # =============================================================================
 # Radii Validation Tests (Parametrized)
 # =============================================================================
