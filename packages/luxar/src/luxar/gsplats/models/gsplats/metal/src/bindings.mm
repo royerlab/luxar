@@ -26,7 +26,6 @@ struct uint3 {
 };
 
 constexpr uint32_t kThreadgroupSize = 64;
-constexpr uint32_t kZeroThreadgroupSize = 128;
 
 // ============================================================================
 // Metal Context Management
@@ -339,7 +338,7 @@ torch::Tensor dispatch_forward_splat_3d(
         setBufferWithOffset(enc, output, 0);
         [enc setBytes:&total_pixels length:sizeof(uint32_t) atIndex:1];
         MTLSize threads = MTLSizeMake(total_pixels, 1, 1);
-        MTLSize group = MTLSizeMake(std::min<uint32_t>(kZeroThreadgroupSize, total_pixels), 1, 1);
+        MTLSize group = MTLSizeMake(std::min<uint32_t>(kThreadgroupSize, total_pixels), 1, 1);
         [enc dispatchThreads:threads threadsPerThreadgroup:group];
         [enc endEncoding];
     }
