@@ -318,6 +318,9 @@ kernel void rasterize_forward_splat_centric_3d(
 
         float intensity = gaussian_intensity(
             dist_sq, s_amp, s_shift_C, s_inv_one_minus_C);
+        if (intensity < intensity_floor) {
+            continue;
+        }
 
         uint out_idx = uint(z) * H * W + uint(y) * W + uint(x);
         atomic_add_float(&output[out_idx], intensity);
@@ -474,6 +477,9 @@ kernel void rasterize_backward_splat_centric_3d(
 
             float intensity = gaussian_intensity(
                 dist_sq, s_amp, s_shift_C, s_inv_one_minus_C);
+            if (intensity < intensity_floor) {
+                continue;
+            }
 
             local_amp += dL_dI * intensity / max(s_amp, 1e-10f);
 
