@@ -268,7 +268,8 @@ kernel void rasterize_forward_splat_centric_3d(
         s_inv_one_minus_C = inv_one_minus_C;
         s_truncate_sq = effective_truncate_sq(
             truncate, s_amp, intensity_floor, s_shift_C, s_inv_one_minus_C);
-        float t_eff = fast::sqrt(s_truncate_sq);
+        float t_eff = effective_truncation(
+            truncate, s_amp, intensity_floor, s_shift_C, s_inv_one_minus_C);
 
         compute_aabb_3d_from_sigma(
             s_lo,
@@ -410,7 +411,8 @@ kernel void rasterize_backward_splat_centric_3d(
         s_inv_one_minus_C = inv_one_minus_C;
         s_truncate_sq = effective_truncate_sq(
             truncate, s_amp, intensity_floor, s_shift_C, s_inv_one_minus_C);
-        float t_eff = fast::sqrt(s_truncate_sq);
+        float t_eff = effective_truncation(
+            truncate, s_amp, intensity_floor, s_shift_C, s_inv_one_minus_C);
 
         compute_aabb_3d_from_sigma(
             s_lo,
