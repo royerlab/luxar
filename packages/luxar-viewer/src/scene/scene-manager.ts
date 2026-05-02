@@ -330,6 +330,7 @@ export class SceneManager extends THREE.EventDispatcher<{
           this.postProcessing.dispose();
           this.setupPostProcessing();
         }
+        this.markSceneResourcesDirtyForContextRestore();
         this.updateRendererSize();
 
         // Trigger a render to force Three.js material/program resource recreation.
@@ -348,6 +349,44 @@ export class SceneManager extends THREE.EventDispatcher<{
     canvas.addEventListener('webglcontextrestored', this.contextRestoredHandler, false);
 
     log.info(Modules.SCENE_MANAGER, 'WebGL context loss handling initialized');
+  }
+
+  /**
+   * Mark scene GPU resources dirty after WebGL context restoration.
+   *
+   * Three.js will recreate buffers/programs lazily, but explicitly marking
+   * attributes/materials dirty makes the recovery path deterministic for custom
+   * shader materials, instanced geometry, and pooled buffer attributes.
+   */
+  private markSceneResourcesDirtyForContextRestore(): void {
+    this.scene.traverse((obj) => {
+      if (
+        obj instanceof THREE.Mesh ||
+        obj instanceof THREE.Points ||
+        obj instanceof THREE.InstancedMesh
+      ) {
+        const geometry = obj.geometry;
+        if (geometry) {
+          const attributes = geometry.attributes as Record<
+            string,
+            THREE.BufferAttribute | THREE.InterleavedBufferAttribute
+          >;
+          for (const attribute of Object.values(attributes)) {
+            attribute.needsUpdate = true;
+          }
+          if (geometry.index) {
+            geometry.index.needsUpdate = true;
+          }
+        }
+
+        const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
+        for (const material of materials) {
+          if (material) {
+            material.needsUpdate = true;
+          }
+        }
+      }
+    });
   }
 
   /**
