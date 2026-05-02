@@ -198,7 +198,7 @@ class MetalSplatFunction(torch.autograd.Function):
 
         # L -> conic. The splat-centric kernels use Luxar/PyTorch's native
         # [Z, Y, X] coordinate order and row-major packed upper triangle.
-        Ls_for_conic = Ls.detach().requires_grad_(True)
+        Ls_for_conic = Ls.detach()
         if use_metal_conic:
             conic_zyx = metal_splatting_backend.compute_conic_metal(
                 Ls.contiguous()
