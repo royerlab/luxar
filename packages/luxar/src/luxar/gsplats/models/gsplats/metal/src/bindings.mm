@@ -309,13 +309,13 @@ torch::Tensor compute_conic_metal(torch::Tensor Ls) {
 
 torch::Tensor dispatch_forward_splat_3d(
     torch::Tensor centers,
-    torch::Tensor conic,
+    torch::Tensor Ls,
     torch::Tensor amps,
     std::vector<int64_t> shape,
     float truncate,
     float intensity_floor
 ) {
-    validate_splat_tensors_3d(centers, conic, amps, shape);
+    validate_splat_L_tensors_3d(centers, Ls, amps, shape);
 
     auto output = torch::empty(shape, centers.options().dtype(torch::kFloat32));
     int64_t total_pixels_i64 = shape_numel(shape);
@@ -347,7 +347,7 @@ torch::Tensor dispatch_forward_splat_3d(
         [enc setComputePipelineState:ctx->getPipeline("rasterize_forward_splat_centric_3d")];
 
         setBufferWithOffset(enc, centers, 0);
-        setBufferWithOffset(enc, conic, 1);
+        setBufferWithOffset(enc, Ls, 1);
         setBufferWithOffset(enc, amps, 2);
         setBufferWithOffset(enc, output, 3);
 
