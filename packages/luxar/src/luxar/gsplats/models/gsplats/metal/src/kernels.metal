@@ -345,7 +345,6 @@ kernel void rasterize_backward_splat_centric_3d(
     constant float& intensity_floor [[buffer(10)]],
     constant float& shift_C [[buffer(11)]],
     constant float& inv_one_minus_C [[buffer(12)]],
-    constant uint& grad_output_broadcast [[buffer(13)]],
     uint3 tg_pos [[threadgroup_position_in_grid]],
     uint tid [[thread_index_in_threadgroup]]
 ) {
@@ -457,9 +456,7 @@ kernel void rasterize_backward_splat_centric_3d(
             int x = s_lo[2] + rem - (y - s_lo[1]) * s_extent[2];
 
             uint out_idx = uint(z) * H * W + uint(y) * W + uint(x);
-            float dL_dI = grad_output_broadcast != 0u
-                ? grad_output[0]
-                : grad_output[out_idx];
+            float dL_dI = grad_output[out_idx];
 
             float dz = float(z) - s_center[0];
             float dy = float(y) - s_center[1];
