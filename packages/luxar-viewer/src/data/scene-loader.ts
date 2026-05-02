@@ -22,7 +22,11 @@ import { ZarrSceneAttrs, ZarrNodeAttrs, hasContentsMethod } from '../types/zarr'
 import { updateInstancedLinesMesh } from '../rendering/line-geometry';
 import { DataMonitorManager } from './data-monitor-manager';
 import { ArrayRefRegistry } from './array-decoder';
-import { ViewStateManager, type SceneDimensions, type DimensionMetadata } from './view-state-manager';
+import {
+  ViewStateManager,
+  type SceneDimensions,
+  type DimensionMetadata,
+} from './view-state-manager';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { config as appConfig } from '../config';
 import { TwoLevelCachingStore, ChunkPrefetcher, DecompressedChunkCache } from '../cache';
@@ -1344,10 +1348,8 @@ export class SceneLoader {
       );
       this._gpuBufferPool.updateLinesGeometry(geometry, processed, processed.segmentCount);
       mesh.geometry = geometry;
-      mesh.count = processed.segmentCount;
     } else {
       updateInstancedLinesMesh(mesh, processed);
-      mesh.count = processed.segmentCount;
     }
 
     if (isLinesUserData(mesh.userData)) {

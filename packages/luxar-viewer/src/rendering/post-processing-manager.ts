@@ -1840,7 +1840,13 @@ export class PostProcessingManager {
       data = halfData;
     }
 
-    const texture = new THREE.DataTexture(data, width, height, THREE.RGBAFormat, exrType);
+    const texture = new THREE.DataTexture(
+      data as BufferSource,
+      width,
+      height,
+      THREE.RGBAFormat,
+      exrType
+    );
     texture.needsUpdate = true;
 
     const exporter = new EXRExporter();

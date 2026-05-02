@@ -4,6 +4,10 @@
   "description": "GPU-accelerated WebGL renderer for nD scientific datasets",
   "license": "BSD-3-Clause",
   "type": "module",
+  "engines": {
+    "node": ">=20.19.0",
+    "pnpm": ">=9.0.0"
+  },
   "main": "./dist/lib/luxar-viewer.js",
   "module": "./dist/lib/luxar-viewer.js",
   "types": "./dist/lib/types/index.d.ts",
@@ -70,7 +74,7 @@
     "@playwright/test": "^1.59.1",
     "@types/node": "^24.10.1",
     "@types/stats.js": "^0.17.4",
-    "@types/three": "^0.178.1",
+    "@types/three": "^0.163.0",
     "@typescript-eslint/eslint-plugin": "^8.59.1",
     "@typescript-eslint/parser": "^8.59.1",
     "@vitest/coverage-v8": "^4.1.5",
