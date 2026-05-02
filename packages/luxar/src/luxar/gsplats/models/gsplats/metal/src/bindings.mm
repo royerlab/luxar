@@ -385,7 +385,6 @@ std::vector<torch::Tensor> dispatch_backward_splat_3d(
     auto d_amps = torch::empty({N}, opts);
 
     MetalContext* ctx = metalContext();
-    torch::mps::synchronize();
 
     id<MTLCommandBuffer> cmd = [ctx->queue commandBuffer];
     id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
