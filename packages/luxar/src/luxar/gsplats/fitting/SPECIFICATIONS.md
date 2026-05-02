@@ -762,6 +762,10 @@ return OptimizationResults(
 - **Smart Logging**: Only log improvements > 5% to reduce noise
 - **Deep Copy**: Use `.detach().clone()` to avoid interfering with gradients
 - **Restoration**: Always restore best state at end, not final state
+- **Final Scoring**: After restoring the selected tensors into the model, recompute
+  `best_loss`, `best_max_abs_error`, and `best_rel_l2` from that exact restored
+  state. Periodic in-loop evaluation metrics are monitoring values only and may
+  be stale because full evaluation is intentionally skipped on most iterations.
 
 **Convergence Criterion**:
 ```python
