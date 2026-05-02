@@ -32,6 +32,7 @@ vi.mock('three', async () => {
     setClearColor() {}
     clear() {}
     render() {}
+    resetState() {}
     dispose() {}
     getContext() {
       return {
@@ -373,7 +374,6 @@ describe('SceneManager', () => {
       // Should call doUpdateSize directly (immediate sizing, no debounce)
       expect(doUpdateSizeSpy).toHaveBeenCalledWith(window.innerWidth, window.innerHeight);
     });
-
   });
 
   describe('scene loading', () => {
@@ -470,6 +470,27 @@ describe('SceneManager', () => {
 
       // Second dispose should not throw
       expect(() => sceneManager.dispose()).not.toThrow();
+    });
+
+    it('should mark geometry attributes and materials dirty on context restore', async () => {
+      const geometry = new THREE.BufferGeometry();
+      const position = new THREE.BufferAttribute(new Float32Array([0, 0, 0]), 3);
+      geometry.setAttribute('position', position);
+      const material = new THREE.MeshBasicMaterial();
+      const mesh = new THREE.Mesh(geometry, material);
+      sceneManager.scene.add(mesh);
+      const initialPositionVersion = position.version;
+      const initialMaterialVersion = material.version;
+
+      const restoredHandler = mockCanvas.addEventListener.mock.calls.find(
+        (call) => call[0] === 'webglcontextrestored'
+      )?.[1] as ((event: Event) => Promise<void>) | undefined;
+
+      expect(restoredHandler).toBeDefined();
+      await restoredHandler?.(new Event('webglcontextrestored'));
+
+      expect(position.version).toBeGreaterThan(initialPositionVersion);
+      expect(material.version).toBeGreaterThan(initialMaterialVersion);
     });
   });
 
