@@ -220,29 +220,24 @@ class MetalSplatFunction(torch.autograd.Function):
         if output.shape != torch.Size(shape):
             output = output.view(shape)
 
-        ctx.save_for_backward(centers, Ls_for_conic, conic_zyx, amps)
+        ctx.save_for_backward(centers, Ls_for_conic, amps)
         return output
 
     @staticmethod
     def backward(
         ctx: Any, grad_output: torch.Tensor
     ) -> Tuple[Optional[torch.Tensor], ...]:
-        centers, Ls_for_conic, conic_zyx, amps = ctx.saved_tensors
+        centers, Ls_for_conic, amps = ctx.saved_tensors
 
-        d_centers, d_conic_zyx, d_amps = metal_splatting_backend.backward_splat_3d(
+        d_centers, d_Ls, d_amps = metal_splatting_backend.backward_splat_3d(
             grad_output.contiguous(),
             centers.contiguous(),
-            conic_zyx.contiguous(),
+            Ls_for_conic.contiguous(),
             amps.contiguous(),
             list(ctx.shape),
             ctx.truncate,
             ctx.intensity_floor,
         )
-
-        # Chain rule: Metal returns d(conic) in the same [Z, Y, X] packed order
-        # as cholesky_to_conic(), so no coordinate reorder is needed. Use a
-        # direct 3D VJP to avoid rebuilding a PyTorch autograd graph here.
-        d_Ls = cholesky_to_conic_vjp_3d(Ls_for_conic, d_conic_zyx)
 
         return d_centers, d_Ls, d_amps, None, None, None, None
 
