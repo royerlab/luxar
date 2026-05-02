@@ -295,7 +295,6 @@ kernel void rasterize_forward_splat_centric_3d(
     int extent_yx = s_extent[1] * s_extent[2];
     uint H = shape_dhw.y;
     uint W = shape_dhw.z;
-    uint HW = H * W;
 
     for (int local = int(tid); local < total; local += int(THREADGROUP_SIZE)) {
         int z = s_lo[0] + local / extent_yx;
@@ -321,7 +320,7 @@ kernel void rasterize_forward_splat_centric_3d(
             continue;
         }
 
-        uint out_idx = uint(z) * HW + uint(y) * W + uint(x);
+        uint out_idx = uint(z) * H * W + uint(y) * W + uint(x);
         atomic_add_float(&output[out_idx], intensity);
     }
 }
@@ -445,7 +444,6 @@ kernel void rasterize_backward_splat_centric_3d(
         int extent_yx = s_extent[1] * s_extent[2];
         uint H = shape_dhw.y;
         uint W = shape_dhw.z;
-        uint HW = H * W;
 
         for (int local = int(tid); local < total; local += int(THREADGROUP_SIZE)) {
             int z = s_lo[0] + local / extent_yx;
@@ -453,7 +451,7 @@ kernel void rasterize_backward_splat_centric_3d(
             int y = s_lo[1] + rem / s_extent[2];
             int x = s_lo[2] + rem - (y - s_lo[1]) * s_extent[2];
 
-            uint out_idx = uint(z) * HW + uint(y) * W + uint(x);
+            uint out_idx = uint(z) * H * W + uint(y) * W + uint(x);
             float dL_dI = grad_output[out_idx];
             if (dL_dI == 0.0f) {
                 continue;
