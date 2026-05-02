@@ -372,7 +372,3 @@ class TestReproducibility:
         """Test default parameters work."""
         result = generate_seeds(simple_2d_image)
         validate_gsplatdata(result, 2, simple_2d_image.shape)
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])

@@ -20,7 +20,7 @@ class BatchJob:
     """Timepoint index (T)."""
 
     channel: int
-    """Channel index (C)."""
+    """Channel index (C). For sliced batches, this is the real flat dataset index."""
 
     tile_index: int
     """Tile index within the spatial grid."""
@@ -30,6 +30,9 @@ class BatchJob:
 
     estimated_wall_seconds: float
     """Estimated wall time in seconds."""
+
+    channel_coords: Tuple[int, ...] = ()
+    """Coordinates in folded channel-like axes, if known."""
 
 
 @dataclass
@@ -109,7 +112,13 @@ class BatchManifest:
     """Actual timepoint indices into the dataset, or None for contiguous 0..n_t-1."""
 
     channel_indices: Optional[List[int]] = None
-    """Actual channel indices into the dataset, or None for contiguous 0..n_c-1."""
+    """Actual flat channel indices into the dataset, or None for contiguous 0..n_c-1."""
+
+    channel_axes: List[str] = field(default_factory=list)
+    """Names of axes folded into the flat channel index."""
+
+    channel_shape: Tuple[int, ...] = ()
+    """Shape of axes folded into the flat channel index."""
 
     # Denoise config
     denoise: bool = False
@@ -180,12 +189,15 @@ def load_manifest(output_dir: Path) -> BatchManifest:
         BatchJob(**{k: v for k, v in j.items() if k in job_fields})
         for j in data.pop("jobs", [])
     ]
-    # Convert spatial_shape back to tuple
+    # Convert tuple-valued fields back to tuples
     data["spatial_shape"] = tuple(data.get("spatial_shape", ()))
+    data["channel_shape"] = tuple(data.get("channel_shape", ()))
 
     # Filter to known fields (forward-compatible with newer manifests)
     known_fields = {f.name for f in dataclasses.fields(BatchManifest)}
     manifest = BatchManifest(**{k: v for k, v in data.items() if k in known_fields})
+    for job in jobs:
+        job.channel_coords = tuple(job.channel_coords)
     manifest.jobs = jobs
     return manifest
 

@@ -23,10 +23,20 @@ import { get } from 'zarrita';
 import { log, Modules } from '../utils/log';
 import type { PointRange } from './data-loader-types';
 
-// Re-export for backward compatibility
 export type { PointRange };
 
 /** Chunk-based spatial index structure */
+interface ChunkSpatialIndexNodeAttrs {
+  ordering?: 'morton' | 'hilbert' | 'none' | string;
+  ordering_dims?: number[];
+  slice_dims?: number[];
+  ordering_bits_per_dim?: number;
+  chunk_size?: number;
+  n_points?: number;
+  n_dims?: number;
+  ndim?: number;
+}
+
 export interface ChunkSpatialIndex {
   /** Metadata from node attributes */
   metadata: {
@@ -117,7 +127,7 @@ export interface ChunkSpatialIndex {
  */
 export async function loadChunkSpatialIndex(
   zarrLocation: zarr.Location<zarr.Readable>,
-  nodeAttrs: any
+  nodeAttrs: ChunkSpatialIndexNodeAttrs
 ): Promise<ChunkSpatialIndex | null> {
   // Skip network probe if spatial ordering is disabled or absent.
   // This matches the guard in gsplats-chunk-spatial-index.ts and
@@ -166,8 +176,7 @@ export async function loadChunkSpatialIndex(
     }
 
     // Validate: ordering_dims + slice_dims should cover all dimensions
-    // Support both new (ordering_dims) and legacy (morton_dims) field names
-    const orderingDims = nodeAttrs.ordering_dims || nodeAttrs.morton_dims || [];
+    const orderingDims = nodeAttrs.ordering_dims || [];
     const sliceDims = nodeAttrs.slice_dims || [];
     const allDims = new Set([...orderingDims, ...sliceDims]);
     if (allDims.size > 0 && allDims.size !== ndim) {
@@ -178,14 +187,13 @@ export async function loadChunkSpatialIndex(
     }
 
     // Create chunk index
-    // Support both new (ordering_*) and legacy (morton_*) field names for backward compatibility
+    const ordering = nodeAttrs.ordering === 'morton' ? 'morton' : 'hilbert';
     const chunkIndex: ChunkSpatialIndex = {
       metadata: {
-        ordering: nodeAttrs.ordering || 'hilbert',
+        ordering,
         ordering_dims: orderingDims,
         slice_dims: sliceDims,
-        ordering_bits_per_dim:
-          nodeAttrs.ordering_bits_per_dim || nodeAttrs.morton_bits_per_dim || 21,
+        ordering_bits_per_dim: nodeAttrs.ordering_bits_per_dim || 21,
         chunk_size: nodeAttrs.chunk_size || 0,
         total_points: nodeAttrs.n_points || 0,
         total_chunks: numChunks,
@@ -200,16 +208,17 @@ export async function loadChunkSpatialIndex(
     );
 
     return chunkIndex;
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
     // No chunk_bounds - this is expected for 3D datasets without spatial ordering
     if (
-      error.message?.includes('404') ||
-      error.message?.includes('Not Found') ||
-      error.message?.includes('Node not found')
+      message.includes('404') ||
+      message.includes('Not Found') ||
+      message.includes('Node not found')
     ) {
       log.info(Modules.SPATIAL_INDEX, 'No chunk_bounds found - dataset has no spatial indexing');
     } else {
-      log.warning(Modules.SPATIAL_INDEX, `Could not load chunk_bounds: ${error.message}`);
+      log.warning(Modules.SPATIAL_INDEX, `Could not load chunk_bounds: ${message}`);
     }
     return null;
   }

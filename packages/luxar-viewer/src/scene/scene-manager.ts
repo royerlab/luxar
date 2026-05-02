@@ -325,15 +325,14 @@ export class SceneManager extends THREE.EventDispatcher<{
         // Force renderer to recreate its internal state
         this.renderer.resetState();
 
-        // Recreate post-processing resources (render targets, shaders)
-        // Note: This is handled by PostProcessingManager's dispose/recreate cycle
-        // For now, we log that resources need recreation
-        log.info(
-          Modules.SCENE_MANAGER,
-          'Post-processing resources will be recreated on next render'
-        );
+        // Recreate post-processing resources that own WebGL render targets.
+        if (this.postProcessing) {
+          this.postProcessing.dispose();
+          this.setupPostProcessing();
+        }
+        this.updateRendererSize();
 
-        // Trigger a render to force resource recreation
+        // Trigger a render to force Three.js material/program resource recreation.
         this.dispatchEvent({ type: 'change' });
 
         hideLoadingIndicator();
@@ -761,7 +760,7 @@ export class SceneManager extends THREE.EventDispatcher<{
         }
       }
 
-      // Handle InstancedMesh objects (legacy) and instanced Mesh objects
+      // Handle both THREE.InstancedMesh and Mesh + InstancedBufferGeometry objects
       // Lines and GSplats use THREE.Mesh with InstancedBufferGeometry (not InstancedMesh)
       // to avoid exceeding WebGL's 16 attribute location limit
       const isLineMesh =

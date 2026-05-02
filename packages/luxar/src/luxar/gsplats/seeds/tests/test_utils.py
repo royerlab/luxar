@@ -241,9 +241,6 @@ class TestDedupe:
         assert deduped.dtype == float
 
 
-if __name__ == "__main__":
-    pytest.main([__file__])
-
 
 class TestCombineSeeds:
     """Test combine_seeds function."""

@@ -323,12 +323,27 @@ class ArrayEncoder:
             if np.any(data < 0):
                 raise ValueError("COLOR semantic type requires non-negative values")
 
+            if np.issubdtype(data.dtype, np.integer):
+                if data.dtype not in (np.dtype("uint8"), np.dtype("uint16")):
+                    raise ValueError(
+                        "Integer COLOR arrays must use dtype uint8 or uint16 "
+                        f"(got {data.dtype})"
+                    )
+                if color_mode not in (None, "sdr"):
+                    raise ValueError(
+                        "Integer COLOR arrays are SDR; color_mode must be None or 'sdr'"
+                    )
+
             # Float colors require explicit color_mode
             if np.issubdtype(data.dtype, np.floating):
                 if color_mode is None:
                     raise ValueError(
                         "Float COLOR arrays require explicit color_mode "
                         "parameter ('sdr' or 'hdr')"
+                    )
+                if color_mode not in ("sdr", "hdr"):
+                    raise ValueError(
+                        f"color_mode must be 'sdr' or 'hdr', got {color_mode!r}"
                     )
                 if color_mode == "sdr":
                     # SDR mode: values must be in [0, 1]

@@ -400,6 +400,46 @@ def generate_hierarchical_transforms_test():
         aprint("  CRITICAL: Verifies transform composition and matrix format")
 
 
+def generate_integer_colors_test():
+    """Test dataset with direct uint8 and uint16 SDR color arrays."""
+    with asection("Generating Integer Colors Test"):
+        output = FIXTURES_DIR / "test_integer_colors.zarr"
+
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
+        positions = np.array(
+            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            dtype=np.float32,
+        )
+        radii = np.full(3, 0.5, dtype=np.float32)
+        colors_u8 = np.array(
+            [[255, 0, 0], [0, 128, 255], [64, 32, 16]], dtype=np.uint8
+        )
+        colors_u16 = np.array(
+            [[65535, 0, 0], [0, 32768, 65535], [16384, 8192, 4096]],
+            dtype=np.uint16,
+        )
+
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.PRECISION,
+            compressor=None,
+            float16_allowed=False,
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+            scene.add_points("uint8_points", positions, colors=colors_u8, radii=radii)
+            scene.add_points("uint16_points", positions, colors=colors_u16, radii=radii)
+
+        aprint(f"✓ Created {output}")
+        aprint("  uint8_points/colors: direct uint8")
+        aprint("  uint16_points/colors: direct uint16")
+
+
 def generate_hdr_colors_test():
     """Test dataset with HDR colors (values > 1.0) to verify float32 color handling.
 
@@ -940,6 +980,9 @@ def main():
         generate_hdr_colors_test()
         aprint("")
 
+        generate_integer_colors_test()
+        aprint("")
+
         generate_sharpness_range_test()
         aprint("")
 
@@ -974,6 +1017,7 @@ def main():
         aprint(f"  {FIXTURES_DIR}/test_4d.zarr")
         aprint(f"  {FIXTURES_DIR}/test_hierarchical_transforms.zarr")
         aprint(f"  {FIXTURES_DIR}/test_hdr_colors.zarr")
+        aprint(f"  {FIXTURES_DIR}/test_integer_colors.zarr")
         aprint(f"  {FIXTURES_DIR}/test_sharpness_range.zarr")
         aprint(f"  {FIXTURES_DIR}/test_log_scalar.zarr")
         aprint(f"  {FIXTURES_DIR}/test_4d_scalar_lut.zarr")

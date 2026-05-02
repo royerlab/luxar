@@ -226,6 +226,7 @@ export class PickingSystem {
 
     this.pickTarget.dispose();
     this.nodeMap.clear();
+    this.postProcessing = null;
     log.info(Modules.RENDERER, 'PickingSystem disposed');
   }
 

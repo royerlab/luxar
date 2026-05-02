@@ -139,24 +139,6 @@ export class AnimationController {
   }
 
   /**
-   * @deprecated Use addPerFrameCallback/removePerFrameCallback instead.
-   * This method is kept for backward compatibility but will be removed.
-   *
-   * Set callback function to execute every frame before rendering.
-   * WARNING: This uses a fixed ID 'legacy' and will conflict with other
-   * code using this method. Prefer addPerFrameCallback for new code.
-   *
-   * @param callback - Function to call each frame, or null to clear callback
-   */
-  setPerFrameCallback(callback: (() => void) | null): void {
-    if (callback) {
-      this.perFrameCallbacks.set('legacy', { callback, continuous: false });
-    } else {
-      this.perFrameCallbacks.delete('legacy');
-    }
-  }
-
-  /**
    * Set the adaptive DPR manager for dynamic resolution scaling.
    *
    * The animation loop will call recordFrame() on the manager each frame

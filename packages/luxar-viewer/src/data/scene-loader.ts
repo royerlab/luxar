@@ -22,7 +22,7 @@ import { ZarrSceneAttrs, ZarrNodeAttrs, hasContentsMethod } from '../types/zarr'
 import { updateInstancedLinesMesh } from '../rendering/line-geometry';
 import { DataMonitorManager } from './data-monitor-manager';
 import { ArrayRefRegistry } from './array-decoder';
-import { ViewStateManager, type SceneDimensions } from './view-state-manager';
+import { ViewStateManager, type SceneDimensions, type DimensionMetadata } from './view-state-manager';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { config as appConfig } from '../config';
 import { TwoLevelCachingStore, ChunkPrefetcher, DecompressedChunkCache } from '../cache';
@@ -50,7 +50,7 @@ import { GPUBufferPool } from '../rendering/gpu-buffer-pool';
 import { invertNdTransformForQuery, computeWorldNdTransform } from './nd-transform';
 import { getEffectiveAttrs } from './attrs-composer';
 import { NodeFactory } from './node-factory';
-import { UpdateProfiler } from '../profiling/update-profiler';
+import { UpdateProfiler, type UpdateSession } from '../profiling/update-profiler';
 import { getWorkerPool } from '../workers/worker-pool';
 import {
   getAggregatedPointsAccumulatorStats,
@@ -79,6 +79,7 @@ function getOrComputeExtendedTolerance(
   dimensionMetadata: Array<{ name?: string }>,
   cache: Map<string, number[]>
 ): number[] {
+  validateExtendDims(extendDims, dimensionMetadata);
   const key = extendDims.slice().sort().join(',');
   let cached = cache.get(key);
   if (cached) return cached;
@@ -91,6 +92,27 @@ function getOrComputeExtendedTolerance(
   }
   cache.set(key, cached);
   return cached;
+}
+
+function validateExtendDims(
+  extendDims: string[],
+  dimensionMetadata: Array<{ name?: string }>
+): void {
+  const validNames = new Set(
+    dimensionMetadata.map((dim) => dim.name).filter((name): name is string => !!name)
+  );
+  const invalid = extendDims.filter((dimName) => !validNames.has(dimName));
+  if (invalid.length > 0) {
+    throw new Error(
+      `Invalid extend_to_all dimension(s): ${invalid.join(', ')}. ` +
+        `Valid dimensions: ${Array.from(validNames).join(', ')}`
+    );
+  }
+}
+
+function isSceneDimensions(value: unknown): value is SceneDimensions {
+  if (!value || typeof value !== 'object') return false;
+  return Array.isArray((value as { dimensions?: unknown }).dimensions);
 }
 
 // ============================================================================
@@ -648,8 +670,8 @@ export class SceneLoader {
       const extendedToleranceCache = new Map<string, number[]>();
 
       // Noop session for when no profiler is available
-      const noopSession = {
-        begin: () => ({ end: () => {}, setMetadata: () => {}, markSkipped: () => {} }) as any,
+      const noopSession: UpdateSession = {
+        begin: () => noopSession,
         end: () => {},
         setMetadata: () => {},
         markSkipped: () => {},
@@ -663,9 +685,7 @@ export class SceneLoader {
 
       // Load points data (no processing needed — data is used directly)
       const pointsLoaders = Array.from(this.loaders.entries()).map(async ([path, loader]) => {
-        const updateFn = async (
-          session: import('../profiling/update-profiler').UpdateSession
-        ): Promise<StagedPointsCommit | null> => {
+        const updateFn = async (session: UpdateSession): Promise<StagedPointsCommit | null> => {
           try {
             // Get points object to check extend_to_all attribute
             const pointsObj = this.rootGroup?.getObjectByName(path) as THREE.Points | undefined;
@@ -675,6 +695,7 @@ export class SceneLoader {
             // Check if we can skip this update (extend_to_all optimization)
             if (extendDims.length > 0 && this.viewState.dimensions?.metadata) {
               const dims = this.viewState.dimensions.metadata;
+              validateExtendDims(extendDims, dims);
               const nonDisplayedDims = dims
                 .filter(
                   (_: { name?: string }, idx: number) => !this.viewState.displayDims.includes(idx)
@@ -764,15 +785,13 @@ export class SceneLoader {
         if (this.profiler) {
           return this.profiler.timeTopLevel(`Points (${path})`, updateFn);
         } else {
-          return updateFn(noopSession as any);
+          return updateFn(noopSession);
         }
       });
 
       // Load + process lines data (includes async worker projection)
       const linesLoaders = Array.from(this.linesLoaders.entries()).map(async ([path, loader]) => {
-        const updateFn = async (
-          session: import('../profiling/update-profiler').UpdateSession
-        ): Promise<StagedLinesCommit | null> => {
+        const updateFn = async (session: UpdateSession): Promise<StagedLinesCommit | null> => {
           try {
             const mesh = this.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
             const attrs = mesh?.userData?.attrs as { extend_to_all?: string[] } | undefined;
@@ -781,6 +800,7 @@ export class SceneLoader {
             // Check if we can skip this update (extend_to_all optimization)
             if (extendDims.length > 0 && this.viewState.dimensions?.metadata) {
               const dims = this.viewState.dimensions.metadata;
+              validateExtendDims(extendDims, dims);
               const nonDisplayedDims = dims
                 .filter(
                   (_: { name?: string }, idx: number) => !this.viewState.displayDims.includes(idx)
@@ -867,16 +887,14 @@ export class SceneLoader {
         if (this.profiler) {
           return this.profiler.timeTopLevel(`Lines (${path})`, updateFn);
         } else {
-          return updateFn(noopSession as any);
+          return updateFn(noopSession);
         }
       });
 
       // Load + process gsplats data (includes async worker projection + Cholesky packing)
       const gsplatsLoaders = Array.from(this.gsplatLoaders.entries()).map(
         async ([path, loader]) => {
-          const updateFn = async (
-            session: import('../profiling/update-profiler').UpdateSession
-          ): Promise<StagedGSplatsCommit | null> => {
+          const updateFn = async (session: UpdateSession): Promise<StagedGSplatsCommit | null> => {
             try {
               const mesh = this.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
               const attrs = mesh?.userData?.attrs as GSplatsMetadata | undefined;
@@ -885,6 +903,7 @@ export class SceneLoader {
               // Check if we can skip this update (extend_to_all optimization)
               if (extendDims.length > 0 && this.viewState.dimensions?.metadata) {
                 const dims = this.viewState.dimensions.metadata;
+                validateExtendDims(extendDims, dims);
                 const nonDisplayedDims = dims
                   .filter(
                     (_: { name?: string }, idx: number) => !this.viewState.displayDims.includes(idx)
@@ -970,7 +989,7 @@ export class SceneLoader {
           if (this.profiler) {
             return this.profiler.timeTopLevel(`GSplats (${path})`, updateFn);
           } else {
-            return updateFn(noopSession as any);
+            return updateFn(noopSession);
           }
         }
       );
@@ -1233,8 +1252,8 @@ export class SceneLoader {
   private async processLinesData(
     path: string,
     data: LoadedLinesData,
-    viewState: { displayDims: number[]; slicePosition: number[]; dimensions?: any[] },
-    session?: import('../profiling/update-profiler').UpdateSession
+    viewState: { displayDims: number[]; slicePosition: number[]; dimensions?: DimensionMetadata[] },
+    session?: UpdateSession
   ): Promise<StagedLinesCommit | null> {
     if (!this.rootGroup) return null;
 
@@ -1417,7 +1436,7 @@ export class SceneLoader {
     path: string,
     data: LoadedGSplatsData,
     viewState: GSplatsViewState,
-    session?: import('../profiling/update-profiler').UpdateSession
+    session?: UpdateSession
   ): Promise<StagedGSplatsCommit | null> {
     if (!this.rootGroup) return null;
 
@@ -1631,7 +1650,7 @@ export class SceneLoader {
    */
   private async buildSceneGraph(
     rootLoc: zarr.Location<zarr.Readable>,
-    rootAttrs: any
+    rootAttrs: ZarrSceneAttrs
   ): Promise<SceneNode> {
     // Enumerate all groups in the store
     const listing = await this.enumerateStore();
@@ -2259,7 +2278,7 @@ export class SceneLoader {
   private updatePointsGeometry(
     path: string,
     data: LoadedPointsData,
-    session?: import('../profiling/update-profiler').UpdateSession
+    session?: UpdateSession
   ): void {
     if (!this.rootGroup) return;
 
@@ -2346,9 +2365,9 @@ export class SceneLoader {
   /**
    * Initialize scene dimensions from metadata using ViewStateManager
    */
-  private initializeSceneDimensions(sceneDims: any): void {
+  private initializeSceneDimensions(sceneDims: unknown): void {
     // Validate sceneDims structure
-    if (!sceneDims || typeof sceneDims !== 'object' || !Array.isArray(sceneDims.dimensions)) {
+    if (!isSceneDimensions(sceneDims)) {
       log.warning(Modules.SCENE_LOADER, 'Invalid scene_dimensions format, skipping');
       return;
     }
@@ -2357,7 +2376,7 @@ export class SceneLoader {
     const validation = ViewStateManager.validateDimensions(sceneDims.dimensions);
 
     // Log validation results
-    const displayedCount = sceneDims.dimensions.filter((d: any) => d.display === true).length;
+    const displayedCount = sceneDims.dimensions.filter((d) => d.display === true).length;
     ViewStateManager.logValidationResults(validation, sceneDims.dimensions.length, displayedCount);
 
     // Stop if validation failed with errors
@@ -2367,7 +2386,7 @@ export class SceneLoader {
     }
 
     // Initialize ViewState using ViewStateManager
-    this.viewState = ViewStateManager.initializeFromDimensions(sceneDims as SceneDimensions);
+    this.viewState = ViewStateManager.initializeFromDimensions(sceneDims);
   }
 
   /**
@@ -2647,7 +2666,9 @@ export class SceneLoader {
 
     // Dispose caching store (flushes L2 metadata, clears L1)
     if (this.cachingStore) {
-      this.cachingStore.dispose().catch(() => {});
+      this.cachingStore.dispose().catch((error) => {
+        log.warning(Modules.SCENE_LOADER, 'Caching store disposal failed', error);
+      });
       this.cachingStore = null;
     }
 

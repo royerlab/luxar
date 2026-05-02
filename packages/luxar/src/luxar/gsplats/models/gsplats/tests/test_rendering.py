@@ -910,7 +910,3 @@ class TestMPSPeakFindingFallback:
         )
 
         assert len(peaks) == 2
-
-
-if __name__ == "__main__":
-    pytest.main([__file__])

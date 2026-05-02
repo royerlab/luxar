@@ -408,6 +408,12 @@ class Scene(Group):
         Returns:
             Dimensions object (always present - required at construction)
         """
+        if self._dimensions is None:
+            raise RuntimeError(
+                "Scene dimensions are not initialized. This indicates a bug in "
+                "scene construction. Use LuxarZarrCompiler.create_scene() with "
+                "a Dimensions object."
+            )
         return self._dimensions
 
     @dimensions.setter

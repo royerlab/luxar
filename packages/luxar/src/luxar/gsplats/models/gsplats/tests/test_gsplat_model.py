@@ -729,7 +729,3 @@ class TestVoxelSizeEccentricity:
         diag = torch.diagonal(L[0])
         ratio = diag.max() / diag.min()
         assert ratio.item() <= 2.0 + 0.01  # sqrt(4)
-
-
-if __name__ == "__main__":
-    pytest.main([__file__])

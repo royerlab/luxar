@@ -395,7 +395,3 @@ class TestReproducibility:
         np.testing.assert_array_equal(
             result1.cholesky_factors, result2.cholesky_factors
         )
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])

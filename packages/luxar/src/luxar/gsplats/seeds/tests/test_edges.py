@@ -408,7 +408,3 @@ class TestPoissonDiskSampleWeighted:
         )
         # With min_distance=40 on a 50x50 grid, at most ~2 seeds can fit
         assert len(result) <= 4
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])

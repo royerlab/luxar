@@ -170,6 +170,15 @@ def validate_colors_for_writing(
 
     _validate_numeric_finite_values(colors, context)
 
+    if colors.size == 0:
+        if n_points == 0 and colors.shape == expected_shape:
+            return
+        raise ValidationError(
+            f"{context}: Empty colors array is only valid when n_points=0 "
+            f"and shape is {expected_shape}. Got shape {colors.shape}.",
+            "Provide one broadcast color with shape (1, 3) or a full colors array",
+        )
+
     # Check for invalid values
     if np.any(colors < 0):
         min_val: float = float(np.min(colors))
@@ -178,9 +187,10 @@ def validate_colors_for_writing(
             "Ensure all color values are >= 0. Use np.clip(colors, 0, None) to fix",
         )
 
-    # Warn about extreme HDR values
+    # Warn about extreme HDR values for floating-point HDR/SDR colors.
+    # Integer color arrays are SDR storage in their native integer range.
     max_val: float = float(np.max(colors))
-    if max_val > 10.0:
+    if np.issubdtype(colors.dtype, np.floating) and max_val > 10.0:
         import warnings
 
         warnings.warn(

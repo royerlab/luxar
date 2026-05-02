@@ -5,6 +5,17 @@ import type { ChunkPrefetcher } from './chunk-prefetcher';
 import { log, Modules } from '../utils/log';
 import { config } from '../config';
 
+type IterableFileSystemDirectoryHandle = FileSystemDirectoryHandle & {
+  entries(): AsyncIterableIterator<[string, FileSystemHandle]>;
+};
+
+interface CacheMetadataFile {
+  baseUrl?: string;
+  contentHash?: string;
+  totalSize?: number;
+  entries?: unknown[];
+}
+
 export interface TwoLevelCachingStoreOptions {
   /** L1 memory cache size in bytes (default: 100MB) */
   l1MaxSize?: number;
@@ -35,6 +46,8 @@ export class TwoLevelCachingStore implements AsyncReadable {
   private static readonly DEFAULT_L1_SIZE = config.cache.l1MaxSizeMB * 1024 * 1024;
   private static readonly DEFAULT_L2_SIZE = config.cache.l2MaxSizeMB * 1024 * 1024;
   private static readonly validationQueues = new Map<string, Promise<void>>();
+  private static readonly INITIAL_RETRY_DELAY_MS = 50;
+  private static readonly MAX_RETRY_DELAY_MS = 500;
 
   // Invalidation callbacks (e.g., L0 DecompressedChunkCache clearing on L1/L2 invalidation)
   private invalidationCallbacks: (() => void)[] = [];
@@ -244,7 +257,7 @@ export class TwoLevelCachingStore implements AsyncReadable {
    * @see {@link setPrefetcher} for enabling automatic adjacent chunk loading
    * @see SPECIFICATIONS.md - Section 3 for complete cache algorithm
    */
-  async get(key: string, _options?: any): Promise<Uint8Array | undefined> {
+  async get(key: string, _options?: unknown): Promise<Uint8Array | undefined> {
     // L1: Memory check (fastest, ~1μs)
     const l1Hit = this.l1Cache.get(key);
     if (l1Hit) {
@@ -268,11 +281,8 @@ export class TwoLevelCachingStore implements AsyncReadable {
     // L3: Remote fetch (~100ms)
     try {
       this.log(`HTTP fetch: ${key}`, 'info');
-      // Ensure proper URL joining regardless of trailing/leading slashes
-      const cleanBase = this.baseUrl.replace(/\/+$/, '');
-      const cleanKey = key.replace(/^\/+/, '');
-      const response = await fetch(`${cleanBase}/${cleanKey}`);
-      if (!response.ok) return undefined;
+      const response = await this.fetchWithRetry(this.buildUrl(key));
+      if (!response?.ok) return undefined;
 
       const data = new Uint8Array(await response.arrayBuffer());
 
@@ -359,9 +369,8 @@ export class TwoLevelCachingStore implements AsyncReadable {
   private async getRemoteContentHash(): Promise<string | null> {
     try {
       // Direct HTTP fetch, no cache lookup
-      const cleanBase = this.baseUrl.replace(/\/+$/, '');
-      const response = await fetch(`${cleanBase}/.zattrs`);
-      if (!response.ok) return null;
+      const response = await this.fetchWithRetry(this.buildUrl('.zattrs'));
+      if (!response?.ok) return null;
 
       const data = await response.arrayBuffer();
       const attrs = JSON.parse(new TextDecoder().decode(data));
@@ -372,6 +381,67 @@ export class TwoLevelCachingStore implements AsyncReadable {
       this.log(`Failed to fetch remote content_hash: ${errorMsg}`, 'warn');
       return null;
     }
+  }
+
+  /**
+   * Build a remote URL without producing duplicate slashes.
+   */
+  private buildUrl(key: string): string {
+    const cleanBase = this.baseUrl.replace(/\/+$/, '');
+    const cleanKey = key.replace(/^\/+/, '');
+    return `${cleanBase}/${cleanKey}`;
+  }
+
+  /**
+   * Fetch with timeout and retries for transient failures.
+   *
+   * 4xx responses are returned immediately because retrying cannot fix a missing
+   * zarr key. Network errors, timeouts, 429, and 5xx responses are retried using
+   * the configured retry budget. The configured timeout is treated as a total
+   * budget across attempts so retries do not multiply worst-case load time.
+   */
+  private async fetchWithRetry(url: string): Promise<Response | undefined> {
+    const maxAttempts = Math.max(1, config.dataLoading.network.retryAttempts + 1);
+    const timeoutPerAttemptMs = Math.max(
+      1,
+      Math.ceil(config.dataLoading.network.timeoutMs / maxAttempts)
+    );
+    let lastError: unknown;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeoutPerAttemptMs);
+
+      try {
+        const response = await fetch(url, { signal: controller.signal });
+        if (response.ok || (response.status < 500 && response.status !== 429)) {
+          return response;
+        }
+        lastError = new Error(`HTTP ${response.status} for ${url}`);
+      } catch (error) {
+        lastError = error;
+      } finally {
+        clearTimeout(timeoutId);
+      }
+
+      if (attempt < maxAttempts - 1) {
+        const delayMs = Math.min(
+          TwoLevelCachingStore.INITIAL_RETRY_DELAY_MS * 2 ** attempt,
+          TwoLevelCachingStore.MAX_RETRY_DELAY_MS
+        );
+        await this.sleep(delayMs);
+      }
+    }
+
+    if (lastError) {
+      const message = lastError instanceof Error ? lastError.message : String(lastError);
+      log.warning(Modules.CACHE, `Fetch failed after ${maxAttempts} attempt(s): ${message}`);
+    }
+    return undefined;
+  }
+
+  private sleep(delayMs: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, delayMs));
   }
 
   /**
@@ -396,13 +466,15 @@ export class TwoLevelCachingStore implements AsyncReadable {
       const opfsRoot = await navigator.storage.getDirectory();
 
       // Iterate all zarr-cache-* directories
-      for await (const [name, handle] of (opfsRoot as any).entries()) {
+      const iterableRoot = opfsRoot as IterableFileSystemDirectoryHandle;
+      for await (const [name, handle] of iterableRoot.entries()) {
         if (name.startsWith('zarr-cache-') && handle.kind === 'directory') {
           try {
             // Read _cache_meta.json from this dataset
-            const metaHandle = await handle.getFileHandle('_cache_meta.json');
+            const directoryHandle = handle as FileSystemDirectoryHandle;
+            const metaHandle = await directoryHandle.getFileHandle('_cache_meta.json');
             const file = await metaHandle.getFile();
-            const meta = JSON.parse(await file.text());
+            const meta = JSON.parse(await file.text()) as CacheMetadataFile;
 
             datasets.push({
               url: meta.baseUrl || 'unknown',

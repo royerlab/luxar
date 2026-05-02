@@ -1,6 +1,7 @@
 """Tests for nD transform validation and composition."""
 
 import warnings
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -177,6 +178,24 @@ class TestValidateWithDimensions:
             validate_nd_transform(
                 {"Channel": {"permutation": [0, 1]}},  # 2 elements, need 3
                 dimensions=dims_5d,
+            )
+
+    def test_reject_empty_categorical_dimension(self) -> None:
+        dims = SimpleNamespace(
+            dimensions=[
+                SimpleNamespace(
+                    name="Category",
+                    display=False,
+                    is_categorical=True,
+                    discrete=False,
+                    categories=[],
+                )
+            ]
+        )
+        with pytest.raises(ValueError, match="at least one category"):
+            validate_nd_transform(
+                {"Category": {"permutation": []}},
+                dimensions=dims,
             )
 
 

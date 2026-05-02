@@ -363,7 +363,3 @@ class TestTorchNumpyEquivalence:
 
         assert x_cpu.device.type == "cpu", "CPU input should produce CPU output"
         assert x_gpu.device.type == "cuda", "GPU input should produce GPU output"
-
-
-if __name__ == "__main__":
-    pytest.main([__file__])

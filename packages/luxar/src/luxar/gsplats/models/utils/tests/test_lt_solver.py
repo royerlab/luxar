@@ -293,7 +293,3 @@ class TestNumericalStability:
         expected = torch.tensor([[3.0], [2.25]], dtype=torch.float32)
 
         torch.testing.assert_close(x, expected, atol=1e-6, rtol=1e-6)
-
-
-if __name__ == "__main__":
-    pytest.main([__file__])

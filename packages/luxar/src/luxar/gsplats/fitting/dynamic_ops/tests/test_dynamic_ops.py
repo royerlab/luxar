@@ -585,7 +585,3 @@ class TestRelocationParameters:
         )
 
         assert any_relocated is False  # Should skip due to convergence guard
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])

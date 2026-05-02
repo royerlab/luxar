@@ -282,7 +282,7 @@ def get_zarr_info(store_path: Path, detailed: bool = False) -> dict[str, Any]:
                     "n_dims": positions.shape[1] if len(positions.shape) > 1 else 1,
                     "has_colors": "colors" in group,
                     "has_radii": "radii" in group,
-                    "has_sharpness": "sharpness" in group,
+                    "has_sharpness": "sharpnesses" in group,
                 }
                 if detailed:
                     point_info["shape"] = list(positions.shape)

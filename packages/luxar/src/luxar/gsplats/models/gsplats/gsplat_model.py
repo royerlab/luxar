@@ -103,11 +103,13 @@ class GaussianSplatModel(nn.Module):
         N = centers0.shape[0]
         d = self.dim
 
-        # Auto-detect best performing device: CUDA → CPU
-        # Note: MPS is supported but currently slower than CPU for typical workloads
+        # Auto-detect best available accelerator consistently with the fitting API:
+        # CUDA → MPS/Metal → CPU.
         if device is None:
             if torch.cuda.is_available():
                 device = torch.device("cuda")
+            elif torch.backends.mps.is_available():
+                device = torch.device("mps")
             else:
                 device = torch.device("cpu")
 

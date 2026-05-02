@@ -51,6 +51,20 @@ import { getWorkerPool } from '../workers/worker-pool';
 import type { UpdateProfiler, UpdateSession } from '../profiling/update-profiler';
 import { DecompressedChunkCache, wrapWithCache, ChunkPrefetcher } from '../cache';
 
+type WritableNumericArray = {
+  length: number;
+  [index: number]: number;
+};
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isNotFoundError(error: unknown): boolean {
+  const message = getErrorMessage(error);
+  return message.includes('404') || message.includes('Not Found');
+}
+
 /**
  * Loader implementation that uses spatial indices for efficient nD queries.
  *
@@ -154,7 +168,7 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
    * Initialize the loader by loading spatial index and opening arrays
    */
   async initialize(): Promise<void> {
-    // Load chunk-based spatial index (NEW: replaces grid-based index)
+    // Load chunk-based spatial index
     try {
       this.chunkIndex = await loadChunkSpatialIndex(this.zarrLocation, this.node.attrs);
 
@@ -280,9 +294,9 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
         colorsArray = wrapWithCache(colorsArray, this.l0Cache, `${this.node.path}/colors`);
       }
       this.arrays.colors = colorsArray;
-    } catch (e: any) {
+    } catch (e: unknown) {
       // Colors are optional - only log if it's not a 404
-      if (!e.message?.includes('404') && !e.message?.includes('Not Found')) {
+      if (!isNotFoundError(e)) {
         log.info(Modules.SPATIAL_INDEX_LOADER, 'No colors array found (using default colors)');
       }
     }
@@ -295,41 +309,30 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
         radiiArray = wrapWithCache(radiiArray, this.l0Cache, `${this.node.path}/radii`);
       }
       this.arrays.radii = radiiArray;
-    } catch (e: any) {
+    } catch (e: unknown) {
       // Radii are optional - only log if it's not a 404
-      if (!e.message?.includes('404') && !e.message?.includes('Not Found')) {
+      if (!isNotFoundError(e)) {
         log.info(Modules.SPATIAL_INDEX_LOADER, 'No radii array found (using default radii)');
       }
     }
 
     try {
-      // Try plural name first (current format), fall back to singular (legacy)
-      let sharpnessArray: zarr.Array<zarr.DataType, zarr.Readable>;
-      let sharpnessName: string;
-      try {
-        sharpnessArray = await zarr.open(this.zarrLocation.resolve('sharpnesses'), {
-          kind: 'array',
-        });
-        sharpnessName = 'sharpnesses';
-      } catch {
-        sharpnessArray = await zarr.open(this.zarrLocation.resolve('sharpness'), {
-          kind: 'array',
-        });
-        sharpnessName = 'sharpness';
-      }
-      this.registerBounds(sharpnessName, sharpnessArray);
+      let sharpnessArray = await zarr.open(this.zarrLocation.resolve('sharpnesses'), {
+        kind: 'array',
+      });
+      this.registerBounds('sharpnesses', sharpnessArray);
       // Wrap with L0 cache if enabled
       if (this.l0Cache) {
         sharpnessArray = wrapWithCache(
           sharpnessArray,
           this.l0Cache,
-          `${this.node.path}/${sharpnessName}`
+          `${this.node.path}/sharpnesses`
         );
       }
       this.arrays.sharpness = sharpnessArray;
-    } catch (e: any) {
+    } catch (e: unknown) {
       // Sharpness is optional - only log if it's not a 404
-      if (!e.message?.includes('404') && !e.message?.includes('Not Found')) {
+      if (!isNotFoundError(e)) {
         log.info(
           Modules.SPATIAL_INDEX_LOADER,
           'No sharpness array found (using default sharpness)'
@@ -647,13 +650,16 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
   }
 
   /**
-   * Update view for new position (more efficient than full reload)
+   * Update view for a new slice position.
+   *
+   * The spatial index makes each reload proportional to the visible ranges,
+   * so re-querying those ranges is the canonical update path for now. This
+   * keeps buffer ownership and range-cache behavior deterministic.
+   *
    * @param viewState - Current view state
    * @param session - Optional profiler session for nested timing
    */
   async updateView(viewState: ViewState, session?: UpdateSession): Promise<LoadedPointsData> {
-    // For now, just reload everything
-    // TODO: Implement incremental updates
     const result = await this.loadPoints(viewState, session);
     if (!this._initialLoadDone) {
       this._initialLoadDone = true;
@@ -834,8 +840,8 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
     }
     if (dtype === 'float16' || dtype === '|f2' || dtype === '<f2' || dtype === '>f2') {
       // Float16 with fallback
-      if (typeof (globalThis as any).Float16Array !== 'undefined') {
-        return new (globalThis as any).Float16Array(totalElements);
+      if (typeof Float16Array !== 'undefined') {
+        return new Float16Array(totalElements);
       }
       log.warning(Modules.SPATIAL_INDEX_LOADER, 'Float16Array not supported, using Float32Array');
     }
@@ -938,9 +944,10 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
         output.set(data, destOffset);
       } else {
         // Fallback: convert if types don't match (shouldn't happen with proper dtype detection)
-        const len = (data as ArrayLike<number>).length;
-        for (let i = 0; i < len; i++) {
-          (output as any)[destOffset + i] = (data as ArrayLike<number>)[i];
+        const source = data as ArrayLike<number>;
+        const destination = output as WritableNumericArray;
+        for (let i = 0; i < source.length; i++) {
+          destination[destOffset + i] = source[i];
         }
       }
 
@@ -1690,7 +1697,7 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
   getMetrics(): LoaderMetrics {
     // Update spatial index metrics if available
     if (this.chunkIndex) {
-      // NEW: Chunk-based index metrics
+      // Chunk-based index metrics
       const totalChunks = this.chunkIndex.metadata.total_chunks;
       const avgChunksPerQuery =
         this.metrics.queries > 0 ? this.lastQueryCells / this.metrics.queries : 0;

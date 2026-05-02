@@ -252,6 +252,59 @@ class TestPassthroughDecoding:
 class TestErrorHandling:
     """Test decoder error handling."""
 
+    def test_missing_encoding_name_raises(self):
+        """Encoding metadata must explicitly name a known encoder."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(tmpdir, mode="w")
+            decoder = ArrayDecoder()
+
+            group.create_dataset("test", data=np.array([1, 2, 3], dtype=np.uint8))
+            group["test"].attrs["encoding"] = {"bounds": [0, 1]}
+
+            with pytest.raises(ValueError, match="encoding.name is required"):
+                decoder.decode(group["test"])
+
+    def test_unknown_encoding_name_raises(self):
+        """Unknown encoder names must fail instead of falling through."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(tmpdir, mode="w")
+            decoder = ArrayDecoder()
+
+            group.create_dataset("test", data=np.array([1, 2, 3], dtype=np.uint8))
+            group["test"].attrs["encoding"] = {"name": "quantized_uint8"}
+
+            with pytest.raises(ValueError, match="Unknown encoding name"):
+                decoder.decode(group["test"])
+
+    def test_target_without_array_ref_raises(self):
+        """Only array_ref metadata may contain a target path."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(tmpdir, mode="w")
+            decoder = ArrayDecoder()
+
+            group.create_dataset("test", data=np.array([1, 2, 3], dtype=np.uint8))
+            group["test"].attrs["encoding"] = {"name": "uint8", "target": "other"}
+
+            with pytest.raises(ValueError, match="target is only valid for array_ref"):
+                decoder.decode(group["test"])
+
+    def test_array_ref_missing_target_metadata(self):
+        """array_ref metadata must include a target path."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(tmpdir, mode="w")
+            decoder = ArrayDecoder()
+
+            group.create_dataset("test", data=np.array([], dtype=np.float32))
+            group["test"].attrs["encoding"] = {
+                "name": "array_ref",
+                "hash": "xxh64:abc123",
+                "original_shape": [100],
+                "original_dtype": "float32",
+            }
+
+            with pytest.raises(ValueError, match="array_ref encoding requires"):
+                decoder.decode(group["test"], group)
+
     def test_array_ref_missing_target(self):
         """Test error when array_ref target not found."""
         with tempfile.TemporaryDirectory() as tmpdir:
