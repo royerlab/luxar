@@ -319,10 +319,10 @@ kernel void rasterize_forward_splat_centric_3d(
 kernel void rasterize_backward_splat_centric_3d(
     device const float* grad_output [[buffer(0)]],
     device const float* centers [[buffer(1)]],
-    device const float* conic [[buffer(2)]],
+    device const float* Ls [[buffer(2)]],
     device const float* amps [[buffer(3)]],
     device float* d_centers [[buffer(4)]],
-    device float* d_conic [[buffer(5)]],
+    device float* d_Ls [[buffer(5)]],
     device float* d_amps [[buffer(6)]],
     constant uint3& shape_dhw [[buffer(7)]],
     constant uint& n_splats [[buffer(8)]],
@@ -337,6 +337,7 @@ kernel void rasterize_backward_splat_centric_3d(
     }
 
     threadgroup float s_center[3];
+    threadgroup float s_L[6];
     threadgroup float s_conic[6];
     threadgroup float s_amp;
     threadgroup float s_shift_C;
@@ -352,14 +353,38 @@ kernel void rasterize_backward_splat_centric_3d(
 
     if (tid == 0) {
         int base3 = int(splat_id) * 3;
-        int base6 = int(splat_id) * 6;
+        int base9 = int(splat_id) * 9;
 
         s_center[0] = centers[base3 + 0];
         s_center[1] = centers[base3 + 1];
         s_center[2] = centers[base3 + 2];
-        for (uint k = 0; k < 6; ++k) {
-            s_conic[k] = conic[base6 + int(k)];
-        }
+
+        float l00 = Ls[base9 + 0];
+        float l10 = Ls[base9 + 3];
+        float l11 = Ls[base9 + 4];
+        float l20 = Ls[base9 + 6];
+        float l21 = Ls[base9 + 7];
+        float l22 = Ls[base9 + 8];
+        s_L[0] = l00;
+        s_L[1] = l10;
+        s_L[2] = l11;
+        s_L[3] = l20;
+        s_L[4] = l21;
+        s_L[5] = l22;
+
+        float k00 = 1.0f / (l00 + 1e-9f);
+        float k11 = 1.0f / (l11 + 1e-9f);
+        float k22 = 1.0f / (l22 + 1e-9f);
+        float k10 = -l10 * k00 * k11;
+        float k21 = -l21 * k11 * k22;
+        float k20 = -(l20 * k00 + l21 * k10) * k22;
+
+        s_conic[0] = k00 * k00 + k10 * k10 + k20 * k20;
+        s_conic[1] = k10 * k11 + k20 * k21;
+        s_conic[2] = k20 * k22;
+        s_conic[3] = k11 * k11 + k21 * k21;
+        s_conic[4] = k21 * k22;
+        s_conic[5] = k22 * k22;
         s_amp = amps[splat_id];
 
         s_shift_C = shift_c(truncate);
@@ -495,16 +520,68 @@ kernel void rasterize_backward_splat_centric_3d(
 
     if (tid == 0) {
         int base3 = int(splat_id) * 3;
-        int base6 = int(splat_id) * 6;
+        int base9 = int(splat_id) * 9;
         d_centers[base3 + 0] = tg_centers[0];
         d_centers[base3 + 1] = tg_centers[1];
         d_centers[base3 + 2] = tg_centers[2];
-        d_conic[base6 + 0] = tg_conic[0];
-        d_conic[base6 + 1] = tg_conic[1];
-        d_conic[base6 + 2] = tg_conic[2];
-        d_conic[base6 + 3] = tg_conic[3];
-        d_conic[base6 + 4] = tg_conic[4];
-        d_conic[base6 + 5] = tg_conic[5];
+
+        float l00 = s_L[0];
+        float l10 = s_L[1];
+        float l11 = s_L[2];
+        float l20 = s_L[3];
+        float l21 = s_L[4];
+        float l22 = s_L[5];
+
+        float k00 = 1.0f / (l00 + 1e-9f);
+        float k11 = 1.0f / (l11 + 1e-9f);
+        float k22 = 1.0f / (l22 + 1e-9f);
+        float k10 = -l10 * k00 * k11;
+        float k21 = -l21 * k11 * k22;
+        float q20 = l20 * k00 + l21 * k10;
+        float k20 = -q20 * k22;
+
+        float dc00 = tg_conic[0];
+        float dc01 = tg_conic[1];
+        float dc02 = tg_conic[2];
+        float dc11 = tg_conic[3];
+        float dc12 = tg_conic[4];
+        float dc22 = tg_conic[5];
+
+        float dk00 = 2.0f * k00 * dc00;
+        float dk10 = 2.0f * k10 * dc00 + k11 * dc01;
+        float dk20 = 2.0f * k20 * dc00 + k21 * dc01 + k22 * dc02;
+        float dk11 = k10 * dc01 + 2.0f * k11 * dc11;
+        float dk21 = k20 * dc01 + 2.0f * k21 * dc11 + k22 * dc12;
+        float dk22 = k20 * dc02 + k21 * dc12 + 2.0f * k22 * dc22;
+
+        float dq20 = -k22 * dk20;
+        dk22 -= q20 * dk20;
+        float dl20 = k00 * dq20;
+        dk00 += l20 * dq20;
+        float dl21 = k10 * dq20;
+        dk10 += l21 * dq20;
+
+        dl21 -= k11 * k22 * dk21;
+        dk11 -= l21 * k22 * dk21;
+        dk22 -= l21 * k11 * dk21;
+
+        float dl10 = -k00 * k11 * dk10;
+        dk00 -= l10 * k11 * dk10;
+        dk11 -= l10 * k00 * dk10;
+
+        float dl00 = -(k00 * k00) * dk00;
+        float dl11 = -(k11 * k11) * dk11;
+        float dl22 = -(k22 * k22) * dk22;
+
+        d_Ls[base9 + 0] = dl00;
+        d_Ls[base9 + 1] = 0.0f;
+        d_Ls[base9 + 2] = 0.0f;
+        d_Ls[base9 + 3] = dl10;
+        d_Ls[base9 + 4] = dl11;
+        d_Ls[base9 + 5] = 0.0f;
+        d_Ls[base9 + 6] = dl20;
+        d_Ls[base9 + 7] = dl21;
+        d_Ls[base9 + 8] = dl22;
         d_amps[splat_id] = tg_amp[0];
     }
 }
