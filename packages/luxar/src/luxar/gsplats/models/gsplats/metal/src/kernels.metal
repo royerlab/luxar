@@ -356,6 +356,8 @@ kernel void rasterize_backward_splat_centric_3d(
 
     threadgroup float s_center[3];
     threadgroup float s_L[6];
+    threadgroup float s_K[6];
+    threadgroup float s_q20;
     threadgroup float s_conic[6];
     threadgroup float s_amp;
     threadgroup float s_shift_C;
@@ -395,7 +397,15 @@ kernel void rasterize_backward_splat_centric_3d(
         float k22 = 1.0f / (l22 + 1e-9f);
         float k10 = -l10 * k00 * k11;
         float k21 = -l21 * k11 * k22;
-        float k20 = -(l20 * k00 + l21 * k10) * k22;
+        float q20 = l20 * k00 + l21 * k10;
+        float k20 = -q20 * k22;
+        s_K[0] = k00;
+        s_K[1] = k10;
+        s_K[2] = k11;
+        s_K[3] = k20;
+        s_K[4] = k21;
+        s_K[5] = k22;
+        s_q20 = q20;
 
         s_conic[0] = k00 * k00 + k10 * k10 + k20 * k20;
         s_conic[1] = k10 * k11 + k20 * k21;
@@ -550,13 +560,13 @@ kernel void rasterize_backward_splat_centric_3d(
         float l21 = s_L[4];
         float l22 = s_L[5];
 
-        float k00 = 1.0f / (l00 + 1e-9f);
-        float k11 = 1.0f / (l11 + 1e-9f);
-        float k22 = 1.0f / (l22 + 1e-9f);
-        float k10 = -l10 * k00 * k11;
-        float k21 = -l21 * k11 * k22;
-        float q20 = l20 * k00 + l21 * k10;
-        float k20 = -q20 * k22;
+        float k00 = s_K[0];
+        float k10 = s_K[1];
+        float k11 = s_K[2];
+        float k20 = s_K[3];
+        float k21 = s_K[4];
+        float k22 = s_K[5];
+        float q20 = s_q20;
 
         float dc00 = tg_conic[0];
         float dc01 = tg_conic[1];
