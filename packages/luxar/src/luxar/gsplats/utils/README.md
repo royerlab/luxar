@@ -14,6 +14,7 @@ This package provides low-level utilities for working with Gaussian splat parame
 - `validate_cholesky_shape(cholesky_factors, ndim, ...)` - Validate packed Cholesky factor shapes
 - `permute_cholesky_packed(packed, d, perm)` - Reorder dimensions of packed Cholesky factors
 - `embed_cholesky_packed(packed, d_src, d_dst, dim_mapping, ...)` - Embed lower-dim Cholesky into higher-dim space
+- `resolve_torch_device(device, use_cuda=True, use_metal=True)` - Shared PyTorch device auto-selection helper
 
 ## Installation
 
@@ -22,7 +23,12 @@ Part of `luxar.gsplats` package. No additional installation required.
 ## Quick Start
 
 ```python
-from luxar.gsplats.utils import pack_tril, unpack_tril, calculate_gradient_dilution_factor
+from luxar.gsplats.utils import (
+    calculate_gradient_dilution_factor,
+    pack_tril,
+    resolve_torch_device,
+    unpack_tril,
+)
 import numpy as np
 
 # Pack a batch of Cholesky factors for storage
@@ -34,6 +40,9 @@ L_restored = unpack_tril(packed, d=2)  # Returns shape (1, 2, 2)
 
 # Calculate gradient dilution for 3D optimization
 factor = calculate_gradient_dilution_factor(3)  # Returns ~1.8
+
+# Resolve a PyTorch device with accelerator opt-out flags
+fit_device = resolve_torch_device(None, use_cuda=False, use_metal=True)
 ```
 
 ## Core Functions

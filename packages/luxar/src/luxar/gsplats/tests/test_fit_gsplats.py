@@ -20,7 +20,7 @@ HAS_SCIPY = importlib.util.find_spec("scipy") is not None
 pytestmark = pytest.mark.skipif(not HAS_TORCH, reason="PyTorch not available")
 
 if HAS_TORCH:
-    from luxar.gsplats.fit_gsplats import fit_gaussian_splats
+    from luxar.gsplats.fit_gsplats import GaussianSplatFitter, fit_gaussian_splats
     from luxar.gsplats.utils.trils import tril_size
 
 
@@ -543,6 +543,21 @@ class TestConstraints:
 
 class TestDeviceSupport:
     """Test device support (CPU/CUDA)."""
+
+    def test_auto_device_honors_use_cuda_false(self, monkeypatch) -> None:
+        """Fitter auto-selection should not pick CUDA when CUDA is disabled."""
+
+        class FakeMPSBackend:
+            def is_available(self) -> bool:
+                return False
+
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+        monkeypatch.setattr(torch.backends, "mps", FakeMPSBackend(), raising=False)
+
+        with pytest.warns(UserWarning, match="will run on CPU"):
+            fitter = GaussianSplatFitter(use_cuda=False, use_metal=True)
+
+        assert fitter.device.type == "cpu"
 
     def test_cpu_device(self, simple_2d_blob, simple_candidates_2d) -> None:
         """Test explicit CPU device."""

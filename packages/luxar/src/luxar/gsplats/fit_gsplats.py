@@ -21,6 +21,7 @@ from luxar.gsplats.fitting import (
 from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
 from luxar.gsplats.fitting.validation import DEFAULT_SIGMA_MIN_DIAG
 from luxar.gsplats.gsplat_data import GSplatData
+from luxar.gsplats.utils import resolve_torch_device
 from luxar.gsplats.utils.trils import tril_size
 
 
@@ -65,17 +66,11 @@ class GaussianSplatFitter:
         # - macOS + Apple Silicon: MPS with Metal acceleration (substantial speedup, chip-dependent)
         # - Linux + NVIDIA GPU: CUDA with custom kernels (often orders of magnitude faster, GPU-dependent)
         # - Fallback: CPU
-        if device is not None:
-            self.device = torch.device(device)
-        else:
-            # Check for CUDA first (Linux with NVIDIA GPU)
-            if use_cuda and torch.cuda.is_available():
-                self.device = torch.device("cuda")
-            # Check for MPS (macOS with Apple Silicon)
-            elif use_metal and torch.backends.mps.is_available():
-                self.device = torch.device("mps")
-            else:
-                self.device = torch.device("cpu")
+        self.device = resolve_torch_device(
+            device,
+            use_cuda=use_cuda,
+            use_metal=use_metal,
+        )
 
         if self.device.type == "cpu":
             from arbol import aprint
