@@ -153,6 +153,24 @@ kernel void zero_float_buffer(
     }
 }
 
+kernel void zero_float_buffer4(
+    device float* output [[buffer(0)]],
+    constant uint& total [[buffer(1)]],
+    uint id [[thread_position_in_grid]]
+) {
+    uint base = id * 4u;
+    if (base + 3u < total) {
+        output[base + 0u] = 0.0f;
+        output[base + 1u] = 0.0f;
+        output[base + 2u] = 0.0f;
+        output[base + 3u] = 0.0f;
+    } else {
+        for (uint i = base; i < total; ++i) {
+            output[i] = 0.0f;
+        }
+    }
+}
+
 // ============================================================================
 // Optional 3D L -> conic conversion
 // ============================================================================
