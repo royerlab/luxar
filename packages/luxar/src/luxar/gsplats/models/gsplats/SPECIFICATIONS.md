@@ -310,15 +310,15 @@ kernel void compute_conic_from_L_3d(
     constant     uint& n_splats  [[buffer(2)]]
 );
 
-kernel void rasterize_forward_splat_centric_3d(...);   // one threadgroup per splat
-kernel void rasterize_backward_splat_centric_3d(...);  // one threadgroup per splat gradient
+kernel void rasterize_forward_splat_centric_3d(...);   // one threadgroup per splat; computes L -> conic inline
+kernel void rasterize_backward_splat_centric_3d(...);  // one threadgroup per splat; computes d_conic -> d_L inline
 ```
 
-The previous Metal tile pipeline was removed.  There are no tile counts, tile offsets, tile-content buffers, PyTorch prefix sums, or CPU `.item()` synchronizations in the hot path.  Forward uses atomic float adds into the output volume because multiple splats can hit the same voxel.  Backward uses threadgroup reductions and writes each splat's gradients once, with no global parameter-gradient atomics.
+The previous Metal tile pipeline was removed.  There are no tile counts, tile offsets, tile-content buffers, PyTorch prefix sums, or CPU `.item()` synchronizations in the hot path.  Forward uses atomic float adds into the output volume because multiple splats can hit the same voxel.  Backward uses threadgroup reductions and writes each splat's gradients once, with no global parameter-gradient atomics.  The 3D hot path now passes Cholesky factors directly to the native kernels; packed conics are internal per-splat intermediates rather than Python-materialized forward/backward tensors.
 
 ### Coordinate convention
 
-PyTorch / NumPy use `[Z, Y, X]` order (first dim = depth).  Current Metal kernels use the same order directly.  The 3D conic is packed as `[c_zz, c_zy, c_zx, c_yy, c_yx, c_xx]`, matching `cholesky_to_conic()` and the CUDA row-major upper-triangle convention.  No `[Z,Y,X] <-> [X,Y,Z]` conic reorder remains in the Metal hot path.
+PyTorch / NumPy use `[Z, Y, X]` order (first dim = depth).  Current Metal kernels use the same order directly.  When the kernels form a 3D conic internally, it is packed as `[c_zz, c_zy, c_zx, c_yy, c_yx, c_xx]`, matching `cholesky_to_conic()` and the CUDA row-major upper-triangle convention.  No `[Z,Y,X] <-> [X,Y,Z]` conic reorder remains in the Metal hot path.
 
 ### Build
 
