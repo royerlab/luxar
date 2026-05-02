@@ -1,5 +1,10 @@
-import { describe, expect, it } from 'vitest';
-import { normalizeDataSourceUrl, readUrlParams } from '../../../config/url-params';
+import { describe, expect, it, vi } from 'vitest';
+import {
+  buildDataSourceBrowserUrl,
+  normalizeDataSourceUrl,
+  readUrlParams,
+  replaceBrowserDataSourceUrl,
+} from '../../../config/url-params';
 
 describe('readUrlParams', () => {
   it('returns null/false defaults for an empty query string', () => {
@@ -62,5 +67,59 @@ describe('readUrlParams', () => {
     const params = readUrlParams('?unknown=foo');
     expect(params.src).toBeNull();
     expect(params.debug).toBe(false);
+  });
+});
+
+describe('buildDataSourceBrowserUrl', () => {
+  it('sets src while preserving existing params and hash fragments', () => {
+    const url = buildDataSourceBrowserUrl('https://example.com/picked.zarr', {
+      pathname: '/viewer',
+      search: '?debug&theme=light&src=old.zarr',
+      hash: '#panel',
+    });
+
+    expect(url).toBe(
+      '/viewer?debug=&theme=light&src=https%3A%2F%2Fexample.com%2Fpicked.zarr#panel'
+    );
+  });
+
+  it('adds a query string when the current URL has no params', () => {
+    const url = buildDataSourceBrowserUrl('datasets/picked.zarr', {
+      pathname: '/viewer',
+      search: '',
+    });
+
+    expect(url).toBe('/viewer?src=datasets%2Fpicked.zarr');
+  });
+});
+
+describe('replaceBrowserDataSourceUrl', () => {
+  it('uses history.replaceState with the centralized URL builder', () => {
+    const replaceState = vi.fn();
+
+    const ok = replaceBrowserDataSourceUrl('datasets/picked.zarr', {
+      location: { pathname: '/viewer', search: '?debug', hash: '#dataset' },
+      history: { replaceState },
+    });
+
+    expect(ok).toBe(true);
+    expect(replaceState).toHaveBeenCalledWith(
+      {},
+      '',
+      '/viewer?debug=&src=datasets%2Fpicked.zarr#dataset'
+    );
+  });
+
+  it('returns false when replaceState is unavailable or blocked', () => {
+    const ok = replaceBrowserDataSourceUrl('datasets/picked.zarr', {
+      location: { pathname: '/viewer', search: '' },
+      history: {
+        replaceState: () => {
+          throw new Error('blocked');
+        },
+      },
+    });
+
+    expect(ok).toBe(false);
   });
 });

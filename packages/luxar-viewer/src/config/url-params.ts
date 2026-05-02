@@ -4,7 +4,8 @@
  * `window.location.search` is read in exactly one place — `main.ts` — and the
  * result flows through the application as a typed object. Components that need
  * a flag declare it on their options, rather than reaching back to
- * `window.location` themselves.
+ * `window.location` themselves. URL writing is centralized here for the same
+ * reason.
  *
  * This makes consumers testable (no need to mock `window.location`), the URL
  * contract auditable (every recognized parameter is listed in `UrlParams`),
@@ -102,4 +103,53 @@ export function readUrlParams(search?: string): UrlParams {
     noPrefetch: params.has('no-prefetch'),
     prefetchDebug: params.has('prefetch-debug'),
   };
+}
+
+export interface BrowserUrlLocation {
+  pathname: string;
+  search: string;
+  hash?: string;
+}
+
+export interface BrowserUrlHistory {
+  replaceState(data: unknown, unused: string, url?: string | URL | null): void;
+}
+
+export interface BrowserUrlWriter {
+  location: BrowserUrlLocation;
+  history: BrowserUrlHistory;
+}
+
+/**
+ * Build a URL path for the current viewer page with `src` updated.
+ *
+ * This helper preserves existing query parameters and hash fragments while
+ * centralizing the viewer's URL-writing contract. It returns a path-relative
+ * URL suitable for `history.replaceState()`.
+ */
+export function buildDataSourceBrowserUrl(src: string, location: BrowserUrlLocation): string {
+  const params = new URLSearchParams(location.search);
+  params.set('src', src);
+  const query = params.toString();
+  const hash = location.hash ?? '';
+  return `${location.pathname}${query ? `?${query}` : ''}${hash}`;
+}
+
+/**
+ * Replace the current browser URL with the selected dataset source.
+ *
+ * Returns `false` if the environment has no browser history/location or if
+ * `history.replaceState()` is blocked, e.g. by a sandboxed iframe. Callers
+ * should treat failure as non-fatal and continue loading the selected dataset.
+ */
+export function replaceBrowserDataSourceUrl(src: string, target?: BrowserUrlWriter): boolean {
+  const writer = target ?? (typeof window !== 'undefined' ? window : undefined);
+  if (!writer?.location || !writer.history) return false;
+
+  try {
+    writer.history.replaceState({}, '', buildDataSourceBrowserUrl(src, writer.location));
+    return true;
+  } catch {
+    return false;
+  }
 }

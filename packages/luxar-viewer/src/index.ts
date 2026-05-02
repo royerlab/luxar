@@ -22,7 +22,7 @@
  * await app.init({
  *   canvas,
  *   src: 'https://example.com/cells.zarr',
- *   updateBrowserUrl: false,         // do NOT rewrite host page URL
+ *   updateBrowserUrl: false,         // default: do NOT rewrite host page URL
  * });
  *
  * // Later, when the host wants to tear the viewer down:
