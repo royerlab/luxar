@@ -96,19 +96,16 @@ inline float3 sigma_diag_sqrt_from_conic_3d(
     );
 }
 
-inline void compute_aabb_3d(
+inline void compute_aabb_3d_from_sigma(
     threadgroup int* lo,
     threadgroup int* extent,
     threadgroup int& total_voxels,
     float center_z,
     float center_y,
     float center_x,
-    float c00,
-    float c01,
-    float c02,
-    float c11,
-    float c12,
-    float c22,
+    float sigma_z,
+    float sigma_y,
+    float sigma_x,
     float t_eff,
     uint D,
     uint H,
@@ -121,11 +118,9 @@ inline void compute_aabb_3d(
         return;
     }
 
-    float3 sigma = sigma_diag_sqrt_from_conic_3d(c00, c01, c02, c11, c12, c22);
-
-    int radius_z = int(ceil(t_eff * sigma.x));
-    int radius_y = int(ceil(t_eff * sigma.y));
-    int radius_x = int(ceil(t_eff * sigma.z));
+    int radius_z = int(ceil(t_eff * sigma_z));
+    int radius_y = int(ceil(t_eff * sigma_y));
+    int radius_x = int(ceil(t_eff * sigma_x));
 
     int lo_z = max(0, int(floor(center_z)) - radius_z);
     int lo_y = max(0, int(floor(center_y)) - radius_y);
@@ -262,6 +257,9 @@ kernel void rasterize_forward_splat_centric_3d(
         s_conic[3] = k11 * k11 + k21 * k21;
         s_conic[4] = k21 * k22;
         s_conic[5] = k22 * k22;
+        float sigma_z = abs(l00);
+        float sigma_y = fast::sqrt(l10 * l10 + l11 * l11);
+        float sigma_x = fast::sqrt(l20 * l20 + l21 * l21 + l22 * l22);
         s_amp = amps[splat_id];
 
         s_shift_C = shift_c(truncate);
@@ -271,19 +269,16 @@ kernel void rasterize_forward_splat_centric_3d(
         float t_eff = effective_truncation(
             truncate, s_amp, intensity_floor, s_shift_C, s_inv_one_minus_C);
 
-        compute_aabb_3d(
+        compute_aabb_3d_from_sigma(
             s_lo,
             s_extent,
             s_total_voxels,
             s_center[0],
             s_center[1],
             s_center[2],
-            s_conic[0],
-            s_conic[1],
-            s_conic[2],
-            s_conic[3],
-            s_conic[4],
-            s_conic[5],
+            sigma_z,
+            sigma_y,
+            sigma_x,
             t_eff,
             shape_dhw.x,
             shape_dhw.y,
@@ -403,6 +398,9 @@ kernel void rasterize_backward_splat_centric_3d(
         s_conic[3] = k11 * k11 + k21 * k21;
         s_conic[4] = k21 * k22;
         s_conic[5] = k22 * k22;
+        float sigma_z = abs(l00);
+        float sigma_y = fast::sqrt(l10 * l10 + l11 * l11);
+        float sigma_x = fast::sqrt(l20 * l20 + l21 * l21 + l22 * l22);
         s_amp = amps[splat_id];
 
         s_shift_C = shift_c(truncate);
@@ -412,19 +410,16 @@ kernel void rasterize_backward_splat_centric_3d(
         float t_eff = effective_truncation(
             truncate, s_amp, intensity_floor, s_shift_C, s_inv_one_minus_C);
 
-        compute_aabb_3d(
+        compute_aabb_3d_from_sigma(
             s_lo,
             s_extent,
             s_total_voxels,
             s_center[0],
             s_center[1],
             s_center[2],
-            s_conic[0],
-            s_conic[1],
-            s_conic[2],
-            s_conic[3],
-            s_conic[4],
-            s_conic[5],
+            sigma_z,
+            sigma_y,
+            sigma_x,
             t_eff,
             shape_dhw.x,
             shape_dhw.y,
