@@ -46,6 +46,7 @@ def compile_metal_shaders() -> None:
             str(air_file),
             "-std=metal3.0",  # Use Metal 3.0 for SIMD intrinsics
             "-O2",  # Optimization level
+            "-ffast-math",  # Match the kernels' fast math assumptions
         ]
     )
 
