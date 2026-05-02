@@ -94,65 +94,6 @@ def cholesky_to_conic(L: torch.Tensor) -> torch.Tensor:
     return result
 
 
-def cholesky_to_conic_vjp_3d(L: torch.Tensor, d_conic: torch.Tensor) -> torch.Tensor:
-    """Analytic VJP for :func:`cholesky_to_conic` in the 3D Metal hot path."""
-    l00 = L[:, 0, 0]
-    l10 = L[:, 1, 0]
-    l11 = L[:, 1, 1]
-    l20 = L[:, 2, 0]
-    l21 = L[:, 2, 1]
-    l22 = L[:, 2, 2]
-
-    k00 = 1.0 / (l00 + 1e-9)
-    k11 = 1.0 / (l11 + 1e-9)
-    k22 = 1.0 / (l22 + 1e-9)
-    k10 = -l10 * k00 * k11
-    k21 = -l21 * k11 * k22
-    q20 = l20 * k00 + l21 * k10
-    k20 = -q20 * k22
-
-    dc00 = d_conic[:, 0]
-    dc01 = d_conic[:, 1]
-    dc02 = d_conic[:, 2]
-    dc11 = d_conic[:, 3]
-    dc12 = d_conic[:, 4]
-    dc22 = d_conic[:, 5]
-
-    dk00 = 2.0 * k00 * dc00
-    dk10 = 2.0 * k10 * dc00 + k11 * dc01
-    dk20 = 2.0 * k20 * dc00 + k21 * dc01 + k22 * dc02
-    dk11 = k10 * dc01 + 2.0 * k11 * dc11
-    dk21 = k20 * dc01 + 2.0 * k21 * dc11 + k22 * dc12
-    dk22 = k20 * dc02 + k21 * dc12 + 2.0 * k22 * dc22
-
-    dq20 = -k22 * dk20
-    dk22 = dk22 - q20 * dk20
-    dl20 = k00 * dq20
-    dk00 = dk00 + l20 * dq20
-    dl21 = k10 * dq20
-    dk10 = dk10 + l21 * dq20
-
-    dl21 = dl21 - k11 * k22 * dk21
-    dk11 = dk11 - l21 * k22 * dk21
-    dk22 = dk22 - l21 * k11 * dk21
-
-    dl10 = -k00 * k11 * dk10
-    dk00 = dk00 - l10 * k11 * dk10
-    dk11 = dk11 - l10 * k00 * dk10
-
-    dl00 = -(k00 * k00) * dk00
-    dl11 = -(k11 * k11) * dk11
-    dl22 = -(k22 * k22) * dk22
-
-    d_L = torch.zeros_like(L)
-    d_L[:, 0, 0] = dl00
-    d_L[:, 1, 0] = dl10
-    d_L[:, 1, 1] = dl11
-    d_L[:, 2, 0] = dl20
-    d_L[:, 2, 1] = dl21
-    d_L[:, 2, 2] = dl22
-    return d_L
-
 
 class MetalSplatFunction(torch.autograd.Function):
     """Custom autograd function for the splat-centric 3D Metal renderer."""
@@ -166,7 +107,6 @@ class MetalSplatFunction(torch.autograd.Function):
         shape: Tuple[int, ...],
         truncate: float,
         intensity_floor: float = 1e-5,
-        use_metal_conic: bool = False,
     ) -> torch.Tensor:
         dim = len(shape)
         if not METAL_AVAILABLE:
@@ -233,7 +173,7 @@ class MetalSplatFunction(torch.autograd.Function):
             ctx.intensity_floor,
         )
 
-        return d_centers, d_Ls, d_amps, None, None, None, None
+        return d_centers, d_Ls, d_amps, None, None, None
 
 
 class GaussianSplatModelMetal(GaussianSplatModel):
@@ -258,7 +198,6 @@ class GaussianSplatModelMetal(GaussianSplatModel):
         truncate: float = 3.0,
         intensity_floor: float = 1e-5,
         use_fp16: bool = False,
-        use_metal_conic: bool = False,
         voxel_size: Optional[np.ndarray] = None,
         device: Optional[torch.device | str] = None,
     ) -> None:
@@ -311,7 +250,6 @@ class GaussianSplatModelMetal(GaussianSplatModel):
         )
 
         self._intensity_floor = float(intensity_floor)
-        self._use_metal_conic = bool(use_metal_conic)
         self._use_fp16 = False
 
     @property
@@ -330,7 +268,6 @@ class GaussianSplatModelMetal(GaussianSplatModel):
                     self.shape,
                     self.truncate,
                     self._intensity_floor,
-                    self._use_metal_conic,
                 ),
             )
 
@@ -490,10 +427,6 @@ class GaussianSplatModelMetal(GaussianSplatModel):
     @property
     def intensity_floor(self) -> builtins.float:
         return self._intensity_floor
-
-    @property
-    def use_metal_conic(self) -> bool:
-        return self._use_metal_conic
 
     def __repr__(self) -> str:
         backend = "metal" if self._uses_custom_metal else "pytorch"
