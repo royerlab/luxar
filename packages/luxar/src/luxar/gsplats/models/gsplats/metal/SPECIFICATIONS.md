@@ -84,7 +84,7 @@ It allocates an MPS float32 output tensor, then encodes in one command buffer:
 ```text
 threadgroup_position_in_grid.x = splat_id
 thread_index_in_threadgroup    = worker thread within that splat
-THREADGROUP_SIZE               = 256
+THREADGROUP_SIZE               = 64
 ```
 
 Thread 0 loads the splat into threadgroup memory:
@@ -100,7 +100,7 @@ AABB lower corner and extent
 effective truncation radius
 ```
 
-All 256 threads then stride over the splat's local AABB.  For each voxel:
+All 64 threads then stride over the splat's local AABB.  For each voxel:
 
 ```text
 d = [z, y, x] - center
@@ -246,7 +246,7 @@ For `128³ @ 32k splats`, `L = 2I`, `truncate = 3`, on Apple M4 Max:
 | Implementation | Forward | Forward+Backward |
 | --- | ---: | ---: |
 | Previous tile-binned Metal | ~2.3-2.5 ms (~0.9 GVox/s) | ~133 ms (~0.016 GVox/s) |
-| Current splat-centric Metal | ~1.5-1.7 ms (~1.2-1.4 GVox/s) | ~3.6-3.8 ms (~0.55-0.58 GVox/s) |
+| Current splat-centric Metal | ~1.5-1.6 ms (~1.3-1.4 GVox/s) | ~3.5-3.7 ms (~0.57-0.60 GVox/s) |
 
 The largest improvement is backward because the old voxel-centric kernel used
 global CAS atomics for every voxel-splat gradient contribution.  The new kernel

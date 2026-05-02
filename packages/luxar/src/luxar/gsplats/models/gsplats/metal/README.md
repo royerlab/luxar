@@ -61,7 +61,7 @@ The forward kernel mirrors the optimized CUDA organization:
 ```text
 one Metal threadgroup = one Gaussian splat
 thread 0 computes that splat's L -> conic transform and AABB
-256 threads cooperate over that splat's AABB
+64 threads cooperate over that splat's AABB
 output uses atomic float add
 ```
 
@@ -138,9 +138,9 @@ Observed on Apple M4 Max, PyTorch 2.11, macOS 15.7.5, workload
 | Path | Time | Effective throughput |
 | --- | ---: | ---: |
 | Old tile-binned Metal forward | ~2.3-2.5 ms | ~0.85-0.94 GVox/s |
-| New splat-centric Metal forward | ~1.5-1.7 ms | ~1.2-1.4 GVox/s |
+| New splat-centric Metal forward | ~1.5-1.6 ms | ~1.3-1.4 GVox/s |
 | Old tile-binned Metal fwd+bwd | ~133 ms | ~0.016 GVox/s |
-| New splat-centric Metal fwd+bwd | ~3.6-3.8 ms | ~0.55-0.58 GVox/s |
+| New splat-centric Metal fwd+bwd | ~3.5-3.7 ms | ~0.57-0.60 GVox/s |
 
 Large-output GVox/s is only one view of splatting performance because the actual
 work scales with splat AABB volume and overlap.  The rewrite's most important
