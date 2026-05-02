@@ -27,6 +27,7 @@ luxar info my_data.zarr --stats
 - Use `luxar profiles` to list network simulation profiles
 - Use `luxar serve --help` for all serving options
 - Use `luxar export --native macos` (or `linux-amd64`/`linux-arm64`) for double-clickable native bundles backed by an embedded Go launcher (requires `make build-launchers` first)
+- For complete working scripts that generate datasets for these commands, see `packages/luxar/examples/` and repository-level `examples/` when present.
 
 ## Module Structure
 

@@ -774,14 +774,30 @@ In data arrays, use integer indices (0-based): 0='DAPI', 1='GFP', 2='mCherry', 3
 - Radius-based visibility for spatial dimensions: points visible if their nD hypersphere intersects the current slice
 - Exact matching for discrete dimensions: only points at the exact value are shown
 
+## Viewer Constraints and Performance
+
+Luxar's storage format supports arbitrary-dimensional scenes, but the web viewer
+uses optimized kernels with practical limits:
+
+- **WASM-accelerated nD kernels support up to 16 dimensions.** This covers
+  spatial queries, effective-radius slicing, Mahalanobis distance, and GSplat
+  attenuation paths backed by fixed-size WebAssembly workspaces.
+- **Datasets with more than 16 dimensions still load**, but those operations use
+  the TypeScript fallback path automatically. This preserves correctness but can
+  be significantly slower for large point, line, or GSplat collections.
+- **For best interactive performance**, keep exported viewer scenes at 16
+  dimensions or fewer when possible. For higher-dimensional source data,
+  pre-slice, aggregate, or encode rarely navigated axes as categorical subsets
+  before export.
+
 ## Chunking Strategy
 
 Optimal chunk sizes balance memory usage and access patterns:
-- **Default chunk size:** 32,768 elements
-- **Minimum chunk size:** 1,024 elements
-- **Maximum chunk size:** 262,144 elements
-- **2D arrays (positions, colors):** Chunk along first dimension only
-- **1D arrays (radii, sharpness):** Simple 1D chunking
+- **Target chunk payload:** 64KB (`TARGET_CHUNK_BYTES`)
+- **Minimum chunk payload:** 16KB (`MIN_CHUNK_BYTES`)
+- **Maximum chunk payload:** 256KB (`MAX_CHUNK_BYTES`)
+- **2D arrays (positions, colors):** Chunk along first dimension only, deriving element counts from dtype and row width
+- **1D arrays (radii, sharpness):** Simple 1D chunking, deriving element counts from dtype
 
 ### Chunking with Spatial Index
 

@@ -79,6 +79,29 @@ const visibility = wasm.compute_nd_visibility_points(/* ... */);
 
 WASM functions use fixed-size arrays for performance and support a **maximum of 16 dimensions**. For data with more than 16 dimensions, the TypeScript fallback is used automatically (slower but has no dimension limit).
 
+## Performance: WASM vs TypeScript Fallback
+
+The TypeScript fallback is correctness-equivalent and useful for development,
+unsupported browsers, or missing build artifacts, but it is not the performance
+target for large interactive scenes. WASM is recommended for:
+
+- nD point visibility and effective-radius queries over large chunks
+- line clipping/projection in 4D+ scenes
+- GSplat attenuation and Cholesky submatrix extraction
+- quantization/LUT/log decoding for large arrays
+
+Run the benchmark suite on the target machine to measure real speedups:
+
+```bash
+make benchmark-wasm
+# or, from packages/luxar-viewer/
+pnpm test src/tests/unit/wasm/wasm-performance.test.ts --run
+```
+
+Benchmark results depend on browser/runtime, CPU, memory bandwidth, array size,
+and dimensionality. Keep benchmark output with performance investigations rather
+than treating static numbers in this README as release guarantees.
+
 ## Build
 
 The WASM module must be compiled from Rust source before use:
