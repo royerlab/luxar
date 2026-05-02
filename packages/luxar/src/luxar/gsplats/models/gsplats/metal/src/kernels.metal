@@ -8,6 +8,7 @@
 
 #include <metal_stdlib>
 #include <metal_atomic>
+#include <metal_simdgroup>
 using namespace metal;
 
 #define THREADGROUP_SIZE 64u
@@ -346,7 +347,9 @@ kernel void rasterize_backward_splat_centric_3d(
     constant float& shift_C [[buffer(11)]],
     constant float& inv_one_minus_C [[buffer(12)]],
     uint3 tg_pos [[threadgroup_position_in_grid]],
-    uint tid [[thread_index_in_threadgroup]]
+    uint tid [[thread_index_in_threadgroup]],
+    uint simd_lane [[thread_index_in_simdgroup]],
+    uint simd_group [[simdgroup_index_in_threadgroup]]
 ) {
     uint splat_id = tg_pos.x;
     if (splat_id >= n_splats) {
@@ -503,36 +506,43 @@ kernel void rasterize_backward_splat_centric_3d(
         }
     }
 
-    tg_amp[tid] = local_amp;
-    tg_centers[tid * 3 + 0] = local_center_0;
-    tg_centers[tid * 3 + 1] = local_center_1;
-    tg_centers[tid * 3 + 2] = local_center_2;
-    tg_conic[tid * 6 + 0] = local_conic_0;
-    tg_conic[tid * 6 + 1] = local_conic_1;
-    tg_conic[tid * 6 + 2] = local_conic_2;
-    tg_conic[tid * 6 + 3] = local_conic_3;
-    tg_conic[tid * 6 + 4] = local_conic_4;
-    tg_conic[tid * 6 + 5] = local_conic_5;
+    float sum_amp = simd_sum(local_amp);
+    float sum_center_0 = simd_sum(local_center_0);
+    float sum_center_1 = simd_sum(local_center_1);
+    float sum_center_2 = simd_sum(local_center_2);
+    float sum_conic_0 = simd_sum(local_conic_0);
+    float sum_conic_1 = simd_sum(local_conic_1);
+    float sum_conic_2 = simd_sum(local_conic_2);
+    float sum_conic_3 = simd_sum(local_conic_3);
+    float sum_conic_4 = simd_sum(local_conic_4);
+    float sum_conic_5 = simd_sum(local_conic_5);
+
+    if (simd_lane == 0) {
+        tg_amp[simd_group] = sum_amp;
+        tg_centers[simd_group * 3 + 0] = sum_center_0;
+        tg_centers[simd_group * 3 + 1] = sum_center_1;
+        tg_centers[simd_group * 3 + 2] = sum_center_2;
+        tg_conic[simd_group * 6 + 0] = sum_conic_0;
+        tg_conic[simd_group * 6 + 1] = sum_conic_1;
+        tg_conic[simd_group * 6 + 2] = sum_conic_2;
+        tg_conic[simd_group * 6 + 3] = sum_conic_3;
+        tg_conic[simd_group * 6 + 4] = sum_conic_4;
+        tg_conic[simd_group * 6 + 5] = sum_conic_5;
+    }
 
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
-    for (uint stride = THREADGROUP_SIZE >> 1; stride > 0; stride >>= 1) {
-        if (tid < stride) {
-            tg_amp[tid] += tg_amp[tid + stride];
-            tg_centers[tid * 3 + 0] += tg_centers[(tid + stride) * 3 + 0];
-            tg_centers[tid * 3 + 1] += tg_centers[(tid + stride) * 3 + 1];
-            tg_centers[tid * 3 + 2] += tg_centers[(tid + stride) * 3 + 2];
-            tg_conic[tid * 6 + 0] += tg_conic[(tid + stride) * 6 + 0];
-            tg_conic[tid * 6 + 1] += tg_conic[(tid + stride) * 6 + 1];
-            tg_conic[tid * 6 + 2] += tg_conic[(tid + stride) * 6 + 2];
-            tg_conic[tid * 6 + 3] += tg_conic[(tid + stride) * 6 + 3];
-            tg_conic[tid * 6 + 4] += tg_conic[(tid + stride) * 6 + 4];
-            tg_conic[tid * 6 + 5] += tg_conic[(tid + stride) * 6 + 5];
-        }
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-    }
-
     if (tid == 0) {
+        tg_amp[0] += tg_amp[1];
+        tg_centers[0] += tg_centers[3];
+        tg_centers[1] += tg_centers[4];
+        tg_centers[2] += tg_centers[5];
+        tg_conic[0] += tg_conic[6];
+        tg_conic[1] += tg_conic[7];
+        tg_conic[2] += tg_conic[8];
+        tg_conic[3] += tg_conic[9];
+        tg_conic[4] += tg_conic[10];
+        tg_conic[5] += tg_conic[11];
         int base3 = int(splat_id) * 3;
         int base9 = int(splat_id) * 9;
         d_centers[base3 + 0] = tg_centers[0];
