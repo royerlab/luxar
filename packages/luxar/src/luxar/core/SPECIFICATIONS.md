@@ -154,6 +154,9 @@ See `docs/guides/specs/ND_TRANSFORMS_SPEC.md` for the full specification includi
 - `add_lines(name, vertices, widths, ...)` - Create Lines node (widths required)
 - `add_gsplats(name, centers, amplitudes, cholesky_factors, ...)` - Create GSplats node
 - `dimensions` property - Get/set scene-level dimensional specifications
+- `to_zarr(path)` - Finalize the progressive backing store and copy it to a new
+  Zarr directory. Calling this finalizes the associated writer; no further nodes
+  should be added afterward.
 
 **Zarr Attributes**:
 ```json
