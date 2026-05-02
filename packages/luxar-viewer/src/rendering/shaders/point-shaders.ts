@@ -36,9 +36,13 @@ export const POINT_VERTEX_SHADER = /* glsl */ `
       vColor = color;
       #endif
 
-      // Apply sharpness scale for dtype normalization and use 2.0 as default
+      // Apply sharpness scale for dtype normalization and use 2.0 as default.
+      // Guard NaN/Inf from malformed data so pow() below cannot poison gl_PointSize.
       float normalizedSharpness = sharpness * sharpnessScale;
-      vSharpness = normalizedSharpness > 0.0 ? normalizedSharpness : 2.0;
+      if (isnan(normalizedSharpness) || isinf(normalizedSharpness) || normalizedSharpness <= 0.0) {
+        normalizedSharpness = 2.0;
+      }
+      vSharpness = normalizedSharpness;
 
       // Transform vertex position from world space to view space
       vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
@@ -46,6 +50,9 @@ export const POINT_VERTEX_SHADER = /* glsl */ `
 
       // Apply radius scale for dtype normalization (e.g., uint8 needs 1/255 scale)
       float normalizedRadius = radius * radiusScale;
+      if (isnan(normalizedRadius) || isinf(normalizedRadius) || normalizedRadius < 0.0) {
+        normalizedRadius = 0.0;
+      }
       vRadius = normalizedRadius; // Pass to fragment shader
 
       // OPTIMIZED world-space point sizing:
@@ -60,6 +67,9 @@ export const POINT_VERTEX_SHADER = /* glsl */ `
       // We need to scale the point size by 1/r_vis to maintain consistent visible size
       // Exact formula: compensation = 1 / (1 - 0.01^(1/s)), guarded against s=0
       float sharpnessCompensation = 1.0 / (1.0 - pow(0.01, 1.0 / max(vSharpness, 0.01)));
+      if (isnan(sharpnessCompensation) || isinf(sharpnessCompensation)) {
+        sharpnessCompensation = 1.0;
+      }
       float pointSize = basePointSize * sharpnessCompensation;
 
       // Clamp to hardware limits, with minimum of 1.0 to avoid undefined behavior
