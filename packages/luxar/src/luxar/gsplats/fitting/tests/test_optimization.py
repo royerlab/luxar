@@ -9,6 +9,7 @@ import torch
 from luxar.gsplats.fitting.config import (
     DynamicOpsConfig,
     FitConfig,
+    ModelComponents,
     PreprocessedData,
 )
 from luxar.gsplats.fitting.initialization import initialize_optimization
@@ -169,6 +170,95 @@ def test_best_state_tracking(simple_2d_setup) -> None:
     assert results.best_max_abs_error >= 0
 
 
+class _ScalarSplatModel(torch.nn.Module):
+    """Tiny model exposing the splat-model methods used by the optimizer."""
+
+    shape = (1,)
+
+    def __init__(self, value: float) -> None:
+        super().__init__()
+        self.param = torch.nn.Parameter(torch.tensor([value], dtype=torch.float32))
+
+    def forward(self) -> torch.Tensor:
+        return self.param
+
+    def current_params(self):
+        centers = self.param.reshape(1, 1)
+        Ls = torch.ones((1, 1, 1), dtype=self.param.dtype, device=self.param.device)
+        amps = self.param.clone()
+        return centers, Ls, amps
+
+    @torch.no_grad()
+    def replace_with(self, centers, _Ls, _amps) -> None:
+        self.param = torch.nn.Parameter(centers.reshape(1).detach().clone())
+
+    def n_splats(self) -> int:
+        return 1
+
+
+def test_best_state_scores_are_recomputed_from_restored_state() -> None:
+    """Reported loss/metrics must match the restored best parameters exactly."""
+    config = FitConfig(
+        V=np.zeros((1,), dtype=np.float32),
+        seeds=None,
+        norm_percentile=0.0,
+        init_sigma_vox=1.0,
+        sigma_min_diag=[0.1],
+        sigma_max_diag=None,
+        truncate=3.0,
+        n_iters=101,
+        lr=0.01,
+        max_abs_error=0.0,
+        rel_l2_target=None,
+        gradient_clip=None,
+        loss_type="mse",
+        asymmetric_penalty=None,
+        l1_amp=None,
+        l1_diag=None,
+        scheduler_type="none",
+        patience=10,
+        lr_reduction_factor=0.5,
+        early_stop_patience=None,
+        enable_dynamic_ops=False,
+        dynamic_config=DynamicOpsConfig(),
+        dynamic_ops_verbose=False,
+        napari_movie=False,
+        movie_every=1,
+        movie_max_frames=None,
+        device=torch.device("cpu"),
+        verbose=False,
+    )
+    target = torch.zeros(1, dtype=torch.float32)
+    preprocessed_data = PreprocessedData(
+        d=1,
+        N=1,
+        seed_centers=np.array([[0.0]], dtype=np.float32),
+        V_normalized=np.zeros((1,), dtype=np.float32),
+        V_tensor=target,
+        image_min=0.0,
+        image_max=0.0,
+        intensity_range=1.0,
+        max_abs_error=0.0,
+    )
+    model = _ScalarSplatModel(value=1.0)
+    optimizer = torch.optim.SGD(model.parameters(), lr=config.lr)
+    components = ModelComponents(model=model, optimizer=optimizer, scheduler=None)
+
+    def loss_fn(pred: torch.Tensor) -> torch.Tensor:
+        return torch.sum((pred - target) ** 2)
+
+    results = run_optimization_loop(components, loss_fn, config, preprocessed_data)
+
+    restored_value = results.centers.reshape(-1)[0]
+    expected_loss = float((restored_value**2).item())
+    expected_max_abs_error = float(abs(restored_value).item())
+    expected_rel_l2 = expected_max_abs_error / 1e-12
+
+    assert results.best_loss == pytest.approx(expected_loss)
+    assert results.best_max_abs_error == pytest.approx(expected_max_abs_error)
+    assert results.best_rel_l2 == pytest.approx(expected_rel_l2)
+
+
 def test_gradient_clipping(simple_2d_setup) -> None:
     """Test that gradient clipping is applied when configured."""
     config, preprocessed_data = simple_2d_setup
@@ -268,12 +358,14 @@ def test_iter_callback_invoked(simple_2d_setup) -> None:
     captured = []
 
     def callback(iteration, pred, info):
-        captured.append({
-            "iteration": iteration,
-            "pred_shape": tuple(pred.shape),
-            "info_keys": set(info.keys()),
-            "loss": info["loss"],
-        })
+        captured.append(
+            {
+                "iteration": iteration,
+                "pred_shape": tuple(pred.shape),
+                "info_keys": set(info.keys()),
+                "loss": info["loss"],
+            }
+        )
 
     config.iter_callback = callback
     config.iter_callback_every = 25
