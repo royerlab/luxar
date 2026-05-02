@@ -196,21 +196,15 @@ class MetalSplatFunction(torch.autograd.Function):
                 "Metal custom kernels require float32 centers, Ls, and amps"
             )
 
-        # L -> conic. The splat-centric kernels use Luxar/PyTorch's native
-        # [Z, Y, X] coordinate order and row-major packed upper triangle.
+        # The splat-centric kernels consume native [Z, Y, X] Cholesky factors
+        # and perform the 3D conic transform inside the per-splat threadgroup.
         Ls_for_conic = Ls.detach()
-        if use_metal_conic:
-            conic_zyx = metal_splatting_backend.compute_conic_metal(
-                Ls.contiguous()
-            ).detach()
-        else:
-            conic_zyx = cholesky_to_conic(Ls_for_conic).detach().contiguous()
 
         output = cast(
             torch.Tensor,
             metal_splatting_backend.forward_splat_3d(
                 centers.contiguous(),
-                conic_zyx.contiguous(),
+                Ls_for_conic.contiguous(),
                 amps.contiguous(),
                 list(shape),
                 float(truncate),

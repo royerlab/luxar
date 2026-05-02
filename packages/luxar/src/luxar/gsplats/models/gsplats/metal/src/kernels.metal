@@ -209,7 +209,7 @@ kernel void compute_conic_from_L_3d(
 
 kernel void rasterize_forward_splat_centric_3d(
     device const float* centers [[buffer(0)]],
-    device const float* conic [[buffer(1)]],
+    device const float* Ls [[buffer(1)]],
     device const float* amps [[buffer(2)]],
     device atomic_float* output [[buffer(3)]],
     constant uint3& shape_dhw [[buffer(4)]],
@@ -236,14 +236,32 @@ kernel void rasterize_forward_splat_centric_3d(
 
     if (tid == 0) {
         int base3 = int(splat_id) * 3;
-        int base6 = int(splat_id) * 6;
+        int base9 = int(splat_id) * 9;
 
         s_center[0] = centers[base3 + 0];
         s_center[1] = centers[base3 + 1];
         s_center[2] = centers[base3 + 2];
-        for (uint k = 0; k < 6; ++k) {
-            s_conic[k] = conic[base6 + int(k)];
-        }
+
+        float l00 = Ls[base9 + 0];
+        float l10 = Ls[base9 + 3];
+        float l11 = Ls[base9 + 4];
+        float l20 = Ls[base9 + 6];
+        float l21 = Ls[base9 + 7];
+        float l22 = Ls[base9 + 8];
+
+        float k00 = 1.0f / (l00 + 1e-9f);
+        float k11 = 1.0f / (l11 + 1e-9f);
+        float k22 = 1.0f / (l22 + 1e-9f);
+        float k10 = -l10 * k00 * k11;
+        float k21 = -l21 * k11 * k22;
+        float k20 = -(l20 * k00 + l21 * k10) * k22;
+
+        s_conic[0] = k00 * k00 + k10 * k10 + k20 * k20;
+        s_conic[1] = k10 * k11 + k20 * k21;
+        s_conic[2] = k20 * k22;
+        s_conic[3] = k11 * k11 + k21 * k21;
+        s_conic[4] = k21 * k22;
+        s_conic[5] = k22 * k22;
         s_amp = amps[splat_id];
 
         s_shift_C = shift_c(truncate);
