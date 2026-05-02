@@ -10,7 +10,7 @@
 #include <metal_atomic>
 using namespace metal;
 
-#define THREADGROUP_SIZE 32u
+#define THREADGROUP_SIZE 64u
 
 // ============================================================================
 // Helpers
