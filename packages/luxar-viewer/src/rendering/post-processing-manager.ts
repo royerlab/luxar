@@ -297,6 +297,22 @@ export class PostProcessingManager {
     }
   }
 
+  /** Dispose every effect object owned by this manager. */
+  private disposeAllEffects(context: string): void {
+    this.safeDisposeEffect(this.bloomEffect, `Bloom ${context}`);
+    this.safeDisposeEffect(this.detectorNoiseEffect, `DetectorNoise ${context}`);
+    this.safeDisposeEffect(this.dofEffect, `DOF ${context}`);
+    this.safeDisposeEffect(this.aoEffect, `AmbientOcclusion ${context}`);
+    this.safeDisposeEffect(this.vignetteEffect, `Vignette ${context}`);
+    this.safeDisposeEffect(
+      this.chromaticLensDistortionEffect,
+      `ChromaticLensDistortion ${context}`
+    );
+    this.safeDisposeEffect(this.smaaEffect, `SMAA ${context}`);
+    this.safeDisposeEffect(this.fxaaEffect, `FXAA ${context}`);
+    this.safeDisposeEffect(this.toneMappingEffect, `ToneMapping ${context}`);
+  }
+
   /**
    * Rebuilds the effect pass with currently active effects
    * This is called when effects are added/removed or toggled
@@ -1992,6 +2008,10 @@ export class PostProcessingManager {
       }
       this.secondaryPass = undefined;
     }
+
+    // Dispose individual effect objects. EffectPass disposal alone is not a
+    // complete ownership guarantee for all pmndrs/postprocessing effects.
+    this.disposeAllEffects('during cleanup');
 
     // Dispose composer (this also disposes passes added to it, but we already did it above for safety)
     this.composer.dispose();
