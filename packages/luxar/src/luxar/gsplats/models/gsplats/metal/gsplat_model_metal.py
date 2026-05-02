@@ -203,9 +203,9 @@ class MetalSplatFunction(torch.autograd.Function):
         output = cast(
             torch.Tensor,
             metal_splatting_backend.forward_splat_3d(
-                centers,
-                Ls_for_conic,
-                amps,
+                centers.contiguous(),
+                Ls_for_conic.contiguous(),
+                amps.contiguous(),
                 list(shape),
                 float(truncate),
                 float(intensity_floor),
@@ -225,9 +225,9 @@ class MetalSplatFunction(torch.autograd.Function):
 
         d_centers, d_Ls, d_amps = metal_splatting_backend.backward_splat_3d(
             grad_output.contiguous(),
-            centers,
-            Ls_for_conic,
-            amps,
+            centers.contiguous(),
+            Ls_for_conic.contiguous(),
+            amps.contiguous(),
             list(ctx.shape),
             ctx.truncate,
             ctx.intensity_floor,
