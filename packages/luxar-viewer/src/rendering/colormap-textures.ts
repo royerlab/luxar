@@ -23,7 +23,7 @@ const customCache = new Map<string, THREE.DataTexture>();
  * maps to unsized gl.RGB which causes silent upload failures. RGBA is
  * universally supported.
  */
-function rgbToRgba(rgb: Uint8Array): Uint8Array {
+function rgbToRgba(rgb: Uint8Array): Uint8Array<ArrayBuffer> {
   const rgba = new Uint8Array(256 * 4);
   for (let i = 0; i < 256; i++) {
     rgba[i * 4] = rgb[i * 3];

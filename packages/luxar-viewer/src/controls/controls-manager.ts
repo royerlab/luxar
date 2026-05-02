@@ -41,7 +41,14 @@ interface ControlsManagerEventMap {
   end: {};
 }
 
+type ControlEventMap = {
+  change: {};
+  start: {};
+  end: {};
+};
+
 type ActiveControls = LuxarOrbitControls | LuxarFlyControls;
+type ControlEventDispatcher = THREE.EventDispatcher<ControlEventMap>;
 
 interface ForwardedControlHandlers {
   change: () => void;
@@ -283,7 +290,7 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
     // Fly controls automatically initialize from current camera state
   }
 
-  private attachControlEventForwarders(controls: ActiveControls): void {
+  private attachControlEventForwarders(controls: ControlEventDispatcher): void {
     const handlers: ForwardedControlHandlers = {
       change: () => this.dispatchEvent({ type: 'change' }),
       start: () => this.dispatchEvent({ type: 'start' }),
@@ -299,9 +306,10 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   private disposeCurrentControls(): void {
     if (this.currentControls) {
       if (this.currentControlHandlers) {
-        this.currentControls.removeEventListener('change', this.currentControlHandlers.change);
-        this.currentControls.removeEventListener('start', this.currentControlHandlers.start);
-        this.currentControls.removeEventListener('end', this.currentControlHandlers.end);
+        const controls = this.currentControls as ControlEventDispatcher;
+        controls.removeEventListener('change', this.currentControlHandlers.change);
+        controls.removeEventListener('start', this.currentControlHandlers.start);
+        controls.removeEventListener('end', this.currentControlHandlers.end);
         this.currentControlHandlers = null;
       }
       this.currentControls.dispose();
