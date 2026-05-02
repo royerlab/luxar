@@ -229,7 +229,7 @@ class LuxarScene:
                 # Check if arrays exist
                 info["has_colors"] = "colors" in child
                 info["has_radii"] = "radii" in child
-                info["has_sharpness"] = "sharpnesses" in child or "sharpness" in child
+                info["has_sharpness"] = "sharpnesses" in child
             elif node_type == "gsplats":
                 info["n_splats"] = child.attrs.get("n_splats", 0)
                 info["ndim"] = child.attrs.get("ndim", 3)
@@ -344,10 +344,7 @@ class LuxarScene:
             raise ValueError(f"Points node '{name}' missing required 'positions' array")
         colors = self._decode_array(group, "colors")
         radii = self._decode_array(group, "radii")
-        # Try plural name first (current format), fall back to singular (legacy)
         sharpness = self._decode_array(group, "sharpnesses")
-        if sharpness is None:
-            sharpness = self._decode_array(group, "sharpness")
 
         # Load chunk bounds if present
         chunk_bounds = None
@@ -459,10 +456,7 @@ class LuxarScene:
         if widths is None:
             raise ValueError(f"Lines node '{name}' missing required 'widths' array")
         colors = self._decode_array(group, "colors")
-        # Try plural name first (current format), fall back to singular (legacy)
         sharpness = self._decode_array(group, "sharpnesses")
-        if sharpness is None:
-            sharpness = self._decode_array(group, "sharpness")
         segments = self._decode_array(group, "segments")
         if segments is None:
             segments = self._decode_array(group, "indices")

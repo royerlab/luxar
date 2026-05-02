@@ -460,6 +460,7 @@ with LuxarZarrCompiler("output.zarr") as compiler:
 ```bash
 luxar demo [OPTIONS]                    # Create demo visualization
 luxar serve PATH [OPTIONS]              # Serve Zarr dataset
+luxar viewer [--data PATH] [OPTIONS]    # Serve viewer only or viewer + data
 luxar info PATH [--stats]               # Dataset information
 luxar export SOURCE -o DIR              # Export standalone folder (Python 3 + browser)
 luxar export SOURCE -o DIR --native macos|linux-amd64|linux-arm64

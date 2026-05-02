@@ -210,6 +210,16 @@ class TestSceneDimensionsProperty:
             assert scene.dimensions.ndim == 3
             assert scene.dimensions.names == ["x", "y", "z"]
 
+    def test_dimensions_getter_enforces_initialization_invariant(
+        self, tmp_path: Path
+    ) -> None:
+        with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene._dimensions = None  # type: ignore[assignment]
+
+            with pytest.raises(RuntimeError, match="dimensions are not initialized"):
+                _ = scene.dimensions
+
 
 # ── Fix 5: GSplatData re-exported at top level ───────────────────────
 

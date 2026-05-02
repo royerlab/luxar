@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, Tuple
+from typing import Any, Dict
 
-import numpy as np
 import zarr
 
 
@@ -186,59 +185,3 @@ def format_gsplats_info(info: Dict[str, Any]) -> str:
             )
 
     return "\n".join(lines)
-
-
-def render_gsplats_to_volume(
-    centers: np.ndarray,
-    cholesky_factors: np.ndarray,
-    amplitudes: np.ndarray,
-    volume_shape: Tuple[int, int, int],
-) -> np.ndarray:
-    """Render Gaussian splats into a 3D volume for visualization.
-
-    .. deprecated:: 0.2.0
-        This function is deprecated and will be removed in a future version.
-        Use :func:`luxar.gsplats.rendering.render_to_volume` or the
-        :meth:`GSplatData.render_to_volume` method instead for substantially
-        faster GPU-accelerated rendering (often orders of magnitude, GPU-dependent).
-
-    This is a legacy NumPy implementation that is very slow (O(N_splats × N_voxels))
-    and runs on CPU only. The new GPU-accelerated renderer is much faster.
-
-    Args:
-        centers: Splat centers (N, 3) in voxel coordinates
-        cholesky_factors: Packed Cholesky factors (N, 6) [L00, L10, L11, L20, L21, L22]
-        amplitudes: Splat amplitudes (N,)
-        volume_shape: Output volume shape (Z, Y, X)
-
-    Returns:
-        3D volume (Z, Y, X) with accumulated splat contributions
-
-    See Also:
-        :func:`luxar.gsplats.rendering.render_to_volume`: Fast GPU-accelerated rendering
-        :meth:`GSplatData.render_to_volume`: Convenience method on GSplatData
-    """
-    import warnings
-
-    warnings.warn(
-        "render_gsplats_to_volume() is deprecated and will be removed in a future version. "
-        "Use luxar.gsplats.rendering.render_to_volume() or GSplatData.render_to_volume() "
-        "instead for substantially faster GPU-accelerated rendering (often orders of magnitude, GPU-dependent).",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-
-    # Import the new fast renderer
-    from luxar.gsplats.gsplat_data import GSplatData
-    from luxar.gsplats.rendering.volume_rendering import render_to_volume
-
-    # Wrap in GSplatData and use new renderer
-    gsplat_data = GSplatData(
-        centers=centers,
-        amplitudes=amplitudes,
-        cholesky_factors=cholesky_factors,
-        colors=None,
-        stats={},
-    )
-
-    return render_to_volume(gsplat_data, shape=volume_shape)

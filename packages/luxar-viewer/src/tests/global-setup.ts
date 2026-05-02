@@ -20,6 +20,7 @@ const EXPECTED_FIXTURES = [
   'test_4d.zarr',
   'test_hierarchical_transforms.zarr',
   'test_hdr_colors.zarr',
+  'test_integer_colors.zarr',
   'test_log_scalar.zarr',
   'test_4d_scalar_lut.zarr',
   'test_uint16_quantization.zarr',

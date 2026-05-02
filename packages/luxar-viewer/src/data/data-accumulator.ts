@@ -35,7 +35,11 @@ import { log, Modules } from '../utils/log';
 /**
  * Generic accumulator interface
  */
-export interface DataAccumulator<TData> {
+export interface DataAccumulator<
+  TData,
+  TGetArgs extends unknown[] = unknown[],
+  TFillArgs extends unknown[] = unknown[],
+> {
   /**
    * Ensure capacity (grow if needed)
    * @returns true if capacity was grown
@@ -50,7 +54,7 @@ export interface DataAccumulator<TData> {
    * - Lines: getData(segmentCount: number, vertexCount: number): LoadedLinesData
    * - GSplats: getData(count: number): LoadedGSplatsData
    */
-  getData(...args: any[]): TData;
+  getData(...args: TGetArgs): TData;
 
   /**
    * Fill accumulator at offset(s)
@@ -60,7 +64,7 @@ export interface DataAccumulator<TData> {
    * - Lines: fill(segmentOffset: number, vertexOffset: number, data: Partial<TData>)
    * - GSplats: fill(offset: number, data: Partial<TData>)
    */
-  fill(...args: any[]): void;
+  fill(...args: TFillArgs): void;
 
   /**
    * Get statistics
@@ -98,7 +102,9 @@ export interface PointsAccumulatorTypes {
  *
  * Type is detected on first fill() and remains fixed for the accumulator's lifetime.
  */
-export class LoadedPointsDataAccumulator implements DataAccumulator<LoadedPointsData> {
+export class LoadedPointsDataAccumulator
+  implements DataAccumulator<LoadedPointsData, [number], [number, Partial<LoadedPointsData>]>
+{
   // Persistent buffers (typed based on data)
   private positionBuffer: Float32Array; // Always Float32
   private colorBuffer: Float32Array | Uint8Array | Uint16Array;
@@ -233,13 +239,6 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<LoadedPoints
     this.totalGrowths++;
 
     return true;
-  }
-
-  /**
-   * Set HDR mode (deprecated - types are now detected automatically)
-   */
-  setHDRMode(_isHDR: boolean): void {
-    // No-op: Types are detected automatically on first fill
   }
 
   /**
@@ -515,7 +514,14 @@ export interface LinesAccumulatorTypes {
  *
  * Type is detected on first fill() and remains fixed for the accumulator's lifetime.
  */
-export class LinesDataAccumulator implements DataAccumulator<LoadedLinesData> {
+export class LinesDataAccumulator
+  implements
+    DataAccumulator<
+      LoadedLinesData,
+      [number, number],
+      [number, number, Partial<LoadedLinesData>]
+    >
+{
   // FLAT buffers (not nested!)
   private vertexBuffer: Float32Array; // ndim-dimensional vertices
   private segmentBuffer: Uint32Array; // index pairs
@@ -794,7 +800,9 @@ export interface GSplatsAccumulatorTypes {
  *
  * Type is detected on first fill() and remains fixed for the accumulator's lifetime.
  */
-export class GSplatsDataAccumulator implements DataAccumulator<LoadedGSplatsData> {
+export class GSplatsDataAccumulator
+  implements DataAccumulator<LoadedGSplatsData, [number], [number, Partial<LoadedGSplatsData>]>
+{
   private centerBuffer: Float32Array;
   private amplitudeBuffer: Float32Array;
   private choleskyBuffer: Float32Array; // CORRECT: for choleskyFactors field

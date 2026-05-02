@@ -128,6 +128,40 @@ class TestModeEdgeCases:
 
             arr = group["test"]
             assert arr.dtype == np.uint8
+            assert arr.attrs["encoding"]["name"] == "uint8"
+
+    def test_integer_color_rejects_ambiguous_dtype(self):
+        """Integer colors must use an explicit display-safe unsigned dtype."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(tmpdir, mode="w")
+            encoder = ArrayEncoder()
+
+            data = np.random.randint(0, 256, (100, 3), dtype=np.int32)
+
+            with pytest.raises(ValueError, match="uint8 or uint16"):
+                encoder.encode(data, group, "test", SemanticType.COLOR)
+
+    def test_integer_color_rejects_hdr_mode(self):
+        """Integer colors are already SDR-quantized, not HDR colors."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(tmpdir, mode="w")
+            encoder = ArrayEncoder()
+
+            data = np.random.randint(0, 256, (100, 3), dtype=np.uint8)
+
+            with pytest.raises(ValueError, match="Integer COLOR arrays are SDR"):
+                encoder.encode(data, group, "test", SemanticType.COLOR, color_mode="hdr")
+
+    def test_float_color_rejects_invalid_color_mode(self):
+        """Float colors require color_mode='sdr' or 'hdr'."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(tmpdir, mode="w")
+            encoder = ArrayEncoder()
+
+            data = np.random.rand(100, 3).astype(np.float32)
+
+            with pytest.raises(ValueError, match="color_mode must be 'sdr' or 'hdr'"):
+                encoder.encode(data, group, "test", SemanticType.COLOR, color_mode="bad")
 
     def test_hdr_color_invalid_mode(self):
         """Test HDR colors with wrong mode."""

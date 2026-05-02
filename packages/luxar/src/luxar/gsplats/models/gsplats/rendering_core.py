@@ -145,7 +145,7 @@ def cached_base_and_offsets(
     return _GRID_CACHE[key]
 
 
-@torch.jit.ignore  # type: ignore[untyped-decorator]  # jit-able but optional; ignore keeps it simple if torch.compile() is used outside
+@torch.jit.ignore  # type: ignore[misc]  # jit-able but optional; ignore keeps it simple if torch.compile() is used outside
 def group_by_box_gpu(
     lo: torch.Tensor, hi: torch.Tensor
 ) -> Tuple[torch.Tensor, torch.Tensor]:

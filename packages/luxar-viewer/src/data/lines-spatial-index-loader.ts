@@ -221,26 +221,15 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     }
 
     try {
-      // Try plural name first (current format), fall back to singular (legacy)
-      let sharpnessArray: zarr.Array<zarr.DataType, zarr.Readable>;
-      let sharpnessName: string;
-      try {
-        sharpnessArray = await zarr.open(this.zarrLocation.resolve('sharpnesses'), {
-          kind: 'array',
-        });
-        sharpnessName = 'sharpnesses';
-      } catch {
-        sharpnessArray = await zarr.open(this.zarrLocation.resolve('sharpness'), {
-          kind: 'array',
-        });
-        sharpnessName = 'sharpness';
-      }
-      this.registerBounds(sharpnessName, sharpnessArray);
+      let sharpnessArray = await zarr.open(this.zarrLocation.resolve('sharpnesses'), {
+        kind: 'array',
+      });
+      this.registerBounds('sharpnesses', sharpnessArray);
       if (this.l0Cache) {
         sharpnessArray = wrapWithCache(
           sharpnessArray,
           this.l0Cache,
-          `${this.node.path}/${sharpnessName}`
+          `${this.node.path}/sharpnesses`
         );
       }
       this.arrays.sharpness = sharpnessArray;

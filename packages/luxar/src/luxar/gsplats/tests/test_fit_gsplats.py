@@ -905,7 +905,3 @@ class TestReconstructionQuality:
         # This isn't guaranteed in all cases, but is a reasonable expectation
         # for this test case with well-separated blobs
         assert len(result_many.amplitudes) > len(result_few.amplitudes)  # More splats
-
-
-if __name__ == "__main__":
-    pytest.main([__file__])

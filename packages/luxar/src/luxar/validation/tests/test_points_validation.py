@@ -4,13 +4,15 @@ This module tests the validation of positions, colors, radii, and sharpness
 parameters when adding points to a scene.
 """
 
+import warnings
+
 import numpy as np
 import pytest
 import zarr
 
 from luxar import Dimensions, LuxarZarrCompiler
 from luxar.encoding import ArrayDecoder, EncodingMode
-from luxar.validation import ValidationError
+from luxar.validation import ValidationError, validate_colors_for_writing
 
 # =============================================================================
 # Position Validation Tests
@@ -80,6 +82,25 @@ def test_non_finite_point_attributes_rejected(
         compiler.create_scene(dimensions=Dimensions.default_3d())
         with pytest.raises(ValidationError, match=error_pattern):
             compiler.write_points("bad", positions, **kwargs)
+
+
+def test_empty_colors_are_valid_only_for_zero_points() -> None:
+    """Empty colors should not reach min/max reductions."""
+    validate_colors_for_writing(np.empty((0, 3), dtype=np.float32), n_points=0)
+
+    with pytest.raises(ValidationError, match="Number of colors"):
+        validate_colors_for_writing(np.empty((0, 3), dtype=np.float32), n_points=5)
+
+
+def test_integer_color_ranges_do_not_emit_hdr_warning() -> None:
+    """Integer SDR colors use native integer ranges, not HDR float ranges."""
+    colors = np.array([[255, 0, 0], [0, 128, 255]], dtype=np.uint8)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        validate_colors_for_writing(colors, n_points=2)
+
+    assert caught == []
 
 
 # =============================================================================

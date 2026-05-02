@@ -217,6 +217,10 @@ def _validate_permutation_basic(perm: Any, dim_name: str) -> None:
 
 def _validate_permutation(perm: Any, dim_name: str, categories: List[str]) -> None:
     """Validate permutation against category list."""
+    if len(categories) == 0:
+        raise ValueError(
+            f"Categorical dimension '{dim_name}' must define at least one category"
+        )
     _validate_permutation_basic(perm, dim_name)
     if len(perm) != len(categories):
         raise ValueError(

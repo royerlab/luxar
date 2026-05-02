@@ -3137,6 +3137,7 @@ def batch_plan(
 
         from luxar.cli.gsplat_config import (
             PRESETS,
+            decode_flat_channel_index,
             discover_ome_zarr_shape,
         )
         from luxar.gsplats.batch.env_capture import (
@@ -3236,6 +3237,20 @@ def batch_plan(
                 if channels_slice
                 else list(range(n_c_full))
             )
+            if not t_indices:
+                raise ValueError("--timepoints selected no timepoints")
+            if not c_indices:
+                raise ValueError("--channels selected no channels")
+            bad_t = [idx for idx in t_indices if idx < 0 or idx >= n_t_full]
+            bad_c = [idx for idx in c_indices if idx < 0 or idx >= n_c_full]
+            if bad_t:
+                raise ValueError(
+                    f"--timepoints selected out-of-range indices {bad_t}; valid range is 0..{n_t_full - 1}"
+                )
+            if bad_c:
+                raise ValueError(
+                    f"--channels selected out-of-range flat channel indices {bad_c}; valid range is 0..{n_c_full - 1}"
+                )
             n_t = len(t_indices)
             n_c = len(c_indices)
             if timepoints_slice or channels_slice:
@@ -3455,6 +3470,8 @@ def batch_plan(
             array_key=array_key,
             n_timepoints=n_t,
             n_channels=n_c,
+            channel_axes=ome_info.channel_axes,
+            channel_shape=ome_info.channel_shape,
             spatial_shape=spatial,
             tile_size=tile_size,
             tile_overlap=tile_overlap,
@@ -3495,21 +3512,32 @@ def batch_plan(
             calibration_samples=batch_calibration_samples,
         )
 
-        # Build job list
+        # Build job list. Store real dataset indices in filenames so status,
+        # merge, and generated Slurm scripts agree when --timepoints/--channels
+        # select non-contiguous values.
         jobs = []
+        t_width_base = max(t_indices) + 1
+        c_width_base = max(c_indices) + 1
         for task_id in range(total_tasks):
-            t = task_id // (n_c * n_tiles)
+            t_seq = task_id // (n_c * n_tiles)
             r = task_id % (n_c * n_tiles)
-            c = r // n_tiles
+            c_seq = r // n_tiles
             k = r % n_tiles
+            t_real = t_indices[t_seq]
+            c_real = c_indices[c_seq]
             jobs.append(
                 BatchJob(
                     task_id=task_id,
-                    timepoint=t,
-                    channel=c,
+                    timepoint=t_real,
+                    channel=c_real,
                     tile_index=k,
-                    output_filename=output_filename(t, c, k, n_t, n_c, n_tiles),
+                    output_filename=output_filename(
+                        t_real, c_real, k, t_width_base, c_width_base, n_tiles
+                    ),
                     estimated_wall_seconds=est_seconds,
+                    channel_coords=decode_flat_channel_index(
+                        c_real, ome_info.channel_shape
+                    ),
                 )
             )
         manifest.jobs = jobs

@@ -464,6 +464,25 @@ describe('TwoLevelCachingStore', () => {
 
       const result = await store.get('missing');
       expect(result).toBeUndefined();
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('should retry transient HTTP errors', async () => {
+      global.fetch = vi
+        .fn()
+        .mockResolvedValueOnce({ ok: false, status: 503 })
+        .mockResolvedValueOnce({ ok: false, status: 503 })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          async arrayBuffer() {
+            return new Uint8Array([9, 8, 7]).buffer;
+          },
+        }) as any;
+
+      const result = await store.get('flaky');
+      expect(result).toEqual(new Uint8Array([9, 8, 7]));
+      expect(global.fetch).toHaveBeenCalledTimes(3);
     });
 
     it('should handle network errors', async () => {

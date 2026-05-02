@@ -85,6 +85,9 @@ Make targets follow action-first naming: `install-<tool>`, `install-<component>-
 ```bash
 luxar demo
 luxar serve <data.zarr> --viewer
+luxar viewer
+luxar viewer --data <data.zarr>
+luxar viewer --data <data.zarr> --profile 3g
 luxar info <data.zarr> --stats
 luxar profiles
 luxar export scene.zarr -o my_export/
@@ -94,7 +97,7 @@ luxar export scene.zarr -o out/ --native macos
 luxar export scene.zarr -o out/ --native macos,linux-amd64,linux-arm64 --name MyScene
 ```
 CLI modules:
-- `packages/luxar/src/luxar/cli/main.py` — `serve`, `demo`, `info`, `profiles`, `export`.
+- `packages/luxar/src/luxar/cli/main.py` — `serve`, `viewer`, `demo`, `info`, `profiles`, `export`.
 - `packages/luxar/src/luxar/cli/export.py` — standalone viewer export.
 - `packages/luxar/src/luxar/cli/gsplat_commands.py` — gsplat subcommands.
 - `packages/luxar/src/luxar/cli/gsplat_config.py` — gsplat config loading/validation.

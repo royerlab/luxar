@@ -36,7 +36,7 @@ vi.mock('zarrita', () => ({
   slice: vi.fn((start, end) => ({ start, end })),
 }));
 
-// Mock chunk-based spatial index functions (NEW)
+// Mock chunk-based spatial index functions
 vi.mock('../../../data/chunk-spatial-index', () => ({
   loadChunkSpatialIndex: vi.fn(),
   queryChunksForView: vi.fn(),
@@ -97,7 +97,7 @@ describe('PointSpatialIndexLoader', () => {
       hasSpatialIndex: true,
     };
 
-    // Configure chunk-based index mocks (NEW)
+    // Configure chunk-based index mocks
     const mockChunkIndex = {
       metadata: {
         ordering: 'hilbert' as const,
@@ -157,7 +157,7 @@ describe('PointSpatialIndexLoader', () => {
 
       await loader.loadPoints(viewState);
 
-      // NEW: Check chunk-based index loading
+      // Check chunk-based index loading
       expect(loadChunkSpatialIndex).toHaveBeenCalledWith(mockZarrLocation, mockNode.attrs);
       expect(zarr.open).toHaveBeenCalled(); // positions, colors, radii, sharpness
     });
@@ -272,7 +272,7 @@ describe('PointSpatialIndexLoader', () => {
 
       await Promise.all(promises);
 
-      // Should only initialize once (NEW: check chunk-based loading)
+      // Should only initialize once
       expect(loadChunkSpatialIndex).toHaveBeenCalledTimes(1);
     });
   });
@@ -287,7 +287,7 @@ describe('PointSpatialIndexLoader', () => {
 
       await loader.loadPoints(viewState);
 
-      // NEW: Check chunk-based query
+      // Check chunk-based query
       expect(queryChunksForView).toHaveBeenCalled();
       expect(chunkIndicesToRanges).toHaveBeenCalled();
 
@@ -299,7 +299,7 @@ describe('PointSpatialIndexLoader', () => {
     });
 
     it('should return empty points when no points visible', async () => {
-      // NEW: Use chunk-based query which returns chunk indices (empty array = no chunks match)
+      // Use chunk-based query which returns chunk indices (empty array = no chunks match)
       (queryChunksForView as any).mockReturnValue([]);
       (chunkIndicesToRanges as any).mockReturnValue([]);
 
@@ -316,7 +316,7 @@ describe('PointSpatialIndexLoader', () => {
     });
 
     it('should merge adjacent ranges for efficiency', async () => {
-      // NEW: Mock chunk-based query to return multiple chunks
+      // Mock chunk-based query to return multiple chunks
       (queryChunksForView as any).mockReturnValue([0, 1, 3]); // Chunks 0, 1, 3
       (chunkIndicesToRanges as any).mockReturnValue([
         { start: 0, end: 100 },
@@ -389,14 +389,14 @@ describe('PointSpatialIndexLoader', () => {
 
       await loader.loadPoints(viewState);
 
-      // NEW: Check chunk-based query was used
+      // Check chunk-based query was used
       expect(queryChunksForView).toHaveBeenCalled();
     });
   });
 
   describe('data projection', () => {
     it('should project nD points to 3D correctly', async () => {
-      // NEW: Use chunk-based query that returns ranges for 2 points
+      // Use chunk-based query that returns ranges for 2 points
       (queryChunksForView as any).mockReturnValue([0]);
       (chunkIndicesToRanges as any).mockReturnValue([{ start: 0, end: 2 }]);
 
@@ -637,7 +637,7 @@ describe('PointSpatialIndexLoader', () => {
       const result = await loader.updateView(viewState2);
 
       expect(result).toBeDefined();
-      // NEW: Check chunk-based query was called twice (once per view)
+      // Check chunk-based query was called twice (once per view)
       expect(queryChunksForView).toHaveBeenCalledTimes(2);
     });
   });
@@ -704,11 +704,12 @@ describe('PointSpatialIndexLoader', () => {
     });
 
     it('should restore original_dtype for encoded arrays', async () => {
-      // Mock encoded colors with original_dtype=uint8
-      // This simulates quantized uint8 colors being decoded
+      // Mock encoded colors with original_dtype=uint8.
+      // Use a known semantic quantized encoding; plain dtype names are direct storage.
+      mockArrays.colors.dtype = 'uint8';
       mockArrays.colors.attrs = {
         encoding: {
-          name: 'quantized_uint8',
+          name: 'bounded_scalar_uint8',
           bounds: [0, 255],
           original_dtype: 'uint8',
           original_shape: [2, 3],
@@ -743,20 +744,4 @@ describe('PointSpatialIndexLoader', () => {
     });
   });
 
-  describe('3D datasets without spatial index (fallback)', () => {
-    // NOTE: These tests test internal implementation details of the spatial index
-    // fallback mechanism. The implementation now uses chunk-based indexing
-    // which has a different structure. These tests are skipped because:
-    // 1. They test private implementation details (spatialIndex structure)
-    // 2. The mock setup is complex and fragile
-    // 3. The actual functionality is tested via E2E tests with real data
-
-    it.skip('should create dummy spatial index for 3D datasets (IMPLEMENTATION DETAIL)', async () => {
-      // This tests internal spatialIndex structure which varies by implementation
-    });
-
-    it.skip('should load all points when no spatial index present (TESTED VIA E2E)', async () => {
-      // This functionality is tested via E2E tests with real 3D zarr datasets
-    });
-  });
 });

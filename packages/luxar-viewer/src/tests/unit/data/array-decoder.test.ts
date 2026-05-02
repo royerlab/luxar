@@ -61,7 +61,7 @@ async function loadArrayWithAttrs(
 describe('ArrayDecoder - Python Compatibility Tests', () => {
   describe('Broadcasting Encoding', () => {
     it('should decode broadcasted colors (1, 3) → (1000, 3)', async () => {
-      // TODO: Blosc decompression error in numcodecs: "Cannot pass non-string to std::string"
+      // NOTE: Blosc decompression error in numcodecs: "Cannot pass non-string to std::string"
       // This is a known issue with the blosc library bindings in Node.js
       const { array, attrs } = await loadArrayWithAttrs('test_broadcasting.zarr', 'points/colors');
 
@@ -94,7 +94,7 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
     });
 
     it('should decode broadcasted radii (1,) → (1000,)', async () => {
-      // TODO: Blosc decompression error in numcodecs: "Cannot pass non-string to std::string"
+      // NOTE: Blosc decompression error in numcodecs: "Cannot pass non-string to std::string"
       const { array, attrs } = await loadArrayWithAttrs('test_broadcasting.zarr', 'points/radii');
 
       // Verify metadata (nested under "encoding")
@@ -142,7 +142,7 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
 
   describe('LUT Encoding', () => {
     it('should decode LUT-encoded colors with 10 unique values', async () => {
-      // TODO: Blosc decompression error in numcodecs: "Cannot pass non-string to std::string"
+      // NOTE: Blosc decompression error in numcodecs: "Cannot pass non-string to std::string"
       const { array, attrs } = await loadArrayWithAttrs('test_lut.zarr', 'points/colors');
 
       // Verify metadata indicates LUT encoding (nested under "encoding")
@@ -201,7 +201,7 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
 
   describe('Quantization Encoding', () => {
     it('should dequantize colors from uint8 to float32', async () => {
-      // TODO: Blosc decompression error in numcodecs: "Cannot pass non-string to std::string"
+      // NOTE: Blosc decompression error in numcodecs: "Cannot pass non-string to std::string"
       const { array, attrs } = await loadArrayWithAttrs('test_quantization.zarr', 'points/colors');
 
       // Verify metadata indicates quantization (nested under "encoding")
@@ -334,7 +334,7 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
       expect(decoded2.length).toBe(decoded1.length);
     });
 
-    it('should resolve array_ref when encoding name is missing', async () => {
+    it('should reject array_ref metadata when encoding name is missing', async () => {
       const {
         array: array2,
         attrs: attrs2,
@@ -350,15 +350,15 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
       };
 
       const decoder = new ArrayDecoder(new ArrayRefRegistry());
-      const decoded = await decoder.decode(array2, attrsNoName, 500, rootLoc);
-
-      expect(decoded.length).toBe(500 * 3);
+      await expect(decoder.decode(array2, attrsNoName, 500, rootLoc)).rejects.toThrow(
+        'encoding.name is required'
+      );
     });
   });
 
   describe('Mixed Encoding Modes', () => {
     it('should handle multiple encoding modes in same scene', async () => {
-      // TODO: Blosc decompression error in numcodecs: "Cannot pass non-string to std::string"
+      // NOTE: Blosc decompression error in numcodecs: "Cannot pass non-string to std::string"
       // Load all three point clouds with different encoding modes
       const uniform = await loadArrayWithAttrs('test_mixed.zarr', 'uniform/colors');
       const lut = await loadArrayWithAttrs('test_mixed.zarr', 'lut/colors');
@@ -448,7 +448,7 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
     });
 
     it('should load 4D colors that vary with time', async () => {
-      // TODO: Blosc decompression error in numcodecs: "Cannot pass non-string to std::string"
+      // NOTE: Blosc decompression error in numcodecs: "Cannot pass non-string to std::string"
       const { array, attrs } = await loadArrayWithAttrs('test_4d.zarr', 'points/colors');
 
       // Load colors
@@ -528,7 +528,7 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
 
   describe('Performance and Edge Cases', () => {
     it('should handle large broadcasted arrays efficiently', async () => {
-      // TODO: Blosc decompression error in numcodecs: "Cannot pass non-string to std::string"
+      // NOTE: Blosc decompression error in numcodecs: "Cannot pass non-string to std::string"
       const { array, attrs } = await loadArrayWithAttrs('test_broadcasting.zarr', 'points/colors');
 
       const decoder = new ArrayDecoder(new ArrayRefRegistry());
@@ -545,21 +545,18 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
       expect(decoded.length).toBe(3000);
     });
 
-    it.skip('should handle empty arrays gracefully', async () => {
-      // TODO: Mocking zarr.Array interface is too complex - test via integration tests instead
-      // Create fake empty array metadata (nested under "encoding")
+    it('should handle empty broadcast targets gracefully', async () => {
       const emptyAttrs: ArrayMetadata = {
         encoding: {
           name: 'broadcasted',
-          n_elements: 1, // Stored size (not target)
+          n_elements: 1,
         },
         shape: [1, 3],
       };
 
       const decoder = new ArrayDecoder(new ArrayRefRegistry());
 
-      // Create a mock empty array - needs full zarr.Array interface
-      const emptyData = new Float32Array(3); // Shape (1, 3) but broadcasting to 0 elements
+      const emptyData = new Float32Array(3);
       const mockArray = {
         shape: [1, 3],
         chunks: [1, 3],
@@ -579,16 +576,10 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
     });
   });
 
-  describe('Sharpness Range Test (Bug Fix Verification)', () => {
-    it('should decode sharpness with correct scale factor 31.0 (not 15.0)', async () => {
-      // CRITICAL: This test verifies the fix for the sharpness scale bug
-      // - Python uses SHARPNESS_MAX = 31.0 for quantization bounds
-      // - TypeScript must use sharpnessScale = 31.0 (not 15.0) when decoding
-      //
-      // Bug history:
-      // - Before fix: TypeScript used scale factor 15.0
-      // - After fix: TypeScript uses scale factor 31.0 (matching Python)
-      // - Impact: All sharpness values > 15 were clamped/misrepresented
+  describe('Sharpness Range Test', () => {
+    it('should decode sharpness with the Python SHARPNESS_MAX bound', async () => {
+      // Python writes SHARPNESS_MAX = 31.0 as quantization metadata.
+      // TypeScript must decode using the stored metadata, not hard-coded scale factors.
 
       const { array, attrs } = await loadArrayWithAttrs(
         'test_sharpness_range.zarr',
@@ -617,9 +608,7 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
         expect(sorted[i]).toBeCloseTo(expected, 0); // Tolerance: ±0.5 (1 decimal place)
       }
 
-      // CRITICAL: Verify high sharpness values are NOT clamped to 15
-      // If the bug still exists (scale = 15.0), values would be clamped to ~15
-      // With the fix (scale = 31.0), values should reach full range
+      // Verify high sharpness values reach the encoded metadata range.
       const maxSharpness = Math.max(...Array.from(decoded));
       expect(maxSharpness).toBeGreaterThan(29.0); // Must be close to 31.0
       expect(maxSharpness).toBeCloseTo(31.0, 1);
@@ -629,16 +618,9 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
       expect(minSharpness).toBeCloseTo(1.0, 1);
     });
 
-    it('should decode uint16 bounded_scalar with correct max_int=65535 (not 255)', async () => {
-      // CRITICAL: This test verifies the fix for the uint16 dequantization bug
-      //
-      // Bug history:
-      // - attrs.dtype is undefined (Python encoder doesn't write it)
-      // - getQuantizationMetadata defaulted to 'uint8', using max_int=255
-      // - For uint16 data, this caused 256x error: decoded = raw/255 * max (WRONG!)
-      // - Correct: decoded = raw/65535 * max
-      //
-      // Fix: Use actual zarr array.dtype (which IS set correctly) instead of attrs.dtype
+    it('should decode uint16 bounded_scalar using the zarr storage dtype', async () => {
+      // Python stores quantized dtype on the zarr array. TypeScript must use
+      // array.dtype so uint16 data is decoded with max_int=65535.
 
       const { array, attrs } = await loadArrayWithAttrs(
         'test_uint16_quantization.zarr',
@@ -671,36 +653,10 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
       const minDecoded = Math.min(...Array.from(decoded));
       const maxDecoded = Math.max(...Array.from(decoded));
 
-      // CRITICAL: With correct uint16 decoding (max_int=65535):
-      // - minDecoded should be close to encMin (within quantization error)
-      // - maxDecoded should be close to encMax
+      // With correct uint16 decoding, values stay within quantization error.
       expect(maxDecoded).toBeCloseTo(encMax, 2);
       expect(minDecoded).toBeCloseTo(encMin, 2);
-
-      // BUG CHECK: With WRONG uint8 decoding (max_int=255):
-      // - maxDecoded would be ~256x too large (e.g., 256.0 instead of 1.0)
-      // This assertion catches the bug if it regresses
-      expect(maxDecoded).toBeLessThan(encMax * 2); // Should never be > 2x expected
-    });
-  });
-
-  describe('LUT Scalar Mode (Critical Bug Fix)', () => {
-    // NOTE: These tests use mock arrays but zarrita's get() function requires
-    // a full zarrita Array interface with chunks, dtype, shape, etc.
-    // Mocking this correctly is complex and fragile.
-    // The LUT functionality is tested via real fixture files above.
-    // These unit tests are skipped in favor of integration tests.
-
-    it.skip('should handle LUT scalar mode correctly (INTEGRATION TEST - use test_lut.zarr)', () => {
-      // CRITICAL: Test the bug fix for scalar mode LUT encoding
-      // Bug: Decoder multiplied by k even in scalar mode
-      // Fix: Check lut_mode and handle scalar vs row differently
-      // TESTED VIA: test_lut.zarr integration test above
-    });
-
-    it.skip('should handle LUT row mode for colors (INTEGRATION TEST - use test_lut.zarr)', () => {
-      // Test row mode still works (one index per point → RGB vector)
-      // TESTED VIA: test_lut.zarr integration test above
+      expect(maxDecoded).toBeLessThan(encMax * 2);
     });
   });
 
@@ -782,6 +738,49 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
       expect(attrs.encoding?.bounds).toBeUndefined();
       expect((attrs.encoding as any)?.min).toBeUndefined();
       expect((attrs.encoding as any)?.max).toBeUndefined();
+    });
+
+    it('should treat Python integer color arrays as direct storage', async () => {
+      const cases = [
+        {
+          path: 'uint8_points/colors',
+          encodingName: 'uint8',
+          ctor: Uint8Array,
+          expectedRows: [
+            [255, 0, 0],
+            [0, 128, 255],
+            [64, 32, 16],
+          ],
+        },
+        {
+          path: 'uint16_points/colors',
+          encodingName: 'uint16',
+          ctor: Uint16Array,
+          expectedRows: [
+            [65535, 0, 0],
+            [0, 32768, 65535],
+            [16384, 8192, 4096],
+          ],
+        },
+      ];
+
+      for (const testCase of cases) {
+        const { array, attrs } = await loadArrayWithAttrs('test_integer_colors.zarr', testCase.path);
+        const raw = await zarr.get(array);
+
+        expect(attrs.encoding?.name).toBe(testCase.encodingName);
+        expect(ArrayDecoder.isEncoded(attrs)).toBe(false);
+        expect(ArrayDecoder.isQuantizedEncoding(attrs)).toBe(false);
+        expect(ArrayDecoder.getEncodingMode(attrs)).toBe('direct');
+        expect(ArrayDecoder.getQuantizationMetadata(attrs, String(array.dtype))).toBeNull();
+        expect(raw.data).toBeInstanceOf(testCase.ctor);
+        const flat = Array.from(raw.data as Uint8Array | Uint16Array);
+        const rows = [0, 1, 2]
+          .map((row) => flat.slice(row * 3, row * 3 + 3).join(','))
+          .sort();
+        const expectedRows = testCase.expectedRows.map((row) => row.join(',')).sort();
+        expect(rows).toEqual(expectedRows);
+      }
     });
   });
 
@@ -1047,17 +1046,20 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
     });
 
     it('should extract quantization metadata correctly', async () => {
-      const { attrs: rgbAttrs } = await loadArrayWithAttrs(
+      const { array: rgbArray, attrs: rgbAttrs } = await loadArrayWithAttrs(
         'test_quantization.zarr',
         'points/colors'
       );
-      const { attrs: boundedAttrs } = await loadArrayWithAttrs(
+      const { array: boundedArray, attrs: boundedAttrs } = await loadArrayWithAttrs(
         'test_sharpness_range.zarr',
         'sharpness_test/sharpnesses'
       );
 
-      const rgbMeta = ArrayDecoder.getQuantizationMetadata(rgbAttrs);
-      const boundedMeta = ArrayDecoder.getQuantizationMetadata(boundedAttrs);
+      const rgbMeta = ArrayDecoder.getQuantizationMetadata(rgbAttrs, String(rgbArray.dtype));
+      const boundedMeta = ArrayDecoder.getQuantizationMetadata(
+        boundedAttrs,
+        String(boundedArray.dtype)
+      );
 
       // RGB metadata
       expect(rgbMeta).not.toBeNull();
@@ -1077,15 +1079,64 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
       );
       const { attrs: lutAttrs } = await loadArrayWithAttrs('test_lut.zarr', 'points/colors');
 
-      expect(ArrayDecoder.getQuantizationMetadata(broadcastAttrs)).toBeNull();
-      expect(ArrayDecoder.getQuantizationMetadata(lutAttrs)).toBeNull();
-      expect(ArrayDecoder.getQuantizationMetadata(null as any)).toBeNull();
+      expect(ArrayDecoder.getQuantizationMetadata(broadcastAttrs, 'uint8')).toBeNull();
+      expect(ArrayDecoder.getQuantizationMetadata(lutAttrs, 'uint8')).toBeNull();
+      expect(ArrayDecoder.getQuantizationMetadata(null as any, 'uint8')).toBeNull();
+    });
+
+    it('should treat dtype encodings as direct storage, not quantization', () => {
+      for (const name of ['uint8', 'uint16', 'uint32', 'uint64', 'float32', 'float16']) {
+        const attrs: ArrayMetadata = { encoding: { name } };
+        expect(ArrayDecoder.isEncoded(attrs)).toBe(false);
+        expect(ArrayDecoder.isQuantizedEncoding(attrs)).toBe(false);
+        expect(ArrayDecoder.getEncodingMode(attrs)).toBe('direct');
+        expect(ArrayDecoder.getQuantizationMetadata(attrs, 'uint8')).toBeNull();
+      }
+    });
+
+    it('should reject unknown encoding names during metadata validation', () => {
+      expect(() =>
+        ArrayDecoder.validateEncodingMetadata({ name: 'mystery_encoder' })
+      ).toThrow('Unknown encoding name');
+    });
+
+    it('should reject malformed prefix-matching encoding names', () => {
+      for (const name of [
+        'lut_float32',
+        'bounded_scalar_uint32',
+        'log_scalar_float32',
+        'rgb_uint32',
+        'hdr_uint8',
+      ]) {
+        expect(ArrayDecoder.isKnownEncodingName(name)).toBe(false);
+        expect(() => ArrayDecoder.validateEncodingMetadata({ name })).toThrow(
+          'Unknown encoding name'
+        );
+      }
+    });
+
+    it('should keep direct dtype encoding names exact', () => {
+      for (const name of ['float64', 'int8', 'int16', 'int32', 'int64']) {
+        expect(ArrayDecoder.isDirectEncodingName(name)).toBe(false);
+        expect(() => ArrayDecoder.validateEncodingMetadata({ name })).toThrow(
+          'Unknown encoding name'
+        );
+      }
+    });
+
+    it('should reject quantization bounds on direct dtype encodings', () => {
+      expect(() =>
+        ArrayDecoder.validateEncodingMetadata({ name: 'uint8', bounds: [0, 1] })
+      ).toThrow('bounds/min/max metadata is only valid for quantized encodings');
+      expect(() =>
+        ArrayDecoder.validateEncodingMetadata({ name: 'float32', min: 0, max: 1 })
+      ).toThrow('bounds/min/max metadata is only valid for quantized encodings');
     });
 
     it('should dequantize range data correctly', async () => {
-      const { attrs } = await loadArrayWithAttrs('test_quantization.zarr', 'points/colors');
+      const { array, attrs } = await loadArrayWithAttrs('test_quantization.zarr', 'points/colors');
 
-      const quantMeta = ArrayDecoder.getQuantizationMetadata(attrs);
+      const quantMeta = ArrayDecoder.getQuantizationMetadata(attrs, String(array.dtype));
       expect(quantMeta).not.toBeNull();
 
       const decoder = new ArrayDecoder(new ArrayRefRegistry());
@@ -1142,16 +1193,17 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
      * This prevents redundant decoding and loading of the same data.
      */
 
-    it('should detect array_ref encoding', () => {
-      // Create fake array_ref attrs
+    it('should detect explicit array_ref encoding', () => {
       const arrayRefAttrs: ArrayMetadata = {
         encoding: {
+          name: 'array_ref',
           target: '/SharedNode/colors',
           hash: 'abc123',
         },
       };
       const arrayRefNoHash: ArrayMetadata = {
         encoding: {
+          name: 'array_ref',
           target: '/SharedNode/positions',
         },
       };
@@ -1161,13 +1213,18 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
           name: 'rgb_uint8',
         },
       };
+      const namelessTargetAttrs: ArrayMetadata = {
+        encoding: {
+          target: '/SharedNode/colors',
+        },
+      };
 
-      // Array ref should be detected
       expect(ArrayDecoder.isArrayRef(arrayRefAttrs)).toBe(true);
       expect(ArrayDecoder.isArrayRef(arrayRefNoHash)).toBe(true);
 
-      // Non array_ref should NOT be detected
+      // Non array_ref and malformed metadata should NOT be detected
       expect(ArrayDecoder.isArrayRef(quantizedAttrs)).toBe(false);
+      expect(ArrayDecoder.isArrayRef(namelessTargetAttrs)).toBe(false);
       expect(ArrayDecoder.isArrayRef(null as any)).toBe(false);
       expect(ArrayDecoder.isArrayRef({} as any)).toBe(false);
     });
@@ -1175,6 +1232,7 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
     it('should not confuse array_ref with other encodings', () => {
       const arrayRefAttrs: ArrayMetadata = {
         encoding: {
+          name: 'array_ref',
           target: '/SharedNode/colors',
           hash: 'abc123',
         },
@@ -1212,34 +1270,16 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
       expect(ArrayDecoder.isArrayRef(broadcastedAttrs)).toBe(false);
     });
 
-    // NOTE: Full integration tests with actual array_ref fixtures require
-    // generating test data with array_ref encoding. This should be added
-    // via E2E tests or by extending generate_test_data.py to create
-    // datasets with deduplication (array_ref).
-    //
-    // For now, the tests above verify the detection logic is correct,
-    // and the implementation follows the same pattern as LUT/quantized/broadcasted
-    // optimizations, so it should work correctly in practice.
+    // Full array_ref fixture coverage lives in the Array Reference Deduplication
+    // suite above; these tests focus on metadata classification helpers.
   });
 
-  describe('Broadcasted Range Loading (Critical Bug Fix)', () => {
+  describe('Broadcasted Range Loading', () => {
     /**
-     * CRITICAL BUG FIX TEST: Broadcasted arrays with range loading
-     *
-     * Bug History:
-     * - Broadcasted arrays store a single value (e.g., radius=0.35) replicated to all points
-     * - When loading ranges, the old code decoded to totalElements size, then tried to
-     *   extract using dataset indices (e.g., range.start=100000)
-     * - This caused out-of-bounds access, resulting in zeros
-     *
-     * Fix:
-     * - Detect broadcasted encoding with isBroadcasted()
-     * - Load the single value once and replicate to all requested points
-     * - No range extraction needed
-     *
-     * Impact:
-     * - Quantum orbitals demo: Orbitals 6 and 7 had zero radius, were invisible
-     * - After fix: All orbitals visible with correct uniform radius
+     * Broadcasted arrays store a single value (for example, a uniform radius)
+     * and replicate it to all requested elements. Range loading should replicate
+     * directly for the requested output size; it must not index into the compact
+     * single-value storage using dataset coordinates.
      */
 
     it('should detect broadcasted encoding with isBroadcasted()', async () => {
@@ -1267,8 +1307,6 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
     });
 
     it('should maintain uniform values when broadcasting to different sizes', async () => {
-      // CRITICAL: This test verifies that broadcasting works for ANY target size
-      // Bug scenario: Broadcasting (1,1) to 1000 points worked, but to 50000 points failed
       const { array, attrs } = await loadArrayWithAttrs('test_broadcasting.zarr', 'points/radii');
 
       const decoder = new ArrayDecoder(new ArrayRefRegistry());
@@ -1293,8 +1331,6 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
     });
 
     it('should not have zeros when broadcasting uniform radii', async () => {
-      // CRITICAL: Verifies the bug fix - broadcasted radii should NEVER have zeros
-      // (unless the broadcast value itself is zero, which it's not in test data)
       const { array, attrs } = await loadArrayWithAttrs('test_broadcasting.zarr', 'points/radii');
 
       const decoder = new ArrayDecoder(new ArrayRefRegistry());

@@ -1,6 +1,10 @@
 import type { OPFSMetadata } from './types';
 import { log, Modules } from '../utils/log';
 
+type IterableFileSystemDirectoryHandle = FileSystemDirectoryHandle & {
+  keys(): AsyncIterableIterator<string>;
+};
+
 /**
  * OPFS persistence layer (L2 cache) with LRU eviction and shallow bucketing.
  *
@@ -254,7 +258,8 @@ export class OPFSStore {
         // Fallback: try to remove entries individually (best-effort)
         try {
           if (this.opfsRoot) {
-            for await (const name of (this.opfsRoot as any).keys()) {
+            const iterableRoot = this.opfsRoot as IterableFileSystemDirectoryHandle;
+            for await (const name of iterableRoot.keys()) {
               try {
                 await this.opfsRoot.removeEntry(name, { recursive: true });
               } catch {
@@ -355,6 +360,7 @@ export class OPFSStore {
   async dispose(): Promise<void> {
     if (this.metadataSaveTimeout) {
       clearTimeout(this.metadataSaveTimeout);
+      this.metadataSaveTimeout = null;
       await this.saveMetadata();
     }
   }
@@ -437,8 +443,13 @@ export class OPFSStore {
       clearTimeout(this.metadataSaveTimeout);
     }
     this.metadataSaveTimeout = setTimeout(() => {
-      this.saveMetadata().catch(() => {});
-      this.metadataSaveTimeout = null;
+      this.saveMetadata()
+        .catch((error) => {
+          log.warning(Modules.CACHE, 'OPFSStore metadata save failed', error);
+        })
+        .finally(() => {
+          this.metadataSaveTimeout = null;
+        });
     }, OPFSStore.METADATA_SAVE_DELAY);
   }
 

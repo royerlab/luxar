@@ -92,7 +92,6 @@ describe('LoadedPointsDataAccumulator', () => {
   });
 
   it('should handle HDR colors (Float32Array)', () => {
-    accumulator.setHDRMode(true);
     accumulator.fill(0, {
       positions: new Float32Array([1, 2, 3]),
       colors: new Float32Array([2.5, 1.8, 0.9]), // HDR values > 1.0

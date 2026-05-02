@@ -263,7 +263,7 @@ def create_server_app(
 
 def _version_callback(value: bool) -> None:
     if value:
-        print(f"luxar {__version__}")
+        aprint(f"luxar {__version__}")
         raise typer.Exit()
 
 
@@ -283,7 +283,7 @@ def main_callback(
 ) -> None:
     """luxar – build and serve Zarr-backed nD scenes."""
     if not ctx.invoked_subcommand:
-        print(ctx.get_help())
+        aprint(ctx.get_help())
         raise typer.Exit(0)
 
 

@@ -214,7 +214,3 @@ class TestTrainingIntegration:
 
         final_lr = optimizer.param_groups[0]["lr"]
         assert final_lr == pytest.approx(initial_lr * 0.9)
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
