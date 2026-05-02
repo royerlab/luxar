@@ -30,7 +30,7 @@ inline float gaussian_intensity(
     float shift_C,
     float inv_one_minus_C
 ) {
-    return amp * inv_one_minus_C * max(fast::exp(-0.5f * dist_sq) - shift_C, 0.0f);
+    return amp * inv_one_minus_C * (fast::exp(-0.5f * dist_sq) - shift_C);
 }
 
 inline float effective_truncate_sq(
