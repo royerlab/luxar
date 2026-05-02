@@ -25,8 +25,7 @@ struct uint3 {
     uint32_t x, y, z;
 };
 
-constexpr uint32_t kForwardThreadgroupSize = 256;
-constexpr uint32_t kBackwardThreadgroupSize = 64;
+constexpr uint32_t kThreadgroupSize = 64;
 
 // ============================================================================
 // Metal Context Management
@@ -295,7 +294,7 @@ torch::Tensor compute_conic_metal(torch::Tensor Ls) {
     [enc setBytes:&n_splats length:sizeof(uint32_t) atIndex:2];
 
     MTLSize threads = MTLSizeMake(n_splats, 1, 1);
-    MTLSize group = MTLSizeMake(std::min<uint32_t>(kForwardThreadgroupSize, n_splats), 1, 1);
+    MTLSize group = MTLSizeMake(std::min<uint32_t>(kThreadgroupSize, n_splats), 1, 1);
     [enc dispatchThreads:threads threadsPerThreadgroup:group];
     [enc endEncoding];
     [cmd commit];
@@ -339,7 +338,7 @@ torch::Tensor dispatch_forward_splat_3d(
         setBufferWithOffset(enc, output, 0);
         [enc setBytes:&total_pixels length:sizeof(uint32_t) atIndex:1];
         MTLSize threads = MTLSizeMake(total_pixels, 1, 1);
-        MTLSize group = MTLSizeMake(std::min<uint32_t>(kForwardThreadgroupSize, total_pixels), 1, 1);
+        MTLSize group = MTLSizeMake(std::min<uint32_t>(kThreadgroupSize, total_pixels), 1, 1);
         [enc dispatchThreads:threads threadsPerThreadgroup:group];
         [enc endEncoding];
     }
@@ -370,7 +369,7 @@ torch::Tensor dispatch_forward_splat_3d(
         [enc setBytes:&inv_one_minus_C length:sizeof(float) atIndex:9];
 
         MTLSize groups = MTLSizeMake(n_splats, 1, 1);
-        MTLSize threadsPerGroup = MTLSizeMake(kForwardThreadgroupSize, 1, 1);
+        MTLSize threadsPerGroup = MTLSizeMake(kThreadgroupSize, 1, 1);
         [enc dispatchThreadgroups:groups threadsPerThreadgroup:threadsPerGroup];
         [enc endEncoding];
     }
@@ -450,7 +449,7 @@ std::vector<torch::Tensor> dispatch_backward_splat_3d(
     [enc setBytes:&inv_one_minus_C length:sizeof(float) atIndex:12];
 
     MTLSize groups = MTLSizeMake(n_splats, 1, 1);
-    MTLSize threadsPerGroup = MTLSizeMake(kBackwardThreadgroupSize, 1, 1);
+    MTLSize threadsPerGroup = MTLSizeMake(kThreadgroupSize, 1, 1);
     [enc dispatchThreadgroups:groups threadsPerThreadgroup:threadsPerGroup];
     [enc endEncoding];
     [cmd commit];
