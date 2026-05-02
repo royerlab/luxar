@@ -144,8 +144,7 @@ class MetalSplatFunction(torch.autograd.Function):
                 Ls.contiguous()
             ).detach()
         else:
-            with torch.no_grad():
-                conic_zyx = cholesky_to_conic(Ls).contiguous()
+            conic_zyx = cholesky_to_conic(Ls_for_conic).detach().contiguous()
 
         output = cast(
             torch.Tensor,
