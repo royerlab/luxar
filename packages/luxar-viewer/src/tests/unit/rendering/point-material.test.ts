@@ -113,9 +113,13 @@ describe('PointMaterial', () => {
       expect(material.vertexShader).toContain(
         'float normalizedSharpness = sharpness * sharpnessScale'
       );
-      expect(material.vertexShader).toContain(
-        'vSharpness = normalizedSharpness > 0.0 ? normalizedSharpness : 2.0'
-      );
+      expect(material.vertexShader).toContain('isnan(normalizedSharpness)');
+      expect(material.vertexShader).toContain('isinf(normalizedSharpness)');
+      expect(material.vertexShader).toContain('vSharpness = normalizedSharpness');
+
+      // Check invalid radius and compensation guards are present
+      expect(material.vertexShader).toContain('isnan(normalizedRadius)');
+      expect(material.vertexShader).toContain('isinf(sharpnessCompensation)');
 
       // Check for mediump precision on varyings (reduces register pressure)
       expect(material.vertexShader).toContain('out mediump vec3 vColor');

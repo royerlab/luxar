@@ -207,14 +207,24 @@ describe('GSplatMaterial', () => {
       const material = new GSplatMaterial();
 
       expect(material.vertexShader).toContain('vec3 cholesky2x2(mat2 S)');
+      expect(material.vertexShader).toContain('bool invalidFloat(float v)');
+      expect(material.vertexShader).toContain('bool invalidCov2D(mat2 S)');
       expect(material.vertexShader).toContain('float L00 = sqrt');
       // OPTIMIZATION: Uses reciprocal multiplication instead of division
       expect(material.vertexShader).toContain('float invL00 = 1.0 / L00');
-      expect(material.vertexShader).toContain('float L10 = S[1][0] * invL00');
+      expect(material.vertexShader).toContain('float L10 = s10 * invL00');
       expect(material.vertexShader).toContain('float L11 = sqrt');
       expect(material.vertexShader).toContain('float invL11 = 1.0 / L11');
       // Returns reciprocals for faster fragment shader
       expect(material.vertexShader).toContain('return vec3(invL00, L10, invL11)');
+    });
+
+    it('should guard invalid projected covariance and amplitudes', () => {
+      const material = new GSplatMaterial();
+
+      expect(material.vertexShader).toContain('invalidCov2D(Sigma2D)');
+      expect(material.vertexShader).toContain('invalidFloat(aAmplitude)');
+      expect(material.vertexShader).toContain('return isnan(v) || isinf(v)');
     });
 
     it('should use uniform ray integral factor for shifted Gaussian', () => {
