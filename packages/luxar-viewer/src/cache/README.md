@@ -465,6 +465,24 @@ Dataset content changed (new content_hash)
     └─→ Fetches fresh data
 ```
 
+## Cache Invalidation Chain
+
+L1/L2 invalidation is the root signal for the whole cache stack. Components that
+cache derived data must subscribe with `TwoLevelCachingStore.onInvalidate()`:
+
+```typescript
+const store = new TwoLevelCachingStore(datasetUrl);
+const decompressedCache = new DecompressedChunkCache();
+store.onInvalidate(() => decompressedCache.clear());
+```
+
+This is required because L0 stores decoded typed arrays derived from compressed
+L1/L2 bytes. When `clearAll()`, `?clear-cache`, or content-hash mismatch clears
+L1/L2, every L0 wrapper for that dataset must clear too; otherwise stale decoded
+arrays can survive even though the compressed source cache was invalidated. New
+cache layers should either register their own invalidation callback or be owned
+by an object that does.
+
 ## Content Hash System
 
 All Luxar-generated datasets include hierarchical content hashes:

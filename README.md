@@ -93,7 +93,7 @@ with LuxarZarrCompiler("my_data.zarr") as compiler:
 
 # View it
 # Terminal 1: make viewer
-# Terminal 2: luxar serve my_data.zarr
+# Terminal 2: luxar serve my_data.zarr --viewer
 # Browser: http://localhost:5173/?src=http://localhost:8000
 ```
 

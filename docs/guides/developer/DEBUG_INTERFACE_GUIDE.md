@@ -19,7 +19,7 @@ components (scene, camera, cache helpers, etc.) after initialization completes.
 **URL parameter** (recommended):
 
 ```
-http://localhost:5173/?src=http://127.0.0.1:8005&debug
+http://localhost:5173/?src=http://127.0.0.1:8000&debug
 ```
 
 **localStorage** (persists across page loads):

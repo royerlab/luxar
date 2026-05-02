@@ -1,6 +1,6 @@
 # luxar.gsplats.batch - Technical Specification
 
-**Version**: 1.0.0
+**Version**: 1.0.1
 **Last Updated**: 2026-05-02
 
 ## Purpose
@@ -39,6 +39,20 @@ task_id = t_seq * (n_channels * n_tiles) + c_seq * n_tiles + tile_index
 ```
 
 When timepoint/channel slicing is used, sequence indices map to real dataset indices through `timepoint_indices` and `channel_indices`.
+
+### Environment Snapshot
+
+Batch planning captures enough of the submit-side environment to make generated
+Slurm scripts reproducible on compute nodes:
+
+- active Conda prefix or Python virtual environment
+- currently loaded environment modules plus CUDA-extension build modules when known
+- curated runtime variables such as `PATH`, `PYTHONPATH`, `LD_LIBRARY_PATH`, CUDA paths, and thread-count controls
+- installed Luxar version when available
+
+The generated preamble restores environment variables before loading modules so
+modulefiles can prepend their own library paths without losing the submit-side
+baseline.
 
 ---
 
@@ -117,6 +131,25 @@ tile_index = r % n_k
 6. Atomically rename `.tmp` to final output.
 7. Skip existing outputs to support restart/requeue.
 
+When `tasks_per_job > 1`, one Slurm array element loops over consecutive flat
+task IDs. In sequential mode those tasks run one after another in the same
+allocation; in parallel mode the script launches multiple tasks and waits for all
+children before exiting. The array length is `ceil(total_tasks / tasks_per_job)`.
+
+### Wall-Time Estimation
+
+**Purpose**: Pick conservative Slurm `--time` values from tile size, seed count,
+iteration count, and dimensionality.
+
+**Algorithm**:
+1. Estimate the per-tile voxel count from `tile_size`, overlap, and spatial dimensionality.
+2. Combine voxel count with requested seeds and optimization iterations.
+3. Apply empirically chosen scaling and a safety margin.
+4. Round the maximum per-task estimate up to a Slurm `HH:MM:SS` limit.
+
+The estimate is intentionally conservative; it is used for scheduling defaults,
+not for correctness. Users can override the time limit through Slurm options.
+
 ### 3-Level Merge
 
 **Purpose**: Merge completed tile outputs into one final `.gsplats.zarr`.
@@ -125,6 +158,19 @@ tile_index = r % n_k
 1. Merge tiles per `(timepoint, channel)`.
 2. Stack timepoints per channel as a new dimension.
 3. Merge channels, optionally applying channel colors.
+
+Intermediate outputs are written under `merged/` and reuse completed files unless
+`force=True` is requested. For single-channel or single-timepoint runs, the
+orchestrator collapses unnecessary levels and returns the most specific final
+path (`tXX_cYY.gsplats.zarr`, `cYY_4d.gsplats.zarr`, or `final.gsplats.zarr`).
+
+### Status and Restart Semantics
+
+Status checks combine filesystem state and Slurm state. A tile is complete when
+its final output exists. Incomplete `.tmp` outputs are treated as stale and are
+removed before rerun. If an array job ID is recorded, pending/running/failed task
+states are queried from Slurm for tasks without final outputs. Requeue-enabled
+scripts log restart attempts and stop after a bounded number of retries.
 
 ---
 
@@ -148,4 +194,5 @@ tile_index = r % n_k
 
 ## Changelog
 
+- **v1.0.1** (2026-05-02): Documented environment capture, task packing, wall-time estimation, merge collapse behavior, and restart semantics.
 - **v1.0.0** (2026-05-02): Initial specification.
