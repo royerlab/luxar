@@ -185,6 +185,34 @@ void setBufferWithOffset(
     [enc setBuffer:buf offset:offset atIndex:index];
 }
 
+void setStorageBufferWithOffset(
+    id<MTLComputeCommandEncoder> enc,
+    const torch::Tensor& t,
+    int index,
+    int64_t visible_numel
+) {
+    if (t.numel() == 0) {
+        [enc setBuffer:nil offset:0 atIndex:index];
+        return;
+    }
+
+    TORCH_CHECK(t.device().is_mps(),
+        "Tensor at index ", index, " must be on MPS device, got ", t.device());
+
+    void* storage_ptr = t.storage().data_ptr().get();
+    id<MTLBuffer> buf = (__bridge id<MTLBuffer>)storage_ptr;
+    TORCH_CHECK(buf != nil, "Failed to get MTLBuffer for tensor at index ", index);
+
+    NSUInteger offset = t.storage_offset() * t.element_size();
+    NSUInteger buffer_size = [buf length];
+    NSUInteger required_size = offset + (visible_numel * t.element_size());
+    TORCH_CHECK(required_size <= buffer_size,
+        "Buffer overflow: tensor at index ", index,
+        " requires ", required_size, " bytes but buffer is ", buffer_size, " bytes");
+
+    [enc setBuffer:buf offset:offset atIndex:index];
+}
+
 void checkCommandBuffer(id<MTLCommandBuffer> cmd, NSString* label) {
     if ([cmd status] == MTLCommandBufferStatusError) {
         NSString* errMsg = [[cmd error] localizedDescription];
@@ -397,12 +425,16 @@ std::vector<torch::Tensor> dispatch_backward_splat_3d(
     validate_splat_L_tensors_3d(centers, Ls, amps, shape);
     TORCH_CHECK(grad_output.device().is_mps(), "grad_output must be on MPS device");
     TORCH_CHECK(grad_output.scalar_type() == torch::kFloat32, "grad_output must be float32");
-    TORCH_CHECK(grad_output.is_contiguous(), "grad_output must be contiguous");
     TORCH_CHECK(grad_output.dim() == 3
             && grad_output.size(0) == shape[0]
             && grad_output.size(1) == shape[1]
             && grad_output.size(2) == shape[2],
         "grad_output shape must match the provided 3D shape");
+    bool grad_output_broadcast = grad_output.stride(0) == 0
+        && grad_output.stride(1) == 0
+        && grad_output.stride(2) == 0;
+    TORCH_CHECK(grad_output.is_contiguous() || grad_output_broadcast,
+        "grad_output must be contiguous or scalar-broadcast");
 
     int64_t N = centers.size(0);
     auto opts = centers.options().dtype(torch::kFloat32);
@@ -424,7 +456,8 @@ std::vector<torch::Tensor> dispatch_backward_splat_3d(
     id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
     [enc setComputePipelineState:ctx->getPipeline("rasterize_backward_splat_centric_3d")];
 
-    setBufferWithOffset(enc, grad_output, 0);
+    setStorageBufferWithOffset(enc, grad_output, 0,
+        grad_output_broadcast ? 1 : grad_output.numel());
     setBufferWithOffset(enc, centers, 1);
     setBufferWithOffset(enc, Ls, 2);
     setBufferWithOffset(enc, amps, 3);
@@ -447,6 +480,8 @@ std::vector<torch::Tensor> dispatch_backward_splat_3d(
     [enc setBytes:&intensity_floor length:sizeof(float) atIndex:10];
     [enc setBytes:&shift_C length:sizeof(float) atIndex:11];
     [enc setBytes:&inv_one_minus_C length:sizeof(float) atIndex:12];
+    uint32_t grad_output_broadcast_u32 = grad_output_broadcast ? 1u : 0u;
+    [enc setBytes:&grad_output_broadcast_u32 length:sizeof(uint32_t) atIndex:13];
 
     MTLSize groups = MTLSizeMake(n_splats, 1, 1);
     MTLSize threadsPerGroup = MTLSizeMake(kThreadgroupSize, 1, 1);
