@@ -144,15 +144,14 @@ def cholesky_to_conic_vjp_3d(L: torch.Tensor, d_conic: torch.Tensor) -> torch.Te
     dl11 = -(k11 * k11) * dk11
     dl22 = -(k22 * k22) * dk22
 
-    zero = torch.zeros_like(dl00)
-    return torch.stack(
-        [
-            torch.stack([dl00, zero, zero], dim=1),
-            torch.stack([dl10, dl11, zero], dim=1),
-            torch.stack([dl20, dl21, dl22], dim=1),
-        ],
-        dim=1,
-    )
+    d_L = torch.zeros_like(L)
+    d_L[:, 0, 0] = dl00
+    d_L[:, 1, 0] = dl10
+    d_L[:, 1, 1] = dl11
+    d_L[:, 2, 0] = dl20
+    d_L[:, 2, 1] = dl21
+    d_L[:, 2, 2] = dl22
+    return d_L
 
 
 class MetalSplatFunction(torch.autograd.Function):
