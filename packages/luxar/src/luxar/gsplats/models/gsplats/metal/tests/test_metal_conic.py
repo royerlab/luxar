@@ -126,11 +126,11 @@ class TestMetalConicAccuracy:
         )
 
 
-class TestInlineConicIntegration:
-    """Test inline native conic computation in full forward/backward pipeline."""
+class TestMetalConicIntegration:
+    """Test Metal conic in full forward/backward pipeline."""
 
-    def test_forward_with_inline_conic(self):
-        """Test that forward works with inline native conic computation."""
+    def test_forward_with_metal_conic(self):
+        """Test that forward works with Metal conic."""
         from luxar.gsplats.models.gsplats.metal import GaussianSplatModelMetal
 
         model = GaussianSplatModelMetal(
@@ -139,6 +139,7 @@ class TestInlineConicIntegration:
             L0=np.array([np.eye(3) * 1.5], dtype=np.float32),
             amps0=np.array([1.0], dtype=np.float32),
             sigma_min_diag=[0.5, 0.5, 0.5],
+            use_metal_conic=True,  # Enable Metal conic
             device="mps",
         )
 
@@ -146,8 +147,8 @@ class TestInlineConicIntegration:
         assert output.max() > 0, "Output should have non-zero values"
         assert output.shape == (16, 16, 16)
 
-    def test_backward_with_inline_conic(self):
-        """Test that backward works with inline native conic/VJP computation."""
+    def test_backward_with_metal_conic(self):
+        """Test that backward works correctly with Metal conic."""
         from luxar.gsplats.models.gsplats.metal import GaussianSplatModelMetal
 
         model = GaussianSplatModelMetal(
@@ -156,6 +157,7 @@ class TestInlineConicIntegration:
             L0=np.tile(np.eye(3) * 1.5, (5, 1, 1)).astype(np.float32),
             amps0=np.ones(5, dtype=np.float32),
             sigma_min_diag=[0.5, 0.5, 0.5],
+            use_metal_conic=True,
             device="mps",
         )
 
@@ -169,8 +171,8 @@ class TestInlineConicIntegration:
         )
         assert has_grad, "Gradients should be computed"
 
-    def test_inline_path_is_deterministic(self):
-        """Test that repeated inline-conic models produce identical outputs."""
+    def test_matches_pytorch_conic(self):
+        """Test that Metal conic gives same results as PyTorch conic."""
         from luxar.gsplats.models.gsplats.metal import GaussianSplatModelMetal
 
         np.random.seed(42)
@@ -178,23 +180,25 @@ class TestInlineConicIntegration:
         L = np.tile(np.eye(3) * 1.5, (10, 1, 1)).astype(np.float32)
         amps = np.ones(10, dtype=np.float32)
 
-        # First model using inline native conic computation
+        # Model with PyTorch conic
         model_pytorch = GaussianSplatModelMetal(
             shape=(16, 16, 16),
             centers0=centers,
             L0=L,
             amps0=amps,
             sigma_min_diag=[0.5, 0.5, 0.5],
+            use_metal_conic=False,  # PyTorch
             device="mps",
         )
 
-        # Second model using the same inline native conic computation
+        # Model with Metal conic
         model_metal = GaussianSplatModelMetal(
             shape=(16, 16, 16),
             centers0=centers,
             L0=L,
             amps0=amps,
             sigma_min_diag=[0.5, 0.5, 0.5],
+            use_metal_conic=True,  # Metal
             device="mps",
         )
 
@@ -202,7 +206,7 @@ class TestInlineConicIntegration:
         out_pytorch = model_pytorch().cpu()
         out_metal = model_metal().cpu()
 
-        # Should be bitwise-identical or very close
+        # Should be essentially identical
         max_diff = (out_pytorch - out_metal).abs().max().item()
         assert max_diff < 1e-5, f"Outputs differ: {max_diff}"
 
