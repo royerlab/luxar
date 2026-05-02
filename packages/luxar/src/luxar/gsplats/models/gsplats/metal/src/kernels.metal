@@ -259,7 +259,7 @@ kernel void rasterize_forward_splat_centric_3d(
         s_conic[3] = k11 * k11 + k21 * k21;
         s_conic[4] = k21 * k22;
         s_conic[5] = k22 * k22;
-        float sigma_z = l00;
+        float sigma_z = abs(l00);
         float sigma_y = fast::sqrt(l10 * l10 + l11 * l11);
         float sigma_x = fast::sqrt(l20 * l20 + l21 * l21 + l22 * l22);
         s_amp = amps[splat_id];
@@ -402,7 +402,7 @@ kernel void rasterize_backward_splat_centric_3d(
         s_conic[3] = k11 * k11 + k21 * k21;
         s_conic[4] = k21 * k22;
         s_conic[5] = k22 * k22;
-        float sigma_z = l00;
+        float sigma_z = abs(l00);
         float sigma_y = fast::sqrt(l10 * l10 + l11 * l11);
         float sigma_x = fast::sqrt(l20 * l20 + l21 * l21 + l22 * l22);
         s_amp = amps[splat_id];
