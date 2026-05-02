@@ -59,6 +59,13 @@ luxar serve data.zarr --viewer # Serve with viewer
 luxar serve --viewer-only      # Serve only viewer
 ```
 
+Security defaults are optimized for local development: CORS allows local
+browser origins (`localhost`, `127.0.0.1`, `0.0.0.0`, `::1`) by default, directory listing
+requests cannot escape the served root, and obvious system paths such as `/`,
+`/etc`, `/proc`, `/sys`, and `/dev` are refused unless you pass
+`--allow-sensitive-path`. Use `--cors-origin '*'` only when you intentionally
+want any website to read the served data; wildcard mode disables credentials.
+
 ### `luxar viewer`
 Serve the Luxar viewer with optional data.
 ```bash
@@ -83,7 +90,7 @@ luxar profiles                # Display all network profiles with descriptions
 
 **Available profiles:** 3g, 4g, 5g, slow-broadband, broadband, fast-broadband, satellite, rural, congested
 
-Use these profiles with `serve`, `viewer`, or `demo` commands via the `--network-profile` option to simulate various network conditions for testing.
+Use these profiles with `serve`, `viewer`, or `demo` commands via the `--profile` option to simulate various network conditions for testing.
 
 
 ### `luxar export`

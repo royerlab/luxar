@@ -11,7 +11,7 @@ import shutil
 import subprocess
 import sys
 import zipfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Optional, Union
 
 import numpy as np
@@ -21,6 +21,54 @@ from ..core.dimensions import Dimension, Dimensions
 from ..io.compiler import LuxarZarrCompiler
 from ..typing_utils.config import check_dataset_size_warning
 from ..typing_utils.protocols import PathLike
+
+
+def _validate_zip_member_path(member: str) -> PurePosixPath:
+    """Validate a zip member path before reading it from a bundle.
+
+    Zip files always use POSIX-style separators. Reject absolute paths,
+    parent-directory traversal, and backslashes to avoid platform-specific
+    traversal surprises when bundles are created on Windows.
+    """
+    if "\\" in member:
+        raise ValueError(f"Unsafe zip path with backslash separator: {member!r}")
+
+    path = PurePosixPath(member)
+    if path.is_absolute() or any(part == ".." for part in path.parts):
+        raise ValueError(f"Unsafe zip path: {member!r}")
+    if not path.parts or path.name in ("", "."):
+        raise ValueError(f"Invalid zip path: {member!r}")
+    return path
+
+
+def _safe_extract_zip_member(
+    zf: zipfile.ZipFile,
+    member: str,
+    destination: Path,
+    *,
+    target_name: str | None = None,
+) -> Path:
+    """Extract one validated zip member under ``destination``.
+
+    The member's archive path is validated, and the final output path is
+    resolved to ensure it remains inside ``destination``. ``target_name`` can
+    be used to flatten bundle members into the cache root.
+    """
+    member_path = _validate_zip_member_path(member)
+    output_name = target_name if target_name is not None else member_path.as_posix()
+    output_path = destination / output_name
+    destination_resolved = destination.resolve()
+    output_resolved = output_path.resolve()
+
+    try:
+        output_resolved.relative_to(destination_resolved)
+    except ValueError as exc:
+        raise ValueError(f"Unsafe extraction target: {output_name!r}") from exc
+
+    output_resolved.parent.mkdir(parents=True, exist_ok=True)
+    with zf.open(member, "r") as src, output_resolved.open("wb") as dst:
+        shutil.copyfileobj(src, dst)
+    return output_resolved
 
 
 def detect_device(verbose: bool = True) -> str:
@@ -256,21 +304,33 @@ def load_precomputed_bundle(
             _validate_lfs_files([bundle_path])
             aprint(f"Extracting {len(missing)} files from {bundle_name}")
             with zipfile.ZipFile(bundle_path, "r") as zf:
-                members = zf.namelist()
+                safe_members = [
+                    m for m in zf.namelist() if not zf.getinfo(m).is_dir()
+                ]
                 for fname in missing:
-                    # Files may be at top level or inside a directory in the zip
-                    matching = [m for m in members if m.endswith(fname)]
+                    requested_path = _validate_zip_member_path(fname)
+                    # Files may be at top level or inside a directory in the zip.
+                    # Match by basename for the documented bundle format while
+                    # ignoring unsafe archive members.
+                    matching = []
+                    for member in safe_members:
+                        try:
+                            member_path = _validate_zip_member_path(member)
+                        except ValueError:
+                            continue
+                        if member_path.name == requested_path.name:
+                            matching.append(member)
                     if not matching:
                         raise FileNotFoundError(
                             f"{fname} not found in bundle {bundle_name}. "
-                            f"Available: {members[:5]}..."
+                            f"Available: {safe_members[:5]}..."
                         )
-                    zf.extract(matching[0], cache_dir)
-                    # If extracted into a subdirectory, move to cache root
-                    extracted = cache_dir / matching[0]
-                    target = cache_dir / fname
-                    if extracted != target:
-                        shutil.move(str(extracted), str(target))
+                    _safe_extract_zip_member(
+                        zf,
+                        matching[0],
+                        cache_dir,
+                        target_name=requested_path.as_posix(),
+                    )
 
         # Load all
         results = []

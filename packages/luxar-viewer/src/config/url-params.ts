@@ -18,6 +18,50 @@
  * Every consumer that wants a URL-derived value should accept the relevant
  * field via constructor/init options rather than read `window.location`.
  */
+const MAX_SRC_LENGTH = 4096;
+const URL_SCHEME_PATTERN = /^[a-zA-Z][a-zA-Z\d+.-]*:/;
+function hasUnsafeSrcCharacter(src: string): boolean {
+  for (const char of src) {
+    const code = char.charCodeAt(0);
+    if (code <= 0x1f || code === 0x7f || char === '<' || char === '>') {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Validate and normalize a data-source URL from user-controlled input.
+ *
+ * Accepted forms:
+ * - Absolute HTTP(S) URLs: `https://example.com/data.zarr`
+ * - Root-relative paths: `/datasets/data.zarr`
+ * - Relative paths: `datasets/data.zarr`
+ *
+ * Rejected forms include unsupported schemes (`file:`, `javascript:`,
+ * `data:`), protocol-relative URLs (`//host/path`), control characters,
+ * obvious HTML delimiters, empty strings, and excessively long values.
+ */
+export function normalizeDataSourceUrl(rawSrc: string | null): string | null {
+  if (rawSrc === null) return null;
+
+  const src = rawSrc.trim();
+  if (src.length === 0 || src.length > MAX_SRC_LENGTH) return null;
+  if (hasUnsafeSrcCharacter(src)) return null;
+  if (src.startsWith('//')) return null;
+
+  const hasScheme = URL_SCHEME_PATTERN.test(src);
+  if (!hasScheme) return src;
+
+  try {
+    const url = new URL(src);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+    return src;
+  } catch {
+    return null;
+  }
+}
+
 export interface UrlParams {
   /** Dataset source URL (`?src=...`). Null when not provided. */
   src: string | null;
@@ -45,12 +89,11 @@ export interface UrlParams {
  * once with no argument and threads the result through the rest of the app.
  */
 export function readUrlParams(search?: string): UrlParams {
-  const raw =
-    search ?? (typeof window !== 'undefined' ? window.location?.search : '') ?? '';
+  const raw = search ?? (typeof window !== 'undefined' ? window.location?.search : '') ?? '';
   const params = new URLSearchParams(raw);
 
   return {
-    src: params.get('src'),
+    src: normalizeDataSourceUrl(params.get('src')),
     theme: params.get('theme'),
     debug: params.has('debug'),
     noCache: params.has('no-cache'),
