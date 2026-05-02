@@ -223,8 +223,14 @@ class MetalSplatFunction(torch.autograd.Function):
     ) -> Tuple[Optional[torch.Tensor], ...]:
         centers, Ls_for_conic, amps = ctx.saved_tensors
 
+        grad_output_arg = grad_output
+        if not grad_output_arg.is_contiguous() and any(
+            stride != 0 for stride in grad_output_arg.stride()
+        ):
+            grad_output_arg = grad_output_arg.contiguous()
+
         d_centers, d_Ls, d_amps = metal_splatting_backend.backward_splat_3d(
-            grad_output.contiguous(),
+            grad_output_arg,
             centers.contiguous(),
             Ls_for_conic.contiguous(),
             amps.contiguous(),
