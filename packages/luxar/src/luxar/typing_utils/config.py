@@ -6,10 +6,10 @@ from pathlib import Path
 from typing import Any, Final, Literal, Optional
 
 from ..typing_utils.constants import (
-    CHUNK_SIZE_DEFAULT,
-    CHUNK_SIZE_MAX,
-    CHUNK_SIZE_MIN,
     LUXAR_VERSION_CURRENT,
+    MAX_CHUNK_BYTES,
+    MIN_CHUNK_BYTES,
+    TARGET_CHUNK_BYTES,
 )
 from ..typing_utils.enums import PhysicalUnit
 from ..typing_utils.protocols import CompressorProtocol
@@ -22,12 +22,14 @@ LuxarVersion = Literal["0.1", "0.2", "0.3"]
 # Core Configuration Constants
 # =============================================================================
 
-# Default Zarr chunk size for points
-DEFAULT_CHUNK_SIZE: Final[int] = CHUNK_SIZE_DEFAULT
+# Default Zarr chunk target in bytes. New code should use the byte-explicit names.
+DEFAULT_CHUNK_BYTES: Final[int] = TARGET_CHUNK_BYTES
 
-# Minimum and maximum chunk sizes for validation
-MIN_CHUNK_SIZE: Final[int] = CHUNK_SIZE_MIN
-MAX_CHUNK_SIZE: Final[int] = CHUNK_SIZE_MAX
+# Backwards-compatible aliases for callers that still import config.*_CHUNK_SIZE.
+# These are byte counts, not element counts.
+DEFAULT_CHUNK_SIZE: Final[int] = DEFAULT_CHUNK_BYTES
+MIN_CHUNK_SIZE: Final[int] = MIN_CHUNK_BYTES
+MAX_CHUNK_SIZE: Final[int] = MAX_CHUNK_BYTES
 
 # Default version for Luxar scenes
 DEFAULT_VERSION: Final[str] = LUXAR_VERSION_CURRENT

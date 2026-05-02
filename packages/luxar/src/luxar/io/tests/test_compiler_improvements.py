@@ -408,9 +408,9 @@ class TestChunkBoundsZarrAlignment:
 
         spatial = {"chunk_size": 512}
 
-        # Without spatial data: uses default
+        # Without spatial data: uses byte-based default (64 KiB / float32)
         result = _calculate_intelligent_chunks((10000,))
-        assert result == (min(10000, 32768),)
+        assert result == (10000,)
 
         # With spatial data: uses chunk_size
         result = _calculate_intelligent_chunks((10000,), spatial_index_data=spatial)
@@ -426,10 +426,10 @@ class TestChunkBoundsZarrAlignment:
 
         spatial = {"chunk_size": 1024}
 
-        # Without spatial data: uses default
+        # Without spatial data: uses byte-based default (64 KiB / float32 / 4 dims)
         result = _calculate_intelligent_chunks((5000, 4))
         assert result[1] == 4
-        assert result[0] == min(5000, 32768 // 4)
+        assert result[0] == min(5000, (65536 // 4) // 4)
 
         # With spatial data: uses chunk_size
         result = _calculate_intelligent_chunks((5000, 4), spatial_index_data=spatial)
