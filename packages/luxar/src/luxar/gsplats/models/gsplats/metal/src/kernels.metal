@@ -357,7 +357,6 @@ kernel void rasterize_backward_splat_centric_3d(
     threadgroup float s_L[6];
     threadgroup float s_conic[6];
     threadgroup float s_amp;
-    threadgroup float s_inv_amp;
     threadgroup float s_shift_C;
     threadgroup float s_inv_one_minus_C;
     threadgroup float s_truncate_sq;
@@ -407,7 +406,6 @@ kernel void rasterize_backward_splat_centric_3d(
         float sigma_y = fast::sqrt(l10 * l10 + l11 * l11);
         float sigma_x = fast::sqrt(l20 * l20 + l21 * l21 + l22 * l22);
         s_amp = amps[splat_id];
-        s_inv_amp = 1.0f / max(s_amp, 1e-10f);
 
         s_shift_C = shift_C;
         s_inv_one_minus_C = inv_one_minus_C;
@@ -483,7 +481,7 @@ kernel void rasterize_backward_splat_centric_3d(
                 continue;
             }
 
-            local_amp += dL_dI * intensity * s_inv_amp;
+            local_amp += dL_dI * intensity / max(s_amp, 1e-10f);
 
             float unshifted = intensity + s_amp * s_inv_one_minus_C * s_shift_C;
             float outer = dL_dI * unshifted * (-0.5f);
