@@ -47,6 +47,8 @@ compatibility.
 
 ## Changelog
 
+- **v2.1.0** (2026-05-02): Updated for inline native `L -> conic` and
+  `d_conic -> d_L` hot-path kernels while keeping conic helper tests.
 - **v2.0.0** (2026-05-02): Updated for the splat-centric Metal rewrite: native
   `[Z,Y,X]` conics, no tile-binned hot path, and no packed-conic reorder tests.
 - **v1.2.0** (2026-05-02): Added interface-parity tests and documented

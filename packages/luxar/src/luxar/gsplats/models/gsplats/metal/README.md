@@ -41,17 +41,17 @@ and invalidates stale extension/metallib artifacts when sources change.
 Python
   GaussianSplatModelMetal
   MetalSplatFunction
-  L -> conic, packed in native [Z,Y,X] order
+  L factors handed directly to native kernels
 
 C++/Objective-C++ extension
-  forward_splat_3d(...)
-  backward_splat_3d(...)
+  forward_splat_3d(centers, Ls, amps, ...)
+  backward_splat_3d(grad_output, centers, Ls, amps, ...)
 
 Metal kernels
   zero_float_buffer
-  rasterize_forward_splat_centric_3d
-  rasterize_backward_splat_centric_3d
-  compute_conic_from_L_3d   # optional forward conic helper
+  rasterize_forward_splat_centric_3d   # computes L -> conic per splat
+  rasterize_backward_splat_centric_3d  # computes L -> conic and d_conic -> d_L per splat
+  compute_conic_from_L_3d              # helper/validation path, not the hot path
 ```
 
 ### Splat-centric forward
@@ -60,6 +60,7 @@ The forward kernel mirrors the optimized CUDA organization:
 
 ```text
 one Metal threadgroup = one Gaussian splat
+thread 0 computes that splat's L -> conic transform and AABB
 256 threads cooperate over that splat's AABB
 output uses atomic float add
 ```
@@ -75,6 +76,7 @@ Backward also uses one threadgroup per splat:
 ```text
 threads accumulate local d_center / d_conic / d_amp
 threadgroup reduction combines partials
+thread 0 applies the analytic d_conic -> d_L VJP
 thread 0 writes that splat's gradients once
 ```
 
@@ -112,7 +114,6 @@ if is_metal_available():
         sigma_min_diag=(0.5, 0.5, 0.5),
         truncate=3.0,
         intensity_floor=1e-5,
-        use_metal_conic=False,
         device="mps",
     )
 
@@ -137,9 +138,9 @@ Observed on Apple M4 Max, PyTorch 2.11, macOS 15.7.5, workload
 | Path | Time | Effective throughput |
 | --- | ---: | ---: |
 | Old tile-binned Metal forward | ~2.3-2.5 ms | ~0.85-0.94 GVox/s |
-| New splat-centric Metal forward | ~1.7-1.9 ms | ~1.1-1.2 GVox/s |
+| New splat-centric Metal forward | ~1.5-1.7 ms | ~1.2-1.4 GVox/s |
 | Old tile-binned Metal fwd+bwd | ~133 ms | ~0.016 GVox/s |
-| New splat-centric Metal fwd+bwd | ~4.4-4.8 ms | ~0.46-0.48 GVox/s |
+| New splat-centric Metal fwd+bwd | ~3.6-3.8 ms | ~0.55-0.58 GVox/s |
 
 Large-output GVox/s is only one view of splatting performance because the actual
 work scales with splat AABB volume and overlap.  The rewrite's most important

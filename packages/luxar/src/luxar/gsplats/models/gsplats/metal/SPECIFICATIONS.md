@@ -24,19 +24,19 @@ PyTorch renderer.
 Python layer
   GaussianSplatModelMetal.forward()
   MetalSplatFunction.forward/backward()
-  cholesky_to_conic() or compute_conic_metal()
+  passes Cholesky factors directly to native kernels
 
 C++/Objective-C++ extension: src/bindings.mm
-  compute_conic_metal(Ls) -> conic
-  forward_splat_3d(centers, conic, amps, shape, truncate, floor) -> output
-  backward_splat_3d(grad_output, centers, conic, amps, shape, truncate, floor)
-      -> (d_centers, d_conic, d_amps)
+  compute_conic_metal(Ls) -> conic  # helper/validation path
+  forward_splat_3d(centers, Ls, amps, shape, truncate, floor) -> output
+  backward_splat_3d(grad_output, centers, Ls, amps, shape, truncate, floor)
+      -> (d_centers, d_Ls, d_amps)
 
 Metal shaders: src/kernels.metal
   zero_float_buffer
-  compute_conic_from_L_3d
-  rasterize_forward_splat_centric_3d
-  rasterize_backward_splat_centric_3d
+  compute_conic_from_L_3d            # helper/validation path
+  rasterize_forward_splat_centric_3d # computes L -> conic per splat
+  rasterize_backward_splat_centric_3d # computes L -> conic and d_conic -> d_L per splat
 ```
 
 The previous tile-binned pipeline (`preprocess_3d`, `bin_3d`, tile counts,
@@ -70,7 +70,7 @@ from the older tile-binned Metal renderer.
 `forward_splat_3d` validates:
 
 - `shape == (D, H, W)` and all dimensions are positive.
-- `centers.shape == (N, 3)`, `conic.shape == (N, 6)`, `amps.shape == (N,)`.
+- `centers.shape == (N, 3)`, `Ls.shape == (N, 3, 3)`, `amps.shape == (N,)`.
 - All tensors are contiguous, MPS, and `float32`.
 - `N` and `D*H*W` fit in `uint32_t` for the current kernels.
 
@@ -91,9 +91,11 @@ Thread 0 loads the splat into threadgroup memory:
 
 ```text
 center[3]
-conic[6]
+L lower-triangular factors
+conic[6] computed from L in native [Z,Y,X] order
+sigma diagonal derived directly from L for AABB construction
 amplitude
-shifted-Gaussian constants
+host-precomputed shifted-Gaussian constants
 AABB lower corner and extent
 effective truncation radius
 ```
@@ -116,13 +118,13 @@ voxel.  The kernel uses Metal `atomic_float` fetch-add.
 
 ### Host-side dispatch
 
-`backward_splat_3d` validates the same splat tensors plus a contiguous MPS
-float32 `grad_output` of shape `(D, H, W)`.  For nonzero `N`, it allocates empty
-MPS gradient tensors:
+`backward_splat_3d` validates the same Cholesky-factor splat tensors plus a
+contiguous MPS float32 `grad_output` of shape `(D, H, W)`.  For nonzero `N`, it
+allocates empty MPS gradient tensors:
 
 ```text
 d_centers: (N, 3)
-d_conic:   (N, 6)
+d_Ls:      (N, 3, 3)
 d_amps:    (N,)
 ```
 
@@ -171,11 +173,11 @@ D² = c00*dz² + c11*dy² + c22*dx²
 ```
 
 The threadgroup then performs a tree reduction in threadgroup memory and thread
-0 writes:
+0 applies the analytic 3D conic-to-Cholesky VJP and writes:
 
 ```text
 d_centers[splat_id, :]
-d_conic[splat_id, :]
+d_Ls[splat_id, :, :]
 d_amps[splat_id]
 ```
 
@@ -183,16 +185,15 @@ No global parameter-gradient atomics are used.
 
 ## AABB and Truncation
 
-The Metal kernels match the optimized CUDA AABB strategy.  AABB radii are derived
-from the conic matrix by extracting the covariance diagonal via cofactors:
+The Metal kernels match the optimized CUDA AABB integer-radius strategy, but now
+avoid recovering covariance diagonals from the conic determinant. Because the hot
+path receives Cholesky factors directly, AABB radii use the covariance diagonal
+from `Σ = L @ L.T`:
 
 ```text
-det = c00*(c11*c22 - c12²) - c01*(c01*c22 - c02*c12)
-    + c02*(c01*c12 - c02*c11)
-
-sigma_z = sqrt(max((c11*c22 - c12²) / |det|, 0))
-sigma_y = sqrt(max((c00*c22 - c02²) / |det|, 0))
-sigma_x = sqrt(max((c00*c11 - c01²) / |det|, 0))
+sigma_z = abs(l00)
+sigma_y = sqrt(l10² + l11²)
+sigma_x = sqrt(l20² + l21² + l22²)
 ```
 
 The base truncation is tightened by `intensity_floor`:
@@ -223,31 +224,20 @@ hi_i = min(shape_i - 1, ceil(center_i) + radius_i)
 ```text
 centers
 Ls_for_conic
-conic_zyx
 amps
 ```
 
-The native backward returns gradients with respect to `centers`, `conic`, and
-`amps`.  Python then applies the chain rule back to Cholesky factors:
-
-```python
-with torch.enable_grad():
-    conic_recomputed = cholesky_to_conic(Ls_for_conic)
-(d_Ls,) = torch.autograd.grad(
-    outputs=conic_recomputed,
-    inputs=Ls_for_conic,
-    grad_outputs=d_conic,
-)
-```
-
-This keeps the conic-to-Cholesky VJP correct while the expensive voxel/splat
-loops run in Metal.
+The native backward returns gradients with respect to `centers`, Cholesky factors
+`Ls`, and `amps` directly. The 3D `d_conic -> d_L` vector-Jacobian product is
+implemented inside `rasterize_backward_splat_centric_3d`, so the Python backward
+no longer rebuilds a `cholesky_to_conic()` autograd graph.
 
 ## Optional Metal L -> Conic
 
 `compute_conic_metal(Ls)` computes the 3D packed conic in native `[Z,Y,X]` order.
-It is used only when `GaussianSplatModelMetal(..., use_metal_conic=True)` is set.
-Backward still uses the Python `cholesky_to_conic` graph for the VJP.
+It remains available as a helper and validation path for conic tests, but the
+custom forward/backward hot path computes `L -> conic` inside the per-splat Metal
+threadgroup instead of materializing a separate conic tensor.
 
 ## Performance Characteristics
 
@@ -256,7 +246,7 @@ For `128³ @ 32k splats`, `L = 2I`, `truncate = 3`, on Apple M4 Max:
 | Implementation | Forward | Forward+Backward |
 | --- | ---: | ---: |
 | Previous tile-binned Metal | ~2.3-2.5 ms (~0.9 GVox/s) | ~133 ms (~0.016 GVox/s) |
-| Current splat-centric Metal | ~1.7-1.9 ms (~1.1-1.2 GVox/s) | ~4.4-4.8 ms (~0.46-0.48 GVox/s) |
+| Current splat-centric Metal | ~1.5-1.7 ms (~1.2-1.4 GVox/s) | ~3.6-3.8 ms (~0.55-0.58 GVox/s) |
 
 The largest improvement is backward because the old voxel-centric kernel used
 global CAS atomics for every voxel-splat gradient contribution.  The new kernel
@@ -282,7 +272,7 @@ GaussianSplatModelMetal(
     truncate=3.0,
     intensity_floor=1e-5,
     use_fp16=False,           # rejected if True
-    use_metal_conic=False,
+    use_metal_conic=False,       # retained helper flag; hot path computes conics inline
     voxel_size=None,
     device="mps",
 )
