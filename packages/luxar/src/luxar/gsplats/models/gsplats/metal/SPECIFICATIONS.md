@@ -246,7 +246,7 @@ For `128³ @ 32k splats`, `L = 2I`, `truncate = 3`, on Apple M4 Max:
 | Implementation | Forward | Forward+Backward |
 | --- | ---: | ---: |
 | Previous tile-binned Metal | ~2.3-2.5 ms (~0.9 GVox/s) | ~133 ms (~0.016 GVox/s) |
-| Current splat-centric Metal | ~1.5-1.6 ms (~1.3-1.4 GVox/s) | ~3.5-3.7 ms (~0.57-0.60 GVox/s) |
+| Current splat-centric Metal | ~1.5-1.6 ms (~1.3-1.4 GVox/s) | ~3.4-3.6 ms (~0.58-0.62 GVox/s) |
 
 The largest improvement is backward because the old voxel-centric kernel used
 global CAS atomics for every voxel-splat gradient contribution.  The new kernel
