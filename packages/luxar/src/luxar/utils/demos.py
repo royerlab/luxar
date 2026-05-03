@@ -104,6 +104,7 @@ def warn_if_no_cuda_gpu() -> None:
     """
     try:
         import torch  # noqa: F401  # check PyTorch is importable
+
         from luxar.gsplats.utils.device import is_mps_available
 
         if torch.cuda.is_available():
