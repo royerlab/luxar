@@ -280,11 +280,11 @@ class MetalRawSplatFunction(torch.autograd.Function):
         output = cast(
             torch.Tensor,
             metal_splatting_backend.forward_raw_splat_3d(
-                raw_mu,
-                raw_L_diag,
-                L_off,
-                raw_a,
-                sigma_min_diag,
+                raw_mu.contiguous(),
+                raw_L_diag.contiguous(),
+                L_off.contiguous(),
+                raw_a.contiguous(),
+                sigma_min_diag.contiguous(),
                 list(shape),
                 float(truncate),
                 float(intensity_floor),
@@ -302,11 +302,11 @@ class MetalRawSplatFunction(torch.autograd.Function):
         d_raw_mu, d_raw_L_diag, d_L_off, d_raw_a = (
             metal_splatting_backend.backward_raw_splat_3d(
                 grad_output.contiguous(),
-                raw_mu,
-                raw_L_diag,
-                L_off,
-                raw_a,
-                sigma_min_diag,
+                raw_mu.contiguous(),
+                raw_L_diag.contiguous(),
+                L_off.contiguous(),
+                raw_a.contiguous(),
+                sigma_min_diag.contiguous(),
                 list(ctx.shape),
                 ctx.truncate,
                 ctx.intensity_floor,
