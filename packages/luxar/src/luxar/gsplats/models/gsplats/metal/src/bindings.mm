@@ -128,12 +128,18 @@ struct MetalContext {
 
 static MetalContext* g_ctx = nullptr;
 
+// set_library_path is meant to be called once at extension import (see
+// __init__.py), before any kernel dispatch. If a context already exists, the
+// path may have been baked into pipelines that command buffers are using;
+// silently destroying it could crash an in-flight dispatch. We therefore only
+// honor a no-context call and treat re-set as a programming error.
 void set_library_path(const std::string& path) {
+    TORCH_CHECK(
+        g_ctx == nullptr,
+        "set_library_path() must be called before any Metal dispatch; "
+        "a MetalContext has already been initialized."
+    );
     g_library_path = path;
-    if (g_ctx) {
-        delete g_ctx;
-        g_ctx = nullptr;
-    }
 }
 
 static MetalContext* metalContext() {
@@ -288,14 +294,15 @@ torch::Tensor dispatch_forward_splat_3d(
     float intensity_floor
 ) {
     validate_splat_tensors_3d(centers, conic, amps, shape);
-
-    auto output = torch::empty(shape, centers.options().dtype(torch::kFloat32));
-    int64_t total_pixels_i64 = shape_numel(shape);
-    uint32_t total_pixels = static_cast<uint32_t>(total_pixels_i64);
+    TORCH_CHECK(truncate > 0.0f, "truncate must be > 0; got ", truncate);
 
     if (centers.size(0) == 0) {
         return torch::zeros(shape, centers.options().dtype(torch::kFloat32));
     }
+
+    auto output = torch::empty(shape, centers.options().dtype(torch::kFloat32));
+    int64_t total_pixels_i64 = shape_numel(shape);
+    uint32_t total_pixels = static_cast<uint32_t>(total_pixels_i64);
 
     MetalContext* ctx = metalContext();
     torch::mps::synchronize();
@@ -362,6 +369,7 @@ std::vector<torch::Tensor> dispatch_backward_splat_3d(
     float intensity_floor
 ) {
     validate_splat_tensors_3d(centers, conic, amps, shape);
+    TORCH_CHECK(truncate > 0.0f, "truncate must be > 0; got ", truncate);
     TORCH_CHECK(grad_output.device().is_mps(), "grad_output must be on MPS device");
     TORCH_CHECK(grad_output.scalar_type() == torch::kFloat32, "grad_output must be float32");
     TORCH_CHECK(grad_output.is_contiguous(), "grad_output must be contiguous");

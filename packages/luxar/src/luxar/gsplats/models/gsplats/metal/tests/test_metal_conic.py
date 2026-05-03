@@ -11,12 +11,17 @@ import pytest
 import torch
 
 from luxar.gsplats.models.gsplats.metal import is_metal_available
-from luxar.gsplats.models.gsplats.metal.gsplat_model_metal import cholesky_to_conic
 
 pytestmark = pytest.mark.skipif(
-    not is_metal_available() or not torch.backends.mps.is_available(),
-    reason="Metal backend or MPS not available",
+    not is_metal_available(), reason="Metal backend not available"
 )
+
+if is_metal_available():
+    from luxar.gsplats.models.gsplats.metal.gsplat_model_metal import (
+        cholesky_to_conic,
+    )
+else:
+    cholesky_to_conic = None  # type: ignore[assignment]
 
 
 # Import the extension module after the skip check

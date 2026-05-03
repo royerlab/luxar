@@ -10,35 +10,27 @@ Tests:
 
 from __future__ import annotations
 
-import sys
-
 import numpy as np
 import pytest
 import torch
 from arbol import aprint
 
 from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
+from luxar.gsplats.models.gsplats.metal import is_metal_available
 from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
 
-# Skip entire module on non-macOS platforms
 pytestmark = pytest.mark.skipif(
-    sys.platform != "darwin" or not torch.backends.mps.is_available(),
-    reason="Metal backend only available on macOS with MPS",
+    not is_metal_available(), reason="Metal backend not available"
 )
 
-# Import Metal-specific modules only on macOS
-if sys.platform == "darwin":
-    from luxar.gsplats.models.gsplats.metal import (
-        GaussianSplatModelMetal,
-        is_metal_available,
-    )
+if is_metal_available():
+    from luxar.gsplats.models.gsplats.metal import GaussianSplatModelMetal
     from luxar.gsplats.models.gsplats.metal.gsplat_model_metal import (
         cholesky_to_conic,
     )
 else:
     # Provide dummies for type checking
     GaussianSplatModelMetal = None  # type: ignore[misc, assignment]
-    is_metal_available = lambda: False  # noqa: E731
     cholesky_to_conic = None  # type: ignore[misc, assignment]
 
 
@@ -331,6 +323,42 @@ class TestMetalGradients:
         # Using xfail (not skip) so failures are visible in CI reports.
         if not pass_gradcheck:
             pytest.xfail("gradcheck failed (expected for GPU numerics)")
+
+    def test_fully_truncated_splat_backward_yields_no_nan(self):
+        """A splat whose entire support is culled by `truncate` must have safe gradients.
+
+        With `truncate` small enough that no voxel passes the dist²<=truncate² test,
+        the per-splat accumulators stay at their zero-initialized register values.
+        This guards against the divide-by-near-zero risks in the backward kernel
+        (e.g. 1/max(amp, 1e-10) and 1/(1-shift_C)) that would surface only when an
+        otherwise-valid splat happens to fall fully outside its truncation window.
+        """
+        from luxar.gsplats.models.gsplats.metal.gsplat_model_metal import (
+            MetalSplatFunction,
+        )
+
+        shape = (16, 16, 16)
+        # Splat far outside the volume so its truncation window covers no voxels.
+        centers = torch.tensor(
+            [[100.0, 100.0, 100.0]], device="mps", requires_grad=True
+        )
+        L = torch.tensor(
+            [[[0.5, 0, 0], [0, 0.5, 0], [0, 0, 0.5]]], device="mps"
+        )
+        amps = torch.tensor([1.0], device="mps", requires_grad=True)
+
+        output = MetalSplatFunction.apply(centers, L, amps, shape, 1.0, 1e-5, False)
+        loss = (output**2).sum()
+        loss.backward()
+
+        # Gradients must exist and contain no NaN/Inf.
+        assert centers.grad is not None
+        assert amps.grad is not None
+        assert torch.isfinite(centers.grad).all(), centers.grad
+        assert torch.isfinite(amps.grad).all(), amps.grad
+        # Fully-culled splat should produce exactly zero gradient.
+        assert torch.all(centers.grad == 0), centers.grad
+        assert torch.all(amps.grad == 0), amps.grad
 
     def test_gradient_sign_correctness(self):
         """Test that gradient signs point in the correct direction to minimize loss.

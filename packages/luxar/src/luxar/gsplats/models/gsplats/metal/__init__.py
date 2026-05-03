@@ -24,11 +24,15 @@ from typing import Optional, Tuple
 # Package directory
 _METAL_DIR = Path(__file__).parent
 _SRC_DIR = _METAL_DIR / "src"
-_EXTENSION_PATTERN = "metal_splatting_backend.cpython-*.so"
+# Filter compiled extensions to the running Python's ABI tag so a stale build
+# from a different interpreter (e.g. cpython-311 alongside cpython-312) is not
+# picked up; loading it would fail at import time with a confusing error.
+_PYTHON_ABI_TAG = f"cpython-{sys.version_info.major}{sys.version_info.minor}"
+_EXTENSION_PATTERN = f"metal_splatting_backend.{_PYTHON_ABI_TAG}-*.so"
 
 
 def _find_extension() -> Optional[Path]:
-    """Find the newest compiled extension file if one exists."""
+    """Find the newest compiled extension matching the active Python ABI."""
     extensions = list(_METAL_DIR.glob(_EXTENSION_PATTERN))
     if extensions:
         return max(extensions, key=lambda path: path.stat().st_mtime)
