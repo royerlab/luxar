@@ -392,6 +392,13 @@ class GaussianSplatModelMetal(GaussianSplatModel):
         self._intensity_floor = float(intensity_floor)
         self._use_metal_conic = bool(use_metal_conic)
         self._use_fp16 = False
+        self._can_use_raw_custom_metal = (
+            self.dim == 3
+            and self.sigma_max_diag is None
+            and self.amp_max is None
+            and self.max_eccentricity is None
+            and self.voxel_size is None
+        )
 
     @property
     def _uses_custom_metal(self) -> bool:
@@ -401,10 +408,7 @@ class GaussianSplatModelMetal(GaussianSplatModel):
     def _uses_raw_custom_metal(self) -> bool:
         return (
             self._uses_custom_metal
-            and self.sigma_max_diag is None
-            and self.amp_max is None
-            and self.max_eccentricity is None
-            and self.voxel_size is None
+            and self._can_use_raw_custom_metal
             and self.L_off.shape[1] == 3
         )
 
