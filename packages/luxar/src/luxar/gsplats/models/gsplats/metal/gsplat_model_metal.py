@@ -301,7 +301,7 @@ class MetalRawSplatFunction(torch.autograd.Function):
         raw_mu, raw_L_diag, L_off, raw_a, sigma_min_diag = ctx.saved_tensors
         d_raw_mu, d_raw_L_diag, d_L_off, d_raw_a = (
             metal_splatting_backend.backward_raw_splat_3d(
-                grad_output.contiguous(),
+                grad_output,
                 raw_mu.contiguous(),
                 raw_L_diag.contiguous(),
                 L_off.contiguous(),
