@@ -310,11 +310,13 @@ kernel void compute_conic_from_L_3d(
     constant     uint& n_splats  [[buffer(2)]]
 );
 
-kernel void rasterize_forward_splat_centric_3d(...);   // one threadgroup per splat; computes L -> conic inline
-kernel void rasterize_backward_splat_centric_3d(...);  // one threadgroup per splat; computes d_conic -> d_L inline
+kernel void rasterize_forward_raw_splat_centric_3d(...);   // raw params -> centers/L/amps and L -> conic inline
+kernel void rasterize_backward_raw_splat_centric_3d(...);  // writes raw parameter gradients directly
+kernel void rasterize_forward_splat_centric_3d(...);       // constrained/fallback L path
+kernel void rasterize_backward_splat_centric_3d(...);      // constrained/fallback L path
 ```
 
-The previous Metal tile pipeline was removed.  There are no tile counts, tile offsets, tile-content buffers, PyTorch prefix sums, or CPU `.item()` synchronizations in the hot path.  Forward uses atomic float adds into the output volume because multiple splats can hit the same voxel.  Backward uses threadgroup reductions and writes each splat's gradients once, with no global parameter-gradient atomics.  The 3D hot path now passes Cholesky factors directly to the native kernels; packed conics are internal per-splat intermediates rather than Python-materialized forward/backward tensors.
+The previous Metal tile pipeline was removed.  There are no tile counts, tile offsets, tile-content buffers, PyTorch prefix sums, or CPU `.item()` synchronizations in the hot path.  Forward uses atomic float adds into the output volume because multiple splats can hit the same voxel.  Backward uses threadgroup reductions and writes each splat's gradients once, with no global parameter-gradient atomics.  The unconstrained 3D hot path passes raw model parameters directly to native kernels, where sigmoid/softplus parameter transforms, L-to-conic conversion, conic-to-L VJP, and raw-parameter VJPs are all handled per splat. Constrained 3D paths pass Cholesky factors directly; packed conics are internal per-splat intermediates rather than Python-materialized forward/backward tensors.
 
 ### Coordinate convention
 
@@ -434,6 +436,7 @@ The `group_by_box` step is O(N log N) due to a sort+group; `group_by_box_gpu` us
 
 ## Changelog
 
+- **v1.2.0** (2026-05-03): Updated the Metal backend description for the raw-parameter 3D hot path and scalar-expanded `grad_output` handling.
 - **v1.1.0** (2026-05-02): Updated the Metal backend description for the splat-centric performance rewrite: no tile-binned hot path, native `[Z,Y,X]` conic packing, atomic output accumulation, and threadgroup-reduced backward gradients.
 - **v1.0.0** (2026-04-28): Initial specification
   - Documented the full Cholesky-parameterized splat density model, the truncated Gaussian rescaling, and the per-axis AABB radii.
