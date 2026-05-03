@@ -682,7 +682,7 @@ export class ArrayDecoder {
     if (!enc || !enc.name) return 'direct';
 
     // Map encoding name to mode
-    if (enc.target) return 'array_ref';
+    if (enc.name === 'array_ref') return 'array_ref';
     if (enc.name === 'broadcasted') return 'broadcasted';
     if (ArrayDecoder.isLUTEncodingName(enc.name)) return 'lut';
     if (ArrayDecoder.isLogScalarEncodingName(enc.name)) return 'log_scalar';
