@@ -541,14 +541,12 @@ torch::Tensor dispatch_forward_raw_splat_3d(
     id<MTLCommandBuffer> cmd = [ctx->queue commandBuffer];
 
     {
-        id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
-        [enc setComputePipelineState:ctx->getPipeline("zero_float_buffer")];
-        setBufferWithOffset(enc, output, 0);
-        [enc setBytes:&total_pixels length:sizeof(uint32_t) atIndex:1];
-        MTLSize threads = MTLSizeMake(total_pixels, 1, 1);
-        MTLSize group = MTLSizeMake(std::min<uint32_t>(kThreadgroupSize, total_pixels), 1, 1);
-        [enc dispatchThreads:threads threadsPerThreadgroup:group];
-        [enc endEncoding];
+        id<MTLBlitCommandEncoder> blit = [cmd blitCommandEncoder];
+        id<MTLBuffer> output_buffer = tensorToMTLBuffer(output);
+        NSUInteger output_offset = output.storage_offset() * output.element_size();
+        NSUInteger output_nbytes = static_cast<NSUInteger>(total_pixels) * sizeof(float);
+        [blit fillBuffer:output_buffer range:NSMakeRange(output_offset, output_nbytes) value:0];
+        [blit endEncoding];
     }
 
     {
