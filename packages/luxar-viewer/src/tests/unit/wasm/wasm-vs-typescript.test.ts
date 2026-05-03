@@ -9,7 +9,8 @@
  * 2. Run identical inputs through both implementations
  * 3. Compare outputs for exact match (within floating-point tolerance)
  *
- * Note: Tests are skipped if WASM module is not built.
+ * Note: Tests are skipped if WASM module is not built unless
+ * LUXAR_REQUIRE_WASM_TESTS=1 is set.
  * Build with: pnpm build:wasm (or make build-wasm)
  */
 
@@ -30,6 +31,7 @@ const __dirname = dirname(__filename);
 const wasmJsPath = join(__dirname, '../../../../public/wasm/luxar_wasm.js');
 const wasmBinaryPath = join(__dirname, '../../../../public/wasm/luxar_wasm_bg.wasm');
 const wasmFilesExist = existsSync(wasmJsPath) && existsSync(wasmBinaryPath);
+const requireWasmTests = process.env.LUXAR_REQUIRE_WASM_TESTS === '1';
 
 /**
  * Helper to compare Float32Arrays within tolerance
@@ -84,6 +86,13 @@ beforeAll(async () => {
     console.log('[Test] WASM module failed to load:', error);
     console.log('[Test] Build WASM with: pnpm build:wasm (or make build-wasm)');
   }
+});
+
+describe('WASM artifact requirement', () => {
+  it.runIf(requireWasmTests)('loads built WASM artifacts when required', () => {
+    expect(wasmFilesExist).toBe(true);
+    expect(wasmModule).not.toBeNull();
+  });
 });
 
 describe('WASM vs TypeScript Comparison', () => {
