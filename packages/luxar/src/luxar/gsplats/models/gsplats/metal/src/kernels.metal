@@ -34,7 +34,12 @@ inline float gaussian_intensity(
 }
 
 inline float stable_sigmoid(float x) {
-    return 1.0f / (1.0f + exp(-x));
+    if (x >= 0.0f) {
+        float e = exp(-x);
+        return 1.0f / (1.0f + e);
+    }
+    float e = exp(x);
+    return e / (1.0f + e);
 }
 
 inline float stable_softplus(float x) {
