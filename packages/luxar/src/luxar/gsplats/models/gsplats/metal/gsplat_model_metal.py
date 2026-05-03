@@ -275,20 +275,21 @@ class MetalRawSplatFunction(torch.autograd.Function):
         ctx.shape = tuple(int(s) for s in shape)
         ctx.truncate = float(truncate)
         ctx.intensity_floor = float(intensity_floor)
+        ctx.save_for_backward(raw_mu, raw_L_diag, L_off, raw_a, sigma_min_diag)
 
-        output, cache = metal_splatting_backend.forward_raw_splat_3d(
-            raw_mu.contiguous(),
-            raw_L_diag.contiguous(),
-            L_off.contiguous(),
-            raw_a.contiguous(),
-            sigma_min_diag.contiguous(),
-            list(shape),
-            float(truncate),
-            float(intensity_floor),
+        output = cast(
+            torch.Tensor,
+            metal_splatting_backend.forward_raw_splat_3d(
+                raw_mu.contiguous(),
+                raw_L_diag.contiguous(),
+                L_off.contiguous(),
+                raw_a.contiguous(),
+                sigma_min_diag.contiguous(),
+                list(shape),
+                float(truncate),
+                float(intensity_floor),
+            ),
         )
-        output = cast(torch.Tensor, output)
-        cache = cast(torch.Tensor, cache)
-        ctx.save_for_backward(raw_mu, raw_L_diag, L_off, raw_a, sigma_min_diag, cache)
         if output.shape != torch.Size(shape):
             output = output.view(shape)
         return output
@@ -297,7 +298,7 @@ class MetalRawSplatFunction(torch.autograd.Function):
     def backward(
         ctx: Any, grad_output: torch.Tensor
     ) -> Tuple[Optional[torch.Tensor], ...]:
-        raw_mu, raw_L_diag, L_off, raw_a, sigma_min_diag, cache = ctx.saved_tensors
+        raw_mu, raw_L_diag, L_off, raw_a, sigma_min_diag = ctx.saved_tensors
         d_raw_mu, d_raw_L_diag, d_L_off, d_raw_a = (
             metal_splatting_backend.backward_raw_splat_3d(
                 grad_output,
@@ -306,7 +307,6 @@ class MetalRawSplatFunction(torch.autograd.Function):
                 L_off.contiguous(),
                 raw_a.contiguous(),
                 sigma_min_diag.contiguous(),
-                cache.contiguous(),
                 list(ctx.shape),
                 ctx.truncate,
                 ctx.intensity_floor,
