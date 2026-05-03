@@ -26,6 +26,23 @@ if HAS_TORCH:
     from luxar.gsplats.utils.trils import pack_tril
 
 
+@pytest.fixture(autouse=True)
+def clear_rendering_grid_cache(monkeypatch):
+    """Keep rendering grid-cache tests isolated from process/global state."""
+    from luxar.gsplats.models.gsplats import rendering_core
+
+    for name in (
+        "LUXAR_GSPLAT_GRID_CACHE_MAX_BYTES",
+        "LUXAR_GSPLAT_GRID_CACHE_MAX_GB",
+        "LUXAR_GSPLAT_GRID_CACHE_MAX_ENTRY_BYTES",
+        "LUXAR_GSPLAT_GRID_CACHE_MAX_ENTRY_GB",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    rendering_core.clear_grid_cache()
+    yield
+    rendering_core.clear_grid_cache()
+
+
 @pytest.fixture
 def simple_2d_params():
     """Create simple 2D Gaussian parameters for testing."""
@@ -135,6 +152,80 @@ def simple_3d_params():
         "L": L,
         "result": result,  # New API
     }
+
+
+class TestGridCacheMemoryPolicy:
+    """Test adaptive byte-budgeted grid-cache behavior."""
+
+    def test_grid_cache_can_be_disabled_with_zero_budget(self, monkeypatch) -> None:
+        from luxar.gsplats.models.gsplats import rendering_core
+
+        monkeypatch.setenv("LUXAR_GSPLAT_GRID_CACHE_MAX_BYTES", "0")
+        strides = torch.tensor([4, 1], dtype=torch.long)
+
+        base, lin_offsets = rendering_core.cached_base_and_offsets(
+            (2, 2), strides, torch.device("cpu")
+        )
+
+        assert base.shape == (2, 4)
+        assert lin_offsets.shape == (4,)
+        assert rendering_core.get_grid_cache_stats()["devices"] == {}
+
+    def test_oversized_entry_is_returned_but_not_cached(self, monkeypatch) -> None:
+        from luxar.gsplats.models.gsplats import rendering_core
+
+        # A 2D (2, 2) float32 grid has base=32 bytes and int64 offsets=32 bytes.
+        monkeypatch.setenv("LUXAR_GSPLAT_GRID_CACHE_MAX_BYTES", "1024")
+        monkeypatch.setenv("LUXAR_GSPLAT_GRID_CACHE_MAX_ENTRY_BYTES", "63")
+        strides = torch.tensor([4, 1], dtype=torch.long)
+
+        base, lin_offsets = rendering_core.cached_base_and_offsets(
+            (2, 2), strides, torch.device("cpu")
+        )
+
+        assert rendering_core._grid_entry_nbytes(base, lin_offsets) == 64
+        assert rendering_core.get_grid_cache_stats()["devices"] == {}
+
+    def test_grid_cache_evicts_lru_entries_by_device_byte_budget(
+        self, monkeypatch
+    ) -> None:
+        from luxar.gsplats.models.gsplats import rendering_core
+
+        monkeypatch.setenv("LUXAR_GSPLAT_GRID_CACHE_MAX_BYTES", "160")
+        monkeypatch.setenv("LUXAR_GSPLAT_GRID_CACHE_MAX_ENTRY_BYTES", "160")
+        device = torch.device("cpu")
+        strides = torch.tensor([10, 1], dtype=torch.long)
+
+        rendering_core.cached_base_and_offsets((2, 2), strides, device)  # 64 bytes
+        rendering_core.cached_base_and_offsets((3, 2), strides, device)  # 96 bytes
+        rendering_core.cached_base_and_offsets((2, 2), strides, device)  # Refresh LRU
+        rendering_core.cached_base_and_offsets((2, 3), strides, device)  # Evicts (3, 2)
+
+        stats = rendering_core.get_grid_cache_stats()["devices"]["cpu"]
+        assert stats["entries"] == 2
+        assert stats["bytes"] == 160
+
+        cache = rendering_core._GRID_CACHE[("cpu", None)]
+        cached_shapes = {key[2] for key in cache}
+        assert cached_shapes == {(2, 2), (2, 3)}
+
+    def test_clear_grid_cache_resets_entries_and_byte_accounting(
+        self, monkeypatch
+    ) -> None:
+        from luxar.gsplats.models.gsplats import rendering_core
+
+        monkeypatch.setenv("LUXAR_GSPLAT_GRID_CACHE_MAX_BYTES", "1024")
+        monkeypatch.setenv("LUXAR_GSPLAT_GRID_CACHE_MAX_ENTRY_BYTES", "1024")
+        strides = torch.tensor([4, 1], dtype=torch.long)
+
+        rendering_core.cached_base_and_offsets((2, 2), strides, torch.device("cpu"))
+        assert rendering_core.get_grid_cache_stats()["devices"]["cpu"]["bytes"] == 64
+
+        rendering_core.clear_grid_cache()
+
+        assert rendering_core.get_grid_cache_stats()["devices"] == {}
+        assert rendering_core._GRID_CACHE == {}
+        assert rendering_core._GRID_CACHE_BYTES == {}
 
 
 class TestRenderGaussiansFullTorch:

@@ -1,7 +1,7 @@
 # luxar.gsplats.models.gsplats — Technical Specification
 
-**Version**: 1.1.0
-**Last Updated**: 2026-05-02
+**Version**: 1.1.1
+**Last Updated**: 2026-05-03
 
 ## Purpose
 
@@ -153,7 +153,7 @@ For each AABB-group, walk the local grid (offset by the splat's centre), compute
 
 **Memory chunking**: when the AABB group's voxel count × splat count exceeds the configured budget, the group is processed in chunks of `chunk_size` splats (or auto-sized via `calculate_optimal_chunk_size`, which targets 60 % of free CUDA memory).
 
-**Grid cache**: `cached_base_and_offsets` keeps an LRU dict of size 64 keyed on `(box_shape, strides, device, dtype)` returning `(base, lin_offsets)` arrays for the local grid. Groups with the same box shape reuse the same offsets — typical hit rate during fitting is > 95 %.
+**Grid cache**: `cached_base_and_offsets` keeps one byte-budgeted LRU cache per device, keyed on `(box_shape, strides, device, dtype)` and returning `(base, lin_offsets)` arrays for the local grid. Groups with the same box shape reuse the same offsets — typical hit rate during fitting is high when the same support shapes recur. The default budget is adaptive (`min(10% free CUDA memory, 2 GiB)` for CUDA, `512 MiB` for MPS, `min(5% available RAM, 4 GiB)` for CPU when available), and can be overridden for HPC jobs with `LUXAR_GSPLAT_GRID_CACHE_MAX_BYTES` / `_MAX_GB` and `LUXAR_GSPLAT_GRID_CACHE_MAX_ENTRY_BYTES` / `_MAX_ENTRY_GB`. Set `LUXAR_GSPLAT_GRID_CACHE_MAX_BYTES=0` to disable caching.
 
 ### Forward substitution: 2D fast path
 
@@ -379,6 +379,7 @@ group_by_box(lo, hi) -> dict
 cached_base_and_offsets(box_shape, strides, device, dtype) -> tuple
 calculate_optimal_chunk_size(K, d, device, dtype) -> int
 clear_grid_cache() -> None
+get_grid_cache_stats() -> dict
 ```
 
 ---
@@ -406,7 +407,7 @@ CUDA C++ extension  ≪  Metal splat-centric (Apple Silicon)  ≪  PyTorch CPU
 
 Concrete throughput depends heavily on splat count, volume shape, and GPU model — see `make benchmark-cuda` (CUDA backend) and the regression suite under `cuda/tests/test_performance.py` / `metal/tests/test_performance.py` for current numbers on the host. The CUDA C++ extension remains the fastest path; the Metal extension now follows the same splat-centric ownership model for 3D MPS FP32 tensors but does not yet reach CUDA-class throughput. The generic-nD path is order-of-magnitude slower and is intended for 4D+ workloads where there is no custom backend; CPU is reserved for development and testing.
 
-Memory: `calculate_optimal_chunk_size` targets 60 % of free GPU memory by default; the LRU grid cache is bounded at `_GRID_CACHE_MAX_ENTRIES = 64` (a few MB typical) and can be cleared explicitly via `clear_grid_cache()` between large jobs.
+Memory: `calculate_optimal_chunk_size` targets 60 % of free GPU memory by default. The support-grid cache is bounded by bytes per device rather than by entry count, skips entries larger than the configured per-entry cap, and can be cleared explicitly via `clear_grid_cache()` between large jobs. HPC users can dedicate more memory to repeated large support shapes with `LUXAR_GSPLAT_GRID_CACHE_MAX_GB=<n>` and `LUXAR_GSPLAT_GRID_CACHE_MAX_ENTRY_GB=<n>`.
 
 The `group_by_box` step is O(N log N) due to a sort+group; `group_by_box_gpu` uses `torch.unique` for a fully-on-GPU alternative on CUDA. MPS lacks `torch.unique` for some dtypes, so the CPU fallback path is used there.
 
@@ -434,6 +435,7 @@ The `group_by_box` step is O(N log N) due to a sort+group; `group_by_box_gpu` us
 
 ## Changelog
 
+- **v1.1.1** (2026-05-03): Documented adaptive byte-budgeted support-grid caching, per-device accounting, cache stats, and HPC environment-variable overrides.
 - **v1.1.0** (2026-05-02): Updated the Metal backend description for the splat-centric performance rewrite: no tile-binned hot path, native `[Z,Y,X]` conic packing, atomic output accumulation, and threadgroup-reduced backward gradients.
 - **v1.0.0** (2026-04-28): Initial specification
   - Documented the full Cholesky-parameterized splat density model, the truncated Gaussian rescaling, and the per-axis AABB radii.
