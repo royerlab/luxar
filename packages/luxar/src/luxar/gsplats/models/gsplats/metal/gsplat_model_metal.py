@@ -14,6 +14,7 @@ from typing import Any, Optional, Sequence, Tuple, cast
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 
 from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
 from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
@@ -313,6 +314,30 @@ class GaussianSplatModelMetal(GaussianSplatModel):
         self._intensity_floor = float(intensity_floor)
         self._use_metal_conic = bool(use_metal_conic)
         self._use_fp16 = False
+
+    def _build_L(self) -> torch.Tensor:
+        """Specialized 3D Cholesky reconstruction for the Metal hot path."""
+        if self.dim != 3 or self.max_eccentricity is not None:
+            return super()._build_L()
+
+        diag = self.sigma_min_diag + F.softplus(self.raw_L_diag)
+        if self.sigma_max_diag is not None:
+            diag = torch.minimum(diag, self.sigma_max_diag)
+
+        n_splats = self.raw_L_diag.shape[0]
+        L = torch.empty(
+            (n_splats, 3, 3), dtype=diag.dtype, device=diag.device
+        )
+        L[:, 0, 0] = diag[:, 0]
+        L[:, 0, 1] = 0.0
+        L[:, 0, 2] = 0.0
+        L[:, 1, 0] = self.L_off[:, 0]
+        L[:, 1, 1] = diag[:, 1]
+        L[:, 1, 2] = 0.0
+        L[:, 2, 0] = self.L_off[:, 1]
+        L[:, 2, 1] = self.L_off[:, 2]
+        L[:, 2, 2] = diag[:, 2]
+        return L
 
     @property
     def _uses_custom_metal(self) -> bool:
