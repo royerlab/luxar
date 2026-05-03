@@ -144,12 +144,9 @@ with asection("3D DAPI Progressive Gaussian Splatting Demo"):
         import torch
 
         from luxar.gsplats.preprocessing import calibrate_nlm_h, denoise_nlm
+        from luxar.gsplats.utils.device import resolve_torch_device
 
-        denoise_device = "cpu"
-        if torch.cuda.is_available():
-            denoise_device = "cuda"
-        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-            denoise_device = "mps"
+        denoise_device = str(resolve_torch_device())
         aprint(f"Denoising device: {denoise_device}")
 
         vol_tensor = torch.from_numpy(V)
