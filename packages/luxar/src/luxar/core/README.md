@@ -581,7 +581,7 @@ Point (1,0,0) → Translate → (6,0,0) → Rotate → (0,6,0) → Scale → (0,
 - Matrices are automatically transposed for THREE.js when stored
 - Use `to_list()` and `from_list()` for serialization (handles transpose)
 - Composition order: `compose(A, B, C)` applies A first, then B, then C (LEFT-to-RIGHT)
-- In matrix math: `result = result @ A @ B @ C` (right-multiplication)
+- With column-vector math, the resulting matrix is `C @ B @ A`, so `C @ (B @ (A @ point))` applies A first
 
 ### 10. ViewerConfig (`viewer_config.py`)
 
