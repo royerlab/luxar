@@ -648,8 +648,6 @@ kernel void rasterize_forward_raw_splat_centric_3d(
     threadgroup float s_center[3];
     threadgroup float s_conic[6];
     threadgroup float s_amp;
-    threadgroup float s_shift_C;
-    threadgroup float s_inv_one_minus_C;
     threadgroup float s_truncate_sq;
     threadgroup int s_lo[3];
     threadgroup int s_extent[3];
@@ -690,12 +688,10 @@ kernel void rasterize_forward_raw_splat_centric_3d(
         float sigma_x = fast::sqrt(l20 * l20 + l21 * l21 + l22 * l22);
         s_amp = stable_softplus(raw_a[splat_id]);
 
-        s_shift_C = shift_C;
-        s_inv_one_minus_C = inv_one_minus_C;
         s_truncate_sq = effective_truncate_sq(
-            truncate, s_amp, intensity_floor, s_shift_C, s_inv_one_minus_C);
+            truncate, s_amp, intensity_floor, shift_C, inv_one_minus_C);
         float t_eff = effective_truncation(
-            truncate, s_amp, intensity_floor, s_shift_C, s_inv_one_minus_C);
+            truncate, s_amp, intensity_floor, shift_C, inv_one_minus_C);
 
         compute_aabb_3d_from_sigma(
             s_lo,
@@ -743,7 +739,7 @@ kernel void rasterize_forward_raw_splat_centric_3d(
         }
 
         float intensity = gaussian_intensity(
-            dist_sq, s_amp, s_shift_C, s_inv_one_minus_C);
+            dist_sq, s_amp, shift_C, inv_one_minus_C);
         if (intensity < intensity_floor) {
             continue;
         }
@@ -783,8 +779,6 @@ kernel void rasterize_backward_raw_splat_centric_3d(
     threadgroup float s_L[6];
     threadgroup float s_conic[6];
     threadgroup float s_amp;
-    threadgroup float s_shift_C;
-    threadgroup float s_inv_one_minus_C;
     threadgroup float s_truncate_sq;
     threadgroup int s_lo[3];
     threadgroup int s_extent[3];
@@ -835,12 +829,10 @@ kernel void rasterize_backward_raw_splat_centric_3d(
         float sigma_x = fast::sqrt(l20 * l20 + l21 * l21 + l22 * l22);
         s_amp = stable_softplus(raw_a[splat_id]);
 
-        s_shift_C = shift_C;
-        s_inv_one_minus_C = inv_one_minus_C;
         s_truncate_sq = effective_truncate_sq(
-            truncate, s_amp, intensity_floor, s_shift_C, s_inv_one_minus_C);
+            truncate, s_amp, intensity_floor, shift_C, inv_one_minus_C);
         float t_eff = effective_truncation(
-            truncate, s_amp, intensity_floor, s_shift_C, s_inv_one_minus_C);
+            truncate, s_amp, intensity_floor, shift_C, inv_one_minus_C);
 
         compute_aabb_3d_from_sigma(
             s_lo,
@@ -904,14 +896,14 @@ kernel void rasterize_backward_raw_splat_centric_3d(
             }
 
             float intensity = gaussian_intensity(
-                dist_sq, s_amp, s_shift_C, s_inv_one_minus_C);
+                dist_sq, s_amp, shift_C, inv_one_minus_C);
             if (intensity < intensity_floor) {
                 continue;
             }
 
             local_amp += dL_dI * intensity / max(s_amp, 1e-10f);
 
-            float unshifted = intensity + s_amp * s_inv_one_minus_C * s_shift_C;
+            float unshifted = intensity + s_amp * inv_one_minus_C * shift_C;
             float outer = dL_dI * unshifted * (-0.5f);
 
             float dD2_dz = 2.0f * (c00 * dz + c01 * dy + c02 * dx);
