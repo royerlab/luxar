@@ -356,6 +356,22 @@ class TestNetworkSimulationMiddleware:
         assert middleware.packet_loss_rate == 0.01
         assert middleware.bytes_per_second == 1_000_000 / 8  # 1 Mbps = 125 KB/s
 
+    def test_production_guard_rejects_active_simulation(self, monkeypatch):
+        """Test network simulation is refused in production environments."""
+        monkeypatch.setenv("LUXAR_ENV", "production")
+
+        with pytest.raises(RuntimeError, match="development/testing only"):
+            NetworkSimulationMiddleware(lambda *_args: None, latency_ms=10.0)
+
+    def test_production_guard_allows_inactive_middleware(self, monkeypatch):
+        """Test production guard allows no-op middleware instances."""
+        monkeypatch.setenv("LUXAR_PRODUCTION", "1")
+
+        middleware = NetworkSimulationMiddleware(lambda *_args: None)
+
+        assert middleware.latency_ms is None
+        assert middleware.bandwidth_limit_mbps is None
+
     def test_middleware_passes_through_non_http(self):
         """Test middleware passes through non-HTTP requests."""
         called = False
