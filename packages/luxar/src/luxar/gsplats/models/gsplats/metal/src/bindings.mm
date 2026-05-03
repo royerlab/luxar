@@ -617,19 +617,20 @@ std::vector<torch::Tensor> dispatch_backward_raw_splat_3d(
         "grad_output must be contiguous or scalar-expanded");
 
     int64_t N = raw_mu.size(0);
+    auto opts = raw_mu.options().dtype(torch::kFloat32);
     if (N == 0) {
         return {
-            torch::zeros_like(raw_mu),
-            torch::zeros_like(raw_L_diag),
-            torch::zeros_like(L_off),
-            torch::zeros_like(raw_a),
+            torch::zeros({N, 3}, opts),
+            torch::zeros({N, 3}, opts),
+            torch::zeros({N, 3}, opts),
+            torch::zeros({N}, opts),
         };
     }
 
-    auto d_raw_mu = torch::empty_like(raw_mu);
-    auto d_raw_L_diag = torch::empty_like(raw_L_diag);
-    auto d_L_off = torch::empty_like(L_off);
-    auto d_raw_a = torch::empty_like(raw_a);
+    auto d_raw_mu = torch::empty({N, 3}, opts);
+    auto d_raw_L_diag = torch::empty({N, 3}, opts);
+    auto d_L_off = torch::empty({N, 3}, opts);
+    auto d_raw_a = torch::empty({N}, opts);
 
     MetalContext* ctx = metalContext();
     torch::mps::synchronize();
