@@ -27,7 +27,7 @@ export type { PointRange };
 
 /** Chunk-based spatial index structure */
 interface ChunkSpatialIndexNodeAttrs {
-  ordering?: 'morton' | 'hilbert' | 'none' | string;
+  ordering?: 'morton' | 'hilbert' | 'none';
   ordering_dims?: number[];
   slice_dims?: number[];
   ordering_bits_per_dim?: number;
