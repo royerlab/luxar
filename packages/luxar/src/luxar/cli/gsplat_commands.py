@@ -458,6 +458,14 @@ def quick_view(
     port: int = typer.Option(8000, "--port", "-p", help="Data server port"),
     viewer_port: int = typer.Option(5173, "--viewer-port", help="Viewer port"),
     open_browser: bool = typer.Option(True, "--open/--no-open", help="Open browser"),
+    cors_origin: str = typer.Option(
+        "local",
+        "--cors-origin",
+        help=(
+            "Allowed CORS origin. Default 'local' allows localhost/127.0.0.1/::1. "
+            "Use '*' to allow any origin without credentials."
+        ),
+    ),
 ) -> None:
     """Quick view of a Gaussian splat dataset in the Luxar web viewer.
 
@@ -471,6 +479,7 @@ def quick_view(
         port: Port for data server
         viewer_port: Port for viewer
         open_browser: Whether to open browser automatically
+        cors_origin: Allowed CORS origin for both servers (default "local").
     """
     try:
         import threading
@@ -574,7 +583,17 @@ def quick_view(
                 # Start data server in background
                 data_thread = threading.Thread(
                     target=_serve_data,
-                    args=(scene_path, "127.0.0.1", actual_port, None, None, 0.0, 0.0),
+                    args=(
+                        scene_path,
+                        "127.0.0.1",
+                        actual_port,
+                        None,  # bandwidth_mbps
+                        None,  # latency_ms
+                        0.0,   # jitter_percent
+                        0.0,   # packet_loss_rate
+                        False,  # allow_sensitive_path
+                        cors_origin,
+                    ),
                     daemon=True,
                 )
                 data_thread.start()
@@ -585,7 +604,13 @@ def quick_view(
 
                 # Serve viewer (this blocks)
                 aprint("\n🎉 Viewer ready!")
-                _serve_viewer("127.0.0.1", actual_viewer_port, data_url, open_browser)
+                _serve_viewer(
+                    "127.0.0.1",
+                    actual_viewer_port,
+                    data_url,
+                    open_browser,
+                    cors_origin,
+                )
 
     except KeyboardInterrupt:
         aprint("\n🛑 Shutting down viewer...")
