@@ -536,7 +536,6 @@ torch::Tensor dispatch_forward_raw_splat_3d(
     }
 
     MetalContext* ctx = metalContext();
-    torch::mps::synchronize();
 
     id<MTLCommandBuffer> cmd = [ctx->queue commandBuffer];
 
