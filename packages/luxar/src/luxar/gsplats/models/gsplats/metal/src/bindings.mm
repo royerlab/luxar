@@ -637,7 +637,10 @@ std::vector<torch::Tensor> dispatch_backward_raw_splat_3d(
 
     id<MTLCommandBuffer> cmd = [ctx->queue commandBuffer];
     id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
-    [enc setComputePipelineState:ctx->getPipeline("rasterize_backward_raw_splat_centric_3d")];
+    const char* backward_pipeline = grad_output_is_scalar
+        ? "rasterize_backward_raw_scalar_splat_centric_3d"
+        : "rasterize_backward_raw_splat_centric_3d";
+    [enc setComputePipelineState:ctx->getPipeline(backward_pipeline)];
 
     if (grad_output_is_scalar) {
         id<MTLBuffer> grad_buf = tensorToMTLBufferUnchecked(grad_output);
@@ -674,8 +677,10 @@ std::vector<torch::Tensor> dispatch_backward_raw_splat_3d(
     [enc setBytes:&intensity_floor length:sizeof(float) atIndex:13];
     [enc setBytes:&shift_C length:sizeof(float) atIndex:14];
     [enc setBytes:&inv_one_minus_C length:sizeof(float) atIndex:15];
-    uint32_t grad_output_scalar_flag = grad_output_is_scalar ? 1u : 0u;
-    [enc setBytes:&grad_output_scalar_flag length:sizeof(uint32_t) atIndex:16];
+    if (!grad_output_is_scalar) {
+        uint32_t grad_output_scalar_flag = 0u;
+        [enc setBytes:&grad_output_scalar_flag length:sizeof(uint32_t) atIndex:16];
+    }
 
     MTLSize groups = MTLSizeMake(n_splats, 1, 1);
     MTLSize threadsPerGroup = MTLSizeMake(kThreadgroupSize, 1, 1);
