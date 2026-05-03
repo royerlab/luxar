@@ -577,6 +577,12 @@ torch::Tensor dispatch_forward_raw_splat_3d(
         [enc setBytes:&intensity_floor length:sizeof(float) atIndex:9];
         [enc setBytes:&shift_C length:sizeof(float) atIndex:10];
         [enc setBytes:&inv_one_minus_C length:sizeof(float) atIndex:11];
+        float shape_scale_z = std::max(static_cast<float>(shape[0]) - 1.0f, 1.0f);
+        float shape_scale_y = std::max(static_cast<float>(shape[1]) - 1.0f, 1.0f);
+        float shape_scale_x = std::max(static_cast<float>(shape[2]) - 1.0f, 1.0f);
+        [enc setBytes:&shape_scale_z length:sizeof(float) atIndex:12];
+        [enc setBytes:&shape_scale_y length:sizeof(float) atIndex:13];
+        [enc setBytes:&shape_scale_x length:sizeof(float) atIndex:14];
 
         MTLSize groups = MTLSizeMake(n_splats, 1, 1);
         MTLSize threadsPerGroup = MTLSizeMake(kThreadgroupSize, 1, 1);
@@ -676,6 +682,12 @@ std::vector<torch::Tensor> dispatch_backward_raw_splat_3d(
     [enc setBytes:&inv_one_minus_C length:sizeof(float) atIndex:15];
     uint32_t grad_output_scalar_flag = grad_output_is_scalar ? 1u : 0u;
     [enc setBytes:&grad_output_scalar_flag length:sizeof(uint32_t) atIndex:16];
+    float shape_scale_z = std::max(static_cast<float>(shape[0]) - 1.0f, 1.0f);
+    float shape_scale_y = std::max(static_cast<float>(shape[1]) - 1.0f, 1.0f);
+    float shape_scale_x = std::max(static_cast<float>(shape[2]) - 1.0f, 1.0f);
+    [enc setBytes:&shape_scale_z length:sizeof(float) atIndex:17];
+    [enc setBytes:&shape_scale_y length:sizeof(float) atIndex:18];
+    [enc setBytes:&shape_scale_x length:sizeof(float) atIndex:19];
 
     MTLSize groups = MTLSizeMake(n_splats, 1, 1);
     MTLSize threadsPerGroup = MTLSizeMake(kThreadgroupSize, 1, 1);
