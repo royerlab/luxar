@@ -514,18 +514,26 @@ class TestDimensionsProperty:
 
 
 class TestToZarr:
-    """Tests for to_zarr method."""
+    """Tests for to_zarr method.
 
-    def test_to_zarr_not_implemented(self) -> None:
-        """Test that to_zarr raises NotImplementedError."""
+    ``Scene.to_zarr`` was implemented in commit 67a410bf; the previous
+    "not implemented" assertion is gone. The full behavioral contract
+    (FileExistsError, inside-source rejection, finalize semantics) is
+    covered in ``test_review_fixes.py``.
+    """
+
+    def test_to_zarr_copies_finalized_store_to_destination(self) -> None:
+        """Exporting copies the finalized Zarr store to the chosen path."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store_path = Path(tmpdir) / "test.zarr"
+            export_path = Path(tmpdir) / "export.zarr"
 
             with LuxarZarrCompiler(store_path) as compiler:
                 scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+                scene.to_zarr(export_path)
 
-                with pytest.raises(NotImplementedError, match="not yet implemented"):
-                    scene.to_zarr(Path(tmpdir) / "export.zarr")
+            assert export_path.exists() and export_path.is_dir()
+            assert (export_path / ".zattrs").exists()
 
 
 class TestGetStorePath:
