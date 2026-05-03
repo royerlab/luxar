@@ -81,9 +81,14 @@ class ArrayEncoder:
             name: Array name within the group
             semantic_type: Semantic type (REQUIRED - must be explicit)
             mode: Encoding mode (AUTO, PRECISION, MEMORY, CUSTOM)
-            n_elements: Number of elements the scalar represents.
-                        - Required if data is scalar
-                        - Optional if data is array (for validation)
+            n_elements: Broadcast target element count.
+                        - Required if data is scalar/tuple/list because the
+                          scalar value is stored once and represents this many
+                          elements.
+                        - Optional for array input, but when provided it opts
+                          into broadcast/uniform validation: arrays must have
+                          shape (1, ...) or be a full-length uniform array.
+                          Omit n_elements for non-uniform full arrays.
             bounds: Min/max bounds for BOUNDED_SCALAR (None = auto-detect)
             positive_scalar_encoding: "linear" or "log" for POSITIVE_SCALAR
             custom_encoder: Explicit encoder name for CUSTOM mode
