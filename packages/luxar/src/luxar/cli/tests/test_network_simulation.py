@@ -402,9 +402,15 @@ class TestNetworkSimulationMiddleware:
         assert elapsed >= 0.09  # 90ms (allow 10% tolerance)
         assert message_count == 2  # Should have sent response
 
-    @pytest.mark.skip(reason="Timing-sensitive test flaky on CI runners")
-    def test_bandwidth_throttling(self):
-        """Test that bandwidth throttling works."""
+    def test_bandwidth_throttling(self, monkeypatch):
+        """Test that bandwidth throttling computes deterministic sleep delays."""
+
+        sleep_calls: list[float] = []
+
+        async def fake_sleep(seconds: float) -> None:
+            sleep_calls.append(seconds)
+
+        monkeypatch.setattr("luxar.cli.network_simulation.asyncio.sleep", fake_sleep)
 
         async def dummy_app(scope, receive, send):
             await send({"type": "http.response.start", "status": 200, "headers": []})
@@ -426,16 +432,17 @@ class TestNetworkSimulationMiddleware:
             async def receive():
                 return {}
 
-            start = time.time()
             await middleware(scope, receive, send)
-            elapsed = time.time() - start
-            return elapsed, len(messages)
+            return len(messages)
 
-        elapsed, message_count = asyncio.run(test_async())
+        message_count = asyncio.run(test_async())
 
-        # 10KB at 125 KB/s = 0.08s, allow generous tolerance
-        assert elapsed >= 0.06  # At least 60ms (75% of expected)
-        assert elapsed <= 0.15  # At most 150ms (allow overhead)
+        # 10KB at 1 Mbps = 10_000 / 125_000 = 0.08s. The exact call may be
+        # slightly smaller if a tiny amount of real time elapsed before the
+        # throttle calculation, but it should remain close and deterministic.
+        assert len(sleep_calls) == 1
+        assert 0.0 < sleep_calls[0] <= 0.08
+        assert sleep_calls[0] == pytest.approx(0.08, abs=0.01)
         assert message_count == 2
 
     def test_packet_loss_drops_requests(self):
