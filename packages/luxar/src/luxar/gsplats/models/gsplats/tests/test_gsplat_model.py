@@ -92,6 +92,23 @@ def simple_3d_setup():
 class TestGaussianSplatModelInitialization:
     """Test model initialization and parameter setup."""
 
+    def test_default_device_is_mps_on_macos(self, simple_2d_setup) -> None:
+        """On macOS the default device auto-resolves to MPS (use_metal=True).
+
+        Pre-rewrite, GaussianSplatModel never auto-selected MPS even when it
+        was available. This test guards the deliberate default-flip introduced
+        with the centralized device.resolve_torch_device helper. On systems
+        without MPS the test skips so non-Mac CI stays clean.
+        """
+        from luxar.gsplats.utils.device import is_mps_available
+
+        if not is_mps_available():
+            pytest.skip("MPS backend not available")
+
+        # use_cuda=False so a CUDA-enabled mac (rare but possible) doesn't beat MPS
+        model = GaussianSplatModel(**simple_2d_setup, truncate=2.0, use_cuda=False)
+        assert model.raw_mu.device.type == "mps"
+
     def test_model_creation_2d(self, simple_2d_setup) -> None:
         """Test basic model creation in 2D."""
         setup = simple_2d_setup
