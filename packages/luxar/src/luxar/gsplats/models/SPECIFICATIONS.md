@@ -741,8 +741,9 @@ expo = torch.sum(y * y, dim=1)
   - Cholesky (off-diagonal): `N × (d*(d-1)//2)`
   - Amplitudes: `N`
   - Sharpness: `N`
-- Grid cache: `O(unique_box_shapes × max_P_box × d)`
-  - Typically small (few unique shapes, cached persistently)
+- Grid cache: bounded by the active per-device byte budget
+  - Defaults are adaptive by device; repeated box shapes are cached while oversized entries are skipped
+  - Tune with `LUXAR_GSPLAT_GRID_CACHE_MAX_GB` / `_MAX_ENTRY_GB` on large HPC jobs, or disable with `LUXAR_GSPLAT_GRID_CACHE_MAX_BYTES=0`
 - Intermediate tensors (per chunk): `O(K_group × d × P_chunk)`
   - Delta: `K × d × P_chunk`
   - Y (solution): `K × d × P_chunk`

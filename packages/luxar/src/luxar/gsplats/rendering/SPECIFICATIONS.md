@@ -1,7 +1,7 @@
 # luxar.gsplats.rendering - Technical Specification
 
-**Version**: 1.0.1
-**Last Updated**: 2026-05-02
+**Version**: 1.0.2
+**Last Updated**: 2026-05-03
 
 ## Purpose
 
@@ -110,9 +110,14 @@ accumulated into the flattened output tensor with row-major offsets.
 The PyTorch path chunks the local-grid point dimension (`P`) to avoid allocating
 `K × D × P` intermediates for an entire support box at once. If `chunk_size` is
 not supplied, the rendering core estimates a safe chunk size from available CUDA
-or MPS memory and falls back to conservative CPU defaults. `clear_grid_cache()`
-can be used by lower-level callers to release cached support grids after large
-shape changes.
+or MPS memory and falls back to conservative CPU defaults.
+
+Support grids are cached per device with byte budgets rather than an entry-count
+limit. Defaults are adaptive and conservative, while HPC users can override them
+with `LUXAR_GSPLAT_GRID_CACHE_MAX_BYTES` / `_MAX_GB` and
+`LUXAR_GSPLAT_GRID_CACHE_MAX_ENTRY_BYTES` / `_MAX_ENTRY_GB`; setting the total
+budget to `0` disables caching. Oversized grids are rendered but not retained.
+`clear_grid_cache()` releases cached support grids after large shape changes.
 
 ### Render to NumPy
 
@@ -143,5 +148,6 @@ shape changes.
 
 ## Changelog
 
+- **v1.0.2** (2026-05-03): Documented adaptive byte-budgeted support-grid caching and HPC tuning environment variables.
 - **v1.0.1** (2026-05-02): Documented voxel-coordinate convention, transform boundary, additive accumulation, and PyTorch memory-management behavior.
 - **v1.0.0** (2026-05-02): Initial specification.
