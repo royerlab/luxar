@@ -783,6 +783,7 @@ kernel void rasterize_backward_raw_splat_centric_3d(
     threadgroup float s_L[6];
     threadgroup float s_conic[6];
     threadgroup float s_amp;
+    threadgroup float s_grad_output_scalar;
     threadgroup float s_shift_C;
     threadgroup float s_inv_one_minus_C;
     threadgroup float s_truncate_sq;
@@ -834,6 +835,7 @@ kernel void rasterize_backward_raw_splat_centric_3d(
         float sigma_y = fast::sqrt(l10 * l10 + l11 * l11);
         float sigma_x = fast::sqrt(l20 * l20 + l21 * l21 + l22 * l22);
         s_amp = stable_softplus(raw_a[splat_id]);
+        s_grad_output_scalar = grad_output_is_scalar != 0u ? grad_output[0] : 0.0f;
 
         s_shift_C = shift_C;
         s_inv_one_minus_C = inv_one_minus_C;
@@ -884,7 +886,7 @@ kernel void rasterize_backward_raw_splat_centric_3d(
             int x = s_lo[2] + rem - (y - s_lo[1]) * s_extent[2];
 
             uint out_idx = uint(z) * H * W + uint(y) * W + uint(x);
-            float dL_dI = grad_output_is_scalar != 0u ? grad_output[0] : grad_output[out_idx];
+            float dL_dI = grad_output_is_scalar != 0u ? s_grad_output_scalar : grad_output[out_idx];
 
             float dz = float(z) - s_center[0];
             float dy = float(y) - s_center[1];
