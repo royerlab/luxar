@@ -497,7 +497,10 @@ export class ArrayDecoder {
    * Format: uint8 or uint16 → float with bounds [min, max]
    */
   private dequantize(data: Float32Array, bounds: [number, number], dtype: string): Float32Array {
-    const [min_val, max_val] = bounds;
+    const [min_val, max_val] = ArrayDecoder.validateQuantizationBounds(
+      bounds,
+      'quantization bounds'
+    );
 
     // Determine max integer value from dtype
     // NumPy dtype formats: 'uint8', '<u1' (little-endian), '|u1' (native byte order for single-byte)
@@ -535,6 +538,12 @@ export class ArrayDecoder {
    * Used for positive scalars with wide dynamic range (e.g., radii)
    */
   private decodeLogScalar(data: Float32Array, maxLog: number, dtype: string): Float32Array {
+    if (!Number.isFinite(maxLog) || maxLog <= 0) {
+      throw new Error(
+        `[ArrayDecoder] Invalid log_scalar max_log: ${maxLog}. Must be finite and > 0.`
+      );
+    }
+
     // Determine max integer value from dtype
     // NumPy dtype formats: 'uint8', '<u1' (little-endian), '|u1' (native byte order for single-byte)
     let max_int: number;
@@ -777,7 +786,9 @@ export class ArrayDecoder {
     }
     const hasBounds = enc.bounds !== undefined || enc.min !== undefined || enc.max !== undefined;
     if (!ArrayDecoder.isQuantizedEncodingName(enc.name) && hasBounds) {
-      throw new Error('[ArrayDecoder] bounds/min/max metadata is only valid for quantized encodings');
+      throw new Error(
+        '[ArrayDecoder] bounds/min/max metadata is only valid for quantized encodings'
+      );
     }
     if (!ArrayDecoder.isLogScalarEncodingName(enc.name) && enc.max_log !== undefined) {
       throw new Error('[ArrayDecoder] max_log metadata is only valid for log_scalar encodings');
@@ -788,15 +799,56 @@ export class ArrayDecoder {
     ) {
       throw new Error('[ArrayDecoder] bounded_scalar encoding requires bounds or min/max');
     }
+    if ((enc.min === undefined) !== (enc.max === undefined)) {
+      throw new Error('[ArrayDecoder] encoding.min and encoding.max must be provided together');
+    }
+    if (ArrayDecoder.isQuantizedEncodingName(enc.name)) {
+      if (enc.bounds !== undefined) {
+        ArrayDecoder.validateQuantizationBounds(enc.bounds, 'encoding.bounds');
+      } else if (enc.min !== undefined && enc.max !== undefined) {
+        ArrayDecoder.validateQuantizationBounds([enc.min, enc.max], 'encoding.min/max');
+      }
+    }
     if (ArrayDecoder.isLogScalarEncodingName(enc.name) && enc.max_log === undefined) {
       throw new Error('[ArrayDecoder] log_scalar encoding requires encoding.max_log');
     }
     if (
-      (ArrayDecoder.isLUTEncodingName(enc.name) || ArrayDecoder.isQuantizedEncodingName(enc.name)) &&
+      ArrayDecoder.isLogScalarEncodingName(enc.name) &&
+      enc.max_log !== undefined &&
+      (!Number.isFinite(enc.max_log) || enc.max_log <= 0)
+    ) {
+      throw new Error(
+        `[ArrayDecoder] Invalid log_scalar max_log: ${enc.max_log}. Must be finite and > 0.`
+      );
+    }
+    if (
+      (ArrayDecoder.isLUTEncodingName(enc.name) ||
+        ArrayDecoder.isQuantizedEncodingName(enc.name)) &&
       !enc.original_dtype
     ) {
       throw new Error('[ArrayDecoder] encoded arrays require encoding.original_dtype');
     }
+  }
+
+  /**
+   * Validate quantization bounds before dequantization.
+   */
+  private static validateQuantizationBounds(
+    bounds: [number, number],
+    context: string
+  ): [number, number] {
+    const [minVal, maxVal] = bounds;
+    if (!Number.isFinite(minVal) || !Number.isFinite(maxVal)) {
+      throw new Error(
+        `[ArrayDecoder] Invalid ${context}: [${minVal}, ${maxVal}]. Bounds must be finite.`
+      );
+    }
+    if (maxVal <= minVal) {
+      throw new Error(
+        `[ArrayDecoder] Invalid ${context}: max (${maxVal}) must be greater than min (${minVal}).`
+      );
+    }
+    return bounds;
   }
 
   /**
@@ -868,7 +920,7 @@ export class ArrayDecoder {
     // Check for log-space encoding first (special case)
     if (ArrayDecoder.isLogScalarEncodingName(enc.name) && enc.max_log !== undefined) {
       return {
-        bounds: [0, enc.max_log], // Log space uses [0, max_log]
+        bounds: ArrayDecoder.validateQuantizationBounds([0, enc.max_log], 'encoding.max_log'),
         dtype: ArrayDecoder.normalizeQuantizedDtype(zarrDtype),
         isLogSpace: true,
       };
@@ -892,7 +944,7 @@ export class ArrayDecoder {
 
       if (bounds) {
         return {
-          bounds,
+          bounds: ArrayDecoder.validateQuantizationBounds(bounds, 'quantization metadata'),
           dtype: ArrayDecoder.normalizeQuantizedDtype(zarrDtype),
           isLogSpace: false,
         };

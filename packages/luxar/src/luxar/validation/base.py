@@ -244,16 +244,11 @@ def validate_radii_for_writing(
     # Check for invalid values
     if np.any(radii <= 0):
         min_val: float = float(np.min(radii))
-        if min_val == 0:
-            raise ValidationError(
-                f"{context}: Radii must be positive (> 0). Found zero values.",
-                "Replace zeros with small positive values: radii[radii == 0] = 0.01",
-            )
-        else:
-            raise ValidationError(
-                f"{context}: Radii must be positive. Found minimum value: {min_val:.3f}",
-                "Use np.abs(radii) or np.clip(radii, 0.01, None) to ensure positive values",
-            )
+        raise ValidationError(
+            f"{context}: Radii must be positive (> 0). "
+            f"Found zero or negative values (minimum: {min_val:.3f}).",
+            "Use np.clip(radii, 0.01, None) to ensure positive values",
+        )
 
 
 def validate_sharpness_for_writing(

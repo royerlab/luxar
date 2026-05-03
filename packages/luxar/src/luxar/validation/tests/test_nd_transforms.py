@@ -308,6 +308,14 @@ class TestApplyNdTransformToBounds:
         result = apply_nd_transform_to_bounds(bounds, {}, dims_4d)
         assert result == bounds
 
+    def test_mismatched_bounds_lengths_are_ignored_defensively(self, dims_4d) -> None:
+        bounds = {"min": [0, 0, 0, 0], "max": [10, 10, 10]}
+        nd_t = {"Time": {"scale": 2.0, "offset": 10.0}}
+
+        result = apply_nd_transform_to_bounds(bounds, nd_t, dims_4d)
+
+        assert result == bounds
+
 
 class TestNodeNdTransformIntegration:
     """Test nd_transform integration with Node/Scene/Compiler."""

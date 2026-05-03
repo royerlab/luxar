@@ -765,7 +765,10 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
       ];
 
       for (const testCase of cases) {
-        const { array, attrs } = await loadArrayWithAttrs('test_integer_colors.zarr', testCase.path);
+        const { array, attrs } = await loadArrayWithAttrs(
+          'test_integer_colors.zarr',
+          testCase.path
+        );
         const raw = await zarr.get(array);
 
         expect(attrs.encoding?.name).toBe(testCase.encodingName);
@@ -775,9 +778,7 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
         expect(ArrayDecoder.getQuantizationMetadata(attrs, String(array.dtype))).toBeNull();
         expect(raw.data).toBeInstanceOf(testCase.ctor);
         const flat = Array.from(raw.data as Uint8Array | Uint16Array);
-        const rows = [0, 1, 2]
-          .map((row) => flat.slice(row * 3, row * 3 + 3).join(','))
-          .sort();
+        const rows = [0, 1, 2].map((row) => flat.slice(row * 3, row * 3 + 3).join(',')).sort();
         const expectedRows = testCase.expectedRows.map((row) => row.join(',')).sort();
         expect(rows).toEqual(expectedRows);
       }
@@ -1095,9 +1096,9 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
     });
 
     it('should reject unknown encoding names during metadata validation', () => {
-      expect(() =>
-        ArrayDecoder.validateEncodingMetadata({ name: 'mystery_encoder' })
-      ).toThrow('Unknown encoding name');
+      expect(() => ArrayDecoder.validateEncodingMetadata({ name: 'mystery_encoder' })).toThrow(
+        'Unknown encoding name'
+      );
     });
 
     it('should reject malformed prefix-matching encoding names', () => {
@@ -1131,6 +1132,87 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
       expect(() =>
         ArrayDecoder.validateEncodingMetadata({ name: 'float32', min: 0, max: 1 })
       ).toThrow('bounds/min/max metadata is only valid for quantized encodings');
+    });
+
+    it('should reject non-finite quantization bounds', () => {
+      expect(() =>
+        ArrayDecoder.validateEncodingMetadata({
+          name: 'bounded_scalar_uint8',
+          original_dtype: 'float32',
+          bounds: [Number.NaN, 1],
+        })
+      ).toThrow('Bounds must be finite');
+      expect(() =>
+        ArrayDecoder.validateEncodingMetadata({
+          name: 'bounded_scalar_uint16',
+          original_dtype: 'float32',
+          min: 0,
+          max: Number.POSITIVE_INFINITY,
+        })
+      ).toThrow('Bounds must be finite');
+    });
+
+    it('should reject non-increasing quantization bounds', () => {
+      expect(() =>
+        ArrayDecoder.validateEncodingMetadata({
+          name: 'bounded_scalar_uint8',
+          original_dtype: 'float32',
+          bounds: [5, 5],
+        })
+      ).toThrow('max (5) must be greater than min (5)');
+      expect(() =>
+        ArrayDecoder.validateEncodingMetadata({
+          name: 'bounded_scalar_uint16',
+          original_dtype: 'float32',
+          min: 10,
+          max: 2,
+        })
+      ).toThrow('max (2) must be greater than min (10)');
+    });
+
+    it('should reject partial min/max quantization metadata', () => {
+      expect(() =>
+        ArrayDecoder.validateEncodingMetadata({
+          name: 'bounded_scalar_uint8',
+          original_dtype: 'float32',
+          min: 0,
+        })
+      ).toThrow('encoding.min and encoding.max must be provided together');
+    });
+
+    it('should reject invalid log scalar max_log metadata', () => {
+      expect(() =>
+        ArrayDecoder.validateEncodingMetadata({
+          name: 'log_scalar_uint8',
+          original_dtype: 'float32',
+          max_log: Number.NaN,
+        })
+      ).toThrow('Invalid log_scalar max_log');
+      expect(() =>
+        ArrayDecoder.validateEncodingMetadata({
+          name: 'log_scalar_uint16',
+          original_dtype: 'float32',
+          max_log: 0,
+        })
+      ).toThrow('Invalid log_scalar max_log');
+    });
+
+    it('should reject invalid bounds during direct range dequantization', () => {
+      const decoder = new ArrayDecoder(new ArrayRefRegistry());
+      expect(() =>
+        decoder.dequantizeRange(new Uint8Array([0, 1]), {
+          bounds: [0, Number.NaN],
+          dtype: 'uint8',
+          isLogSpace: false,
+        })
+      ).toThrow('Bounds must be finite');
+      expect(() =>
+        decoder.dequantizeRange(new Uint8Array([0, 1]), {
+          bounds: [1, 1],
+          dtype: 'uint8',
+          isLogSpace: false,
+        })
+      ).toThrow('max (1) must be greater than min (1)');
     });
 
     it('should dequantize range data correctly', async () => {

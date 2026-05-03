@@ -334,7 +334,7 @@ def apply_nd_transform_to_bounds(
     for i, dim in enumerate(dimensions.dimensions):
         if dim.name not in nd_transform or dim.display:
             continue
-        if i >= len(min_vals):
+        if i >= len(min_vals) or i >= len(max_vals):
             continue
 
         entry = nd_transform[dim.name]
