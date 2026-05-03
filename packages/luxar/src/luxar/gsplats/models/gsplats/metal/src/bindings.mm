@@ -538,7 +538,7 @@ torch::Tensor dispatch_forward_raw_splat_3d(
     MetalContext* ctx = metalContext();
     torch::mps::synchronize();
 
-    id<MTLCommandBuffer> cmd = [ctx->queue commandBuffer];
+    id<MTLCommandBuffer> cmd = [ctx->queue commandBufferWithUnretainedReferences];
 
     {
         id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
@@ -635,7 +635,7 @@ std::vector<torch::Tensor> dispatch_backward_raw_splat_3d(
     MetalContext* ctx = metalContext();
     torch::mps::synchronize();
 
-    id<MTLCommandBuffer> cmd = [ctx->queue commandBuffer];
+    id<MTLCommandBuffer> cmd = [ctx->queue commandBufferWithUnretainedReferences];
     id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
     [enc setComputePipelineState:ctx->getPipeline("rasterize_backward_raw_splat_centric_3d")];
 
