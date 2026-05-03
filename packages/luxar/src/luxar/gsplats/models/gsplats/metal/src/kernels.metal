@@ -43,6 +43,12 @@ inline float stable_sigmoid(float x) {
 }
 
 inline float stable_softplus(float x) {
+    if (x > 20.0f) {
+        return x;
+    }
+    if (x < -20.0f) {
+        return exp(x);
+    }
     return log(1.0f + exp(x));
 }
 
