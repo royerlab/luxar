@@ -525,6 +525,8 @@ torch::Tensor dispatch_forward_raw_splat_3d(
     float truncate,
     float intensity_floor
 ) {
+    validate_raw_splat_tensors_3d(raw_mu, raw_L_diag, L_off, raw_a, sigma_min_diag, shape);
+
     auto output = torch::empty(shape, raw_mu.options().dtype(torch::kFloat32));
     int64_t total_pixels_i64 = shape_numel(shape);
     uint32_t total_pixels = static_cast<uint32_t>(total_pixels_i64);
@@ -600,9 +602,19 @@ std::vector<torch::Tensor> dispatch_backward_raw_splat_3d(
     float truncate,
     float intensity_floor
 ) {
+    validate_raw_splat_tensors_3d(raw_mu, raw_L_diag, L_off, raw_a, sigma_min_diag, shape);
+    TORCH_CHECK(grad_output.device().is_mps(), "grad_output must be on MPS device");
+    TORCH_CHECK(grad_output.scalar_type() == torch::kFloat32, "grad_output must be float32");
+    TORCH_CHECK(grad_output.dim() == 3
+            && grad_output.size(0) == shape[0]
+            && grad_output.size(1) == shape[1]
+            && grad_output.size(2) == shape[2],
+        "grad_output shape must match the provided 3D shape");
     bool grad_output_is_scalar = grad_output.stride(0) == 0
         && grad_output.stride(1) == 0
         && grad_output.stride(2) == 0;
+    TORCH_CHECK(grad_output.is_contiguous() || grad_output_is_scalar,
+        "grad_output must be contiguous or scalar-expanded");
 
     int64_t N = raw_mu.size(0);
     auto opts = raw_mu.options().dtype(torch::kFloat32);
