@@ -375,7 +375,9 @@ def validate_zarr_attributes(attrs: dict, is_root: bool = False) -> None:
                 f"Use one of: {', '.join(valid_types)}",
             )
 
-    # Validate version if present
+    # Validate version if present. Keep this import local to avoid a package
+    # initialization cycle: typing_utils.config imports protocols from the public
+    # package path during luxar import, while validation.base is imported early.
     if "luxar_version" in attrs:
         from ..typing_utils.config import SUPPORTED_VERSIONS
 
