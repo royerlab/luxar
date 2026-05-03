@@ -2,18 +2,17 @@
 
 from __future__ import annotations
 
-import sys
-
 import numpy as np
 import pytest
 import torch
 
+from luxar.gsplats.models.gsplats.metal import is_metal_available
+
 pytestmark = pytest.mark.skipif(
-    sys.platform != "darwin" or not torch.backends.mps.is_available(),
-    reason="Metal backend only available on macOS with MPS",
+    not is_metal_available(), reason="Metal backend not available"
 )
 
-if sys.platform == "darwin" and torch.backends.mps.is_available():
+if is_metal_available():
     from luxar.gsplats.models.gsplats.metal import GaussianSplatModelMetal
 else:
     GaussianSplatModelMetal = None  # type: ignore[misc, assignment]
