@@ -20,6 +20,23 @@ from luxar.cli.utils import find_available_port
 from luxar.utils.demos import create_lorenz_attractor
 
 
+class _ImmediateThread:
+    """threading.Thread stand-in that runs target inline; used to make CLI
+    invocations deterministic in tests that exercise the data-server thread."""
+
+    def __init__(self, target=None, args=(), kwargs=None, daemon=None):
+        self._target = target
+        self._args = args
+        self._kwargs = kwargs or {}
+
+    def start(self):
+        if self._target is not None:
+            self._target(*self._args, **self._kwargs)
+
+    def join(self, *_a, **_k):
+        return None
+
+
 @pytest.fixture
 def available_port():
     """Find an available port for testing."""
@@ -167,6 +184,89 @@ class TestServeIntegration:
         response = client.get("/health", headers={"Origin": "https://example.org"})
         assert response.headers["Access-Control-Allow-Origin"] == "*"
         assert response.headers.get("Access-Control-Allow-Credentials") != "true"
+
+    def test_viewer_command_threads_cors_origin(self, sample_scene, monkeypatch):
+        """`luxar viewer --cors-origin X` must propagate X to both servers."""
+        from typer.testing import CliRunner
+
+        from luxar.cli import app
+        from luxar.cli import main as cli_main
+
+        captured: dict[str, str] = {}
+
+        def fake_serve_viewer(host, port, data_url=None, open_browser_flag=True,
+                              cors_origin="local"):
+            captured["viewer"] = cors_origin
+
+        def fake_serve_data(path, host, port, *args, **kwargs):
+            cors_origin = kwargs.get("cors_origin")
+            if cors_origin is None and len(args) >= 6:
+                cors_origin = args[5]
+            captured["data"] = cors_origin or "local"
+
+        monkeypatch.setattr(cli_main, "_serve_viewer", fake_serve_viewer)
+        monkeypatch.setattr(cli_main, "_serve_data", fake_serve_data)
+        monkeypatch.setattr(cli_main, "check_viewer_built", lambda: True)
+        monkeypatch.setattr(cli_main.threading, "Thread", _ImmediateThread)
+        monkeypatch.setattr(cli_main.time, "sleep", lambda *_a, **_k: None)
+
+        result = CliRunner().invoke(
+            app,
+            [
+                "viewer",
+                "--data",
+                str(sample_scene),
+                "--cors-origin",
+                "https://example.com",
+                "--no-open",
+            ],
+        )
+        assert result.exit_code == 0, result.stdout
+        assert captured["viewer"] == "https://example.com"
+        assert captured["data"] == "https://example.com"
+
+    def test_demo_command_threads_cors_origin(self, monkeypatch, tmp_path):
+        """`luxar demo --cors-origin X` must propagate X to both servers."""
+        from typer.testing import CliRunner
+
+        from luxar.cli import app
+        from luxar.cli import main as cli_main
+
+        captured: dict[str, str] = {}
+
+        def fake_serve_viewer(host, port, data_url=None, open_browser_flag=True,
+                              cors_origin="local"):
+            captured["viewer"] = cors_origin
+
+        def fake_serve_data(path, host, port, *args, **kwargs):
+            cors_origin = kwargs.get("cors_origin")
+            if cors_origin is None and len(args) >= 6:
+                cors_origin = args[5]
+            captured["data"] = cors_origin or "local"
+
+        monkeypatch.setattr(cli_main, "_serve_viewer", fake_serve_viewer)
+        monkeypatch.setattr(cli_main, "_serve_data", fake_serve_data)
+        monkeypatch.setattr(cli_main, "check_viewer_built", lambda: True)
+        monkeypatch.setattr(cli_main.threading, "Thread", _ImmediateThread)
+        monkeypatch.setattr(cli_main.time, "sleep", lambda *_a, **_k: None)
+
+        out = tmp_path / "demo.zarr"
+        result = CliRunner().invoke(
+            app,
+            [
+                "demo",
+                "--no-open",
+                "--points",
+                "100",
+                "--output",
+                str(out),
+                "--cors-origin",
+                "https://example.com",
+            ],
+        )
+        assert result.exit_code == 0, result.stdout
+        assert captured["viewer"] == "https://example.com"
+        assert captured["data"] == "https://example.com"
 
     def test_directory_listing_blocks_parent_traversal(self, tmp_path):
         """Custom directory listings must not escape the served root."""

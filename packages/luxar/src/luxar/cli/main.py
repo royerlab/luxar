@@ -419,7 +419,7 @@ def serve(
                     f"⚠️  Viewer port {viewer_port} busy, using {actual_viewer_port} instead"
                 )
 
-            _serve_viewer(host, actual_viewer_port, None, open_browser)
+            _serve_viewer(host, actual_viewer_port, None, open_browser, cors_origin)
             return
 
         # Require path for data serving
@@ -499,7 +499,7 @@ def serve(
                 data_url = f"http://{host}:{actual_port}"  # No trailing slash
                 viewer_thread = threading.Thread(
                     target=_serve_viewer,
-                    args=(host, actual_viewer_port, data_url, False),
+                    args=(host, actual_viewer_port, data_url, False, cors_origin),
                     daemon=True,
                 )
                 viewer_thread.start()
@@ -547,7 +547,11 @@ def serve(
 
 
 def _serve_viewer(
-    host: str, port: int, data_url: Optional[str] = None, open_browser_flag: bool = True
+    host: str,
+    port: int,
+    data_url: Optional[str] = None,
+    open_browser_flag: bool = True,
+    cors_origin: str = _DEFAULT_CORS_ORIGIN,
 ) -> None:
     """Internal function to serve the viewer.
 
@@ -559,11 +563,12 @@ def _serve_viewer(
             in viewer fetches).
         open_browser_flag: If True, open the viewer URL in the system browser
             shortly after the server starts.
+        cors_origin: Allowed CORS origin (see :func:`_add_cors`).
     """
     viewer_dist = get_viewer_dist_path()
 
     api = FastAPI(title="Luxar Viewer", docs_url=None, redoc_url=None)
-    _add_cors(api)
+    _add_cors(api, cors_origin)
 
     # Mount viewer static files
     api.mount("/", StaticFiles(directory=str(viewer_dist), html=True))
@@ -622,6 +627,14 @@ def viewer(
         "--packet-loss",
         help="Packet loss rate (e.g., '1%', '0.01')",
     ),
+    cors_origin: str = typer.Option(
+        _DEFAULT_CORS_ORIGIN,
+        "--cors-origin",
+        help=(
+            "Allowed CORS origin. Default 'local' allows localhost/127.0.0.1/::1. "
+            "Use '*' to allow any origin without credentials."
+        ),
+    ),
     allow_sensitive_path: bool = typer.Option(
         False,
         "--allow-sensitive-path",
@@ -653,6 +666,8 @@ def viewer(
         latency (str, optional): Network latency (applies to data server only).
         jitter (str, optional): Latency jitter percentage (applies to data server only).
         packet_loss (str, optional): Packet loss rate (applies to data server only).
+        cors_origin (str, optional): Allowed CORS origin for both viewer and
+            data servers. Defaults to "local" (loopback only).
         allow_sensitive_path (bool, optional): Permit serving system paths.
     """
     try:
@@ -715,6 +730,7 @@ def viewer(
                     jitter_percent,
                     packet_loss_rate,
                     allow_sensitive_path,
+                    cors_origin,
                 ),
                 daemon=True,
             )
@@ -734,7 +750,7 @@ def viewer(
             aprint(f"⚠️  Viewer port {port} busy, using {actual_viewer_port} instead")
 
         # Serve viewer
-        _serve_viewer(host, actual_viewer_port, data_url, open_browser)
+        _serve_viewer(host, actual_viewer_port, data_url, open_browser, cors_origin)
 
     except KeyboardInterrupt:
         aprint("\n🛑 Shutting down viewer...")
@@ -752,6 +768,7 @@ def _serve_data(
     jitter_percent: float = 0.0,
     packet_loss_rate: float = 0.0,
     allow_sensitive_path: bool = False,
+    cors_origin: str = _DEFAULT_CORS_ORIGIN,
 ) -> None:
     """Internal function to serve data in background.
 
@@ -764,11 +781,12 @@ def _serve_data(
         jitter_percent: Jitter as percentage (0.0-1.0)
         packet_loss_rate: Packet loss rate (0.0-1.0)
         allow_sensitive_path: Permit serving system paths.
+        cors_origin: Allowed CORS origin (see :func:`_add_cors`).
     """
     _validate_serve_path(path, allow_sensitive_path=allow_sensitive_path)
 
     api = FastAPI(title="Luxar Data Server", docs_url=None, redoc_url=None)
-    _add_cors(api)
+    _add_cors(api, cors_origin)
 
     # Determine serve path
     if path.is_dir():
@@ -838,6 +856,14 @@ def demo(
         None,
         "--packet-loss",
         help="Packet loss rate (e.g., '1%', '0.01')",
+    ),
+    cors_origin: str = typer.Option(
+        _DEFAULT_CORS_ORIGIN,
+        "--cors-origin",
+        help=(
+            "Allowed CORS origin. Default 'local' allows localhost/127.0.0.1/::1. "
+            "Use '*' to allow any origin without credentials."
+        ),
     ),
 ) -> None:
     """Generate a demo dataset and optionally serve with viewer.
@@ -955,6 +981,8 @@ def demo(
                     latency_ms,
                     jitter_percent,
                     packet_loss_rate,
+                    False,  # allow_sensitive_path
+                    cors_origin,
                 ),
                 daemon=True,
             )
@@ -966,7 +994,13 @@ def demo(
 
             # Serve viewer (this blocks)
             aprint("\n🎉 Demo ready! Starting viewer...")
-            _serve_viewer("127.0.0.1", actual_viewer_port, data_url, open_browser)
+            _serve_viewer(
+                "127.0.0.1",
+                actual_viewer_port,
+                data_url,
+                open_browser,
+                cors_origin,
+            )
 
     except KeyboardInterrupt:
         aprint("\n🛑 Shutting down demo...")
