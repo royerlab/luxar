@@ -25,7 +25,7 @@ struct uint3 {
     uint32_t x, y, z;
 };
 
-constexpr uint32_t kThreadgroupSize = 128;
+constexpr uint32_t kThreadgroupSize = 64;
 
 // ============================================================================
 // Metal Context Management
