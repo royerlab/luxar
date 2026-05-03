@@ -637,6 +637,9 @@ kernel void rasterize_forward_raw_splat_centric_3d(
     constant float& intensity_floor [[buffer(9)]],
     constant float& shift_C [[buffer(10)]],
     constant float& inv_one_minus_C [[buffer(11)]],
+    constant float& shape_scale_z [[buffer(12)]],
+    constant float& shape_scale_y [[buffer(13)]],
+    constant float& shape_scale_x [[buffer(14)]],
     uint3 tg_pos [[threadgroup_position_in_grid]],
     uint tid [[thread_index_in_threadgroup]]
 ) {
@@ -658,12 +661,9 @@ kernel void rasterize_forward_raw_splat_centric_3d(
     if (tid == 0) {
         int base3 = int(splat_id) * 3;
 
-        float scale_z = max(float(shape_dhw.x) - 1.0f, 1.0f);
-        float scale_y = max(float(shape_dhw.y) - 1.0f, 1.0f);
-        float scale_x = max(float(shape_dhw.z) - 1.0f, 1.0f);
-        s_center[0] = stable_sigmoid(raw_mu[base3 + 0]) * scale_z;
-        s_center[1] = stable_sigmoid(raw_mu[base3 + 1]) * scale_y;
-        s_center[2] = stable_sigmoid(raw_mu[base3 + 2]) * scale_x;
+        s_center[0] = stable_sigmoid(raw_mu[base3 + 0]) * shape_scale_z;
+        s_center[1] = stable_sigmoid(raw_mu[base3 + 1]) * shape_scale_y;
+        s_center[2] = stable_sigmoid(raw_mu[base3 + 2]) * shape_scale_x;
 
         float l00 = sigma_min_diag[0] + stable_softplus(raw_L_diag[base3 + 0]);
         float l10 = L_off[base3 + 0];
@@ -771,6 +771,9 @@ kernel void rasterize_backward_raw_splat_centric_3d(
     constant float& shift_C [[buffer(14)]],
     constant float& inv_one_minus_C [[buffer(15)]],
     constant uint& grad_output_is_scalar [[buffer(16)]],
+    constant float& shape_scale_z [[buffer(17)]],
+    constant float& shape_scale_y [[buffer(18)]],
+    constant float& shape_scale_x [[buffer(19)]],
     uint3 tg_pos [[threadgroup_position_in_grid]],
     uint tid [[thread_index_in_threadgroup]]
 ) {
@@ -797,12 +800,9 @@ kernel void rasterize_backward_raw_splat_centric_3d(
     if (tid == 0) {
         int base3 = int(splat_id) * 3;
 
-        float scale_z = max(float(shape_dhw.x) - 1.0f, 1.0f);
-        float scale_y = max(float(shape_dhw.y) - 1.0f, 1.0f);
-        float scale_x = max(float(shape_dhw.z) - 1.0f, 1.0f);
-        s_center[0] = stable_sigmoid(raw_mu[base3 + 0]) * scale_z;
-        s_center[1] = stable_sigmoid(raw_mu[base3 + 1]) * scale_y;
-        s_center[2] = stable_sigmoid(raw_mu[base3 + 2]) * scale_x;
+        s_center[0] = stable_sigmoid(raw_mu[base3 + 0]) * shape_scale_z;
+        s_center[1] = stable_sigmoid(raw_mu[base3 + 1]) * shape_scale_y;
+        s_center[2] = stable_sigmoid(raw_mu[base3 + 2]) * shape_scale_x;
 
         float l00 = sigma_min_diag[0] + stable_softplus(raw_L_diag[base3 + 0]);
         float l10 = L_off[base3 + 0];
@@ -1011,16 +1011,13 @@ kernel void rasterize_backward_raw_splat_centric_3d(
         float dl11 = -(k11 * k11) * dk11;
         float dl22 = -(k22 * k22) * dk22;
 
-        float scale_z = max(float(shape_dhw.x) - 1.0f, 1.0f);
-        float scale_y = max(float(shape_dhw.y) - 1.0f, 1.0f);
-        float scale_x = max(float(shape_dhw.z) - 1.0f, 1.0f);
         float u0 = stable_sigmoid(raw_mu[base3 + 0]);
         float u1 = stable_sigmoid(raw_mu[base3 + 1]);
         float u2 = stable_sigmoid(raw_mu[base3 + 2]);
 
-        d_raw_mu[base3 + 0] = tg_centers[0] * scale_z * u0 * (1.0f - u0);
-        d_raw_mu[base3 + 1] = tg_centers[1] * scale_y * u1 * (1.0f - u1);
-        d_raw_mu[base3 + 2] = tg_centers[2] * scale_x * u2 * (1.0f - u2);
+        d_raw_mu[base3 + 0] = tg_centers[0] * shape_scale_z * u0 * (1.0f - u0);
+        d_raw_mu[base3 + 1] = tg_centers[1] * shape_scale_y * u1 * (1.0f - u1);
+        d_raw_mu[base3 + 2] = tg_centers[2] * shape_scale_x * u2 * (1.0f - u2);
 
         d_raw_L_diag[base3 + 0] = dl00 * stable_sigmoid(raw_L_diag[base3 + 0]);
         d_raw_L_diag[base3 + 1] = dl11 * stable_sigmoid(raw_L_diag[base3 + 1]);
