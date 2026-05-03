@@ -1014,20 +1014,20 @@ kernel void rasterize_backward_raw_splat_centric_3d(
         float scale_z = max(float(shape_dhw.x) - 1.0f, 1.0f);
         float scale_y = max(float(shape_dhw.y) - 1.0f, 1.0f);
         float scale_x = max(float(shape_dhw.z) - 1.0f, 1.0f);
-        float u0 = stable_sigmoid(raw_mu[base3 + 0]);
-        float u1 = stable_sigmoid(raw_mu[base3 + 1]);
-        float u2 = stable_sigmoid(raw_mu[base3 + 2]);
+        float u0 = s_center[0] / scale_z;
+        float u1 = s_center[1] / scale_y;
+        float u2 = s_center[2] / scale_x;
 
         d_raw_mu[base3 + 0] = tg_centers[0] * scale_z * u0 * (1.0f - u0);
         d_raw_mu[base3 + 1] = tg_centers[1] * scale_y * u1 * (1.0f - u1);
         d_raw_mu[base3 + 2] = tg_centers[2] * scale_x * u2 * (1.0f - u2);
 
-        d_raw_L_diag[base3 + 0] = dl00 * stable_sigmoid(raw_L_diag[base3 + 0]);
-        d_raw_L_diag[base3 + 1] = dl11 * stable_sigmoid(raw_L_diag[base3 + 1]);
-        d_raw_L_diag[base3 + 2] = dl22 * stable_sigmoid(raw_L_diag[base3 + 2]);
+        d_raw_L_diag[base3 + 0] = dl00 * (1.0f - exp(-(l00 - sigma_min_diag[0])));
+        d_raw_L_diag[base3 + 1] = dl11 * (1.0f - exp(-(l11 - sigma_min_diag[1])));
+        d_raw_L_diag[base3 + 2] = dl22 * (1.0f - exp(-(l22 - sigma_min_diag[2])));
         d_L_off[base3 + 0] = dl10;
         d_L_off[base3 + 1] = dl20;
         d_L_off[base3 + 2] = dl21;
-        d_raw_a[splat_id] = tg_amp[0] * stable_sigmoid(raw_a[splat_id]);
+        d_raw_a[splat_id] = tg_amp[0] * (1.0f - exp(-s_amp));
     }
 }
