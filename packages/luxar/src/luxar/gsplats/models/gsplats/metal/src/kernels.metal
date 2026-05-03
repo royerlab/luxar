@@ -909,7 +909,7 @@ kernel void rasterize_backward_raw_splat_centric_3d(
                 continue;
             }
 
-            local_amp += dL_dI * intensity / s_amp;
+            local_amp += dL_dI * intensity / max(s_amp, 1e-10f);
 
             float unshifted = intensity + s_amp * s_inv_one_minus_C * s_shift_C;
             float outer = dL_dI * unshifted * (-0.5f);
