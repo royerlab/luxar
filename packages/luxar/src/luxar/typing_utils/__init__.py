@@ -8,8 +8,6 @@ This package is organized as follows:
 - config.py: Configuration classes
 """
 
-import warnings
-
 # Re-export everything for backward compatibility
 # Import validation functions from validation.types module
 from ..validation.types import (
@@ -93,24 +91,6 @@ from .protocols import (
     SceneProtocol,
     ZarrDataT,
 )
-
-_DEPRECATED_REEXPORTS: dict[str, tuple[int, str]] = {
-    "DEFAULT_CHUNK_SIZE": (32_768, "TARGET_CHUNK_BYTES"),
-}
-
-
-def __getattr__(name: str) -> int:
-    if name in _DEPRECATED_REEXPORTS:
-        value, replacement = _DEPRECATED_REEXPORTS[name]
-        warnings.warn(
-            f"luxar.typing_utils.{name} is deprecated and will be removed in a "
-            f"future release; use {replacement} instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return value
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
 
 __all__ = [
     # From aliases

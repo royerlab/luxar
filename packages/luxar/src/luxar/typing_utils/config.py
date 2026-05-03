@@ -7,8 +7,6 @@ from typing import Any, Final, Literal, Optional
 
 from ..typing_utils.constants import (
     LUXAR_VERSION_CURRENT,
-    MAX_CHUNK_BYTES,
-    MIN_CHUNK_BYTES,
     TARGET_CHUNK_BYTES,
 )
 from ..typing_utils.enums import PhysicalUnit
@@ -22,14 +20,9 @@ LuxarVersion = Literal["0.1", "0.2", "0.3"]
 # Core Configuration Constants
 # =============================================================================
 
-# Default Zarr chunk target in bytes. New code should use the byte-explicit names.
+# Zarr chunk target/bounds in bytes. Consumers convert to element counts using
+# the array's dtype itemsize.
 DEFAULT_CHUNK_BYTES: Final[int] = TARGET_CHUNK_BYTES
-
-# Backwards-compatible aliases for callers that still import config.*_CHUNK_SIZE.
-# These are byte counts, not element counts.
-DEFAULT_CHUNK_SIZE: Final[int] = DEFAULT_CHUNK_BYTES
-MIN_CHUNK_SIZE: Final[int] = MIN_CHUNK_BYTES
-MAX_CHUNK_SIZE: Final[int] = MAX_CHUNK_BYTES
 
 # Default version for Luxar scenes
 DEFAULT_VERSION: Final[str] = LUXAR_VERSION_CURRENT
@@ -135,34 +128,6 @@ except ImportError:
 # =============================================================================
 # Configuration Validation Functions
 # =============================================================================
-
-
-def validate_chunk_size(chunk_size: Any) -> int:
-    """Validate chunk size is within acceptable bounds.
-
-    Args:
-        chunk_size: Chunk size to validate
-
-    Returns:
-        Validated chunk size
-
-    Raises:
-        ValueError: If chunk size is invalid
-    """
-    if not isinstance(chunk_size, int):
-        raise ValueError("Chunk size must be an integer")
-
-    if chunk_size < MIN_CHUNK_SIZE:
-        raise ValueError(
-            f"Chunk size {chunk_size} is too small (min: {MIN_CHUNK_SIZE})"
-        )
-
-    if chunk_size > MAX_CHUNK_SIZE:
-        raise ValueError(
-            f"Chunk size {chunk_size} is too large (max: {MAX_CHUNK_SIZE})"
-        )
-
-    return chunk_size
 
 
 def validate_compression_level(level: Any) -> int:

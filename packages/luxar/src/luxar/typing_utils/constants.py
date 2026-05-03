@@ -4,7 +4,6 @@ This module centralizes all magic numbers and constants to improve
 maintainability and provide clear documentation of their purposes.
 """
 
-import warnings
 from typing import Final
 
 # Version constants
@@ -47,30 +46,6 @@ COLOR_HDR_THEORETICAL_MAX: Final[float] = float("inf")  # No theoretical limit
 TARGET_CHUNK_BYTES: Final[int] = 65_536  # 64KB target chunk size
 MIN_CHUNK_BYTES: Final[int] = 16_384  # 16KB minimum to amortize HTTP overhead
 MAX_CHUNK_BYTES: Final[int] = 262_144  # 256KB maximum for responsive streaming
-
-# Legacy chunk constants were element-count based and were removed from normal
-# exports in favor of byte-based constants. Keep lazy module attributes for direct
-# imports during the migration window, but warn so callers notice the change.
-_DEPRECATED_CHUNK_CONSTANTS: Final[dict[str, tuple[int, str]]] = {
-    "CHUNK_SIZE_MIN": (1_024, "MIN_CHUNK_BYTES"),
-    "CHUNK_SIZE_DEFAULT": (32_768, "TARGET_CHUNK_BYTES"),
-    "DEFAULT_CHUNK_SIZE": (32_768, "TARGET_CHUNK_BYTES"),
-    "CHUNK_SIZE_MAX": (1_048_576, "MAX_CHUNK_BYTES"),
-}
-
-
-def __getattr__(name: str) -> int:
-    if name in _DEPRECATED_CHUNK_CONSTANTS:
-        value, replacement = _DEPRECATED_CHUNK_CONSTANTS[name]
-        warnings.warn(
-            f"luxar.typing_utils.constants.{name} is deprecated and will be "
-            f"removed in a future release; use {replacement} instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return value
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
 
 # Memory constants
 KB_TO_BYTES: Final[int] = 1024

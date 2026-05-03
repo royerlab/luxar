@@ -68,13 +68,12 @@ Constant values used throughout Luxar.
 Configuration settings, defaults, and validation functions.
 
 **Key Constants:**
-- `DEFAULT_CHUNK_BYTES`, `MIN_CHUNK_SIZE`, `MAX_CHUNK_SIZE` - Byte-based chunk target/bounds (`*_CHUNK_SIZE` aliases are retained for compatibility)
+- `DEFAULT_CHUNK_BYTES` - Byte-based chunk target. Bounds (`MIN_CHUNK_BYTES`, `MAX_CHUNK_BYTES`) live in `constants.py`.
 - `DEFAULT_VERSION`, `SUPPORTED_VERSIONS` - Luxar version management
 - `SUPPORTED_COMPRESSION`, `SUPPORTED_UNITS` - Supported values
 - `MAX_RECOMMENDED_POINTS`, `LARGE_DATASET_WARNING` - Performance thresholds
 
 **Key Functions:**
-- `validate_chunk_size()` - Validate chunk size within bounds
 - `validate_compression_level()` - Validate compression level (1-9)
 - `estimate_memory_usage()` - Estimate memory for a points dataset
 - `check_dataset_size_warning()` - Check if dataset size warrants a warning

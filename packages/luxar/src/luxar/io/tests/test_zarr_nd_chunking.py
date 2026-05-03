@@ -178,8 +178,14 @@ class TestZarrNDChunking:
         bytes_per_element = 4  # float32
         chunk_size_bytes = chunk_shape[0] * chunk_shape[1] * bytes_per_element
 
-        # Chunk size should be reasonable for caching (between 100KB and 10MB)
-        assert 100_000 <= chunk_size_bytes <= 10_000_000
+        # Chunk size should fall within the byte-based bounds defined by the
+        # constants module (16KB-256KB), with the 64KB target as the sweet spot.
+        from luxar.typing_utils.constants import (
+            MAX_CHUNK_BYTES,
+            MIN_CHUNK_BYTES,
+        )
+
+        assert MIN_CHUNK_BYTES <= chunk_size_bytes <= MAX_CHUNK_BYTES
 
         # Verify chunks are not too small (inefficient) or too large (memory issues)
         assert chunk_shape[0] >= 1000  # At least 1000 points per chunk
