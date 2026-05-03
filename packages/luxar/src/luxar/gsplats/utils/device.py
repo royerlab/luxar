@@ -1,4 +1,10 @@
-"""PyTorch device-selection helpers for Gaussian splat code."""
+"""PyTorch device-selection helpers for Gaussian splat code.
+
+Use :func:`resolve_torch_device` for default-device auto-selection (CUDA > MPS
+> CPU) and :func:`is_mps_available` for guarded availability checks. Memory
+operations such as ``torch.cuda.empty_cache()`` should keep using ``torch.cuda``
+directly since they are not about device selection.
+"""
 
 from __future__ import annotations
 

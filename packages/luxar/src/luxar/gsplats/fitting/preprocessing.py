@@ -583,8 +583,10 @@ def _subsample_seeds_spatially_diverse(
         try:
             import torch
 
-            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-            use_gpu = device.type == "cuda"
+            from luxar.gsplats.utils.device import resolve_torch_device
+
+            device = resolve_torch_device()
+            use_gpu = device.type in ("cuda", "mps")
         except ImportError:
             use_gpu = False
 

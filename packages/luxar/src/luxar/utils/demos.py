@@ -80,20 +80,17 @@ def detect_device(verbose: bool = True) -> str:
     Returns:
         Device string: 'cuda', 'mps', or 'cpu'.
     """
-    import torch
+    from luxar.gsplats.utils.device import resolve_torch_device
 
-    if torch.cuda.is_available():
-        device = "cuda"
-        if verbose:
-            aprint("Using CUDA device")
-    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-        device = "mps"
-        if verbose:
-            aprint("Using MPS device (Metal acceleration)")
-    else:
-        device = "cpu"
-        if verbose:
-            aprint("Using CPU device")
+    device = str(resolve_torch_device())
+    if verbose:
+        aprint(
+            {
+                "cuda": "Using CUDA device",
+                "mps": "Using MPS device (Metal acceleration)",
+                "cpu": "Using CPU device",
+            }.get(device, f"Using device: {device}")
+        )
     return device
 
 
@@ -106,15 +103,12 @@ def warn_if_no_cuda_gpu() -> None:
     understand the hardware requirements before waiting hours for a CPU run.
     """
     try:
-        import torch
+        import torch  # noqa: F401  # check PyTorch is importable
+        from luxar.gsplats.utils.device import is_mps_available
 
         if torch.cuda.is_available():
             return  # All good
-        device = (
-            "MPS"
-            if (hasattr(torch.backends, "mps") and torch.backends.mps.is_available())
-            else "CPU"
-        )
+        device = "MPS" if is_mps_available() else "CPU"
     except ImportError:
         device = "CPU (PyTorch not installed)"
 
