@@ -91,6 +91,15 @@ describe('buildDataSourceBrowserUrl', () => {
 
     expect(url).toBe('/viewer?src=datasets%2Fpicked.zarr');
   });
+
+  it('strips trailing slashes from src so downstream zarr fetches do not 404', () => {
+    const url = buildDataSourceBrowserUrl('http://example.com/data.zarr///', {
+      pathname: '/viewer',
+      search: '',
+    });
+
+    expect(url).toBe('/viewer?src=http%3A%2F%2Fexample.com%2Fdata.zarr');
+  });
 });
 
 describe('replaceBrowserDataSourceUrl', () => {
@@ -121,5 +130,20 @@ describe('replaceBrowserDataSourceUrl', () => {
     });
 
     expect(ok).toBe(false);
+  });
+
+  it('normalizes trailing slashes in src so callers do not have to', () => {
+    const replaceState = vi.fn();
+
+    replaceBrowserDataSourceUrl('http://example.com/', {
+      location: { pathname: '/viewer', search: '' },
+      history: { replaceState },
+    });
+
+    expect(replaceState).toHaveBeenCalledWith(
+      {},
+      '',
+      '/viewer?src=http%3A%2F%2Fexample.com'
+    );
   });
 });

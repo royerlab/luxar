@@ -315,6 +315,12 @@ export class TwoLevelCachingStore implements AsyncReadable {
 
   /**
    * Validate cache using content hash. Clears cache if content changed.
+   *
+   * Validation is serialized per dataset via a static queue keyed on
+   * `datasetId`, which is `SHA-256(baseUrl)` (see {@link hashUrl}). All
+   * `TwoLevelCachingStore` instances pointing at the same URL share the same
+   * id and therefore the same queue, so rapid same-URL switches cannot let
+   * an older validation finish after a newer one and restore stale metadata.
    */
   private async validateCache(datasetId: string): Promise<void> {
     const previousValidation = TwoLevelCachingStore.validationQueues.get(datasetId);
@@ -393,35 +399,55 @@ export class TwoLevelCachingStore implements AsyncReadable {
   }
 
   /**
-   * Fetch with timeout and retries for transient failures.
+   * Fetch with per-attempt timeout and retries for transient failures.
    *
    * 4xx responses are returned immediately because retrying cannot fix a missing
    * zarr key. Network errors, timeouts, 429, and 5xx responses are retried using
-   * the configured retry budget. The configured timeout is treated as a total
-   * budget across attempts so retries do not multiply worst-case load time.
+   * the configured retry budget. `timeoutMs` is the per-attempt budget — total
+   * worst-case time is `maxAttempts * timeoutMs + sum(backoff)`. The previous
+   * "shared budget across attempts" model collapsed to a 1 ms abort with
+   * hostile config; per-attempt is the standard semantic and matches user
+   * expectations from `fetch` libraries.
+   *
+   * If `externalSignal` aborts, the loop exits immediately without consuming
+   * retry budget — only timeouts triggered by the per-attempt controller count.
    */
-  private async fetchWithRetry(url: string): Promise<Response | undefined> {
+  private async fetchWithRetry(
+    url: string,
+    externalSignal?: AbortSignal
+  ): Promise<Response | undefined> {
     const maxAttempts = Math.max(1, config.dataLoading.network.retryAttempts + 1);
-    const timeoutPerAttemptMs = Math.max(
-      1,
-      Math.ceil(config.dataLoading.network.timeoutMs / maxAttempts)
-    );
+    const timeoutPerAttemptMs = Math.max(1, config.dataLoading.network.timeoutMs);
     let lastError: unknown;
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), timeoutPerAttemptMs);
+      if (externalSignal?.aborted) {
+        return undefined;
+      }
+
+      const timeoutController = new AbortController();
+      const timeoutId = setTimeout(
+        () => timeoutController.abort(),
+        timeoutPerAttemptMs
+      );
+      const externalListener = () => timeoutController.abort();
+      externalSignal?.addEventListener('abort', externalListener);
 
       try {
-        const response = await fetch(url, { signal: controller.signal });
+        const response = await fetch(url, { signal: timeoutController.signal });
         if (response.ok || (response.status < 500 && response.status !== 429)) {
           return response;
         }
         lastError = new Error(`HTTP ${response.status} for ${url}`);
       } catch (error) {
+        // External abort short-circuits — do not consume retry budget.
+        if (externalSignal?.aborted) {
+          return undefined;
+        }
         lastError = error;
       } finally {
         clearTimeout(timeoutId);
+        externalSignal?.removeEventListener('abort', externalListener);
       }
 
       if (attempt < maxAttempts - 1) {
