@@ -876,6 +876,7 @@ kernel void rasterize_backward_raw_splat_centric_3d(
         int extent_yx = s_extent[1] * s_extent[2];
         uint H = shape_dhw.y;
         uint W = shape_dhw.z;
+        float scalar_grad_output = grad_output_is_scalar != 0u ? grad_output[0] : 0.0f;
 
         for (int local = int(tid); local < total; local += int(THREADGROUP_SIZE)) {
             int z = s_lo[0] + local / extent_yx;
@@ -884,7 +885,7 @@ kernel void rasterize_backward_raw_splat_centric_3d(
             int x = s_lo[2] + rem - (y - s_lo[1]) * s_extent[2];
 
             uint out_idx = uint(z) * H * W + uint(y) * W + uint(x);
-            float dL_dI = grad_output_is_scalar != 0u ? grad_output[0] : grad_output[out_idx];
+            float dL_dI = grad_output_is_scalar != 0u ? scalar_grad_output : grad_output[out_idx];
 
             float dz = float(z) - s_center[0];
             float dy = float(y) - s_center[1];
