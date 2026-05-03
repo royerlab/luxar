@@ -1014,9 +1014,9 @@ kernel void rasterize_backward_raw_splat_centric_3d(
         float scale_z = max(float(shape_dhw.x) - 1.0f, 1.0f);
         float scale_y = max(float(shape_dhw.y) - 1.0f, 1.0f);
         float scale_x = max(float(shape_dhw.z) - 1.0f, 1.0f);
-        float u0 = stable_sigmoid(raw_mu[base3 + 0]);
-        float u1 = stable_sigmoid(raw_mu[base3 + 1]);
-        float u2 = stable_sigmoid(raw_mu[base3 + 2]);
+        float u0 = s_center[0] / scale_z;
+        float u1 = s_center[1] / scale_y;
+        float u2 = s_center[2] / scale_x;
 
         d_raw_mu[base3 + 0] = tg_centers[0] * scale_z * u0 * (1.0f - u0);
         d_raw_mu[base3 + 1] = tg_centers[1] * scale_y * u1 * (1.0f - u1);
