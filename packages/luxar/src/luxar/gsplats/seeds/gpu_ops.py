@@ -55,13 +55,10 @@ def _get_device(device: Optional[str] = None) -> str:
     if device is None:
         return "cpu"
 
+    from luxar.gsplats.utils.device import is_mps_available, resolve_torch_device
+
     if device == "auto":
-        if torch.cuda.is_available():
-            return "cuda"
-        elif torch.backends.mps.is_available():
-            return "mps"
-        else:
-            return "cpu"
+        return str(resolve_torch_device())
 
     if device == "cpu":
         return "cpu"
@@ -77,7 +74,7 @@ def _get_device(device: Optional[str] = None) -> str:
         return device
 
     if device == "mps":
-        if not torch.backends.mps.is_available():
+        if not is_mps_available():
             warnings.warn(
                 "MPS requested but not available. Falling back to CPU.",
                 RuntimeWarning,

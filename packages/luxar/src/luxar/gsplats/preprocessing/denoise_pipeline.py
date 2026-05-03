@@ -104,13 +104,10 @@ def denoise_volume_array(
     volume = volume.astype(np.float32)
     norm_vol, vmin, vmax = normalize_volume(volume)
 
-    # Auto-detect device: prefer CUDA when available
-    if device is not None:
-        dev = torch.device(device)
-    elif torch.cuda.is_available():
-        dev = torch.device("cuda")
-    else:
-        dev = torch.device("cpu")
+    # Auto-detect device: prefer CUDA, then MPS, then CPU.
+    from luxar.gsplats.utils.device import resolve_torch_device
+
+    dev = resolve_torch_device(device)
 
     # Resolve and log backend
     from .nlm_core import _resolve_backend
