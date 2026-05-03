@@ -181,9 +181,6 @@ timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
 ### Configuration Functions
 
-#### validate_chunk_size(chunk_size) → int
-Validate chunk size within MIN/MAX bounds. Raises ValueError if invalid.
-
 #### validate_compression_level(level) → int
 Validate compression level is 1-9. Raises ValueError if invalid.
 
@@ -255,9 +252,14 @@ total = n_points * memory_per_point
   - Updated config.py section to reflect actual implementation
   - Added reference to encoding/SPECIFICATIONS.md for dtype selection
 
-- **v1.0.8** (2026-05-01): Deprecated legacy element-count chunk constants
+- **v1.0.9** (2026-05-02): Removed legacy element-count chunk constants
+  - Deleted `DEFAULT_CHUNK_SIZE`, `MIN_CHUNK_SIZE`, `MAX_CHUNK_SIZE` aliases from `config.py`
+  - Deleted deprecation `__getattr__` shims from `constants.py` and `typing_utils/__init__.py`
+  - Deleted unused `validate_chunk_size` (zero production callers)
+  - Use `DEFAULT_CHUNK_BYTES` (config) or `TARGET_CHUNK_BYTES`/`MIN_CHUNK_BYTES`/`MAX_CHUNK_BYTES` (constants) directly
+
+- **v1.0.8** (2026-05-01): Deprecated legacy element-count chunk constants (superseded by v1.0.9)
   - Removed deprecated chunk constants from `__all__`/eager imports
-  - Direct `typing_utils.constants.DEFAULT_CHUNK_SIZE`/`CHUNK_SIZE_*` access now emits `DeprecationWarning`
   - Internal compiler chunking now derives element counts from `TARGET_CHUNK_BYTES`
 
 - **v1.0.7** (2025-11-28): Chunk size documentation enhancement
