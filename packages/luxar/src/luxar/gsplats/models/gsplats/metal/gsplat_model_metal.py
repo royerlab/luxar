@@ -275,7 +275,8 @@ class MetalRawSplatFunction(torch.autograd.Function):
         ctx.shape = tuple(int(s) for s in shape)
         ctx.truncate = float(truncate)
         ctx.intensity_floor = float(intensity_floor)
-        ctx.save_for_backward(raw_mu, raw_L_diag, L_off, raw_a, sigma_min_diag)
+        ctx.sigma_min_diag = sigma_min_diag
+        ctx.save_for_backward(raw_mu, raw_L_diag, L_off, raw_a)
 
         output = cast(
             torch.Tensor,
@@ -298,7 +299,8 @@ class MetalRawSplatFunction(torch.autograd.Function):
     def backward(
         ctx: Any, grad_output: torch.Tensor
     ) -> Tuple[Optional[torch.Tensor], ...]:
-        raw_mu, raw_L_diag, L_off, raw_a, sigma_min_diag = ctx.saved_tensors
+        raw_mu, raw_L_diag, L_off, raw_a = ctx.saved_tensors
+        sigma_min_diag = ctx.sigma_min_diag
         d_raw_mu, d_raw_L_diag, d_L_off, d_raw_a = (
             metal_splatting_backend.backward_raw_splat_3d(
                 grad_output,
