@@ -883,8 +883,11 @@ kernel void rasterize_backward_raw_splat_centric_3d(
             int y = s_lo[1] + rem / s_extent[2];
             int x = s_lo[2] + rem - (y - s_lo[1]) * s_extent[2];
 
-            uint out_idx = uint(z) * H * W + uint(y) * W + uint(x);
-            float dL_dI = grad_output_is_scalar != 0u ? grad_output[0] : grad_output[out_idx];
+            float dL_dI = grad_output[0];
+            if (grad_output_is_scalar == 0u) {
+                uint out_idx = uint(z) * H * W + uint(y) * W + uint(x);
+                dL_dI = grad_output[out_idx];
+            }
 
             float dz = float(z) - s_center[0];
             float dy = float(y) - s_center[1];
