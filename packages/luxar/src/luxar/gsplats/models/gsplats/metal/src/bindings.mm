@@ -515,7 +515,7 @@ std::vector<torch::Tensor> dispatch_backward_splat_3d(
 // Raw-Parameter Splat-Centric Forward/Backward Passes
 // ============================================================================
 
-torch::Tensor dispatch_forward_raw_splat_3d(
+std::vector<torch::Tensor> dispatch_forward_raw_splat_3d(
     torch::Tensor raw_mu,
     torch::Tensor raw_L_diag,
     torch::Tensor L_off,
@@ -528,11 +528,12 @@ torch::Tensor dispatch_forward_raw_splat_3d(
     validate_raw_splat_tensors_3d(raw_mu, raw_L_diag, L_off, raw_a, sigma_min_diag, shape);
 
     auto output = torch::empty(shape, raw_mu.options().dtype(torch::kFloat32));
+    auto cache = torch::empty({raw_mu.size(0), 24}, raw_mu.options().dtype(torch::kFloat32));
     int64_t total_pixels_i64 = shape_numel(shape);
     uint32_t total_pixels = static_cast<uint32_t>(total_pixels_i64);
 
     if (raw_mu.size(0) == 0) {
-        return torch::zeros(shape, raw_mu.options().dtype(torch::kFloat32));
+        return {torch::zeros(shape, raw_mu.options().dtype(torch::kFloat32)), cache};
     }
 
     MetalContext* ctx = metalContext();
@@ -561,6 +562,7 @@ torch::Tensor dispatch_forward_raw_splat_3d(
         setBufferWithOffset(enc, raw_a, 3);
         setBufferWithOffset(enc, sigma_min_diag, 4);
         setBufferWithOffset(enc, output, 5);
+        setBufferWithOffset(enc, cache, 12);
 
         uint3 shape_dhw = {
             static_cast<uint32_t>(shape[0]),
@@ -588,7 +590,7 @@ torch::Tensor dispatch_forward_raw_splat_3d(
     [cmd waitUntilCompleted];
     checkCommandBuffer(cmd, @"rasterize_forward_raw_splat_centric_3d failed");
 
-    return output;
+    return {output, cache};
 }
 
 std::vector<torch::Tensor> dispatch_backward_raw_splat_3d(
@@ -598,11 +600,17 @@ std::vector<torch::Tensor> dispatch_backward_raw_splat_3d(
     torch::Tensor L_off,
     torch::Tensor raw_a,
     torch::Tensor sigma_min_diag,
+    torch::Tensor cache,
     std::vector<int64_t> shape,
     float truncate,
     float intensity_floor
 ) {
     validate_raw_splat_tensors_3d(raw_mu, raw_L_diag, L_off, raw_a, sigma_min_diag, shape);
+    TORCH_CHECK(cache.device().is_mps(), "cache must be on MPS device");
+    TORCH_CHECK(cache.scalar_type() == torch::kFloat32, "cache must be float32");
+    TORCH_CHECK(cache.is_contiguous(), "cache must be contiguous");
+    TORCH_CHECK(cache.dim() == 2 && cache.size(0) == raw_mu.size(0) && cache.size(1) == 24,
+        "cache must have shape (N, 24)");
     TORCH_CHECK(grad_output.device().is_mps(), "grad_output must be on MPS device");
     TORCH_CHECK(grad_output.scalar_type() == torch::kFloat32, "grad_output must be float32");
     TORCH_CHECK(grad_output.dim() == 3
@@ -637,7 +645,7 @@ std::vector<torch::Tensor> dispatch_backward_raw_splat_3d(
 
     id<MTLCommandBuffer> cmd = [ctx->queue commandBuffer];
     id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
-    [enc setComputePipelineState:ctx->getPipeline("rasterize_backward_raw_splat_centric_3d")];
+    [enc setComputePipelineState:ctx->getPipeline("rasterize_backward_raw_cached_splat_centric_3d")];
 
     if (grad_output_is_scalar) {
         id<MTLBuffer> grad_buf = tensorToMTLBufferUnchecked(grad_output);
@@ -654,28 +662,29 @@ std::vector<torch::Tensor> dispatch_backward_raw_splat_3d(
     setBufferWithOffset(enc, L_off, 3);
     setBufferWithOffset(enc, raw_a, 4);
     setBufferWithOffset(enc, sigma_min_diag, 5);
-    setBufferWithOffset(enc, d_raw_mu, 6);
-    setBufferWithOffset(enc, d_raw_L_diag, 7);
-    setBufferWithOffset(enc, d_L_off, 8);
-    setBufferWithOffset(enc, d_raw_a, 9);
+    setBufferWithOffset(enc, cache, 6);
+    setBufferWithOffset(enc, d_raw_mu, 7);
+    setBufferWithOffset(enc, d_raw_L_diag, 8);
+    setBufferWithOffset(enc, d_L_off, 9);
+    setBufferWithOffset(enc, d_raw_a, 10);
 
     uint3 shape_dhw = {
         static_cast<uint32_t>(shape[0]),
         static_cast<uint32_t>(shape[1]),
         static_cast<uint32_t>(shape[2]),
     };
-    [enc setBytes:&shape_dhw length:sizeof(uint3) atIndex:10];
+    [enc setBytes:&shape_dhw length:sizeof(uint3) atIndex:11];
 
     uint32_t n_splats = static_cast<uint32_t>(N);
-    [enc setBytes:&n_splats length:sizeof(uint32_t) atIndex:11];
+    [enc setBytes:&n_splats length:sizeof(uint32_t) atIndex:12];
     float shift_C = std::exp(-0.5f * truncate * truncate);
     float inv_one_minus_C = 1.0f / (1.0f - shift_C);
-    [enc setBytes:&truncate length:sizeof(float) atIndex:12];
-    [enc setBytes:&intensity_floor length:sizeof(float) atIndex:13];
-    [enc setBytes:&shift_C length:sizeof(float) atIndex:14];
-    [enc setBytes:&inv_one_minus_C length:sizeof(float) atIndex:15];
+    [enc setBytes:&truncate length:sizeof(float) atIndex:13];
+    [enc setBytes:&intensity_floor length:sizeof(float) atIndex:14];
+    [enc setBytes:&shift_C length:sizeof(float) atIndex:15];
+    [enc setBytes:&inv_one_minus_C length:sizeof(float) atIndex:16];
     uint32_t grad_output_scalar_flag = grad_output_is_scalar ? 1u : 0u;
-    [enc setBytes:&grad_output_scalar_flag length:sizeof(uint32_t) atIndex:16];
+    [enc setBytes:&grad_output_scalar_flag length:sizeof(uint32_t) atIndex:17];
 
     MTLSize groups = MTLSizeMake(n_splats, 1, 1);
     MTLSize threadsPerGroup = MTLSizeMake(kThreadgroupSize, 1, 1);
