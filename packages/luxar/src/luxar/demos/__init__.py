@@ -8,11 +8,28 @@ To run a demo:
     hatch run python packages/luxar/src/luxar/demos/demo_cubic_array.py
 
 See demos/README.md for more information on creating new demos.
-
-Note: The `launch_viewer` helper function is imported from `luxar.demos`
-which is aliased to `luxar.utils.demos` in the main package.
 """
 
-# Note: Demos are meant to be run as scripts, not imported as modules.
-# The `launch_viewer` function is available via `from luxar.demos import launch_viewer`
-# which resolves to `luxar.utils.demos.launch_viewer` due to the alias in luxar/__init__.py
+from ..utils.demos import (
+    create_lorenz_attractor,
+    create_random_spheres,
+    create_time_series_demo,
+    detect_device,
+    launch_viewer,
+    load_precomputed_bundle,
+    load_precomputed_gsplats,
+    parse_demo_flags,
+    warn_if_no_cuda_gpu,
+)
+
+__all__ = [
+    "create_lorenz_attractor",
+    "create_random_spheres",
+    "create_time_series_demo",
+    "detect_device",
+    "launch_viewer",
+    "load_precomputed_bundle",
+    "load_precomputed_gsplats",
+    "parse_demo_flags",
+    "warn_if_no_cuda_gpu",
+]

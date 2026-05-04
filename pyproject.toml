@@ -332,11 +332,17 @@ module = [
 ]
 follow_imports = "skip"
 
-# Relax strict rules for test files. NOTE: ignore_errors is intentionally
-# kept on for now — narrowing it surfaces ~500 hits, including real bugs
-# (e.g. arg-type mismatches in fit_gaussian_splats calls) but also false
-# positives from the dynamic `sys.modules['luxar.demos']` alias in
-# luxar/__init__.py. Tightening this is tracked as follow-up work.
+# Relax strict rules for test files. ignore_errors is kept on:
+# narrowing it surfaces ~540 mypy hits, mostly noise from intentional
+# negative tests passing wrong types into validation functions to verify
+# rejection, and from MockGaussianSplatFitter (a duck-typed stand-in for
+# GaussianSplatFitter) used in test_fitting_validation.py. Cleaning these
+# up requires Protocol-based refactoring of prepare_fit_config and
+# per-call type-ignore annotations on negative tests; a separate effort.
+# The real public-API arg-type bugs originally hidden behind this ignore
+# (fit_gaussian_splats `seeds` accepting GSplatData; render_gaussians
+# `intensity_floor` accepting None) and the spurious attr-defined errors
+# from the `sys.modules['luxar.demos']` alias have been fixed at source.
 [[tool.mypy.overrides]]
 module = [
     "luxar.tests.*",
@@ -348,7 +354,10 @@ disallow_incomplete_defs = false
 check_untyped_defs = false
 ignore_errors = true
 
-# Same caveat as the tests override — see comment above.
+# Demos are scripts that import third-party libraries without type stubs
+# (skimage, fsspec, scipy.* in some cases). Their mypy errors are mostly
+# `no-untyped-call`/`import-untyped`/`attr-defined` from those libraries
+# and don't reflect bugs in the demos themselves.
 [[tool.mypy.overrides]]
 module = [
     "luxar.demos.*",

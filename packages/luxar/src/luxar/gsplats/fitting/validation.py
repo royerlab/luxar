@@ -21,7 +21,7 @@ DEFAULT_SIGMA_MIN_DIAG = float(np.sqrt(1.0 / 12.0))
 def prepare_fit_config(
     fitter: "GaussianSplatFitter",  # GaussianSplatFitter instance
     V: np.ndarray,
-    seeds: Optional[np.ndarray | int | float] = None,
+    seeds: Optional[np.ndarray | int | float | GSplatData] = None,
     norm_percentile: float = 0.0,
     downscale: Optional[int | Sequence[int]] = None,
     init_sigma_vox: Optional[float] = None,
