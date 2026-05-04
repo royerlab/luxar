@@ -466,27 +466,15 @@ describe('SceneLoader', () => {
   });
 
   describe('transform handling', () => {
-    it('should apply transforms to objects correctly', async () => {
-      // Setup node with transform
+    it('should apply column-major transforms to objects correctly', async () => {
+      // Column-major translation matrix (translation at indices [12,13,14])
       mockZarrGroup.attrs = {
         type: 'points',
         transform: [
-          1,
-          0,
-          0,
-          10, // Translation x=10
-          0,
-          1,
-          0,
-          20, // Translation y=20
-          0,
-          0,
-          1,
-          30, // Translation z=30
-          0,
-          0,
-          0,
-          1,
+          1, 0, 0, 0, // Column 0
+          0, 1, 0, 0, // Column 1
+          0, 0, 1, 0, // Column 2
+          10, 20, 30, 1, // Column 3 (translation)
         ],
       };
 
@@ -496,17 +484,31 @@ describe('SceneLoader', () => {
       expect(THREE.Matrix4).toHaveBeenCalled();
     });
 
-    it('should handle invalid transform lengths', async () => {
-      const consoleSpy = vi.spyOn(console, 'warn');
+    it('should reject row-major transforms', async () => {
+      mockZarrGroup.attrs = {
+        type: 'points',
+        transform: [
+          1, 0, 0, 10, // Row 0 (tx at [3])
+          0, 1, 0, 20, // Row 1 (ty at [7])
+          0, 0, 1, 30, // Row 2 (tz at [11])
+          0, 0, 0, 1,
+        ],
+      };
 
+      await expect(
+        sceneLoader.loadScene('http://localhost:8000/test.zarr')
+      ).rejects.toThrow(/row-major/);
+    });
+
+    it('should reject invalid transform lengths', async () => {
       mockZarrGroup.attrs = {
         type: 'group',
         transform: [1, 2, 3], // Invalid length
       };
 
-      await sceneLoader.loadScene('http://localhost:8000/test.zarr');
-
-      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Invalid transform length'));
+      await expect(
+        sceneLoader.loadScene('http://localhost:8000/test.zarr')
+      ).rejects.toThrow(/Invalid transform length/);
     });
   });
 
@@ -561,15 +563,12 @@ describe('SceneLoader', () => {
         1, // Column 3: translation + w
       ];
 
-      const isValid = (sceneLoader as any).nodeFactory.validateTransformFormat(
-        columnMajorTransform
-      );
-      expect(isValid).toBe(true);
+      expect(() =>
+        (sceneLoader as any).nodeFactory.validateTransformFormat(columnMajorTransform)
+      ).not.toThrow();
     });
 
-    it('should detect row-major matrices (warn user)', () => {
-      const consoleSpy = vi.spyOn(console, 'warn');
-
+    it('should throw for row-major matrices', () => {
       // Row-major: translation at indices [3, 7, 11] (WRONG for THREE.js)
       const rowMajorTransform = [
         1,
@@ -590,16 +589,12 @@ describe('SceneLoader', () => {
         1, // Row 3: homogeneous
       ];
 
-      const isValid = (sceneLoader as any).nodeFactory.validateTransformFormat(rowMajorTransform);
-      expect(isValid).toBe(false);
-      expect(consoleSpy).toHaveBeenCalledWith(
-        expect.stringContaining('row-major (NumPy) format instead of column-major')
-      );
+      expect(() =>
+        (sceneLoader as any).nodeFactory.validateTransformFormat(rowMajorTransform)
+      ).toThrow(/row-major/);
     });
 
-    it('should warn when translation is at wrong indices', () => {
-      const consoleSpy = vi.spyOn(console, 'warn');
-
+    it('should throw when translation is at wrong indices', () => {
       // Suspicious transform: non-zero at row-major positions [3, 7, 11], zero at column-major [12, 13, 14]
       const suspiciousTransform = [
         1,
@@ -620,24 +615,26 @@ describe('SceneLoader', () => {
         1, // [12, 13, 14] are zero (column-major)
       ];
 
-      const isValid = (sceneLoader as any).nodeFactory.validateTransformFormat(suspiciousTransform);
-      expect(isValid).toBe(false);
-      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('matrix.T.ravel().tolist()'));
+      expect(() =>
+        (sceneLoader as any).nodeFactory.validateTransformFormat(suspiciousTransform)
+      ).toThrow(/matrix\.T\.ravel/);
     });
 
     it('should accept identity matrix', () => {
       const identityTransform = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 
-      const isValid = (sceneLoader as any).nodeFactory.validateTransformFormat(identityTransform);
-      expect(isValid).toBe(true);
+      expect(() =>
+        (sceneLoader as any).nodeFactory.validateTransformFormat(identityTransform)
+      ).not.toThrow();
     });
 
     it('should handle transforms with only rotation/scale (no translation)', () => {
       // Scale matrix: no translation, should pass validation
       const scaleTransform = [2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 1];
 
-      const isValid = (sceneLoader as any).nodeFactory.validateTransformFormat(scaleTransform);
-      expect(isValid).toBe(true);
+      expect(() =>
+        (sceneLoader as any).nodeFactory.validateTransformFormat(scaleTransform)
+      ).not.toThrow();
     });
   });
 

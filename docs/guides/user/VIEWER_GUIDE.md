@@ -274,6 +274,17 @@ slice position for that dimension.
 - For 4D time-lapse data, use animation playback (see next section) to step
   through time automatically.
 
+### Performance limit: 16 dimensions
+
+The viewer's WASM-accelerated kernels (spatial queries, effective-radius
+slicing, GSplat attenuation) are bounded to **16 dimensions**. Scenes with
+more dimensions still load and render correctly via a TypeScript fallback,
+but interactive performance can drop noticeably on large point or splat
+collections. For best performance on high-dim source data, pre-slice or
+pre-aggregate before export. See
+[LUXAR_ZARR_FORMAT.md → Viewer Constraints and Performance](LUXAR_ZARR_FORMAT.md#viewer-constraints-and-performance)
+for details.
+
 ---
 
 ## Animation Playback

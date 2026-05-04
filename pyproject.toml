@@ -332,7 +332,11 @@ module = [
 ]
 follow_imports = "skip"
 
-# Relax strict rules for test files
+# Relax strict rules for test files. NOTE: ignore_errors is intentionally
+# kept on for now — narrowing it surfaces ~500 hits, including real bugs
+# (e.g. arg-type mismatches in fit_gaussian_splats calls) but also false
+# positives from the dynamic `sys.modules['luxar.demos']` alias in
+# luxar/__init__.py. Tightening this is tracked as follow-up work.
 [[tool.mypy.overrides]]
 module = [
     "luxar.tests.*",
@@ -344,7 +348,7 @@ disallow_incomplete_defs = false
 check_untyped_defs = false
 ignore_errors = true
 
-# Relax strict rules for demo files
+# Same caveat as the tests override — see comment above.
 [[tool.mypy.overrides]]
 module = [
     "luxar.demos.*",
