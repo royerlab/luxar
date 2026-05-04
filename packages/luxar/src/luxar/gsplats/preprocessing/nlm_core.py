@@ -147,9 +147,10 @@ def denoise_nlm(
 
         try:
             return nlm_cuda_denoise(volume, h, patch_size, search_distance)
-        except ValueError as exc:
+        except (ValueError, RuntimeError) as exc:
             # Unsupported params (e.g., search_distance too large for GPU
-            # shared memory) — fall back to PyTorch backend
+            # shared memory) or runtime kernel failures (driver mismatch,
+            # OOM, etc.) — fall back to PyTorch backend.
             import warnings
 
             warnings.warn(
