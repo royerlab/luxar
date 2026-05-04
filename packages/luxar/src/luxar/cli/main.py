@@ -822,7 +822,12 @@ def _serve_data(
 def demo(
     output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output path"),
     n_points: int = typer.Option(10000, "--points", "-n", help="Number of points"),
-    demo_type: str = typer.Option("lorenz", "--type", "-t", help="Demo type"),
+    demo_type: str = typer.Option(
+        "lorenz",
+        "--type",
+        "-t",
+        help="Demo type (currently only 'lorenz' supported)",
+    ),
     seed: Optional[int] = typer.Option(None, "--seed", "-s", help="Random seed"),
     serve: bool = typer.Option(True, "--serve/--no-serve", help="Serve with viewer"),
     open_browser: bool = typer.Option(True, "--open/--no-open", help="Open browser"),

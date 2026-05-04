@@ -33,8 +33,22 @@ def _extract_compressed_zarr(compressed_path: Path) -> Path:
     if compressed_path.suffix == ".zip" or str(compressed_path).endswith(
         ".gsplats.zarr.zip"
     ):
-        # ZIP extraction
+        # ZIP extraction (with path traversal protection)
         with zipfile.ZipFile(compressed_path, "r") as zip_ref:
+            temp_dir_resolved = Path(temp_dir).resolve()
+            for member in zip_ref.namelist():
+                # Reject absolute paths, parent traversal, and backslash sep.
+                if "\\" in member or member.startswith("/"):
+                    raise ValueError(
+                        f"Zip member '{member}' has unsafe path separator"
+                    )
+                member_path = (Path(temp_dir) / member).resolve()
+                try:
+                    member_path.relative_to(temp_dir_resolved)
+                except ValueError as exc:
+                    raise ValueError(
+                        f"Zip member '{member}' would escape extraction directory"
+                    ) from exc
             zip_ref.extractall(temp_dir)
     elif compressed_path.suffix == ".gz" or str(compressed_path).endswith(
         (".tar.gz", ".gsplats.zarr.tar.gz")

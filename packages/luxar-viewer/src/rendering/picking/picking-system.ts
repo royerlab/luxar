@@ -128,8 +128,13 @@ export class PickingSystem {
     this.nodeMap.set(pickId, { main: mainNode, pick: pickNode });
   }
 
-  /** Unregister a node by its pick ID. */
+  /** Unregister a node by its pick ID and dispose its pick material. */
   unregisterNode(pickId: number): void {
+    const entry = this.nodeMap.get(pickId);
+    if (entry) {
+      const material = (entry.pick as THREE.Mesh).material as THREE.ShaderMaterial | undefined;
+      if (material?.dispose) material.dispose();
+    }
     this.nodeMap.delete(pickId);
   }
 

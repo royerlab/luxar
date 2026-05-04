@@ -5,8 +5,6 @@ viewer at load time, becoming the scene-specific defaults.
 
 Design philosophy: expose everything the user can see and change in the
 viewer so that Python -> zarr -> viewer round-trips preserve all settings.
-Note: Scene.to_zarr() is not yet implemented, so full round-trip export
-back to Python is planned but not currently available.
 """
 
 from __future__ import annotations
