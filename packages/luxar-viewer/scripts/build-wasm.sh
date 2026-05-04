@@ -65,6 +65,10 @@ wasm-pack build \
   ${BUILD_MODE} \
   --scope luxar
 
+# wasm-pack emits a .gitignore in its output directory. Drop it so it does
+# not ride into the Vite build output and ultimately the Python wheel.
+rm -f ../../../public/wasm/.gitignore
+
 echo "✅ WASM module built successfully!"
 echo "📁 Output: packages/luxar-viewer/public/wasm/"
 echo ""
