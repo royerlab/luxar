@@ -179,6 +179,50 @@ Same idea, three rows. Avoids `torch.linalg.solve_triangular` overhead — measu
 
 Reconstructs the full lower-triangular `L` tensor from the packed off-diagonal vector `L_off` (row-major over the strictly-lower-triangular indices). Upper triangle is zero-filled. Differentiable through both inputs.
 
+### Eccentricity constraint
+
+When `max_eccentricity = E` is set, `current_params()` clamps each
+off-diagonal `L[i,j]` (with `i > j`) to a per-pair budget proportional
+to the smaller of the two anchoring diagonals:
+
+```
+|L[i,j]|  ≤  γ · min(L[i,i], L[j,j])
+```
+
+with
+
+```
+γ      = √(E − 1) / (k_2d · (d − 1)^0.7)
+k_2d   = 2.4 + 0.5 / √(E − 1)        (for E > 1)
+k_2d   = 3.0                          (degenerate E = 1 case)
+```
+
+(Implementation: `gsplat_model.py::current_params` lines ~294–319.)
+
+When `voxel_size` is provided the bound is applied in physical space
+— `min(vs[i]·L[i,i], vs[j]·L[j,j])` replaces `min(L[i,i], L[j,j])` and
+the result is rescaled by `vs[i]` before clamping the voxel-space
+off-diagonal. This keeps the constraint anisotropy-aware.
+
+**Origin / status.** This is a **bounding heuristic**, not a closed-form
+guarantee that `cond(L Lᵀ) ≤ E` for `d > 2`:
+
+- For **d = 2** the 2×2 lower-triangular case admits an analytic
+  expression for `cond(L Lᵀ)` and `k_2d = 2.4 + 0.5/√(E − 1)` was
+  fitted so the worst-case condition number tracks `E` closely; the
+  asymptote `2.4` corresponds to the large-`E` regime, the `0.5/√(E−1)`
+  term corrects the small-`E` near-isotropic regime.
+- For **d > 2** the `(d − 1)^0.7` falloff is an empirical correction
+  that controls how off-diagonal mass accumulates as more `(i,j)`
+  pairs share each diagonal anchor; it was tuned by fitting against
+  Monte-Carlo evaluations of `cond(L Lᵀ)` on random lower-triangular
+  matrices clamped to the per-pair budget.
+
+The constraint therefore *biases* the parameter space against
+pathological elongation rather than guaranteeing a hard eigenvalue
+ratio. If a workflow needs a strict `cond(L Lᵀ) ≤ E` guarantee,
+post-fit eigendecomposition + projection is the appropriate step.
+
 ### `prune_(mask)` / `append_(centers, Ls, amps)` / `replace_with(centers, Ls, amps)`
 
 In-place dynamic splat management used by the fitter's prune-and-densify schedule. `append_` and `replace_with` invert the activations to write raw values:

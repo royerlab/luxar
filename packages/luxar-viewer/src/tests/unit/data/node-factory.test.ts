@@ -231,7 +231,7 @@ describe('NodeFactory', () => {
   });
 
   describe('validateTransformFormat', () => {
-    it('should return true for valid column-major transform', () => {
+    it('should not throw for valid column-major transform', () => {
       // Identity matrix with translation at [12,13,14]
       const transform = [
         1, 0, 0, 0, // Column 0
@@ -240,10 +240,10 @@ describe('NodeFactory', () => {
         5, 10, 15, 1, // Column 3 (translation)
       ];
 
-      expect(factory.validateTransformFormat(transform)).toBe(true);
+      expect(() => factory.validateTransformFormat(transform)).not.toThrow();
     });
 
-    it('should return false and warn for row-major transform', () => {
+    it('should throw for row-major transform', () => {
       // Row-major matrix with translation at [3,7,11]
       const transform = [
         1, 0, 0, 5, // Row 0 (tx at index 3)
@@ -252,16 +252,15 @@ describe('NodeFactory', () => {
         0, 0, 0, 1, // Row 3
       ];
 
-      const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-      const result = factory.validateTransformFormat(transform);
-      expect(result).toBe(false);
-      consoleSpy.mockRestore();
+      expect(() => factory.validateTransformFormat(transform)).toThrow(
+        /row-major/
+      );
     });
 
-    it('should return true for identity matrix', () => {
+    it('should not throw for identity matrix', () => {
       const identity = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 
-      expect(factory.validateTransformFormat(identity)).toBe(true);
+      expect(() => factory.validateTransformFormat(identity)).not.toThrow();
     });
   });
 
@@ -304,12 +303,22 @@ describe('NodeFactory', () => {
       expect(object.scale.z).toBeCloseTo(4);
     });
 
-    it('should handle invalid transform length', () => {
+    it('should throw on invalid transform length', () => {
       const object = new THREE.Object3D();
       const invalidTransform = [1, 0, 0, 0, 0, 1, 0, 0]; // Only 8 elements
 
-      // Should not throw, just return early
-      expect(() => factory.applyTransform(object, invalidTransform)).not.toThrow();
+      expect(() => factory.applyTransform(object, invalidTransform)).toThrow(
+        /Invalid transform length/
+      );
+    });
+
+    it('should throw on row-major transform', () => {
+      const object = new THREE.Object3D();
+      const rowMajor = [1, 0, 0, 5, 0, 1, 0, 10, 0, 0, 1, 15, 0, 0, 0, 1];
+
+      expect(() => factory.applyTransform(object, rowMajor)).toThrow(
+        /row-major/
+      );
     });
   });
 
