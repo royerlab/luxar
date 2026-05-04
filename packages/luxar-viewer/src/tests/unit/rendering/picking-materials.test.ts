@@ -10,6 +10,10 @@ import * as THREE from 'three';
 import { PointPickingMaterial } from '../../../rendering/picking/point-picking-material';
 import { LinePickingMaterial } from '../../../rendering/picking/line-picking-material';
 import { GSplatPickingMaterial } from '../../../rendering/picking/gsplat-picking-material';
+import {
+  MAX_PICK_BUFFER_DIM,
+  computePickBufferSize,
+} from '../../../rendering/picking/picking-system';
 
 describe('PointPickingMaterial', () => {
   it('instantiates with correct nodeId uniform', () => {
@@ -120,5 +124,36 @@ describe('GSplatPickingMaterial', () => {
     expect(material.uniforms.uNearCull.value).toBe(0.5);
     expect(material.uniforms.uFx.value).toBeGreaterThan(0);
     material.dispose();
+  });
+});
+
+describe('computePickBufferSize', () => {
+  it('halves both dimensions for normal-sized buffers', () => {
+    expect(computePickBufferSize(1920, 1080)).toEqual({ w: 960, h: 540 });
+  });
+
+  it('caps oversized 4K buffer at MAX_PICK_BUFFER_DIM on the wide axis only', () => {
+    // 3840 / 2 = 1920 -> capped at 1024; 2160 / 2 = 1080 -> capped at 1024
+    expect(computePickBufferSize(3840, 2160)).toEqual({
+      w: MAX_PICK_BUFFER_DIM,
+      h: MAX_PICK_BUFFER_DIM,
+    });
+  });
+
+  it('caps only the axis that exceeds the limit', () => {
+    // 5120 / 2 = 2560 -> capped; 1440 / 2 = 720 -> kept
+    expect(computePickBufferSize(5120, 1440)).toEqual({
+      w: MAX_PICK_BUFFER_DIM,
+      h: 720,
+    });
+  });
+
+  it('floors fractional values', () => {
+    expect(computePickBufferSize(1921, 1081)).toEqual({ w: 960, h: 540 });
+  });
+
+  it('clamps to a minimum of 1 pixel', () => {
+    expect(computePickBufferSize(0, 0)).toEqual({ w: 1, h: 1 });
+    expect(computePickBufferSize(1, 1)).toEqual({ w: 1, h: 1 });
   });
 });
