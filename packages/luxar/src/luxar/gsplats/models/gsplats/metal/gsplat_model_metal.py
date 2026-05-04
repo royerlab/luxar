@@ -94,6 +94,66 @@ def cholesky_to_conic(L: torch.Tensor) -> torch.Tensor:
     return result
 
 
+def cholesky_to_conic_vjp_3d(L: torch.Tensor, d_conic: torch.Tensor) -> torch.Tensor:
+    """Analytic VJP for :func:`cholesky_to_conic` in the 3D Metal hot path."""
+    l00 = L[:, 0, 0]
+    l10 = L[:, 1, 0]
+    l11 = L[:, 1, 1]
+    l20 = L[:, 2, 0]
+    l21 = L[:, 2, 1]
+    l22 = L[:, 2, 2]
+
+    k00 = 1.0 / (l00 + 1e-9)
+    k11 = 1.0 / (l11 + 1e-9)
+    k22 = 1.0 / (l22 + 1e-9)
+    k10 = -l10 * k00 * k11
+    k21 = -l21 * k11 * k22
+    q20 = l20 * k00 + l21 * k10
+    k20 = -q20 * k22
+
+    dc00 = d_conic[:, 0]
+    dc01 = d_conic[:, 1]
+    dc02 = d_conic[:, 2]
+    dc11 = d_conic[:, 3]
+    dc12 = d_conic[:, 4]
+    dc22 = d_conic[:, 5]
+
+    dk00 = 2.0 * k00 * dc00
+    dk10 = 2.0 * k10 * dc00 + k11 * dc01
+    dk20 = 2.0 * k20 * dc00 + k21 * dc01 + k22 * dc02
+    dk11 = k10 * dc01 + 2.0 * k11 * dc11
+    dk21 = k20 * dc01 + 2.0 * k21 * dc11 + k22 * dc12
+    dk22 = k20 * dc02 + k21 * dc12 + 2.0 * k22 * dc22
+
+    dq20 = -k22 * dk20
+    dk22 = dk22 - q20 * dk20
+    dl20 = k00 * dq20
+    dk00 = dk00 + l20 * dq20
+    dl21 = k10 * dq20
+    dk10 = dk10 + l21 * dq20
+
+    dl21 = dl21 - k11 * k22 * dk21
+    dk11 = dk11 - l21 * k22 * dk21
+    dk22 = dk22 - l21 * k11 * dk21
+
+    dl10 = -k00 * k11 * dk10
+    dk00 = dk00 - l10 * k11 * dk10
+    dk11 = dk11 - l10 * k00 * dk10
+
+    dl00 = -(k00 * k00) * dk00
+    dl11 = -(k11 * k11) * dk11
+    dl22 = -(k22 * k22) * dk22
+
+    d_L = torch.zeros_like(L)
+    d_L[:, 0, 0] = dl00
+    d_L[:, 1, 0] = dl10
+    d_L[:, 1, 1] = dl11
+    d_L[:, 2, 0] = dl20
+    d_L[:, 2, 1] = dl21
+    d_L[:, 2, 2] = dl22
+    return d_L
+
+
 class MetalSplatFunction(torch.autograd.Function):
     """Custom autograd function for the splat-centric 3D Metal renderer."""
 
@@ -136,21 +196,15 @@ class MetalSplatFunction(torch.autograd.Function):
                 "Metal custom kernels require float32 centers, Ls, and amps"
             )
 
-        # L -> conic. The splat-centric kernels use Luxar/PyTorch's native
-        # [Z, Y, X] coordinate order and row-major packed upper triangle.
-        Ls_for_conic = Ls.detach().clone().requires_grad_(True)
-        if use_metal_conic:
-            conic_zyx = metal_splatting_backend.compute_conic_metal(
-                Ls.contiguous()
-            ).detach()
-        else:
-            conic_zyx = cholesky_to_conic(Ls_for_conic).detach().contiguous()
+        # The splat-centric kernels consume native [Z, Y, X] Cholesky factors
+        # and perform the 3D conic transform inside the per-splat threadgroup.
+        Ls_for_conic = Ls.detach()
 
         output = cast(
             torch.Tensor,
             metal_splatting_backend.forward_splat_3d(
                 centers.contiguous(),
-                conic_zyx.contiguous(),
+                Ls_for_conic.contiguous(),
                 amps.contiguous(),
                 list(shape),
                 float(truncate),
@@ -160,39 +214,105 @@ class MetalSplatFunction(torch.autograd.Function):
         if output.shape != torch.Size(shape):
             output = output.view(shape)
 
-        ctx.save_for_backward(centers, Ls_for_conic, conic_zyx, amps)
+        ctx.save_for_backward(centers, Ls_for_conic, amps)
         return output
 
     @staticmethod
     def backward(
         ctx: Any, grad_output: torch.Tensor
     ) -> Tuple[Optional[torch.Tensor], ...]:
-        centers, Ls_for_conic, conic_zyx, amps = ctx.saved_tensors
+        centers, Ls_for_conic, amps = ctx.saved_tensors
 
-        d_centers, d_conic_zyx, d_amps = metal_splatting_backend.backward_splat_3d(
+        d_centers, d_Ls, d_amps = metal_splatting_backend.backward_splat_3d(
             grad_output.contiguous(),
             centers.contiguous(),
-            conic_zyx.contiguous(),
+            Ls_for_conic.contiguous(),
             amps.contiguous(),
             list(ctx.shape),
             ctx.truncate,
             ctx.intensity_floor,
         )
 
-        # Chain rule: Metal returns d(conic) in the same [Z, Y, X] packed order
-        # as cholesky_to_conic(), so no coordinate reorder is needed.
-        with torch.enable_grad():
-            conic_recomputed_zyx = cholesky_to_conic(Ls_for_conic)
-        (d_Ls,) = torch.autograd.grad(
-            outputs=conic_recomputed_zyx,
-            inputs=Ls_for_conic,
-            grad_outputs=d_conic_zyx,
-            retain_graph=False,
-            create_graph=False,
-            allow_unused=False,
-        )
-
         return d_centers, d_Ls, d_amps, None, None, None, None
+
+
+class MetalRawSplatFunction(torch.autograd.Function):
+    """Custom autograd function that keeps raw 3D parameters in Metal."""
+
+    @staticmethod
+    def forward(
+        ctx: Any,
+        raw_mu: torch.Tensor,
+        raw_L_diag: torch.Tensor,
+        L_off: torch.Tensor,
+        raw_a: torch.Tensor,
+        sigma_min_diag: torch.Tensor,
+        shape: Tuple[int, ...],
+        truncate: float,
+        intensity_floor: float = 1e-5,
+    ) -> torch.Tensor:
+        if not METAL_AVAILABLE:
+            raise RuntimeError("Metal splatting backend is not available")
+        if len(shape) != 3:
+            raise ValueError("MetalRawSplatFunction requires 3D volumes")
+        if (
+            raw_mu.device.type != "mps"
+            or raw_L_diag.device.type != "mps"
+            or L_off.device.type != "mps"
+            or raw_a.device.type != "mps"
+            or sigma_min_diag.device.type != "mps"
+        ):
+            raise ValueError("MetalRawSplatFunction requires MPS tensors")
+        if (
+            raw_mu.dtype != torch.float32
+            or raw_L_diag.dtype != torch.float32
+            or L_off.dtype != torch.float32
+            or raw_a.dtype != torch.float32
+            or sigma_min_diag.dtype != torch.float32
+        ):
+            raise TypeError("Metal raw kernels require float32 tensors")
+
+        ctx.shape = tuple(int(s) for s in shape)
+        ctx.truncate = float(truncate)
+        ctx.intensity_floor = float(intensity_floor)
+        ctx.save_for_backward(raw_mu, raw_L_diag, L_off, raw_a, sigma_min_diag)
+
+        output = cast(
+            torch.Tensor,
+            metal_splatting_backend.forward_raw_splat_3d(
+                raw_mu.contiguous(),
+                raw_L_diag.contiguous(),
+                L_off.contiguous(),
+                raw_a.contiguous(),
+                sigma_min_diag.contiguous(),
+                list(shape),
+                float(truncate),
+                float(intensity_floor),
+            ),
+        )
+        if output.shape != torch.Size(shape):
+            output = output.view(shape)
+        return output
+
+    @staticmethod
+    def backward(
+        ctx: Any, grad_output: torch.Tensor
+    ) -> Tuple[Optional[torch.Tensor], ...]:
+        raw_mu, raw_L_diag, L_off, raw_a, sigma_min_diag = ctx.saved_tensors
+        d_raw_mu, d_raw_L_diag, d_L_off, d_raw_a = (
+            metal_splatting_backend.backward_raw_splat_3d(
+                grad_output,
+                raw_mu.contiguous(),
+                raw_L_diag.contiguous(),
+                L_off.contiguous(),
+                raw_a.contiguous(),
+                sigma_min_diag.contiguous(),
+                list(ctx.shape),
+                ctx.truncate,
+                ctx.intensity_floor,
+            )
+        )
+        return d_raw_mu, d_raw_L_diag, d_L_off, d_raw_a, None, None, None, None
 
 
 class GaussianSplatModelMetal(GaussianSplatModel):
@@ -277,7 +397,33 @@ class GaussianSplatModelMetal(GaussianSplatModel):
     def _uses_custom_metal(self) -> bool:
         return METAL_AVAILABLE and self.dim == 3 and self.raw_mu.device.type == "mps"
 
+    @property
+    def _uses_raw_custom_metal(self) -> bool:
+        return (
+            self._uses_custom_metal
+            and self.sigma_max_diag is None
+            and self.amp_max is None
+            and self.max_eccentricity is None
+            and self.voxel_size is None
+            and self.L_off.shape[1] == 3
+        )
+
     def forward(self) -> torch.Tensor:
+        if self._uses_raw_custom_metal:
+            return cast(
+                torch.Tensor,
+                MetalRawSplatFunction.apply(  # type: ignore[no-untyped-call]
+                    self.raw_mu,
+                    self.raw_L_diag,
+                    self.L_off,
+                    self.raw_a,
+                    self.sigma_min_diag,
+                    self.shape,
+                    self.truncate,
+                    self._intensity_floor,
+                ),
+            )
+
         centers, Ls, amps = self.current_params()
         if self._uses_custom_metal:
             return cast(

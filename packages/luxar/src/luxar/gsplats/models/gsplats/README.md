@@ -114,7 +114,7 @@ occupancy.
 For GPU-accelerated rendering, see the backend-specific subpackages:
 
 - **CUDA** (`cuda/`): NVIDIA GPU acceleration (2D-8D), substantial speedup (often orders of magnitude, GPU-dependent)
-- **Metal** (`metal/`): Apple Silicon acceleration for 3D MPS volumes using splat-centric Metal kernels, with PyTorch rendering for other supported MPS dimensions; substantial speedup is chip- and workload-dependent
+- **Metal** (`metal/`): Apple Silicon acceleration for 3D MPS volumes using splat-centric Metal kernels. The unconstrained 3D training path consumes raw model parameters directly in Metal and returns raw gradients; constrained 3D paths use post-activation Cholesky tensors, and other supported MPS dimensions use PyTorch rendering. Speedup is chip- and workload-dependent.
 
 Both backends provide model classes (`GaussianSplatModelCUDA`, `GaussianSplatModelMetal`) with matching parameter-management APIs. CUDA provides custom kernels for 2D-8D; Metal accepts 2D-8D MPS models but only dispatches to custom splat-centric Metal kernels for 3D float32 tensors.
 

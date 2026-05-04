@@ -342,9 +342,7 @@ class TestMetalGradients:
         centers = torch.tensor(
             [[100.0, 100.0, 100.0]], device="mps", requires_grad=True
         )
-        L = torch.tensor(
-            [[[0.5, 0, 0], [0, 0.5, 0], [0, 0, 0.5]]], device="mps"
-        )
+        L = torch.tensor([[[0.5, 0, 0], [0, 0.5, 0], [0, 0, 0.5]]], device="mps")
         amps = torch.tensor([1.0], device="mps", requires_grad=True)
 
         output = MetalSplatFunction.apply(centers, L, amps, shape, 1.0, 1e-5, False)

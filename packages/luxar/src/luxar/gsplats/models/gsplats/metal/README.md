@@ -32,8 +32,9 @@ The build compiles:
 1. `src/kernels.metal` -> `src/default.metallib`
 2. `src/bindings.mm` -> `metal_splatting_backend*.so`
 
-The package passes the absolute `default.metallib` path into the native extension
-and invalidates stale extension/metallib artifacts when sources change.
+The package passes the absolute `default.metallib` path into the native extension,
+invalidates stale extension/metallib artifacts when sources change, and touches
+outputs after no-op distutils rebuilds so repeated imports do not auto-compile.
 
 ## Architecture
 
@@ -41,17 +42,21 @@ and invalidates stale extension/metallib artifacts when sources change.
 Python
   GaussianSplatModelMetal
   MetalSplatFunction
-  L -> conic, packed in native [Z,Y,X] order
+  L factors handed directly to native kernels
 
 C++/Objective-C++ extension
-  forward_splat_3d(...)
-  backward_splat_3d(...)
+  forward_raw_splat_3d(raw_mu, raw_L_diag, L_off, raw_a, sigma_min_diag, ...)
+  backward_raw_splat_3d(grad_output, raw_mu, raw_L_diag, L_off, raw_a, ...)
+  forward_splat_3d(centers, Ls, amps, ...)          # constrained/fallback path
+  backward_splat_3d(grad_output, centers, Ls, amps, ...)
 
 Metal kernels
   zero_float_buffer
-  rasterize_forward_splat_centric_3d
-  rasterize_backward_splat_centric_3d
-  compute_conic_from_L_3d   # optional forward conic helper
+  rasterize_forward_raw_splat_centric_3d      # raw params -> centers/L/amps + L -> conic
+  rasterize_backward_raw_splat_centric_3d     # d_output -> raw parameter gradients
+  rasterize_forward_splat_centric_3d          # constrained/fallback L path
+  rasterize_backward_splat_centric_3d         # constrained/fallback L path
+  compute_conic_from_L_3d                     # helper/validation path, not the hot path
 ```
 
 ### Splat-centric forward
@@ -60,7 +65,8 @@ The forward kernel mirrors the optimized CUDA organization:
 
 ```text
 one Metal threadgroup = one Gaussian splat
-256 threads cooperate over that splat's AABB
+thread 0 applies raw sigmoid/softplus transforms when eligible, then computes L -> conic and AABB
+64 threads cooperate over that splat's AABB
 output uses atomic float add
 ```
 
@@ -70,11 +76,13 @@ no longer performs a PyTorch prefix sum or CPU `.item()` synchronization.
 
 ### Splat-centric backward
 
-Backward also uses one threadgroup per splat:
+Backward also uses one threadgroup per splat. In the unconstrained raw-parameter path, the native kernel writes gradients for `raw_mu`, `raw_L_diag`, `L_off`, and `raw_a` directly, avoiding Python-side `current_params()` autograd work:
 
 ```text
 threads accumulate local d_center / d_conic / d_amp
 threadgroup reduction combines partials
+thread 0 applies the analytic d_conic -> d_L VJP
+thread 0 applies sigmoid/softplus VJPs for raw parameters when applicable
 thread 0 writes that splat's gradients once
 ```
 
@@ -112,7 +120,6 @@ if is_metal_available():
         sigma_min_diag=(0.5, 0.5, 0.5),
         truncate=3.0,
         intensity_floor=1e-5,
-        use_metal_conic=False,
         device="mps",
     )
 
@@ -137,9 +144,9 @@ Observed on Apple M4 Max, PyTorch 2.11, macOS 15.7.5, workload
 | Path | Time | Effective throughput |
 | --- | ---: | ---: |
 | Old tile-binned Metal forward | ~2.3-2.5 ms | ~0.85-0.94 GVox/s |
-| New splat-centric Metal forward | ~1.7-1.9 ms | ~1.1-1.2 GVox/s |
+| New splat-centric Metal forward | ~1.5-1.6 ms | ~1.3-1.4 GVox/s |
 | Old tile-binned Metal fwd+bwd | ~133 ms | ~0.016 GVox/s |
-| New splat-centric Metal fwd+bwd | ~4.4-4.8 ms | ~0.46-0.48 GVox/s |
+| New raw splat-centric Metal fwd+bwd | ~2.8-3.0 ms | ~0.70-0.75 GVox/s |
 
 Large-output GVox/s is only one view of splatting performance because the actual
 work scales with splat AABB volume and overlap.  The rewrite's most important

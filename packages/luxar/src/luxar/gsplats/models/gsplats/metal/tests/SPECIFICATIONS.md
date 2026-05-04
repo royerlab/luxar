@@ -7,8 +7,8 @@
 
 Tests for the Apple Metal backend: extension initialization, 3D splat-centric
 forward/backward correctness, native `[Z,Y,X]` coordinate conventions,
-L-to-conic computation, API parity, performance smoke coverage, and optimizer
-compatibility.
+L-to-conic computation, raw-parameter hot-path gradients, API parity,
+performance smoke coverage, and optimizer compatibility.
 
 ---
 
@@ -47,6 +47,9 @@ compatibility.
 
 ## Changelog
 
+- **v2.2.0** (2026-05-03): Updated for raw-parameter 3D hot-path kernels and scalar-expanded `grad_output` handling.
+- **v2.1.0** (2026-05-02): Updated for inline native `L -> conic` and
+  `d_conic -> d_L` hot-path kernels while keeping conic helper tests.
 - **v2.0.0** (2026-05-02): Updated for the splat-centric Metal rewrite: native
   `[Z,Y,X]` conics, no tile-binned hot path, and no packed-conic reorder tests.
 - **v1.2.0** (2026-05-02): Added interface-parity tests and documented

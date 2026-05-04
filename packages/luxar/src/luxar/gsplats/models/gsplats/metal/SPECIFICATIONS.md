@@ -1,7 +1,7 @@
 # Metal Backend Specification
 
-**Version**: 2.0.0
-**Last Updated**: 2026-05-02
+**Version**: 2.1.0
+**Last Updated**: 2026-05-03
 
 ## Overview
 
@@ -23,20 +23,27 @@ PyTorch renderer.
 ```text
 Python layer
   GaussianSplatModelMetal.forward()
-  MetalSplatFunction.forward/backward()
-  cholesky_to_conic() or compute_conic_metal()
+  MetalRawSplatFunction.forward/backward()  # unconstrained 3D hot path
+  MetalSplatFunction.forward/backward()     # constrained/fallback 3D path
 
 C++/Objective-C++ extension: src/bindings.mm
-  compute_conic_metal(Ls) -> conic
-  forward_splat_3d(centers, conic, amps, shape, truncate, floor) -> output
-  backward_splat_3d(grad_output, centers, conic, amps, shape, truncate, floor)
-      -> (d_centers, d_conic, d_amps)
+  compute_conic_metal(Ls) -> conic  # helper/validation path
+  forward_raw_splat_3d(raw_mu, raw_L_diag, L_off, raw_a, sigma_min_diag, ...)
+      -> output
+  backward_raw_splat_3d(grad_output, raw_mu, raw_L_diag, L_off, raw_a,
+                        sigma_min_diag, ...)
+      -> (d_raw_mu, d_raw_L_diag, d_L_off, d_raw_a)
+  forward_splat_3d(centers, Ls, amps, shape, truncate, floor) -> output
+  backward_splat_3d(grad_output, centers, Ls, amps, shape, truncate, floor)
+      -> (d_centers, d_Ls, d_amps)
 
 Metal shaders: src/kernels.metal
   zero_float_buffer
-  compute_conic_from_L_3d
-  rasterize_forward_splat_centric_3d
-  rasterize_backward_splat_centric_3d
+  compute_conic_from_L_3d                       # helper/validation path
+  rasterize_forward_raw_splat_centric_3d        # raw params -> centers/L/amps + L -> conic
+  rasterize_backward_raw_splat_centric_3d       # d_output -> raw parameter gradients
+  rasterize_forward_splat_centric_3d            # constrained/fallback L path
+  rasterize_backward_splat_centric_3d           # constrained/fallback L path
 ```
 
 The previous tile-binned pipeline (`preprocess_3d`, `bin_3d`, tile counts,
@@ -67,12 +74,14 @@ from the older tile-binned Metal renderer.
 
 ### Host-side dispatch
 
-`forward_splat_3d` validates:
+`forward_raw_splat_3d` is used when the 3D model has no `sigma_max_diag`, `amp_max`, `max_eccentricity`, or `voxel_size` constraints. It validates:
 
 - `shape == (D, H, W)` and all dimensions are positive.
-- `centers.shape == (N, 3)`, `conic.shape == (N, 6)`, `amps.shape == (N,)`.
+- `raw_mu.shape == raw_L_diag.shape == L_off.shape == (N, 3)`, `raw_a.shape == (N,)`, and `sigma_min_diag.shape == (3,)`.
 - All tensors are contiguous, MPS, and `float32`.
 - `N` and `D*H*W` fit in `uint32_t` for the current kernels.
+
+`forward_splat_3d` remains available for constrained 3D paths and validates post-activation tensors: `centers.shape == (N, 3)`, `Ls.shape == (N, 3, 3)`, and `amps.shape == (N,)`.
 
 It allocates an MPS float32 output tensor, then encodes in one command buffer:
 
@@ -84,21 +93,26 @@ It allocates an MPS float32 output tensor, then encodes in one command buffer:
 ```text
 threadgroup_position_in_grid.x = splat_id
 thread_index_in_threadgroup    = worker thread within that splat
-THREADGROUP_SIZE               = 256
+THREADGROUP_SIZE               = 64
 ```
 
-Thread 0 loads the splat into threadgroup memory:
+Thread 0 loads the splat into threadgroup memory. In the raw hot path it first applies the same parameter transforms as `current_params()`:
 
 ```text
-center[3]
-conic[6]
-amplitude
-shifted-Gaussian constants
+center_i = sigmoid(raw_mu_i) * max(shape_i - 1, 1)
+diag_i   = sigma_min_diag_i + softplus(raw_L_diag_i)
+L_off    = raw L_off entries
+amp      = softplus(raw_a)
+conic[6] computed from L in native [Z,Y,X] order
+sigma diagonal derived directly from L for AABB construction
+host-precomputed shifted-Gaussian constants
 AABB lower corner and extent
 effective truncation radius
 ```
 
-All 256 threads then stride over the splat's local AABB.  For each voxel:
+The constrained/fallback L path receives `centers`, `Ls`, and `amps` directly and then performs the same per-splat conic/AABB work.
+
+All 64 threads then stride over the splat's local AABB.  For each voxel:
 
 ```text
 d = [z, y, x] - center
@@ -116,13 +130,20 @@ voxel.  The kernel uses Metal `atomic_float` fetch-add.
 
 ### Host-side dispatch
 
-`backward_splat_3d` validates the same splat tensors plus a contiguous MPS
-float32 `grad_output` of shape `(D, H, W)`.  For nonzero `N`, it allocates empty
-MPS gradient tensors:
+`backward_raw_splat_3d` validates the same raw splat tensors plus an MPS float32 `grad_output` of shape `(D, H, W)`. `grad_output` may be contiguous or scalar-expanded with zero strides; the latter avoids materializing a dense all-ones gradient for losses such as `output.sum()`. For nonzero `N`, it allocates empty MPS gradient tensors:
+
+```text
+d_raw_mu:     (N, 3)
+d_raw_L_diag: (N, 3)
+d_L_off:      (N, 3)
+d_raw_a:      (N,)
+```
+
+`backward_splat_3d` remains available for constrained 3D paths and returns:
 
 ```text
 d_centers: (N, 3)
-d_conic:   (N, 6)
+d_Ls:      (N, 3, 3)
 d_amps:    (N,)
 ```
 
@@ -171,11 +192,20 @@ D² = c00*dz² + c11*dy² + c22*dx²
 ```
 
 The threadgroup then performs a tree reduction in threadgroup memory and thread
-0 writes:
+0 applies the analytic 3D conic-to-Cholesky VJP. In the raw hot path it then applies the sigmoid/softplus VJPs and writes:
+
+```text
+d_raw_mu[splat_id, :]
+d_raw_L_diag[splat_id, :]
+d_L_off[splat_id, :]
+d_raw_a[splat_id]
+```
+
+The constrained/fallback L path writes:
 
 ```text
 d_centers[splat_id, :]
-d_conic[splat_id, :]
+d_Ls[splat_id, :, :]
 d_amps[splat_id]
 ```
 
@@ -183,16 +213,15 @@ No global parameter-gradient atomics are used.
 
 ## AABB and Truncation
 
-The Metal kernels match the optimized CUDA AABB strategy.  AABB radii are derived
-from the conic matrix by extracting the covariance diagonal via cofactors:
+The Metal kernels match the optimized CUDA AABB integer-radius strategy, but now
+avoid recovering covariance diagonals from the conic determinant. Because the hot
+path receives Cholesky factors directly, AABB radii use the covariance diagonal
+from `Σ = L @ L.T`:
 
 ```text
-det = c00*(c11*c22 - c12²) - c01*(c01*c22 - c02*c12)
-    + c02*(c01*c12 - c02*c11)
-
-sigma_z = sqrt(max((c11*c22 - c12²) / |det|, 0))
-sigma_y = sqrt(max((c00*c22 - c02²) / |det|, 0))
-sigma_x = sqrt(max((c00*c11 - c01²) / |det|, 0))
+sigma_z = abs(l00)
+sigma_y = sqrt(l10² + l11²)
+sigma_x = sqrt(l20² + l21² + l22²)
 ```
 
 The base truncation is tightened by `intensity_floor`:
@@ -218,36 +247,26 @@ hi_i = min(shape_i - 1, ceil(center_i) + radius_i)
 
 ## Python Autograd Boundary
 
-`MetalSplatFunction.forward` saves:
+For unconstrained 3D models, `MetalRawSplatFunction.forward` saves the raw model parameters and `sigma_min_diag`:
 
 ```text
-centers
-Ls_for_conic
-conic_zyx
-amps
+raw_mu
+raw_L_diag
+L_off
+raw_a
+sigma_min_diag
 ```
 
-The native backward returns gradients with respect to `centers`, `conic`, and
-`amps`.  Python then applies the chain rule back to Cholesky factors:
+The native backward returns gradients with respect to those raw parameters directly. It applies the 3D `d_conic -> d_L` vector-Jacobian product and then the sigmoid/softplus VJPs inside `rasterize_backward_raw_splat_centric_3d`, so Python does not build a `current_params()` autograd graph on the hot path.
 
-```python
-with torch.enable_grad():
-    conic_recomputed = cholesky_to_conic(Ls_for_conic)
-(d_Ls,) = torch.autograd.grad(
-    outputs=conic_recomputed,
-    inputs=Ls_for_conic,
-    grad_outputs=d_conic,
-)
-```
-
-This keeps the conic-to-Cholesky VJP correct while the expensive voxel/splat
-loops run in Metal.
+For constrained 3D models, `MetalSplatFunction.forward` saves post-activation `centers`, `Ls`, and `amps`; the constrained native backward returns gradients with respect to those tensors directly.
 
 ## Optional Metal L -> Conic
 
 `compute_conic_metal(Ls)` computes the 3D packed conic in native `[Z,Y,X]` order.
-It is used only when `GaussianSplatModelMetal(..., use_metal_conic=True)` is set.
-Backward still uses the Python `cholesky_to_conic` graph for the VJP.
+It remains available as a helper and validation path for conic tests, but the
+custom forward/backward hot path computes `L -> conic` inside the per-splat Metal
+threadgroup instead of materializing a separate conic tensor.
 
 ## Performance Characteristics
 
@@ -256,11 +275,13 @@ For `128³ @ 32k splats`, `L = 2I`, `truncate = 3`, on Apple M4 Max:
 | Implementation | Forward | Forward+Backward |
 | --- | ---: | ---: |
 | Previous tile-binned Metal | ~2.3-2.5 ms (~0.9 GVox/s) | ~133 ms (~0.016 GVox/s) |
-| Current splat-centric Metal | ~1.7-1.9 ms (~1.1-1.2 GVox/s) | ~4.4-4.8 ms (~0.46-0.48 GVox/s) |
+| Current raw splat-centric Metal | ~1.3-1.5 ms (~1.4-1.6 GVox/s) | ~2.8-3.0 ms (~0.70-0.75 GVox/s) |
 
 The largest improvement is backward because the old voxel-centric kernel used
 global CAS atomics for every voxel-splat gradient contribution.  The new kernel
-uses local threadgroup reductions and one write per splat gradient.
+uses local threadgroup reductions and one write per splat gradient. The raw hot
+path additionally avoids Python-side parameter activation autograd and dense
+materialization of scalar-expanded `grad_output`.
 
 CUDA remains much faster for large production workloads; CUDA has 2D-8D
 specialization, FP16 input paths, more mature occupancy behavior, and highly
@@ -282,13 +303,13 @@ GaussianSplatModelMetal(
     truncate=3.0,
     intensity_floor=1e-5,
     use_fp16=False,           # rejected if True
-    use_metal_conic=False,
+    use_metal_conic=False,       # retained helper flag; hot path computes conics inline
     voxel_size=None,
     device="mps",
 )
 ```
 
-`MetalSplatFunction.apply` arguments:
+`MetalRawSplatFunction.apply` is the default unconstrained 3D training path. `MetalSplatFunction.apply` remains the constrained/fallback 3D path with arguments:
 
 ```python
 output = MetalSplatFunction.apply(
@@ -335,6 +356,9 @@ Important coverage:
 
 ## Changelog
 
+- **v2.1.0** (2026-05-03): Added raw-parameter 3D Metal hot path.
+  - Native kernels now apply unconstrained sigmoid/softplus parameter transforms and raw-parameter VJPs directly when no extra constraints are active.
+  - `backward_raw_splat_3d` accepts scalar-expanded `grad_output` without dense materialization.
 - **v2.0.0** (2026-05-02): Splat-centric performance rewrite.
   - Removed tile-binned preprocessing/binning/prefix-sum pipeline from the hot path.
   - Added splat-centric forward with one threadgroup per splat and atomic output accumulation.
