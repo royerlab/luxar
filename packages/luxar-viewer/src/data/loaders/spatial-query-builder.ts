@@ -1,200 +1,111 @@
 /**
- * SpatialQueryBuilder - Unified spatial query logic for all loader types.
+ * SpatialQueryBuilder - Canonical spatial query API for Points, Lines, GSplats.
  *
- * This module extracts the duplicated spatial query building logic from all three
- * spatial index loaders (Points, Lines, GSplats) into a single reusable component.
+ * Provides one unified entry point for chunk-bounds-based AABB queries:
+ * builds the query position from view state, computes (or accepts) per-dimension
+ * tolerance, runs the AABB scan, converts matching chunks to load ranges, and
+ * coalesces overlapping/adjacent ranges.
  *
- * Features:
- * - Unified tolerance calculation (displayed dims → infinite, hidden dims → step-based)
- * - Worker dispatch for CPU-intensive spatial queries
- * - Main thread fallback on worker failure
- * - extend_to_all dimension handling
+ * Tolerance source is selected at construction:
+ * - `geometryType: 'points' | 'lines' | 'gsplats'` — delegates to
+ *   `tolerance-computer.computeTolerance` for geometry-aware semantics.
+ * - `tolerance: number[]` — caller-supplied array (used when the caller has
+ *   geometry-specific logic that the unified computer does not model, e.g. the
+ *   points loader's `EffectiveRadiusConfig`-driven tolerance).
+ *
+ * Always runs on the main thread — AABB scans are O(numChunks × ndim) and
+ * complete in microseconds. Worker dispatch would add ~3 ms structured-clone
+ * overhead per call, which dominates when many nodes query concurrently.
  *
  * @module data/loaders/spatial-query-builder
  */
 
 import { log, Modules } from '../../utils/log';
+import { computeTolerance, type GeometryType, type ToleranceOptions } from '../tolerance-computer';
 import type { BaseViewState, LoadRange } from './base-types';
-import type { DimensionMetadata } from '../../types/dims';
 
 // ============================================================================
-// Tolerance Calculation
+// Canonical Chunk Spatial Index Type
 // ============================================================================
 
 /**
- * Default tolerance for hidden dimensions when no step is specified.
+ * Canonical chunk spatial index shape consumed by `SpatialQueryBuilder`.
+ *
+ * All three geometry types (Points, Lines segments, GSplats) produce indices
+ * of this shape: a flattened `(numChunks, ndim, 2)` Float32Array of [min, max]
+ * bounds per chunk per dimension, plus the chunk count and dimensionality.
+ *
+ * Lines have a dual index (vertex + segment); only the segment side is used
+ * for the chunk query. The vertex side is loaded separately and consumed via
+ * a different code path (sorted-indices → contiguous ranges).
  */
-export const DEFAULT_HIDDEN_DIM_TOLERANCE = 3.0;
+export interface ChunkSpatialIndex {
+  /** Chunk bounding boxes: shape `(numChunks, ndim, 2)` flattened row-major. */
+  chunkBounds: Float32Array;
 
-/**
- * Infinite tolerance for displayed dimensions (all points visible in displayed space).
- */
-export const DISPLAYED_DIM_TOLERANCE = 1e10;
+  /** Number of chunks in the index. */
+  chunkCount: number;
 
-/**
- * Configuration for tolerance calculation.
- */
-export interface ToleranceConfig {
-  /** Default tolerance for hidden dimensions without step info */
-  defaultTolerance?: number;
+  /** Common metadata fields used by the query path. */
+  metadata: {
+    /** Full dimensionality of the dataset. */
+    ndim: number;
 
-  /** Multiplier for step-based tolerance (tolerance = step * multiplier) */
-  stepMultiplier?: number;
-
-  /** Maximum radius for points (used as fallback) */
-  maxRadius?: number;
+    /** Elements per chunk (points/segments/splats). */
+    chunk_size?: number;
+  };
 }
 
-/**
- * Calculate query tolerance for each dimension.
- *
- * This unified function replaces the duplicated tolerance calculation in:
- * - point-spatial-index-loader.ts (calculateSpatialQueryTolerance)
- * - lines-chunk-spatial-index.ts (computeLinesTolerance)
- * - gsplats-chunk-spatial-index.ts (computeGSplatsTolerance)
- *
- * Logic:
- * - Displayed dimensions (in displayDims): INFINITE tolerance (see all points)
- * - Hidden dimensions:
- *   - If step available: step * multiplier
- *   - If viewState tolerance provided: use that
- *   - Otherwise: defaultTolerance
- *
- * @param viewState - Current view state with displayDims, tolerance, dimensions
- * @param ndim - Full dimensionality of the dataset
- * @param config - Optional tolerance configuration
- * @returns Tolerance array of length ndim
- */
-export function computeQueryTolerance(
-  viewState: BaseViewState,
-  ndim: number,
-  config: ToleranceConfig = {}
-): number[] {
-  const {
-    defaultTolerance = DEFAULT_HIDDEN_DIM_TOLERANCE,
-    stepMultiplier = 1.0,
-    maxRadius = defaultTolerance,
-  } = config;
-
-  const tolerance = new Array<number>(ndim).fill(0);
-  const { displayDims, dimensions } = viewState;
-
-  for (let d = 0; d < ndim; d++) {
-    if (displayDims.includes(d)) {
-      // Displayed dimensions: infinite tolerance (see all points in displayed space)
-      tolerance[d] = DISPLAYED_DIM_TOLERANCE;
-    } else {
-      // Hidden dimensions: calculate appropriate tolerance
-      if (dimensions && dimensions[d]?.step !== undefined) {
-        // Use step-based tolerance if dimension metadata available
-        tolerance[d] = dimensions[d]!.step! * stepMultiplier;
-      } else if (viewState.tolerance[d] !== undefined && viewState.tolerance[d] > 0) {
-        // Use explicit tolerance from view state
-        tolerance[d] = viewState.tolerance[d];
-      } else {
-        // Fallback to maxRadius or default
-        tolerance[d] = maxRadius;
-      }
-    }
-  }
-
-  return tolerance;
-}
+// ============================================================================
+// Helpers (also exported for direct use by callers that don't need the builder)
+// ============================================================================
 
 /**
- * Build query position from view state.
- *
- * Ensures the position array has the correct length for the dataset's ndim.
- *
- * @param viewState - Current view state
- * @param ndim - Full dimensionality
- * @returns Position array of length ndim
+ * Build the query position array, padded/truncated to `ndim`.
  */
 export function buildQueryPosition(viewState: BaseViewState, ndim: number): number[] {
   const position = new Array<number>(ndim).fill(0);
-
   for (let d = 0; d < ndim && d < viewState.slicePosition.length; d++) {
     position[d] = viewState.slicePosition[d] ?? 0;
   }
-
   return position;
 }
 
-// ============================================================================
-// Spatial Query Execution
-// ============================================================================
-
-/**
- * Parameters for spatial index query.
- */
+/** Parameters for `executeSpatialQuery`. */
 export interface SpatialQueryParams {
-  /** Chunk bounding boxes (flattened Float32Array) */
+  /** Chunk bounding boxes (flattened Float32Array, layout `[numChunks][ndim][2]`). */
   chunkBounds: Float32Array;
-
-  /** Query position (one value per dimension) */
+  /** Query position (one value per dimension). */
   queryPosition: number[];
-
-  /** Query tolerance (one value per dimension) */
+  /** Query tolerance (one value per dimension). */
   queryTolerance: number[];
-
-  /** Number of chunks in index */
+  /** Number of chunks in the index. */
   numChunks: number;
-
-  /** Dimensionality */
+  /** Dimensionality. */
   ndim: number;
 }
 
 /**
- * Execute spatial query on main thread.
+ * Run the AABB scan and return matching chunk indices.
  *
- * Always runs on main thread — AABB scan is O(chunks × ndim) and completes in
- * microseconds. Worker roundtrips add ~3ms each (structured clone, postMessage,
- * deserialization), which dominates when many nodes query concurrently.
- *
- * @param params - Query parameters
- * @returns Array of chunk indices that match the query
+ * A chunk matches if its bounds overlap the query box in every dimension.
+ * Early-exit on the first non-overlapping dimension keeps the inner loop tight.
  */
 export function executeSpatialQuery(params: SpatialQueryParams): number[] {
   const { chunkBounds, queryPosition, queryTolerance, numChunks, ndim } = params;
-  return queryChunksMainThread(chunkBounds, queryPosition, queryTolerance, numChunks, ndim);
-}
-
-/**
- * Main thread implementation of chunk spatial query.
- *
- * Uses AABB (axis-aligned bounding box) intersection test in nD space.
- * A chunk intersects if its bounds overlap the query box in ALL dimensions.
- *
- * @param chunkBounds - Flattened chunk bounding boxes
- * @param position - Query position
- * @param tolerance - Query tolerance
- * @param numChunks - Number of chunks
- * @param ndim - Dimensionality
- * @returns Matching chunk indices
- */
-function queryChunksMainThread(
-  chunkBounds: Float32Array,
-  position: number[],
-  tolerance: number[],
-  numChunks: number,
-  ndim: number
-): number[] {
   const matchingChunks: number[] = [];
 
   for (let chunkIdx = 0; chunkIdx < numChunks; chunkIdx++) {
     let intersects = true;
 
     for (let d = 0; d < ndim; d++) {
-      // Chunk bounds layout: chunkBounds[chunkIdx, d, min/max] flattened row-major
       const offset = chunkIdx * ndim * 2 + d * 2;
       const chunkMin = chunkBounds[offset];
       const chunkMax = chunkBounds[offset + 1];
 
-      // Query box for this dimension
-      const queryMin = position[d] - tolerance[d];
-      const queryMax = position[d] + tolerance[d];
+      const queryMin = queryPosition[d] - queryTolerance[d];
+      const queryMax = queryPosition[d] + queryTolerance[d];
 
-      // No intersection if boxes don't overlap
       if (chunkMax < queryMin || chunkMin > queryMax) {
         intersects = false;
         break;
@@ -207,22 +118,10 @@ function queryChunksMainThread(
   }
 
   log.query(Modules.SPATIAL_INDEX, `Query: ${matchingChunks.length}/${numChunks} chunks match`);
-
   return matchingChunks;
 }
 
-// ============================================================================
-// Range Conversion
-// ============================================================================
-
-/**
- * Convert chunk indices to load ranges.
- *
- * @param chunkIndices - Matching chunk indices
- * @param chunkSize - Elements per chunk
- * @param totalElements - Total elements in dataset
- * @returns Array of load ranges
- */
+/** Convert chunk indices to load ranges (clipped at `totalElements`). */
 export function chunkIndicesToRanges(
   chunkIndices: number[],
   chunkSize: number,
@@ -234,171 +133,144 @@ export function chunkIndicesToRanges(
   }));
 }
 
-/**
- * Merge overlapping or adjacent ranges.
- *
- * Reduces the number of zarr chunk loads by combining contiguous ranges.
- *
- * @param ranges - Unmerged ranges
- * @returns Merged ranges (sorted by start)
- */
+/** Coalesce overlapping or adjacent ranges. Result is sorted by `start`. */
 export function mergeRanges(ranges: LoadRange[]): LoadRange[] {
   if (ranges.length === 0) return [];
 
-  // Sort by start
   const sorted = [...ranges].sort((a, b) => a.start - b.start);
-
   const merged: LoadRange[] = [];
   let current = sorted[0];
 
   for (let i = 1; i < sorted.length; i++) {
     if (sorted[i].start <= current.end) {
-      // Overlapping or adjacent - merge
       current = { start: current.start, end: Math.max(current.end, sorted[i].end) };
     } else {
-      // Gap - push current and start new
       merged.push(current);
       current = sorted[i];
     }
   }
-
   merged.push(current);
   return merged;
 }
 
-// ============================================================================
-// Extend-to-all Handling
-// ============================================================================
-
 /**
- * Check if visibility should be extended across all values in current non-displayed dimensions.
+ * Decide whether `extendDims` triggers a "load all elements" short-circuit.
  *
- * @param extendDims - Dimension names to extend across
- * @param viewState - Current view state
- * @param dimMetadata - Optional dimension metadata for name resolution
- * @returns True if currently extending visibility
+ * Returns true iff at least one extend-to-all dimension is currently hidden
+ * (not in `viewState.displayDims`). When that happens, the caller should skip
+ * the spatial query and load every element so the user can navigate freely
+ * along the extended dimension.
  */
 export function shouldExtendVisibility(
   extendDims: string[] | undefined,
-  viewState: BaseViewState,
-  dimMetadata?: DimensionMetadata[]
+  viewState: BaseViewState
 ): boolean {
-  if (!extendDims || extendDims.length === 0) {
-    return false;
-  }
+  if (!extendDims || extendDims.length === 0) return false;
+  const dims = viewState.dimensions;
+  if (!dims || dims.length === 0) return false;
 
-  if (!dimMetadata || dimMetadata.length === 0) {
-    return false;
-  }
-
-  // Get names of non-displayed dimensions
-  const hiddenDimNames = dimMetadata
+  const hiddenDimNames = dims
     .filter((_, idx) => !viewState.displayDims.includes(idx))
     .map((meta) => meta.name)
-    .filter((name) => name !== undefined);
+    .filter((name): name is string => name !== undefined);
 
-  // Check if any extend_to_all dimension is currently hidden
   return extendDims.some((edim) => hiddenDimNames.includes(edim));
 }
 
-/**
- * Create a "load all" range for extend_to_all scenarios.
- *
- * @param totalElements - Total elements in dataset
- * @returns Single range covering all elements
- */
+/** Single range covering all elements in the dataset. */
 export function createLoadAllRange(totalElements: number): LoadRange[] {
   return [{ start: 0, end: totalElements }];
 }
 
 // ============================================================================
-// SpatialQueryBuilder Class
+// SpatialQueryBuilder
 // ============================================================================
 
 /**
- * Builder class for constructing and executing spatial queries.
+ * Constructor-options for `SpatialQueryBuilder`.
  *
- * Provides a fluent API for building spatial queries with proper tolerance calculation.
+ * Discriminated union: callers must supply EITHER `geometryType` (tolerance is
+ * computed via `tolerance-computer.computeTolerance`) OR `tolerance` (a
+ * pre-computed per-dimension array). Both are mutually exclusive.
+ */
+export type SpatialQueryOptions = {
+  /** Total elements in the dataset (for clipping the last range). */
+  totalElements: number;
+
+  /** Override `index.metadata.chunk_size` if absent there. */
+  chunkSize?: number;
+
+  /** Names of `extend_to_all` dimensions; triggers load-all when any is hidden. */
+  extendDims?: string[];
+} & (
+  | {
+      /** Geometry-aware tolerance via `computeTolerance(geometryType, …)`. */
+      geometryType: GeometryType;
+      /** Optional tuning passed to `computeTolerance`. */
+      toleranceOptions?: ToleranceOptions;
+      tolerance?: never;
+    }
+  | {
+      /** Pre-computed per-dimension tolerance (used for points). */
+      tolerance: number[];
+      geometryType?: never;
+      toleranceOptions?: never;
+    }
+);
+
+/**
+ * Builder that runs one chunk-bounds spatial query end-to-end.
  *
- * @example
- * ```typescript
- * const builder = new SpatialQueryBuilder(chunkIndex, viewState);
- * const ranges = await builder
- *   .withExtendToAll(extendDims)
- *   .withMaxRadius(maxRadius)
- *   .execute();
+ * @example geometry-aware (gsplats / lines)
+ * ```ts
+ * const ranges = await new SpatialQueryBuilder(index, viewState, {
+ *   geometryType: 'gsplats',
+ *   totalElements: attrs.n_splats,
+ *   chunkSize: attrs.chunk_size,
+ *   extendDims: attrs.extend_to_all,
+ * }).execute();
+ * ```
+ *
+ * @example pre-computed tolerance (points with EffectiveRadiusConfig)
+ * ```ts
+ * const tolerance = calculateSpatialQueryTolerance(viewState, config, ndim);
+ * const ranges = await new SpatialQueryBuilder(index, viewState, {
+ *   tolerance,
+ *   totalElements: attrs.n_points,
+ *   chunkSize: attrs.chunk_size,
+ *   extendDims: attrs.extend_to_all,
+ * }).execute();
  * ```
  */
 export class SpatialQueryBuilder {
-  private chunkBounds: Float32Array;
-  private numChunks: number;
-  private ndim: number;
-  private chunkSize: number;
-  private totalElements: number;
-  private viewState: BaseViewState;
+  private readonly chunkBounds: Float32Array;
+  private readonly numChunks: number;
+  private readonly ndim: number;
+  private readonly chunkSize: number;
+  private readonly totalElements: number;
+  private readonly viewState: BaseViewState;
+  private readonly extendDims?: string[];
+  private readonly options: SpatialQueryOptions;
 
-  // Optional configuration
-  private extendDims?: string[];
-  private toleranceConfig: ToleranceConfig = {};
-
-  constructor(
-    index: {
-      chunkBounds: Float32Array;
-      chunkCount: number;
-      metadata: { ndim: number; chunk_size?: number };
-    },
-    viewState: BaseViewState,
-    totalElements: number,
-    chunkSize?: number
-  ) {
+  constructor(index: ChunkSpatialIndex, viewState: BaseViewState, options: SpatialQueryOptions) {
     this.chunkBounds = index.chunkBounds;
     this.numChunks = index.chunkCount;
     this.ndim = index.metadata.ndim;
-    this.chunkSize = chunkSize ?? index.metadata.chunk_size ?? 1000;
-    this.totalElements = totalElements;
+    this.chunkSize = options.chunkSize ?? index.metadata.chunk_size ?? 1000;
+    this.totalElements = options.totalElements;
     this.viewState = viewState;
+    this.extendDims = options.extendDims;
+    this.options = options;
   }
 
   /**
-   * Configure extend_to_all dimensions.
-   */
-  withExtendToAll(extendDims: string[] | undefined): this {
-    this.extendDims = extendDims;
-    return this;
-  }
-
-  /**
-   * Configure max radius for tolerance fallback.
-   */
-  withMaxRadius(maxRadius: number): this {
-    this.toleranceConfig.maxRadius = maxRadius;
-    return this;
-  }
-
-  /**
-   * Configure default tolerance for hidden dimensions.
-   */
-  withDefaultTolerance(tolerance: number): this {
-    this.toleranceConfig.defaultTolerance = tolerance;
-    return this;
-  }
-
-  /**
-   * Configure step multiplier for tolerance calculation.
-   */
-  withStepMultiplier(multiplier: number): this {
-    this.toleranceConfig.stepMultiplier = multiplier;
-    return this;
-  }
-
-  /**
-   * Execute the spatial query.
+   * Run the query. Returns merged load ranges for visible elements.
    *
-   * @returns Merged load ranges for visible elements
+   * Short-circuits to "load all" when `extendDims` is active for any currently
+   * hidden dimension (the user is navigating across an extended axis).
    */
   async execute(): Promise<LoadRange[]> {
-    // Check for extend_to_all - if applicable, return all elements
-    if (shouldExtendVisibility(this.extendDims, this.viewState, this.viewState.dimensions)) {
+    if (shouldExtendVisibility(this.extendDims, this.viewState)) {
       log.query(
         Modules.SPATIAL_INDEX,
         `Extending visibility across: ${this.extendDims?.join(', ')}`
@@ -406,9 +278,8 @@ export class SpatialQueryBuilder {
       return createLoadAllRange(this.totalElements);
     }
 
-    // Build query position and tolerance
     const queryPosition = buildQueryPosition(this.viewState, this.ndim);
-    const queryTolerance = computeQueryTolerance(this.viewState, this.ndim, this.toleranceConfig);
+    const queryTolerance = this.resolveTolerance();
 
     log.query(
       Modules.SPATIAL_INDEX,
@@ -419,7 +290,6 @@ export class SpatialQueryBuilder {
       `Query: tol=[${queryTolerance.map((t) => (t > 1e9 ? '∞' : t.toFixed(2))).join(', ')}]`
     );
 
-    // Execute query
     const chunkIndices = executeSpatialQuery({
       chunkBounds: this.chunkBounds,
       queryPosition,
@@ -428,8 +298,21 @@ export class SpatialQueryBuilder {
       ndim: this.ndim,
     });
 
-    // Convert to ranges and merge
     const ranges = chunkIndicesToRanges(chunkIndices, this.chunkSize, this.totalElements);
     return mergeRanges(ranges);
+  }
+
+  /** Pick tolerance source per the discriminated-union options. */
+  private resolveTolerance(): number[] {
+    if (this.options.tolerance !== undefined) {
+      return this.options.tolerance;
+    }
+    return computeTolerance(
+      this.options.geometryType,
+      this.viewState.displayDims,
+      this.ndim,
+      this.viewState.dimensions,
+      this.options.toleranceOptions
+    );
   }
 }

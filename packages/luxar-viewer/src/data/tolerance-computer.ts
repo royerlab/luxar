@@ -1,16 +1,20 @@
 /**
- * Unified tolerance computation for spatial queries across all geometry types.
+ * Canonical tolerance computer used by all geometry-specific spatial-index loaders.
  *
- * Extracted from SceneLoader and consolidates the tolerance logic scattered
- * across multiple modules (effective-radius-calculator, lines-chunk-spatial-index,
- * gsplats-chunk-spatial-index, spatial-query-builder).
+ * Each geometry type has slightly different requirements for hidden (non-displayed)
+ * dimensions:
+ * - **Points**: `maxRadius` for spatial dims, 0.5 for discrete dims (selected via
+ *   the `spatialExtendDims` option, which is the per-dimension flag array carried
+ *   by `EffectiveRadiusConfig`).
+ * - **Lines**: 0 for spatial dims (segment bounding boxes already include line
+ *   width extent), `step / 2` for discrete dims (or 0.5 fallback).
+ * - **GSplats**: `step × gsplatsDefaultTolerance` (default 3σ) for continuous dims,
+ *   0.5 for discrete dims, falling back to `gsplatsDefaultTolerance` when no step.
  *
- * Each geometry type has slightly different requirements for non-displayed dimensions:
- * - **Points**: Uses maxRadius for spatial dims, 0.5 for discrete dims
- * - **Lines**: 0 for spatial dims (segment bounds already include width), step/2 for discrete
- * - **GSplats**: step * defaultTolerance (3 sigma) for spatial, 0.5 for discrete
+ * Displayed dimensions always get infinite tolerance (1e10) regardless of type.
  *
- * Displayed dimensions always get infinite tolerance (1e10) across all types.
+ * Called from `SpatialQueryBuilder` (geometry-aware path) and directly from
+ * `scene-loader.ts` (lines projection clipping path).
  *
  * @module data/tolerance-computer
  */
@@ -54,20 +58,14 @@ export interface ToleranceOptions {
 const DISPLAYED_TOLERANCE = 1e10;
 
 /**
- * Compute per-dimension query tolerances for a spatial index query.
+ * Compute per-dimension query tolerances for a spatial-index query.
  *
- * This is the single entry point that replaces:
- * - `calculateSpatialQueryTolerance` (effective-radius-calculator.ts)
- * - `computeLinesTolerance` (lines-chunk-spatial-index.ts)
- * - `computeGSplatsTolerance` (gsplats-chunk-spatial-index.ts)
- * - `computeQueryTolerance` (loaders/spatial-query-builder.ts)
- *
- * @param geometryType - Geometry type determines the strategy for hidden dimensions
- * @param displayDims - Indices of the currently displayed (rendered) dimensions
- * @param ndim - Total number of dimensions
- * @param dimensions - Optional per-dimension metadata (step, discrete flag)
- * @param options - Additional options (maxRadius for points, gsplatsDefaultTolerance)
- * @returns Tolerance array of length ndim
+ * @param geometryType - Geometry type determines the strategy for hidden dimensions.
+ * @param displayDims - Indices of the currently displayed (rendered) dimensions.
+ * @param ndim - Total number of dimensions.
+ * @param dimensions - Optional per-dimension metadata (step, discrete flag).
+ * @param options - Additional options (maxRadius for points, gsplatsDefaultTolerance, etc.).
+ * @returns Tolerance array of length ndim.
  */
 export function computeTolerance(
   geometryType: GeometryType,
@@ -111,9 +109,8 @@ function computeHiddenDimTolerance(
 /**
  * Points hidden dimension tolerance.
  *
- * Spatial dimensions use maxRadius so points whose radius intersects the slice
+ * Spatial dimensions use `maxRadius` so points whose radius intersects the slice
  * are loaded. Discrete dimensions use 0.5 for floating-point safety.
- * Mirrors `calculateSpatialQueryTolerance` from effective-radius-calculator.ts.
  */
 function computePointsHiddenTolerance(
   dimIndex: number,
@@ -141,8 +138,7 @@ function computePointsHiddenTolerance(
  * Lines hidden dimension tolerance.
  *
  * Spatial dimensions get 0 because segment bounding boxes already include
- * the line width extent. Discrete dimensions use step/2 (or 0.5 fallback).
- * Mirrors `computeLinesTolerance` from lines-chunk-spatial-index.ts.
+ * the line width extent. Discrete dimensions use `step / 2` (or 0.5 fallback).
  */
 function computeLinesHiddenTolerance(dimInfo: DimensionInfo | undefined): number {
   if (dimInfo?.discrete) {
@@ -158,9 +154,8 @@ function computeLinesHiddenTolerance(dimInfo: DimensionInfo | undefined): number
 /**
  * GSplats hidden dimension tolerance.
  *
- * Discrete dimensions use 0.5. Continuous dimensions use step * defaultTolerance
- * (default 3.0 = 3 sigma of the Gaussian), falling back to defaultTolerance alone.
- * Mirrors `computeGSplatsTolerance` from gsplats-chunk-spatial-index.ts.
+ * Discrete dimensions use 0.5. Continuous dimensions use `step × defaultTolerance`
+ * (default 3.0 = 3 σ of the Gaussian), falling back to `defaultTolerance` alone.
  */
 function computeGSplatsHiddenTolerance(
   dimInfo: DimensionInfo | undefined,

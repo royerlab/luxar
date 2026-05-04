@@ -38,8 +38,7 @@ export interface ViewState {
    * **NOTE**: This is `SimpleDims` (with `.metadata`, `.ndim`, `.displayed`, `.currentStep`).
    * `BaseViewState.dimensions` in `loaders/base-types.ts` is `DimensionMetadata[]` (the raw
    * metadata array). When passing ViewState data to BaseViewState-consuming code (e.g.,
-   * SpatialQueryBuilder's `computeQueryTolerance`), extract `.metadata` first:
-   * `viewState.dimensions?.metadata`
+   * `SpatialQueryBuilder`), extract `.metadata` first: `viewState.dimensions?.metadata`.
    */
   dimensions?: SimpleDims;
 }

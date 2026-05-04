@@ -13,16 +13,8 @@
 import * as zarr from 'zarrita';
 import { get, slice } from 'zarrita';
 import { log, Modules, LogEmoji } from '../utils/log';
-import {
-  loadGSplatsChunkSpatialIndex,
-  queryGSplatsChunksForView,
-  chunkIndicesToSplatRanges,
-  mergeRanges,
-  computeToleranceFromViewState,
-} from './gsplats-chunk-spatial-index';
 import type {
   GSplatsMetadata,
-  GSplatsChunkSpatialIndex,
   LoadedGSplatsData,
   GSplatsDataLoader,
   GSplatsViewState,
@@ -30,7 +22,12 @@ import type {
 } from '../types/gsplats';
 import type { SceneNode } from './data-loader-types';
 import { ArrayDecoder, ArrayRefRegistry, type ArrayMetadata } from './array-decoder';
-import { RangeLoader, type LoadRange } from './loaders';
+import {
+  RangeLoader,
+  SpatialQueryBuilder,
+  type ChunkSpatialIndex,
+  type LoadRange,
+} from './loaders';
 import { choleskyPackedSize } from '../types/gsplats';
 import { GSplatsDataAccumulator, type AccumulatorStats } from './data-accumulator';
 import { config as appConfig } from '../config';
@@ -46,7 +43,7 @@ import { DecompressedChunkCache, wrapWithCache, ChunkPrefetcher } from '../cache
  * - Support for optional arrays (colors)
  */
 export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
-  private chunkIndex: GSplatsChunkSpatialIndex | null = null;
+  private chunkIndex: ChunkSpatialIndex | null = null;
   private zarrLocation: zarr.Location<zarr.Readable>;
   private node: SceneNode;
   private initPromise: Promise<void> | null = null;
@@ -106,7 +103,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
 
     // Load spatial index
     try {
-      this.chunkIndex = await loadGSplatsChunkSpatialIndex(this.zarrLocation, attrs);
+      this.chunkIndex = await this.loadChunkBounds(attrs);
 
       if (!this.chunkIndex) {
         log.info(
@@ -181,9 +178,8 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     // Initialize data accumulator for object pooling (Phase 1 optimization)
     // NOTE: Infrastructure-only for Phase 1. Full hot path integration deferred to Phase 2.
     if (appConfig.dataLoading.performance.useAccumulators) {
-      const metadata = attrs as GSplatsMetadata;
-      const totalSplats = this.chunkIndex?.metadata.n_splats || metadata.n_splats || 0;
-      const ndim = this.chunkIndex?.metadata.ndim || this.arrays.centers?.shape[1] || 3;
+      const totalSplats = attrs.n_splats || 0;
+      const ndim = attrs.ndim || this.arrays.centers?.shape[1] || 3;
 
       // Estimate initial capacity (at least 1024, or ~10% of total)
       const initialCapacity = Math.min(
@@ -388,75 +384,111 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
   }
 
   /**
-   * Query visible splat ranges based on view state
+   * Probe the gsplats `chunk_bounds` array.
+   *
+   * Returns null if spatial ordering is disabled in metadata, which is
+   * expected for small/non-ordered datasets (graceful fallback to full load).
+   */
+  private async loadChunkBounds(attrs: GSplatsMetadata): Promise<ChunkSpatialIndex | null> {
+    if (attrs.ordering === 'none') {
+      log.info(
+        Modules.GSPLATS_SPATIAL_INDEX_LOADER,
+        `GSplats node has no spatial ordering (ordering=${attrs.ordering})`
+      );
+      return null;
+    }
+
+    try {
+      const boundsArray = await zarr.open(this.zarrLocation.resolve('chunk_bounds'), {
+        kind: 'array',
+      });
+      const boundsData = await get(boundsArray);
+      const chunkBounds = new Float32Array(boundsData.data as ArrayBuffer | ArrayLike<number>);
+
+      // Reconcile expected vs actual chunk count and use the smaller value.
+      let chunkCount = Math.ceil(attrs.n_splats / attrs.chunk_size);
+      const actualChunks = Math.floor(chunkBounds.length / (attrs.ndim * 2));
+      if (chunkCount !== actualChunks) {
+        log.warning(
+          Modules.GSPLATS_SPATIAL_INDEX_LOADER,
+          `GSplats chunk count mismatch: metadata implies ${chunkCount} chunks, ` +
+            `but chunkBounds array has ${actualChunks} chunks — using min`
+        );
+        chunkCount = Math.min(chunkCount, actualChunks);
+      }
+
+      return {
+        chunkBounds,
+        chunkCount,
+        metadata: { ndim: attrs.ndim, chunk_size: attrs.chunk_size },
+      };
+    } catch (error: unknown) {
+      // 404 / Not Found is expected for datasets without spatial ordering;
+      // any other error is unexpected but non-fatal — log and fall back to
+      // loading all data, matching the legacy soft-fallback behaviour.
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (
+        errorMessage.includes('404') ||
+        errorMessage.includes('Not Found') ||
+        errorMessage.includes('Node not found')
+      ) {
+        log.info(
+          Modules.GSPLATS_SPATIAL_INDEX_LOADER,
+          'No chunk bounds found - GSplats dataset has no spatial indexing'
+        );
+      } else {
+        log.error(
+          Modules.GSPLATS_SPATIAL_INDEX_LOADER,
+          'Failed to load GSplats spatial index:',
+          error
+        );
+      }
+      return null;
+    }
+  }
+
+  /**
+   * Query visible splat ranges based on view state.
+   *
+   * Delegates the chunk-bounds AABB scan and range coalescing to the canonical
+   * `SpatialQueryBuilder`, which also handles the `extend_to_all` short-circuit.
+   * Returns a load-all range when no spatial index is available.
    */
   private async queryVisibleSplatRanges(viewState: GSplatsViewState): Promise<SplatRange[]> {
     const attrs = this.node.attrs as unknown as GSplatsMetadata;
-
-    // Check if this node has extend_to_all dimensions
     const extendDims: string[] = attrs.extend_to_all || [];
 
-    if (extendDims.length > 0) {
-      // DEFENSIVE CHECK: Warn if dimensions not available for extend_to_all
-      if (!viewState.dimensions || viewState.dimensions.length === 0) {
-        log.warning(
-          Modules.GSPLATS_SPATIAL_INDEX_LOADER,
-          `extend_to_all=[${extendDims.join(', ')}] specified for ${this.node.path} but ` +
-            'viewState.dimensions is undefined. extend_to_all will not work. ' +
-            'Ensure scene dimensions are initialized before loading nodes.'
-        );
-      }
-
-      // Check if we're navigating through an extended dimension
-      const currentNonDisplayedDims: string[] =
-        viewState.dimensions
-          ?.filter((_meta: { name?: string }, idx: number) => !viewState.displayDims.includes(idx))
-          ?.map((meta: { name?: string }) => meta.name)
-          ?.filter((name: string | undefined): name is string => !!name) || [];
-
-      const isExtending = extendDims.some((edim: string) => currentNonDisplayedDims.includes(edim));
-
-      if (isExtending) {
-        if (!this._initialLoadDone) {
-          log.custom(
-            LogEmoji.BROADCAST,
-            Modules.GSPLATS_SPATIAL_INDEX_LOADER,
-            `Extending ${this.node.path} visibility across: ${extendDims.join(', ')}`
-          );
-        }
-        // Return all splats for extended dimensions
-        return [{ start: 0, end: attrs.n_splats }];
-      }
+    if (extendDims.length > 0 && (!viewState.dimensions || viewState.dimensions.length === 0)) {
+      log.warning(
+        Modules.GSPLATS_SPATIAL_INDEX_LOADER,
+        `extend_to_all=[${extendDims.join(', ')}] specified for ${this.node.path} but ` +
+          'viewState.dimensions is undefined. extend_to_all will not work. ' +
+          'Ensure scene dimensions are initialized before loading nodes.'
+      );
     }
 
     if (!this.chunkIndex) {
-      // No spatial index - load all splats
       return [{ start: 0, end: attrs.n_splats }];
     }
 
-    // Compute tolerance for queries
-    const tolerance = computeToleranceFromViewState(viewState);
-
-    // Ensure slicePosition has correct length
-    const slicePosition = new Array(attrs.ndim).fill(0);
-    for (let i = 0; i < Math.min(viewState.slicePosition.length, attrs.ndim); i++) {
-      slicePosition[i] = viewState.slicePosition[i] ?? 0;
+    if (!this._initialLoadDone && extendDims.length > 0) {
+      // Surface the broadcast emoji exactly once on first load to make it
+      // visible that this node is configured for extend_to_all visibility.
+      log.custom(
+        LogEmoji.BROADCAST,
+        Modules.GSPLATS_SPATIAL_INDEX_LOADER,
+        `${this.node.path} configured with extend_to_all: ${extendDims.join(', ')}`
+      );
     }
 
-    // Always query on main thread — AABB scan is O(chunks × ndim) and completes in
-    // microseconds. Worker roundtrips add ~3ms each (structured clone, postMessage,
-    // deserialization), which dominates when many nodes query concurrently (e.g. 50
-    // nodes × 3ms = 150ms of pure overhead for nanoseconds of actual computation).
-    const chunkIndices = queryGSplatsChunksForView(this.chunkIndex, slicePosition, tolerance);
+    const ranges = await new SpatialQueryBuilder(this.chunkIndex, viewState, {
+      geometryType: 'gsplats',
+      totalElements: attrs.n_splats,
+      chunkSize: attrs.chunk_size,
+      extendDims,
+    }).execute();
 
-    if (chunkIndices.length === 0) {
-      return [];
-    }
-
-    // Convert to ranges and merge
-    const ranges = chunkIndicesToSplatRanges(chunkIndices, attrs.chunk_size, attrs.n_splats);
-
-    return mergeRanges(ranges);
+    return ranges;
   }
 
   /**

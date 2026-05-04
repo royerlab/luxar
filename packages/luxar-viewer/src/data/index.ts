@@ -36,14 +36,16 @@ export type {
   LoaderStats,
 } from './data-loader-types';
 
-// Chunk-based spatial index (NEW)
+// Spatial query (canonical chunk-bounds API used by Points/Lines/GSplats).
+// Re-exports from the loaders barrel so the geometry-specific loaders only
+// import via `./loaders`.
 export {
-  loadChunkSpatialIndex,
-  queryChunksForView,
-  chunkIndicesToRanges,
-  mergePointRanges,
+  SpatialQueryBuilder,
   type ChunkSpatialIndex,
-} from './chunk-spatial-index';
+  type SpatialQueryOptions,
+  chunkIndicesToRanges,
+  mergeRanges,
+} from './loaders';
 
 // Directory navigation
 export { DirectoryNavigator } from './directory-navigator';
@@ -62,17 +64,6 @@ export {
   lerpVec3,
   distance3D,
 } from './lines-spatial-index-loader';
-export {
-  loadLinesChunkSpatialIndex,
-  querySegmentChunksForView,
-  queryVertexChunksForView,
-  computeLinesTolerance,
-  segmentChunkIndicesToRanges,
-  vertexChunkIndicesToRanges,
-  mergeRanges,
-  computeVertexChunksForIndices,
-  computeVertexRangesFromIndices,
-} from './lines-chunk-spatial-index';
 
 // Scene graph builder (extracted from SceneLoader for modularity)
 export { SceneGraphBuilder } from './scene-graph-builder';
