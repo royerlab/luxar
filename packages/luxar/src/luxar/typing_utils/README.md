@@ -55,7 +55,7 @@ Constant values used throughout Luxar.
 **Categories:**
 - **Version**: `LUXAR_VERSION_CURRENT`, `DEFAULT_ZARR_VERSION`
 - **Rendering**: `OPACITY_MIN/MAX`, `GAMMA_MIN/MAX`, `DEFAULT_BLENDING_MODE`, `SHARPNESS_MIN/MAX`
-- **Chunks**: `TARGET_CHUNK_BYTES`, `MIN_CHUNK_BYTES`, `MAX_CHUNK_BYTES` (byte-based single source of truth). Legacy element-count constants are deprecated lazy attributes and emit `DeprecationWarning`.
+- **Chunks**: `TARGET_CHUNK_BYTES`, `MIN_CHUNK_BYTES`, `MAX_CHUNK_BYTES` (byte-based single source of truth). Legacy element-count constants (`CHUNK_SIZE_*`, `DEFAULT_CHUNK_SIZE`) have been removed; use the byte-based names directly.
 - **Memory**: `KB_TO_BYTES`, `MB_TO_BYTES`, `GB_TO_BYTES`
 - **Limits**: `MAX_POINTS_RECOMMENDED`, `MAX_POINTS_WARNING`, `MIN_POINT_RADIUS`, `MAX_POINT_RADIUS`
 - **Categorical**: `MIN_CATEGORIES`, `MAX_CATEGORY_LABEL_LENGTH`, `CATEGORICAL_STEP`

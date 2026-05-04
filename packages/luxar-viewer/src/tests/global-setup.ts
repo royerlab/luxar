@@ -5,36 +5,44 @@
  * If any are missing, runs the generator script automatically.
  */
 
-import { existsSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { execSync } from 'child_process';
 import { resolve } from 'path';
 import { fileURLToPath } from 'url';
-
-/** All zarr fixtures that generate_test_data.py produces. */
-const EXPECTED_FIXTURES = [
-  'test_broadcasting.zarr',
-  'test_lut.zarr',
-  'test_quantization.zarr',
-  'test_array_refs.zarr',
-  'test_mixed.zarr',
-  'test_4d.zarr',
-  'test_hierarchical_transforms.zarr',
-  'test_hdr_colors.zarr',
-  'test_integer_colors.zarr',
-  'test_log_scalar.zarr',
-  'test_4d_scalar_lut.zarr',
-  'test_uint16_quantization.zarr',
-  'test_sharpness_range.zarr',
-  'test_nd_transforms.zarr',
-  'test_lines.zarr',
-  'test_gsplats.zarr',
-];
 
 // Use import.meta.url for reliable path resolution in vitest global setup
 const THIS_DIR = resolve(fileURLToPath(import.meta.url), '..');
 const VIEWER_ROOT = resolve(THIS_DIR, '../..');
 const FIXTURES_DIR = resolve(VIEWER_ROOT, 'tests/fixtures');
 const PROJECT_ROOT = resolve(VIEWER_ROOT, '../..');
+const GENERATOR_PATH = resolve(VIEWER_ROOT, 'tests/fixtures/generate_test_data.py');
+
+/**
+ * Parse fixture names from generate_test_data.py — the single source of truth.
+ *
+ * Each fixture is written by an `output = FIXTURES_DIR / "<name>.zarr"` line.
+ * Deriving the list at runtime instead of duplicating it here means the TS
+ * side cannot silently drift when fixtures are added or renamed in Python.
+ */
+function parseGeneratedFixtureNames(): string[] {
+  const source = readFileSync(GENERATOR_PATH, 'utf-8');
+  const re = /FIXTURES_DIR\s*\/\s*"([^"]+\.zarr)"/g;
+  const names = new Set<string>();
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(source)) !== null) {
+    names.add(m[1]);
+  }
+  if (names.size === 0) {
+    throw new Error(
+      `[test-setup] No fixtures parsed from ${GENERATOR_PATH} — ` +
+        'expected pattern `FIXTURES_DIR / "test_*.zarr"`. ' +
+        'The generator file moved or its structure changed; update this parser.'
+    );
+  }
+  return [...names].sort();
+}
+
+const EXPECTED_FIXTURES = parseGeneratedFixtureNames();
 
 export async function setup(): Promise<void> {
   const missing = EXPECTED_FIXTURES.filter((name) => !existsSync(resolve(FIXTURES_DIR, name)));
