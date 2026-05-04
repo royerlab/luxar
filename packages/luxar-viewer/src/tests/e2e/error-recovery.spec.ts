@@ -224,6 +224,9 @@ test.describe('Error Recovery - WebGL Failures', () => {
     await page.goto('/?debug');
     await waitForLuxarReady(page);
 
+    // Snapshot state before context loss so we can verify it survives the cycle
+    const stateBefore = await getLuxarState(page);
+
     // Simulate WebGL context loss via the WEBGL_lose_context extension
     const contextLostTriggered = await page.evaluate(() => {
       const canvas = document.querySelector('canvas') as HTMLCanvasElement;
@@ -251,6 +254,25 @@ test.describe('Error Recovery - WebGL Failures', () => {
       });
 
       await page.waitForTimeout(1000);
+
+      // Verify the viewer state survived the loss/restore cycle. The
+      // post-restore handler in scene-manager.ts disposes/recreates
+      // post-processing and re-marks geometry/materials dirty so the next
+      // render re-uploads everything to the GPU.
+      const stateAfter = await getLuxarState(page);
+      expect(stateAfter.initialized).toBe(true);
+      expect(stateAfter.totalPoints).toBe(stateBefore.totalPoints);
+
+      // renderOnce must not throw against the restored context
+      const renderOk = await page.evaluate(() => {
+        try {
+          (window as any).__luxarDebug?.renderOnce?.();
+          return true;
+        } catch {
+          return false;
+        }
+      });
+      expect(renderOk).toBe(true);
     }
 
     // The key assertion: no unhandled exceptions during context loss/restore cycle
