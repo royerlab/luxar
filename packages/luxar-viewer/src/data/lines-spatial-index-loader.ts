@@ -14,17 +14,8 @@
 import * as zarr from 'zarrita';
 import { get, slice } from 'zarrita';
 import { log, Modules, LogEmoji } from '../utils/log';
-import {
-  loadLinesChunkSpatialIndex,
-  querySegmentChunksForView,
-  computeLinesTolerance,
-  segmentChunkIndicesToRanges,
-  mergeRanges,
-  computeVertexRangesFromIndices,
-} from './lines-chunk-spatial-index';
 import type {
   LinesMetadata,
-  LinesChunkSpatialIndex,
   LoadedLinesData,
   ProcessedLinesData,
   LinesDataLoader,
@@ -34,13 +25,65 @@ import type {
 } from '../types/lines';
 import type { SceneNode } from './data-loader-types';
 import { ArrayDecoder, ArrayRefRegistry, type ArrayMetadata } from './array-decoder';
-import { RangeLoader, type LoadRange } from './loaders';
+import {
+  RangeLoader,
+  SpatialQueryBuilder,
+  mergeRanges,
+  type ChunkSpatialIndex,
+  type LoadRange,
+} from './loaders';
 import { LinesDataAccumulator, type AccumulatorStats } from './data-accumulator';
 import { config as appConfig } from '../config';
 import type { UpdateProfiler, UpdateSession } from '../profiling/update-profiler';
 import { initWasm, getFallback } from '../wasm';
 import type { WasmModule } from '../wasm/types';
 import { DecompressedChunkCache, wrapWithCache, ChunkPrefetcher } from '../cache';
+
+/**
+ * Internal index shape: the lines loader carries both vertex and segment
+ * chunk bounds, but the chunk-bounds spatial query only consults the segment
+ * side. The vertex side is loaded so the loader can compute byte counts and
+ * (in the future) re-enable vertex-driven prefetching, but is not used in
+ * the current query path.
+ */
+interface LinesDualChunkIndex {
+  segmentIndex: ChunkSpatialIndex;
+  vertexChunkBounds: Float32Array;
+  vertexChunkCount: number;
+}
+
+/**
+ * Compute contiguous vertex ranges from a sorted list of vertex indices.
+ *
+ * Used after loading segment data: each segment references two vertex
+ * indices, and we batch the unique sorted indices into runs of consecutive
+ * integers so zarr loading touches the minimum number of chunks.
+ *
+ * This is genuinely lines-specific (operates on per-segment vertex indices,
+ * not on chunk bounds) and is therefore not in the canonical
+ * `loaders/spatial-query-builder` API.
+ */
+function computeVertexRangesFromIndices(sortedIndices: number[]): SegmentRange[] {
+  if (sortedIndices.length === 0) return [];
+
+  const ranges: SegmentRange[] = [];
+  let rangeStart = sortedIndices[0];
+  let rangeEnd = sortedIndices[0] + 1;
+
+  for (let i = 1; i < sortedIndices.length; i++) {
+    const idx = sortedIndices[i];
+    if (idx === rangeEnd) {
+      rangeEnd++;
+    } else {
+      ranges.push({ start: rangeStart, end: rangeEnd });
+      rangeStart = idx;
+      rangeEnd = idx + 1;
+    }
+  }
+  ranges.push({ start: rangeStart, end: rangeEnd });
+
+  return ranges;
+}
 
 // ============================================================================
 // WASM Module Caching for Hot Path Optimization
@@ -91,7 +134,7 @@ function getWasmModuleSync(): WasmModule {
  * - Per-vertex attribute interpolation for clipped segments
  */
 export class LinesSpatialIndexLoader implements LinesDataLoader {
-  private chunkIndex: LinesChunkSpatialIndex | null = null;
+  private chunkIndex: LinesDualChunkIndex | null = null;
   private zarrLocation: zarr.Location<zarr.Readable>;
   private node: SceneNode;
   private initPromise: Promise<void> | null = null;
@@ -150,9 +193,9 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
   async initialize(): Promise<void> {
     const attrs = this.node.attrs as unknown as LinesMetadata;
 
-    // Load dual spatial index
+    // Load dual spatial index (vertex + segment chunk bounds)
     try {
-      this.chunkIndex = await loadLinesChunkSpatialIndex(this.zarrLocation, attrs);
+      this.chunkIndex = await this.loadDualChunkBounds(attrs);
 
       if (!this.chunkIndex) {
         log.info(
@@ -162,7 +205,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       } else {
         log.query(
           Modules.LINES_LOADER,
-          `Lines index loaded: ${this.chunkIndex.vertexChunkCount} vertex chunks, ${this.chunkIndex.segmentChunkCount} segment chunks`
+          `Lines index loaded: ${this.chunkIndex.vertexChunkCount} vertex chunks, ${this.chunkIndex.segmentIndex.chunkCount} segment chunks`
         );
       }
     } catch (error) {
@@ -240,10 +283,9 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     // Initialize data accumulator for object pooling (Phase 1 optimization)
     // NOTE: Infrastructure-only for Phase 1. Full hot path integration deferred to Phase 2.
     if (appConfig.dataLoading.performance.useAccumulators) {
-      const metadata = attrs as LinesMetadata;
-      const totalSegments = this.chunkIndex?.metadata.n_segments || metadata.n_segments || 0;
-      const totalVertices = this.chunkIndex?.metadata.n_vertices || metadata.n_vertices || 0;
-      const ndim = this.chunkIndex?.metadata.ndim || this.arrays.vertices?.shape[1] || 3;
+      const totalSegments = attrs.n_segments || 0;
+      const totalVertices = attrs.n_vertices || 0;
+      const ndim = attrs.ndim || this.arrays.vertices?.shape[1] || 3;
 
       // Estimate initial capacity (at least 1024 segments, or ~10% of total)
       const initialSegmentCap = Math.min(
@@ -558,81 +600,126 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
   }
 
   /**
-   * Query visible segment ranges based on view state
+   * Probe both `vertex_chunk_bounds` and `segment_chunk_bounds` from zarr.
+   *
+   * Returns null when spatial ordering is disabled, expected for small/non-
+   * ordered datasets (graceful fallback to full load).
    */
-  private async queryVisibleSegmentRanges(viewState: LinesViewState): Promise<SegmentRange[]> {
-    const attrs = this.node.attrs as unknown as LinesMetadata;
+  private async loadDualChunkBounds(attrs: LinesMetadata): Promise<LinesDualChunkIndex | null> {
+    if (attrs.ordering === 'none' || !attrs.vertex_ordering || !attrs.segment_ordering) {
+      log.info(
+        Modules.LINES_LOADER,
+        `Lines node has no spatial ordering (ordering=${attrs.ordering})`
+      );
+      return null;
+    }
 
-    // Check if this node has extend_to_all dimensions
-    const extendDims: string[] = this.node.attrs.extend_to_all || [];
+    try {
+      const vertexBoundsArray = await zarr.open(this.zarrLocation.resolve('vertex_chunk_bounds'), {
+        kind: 'array',
+      });
+      const vertexBoundsData = await get(vertexBoundsArray);
+      const vertexChunkBounds = new Float32Array(
+        vertexBoundsData.data as ArrayBuffer | ArrayLike<number>
+      );
 
-    if (extendDims.length > 0) {
-      // DEFENSIVE CHECK: Warn if dimensions not available for extend_to_all
-      if (!viewState.dimensions || viewState.dimensions.length === 0) {
+      const segmentBoundsArray = await zarr.open(
+        this.zarrLocation.resolve('segment_chunk_bounds'),
+        { kind: 'array' }
+      );
+      const segmentBoundsData = await get(segmentBoundsArray);
+      const segmentChunkBounds = new Float32Array(
+        segmentBoundsData.data as ArrayBuffer | ArrayLike<number>
+      );
+
+      const vertexChunkCount = Math.ceil(attrs.n_vertices / attrs.vertex_ordering.chunk_size);
+      const segmentChunkCount = Math.ceil(attrs.n_segments / attrs.segment_ordering.chunk_size);
+
+      const expectedVertexSize = vertexChunkCount * attrs.ndim * 2;
+      const expectedSegmentSize = segmentChunkCount * attrs.ndim * 2;
+      if (vertexChunkBounds.length !== expectedVertexSize) {
         log.warning(
           Modules.LINES_LOADER,
-          `extend_to_all=[${extendDims.join(', ')}] specified for ${this.node.path} but ` +
-            'viewState.dimensions is undefined. extend_to_all will not work. ' +
-            'Ensure scene dimensions are initialized before loading nodes.'
+          `Vertex bounds size mismatch: got ${vertexChunkBounds.length}, expected ${expectedVertexSize}`
+        );
+      }
+      if (segmentChunkBounds.length !== expectedSegmentSize) {
+        log.warning(
+          Modules.LINES_LOADER,
+          `Segment bounds size mismatch: got ${segmentChunkBounds.length}, expected ${expectedSegmentSize}`
         );
       }
 
-      // Check if we're navigating through an extended dimension
-      // LinesViewState.dimensions is DimensionMetadata[] directly
-      const currentNonDisplayedDims: string[] =
-        viewState.dimensions
-          ?.filter((_meta: { name?: string }, idx: number) => !viewState.displayDims.includes(idx))
-          ?.map((meta: { name?: string }) => meta.name)
-          ?.filter((name: string | undefined): name is string => !!name) || [];
-
-      const isExtending = extendDims.some((edim: string) => currentNonDisplayedDims.includes(edim));
-
-      if (isExtending) {
-        if (!this._initialLoadDone) {
-          log.custom(
-            LogEmoji.BROADCAST,
-            Modules.LINES_LOADER,
-            `Extending ${this.node.path} visibility across: ${extendDims.join(', ')}`
-          );
-        }
-        // Return all segments for extended dimensions
-        return [{ start: 0, end: attrs.n_segments }];
+      return {
+        segmentIndex: {
+          chunkBounds: segmentChunkBounds,
+          chunkCount: segmentChunkCount,
+          metadata: { ndim: attrs.ndim, chunk_size: attrs.segment_ordering.chunk_size },
+        },
+        vertexChunkBounds,
+        vertexChunkCount,
+      };
+    } catch (error: unknown) {
+      // 404 / Not Found is expected for datasets without spatial ordering;
+      // any other error is unexpected but non-fatal — log and fall back to
+      // loading all data, matching the legacy soft-fallback behaviour.
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (
+        errorMessage.includes('404') ||
+        errorMessage.includes('Not Found') ||
+        errorMessage.includes('Node not found')
+      ) {
+        log.info(
+          Modules.LINES_LOADER,
+          'No chunk bounds found - Lines dataset has no spatial indexing'
+        );
+      } else {
+        log.error(Modules.LINES_LOADER, 'Failed to load Lines spatial index:', error);
       }
+      return null;
+    }
+  }
+
+  /**
+   * Query visible segment ranges based on view state.
+   *
+   * Delegates the chunk-bounds AABB scan and range coalescing to the canonical
+   * `SpatialQueryBuilder` with `geometryType: 'lines'`. Returns a load-all
+   * range when no spatial index is available.
+   */
+  private async queryVisibleSegmentRanges(viewState: LinesViewState): Promise<SegmentRange[]> {
+    const attrs = this.node.attrs as unknown as LinesMetadata;
+    const extendDims: string[] = this.node.attrs.extend_to_all || [];
+
+    if (extendDims.length > 0 && (!viewState.dimensions || viewState.dimensions.length === 0)) {
+      log.warning(
+        Modules.LINES_LOADER,
+        `extend_to_all=[${extendDims.join(', ')}] specified for ${this.node.path} but ` +
+          'viewState.dimensions is undefined. extend_to_all will not work. ' +
+          'Ensure scene dimensions are initialized before loading nodes.'
+      );
     }
 
     if (!this.chunkIndex) {
-      // No spatial index - load all segments
       return [{ start: 0, end: attrs.n_segments }];
     }
 
-    // Compute tolerance for queries
-    const tolerance = viewState.dimensions
-      ? computeLinesTolerance(viewState.dimensions, viewState.displayDims)
-      : new Array(attrs.ndim).fill(0).map((_, i) => (viewState.displayDims.includes(i) ? 1e10 : 0));
-
-    // Ensure slicePosition has correct length
-    const slicePosition = new Array(attrs.ndim).fill(0);
-    for (let i = 0; i < Math.min(viewState.slicePosition.length, attrs.ndim); i++) {
-      slicePosition[i] = viewState.slicePosition[i] ?? 0;
+    if (!this._initialLoadDone && extendDims.length > 0) {
+      log.custom(
+        LogEmoji.BROADCAST,
+        Modules.LINES_LOADER,
+        `${this.node.path} configured with extend_to_all: ${extendDims.join(', ')}`
+      );
     }
 
-    // Always query on main thread — AABB scan is O(chunks × ndim) and completes in
-    // microseconds. Worker roundtrips add ~3ms each (structured clone, postMessage,
-    // deserialization), which dominates when many nodes query concurrently.
-    const chunkIndices = querySegmentChunksForView(this.chunkIndex, slicePosition, tolerance);
+    const ranges = await new SpatialQueryBuilder(this.chunkIndex.segmentIndex, viewState, {
+      geometryType: 'lines',
+      totalElements: attrs.n_segments,
+      chunkSize: attrs.segment_ordering!.chunk_size,
+      extendDims,
+    }).execute();
 
-    if (chunkIndices.length === 0) {
-      return [];
-    }
-
-    // Convert to ranges and merge
-    const ranges = segmentChunkIndicesToRanges(
-      chunkIndices,
-      this.chunkIndex.metadata.segment_ordering!.chunk_size,
-      attrs.n_segments
-    );
-
-    return mergeRanges(ranges);
+    return ranges;
   }
 
   /**

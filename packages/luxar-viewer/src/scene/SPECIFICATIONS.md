@@ -95,7 +95,6 @@ interface PointsUserData {
   nodeType: 'points';
   loader: PointSpatialIndexLoader; // Data loader instance
   attrs: ZarrGroupAttrs; // Node attributes from zarr
-  spatialIndex?: PointSpatialIndex; // Spatial index for queries (optional)
 }
 ```
 
@@ -106,7 +105,6 @@ interface LinesUserData {
   nodeType: 'lines';
   loader: LinesSpatialIndexLoader; // Lines data loader instance
   attrs: LinesMetadata; // Node attributes from zarr
-  spatialIndex?: LinesChunkSpatialIndex; // Dual spatial index (optional)
   maxWidth: number; // Maximum line width (for bounding box expansion)
 }
 ```
@@ -1191,12 +1189,13 @@ sceneDimsManager.addListener(() => {
 
 ```typescript
 async function updateLinesForDimensions(linesObject: THREE.Mesh, dims: SimpleDims): Promise<void> {
-  const { loader, spatialIndex } = linesObject.userData as LinesUserData;
+  const { loader } = linesObject.userData as LinesUserData;
 
   // Calculate slice position and tolerance
   const slicePosition = getSlicePosition(dims);
-  // NOTE: segment_chunk_bounds already include line width, so spatial tolerance = 0
-  const tolerance = computeLinesTolerance(dims.dimensions);
+  // NOTE: segment_chunk_bounds already include line width, so spatial tolerance = 0.
+  // The unified `computeTolerance('lines', …)` enforces this rule.
+  const tolerance = computeTolerance('lines', dims.displayed, dims.ndim, dims.dimensions);
 
   // Load visible lines data
   const linesData = await loader.loadForView(slicePosition, tolerance);

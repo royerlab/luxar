@@ -126,23 +126,6 @@ export interface GSplatsMetadata {
 // Spatial Index Types
 // ============================================================================
 
-/**
- * Chunk-based spatial index for GSplats.
- *
- * GSplats use spatial ordering (Morton or Hilbert) for chunk-based loading.
- * Each chunk has a bounding box that includes splat extents (based on Cholesky factors).
- */
-export interface GSplatsChunkSpatialIndex {
-  /** GSplats metadata from zarr attributes */
-  metadata: GSplatsMetadata;
-
-  /** Chunk bounding boxes (num_chunks * ndim * 2), flattened row-major */
-  chunkBounds: Float32Array;
-
-  /** Computed: ceil(n_splats / chunk_size) */
-  chunkCount: number;
-}
-
 // ============================================================================
 // Loaded Data Types
 // ============================================================================
@@ -288,9 +271,6 @@ export interface GSplatsUserData {
 
   /** Zarr group attributes */
   attrs: GSplatsMetadata;
-
-  /** Spatial index for queries (optional, may not exist for non-ordered data) */
-  spatialIndex?: GSplatsChunkSpatialIndex;
 
   /** Currently visible splat count after nD slicing (updated on view change) */
   visibleSplatCount?: number;

@@ -1,101 +1,24 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   SpatialQueryBuilder,
-  computeQueryTolerance,
   buildQueryPosition,
   chunkIndicesToRanges,
   mergeRanges,
   shouldExtendVisibility,
   createLoadAllRange,
   executeSpatialQuery,
-  DISPLAYED_DIM_TOLERANCE,
+  type ChunkSpatialIndex,
 } from '../../../../data/loaders/spatial-query-builder';
 import type { BaseViewState } from '../../../../data/loaders/base-types';
 import type { DimensionMetadata } from '../../../../types/dims';
+import * as toleranceComputer from '../../../../data/tolerance-computer';
 
-describe('computeQueryTolerance', () => {
-  it('should set infinite tolerance for displayed dimensions', () => {
-    const viewState: BaseViewState = {
-      displayDims: [0, 1, 2],
-      slicePosition: [0, 0, 0],
-      tolerance: [],
-    };
-
-    const tolerance = computeQueryTolerance(viewState, 3);
-
-    expect(tolerance[0]).toBe(DISPLAYED_DIM_TOLERANCE);
-    expect(tolerance[1]).toBe(DISPLAYED_DIM_TOLERANCE);
-    expect(tolerance[2]).toBe(DISPLAYED_DIM_TOLERANCE);
-  });
-
-  it('should use step-based tolerance for hidden dimensions with step metadata', () => {
-    const dimensions: DimensionMetadata[] = [
-      { name: 'x', unit: 'um', scale: 1, step: 0.5 },
-      { name: 'y', unit: 'um', scale: 1, step: 0.5 },
-      { name: 'z', unit: 'um', scale: 1, step: 0.5 },
-      { name: 't', unit: 's', scale: 1, step: 1.0 },
-    ];
-
-    const viewState: BaseViewState = {
-      displayDims: [0, 1, 2], // Display x, y, z; hide t
-      slicePosition: [0, 0, 0, 5],
-      tolerance: [],
-      dimensions,
-    };
-
-    const tolerance = computeQueryTolerance(viewState, 4, { stepMultiplier: 1.0 });
-
-    expect(tolerance[0]).toBe(DISPLAYED_DIM_TOLERANCE); // Displayed
-    expect(tolerance[1]).toBe(DISPLAYED_DIM_TOLERANCE); // Displayed
-    expect(tolerance[2]).toBe(DISPLAYED_DIM_TOLERANCE); // Displayed
-    expect(tolerance[3]).toBe(1.0); // Hidden: step * 1.0
-  });
-
-  it('should use explicit tolerance from viewState for hidden dimensions', () => {
-    const viewState: BaseViewState = {
-      displayDims: [0, 1, 2],
-      slicePosition: [0, 0, 0, 5],
-      tolerance: [0, 0, 0, 2.5],
-    };
-
-    const tolerance = computeQueryTolerance(viewState, 4);
-
-    expect(tolerance[3]).toBe(2.5);
-  });
-
-  it('should use maxRadius as fallback for hidden dimensions', () => {
-    const viewState: BaseViewState = {
-      displayDims: [0, 1, 2],
-      slicePosition: [0, 0, 0, 5],
-      tolerance: [],
-    };
-
-    const tolerance = computeQueryTolerance(viewState, 4, { maxRadius: 5.0 });
-
-    expect(tolerance[3]).toBe(5.0);
-  });
-
-  it('should apply stepMultiplier correctly', () => {
-    const dimensions: DimensionMetadata[] = [
-      { name: 'x', unit: 'um', scale: 1, step: 0.5 },
-      { name: 't', unit: 's', scale: 1, step: 1.0 },
-    ];
-
-    const viewState: BaseViewState = {
-      displayDims: [0],
-      slicePosition: [0, 5],
-      tolerance: [],
-      dimensions,
-    };
-
-    const tolerance = computeQueryTolerance(viewState, 2, { stepMultiplier: 2.0 });
-
-    expect(tolerance[1]).toBe(2.0); // step (1.0) * multiplier (2.0)
-  });
-});
+// ============================================================================
+// buildQueryPosition
+// ============================================================================
 
 describe('buildQueryPosition', () => {
-  it('should build position array of correct length', () => {
+  it('builds position array padded to ndim', () => {
     const viewState: BaseViewState = {
       displayDims: [0, 1, 2],
       slicePosition: [1.0, 2.0, 3.0],
@@ -104,15 +27,22 @@ describe('buildQueryPosition', () => {
 
     const position = buildQueryPosition(viewState, 5);
 
-    expect(position).toHaveLength(5);
-    expect(position[0]).toBe(1.0);
-    expect(position[1]).toBe(2.0);
-    expect(position[2]).toBe(3.0);
-    expect(position[3]).toBe(0);
-    expect(position[4]).toBe(0);
+    expect(position).toEqual([1.0, 2.0, 3.0, 0, 0]);
   });
 
-  it('should handle short slicePosition', () => {
+  it('truncates when slicePosition is longer than ndim', () => {
+    const viewState: BaseViewState = {
+      displayDims: [0, 1, 2],
+      slicePosition: [1.0, 2.0, 3.0, 4.0, 5.0],
+      tolerance: [],
+    };
+
+    const position = buildQueryPosition(viewState, 3);
+
+    expect(position).toEqual([1.0, 2.0, 3.0]);
+  });
+
+  it('handles short slicePosition by padding with zero', () => {
     const viewState: BaseViewState = {
       displayDims: [0, 1, 2],
       slicePosition: [1.0],
@@ -121,253 +51,159 @@ describe('buildQueryPosition', () => {
 
     const position = buildQueryPosition(viewState, 3);
 
-    expect(position).toHaveLength(3);
-    expect(position[0]).toBe(1.0);
-    expect(position[1]).toBe(0);
-    expect(position[2]).toBe(0);
+    expect(position).toEqual([1.0, 0, 0]);
   });
 });
 
+// ============================================================================
+// chunkIndicesToRanges
+// ============================================================================
+
 describe('chunkIndicesToRanges', () => {
-  it('should convert chunk indices to ranges', () => {
+  it('converts chunk indices to ranges, clipping the last chunk', () => {
     const ranges = chunkIndicesToRanges([0, 2, 3], 1000, 3500);
 
     expect(ranges).toEqual([
       { start: 0, end: 1000 },
       { start: 2000, end: 3000 },
-      { start: 3000, end: 3500 }, // Last chunk is partial
+      { start: 3000, end: 3500 }, // clipped to totalElements
     ]);
   });
 
-  it('should handle single chunk', () => {
-    const ranges = chunkIndicesToRanges([1], 1000, 2000);
-
-    expect(ranges).toEqual([{ start: 1000, end: 2000 }]);
+  it('handles a single chunk', () => {
+    expect(chunkIndicesToRanges([1], 1000, 2000)).toEqual([{ start: 1000, end: 2000 }]);
   });
 
-  it('should handle empty input', () => {
-    const ranges = chunkIndicesToRanges([], 1000, 5000);
-
-    expect(ranges).toEqual([]);
+  it('handles empty input', () => {
+    expect(chunkIndicesToRanges([], 1000, 5000)).toEqual([]);
   });
 });
 
+// ============================================================================
+// mergeRanges
+// ============================================================================
+
 describe('mergeRanges', () => {
-  it('should merge overlapping ranges', () => {
-    const ranges = [
-      { start: 0, end: 100 },
-      { start: 50, end: 150 },
-    ];
-
-    const merged = mergeRanges(ranges);
-
-    expect(merged).toEqual([{ start: 0, end: 150 }]);
+  it('merges overlapping ranges', () => {
+    expect(
+      mergeRanges([
+        { start: 0, end: 100 },
+        { start: 50, end: 150 },
+      ])
+    ).toEqual([{ start: 0, end: 150 }]);
   });
 
-  it('should merge adjacent ranges', () => {
-    const ranges = [
-      { start: 0, end: 100 },
-      { start: 100, end: 200 },
-    ];
-
-    const merged = mergeRanges(ranges);
-
-    expect(merged).toEqual([{ start: 0, end: 200 }]);
+  it('merges adjacent ranges', () => {
+    expect(
+      mergeRanges([
+        { start: 0, end: 100 },
+        { start: 100, end: 200 },
+      ])
+    ).toEqual([{ start: 0, end: 200 }]);
   });
 
-  it('should not merge non-overlapping ranges', () => {
-    const ranges = [
-      { start: 0, end: 100 },
-      { start: 200, end: 300 },
-    ];
-
-    const merged = mergeRanges(ranges);
-
-    expect(merged).toEqual([
+  it('keeps non-overlapping ranges separate', () => {
+    expect(
+      mergeRanges([
+        { start: 0, end: 100 },
+        { start: 200, end: 300 },
+      ])
+    ).toEqual([
       { start: 0, end: 100 },
       { start: 200, end: 300 },
     ]);
   });
 
-  it('should handle unsorted input', () => {
-    const ranges = [
-      { start: 200, end: 300 },
-      { start: 0, end: 100 },
-      { start: 50, end: 150 },
-    ];
-
-    const merged = mergeRanges(ranges);
-
-    expect(merged).toEqual([
+  it('handles unsorted input', () => {
+    expect(
+      mergeRanges([
+        { start: 200, end: 300 },
+        { start: 0, end: 100 },
+        { start: 50, end: 150 },
+      ])
+    ).toEqual([
       { start: 0, end: 150 },
       { start: 200, end: 300 },
     ]);
   });
 
-  it('should handle empty input', () => {
+  it('handles empty input', () => {
     expect(mergeRanges([])).toEqual([]);
   });
 });
 
+// ============================================================================
+// shouldExtendVisibility
+// ============================================================================
+
 describe('shouldExtendVisibility', () => {
-  const dimMetadata: DimensionMetadata[] = [
+  const dims: DimensionMetadata[] = [
     { name: 'x', unit: 'um', scale: 1 },
     { name: 'y', unit: 'um', scale: 1 },
     { name: 'z', unit: 'um', scale: 1 },
     { name: 't', unit: 's', scale: 1 },
   ];
 
-  it('should return true when extending across hidden dimension', () => {
+  it('returns true when an extend_to_all dim is currently hidden', () => {
     const viewState: BaseViewState = {
-      displayDims: [0, 1, 2], // x, y, z displayed; t hidden
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0, 5],
+      tolerance: [],
+      dimensions: dims,
+    };
+    expect(shouldExtendVisibility(['t'], viewState)).toBe(true);
+  });
+
+  it('returns false when the extend_to_all dim is currently displayed', () => {
+    const viewState: BaseViewState = {
+      displayDims: [0, 1, 3],
+      slicePosition: [0, 0, 0, 5],
+      tolerance: [],
+      dimensions: dims,
+    };
+    expect(shouldExtendVisibility(['t'], viewState)).toBe(false);
+  });
+
+  it('returns false when extendDims is empty or undefined', () => {
+    const viewState: BaseViewState = {
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0, 5],
+      tolerance: [],
+      dimensions: dims,
+    };
+    expect(shouldExtendVisibility([], viewState)).toBe(false);
+    expect(shouldExtendVisibility(undefined, viewState)).toBe(false);
+  });
+
+  it('returns false when viewState lacks dimension metadata', () => {
+    const viewState: BaseViewState = {
+      displayDims: [0, 1, 2],
       slicePosition: [0, 0, 0, 5],
       tolerance: [],
     };
-
-    expect(shouldExtendVisibility(['t'], viewState, dimMetadata)).toBe(true);
-  });
-
-  it('should return false when extend_to_all dimension is displayed', () => {
-    const viewState: BaseViewState = {
-      displayDims: [0, 1, 3], // x, y, t displayed; z hidden
-      slicePosition: [0, 0, 0, 5],
-      tolerance: [],
-    };
-
-    expect(shouldExtendVisibility(['t'], viewState, dimMetadata)).toBe(false);
-  });
-
-  it('should return false when extendDims is empty', () => {
-    const viewState: BaseViewState = {
-      displayDims: [0, 1, 2],
-      slicePosition: [0, 0, 0],
-      tolerance: [],
-    };
-
-    expect(shouldExtendVisibility([], viewState, dimMetadata)).toBe(false);
-  });
-
-  it('should return false when extendDims is undefined', () => {
-    const viewState: BaseViewState = {
-      displayDims: [0, 1, 2],
-      slicePosition: [0, 0, 0],
-      tolerance: [],
-    };
-
-    expect(shouldExtendVisibility(undefined, viewState, dimMetadata)).toBe(false);
-  });
-
-  it('should return false when dimMetadata is missing', () => {
-    const viewState: BaseViewState = {
-      displayDims: [0, 1, 2],
-      slicePosition: [0, 0, 0],
-      tolerance: [],
-    };
-
-    expect(shouldExtendVisibility(['t'], viewState, undefined)).toBe(false);
-    expect(shouldExtendVisibility(['t'], viewState, [])).toBe(false);
+    expect(shouldExtendVisibility(['t'], viewState)).toBe(false);
   });
 });
+
+// ============================================================================
+// createLoadAllRange
+// ============================================================================
 
 describe('createLoadAllRange', () => {
-  it('should create single range covering all elements', () => {
-    const ranges = createLoadAllRange(10000);
-
-    expect(ranges).toEqual([{ start: 0, end: 10000 }]);
+  it('produces a single range covering all elements', () => {
+    expect(createLoadAllRange(10000)).toEqual([{ start: 0, end: 10000 }]);
   });
 });
 
-describe('SpatialQueryBuilder', () => {
-  const createMockIndex = (numChunks: number, ndim: number) => ({
-    chunkBounds: new Float32Array(numChunks * ndim * 2),
-    chunkCount: numChunks,
-    metadata: { ndim, chunk_size: 1000 },
-  });
-
-  it('should build and execute query', async () => {
-    // Create a simple 3D index with 2 chunks
-    const index = createMockIndex(2, 3);
-    // Chunk 0: [0,50] x [0,50] x [0,50]
-    index.chunkBounds.set([0, 50, 0, 50, 0, 50], 0);
-    // Chunk 1: [50,100] x [50,100] x [50,100]
-    index.chunkBounds.set([50, 100, 50, 100, 50, 100], 6);
-
-    const viewState: BaseViewState = {
-      displayDims: [0, 1, 2],
-      slicePosition: [25, 25, 25], // Should hit chunk 0
-      tolerance: [10, 10, 10],
-    };
-
-    const builder = new SpatialQueryBuilder(index, viewState, 2000, 1000);
-    const ranges = await builder.execute();
-
-    // With infinite tolerance for displayed dims, both chunks should match
-    expect(ranges.length).toBeGreaterThan(0);
-  });
-
-  it('should return all elements when extending visibility', async () => {
-    const index = createMockIndex(2, 4);
-    const dimMetadata: DimensionMetadata[] = [
-      { name: 'x', unit: 'um', scale: 1 },
-      { name: 'y', unit: 'um', scale: 1 },
-      { name: 'z', unit: 'um', scale: 1 },
-      { name: 't', unit: 's', scale: 1 },
-    ];
-
-    const viewState: BaseViewState = {
-      displayDims: [0, 1, 2], // t is hidden
-      slicePosition: [0, 0, 0, 5],
-      tolerance: [],
-      dimensions: dimMetadata,
-    };
-
-    const builder = new SpatialQueryBuilder(index, viewState, 5000, 1000);
-    const ranges = await builder.withExtendToAll(['t']).execute();
-
-    // Should return single range covering all elements
-    expect(ranges).toEqual([{ start: 0, end: 5000 }]);
-  });
-
-  it('should support fluent configuration', async () => {
-    const index = createMockIndex(1, 3);
-    index.chunkBounds.set([0, 100, 0, 100, 0, 100], 0);
-
-    const viewState: BaseViewState = {
-      displayDims: [0, 1, 2],
-      slicePosition: [50, 50, 50],
-      tolerance: [],
-    };
-
-    const builder = new SpatialQueryBuilder(index, viewState, 1000, 1000);
-    const ranges = await builder
-      .withMaxRadius(10)
-      .withDefaultTolerance(5)
-      .withStepMultiplier(2.0)
-      .execute();
-
-    expect(ranges.length).toBeGreaterThan(0);
-  });
-});
+// ============================================================================
+// executeSpatialQuery
+// ============================================================================
 
 describe('executeSpatialQuery', () => {
-  it('should return matching chunk indices for intersecting query', () => {
+  it('returns matching chunk indices for an intersecting query', () => {
     // Two chunks in 3D: [0,50]³ and [50,100]³
-    const chunkBounds = new Float32Array([
-      0,
-      50,
-      0,
-      50,
-      0,
-      50, // Chunk 0
-      50,
-      100,
-      50,
-      100,
-      50,
-      100, // Chunk 1
-    ]);
+    const chunkBounds = new Float32Array([0, 50, 0, 50, 0, 50, 50, 100, 50, 100, 50, 100]);
 
-    // Query at [25,25,25] with tight tolerance — should hit only chunk 0
     const result = executeSpatialQuery({
       chunkBounds,
       queryPosition: [25, 25, 25],
@@ -379,7 +215,7 @@ describe('executeSpatialQuery', () => {
     expect(result).toEqual([0]);
   });
 
-  it('should return empty array when no chunks intersect', () => {
+  it('returns empty when no chunks intersect', () => {
     const chunkBounds = new Float32Array([0, 50, 0, 50, 0, 50]);
 
     const result = executeSpatialQuery({
@@ -393,50 +229,11 @@ describe('executeSpatialQuery', () => {
     expect(result).toEqual([]);
   });
 
-  it('should return synchronously (not a Promise)', () => {
-    const chunkBounds = new Float32Array([0, 100, 0, 100, 0, 100]);
-
-    const result = executeSpatialQuery({
-      chunkBounds,
-      queryPosition: [50, 50, 50],
-      queryTolerance: [1e10, 1e10, 1e10],
-      numChunks: 1,
-      ndim: 3,
-    });
-
-    // Verify it's a plain array, not a Promise
-    expect(Array.isArray(result)).toBe(true);
-    expect(result).not.toBeInstanceOf(Promise);
-    expect(result).toEqual([0]);
-  });
-
-  it('should match all chunks with infinite tolerance', () => {
-    // 3 chunks in 4D
+  it('matches all chunks with infinite tolerance', () => {
+    // 3 chunks in 4D, last one far from origin
     const chunkBounds = new Float32Array([
-      0,
-      10,
-      0,
-      10,
-      0,
-      10,
-      0,
-      10, // Chunk 0
-      10,
-      20,
-      10,
-      20,
-      10,
-      20,
-      10,
-      20, // Chunk 1
-      90,
+      0, 10, 0, 10, 0, 10, 0, 10, 10, 20, 10, 20, 10, 20, 10, 20, 90, 100, 90, 100, 90, 100, 90,
       100,
-      90,
-      100,
-      90,
-      100,
-      90,
-      100, // Chunk 2 (far away)
     ]);
 
     const result = executeSpatialQuery({
@@ -448,5 +245,193 @@ describe('executeSpatialQuery', () => {
     });
 
     expect(result).toEqual([0, 1, 2]);
+  });
+
+  it('returns synchronously (not a Promise)', () => {
+    const chunkBounds = new Float32Array([0, 100, 0, 100, 0, 100]);
+    const result = executeSpatialQuery({
+      chunkBounds,
+      queryPosition: [50, 50, 50],
+      queryTolerance: [1e10, 1e10, 1e10],
+      numChunks: 1,
+      ndim: 3,
+    });
+    expect(Array.isArray(result)).toBe(true);
+    expect(result).not.toBeInstanceOf(Promise);
+  });
+});
+
+// ============================================================================
+// SpatialQueryBuilder
+// ============================================================================
+
+describe('SpatialQueryBuilder', () => {
+  function makeIndex(numChunks: number, ndim: number, chunkSize = 1000): ChunkSpatialIndex {
+    return {
+      chunkBounds: new Float32Array(numChunks * ndim * 2),
+      chunkCount: numChunks,
+      metadata: { ndim, chunk_size: chunkSize },
+    };
+  }
+
+  describe('geometry-aware path', () => {
+    it('delegates tolerance to computeTolerance with the given geometryType', async () => {
+      const index = makeIndex(1, 3);
+      // Chunk 0 covers [0,100]³
+      index.chunkBounds.set([0, 100, 0, 100, 0, 100], 0);
+
+      const viewState: BaseViewState = {
+        displayDims: [0, 1, 2],
+        slicePosition: [50, 50, 50],
+        tolerance: [],
+      };
+
+      const spy = vi.spyOn(toleranceComputer, 'computeTolerance');
+
+      await new SpatialQueryBuilder(index, viewState, {
+        geometryType: 'gsplats',
+        totalElements: 1000,
+      }).execute();
+
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy).toHaveBeenCalledWith(
+        'gsplats',
+        viewState.displayDims,
+        index.metadata.ndim,
+        viewState.dimensions,
+        undefined
+      );
+
+      spy.mockRestore();
+    });
+
+    it('forwards toleranceOptions to computeTolerance', async () => {
+      const index = makeIndex(1, 3);
+      index.chunkBounds.set([0, 100, 0, 100, 0, 100], 0);
+      const viewState: BaseViewState = {
+        displayDims: [0, 1, 2],
+        slicePosition: [50, 50, 50],
+        tolerance: [],
+      };
+
+      const spy = vi.spyOn(toleranceComputer, 'computeTolerance');
+
+      await new SpatialQueryBuilder(index, viewState, {
+        geometryType: 'points',
+        toleranceOptions: { maxRadius: 5.0, spatialExtendDims: [true, true, true] },
+        totalElements: 1000,
+      }).execute();
+
+      expect(spy).toHaveBeenCalledWith('points', [0, 1, 2], 3, undefined, {
+        maxRadius: 5.0,
+        spatialExtendDims: [true, true, true],
+      });
+
+      spy.mockRestore();
+    });
+  });
+
+  describe('pre-computed tolerance path', () => {
+    it('uses caller-supplied tolerance verbatim, bypassing computeTolerance', async () => {
+      const index = makeIndex(2, 3);
+      // Chunk 0: [0,50]³
+      index.chunkBounds.set([0, 50, 0, 50, 0, 50], 0);
+      // Chunk 1: [60,100]³ (gap from 50–60)
+      index.chunkBounds.set([60, 100, 60, 100, 60, 100], 6);
+
+      const viewState: BaseViewState = {
+        displayDims: [0, 1, 2],
+        slicePosition: [25, 25, 25],
+        tolerance: [],
+      };
+
+      const spy = vi.spyOn(toleranceComputer, 'computeTolerance');
+
+      // Tight tolerance — only chunk 0 should match
+      const ranges = await new SpatialQueryBuilder(index, viewState, {
+        tolerance: [10, 10, 10],
+        totalElements: 2000,
+      }).execute();
+
+      expect(spy).not.toHaveBeenCalled();
+      expect(ranges).toEqual([{ start: 0, end: 1000 }]);
+
+      spy.mockRestore();
+    });
+  });
+
+  describe('extend-to-all short-circuit', () => {
+    it('returns single load-all range when an extendDim is hidden', async () => {
+      const index = makeIndex(2, 4);
+      const dims: DimensionMetadata[] = [
+        { name: 'x', unit: 'um', scale: 1 },
+        { name: 'y', unit: 'um', scale: 1 },
+        { name: 'z', unit: 'um', scale: 1 },
+        { name: 't', unit: 's', scale: 1 },
+      ];
+
+      const viewState: BaseViewState = {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 5],
+        tolerance: [],
+        dimensions: dims,
+      };
+
+      const ranges = await new SpatialQueryBuilder(index, viewState, {
+        geometryType: 'lines',
+        totalElements: 5000,
+        extendDims: ['t'],
+      }).execute();
+
+      expect(ranges).toEqual([{ start: 0, end: 5000 }]);
+    });
+
+    it('runs the normal query when no extendDim is hidden', async () => {
+      const index = makeIndex(1, 3);
+      index.chunkBounds.set([0, 100, 0, 100, 0, 100], 0);
+      const dims: DimensionMetadata[] = [
+        { name: 'x', unit: 'um', scale: 1 },
+        { name: 'y', unit: 'um', scale: 1 },
+        { name: 'z', unit: 'um', scale: 1 },
+      ];
+
+      const viewState: BaseViewState = {
+        displayDims: [0, 1, 2],
+        slicePosition: [50, 50, 50],
+        tolerance: [],
+        dimensions: dims,
+      };
+
+      const ranges = await new SpatialQueryBuilder(index, viewState, {
+        tolerance: [1e10, 1e10, 1e10],
+        totalElements: 1000,
+        extendDims: ['t'],
+      }).execute();
+
+      expect(ranges).toEqual([{ start: 0, end: 1000 }]);
+    });
+  });
+
+  describe('chunkSize fallback', () => {
+    it('uses options.chunkSize when index.metadata.chunk_size is missing', async () => {
+      const index: ChunkSpatialIndex = {
+        chunkBounds: new Float32Array([0, 100, 0, 100, 0, 100]),
+        chunkCount: 1,
+        metadata: { ndim: 3 },
+      };
+      const viewState: BaseViewState = {
+        displayDims: [0, 1, 2],
+        slicePosition: [50, 50, 50],
+        tolerance: [],
+      };
+
+      const ranges = await new SpatialQueryBuilder(index, viewState, {
+        tolerance: [1e10, 1e10, 1e10],
+        totalElements: 500,
+        chunkSize: 250,
+      }).execute();
+
+      expect(ranges).toEqual([{ start: 0, end: 250 }]);
+    });
   });
 });

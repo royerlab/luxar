@@ -133,7 +133,7 @@ for chunk_idx in range(num_chunks):
 **Algorithm**:
 
 ```typescript
-function queryChunksForView(chunkIndex, slicePosition, tolerance):
+function executeSpatialQuery(chunkIndex, slicePosition, tolerance):
     const { total_chunks, ndim, chunkBounds } = chunkIndex.metadata
     const matchingChunks = []
 
@@ -241,7 +241,7 @@ function chunkIndicesToRanges(chunkIndices, chunkSize, totalPoints):
 **Algorithm**:
 
 ```
-function mergePointRanges(ranges):
+function mergeRanges(ranges):
     if ranges.length == 0:
         return []
 
@@ -749,13 +749,9 @@ function loadGroupChildren(store, path, parentGroup, arrayRefRegistry):
 
 ```
 function loadPointsNode(store, path, attrs, arrayRefRegistry):
-    // 1. Load chunk-based spatial index (if available)
-    chunkIndex = await loadChunkSpatialIndex(store.resolve(path), attrs)
-
-    // Note: If no chunk_bounds, loader will fall back to loading all points
-    // This is acceptable for small 3D datasets without Morton ordering
-
-    // 2. Create loader with caching
+    // 1. Create loader (its initialize() will probe chunk_bounds privately;
+    //    a missing index falls back to loading all points — acceptable for
+    //    small 3D datasets without Morton/Hilbert ordering).
     loader = new PointSpatialIndexLoader(
         store.resolve(path),
         node,
@@ -763,17 +759,19 @@ function loadPointsNode(store, path, attrs, arrayRefRegistry):
         arrayRefRegistry
     )
 
-    // 3. Determine initial view state
+    // 2. Determine initial view state
     viewState = {
         displayDims: getDisplayedDimensions(sceneDimensions),
         slicePosition: calculateInitialSlicePosition(sceneDimensions),
         tolerance: calculateInitialTolerance(sceneDimensions)
     }
 
-    // 4. Load initial visible points
+    // 3. Load initial visible points (loader internally constructs a
+    //    SpatialQueryBuilder with pre-computed `EffectiveRadiusConfig`-driven
+    //    tolerance and runs the canonical chunk-bounds AABB scan).
     pointsData = await loader.loadForView(viewState)
 
-    // 5. Create THREE.js Points object
+    // 4. Create THREE.js Points object
     geometry = new THREE.BufferGeometry()
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(pointsData.positions, 3))
 
@@ -786,11 +784,10 @@ function loadPointsNode(store, path, attrs, arrayRefRegistry):
     material = createPointMaterial(attrs)
     pointsObject = new THREE.Points(geometry, material)
 
-    // 6. Attach metadata for future updates
+    // 5. Attach metadata for future updates
     pointsObject.userData = {
         loader: loader,
-        attrs: attrs,
-        spatialIndex: spatialIndex
+        attrs: attrs
     }
 
     return pointsObject
@@ -998,51 +995,49 @@ Stored in node `.zattrs`:
 
 ### 7.4 Lines Chunk Spatial Index Structure
 
+The lines loader privately holds a dual chunk index loaded from zarr — both
+`vertex_chunk_bounds` and `segment_chunk_bounds`. The chunk-bounds AABB query
+consumes only the segment side via the canonical `ChunkSpatialIndex` from
+`data/loaders/spatial-query-builder.ts`. The vertex side stays inside the
+loader for upper-bound bookkeeping.
+
+The metadata fields read from zarr are part of `LinesMetadata` (see
+`types/lines.ts`):
+
 ```typescript
-interface LinesChunkSpatialIndex {
-  metadata: {
-    // Core info (from zarr .zattrs)
-    n_vertices: number;
-    n_segments: number;
-    ndim: number;
-    original_line_type: 'segments' | 'polyline' | 'loop' | 'indexed';
-    max_width: number;
-    has_colors: boolean;
-    has_sharpness: boolean;
-    ordering: 'morton' | 'hilbert' | 'none';
+// LinesMetadata (excerpt; relevant to spatial indexing):
+{
+  n_vertices: number;
+  n_segments: number;
+  ndim: number;
+  ordering: 'morton' | 'hilbert' | 'none';
 
-    // Vertex ordering (from zarr .zattrs["vertex_ordering"])
-    vertex_ordering: {
-      slice_dims: number[]; // Discrete dimension indices in D-space
-      ordering_dims: number[]; // Spatial dimension indices in D-space
-      ordering_min: number[]; // Min bounds for ordering dims
-      ordering_max: number[]; // Max bounds for ordering dims
-      chunk_size: number; // Vertices per chunk
-      ordering_bits_per_dim?: number; // Implementation detail (optional)
-    };
-
-    // Segment ordering (from zarr .zattrs["segment_ordering"])
-    segment_ordering: {
-      slice_dims: number[]; // Discrete dimension indices in (2×D)-space
-      ordering_dims: number[]; // Spatial dimension indices in (2×D)-space
-      ordering_min: number[]; // Min bounds in (2×D)-space
-      ordering_max: number[]; // Max bounds in (2×D)-space
-      chunk_size: number; // Segments per chunk
-      ordering_bits_per_dim?: number; // Implementation detail (optional)
-    };
+  // Vertex ordering (from zarr .zattrs["vertex_ordering"])
+  vertex_ordering?: {
+    slice_dims: number[];
+    ordering_dims: number[];
+    ordering_min: number[];
+    ordering_max: number[];
+    chunk_size: number; // Vertices per chunk
+    ordering_bits_per_dim?: number;
   };
 
-  // Dual chunk bounds (loaded from zarr arrays)
-  vertexChunkBounds: Float32Array; // (num_v_chunks * ndim * 2) flattened
-  segmentChunkBounds: Float32Array; // (num_s_chunks * ndim * 2) flattened
-
-  // Computed from metadata (NOT stored in zarr)
-  vertexChunkCount: number; // = ceil(n_vertices / vertex_ordering.chunk_size)
-  segmentChunkCount: number; // = ceil(n_segments / segment_ordering.chunk_size)
+  // Segment ordering (from zarr .zattrs["segment_ordering"])
+  segment_ordering?: {
+    slice_dims: number[];
+    ordering_dims: number[];
+    ordering_min: number[];
+    ordering_max: number[];
+    chunk_size: number; // Segments per chunk
+    ordering_bits_per_dim?: number;
+  };
 }
 ```
 
-**Note**: `vertexChunkCount` and `segmentChunkCount` are computed client-side, not read from zarr.
+The chunk-bounds arrays (`vertex_chunk_bounds`, `segment_chunk_bounds`) are
+loaded from zarr as Float32Array of shape `(num_chunks, ndim, 2)` flattened
+row-major. Chunk counts (`ceil(n_vertices / vertex_ordering.chunk_size)` and
+`ceil(n_segments / segment_ordering.chunk_size)`) are computed client-side.
 
 ### 7.5 Lines Query Algorithm
 
@@ -1052,11 +1047,12 @@ interface LinesChunkSpatialIndex {
 
 ```typescript
 function queryLinesForView(
-  linesIndex: LinesChunkSpatialIndex,
+  linesIndex: LinesDualChunkIndex,
   slicePosition: number[],
   tolerance: number[]
 ): { segmentChunks: number[]; segmentRanges: Array<{ start: number; end: number }> } {
-  const { metadata, segmentChunkBounds, segmentChunkCount } = linesIndex;
+  const { segmentIndex } = linesIndex;
+  const { chunkBounds: segmentChunkBounds, chunkCount: segmentChunkCount, metadata } = segmentIndex;
   const { ndim } = metadata;
 
   // 1. Query segment chunks using AABB intersection
@@ -1120,7 +1116,8 @@ Phase 2: Load Vertices
 ```typescript
 async function loadLinesForView(
   store: ZarrStore,
-  linesIndex: LinesChunkSpatialIndex,
+  linesIndex: LinesDualChunkIndex,
+  attrs: LinesMetadata,
   slicePosition: number[],
   tolerance: number[]
 ): Promise<LoadedLinesData> {
@@ -1136,18 +1133,17 @@ async function loadLinesForView(
     uniqueVertexIndices.add(segments[i + 1]);
   }
 
-  // Determine vertex ranges to load (minimize chunk loads)
+  // Determine contiguous vertex ranges to load (minimize chunk loads).
+  // `computeVertexRangesFromIndices` is a private helper inside
+  // lines-spatial-index-loader.ts (sorted indices → contiguous runs).
   const sortedVertices = Array.from(uniqueVertexIndices).sort((a, b) => a - b);
-  const vertexRanges = computeVertexRangesFromIndices(
-    sortedVertices,
-    linesIndex.metadata.vertex_ordering.chunk_size
-  );
+  const vertexRanges = computeVertexRangesFromIndices(sortedVertices);
 
   // Phase 2: Load vertex data
-  const vertices = await loadVertexRanges(store, vertexRanges, linesIndex.metadata.ndim);
+  const vertices = await loadVertexRanges(store, vertexRanges, attrs.ndim);
   const widths = await loadWidthRanges(store, vertexRanges);
-  const colors = linesIndex.metadata.has_colors ? await loadColorRanges(store, vertexRanges) : null;
-  const sharpness = linesIndex.metadata.has_sharpness
+  const colors = attrs.has_colors ? await loadColorRanges(store, vertexRanges) : null;
+  const sharpness = attrs.has_sharpness
     ? await loadSharpnessRanges(store, vertexRanges)
     : null;
 
@@ -1393,23 +1389,11 @@ scene.add_lines('detector', vertices, widths=0.1, extend_to_all=["time"])
 
 **CRITICAL**: The `segment_chunk_bounds` **already include line width extent** (as specified in Python spec Section 6.5.5). This means the tolerance for spatial dimensions in the query should NOT include width again.
 
-**Dimension Tolerance for Lines**:
-
-```typescript
-function computeLinesTolerance(sceneDims: DimensionMetadata[], displayDims: number[]): number[] {
-  return sceneDims.map((dim, idx) => {
-    if (displayDims.includes(idx)) {
-      // Displayed dimensions: infinite tolerance (want all segments in view)
-      return 1e10;
-    }
-    if (dim.discrete) {
-      return 0.5; // Discrete dims: half-unit tolerance for integer matching
-    }
-    // Spatial dims: zero tolerance - segment_chunk_bounds already include width!
-    return 0;
-  });
-}
-```
+**Dimension Tolerance for Lines**: handled by the canonical
+`computeTolerance('lines', …)` from `data/tolerance-computer.ts`. The
+geometry-aware rules: displayed → 1e10 (infinite), discrete hidden → `step / 2`
+(or 0.5 fallback), spatial hidden → 0 (segment bounds already include line
+width, so no extra tolerance is needed).
 
 **Key Difference from Points**:
 
@@ -1745,7 +1729,7 @@ This section documents all TypeScript source files in the `data/` package with t
 
 **Key Exports**: `PointSpatialIndexLoader`
 
-**Relationships**: Uses `ChunkSpatialIndex` from `chunk-spatial-index.ts`, `EffectiveRadiusConfig` from `effective-radius-calculator.ts`, `ArrayDecoder`/`ArrayRefRegistry` from `array-decoder.ts`, `RangeLoader` from `loaders/`, and `LoadedPointsDataAccumulator` from `data-accumulator.ts`.
+**Relationships**: Uses `EffectiveRadiusConfig` from `effective-radius-calculator.ts`, `SpatialQueryBuilder` + `ChunkSpatialIndex` from `loaders/spatial-query-builder.ts` for chunk-bounds queries, `ArrayDecoder`/`ArrayRefRegistry` from `array-decoder.ts`, `RangeLoader` from `loaders/`, and `LoadedPointsDataAccumulator` from `data-accumulator.ts`. The `chunk_bounds` zarr probe is inlined as a private method.
 
 #### `lines-spatial-index-loader.ts`
 
@@ -1753,7 +1737,7 @@ This section documents all TypeScript source files in the `data/` package with t
 
 **Key Exports**: `LinesSpatialIndexLoader`, `buildInstanceBuffers()`, `clipSegmentToSlice()`, `lerp()`, `lerpVec3()`, `distance3D()`
 
-**Relationships**: Uses `LinesChunkSpatialIndex` from `lines-chunk-spatial-index.ts`, `ArrayDecoder`/`ArrayRefRegistry` from `array-decoder.ts`, `RangeLoader` from `loaders/`, and `LinesDataAccumulator` from `data-accumulator.ts`.
+**Relationships**: Uses `SpatialQueryBuilder` + `ChunkSpatialIndex` from `loaders/spatial-query-builder.ts` for the segment chunk query, `tolerance-computer.computeTolerance('lines', …)` indirectly via the builder, `ArrayDecoder`/`ArrayRefRegistry` from `array-decoder.ts`, `RangeLoader` from `loaders/`, and `LinesDataAccumulator` from `data-accumulator.ts`. The dual-bounds (`vertex_chunk_bounds` + `segment_chunk_bounds`) zarr probe and the lines-specific `computeVertexRangesFromIndices` (sorted-indices → contiguous ranges) are private to this module.
 
 #### `gsplats-spatial-index-loader.ts`
 
@@ -1761,33 +1745,27 @@ This section documents all TypeScript source files in the `data/` package with t
 
 **Key Exports**: `GSplatsSpatialIndexLoader`
 
-**Relationships**: Uses `GSplatsChunkSpatialIndex` from `gsplats-chunk-spatial-index.ts`, `ArrayDecoder`/`ArrayRefRegistry` from `array-decoder.ts`, `RangeLoader` from `loaders/`, and `GSplatsDataAccumulator` from `data-accumulator.ts`.
+**Relationships**: Uses `SpatialQueryBuilder` + `ChunkSpatialIndex` from `loaders/spatial-query-builder.ts` for the chunk query, `tolerance-computer.computeTolerance('gsplats', …)` indirectly via the builder, `ArrayDecoder`/`ArrayRefRegistry` from `array-decoder.ts`, `RangeLoader` from `loaders/`, and `GSplatsDataAccumulator` from `data-accumulator.ts`. The `chunk_bounds` zarr probe is inlined as a private method.
 
 ### 9.3 Spatial Index Infrastructure
 
-#### `chunk-spatial-index.ts`
+#### `loaders/spatial-query-builder.ts`
 
-**Purpose**: Core chunk-based spatial index implementation for Points. Loads chunk bounding boxes from Zarr and provides AABB intersection queries for finding chunks visible in the current nD view. Uses Morton/Hilbert space-filling curve metadata.
+**Purpose**: Canonical chunk-bounds spatial-query API used by all three geometry loaders. Builds the query position from view state, computes (or accepts) per-dimension tolerance, runs the AABB scan, converts matching chunk indices to load ranges, and coalesces overlapping/adjacent ranges.
 
-**Key Exports**: `ChunkSpatialIndex`, `loadChunkSpatialIndex()`, `queryChunksForView()`, `chunkIndicesToRanges()`, `mergePointRanges()`
+**Tolerance source.** The builder accepts a discriminated-union options object: callers either supply `geometryType: 'points' | 'lines' | 'gsplats'` (delegates tolerance to `tolerance-computer.computeTolerance`) or a pre-computed `tolerance: number[]` (used by points, which has bespoke `EffectiveRadiusConfig`-driven tolerance with an `>= 1e9` extend-to-all sentinel).
 
-**Relationships**: Used by `PointSpatialIndexLoader`. Provides the foundational spatial query pattern reused by Lines and GSplats variants.
+**Key Exports**: `SpatialQueryBuilder`, `ChunkSpatialIndex` (canonical type), `SpatialQueryOptions`, `executeSpatialQuery`, `chunkIndicesToRanges`, `mergeRanges`, `buildQueryPosition`, `shouldExtendVisibility`, `createLoadAllRange`.
 
-#### `gsplats-chunk-spatial-index.ts`
+**Relationships**: Used by `PointSpatialIndexLoader`, `LinesSpatialIndexLoader`, and `GSplatsSpatialIndexLoader`. Delegates geometry-aware tolerance to `tolerance-computer.computeTolerance`. Always runs on the main thread (AABB scans are O(numChunks × ndim) microseconds; worker dispatch would add ~3 ms structured-clone overhead per call).
 
-**Purpose**: Spatial index loading and querying for GSplats. GSplats use space-filling curves (Morton or Hilbert) for chunk-based loading, with each chunk bounding box including splat extents based on Cholesky factors.
+#### `tolerance-computer.ts`
 
-**Key Exports**: `loadGSplatsChunkSpatialIndex()`, `queryGSplatsChunksForView()`, `chunkIndicesToSplatRanges()`, `mergeRanges()`, `computeToleranceFromViewState()`
+**Purpose**: Single canonical tolerance computer for all geometry types. Centralises the rules: displayed dimensions get infinite tolerance (1e10), hidden dimensions follow per-geometry strategies — points use `maxRadius` for spatial dims and 0.5 for discrete dims; lines use 0 for spatial dims (segment bounds already include line width) and step/2 for discrete; gsplats use `step * defaultTolerance` (3σ) for continuous dims and 0.5 for discrete.
 
-**Relationships**: Used by `GSplatsSpatialIndexLoader`. Consumes `GSplatsMetadata` and `GSplatsChunkSpatialIndex` types from `types/gsplats.ts`.
+**Key Exports**: `computeTolerance(geometryType, displayDims, ndim, dimensions?, options?)`, `GeometryType`, `ToleranceOptions`, `DimensionInfo`.
 
-#### `lines-chunk-spatial-index.ts`
-
-**Purpose**: Dual spatial index loading for Lines. Lines have two independent spatial orderings: vertices ordered in D-dimensional space and segments ordered in D-space with bounds including line width. Segment bounds already include line width extent, so spatial queries for non-displayed dimensions use tolerance = 0.
-
-**Key Exports**: `loadLinesChunkSpatialIndex()`, `querySegmentChunksForView()`, `queryVertexChunksForView()`, `computeLinesTolerance()`, `segmentChunkIndicesToRanges()`, `vertexChunkIndicesToRanges()`, `mergeRanges()`, `computeVertexChunksForIndices()`, `computeVertexRangesFromIndices()`
-
-**Relationships**: Used by `LinesSpatialIndexLoader`. Consumes `LinesMetadata` and `LinesChunkSpatialIndex` types from `types/lines.ts`.
+**Relationships**: Called from inside `SpatialQueryBuilder` (geometry-aware path) and directly from `scene-loader.ts` for the lines projection clipping path.
 
 ### 9.4 Data Processing
 

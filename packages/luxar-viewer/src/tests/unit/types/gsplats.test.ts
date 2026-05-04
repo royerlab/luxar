@@ -79,7 +79,6 @@ describe('GSplats Types', () => {
           center_bounds: { min: [0, 0, 0], max: [100, 100, 100] },
           ordering: 'morton',
         },
-        spatialIndex: null,
       };
 
       expect(isGSplatsUserData(validUserData)).toBe(true);
@@ -291,61 +290,6 @@ describe('GSplats Type Definitions', () => {
       expect(data.centers3D.length).toBe(6); // 2 splats * 3 dims
       expect(data.choleskyFactors3D.length).toBe(12); // 2 splats * 6 elements
       expect(data.amplitudes[0]).toBeLessThan(1.0); // Attenuated
-    });
-  });
-
-  describe('GSplatsChunkSpatialIndex interface', () => {
-    it('should represent spatial index for chunk queries', () => {
-      const index = {
-        metadata: {
-          type: 'gsplats' as const,
-          n_splats: 10000,
-          ndim: 3,
-          has_colors: true,
-          chunk_size: 2000,
-          amplitude_range: { min: 0, max: 1 },
-          center_bounds: { min: [0, 0, 0], max: [100, 100, 100] },
-          ordering: 'hilbert' as const,
-        },
-        chunkBounds: new Float32Array([
-          // 5 chunks * 3 dims * 2 (min/max)
-          0,
-          20,
-          0,
-          20,
-          0,
-          20, // Chunk 0
-          20,
-          40,
-          0,
-          20,
-          0,
-          20, // Chunk 1
-          40,
-          60,
-          0,
-          20,
-          0,
-          20, // Chunk 2
-          60,
-          80,
-          0,
-          20,
-          0,
-          20, // Chunk 3
-          80,
-          100,
-          0,
-          20,
-          0,
-          20, // Chunk 4
-        ]),
-        chunkCount: 5,
-      };
-
-      expect(index.chunkCount).toBe(5);
-      expect(index.chunkBounds.length).toBe(30); // 5 chunks * 3 dims * 2
-      expect(index.metadata.n_splats).toBe(10000);
     });
   });
 });
