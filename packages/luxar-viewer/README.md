@@ -618,7 +618,7 @@ renderingControls: {
 ### Performance Optimization
 
 - **Element Count**: Optimize for datasets with millions of elements
-- **Chunk Size**: Zarr chunk sizes of 64KB-1MB work well
+- **Chunk Size**: Zarr chunk sizes of 16KB-256KB (target 64KB) — matches `TARGET_CHUNK_BYTES` in `luxar.typing_utils.constants`
 - **LOD**: Consider implementing level-of-detail for very large datasets
 - **Compression**: Use Zarr compression (e.g., blosc) to reduce network transfer
 

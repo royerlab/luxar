@@ -904,6 +904,8 @@ def demo(
         latency (str, optional): Network latency.
         jitter (str, optional): Latency jitter percentage.
         packet_loss (str, optional): Packet loss rate.
+        cors_origin (str, optional): Allowed CORS origin for both viewer and
+            data servers. Defaults to "local" (loopback only).
     """
     # Validate inputs early
     if n_points <= 0:

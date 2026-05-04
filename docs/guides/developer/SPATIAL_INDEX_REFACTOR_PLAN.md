@@ -1,6 +1,10 @@
 # Spatial Index Consolidation Plan
 
-**Status:** Plan only — no implementation has started.
+**Status:** Implemented in commit `64a00994` ("refactor(viewer): consolidate
+spatial-index API into single canonical builder"). The actual implementation
+took a single-phase, all-at-once approach rather than the three-phase migration
+sketched below — see "What actually shipped" at the bottom of this document.
+This plan is retained for historical context.
 **Owner:** TBD (see "Open questions" below).
 
 ## Problem
@@ -92,3 +96,55 @@ Net: ~−500 LOC, plus a clearer extension point for adding new geometry types (
 - Performance changes — this is a structure-only refactor.
 - New geometry types — the strategy interface is designed to make adding them easier, but implementing them is out of scope.
 - Touching the worker-side spatial code (`workers/data-worker.ts` does not use these files directly).
+
+## What actually shipped (commit 64a00994)
+
+The implementation skipped the strategy-interface step and went straight to a
+direct call-site migration:
+
+- The three legacy modules (`chunk-spatial-index.ts`,
+  `gsplats-chunk-spatial-index.ts`, `lines-chunk-spatial-index.ts`) and their
+  exports (`loadChunkSpatialIndex`, `queryChunksForView`,
+  `queryGSplatsChunksForView`, `querySegmentChunksForView`,
+  `queryVertexChunksForView`, `computeGSplatsTolerance`,
+  `computeLinesTolerance`, `chunkIndicesToSplatRanges`,
+  `segmentChunkIndicesToRanges`, `vertexChunkIndicesToRanges`,
+  `computeVertexChunksForIndices`, …) were deleted outright.
+- The three loaders (`point-spatial-index-loader.ts`,
+  `lines-spatial-index-loader.ts`, `gsplats-spatial-index-loader.ts`) inline
+  their `chunk_bounds` zarr probes as private methods and route the AABB scan
+  through `loaders/spatial-query-builder.ts::SpatialQueryBuilder`.
+- `SpatialQueryBuilder` adopted a discriminated-union options object: callers
+  pass either `geometryType: 'points' | 'lines' | 'gsplats'` (delegates
+  tolerance to `data/tolerance-computer.ts::computeTolerance`) or a
+  pre-computed `tolerance: number[]` (used by points, which keeps its
+  `EffectiveRadiusConfig`-driven tolerance via
+  `effective-radius-calculator.calculateSpatialQueryTolerance`).
+- The fluent setters (`computeQueryTolerance`, `withMaxRadius`, etc.) and the
+  `ToleranceConfig` / `DEFAULT_HIDDEN_DIM_TOLERANCE` / `DISPLAYED_DIM_TOLERANCE`
+  exports from `spatial-query-builder.ts` were dropped.
+- The `loaders/integration-example.ts` reference template (and its test) were
+  deleted as dead code.
+- `tolerance-computer.ts` (the canonical computer added in earlier passes) is
+  now the single source of truth and is re-exported from `data/index.ts`.
+
+Net delta: ~−2,000 LOC, three fewer files, one canonical `ChunkSpatialIndex`
+type (in `loaders/spatial-query-builder.ts`), one canonical query API, one
+canonical tolerance computer.
+
+The "open questions" section's resolutions:
+
+1. **`*ChunkSpatialIndex` interfaces** → unified into a single canonical
+   `ChunkSpatialIndex` type exported from `loaders/spatial-query-builder.ts`.
+   Geometry-specific extensions (e.g. the points loader's `PointsChunkIndex`
+   with ordering metadata for stats logging) are kept private to the loader
+   and projected to the canonical shape at query time.
+2. **Fluent class vs free functions** → the constructor-options class won;
+   the functional helpers (`buildQueryPosition`, `executeSpatialQuery`,
+   `chunkIndicesToRanges`, `mergeRanges`, `shouldExtendVisibility`,
+   `createLoadAllRange`) remain exported for callers that don't need the
+   builder.
+3. **Two-phase load (lines)** → kept lines-specific. The vertex-side bounds
+   stay inside `LinesSpatialIndexLoader` for upper-bounds bookkeeping, and the
+   sorted-indices→contiguous-runs helper (`computeVertexRangesFromIndices`)
+   is a private function inside the loader.

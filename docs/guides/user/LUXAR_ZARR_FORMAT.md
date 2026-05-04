@@ -50,7 +50,7 @@ This diagram shows how data flows from Python creation through storage to WebGL 
 │  ┌──────────────────┐                                                      │
 │  │ Spatial ordering │  Morton/Hilbert space-filling curves                 │
 │  │ Compound sort    │  Discrete dims (time) → spatial (x,y,z)              │
-│  │ Chunking         │  Split into 32KB-1MB chunks                          │
+│  │ Chunking         │  Split into 16KB-256KB chunks (target 64KB)          │
 │  │ AABB calculation │  Per-chunk bounding boxes                            │
 │  └────────┬─────────┘                                                      │
 │           │                                                                 │
@@ -803,7 +803,7 @@ Optimal chunk sizes balance memory usage and access patterns:
 
 When using spatial indices:
 - **Chunk Alignment**: Zarr chunks are automatically aligned with spatial index chunks
-- **Typical Strategy**: `chunk_size` is computed based on target memory per chunk (~32KB)
+- **Typical Strategy**: `chunk_size` is computed based on target memory per chunk (~64KB, see `TARGET_CHUNK_BYTES`)
 - **Benefits**: Loading a chunk index range loads exactly that zarr chunk
 - **Morton Ordering**: Points within a chunk are spatially nearby due to Morton ordering
 

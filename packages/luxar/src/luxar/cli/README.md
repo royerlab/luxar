@@ -115,7 +115,7 @@ luxar export my_scene.zarr -o out/ --native macos,linux-amd64,linux-arm64 \
                                           --name MyScene                # All three at once
 ```
 
-**Options** (in addition to the parent command's): `--native PLATFORMS` (comma-separated; choices: `macos`, `linux-amd64`, `linux-arm64`), `--name NAME` (defaults to the zarr stem).
+**Options** (in addition to the parent command's): `--native PLATFORMS` (comma-separated; choices: `macos`, `linux-amd64`, `linux-arm64`), `--name NAME` (defaults to the zarr stem), `--zip/--no-zip` (when `--native macos`, also produces a sibling `<name>.app.zip` — via `ditto` on Darwin to preserve resource forks and extended attributes, or `zipfile` on cross-build hosts with executable-bit preservation; on by default, pass `--no-zip` to skip).
 
 **Prerequisites**: run `make build-launchers` first to populate `cli/_launchers/` with the host-platform binary. CGO blocks pure cross-compilation, so Linux + Windows binaries must be built on hosts of the matching OS (typically via CI).
 

@@ -8,16 +8,15 @@ for ``[X, Y, Z]`` math; that path has been removed.
 
 from __future__ import annotations
 
-import sys
-
 import numpy as np
 import pytest
 import torch
 from arbol import aprint
 
+from luxar.gsplats.models.gsplats.metal import is_metal_available
 from luxar.gsplats.models.gsplats.metal.gsplat_model_metal import cholesky_to_conic
 
-_metal_available = sys.platform == "darwin" and torch.backends.mps.is_available()
+_metal_available = is_metal_available()
 
 
 class TestNativeZyxConvention:
