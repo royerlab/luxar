@@ -97,7 +97,7 @@ class GaussianSplatFitter:
     def fit(
         self,
         V: np.ndarray,
-        seeds: Optional[np.ndarray | int | float] = None,
+        seeds: Optional[np.ndarray | int | float | GSplatData] = None,
         norm_percentile: float = 0.0,
         downscale: Optional[int | Sequence[int]] = None,
         init_sigma_vox: Optional[float] = None,
@@ -247,7 +247,7 @@ class GaussianSplatFitter:
 
 def fit_gaussian_splats(
     V: np.ndarray,
-    seeds: Optional[np.ndarray | int | float] = None,
+    seeds: Optional[np.ndarray | int | float | GSplatData] = None,
     norm_percentile: float = 0.0,
     downscale: Optional[int | Sequence[int]] = None,
     init_sigma_vox: Optional[float] = None,
@@ -322,8 +322,9 @@ def fit_gaussian_splats(
     ----------
     V : np.ndarray
         Input n-dimensional image/volume to reconstruct. Will be normalized to [0,1].
-    seeds : np.ndarray, shape (N, d) or int or float, optional
-        Initial seed center positions, count, or compression ratio.
+    seeds : np.ndarray (N, d), int, float, GSplatData, or None
+        Initial seed center positions, count, compression ratio, or full
+        warm-start dataset.
         - If np.ndarray: Explicit seed centers in voxel coordinates
         - If int: Exact number (keeps highest intensity if more detected)
         - If float (0 < seeds <= 1.0): Compression ratio - the ratio of floats
@@ -331,6 +332,8 @@ def fit_gaussian_splats(
           seeds=0.1 targets a representation using 10% of the original storage.
           The number of splats is computed as: n = ratio × total_voxels / floats_per_splat
           where floats_per_splat = d + d×(d+1)/2 + 1 (center + Cholesky + amp).
+        - If GSplatData: Warm-start from a previously fitted result
+          (centers + Cholesky + amplitudes carried over directly).
         - If None: Auto-generated using dimension-aware intelligent defaults:
           * Universal scales: (0.5, 1.0, 2.0, 4.0, 8.0, 16.0) for comprehensive detection
           * Volume-proportional density: ~1% of voxels as seeds

@@ -19,8 +19,8 @@ from arbol import aprint, asection
 
 from ..core.dimensions import Dimension, Dimensions
 from ..io.compiler import LuxarZarrCompiler
+from ..typing_utils.aliases import PathLike
 from ..typing_utils.config import check_dataset_size_warning
-from ..typing_utils.protocols import PathLike
 
 
 def _validate_zip_member_path(member: str) -> PurePosixPath:
@@ -446,10 +446,12 @@ def create_lorenz_attractor(
 
     # HSV to RGB vectorized conversion
     # Based on standard HSV→RGB algorithm, vectorized for performance
-    c = v * s  # Chroma
+    c = np.float32(v * s)  # Chroma
     h_prime = hue * 6.0  # Hue in [0, 6) range
-    x = c * (1 - np.abs(h_prime % 2 - 1))  # Intermediate value
-    m = v - c  # Match value
+    x_hsv = np.asarray(
+        c * (1 - np.abs(h_prime % 2 - 1)), dtype=np.float32
+    )  # Intermediate
+    m = np.float32(v - c)  # Match value
 
     # Initialize RGB arrays
     r = np.zeros(n_points, dtype=np.float32)
@@ -462,27 +464,27 @@ def create_lorenz_attractor(
 
     # Sector 0: Red to Yellow (R=max, G=rising, B=0)
     mask = sector == 0
-    r[mask], g[mask], b[mask] = c, x[mask], 0.0
+    r[mask], g[mask], b[mask] = c, x_hsv[mask], 0.0
 
     # Sector 1: Yellow to Green (R=falling, G=max, B=0)
     mask = sector == 1
-    r[mask], g[mask], b[mask] = x[mask], c, 0.0
+    r[mask], g[mask], b[mask] = x_hsv[mask], c, 0.0
 
     # Sector 2: Green to Cyan (R=0, G=max, B=rising)
     mask = sector == 2
-    r[mask], g[mask], b[mask] = 0.0, c, x[mask]
+    r[mask], g[mask], b[mask] = 0.0, c, x_hsv[mask]
 
     # Sector 3: Cyan to Blue (R=0, G=falling, B=max)
     mask = sector == 3
-    r[mask], g[mask], b[mask] = 0.0, x[mask], c
+    r[mask], g[mask], b[mask] = 0.0, x_hsv[mask], c
 
     # Sector 4: Blue to Magenta (R=rising, G=0, B=max)
     mask = sector == 4
-    r[mask], g[mask], b[mask] = x[mask], 0.0, c
+    r[mask], g[mask], b[mask] = x_hsv[mask], 0.0, c
 
     # Sector 5: Magenta to Red (R=max, G=0, B=falling)
     mask = sector == 5
-    r[mask], g[mask], b[mask] = c, 0.0, x[mask]
+    r[mask], g[mask], b[mask] = c, 0.0, x_hsv[mask]
 
     # Add match value to get final RGB (adjust for brightness)
     colors = np.column_stack([r + m, g + m, b + m]).astype(np.float32)

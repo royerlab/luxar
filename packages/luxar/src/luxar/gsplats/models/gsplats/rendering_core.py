@@ -552,7 +552,7 @@ def _render_gaussians_2d(
     Ls: torch.Tensor,  # (N,2,2)
     amps: torch.Tensor,  # (N,)
     truncate: float,
-    intensity_floor: float,
+    intensity_floor: Optional[float],
     chunk_size: Optional[int] = None,
 ) -> torch.Tensor:
     """Specialized 2D renderer with explicit forward substitution."""
@@ -629,7 +629,7 @@ def _render_gaussians_3d(
     Ls: torch.Tensor,  # (N,3,3)
     amps: torch.Tensor,  # (N,)
     truncate: float,
-    intensity_floor: float,
+    intensity_floor: Optional[float],
     chunk_size: Optional[int] = None,
 ) -> torch.Tensor:
     """Specialized 3D renderer with explicit forward substitution."""
@@ -709,7 +709,7 @@ def render_gaussians(
     Ls: torch.Tensor,  # (N, d, d) lower-tri
     amps: torch.Tensor,  # (N,)
     truncate: float = 3.0,
-    intensity_floor: float = 1e-5,  # for amplitude-aware culling
+    intensity_floor: Optional[float] = 1e-5,  # for amplitude-aware culling; None disables
     chunk_size: Optional[int] = None,  # P-dimension chunk size for memory control
 ) -> torch.Tensor:
     """
@@ -732,8 +732,9 @@ def render_gaussians(
         Splat amplitudes.
     truncate : float, default=3.0
         Truncation radius in standard deviations.
-    intensity_floor : float, default=1e-5
+    intensity_floor : float or None, default=1e-5
         Minimum intensity threshold for amplitude-aware culling.
+        Pass ``None`` (or a non-positive value) to disable culling entirely.
     chunk_size : int, optional
         Chunk size for memory management.
 
