@@ -19,8 +19,12 @@ Windows + AppImage are intentionally out of scope for this prototype.
 
 from __future__ import annotations
 
+import os
+import platform
 import shutil
 import stat
+import subprocess
+import zipfile
 from pathlib import Path
 
 from arbol import aprint, asection
@@ -280,3 +284,64 @@ This is a one-time fix per copy of the app — once stripped, double-
 click works normally. The app itself is a vanilla local HTTP server +
 WKWebView; it makes no outbound network connections.
 """
+
+
+def zip_macos_app(app_path: Path) -> Path:
+    """Zip a macOS ``.app`` bundle next to itself.
+
+    Prefers ``ditto -c -k --keepParent`` on Darwin so resource forks,
+    extended attributes, and the bundle's directory layout are preserved
+    exactly.  On non-Darwin hosts (e.g. Linux producing a macOS bundle as
+    a cross-build), falls back to ``zipfile`` with executable-bit
+    preservation so the embedded launcher remains runnable after
+    extraction.
+
+    The archive lands at ``<app_path>.zip`` (i.e. ``Foo.app.zip`` next to
+    ``Foo.app``); any existing archive is overwritten.
+
+    Returns the path to the produced ``.zip``.
+    """
+    if app_path.suffix != ".app" or not app_path.is_dir():
+        raise ValueError(
+            f"zip_macos_app expects a .app bundle directory, got {app_path}"
+        )
+
+    archive_path = app_path.with_suffix(".app.zip")
+    if archive_path.exists():
+        archive_path.unlink()
+
+    ditto = shutil.which("ditto")
+    if ditto and platform.system() == "Darwin":
+        with asection(f"Zipping {app_path.name} with ditto"):
+            subprocess.run(
+                [
+                    ditto,
+                    "-c",
+                    "-k",
+                    "--keepParent",
+                    str(app_path),
+                    str(archive_path),
+                ],
+                check=True,
+            )
+            aprint(f"  ✓ {archive_path.name}")
+    else:
+        with asection(
+            f"Zipping {app_path.name} with zipfile (ditto unavailable)"
+        ):
+            with zipfile.ZipFile(
+                archive_path, "w", compression=zipfile.ZIP_DEFLATED
+            ) as zf:
+                for root, _dirs, files in os.walk(app_path):
+                    for fname in files:
+                        full = Path(root) / fname
+                        arcname = full.relative_to(app_path.parent)
+                        # ``ZipInfo.from_file`` carries Unix permissions
+                        # (executable bit on the launcher) over to the
+                        # archive's external_attr field.
+                        info = zipfile.ZipInfo.from_file(full, str(arcname))
+                        info.compress_type = zipfile.ZIP_DEFLATED
+                        with open(full, "rb") as src:
+                            zf.writestr(info, src.read())
+            aprint(f"  ✓ {archive_path.name}")
+    return archive_path

@@ -1252,6 +1252,16 @@ def export(
         "--name",
         help="Bundle name (defaults to the zarr stem). Used with --native.",
     ),
+    zip_app: bool = typer.Option(
+        True,
+        "--zip/--no-zip",
+        help=(
+            "When --native macos is requested, also produce a sibling "
+            "<name>.app.zip via ditto (or zipfile fallback). On by default "
+            "so users get a single shareable artifact with the .app's "
+            "permissions and resource forks intact. Pass --no-zip to skip."
+        ),
+    ),
 ) -> None:
     """Export a zarr scene + viewer as a standalone offline folder.
 
@@ -1277,6 +1287,7 @@ def export(
                 overwrite=overwrite,
                 native=native,
                 name=name,
+                zip_app=zip_app,
             )
             return
 
@@ -1324,6 +1335,7 @@ def _run_native_export(
     overwrite: bool,
     native: str,
     name: Optional[str],
+    zip_app: bool = True,
 ) -> None:
     """Helper for ``luxar export --native``: validate args, then bundle.
 
@@ -1340,6 +1352,7 @@ def _run_native_export(
         bundle_linux_folder,
         bundle_macos_app,
         get_launcher_path,
+        zip_macos_app,
     )
     from .utils import check_viewer_built, get_viewer_dist_path, validate_zarr_store
 
@@ -1383,14 +1396,15 @@ def _run_native_export(
         produced: list[Path] = []
         for plat in requested:
             if plat == "macos":
-                produced.append(
-                    bundle_macos_app(
-                        viewer_dist=viewer_dist,
-                        zarr_data=source,
-                        output=output,
-                        app_name=bundle_name,
-                    )
+                app_path = bundle_macos_app(
+                    viewer_dist=viewer_dist,
+                    zarr_data=source,
+                    output=output,
+                    app_name=bundle_name,
                 )
+                produced.append(app_path)
+                if zip_app:
+                    produced.append(zip_macos_app(app_path))
             elif plat.startswith("linux-"):
                 arch = plat.split("-", 1)[1]
                 produced.append(
