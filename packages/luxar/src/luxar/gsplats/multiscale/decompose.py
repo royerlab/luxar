@@ -19,6 +19,7 @@ import torch.nn.functional as F
 from arbol import aprint, asection
 
 from luxar.gsplats.models.utils.inverse_softplus import stable_inverse_softplus_torch
+from luxar.gsplats.utils.device import resolve_torch_device
 
 
 def _cubic_upsample_2x_1d(img: torch.Tensor, axis: int) -> torch.Tensor:
@@ -1040,14 +1041,9 @@ def decompose_image(
     - Reconstruction: V ≈ Σₖ upsample(scales_list[k])
     - Higher alpha values push more energy to coarse scales
     """
-    # Auto-detect device
-    if device is None:
-        if torch.cuda.is_available():
-            device = "cuda"
-        elif torch.backends.mps.is_available():
-            device = "mps"
-        else:
-            device = "cpu"
+    # Auto-detect device (centralized helper handles CUDA/MPS/CPU and missing
+    # ``torch.backends.mps`` on older PyTorch builds).
+    device = resolve_torch_device(device)
 
     # Convert to torch tensor
     V_tensor = torch.tensor(V, dtype=torch.float32, device=device)

@@ -15,6 +15,7 @@ from arbol import aprint, asection
 from scipy.spatial import distance
 
 from luxar.gsplats.fitting.config import FitConfig, PreprocessedData
+from luxar.gsplats.utils.device import resolve_torch_device
 
 if TYPE_CHECKING:
     from luxar.gsplats.gsplat_data import GSplatData
@@ -580,13 +581,10 @@ def _subsample_seeds_spatially_diverse(
     use_gpu = target_count > 1000
 
     if use_gpu:
-        try:
-            import torch
-
-            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-            use_gpu = device.type == "cuda"
-        except ImportError:
-            use_gpu = False
+        # CUDA-only path; this routine has not been validated on MPS, so we
+        # opt out of Metal and fall back to CPU when CUDA is unavailable.
+        device = resolve_torch_device(use_metal=False)
+        use_gpu = device.type == "cuda"
 
     if use_gpu:
         # GPU-accelerated farthest-first selection
