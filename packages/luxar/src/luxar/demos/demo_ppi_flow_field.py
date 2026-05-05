@@ -560,10 +560,18 @@ def compute_signed_flow_layout(
     """Run UMAP on signed flow-profile adjacency features, with cache."""
     if cache_path.exists() and not recompute:
         data = np.load(cache_path, allow_pickle=False)
+        cached_n_neighbors = (
+            int(data["n_neighbors"]) if "n_neighbors" in data else None
+        )
+        cached_min_dist = (
+            float(data["min_dist"]) if "min_dist" in data else None
+        )
         if (
             "network_hash" in data
             and str(data["network_hash"]) == graph_hash
             and "coords" in data
+            and cached_n_neighbors == UMAP_N_NEIGHBORS
+            and cached_min_dist == UMAP_MIN_DIST
         ):
             with asection("Loading cached signed-flow UMAP layout"):
                 coords = data["coords"].astype(np.float32)
