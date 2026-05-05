@@ -29,6 +29,7 @@ from luxar.typing_utils.config import (
     SUPPORTED_VERSIONS,
     check_dataset_size_warning,
     estimate_memory_usage,
+    validate_chunk_bytes,
     validate_chunk_size,
     validate_compression_level,
 )
@@ -81,43 +82,44 @@ class TestConfigConstants:
         assert DEFAULT_LOG_LEVEL == "INFO"
 
 
-class TestValidateChunkSize:
-    """Tests for validate_chunk_size function."""
+class TestValidateChunkBytes:
+    """Tests for validate_chunk_bytes function (was validate_chunk_size)."""
 
     def test_valid_chunk_size(self) -> None:
-        """Test valid chunk size passes."""
-        result = validate_chunk_size(DEFAULT_CHUNK_SIZE)
+        result = validate_chunk_bytes(DEFAULT_CHUNK_SIZE)
         assert result == DEFAULT_CHUNK_SIZE
 
     def test_minimum_chunk_size(self) -> None:
-        """Test minimum chunk size is accepted."""
-        result = validate_chunk_size(MIN_CHUNK_SIZE)
+        result = validate_chunk_bytes(MIN_CHUNK_SIZE)
         assert result == MIN_CHUNK_SIZE
 
     def test_maximum_chunk_size(self) -> None:
-        """Test maximum chunk size is accepted."""
-        result = validate_chunk_size(MAX_CHUNK_SIZE)
+        result = validate_chunk_bytes(MAX_CHUNK_SIZE)
         assert result == MAX_CHUNK_SIZE
 
     def test_chunk_size_too_small(self) -> None:
-        """Test chunk size below minimum raises error."""
         with pytest.raises(ValueError, match="too small"):
-            validate_chunk_size(MIN_CHUNK_SIZE - 1)
+            validate_chunk_bytes(MIN_CHUNK_SIZE - 1)
 
     def test_chunk_size_too_large(self) -> None:
-        """Test chunk size above maximum raises error."""
         with pytest.raises(ValueError, match="too large"):
-            validate_chunk_size(MAX_CHUNK_SIZE + 1)
+            validate_chunk_bytes(MAX_CHUNK_SIZE + 1)
 
     def test_chunk_size_not_integer(self) -> None:
-        """Test non-integer chunk size raises error."""
         with pytest.raises(ValueError, match="integer"):
-            validate_chunk_size(1024.5)  # type: ignore[arg-type]
+            validate_chunk_bytes(1024.5)  # type: ignore[arg-type]
 
     def test_chunk_size_string_error(self) -> None:
-        """Test string chunk size raises error."""
         with pytest.raises(ValueError, match="integer"):
-            validate_chunk_size("1024")  # type: ignore[arg-type]
+            validate_chunk_bytes("1024")  # type: ignore[arg-type]
+
+    def test_legacy_alias_warns_and_forwards(self) -> None:
+        """`validate_chunk_size` is a deprecated alias that warns and forwards."""
+        with pytest.warns(DeprecationWarning, match="validate_chunk_bytes"):
+            assert validate_chunk_size(DEFAULT_CHUNK_SIZE) == DEFAULT_CHUNK_SIZE
+        with pytest.warns(DeprecationWarning):
+            with pytest.raises(ValueError, match="too small"):
+                validate_chunk_size(MIN_CHUNK_SIZE - 1)
 
 
 class TestValidateCompressionLevel:
