@@ -44,6 +44,31 @@ describe('readUrlParams', () => {
     expect(normalizeDataSourceUrl('   ')).toBeNull();
     expect(normalizeDataSourceUrl('datasets/\u0000bad.zarr')).toBeNull();
     expect(normalizeDataSourceUrl(`https://example.com/${'a'.repeat(5000)}.zarr`)).toBeNull();
+    expect(normalizeDataSourceUrl('datasets/\rbad.zarr')).toBeNull();
+    expect(normalizeDataSourceUrl('datasets/\nbad.zarr')).toBeNull();
+  });
+
+  it('rejects mixed-case javascript: and other unsafe schemes', () => {
+    // Mixed-case scheme must not bypass the deny list — `new URL()` lowercases
+    // the protocol so the http/https check still rejects it.
+    expect(normalizeDataSourceUrl('JaVaScRiPt:alert(1)')).toBeNull();
+    expect(normalizeDataSourceUrl('vbscript:msgbox(1)')).toBeNull();
+    expect(normalizeDataSourceUrl('blob:https://example.com/abc')).toBeNull();
+    expect(normalizeDataSourceUrl('about:blank')).toBeNull();
+    // Leading whitespace must not smuggle a dangerous scheme past trim().
+    expect(normalizeDataSourceUrl('\t javascript:alert(1)')).toBeNull();
+  });
+
+  it('strips trailing slashes per CLAUDE.md zarr-loader gotcha', () => {
+    expect(normalizeDataSourceUrl('https://example.com/data.zarr/')).toBe(
+      'https://example.com/data.zarr'
+    );
+    expect(normalizeDataSourceUrl('https://example.com/data.zarr///')).toBe(
+      'https://example.com/data.zarr'
+    );
+    expect(normalizeDataSourceUrl('datasets/test.zarr/')).toBe('datasets/test.zarr');
+    // A bare "/" trims to empty and is rejected.
+    expect(normalizeDataSourceUrl('/')).toBeNull();
   });
 
   it('treats valueless flags as boolean true', () => {
