@@ -41,12 +41,16 @@ def _load_demo_module():
 
 
 _demo = _load_demo_module()
-FlowField = _demo.FlowField
 _grid_points_for_flat_indices = _demo._grid_points_for_flat_indices
-_trilinear_vector_batch = _demo._trilinear_vector_batch
 array_hash = _demo.array_hash
-compute_cubic_bounds = _demo.compute_cubic_bounds
 network_hash = _demo.network_hash
+
+# Field helpers were moved to luxar.utils.fields in the hardening pass;
+# keep a thin alias here so the existing test bodies stay untouched.
+from luxar.utils.fields import FlowField, cubic_bounds, trilinear_vector
+
+compute_cubic_bounds = cubic_bounds
+_trilinear_vector_batch = trilinear_vector
 
 
 class TestGridPointsForFlatIndices:

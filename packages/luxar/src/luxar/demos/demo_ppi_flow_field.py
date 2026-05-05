@@ -55,6 +55,12 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, UIConfig, ViewerConfig
 from luxar.demos import launch_viewer
 from luxar.utils._umap_utils import get_categorical_color
+from luxar.utils.fields import (
+    FlowField,
+    add_reference_cube_to_scene,
+    cubic_bounds,
+    rk4_step,
+)
 from luxar.utils.paths import get_demos_output_dir
 
 # -----------------------------------------------------------------------------
@@ -155,17 +161,6 @@ class OrientedEdges:
     head_idx: np.ndarray
     centrality_delta: np.ndarray
     tie_mask: np.ndarray
-
-
-@dataclass(frozen=True)
-class FlowField:
-    """Cubic vector field in UMAP coordinates."""
-
-    vectors: np.ndarray
-    grid_min: np.ndarray
-    grid_max: np.ndarray
-    spacing: float
-    cache_key: str
 
 
 @dataclass(frozen=True)
@@ -618,20 +613,6 @@ def compute_signed_flow_layout(
 # -----------------------------------------------------------------------------
 
 
-def compute_cubic_bounds(
-    coords: np.ndarray, pad_fraction: float = 0.08
-) -> tuple[np.ndarray, np.ndarray]:
-    """Return padded cubic bounds around the 3D coordinates."""
-    lo = coords.min(axis=0).astype(np.float32)
-    hi = coords.max(axis=0).astype(np.float32)
-    center = (lo + hi) * 0.5
-    side = float(np.max(hi - lo))
-    half = max(side * (0.5 + pad_fraction), 1.0)
-    grid_min = (center - half).astype(np.float32)
-    grid_max = (center + half).astype(np.float32)
-    return grid_min, grid_max
-
-
 def _flow_cache_key(
     graph_hash: str,
     layout_hash: str,
@@ -699,7 +680,7 @@ def _build_field_vectors(
     """Compute the unsmoothed vector field over the cubic grid."""
     from scipy.spatial import cKDTree
 
-    grid_min, grid_max = compute_cubic_bounds(coords)
+    grid_min, grid_max = cubic_bounds(coords, pad_fraction=0.08)
     n = preset.grid_size
     spacing = float((grid_max[0] - grid_min[0]) / max(n - 1, 1))
 
@@ -849,114 +830,7 @@ def compute_vector_field(
 # -----------------------------------------------------------------------------
 
 
-def _trilinear_vector_batch(flow: FlowField, points: np.ndarray) -> np.ndarray:
-    """Trilinearly interpolate vector field values at xyz world points."""
-    field = flow.vectors
-    n = field.shape[0]
-    idx = (points - flow.grid_min[None, :]) / np.float32(flow.spacing)
-    x = idx[:, 0]
-    y = idx[:, 1]
-    z = idx[:, 2]
-
-    ix0 = np.floor(x).astype(np.int32)
-    iy0 = np.floor(y).astype(np.int32)
-    iz0 = np.floor(z).astype(np.int32)
-    valid = (
-        (ix0 >= 0)
-        & (iy0 >= 0)
-        & (iz0 >= 0)
-        & (ix0 < n - 1)
-        & (iy0 < n - 1)
-        & (iz0 < n - 1)
-    )
-
-    out = np.full((len(points), 3), np.nan, dtype=np.float32)
-    if not np.any(valid):
-        return out
-
-    ix = ix0[valid]
-    iy = iy0[valid]
-    iz = iz0[valid]
-    dx = (x[valid] - ix).astype(np.float32)
-    dy = (y[valid] - iy).astype(np.float32)
-    dz = (z[valid] - iz).astype(np.float32)
-
-    c000 = field[ix, iy, iz]
-    c100 = field[ix + 1, iy, iz]
-    c010 = field[ix, iy + 1, iz]
-    c110 = field[ix + 1, iy + 1, iz]
-    c001 = field[ix, iy, iz + 1]
-    c101 = field[ix + 1, iy, iz + 1]
-    c011 = field[ix, iy + 1, iz + 1]
-    c111 = field[ix + 1, iy + 1, iz + 1]
-
-    c00 = c000 * (1.0 - dx[:, None]) + c100 * dx[:, None]
-    c10 = c010 * (1.0 - dx[:, None]) + c110 * dx[:, None]
-    c01 = c001 * (1.0 - dx[:, None]) + c101 * dx[:, None]
-    c11 = c011 * (1.0 - dx[:, None]) + c111 * dx[:, None]
-    c0 = c00 * (1.0 - dy[:, None]) + c10 * dy[:, None]
-    c1 = c01 * (1.0 - dy[:, None]) + c11 * dy[:, None]
-    out[valid] = c0 * (1.0 - dz[:, None]) + c1 * dz[:, None]
-    return out.astype(np.float32)
-
-
-def _unit_flow_batch(flow: FlowField, points: np.ndarray) -> np.ndarray:
-    """Interpolate and normalize the flow direction at many points."""
-    vectors = _trilinear_vector_batch(flow, points)
-    norms = np.linalg.norm(vectors, axis=1)
-    valid = np.isfinite(norms) & (norms > 1e-7)
-    out = np.full_like(vectors, np.nan)
-    out[valid] = vectors[valid] / norms[valid, None]
-    return out
-
-
-def _rk4_step_batch(
-    points: np.ndarray, step_size: float, flow: FlowField
-) -> np.ndarray:
-    """One vectorized RK4 step for dx/ds = normalized_flow(x)."""
-    out = np.full_like(points, np.nan)
-
-    k1 = _unit_flow_batch(flow, points)
-    valid = np.isfinite(k1).all(axis=1)
-    if not np.any(valid):
-        return out
-
-    source_idx = np.flatnonzero(valid)
-    p = points[source_idx]
-    kk1 = k1[source_idx]
-
-    k2 = _unit_flow_batch(flow, p + 0.5 * step_size * kk1)
-    valid = np.isfinite(k2).all(axis=1)
-    if not np.any(valid):
-        return out
-    source_idx = source_idx[valid]
-    p = p[valid]
-    kk1 = kk1[valid]
-    kk2 = k2[valid]
-
-    k3 = _unit_flow_batch(flow, p + 0.5 * step_size * kk2)
-    valid = np.isfinite(k3).all(axis=1)
-    if not np.any(valid):
-        return out
-    source_idx = source_idx[valid]
-    p = p[valid]
-    kk1 = kk1[valid]
-    kk2 = kk2[valid]
-    kk3 = k3[valid]
-
-    k4 = _unit_flow_batch(flow, p + step_size * kk3)
-    valid = np.isfinite(k4).all(axis=1)
-    if not np.any(valid):
-        return out
-    source_idx = source_idx[valid]
-    p = p[valid]
-    kk1 = kk1[valid]
-    kk2 = kk2[valid]
-    kk3 = kk3[valid]
-    kk4 = k4[valid]
-
-    out[source_idx] = p + (step_size / 6.0) * (kk1 + 2.0 * kk2 + 2.0 * kk3 + kk4)
-    return out.astype(np.float32)
+# Streamline integration uses rk4_step from luxar.utils.fields (imported above).
 
 
 def _select_streamline_seeds(pagerank: np.ndarray, max_seeds: int | None) -> np.ndarray:
@@ -1040,7 +914,7 @@ def integrate_streamlines(
             if len(active_idx) == 0:
                 break
 
-            next_points = _rk4_step_batch(current[active_idx], step_size, flow)
+            next_points = rk4_step(current[active_idx], step_size, flow)
             inside = np.all(
                 (next_points >= flow.grid_min[None, :])
                 & (next_points <= flow.grid_max[None, :]),
@@ -1240,56 +1114,6 @@ def build_oriented_edge_lines(
     return vertices, widths, colors, labels, n_edges
 
 
-def add_reference_cube(scene: Any, grid_min: np.ndarray, grid_max: np.ndarray) -> None:
-    """Add a faint bounding cube for the vector-field domain."""
-    x0, y0, z0 = grid_min.tolist()
-    x1, y1, z1 = grid_max.tolist()
-    corners = np.array(
-        [
-            [x0, y0, z0],
-            [x1, y0, z0],
-            [x1, y1, z0],
-            [x0, y1, z0],
-            [x0, y0, z1],
-            [x1, y0, z1],
-            [x1, y1, z1],
-            [x0, y1, z1],
-        ],
-        dtype=np.float32,
-    )
-    edges = np.array(
-        [
-            [0, 1],
-            [1, 2],
-            [2, 3],
-            [3, 0],
-            [4, 5],
-            [5, 6],
-            [6, 7],
-            [7, 4],
-            [0, 4],
-            [1, 5],
-            [2, 6],
-            [3, 7],
-        ],
-        dtype=np.uint32,
-    )
-    scene.add_lines(
-        "vector field bounding cube",
-        vertices=corners,
-        widths=0.0063,
-        colors=(0.55, 0.62, 0.80),
-        sharpness=0.8,
-        indices=edges.ravel(),
-        line_type="indexed",
-        opacity=0.18,
-        intensity=0.35 * NODE_INTENSITY_SCALE,
-        blending_mode="additive",
-        layer=True,
-        visible=False,
-    )
-
-
 def build_legend_html(communities: np.ndarray, top_n: int = 14) -> str:
     """Compact HTML legend and method summary."""
     unique, counts = np.unique(communities, return_counts=True)
@@ -1474,7 +1298,15 @@ def write_scene(
                     layer=True,
                 )
 
-            add_reference_cube(scene, flow.grid_min, flow.grid_max)
+            add_reference_cube_to_scene(
+                scene,
+                flow.grid_min,
+                flow.grid_max,
+                name="vector field bounding cube",
+                widths=0.0063,
+                opacity=0.18,
+                intensity=0.35 * NODE_INTENSITY_SCALE,
+            )
 
             scene.add_text(
                 "HuRI PPI Flow Field",
