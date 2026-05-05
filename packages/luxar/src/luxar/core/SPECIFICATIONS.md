@@ -145,7 +145,7 @@ See `docs/guides/specs/ND_TRANSFORMS_SPEC.md` for the full specification includi
 **Scene Dimensions as Single Source of Truth**:
 - Scene dimensions define the coordinate system for the entire dataset
 - All data nodes (Points, Lines, GSplats) must conform to scene dimensions
-- Object-level metadata (morton_dims, slice_dims) is derived from scene dimensions
+- Object-level metadata (ordering_dims, slice_dims) is derived from scene dimensions
 - This ensures consistency across all objects and enables proper nD navigation
 
 **Key Operations**:

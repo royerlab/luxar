@@ -72,6 +72,33 @@ This includes:
 
 Please refer to the main SPECIFICATIONS.md file for complete implementation details.
 
+## Required Model API
+
+`fitting/optimization.py:run_optimization_loop` operates polymorphically on
+any model that implements the contract below. Custom models that do not
+satisfy this contract will fail at runtime — the loop hard-checks the
+critical methods before entering the inner training loop.
+
+| Method | Signature | Used by | Enforcement |
+|--------|-----------|---------|-------------|
+| `current_params()` | `() -> tuple[Tensor, Tensor, Tensor]` returning `(centers, Ls, amps)` | best-state capture, restore | runtime |
+| `replace_with(centers, Ls, amps)` | `(Tensor, Tensor, Tensor) -> None` | best-state restore (`fitting/optimization.py:444-454`) | **`hasattr` runtime check raises `TypeError`** |
+| `forward(...)` | `() -> Tensor` (the rendered image/volume) | every iteration | implicit (must be a callable `nn.Module`) |
+| `n_splats()` | `() -> int` | logging, dynamic-ops triggers | runtime via `getattr` fallback |
+| `parameters()` | `() -> Iterable[Parameter]` | optimizer setup | inherited from `torch.nn.Module` |
+
+`GaussianSplatModel` (`gsplat_model.py`) implements every method above, so
+subclassing it — as `GaussianSplatModelCUDA` and `GaussianSplatModelMetal`
+do — automatically satisfies the contract. Custom backends or test fixtures
+that bypass the base class must implement each method explicitly.
+
+**Why this contract is hard-enforced**: `run_optimization_loop` may
+restore the model from a saved best state via `replace_with(...)` and then
+re-score the result. A model that silently accepts the
+"best-loss == saved-loss" assumption without supporting `replace_with`
+would corrupt the result-tracking invariant; a missing `current_params()`
+would leave the saved best state empty.
+
 ## Summary of Key Components
 
 ### 1. GaussianSplatModel (`gsplats/gsplat_model.py`)

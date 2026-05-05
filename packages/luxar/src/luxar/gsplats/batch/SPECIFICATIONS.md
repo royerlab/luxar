@@ -174,6 +174,30 @@ scripts log restart attempts and stop after a bounded number of retries.
 
 ---
 
+## Backward Compatibility
+
+Three fields were added in 2026-04 to support nD channel coordinates:
+
+| Field | Defined on | Default for old manifests |
+|-------|------------|---------------------------|
+| `BatchJob.channel_coords: Tuple[int, ...]` | per-job | `()` |
+| `BatchManifest.channel_axes: List[str]` | manifest-level | `[]` |
+| `BatchManifest.channel_shape: Tuple[int, ...]` | manifest-level | `()` |
+
+`load_manifest` (`manifest.py`) tolerates manifests written by older code:
+unknown fields are filtered, missing fields fall back to the defaults
+above, and `channel_shape` is re-tupled on read. The reverse direction
+(new manifest loaded by old code) silently drops these fields — this is
+a one-way forward migration, not bidirectional compatibility.
+
+**Consumer guidance**: anything depending on
+`decode_flat_channel_index(channel, channel_shape)` (introduced together
+with these fields) must gate on `channel_shape != ()`. Old-manifest jobs
+report empty `channel_coords` / `channel_shape` and the helper raises if
+you call it on an empty shape.
+
+---
+
 ## Validation Rules
 
 - Timepoint and channel slices must select at least one index.
