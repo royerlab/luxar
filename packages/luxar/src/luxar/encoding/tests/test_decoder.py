@@ -346,3 +346,81 @@ class TestErrorHandling:
             # Should raise error when zarr_root is None
             with pytest.raises(ValueError, match="zarr_root required"):
                 decoder.decode(group["test"], zarr_root=None)
+
+    def test_bounded_scalar_rejects_non_finite_bounds(self):
+        """Bounded scalar metadata must have finite min/max."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(tmpdir, mode="w")
+            decoder = ArrayDecoder()
+            group.create_dataset("test", data=np.array([0, 128, 255], dtype=np.uint8))
+            group["test"].attrs["encoding"] = {
+                "name": "bounded_scalar_uint8",
+                "min": float("nan"),
+                "max": 1.0,
+                "bits": 8,
+                "original_dtype": "float32",
+            }
+            with pytest.raises(ValueError, match="finite min/max"):
+                decoder.decode(group["test"])
+
+    def test_bounded_scalar_rejects_max_le_min(self):
+        """Bounded scalar metadata must have max > min."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(tmpdir, mode="w")
+            decoder = ArrayDecoder()
+            group.create_dataset("test", data=np.array([0, 128, 255], dtype=np.uint8))
+            group["test"].attrs["encoding"] = {
+                "name": "bounded_scalar_uint8",
+                "min": 5.0,
+                "max": 5.0,
+                "bits": 8,
+                "original_dtype": "float32",
+            }
+            with pytest.raises(ValueError, match="max > min"):
+                decoder.decode(group["test"])
+
+    def test_bounded_scalar_rejects_zero_bits(self):
+        """Bounded scalar metadata must have bits > 0."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(tmpdir, mode="w")
+            decoder = ArrayDecoder()
+            group.create_dataset("test", data=np.array([0, 128, 255], dtype=np.uint8))
+            group["test"].attrs["encoding"] = {
+                "name": "bounded_scalar_uint8",
+                "min": 0.0,
+                "max": 1.0,
+                "bits": 0,
+                "original_dtype": "float32",
+            }
+            with pytest.raises(ValueError, match="bits > 0"):
+                decoder.decode(group["test"])
+
+    def test_log_scalar_rejects_non_positive_max_log(self):
+        """Log scalar metadata must have positive, finite max_log."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(tmpdir, mode="w")
+            decoder = ArrayDecoder()
+            group.create_dataset("test", data=np.array([0, 128, 255], dtype=np.uint8))
+            group["test"].attrs["encoding"] = {
+                "name": "log_scalar_uint8",
+                "max_log": -1.0,
+                "bits": 8,
+                "original_dtype": "float32",
+            }
+            with pytest.raises(ValueError, match="finite, positive max_log"):
+                decoder.decode(group["test"])
+
+    def test_log_scalar_rejects_inf_max_log(self):
+        """Log scalar metadata must have finite max_log."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(tmpdir, mode="w")
+            decoder = ArrayDecoder()
+            group.create_dataset("test", data=np.array([0, 128, 255], dtype=np.uint8))
+            group["test"].attrs["encoding"] = {
+                "name": "log_scalar_uint8",
+                "max_log": float("inf"),
+                "bits": 8,
+                "original_dtype": "float32",
+            }
+            with pytest.raises(ValueError, match="finite, positive max_log"):
+                decoder.decode(group["test"])

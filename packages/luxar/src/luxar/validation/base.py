@@ -375,9 +375,11 @@ def validate_zarr_attributes(attrs: dict, is_root: bool = False) -> None:
                 f"Use one of: {', '.join(valid_types)}",
             )
 
-    # Validate version if present. Keep this import local to avoid a package
-    # initialization cycle: typing_utils.config imports protocols from the public
-    # package path during luxar import, while validation.base is imported early.
+    # Validate version if present. Keep this import local: typing_utils.config
+    # itself imports io.reader.DEFAULT_COMP via a lazy/inline path, and io.reader
+    # transitively imports core.dimensions which imports validation.category_validation.
+    # validation.base is imported early enough that an unconditional top-level
+    # import here would risk re-entering this module via that chain.
     if "luxar_version" in attrs:
         from ..typing_utils.config import SUPPORTED_VERSIONS
 

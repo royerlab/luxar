@@ -149,11 +149,25 @@ class ArrayDecoder:
 
         Returns:
             Decoded array with original dtype
+
+        Raises:
+            ValueError: If metadata is malformed (non-finite bounds,
+                ``max <= min``, or ``bits <= 0``).
         """
         data = np.asarray(arr[:])
         min_val = float(enc["min"])
         max_val = float(enc["max"])
         bits = int(enc["bits"])
+        if not (np.isfinite(min_val) and np.isfinite(max_val)):
+            raise ValueError(
+                f"bounded_scalar requires finite min/max, got min={min_val} max={max_val}"
+            )
+        if max_val <= min_val:
+            raise ValueError(
+                f"bounded_scalar requires max > min, got min={min_val} max={max_val}"
+            )
+        if bits <= 0:
+            raise ValueError(f"bounded_scalar requires bits > 0, got {bits}")
         original_dtype = np.dtype(enc.get("original_dtype", "float32"))
 
         # Use float64 intermediate for precision, then cast to original dtype
@@ -170,10 +184,20 @@ class ArrayDecoder:
 
         Returns:
             Decoded array with original dtype
+
+        Raises:
+            ValueError: If metadata is malformed (non-finite or
+                non-positive ``max_log``, or ``bits <= 0``).
         """
         data = np.asarray(arr[:])
         max_log = float(enc["max_log"])
         bits = int(enc["bits"])
+        if not np.isfinite(max_log) or max_log <= 0.0:
+            raise ValueError(
+                f"log_scalar requires finite, positive max_log, got {max_log}"
+            )
+        if bits <= 0:
+            raise ValueError(f"log_scalar requires bits > 0, got {bits}")
         original_dtype = np.dtype(enc.get("original_dtype", "float32"))
 
         # Use float64 intermediate for precision, then cast to original dtype
