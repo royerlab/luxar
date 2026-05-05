@@ -419,7 +419,13 @@ class TestNetworkSimulationMiddleware:
         assert message_count == 2  # Should have sent response
 
     def test_bandwidth_throttling(self, monkeypatch):
-        """Test that bandwidth throttling computes deterministic sleep delays."""
+        """Test that bandwidth throttling computes deterministic sleep delays.
+
+        Both ``asyncio.sleep`` and ``time.time`` are monkeypatched so the
+        elapsed delta the middleware computes is exactly zero, regardless
+        of how slow the test runner is. Without freezing ``time.time``,
+        the assertion ``sleep_calls[0] == approx(0.08)`` flakes on slow CI.
+        """
 
         sleep_calls: list[float] = []
 
@@ -427,6 +433,8 @@ class TestNetworkSimulationMiddleware:
             sleep_calls.append(seconds)
 
         monkeypatch.setattr("luxar.cli.network_simulation.asyncio.sleep", fake_sleep)
+        # Freeze the wall clock so elapsed = 0 inside the middleware.
+        monkeypatch.setattr("luxar.cli.network_simulation.time.time", lambda: 0.0)
 
         async def dummy_app(scope, receive, send):
             await send({"type": "http.response.start", "status": 200, "headers": []})
@@ -434,7 +442,7 @@ class TestNetworkSimulationMiddleware:
             await send({"type": "http.response.body", "body": b"x" * 10000})
 
         async def test_async():
-            # 1 Mbps = 125 KB/s, so 10KB should take ~0.08s
+            # 1 Mbps = 125 KB/s, so 10KB should take exactly 0.08s
             middleware = NetworkSimulationMiddleware(
                 dummy_app, bandwidth_limit_mbps=1.0
             )
@@ -453,12 +461,10 @@ class TestNetworkSimulationMiddleware:
 
         message_count = asyncio.run(test_async())
 
-        # 10KB at 1 Mbps = 10_000 / 125_000 = 0.08s. The exact call may be
-        # slightly smaller if a tiny amount of real time elapsed before the
-        # throttle calculation, but it should remain close and deterministic.
+        # 10KB at 1 Mbps = 10_000 / 125_000 = 0.08s. With time.time frozen
+        # the middleware sleeps the entire expected_time deterministically.
         assert len(sleep_calls) == 1
-        assert 0.0 < sleep_calls[0] <= 0.08
-        assert sleep_calls[0] == pytest.approx(0.08, abs=0.01)
+        assert sleep_calls[0] == pytest.approx(0.08, abs=1e-9)
         assert message_count == 2
 
     def test_packet_loss_drops_requests(self):
