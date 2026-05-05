@@ -325,10 +325,13 @@ export class SceneManager extends THREE.EventDispatcher<{
         // Force renderer to recreate its internal state
         this.renderer.resetState();
 
-        // Recreate post-processing resources that own WebGL render targets.
+        // Rebuild post-processing GPU-bound resources in place. The
+        // PostProcessingManager identity is preserved across the rebuild so
+        // PickingSystem, AnimationController, and RenderingControls keep
+        // their cached references valid; user settings (bloom, exposure,
+        // tone mapping, DOF, etc.) are preserved end-to-end.
         if (this.postProcessing) {
-          this.postProcessing.dispose();
-          this.setupPostProcessing();
+          this.postProcessing.rebuildAfterContextRestore();
         }
         this.markSceneResourcesDirtyForContextRestore();
         this.updateRendererSize();
