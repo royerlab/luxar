@@ -492,6 +492,27 @@ describe('SceneManager', () => {
       expect(position.version).toBeGreaterThan(initialPositionVersion);
       expect(material.version).toBeGreaterThan(initialMaterialVersion);
     });
+
+    it('preserves PostProcessingManager identity across context restore (CR-1)', async () => {
+      // Cached references in PickingSystem / AnimationController /
+      // RenderingControls must remain valid after context restore. The
+      // rebuild path must NOT replace the manager instance — it should
+      // rebuild GPU-bound resources in place via
+      // `rebuildAfterContextRestore()`.
+      const ppBefore = sceneManager.postProcessing;
+      expect(ppBefore).toBeDefined();
+
+      const restoredHandler = mockCanvas.addEventListener.mock.calls.find(
+        (call) => call[0] === 'webglcontextrestored'
+      )?.[1] as ((event: Event) => Promise<void>) | undefined;
+
+      expect(restoredHandler).toBeDefined();
+      await restoredHandler?.(new Event('webglcontextrestored'));
+
+      const ppAfter = sceneManager.postProcessing;
+      // Identity preserved: same object, not a replacement.
+      expect(ppAfter).toBe(ppBefore);
+    });
   });
 
   describe('helper methods', () => {
