@@ -529,6 +529,89 @@ describe('TwoLevelCachingStore', () => {
       await newStore.dispose(); // Should not throw
       expect(newStore).toBeDefined();
     });
+
+    it('VC-1: dispose aborts in-flight cache validation and removes the queue entry', { timeout: 15_000 }, async () => {
+      // Mock fetch that hangs UNTIL the abort signal fires; abort path
+      // rejects with the standard AbortError so fetchWithRetry can unwind.
+      let observedSignal: AbortSignal | undefined;
+      global.fetch = vi.fn((_url: string, init?: RequestInit) => {
+        const signal = init?.signal as AbortSignal | undefined;
+        observedSignal = signal;
+        return new Promise<Response>((_resolve, reject) => {
+          if (signal?.aborted) {
+            reject(new DOMException('Aborted', 'AbortError'));
+            return;
+          }
+          signal?.addEventListener(
+            'abort',
+            () => reject(new DOMException('Aborted', 'AbortError')),
+            { once: true }
+          );
+        });
+      }) as any;
+
+      const slowStore = new TwoLevelCachingStore('https://example.com/slow.zarr', {
+        l1MaxSize: 20 * 1024 * 1024,
+        l2MaxSize: 4096,
+      });
+      // Kick off init (which calls validateCache → fetchWithRetry).
+      const initPromise = slowStore.init();
+      // Give the init enough time to enter fetchWithRetry.
+      await new Promise((r) => setTimeout(r, 50));
+
+      await slowStore.dispose();
+
+      // The fetch's signal must have aborted as a consequence of dispose().
+      expect(observedSignal?.aborted).toBe(true);
+
+      // init() must resolve now that the validation chain has unwound.
+      await initPromise;
+    });
+
+    it('VC-2: cache-validation HEAD probe uses a shorter timeout than data fetches', { timeout: 15_000 }, async () => {
+      // Verify timing: the validation HEAD probe should abort under the
+      // shorter `validationTimeoutMs` budget (5 s), not the full 30 s
+      // `timeoutMs` data budget. We assert that the FIRST attempt's abort
+      // fires within ~validationTimeoutMs / maxAttempts.
+      const startTimes = new Map<string, number>();
+      const abortTimes = new Map<string, number>();
+      global.fetch = vi.fn((url: string, init?: RequestInit) => {
+        const path = url.replace('https://example.com/timeout.zarr/', '');
+        startTimes.set(path, Date.now());
+        const signal = init?.signal as AbortSignal | undefined;
+        return new Promise<Response>((_resolve, reject) => {
+          signal?.addEventListener(
+            'abort',
+            () => {
+              abortTimes.set(path, Date.now());
+              reject(new DOMException('Aborted', 'AbortError'));
+            },
+            { once: true }
+          );
+        });
+      }) as any;
+
+      const timeoutStore = new TwoLevelCachingStore('https://example.com/timeout.zarr', {
+        l1MaxSize: 20 * 1024 * 1024,
+        l2MaxSize: 4096,
+      });
+      const initPromise = timeoutStore.init();
+
+      // Let the validation budget run through enough retries for our
+      // measurement, but stay well under the data-fetch budget.
+      await new Promise((r) => setTimeout(r, 2500));
+
+      const start = startTimes.get('.zattrs');
+      const abort = abortTimes.get('.zattrs');
+      expect(start).toBeDefined();
+      expect(abort).toBeDefined();
+      // First-attempt abort should fire within ~validationTimeoutMs/4 ≈ 1.25 s
+      // (validation budget), not 30 s/4 ≈ 7.5 s (data budget).
+      expect((abort as number) - (start as number)).toBeLessThan(2000);
+
+      await timeoutStore.dispose();
+      await initPromise;
+    });
   });
 
   describe('Debug Features', () => {

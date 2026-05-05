@@ -307,6 +307,12 @@ export interface UIConfig {
  */
 export interface DataLoadingNetworkConfig {
   timeoutMs: number;
+  /**
+   * Dedicated short budget for the L2 cache-validation HEAD probe. On flaky
+   * networks the validation must NOT block scene loading for the full
+   * `timeoutMs` — failing fast lets cached data render quickly.
+   */
+  validationTimeoutMs: number;
   maxConcurrent: number;
   retryAttempts: number;
 }

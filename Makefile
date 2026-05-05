@@ -15,6 +15,7 @@
         stats show-env prune-env shell build publish-test publish \
         check-deps install-node install-pnpm install-hatch \
         setup-cuda check-cuda-deps build-cuda build-cuda-slurm clean-cuda test-cuda benchmark-cuda \
+        benchmark-metal benchmark-metal-stress \
         build-nlm-cuda clean-nlm-cuda test-nlm-cuda \
         benchmark-wasm \
         install-go build-launchers clean-launchers
@@ -2147,6 +2148,22 @@ test-cuda:  ## Run CUDA extension tests
 	hatch run pytest $(CUDA_EXT_DIR)/tests/ -v
 	@echo ""
 	@echo "✅ CUDA tests completed!"
+
+benchmark-metal:  ## Run Metal (MPS) performance benchmarks (M-series only)
+	@echo "Running Metal performance benchmarks..."
+	@mkdir -p benchmarks
+	hatch run python scripts/benchmarks/benchmark_metal_optimizations.py \
+		--label baseline-$$(date +%Y%m%d-%H%M%S) \
+		--output benchmarks/metal_$$(date +%Y%m%d-%H%M%S).json
+	@echo ""
+	@echo "Benchmark completed! Results in benchmarks/"
+
+benchmark-metal-stress:  ## Run Metal RSS leak-check (validates MET-1 @autoreleasepool)
+	@echo "Running Metal stress / leak-check..."
+	@mkdir -p benchmarks
+	hatch run python scripts/benchmarks/benchmark_metal_optimizations.py \
+		--stress --label stress-$$(date +%Y%m%d-%H%M%S) \
+		--output benchmarks/metal_stress_$$(date +%Y%m%d-%H%M%S).json
 
 benchmark-cuda:  ## Run CUDA performance benchmarks
 	$(CHECK_MACOS_CUDA)

@@ -118,7 +118,7 @@ inline float3 sigma_diag_sqrt_from_conic_3d(
 inline void compute_aabb_3d_from_sigma(
     threadgroup int* lo,
     threadgroup int* extent,
-    threadgroup int& total_voxels,
+    threadgroup uint& total_voxels,
     float center_z,
     float center_y,
     float center_x,
@@ -155,7 +155,40 @@ inline void compute_aabb_3d_from_sigma(
     extent[0] = max(0, hi_z - lo_z + 1);
     extent[1] = max(0, hi_y - lo_y + 1);
     extent[2] = max(0, hi_x - lo_x + 1);
-    total_voxels = extent[0] * extent[1] * extent[2];
+    // MET-3: compute the voxel total in uint so a wide splat in a 1290³+
+    // volume (host validator hard-caps at 2e9 voxels) cannot silently
+    // overflow a 32-bit signed integer and produce a negative loop bound.
+    total_voxels = uint(extent[0]) * uint(extent[1]) * uint(extent[2]);
+}
+
+// Conic-input AABB: thin wrapper around compute_aabb_3d_from_sigma that
+// derives the per-axis sigma from the packed conic. Used by the constrained
+// (precomputed-conic) splat-centric kernels — the raw-parameter kernels
+// derive sigma directly from L and call compute_aabb_3d_from_sigma instead.
+inline void compute_aabb_3d(
+    threadgroup int* lo,
+    threadgroup int* extent,
+    threadgroup uint& total_voxels,
+    float center_z,
+    float center_y,
+    float center_x,
+    float c00,
+    float c01,
+    float c02,
+    float c11,
+    float c12,
+    float c22,
+    float t_eff,
+    uint D,
+    uint H,
+    uint W
+) {
+    float3 sigma = sigma_diag_sqrt_from_conic_3d(c00, c01, c02, c11, c12, c22);
+    compute_aabb_3d_from_sigma(
+        lo, extent, total_voxels,
+        center_z, center_y, center_x,
+        sigma.x, sigma.y, sigma.z,
+        t_eff, D, H, W);
 }
 
 // ============================================================================
@@ -223,15 +256,13 @@ kernel void compute_conic_from_L_3d(
 
 kernel void rasterize_forward_splat_centric_3d(
     device const float* centers [[buffer(0)]],
-    device const float* Ls [[buffer(1)]],
+    device const float* conic [[buffer(1)]],
     device const float* amps [[buffer(2)]],
     device atomic_float* output [[buffer(3)]],
     constant uint3& shape_dhw [[buffer(4)]],
     constant uint& n_splats [[buffer(5)]],
     constant float& truncate [[buffer(6)]],
     constant float& intensity_floor [[buffer(7)]],
-    constant float& shift_C [[buffer(8)]],
-    constant float& inv_one_minus_C [[buffer(9)]],
     uint3 tg_pos [[threadgroup_position_in_grid]],
     uint tid [[thread_index_in_threadgroup]]
 ) {
@@ -248,58 +279,45 @@ kernel void rasterize_forward_splat_centric_3d(
     threadgroup float s_truncate_sq;
     threadgroup int s_lo[3];
     threadgroup int s_extent[3];
-    threadgroup int s_total_voxels = 0;
+    // MET-3: counter is uint to match compute_aabb_3d's `uint& total_voxels`
+    // signature and to prevent a 1290³+ volume from overflowing the loop
+    // bound. Threadgroup-storage initializers are technically UB per the
+    // MSL spec; thread 0 always writes via compute_aabb_3d before the
+    // barrier below, so other threads observe the assigned value.
+    threadgroup uint s_total_voxels;
 
     if (tid == 0) {
         int base3 = int(splat_id) * 3;
-        int base9 = int(splat_id) * 9;
+        int base6 = int(splat_id) * 6;
 
         s_center[0] = centers[base3 + 0];
         s_center[1] = centers[base3 + 1];
         s_center[2] = centers[base3 + 2];
-
-        float l00 = Ls[base9 + 0];
-        float l10 = Ls[base9 + 3];
-        float l11 = Ls[base9 + 4];
-        float l20 = Ls[base9 + 6];
-        float l21 = Ls[base9 + 7];
-        float l22 = Ls[base9 + 8];
-
-        float k00 = 1.0f / (l00 + 1e-9f);
-        float k11 = 1.0f / (l11 + 1e-9f);
-        float k22 = 1.0f / (l22 + 1e-9f);
-        float k10 = -l10 * k00 * k11;
-        float k21 = -l21 * k11 * k22;
-        float k20 = -(l20 * k00 + l21 * k10) * k22;
-
-        s_conic[0] = k00 * k00 + k10 * k10 + k20 * k20;
-        s_conic[1] = k10 * k11 + k20 * k21;
-        s_conic[2] = k20 * k22;
-        s_conic[3] = k11 * k11 + k21 * k21;
-        s_conic[4] = k21 * k22;
-        s_conic[5] = k22 * k22;
-        float sigma_z = abs(l00);
-        float sigma_y = fast::sqrt(l10 * l10 + l11 * l11);
-        float sigma_x = fast::sqrt(l20 * l20 + l21 * l21 + l22 * l22);
+        for (uint k = 0; k < 6; ++k) {
+            s_conic[k] = conic[base6 + int(k)];
+        }
         s_amp = amps[splat_id];
 
-        s_shift_C = shift_C;
-        s_inv_one_minus_C = inv_one_minus_C;
+        s_shift_C = shift_c(truncate);
+        s_inv_one_minus_C = 1.0f / (1.0f - s_shift_C);
         s_truncate_sq = effective_truncate_sq(
             truncate, s_amp, intensity_floor, s_shift_C, s_inv_one_minus_C);
         float t_eff = effective_truncation(
             truncate, s_amp, intensity_floor, s_shift_C, s_inv_one_minus_C);
 
-        compute_aabb_3d_from_sigma(
+        compute_aabb_3d(
             s_lo,
             s_extent,
             s_total_voxels,
             s_center[0],
             s_center[1],
             s_center[2],
-            sigma_z,
-            sigma_y,
-            sigma_x,
+            s_conic[0],
+            s_conic[1],
+            s_conic[2],
+            s_conic[3],
+            s_conic[4],
+            s_conic[5],
             t_eff,
             shape_dhw.x,
             shape_dhw.y,
@@ -308,8 +326,8 @@ kernel void rasterize_forward_splat_centric_3d(
 
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
-    int total = s_total_voxels;
-    if (total == 0) {
+    uint total = s_total_voxels;
+    if (total == 0u) {
         return;
     }
 
@@ -317,9 +335,10 @@ kernel void rasterize_forward_splat_centric_3d(
     uint H = shape_dhw.y;
     uint W = shape_dhw.z;
 
-    for (int local = int(tid); local < total; local += int(THREADGROUP_SIZE)) {
-        int z = s_lo[0] + local / extent_yx;
-        int rem = local - (z - s_lo[0]) * extent_yx;
+    for (uint local = tid; local < total; local += uint(THREADGROUP_SIZE)) {
+        int local_int = int(local);
+        int z = s_lo[0] + local_int / extent_yx;
+        int rem = local_int - (z - s_lo[0]) * extent_yx;
         int y = s_lo[1] + rem / s_extent[2];
         int x = s_lo[2] + rem - (y - s_lo[1]) * s_extent[2];
 
@@ -353,17 +372,15 @@ kernel void rasterize_forward_splat_centric_3d(
 kernel void rasterize_backward_splat_centric_3d(
     device const float* grad_output [[buffer(0)]],
     device const float* centers [[buffer(1)]],
-    device const float* Ls [[buffer(2)]],
+    device const float* conic [[buffer(2)]],
     device const float* amps [[buffer(3)]],
     device float* d_centers [[buffer(4)]],
-    device float* d_Ls [[buffer(5)]],
+    device float* d_conic [[buffer(5)]],
     device float* d_amps [[buffer(6)]],
     constant uint3& shape_dhw [[buffer(7)]],
     constant uint& n_splats [[buffer(8)]],
     constant float& truncate [[buffer(9)]],
     constant float& intensity_floor [[buffer(10)]],
-    constant float& shift_C [[buffer(11)]],
-    constant float& inv_one_minus_C [[buffer(12)]],
     uint3 tg_pos [[threadgroup_position_in_grid]],
     uint tid [[thread_index_in_threadgroup]]
 ) {
@@ -373,7 +390,6 @@ kernel void rasterize_backward_splat_centric_3d(
     }
 
     threadgroup float s_center[3];
-    threadgroup float s_L[6];
     threadgroup float s_conic[6];
     threadgroup float s_amp;
     threadgroup float s_shift_C;
@@ -381,7 +397,9 @@ kernel void rasterize_backward_splat_centric_3d(
     threadgroup float s_truncate_sq;
     threadgroup int s_lo[3];
     threadgroup int s_extent[3];
-    threadgroup int s_total_voxels = 0;
+    // MET-3: see forward kernel — counter is uint to match
+    // compute_aabb_3d's signature and prevent overflow.
+    threadgroup uint s_total_voxels;
 
     threadgroup float tg_amp[THREADGROUP_SIZE];
     threadgroup float tg_centers[THREADGROUP_SIZE * 3];
@@ -389,60 +407,36 @@ kernel void rasterize_backward_splat_centric_3d(
 
     if (tid == 0) {
         int base3 = int(splat_id) * 3;
-        int base9 = int(splat_id) * 9;
+        int base6 = int(splat_id) * 6;
 
         s_center[0] = centers[base3 + 0];
         s_center[1] = centers[base3 + 1];
         s_center[2] = centers[base3 + 2];
-
-        float l00 = Ls[base9 + 0];
-        float l10 = Ls[base9 + 3];
-        float l11 = Ls[base9 + 4];
-        float l20 = Ls[base9 + 6];
-        float l21 = Ls[base9 + 7];
-        float l22 = Ls[base9 + 8];
-        s_L[0] = l00;
-        s_L[1] = l10;
-        s_L[2] = l11;
-        s_L[3] = l20;
-        s_L[4] = l21;
-        s_L[5] = l22;
-
-        float k00 = 1.0f / (l00 + 1e-9f);
-        float k11 = 1.0f / (l11 + 1e-9f);
-        float k22 = 1.0f / (l22 + 1e-9f);
-        float k10 = -l10 * k00 * k11;
-        float k21 = -l21 * k11 * k22;
-        float k20 = -(l20 * k00 + l21 * k10) * k22;
-
-        s_conic[0] = k00 * k00 + k10 * k10 + k20 * k20;
-        s_conic[1] = k10 * k11 + k20 * k21;
-        s_conic[2] = k20 * k22;
-        s_conic[3] = k11 * k11 + k21 * k21;
-        s_conic[4] = k21 * k22;
-        s_conic[5] = k22 * k22;
-        float sigma_z = abs(l00);
-        float sigma_y = fast::sqrt(l10 * l10 + l11 * l11);
-        float sigma_x = fast::sqrt(l20 * l20 + l21 * l21 + l22 * l22);
+        for (uint k = 0; k < 6; ++k) {
+            s_conic[k] = conic[base6 + int(k)];
+        }
         s_amp = amps[splat_id];
 
-        s_shift_C = shift_C;
-        s_inv_one_minus_C = inv_one_minus_C;
+        s_shift_C = shift_c(truncate);
+        s_inv_one_minus_C = 1.0f / (1.0f - s_shift_C);
         s_truncate_sq = effective_truncate_sq(
             truncate, s_amp, intensity_floor, s_shift_C, s_inv_one_minus_C);
         float t_eff = effective_truncation(
             truncate, s_amp, intensity_floor, s_shift_C, s_inv_one_minus_C);
 
-        compute_aabb_3d_from_sigma(
+        compute_aabb_3d(
             s_lo,
             s_extent,
             s_total_voxels,
             s_center[0],
             s_center[1],
             s_center[2],
-            sigma_z,
-            sigma_y,
-            sigma_x,
+            s_conic[0],
+            s_conic[1],
+            s_conic[2],
+            s_conic[3],
+            s_conic[4],
+            s_conic[5],
             t_eff,
             shape_dhw.x,
             shape_dhw.y,
@@ -462,20 +456,24 @@ kernel void rasterize_backward_splat_centric_3d(
     float local_conic_4 = 0.0f;
     float local_conic_5 = 0.0f;
 
-    int total = s_total_voxels;
-    if (total > 0) {
+    uint total = s_total_voxels;
+    if (total > 0u) {
         int extent_yx = s_extent[1] * s_extent[2];
         uint H = shape_dhw.y;
         uint W = shape_dhw.z;
 
-        for (int local = int(tid); local < total; local += int(THREADGROUP_SIZE)) {
-            int z = s_lo[0] + local / extent_yx;
-            int rem = local - (z - s_lo[0]) * extent_yx;
+        for (uint local = tid; local < total; local += uint(THREADGROUP_SIZE)) {
+            int local_int = int(local);
+            int z = s_lo[0] + local_int / extent_yx;
+            int rem = local_int - (z - s_lo[0]) * extent_yx;
             int y = s_lo[1] + rem / s_extent[2];
             int x = s_lo[2] + rem - (y - s_lo[1]) * s_extent[2];
 
             uint out_idx = uint(z) * H * W + uint(y) * W + uint(x);
             float dL_dI = grad_output[out_idx];
+            if (dL_dI == 0.0f) {
+                continue;
+            }
 
             float dz = float(z) - s_center[0];
             float dy = float(y) - s_center[1];
@@ -553,68 +551,16 @@ kernel void rasterize_backward_splat_centric_3d(
 
     if (tid == 0) {
         int base3 = int(splat_id) * 3;
-        int base9 = int(splat_id) * 9;
+        int base6 = int(splat_id) * 6;
         d_centers[base3 + 0] = tg_centers[0];
         d_centers[base3 + 1] = tg_centers[1];
         d_centers[base3 + 2] = tg_centers[2];
-
-        float l00 = s_L[0];
-        float l10 = s_L[1];
-        float l11 = s_L[2];
-        float l20 = s_L[3];
-        float l21 = s_L[4];
-        float l22 = s_L[5];
-
-        float k00 = 1.0f / (l00 + 1e-9f);
-        float k11 = 1.0f / (l11 + 1e-9f);
-        float k22 = 1.0f / (l22 + 1e-9f);
-        float k10 = -l10 * k00 * k11;
-        float k21 = -l21 * k11 * k22;
-        float q20 = l20 * k00 + l21 * k10;
-        float k20 = -q20 * k22;
-
-        float dc00 = tg_conic[0];
-        float dc01 = tg_conic[1];
-        float dc02 = tg_conic[2];
-        float dc11 = tg_conic[3];
-        float dc12 = tg_conic[4];
-        float dc22 = tg_conic[5];
-
-        float dk00 = 2.0f * k00 * dc00;
-        float dk10 = 2.0f * k10 * dc00 + k11 * dc01;
-        float dk20 = 2.0f * k20 * dc00 + k21 * dc01 + k22 * dc02;
-        float dk11 = k10 * dc01 + 2.0f * k11 * dc11;
-        float dk21 = k20 * dc01 + 2.0f * k21 * dc11 + k22 * dc12;
-        float dk22 = k20 * dc02 + k21 * dc12 + 2.0f * k22 * dc22;
-
-        float dq20 = -k22 * dk20;
-        dk22 -= q20 * dk20;
-        float dl20 = k00 * dq20;
-        dk00 += l20 * dq20;
-        float dl21 = k10 * dq20;
-        dk10 += l21 * dq20;
-
-        dl21 -= k11 * k22 * dk21;
-        dk11 -= l21 * k22 * dk21;
-        dk22 -= l21 * k11 * dk21;
-
-        float dl10 = -k00 * k11 * dk10;
-        dk00 -= l10 * k11 * dk10;
-        dk11 -= l10 * k00 * dk10;
-
-        float dl00 = -(k00 * k00) * dk00;
-        float dl11 = -(k11 * k11) * dk11;
-        float dl22 = -(k22 * k22) * dk22;
-
-        d_Ls[base9 + 0] = dl00;
-        d_Ls[base9 + 1] = 0.0f;
-        d_Ls[base9 + 2] = 0.0f;
-        d_Ls[base9 + 3] = dl10;
-        d_Ls[base9 + 4] = dl11;
-        d_Ls[base9 + 5] = 0.0f;
-        d_Ls[base9 + 6] = dl20;
-        d_Ls[base9 + 7] = dl21;
-        d_Ls[base9 + 8] = dl22;
+        d_conic[base6 + 0] = tg_conic[0];
+        d_conic[base6 + 1] = tg_conic[1];
+        d_conic[base6 + 2] = tg_conic[2];
+        d_conic[base6 + 3] = tg_conic[3];
+        d_conic[base6 + 4] = tg_conic[4];
+        d_conic[base6 + 5] = tg_conic[5];
         d_amps[splat_id] = tg_amp[0];
     }
 }
@@ -653,7 +599,11 @@ kernel void rasterize_forward_raw_splat_centric_3d(
     threadgroup float s_truncate_sq;
     threadgroup int s_lo[3];
     threadgroup int s_extent[3];
-    threadgroup int s_total_voxels = 0;
+    // MET-3 (parallel of the constrained kernel): uint counter to match the
+    // shared compute_aabb_3d_from_sigma signature and prevent loop-bound
+    // overflow on >1290^3 volumes. Thread 0 always writes via the helper
+    // before the barrier below.
+    threadgroup uint s_total_voxels;
 
     if (tid == 0) {
         int base3 = int(splat_id) * 3;
@@ -715,8 +665,8 @@ kernel void rasterize_forward_raw_splat_centric_3d(
 
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
-    int total = s_total_voxels;
-    if (total == 0) {
+    uint total = s_total_voxels;
+    if (total == 0u) {
         return;
     }
 
@@ -724,9 +674,10 @@ kernel void rasterize_forward_raw_splat_centric_3d(
     uint H = shape_dhw.y;
     uint W = shape_dhw.z;
 
-    for (int local = int(tid); local < total; local += int(THREADGROUP_SIZE)) {
-        int z = s_lo[0] + local / extent_yx;
-        int rem = local - (z - s_lo[0]) * extent_yx;
+    for (uint local = tid; local < total; local += uint(THREADGROUP_SIZE)) {
+        int local_int = int(local);
+        int z = s_lo[0] + local_int / extent_yx;
+        int rem = local_int - (z - s_lo[0]) * extent_yx;
         int y = s_lo[1] + rem / s_extent[2];
         int x = s_lo[2] + rem - (y - s_lo[1]) * s_extent[2];
 
@@ -788,7 +739,8 @@ kernel void rasterize_backward_raw_splat_centric_3d(
     threadgroup float s_truncate_sq;
     threadgroup int s_lo[3];
     threadgroup int s_extent[3];
-    threadgroup int s_total_voxels = 0;
+    // MET-3: see raw forward kernel above for the rationale.
+    threadgroup uint s_total_voxels;
 
     threadgroup float tg_amp[THREADGROUP_SIZE];
     threadgroup float tg_centers[THREADGROUP_SIZE * 3];
@@ -871,15 +823,16 @@ kernel void rasterize_backward_raw_splat_centric_3d(
     float local_conic_4 = 0.0f;
     float local_conic_5 = 0.0f;
 
-    int total = s_total_voxels;
-    if (total > 0) {
+    uint total = s_total_voxels;
+    if (total > 0u) {
         int extent_yx = s_extent[1] * s_extent[2];
         uint H = shape_dhw.y;
         uint W = shape_dhw.z;
 
-        for (int local = int(tid); local < total; local += int(THREADGROUP_SIZE)) {
-            int z = s_lo[0] + local / extent_yx;
-            int rem = local - (z - s_lo[0]) * extent_yx;
+        for (uint local = tid; local < total; local += uint(THREADGROUP_SIZE)) {
+            int local_int = int(local);
+            int z = s_lo[0] + local_int / extent_yx;
+            int rem = local_int - (z - s_lo[0]) * extent_yx;
             int y = s_lo[1] + rem / s_extent[2];
             int x = s_lo[2] + rem - (y - s_lo[1]) * s_extent[2];
 

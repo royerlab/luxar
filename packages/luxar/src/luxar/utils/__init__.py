@@ -8,6 +8,7 @@ from .array import (
     ensure_float32,
     validate_array_shape,
 )
+from .atomic_copy import atomic_copytree
 from .demos import (
     create_lorenz_attractor,
     create_random_spheres,
@@ -24,6 +25,8 @@ __all__ = [
     # From array
     "ensure_float32",
     "validate_array_shape",
+    # From atomic_copy
+    "atomic_copytree",
     # From demos
     "create_lorenz_attractor",
     "create_random_spheres",

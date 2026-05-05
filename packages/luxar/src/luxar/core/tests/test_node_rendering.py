@@ -19,29 +19,29 @@ class TestNodeRenderingAttributes:
         assert node.blending_mode == "additive"
 
     def test_opacity_getter_setter(self, tmp_path) -> None:
-        """Test opacity property getter and setter."""
+        """Test opacity property getter and setter (mutations inside context)."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             node = scene.add_group("test_node")
 
-        # Test setting valid opacity
-        node.opacity = 0.5
-        assert node.opacity == 0.5
-        assert node.attrs["opacity"] == 0.5
+            # Test setting valid opacity (CL-2: must run before finalize)
+            node.opacity = 0.5
+            assert node.opacity == 0.5
+            assert node.attrs["opacity"] == 0.5
 
-        # Test edge cases
-        node.opacity = 0.0
-        assert node.opacity == 0.0
+            # Test edge cases
+            node.opacity = 0.0
+            assert node.opacity == 0.0
 
-        node.opacity = 1.0
-        assert node.opacity == 1.0
+            node.opacity = 1.0
+            assert node.opacity == 1.0
 
-        # Test type conversion
-        node.opacity = 0.7
-        assert node.opacity == 0.7
+            # Test type conversion
+            node.opacity = 0.7
+            assert node.opacity == 0.7
 
-        node.opacity = "0.3"
-        assert node.opacity == 0.3
+            node.opacity = "0.3"
+            assert node.opacity == 0.3
 
     def test_opacity_validation(self, tmp_path) -> None:
         """Test opacity validation."""
@@ -60,29 +60,29 @@ class TestNodeRenderingAttributes:
             node.opacity = "invalid"
 
     def test_gamma_getter_setter(self, tmp_path) -> None:
-        """Test gamma property getter and setter."""
+        """Test gamma property getter and setter (mutations inside context)."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             node = scene.add_group("test_node")
 
-        # Test setting valid gamma
-        node.gamma = 1.5
-        assert node.gamma == 1.5
-        assert node.attrs["gamma"] == 1.5
+            # Test setting valid gamma (CL-2: must run before finalize)
+            node.gamma = 1.5
+            assert node.gamma == 1.5
+            assert node.attrs["gamma"] == 1.5
 
-        # Test edge cases
-        node.gamma = 0.2
-        assert node.gamma == 0.2
+            # Test edge cases
+            node.gamma = 0.2
+            assert node.gamma == 0.2
 
-        node.gamma = 2.0
-        assert node.gamma == 2.0
+            node.gamma = 2.0
+            assert node.gamma == 2.0
 
-        # Test type conversion
-        node.gamma = 1
-        assert node.gamma == 1.0
+            # Test type conversion
+            node.gamma = 1
+            assert node.gamma == 1.0
 
-        node.gamma = "1.8"
-        assert node.gamma == 1.8
+            node.gamma = "1.8"
+            assert node.gamma == 1.8
 
     def test_gamma_validation(self, tmp_path) -> None:
         """Test gamma validation."""
@@ -101,16 +101,16 @@ class TestNodeRenderingAttributes:
             node.gamma = "not_a_number"
 
     def test_blending_mode_getter_setter(self, tmp_path) -> None:
-        """Test blending_mode property getter and setter."""
+        """Test blending_mode property getter and setter (mutations inside context)."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
             node = scene.add_group("test_node")
 
-        # Test setting valid blending modes
-        for mode in ["normal", "additive", "max"]:
-            node.blending_mode = mode
-            assert node.blending_mode == mode
-            assert node.attrs["blending_mode"] == mode
+            # CL-2: must run before finalize.
+            for mode in ["normal", "additive", "max"]:
+                node.blending_mode = mode
+                assert node.blending_mode == mode
+                assert node.attrs["blending_mode"] == mode
 
     def test_blending_mode_validation(self, tmp_path) -> None:
         """Test blending mode validation."""
@@ -175,17 +175,17 @@ class TestNodeRenderingAttributes:
         with LuxarZarrCompiler(tmp_path / "test.zarr") as compiler:
             scene = compiler.create_scene(dimensions=Dimensions.default_3d())
 
-        # Create parent with custom attributes
-        parent = scene.add_group("parent", opacity=0.3, blending_mode="additive")
-        assert parent.opacity == 0.3
-        assert parent.blending_mode == "additive"
+            # Create parent with custom attributes (CL-2: inside the context).
+            parent = scene.add_group("parent", opacity=0.3, blending_mode="additive")
+            assert parent.opacity == 0.3
+            assert parent.blending_mode == "additive"
 
-        # Create child without specifying attributes
-        child = parent.add_group("child")
-        # Child should have its own default values (not inherit from parent in Python)
-        assert child.opacity == 1.0
-        assert child.blending_mode == "additive"
+            # Create child without specifying attributes
+            child = parent.add_group("child")
+            # Child should have its own default values (not inherit from parent in Python)
+            assert child.opacity == 1.0
+            assert child.blending_mode == "additive"
 
-        # But parent attributes are stored for TypeScript inheritance
-        assert parent.attrs["opacity"] == 0.3
-        assert parent.attrs["blending_mode"] == "additive"
+            # But parent attributes are stored for TypeScript inheritance
+            assert parent.attrs["opacity"] == 0.3
+            assert parent.attrs["blending_mode"] == "additive"
