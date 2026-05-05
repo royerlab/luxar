@@ -25,6 +25,7 @@ import type {
 } from '../types/lines';
 import type { SceneNode } from './data-loader-types';
 import { ArrayDecoder, ArrayRefRegistry, type ArrayMetadata } from './array-decoder';
+import { fetchChunkBoundsArray } from './loaders/chunk-bounds-loader';
 import {
   RangeLoader,
   SpatialQueryBuilder,
@@ -614,70 +615,52 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       return null;
     }
 
-    try {
-      const vertexBoundsArray = await zarr.open(this.zarrLocation.resolve('vertex_chunk_bounds'), {
-        kind: 'array',
-      });
-      const vertexBoundsData = await get(vertexBoundsArray);
-      const vertexChunkBounds = new Float32Array(
-        vertexBoundsData.data as ArrayBuffer | ArrayLike<number>
+    const vertexResult = await fetchChunkBoundsArray(
+      this.zarrLocation,
+      'vertex_chunk_bounds',
+      Modules.LINES_LOADER,
+      'No chunk bounds found - Lines dataset has no spatial indexing'
+    );
+    if (!vertexResult) return null;
+
+    const segmentResult = await fetchChunkBoundsArray(
+      this.zarrLocation,
+      'segment_chunk_bounds',
+      Modules.LINES_LOADER,
+      'No chunk bounds found - Lines dataset has no spatial indexing'
+    );
+    if (!segmentResult) return null;
+
+    const vertexChunkBounds = vertexResult.data;
+    const segmentChunkBounds = segmentResult.data;
+
+    const vertexChunkCount = Math.ceil(attrs.n_vertices / attrs.vertex_ordering.chunk_size);
+    const segmentChunkCount = Math.ceil(attrs.n_segments / attrs.segment_ordering.chunk_size);
+
+    const expectedVertexSize = vertexChunkCount * attrs.ndim * 2;
+    const expectedSegmentSize = segmentChunkCount * attrs.ndim * 2;
+    if (vertexChunkBounds.length !== expectedVertexSize) {
+      log.warning(
+        Modules.LINES_LOADER,
+        `Vertex bounds size mismatch: got ${vertexChunkBounds.length}, expected ${expectedVertexSize}`
       );
-
-      const segmentBoundsArray = await zarr.open(
-        this.zarrLocation.resolve('segment_chunk_bounds'),
-        { kind: 'array' }
-      );
-      const segmentBoundsData = await get(segmentBoundsArray);
-      const segmentChunkBounds = new Float32Array(
-        segmentBoundsData.data as ArrayBuffer | ArrayLike<number>
-      );
-
-      const vertexChunkCount = Math.ceil(attrs.n_vertices / attrs.vertex_ordering.chunk_size);
-      const segmentChunkCount = Math.ceil(attrs.n_segments / attrs.segment_ordering.chunk_size);
-
-      const expectedVertexSize = vertexChunkCount * attrs.ndim * 2;
-      const expectedSegmentSize = segmentChunkCount * attrs.ndim * 2;
-      if (vertexChunkBounds.length !== expectedVertexSize) {
-        log.warning(
-          Modules.LINES_LOADER,
-          `Vertex bounds size mismatch: got ${vertexChunkBounds.length}, expected ${expectedVertexSize}`
-        );
-      }
-      if (segmentChunkBounds.length !== expectedSegmentSize) {
-        log.warning(
-          Modules.LINES_LOADER,
-          `Segment bounds size mismatch: got ${segmentChunkBounds.length}, expected ${expectedSegmentSize}`
-        );
-      }
-
-      return {
-        segmentIndex: {
-          chunkBounds: segmentChunkBounds,
-          chunkCount: segmentChunkCount,
-          metadata: { ndim: attrs.ndim, chunk_size: attrs.segment_ordering.chunk_size },
-        },
-        vertexChunkBounds,
-        vertexChunkCount,
-      };
-    } catch (error: unknown) {
-      // 404 / Not Found is expected for datasets without spatial ordering;
-      // any other error is unexpected but non-fatal — log and fall back to
-      // loading all data, matching the legacy soft-fallback behaviour.
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      if (
-        errorMessage.includes('404') ||
-        errorMessage.includes('Not Found') ||
-        errorMessage.includes('Node not found')
-      ) {
-        log.info(
-          Modules.LINES_LOADER,
-          'No chunk bounds found - Lines dataset has no spatial indexing'
-        );
-      } else {
-        log.error(Modules.LINES_LOADER, 'Failed to load Lines spatial index:', error);
-      }
-      return null;
     }
+    if (segmentChunkBounds.length !== expectedSegmentSize) {
+      log.warning(
+        Modules.LINES_LOADER,
+        `Segment bounds size mismatch: got ${segmentChunkBounds.length}, expected ${expectedSegmentSize}`
+      );
+    }
+
+    return {
+      segmentIndex: {
+        chunkBounds: segmentChunkBounds,
+        chunkCount: segmentChunkCount,
+        metadata: { ndim: attrs.ndim, chunk_size: attrs.segment_ordering.chunk_size },
+      },
+      vertexChunkBounds,
+      vertexChunkCount,
+    };
   }
 
   /**
