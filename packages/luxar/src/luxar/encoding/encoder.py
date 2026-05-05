@@ -140,6 +140,13 @@ class ArrayEncoder:
             )
             return
 
+        # Empty array handling: pass through without encoding. This must run
+        # before the n_elements uniformity check below — `_is_uniform` indexes
+        # `data[0]` and would raise IndexError on an empty array.
+        if data.size == 0:
+            self._write_passthrough(zarr_group, name, data, chunks, compressor)
+            return
+
         # Array input path - validate n_elements if provided
         if n_elements is not None:
             if data.shape[0] != n_elements and data.shape[0] != 1:
@@ -155,11 +162,6 @@ class ArrayEncoder:
                     f"n_elements={n_elements} provided with full array, but array has "
                     f"varying values. For non-uniform data, omit n_elements parameter."
                 )
-
-        # Empty array handling: pass through without encoding
-        if data.size == 0:
-            self._write_passthrough(zarr_group, name, data, chunks, compressor)
-            return
 
         # Validate input data
         self._validate_input(data, semantic_type, color_mode)

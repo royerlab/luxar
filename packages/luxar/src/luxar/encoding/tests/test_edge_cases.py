@@ -92,6 +92,29 @@ class TestErrorPaths:
             with pytest.raises(ValueError, match="integer dtype"):
                 encoder.encode(data, group, "test", SemanticType.INDEX)
 
+    def test_empty_array_with_zero_n_elements(self):
+        """Encode empty array when ``n_elements=0`` is supplied.
+
+        Regression: ``_is_uniform`` indexes ``data[0]`` and raised
+        IndexError before the ``data.size == 0`` short-circuit was
+        hoisted above the n_elements uniformity check.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(tmpdir, mode="w")
+            encoder = ArrayEncoder()
+
+            data = np.empty((0, 3), dtype=np.float32)
+            encoder.encode(
+                data,
+                group,
+                "colors",
+                SemanticType.COLOR,
+                n_elements=0,
+                color_mode="sdr",
+            )
+
+            assert group["colors"].shape == (0, 3)
+
 
 class TestModeEdgeCases:
     """Test edge cases in different modes."""
