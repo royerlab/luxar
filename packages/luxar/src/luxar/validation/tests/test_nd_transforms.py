@@ -308,13 +308,27 @@ class TestApplyNdTransformToBounds:
         result = apply_nd_transform_to_bounds(bounds, {}, dims_4d)
         assert result == bounds
 
-    def test_mismatched_bounds_lengths_are_ignored_defensively(self, dims_4d) -> None:
+    def test_mismatched_bounds_lengths_raise_value_error(self, dims_4d) -> None:
+        # EN-2: silently skipping a mismatched bounds entry would yield mixed
+        # transformed and untransformed bounds for the trailing dims, skewing
+        # scene extents downstream. Fail fast so corrupt zarr metadata
+        # surfaces clearly at the call site.
         bounds = {"min": [0, 0, 0, 0], "max": [10, 10, 10]}
         nd_t = {"Time": {"scale": 2.0, "offset": 10.0}}
 
-        result = apply_nd_transform_to_bounds(bounds, nd_t, dims_4d)
+        with pytest.raises(ValueError, match="Bounds length mismatch"):
+            apply_nd_transform_to_bounds(bounds, nd_t, dims_4d)
 
-        assert result == bounds
+    def test_bounds_shorter_than_dims_raise_value_error(self, dims_4d) -> None:
+        # The companion case: bounds arrays are well-formed (equal lengths)
+        # but cover fewer dims than the dimensions schema. Silently skipping
+        # the missing dim would still produce mixed transformed/untransformed
+        # bounds for any dim a downstream caller assumes is present.
+        bounds = {"min": [0, 0, 0], "max": [10, 10, 10]}
+        nd_t = {"Time": {"scale": 2.0, "offset": 10.0}}
+
+        with pytest.raises(ValueError, match="out of range for bounds arrays"):
+            apply_nd_transform_to_bounds(bounds, nd_t, dims_4d)
 
 
 class TestNodeNdTransformIntegration:
