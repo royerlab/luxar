@@ -141,16 +141,14 @@ class DirectoryListingStaticFiles(StaticFiles):
 
     async def get_response(self, path: str, scope: MutableMapping[str, Any]) -> Any:
         """Override to provide directory listing."""
+        from starlette.responses import Response
+
         # Handle OPTIONS requests for CORS
         if scope.get("method") == "OPTIONS":
-            from starlette.responses import Response
-
             return Response(status_code=204)
 
         if self.directory is None:
             raise ValueError("Directory not set")
-
-        from starlette.responses import Response
 
         base_path = Path(self.directory).resolve()
         full_path = (base_path / path).resolve() if path else base_path
@@ -189,8 +187,6 @@ class DirectoryListingStaticFiles(StaticFiles):
                         }
                     )
             except PermissionError:
-                from starlette.responses import Response
-
                 return Response("Permission denied", status_code=403)
 
             # Return JSON for API requests
