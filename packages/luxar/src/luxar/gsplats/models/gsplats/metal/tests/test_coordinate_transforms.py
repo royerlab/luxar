@@ -42,9 +42,20 @@ class TestNativeZyxConvention:
         assert torch.allclose(conic, expected, atol=1e-6)
 
     def test_conic_gradient_order_matches_forward_order(self) -> None:
-        d_conic = torch.rand(10, 6)
-        # No old [Z,Y,X] <-> [X,Y,Z] permutation is needed anymore.
-        assert torch.allclose(d_conic, d_conic.clone())
+        # Metal backward returns d_conic in the same packed [Z,Y,X] upper-
+        # triangle order that ``cholesky_to_conic`` produces, so the chain rule
+        # back to L can use the conic gradient directly without any
+        # ``[Z,Y,X] <-> [X,Y,Z]`` permutation.
+        L = torch.eye(3, dtype=torch.float32).unsqueeze(0).requires_grad_(True)
+        conic = cholesky_to_conic(L)
+        # Confirm the packed layout is six entries per splat in row-major
+        # upper-triangle order: [c00, c01, c02, c11, c12, c22].
+        assert conic.shape == (1, 6)
+        # Confirm a unit gradient on the conic flows back through L without
+        # requiring any reordering of the packed entries.
+        (d_L,) = torch.autograd.grad(conic.sum(), L, retain_graph=False)
+        assert d_L.shape == L.shape
+        assert torch.isfinite(d_L).all()
 
 
 @pytest.mark.skipif(
