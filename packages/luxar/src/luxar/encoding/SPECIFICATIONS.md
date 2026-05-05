@@ -370,6 +370,13 @@ Use LUT encoding when:
 
 **Rationale for 256 threshold**: Beyond 256 unique values, uint16 indices (2 bytes) offer no advantage over float16 (2 bytes), which preserves more precision.
 
+**`lut_uint16` is decode-only.** Both the Python decoder (`ArrayDecoder._decode_lut`)
+and the TypeScript decoder (`array-decoder.ts:isLUTEncodingName`) accept the
+`lut_uint16` encoding name for forward-compatibility with external producers,
+but the canonical encoder (`ArrayEncoder._encode_lut`) only ever emits
+`lut_uint8`. Round-trips through `ArrayEncoder` will never produce `lut_uint16`
+metadata.
+
 ### 6.3 Storage Format
 
 **Indices array**: dtype `uint8`, shape depends on LUT mode:
