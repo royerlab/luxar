@@ -40,8 +40,14 @@ function hasUnsafeSrcCharacter(src: string): boolean {
  * - Relative paths: `datasets/data.zarr`
  *
  * Rejected forms include unsupported schemes (`file:`, `javascript:`,
- * `data:`), protocol-relative URLs (`//host/path`), control characters,
- * obvious HTML delimiters, empty strings, and excessively long values.
+ * `data:`, `vbscript:`, `blob:`, etc.), protocol-relative URLs
+ * (`//host/path`), control characters, obvious HTML delimiters, empty
+ * strings, and excessively long values.
+ *
+ * Trailing slashes are stripped: the zarr loader appends path components
+ * (metadata, chunks) to this string, so a trailing `/` produces malformed
+ * requests on stricter servers (see CLAUDE.md "Data Source URLs Must NOT
+ * Have Trailing Slash").
  */
 export function normalizeDataSourceUrl(rawSrc: string | null): string | null {
   if (rawSrc === null) return null;
@@ -52,15 +58,20 @@ export function normalizeDataSourceUrl(rawSrc: string | null): string | null {
   if (src.startsWith('//')) return null;
 
   const hasScheme = URL_SCHEME_PATTERN.test(src);
-  if (!hasScheme) return src;
-
-  try {
-    const url = new URL(src);
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
-    return src;
-  } catch {
-    return null;
+  if (hasScheme) {
+    try {
+      const url = new URL(src);
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+    } catch {
+      return null;
+    }
   }
+
+  // Strip trailing slashes so the zarr loader builds clean child paths.
+  // A bare "/" is dropped to "" and rejected as empty.
+  const trimmed = src.replace(/\/+$/, '');
+  if (trimmed.length === 0) return null;
+  return trimmed;
 }
 
 export interface UrlParams {
