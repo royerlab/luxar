@@ -90,8 +90,14 @@ export interface SpatialQueryParams {
  *
  * A chunk matches if its bounds overlap the query box in every dimension.
  * Early-exit on the first non-overlapping dimension keeps the inner loop tight.
+ *
+ * `logModule` is the label for the diagnostic log line emitted on completion;
+ * pass the geometry-specific module so log filtering / triage works.
  */
-export function executeSpatialQuery(params: SpatialQueryParams): number[] {
+export function executeSpatialQuery(
+  params: SpatialQueryParams,
+  logModule: string = Modules.SPATIAL_INDEX
+): number[] {
   const { chunkBounds, queryPosition, queryTolerance, numChunks, ndim } = params;
   const matchingChunks: number[] = [];
 
@@ -117,7 +123,7 @@ export function executeSpatialQuery(params: SpatialQueryParams): number[] {
     }
   }
 
-  log.query(Modules.SPATIAL_INDEX, `Query: ${matchingChunks.length}/${numChunks} chunks match`);
+  log.query(logModule, `Query: ${matchingChunks.length}/${numChunks} chunks match`);
   return matchingChunks;
 }
 
@@ -202,6 +208,15 @@ export type SpatialQueryOptions = {
 
   /** Names of `extend_to_all` dimensions; triggers load-all when any is hidden. */
   extendDims?: string[];
+
+  /**
+   * Log module label for diagnostic messages emitted by this query
+   * (`Modules.SPATIAL_INDEX_LOADER`, `Modules.LINES_LOADER`,
+   * `Modules.GSPLATS_SPATIAL_INDEX_LOADER`, …). Defaults to
+   * `Modules.SPATIAL_INDEX` when omitted, but callers should pass their
+   * geometry-specific module so log filtering / triage works.
+   */
+  logModule?: string;
 } & (
   | {
       /** Geometry-aware tolerance via `computeTolerance(geometryType, …)`. */
@@ -251,6 +266,7 @@ export class SpatialQueryBuilder {
   private readonly viewState: BaseViewState;
   private readonly extendDims?: string[];
   private readonly options: SpatialQueryOptions;
+  private readonly logModule: string;
 
   constructor(index: ChunkSpatialIndex, viewState: BaseViewState, options: SpatialQueryOptions) {
     this.chunkBounds = index.chunkBounds;
@@ -261,6 +277,7 @@ export class SpatialQueryBuilder {
     this.viewState = viewState;
     this.extendDims = options.extendDims;
     this.options = options;
+    this.logModule = options.logModule ?? Modules.SPATIAL_INDEX;
   }
 
   /**
@@ -272,7 +289,7 @@ export class SpatialQueryBuilder {
   async execute(): Promise<LoadRange[]> {
     if (shouldExtendVisibility(this.extendDims, this.viewState)) {
       log.query(
-        Modules.SPATIAL_INDEX,
+        this.logModule,
         `Extending visibility across: ${this.extendDims?.join(', ')}`
       );
       return createLoadAllRange(this.totalElements);
@@ -282,21 +299,24 @@ export class SpatialQueryBuilder {
     const queryTolerance = this.resolveTolerance();
 
     log.query(
-      Modules.SPATIAL_INDEX,
+      this.logModule,
       `Query: pos=[${queryPosition.map((p) => p.toFixed(2)).join(', ')}]`
     );
     log.info(
-      Modules.SPATIAL_INDEX,
+      this.logModule,
       `Query: tol=[${queryTolerance.map((t) => (t > 1e9 ? '∞' : t.toFixed(2))).join(', ')}]`
     );
 
-    const chunkIndices = executeSpatialQuery({
-      chunkBounds: this.chunkBounds,
-      queryPosition,
-      queryTolerance,
-      numChunks: this.numChunks,
-      ndim: this.ndim,
-    });
+    const chunkIndices = executeSpatialQuery(
+      {
+        chunkBounds: this.chunkBounds,
+        queryPosition,
+        queryTolerance,
+        numChunks: this.numChunks,
+        ndim: this.ndim,
+      },
+      this.logModule
+    );
 
     const ranges = chunkIndicesToRanges(chunkIndices, this.chunkSize, this.totalElements);
     return mergeRanges(ranges);
