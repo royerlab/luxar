@@ -47,7 +47,9 @@ network_hash = _demo.network_hash
 
 # Field helpers were moved to luxar.utils.fields in the hardening pass;
 # keep a thin alias here so the existing test bodies stay untouched.
-from luxar.utils.fields import FlowField, cubic_bounds, trilinear_vector
+# Imported below the late `_load_demo_module()` call (E402 is intentional
+# here — the demo file must be loaded by path before its symbols are used).
+from luxar.utils.fields import FlowField, cubic_bounds, trilinear_vector  # noqa: E402
 
 compute_cubic_bounds = cubic_bounds
 _trilinear_vector_batch = trilinear_vector
