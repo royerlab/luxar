@@ -711,8 +711,10 @@ def calibrate_nlm_once(first_volume: np.ndarray | None) -> float:
         )
 
     with asection("Calibrating NLM denoiser (Noise2Self / J-invariant)"):
+        from luxar.gsplats.utils.device import resolve_torch_device
+
         vol_tensor = torch.from_numpy(first_volume)
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+        device = str(resolve_torch_device())
 
         h = calibrate_nlm_h(
             vol_tensor,
@@ -751,8 +753,9 @@ def preprocess_volume(volume: np.ndarray, nlm_h: float) -> np.ndarray:
     import torch
 
     from luxar.gsplats.preprocessing import denoise_nlm
+    from luxar.gsplats.utils.device import resolve_torch_device
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = str(resolve_torch_device())
 
     # Step 1: Full 3D Non-Local Means denoising (GPU-accelerated)
     vol_tensor = torch.from_numpy(volume).to(device)
