@@ -288,20 +288,14 @@ export class SpatialQueryBuilder {
    */
   async execute(): Promise<LoadRange[]> {
     if (shouldExtendVisibility(this.extendDims, this.viewState)) {
-      log.query(
-        this.logModule,
-        `Extending visibility across: ${this.extendDims?.join(', ')}`
-      );
+      log.query(this.logModule, `Extending visibility across: ${this.extendDims?.join(', ')}`);
       return createLoadAllRange(this.totalElements);
     }
 
     const queryPosition = buildQueryPosition(this.viewState, this.ndim);
     const queryTolerance = this.resolveTolerance();
 
-    log.query(
-      this.logModule,
-      `Query: pos=[${queryPosition.map((p) => p.toFixed(2)).join(', ')}]`
-    );
+    log.query(this.logModule, `Query: pos=[${queryPosition.map((p) => p.toFixed(2)).join(', ')}]`);
     log.info(
       this.logModule,
       `Query: tol=[${queryTolerance.map((t) => (t > 1e9 ? '∞' : t.toFixed(2))).join(', ')}]`

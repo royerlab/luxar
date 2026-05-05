@@ -20,7 +20,11 @@
 import * as THREE from 'three';
 import type { PostProcessingManager } from '../post-processing-manager';
 import { isCameraAwareMaterial } from '../camera-aware-material';
-import { getCameraFovRadians, isOrthographicCamera, getOrthoFrustumHeight } from '../../scene/camera-utils';
+import {
+  getCameraFovRadians,
+  isOrthographicCamera,
+  getOrthoFrustumHeight,
+} from '../../scene/camera-utils';
 import type { LuxarCamera } from '../../scene/camera-utils';
 import { log, Modules } from '../../utils/log';
 
