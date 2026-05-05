@@ -331,11 +331,29 @@ def apply_nd_transform_to_bounds(
     min_vals = list(bounds["min"])
     max_vals = list(bounds["max"])
 
+    # EN-2: bounds["min"] and bounds["max"] must have the same length —
+    # otherwise we'd silently produce mixed transformed/untransformed bounds
+    # for the trailing dims, skewing scene extents downstream. Fail fast so
+    # corrupt zarr metadata surfaces at the call site rather than as a
+    # mysterious geometry artifact later.
+    if len(min_vals) != len(max_vals):
+        raise ValueError(
+            f"Bounds length mismatch: min has {len(min_vals)} entries, "
+            f"max has {len(max_vals)} entries. The bounds arrays must have "
+            "equal length."
+        )
+
     for i, dim in enumerate(dimensions.dimensions):
         if dim.name not in nd_transform or dim.display:
             continue
-        if i >= len(min_vals) or i >= len(max_vals):
-            continue
+        if i >= len(min_vals):
+            # The bounds arrays cover fewer dims than the dimensions schema.
+            # Silently skipping would give the caller mixed transformed and
+            # untransformed bounds; refuse instead.
+            raise ValueError(
+                f"Dimension index {i} (name={dim.name!r}) is out of range "
+                f"for bounds arrays of length {len(min_vals)}."
+            )
 
         entry = nd_transform[dim.name]
 
