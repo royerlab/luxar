@@ -150,10 +150,25 @@ export class PickingSystem {
   unregisterNode(pickId: number): void {
     const entry = this.nodeMap.get(pickId);
     if (entry) {
-      const material = (entry.pick as THREE.Mesh).material as THREE.ShaderMaterial | undefined;
-      if (material?.dispose) material.dispose();
+      this._disposePickMaterial(entry.pick as THREE.Mesh);
     }
     this.nodeMap.delete(pickId);
+  }
+
+  /**
+   * Dispose the material(s) attached to a pick mesh. Handles the rare
+   * `material: array` case so a future custom-multi-material pick node
+   * doesn't leak shaders.
+   */
+  private _disposePickMaterial(mesh: THREE.Mesh): void {
+    const material = mesh.material;
+    if (Array.isArray(material)) {
+      for (const m of material) {
+        m?.dispose?.();
+      }
+    } else {
+      material?.dispose?.();
+    }
   }
 
   /** Number of registered pick nodes. */
@@ -238,8 +253,7 @@ export class PickingSystem {
 
     // Dispose all pick materials (unregisters from materialManager automatically)
     for (const entry of this.nodeMap.values()) {
-      const material = (entry.pick as THREE.Mesh).material as THREE.ShaderMaterial;
-      if (material?.dispose) material.dispose();
+      this._disposePickMaterial(entry.pick as THREE.Mesh);
     }
 
     // Clean up pick scene children (paranoia — should be empty between renders)
