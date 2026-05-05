@@ -91,6 +91,30 @@ def _add_cors(api: FastAPI, cors_origin: str = _DEFAULT_CORS_ORIGIN) -> None:
     )
 
 
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "0.0.0.0"})
+
+
+def _warn_if_lan_exposed(host: str, cors_origin: str) -> None:
+    """Warn when the user is binding non-loopback AND opening CORS to all.
+
+    ``host`` is the bind address. ``0.0.0.0`` is treated as loopback for this
+    warning's purpose because it is the conventional "all interfaces" sentinel
+    on the server side; the *real* exposure risk is when a developer passes
+    a routable LAN address (an internal IP, a hostname, ``::``).
+    """
+    if cors_origin.strip() != "*":
+        return
+    bind_host = host.strip().lower()
+    if bind_host in _LOOPBACK_HOSTS:
+        return
+    aprint(
+        f"⚠️  Serving on host={host} with --cors-origin '*'. "
+        "This exposes the data to anything that can reach this machine on "
+        "the network. Pass --cors-origin local (or an explicit origin) "
+        "if that was not intended."
+    )
+
+
 def _path_is_within(path: Path, base: Path) -> bool:
     """Return True if ``path`` resolves inside ``base``."""
     try:
@@ -409,6 +433,7 @@ def serve(
             aprint(
                 "⚠️  --viewer-only already includes the viewer; --viewer is redundant"
             )
+        _warn_if_lan_exposed(host, cors_origin)
 
         # Handle viewer-only mode
         if viewer_only:
@@ -680,6 +705,8 @@ def viewer(
         allow_sensitive_path (bool, optional): Permit serving system paths.
     """
     try:
+        _warn_if_lan_exposed(host, cors_origin)
+
         # Check if viewer is built
         if not check_viewer_built():
             aprint("❌ Viewer not built. Building now...")

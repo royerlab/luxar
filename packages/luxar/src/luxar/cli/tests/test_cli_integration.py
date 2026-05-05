@@ -321,6 +321,31 @@ class TestServeIntegration:
             if candidate.exists():
                 assert _is_sensitive_serve_path(candidate / "fakeuser") is False
 
+    def test_lan_warning_silent_for_loopback_or_local_cors(self, capsys):
+        """No LAN warning when bind is loopback or CORS is not wildcard."""
+        from luxar.cli.main import _warn_if_lan_exposed
+
+        # Loopback host with wildcard CORS — no warning.
+        _warn_if_lan_exposed("127.0.0.1", "*")
+        _warn_if_lan_exposed("localhost", "*")
+        _warn_if_lan_exposed("::1", "*")
+        _warn_if_lan_exposed("0.0.0.0", "*")
+        # Non-loopback host with restricted CORS — no warning.
+        _warn_if_lan_exposed("192.168.1.10", "local")
+        _warn_if_lan_exposed("my-server.lan", "https://example.com")
+
+        captured = capsys.readouterr()
+        assert "Serving on host" not in captured.out
+
+    def test_lan_warning_fires_for_lan_bind_with_wildcard(self, capsys):
+        """LAN-routable bind + wildcard CORS triggers the warning."""
+        from luxar.cli.main import _warn_if_lan_exposed
+
+        _warn_if_lan_exposed("192.168.1.10", "*")
+        captured = capsys.readouterr()
+        assert "Serving on host=192.168.1.10" in captured.out
+        assert "--cors-origin '*'" in captured.out
+
     def test_404_for_nonexistent_path(self, test_server):
         """Test that nonexistent paths return 404."""
         response = requests.get(f"{test_server}/nonexistent/path")
