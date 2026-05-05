@@ -12,6 +12,7 @@ from typing import Any, Literal, Optional, Union
 import numpy as np
 import zarr
 
+from ..validation.base import _validate_numeric_finite_values
 from .modes import EncodingMode
 from .registry import ArrayRefRegistry
 from .semantic_types import SemanticType
@@ -310,12 +311,13 @@ class ArrayEncoder:
         Raises:
             ValueError: If constraints are violated
         """
-        # Check for NaN or Inf
-        if np.issubdtype(data.dtype, np.floating):
-            if np.any(np.isnan(data)):
-                raise ValueError("Input data contains NaN values")
-            if np.any(np.isinf(data)):
-                raise ValueError("Input data contains Inf values")
+        # EN-1: route NaN/Inf detection through the canonical validator so
+        # error messages, suggestions, and fast-path semantics stay in lock-
+        # step with `validation.base._validate_numeric_finite_values`. The
+        # helper handles both NaN and Inf in a single np.isfinite scan and
+        # raises ValidationError (a ValueError subclass).
+        if np.issubdtype(data.dtype, np.number):
+            _validate_numeric_finite_values(data, "input data")
 
         # Semantic type specific validation
         if semantic_type == SemanticType.COLOR:

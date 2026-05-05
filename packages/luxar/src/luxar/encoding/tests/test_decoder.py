@@ -70,6 +70,28 @@ class TestLUTDecoding:
             assert decoded.dtype == np.float32
             assert set(decoded) == {0.0, 0.5, 1.0, 2.0}
 
+    def test_decode_lut_uint16_external(self):
+        """Decoder must dispatch lut_uint16 even though the encoder only emits uint8.
+
+        Some external producers (and the TypeScript decoder) recognise lut_uint16,
+        so the Python decoder must keep parity with the cross-language contract.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(tmpdir, mode="w")
+            decoder = ArrayDecoder()
+
+            indices = np.array([0, 1, 2, 1, 0], dtype=np.uint16)
+            group.create_dataset("test", data=indices)
+            group["test"].attrs["encoding"] = {
+                "name": "lut_uint16",
+                "lut": [10.0, 20.0, 30.0],
+                "original_dtype": "float32",
+            }
+
+            decoded = decoder.decode(group["test"])
+            assert decoded.dtype == np.float32
+            assert decoded.tolist() == [10.0, 20.0, 30.0, 20.0, 10.0]
+
     def test_decode_lut_color_row_mode(self):
         """Test decoding color LUT in row mode."""
         with tempfile.TemporaryDirectory() as tmpdir:
