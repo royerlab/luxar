@@ -405,7 +405,21 @@ class GaussianSplatModel(nn.Module):
         Ls: torch.Tensor,
         amps: torch.Tensor,
     ) -> None:
-        """Hard replace the whole parameter set."""
+        """Hard-replace the whole parameter set in-place.
+
+        .. warning::
+            Reassigning ``nn.Parameter`` attributes invalidates any optimizer
+            state (Adam moments, momentum buffers, etc.) registered against
+            the *previous* parameter tensors. Callers that intend to keep
+            training after a ``replace_with`` must rebuild the optimizer —
+            ``initialize_optimization`` is the canonical entry point.
+
+            The current best-state restore path
+            (``optimization.py::_restore_best_state``) is safe because it
+            runs purely under ``torch.no_grad()`` and does NOT call
+            ``optimizer.step()`` afterwards: it only re-evaluates the loss
+            so the reported metrics match the restored parameters.
+        """
         raw_mu, L_diag_raw, L_off, amp_raw = self._to_internal_params(centers, Ls, amps)
         self.raw_mu = torch.nn.Parameter(raw_mu)
         self.raw_L_diag = torch.nn.Parameter(L_diag_raw)
