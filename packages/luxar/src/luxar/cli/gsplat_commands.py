@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Literal, Optional
 import typer
 from arbol import aprint, asection
 
+from .main import _DEFAULT_CORS_ORIGIN
 from .utils import format_memory_size
 
 if TYPE_CHECKING:
@@ -459,7 +460,7 @@ def quick_view(
     viewer_port: int = typer.Option(5173, "--viewer-port", help="Viewer port"),
     open_browser: bool = typer.Option(True, "--open/--no-open", help="Open browser"),
     cors_origin: str = typer.Option(
-        "local",
+        _DEFAULT_CORS_ORIGIN,
         "--cors-origin",
         help=(
             "Allowed CORS origin. Default 'local' allows localhost/127.0.0.1/::1. "

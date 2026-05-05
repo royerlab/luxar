@@ -70,7 +70,7 @@ class ArrayDecoder:
             return self._expand_broadcasted(zarr_array, enc)
         elif name == "array_ref":
             return self._follow_ref(zarr_array, enc, zarr_root)
-        elif name == "lut_uint8":
+        elif name in {"lut_uint8", "lut_uint16"}:
             return self._decode_lut(zarr_array, enc)
 
         # Quantized encodings (require inverse transformation)

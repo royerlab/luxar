@@ -26,6 +26,7 @@ import stat
 import subprocess
 import zipfile
 from pathlib import Path
+from xml.sax.saxutils import escape as xml_escape
 
 from arbol import aprint, asection
 
@@ -191,6 +192,10 @@ def _macos_info_plist(app_name: str, *, with_icon: bool = True) -> str:
     """
     slug = "".join(c if c.isalnum() else "-" for c in app_name.lower()).strip("-")
     bundle_id = f"org.czbiohub.luxar.{slug or 'scene'}"
+    # Escape user-supplied app_name for XML; bundle_id is already slug-safe
+    # but escape defensively in case the slug logic ever changes.
+    safe_app_name = xml_escape(app_name)
+    safe_bundle_id = xml_escape(bundle_id)
     icon_keys = ""
     if with_icon:
         icon_keys = (
@@ -202,11 +207,11 @@ def _macos_info_plist(app_name: str, *, with_icon: bool = True) -> str:
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>{app_name}</string>
+    <string>{safe_app_name}</string>
     <key>CFBundleDisplayName</key>
-    <string>{app_name}</string>
+    <string>{safe_app_name}</string>
     <key>CFBundleIdentifier</key>
-    <string>{bundle_id}</string>
+    <string>{safe_bundle_id}</string>
     <key>CFBundleExecutable</key>
     <string>launcher</string>
     <key>CFBundlePackageType</key>
