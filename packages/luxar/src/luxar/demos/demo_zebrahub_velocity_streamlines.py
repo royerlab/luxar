@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass, replace
@@ -173,19 +172,26 @@ class StreamlineGeometry:
 # -----------------------------------------------------------------------------
 
 
-def _ensure_module(module: str, pip_name: str | None = None) -> Any:
-    """Import a module, pip-installing it on first miss."""
+def _require_module(module: str, pip_name: str | None = None) -> Any:
+    """Import a module, raising a clear error with install instructions if missing.
+
+    The earlier version of this helper silently ran ``pip install`` with
+    stdout/stderr suppressed, mutating the user's Python environment
+    without confirmation. That is hostile to constrained environments
+    (HPC, locked-down CI, virtualenvs with pinned deps) and hides the
+    install failure mode entirely. The PPI demo's import-error pattern is
+    safer and more transparent.
+    """
     try:
         return __import__(module)
-    except ImportError:
+    except ImportError as exc:
         pkg = pip_name or module
-        aprint(f"Installing {pkg} (one-time)…")
-        subprocess.check_call(
-            [sys.executable, "-m", "pip", "install", "-q", pkg],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        return __import__(module)
+        aprint(f"❌ Missing dependency for the zebrahub demo: {module}")
+        aprint(f"   Install with: pip install {pkg}")
+        raise ImportError(
+            f"{module} is required by demo_zebrahub_velocity_streamlines. "
+            f"Install with `pip install {pkg}`."
+        ) from exc
 
 
 # -----------------------------------------------------------------------------
@@ -217,7 +223,7 @@ def resolve_h5ad(cache_dir: Path, h5ad_override: Path | None) -> Path:
         aprint(f"Using cached AnnData: {path.name} ({size_gb:.2f} GB)")
         return path
 
-    gdown = _ensure_module("gdown")
+    gdown = _require_module("gdown")
     with asection("Downloading Zebrahub velocity AnnData from Google Drive"):
         aprint(f"  Folder: {DRIVE_FOLDER_URL}")
         aprint(f"  Target: {cache_dir}")
@@ -305,7 +311,7 @@ def _stabilize_3d(coords: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 
 def load_zebrahub(h5ad_path: Path) -> ZebrahubData:
     """Load 3D UMAP positions, RNA-velocity vectors, and metadata."""
-    ad = _ensure_module("anndata")
+    ad = _require_module("anndata")
 
     with asection(f"Reading {h5ad_path.name}"):
         adata = ad.read_h5ad(h5ad_path, backed="r")
