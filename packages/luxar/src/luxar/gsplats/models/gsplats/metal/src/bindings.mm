@@ -64,34 +64,46 @@ struct MetalContext {
     id<MTLLibrary> library;
     std::map<std::string, id<MTLComputePipelineState>> pipelines;
 
-    MetalContext() {
-        device = MTLCreateSystemDefaultDevice();
-        if (!device) {
-            throw std::runtime_error("Failed to create Metal device. Is this running on macOS with Metal support?");
-        }
+    MetalContext() : device(nil), queue(nil), library(nil) {
+        // MET-4: exception-safe construction. The C++ destructor only runs
+        // after a constructor returns normally, so any throw mid-init must
+        // release whatever has already been retained — otherwise device /
+        // queue accumulate +1 retain counts forever.
+        @autoreleasepool {
+            device = MTLCreateSystemDefaultDevice();
+            if (!device) {
+                throw std::runtime_error(
+                    "Failed to create Metal device. Is this running on macOS with Metal support?");
+            }
 
-        queue = [device newCommandQueue];
-        if (!queue) {
-            throw std::runtime_error("Failed to create Metal command queue");
-        }
+            queue = [device newCommandQueue];
+            if (!queue) {
+                [device release]; device = nil;
+                throw std::runtime_error("Failed to create Metal command queue");
+            }
 
-        NSError* error = nil;
-        NSMutableArray<NSString*>* attempted = [NSMutableArray array];
+            NSError* error = nil;
+            NSMutableArray<NSString*>* attempted = [NSMutableArray array];
 
-        for (NSString* libPath in metalLibraryCandidatePaths()) {
-            [attempted addObject:libPath];
-            if ([[NSFileManager defaultManager] fileExistsAtPath:libPath]) {
-                library = [device newLibraryWithFile:libPath error:&error];
-                if (library) {
-                    break;
+            for (NSString* libPath in metalLibraryCandidatePaths()) {
+                [attempted addObject:libPath];
+                if ([[NSFileManager defaultManager] fileExistsAtPath:libPath]) {
+                    library = [device newLibraryWithFile:libPath error:&error];
+                    if (library) {
+                        break;
+                    }
                 }
             }
-        }
 
-        if (!library) {
-            NSString* msg = error ? [error localizedDescription] : @"Library not found";
-            NSString* paths = [attempted componentsJoinedByString:@"\n  - "];
-            throw std::runtime_error([[NSString stringWithFormat:@"Failed to load Metal library: %@\nSearched:\n  - %@", msg, paths] UTF8String]);
+            if (!library) {
+                NSString* msg = error ? [error localizedDescription] : @"Library not found";
+                NSString* paths = [attempted componentsJoinedByString:@"\n  - "];
+                std::string err = [[NSString stringWithFormat:
+                    @"Failed to load Metal library: %@\nSearched:\n  - %@", msg, paths] UTF8String];
+                [queue release];  queue = nil;
+                [device release]; device = nil;
+                throw std::runtime_error(err);
+            }
         }
     }
 
@@ -214,6 +226,20 @@ void validate_shape_3d(const std::vector<int64_t>& shape) {
     int64_t numel = shape[0] * shape[1] * shape[2];
     TORCH_CHECK(numel <= std::numeric_limits<uint32_t>::max(),
         "Metal 3D kernels currently support at most uint32_t output elements, got ", numel);
+
+    // MET-3: per-splat AABB voxel counts inside the kernels are tracked in
+    // 32-bit unsigned ints. A volume large enough to let a single wide splat
+    // overflow that counter would silently drop the splat. Cap conservatively
+    // at 2e9 voxels (well below UINT_MAX) and fail fast with a clear error.
+    constexpr uint64_t kMaxVoxels = 2'000'000'000ULL;
+    uint64_t total_voxels = static_cast<uint64_t>(shape[0])
+                          * static_cast<uint64_t>(shape[1])
+                          * static_cast<uint64_t>(shape[2]);
+    TORCH_CHECK(total_voxels <= kMaxVoxels,
+        "Volume D*H*W=", total_voxels,
+        " exceeds Metal backend's per-splat AABB capacity (", kMaxVoxels, " voxels). "
+        "This is a hard cap to prevent silent splat drops; reduce volume size or "
+        "tile the workload.");
 }
 
 int64_t shape_numel(const std::vector<int64_t>& shape) {
@@ -337,11 +363,11 @@ torch::Tensor compute_conic_metal(torch::Tensor Ls) {
         return conic;
     }
 
-    // Wrap the Metal calls in an autorelease pool so the autoreleased
-    // command buffer / encoder / NSString objects don't accumulate over
-    // many iterations. The build uses -fno-objc-arc (manual MRC), so
-    // without this pool the objects sit around until Python returns to
-    // its outermost pool — effectively never inside a fitting loop.
+    // MET-1: wrap the dispatch body in an autorelease pool. Compiled with
+    // -fno-objc-arc (manual reference counting), so MTLCommandBuffer /
+    // MTLComputeCommandEncoder / NSString returned by Cocoa convenience
+    // initializers would otherwise accumulate on the thread's outer pool —
+    // a slow but real leak over thousands of training iterations.
     @autoreleasepool {
         MetalContext* ctx = metalContext();
         torch::mps::synchronize();
@@ -374,15 +400,16 @@ torch::Tensor compute_conic_metal(torch::Tensor Ls) {
 
 torch::Tensor dispatch_forward_splat_3d(
     torch::Tensor centers,
-    torch::Tensor Ls,
+    torch::Tensor conic,
     torch::Tensor amps,
     std::vector<int64_t> shape,
     float truncate,
     float intensity_floor
 ) {
-    validate_splat_L_tensors_3d(centers, Ls, amps, shape);
-    TORCH_CHECK(truncate > 0.0f, "truncate must be > 0; got ", truncate);
+    validate_splat_tensors_3d(centers, conic, amps, shape);
 
+    // MET-10 (review-flagged minor): handle N=0 BEFORE allocating the output
+    // tensor, avoiding a wasted allocation on the empty path.
     if (centers.size(0) == 0) {
         return torch::zeros(shape, centers.options().dtype(torch::kFloat32));
     }
@@ -391,6 +418,7 @@ torch::Tensor dispatch_forward_splat_3d(
     int64_t total_pixels_i64 = shape_numel(shape);
     uint32_t total_pixels = static_cast<uint32_t>(total_pixels_i64);
 
+    // MET-1: see compute_conic_metal — same MRC autorelease-pool rationale.
     @autoreleasepool {
         MetalContext* ctx = metalContext();
         torch::mps::synchronize();
@@ -414,7 +442,7 @@ torch::Tensor dispatch_forward_splat_3d(
             [enc setComputePipelineState:ctx->getPipeline("rasterize_forward_splat_centric_3d")];
 
             setBufferWithOffset(enc, centers, 0);
-            setBufferWithOffset(enc, Ls, 1);
+            setBufferWithOffset(enc, conic, 1);
             setBufferWithOffset(enc, amps, 2);
             setBufferWithOffset(enc, output, 3);
 
@@ -427,12 +455,8 @@ torch::Tensor dispatch_forward_splat_3d(
 
             uint32_t n_splats = static_cast<uint32_t>(centers.size(0));
             [enc setBytes:&n_splats length:sizeof(uint32_t) atIndex:5];
-            float shift_C = std::exp(-0.5f * truncate * truncate);
-            float inv_one_minus_C = 1.0f / (1.0f - shift_C);
             [enc setBytes:&truncate length:sizeof(float) atIndex:6];
             [enc setBytes:&intensity_floor length:sizeof(float) atIndex:7];
-            [enc setBytes:&shift_C length:sizeof(float) atIndex:8];
-            [enc setBytes:&inv_one_minus_C length:sizeof(float) atIndex:9];
 
             MTLSize groups = MTLSizeMake(n_splats, 1, 1);
             MTLSize threadsPerGroup = MTLSizeMake(kThreadgroupSize, 1, 1);
@@ -455,14 +479,13 @@ torch::Tensor dispatch_forward_splat_3d(
 std::vector<torch::Tensor> dispatch_backward_splat_3d(
     torch::Tensor grad_output,
     torch::Tensor centers,
-    torch::Tensor Ls,
+    torch::Tensor conic,
     torch::Tensor amps,
     std::vector<int64_t> shape,
     float truncate,
     float intensity_floor
 ) {
-    validate_splat_L_tensors_3d(centers, Ls, amps, shape);
-    TORCH_CHECK(truncate > 0.0f, "truncate must be > 0; got ", truncate);
+    validate_splat_tensors_3d(centers, conic, amps, shape);
     TORCH_CHECK(grad_output.device().is_mps(), "grad_output must be on MPS device");
     TORCH_CHECK(grad_output.scalar_type() == torch::kFloat32, "grad_output must be float32");
     TORCH_CHECK(grad_output.is_contiguous(), "grad_output must be contiguous");
@@ -477,14 +500,15 @@ std::vector<torch::Tensor> dispatch_backward_splat_3d(
     if (N == 0) {
         return {
             torch::zeros({N, 3}, opts),
-            torch::zeros({N, 3, 3}, opts),
+            torch::zeros({N, 6}, opts),
             torch::zeros({N}, opts),
         };
     }
     auto d_centers = torch::empty({N, 3}, opts);
-    auto d_Ls = torch::empty({N, 3, 3}, opts);
+    auto d_conic = torch::empty({N, 6}, opts);
     auto d_amps = torch::empty({N}, opts);
 
+    // MET-1: see compute_conic_metal — same MRC autorelease-pool rationale.
     @autoreleasepool {
         MetalContext* ctx = metalContext();
         torch::mps::synchronize();
@@ -495,10 +519,10 @@ std::vector<torch::Tensor> dispatch_backward_splat_3d(
 
         setBufferWithOffset(enc, grad_output, 0);
         setBufferWithOffset(enc, centers, 1);
-        setBufferWithOffset(enc, Ls, 2);
+        setBufferWithOffset(enc, conic, 2);
         setBufferWithOffset(enc, amps, 3);
         setBufferWithOffset(enc, d_centers, 4);
-        setBufferWithOffset(enc, d_Ls, 5);
+        setBufferWithOffset(enc, d_conic, 5);
         setBufferWithOffset(enc, d_amps, 6);
 
         uint3 shape_dhw = {
@@ -510,12 +534,8 @@ std::vector<torch::Tensor> dispatch_backward_splat_3d(
 
         uint32_t n_splats = static_cast<uint32_t>(N);
         [enc setBytes:&n_splats length:sizeof(uint32_t) atIndex:8];
-        float shift_C = std::exp(-0.5f * truncate * truncate);
-        float inv_one_minus_C = 1.0f / (1.0f - shift_C);
         [enc setBytes:&truncate length:sizeof(float) atIndex:9];
         [enc setBytes:&intensity_floor length:sizeof(float) atIndex:10];
-        [enc setBytes:&shift_C length:sizeof(float) atIndex:11];
-        [enc setBytes:&inv_one_minus_C length:sizeof(float) atIndex:12];
 
         MTLSize groups = MTLSizeMake(n_splats, 1, 1);
         MTLSize threadsPerGroup = MTLSizeMake(kThreadgroupSize, 1, 1);
@@ -526,7 +546,7 @@ std::vector<torch::Tensor> dispatch_backward_splat_3d(
         checkCommandBuffer(cmd, @"rasterize_backward_splat_centric_3d failed");
     }
 
-    return {d_centers, d_Ls, d_amps};
+    return {d_centers, d_conic, d_amps};
 }
 
 

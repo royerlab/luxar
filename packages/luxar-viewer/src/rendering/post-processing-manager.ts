@@ -69,15 +69,18 @@ import {
  * ```
  */
 export class PostProcessingManager {
-  private composer: EffectComposer;
-  private renderPass: RenderPass;
+  // Definite-assignment: these are initialized via the constructor's call
+  // to `initializeTransientResources()` — TS can't trace through the helper.
+  // They are also reassigned by `rebuildAfterContextRestore()`.
+  private composer!: EffectComposer;
+  private renderPass!: RenderPass;
   private effectPass?: EffectPass;
   private secondaryPass?: EffectPass;
 
   // Individual effect references for runtime updates with proper typing
   private bloomEffect?: BloomEffectTyped;
   private dofEffect?: DepthOfFieldEffectTyped;
-  private toneMappingEffect!: LuxarToneMappingEffect;
+  private toneMappingEffect?: LuxarToneMappingEffect;
   private smaaEffect?: SMAAEffect;
   private fxaaEffect?: FXAAEffect;
   private aoEffect?: SSAOEffect;
@@ -96,6 +99,10 @@ export class PostProcessingManager {
 
   // Rebuild control - prevents redundant rebuilds during bulk changes
   private deferRebuild: boolean = false;
+
+  // Idempotency guard for dispose(); prevents double-dispose of the composer
+  // and the underlying GPU resources when shutdown paths overlap.
+  private disposed: boolean = false;
 
   // DPR-based noise scaling
   // Store base (user-configured) noise values separately from DPR-scaled effective values
@@ -150,37 +157,60 @@ export class PostProcessingManager {
     this.fxaaEnabled = config.renderingControls.defaults.fxaaEnabled;
     this.smaaEnabled = config.renderingControls.defaults.smaaEnabled;
 
-    // Calculate effective size for SSAA (now works correctly with initialized values)
-    const effectiveWidth = this.ssaaEnabled
-      ? Math.round(size.width * this.ssaaMultiplier)
-      : size.width;
-    const effectiveHeight = this.ssaaEnabled
-      ? Math.round(size.height * this.ssaaMultiplier)
-      : size.height;
-
-    // Create composer with HDR support using 16-bit float buffers
-    this.composer = new EffectComposer(this.renderer, {
-      frameBufferType: THREE.HalfFloatType,
-      multisampling: this.msaaEnabled ? this.msaaSamples : 0, // Native MSAA support
-    });
-
-    // Set composer size to effective size (including SSAA if enabled)
-    this.composer.setSize(effectiveWidth, effectiveHeight);
-
-    // Initialize render pass
-    this.renderPass = new RenderPass(this.scene, this.camera);
-    this.composer.addPass(this.renderPass);
-
-    // Create initial effects and setup passes
-    this.createInitialEffects();
+    // Build composer + render pass + initial effects, then wire the effect
+    // pass. Both the constructor and rebuildAfterContextRestore() share this
+    // path so context-restore stays a single source of truth for transient
+    // resource construction.
+    this.initializeTransientResources();
     this.rebuildEffectPass();
 
     log.success(
       Modules.POST_PROCESSING,
       `pmndrs/postprocessing initialized - Output: ${size.width}x${size.height}, ` +
-        `Render: ${effectiveWidth}x${effectiveHeight}${this.ssaaEnabled ? ' (SSAA)' : ''}, ` +
+        `Render: ${this.computeEffectiveSize().width}x${this.computeEffectiveSize().height}` +
+        `${this.ssaaEnabled ? ' (SSAA)' : ''}, ` +
         `MSAA: ${this.msaaEnabled ? this.msaaSamples + 'x' : 'off'}`
     );
+  }
+
+  /**
+   * Compute the effective render-target size given current SSAA settings.
+   */
+  private computeEffectiveSize(): { width: number; height: number } {
+    return {
+      width: this.ssaaEnabled
+        ? Math.round(this.renderSize.width * this.ssaaMultiplier)
+        : this.renderSize.width,
+      height: this.ssaaEnabled
+        ? Math.round(this.renderSize.height * this.ssaaMultiplier)
+        : this.renderSize.height,
+    };
+  }
+
+  /**
+   * (Re)create all GPU-bound transient resources: composer, render pass,
+   * and the initial set of effects. Caller is responsible for invoking
+   * `rebuildEffectPass()` afterwards to wire the effect chain.
+   *
+   * Used by both the constructor and `rebuildAfterContextRestore()`.
+   */
+  private initializeTransientResources(): void {
+    const { width, height } = this.computeEffectiveSize();
+
+    // Create composer with HDR support using 16-bit float buffers
+    this.composer = new EffectComposer(this.renderer, {
+      frameBufferType: THREE.HalfFloatType,
+      multisampling: this.msaaEnabled ? this.msaaSamples : 0,
+    });
+    this.composer.setSize(width, height);
+
+    // Initialize render pass
+    this.renderPass = new RenderPass(this.scene, this.camera);
+    this.composer.addPass(this.renderPass);
+
+    // Create initial effects (bloom, toneMapping, smaa, fxaa); optional
+    // effects are added later via setXxxEnabled() toggles.
+    this.createInitialEffects();
   }
 
   /**
@@ -370,7 +400,9 @@ export class PostProcessingManager {
       orderedEffects.push({ effect: this.detectorNoiseEffect, name: 'DetectorNoise' });
 
     // Tone mapping (HDR → LDR conversion)
-    orderedEffects.push({ effect: this.toneMappingEffect, name: 'ToneMapping' });
+    if (this.toneMappingEffect) {
+      orderedEffects.push({ effect: this.toneMappingEffect, name: 'ToneMapping' });
+    }
 
     // LDR effects (after tone mapping) - pmndrs v7 requires vignette after tone mapping
     if (this.vignetteEffect) {
@@ -613,6 +645,11 @@ export class PostProcessingManager {
     };
 
     const mappedMode = modeMap[mode] ?? ToneMappingMode.ACES_FILMIC;
+    if (!this.toneMappingEffect) {
+      // Effect is absent (post-dispose or pre-init); keep the call a no-op
+      // rather than throwing — the desired mode is reapplied on rebuild.
+      return;
+    }
     this.toneMappingEffect.mode = mappedMode;
 
     const modeName = Object.keys(ToneMappingMode).find(
@@ -641,6 +678,7 @@ export class PostProcessingManager {
       [ToneMappingMode.NEUTRAL]: THREE.NeutralToneMapping,
     };
 
+    if (!this.toneMappingEffect) return THREE.ACESFilmicToneMapping;
     return reverseMap[this.toneMappingEffect.mode] ?? THREE.ACESFilmicToneMapping;
   }
 
@@ -1197,7 +1235,9 @@ export class PostProcessingManager {
       smaa: this.smaaEnabled,
       msaa: this.msaaEnabled,
       ssaa: this.ssaaEnabled,
-      toneMapping: toneMappingNames[this.toneMappingEffect.mode] ?? 'Unknown',
+      toneMapping: this.toneMappingEffect
+        ? (toneMappingNames[this.toneMappingEffect.mode] ?? 'Unknown')
+        : 'Off',
       vignette: !!this.vignetteEffect,
       ao: !!this.aoEffect,
       lensDistortion: false, // Old effect removed - now part of ChromaticLensDistortion
@@ -1984,10 +2024,15 @@ export class PostProcessingManager {
   }
 
   /**
-   * Disposes all resources
+   * Tear down every GPU-bound transient resource (composer, render passes,
+   * effect instances). The manager identity is preserved; durable user
+   * settings stored on `this.*Enabled` / `this.*Multiplier` / `this.bloomLevels`
+   * etc. are intentionally NOT cleared, so the manager remains useful for a
+   * subsequent `initializeTransientResources()` call.
+   *
+   * Used by both `dispose()` and `rebuildAfterContextRestore()`.
    */
-  dispose(): void {
-    // Dispose effect passes first
+  private disposeTransientResources(): void {
     if (this.effectPass) {
       try {
         this.effectPass.dispose();
@@ -2013,10 +2058,13 @@ export class PostProcessingManager {
     // complete ownership guarantee for all pmndrs/postprocessing effects.
     this.disposeAllEffects('during cleanup');
 
-    // Dispose composer (this also disposes passes added to it, but we already did it above for safety)
+    // Dispose composer (it also disposes passes added to it; we already did
+    // that above for safety).
     this.composer.dispose();
 
-    // Clear individual effect references
+    // Clear individual effect references — symmetric across every effect
+    // owned by the manager, so dispose paths are safely idempotent and
+    // post-dispose reads are well-defined as `undefined`.
     this.bloomEffect = undefined;
     this.detectorNoiseEffect = undefined;
     this.dofEffect = undefined;
@@ -2025,7 +2073,236 @@ export class PostProcessingManager {
     this.chromaticLensDistortionEffect = undefined;
     this.smaaEffect = undefined;
     this.fxaaEffect = undefined;
+    this.toneMappingEffect = undefined;
+  }
 
+  /**
+   * Capture the user-visible (durable) settings of every effect currently
+   * configured on this manager. The returned snapshot is enough to fully
+   * restore the post-processing pipeline after a context-loss-driven
+   * rebuild — see `applyDurableState()`.
+   */
+  private captureDurableState(): PostProcessingDurableState {
+    const bloom = this.bloomEffect as any;
+    return {
+      bloom:
+        this.bloomEffect && isBloomEffectTyped(this.bloomEffect)
+          ? {
+              intensity: bloom.intensity,
+              luminanceThreshold: bloom.luminanceMaterial?.threshold,
+              radius: bloom.mipmapBlurPass?.radius,
+            }
+          : null,
+      toneMapping: this.toneMappingEffect
+        ? {
+            mode: this.toneMappingEffect.mode,
+            whitePoint: this.toneMappingEffect.whitePoint,
+            exposure: this.toneMappingEffect.exposure,
+            globalOffset: this.toneMappingEffect.globalOffset,
+            globalGamma: this.toneMappingEffect.globalGamma,
+          }
+        : null,
+      dof:
+        this.dofEffect && isDepthOfFieldEffectTyped(this.dofEffect)
+          ? {
+              bokehScale: this.dofEffect.bokehScale,
+              focusDistance:
+                this.dofEffect.circleOfConfusionMaterial?.uniforms?.focusDistance?.value,
+            }
+          : null,
+      vignette:
+        this.vignetteEffect && isRobustVignetteEffect(this.vignetteEffect)
+          ? {
+              darkness: this.vignetteEffect.darkness,
+              offset: this.vignetteEffect.offset,
+            }
+          : null,
+      chromaticLensDistortion:
+        this.chromaticLensDistortionEffect &&
+        isChromaticLensDistortionEffect(this.chromaticLensDistortionEffect)
+          ? {
+              distortion: this.chromaticLensDistortionEffect.distortion.clone(),
+              principalPoint: this.chromaticLensDistortionEffect.principalPoint.clone(),
+              focalLength: this.chromaticLensDistortionEffect.focalLength.clone(),
+              skew: this.chromaticLensDistortionEffect.skew,
+              dispersion: this.chromaticLensDistortionEffect.dispersion,
+            }
+          : null,
+      detectorNoise:
+        this.detectorNoiseEffect && isDetectorNoiseEffect(this.detectorNoiseEffect)
+          ? {
+              readoutSigma: this.detectorNoiseEffect.readoutSigma,
+              photonGain: this.detectorNoiseEffect.photonGain,
+              fpnSigma: this.detectorNoiseEffect.fpnSigma,
+            }
+          : null,
+      aoEnabled: !!this.aoEffect,
+    };
+  }
+
+  /**
+   * Re-apply a previously captured durable state to the freshly recreated
+   * effect instances. `initializeTransientResources()` produced default-
+   * configured bloom/toneMapping/smaa/fxaa instances; this method restores
+   * the user's settings on those, plus toggles on optional effects (DOF,
+   * vignette, AO, chromatic lens distortion, detector noise) so the
+   * pipeline matches the pre-rebuild configuration.
+   *
+   * Caller invokes `rebuildEffectPass()` afterwards.
+   */
+  private applyDurableState(state: PostProcessingDurableState): void {
+    // Bloom: always present after init; only re-apply settings if it was
+    // previously configured. If the user had bloom disabled before rebuild,
+    // dispose the freshly-created default instance.
+    if (state.bloom && this.bloomEffect && isBloomEffectTyped(this.bloomEffect)) {
+      const restoredBloom = this.bloomEffect as any;
+      restoredBloom.intensity = state.bloom.intensity;
+      if (state.bloom.luminanceThreshold !== undefined && restoredBloom.luminanceMaterial) {
+        restoredBloom.luminanceMaterial.threshold = state.bloom.luminanceThreshold;
+      }
+      if (state.bloom.radius !== undefined && restoredBloom.mipmapBlurPass) {
+        restoredBloom.mipmapBlurPass.radius = state.bloom.radius;
+      }
+    } else if (!state.bloom && this.bloomEffect) {
+      this.safeDisposeEffect(this.bloomEffect, 'Bloom (rebuild: was disabled)');
+      this.bloomEffect = undefined;
+    }
+
+    // Tone mapping: always present after init; restore user-facing fields.
+    if (state.toneMapping && this.toneMappingEffect) {
+      this.toneMappingEffect.mode = state.toneMapping.mode;
+      if (state.toneMapping.whitePoint !== undefined) {
+        this.toneMappingEffect.whitePoint = state.toneMapping.whitePoint;
+      }
+      if (state.toneMapping.exposure !== undefined) {
+        this.toneMappingEffect.exposure = state.toneMapping.exposure;
+      }
+      if (state.toneMapping.globalOffset !== undefined) {
+        this.toneMappingEffect.globalOffset = state.toneMapping.globalOffset;
+      }
+      if (state.toneMapping.globalGamma !== undefined) {
+        this.toneMappingEffect.globalGamma = state.toneMapping.globalGamma;
+      }
+    }
+
+    // Optional effects: recreate via their toggle methods, then re-apply
+    // settings on the new instance. Each toggle calls rebuildEffectPass()
+    // internally, but the final caller will rebuild once more so the
+    // intermediate calls are absorbed.
+    if (state.dof) {
+      // setDOF expects (enabled, focus?, strength?). Re-derive the world-
+      // space focus from the saved normalized focusDistance via the
+      // PerspectiveDepthMapper inverse.
+      const focusDistance = state.dof.focusDistance;
+      const bokehScale = state.dof.bokehScale;
+      const strength = bokehScale !== undefined ? bokehScale / 4.0 : undefined;
+      // Note: focusDistance here is normalized [0,1]; setDOF will re-normalize
+      // a world-space input. We restore by calling setDOF then writing the
+      // normalized uniform back directly to preserve numeric precision.
+      this.setDOF(true, undefined, strength);
+      if (
+        focusDistance !== undefined &&
+        this.dofEffect &&
+        isDepthOfFieldEffectTyped(this.dofEffect) &&
+        this.dofEffect.circleOfConfusionMaterial?.uniforms?.focusDistance
+      ) {
+        this.dofEffect.circleOfConfusionMaterial.uniforms.focusDistance.value = focusDistance;
+      }
+    }
+    if (state.vignette) {
+      this.setVignetteEnabled(true, state.vignette.darkness, state.vignette.offset);
+    }
+    if (state.aoEnabled) {
+      this.setAOEnabled(true, this._qualityPreset);
+    }
+    if (state.chromaticLensDistortion) {
+      this.setChromaticLensDistortionEnabled(true);
+      if (
+        this.chromaticLensDistortionEffect &&
+        isChromaticLensDistortionEffect(this.chromaticLensDistortionEffect)
+      ) {
+        this.chromaticLensDistortionEffect.distortion =
+          state.chromaticLensDistortion.distortion.clone();
+        this.chromaticLensDistortionEffect.principalPoint =
+          state.chromaticLensDistortion.principalPoint.clone();
+        this.chromaticLensDistortionEffect.focalLength =
+          state.chromaticLensDistortion.focalLength.clone();
+        this.chromaticLensDistortionEffect.skew = state.chromaticLensDistortion.skew;
+        this.chromaticLensDistortionEffect.dispersion = state.chromaticLensDistortion.dispersion;
+      }
+    }
+    if (state.detectorNoise) {
+      this.setDetectorNoiseEnabled(
+        true,
+        state.detectorNoise.readoutSigma,
+        state.detectorNoise.photonGain,
+        state.detectorNoise.fpnSigma
+      );
+    }
+  }
+
+  /**
+   * Rebuild GPU-bound resources after a WebGL context-restore event.
+   *
+   * The manager's identity is preserved across the rebuild so external
+   * consumers (PickingSystem, AnimationController, RenderingControls) can
+   * keep their cached references — they will transparently see the new
+   * composer / effects through the same `PostProcessingManager` reference.
+   * All durable user settings (bloom, tone mapping, DOF, vignette, AO,
+   * chromatic lens distortion, detector noise) are preserved across the
+   * rebuild.
+   *
+   * Safe to call repeatedly; a no-op if `dispose()` has already run.
+   */
+  rebuildAfterContextRestore(): void {
+    if (this.disposed) return;
+
+    log.info(Modules.POST_PROCESSING, 'Rebuilding post-processing pipeline after context restore');
+
+    const state = this.captureDurableState();
+    this.disposeTransientResources();
+    this.initializeTransientResources();
+    this.applyDurableState(state);
+    this.rebuildEffectPass();
+
+    log.success(Modules.POST_PROCESSING, 'Post-processing pipeline rebuilt after context restore');
+  }
+
+  /**
+   * Disposes all resources. Safe to call multiple times — subsequent calls
+   * are no-ops thanks to the `disposed` guard.
+   */
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.disposeTransientResources();
     log.success(Modules.POST_PROCESSING, 'PostProcessing resources disposed');
   }
+}
+
+/**
+ * Snapshot of every user-visible setting of a `PostProcessingManager`.
+ * Captured before a context-restore rebuild and re-applied to the freshly
+ * recreated effects so the rebuild is transparent to the user.
+ */
+interface PostProcessingDurableState {
+  bloom: { intensity: number; luminanceThreshold?: number; radius?: number } | null;
+  toneMapping: {
+    mode: ToneMappingMode;
+    whitePoint?: number;
+    exposure?: number;
+    globalOffset?: number;
+    globalGamma?: number;
+  } | null;
+  dof: { bokehScale?: number; focusDistance?: number } | null;
+  vignette: { darkness: number; offset: number } | null;
+  chromaticLensDistortion: {
+    distortion: THREE.Vector2;
+    principalPoint: THREE.Vector2;
+    focalLength: THREE.Vector2;
+    skew: number;
+    dispersion: number;
+  } | null;
+  detectorNoise: { readoutSigma: number; photonGain: number; fpnSigma: number } | null;
+  aoEnabled: boolean;
 }

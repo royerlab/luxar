@@ -4,6 +4,7 @@ import numpy as np
 import zarr
 
 from luxar import Dimensions, LuxarZarrCompiler
+from luxar.typing_utils.constants import MAX_CHUNK_BYTES, MIN_CHUNK_BYTES
 
 
 class TestZarrNDChunking:
@@ -178,13 +179,10 @@ class TestZarrNDChunking:
         bytes_per_element = 4  # float32
         chunk_size_bytes = chunk_shape[0] * chunk_shape[1] * bytes_per_element
 
-        # Chunk size should fall within the byte-based bounds defined by the
-        # constants module (16KB-256KB), with the 64KB target as the sweet spot.
-        from luxar.typing_utils.constants import (
-            MAX_CHUNK_BYTES,
-            MIN_CHUNK_BYTES,
-        )
-
+        # Chunk size should sit within the byte-target band defined by the
+        # single source of truth in typing_utils.constants. The migration to
+        # byte-targeted chunking intentionally produces smaller chunks than the
+        # old element-count heuristic.
         assert MIN_CHUNK_BYTES <= chunk_size_bytes <= MAX_CHUNK_BYTES
 
         # Verify chunks are not too small (inefficient) or too large (memory issues)

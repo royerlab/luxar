@@ -54,28 +54,6 @@ def _compute_max_abs_error(pred: torch.Tensor, target: torch.Tensor) -> float:
     return torch.max(torch.abs(pred - target)).item()
 
 
-def _compute_rel_l2(pred: torch.Tensor, target: torch.Tensor) -> float:
-    """
-    Compute relative L2 error: ||pred - target||₂ / ||target||₂.
-
-    Parameters
-    ----------
-    pred : torch.Tensor
-        Model prediction
-    target : torch.Tensor
-        Target values
-
-    Returns
-    -------
-    float
-        Relative L2 error (0 = perfect, 1 = error magnitude equals signal)
-    """
-    return float(
-        torch.linalg.norm((pred - target).reshape(-1))
-        / (torch.linalg.norm(target.reshape(-1)) + 1e-12)
-    )
-
-
 def _compute_eval_metrics(
     pred: torch.Tensor, target: torch.Tensor
 ) -> tuple[float, float]:
@@ -466,8 +444,7 @@ def run_optimization_loop(
         with torch.no_grad():
             centers, Ls, amps = model.current_params()
             pred_final = model()
-            best_max_abs_error = _compute_max_abs_error(pred_final, V_t)
-            best_rel_l2 = _compute_rel_l2(pred_final, V_t)
+            best_max_abs_error, best_rel_l2 = _compute_eval_metrics(pred_final, V_t)
 
     return OptimizationResults(
         centers=centers,

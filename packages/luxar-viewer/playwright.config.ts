@@ -12,6 +12,11 @@
 import { defineConfig, devices } from '@playwright/test';
 import * as path from 'path';
 import * as fs from 'fs';
+import { fileURLToPath } from 'url';
+
+// `package.json` declares `"type": "module"`, so the CommonJS `__dirname`
+// global is undefined at config load. Reconstruct it from `import.meta.url`.
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /**
  * See https://playwright.dev/docs/test-configuration

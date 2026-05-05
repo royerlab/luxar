@@ -25,6 +25,8 @@ from luxar.typing_utils.config import (
     SUPPORTED_VERSIONS,
     check_dataset_size_warning,
     estimate_memory_usage,
+    validate_chunk_bytes,
+    validate_chunk_size,
     validate_compression_level,
 )
 
@@ -64,6 +66,51 @@ class TestConfigConstants:
     def test_log_level_default(self) -> None:
         """Test default log level is INFO."""
         assert DEFAULT_LOG_LEVEL == "INFO"
+
+
+class TestValidateChunkBytes:
+    """Tests for validate_chunk_bytes function (was validate_chunk_size).
+
+    The constants and function names migrated from "size" (element counts)
+    to "bytes" in commit 9f284ff2; the alias under the old function name is
+    kept as a deprecated shim with a one-release deprecation warning.
+    """
+
+    def test_valid_chunk_bytes(self) -> None:
+        result = validate_chunk_bytes(DEFAULT_CHUNK_BYTES)
+        assert result == DEFAULT_CHUNK_BYTES
+
+    def test_minimum_chunk_bytes(self) -> None:
+        result = validate_chunk_bytes(constants.MIN_CHUNK_BYTES)
+        assert result == constants.MIN_CHUNK_BYTES
+
+    def test_maximum_chunk_bytes(self) -> None:
+        result = validate_chunk_bytes(constants.MAX_CHUNK_BYTES)
+        assert result == constants.MAX_CHUNK_BYTES
+
+    def test_chunk_bytes_too_small(self) -> None:
+        with pytest.raises(ValueError, match="too small"):
+            validate_chunk_bytes(constants.MIN_CHUNK_BYTES - 1)
+
+    def test_chunk_bytes_too_large(self) -> None:
+        with pytest.raises(ValueError, match="too large"):
+            validate_chunk_bytes(constants.MAX_CHUNK_BYTES + 1)
+
+    def test_chunk_bytes_not_integer(self) -> None:
+        with pytest.raises(ValueError, match="integer"):
+            validate_chunk_bytes(1024.5)  # type: ignore[arg-type]
+
+    def test_chunk_bytes_string_error(self) -> None:
+        with pytest.raises(ValueError, match="integer"):
+            validate_chunk_bytes("1024")  # type: ignore[arg-type]
+
+    def test_legacy_alias_warns_and_forwards(self) -> None:
+        """`validate_chunk_size` is a deprecated alias that warns and forwards."""
+        with pytest.warns(DeprecationWarning, match="validate_chunk_bytes"):
+            assert validate_chunk_size(DEFAULT_CHUNK_BYTES) == DEFAULT_CHUNK_BYTES
+        with pytest.warns(DeprecationWarning):
+            with pytest.raises(ValueError, match="too small"):
+                validate_chunk_size(constants.MIN_CHUNK_BYTES - 1)
 
 
 class TestValidateCompressionLevel:

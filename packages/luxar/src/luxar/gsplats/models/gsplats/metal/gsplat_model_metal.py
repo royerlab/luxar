@@ -136,15 +136,25 @@ class MetalSplatFunction(torch.autograd.Function):
                 "Metal custom kernels require float32 centers, Ls, and amps"
             )
 
-        # The splat-centric kernels consume native [Z, Y, X] Cholesky factors
-        # and perform the 3D conic transform inside the per-splat threadgroup.
-        Ls_for_conic = Ls.detach()
+        # L -> conic. The splat-centric kernels use Luxar/PyTorch's native
+        # [Z, Y, X] coordinate order and row-major packed upper triangle. We
+        # compute the conic ONCE per forward (via the Metal kernel when
+        # ``use_metal_conic`` is set, otherwise via the PyTorch helper) so the
+        # rasterization kernel does not redo the Cholesky → conic math
+        # per-splat-per-thread.
+        Ls_for_conic = Ls.detach().clone().requires_grad_(True)
+        if use_metal_conic:
+            conic_zyx = metal_splatting_backend.compute_conic_metal(
+                Ls.contiguous()
+            ).detach()
+        else:
+            conic_zyx = cholesky_to_conic(Ls_for_conic).detach().contiguous()
 
         output = cast(
             torch.Tensor,
             metal_splatting_backend.forward_splat_3d(
                 centers.contiguous(),
-                Ls_for_conic.contiguous(),
+                conic_zyx.contiguous(),
                 amps.contiguous(),
                 list(shape),
                 float(truncate),
@@ -154,23 +164,36 @@ class MetalSplatFunction(torch.autograd.Function):
         if output.shape != torch.Size(shape):
             output = output.view(shape)
 
-        ctx.save_for_backward(centers, Ls_for_conic, amps)
+        ctx.save_for_backward(centers, Ls_for_conic, conic_zyx, amps)
         return output
 
     @staticmethod
     def backward(
         ctx: Any, grad_output: torch.Tensor
     ) -> Tuple[Optional[torch.Tensor], ...]:
-        centers, Ls_for_conic, amps = ctx.saved_tensors
+        centers, Ls_for_conic, conic_zyx, amps = ctx.saved_tensors
 
-        d_centers, d_Ls, d_amps = metal_splatting_backend.backward_splat_3d(
+        d_centers, d_conic_zyx, d_amps = metal_splatting_backend.backward_splat_3d(
             grad_output.contiguous(),
             centers.contiguous(),
-            Ls_for_conic.contiguous(),
+            conic_zyx.contiguous(),
             amps.contiguous(),
             list(ctx.shape),
             ctx.truncate,
             ctx.intensity_floor,
+        )
+
+        # Chain rule: Metal returns d(conic) in the same [Z, Y, X] packed
+        # order as cholesky_to_conic(), so no coordinate reorder is needed.
+        with torch.enable_grad():
+            conic_recomputed_zyx = cholesky_to_conic(Ls_for_conic)
+        (d_Ls,) = torch.autograd.grad(
+            outputs=conic_recomputed_zyx,
+            inputs=Ls_for_conic,
+            grad_outputs=d_conic_zyx,
+            retain_graph=False,
+            create_graph=False,
+            allow_unused=False,
         )
 
         return d_centers, d_Ls, d_amps, None, None, None, None
