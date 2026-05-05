@@ -42,6 +42,12 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, UIConfig, ViewerConfig
 from luxar.demos import launch_viewer
 from luxar.utils._umap_utils import get_categorical_color
+from luxar.utils.fields import (
+    FlowField,
+    add_reference_cube_to_scene,
+    cubic_bounds,
+    rk4_step,
+)
 from luxar.utils.paths import get_demos_output_dir
 
 # -----------------------------------------------------------------------------
@@ -150,17 +156,6 @@ class ZebrahubData:
     anatomy_categories: list[str]
     stage_codes: np.ndarray  # (N,) int32 (or zeros if absent)
     stage_categories: list[str]
-
-
-@dataclass(frozen=True)
-class FlowField:
-    """Cubic velocity field in stabilized UMAP coordinates."""
-
-    vectors: np.ndarray  # (n, n, n, 3) float32
-    grid_min: np.ndarray
-    grid_max: np.ndarray
-    spacing: float
-    cache_key: str
 
 
 @dataclass(frozen=True)
@@ -402,15 +397,9 @@ def _array_hash(*arrays: np.ndarray) -> str:
     return digest.hexdigest()[:16]
 
 
-def _cubic_bounds(
-    positions: np.ndarray, pad: float = 0.06
-) -> tuple[np.ndarray, np.ndarray]:
-    lo = positions.min(axis=0).astype(np.float32)
-    hi = positions.max(axis=0).astype(np.float32)
-    center = (lo + hi) * 0.5
-    side = float(np.max(hi - lo))
-    half = max(side * (0.5 + pad), 1.0)
-    return (center - half).astype(np.float32), (center + half).astype(np.float32)
+# Cubic-bounds, trilinear vector sampling, RK4 advection, and reference-cube
+# rendering live in luxar.utils.fields. The imports at the top of this module
+# bring in cubic_bounds, rk4_step, FlowField, and add_reference_cube_to_scene.
 
 
 def compute_velocity_field(
@@ -434,7 +423,7 @@ def compute_velocity_field(
                 aprint(f"  {vectors.shape[0]}^3 field from {cache_path.name}")
                 return FlowField(vectors, grid_min, grid_max, spacing, cache_key)
 
-    grid_min, grid_max = _cubic_bounds(data.positions)
+    grid_min, grid_max = cubic_bounds(data.positions, pad_fraction=0.06)
     n = preset.grid_size
     spacing = float((grid_max[0] - grid_min[0]) / max(n - 1, 1))
 
@@ -498,92 +487,8 @@ def compute_velocity_field(
     return FlowField(field, grid_min, grid_max, spacing, cache_key)
 
 
-# -----------------------------------------------------------------------------
-# RK4 streamline integration
-# -----------------------------------------------------------------------------
-
-
-def _trilinear(flow: FlowField, points: np.ndarray) -> np.ndarray:
-    field = flow.vectors
-    n = field.shape[0]
-    idx = (points - flow.grid_min[None, :]) / np.float32(flow.spacing)
-    x, y, z = idx[:, 0], idx[:, 1], idx[:, 2]
-    ix0 = np.floor(x).astype(np.int32)
-    iy0 = np.floor(y).astype(np.int32)
-    iz0 = np.floor(z).astype(np.int32)
-    valid = (
-        (ix0 >= 0)
-        & (iy0 >= 0)
-        & (iz0 >= 0)
-        & (ix0 < n - 1)
-        & (iy0 < n - 1)
-        & (iz0 < n - 1)
-    )
-    out = np.full((len(points), 3), np.nan, dtype=np.float32)
-    if not np.any(valid):
-        return out
-    ix = ix0[valid]
-    iy = iy0[valid]
-    iz = iz0[valid]
-    dx = (x[valid] - ix).astype(np.float32)[:, None]
-    dy = (y[valid] - iy).astype(np.float32)[:, None]
-    dz = (z[valid] - iz).astype(np.float32)[:, None]
-
-    c000 = field[ix, iy, iz]
-    c100 = field[ix + 1, iy, iz]
-    c010 = field[ix, iy + 1, iz]
-    c110 = field[ix + 1, iy + 1, iz]
-    c001 = field[ix, iy, iz + 1]
-    c101 = field[ix + 1, iy, iz + 1]
-    c011 = field[ix, iy + 1, iz + 1]
-    c111 = field[ix + 1, iy + 1, iz + 1]
-    c00 = c000 * (1.0 - dx) + c100 * dx
-    c10 = c010 * (1.0 - dx) + c110 * dx
-    c01 = c001 * (1.0 - dx) + c101 * dx
-    c11 = c011 * (1.0 - dx) + c111 * dx
-    c0 = c00 * (1.0 - dy) + c10 * dy
-    c1 = c01 * (1.0 - dy) + c11 * dy
-    out[valid] = c0 * (1.0 - dz) + c1 * dz
-    return out
-
-
-def _unit_flow(flow: FlowField, points: np.ndarray) -> np.ndarray:
-    vectors = _trilinear(flow, points)
-    norms = np.linalg.norm(vectors, axis=1)
-    valid = np.isfinite(norms) & (norms > 1e-7)
-    out = np.full_like(vectors, np.nan)
-    out[valid] = vectors[valid] / norms[valid, None]
-    return out
-
-
-def _rk4_step(points: np.ndarray, step: float, flow: FlowField) -> np.ndarray:
-    out = np.full_like(points, np.nan)
-    k1 = _unit_flow(flow, points)
-    valid = np.isfinite(k1).all(axis=1)
-    if not np.any(valid):
-        return out
-    src = np.flatnonzero(valid)
-    p, kk1 = points[src], k1[src]
-    k2 = _unit_flow(flow, p + 0.5 * step * kk1)
-    valid = np.isfinite(k2).all(axis=1)
-    if not np.any(valid):
-        return out
-    src = src[valid]
-    p, kk1, kk2 = p[valid], kk1[valid], k2[valid]
-    k3 = _unit_flow(flow, p + 0.5 * step * kk2)
-    valid = np.isfinite(k3).all(axis=1)
-    if not np.any(valid):
-        return out
-    src = src[valid]
-    p, kk1, kk2, kk3 = p[valid], kk1[valid], kk2[valid], k3[valid]
-    k4 = _unit_flow(flow, p + step * kk3)
-    valid = np.isfinite(k4).all(axis=1)
-    if not np.any(valid):
-        return out
-    src = src[valid]
-    p, kk1, kk2, kk3, kk4 = p[valid], kk1[valid], kk2[valid], kk3[valid], k4[valid]
-    out[src] = p + (step / 6.0) * (kk1 + 2.0 * kk2 + 2.0 * kk3 + kk4)
-    return out.astype(np.float32)
+# RK4 streamline integration uses rk4_step from luxar.utils.fields
+# (imported at the top of this module).
 
 
 def _select_seeds(data: ZebrahubData, n_seeds: int | None) -> np.ndarray:
@@ -683,7 +588,7 @@ def integrate_streamlines(
             if len(active_idx) == 0:
                 break
 
-            next_points = _rk4_step(current[active_idx], step_size, flow)
+            next_points = rk4_step(current[active_idx], step_size, flow)
             inside = np.all(
                 (next_points >= flow.grid_min[None, :])
                 & (next_points <= flow.grid_max[None, :]),
@@ -856,40 +761,6 @@ def categorical_palette(n: int) -> np.ndarray:
     )
 
 
-def add_reference_cube(scene: Any, grid_min: np.ndarray, grid_max: np.ndarray) -> None:
-    x0, y0, z0 = grid_min.tolist()
-    x1, y1, z1 = grid_max.tolist()
-    corners = np.array(
-        [
-            [x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0],
-            [x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1],
-        ],
-        dtype=np.float32,
-    )
-    edges = np.array(
-        [
-            [0, 1], [1, 2], [2, 3], [3, 0],
-            [4, 5], [5, 6], [6, 7], [7, 4],
-            [0, 4], [1, 5], [2, 6], [3, 7],
-        ],
-        dtype=np.uint32,
-    )
-    scene.add_lines(
-        "Velocity field bounding cube",
-        vertices=corners,
-        widths=0.0055,
-        colors=(0.55, 0.62, 0.80),
-        sharpness=0.8,
-        indices=edges.ravel(),
-        line_type="indexed",
-        opacity=0.20,
-        intensity=REF_CUBE_INTENSITY,
-        blending_mode="additive",
-        layer=True,
-        visible=False,
-    )
-
-
 def build_legend_html(
     anatomy_categories: list[str],
     palette: np.ndarray,
@@ -1059,7 +930,15 @@ def write_scene(
                     layer=True,
                 )
 
-            add_reference_cube(scene, flow.grid_min, flow.grid_max)
+            add_reference_cube_to_scene(
+                scene,
+                flow.grid_min,
+                flow.grid_max,
+                name="Velocity field bounding cube",
+                widths=0.0055,
+                opacity=0.20,
+                intensity=REF_CUBE_INTENSITY,
+            )
 
             scene.add_text(
                 "Zebrahub — 3D RNA-velocity UMAP",
