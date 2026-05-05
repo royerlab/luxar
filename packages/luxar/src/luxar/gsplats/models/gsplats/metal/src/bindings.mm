@@ -337,26 +337,33 @@ torch::Tensor compute_conic_metal(torch::Tensor Ls) {
         return conic;
     }
 
-    MetalContext* ctx = metalContext();
-    torch::mps::synchronize();
+    // Wrap the Metal calls in an autorelease pool so the autoreleased
+    // command buffer / encoder / NSString objects don't accumulate over
+    // many iterations. The build uses -fno-objc-arc (manual MRC), so
+    // without this pool the objects sit around until Python returns to
+    // its outermost pool — effectively never inside a fitting loop.
+    @autoreleasepool {
+        MetalContext* ctx = metalContext();
+        torch::mps::synchronize();
 
-    id<MTLCommandBuffer> cmd = [ctx->queue commandBuffer];
-    id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
-    [enc setComputePipelineState:ctx->getPipeline("compute_conic_from_L_3d")];
+        id<MTLCommandBuffer> cmd = [ctx->queue commandBuffer];
+        id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
+        [enc setComputePipelineState:ctx->getPipeline("compute_conic_from_L_3d")];
 
-    setBufferWithOffset(enc, Ls, 0);
-    setBufferWithOffset(enc, conic, 1);
+        setBufferWithOffset(enc, Ls, 0);
+        setBufferWithOffset(enc, conic, 1);
 
-    uint32_t n_splats = static_cast<uint32_t>(Ls.size(0));
-    [enc setBytes:&n_splats length:sizeof(uint32_t) atIndex:2];
+        uint32_t n_splats = static_cast<uint32_t>(Ls.size(0));
+        [enc setBytes:&n_splats length:sizeof(uint32_t) atIndex:2];
 
-    MTLSize threads = MTLSizeMake(n_splats, 1, 1);
-    MTLSize group = MTLSizeMake(std::min<uint32_t>(kThreadgroupSize, n_splats), 1, 1);
-    [enc dispatchThreads:threads threadsPerThreadgroup:group];
-    [enc endEncoding];
-    [cmd commit];
-    [cmd waitUntilCompleted];
-    checkCommandBuffer(cmd, @"compute_conic_from_L_3d failed");
+        MTLSize threads = MTLSizeMake(n_splats, 1, 1);
+        MTLSize group = MTLSizeMake(std::min<uint32_t>(kThreadgroupSize, n_splats), 1, 1);
+        [enc dispatchThreads:threads threadsPerThreadgroup:group];
+        [enc endEncoding];
+        [cmd commit];
+        [cmd waitUntilCompleted];
+        checkCommandBuffer(cmd, @"compute_conic_from_L_3d failed");
+    }
 
     return conic;
 }
@@ -384,57 +391,59 @@ torch::Tensor dispatch_forward_splat_3d(
     int64_t total_pixels_i64 = shape_numel(shape);
     uint32_t total_pixels = static_cast<uint32_t>(total_pixels_i64);
 
-    MetalContext* ctx = metalContext();
-    torch::mps::synchronize();
+    @autoreleasepool {
+        MetalContext* ctx = metalContext();
+        torch::mps::synchronize();
 
-    id<MTLCommandBuffer> cmd = [ctx->queue commandBuffer];
+        id<MTLCommandBuffer> cmd = [ctx->queue commandBuffer];
 
-    // Zero the output in the same command buffer as the splat scatter pass.
-    {
-        id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
-        [enc setComputePipelineState:ctx->getPipeline("zero_float_buffer")];
-        setBufferWithOffset(enc, output, 0);
-        [enc setBytes:&total_pixels length:sizeof(uint32_t) atIndex:1];
-        MTLSize threads = MTLSizeMake(total_pixels, 1, 1);
-        MTLSize group = MTLSizeMake(std::min<uint32_t>(kThreadgroupSize, total_pixels), 1, 1);
-        [enc dispatchThreads:threads threadsPerThreadgroup:group];
-        [enc endEncoding];
+        // Zero the output in the same command buffer as the splat scatter pass.
+        {
+            id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
+            [enc setComputePipelineState:ctx->getPipeline("zero_float_buffer")];
+            setBufferWithOffset(enc, output, 0);
+            [enc setBytes:&total_pixels length:sizeof(uint32_t) atIndex:1];
+            MTLSize threads = MTLSizeMake(total_pixels, 1, 1);
+            MTLSize group = MTLSizeMake(std::min<uint32_t>(kThreadgroupSize, total_pixels), 1, 1);
+            [enc dispatchThreads:threads threadsPerThreadgroup:group];
+            [enc endEncoding];
+        }
+
+        {
+            id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
+            [enc setComputePipelineState:ctx->getPipeline("rasterize_forward_splat_centric_3d")];
+
+            setBufferWithOffset(enc, centers, 0);
+            setBufferWithOffset(enc, Ls, 1);
+            setBufferWithOffset(enc, amps, 2);
+            setBufferWithOffset(enc, output, 3);
+
+            uint3 shape_dhw = {
+                static_cast<uint32_t>(shape[0]),
+                static_cast<uint32_t>(shape[1]),
+                static_cast<uint32_t>(shape[2]),
+            };
+            [enc setBytes:&shape_dhw length:sizeof(uint3) atIndex:4];
+
+            uint32_t n_splats = static_cast<uint32_t>(centers.size(0));
+            [enc setBytes:&n_splats length:sizeof(uint32_t) atIndex:5];
+            float shift_C = std::exp(-0.5f * truncate * truncate);
+            float inv_one_minus_C = 1.0f / (1.0f - shift_C);
+            [enc setBytes:&truncate length:sizeof(float) atIndex:6];
+            [enc setBytes:&intensity_floor length:sizeof(float) atIndex:7];
+            [enc setBytes:&shift_C length:sizeof(float) atIndex:8];
+            [enc setBytes:&inv_one_minus_C length:sizeof(float) atIndex:9];
+
+            MTLSize groups = MTLSizeMake(n_splats, 1, 1);
+            MTLSize threadsPerGroup = MTLSizeMake(kThreadgroupSize, 1, 1);
+            [enc dispatchThreadgroups:groups threadsPerThreadgroup:threadsPerGroup];
+            [enc endEncoding];
+        }
+
+        [cmd commit];
+        [cmd waitUntilCompleted];
+        checkCommandBuffer(cmd, @"rasterize_forward_splat_centric_3d failed");
     }
-
-    {
-        id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
-        [enc setComputePipelineState:ctx->getPipeline("rasterize_forward_splat_centric_3d")];
-
-        setBufferWithOffset(enc, centers, 0);
-        setBufferWithOffset(enc, Ls, 1);
-        setBufferWithOffset(enc, amps, 2);
-        setBufferWithOffset(enc, output, 3);
-
-        uint3 shape_dhw = {
-            static_cast<uint32_t>(shape[0]),
-            static_cast<uint32_t>(shape[1]),
-            static_cast<uint32_t>(shape[2]),
-        };
-        [enc setBytes:&shape_dhw length:sizeof(uint3) atIndex:4];
-
-        uint32_t n_splats = static_cast<uint32_t>(centers.size(0));
-        [enc setBytes:&n_splats length:sizeof(uint32_t) atIndex:5];
-        float shift_C = std::exp(-0.5f * truncate * truncate);
-        float inv_one_minus_C = 1.0f / (1.0f - shift_C);
-        [enc setBytes:&truncate length:sizeof(float) atIndex:6];
-        [enc setBytes:&intensity_floor length:sizeof(float) atIndex:7];
-        [enc setBytes:&shift_C length:sizeof(float) atIndex:8];
-        [enc setBytes:&inv_one_minus_C length:sizeof(float) atIndex:9];
-
-        MTLSize groups = MTLSizeMake(n_splats, 1, 1);
-        MTLSize threadsPerGroup = MTLSizeMake(kThreadgroupSize, 1, 1);
-        [enc dispatchThreadgroups:groups threadsPerThreadgroup:threadsPerGroup];
-        [enc endEncoding];
-    }
-
-    [cmd commit];
-    [cmd waitUntilCompleted];
-    checkCommandBuffer(cmd, @"rasterize_forward_splat_centric_3d failed");
 
     return output;
 }
@@ -476,44 +485,46 @@ std::vector<torch::Tensor> dispatch_backward_splat_3d(
     auto d_Ls = torch::empty({N, 3, 3}, opts);
     auto d_amps = torch::empty({N}, opts);
 
-    MetalContext* ctx = metalContext();
-    torch::mps::synchronize();
+    @autoreleasepool {
+        MetalContext* ctx = metalContext();
+        torch::mps::synchronize();
 
-    id<MTLCommandBuffer> cmd = [ctx->queue commandBuffer];
-    id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
-    [enc setComputePipelineState:ctx->getPipeline("rasterize_backward_splat_centric_3d")];
+        id<MTLCommandBuffer> cmd = [ctx->queue commandBuffer];
+        id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
+        [enc setComputePipelineState:ctx->getPipeline("rasterize_backward_splat_centric_3d")];
 
-    setBufferWithOffset(enc, grad_output, 0);
-    setBufferWithOffset(enc, centers, 1);
-    setBufferWithOffset(enc, Ls, 2);
-    setBufferWithOffset(enc, amps, 3);
-    setBufferWithOffset(enc, d_centers, 4);
-    setBufferWithOffset(enc, d_Ls, 5);
-    setBufferWithOffset(enc, d_amps, 6);
+        setBufferWithOffset(enc, grad_output, 0);
+        setBufferWithOffset(enc, centers, 1);
+        setBufferWithOffset(enc, Ls, 2);
+        setBufferWithOffset(enc, amps, 3);
+        setBufferWithOffset(enc, d_centers, 4);
+        setBufferWithOffset(enc, d_Ls, 5);
+        setBufferWithOffset(enc, d_amps, 6);
 
-    uint3 shape_dhw = {
-        static_cast<uint32_t>(shape[0]),
-        static_cast<uint32_t>(shape[1]),
-        static_cast<uint32_t>(shape[2]),
-    };
-    [enc setBytes:&shape_dhw length:sizeof(uint3) atIndex:7];
+        uint3 shape_dhw = {
+            static_cast<uint32_t>(shape[0]),
+            static_cast<uint32_t>(shape[1]),
+            static_cast<uint32_t>(shape[2]),
+        };
+        [enc setBytes:&shape_dhw length:sizeof(uint3) atIndex:7];
 
-    uint32_t n_splats = static_cast<uint32_t>(N);
-    [enc setBytes:&n_splats length:sizeof(uint32_t) atIndex:8];
-    float shift_C = std::exp(-0.5f * truncate * truncate);
-    float inv_one_minus_C = 1.0f / (1.0f - shift_C);
-    [enc setBytes:&truncate length:sizeof(float) atIndex:9];
-    [enc setBytes:&intensity_floor length:sizeof(float) atIndex:10];
-    [enc setBytes:&shift_C length:sizeof(float) atIndex:11];
-    [enc setBytes:&inv_one_minus_C length:sizeof(float) atIndex:12];
+        uint32_t n_splats = static_cast<uint32_t>(N);
+        [enc setBytes:&n_splats length:sizeof(uint32_t) atIndex:8];
+        float shift_C = std::exp(-0.5f * truncate * truncate);
+        float inv_one_minus_C = 1.0f / (1.0f - shift_C);
+        [enc setBytes:&truncate length:sizeof(float) atIndex:9];
+        [enc setBytes:&intensity_floor length:sizeof(float) atIndex:10];
+        [enc setBytes:&shift_C length:sizeof(float) atIndex:11];
+        [enc setBytes:&inv_one_minus_C length:sizeof(float) atIndex:12];
 
-    MTLSize groups = MTLSizeMake(n_splats, 1, 1);
-    MTLSize threadsPerGroup = MTLSizeMake(kThreadgroupSize, 1, 1);
-    [enc dispatchThreadgroups:groups threadsPerThreadgroup:threadsPerGroup];
-    [enc endEncoding];
-    [cmd commit];
-    [cmd waitUntilCompleted];
-    checkCommandBuffer(cmd, @"rasterize_backward_splat_centric_3d failed");
+        MTLSize groups = MTLSizeMake(n_splats, 1, 1);
+        MTLSize threadsPerGroup = MTLSizeMake(kThreadgroupSize, 1, 1);
+        [enc dispatchThreadgroups:groups threadsPerThreadgroup:threadsPerGroup];
+        [enc endEncoding];
+        [cmd commit];
+        [cmd waitUntilCompleted];
+        checkCommandBuffer(cmd, @"rasterize_backward_splat_centric_3d failed");
+    }
 
     return {d_centers, d_Ls, d_amps};
 }
@@ -536,66 +547,71 @@ torch::Tensor dispatch_forward_raw_splat_3d(
     validate_raw_splat_tensors_3d(raw_mu, raw_L_diag, L_off, raw_a, sigma_min_diag, shape);
     TORCH_CHECK(truncate > 0.0f, "truncate must be > 0; got ", truncate);
 
-    auto output = torch::empty(shape, raw_mu.options().dtype(torch::kFloat32));
-    int64_t total_pixels_i64 = shape_numel(shape);
-    uint32_t total_pixels = static_cast<uint32_t>(total_pixels_i64);
-
+    // Early-return for the zero-splat case BEFORE allocating ``output`` —
+    // otherwise the empty allocation is wasted (the constrained forward
+    // path already follows this order).
     if (raw_mu.size(0) == 0) {
         return torch::zeros(shape, raw_mu.options().dtype(torch::kFloat32));
     }
 
-    MetalContext* ctx = metalContext();
-    torch::mps::synchronize();
+    auto output = torch::empty(shape, raw_mu.options().dtype(torch::kFloat32));
+    int64_t total_pixels_i64 = shape_numel(shape);
+    uint32_t total_pixels = static_cast<uint32_t>(total_pixels_i64);
 
-    id<MTLCommandBuffer> cmd = [ctx->queue commandBuffer];
+    @autoreleasepool {
+        MetalContext* ctx = metalContext();
+        torch::mps::synchronize();
 
-    {
-        id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
-        [enc setComputePipelineState:ctx->getPipeline("zero_float_buffer")];
-        setBufferWithOffset(enc, output, 0);
-        [enc setBytes:&total_pixels length:sizeof(uint32_t) atIndex:1];
-        MTLSize threads = MTLSizeMake(total_pixels, 1, 1);
-        MTLSize group = MTLSizeMake(std::min<uint32_t>(kThreadgroupSize, total_pixels), 1, 1);
-        [enc dispatchThreads:threads threadsPerThreadgroup:group];
-        [enc endEncoding];
+        id<MTLCommandBuffer> cmd = [ctx->queue commandBuffer];
+
+        {
+            id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
+            [enc setComputePipelineState:ctx->getPipeline("zero_float_buffer")];
+            setBufferWithOffset(enc, output, 0);
+            [enc setBytes:&total_pixels length:sizeof(uint32_t) atIndex:1];
+            MTLSize threads = MTLSizeMake(total_pixels, 1, 1);
+            MTLSize group = MTLSizeMake(std::min<uint32_t>(kThreadgroupSize, total_pixels), 1, 1);
+            [enc dispatchThreads:threads threadsPerThreadgroup:group];
+            [enc endEncoding];
+        }
+
+        {
+            id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
+            [enc setComputePipelineState:ctx->getPipeline("rasterize_forward_raw_splat_centric_3d")];
+
+            setBufferWithOffset(enc, raw_mu, 0);
+            setBufferWithOffset(enc, raw_L_diag, 1);
+            setBufferWithOffset(enc, L_off, 2);
+            setBufferWithOffset(enc, raw_a, 3);
+            setBufferWithOffset(enc, sigma_min_diag, 4);
+            setBufferWithOffset(enc, output, 5);
+
+            uint3 shape_dhw = {
+                static_cast<uint32_t>(shape[0]),
+                static_cast<uint32_t>(shape[1]),
+                static_cast<uint32_t>(shape[2]),
+            };
+            [enc setBytes:&shape_dhw length:sizeof(uint3) atIndex:6];
+
+            uint32_t n_splats = static_cast<uint32_t>(raw_mu.size(0));
+            [enc setBytes:&n_splats length:sizeof(uint32_t) atIndex:7];
+            float shift_C = std::exp(-0.5f * truncate * truncate);
+            float inv_one_minus_C = 1.0f / (1.0f - shift_C);
+            [enc setBytes:&truncate length:sizeof(float) atIndex:8];
+            [enc setBytes:&intensity_floor length:sizeof(float) atIndex:9];
+            [enc setBytes:&shift_C length:sizeof(float) atIndex:10];
+            [enc setBytes:&inv_one_minus_C length:sizeof(float) atIndex:11];
+
+            MTLSize groups = MTLSizeMake(n_splats, 1, 1);
+            MTLSize threadsPerGroup = MTLSizeMake(kThreadgroupSize, 1, 1);
+            [enc dispatchThreadgroups:groups threadsPerThreadgroup:threadsPerGroup];
+            [enc endEncoding];
+        }
+
+        [cmd commit];
+        [cmd waitUntilCompleted];
+        checkCommandBuffer(cmd, @"rasterize_forward_raw_splat_centric_3d failed");
     }
-
-    {
-        id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
-        [enc setComputePipelineState:ctx->getPipeline("rasterize_forward_raw_splat_centric_3d")];
-
-        setBufferWithOffset(enc, raw_mu, 0);
-        setBufferWithOffset(enc, raw_L_diag, 1);
-        setBufferWithOffset(enc, L_off, 2);
-        setBufferWithOffset(enc, raw_a, 3);
-        setBufferWithOffset(enc, sigma_min_diag, 4);
-        setBufferWithOffset(enc, output, 5);
-
-        uint3 shape_dhw = {
-            static_cast<uint32_t>(shape[0]),
-            static_cast<uint32_t>(shape[1]),
-            static_cast<uint32_t>(shape[2]),
-        };
-        [enc setBytes:&shape_dhw length:sizeof(uint3) atIndex:6];
-
-        uint32_t n_splats = static_cast<uint32_t>(raw_mu.size(0));
-        [enc setBytes:&n_splats length:sizeof(uint32_t) atIndex:7];
-        float shift_C = std::exp(-0.5f * truncate * truncate);
-        float inv_one_minus_C = 1.0f / (1.0f - shift_C);
-        [enc setBytes:&truncate length:sizeof(float) atIndex:8];
-        [enc setBytes:&intensity_floor length:sizeof(float) atIndex:9];
-        [enc setBytes:&shift_C length:sizeof(float) atIndex:10];
-        [enc setBytes:&inv_one_minus_C length:sizeof(float) atIndex:11];
-
-        MTLSize groups = MTLSizeMake(n_splats, 1, 1);
-        MTLSize threadsPerGroup = MTLSizeMake(kThreadgroupSize, 1, 1);
-        [enc dispatchThreadgroups:groups threadsPerThreadgroup:threadsPerGroup];
-        [enc endEncoding];
-    }
-
-    [cmd commit];
-    [cmd waitUntilCompleted];
-    checkCommandBuffer(cmd, @"rasterize_forward_raw_splat_centric_3d failed");
 
     return output;
 }
@@ -642,58 +658,60 @@ std::vector<torch::Tensor> dispatch_backward_raw_splat_3d(
     auto d_L_off = torch::empty({N, 3}, opts);
     auto d_raw_a = torch::empty({N}, opts);
 
-    MetalContext* ctx = metalContext();
-    torch::mps::synchronize();
+    @autoreleasepool {
+        MetalContext* ctx = metalContext();
+        torch::mps::synchronize();
 
-    id<MTLCommandBuffer> cmd = [ctx->queue commandBuffer];
-    id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
-    [enc setComputePipelineState:ctx->getPipeline("rasterize_backward_raw_splat_centric_3d")];
+        id<MTLCommandBuffer> cmd = [ctx->queue commandBuffer];
+        id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
+        [enc setComputePipelineState:ctx->getPipeline("rasterize_backward_raw_splat_centric_3d")];
 
-    if (grad_output_is_scalar) {
-        id<MTLBuffer> grad_buf = tensorToMTLBufferUnchecked(grad_output);
-        TORCH_CHECK(grad_buf != nil, "Failed to get MTLBuffer for scalar grad_output");
-        NSUInteger grad_offset = grad_output.storage_offset() * grad_output.element_size();
-        TORCH_CHECK(grad_offset + grad_output.element_size() <= [grad_buf length],
-            "Scalar grad_output storage offset is outside its Metal buffer");
-        [enc setBuffer:grad_buf offset:grad_offset atIndex:0];
-    } else {
-        setBufferWithOffset(enc, grad_output, 0);
+        if (grad_output_is_scalar) {
+            id<MTLBuffer> grad_buf = tensorToMTLBufferUnchecked(grad_output);
+            TORCH_CHECK(grad_buf != nil, "Failed to get MTLBuffer for scalar grad_output");
+            NSUInteger grad_offset = grad_output.storage_offset() * grad_output.element_size();
+            TORCH_CHECK(grad_offset + grad_output.element_size() <= [grad_buf length],
+                "Scalar grad_output storage offset is outside its Metal buffer");
+            [enc setBuffer:grad_buf offset:grad_offset atIndex:0];
+        } else {
+            setBufferWithOffset(enc, grad_output, 0);
+        }
+        setBufferWithOffset(enc, raw_mu, 1);
+        setBufferWithOffset(enc, raw_L_diag, 2);
+        setBufferWithOffset(enc, L_off, 3);
+        setBufferWithOffset(enc, raw_a, 4);
+        setBufferWithOffset(enc, sigma_min_diag, 5);
+        setBufferWithOffset(enc, d_raw_mu, 6);
+        setBufferWithOffset(enc, d_raw_L_diag, 7);
+        setBufferWithOffset(enc, d_L_off, 8);
+        setBufferWithOffset(enc, d_raw_a, 9);
+
+        uint3 shape_dhw = {
+            static_cast<uint32_t>(shape[0]),
+            static_cast<uint32_t>(shape[1]),
+            static_cast<uint32_t>(shape[2]),
+        };
+        [enc setBytes:&shape_dhw length:sizeof(uint3) atIndex:10];
+
+        uint32_t n_splats = static_cast<uint32_t>(N);
+        [enc setBytes:&n_splats length:sizeof(uint32_t) atIndex:11];
+        float shift_C = std::exp(-0.5f * truncate * truncate);
+        float inv_one_minus_C = 1.0f / (1.0f - shift_C);
+        [enc setBytes:&truncate length:sizeof(float) atIndex:12];
+        [enc setBytes:&intensity_floor length:sizeof(float) atIndex:13];
+        [enc setBytes:&shift_C length:sizeof(float) atIndex:14];
+        [enc setBytes:&inv_one_minus_C length:sizeof(float) atIndex:15];
+        uint32_t grad_output_scalar_flag = grad_output_is_scalar ? 1u : 0u;
+        [enc setBytes:&grad_output_scalar_flag length:sizeof(uint32_t) atIndex:16];
+
+        MTLSize groups = MTLSizeMake(n_splats, 1, 1);
+        MTLSize threadsPerGroup = MTLSizeMake(kThreadgroupSize, 1, 1);
+        [enc dispatchThreadgroups:groups threadsPerThreadgroup:threadsPerGroup];
+        [enc endEncoding];
+        [cmd commit];
+        [cmd waitUntilCompleted];
+        checkCommandBuffer(cmd, @"rasterize_backward_raw_splat_centric_3d failed");
     }
-    setBufferWithOffset(enc, raw_mu, 1);
-    setBufferWithOffset(enc, raw_L_diag, 2);
-    setBufferWithOffset(enc, L_off, 3);
-    setBufferWithOffset(enc, raw_a, 4);
-    setBufferWithOffset(enc, sigma_min_diag, 5);
-    setBufferWithOffset(enc, d_raw_mu, 6);
-    setBufferWithOffset(enc, d_raw_L_diag, 7);
-    setBufferWithOffset(enc, d_L_off, 8);
-    setBufferWithOffset(enc, d_raw_a, 9);
-
-    uint3 shape_dhw = {
-        static_cast<uint32_t>(shape[0]),
-        static_cast<uint32_t>(shape[1]),
-        static_cast<uint32_t>(shape[2]),
-    };
-    [enc setBytes:&shape_dhw length:sizeof(uint3) atIndex:10];
-
-    uint32_t n_splats = static_cast<uint32_t>(N);
-    [enc setBytes:&n_splats length:sizeof(uint32_t) atIndex:11];
-    float shift_C = std::exp(-0.5f * truncate * truncate);
-    float inv_one_minus_C = 1.0f / (1.0f - shift_C);
-    [enc setBytes:&truncate length:sizeof(float) atIndex:12];
-    [enc setBytes:&intensity_floor length:sizeof(float) atIndex:13];
-    [enc setBytes:&shift_C length:sizeof(float) atIndex:14];
-    [enc setBytes:&inv_one_minus_C length:sizeof(float) atIndex:15];
-    uint32_t grad_output_scalar_flag = grad_output_is_scalar ? 1u : 0u;
-    [enc setBytes:&grad_output_scalar_flag length:sizeof(uint32_t) atIndex:16];
-
-    MTLSize groups = MTLSizeMake(n_splats, 1, 1);
-    MTLSize threadsPerGroup = MTLSizeMake(kThreadgroupSize, 1, 1);
-    [enc dispatchThreadgroups:groups threadsPerThreadgroup:threadsPerGroup];
-    [enc endEncoding];
-    [cmd commit];
-    [cmd waitUntilCompleted];
-    checkCommandBuffer(cmd, @"rasterize_backward_raw_splat_centric_3d failed");
 
     return {d_raw_mu, d_raw_L_diag, d_L_off, d_raw_a};
 }
