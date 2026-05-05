@@ -1714,11 +1714,13 @@ def denoise_volume_cmd(
             import torch
 
             from luxar.gsplats.preprocessing import calibrate_nlm_h
+            from luxar.gsplats.utils.device import resolve_torch_device
 
             with asection("Auto-calibrating h (Noise2Self)"):
                 norm_vol, _, _ = normalize_volume(volume)
                 t_vol = torch.from_numpy(norm_vol)
-                dev = torch.device(device) if device else None
+                # Auto-select CUDA > MPS > CPU when --device is omitted.
+                dev = resolve_torch_device(device) if device else resolve_torch_device()
                 effective_h = calibrate_nlm_h(
                     t_vol,
                     patch_size=patch_size,
@@ -1972,11 +1974,13 @@ def fit_volume(
                     from luxar.gsplats.preprocessing.denoise_pipeline import (
                         normalize_volume,
                     )
+                    from luxar.gsplats.utils.device import resolve_torch_device
 
                     with asection("Calibrating NLM h"):
                         norm_vol, _, _ = normalize_volume(volume)
                         t_vol = torch.from_numpy(norm_vol)
-                        dev = torch.device(device) if device else None
+                        # Auto-select CUDA > MPS > CPU when --device is omitted.
+                        dev = resolve_torch_device(device) if device else resolve_torch_device()
                         _denoise_effective_h = calibrate_nlm_h(
                             t_vol,
                             patch_size=denoise_patch_size,
