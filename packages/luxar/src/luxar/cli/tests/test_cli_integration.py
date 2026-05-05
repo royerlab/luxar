@@ -289,6 +289,38 @@ class TestServeIntegration:
         with pytest.raises(ValueError, match="Refusing to serve sensitive system path"):
             create_server_app(Path(Path.cwd().anchor))
 
+    def test_sensitive_system_paths_blocked(self):
+        """System roots are flagged as sensitive."""
+        from luxar.cli.main import _is_sensitive_serve_path
+
+        # Posix-only paths — skipped on Windows where these aren't sensitive.
+        if not Path("/etc").exists():
+            pytest.skip("system /etc not present (probably Windows)")
+
+        assert _is_sensitive_serve_path(Path("/etc")) is True
+        assert _is_sensitive_serve_path(Path("/usr")) is True
+        # Subdirectories of sensitive roots stay sensitive.
+        assert _is_sensitive_serve_path(Path("/etc/passwd")) is True
+
+    def test_tmpdir_not_sensitive(self):
+        """Tempdirs (under /var on macOS, /tmp on Linux) must be servable."""
+        import tempfile
+
+        from luxar.cli.main import _is_sensitive_serve_path
+
+        with tempfile.TemporaryDirectory() as td:
+            assert _is_sensitive_serve_path(Path(td)) is False
+
+    def test_user_directories_not_sensitive(self):
+        """/home and /Users hold legitimate project data and must be servable."""
+        from luxar.cli.main import _is_sensitive_serve_path
+
+        # These paths may not exist on every machine — check that *if* they
+        # exist, they are not classified as sensitive.
+        for candidate in (Path("/Users"), Path("/home")):
+            if candidate.exists():
+                assert _is_sensitive_serve_path(candidate / "fakeuser") is False
+
     def test_404_for_nonexistent_path(self, test_server):
         """Test that nonexistent paths return 404."""
         response = requests.get(f"{test_server}/nonexistent/path")
