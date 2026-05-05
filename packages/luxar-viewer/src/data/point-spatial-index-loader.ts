@@ -882,6 +882,7 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
         totalElements: this.chunkIndex.metadata.total_points,
         chunkSize: this.chunkIndex.metadata.chunk_size,
         extendDims,
+        logModule: Modules.SPATIAL_INDEX_LOADER,
       }
     ).execute();
   }

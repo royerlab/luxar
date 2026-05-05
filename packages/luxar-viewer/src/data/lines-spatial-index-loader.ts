@@ -717,6 +717,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       totalElements: attrs.n_segments,
       chunkSize: attrs.segment_ordering!.chunk_size,
       extendDims,
+      logModule: Modules.LINES_LOADER,
     }).execute();
 
     return ranges;

@@ -486,6 +486,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       totalElements: attrs.n_splats,
       chunkSize: attrs.chunk_size,
       extendDims,
+      logModule: Modules.GSPLATS_SPATIAL_INDEX_LOADER,
     }).execute();
 
     return ranges;
