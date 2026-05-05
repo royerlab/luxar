@@ -7,7 +7,6 @@ are inherited from Group.
 
 from __future__ import annotations
 
-import shutil
 import warnings
 from os import PathLike
 from pathlib import Path
@@ -21,6 +20,7 @@ from ..core.group import Group
 from ..core.overlay import Overlay
 from ..core.viewer_config import ViewerConfig
 from ..io.writer import ZarrWriterProtocol
+from ..utils.atomic_copy import atomic_copytree
 
 
 class Scene(Group):
@@ -1002,6 +1002,7 @@ class Scene(Group):
 
         aprint(f"Exporting scene from {source} to {destination}")
         writer.finalize()
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(source, destination)
+        # CL-1: atomic copy — a failure mid-copy leaves no half-written
+        # zarr store at `destination`.
+        atomic_copytree(source, destination)
         aprint(f"✓ Scene exported to {destination}")

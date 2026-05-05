@@ -20,6 +20,8 @@ from pathlib import Path
 
 from arbol import aprint, asection
 
+from ..utils.atomic_copy import atomic_copytree
+
 from .utils import (
     check_viewer_built,
     format_memory_size,
@@ -93,7 +95,9 @@ def _copy_viewer(dest: Path) -> None:
     """
     viewer_dist = get_viewer_dist_path()
     with asection("Copying viewer files"):
-        shutil.copytree(viewer_dist, dest)
+        # CL-1: atomic copy — partial output on crash leaves no half-written
+        # `dest` for the user to clean up.
+        atomic_copytree(viewer_dist, dest)
         # Rewrite absolute asset paths to relative so the viewer works
         # when served from a subdirectory (e.g. /viewer/).
         _rewrite_absolute_paths(dest)
@@ -157,7 +161,8 @@ def _copy_zarr_data(source: Path, dest: Path) -> None:
         dest: Destination directory for zarr data.
     """
     with asection("Copying zarr data"):
-        shutil.copytree(source, dest)
+        # CL-1: atomic copy.
+        atomic_copytree(source, dest)
         # Calculate size for user feedback
         total_size = sum(f.stat().st_size for f in dest.rglob("*") if f.is_file())
         aprint(f"Copied zarr data ({format_memory_size(total_size)}) to {dest}")
