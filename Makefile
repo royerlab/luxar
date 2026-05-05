@@ -500,7 +500,17 @@ test-all:  ## Run all tests (Python, Rust/WASM, and TypeScript with fresh fixtur
 		echo "📦 Installing TypeScript dependencies first..."; \
 		cd packages/luxar-viewer && pnpm install; \
 	fi
-	cd packages/luxar-viewer && pnpm test --run
+	@# When WASM artifacts are present (build above succeeded, or a prior
+	@# build is cached), require the WASM-vs-TypeScript artifact-presence
+	@# meta-test to run instead of being silently skipped via runIf().
+	@if [ -f "packages/luxar-viewer/public/wasm/luxar_wasm.js" ] \
+	   && [ -f "packages/luxar-viewer/public/wasm/luxar_wasm_bg.wasm" ]; then \
+		export LUXAR_REQUIRE_WASM_TESTS=1; \
+		echo "🦀 WASM artifacts detected; LUXAR_REQUIRE_WASM_TESTS=1"; \
+		cd packages/luxar-viewer && LUXAR_REQUIRE_WASM_TESTS=1 pnpm test --run; \
+	else \
+		cd packages/luxar-viewer && pnpm test --run; \
+	fi
 	@echo ""
 	@echo "🎮 Checking CUDA tests..."
 	@if ls $(CUDA_EXT_DIR)/cuda_splatting_backend*.so 1>/dev/null 2>&1; then \
