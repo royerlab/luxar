@@ -154,13 +154,41 @@ class Node:
     def _persist_attr(self, key: str, value: Any) -> None:
         """Update an attribute in both the cache and the zarr store.
 
+        After the writer has been finalized (context exit or
+        ``Scene.to_zarr``), the on-disk attribute can no longer be updated
+        through this writer — the consolidated metadata is sealed. The
+        in-memory cache is still updated so getters reflect the new value
+        on the live Node, but a warning surfaces the silent persistence gap
+        rather than letting the disk and memory drift apart unnoticed.
+        Callers that need to update on-disk attrs after finalize should
+        re-open the zarr through a fresh writer/loader.
+
         Args:
             key: Attribute key
             value: Attribute value
         """
         self._attrs_cache[key] = value
-        if self._writer is not None:
-            self._writer.write_group(self.path, **{key: value})
+        if self._writer is None:
+            return
+        # Inspect the writer's finalization state without coupling to its
+        # concrete class. The `_check_not_finalized` helper raises on the
+        # finalized path; sniffing the flag avoids that and lets us emit a
+        # clearer warning instead.
+        is_finalized = bool(getattr(self._writer, "_is_finalized", False))
+        if is_finalized:
+            import warnings
+
+            warnings.warn(
+                f"Setting Node attribute {key!r} after the writer has been "
+                "finalized. The in-memory cache is updated, but the on-disk "
+                "zarr attribute is unchanged. Set attributes inside the "
+                "LuxarZarrCompiler context (or before Scene.to_zarr) for "
+                "persistence.",
+                UserWarning,
+                stacklevel=3,
+            )
+            return
+        self._writer.write_group(self.path, **{key: value})
 
     # --------------------------------------------------------------- hierarchy
     def add_group(self, name: str, **attrs: Any) -> "Group":
