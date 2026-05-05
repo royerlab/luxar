@@ -363,6 +363,13 @@ class TestNetworkSimulationMiddleware:
         with pytest.raises(RuntimeError, match="development/testing only"):
             NetworkSimulationMiddleware(lambda *_args: None, latency_ms=10.0)
 
+    def test_production_guard_rejects_staging(self, monkeypatch):
+        """Staging counts as a non-development environment for the guard."""
+        monkeypatch.setenv("LUXAR_ENV", "staging")
+
+        with pytest.raises(RuntimeError, match="development/testing only"):
+            NetworkSimulationMiddleware(lambda *_args: None, latency_ms=10.0)
+
     def test_production_guard_allows_inactive_middleware(self, monkeypatch):
         """Test production guard allows no-op middleware instances."""
         monkeypatch.setenv("LUXAR_PRODUCTION", "1")

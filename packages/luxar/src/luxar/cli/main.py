@@ -47,7 +47,9 @@ from .utils import (
     open_browser as open_browser_func,
 )
 
-_LOCAL_CORS_ORIGIN_REGEX = r"^https?://(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(:\d+)?$"
+# 0.0.0.0 is a bind address, not a routable origin — browsers never send it
+# as Origin — so it is intentionally absent from this regex.
+_LOCAL_CORS_ORIGIN_REGEX = r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$"
 _DEFAULT_CORS_ORIGIN = "local"
 
 
@@ -109,6 +111,11 @@ def _is_sensitive_serve_path(path: Path) -> bool:
     if resolved == Path(resolved.anchor):
         return True
 
+    # System roots that are never legitimate to serve over a dev HTTP server.
+    # /home and /Users are intentionally NOT on this list — users routinely
+    # store project data there. /var and /private/var are also omitted because
+    # macOS' TMPDIR resolves under /private/var/folders/... and the test
+    # suite (and many user workflows) legitimately serves from tmpdirs.
     sensitive_roots = [
         Path("/etc"),
         Path("/private/etc"),
@@ -116,6 +123,8 @@ def _is_sensitive_serve_path(path: Path) -> bool:
         Path("/sys"),
         Path("/dev"),
         Path("/root"),
+        Path("/usr"),
+        Path("/boot"),
     ]
     for root in sensitive_roots:
         try:

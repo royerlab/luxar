@@ -313,10 +313,21 @@ def _truthy_env(value: Optional[str]) -> bool:
 
 
 def _production_guard_enabled() -> bool:
-    """Whether network simulation should be refused for production envs."""
-    return _truthy_env(os.getenv("LUXAR_PRODUCTION")) or os.getenv(
-        "LUXAR_ENV", ""
-    ).strip().lower() in {"prod", "production"}
+    """Whether network simulation should be refused for production envs.
+
+    Triggers when ``LUXAR_PRODUCTION`` is truthy, or ``LUXAR_ENV`` names
+    a non-development environment (``prod``, ``production``, or
+    ``staging``). ``staging`` is included because it is closer to prod
+    than dev — running latency/packet-loss simulations against a staging
+    server is just as misleading as against prod.
+    """
+    if _truthy_env(os.getenv("LUXAR_PRODUCTION")):
+        return True
+    return os.getenv("LUXAR_ENV", "").strip().lower() in {
+        "prod",
+        "production",
+        "staging",
+    }
 
 
 def has_network_simulation(
