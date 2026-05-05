@@ -99,7 +99,7 @@ inline float3 sigma_diag_sqrt_from_conic_3d(
 inline void compute_aabb_3d(
     threadgroup int* lo,
     threadgroup int* extent,
-    threadgroup int& total_voxels,
+    threadgroup uint& total_voxels,
     float center_z,
     float center_y,
     float center_x,
@@ -141,7 +141,10 @@ inline void compute_aabb_3d(
     extent[0] = max(0, hi_z - lo_z + 1);
     extent[1] = max(0, hi_y - lo_y + 1);
     extent[2] = max(0, hi_x - lo_x + 1);
-    total_voxels = extent[0] * extent[1] * extent[2];
+    // MET-3: compute the voxel total in uint so a wide splat in a 1290³+
+    // volume (host validator hard-caps at 2e9 voxels) cannot silently
+    // overflow a 32-bit signed integer and produce a negative loop bound.
+    total_voxels = uint(extent[0]) * uint(extent[1]) * uint(extent[2]);
 }
 
 // ============================================================================
@@ -232,7 +235,12 @@ kernel void rasterize_forward_splat_centric_3d(
     threadgroup float s_truncate_sq;
     threadgroup int s_lo[3];
     threadgroup int s_extent[3];
-    threadgroup int s_total_voxels = 0;
+    // MET-3: counter is uint to match compute_aabb_3d's `uint& total_voxels`
+    // signature and to prevent a 1290³+ volume from overflowing the loop
+    // bound. Threadgroup-storage initializers are technically UB per the
+    // MSL spec; thread 0 always writes via compute_aabb_3d before the
+    // barrier below, so other threads observe the assigned value.
+    threadgroup uint s_total_voxels;
 
     if (tid == 0) {
         int base3 = int(splat_id) * 3;
@@ -274,8 +282,8 @@ kernel void rasterize_forward_splat_centric_3d(
 
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
-    int total = s_total_voxels;
-    if (total == 0) {
+    uint total = s_total_voxels;
+    if (total == 0u) {
         return;
     }
 
@@ -283,9 +291,10 @@ kernel void rasterize_forward_splat_centric_3d(
     uint H = shape_dhw.y;
     uint W = shape_dhw.z;
 
-    for (int local = int(tid); local < total; local += int(THREADGROUP_SIZE)) {
-        int z = s_lo[0] + local / extent_yx;
-        int rem = local - (z - s_lo[0]) * extent_yx;
+    for (uint local = tid; local < total; local += uint(THREADGROUP_SIZE)) {
+        int local_int = int(local);
+        int z = s_lo[0] + local_int / extent_yx;
+        int rem = local_int - (z - s_lo[0]) * extent_yx;
         int y = s_lo[1] + rem / s_extent[2];
         int x = s_lo[2] + rem - (y - s_lo[1]) * s_extent[2];
 
@@ -344,7 +353,9 @@ kernel void rasterize_backward_splat_centric_3d(
     threadgroup float s_truncate_sq;
     threadgroup int s_lo[3];
     threadgroup int s_extent[3];
-    threadgroup int s_total_voxels = 0;
+    // MET-3: see forward kernel — counter is uint to match
+    // compute_aabb_3d's signature and prevent overflow.
+    threadgroup uint s_total_voxels;
 
     threadgroup float tg_amp[THREADGROUP_SIZE];
     threadgroup float tg_centers[THREADGROUP_SIZE * 3];
@@ -401,15 +412,16 @@ kernel void rasterize_backward_splat_centric_3d(
     float local_conic_4 = 0.0f;
     float local_conic_5 = 0.0f;
 
-    int total = s_total_voxels;
-    if (total > 0) {
+    uint total = s_total_voxels;
+    if (total > 0u) {
         int extent_yx = s_extent[1] * s_extent[2];
         uint H = shape_dhw.y;
         uint W = shape_dhw.z;
 
-        for (int local = int(tid); local < total; local += int(THREADGROUP_SIZE)) {
-            int z = s_lo[0] + local / extent_yx;
-            int rem = local - (z - s_lo[0]) * extent_yx;
+        for (uint local = tid; local < total; local += uint(THREADGROUP_SIZE)) {
+            int local_int = int(local);
+            int z = s_lo[0] + local_int / extent_yx;
+            int rem = local_int - (z - s_lo[0]) * extent_yx;
             int y = s_lo[1] + rem / s_extent[2];
             int x = s_lo[2] + rem - (y - s_lo[1]) * s_extent[2];
 

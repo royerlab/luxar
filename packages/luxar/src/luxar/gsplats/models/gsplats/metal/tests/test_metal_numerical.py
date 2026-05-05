@@ -57,18 +57,19 @@ class TestCholeskyToConic:
         expected_diag = 1.0 / (1.5**2)
 
         assert conic.shape == (1, 6)
+        # Packed [Z, Y, X] order: [c_zz, c_zy, c_zx, c_yy, c_yx, c_xx].
         assert torch.allclose(
             conic[0, 0], torch.tensor(expected_diag), atol=1e-6
-        )  # c_xx
+        )  # c_zz
         assert torch.allclose(
             conic[0, 3], torch.tensor(expected_diag), atol=1e-6
         )  # c_yy
         assert torch.allclose(
             conic[0, 5], torch.tensor(expected_diag), atol=1e-6
-        )  # c_zz
-        assert torch.allclose(conic[0, 1], torch.tensor(0.0), atol=1e-6)  # c_xy
-        assert torch.allclose(conic[0, 2], torch.tensor(0.0), atol=1e-6)  # c_xz
-        assert torch.allclose(conic[0, 4], torch.tensor(0.0), atol=1e-6)  # c_yz
+        )  # c_xx
+        assert torch.allclose(conic[0, 1], torch.tensor(0.0), atol=1e-6)  # c_zy
+        assert torch.allclose(conic[0, 2], torch.tensor(0.0), atol=1e-6)  # c_zx
+        assert torch.allclose(conic[0, 4], torch.tensor(0.0), atol=1e-6)  # c_yx
 
     def test_general_matrix(self):
         """Test with non-diagonal Cholesky factors."""
@@ -86,17 +87,18 @@ class TestCholeskyToConic:
         Sigma = L @ L.transpose(-2, -1)
         Sigma_inv_expected = torch.linalg.inv(Sigma)
 
-        # Reconstruct full matrix from conic
+        # Reconstruct full matrix from conic.
+        # Packed order is [Z, Y, X]: [c_zz, c_zy, c_zx, c_yy, c_yx, c_xx].
         Sigma_inv_reconstructed = torch.zeros(1, 3, 3, dtype=torch.float32)
-        Sigma_inv_reconstructed[0, 0, 0] = conic[0, 0]  # c_xx
-        Sigma_inv_reconstructed[0, 0, 1] = conic[0, 1]  # c_xy
-        Sigma_inv_reconstructed[0, 1, 0] = conic[0, 1]  # c_xy (symmetric)
-        Sigma_inv_reconstructed[0, 0, 2] = conic[0, 2]  # c_xz
-        Sigma_inv_reconstructed[0, 2, 0] = conic[0, 2]  # c_xz
+        Sigma_inv_reconstructed[0, 0, 0] = conic[0, 0]  # c_zz
+        Sigma_inv_reconstructed[0, 0, 1] = conic[0, 1]  # c_zy
+        Sigma_inv_reconstructed[0, 1, 0] = conic[0, 1]  # c_zy (symmetric)
+        Sigma_inv_reconstructed[0, 0, 2] = conic[0, 2]  # c_zx
+        Sigma_inv_reconstructed[0, 2, 0] = conic[0, 2]  # c_zx
         Sigma_inv_reconstructed[0, 1, 1] = conic[0, 3]  # c_yy
-        Sigma_inv_reconstructed[0, 1, 2] = conic[0, 4]  # c_yz
-        Sigma_inv_reconstructed[0, 2, 1] = conic[0, 4]  # c_yz
-        Sigma_inv_reconstructed[0, 2, 2] = conic[0, 5]  # c_zz
+        Sigma_inv_reconstructed[0, 1, 2] = conic[0, 4]  # c_yx
+        Sigma_inv_reconstructed[0, 2, 1] = conic[0, 4]  # c_yx
+        Sigma_inv_reconstructed[0, 2, 2] = conic[0, 5]  # c_xx
 
         assert torch.allclose(Sigma_inv_reconstructed, Sigma_inv_expected, atol=1e-5), (
             "Conic should match Σ^(-1)"
