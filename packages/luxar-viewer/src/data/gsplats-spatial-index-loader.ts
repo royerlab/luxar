@@ -22,6 +22,7 @@ import type {
 } from '../types/gsplats';
 import type { SceneNode } from './data-loader-types';
 import { ArrayDecoder, ArrayRefRegistry, type ArrayMetadata } from './array-decoder';
+import { fetchChunkBoundsArray } from './loaders/chunk-bounds-loader';
 import {
   RangeLoader,
   SpatialQueryBuilder,
@@ -398,53 +399,33 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       return null;
     }
 
-    try {
-      const boundsArray = await zarr.open(this.zarrLocation.resolve('chunk_bounds'), {
-        kind: 'array',
-      });
-      const boundsData = await get(boundsArray);
-      const chunkBounds = new Float32Array(boundsData.data as ArrayBuffer | ArrayLike<number>);
+    const result = await fetchChunkBoundsArray(
+      this.zarrLocation,
+      'chunk_bounds',
+      Modules.GSPLATS_SPATIAL_INDEX_LOADER,
+      'No chunk bounds found - GSplats dataset has no spatial indexing'
+    );
+    if (!result) return null;
 
-      // Reconcile expected vs actual chunk count and use the smaller value.
-      let chunkCount = Math.ceil(attrs.n_splats / attrs.chunk_size);
-      const actualChunks = Math.floor(chunkBounds.length / (attrs.ndim * 2));
-      if (chunkCount !== actualChunks) {
-        log.warning(
-          Modules.GSPLATS_SPATIAL_INDEX_LOADER,
-          `GSplats chunk count mismatch: metadata implies ${chunkCount} chunks, ` +
-            `but chunkBounds array has ${actualChunks} chunks — using min`
-        );
-        chunkCount = Math.min(chunkCount, actualChunks);
-      }
+    const chunkBounds = result.data;
 
-      return {
-        chunkBounds,
-        chunkCount,
-        metadata: { ndim: attrs.ndim, chunk_size: attrs.chunk_size },
-      };
-    } catch (error: unknown) {
-      // 404 / Not Found is expected for datasets without spatial ordering;
-      // any other error is unexpected but non-fatal — log and fall back to
-      // loading all data, matching the legacy soft-fallback behaviour.
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      if (
-        errorMessage.includes('404') ||
-        errorMessage.includes('Not Found') ||
-        errorMessage.includes('Node not found')
-      ) {
-        log.info(
-          Modules.GSPLATS_SPATIAL_INDEX_LOADER,
-          'No chunk bounds found - GSplats dataset has no spatial indexing'
-        );
-      } else {
-        log.error(
-          Modules.GSPLATS_SPATIAL_INDEX_LOADER,
-          'Failed to load GSplats spatial index:',
-          error
-        );
-      }
-      return null;
+    // Reconcile expected vs actual chunk count and use the smaller value.
+    let chunkCount = Math.ceil(attrs.n_splats / attrs.chunk_size);
+    const actualChunks = Math.floor(chunkBounds.length / (attrs.ndim * 2));
+    if (chunkCount !== actualChunks) {
+      log.warning(
+        Modules.GSPLATS_SPATIAL_INDEX_LOADER,
+        `GSplats chunk count mismatch: metadata implies ${chunkCount} chunks, ` +
+          `but chunkBounds array has ${actualChunks} chunks — using min`
+      );
+      chunkCount = Math.min(chunkCount, actualChunks);
     }
+
+    return {
+      chunkBounds,
+      chunkCount,
+      metadata: { ndim: attrs.ndim, chunk_size: attrs.chunk_size },
+    };
   }
 
   /**

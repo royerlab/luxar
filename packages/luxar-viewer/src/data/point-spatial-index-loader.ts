@@ -35,6 +35,7 @@ import type {
   QueryInfo,
 } from '../ui/data-monitor-types';
 import { ArrayDecoder, ArrayRefRegistry, type ArrayMetadata } from './array-decoder';
+import { fetchChunkBoundsArray } from './loaders/chunk-bounds-loader';
 import { RangeLoader, SpatialQueryBuilder, type BaseViewState, type LoadRange } from './loaders';
 import type { ZarrSceneAttrs } from '../types/zarr';
 import type { PointsMetadata } from '../types/points';
@@ -705,75 +706,64 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
       return null;
     }
 
-    try {
-      const boundsLoc = this.zarrLocation.resolve('chunk_bounds');
-      const boundsArray = await zarr.open(boundsLoc, { kind: 'array' });
-      const boundsData = await get(boundsArray);
-      const [numChunks, ndim, _two] = boundsArray.shape;
+    const result = await fetchChunkBoundsArray(
+      this.zarrLocation,
+      'chunk_bounds',
+      Modules.SPATIAL_INDEX,
+      'No chunk_bounds found - dataset has no spatial indexing'
+    );
+    if (!result) return null;
 
-      if (_two !== 2) {
-        log.error(
-          Modules.SPATIAL_INDEX,
-          `Invalid chunk_bounds shape: expected [..., 2], got [..., ${_two}]`
-        );
-        return null;
-      }
-
-      const expectedLength = numChunks * ndim * 2;
-      const actualLength = (boundsData.data as ArrayLike<number>).length;
-      if (actualLength !== expectedLength) {
-        log.warning(
-          Modules.SPATIAL_INDEX,
-          `Chunk bounds array length mismatch: expected ${expectedLength} (${numChunks}×${ndim}×2), got ${actualLength}`
-        );
-      }
-
-      const positionDims = nodeAttrs.ndim;
-      if (positionDims !== undefined && positionDims !== ndim) {
-        log.warning(
-          Modules.SPATIAL_INDEX,
-          `Dimensionality mismatch: chunk_bounds has ${ndim}D but node attributes indicate ${positionDims}D`
-        );
-      }
-
-      const orderingDims = nodeAttrs.ordering_dims ?? [];
-      const sliceDims = nodeAttrs.slice_dims ?? [];
-      const allDims = new Set([...orderingDims, ...sliceDims]);
-      if (allDims.size > 0 && allDims.size !== ndim) {
-        log.warning(
-          Modules.SPATIAL_INDEX,
-          `Dimension coverage mismatch: ordering_dims[${orderingDims.length}] + slice_dims[${sliceDims.length}] = ${allDims.size}, but ndim=${ndim}`
-        );
-      }
-
-      const ordering = nodeAttrs.ordering === 'morton' ? 'morton' : 'hilbert';
-      return {
-        chunkBounds: new Float32Array(boundsData.data as ArrayBuffer | ArrayLike<number>),
-        chunkCount: numChunks,
-        metadata: {
-          ordering,
-          ordering_dims: orderingDims,
-          slice_dims: sliceDims,
-          ordering_bits_per_dim: nodeAttrs.ordering_bits_per_dim ?? 21,
-          chunk_size: nodeAttrs.chunk_size ?? 0,
-          total_points: nodeAttrs.n_points ?? 0,
-          total_chunks: numChunks,
-          ndim,
-        },
-      };
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (
-        message.includes('404') ||
-        message.includes('Not Found') ||
-        message.includes('Node not found')
-      ) {
-        log.info(Modules.SPATIAL_INDEX, 'No chunk_bounds found - dataset has no spatial indexing');
-        return null;
-      }
-      log.warning(Modules.SPATIAL_INDEX, `Could not load chunk_bounds: ${message}`);
+    const [numChunks, ndim, _two] = result.shape;
+    if (_two !== 2) {
+      log.error(
+        Modules.SPATIAL_INDEX,
+        `Invalid chunk_bounds shape: expected [..., 2], got [..., ${_two}]`
+      );
       return null;
     }
+
+    const expectedLength = numChunks * ndim * 2;
+    if (result.data.length !== expectedLength) {
+      log.warning(
+        Modules.SPATIAL_INDEX,
+        `Chunk bounds array length mismatch: expected ${expectedLength} (${numChunks}×${ndim}×2), got ${result.data.length}`
+      );
+    }
+
+    const positionDims = nodeAttrs.ndim;
+    if (positionDims !== undefined && positionDims !== ndim) {
+      log.warning(
+        Modules.SPATIAL_INDEX,
+        `Dimensionality mismatch: chunk_bounds has ${ndim}D but node attributes indicate ${positionDims}D`
+      );
+    }
+
+    const orderingDims = nodeAttrs.ordering_dims ?? [];
+    const sliceDims = nodeAttrs.slice_dims ?? [];
+    const allDims = new Set([...orderingDims, ...sliceDims]);
+    if (allDims.size > 0 && allDims.size !== ndim) {
+      log.warning(
+        Modules.SPATIAL_INDEX,
+        `Dimension coverage mismatch: ordering_dims[${orderingDims.length}] + slice_dims[${sliceDims.length}] = ${allDims.size}, but ndim=${ndim}`
+      );
+    }
+
+    const ordering = nodeAttrs.ordering === 'morton' ? 'morton' : 'hilbert';
+    return {
+      chunkBounds: result.data,
+      chunkCount: numChunks,
+      metadata: {
+        ordering,
+        ordering_dims: orderingDims,
+        slice_dims: sliceDims,
+        ordering_bits_per_dim: nodeAttrs.ordering_bits_per_dim ?? 21,
+        chunk_size: nodeAttrs.chunk_size ?? 0,
+        total_points: nodeAttrs.n_points ?? 0,
+        total_chunks: numChunks,
+        ndim,
+      },
+    };
   }
 
   /**
