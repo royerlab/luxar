@@ -318,17 +318,24 @@ def zip_macos_app(app_path: Path) -> Path:
     ditto = shutil.which("ditto")
     if ditto and platform.system() == "Darwin":
         with asection(f"Zipping {app_path.name} with ditto"):
-            subprocess.run(
-                [
-                    ditto,
-                    "-c",
-                    "-k",
-                    "--keepParent",
-                    str(app_path),
-                    str(archive_path),
-                ],
-                check=True,
-            )
+            try:
+                subprocess.run(
+                    [
+                        ditto,
+                        "-c",
+                        "-k",
+                        "--keepParent",
+                        str(app_path),
+                        str(archive_path),
+                    ],
+                    check=True,
+                )
+            except subprocess.CalledProcessError:
+                # Clean up any partial archive ditto may have left behind so
+                # the user does not pick up a corrupted zip on the next run.
+                if archive_path.exists():
+                    archive_path.unlink()
+                raise
             aprint(f"  ✓ {archive_path.name}")
     else:
         with asection(
@@ -346,7 +353,10 @@ def zip_macos_app(app_path: Path) -> Path:
                         # archive's external_attr field.
                         info = zipfile.ZipInfo.from_file(full, str(arcname))
                         info.compress_type = zipfile.ZIP_DEFLATED
-                        with open(full, "rb") as src:
-                            zf.writestr(info, src.read())
+                        # Stream large files instead of loading the whole
+                        # contents into memory. The bundle includes the
+                        # viewer + zarr scene which is easily >100 MB.
+                        with open(full, "rb") as src, zf.open(info, "w") as dst:
+                            shutil.copyfileobj(src, dst)
             aprint(f"  ✓ {archive_path.name}")
     return archive_path
