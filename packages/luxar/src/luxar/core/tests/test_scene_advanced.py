@@ -516,16 +516,25 @@ class TestDimensionsProperty:
 class TestToZarr:
     """Tests for to_zarr method."""
 
-    def test_to_zarr_not_implemented(self) -> None:
-        """Test that to_zarr raises NotImplementedError."""
+    def test_to_zarr_finalizes_and_copies_store(self) -> None:
+        """Scene.to_zarr finalizes the backing store and copies it elsewhere.
+
+        The detailed behavior (refusing existing destinations, refusing
+        nested destinations, etc.) is exercised in test_review_fixes.py;
+        this test pins down the smoke-level happy path that used to be a
+        ``NotImplementedError`` stub.
+        """
         with tempfile.TemporaryDirectory() as tmpdir:
             store_path = Path(tmpdir) / "test.zarr"
+            export_path = Path(tmpdir) / "export.zarr"
 
             with LuxarZarrCompiler(store_path) as compiler:
                 scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+                scene.to_zarr(export_path)
 
-                with pytest.raises(NotImplementedError, match="not yet implemented"):
-                    scene.to_zarr(Path(tmpdir) / "export.zarr")
+            assert export_path.exists()
+            assert export_path.is_dir()
+            assert (export_path / ".zgroup").exists()
 
 
 class TestGetStorePath:
