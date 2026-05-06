@@ -39,6 +39,11 @@ import {
 } from './postprocessing-types';
 import { safeDisposeEffect } from './effect-disposal';
 import { computeEffectiveRenderSize } from './render-target-sizing';
+import {
+  halfFloatToFloat32,
+  float32ToHalfFloat,
+  flipPixelsVerticallyRGBA,
+} from './hdr-pixel-utils';
 
 /**
  * Manages HDR post-processing effects using pmndrs/postprocessing library.
@@ -1826,10 +1831,7 @@ export class PostProcessingManager {
         // Read as Uint16Array (half-float encoded), then convert to Float32Array
         const halfData = new Uint16Array(pixelCount);
         this.renderer.readRenderTargetPixels(sourceBuffer, 0, 0, width, height, halfData);
-        pixels = new Float32Array(pixelCount);
-        for (let i = 0; i < pixelCount; i++) {
-          pixels[i] = THREE.DataUtils.fromHalfFloat(halfData[i]);
-        }
+        pixels = halfFloatToFloat32(halfData);
       } else {
         // FloatType — read directly as Float32Array
         pixels = new Float32Array(pixelCount);
@@ -1862,18 +1864,10 @@ export class PostProcessingManager {
     const exrType: THREE.TextureDataType = options?.type ?? THREE.HalfFloatType;
     const { pixels, width, height } = this.captureHDRPixels();
 
-    // Create DataTexture and export as EXR
-    // Convert to the requested type if needed
-    const totalComponents = pixels.length;
-    let data: Float32Array | Uint16Array = pixels;
-    if (exrType === THREE.HalfFloatType) {
-      // Convert Float32 → Half-float (Uint16) for smaller file size
-      const halfData = new Uint16Array(totalComponents);
-      for (let i = 0; i < totalComponents; i++) {
-        halfData[i] = THREE.DataUtils.toHalfFloat(pixels[i]);
-      }
-      data = halfData;
-    }
+    // Create DataTexture and export as EXR. Half-float encoding gives a
+    // ~2× smaller file with negligible quality loss for typical scenes.
+    const data: Float32Array | Uint16Array =
+      exrType === THREE.HalfFloatType ? float32ToHalfFloat(pixels) : pixels;
 
     const texture = new THREE.DataTexture(
       data as BufferSource,
@@ -1923,19 +1917,14 @@ export class PostProcessingManager {
     const gl = this.renderer.getContext();
     const width = gl.drawingBufferWidth;
     const height = gl.drawingBufferHeight;
-    const pixelCount = width * height * 4;
-    const pixels = new Uint8Array(pixelCount);
+    const pixels = new Uint8Array(width * height * 4);
     gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
 
-    // Flip vertically — WebGL framebuffer is bottom-up, ImageData is top-down
-    const rowSize = width * 4;
-    const flipped = new Uint8ClampedArray(pixelCount);
-    for (let y = 0; y < height; y++) {
-      const srcOffset = y * rowSize;
-      const dstOffset = (height - 1 - y) * rowSize;
-      flipped.set(pixels.subarray(srcOffset, srcOffset + rowSize), dstOffset);
-    }
-
+    // Flip vertically — WebGL framebuffer is bottom-up, ImageData is top-down.
+    // The helper allocates with `new Uint8ClampedArray(N)` which is always
+    // ArrayBuffer-backed in practice; the cast widens TS's defensive
+    // ArrayBufferLike to the concrete ArrayBuffer that ImageData wants.
+    const flipped = flipPixelsVerticallyRGBA(pixels, width, height) as Uint8ClampedArray<ArrayBuffer>;
     return new ImageData(flipped, width, height);
   }
 
@@ -1964,15 +1953,10 @@ export class PostProcessingManager {
    * This ensures the renderer framebuffer matches the composer size
    */
   private updateRendererSize(): void {
-    const effectiveWidth = this.ssaaEnabled
-      ? Math.round(this.renderSize.width * this.ssaaMultiplier)
-      : this.renderSize.width;
-    const effectiveHeight = this.ssaaEnabled
-      ? Math.round(this.renderSize.height * this.ssaaMultiplier)
-      : this.renderSize.height;
+    const { width: effectiveWidth, height: effectiveHeight } = this.computeEffectiveSize();
 
-    // Update renderer framebuffer size to match composer
-    // The 'false' parameter prevents updating the canvas CSS size
+    // Update renderer framebuffer size to match composer.
+    // The 'false' parameter prevents updating the canvas CSS size.
     this.renderer.setSize(effectiveWidth, effectiveHeight, false);
 
     // Manually set canvas display size to maintain viewport dimensions
