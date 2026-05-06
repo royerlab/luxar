@@ -33,10 +33,11 @@ import {
   type ComposableAttrs,
   type EffectiveAttrs,
 } from '../../data/attrs-composer';
+import { clamp } from '../gui/utils/value-formatting';
 
 /** Clamp a gamma value to a safe range for the shader (prevents division by zero and extreme exponents) */
 function clampGamma(gamma: number): number {
-  return Math.max(0.2, Math.min(5.0, gamma));
+  return clamp(gamma, 0.2, 5.0);
 }
 
 // Type guard: does this material have our update* methods?

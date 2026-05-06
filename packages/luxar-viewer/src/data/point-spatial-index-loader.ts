@@ -812,8 +812,16 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
     // Build query tolerance. EffectiveRadiusConfig-aware path knows about
     // discrete dims and the `>= 1e9` extend-to-all sentinel; without it we use
     // a uniform fallback (infinite for displayed, explicit/maxRadius otherwise).
-    // TODO(spatial-index-consolidation-v2): unify into computeTolerance('points', …)
-    // once the rendering-side filter (calculateEffectiveRadii) is migrated together.
+    //
+    // Status (audited 2026-05-06): the original `TODO(spatial-index-consolidation-v2)`
+    // pointed at `computeTolerance('points', …)`. That helper now exists in
+    // `data/tolerance-computer.ts` and is used by `SpatialQueryBuilder`, but
+    // the merge here is blocked by the EffectiveRadiusConfig-aware path
+    // below: `calculateSpatialQueryTolerance` knows about discrete-dim
+    // half-step thresholds and the rendering-side `calculateEffectiveRadii`,
+    // which `computeTolerance` does not. Unifying requires migrating both
+    // sides simultaneously — tracked under follow-up "spatial-index
+    // tolerance unification".
     let queryTolerance: number[];
     if (this._effectiveRadiusConfig) {
       queryTolerance = calculateSpatialQueryTolerance(
