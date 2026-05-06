@@ -52,6 +52,14 @@ import {
   applyGlobalOffset,
   applyGlobalGamma,
 } from './tone-mapping-handler';
+import {
+  applyBloomRadius,
+  applyBloomSettings,
+  buildBloomConstructorOptions,
+  clampBloomLevels,
+  readBloomSettings,
+  resolveBloomSettings,
+} from './bloom-handler';
 
 /**
  * Manages HDR post-processing effects using pmndrs/postprocessing library.
@@ -526,42 +534,7 @@ export class PostProcessingManager {
    * @param threshold - Luminance threshold (0-1, default 0.85). Higher = only brightest pixels bloom
    */
   updateBloomSettings(strength?: number, radius?: number, threshold?: number): void {
-    if (!this.bloomEffect) {
-      log.warning(Modules.POST_PROCESSING, 'Bloom effect not initialized');
-      return;
-    }
-
-    // Validate bloom effect has expected properties
-    if (!isBloomEffectTyped(this.bloomEffect)) {
-      log.error(Modules.POST_PROCESSING, 'Invalid bloom effect type');
-      return;
-    }
-
-    // Access properties correctly according to pmndrs structure
-    const bloom = this.bloomEffect as any;
-
-    if (strength !== undefined) {
-      bloom.intensity = strength;
-    }
-
-    if (radius !== undefined && bloom.mipmapBlurPass) {
-      bloom.mipmapBlurPass.radius = radius;
-    }
-
-    if (threshold !== undefined && bloom.luminanceMaterial) {
-      bloom.luminanceMaterial.threshold = threshold;
-    }
-
-    // Get current values for logging
-    const currentStrength = bloom.intensity || 0;
-    const currentRadius = bloom.mipmapBlurPass?.radius || 0;
-    const currentThreshold = bloom.luminanceMaterial?.threshold || 0;
-
-    log.update(
-      Modules.POST_PROCESSING,
-      `Bloom updated: strength=${currentStrength.toFixed(2)}, ` +
-        `radius=${currentRadius.toFixed(2)}, threshold=${currentThreshold.toFixed(2)}`
-    );
+    applyBloomSettings(this.bloomEffect, { intensity: strength, radius, threshold });
   }
 
   /**
@@ -577,22 +550,11 @@ export class PostProcessingManager {
    */
   setBloomEnabled(enabled: boolean, strength?: number, radius?: number, threshold?: number): void {
     if (enabled && !this.bloomEffect) {
-      // Create bloom effect with provided or default settings
-      this.bloomEffect = new BloomEffect({
-        intensity: strength ?? config.renderingControls.defaults.bloomStrength,
-        luminanceThreshold: threshold ?? config.renderingControls.defaults.bloomThreshold,
-        luminanceSmoothing: 0.01,
-        mipmapBlur: true,
-        kernelSize: KernelSize.LARGE,
-        blendFunction: BlendFunction.ADD,
-        levels: this.bloomLevels,
-      }) as BloomEffectTyped;
-
-      // Set radius on mipmapBlurPass after creation
-      const bloom = this.bloomEffect as any;
-      if (bloom.mipmapBlurPass) {
-        bloom.mipmapBlurPass.radius = radius ?? config.renderingControls.defaults.bloomRadius;
-      }
+      const settings = resolveBloomSettings({ intensity: strength, radius, threshold });
+      this.bloomEffect = new BloomEffect(
+        buildBloomConstructorOptions(settings, this.bloomLevels)
+      ) as BloomEffectTyped;
+      applyBloomRadius(this.bloomEffect as unknown as { mipmapBlurPass?: { radius: number } }, settings.radius);
 
       this.rebuildEffectPass();
       log.success(Modules.POST_PROCESSING, 'Bloom enabled');
@@ -601,9 +563,7 @@ export class PostProcessingManager {
       this.bloomEffect = undefined;
       this.rebuildEffectPass();
       log.info(Modules.POST_PROCESSING, 'Bloom disabled');
-    }
-    // If enabled and effect already exists, just update settings
-    else if (enabled && this.bloomEffect) {
+    } else if (enabled && this.bloomEffect) {
       this.updateBloomSettings(strength, radius, threshold);
     }
   }
@@ -1621,57 +1581,41 @@ export class PostProcessingManager {
    * @param levels - Number of mipmap levels
    */
   setBloomLevels(levels: number): void {
-    // Clamp to reasonable range and ensure integer
-    levels = Math.round(Math.max(1, Math.min(12, levels)));
+    levels = clampBloomLevels(levels);
 
     if (this.bloomLevels === levels) return;
 
     this.bloomLevels = levels;
 
-    if (this.bloomEffect) {
-      if (!isBloomEffectTyped(this.bloomEffect)) {
-        log.error(Modules.POST_PROCESSING, 'Invalid bloom effect type');
-        return;
-      }
-
-      const bloom = this.bloomEffect as any;
-
-      // Store current settings
-      const settings = {
-        intensity: bloom.intensity || config.renderingControls.defaults.bloomStrength,
-        luminanceThreshold:
-          bloom.luminanceMaterial?.threshold || config.renderingControls.defaults.bloomThreshold,
-        radius: bloom.mipmapBlurPass?.radius || config.renderingControls.defaults.bloomRadius,
-      };
-
-      // Dispose old bloom effect before recreating
-      safeDisposeEffect(this.bloomEffect, 'Bloom (levels change)');
-
-      // Recreate bloom with new levels setting
-      // Levels control the quality/performance of mipmap blur
-      this.bloomEffect = new BloomEffect({
-        intensity: settings.intensity,
-        luminanceThreshold: settings.luminanceThreshold,
-        luminanceSmoothing: 0.01,
-        mipmapBlur: true,
-        kernelSize: KernelSize.LARGE,
-        blendFunction: BlendFunction.ADD,
-        levels: levels, // Number of mipmap levels
-      }) as BloomEffectTyped;
-
-      // Set radius after creation
-      const newBloom = this.bloomEffect as any;
-      if (newBloom.mipmapBlurPass) {
-        newBloom.mipmapBlurPass.radius = settings.radius;
-      }
-
-      // Rebuild effect pass
-      this.rebuildEffectPass();
-
-      log.info(Modules.POST_PROCESSING, `Bloom mipmap levels set to ${levels}`);
-    } else {
+    if (!this.bloomEffect) {
       log.warning(Modules.POST_PROCESSING, 'Bloom effect not initialized');
+      return;
     }
+    if (!isBloomEffectTyped(this.bloomEffect)) {
+      log.error(Modules.POST_PROCESSING, 'Invalid bloom effect type');
+      return;
+    }
+
+    const settings = readBloomSettings(
+      this.bloomEffect as unknown as {
+        intensity: number;
+        mipmapBlurPass?: { radius: number };
+        luminanceMaterial?: { threshold: number };
+      }
+    );
+
+    safeDisposeEffect(this.bloomEffect, 'Bloom (levels change)');
+    this.bloomEffect = new BloomEffect(
+      buildBloomConstructorOptions(settings, levels)
+    ) as BloomEffectTyped;
+    applyBloomRadius(
+      this.bloomEffect as unknown as { mipmapBlurPass?: { radius: number } },
+      settings.radius
+    );
+
+    this.rebuildEffectPass();
+
+    log.info(Modules.POST_PROCESSING, `Bloom mipmap levels set to ${levels}`);
   }
 
   /**
