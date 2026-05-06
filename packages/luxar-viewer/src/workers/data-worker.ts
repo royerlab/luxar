@@ -88,6 +88,119 @@ function validateNDArrays(
 }
 
 /**
+ * Validate projection inputs that share the WASM 3D-extraction
+ * preconditions: positions ≥ numItems × ndim, displayDims length ≤ 3,
+ * each displayDim < ndim, slicePosition ≥ ndim. Reused by every
+ * `project*To3D` entry point before the first WASM call.
+ */
+function validateProjectionInputs(
+  fnName: string,
+  positions: Float32Array,
+  displayDims: number[] | Uint32Array,
+  slicePosition: number[] | Float32Array,
+  ndim: number,
+  numItems: number,
+  positionsPerItem: number = ndim
+): void {
+  if (!Number.isInteger(ndim) || ndim < 1 || ndim > MAX_WASM_DIMS) {
+    throw new Error(
+      `${fnName}: ndim=${ndim} out of range [1, ${MAX_WASM_DIMS}]`
+    );
+  }
+  if (!Number.isInteger(numItems) || numItems < 0) {
+    throw new Error(`${fnName}: numItems=${numItems} must be a non-negative integer`);
+  }
+  const expectedPositions = numItems * positionsPerItem;
+  if (positions.length < expectedPositions) {
+    throw new Error(
+      `${fnName}: positions array too short (got ${positions.length}, expected ≥ ${expectedPositions})`
+    );
+  }
+  if (displayDims.length === 0 || displayDims.length > 3) {
+    throw new Error(
+      `${fnName}: displayDims must have 1–3 entries (got ${displayDims.length})`
+    );
+  }
+  for (let i = 0; i < displayDims.length; i++) {
+    const d = displayDims[i];
+    if (!Number.isInteger(d) || d < 0 || d >= ndim) {
+      throw new Error(
+        `${fnName}: displayDims[${i}]=${d} out of range [0, ${ndim - 1}]`
+      );
+    }
+  }
+  if (slicePosition.length < ndim) {
+    throw new Error(
+      `${fnName}: slicePosition too short (got ${slicePosition.length}, expected ≥ ${ndim})`
+    );
+  }
+}
+
+/**
+ * Validate decode-entry-point inputs. The decoders share a common
+ * preconditions: `data.length` and (for LUT modes) `lut` length must
+ * be ≥ implied minimums; numeric scalars (bounds, maxLog, k) must be
+ * finite. Rejecting at the worker boundary keeps WASM from reading
+ * past the end of caller-supplied buffers.
+ */
+function validateDecodeArgs(
+  fnName: string,
+  data: ArrayLike<number>,
+  opts: {
+    /** Expected element count, or undefined to skip the strict check. */
+    minLength?: number;
+    /** A finite-number bound to validate (e.g. min/max/maxLog). */
+    finiteScalar?: { name: string; value: number };
+    /** A pair of bounds `[min, max]` requiring max > min. */
+    boundsPair?: { name: string; bounds: readonly [number, number] };
+    /** A non-empty LUT array. */
+    lut?: { name: string; values: ArrayLike<number>; minLength?: number };
+    /** A positive integer count. */
+    positiveInt?: { name: string; value: number };
+  } = {}
+): void {
+  if (opts.minLength !== undefined && data.length < opts.minLength) {
+    throw new Error(
+      `${fnName}: data array too short (got ${data.length}, expected ≥ ${opts.minLength})`
+    );
+  }
+  if (opts.finiteScalar) {
+    const { name, value } = opts.finiteScalar;
+    if (!Number.isFinite(value)) {
+      throw new Error(`${fnName}: ${name}=${value} must be a finite number`);
+    }
+  }
+  if (opts.boundsPair) {
+    const { name, bounds } = opts.boundsPair;
+    if (!Number.isFinite(bounds[0]) || !Number.isFinite(bounds[1])) {
+      throw new Error(`${fnName}: ${name}=[${bounds[0]}, ${bounds[1]}] must be finite`);
+    }
+    if (bounds[1] <= bounds[0]) {
+      throw new Error(
+        `${fnName}: ${name} max (${bounds[1]}) must be greater than min (${bounds[0]})`
+      );
+    }
+  }
+  if (opts.lut) {
+    const { name, values, minLength } = opts.lut;
+    if (values.length === 0) {
+      throw new Error(`${fnName}: ${name} must be non-empty`);
+    }
+    if (minLength !== undefined && values.length < minLength) {
+      throw new Error(
+        `${fnName}: ${name} too short (got ${values.length}, expected ≥ ${minLength})`
+      );
+    }
+  }
+  if (opts.positiveInt) {
+    const { name, value } = opts.positiveInt;
+    if (!Number.isInteger(value) || value < 1) {
+      throw new Error(`${fnName}: ${name}=${value} must be a positive integer`);
+    }
+  }
+}
+
+/**
  * Initialize worker (called once at startup).
  *
  * Loads the WASM module via initWasm(); if that fails catastrophically (including
@@ -405,6 +518,25 @@ async function projectPointsTo3D(params: {
   } = params;
   const { displayDims, slicePosition } = viewState;
 
+  validateProjectionInputs(
+    'projectPointsTo3D',
+    positions,
+    displayDims,
+    slicePosition,
+    ndim,
+    numPoints
+  );
+  if (radii && radii.length < numPoints) {
+    throw new Error(
+      `projectPointsTo3D: radii too short (got ${radii.length}, expected ≥ ${numPoints})`
+    );
+  }
+  if (sharpness && sharpness.length < numPoints) {
+    throw new Error(
+      `projectPointsTo3D: sharpness too short (got ${sharpness.length}, expected ≥ ${numPoints})`
+    );
+  }
+
   // Determine if using pre-allocated buffers (TransferableAccumulator pattern)
   const usePreallocated = !!outputBuffers;
 
@@ -638,6 +770,41 @@ async function projectLinesTo3D(params: {
     ndim,
     segmentCount,
   } = params;
+
+  validateProjectionInputs(
+    'projectLinesTo3D',
+    positions,
+    displayDims,
+    slicePosition,
+    ndim,
+    // positions array is `numVertices × ndim`, where the highest vertex
+    // index referenced is < positions.length / ndim. We can't tightly
+    // bound `numVertices` here without scanning `segments`, so we fall
+    // back to validating `segments.length` and `widths.length` against
+    // segmentCount; positions.length is sanity-checked as ≥ ndim.
+    1,
+    ndim
+  );
+  if (!Number.isInteger(segmentCount) || segmentCount < 0) {
+    throw new Error(
+      `projectLinesTo3D: segmentCount=${segmentCount} must be a non-negative integer`
+    );
+  }
+  if (segments.length < segmentCount * 2) {
+    throw new Error(
+      `projectLinesTo3D: segments array too short (got ${segments.length}, expected ≥ ${segmentCount * 2})`
+    );
+  }
+  if (widths.length < segmentCount) {
+    throw new Error(
+      `projectLinesTo3D: widths too short (got ${widths.length}, expected ≥ ${segmentCount})`
+    );
+  }
+  if (tolerance.length < ndim) {
+    throw new Error(
+      `projectLinesTo3D: tolerance too short (got ${tolerance.length}, expected ≥ ${ndim})`
+    );
+  }
 
   // Convert input arrays to WASM-compatible formats
   const slicePosF32 = new Float32Array(slicePosition);
@@ -891,6 +1058,28 @@ async function projectGSplatsTo3D(params: {
     splatCount,
   } = params;
 
+  validateProjectionInputs(
+    'projectGSplatsTo3D',
+    positions,
+    displayDims,
+    slicePosition,
+    ndim,
+    splatCount
+  );
+  // Cholesky factors: packed lower-triangular = ndim × (ndim + 1) / 2 per splat.
+  const expectedCholesky = splatCount * ((ndim * (ndim + 1)) / 2);
+  if (choleskyFactors.length < expectedCholesky) {
+    throw new Error(
+      'projectGSplatsTo3D: choleskyFactors too short ' +
+        `(got ${choleskyFactors.length}, expected ≥ ${expectedCholesky})`
+    );
+  }
+  if (amplitudes.length < splatCount) {
+    throw new Error(
+      `projectGSplatsTo3D: amplitudes too short (got ${amplitudes.length}, expected ≥ ${splatCount})`
+    );
+  }
+
   // Compute hidden dimensions (all dims not in displayDims)
   const hiddenDims: number[] = [];
   for (let d = 0; d < ndim; d++) {
@@ -1086,6 +1275,9 @@ async function decodeQuantized(params: {
   }
 
   const { data, bounds, dtype } = params;
+  validateDecodeArgs('decodeQuantized', data, {
+    boundsPair: { name: 'bounds', bounds },
+  });
   const [minVal, maxVal] = bounds;
 
   const result = new Float32Array(data.length);
@@ -1119,6 +1311,9 @@ async function decodeLogScalar(params: {
   }
 
   const { data, maxLog, dtype } = params;
+  validateDecodeArgs('decodeLogScalar', data, {
+    finiteScalar: { name: 'maxLog', value: maxLog },
+  });
 
   const result = new Float32Array(data.length);
 
@@ -1154,6 +1349,19 @@ async function decodeLUT(params: {
   }
 
   const { indices, lut, k, lutMode } = params;
+  validateDecodeArgs('decodeLUT', indices, {
+    positiveInt: { name: 'k', value: k },
+    lut: {
+      name: 'lut',
+      values: lut,
+      // Row mode requires the LUT to have ≥ k columns per entry; the
+      // table is flat with `lut.length` total entries (= rows × k).
+      minLength: lutMode === 'row' ? k : 1,
+    },
+  });
+  if (lutMode !== 'row' && lutMode !== 'scalar') {
+    throw new Error(`decodeLUT: lutMode='${lutMode}' must be 'row' or 'scalar'`);
+  }
   // Infer dtype from indices type if not explicitly provided
   const dtype = params.dtype ?? (indices instanceof Uint8Array ? 'uint8' : 'uint16');
   const n = indices.length;
@@ -1203,6 +1411,21 @@ async function decodeBroadcasted(params: {
   }
 
   const { value, numPoints, elementsPerPoint } = params;
+  if (!Number.isInteger(numPoints) || numPoints < 0) {
+    throw new Error(
+      `decodeBroadcasted: numPoints=${numPoints} must be a non-negative integer`
+    );
+  }
+  if (!Number.isInteger(elementsPerPoint) || elementsPerPoint < 1) {
+    throw new Error(
+      `decodeBroadcasted: elementsPerPoint=${elementsPerPoint} must be a positive integer`
+    );
+  }
+  if (value.length < elementsPerPoint) {
+    throw new Error(
+      `decodeBroadcasted: value too short (got ${value.length}, expected ≥ ${elementsPerPoint})`
+    );
+  }
   const result = new Float32Array(numPoints * elementsPerPoint);
 
   // Use WASM for broadcasting

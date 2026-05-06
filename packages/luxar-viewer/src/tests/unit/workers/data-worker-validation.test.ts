@@ -1,0 +1,321 @@
+/**
+ * Validate that data-worker entry points reject malformed inputs at
+ * the JS boundary instead of letting them reach WASM.
+ *
+ * Each test loads the worker module fresh via `vi.resetModules` with a
+ * stubbed `wasm` module, calls `initialize()`, then exercises one
+ * entry point with a deliberately bad payload.
+ */
+
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+interface WorkerModule {
+  workerAPI: Record<string, (...args: unknown[]) => Promise<unknown>>;
+}
+
+async function loadWorker(): Promise<WorkerModule> {
+  vi.resetModules();
+  const wasmStub = {
+    extract_3d_positions: vi.fn(),
+    calculate_effective_radii: vi.fn(),
+    compute_nd_visibility_points: vi.fn(() => 0),
+    compute_nd_visibility_lines: vi.fn(() => 0),
+    compute_nd_visibility_gsplats: vi.fn(() => 0),
+    clip_segments_batch: vi.fn(() => 0),
+    interpolate_clipped_positions: vi.fn(),
+    interpolate_colors_batch: vi.fn(),
+    interpolate_scalars_batch: vi.fn(),
+    calculate_segment_lengths: vi.fn(),
+    mark_clipped_endpoints: vi.fn(),
+    compact_by_mask: vi.fn(),
+    extract_visible_cholesky_3d: vi.fn(),
+    compute_gsplats_attenuation: vi.fn(),
+    compact_attenuated_amplitudes: vi.fn(),
+    decode_quantized_u8: vi.fn(),
+    decode_quantized_u16: vi.fn(),
+    decode_log_scalar_u8: vi.fn(),
+    decode_log_scalar_u16: vi.fn(),
+    decode_lut_scalar_u8: vi.fn(),
+    decode_lut_scalar_u16: vi.fn(),
+    decode_lut_row_u8: vi.fn(),
+    decode_lut_row_u16: vi.fn(),
+    decode_broadcasted: vi.fn(),
+    query_chunks_for_view: vi.fn(() => 0),
+  };
+  vi.doMock('../../../wasm', () => ({
+    initWasm: vi.fn(async () => wasmStub),
+  }));
+  vi.doMock('../../../utils/log', () => ({
+    log: { info: vi.fn(), warning: vi.fn(), error: vi.fn(), success: vi.fn() },
+    Modules: { WORKER_POOL: 'WorkerPool' },
+  }));
+  vi.doMock('comlink', () => ({
+    expose: vi.fn(),
+    transfer: vi.fn((obj) => obj),
+  }));
+
+  const mod = (await import('../../../workers/data-worker')) as unknown as WorkerModule;
+  await mod.workerAPI.initialize();
+  return mod;
+}
+
+describe('data-worker validation — projection entry points', () => {
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('projectPointsTo3D rejects ndim out of [1, 16]', async () => {
+    const mod = await loadWorker();
+    await expect(
+      mod.workerAPI.projectPointsTo3D({
+        positions: new Float32Array(0),
+        colors: null,
+        radii: null,
+        sharpness: null,
+        viewState: { displayDims: [0, 1, 2], slicePosition: new Array(20).fill(0) },
+        effectiveRadiusConfig: null,
+        ndim: 17,
+        numPoints: 0,
+      })
+    ).rejects.toThrow(/ndim=17 out of range/);
+  });
+
+  it('projectPointsTo3D rejects positions array shorter than numPoints × ndim', async () => {
+    const mod = await loadWorker();
+    await expect(
+      mod.workerAPI.projectPointsTo3D({
+        positions: new Float32Array(5), // too short for 10 points × 3 dims
+        colors: null,
+        radii: null,
+        sharpness: null,
+        viewState: { displayDims: [0, 1, 2], slicePosition: [0, 0, 0] },
+        effectiveRadiusConfig: null,
+        ndim: 3,
+        numPoints: 10,
+      })
+    ).rejects.toThrow(/positions array too short/);
+  });
+
+  it('projectPointsTo3D rejects radii too short for numPoints', async () => {
+    const mod = await loadWorker();
+    await expect(
+      mod.workerAPI.projectPointsTo3D({
+        positions: new Float32Array(30),
+        colors: null,
+        radii: new Float32Array(3), // need 10
+        sharpness: null,
+        viewState: { displayDims: [0, 1, 2], slicePosition: [0, 0, 0] },
+        effectiveRadiusConfig: null,
+        ndim: 3,
+        numPoints: 10,
+      })
+    ).rejects.toThrow(/radii too short/);
+  });
+
+  it('projectPointsTo3D rejects displayDims with out-of-range entries', async () => {
+    const mod = await loadWorker();
+    await expect(
+      mod.workerAPI.projectPointsTo3D({
+        positions: new Float32Array(30),
+        colors: null,
+        radii: null,
+        sharpness: null,
+        viewState: { displayDims: [0, 1, 7], slicePosition: [0, 0, 0] }, // 7 ≥ ndim
+        effectiveRadiusConfig: null,
+        ndim: 3,
+        numPoints: 10,
+      })
+    ).rejects.toThrow(/displayDims\[2\]=7 out of range/);
+  });
+
+  it('projectLinesTo3D rejects negative segmentCount', async () => {
+    const mod = await loadWorker();
+    await expect(
+      mod.workerAPI.projectLinesTo3D({
+        positions: new Float32Array(30),
+        segments: new Uint32Array(0),
+        widths: new Float32Array(0),
+        colors: null,
+        sharpness: null,
+        slicePosition: [0, 0, 0],
+        tolerance: [0, 0, 0],
+        displayDims: [0, 1, 2],
+        ndim: 3,
+        segmentCount: -1,
+      })
+    ).rejects.toThrow(/segmentCount=-1 must be a non-negative integer/);
+  });
+
+  it('projectLinesTo3D rejects segments array shorter than 2 × segmentCount', async () => {
+    const mod = await loadWorker();
+    await expect(
+      mod.workerAPI.projectLinesTo3D({
+        positions: new Float32Array(30),
+        segments: new Uint32Array(3), // need 4 for 2 segments
+        widths: new Float32Array(2),
+        colors: null,
+        sharpness: null,
+        slicePosition: [0, 0, 0],
+        tolerance: [0, 0, 0],
+        displayDims: [0, 1, 2],
+        ndim: 3,
+        segmentCount: 2,
+      })
+    ).rejects.toThrow(/segments array too short/);
+  });
+
+  it('projectGSplatsTo3D rejects choleskyFactors shorter than packed-lower-triangular size', async () => {
+    const mod = await loadWorker();
+    // 3D × 5 splats: each Cholesky packed = 3*4/2 = 6, total = 30.
+    await expect(
+      mod.workerAPI.projectGSplatsTo3D({
+        positions: new Float32Array(15),
+        choleskyFactors: new Float32Array(20), // need 30
+        amplitudes: new Float32Array(5),
+        colors: null,
+        sharpness: null,
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0],
+        ndim: 3,
+        splatCount: 5,
+      })
+    ).rejects.toThrow(/choleskyFactors too short/);
+  });
+
+  it('projectGSplatsTo3D rejects amplitudes shorter than splatCount', async () => {
+    const mod = await loadWorker();
+    await expect(
+      mod.workerAPI.projectGSplatsTo3D({
+        positions: new Float32Array(15),
+        choleskyFactors: new Float32Array(30),
+        amplitudes: new Float32Array(2), // need 5
+        colors: null,
+        sharpness: null,
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0],
+        ndim: 3,
+        splatCount: 5,
+      })
+    ).rejects.toThrow(/amplitudes too short/);
+  });
+});
+
+describe('data-worker validation — decode entry points', () => {
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('decodeQuantized rejects bounds where max ≤ min', async () => {
+    const mod = await loadWorker();
+    await expect(
+      mod.workerAPI.decodeQuantized({
+        data: new Uint8Array([0, 128, 255]),
+        bounds: [10, 5],
+        dtype: 'uint8',
+      })
+    ).rejects.toThrow(/max \(5\) must be greater than min \(10\)/);
+  });
+
+  it('decodeQuantized rejects non-finite bounds', async () => {
+    const mod = await loadWorker();
+    await expect(
+      mod.workerAPI.decodeQuantized({
+        data: new Uint8Array([0, 128, 255]),
+        bounds: [0, Number.POSITIVE_INFINITY],
+        dtype: 'uint8',
+      })
+    ).rejects.toThrow(/must be finite/);
+  });
+
+  it('decodeQuantized accepts the happy path', async () => {
+    const mod = await loadWorker();
+    const out = (await mod.workerAPI.decodeQuantized({
+      data: new Uint8Array([0, 128, 255]),
+      bounds: [0, 1],
+      dtype: 'uint8',
+    })) as Float32Array;
+    expect(out).toBeInstanceOf(Float32Array);
+    expect(out.length).toBe(3);
+  });
+
+  it('decodeLogScalar rejects non-finite maxLog', async () => {
+    const mod = await loadWorker();
+    await expect(
+      mod.workerAPI.decodeLogScalar({
+        data: new Uint8Array([0, 128, 255]),
+        maxLog: Number.NaN,
+        dtype: 'uint8',
+      })
+    ).rejects.toThrow(/maxLog=NaN must be a finite number/);
+  });
+
+  it('decodeLUT rejects k=0 (positive integer required)', async () => {
+    const mod = await loadWorker();
+    await expect(
+      mod.workerAPI.decodeLUT({
+        indices: new Uint8Array([0, 1]),
+        lut: [0.1, 0.2, 0.3],
+        k: 0,
+        lutMode: 'scalar',
+      })
+    ).rejects.toThrow(/k=0 must be a positive integer/);
+  });
+
+  it('decodeLUT rejects empty lut', async () => {
+    const mod = await loadWorker();
+    await expect(
+      mod.workerAPI.decodeLUT({
+        indices: new Uint8Array([0, 1]),
+        lut: [],
+        k: 1,
+        lutMode: 'scalar',
+      })
+    ).rejects.toThrow(/lut must be non-empty/);
+  });
+
+  it('decodeLUT rejects row-mode lut shorter than k', async () => {
+    const mod = await loadWorker();
+    await expect(
+      mod.workerAPI.decodeLUT({
+        indices: new Uint8Array([0]),
+        lut: [0.1, 0.2], // need ≥ 3 for k=3 row mode
+        k: 3,
+        lutMode: 'row',
+      })
+    ).rejects.toThrow(/lut too short/);
+  });
+
+  it('decodeLUT rejects unknown lutMode', async () => {
+    const mod = await loadWorker();
+    await expect(
+      mod.workerAPI.decodeLUT({
+        indices: new Uint8Array([0]),
+        lut: [0.1],
+        k: 1,
+        lutMode: 'cubic' as 'row',
+      })
+    ).rejects.toThrow(/lutMode='cubic' must be 'row' or 'scalar'/);
+  });
+
+  it('decodeBroadcasted rejects non-positive elementsPerPoint', async () => {
+    const mod = await loadWorker();
+    await expect(
+      mod.workerAPI.decodeBroadcasted({
+        value: new Float32Array([1, 2, 3]),
+        numPoints: 10,
+        elementsPerPoint: 0,
+      })
+    ).rejects.toThrow(/elementsPerPoint=0 must be a positive integer/);
+  });
+
+  it('decodeBroadcasted rejects value shorter than elementsPerPoint', async () => {
+    const mod = await loadWorker();
+    await expect(
+      mod.workerAPI.decodeBroadcasted({
+        value: new Float32Array([1, 2]), // need 4
+        numPoints: 10,
+        elementsPerPoint: 4,
+      })
+    ).rejects.toThrow(/value too short/);
+  });
+});
