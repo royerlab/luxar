@@ -29,17 +29,18 @@ export default defineConfig({
       // dedicated commit each time a phase of new tests crosses the next
       // band. Long-term target: 80% across the board.
       thresholds: {
-        lines: 60,
-        functions: 62,
-        branches: 49,
-        statements: 59,
+        lines: 60.5,
+        functions: 63,
+        branches: 49.3,
+        statements: 60,
       },
       // Note: actuals after Phases 1, 2, 3.1-3.4, 7.3-7.4, plus the
       // Phase-4.1 rendering-controls extractions and the 5.4 RangeSlider
-      // / focus-manager / clipping-display / cinematic-mode test suites
-      // (~88 new tests across this branch) land at ~59.6% lines /
-      // 62.5% functions / 60.3% statements / 49.1% branches. Floor moves
-      // up by ~1pp per band; long-term target stays 80% across the board.
+      // / focus-manager / clipping-display / cinematic-mode +
+      // ColormapLegend + ResolutionIndicator suites (~120 new tests
+      // across this branch) land at ~60.9% lines / 63.3% functions /
+      // 60.2% statements / 49.4% branches. Floor moves up by ~1pp
+      // per band; long-term target stays 80% across the board.
     },
   },
   resolve: {
