@@ -79,7 +79,7 @@ function hasOwnProperties(obj: Record<string, unknown>): boolean {
  * Nodes with the same extendDims share a single cached array.
  */
 function getOrComputeExtendedTolerance(
-  baseTolerance: number[],
+  baseTolerance: readonly number[],
   extendDims: string[],
   dimensionMetadata: Array<{ name?: string }>,
   cache: Map<string, number[]>
@@ -821,9 +821,9 @@ export class SceneLoader {
             }
 
             let linesViewState: {
-              displayDims: number[];
-              slicePosition: number[];
-              tolerance: number[];
+              displayDims: readonly number[];
+              slicePosition: readonly number[];
+              tolerance: readonly number[];
               dimensions?: import('../types/dims').DimensionMetadata[];
             } = {
               displayDims: this.viewState.displayDims,
@@ -1250,7 +1250,11 @@ export class SceneLoader {
   private async processLinesData(
     path: string,
     data: LoadedLinesData,
-    viewState: { displayDims: number[]; slicePosition: number[]; dimensions?: DimensionMetadata[] },
+    viewState: {
+      displayDims: readonly number[];
+      slicePosition: readonly number[];
+      dimensions?: DimensionMetadata[];
+    },
     session?: UpdateSession
   ): Promise<StagedLinesCommit | null> {
     if (!this.rootGroup) return null;
@@ -1366,8 +1370,8 @@ export class SceneLoader {
    */
   private async projectLinesTo3DUsingWorker(
     data: LoadedLinesData,
-    viewState: { displayDims: number[]; slicePosition: number[] },
-    tolerance: number[]
+    viewState: { displayDims: readonly number[]; slicePosition: readonly number[] },
+    tolerance: readonly number[]
   ): Promise<ProcessedLinesData> {
     try {
       const worker = await getWorkerPool().getWorker();
@@ -1882,9 +1886,9 @@ export class SceneLoader {
     try {
       // Load lines data
       let linesViewState: {
-        displayDims: number[];
-        slicePosition: number[];
-        tolerance: number[];
+        displayDims: readonly number[];
+        slicePosition: readonly number[];
+        tolerance: readonly number[];
         dimensions?: import('../types/dims').DimensionMetadata[];
       } = {
         displayDims: this.viewState.displayDims,

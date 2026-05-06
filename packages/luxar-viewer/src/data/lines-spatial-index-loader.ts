@@ -865,9 +865,9 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
 export function clipSegmentToSlice(
   p1: number[],
   p2: number[],
-  slicePosition: number[],
-  tolerance: number[],
-  displayDims: number[]
+  slicePosition: readonly number[],
+  tolerance: readonly number[],
+  displayDims: readonly number[]
 ): ClippedSegment {
   let t1 = 0.0; // Parameter at start
   let t2 = 1.0; // Parameter at end
@@ -980,9 +980,9 @@ export function distance3D(a: number[], b: number[]): number {
  */
 export function buildInstanceBuffers(
   loadedData: LoadedLinesData,
-  slicePosition: number[],
-  tolerance: number[],
-  displayDims: number[]
+  slicePosition: readonly number[],
+  tolerance: readonly number[],
+  displayDims: readonly number[]
 ): ProcessedLinesData {
   const { positions, segments, widths, colors, sharpness, ndim, segmentCount } = loadedData;
 

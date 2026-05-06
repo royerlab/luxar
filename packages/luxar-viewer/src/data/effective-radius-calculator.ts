@@ -218,7 +218,7 @@ export function calculateSpatialQueryTolerance(
  */
 export function shouldApplyEffectiveRadius(
   config: EffectiveRadiusConfig | null,
-  displayDims: number[],
+  displayDims: readonly number[],
   hasRadii: boolean
 ): boolean {
   if (!config || !hasRadii) {

@@ -43,9 +43,9 @@ export interface MonitorEvent {
     cacheKey?: string;
     error?: string;
     // Spatial-specific data
-    queryPosition?: number[];
-    queryTolerance?: number[];
-    gridBounds?: { min: number[]; max: number[] };
+    queryPosition?: readonly number[];
+    queryTolerance?: readonly number[];
+    gridBounds?: { min: readonly number[]; max: readonly number[] };
   };
 }
 

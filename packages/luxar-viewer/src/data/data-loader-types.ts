@@ -12,16 +12,23 @@ import { log, Modules } from '../utils/log';
 /**
  * Represents the current view state for data loading.
  * This determines what portion of the nD dataset should be loaded.
+ *
+ * Array fields are typed `readonly number[]` so the *contents* cannot
+ * be mutated (`arr[i] = …`, `arr.push(…)`). The fields themselves are
+ * still re-assignable, so callers that need to update the view state
+ * should construct a fresh array (`tolerance: [...prev, x]`) rather
+ * than mutating in place. This prevents the cross-method mutation
+ * races flagged in the 2026-05-06 review.
  */
 export interface ViewState {
   /** Which dimensions to display (max 3, indices into nD space) */
-  displayDims: number[];
+  displayDims: readonly number[];
 
   /** Current position in nD space (one value per dimension) */
-  slicePosition: number[];
+  slicePosition: readonly number[];
 
   /** Tolerance for slicing in each dimension (radius in non-displayed dims, 0 for displayed) */
-  tolerance: number[];
+  tolerance: readonly number[];
 
   /** Optional camera frustum for view-dependent loading */
   cameraFrustum?: THREE.Frustum;

@@ -241,13 +241,13 @@ export interface GSplatsDataLoader {
  */
 export interface GSplatsViewState {
   /** Which dimensions to display (max 3, indices into nD space) */
-  displayDims: number[];
+  displayDims: readonly number[];
 
   /** Current position in nD space (one value per dimension) */
-  slicePosition: number[];
+  slicePosition: readonly number[];
 
   /** Tolerance for slicing in each dimension */
-  tolerance: number[];
+  tolerance: readonly number[];
 
   /** Dimension metadata for the dataset */
   dimensions?: DimensionMetadata[];

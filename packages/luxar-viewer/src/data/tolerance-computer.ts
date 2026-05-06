@@ -69,7 +69,7 @@ const DISPLAYED_TOLERANCE = 1e10;
  */
 export function computeTolerance(
   geometryType: GeometryType,
-  displayDims: number[],
+  displayDims: readonly number[],
   ndim: number,
   dimensions?: DimensionInfo[],
   options: ToleranceOptions = {}

@@ -96,8 +96,8 @@ function validateNDArrays(
 function validateProjectionInputs(
   fnName: string,
   positions: Float32Array,
-  displayDims: number[] | Uint32Array,
-  slicePosition: number[] | Float32Array,
+  displayDims: readonly number[] | Uint32Array,
+  slicePosition: readonly number[] | Float32Array,
   ndim: number,
   numItems: number,
   positionsPerItem: number = ndim
@@ -454,9 +454,9 @@ export interface EffectiveRadiusConfig {
  * View state for projection (subset of main thread ViewState)
  */
 export interface ProjectionViewState {
-  displayDims: number[];
-  slicePosition: number[];
-  tolerance: number[];
+  displayDims: readonly number[];
+  slicePosition: readonly number[];
+  tolerance: readonly number[];
 }
 
 /**
@@ -735,9 +735,9 @@ async function projectLinesTo3D(params: {
   widths: Float32Array;
   colors: Float32Array | Uint8Array | Uint16Array | null;
   sharpness: Float32Array | null;
-  slicePosition: number[];
-  tolerance: number[];
-  displayDims: number[];
+  slicePosition: readonly number[];
+  tolerance: readonly number[];
+  displayDims: readonly number[];
   ndim: number;
   segmentCount: number;
 }): Promise<{
@@ -1023,16 +1023,16 @@ async function projectGSplatsTo3D(params: {
   amplitudes: Float32Array;
   colors: Float32Array | Uint8Array | Uint16Array | null;
   sharpness: Float32Array | null;
-  displayDims: number[];
-  slicePosition: number[];
+  displayDims: readonly number[];
+  slicePosition: readonly number[];
   ndim: number;
   splatCount: number;
   /** Indices of hidden dimensions that are discrete (binary visibility) */
-  discreteDims?: number[];
+  discreteDims?: readonly number[];
   /** Per-dimension step sizes for discrete dims (keyed by dim index) */
   discreteSteps?: Record<number, number>;
   /** Indices of dimensions to skip entirely (extend_to_all — always visible) */
-  extendToAllDims?: number[];
+  extendToAllDims?: readonly number[];
   /** Truncation radius in sigmas for shifted Gaussian attenuation (default 3.0) */
   truncate?: number;
 }): Promise<{

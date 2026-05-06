@@ -42,11 +42,11 @@ import type { SceneNode } from './data-loader-types';
  * @returns New slicePosition and tolerance in local (raw) space
  */
 export function invertNdTransformForQuery(
-  slicePosition: number[],
-  tolerance: number[],
+  slicePosition: readonly number[],
+  tolerance: readonly number[],
   ndTransform: NdTransformMap,
   dimensionNames: string[],
-  displayDims: number[]
+  displayDims: readonly number[]
 ): { slicePosition: number[]; tolerance: number[] } {
   const localSlice = [...slicePosition];
   const localTolerance = [...tolerance];
