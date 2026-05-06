@@ -31,12 +31,12 @@ export default defineConfig({
       thresholds: {
         lines: 58,
         functions: 60,
-        branches: 47,
+        branches: 48,
         statements: 58,
       },
-      // Note: actuals after the D1 post-processing-handler extractions
-      // land at ~58.7% lines / 60.6% functions / 58.1% statements /
-      // 48.3% branches. The floor here is set 0.1-0.6pp below those
+      // Note: actuals after the D2/D3/D4 helper extractions and tests
+      // land at ~58.8% lines / 60.8% functions / 58.2% statements /
+      // 48.5% branches. The floor here is set 0.2-0.8pp below those
       // numbers so re-runs don't flicker around the threshold.
     },
   },
