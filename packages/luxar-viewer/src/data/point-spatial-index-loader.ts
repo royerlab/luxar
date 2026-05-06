@@ -8,7 +8,6 @@
 
 import * as zarr from 'zarrita';
 import { get, slice } from 'zarrita';
-import * as THREE from 'three';
 import { log, Modules } from '../utils/log';
 import {
   DataLoader,
@@ -17,14 +16,11 @@ import {
   LoaderConfig,
   PointRange,
   SceneNode,
-  PositionArray,
-  ColorArray,
-  ScalarArray,
+  type ColorArray,
+  type ScalarArray,
 } from './data-loader-types';
 import {
-  calculateEffectiveRadii,
   calculateSpatialQueryTolerance,
-  shouldApplyEffectiveRadius,
   type EffectiveRadiusConfig,
 } from './effective-radius-calculator';
 import { computeLoadLatency, recordLoadEvent } from './point-loader/loader-metrics';
@@ -35,6 +31,13 @@ import {
   type PointsChunkIndex,
   type PointsNodeAttrsForIndex,
 } from './point-loader/chunk-index-loader';
+import {
+  createEmptyPointsData as createEmptyPointsDataHelper,
+  projectPointsTo3D,
+  projectPointsTo3DUsingWorker,
+  type ProjectionContext,
+  type ProjectionTargetBuffers,
+} from './point-loader/projection';
 import type {
   MonitorEvent,
   MonitorEventListener,
@@ -53,7 +56,6 @@ import type { ZarrSceneAttrs } from '../types/zarr';
 import type { PointsMetadata } from '../types/points';
 import { LoadedPointsDataAccumulator, type AccumulatorStats } from './data-accumulator';
 import { config as appConfig } from '../config';
-import { getWorkerPool } from '../workers/worker-pool';
 import type { UpdateProfiler, UpdateSession } from '../profiling/update-profiler';
 import { DecompressedChunkCache, wrapWithCache, ChunkPrefetcher } from '../cache';
 
@@ -507,12 +509,7 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
         (this.metrics.avgQueryTime * (this.metrics.queries - 1) + queryTime) / this.metrics.queries;
 
       // Phase 1 Deep Integration: Prepare accumulator buffers if enabled
-      let targetBuffers: {
-        positions3D: Float32Array;
-        colors: ColorArray;
-        radii: ScalarArray;
-        sharpness: ScalarArray;
-      } | null = null;
+      let targetBuffers: ProjectionTargetBuffers | null = null;
 
       if (this._accumulator && appConfig.dataLoading.performance.useAccumulators) {
         const totalPoints = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
@@ -1110,11 +1107,22 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
   }
 
   /**
-   * Project nD points to 3D display space
-   *
-   * @param targetBuffers - Optional accumulator buffers for zero-allocation operation
-   *                        When provided, writes directly to buffers (deep integration)
-   *                        When null, allocates new arrays (fallback path)
+   * Build a `ProjectionContext` from instance fields. Done per-call so
+   * the helpers in `point-loader/projection.ts` can stay pure with
+   * respect to the loader.
+   */
+  private buildProjectionContext(): ProjectionContext {
+    return {
+      chunkIndex: this.chunkIndex,
+      effectiveRadiusConfig: this._effectiveRadiusConfig,
+      accumulator: this._accumulator,
+      nodeAttrs: this.attrs,
+    };
+  }
+
+  /**
+   * Main-thread nD → 3D projection. Thin delegate to
+   * `projectPointsTo3D` in `point-loader/projection.ts`.
    */
   private projectTo3D(
     positions: Float32Array | Uint8Array | Uint16Array | Float16Array | null,
@@ -1123,363 +1131,24 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
     sharpness: Float32Array | Uint8Array | Uint16Array | Float16Array | null,
     viewState: ViewState,
     ranges: PointRange[],
-    targetBuffers?: {
-      positions3D: Float32Array;
-      colors: ColorArray;
-      radii: ScalarArray;
-      sharpness: ScalarArray;
-    } | null
+    targetBuffers?: ProjectionTargetBuffers | null
   ): LoadedPointsData {
-    const totalPoints = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
-
-    if (!positions) {
-      throw new Error('Positions data is required for points');
-    }
-
-    // CRITICAL: Calculate ndim from actual positions array, not chunk index metadata.
-    const ndim =
-      totalPoints > 0
-        ? Math.round(positions.length / totalPoints)
-        : this.chunkIndex?.metadata.ndim || 3;
-
-    // Validate the calculation
-    if (totalPoints > 0 && positions.length !== totalPoints * ndim) {
-      log.error(
-        Modules.SPATIAL_INDEX_LOADER,
-        `Position data size mismatch: ${positions.length} elements for ${totalPoints} points ` +
-          `doesn't divide evenly (calculated ndim=${ndim}). This may indicate encoding metadata issues.`
-      );
-    }
-
-    let numPoints = totalPoints;
-
-    // Phase 1 Deep Integration: Use target buffers if provided (ZERO allocations!)
-    const { displayDims } = viewState;
-
-    // Use target buffer or allocate new (zero-allocation when targetBuffers provided)
-    let positions3D = targetBuffers ? targetBuffers.positions3D : new Float32Array(numPoints * 3);
-
-    // Extract 3D positions from nD data (write directly to buffer)
-    for (let i = 0; i < numPoints; i++) {
-      // Extract displayed dimensions
-      for (let j = 0; j < Math.min(3, displayDims.length); j++) {
-        const dimIdx = displayDims[j];
-        positions3D[i * 3 + j] = positions[i * ndim + dimIdx];
-      }
-      // Fill remaining with zeros
-      for (let j = displayDims.length; j < 3; j++) {
-        positions3D[i * 3 + j] = 0;
-      }
-    }
-
-    // Calculate bounds
-    const bounds = new THREE.Box3();
-    const point = new THREE.Vector3();
-    for (let i = 0; i < numPoints; i++) {
-      point.set(positions3D[i * 3], positions3D[i * 3 + 1], positions3D[i * 3 + 2]);
-      bounds.expandByPoint(point);
-    }
-
-    // Calculate effective radii if configuration exists and radii are provided
-    let finalRadii: Float32Array | Uint8Array | undefined;
-    let usedEffectiveRadius = false;
-
-    if (radii) {
-      // Use target buffer or allocate (zero-allocation when targetBuffers provided)
-      if (targetBuffers && targetBuffers.radii) {
-        // Deep integration: Write directly to accumulator radii buffer
-        if (radii instanceof Uint8Array && targetBuffers.radii instanceof Uint8Array) {
-          (targetBuffers.radii as Uint8Array).set(radii);
-          finalRadii = targetBuffers.radii as Uint8Array;
-        } else if (radii instanceof Float32Array && targetBuffers.radii instanceof Float32Array) {
-          (targetBuffers.radii as Float32Array).set(radii as Float32Array);
-          finalRadii = targetBuffers.radii as Float32Array;
-        } else {
-          // Type mismatch (rare): fallback to conversion
-          const float32Radii = radii instanceof Float32Array ? radii : new Float32Array(radii);
-          (targetBuffers.radii as Float32Array).set(float32Radii);
-          finalRadii = targetBuffers.radii as Float32Array;
-        }
-      } else {
-        // Fallback: Allocate if needed
-        finalRadii = radii instanceof Float32Array ? radii : new Float32Array(radii);
-      }
-
-      // Normalize uint8 radii to world units before effective radius calculation
-      let effectiveRadiusConfig = this._effectiveRadiusConfig;
-      if (finalRadii instanceof Uint8Array) {
-        // Convert Uint8 to Float32 for effective radius calculation
-        const float32Radii = new Float32Array(finalRadii.length);
-        for (let i = 0; i < finalRadii.length; i++) {
-          float32Radii[i] = finalRadii[i] / 255.0;
-        }
-        // Write to target buffer or use temp array
-        if (targetBuffers && targetBuffers.radii instanceof Float32Array) {
-          (targetBuffers.radii as Float32Array).set(float32Radii);
-          finalRadii = targetBuffers.radii as Float32Array;
-        } else {
-          finalRadii = float32Radii;
-        }
-
-        // Scale max_radius for effective radius calculation
-        if (effectiveRadiusConfig) {
-          effectiveRadiusConfig = {
-            ...effectiveRadiusConfig,
-            maxRadius: effectiveRadiusConfig.maxRadius / 255.0,
-          };
-        }
-      }
-
-      if (effectiveRadiusConfig && finalRadii instanceof Float32Array) {
-        // Check if we should apply effective radius
-        if (shouldApplyEffectiveRadius(effectiveRadiusConfig, viewState.displayDims, true)) {
-          const effectiveRadii = calculateEffectiveRadii(
-            positions,
-            finalRadii,
-            viewState,
-            effectiveRadiusConfig,
-            ndim
-          );
-
-          // Write result to target buffer (if using) or replace
-          if (targetBuffers && targetBuffers.radii instanceof Float32Array) {
-            (targetBuffers.radii as Float32Array).set(effectiveRadii);
-            finalRadii = targetBuffers.radii as Float32Array;
-          } else {
-            finalRadii = effectiveRadii;
-          }
-          usedEffectiveRadius = true;
-        }
-      }
-    }
-
-    // Filter out zero-radius points to avoid sending them to GPU
-    // This significantly improves performance for nD slicing
-    // IMPORTANT: Only filter when we actually calculated effective radii
-    if (usedEffectiveRadius && finalRadii) {
-      const threshold = 0.0001; // Small threshold for floating point precision
-      const validIndices: number[] = [];
-
-      // Find indices of points with non-zero radius
-      for (let i = 0; i < numPoints; i++) {
-        if (finalRadii[i] > threshold) {
-          validIndices.push(i);
-        }
-      }
-
-      const filteredCount = validIndices.length;
-
-      // Only filter if we're actually removing points AND we have valid points left
-      if (filteredCount < numPoints && filteredCount > 0) {
-        log.info(
-          Modules.SPATIAL_INDEX_LOADER,
-          `Filtering out ${numPoints - filteredCount} zero-radius points (keeping ${filteredCount})`
-        );
-
-        if (targetBuffers) {
-          // Phase 1 Deep Integration: IN-PLACE compaction (ZERO allocations!)
-          // Compact valid points to beginning of target buffers
-          let writeIdx = 0;
-          for (let i = 0; i < validIndices.length; i++) {
-            const readIdx = validIndices[i];
-
-            // Only copy if read index != write index (avoid redundant copy)
-            if (writeIdx !== readIdx) {
-              // Compact positions
-              positions3D[writeIdx * 3] = positions3D[readIdx * 3];
-              positions3D[writeIdx * 3 + 1] = positions3D[readIdx * 3 + 1];
-              positions3D[writeIdx * 3 + 2] = positions3D[readIdx * 3 + 2];
-
-              // Compact radii
-              if (finalRadii) {
-                if (finalRadii instanceof Float32Array) {
-                  (finalRadii as Float32Array)[writeIdx] = (finalRadii as Float32Array)[readIdx];
-                } else {
-                  (finalRadii as Uint8Array)[writeIdx] = (finalRadii as Uint8Array)[readIdx];
-                }
-              }
-
-              // Compact colors (type-preserving)
-              if (colors && targetBuffers.colors) {
-                if (colors instanceof Uint8Array && targetBuffers.colors instanceof Uint8Array) {
-                  const cb = targetBuffers.colors as Uint8Array;
-                  cb[writeIdx * 3] = cb[readIdx * 3];
-                  cb[writeIdx * 3 + 1] = cb[readIdx * 3 + 1];
-                  cb[writeIdx * 3 + 2] = cb[readIdx * 3 + 2];
-                } else if (
-                  colors instanceof Uint16Array &&
-                  targetBuffers.colors instanceof Uint16Array
-                ) {
-                  const cb = targetBuffers.colors as Uint16Array;
-                  cb[writeIdx * 3] = cb[readIdx * 3];
-                  cb[writeIdx * 3 + 1] = cb[readIdx * 3 + 1];
-                  cb[writeIdx * 3 + 2] = cb[readIdx * 3 + 2];
-                } else if (
-                  colors instanceof Float32Array &&
-                  targetBuffers.colors instanceof Float32Array
-                ) {
-                  const cb = targetBuffers.colors as Float32Array;
-                  cb[writeIdx * 3] = cb[readIdx * 3];
-                  cb[writeIdx * 3 + 1] = cb[readIdx * 3 + 1];
-                  cb[writeIdx * 3 + 2] = cb[readIdx * 3 + 2];
-                }
-              }
-
-              // Compact sharpness (type-preserving)
-              if (sharpness && targetBuffers.sharpness) {
-                if (
-                  sharpness instanceof Uint8Array &&
-                  targetBuffers.sharpness instanceof Uint8Array
-                ) {
-                  (targetBuffers.sharpness as Uint8Array)[writeIdx] = (
-                    targetBuffers.sharpness as Uint8Array
-                  )[readIdx];
-                } else if (
-                  sharpness instanceof Float32Array &&
-                  targetBuffers.sharpness instanceof Float32Array
-                ) {
-                  (targetBuffers.sharpness as Float32Array)[writeIdx] = (
-                    targetBuffers.sharpness as Float32Array
-                  )[readIdx];
-                }
-              }
-            }
-
-            writeIdx++;
-          }
-
-          // Update count to filtered count (arrays already compacted in-place!)
-          numPoints = filteredCount;
-        } else {
-          // Fallback: Create filtered arrays (allocations when accumulator disabled)
-          const filteredPositions3D = new Float32Array(filteredCount * 3);
-          const filteredRadii = new Float32Array(filteredCount);
-
-          // Filter colors if present
-          let filteredColors: Float32Array | Uint8Array | Uint16Array | undefined;
-          if (colors) {
-            if (colors instanceof Float32Array) {
-              filteredColors = new Float32Array(filteredCount * 3);
-            } else if (colors instanceof Uint8Array) {
-              filteredColors = new Uint8Array(filteredCount * 3);
-            } else if (colors instanceof Uint16Array) {
-              filteredColors = new Uint16Array(filteredCount * 3);
-            }
-          }
-
-          // Filter sharpness if present
-          let filteredSharpness: Float32Array | Uint8Array | Uint16Array | undefined;
-          if (sharpness) {
-            if (sharpness instanceof Float32Array) {
-              filteredSharpness = new Float32Array(filteredCount);
-            } else if (sharpness instanceof Uint8Array) {
-              filteredSharpness = new Uint8Array(filteredCount);
-            } else if (sharpness instanceof Uint16Array) {
-              filteredSharpness = new Uint16Array(filteredCount);
-            }
-          }
-
-          // Copy only valid points
-          for (let i = 0; i < filteredCount; i++) {
-            const srcIdx = validIndices[i];
-
-            // Copy position (3 components)
-            filteredPositions3D[i * 3] = positions3D[srcIdx * 3];
-            filteredPositions3D[i * 3 + 1] = positions3D[srcIdx * 3 + 1];
-            filteredPositions3D[i * 3 + 2] = positions3D[srcIdx * 3 + 2];
-
-            // Copy radius
-            filteredRadii[i] = finalRadii![srcIdx];
-
-            // Copy colors if present (3 components)
-            if (colors && filteredColors) {
-              filteredColors[i * 3] = colors[srcIdx * 3];
-              filteredColors[i * 3 + 1] = colors[srcIdx * 3 + 1];
-              filteredColors[i * 3 + 2] = colors[srcIdx * 3 + 2];
-            }
-
-            // Copy sharpness if present
-            if (sharpness && filteredSharpness) {
-              filteredSharpness[i] = sharpness[srcIdx];
-            }
-          }
-
-          // Replace arrays with filtered versions
-          positions3D = filteredPositions3D;
-          finalRadii = filteredRadii;
-          colors = filteredColors || colors;
-          sharpness = filteredSharpness || sharpness;
-
-          // Update point count
-          numPoints = filteredCount;
-        }
-
-        // Recalculate bounds for filtered points only
-        bounds.makeEmpty();
-        for (let i = 0; i < filteredCount; i++) {
-          point.set(positions3D[i * 3], positions3D[i * 3 + 1], positions3D[i * 3 + 2]);
-          bounds.expandByPoint(point);
-        }
-      } else if (filteredCount === 0) {
-        // All points were filtered out - this is correct behavior for points outside the hyperplane!
-        log.info(
-          Modules.SPATIAL_INDEX_LOADER,
-          `All ${numPoints} points have zero effective radius - no points visible at this slice`
-        );
-        // Return empty points - this is the correct behavior
-        return this.createEmptyPointsData(viewState);
-      }
-    }
-
-    // Phase 1 Deep Integration: Return from accumulator when using target buffers
-    if (targetBuffers && this._accumulator) {
-      // Data is already in accumulator buffers (written directly during processing)
-      // Just update metadata and return (ZERO allocations!)
-      this._accumulator.updateMetadata({
-        bounds,
-        usedSpatialIndex: true,
-      });
-
-      // Return from accumulator (subarrays are views into accumulator buffers)
-      return this._accumulator.getData(numPoints);
-    }
-
-    // Fallback: Create new LoadedPointsData object (when accumulator disabled)
-    const dtypes = {
-      positions: this.node.attrs.position_dtype as string | undefined,
-      colors: this.node.attrs.color_dtype as string | undefined,
-      radii: this.node.attrs.radius_dtype as string | undefined,
-      sharpness: this.node.attrs.sharpness_dtype as string | undefined,
-    };
-
-    return {
-      positions: positions3D as PositionArray,
-      colors: colors as ColorArray | undefined,
-      radii: finalRadii as ScalarArray | undefined,
-      sharpness: sharpness as ScalarArray | undefined,
-      pointCount: numPoints,
-      ndim,
-      metadata: {
-        totalPoints: this.node.attrs.n_points || totalPoints,
-        loadedPoints: numPoints,
-        bounds,
-        usedSpatialIndex: true,
-        usedEffectiveRadius,
-        dtypes,
-      },
-    };
+    return projectPointsTo3D(
+      positions,
+      colors,
+      radii,
+      sharpness,
+      viewState,
+      ranges,
+      this.buildProjectionContext(),
+      targetBuffers
+    );
   }
 
   /**
-   * Project nD points to 3D display space using a web worker
-   *
-   * This offloads CPU-intensive projection work to a worker thread:
-   * - nD → 3D coordinate extraction
-   * - Effective radius calculation
-   * - Zero-radius point filtering
-   * - Bounds calculation
-   *
-   * Uses Comlink.transfer() for zero-copy ArrayBuffer transfer.
+   * Worker-based nD → 3D projection. Thin delegate to
+   * `projectPointsTo3DUsingWorker` in `point-loader/projection.ts`,
+   * which falls back to the main thread on worker failure.
    */
   private async projectTo3DUsingWorker(
     positions: Float32Array | Uint8Array | Uint16Array | Float16Array | null,
@@ -1489,169 +1158,25 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
     viewState: ViewState,
     ranges: PointRange[]
   ): Promise<LoadedPointsData> {
-    const totalPoints = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
-
-    if (!positions) {
-      throw new Error('Positions data is required for points');
-    }
-
-    // Calculate ndim from actual positions array
-    const ndim =
-      totalPoints > 0
-        ? Math.round(positions.length / totalPoints)
-        : this.chunkIndex?.metadata.ndim || 3;
-
-    // Convert positions to Float32Array if needed (positions must be Float32)
-    const positionsFloat32 =
-      positions instanceof Float32Array ? positions : new Float32Array(positions);
-
-    // Colors: Keep native type! Worker and GPU buffer pool support multi-type (Uint8/Uint16/Float32)
-    // THREE.js handles normalization in shader via normalized attribute flag
-    // Float16Array needs conversion to Float32Array (worker doesn't support Float16)
-    // Note: Float16 values are already in float range, no normalization needed
-    let colorsMultiType: Float32Array | Uint8Array | Uint16Array | null = null;
-    if (colors) {
-      if (colors instanceof Float16Array) {
-        // Convert Float16 to Float32 (no normalization - already in float range)
-        colorsMultiType = new Float32Array(colors);
-      } else {
-        colorsMultiType = colors;
-      }
-    }
-
-    // Radii/sharpness: Convert to Float32Array (no normalization needed - already world units)
-    const radiiFloat32 = radii
-      ? radii instanceof Float32Array
-        ? radii
-        : new Float32Array(radii)
-      : null;
-
-    const sharpnessFloat32 = sharpness
-      ? sharpness instanceof Float32Array
-        ? sharpness
-        : new Float32Array(sharpness)
-      : null;
-
-    // Build effective radius config for worker
-    let workerEffectiveRadiusConfig: { spatialExtendDims: boolean[]; maxRadius: number } | null =
-      null;
-    if (this._effectiveRadiusConfig && radiiFloat32) {
-      // Check if we should apply effective radius
-      if (shouldApplyEffectiveRadius(this._effectiveRadiusConfig, viewState.displayDims, true)) {
-        workerEffectiveRadiusConfig = {
-          spatialExtendDims: this._effectiveRadiusConfig.spatialExtendDims,
-          maxRadius: this._effectiveRadiusConfig.maxRadius,
-        };
-      }
-    }
-
-    try {
-      const worker = await getWorkerPool().getWorker();
-
-      log.info(
-        Modules.SPATIAL_INDEX_LOADER,
-        `Projecting ${totalPoints} points to 3D using worker (ndim=${ndim})`
-      );
-
-      const workerResult = await worker.projectPointsTo3D({
-        positions: positionsFloat32,
-        colors: colorsMultiType,
-        radii: radiiFloat32,
-        sharpness: sharpnessFloat32,
-        viewState: {
-          displayDims: viewState.displayDims,
-          slicePosition: viewState.slicePosition,
-          tolerance: viewState.tolerance,
-        },
-        effectiveRadiusConfig: workerEffectiveRadiusConfig,
-        ndim,
-        numPoints: totalPoints,
-      });
-
-      // Handle empty result
-      if (workerResult.visibleCount === 0) {
-        log.info(
-          Modules.SPATIAL_INDEX_LOADER,
-          `Worker projection: all ${totalPoints} points have zero effective radius`
-        );
-        return this.createEmptyPointsData(viewState);
-      }
-
-      // Build THREE.Box3 from worker bounds
-      const bounds = new THREE.Box3(
-        new THREE.Vector3(...workerResult.bounds.min),
-        new THREE.Vector3(...workerResult.bounds.max)
-      );
-
-      log.info(
-        Modules.SPATIAL_INDEX_LOADER,
-        `Worker projection complete: ${workerResult.visibleCount}/${totalPoints} visible points`
-      );
-
-      // Get dtype metadata from node attributes
-      const dtypes = {
-        positions: this.node.attrs.position_dtype as string | undefined,
-        colors: this.node.attrs.color_dtype as string | undefined,
-        radii: this.node.attrs.radius_dtype as string | undefined,
-        sharpness: this.node.attrs.sharpness_dtype as string | undefined,
-      };
-
-      return {
-        positions: workerResult.positions3D as PositionArray,
-        colors: workerResult.colors as ColorArray | undefined,
-        radii: workerResult.radii as ScalarArray | undefined,
-        sharpness: workerResult.sharpness as ScalarArray | undefined,
-        pointCount: workerResult.visibleCount,
-        ndim,
-        metadata: {
-          totalPoints: this.node.attrs.n_points || totalPoints,
-          loadedPoints: workerResult.visibleCount,
-          bounds,
-          usedSpatialIndex: true,
-          usedEffectiveRadius: !!workerEffectiveRadiusConfig,
-          dtypes,
-        },
-      };
-    } catch (error) {
-      // Fallback to main thread on worker failure
-      log.warning(
-        Modules.SPATIAL_INDEX_LOADER,
-        'Worker projection failed, falling back to main thread:',
-        error
-      );
-      return this.projectTo3D(positions, colors, radii, sharpness, viewState, ranges, null);
-    }
+    return projectPointsTo3DUsingWorker(
+      positions,
+      colors,
+      radii,
+      sharpness,
+      viewState,
+      ranges,
+      this.buildProjectionContext()
+    );
   }
 
   /**
-   * Create empty points when no points are visible
+   * Empty-points payload for the "no visible points" branches. Thin
+   * delegate to `createEmptyPointsData` in `point-loader/projection.ts`.
    */
   private createEmptyPointsData(viewState: ViewState): LoadedPointsData {
-    // Note: viewState parameter kept for future use when we might need
-    // dimension-aware empty points (e.g., different ndim based on view)
-    void viewState; // Explicitly mark as intentionally unused for now
-
-    // Get dtype metadata from node attributes
-    const dtypes = {
-      positions: this.node.attrs.position_dtype as string | undefined,
-      colors: this.node.attrs.color_dtype as string | undefined,
-      radii: this.node.attrs.radius_dtype as string | undefined,
-      sharpness: this.node.attrs.sharpness_dtype as string | undefined,
-    };
-
-    return {
-      positions: new Float32Array(0) as PositionArray,
-      pointCount: 0,
-      ndim: this.chunkIndex?.metadata.ndim || 3,
-      metadata: {
-        totalPoints: this.node.attrs.n_points || 0,
-        loadedPoints: 0,
-        bounds: new THREE.Box3(),
-        usedSpatialIndex: true,
-        dtypes,
-      },
-    };
+    return createEmptyPointsDataHelper(this.buildProjectionContext(), viewState);
   }
+
 
   // LoaderMonitor implementation
 
