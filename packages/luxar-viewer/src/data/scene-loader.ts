@@ -11,6 +11,15 @@ import * as THREE from 'three';
 import { PointSpatialIndexLoader } from './point-spatial-index-loader';
 import { normalizeURL } from './scene-loader/url-normalization';
 import { applyEffectiveAttrs as applyEffectiveAttrsHelper } from './scene-loader/effective-attrs';
+import {
+  getCacheStats as getCacheStatsHelper,
+  listCachedDatasets as listCachedDatasetsHelper,
+  clearL0Cache as clearL0CacheHelper,
+  clearL1Cache as clearL1CacheHelper,
+  clearL2Cache as clearL2CacheHelper,
+  clearAllCaches as clearAllCachesHelper,
+  type CacheStatsSnapshot,
+} from './scene-loader/cache-api';
 import { LinesSpatialIndexLoader, buildInstanceBuffers } from './lines-spatial-index-loader';
 import {
   DataLoader,
@@ -226,25 +235,15 @@ export class SceneLoader {
    * Snapshot of all cache levels (L0, L1, L2) in the form historically
    * exposed by `__luxarDebug.cache.getStats()`.
    */
-  getCacheStats(): {
-    l0: ReturnType<DecompressedChunkCache['getStats']> | null;
-    l1: ReturnType<MultiLevelCachingStore['getStats']>['l1'] | null;
-    l2: ReturnType<MultiLevelCachingStore['getStats']>['l2'] | null;
-  } {
-    const l1l2 = this.cachingStore?.getStats();
-    return {
-      l0: this.l0Cache?.getStats() ?? null,
-      l1: l1l2?.l1 ?? null,
-      l2: l1l2?.l2 ?? null,
-    };
+  getCacheStats(): CacheStatsSnapshot {
+    return getCacheStatsHelper(this.l0Cache, this.cachingStore);
   }
 
   /** List datasets currently held by the L1/L2 caching store. */
   async listCachedDatasets(): Promise<
-    ReturnType<MultiLevelCachingStore['listDatasets']> extends Promise<infer R> ? R : never
+    Awaited<ReturnType<MultiLevelCachingStore['listDatasets']>>
   > {
-    if (!this.cachingStore) return [];
-    return this.cachingStore.listDatasets();
+    return listCachedDatasetsHelper(this.cachingStore);
   }
 
   /** True if the L1/L2 caching store is configured for this loader. */
@@ -254,25 +253,22 @@ export class SceneLoader {
 
   /** Clear the in-memory L0 decompressed-chunk cache. No-op if absent. */
   clearL0Cache(): void {
-    this.l0Cache?.clear();
+    clearL0CacheHelper(this.l0Cache);
   }
 
   /** Clear the in-memory L1 metadata/chunk cache. No-op if absent. */
   clearL1Cache(): void {
-    this.cachingStore?.clearL1();
+    clearL1CacheHelper(this.cachingStore);
   }
 
   /** Clear the persistent L2 OPFS cache. No-op if absent. */
   async clearL2Cache(): Promise<void> {
-    await this.cachingStore?.clearL2();
+    await clearL2CacheHelper(this.cachingStore);
   }
 
   /** Clear all cache levels (L0 + L1 + L2). */
   async clearAllCaches(): Promise<void> {
-    this.l0Cache?.clear();
-    if (this.cachingStore) {
-      await this.cachingStore.clearAll();
-    }
+    await clearAllCachesHelper(this.l0Cache, this.cachingStore);
   }
 
   /**
