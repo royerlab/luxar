@@ -9,7 +9,7 @@
 import * as zarr from 'zarrita';
 import { get, slice } from 'zarrita';
 import * as THREE from 'three';
-import { log, Modules, LogEmoji } from '../utils/log';
+import { log, Modules } from '../utils/log';
 import {
   DataLoader,
   ViewState,
@@ -38,6 +38,10 @@ import { ArrayDecoder, ArrayRefRegistry, type ArrayMetadata } from './array-deco
 import { fetchChunkBoundsArray } from './loaders/chunk-bounds-loader';
 import { RangeLoader, SpatialQueryBuilder, type BaseViewState, type LoadRange } from './loaders';
 import { OnceInit } from './loaders/once-init';
+import {
+  warnExtendToAllNoDimensions,
+  announceExtendToAllOnce,
+} from './loaders/extend-to-all-preflight';
 import type { ZarrSceneAttrs } from '../types/zarr';
 import type { PointsMetadata } from '../types/points';
 import { LoadedPointsDataAccumulator, type AccumulatorStats } from './data-accumulator';
@@ -775,17 +779,13 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
   private async queryVisiblePointRanges(viewState: ViewState): Promise<PointRange[]> {
     const extendDims = this.node.attrs.extend_to_all || [];
 
-    if (
-      extendDims.length > 0 &&
-      (!viewState.dimensions?.metadata || viewState.dimensions.metadata.length === 0)
-    ) {
-      log.warning(
-        Modules.SPATIAL_INDEX_LOADER,
-        `extend_to_all=[${extendDims.join(', ')}] specified for ${this.node.path} but ` +
-          'viewState.dimensions.metadata is undefined. extend_to_all will not work. ' +
-          'Ensure scene dimensions are initialized before loading nodes.'
-      );
-    }
+    warnExtendToAllNoDimensions({
+      extendDims,
+      hasResolvedDimensions:
+        !!viewState.dimensions?.metadata && viewState.dimensions.metadata.length > 0,
+      nodePath: this.node.path,
+      logModule: Modules.SPATIAL_INDEX_LOADER,
+    });
 
     if (!this.chunkIndex) {
       // No chunk index - load all points (fallback for 3D datasets without Morton/Hilbert ordering)
@@ -796,12 +796,12 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
       return [{ start: 0, end: totalPoints }];
     }
 
-    if (!this._initialLoadDone && extendDims.length > 0) {
-      log.custom(
-        LogEmoji.BROADCAST,
-        Modules.SPATIAL_INDEX_LOADER,
-        `${this.node.path} configured with extend_to_all: ${extendDims.join(', ')}`
-      );
+    if (!this._initialLoadDone) {
+      announceExtendToAllOnce({
+        extendDims,
+        nodePath: this.node.path,
+        logModule: Modules.SPATIAL_INDEX_LOADER,
+      });
     }
 
     const { slicePosition, tolerance } = viewState;

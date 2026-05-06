@@ -35,6 +35,10 @@ import {
 } from './loaders';
 import { getExpectedColorType, loadColorRanges } from './loaders/color-attribute-utils';
 import { OnceInit } from './loaders/once-init';
+import {
+  warnExtendToAllNoDimensions,
+  announceExtendToAllOnce,
+} from './loaders/extend-to-all-preflight';
 import { LinesDataAccumulator, type AccumulatorStats } from './data-accumulator';
 import { config as appConfig } from '../config';
 import type { UpdateProfiler, UpdateSession } from '../profiling/update-profiler';
@@ -669,25 +673,23 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     const attrs = this.node.attrs as unknown as LinesMetadata;
     const extendDims: string[] = this.node.attrs.extend_to_all || [];
 
-    if (extendDims.length > 0 && (!viewState.dimensions || viewState.dimensions.length === 0)) {
-      log.warning(
-        Modules.LINES_LOADER,
-        `extend_to_all=[${extendDims.join(', ')}] specified for ${this.node.path} but ` +
-          'viewState.dimensions is undefined. extend_to_all will not work. ' +
-          'Ensure scene dimensions are initialized before loading nodes.'
-      );
-    }
+    warnExtendToAllNoDimensions({
+      extendDims,
+      hasResolvedDimensions: !!viewState.dimensions && viewState.dimensions.length > 0,
+      nodePath: this.node.path,
+      logModule: Modules.LINES_LOADER,
+    });
 
     if (!this.chunkIndex) {
       return [{ start: 0, end: attrs.n_segments }];
     }
 
-    if (!this._initialLoadDone && extendDims.length > 0) {
-      log.custom(
-        LogEmoji.BROADCAST,
-        Modules.LINES_LOADER,
-        `${this.node.path} configured with extend_to_all: ${extendDims.join(', ')}`
-      );
+    if (!this._initialLoadDone) {
+      announceExtendToAllOnce({
+        extendDims,
+        nodePath: this.node.path,
+        logModule: Modules.LINES_LOADER,
+      });
     }
 
     const ranges = await new SpatialQueryBuilder(this.chunkIndex.segmentIndex, viewState, {

@@ -12,7 +12,7 @@
 
 import * as zarr from 'zarrita';
 import { get, slice } from 'zarrita';
-import { log, Modules, LogEmoji } from '../utils/log';
+import { log, Modules } from '../utils/log';
 import type {
   GSplatsMetadata,
   LoadedGSplatsData,
@@ -31,6 +31,10 @@ import {
 } from './loaders';
 import { getExpectedColorType, loadColorRanges } from './loaders/color-attribute-utils';
 import { OnceInit } from './loaders/once-init';
+import {
+  warnExtendToAllNoDimensions,
+  announceExtendToAllOnce,
+} from './loaders/extend-to-all-preflight';
 import { choleskyPackedSize } from '../types/gsplats';
 import { GSplatsDataAccumulator, type AccumulatorStats } from './data-accumulator';
 import { config as appConfig } from '../config';
@@ -434,27 +438,23 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     const attrs = this.node.attrs as unknown as GSplatsMetadata;
     const extendDims: string[] = attrs.extend_to_all || [];
 
-    if (extendDims.length > 0 && (!viewState.dimensions || viewState.dimensions.length === 0)) {
-      log.warning(
-        Modules.GSPLATS_SPATIAL_INDEX_LOADER,
-        `extend_to_all=[${extendDims.join(', ')}] specified for ${this.node.path} but ` +
-          'viewState.dimensions is undefined. extend_to_all will not work. ' +
-          'Ensure scene dimensions are initialized before loading nodes.'
-      );
-    }
+    warnExtendToAllNoDimensions({
+      extendDims,
+      hasResolvedDimensions: !!viewState.dimensions && viewState.dimensions.length > 0,
+      nodePath: this.node.path,
+      logModule: Modules.GSPLATS_SPATIAL_INDEX_LOADER,
+    });
 
     if (!this.chunkIndex) {
       return [{ start: 0, end: attrs.n_splats }];
     }
 
-    if (!this._initialLoadDone && extendDims.length > 0) {
-      // Surface the broadcast emoji exactly once on first load to make it
-      // visible that this node is configured for extend_to_all visibility.
-      log.custom(
-        LogEmoji.BROADCAST,
-        Modules.GSPLATS_SPATIAL_INDEX_LOADER,
-        `${this.node.path} configured with extend_to_all: ${extendDims.join(', ')}`
-      );
+    if (!this._initialLoadDone) {
+      announceExtendToAllOnce({
+        extendDims,
+        nodePath: this.node.path,
+        logModule: Modules.GSPLATS_SPATIAL_INDEX_LOADER,
+      });
     }
 
     const ranges = await new SpatialQueryBuilder(this.chunkIndex, viewState, {
