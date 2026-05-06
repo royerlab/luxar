@@ -51,12 +51,11 @@ import { DimensionSliders } from '../ui/dimension-sliders';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
 import { DebugConsole } from '../ui/debug-console';
 import { InputContextManager, InputContext } from './input-context-manager';
+import { getNonDisplayedDimensions } from './input-handler-utils';
 import {
-  getNonDisplayedDimensions,
-  calculateStepSize,
-  calculateNextPosition,
-  mapKeyToDimension,
-} from './input-handler-utils';
+  computeDimensionStep,
+  resolveSelectedDimension,
+} from './handlers/dimension-navigation';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { updateSceneForDimensions, cycleDataMonitor, hideDataMonitor } from '../data';
 
@@ -1415,41 +1414,16 @@ export class InputHandler {
    * @private
    */
   private handleDimensionNavigation(direction: -1 | 1): void {
-    const dims = sceneDimsManager.getDims();
-    const dimensionRanges = sceneDimsManager.getDimensionRanges();
-    if (!dims || !dimensionRanges) return;
-
-    const navigableDims = this.getNavigableDimensionsList(dims);
-    if (navigableDims.length === 0) return;
-
-    // Target the currently selected dimension (bounded by available dimensions)
-    const dimIndex = Math.min(this.selectedDimension, navigableDims.length - 1);
-    const targetDim = navigableDims[dimIndex];
-
-    // Gather dimension properties for step calculation
-    const currentValue = dims.currentStep[targetDim];
-    const dimMeta = dims.metadata?.[targetDim];
-    const [min, max] = dimensionRanges[targetDim];
-
-    // Use utility functions for step calculation and navigation
-    const stepSize = calculateStepSize(targetDim, dims);
-    const isCyclic = dimMeta?.cyclic || false; // Respect cyclic flag from metadata
-    const newValue = calculateNextPosition(
-      currentValue,
+    const step = computeDimensionStep(
       direction,
-      stepSize,
-      [min, max],
-      dimMeta?.discrete,
-      isCyclic // Enable wrap-around for cyclic dimensions
+      this.selectedDimension,
+      sceneDimsManager.getDims(),
+      sceneDimsManager.getDimensionRanges()
     );
+    if (!step || !step.changed) return;
 
-    // Update dimension state if value actually changed
-    if (Math.abs(newValue - currentValue) > 1e-6) {
-      sceneDimsManager.setDimensionValue(targetDim, newValue);
-
-      // Trigger visual update
-      this.animationController.startAnimation();
-    }
+    sceneDimsManager.setDimensionValue(step.targetDim, step.newValue);
+    this.animationController.startAnimation();
   }
 
   /**
@@ -1463,22 +1437,13 @@ export class InputHandler {
    * @private
    */
   private selectDimension(index: number): void {
-    const dims = sceneDimsManager.getDims();
-    if (!dims) {
-      return;
-    }
-
-    // mapKeyToDimension maps key (index+1) to the N-th navigable dimension
-    const dimIndex = mapKeyToDimension((index + 1).toString(), dims);
-
-    if (dimIndex >= 0) {
-      // index is already the 0-based navigable position (key 1 → index 0, etc.)
-      this.selectedDimension = index;
-    } else {
-      const navigableDims = this.getNavigableDimensionsList(dims);
+    const result = resolveSelectedDimension(index, sceneDimsManager.getDims());
+    if (result.selectedDimension !== null) {
+      this.selectedDimension = result.selectedDimension;
+    } else if ('navigableCount' in result) {
       log.info(
         Modules.INPUT,
-        `Dimension ${index + 1} not available (only ${navigableDims.length} non-displayed dimensions)`
+        `Dimension ${index + 1} not available (only ${result.navigableCount} non-displayed dimensions)`
       );
     }
   }
