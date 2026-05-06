@@ -282,19 +282,19 @@ describe('configureHDRRenderer', () => {
       makeCaps({ rec2020Gamut: true, hdr: true })
     );
     expect(logSpy).toHaveBeenCalled();
-    const messages = logSpy.mock.calls.map((c) => (c[0] as string));
+    const messages: string[] = logSpy.mock.calls.map((c: unknown[]) => c[0] as string);
     expect(messages.some((m) => m.includes('Rec2020 gamut'))).toBe(true);
   });
 
   it('logs the P3 success message when only P3 is detected', () => {
     configureHDRRenderer({} as THREE.WebGLRenderer, makeCaps({ p3Gamut: true }));
-    const messages = logSpy.mock.calls.map((c) => (c[0] as string));
+    const messages: string[] = logSpy.mock.calls.map((c: unknown[]) => c[0] as string);
     expect(messages.some((m) => m.includes('P3 gamut'))).toBe(true);
   });
 
   it('logs the standard sRGB message when nothing exotic is detected', () => {
     configureHDRRenderer({} as THREE.WebGLRenderer, makeCaps());
-    const messages = logSpy.mock.calls.map((c) => (c[0] as string));
+    const messages: string[] = logSpy.mock.calls.map((c: unknown[]) => c[0] as string);
     expect(messages.some((m) => m.includes('Standard sRGB display'))).toBe(true);
   });
 });
@@ -316,7 +316,7 @@ describe('logHDRCapabilities', () => {
     );
     // 1 header + 5 capability lines + 1 color-buffer line + 1 recommendation line.
     expect(logSpy.mock.calls.length).toBeGreaterThanOrEqual(8);
-    const all = logSpy.mock.calls.map((c) => (c[0] as string)).join('\n');
+    const all = logSpy.mock.calls.map((c: unknown[]) => c[0] as string).join('\n');
     expect(all).toContain('P3 Wide Gamut');
     expect(all).toContain('Rec2020 Gamut');
     expect(all).toContain('High Dynamic Range');

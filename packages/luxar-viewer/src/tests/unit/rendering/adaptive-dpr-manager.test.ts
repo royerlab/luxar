@@ -53,7 +53,7 @@ function setNativeDPR(value: number): () => void {
 function makeRenderer(): DPRRenderer & { setAdaptivePixelRatio: ReturnType<typeof vi.fn> } {
   return {
     setAdaptivePixelRatio: vi.fn(),
-  };
+  } as DPRRenderer & { setAdaptivePixelRatio: ReturnType<typeof vi.fn> };
 }
 
 /** Simulate `frameCount` frames over `durationMs` so the FPS computes deterministically. */

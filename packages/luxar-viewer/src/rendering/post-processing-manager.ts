@@ -37,6 +37,8 @@ import {
   isBloomEffectTyped,
   isDepthOfFieldEffectTyped,
 } from './postprocessing-types';
+import { safeDisposeEffect } from './post-processing/effect-disposal';
+import { computeEffectiveRenderSize } from './post-processing/render-target-sizing';
 
 /**
  * Manages HDR post-processing effects using pmndrs/postprocessing library.
@@ -175,16 +177,10 @@ export class PostProcessingManager {
 
   /**
    * Compute the effective render-target size given current SSAA settings.
+   * Delegates to the pure helper so the SSAA arithmetic is unit-testable.
    */
   private computeEffectiveSize(): { width: number; height: number } {
-    return {
-      width: this.ssaaEnabled
-        ? Math.round(this.renderSize.width * this.ssaaMultiplier)
-        : this.renderSize.width,
-      height: this.ssaaEnabled
-        ? Math.round(this.renderSize.height * this.ssaaMultiplier)
-        : this.renderSize.height,
-    };
+    return computeEffectiveRenderSize(this.renderSize, this.ssaaEnabled, this.ssaaMultiplier);
   }
 
   /**
@@ -313,34 +309,17 @@ export class PostProcessingManager {
     this.rebuildEffectPass();
   }
 
-  /**
-   * Safely dispose an effect, handling any errors
-   * Effects from pmndrs/postprocessing have a dispose() method to free GPU resources
-   */
-  private safeDisposeEffect(effect: any, effectName: string): void {
-    if (effect && typeof effect.dispose === 'function') {
-      try {
-        effect.dispose();
-      } catch (error) {
-        log.warning(Modules.POST_PROCESSING, `Error disposing ${effectName}: ${error}`);
-      }
-    }
-  }
-
   /** Dispose every effect object owned by this manager. */
   private disposeAllEffects(context: string): void {
-    this.safeDisposeEffect(this.bloomEffect, `Bloom ${context}`);
-    this.safeDisposeEffect(this.detectorNoiseEffect, `DetectorNoise ${context}`);
-    this.safeDisposeEffect(this.dofEffect, `DOF ${context}`);
-    this.safeDisposeEffect(this.aoEffect, `AmbientOcclusion ${context}`);
-    this.safeDisposeEffect(this.vignetteEffect, `Vignette ${context}`);
-    this.safeDisposeEffect(
-      this.chromaticLensDistortionEffect,
-      `ChromaticLensDistortion ${context}`
-    );
-    this.safeDisposeEffect(this.smaaEffect, `SMAA ${context}`);
-    this.safeDisposeEffect(this.fxaaEffect, `FXAA ${context}`);
-    this.safeDisposeEffect(this.toneMappingEffect, `ToneMapping ${context}`);
+    safeDisposeEffect(this.bloomEffect, `Bloom ${context}`);
+    safeDisposeEffect(this.detectorNoiseEffect, `DetectorNoise ${context}`);
+    safeDisposeEffect(this.dofEffect, `DOF ${context}`);
+    safeDisposeEffect(this.aoEffect, `AmbientOcclusion ${context}`);
+    safeDisposeEffect(this.vignetteEffect, `Vignette ${context}`);
+    safeDisposeEffect(this.chromaticLensDistortionEffect, `ChromaticLensDistortion ${context}`);
+    safeDisposeEffect(this.smaaEffect, `SMAA ${context}`);
+    safeDisposeEffect(this.fxaaEffect, `FXAA ${context}`);
+    safeDisposeEffect(this.toneMappingEffect, `ToneMapping ${context}`);
   }
 
   /**
@@ -605,7 +584,7 @@ export class PostProcessingManager {
       this.rebuildEffectPass();
       log.success(Modules.POST_PROCESSING, 'Bloom enabled');
     } else if (!enabled && this.bloomEffect) {
-      this.safeDisposeEffect(this.bloomEffect, 'Bloom');
+      safeDisposeEffect(this.bloomEffect, 'Bloom');
       this.bloomEffect = undefined;
       this.rebuildEffectPass();
       log.info(Modules.POST_PROCESSING, 'Bloom disabled');
@@ -757,7 +736,7 @@ export class PostProcessingManager {
     };
 
     // Dispose old SMAA effect before recreating
-    this.safeDisposeEffect(this.smaaEffect, 'SMAA (preset change)');
+    safeDisposeEffect(this.smaaEffect, 'SMAA (preset change)');
 
     // Need to recreate SMAA effect with new preset
     this.smaaEffect = new SMAAEffect({
@@ -806,7 +785,7 @@ export class PostProcessingManager {
           `strength=${strength}, focalLength=${focalLength.toFixed(3)}`
       );
     } else if (!enabled && this.dofEffect) {
-      this.safeDisposeEffect(this.dofEffect, 'DOF');
+      safeDisposeEffect(this.dofEffect, 'DOF');
       this.dofEffect = undefined;
       this.rebuildEffectPass();
       log.info(Modules.POST_PROCESSING, 'DOF disabled');
@@ -885,7 +864,7 @@ export class PostProcessingManager {
         `Detector noise enabled: readout=${readoutSigma ?? 0.01}, gain=${photonGain ?? 0.01}, fpn=${fpnSigma ?? 0.005}`
       );
     } else if (!enabled && this.detectorNoiseEffect) {
-      this.safeDisposeEffect(this.detectorNoiseEffect, 'DetectorNoise');
+      safeDisposeEffect(this.detectorNoiseEffect, 'DetectorNoise');
       this.detectorNoiseEffect = undefined;
       this.rebuildEffectPass();
       log.info(Modules.POST_PROCESSING, 'Detector noise disabled');
@@ -997,7 +976,7 @@ export class PostProcessingManager {
         `Vignette enabled (HDR-safe): darkness=${darkness ?? 0.5}, offset=${offset ?? 0.5}`
       );
     } else if (!enabled && this.vignetteEffect) {
-      this.safeDisposeEffect(this.vignetteEffect, 'Vignette');
+      safeDisposeEffect(this.vignetteEffect, 'Vignette');
       this.vignetteEffect = undefined;
       this.rebuildEffectPass();
       log.info(Modules.POST_PROCESSING, 'Vignette disabled');
@@ -1061,7 +1040,7 @@ export class PostProcessingManager {
           `focalLength=(${focalLengthX}, ${focalLengthY}), skew=${skew}`
       );
     } else if (!enabled && this.chromaticLensDistortionEffect) {
-      this.safeDisposeEffect(this.chromaticLensDistortionEffect, 'ChromaticLensDistortion');
+      safeDisposeEffect(this.chromaticLensDistortionEffect, 'ChromaticLensDistortion');
       this.chromaticLensDistortionEffect = undefined;
       this.rebuildEffectPass();
       log.info(Modules.POST_PROCESSING, 'Chromatic lens distortion disabled');
@@ -1179,7 +1158,7 @@ export class PostProcessingManager {
       this.rebuildEffectPass();
       log.info(Modules.POST_PROCESSING, `Ambient occlusion enabled: quality=${quality}`);
     } else if (!enabled && this.aoEffect) {
-      this.safeDisposeEffect(this.aoEffect, 'AmbientOcclusion');
+      safeDisposeEffect(this.aoEffect, 'AmbientOcclusion');
       this.aoEffect = undefined;
       this.rebuildEffectPass();
       log.info(Modules.POST_PROCESSING, 'Ambient occlusion disabled');
@@ -1707,7 +1686,7 @@ export class PostProcessingManager {
       };
 
       // Dispose old bloom effect before recreating
-      this.safeDisposeEffect(this.bloomEffect, 'Bloom (levels change)');
+      safeDisposeEffect(this.bloomEffect, 'Bloom (levels change)');
 
       // Recreate bloom with new levels setting
       // Levels control the quality/performance of mipmap blur
@@ -2164,7 +2143,7 @@ export class PostProcessingManager {
         restoredBloom.mipmapBlurPass.radius = state.bloom.radius;
       }
     } else if (!state.bloom && this.bloomEffect) {
-      this.safeDisposeEffect(this.bloomEffect, 'Bloom (rebuild: was disabled)');
+      safeDisposeEffect(this.bloomEffect, 'Bloom (rebuild: was disabled)');
       this.bloomEffect = undefined;
     }
 

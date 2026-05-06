@@ -65,7 +65,7 @@ describe('log routing', () => {
     log.query('Mod', 'querying');
     log.data('Mod', 'crunching');
 
-    const messages = logSpy.mock.calls.map((c) => c[0] as string);
+    const messages = logSpy.mock.calls.map((c: unknown[]) => c[0] as string);
     expect(messages).toEqual([
       `[${LogEmoji.LOAD}] [Mod] fetching`,
       `[${LogEmoji.UPDATE}] [Mod] updating`,
@@ -129,7 +129,7 @@ describe('createModuleLogger', () => {
     // log + info + success + load + update + query + data + custom each
     // route through console.log. error and warning route to console.error
     // and console.warn respectively. Total console.log calls: 8.
-    const allLogMessages = logSpy.mock.calls.map((c) => c[0] as string);
+    const allLogMessages = logSpy.mock.calls.map((c: unknown[]) => c[0] as string);
     expect(allLogMessages.length).toBe(8);
     for (const m of allLogMessages) {
       expect(m).toContain('[MyMod]');
