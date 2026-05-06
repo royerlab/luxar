@@ -642,7 +642,8 @@ describe('PointSpatialIndexLoader', () => {
       // Verify cleanup
       expect((loader as any).chunkIndex).toBeNull();
       expect((loader as any).arrays).toEqual({});
-      expect((loader as any).eventListeners.size).toBe(0);
+      // eventListeners Set replaced by LoaderEventEmitter — same observable contract.
+      expect((loader as any).events.size).toBe(0);
     });
   });
 

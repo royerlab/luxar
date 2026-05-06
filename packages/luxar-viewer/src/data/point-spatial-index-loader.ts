@@ -28,6 +28,7 @@ import {
   type EffectiveRadiusConfig,
 } from './effective-radius-calculator';
 import { computeLoadLatency, recordLoadEvent } from './point-loader/loader-metrics';
+import { LoaderEventEmitter } from './point-loader/monitor-events';
 import type {
   MonitorEvent,
   MonitorEventListener,
@@ -128,7 +129,7 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
   private _accumulator: LoadedPointsDataAccumulator | null = null;
 
   // Monitoring
-  private eventListeners = new Set<MonitorEventListener>();
+  private readonly events = new LoaderEventEmitter();
   private metrics: LoaderMetrics;
   private activeQueries = new Map<string, QueryInfo>();
   private lastQueryCells = 0;
@@ -1745,14 +1746,14 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
    * Add event listener
    */
   addEventListener(listener: MonitorEventListener): void {
-    this.eventListeners.add(listener);
+    this.events.add(listener);
   }
 
   /**
    * Remove event listener
    */
   removeEventListener(listener: MonitorEventListener): void {
-    this.eventListeners.delete(listener);
+    this.events.remove(listener);
   }
 
   /**
@@ -1797,16 +1798,12 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
   }
 
   /**
-   * Emit event to listeners
+   * Emit event to listeners. Thin wrapper around `LoaderEventEmitter.emit`
+   * so the three call sites in this file keep their `this.emitEvent(...)`
+   * shape; per-listener error isolation lives in the emitter.
    */
   private emitEvent(event: MonitorEvent): void {
-    for (const listener of this.eventListeners) {
-      try {
-        listener(event);
-      } catch (error) {
-        log.error(Modules.SPATIAL_INDEX_LOADER, 'Error in event listener:', error);
-      }
-    }
+    this.events.emit(event);
   }
 
   /**
@@ -1889,7 +1886,7 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
     this.chunkIndex = null;
     this.arrays = {};
     this._onceInit.reset();
-    this.eventListeners.clear();
+    this.events.clear();
 
     // Dispose accumulator
     if (this._accumulator) {
