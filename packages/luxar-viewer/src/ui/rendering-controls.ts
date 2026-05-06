@@ -10,15 +10,20 @@ import { ThemeManager } from '../themes/theme-manager';
 
 import type { RenderingControllers } from '../controls/types';
 import { isOrbitControls } from '../controls/types';
-import { serializeSettings, deserializeSettings } from './rendering-controls-utils';
 import { log, Modules } from '../utils/log';
-import { StorageKeys } from '../utils/storage-keys';
 import { setupNavigationControls } from './rendering-controls/navigation-setup';
 import { setupCameraControls } from './rendering-controls/camera-setup';
 import { setupHDRControls } from './rendering-controls/hdr-setup';
 import { setupAntiAliasingControls } from './rendering-controls/anti-aliasing-setup';
 import { setupPostProcessingControls } from './rendering-controls/post-processing-setup';
 import { CinematicModeController, TONE_MAPPING_MAP } from './rendering-controls/cinematic-mode';
+import {
+  buildBaseDefaults,
+  buildResetDefaults,
+  clearStoredSettings,
+  saveSettingsToStorage,
+  loadSettingsFromStorage,
+} from './rendering-controls/settings-persistence';
 import type { AdaptiveDPRManager } from '../rendering/adaptive-dpr-manager';
 import type { ZarrViewerConfig } from '../types/zarr';
 import { extractRenderingOverrides } from '../config/viewer-config-utils';
@@ -134,15 +139,7 @@ export class RenderingControls {
   constructor(postProcessing: PostProcessingManager, sceneManager: SceneManager) {
     this.postProcessing = postProcessing;
     this.sceneManager = sceneManager;
-    this.settings = {
-      ...config.renderingControls.defaults,
-      // Add fly control defaults from config.controls.fly
-      flyMovementSpeed: config.controls.fly.movement.speed.default,
-      flyRotationSpeed: config.controls.fly.rotation.speed.default,
-      flyInertialMode: config.controls.fly.inertialMode.default,
-      flyDamping: config.controls.fly.movement.damping.default,
-      flyRotationDamping: config.controls.fly.rotation.damping.default,
-    };
+    this.settings = buildBaseDefaults();
 
     // Initialize GUI with close button callback
     this.gui = new GUI({
@@ -357,37 +354,14 @@ export class RenderingControls {
     // Clear cinematic snapshot since we're resetting all settings
     this.cinematic?.clearSnapshot();
 
-    // Get fresh defaults from config, including fly control defaults
-    const defaults = {
-      ...config.renderingControls.defaults,
-      flyMovementSpeed: config.controls.fly.movement.speed.default,
-      flyRotationSpeed: config.controls.fly.rotation.speed.default,
-      flyInertialMode: config.controls.fly.inertialMode.default,
-      flyDamping: config.controls.fly.movement.damping.default,
-      flyRotationDamping: config.controls.fly.rotation.damping.default,
-    };
-
-    // Overlay zarr viewer_config on top of hardcoded defaults (if available).
-    // This makes the data author's recommendations the "true defaults" for this scene.
-    if (this.zarrViewerConfig) {
-      const zarrOverrides = extractRenderingOverrides(this.zarrViewerConfig);
-      Object.assign(defaults, zarrOverrides);
-    }
+    // Get fresh defaults (zarr overrides are layered on top when available).
+    const defaults = buildResetDefaults(this.zarrViewerConfig);
 
     // Update settings object in place to maintain GUI bindings
     Object.assign(this.settings, defaults);
 
     // Clear saved settings for this scene (before applying, so user sees clean state).
-    // Wrapped in try/catch so a host page with localStorage disabled (private
-    // mode strict, sandboxed iframe) doesn't break the reset flow.
-    if (this.sceneId) {
-      try {
-        const key = StorageKeys.rendering(this.sceneId);
-        localStorage.removeItem(key);
-      } catch (err) {
-        log.warning(Modules.RENDERING_CONTROLS, 'Failed to clear saved rendering settings', err);
-      }
-    }
+    clearStoredSettings(this.sceneId);
 
     // Apply camera settings to scene manager (before post-processing)
     const currentFOV = this.sceneManager.currentFov;
@@ -969,83 +943,48 @@ export class RenderingControls {
     }
   }
 
-  /**
-   * Save current settings to localStorage
-   */
+  /** Save current settings to localStorage. */
   private saveSettings(): void {
-    if (!this.sceneId) return;
-
-    try {
-      const key = StorageKeys.rendering(this.sceneId);
-      localStorage.setItem(key, serializeSettings(this.settings));
-    } catch (err) {
-      // Ignore quota / disabled-storage errors — settings just don't persist.
-      log.warning(
-        Modules.RENDERING_CONTROLS,
-        'Failed to save rendering settings to localStorage',
-        err
-      );
-    }
+    saveSettingsToStorage(this.sceneId, this.settings);
   }
 
-  /**
-   * Load settings from localStorage
-   */
+  /** Load settings from localStorage and apply them to GUI / managers. */
   private loadSettings(): void {
     if (!this.sceneId) return;
 
     // Snapshot is session-only; clear it when loading persisted settings
     this.cinematic?.clearSnapshot();
 
-    let stored: string | null = null;
-    try {
-      const key = StorageKeys.rendering(this.sceneId);
-      stored = localStorage.getItem(key);
-    } catch (err) {
-      log.warning(
-        Modules.RENDERING_CONTROLS,
-        'Failed to read rendering settings from localStorage',
-        err
-      );
+    const { stored, loaded } = loadSettingsFromStorage(this.sceneId);
+    this.hasStoredLocalSettings = stored;
+
+    if (!stored) return;
+
+    if (!loaded) {
+      log.warning(Modules.RENDERER, 'Failed to parse rendering settings');
+      return;
     }
-    this.hasStoredLocalSettings = !!stored;
 
-    if (stored) {
-      const loadedSettings = deserializeSettings(stored);
-      if (loadedSettings) {
-        // Update settings properties IN PLACE to maintain GUI controller bindings
-        // This is critical - replacing the entire settings object breaks the GUI bindings
-        Object.assign(this.settings, {
-          ...config.renderingControls.defaults,
-          // Add fly control defaults from config.controls.fly
-          flyMovementSpeed: config.controls.fly.movement.speed.default,
-          flyRotationSpeed: config.controls.fly.rotation.speed.default,
-          flyInertialMode: config.controls.fly.inertialMode.default,
-          flyDamping: config.controls.fly.movement.damping.default,
-          flyRotationDamping: config.controls.fly.rotation.damping.default,
-          ...loadedSettings,
-        });
+    // Update settings properties IN PLACE to maintain GUI controller bindings
+    // (replacing the entire settings object would break the GUI bindings).
+    Object.assign(this.settings, { ...buildBaseDefaults(), ...loaded });
 
-        // Update GUI to reflect loaded values
-        // Note: HDR controller's updateDisplay is overridden to show actual intensity
-        this.gui.controllersRecursive().forEach((controller) => {
-          controller.updateDisplay();
-        });
+    // Update GUI to reflect loaded values
+    // Note: HDR controller's updateDisplay is overridden to show actual intensity
+    this.gui.controllersRecursive().forEach((controller) => {
+      controller.updateDisplay();
+    });
 
-        // Sync adaptive DPR manager state and update visibility
-        if (this.adaptiveDPRManager && this.updateAdaptiveDPRVisibility) {
-          this.adaptiveDPRManager.setEnabled(this.settings.adaptiveDPREnabled);
-          this.updateAdaptiveDPRVisibility(this.settings.adaptiveDPREnabled);
-        }
-
-        // Update cinematic mode checkbox based on loaded effects state
-        this.updateCinematicModeCheckbox();
-
-        log.info(Modules.RENDERER, `Loaded rendering settings for scene: ${this.sceneId}`);
-      } else {
-        log.warning(Modules.RENDERER, 'Failed to parse rendering settings');
-      }
+    // Sync adaptive DPR manager state and update visibility
+    if (this.adaptiveDPRManager && this.updateAdaptiveDPRVisibility) {
+      this.adaptiveDPRManager.setEnabled(this.settings.adaptiveDPREnabled);
+      this.updateAdaptiveDPRVisibility(this.settings.adaptiveDPREnabled);
     }
+
+    // Update cinematic mode checkbox based on loaded effects state
+    this.updateCinematicModeCheckbox();
+
+    log.info(Modules.RENDERER, `Loaded rendering settings for scene: ${this.sceneId}`);
   }
 
   /**
