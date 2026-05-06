@@ -31,15 +31,15 @@ export default defineConfig({
       // in a dedicated commit each time a phase of new tests crosses the
       // next band. Long-term target: 80% across the board.
       thresholds: {
-        lines: 57,
-        functions: 58,
+        lines: 58,
+        functions: 59,
         branches: 47,
         statements: 57,
       },
-      // Note: actuals after the hdr-detection / label-loader / range-loader
-      // singleton tests land at ~57.9% lines / 58.5% functions /
-      // 57.2% statements / 47.0% branches. The floor here is set 0-0.5pp
-      // below those numbers so re-runs don't flicker around the threshold.
+      // Note: actuals after adding loader-registry / log / adaptive-dpr-manager
+      // unit tests land at ~58.4% lines / 59.9% functions / 57.7% statements /
+      // 47.5% branches. The floor here is set 0.4-0.9pp below those numbers
+      // so re-runs don't flicker around the threshold.
     },
   },
   resolve: {
