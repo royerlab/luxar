@@ -6,6 +6,45 @@ All notable changes to Luxar are documented in this file.
 
 ### May 2026
 
+#### Added — `luxar gsplat cal` (blind-spot CV calibration)
+
+- New CLI command `luxar gsplat cal <volume> <out.json>` that sweeps splat
+  count `K` and reports the recommended `K*` via blind-spot
+  cross-validation: 5%-donut-median masking (Noise2Self protocol from
+  Batson & Royer 2019), fit at each `K` against the masked volume, evaluate
+  PSNR at the held-out positions against the *original* values. Hybrid
+  peak/plateau/signal-limited detection rule from the manuscript's
+  `splat_count_vs_quality §4.2`.
+- Free byproduct: per-dataset noise-floor estimate via a three-estimator
+  ensemble (discrete-Laplacian MAD, Haar HH-subband MAD, background-region
+  MAD), giving an absolute PSNR ceiling.
+- Configurable K grid: `--k-grid '1000,4000,...'` (explicit) or parametric
+  via `--n-grid`, `--k-min`, `--k-max`, `--progression exp|power`,
+  `--power`. Volume loader pass-through (`--channel`, `--timepoint`,
+  `--array-key`) and full preset/config layering. Optional `--keep-fits`
+  persists each per-K `.gsplats.zarr`; optional `--pdf` produces a 3-page
+  matplotlib report (rate-distortion, blind-spot CV curves, slice
+  montages).
+- New module `luxar.gsplats.calibration`: `cv_mask`, `donut_median_fill`,
+  `held_out_psnr`, `estimate_noise_floor` (returns `NoiseFloor`),
+  `build_k_grid`, `find_k_star` (returns `HeldOutPeak`),
+  `CalibrationResult` (JSON round-trip), and the top-level `calibrate`
+  driver. New module `luxar.gsplats.calibration_report` for the optional
+  PDF.
+- Purely additive: no changes to `fit_gaussian_splats`, the optimisation
+  loop, the loss module, the metrics module, or `GSplatData`. Held-out
+  PSNR is fundamentally a *capacity*-selection criterion (across `K`),
+  not an *iteration*-selection one — the existing patience-based early
+  stop already covers the within-fit regime.
+- Tests: 37 unit tests in `gsplats/tests/test_calibration.py` covering
+  mask determinism, donut fill (2D/3D/4D), held-out PSNR, K-grid
+  construction, peak detection rule, noise-floor recovery on synthetic
+  Gaussian noise, JSON round-trip, and a CPU smoke test of the full
+  driver. Plus 4 CLI smoke tests in
+  `cli/tests/test_gsplat_cli_extended.py::TestCalibrateCommand`.
+- Docs: `gsplats/README.md` Calibration section, `gsplats/SPECIFICATIONS.md`
+  §8, Sphinx page `docs/api/gsplats.rst`, and CLAUDE.md examples block.
+
 #### Changed — GSplats default device on macOS
 
 - `GaussianSplatModel` (and the gsplat fitting API) now auto-selects MPS on macOS when no explicit device is provided and `use_metal=True` (the default). Pre-rewrite, MPS was never auto-selected. Pass `use_metal=False` to keep CPU as the default on Macs that prefer it.
