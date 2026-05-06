@@ -37,6 +37,10 @@ import {
 import { log, Modules, LogEmoji } from '../utils/log';
 import { sceneDimsManager } from './scene-dims-manager';
 import {
+  clearLoadedSceneContent,
+  disposeSceneGraphResources,
+} from './scene-setup/scene-disposal';
+import {
   type LuxarCamera,
   isPerspectiveCamera,
   isOrthographicCamera,
@@ -711,57 +715,13 @@ export class SceneManager extends THREE.EventDispatcher<{
   }
 
   /**
-   * Clear all loaded content from the scene, keeping lights and background
+   * Clear all loaded content from the scene, keeping lights and background.
+   * Thin delegate over `clearLoadedSceneContent` in scene-setup/scene-disposal.
    */
   private clearSceneContent(): void {
     this.invalidateBoundsCache();
-
-    // Helper function to recursively dispose of objects
-    const disposeObject = (obj: THREE.Object3D) => {
-      // Handle Mesh, Points, and InstancedMesh (used for lines)
-      if (
-        obj instanceof THREE.Mesh ||
-        obj instanceof THREE.Points ||
-        obj instanceof THREE.InstancedMesh
-      ) {
-        if (obj.geometry) obj.geometry.dispose();
-        if (obj.material) {
-          if (Array.isArray(obj.material)) {
-            obj.material.forEach((m) => m.dispose());
-          } else {
-            obj.material.dispose();
-          }
-        }
-      }
-
-      // Recursively dispose children
-      while (obj.children.length > 0) {
-        disposeObject(obj.children[0]);
-        obj.remove(obj.children[0]);
-      }
-    };
-
-    // Find all objects to remove (direct children of scene)
-    const objectsToRemove: THREE.Object3D[] = [];
-
-    for (let i = this.scene.children.length - 1; i >= 0; i--) {
-      const child = this.scene.children[i];
-
-      // Keep lights and any background/environment objects
-      if (child instanceof THREE.Light) continue;
-      if (child.userData?.isBackground) continue;
-
-      // Mark everything else for removal
-      objectsToRemove.push(child);
-    }
-
-    // Remove and dispose marked objects
-    for (const obj of objectsToRemove) {
-      disposeObject(obj);
-      this.scene.remove(obj);
-    }
-
-    log.info(Modules.SCENE_MANAGER, `Cleared ${objectsToRemove.length} objects from scene`);
+    const removed = clearLoadedSceneContent(this.scene);
+    log.info(Modules.SCENE_MANAGER, `Cleared ${removed} objects from scene`);
   }
 
   /**
@@ -1606,24 +1566,10 @@ export class SceneManager extends THREE.EventDispatcher<{
     this.renderer.dispose();
 
     // Traverse scene graph and dispose all geometry and material resources
-    // This is critical because WebGL resources are not garbage collected
-    this.scene.traverse((object) => {
-      if ('geometry' in object && 'material' in object) {
-        const mesh = object as THREE.Mesh;
-
-        // Dispose geometry - frees vertex and index buffers on GPU
-        mesh.geometry.dispose();
-
-        // Handle both single materials and material arrays
-        if (mesh.material instanceof THREE.Material) {
-          // Single material - dispose textures and shader programs
-          mesh.material.dispose();
-        } else if (Array.isArray(mesh.material)) {
-          // Multiple materials - dispose each one individually
-          mesh.material.forEach((material) => material.dispose());
-        }
-      }
-    });
+    // (WebGL resources are not garbage collected). Delegated to
+    // scene-setup/scene-disposal so the same one-shot final-dispose pass
+    // is unit-testable in isolation.
+    disposeSceneGraphResources(this.scene);
   }
 
   /**

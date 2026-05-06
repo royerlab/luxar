@@ -1,0 +1,113 @@
+/**
+ * Scene-graph disposal helpers extracted from `scene/scene-manager.ts`.
+ *
+ * Three independent behaviors live here, all pure with respect to the
+ * scene manager:
+ *
+ *   - `disposeObjectTree` — recursively dispose a single Object3D and
+ *     its descendants, removing children from their parents as it goes.
+ *     Used by `clearSceneContent()` for objects below the scene root
+ *     that are being unloaded.
+ *   - `clearLoadedSceneContent` — walk the direct children of the scene
+ *     root, skip lights and `userData.isBackground` markers, dispose
+ *     and remove the rest. Returns the count of removed objects so the
+ *     caller can log it.
+ *   - `disposeSceneGraphResources` — traverse the scene one last time
+ *     on shutdown, disposing every geometry + material reference. The
+ *     scene root is NOT cleared from `scene.children`; the caller is
+ *     about to drop the renderer/scene/camera anyway.
+ *
+ * @module scene/scene-setup/scene-disposal
+ */
+
+import * as THREE from 'three';
+
+/**
+ * Recursively dispose `obj` and every descendant, removing each child
+ * from its parent as it walks. Disposes geometry and material(s) on
+ * `Mesh`, `Points`, and `InstancedMesh` instances; non-renderable
+ * Object3Ds (Group / Object3D / Light) are walked through but contribute
+ * nothing to dispose themselves.
+ *
+ * The walk is depth-first by always disposing `children[0]` until the
+ * children array is empty — the same shape `clearSceneContent` had
+ * inline. This avoids re-indexing after each removal.
+ */
+export function disposeObjectTree(obj: THREE.Object3D): void {
+  if (
+    obj instanceof THREE.Mesh ||
+    obj instanceof THREE.Points ||
+    obj instanceof THREE.InstancedMesh
+  ) {
+    if (obj.geometry) obj.geometry.dispose();
+    if (obj.material) {
+      if (Array.isArray(obj.material)) {
+        obj.material.forEach((m) => m.dispose());
+      } else {
+        obj.material.dispose();
+      }
+    }
+  }
+
+  // Recursively dispose children
+  while (obj.children.length > 0) {
+    disposeObjectTree(obj.children[0]);
+    obj.remove(obj.children[0]);
+  }
+}
+
+/**
+ * Clear loaded content from a scene root, preserving lights and any
+ * objects flagged with `userData.isBackground = true`.
+ *
+ * For each remaining direct child, disposes its full subtree via
+ * `disposeObjectTree` and removes it from the scene.
+ *
+ * @returns number of removed objects (for logging by the caller).
+ */
+export function clearLoadedSceneContent(scene: THREE.Scene): number {
+  const objectsToRemove: THREE.Object3D[] = [];
+
+  // Snapshot the removable children — iterate from the back so the
+  // index walk is correct even though we don't mutate during this loop.
+  for (let i = scene.children.length - 1; i >= 0; i--) {
+    const child = scene.children[i];
+    if (child instanceof THREE.Light) continue;
+    if (child.userData?.isBackground) continue;
+    objectsToRemove.push(child);
+  }
+
+  for (const obj of objectsToRemove) {
+    disposeObjectTree(obj);
+    scene.remove(obj);
+  }
+
+  return objectsToRemove.length;
+}
+
+/**
+ * Final-shutdown traversal: dispose every renderable's geometry and
+ * material(s) under the scene. Unlike `clearLoadedSceneContent`, this
+ * does NOT remove anything from the scene graph — the caller is about
+ * to drop the scene, renderer, and camera, so detaching is unnecessary
+ * and traversing once is faster than walking + removing.
+ *
+ * Skips non-renderable Object3Ds; those have nothing to dispose.
+ */
+export function disposeSceneGraphResources(scene: THREE.Scene): void {
+  scene.traverse((object) => {
+    if ('geometry' in object && 'material' in object) {
+      const mesh = object as THREE.Mesh;
+
+      // Dispose geometry - frees vertex and index buffers on GPU
+      mesh.geometry.dispose();
+
+      // Handle both single materials and material arrays
+      if (mesh.material instanceof THREE.Material) {
+        mesh.material.dispose();
+      } else if (Array.isArray(mesh.material)) {
+        mesh.material.forEach((material) => material.dispose());
+      }
+    }
+  });
+}
