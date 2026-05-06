@@ -29,18 +29,16 @@ export default defineConfig({
       // dedicated commit each time a phase of new tests crosses the next
       // band. Long-term target: 80% across the board.
       thresholds: {
-        lines: 61,
-        functions: 63.5,
-        branches: 49.5,
-        statements: 60.3,
+        lines: 63,
+        functions: 65,
+        branches: 52,
+        statements: 62,
       },
-      // Note: after the 5.4 ColormapLegend / ResolutionIndicator /
-      // PerformanceMonitor / base-types / wasm-loader / scene-loader-
-      // helpers / chunk-bounds-loader suites (~62 new tests in this
-      // session), measured coverage rose to 61.24 % lines /
-      // 63.93 % functions / 49.69 % branches / 60.54 % statements.
-      // Floor moves up another ~0.3-0.5pp per band; long-term target
-      // stays 80 %.
+      // Note: after the Phase 4.5 + 4.6 decompositions added ~81 unit
+      // tests for the scene-loader / recording-panel sub-modules,
+      // measured coverage rose to 63.98 % lines / 66.28 % functions /
+      // 53.19 % branches / 63.28 % statements. Floor moves up ~2pp per
+      // band with a ~1pp safety margin; long-term target stays 80 %.
     },
   },
   resolve: {
