@@ -28,25 +28,13 @@ import type { DimensionAnimationManager } from '../scene/dimension-animation-man
 import type { AdaptiveDPRManager } from '../rendering/adaptive-dpr-manager';
 import { LuxarOrbitControls } from '../controls/luxar-orbit-controls';
 import type { OverlayManager } from './overlay-manager';
-import { FONT_PRESETS } from './overlay-manager';
-import type { OverlayConfig } from './overlay-loader';
 import {
-  anchorOffset as computeAnchorOffset,
   computeVideoBitrate as computeVideoBitratePure,
   generateFfmpegScript as generateFfmpegScriptPure,
   generateFilename as generateFilenamePure,
   getSupportedMimeType as getSupportedMimeTypePure,
 } from './recording/media-utilities';
-
-/** Maps Luxar blend mode names to Canvas 2D globalCompositeOperation values. */
-const BLEND_MODE_TO_COMPOSITE: Record<string, GlobalCompositeOperation> = {
-  normal: 'source-over',
-  multiply: 'multiply',
-  screen: 'screen',
-  overlay: 'overlay',
-  additive: 'lighter',
-  difference: 'difference',
-};
+import { compositeOverlays as compositeOverlaysHelper } from './recording/overlay-compositor';
 
 export type RecordingMode = 'image' | 'video' | 'turntable';
 
@@ -1799,205 +1787,19 @@ export class RecordingPanel {
 
   /**
    * Composite visible DOM overlays onto a capture canvas using Canvas 2D.
-   * Handles text, image, and HTML overlays with positioning, opacity, and blend modes.
+   *
+   * Implementation lives in `recording/overlay-compositor.ts`; this
+   * method is a thin delegate that supplies the OverlayManager and
+   * the renderer's GL canvas needed for HTML-overlay coordinate mapping.
    */
   private compositeOverlays(canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D): void {
-    const overlays = this.overlayManager!.getVisibleOverlays();
-    if (overlays.length === 0) return;
-
-    const w = canvas.width;
-    const h = canvas.height;
-
-    for (const { el, config } of overlays) {
-      ctx.save();
-
-      // Blend mode
-      if (config.blend_mode && config.blend_mode !== 'normal') {
-        ctx.globalCompositeOperation = BLEND_MODE_TO_COMPOSITE[config.blend_mode] ?? 'source-over';
-      }
-
-      // Opacity
-      ctx.globalAlpha = parseFloat(el.style.opacity) || config.opacity;
-
-      // Position: normalized [0,1] -> pixel coords on capture canvas
-      const [nx, ny] = config.position;
-      let x = nx * w;
-      let y = ny * h;
-
-      if (el.classList.contains('luxar-overlay--text')) {
-        this.compositeTextOverlay(ctx, el, config, x, y, w, h);
-      } else if (el.classList.contains('luxar-overlay--image')) {
-        this.compositeImageOverlay(ctx, el, config, x, y, w, h);
-      } else if (el.classList.contains('luxar-overlay--html')) {
-        this.compositeHtmlOverlay(ctx, el, config, x, y, w, h);
-      }
-
-      ctx.restore();
-    }
-  }
-
-  /** Composite a text overlay onto the capture canvas. */
-  private compositeTextOverlay(
-    ctx: CanvasRenderingContext2D,
-    el: HTMLDivElement,
-    config: OverlayConfig,
-    x: number,
-    y: number,
-    _canvasW: number,
-    canvasH: number
-  ): void {
-    const text = el.textContent ?? '';
-    if (!text) return;
-
-    // Font size: config.font_size is in vh-relative units (multiplied by 100 for CSS vh)
-    const fontSize = (config.font_size ?? 0.03) * canvasH;
-    const fontFamily = FONT_PRESETS[config.font ?? 'sans'] ?? config.font ?? FONT_PRESETS.sans;
-    ctx.font = `${fontSize}px ${fontFamily}`;
-    ctx.textBaseline = 'top';
-
-    // Measure text for anchor offset and background
-    const metrics = ctx.measureText(text);
-    const textWidth = metrics.width;
-    const textHeight = fontSize * 1.2; // approximate line height
-
-    // Apply anchor offset
-    const [dx, dy] = this.anchorOffset(config.anchor, textWidth, textHeight);
-    x += dx;
-    y += dy;
-
-    // Background
-    if (config.background) {
-      const padding = (config.padding ?? 0.005) * canvasH;
-      ctx.fillStyle = config.background;
-      ctx.fillRect(x - padding, y - padding, textWidth + padding * 2, textHeight + padding * 2);
-    }
-
-    // Text stroke (outline)
-    if (config.stroke_color) {
-      const strokeWidth = (config.stroke_width ?? 0.002) * canvasH;
-      ctx.strokeStyle = config.stroke_color;
-      ctx.lineWidth = strokeWidth * 2;
-      ctx.lineJoin = 'round';
-      ctx.strokeText(text, x, y);
-    }
-
-    // Text fill
-    ctx.fillStyle = config.color ?? '#ffffff';
-    ctx.fillText(text, x, y);
-  }
-
-  /** Composite an image overlay onto the capture canvas. */
-  private compositeImageOverlay(
-    ctx: CanvasRenderingContext2D,
-    el: HTMLDivElement,
-    config: OverlayConfig,
-    x: number,
-    y: number,
-    canvasW: number,
-    canvasH: number
-  ): void {
-    const img = el.querySelector('img');
-    if (!img || !img.complete || img.naturalWidth === 0) return;
-
-    // Size: config.size is [vw-fraction, vh-fraction]
-    let drawW: number, drawH: number;
-    if (config.size) {
-      drawW = config.size[0] * canvasW;
-      drawH = config.size[1] * canvasH;
-    } else {
-      drawW = img.naturalWidth;
-      drawH = img.naturalHeight;
-    }
-
-    // Apply anchor offset
-    const [dx, dy] = this.anchorOffset(config.anchor, drawW, drawH);
-    x += dx;
-    y += dy;
-
-    ctx.drawImage(img, x, y, drawW, drawH);
-  }
-
-  /** Composite an HTML overlay by rasterizing its DOM content. */
-  private compositeHtmlOverlay(
-    ctx: CanvasRenderingContext2D,
-    el: HTMLDivElement,
-    _config: OverlayConfig,
-    x: number,
-    y: number,
-    _canvasW: number,
-    _canvasH: number
-  ): void {
-    // Use the element's actual rendered size via getBoundingClientRect,
-    // scaled to the capture canvas dimensions
-    const glCanvas = this.sceneManager.renderer.domElement;
-    const glRect = glCanvas.getBoundingClientRect();
-    const elRect = el.getBoundingClientRect();
-
-    if (glRect.width === 0 || glRect.height === 0) return;
-
-    const scaleX = ctx.canvas.width / glRect.width;
-    const scaleY = ctx.canvas.height / glRect.height;
-
-    // Override position with actual DOM-relative position (more accurate for HTML)
-    x = (elRect.left - glRect.left) * scaleX;
-    y = (elRect.top - glRect.top) * scaleY;
-    const drawW = elRect.width * scaleX;
-    const drawH = elRect.height * scaleY;
-
-    // Rasterize via SVG foreignObject
-    // Clone the element's computed styles inline so they survive the SVG context
-    const clone = el.cloneNode(true) as HTMLDivElement;
-    const computed = getComputedStyle(el);
-    clone.style.cssText = '';
-    // Copy key visual styles
-    for (const prop of [
-      'color',
-      'font-family',
-      'font-size',
-      'font-weight',
-      'line-height',
-      'background-color',
-      'padding',
-      'border',
-      'white-space',
-      'word-wrap',
-      'text-align',
-    ] as const) {
-      clone.style.setProperty(prop, computed.getPropertyValue(prop));
-    }
-    clone.style.setProperty('position', 'static');
-    clone.style.setProperty('width', `${elRect.width}px`);
-    clone.style.setProperty('height', `${elRect.height}px`);
-    clone.style.setProperty('overflow', 'hidden');
-
-    const svgNs = 'http://www.w3.org/2000/svg';
-    const xhtmlNs = 'http://www.w3.org/1999/xhtml';
-    const pct = '100%';
-    const svg = `<svg xmlns="${svgNs}" width="${elRect.width}" height="${elRect.height}"><foreignObject width="${pct}" height="${pct}"><div xmlns="${xhtmlNs}">${clone.outerHTML}</div></foreignObject></svg>`;
-
-    const img = new Image();
-    img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
-
-    // Synchronous draw if image is already cached, otherwise skip this frame.
-    // In practice, the SVG data URL decodes instantly in modern browsers.
-    if (img.complete && img.naturalWidth > 0) {
-      ctx.drawImage(img, x, y, drawW, drawH);
-    } else {
-      // Attempt async decode — won't help THIS frame but logs the issue
-      img
-        .decode()
-        .then(() => {
-          log.info(Modules.RECORDING, '[Overlay] HTML overlay rasterized async (missed frame)');
-        })
-        .catch(() => {
-          log.warning(Modules.RECORDING, '[Overlay] Failed to rasterize HTML overlay');
-        });
-    }
-  }
-
-  /** Compute anchor offset (same semantics as CSS transform: translate). */
-  private anchorOffset(anchor: string, width: number, height: number): [number, number] {
-    return computeAnchorOffset(anchor, width, height);
+    if (!this.overlayManager) return;
+    compositeOverlaysHelper(
+      canvas,
+      ctx,
+      this.overlayManager,
+      this.sceneManager.renderer.domElement
+    );
   }
 
   /** Compute video bitrate based on canvas size, FPS, and quality preset */
