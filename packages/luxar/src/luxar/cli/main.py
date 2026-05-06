@@ -35,6 +35,8 @@ from .network_simulation import (
     print_network_params,
 )
 from .utils import (
+    _DEFAULT_CORS_ORIGIN,
+    _LOCAL_CORS_ORIGIN_REGEX,
     build_viewer,
     check_viewer_built,
     find_available_port,
@@ -47,11 +49,11 @@ from .utils import (
     open_browser as open_browser_func,
 )
 
-# CORS regex + default constant moved to utils.py so subcommand modules
-# (e.g. gsplat_commands.py) can import them without creating a cycle
-# through main.py. Re-imported here so existing references compile
-# unchanged.
-from .utils import _DEFAULT_CORS_ORIGIN, _LOCAL_CORS_ORIGIN_REGEX  # noqa: E402
+# Note: _DEFAULT_CORS_ORIGIN / _LOCAL_CORS_ORIGIN_REGEX live in utils.py
+# (rather than at module scope here) so subcommand modules — e.g.
+# gsplat_commands.py — can import them without forming a cycle through
+# this file (main.py imports gsplat_commands at module bottom to attach
+# the subcommand tree).
 
 
 def _add_cors(api: FastAPI, cors_origin: str = _DEFAULT_CORS_ORIGIN) -> None:
