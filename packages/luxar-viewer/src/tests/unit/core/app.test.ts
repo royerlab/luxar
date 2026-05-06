@@ -95,7 +95,6 @@ describe('LuxarApp', () => {
     mockAnimationController = {
       startAnimation: vi.fn(),
       stopAnimation: vi.fn(),
-      setPerFrameCallback: vi.fn(),
       addPerFrameCallback: vi.fn(),
       removePerFrameCallback: vi.fn(),
       setAdaptiveDPRManager: vi.fn(),
@@ -247,9 +246,9 @@ describe('LuxarApp', () => {
       mockFetch.mockResolvedValue({ ok: true });
       await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
 
-      await expect(app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' })).rejects.toThrow(
-        /already initialized/i
-      );
+      await expect(
+        app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' })
+      ).rejects.toThrow(/already initialized/i);
     });
 
     it('allows init() again after dispose()', async () => {
@@ -257,7 +256,9 @@ describe('LuxarApp', () => {
       await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
       app.dispose();
 
-      await expect(app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' })).resolves.toBeUndefined();
+      await expect(
+        app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' })
+      ).resolves.toBeUndefined();
       expect(app.initialized).toBe(true);
     });
 
@@ -369,9 +370,9 @@ describe('LuxarApp', () => {
       const error = new Error('Failed to initialize scene manager');
       mockSceneManager.init.mockRejectedValue(error);
 
-      await expect(app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' })).rejects.toThrow(
-        'Failed to initialize scene manager'
-      );
+      await expect(
+        app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' })
+      ).rejects.toThrow('Failed to initialize scene manager');
 
       expect(app.initialized).toBe(false);
     });
@@ -381,7 +382,9 @@ describe('LuxarApp', () => {
       mockSceneManager.loadSceneData.mockRejectedValue(new Error('Load failed'));
 
       // Should throw because loadSceneData error propagates
-      await expect(app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' })).rejects.toThrow('Load failed');
+      await expect(
+        app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' })
+      ).rejects.toThrow('Load failed');
     });
 
     it('disposes partial state when init() throws so the caller can retry', async () => {
@@ -436,9 +439,9 @@ describe('LuxarApp', () => {
         throw new Error('Animation controller failed');
       });
 
-      await expect(app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' })).rejects.toThrow(
-        'Animation controller failed'
-      );
+      await expect(
+        app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' })
+      ).rejects.toThrow('Animation controller failed');
     });
 
     it('should handle input handler init failure', async () => {
@@ -446,9 +449,9 @@ describe('LuxarApp', () => {
         throw new Error('Input handler failed');
       });
 
-      await expect(app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' })).rejects.toThrow(
-        'Input handler failed'
-      );
+      await expect(
+        app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' })
+      ).rejects.toThrow('Input handler failed');
     });
   });
 
@@ -654,9 +657,7 @@ describe('LuxarApp', () => {
     });
 
     it('does not call history.replaceState when updateBrowserUrl is false', async () => {
-      const replaceStateSpy = vi
-        .spyOn(window.history, 'replaceState')
-        .mockImplementation(() => {});
+      const replaceStateSpy = vi.spyOn(window.history, 'replaceState').mockImplementation(() => {});
 
       await app.init({ canvas: mockCanvas, src: '', updateBrowserUrl: false });
 
@@ -671,12 +672,25 @@ describe('LuxarApp', () => {
       replaceStateSpy.mockRestore();
     });
 
-    it('calls history.replaceState by default', async () => {
-      const replaceStateSpy = vi
-        .spyOn(window.history, 'replaceState')
-        .mockImplementation(() => {});
+    it('does not call history.replaceState by default for embedded safety', async () => {
+      const replaceStateSpy = vi.spyOn(window.history, 'replaceState').mockImplementation(() => {});
 
       await app.init({ canvas: mockCanvas, src: '' });
+
+      const browserCall = (DatasetBrowser as any).mock.calls.at(-1);
+      const onSelect = browserCall[0].onDatasetSelect as (url: string) => Promise<void>;
+
+      replaceStateSpy.mockClear();
+      await onSelect('http://example.com/picked.zarr');
+
+      expect(replaceStateSpy).not.toHaveBeenCalled();
+      replaceStateSpy.mockRestore();
+    });
+
+    it('calls history.replaceState when updateBrowserUrl is true', async () => {
+      const replaceStateSpy = vi.spyOn(window.history, 'replaceState').mockImplementation(() => {});
+
+      await app.init({ canvas: mockCanvas, src: '', updateBrowserUrl: true });
 
       const browserCall = (DatasetBrowser as any).mock.calls.at(-1);
       const onSelect = browserCall[0].onDatasetSelect as (url: string) => Promise<void>;

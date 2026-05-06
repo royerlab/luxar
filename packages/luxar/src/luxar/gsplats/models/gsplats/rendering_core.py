@@ -12,7 +12,11 @@ This module contains the main rendering implementation including:
 from __future__ import annotations
 
 import math
-from typing import Dict, Optional, Sequence, Tuple
+import os
+import warnings
+from collections import OrderedDict
+from dataclasses import dataclass
+from typing import Any, Dict, Optional, Sequence, Tuple, cast
 
 import numpy as np
 import torch
@@ -83,13 +87,38 @@ def calculate_optimal_chunk_size(
 
 # ===== Fast-path helpers for 2D/3D ==========================================
 
-# Simple process-wide cache for base grids and linear offsets.
-# Keyed by (device, dtype, strides_tuple, box_shape_tuple).
-_GRID_CACHE_MAX_ENTRIES = 64  # ~4 MB typical; smaller cache reduces eviction overhead
+# Process-wide cache for base grids and linear offsets.
+#
+# Cache sizing must adapt across laptops, workstations, and HPC nodes.  The
+# default policy derives a conservative byte budget from the current device, and
+# users can override it with environment variables for large repeated renders.
+#
+# Supported overrides:
+#   LUXAR_GSPLAT_GRID_CACHE_MAX_BYTES=0          # disable cache
+#   LUXAR_GSPLAT_GRID_CACHE_MAX_GB=8             # total budget per device
+#   LUXAR_GSPLAT_GRID_CACHE_MAX_ENTRY_BYTES=...
+#   LUXAR_GSPLAT_GRID_CACHE_MAX_ENTRY_GB=6       # max one cached support grid
+_GRID_CACHE_CUDA_FRACTION = 0.10
+_GRID_CACHE_CPU_FRACTION = 0.05
+_GRID_CACHE_MAX_ENTRY_FRACTION = 0.75
+_GRID_CACHE_DEFAULT_CUDA_MAX_BYTES = 2 * (1024**3)
+_GRID_CACHE_DEFAULT_CPU_MAX_BYTES = 4 * (1024**3)
+_GRID_CACHE_DEFAULT_MPS_BYTES = 512 * (1024**2)
+_GRID_CACHE_FALLBACK_BYTES = 512 * (1024**2)
 
-_GRID_CACHE: Dict[
-    Tuple[str, str, Tuple[int, ...], Tuple[int, ...]], Tuple[torch.Tensor, torch.Tensor]
-] = {}
+DeviceCacheKey = Tuple[str, Optional[int]]
+GridCacheKey = Tuple[str, Tuple[int, ...], Tuple[int, ...]]
+
+
+@dataclass
+class _GridCacheEntry:
+    base: torch.Tensor
+    lin_offsets: torch.Tensor
+    nbytes: int
+
+
+_GRID_CACHE: Dict[DeviceCacheKey, OrderedDict[GridCacheKey, _GridCacheEntry]] = {}
+_GRID_CACHE_BYTES: Dict[DeviceCacheKey, int] = {}
 
 
 def clear_grid_cache() -> None:
@@ -99,6 +128,172 @@ def clear_grid_cache() -> None:
     or after completing a fitting session.
     """
     _GRID_CACHE.clear()
+    _GRID_CACHE_BYTES.clear()
+
+
+def _parse_nonnegative_int_env(name: str) -> Optional[int]:
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        warnings.warn(
+            f"Ignoring invalid {name}={raw!r}; expected a non-negative integer.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return None
+    if value < 0:
+        warnings.warn(
+            f"Ignoring invalid {name}={raw!r}; expected a non-negative integer.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return None
+    return value
+
+
+def _parse_nonnegative_gb_env(name: str) -> Optional[int]:
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return None
+    try:
+        value = float(raw)
+    except ValueError:
+        warnings.warn(
+            f"Ignoring invalid {name}={raw!r}; expected a non-negative number.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return None
+    if value < 0:
+        warnings.warn(
+            f"Ignoring invalid {name}={raw!r}; expected a non-negative number.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return None
+    return int(value * (1024**3))
+
+
+def _read_byte_override(bytes_var: str, gb_var: str) -> Optional[int]:
+    bytes_value = _parse_nonnegative_int_env(bytes_var)
+    if bytes_value is not None:
+        return bytes_value
+    return _parse_nonnegative_gb_env(gb_var)
+
+
+def _device_cache_key(device: torch.device) -> DeviceCacheKey:
+    index = cast(Optional[int], getattr(device, "index", None))
+    if device.type == "cuda" and index is None and torch.cuda.is_available():
+        index = torch.cuda.current_device()
+    return (device.type, index)
+
+
+def _available_cpu_memory_bytes() -> Optional[int]:
+    try:
+        pages = os.sysconf("SC_AVPHYS_PAGES")
+        page_size = os.sysconf("SC_PAGE_SIZE")
+    except (AttributeError, OSError, ValueError):
+        return None
+    if pages <= 0 or page_size <= 0:
+        return None
+    return pages * page_size
+
+
+def _default_grid_cache_budget_bytes(device: torch.device) -> int:
+    if device.type == "cuda" and torch.cuda.is_available():
+        try:
+            free_mem, _ = torch.cuda.mem_get_info(device)
+            return min(
+                int(free_mem * _GRID_CACHE_CUDA_FRACTION),
+                _GRID_CACHE_DEFAULT_CUDA_MAX_BYTES,
+            )
+        except Exception:
+            return _GRID_CACHE_FALLBACK_BYTES
+
+    if device.type == "mps":
+        return _GRID_CACHE_DEFAULT_MPS_BYTES
+
+    available = _available_cpu_memory_bytes()
+    if available is not None:
+        return min(
+            int(available * _GRID_CACHE_CPU_FRACTION),
+            _GRID_CACHE_DEFAULT_CPU_MAX_BYTES,
+        )
+
+    return _GRID_CACHE_FALLBACK_BYTES
+
+
+def _grid_cache_budget_bytes(device: torch.device) -> int:
+    override = _read_byte_override(
+        "LUXAR_GSPLAT_GRID_CACHE_MAX_BYTES", "LUXAR_GSPLAT_GRID_CACHE_MAX_GB"
+    )
+    if override is not None:
+        return override
+    return _default_grid_cache_budget_bytes(device)
+
+
+def _grid_cache_max_entry_bytes(device: torch.device, budget_bytes: int) -> int:
+    override = _read_byte_override(
+        "LUXAR_GSPLAT_GRID_CACHE_MAX_ENTRY_BYTES",
+        "LUXAR_GSPLAT_GRID_CACHE_MAX_ENTRY_GB",
+    )
+    if override is not None:
+        return min(override, budget_bytes)
+    return int(budget_bytes * _GRID_CACHE_MAX_ENTRY_FRACTION)
+
+
+def _tensor_nbytes(tensor: torch.Tensor) -> int:
+    return int(tensor.numel() * tensor.element_size())
+
+
+def _grid_entry_nbytes(base: torch.Tensor, lin_offsets: torch.Tensor) -> int:
+    return _tensor_nbytes(base) + _tensor_nbytes(lin_offsets)
+
+
+def _evict_until_within_budget(
+    device_key: DeviceCacheKey, incoming_bytes: int, budget_bytes: int
+) -> None:
+    cache = _GRID_CACHE.get(device_key)
+    if not cache:
+        return
+
+    current_bytes = _GRID_CACHE_BYTES.get(device_key, 0)
+    while current_bytes + incoming_bytes > budget_bytes and cache:
+        _, entry = cache.popitem(last=False)
+        current_bytes = max(0, current_bytes - entry.nbytes)
+
+    if cache:
+        _GRID_CACHE_BYTES[device_key] = current_bytes
+    else:
+        _GRID_CACHE.pop(device_key, None)
+        _GRID_CACHE_BYTES.pop(device_key, None)
+
+
+def get_grid_cache_stats() -> Dict[str, Any]:
+    """Return cache occupancy and configured budgets for debugging/tests."""
+    devices: Dict[str, Dict[str, int]] = {}
+    for device_key, cache in _GRID_CACHE.items():
+        device = torch.device(
+            device_key[0]
+            if device_key[1] is None
+            else f"{device_key[0]}:{device_key[1]}"
+        )
+        budget = _grid_cache_budget_bytes(device)
+        devices[_format_device_cache_key(device_key)] = {
+            "entries": len(cache),
+            "bytes": _GRID_CACHE_BYTES.get(device_key, 0),
+            "budget_bytes": budget,
+            "max_entry_bytes": _grid_cache_max_entry_bytes(device, budget),
+        }
+    return {"devices": devices}
+
+
+def _format_device_cache_key(device_key: DeviceCacheKey) -> str:
+    device_type, index = device_key
+    return device_type if index is None else f"{device_type}:{index}"
 
 
 def cached_base_and_offsets(
@@ -109,21 +304,23 @@ def cached_base_and_offsets(
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Returns:
-      base: (d, P) float tensor with coordinates [0..h_i-1] mesh, flattened.
+      base: (d, P) float tensor with integer voxel coordinates [0..h_i-1], flattened.
       lin_offsets: (P,) long tensor of row-major flat offsets for this box_shape.
 
-    Note: Uses integer coordinates [0, 1, 2, ...] for backwards compatibility.
-    The CUDA backend uses pixel-centered coordinates (i + 0.5) which is
-    more physically accurate but produces small numerical differences.
+    Note: Luxar currently samples Gaussian splats at integer voxel coordinates.
+    Keep this convention in sync with the CUDA backend in kernels_core.cuh.
     """
-    key = (
-        device.type,
+    device_key = _device_cache_key(device)
+    key: GridCacheKey = (
         str(dtype),
         tuple(int(s) for s in strides.tolist()),
         tuple(int(s) for s in box_shape),
     )
-    if key in _GRID_CACHE:
-        return _GRID_CACHE[key]
+    device_cache = _GRID_CACHE.get(device_key)
+    if device_cache is not None and key in device_cache:
+        entry = device_cache.pop(key)
+        device_cache[key] = entry
+        return entry.base, entry.lin_offsets
 
     ranges = [torch.arange(int(s), device=device, dtype=dtype) for s in box_shape]
     grids = torch.meshgrid(*ranges, indexing="ij")  # list of d arrays
@@ -137,13 +334,21 @@ def cached_base_and_offsets(
         lin_offsets.add_(g.reshape(-1).to(torch.long) * s.item())
     del grids, ranges  # Free meshgrid tensors immediately
 
-    # Evict oldest entry if cache is full (prevents unbounded GPU memory growth)
-    if len(_GRID_CACHE) >= _GRID_CACHE_MAX_ENTRIES:
-        oldest_key = next(iter(_GRID_CACHE))
-        del _GRID_CACHE[oldest_key]
+    budget_bytes = _grid_cache_budget_bytes(device)
+    entry_bytes = _grid_entry_nbytes(base, lin_offsets)
+    max_entry_bytes = _grid_cache_max_entry_bytes(device, budget_bytes)
 
-    _GRID_CACHE[key] = (base, lin_offsets)
-    return _GRID_CACHE[key]
+    # A budget of 0 disables caching. Oversized entries are still returned for
+    # the current render, but are not kept as long-lived CPU/GPU tensors.
+    if budget_bytes <= 0 or entry_bytes > budget_bytes or entry_bytes > max_entry_bytes:
+        return base, lin_offsets
+
+    _evict_until_within_budget(device_key, entry_bytes, budget_bytes)
+
+    device_cache = _GRID_CACHE.setdefault(device_key, OrderedDict())
+    device_cache[key] = _GridCacheEntry(base, lin_offsets, entry_bytes)
+    _GRID_CACHE_BYTES[device_key] = _GRID_CACHE_BYTES.get(device_key, 0) + entry_bytes
+    return base, lin_offsets
 
 
 @torch.jit.ignore  # type: ignore[untyped-decorator]  # jit-able but optional; ignore keeps it simple if torch.compile() is used outside
@@ -347,7 +552,7 @@ def _render_gaussians_2d(
     Ls: torch.Tensor,  # (N,2,2)
     amps: torch.Tensor,  # (N,)
     truncate: float,
-    intensity_floor: float,
+    intensity_floor: Optional[float],
     chunk_size: Optional[int] = None,
 ) -> torch.Tensor:
     """Specialized 2D renderer with explicit forward substitution."""
@@ -424,7 +629,7 @@ def _render_gaussians_3d(
     Ls: torch.Tensor,  # (N,3,3)
     amps: torch.Tensor,  # (N,)
     truncate: float,
-    intensity_floor: float,
+    intensity_floor: Optional[float],
     chunk_size: Optional[int] = None,
 ) -> torch.Tensor:
     """Specialized 3D renderer with explicit forward substitution."""
@@ -504,7 +709,7 @@ def render_gaussians(
     Ls: torch.Tensor,  # (N, d, d) lower-tri
     amps: torch.Tensor,  # (N,)
     truncate: float = 3.0,
-    intensity_floor: float = 1e-5,  # for amplitude-aware culling
+    intensity_floor: Optional[float] = 1e-5,  # for amplitude-aware culling; None disables
     chunk_size: Optional[int] = None,  # P-dimension chunk size for memory control
 ) -> torch.Tensor:
     """
@@ -527,8 +732,9 @@ def render_gaussians(
         Splat amplitudes.
     truncate : float, default=3.0
         Truncation radius in standard deviations.
-    intensity_floor : float, default=1e-5
+    intensity_floor : float or None, default=1e-5
         Minimum intensity threshold for amplitude-aware culling.
+        Pass ``None`` (or a non-positive value) to disable culling entirely.
     chunk_size : int, optional
         Chunk size for memory management.
 

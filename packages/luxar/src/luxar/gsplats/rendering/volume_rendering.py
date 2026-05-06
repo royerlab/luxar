@@ -27,11 +27,9 @@ def auto_detect_device() -> str:
     str
         Device string: "cuda", "mps", or "cpu"
     """
-    if torch.cuda.is_available():
-        return "cuda"
-    if torch.backends.mps.is_available():
-        return "mps"
-    return "cpu"
+    from luxar.gsplats.utils.device import resolve_torch_device
+
+    return str(resolve_torch_device())
 
 
 def render_to_volume_tensor(

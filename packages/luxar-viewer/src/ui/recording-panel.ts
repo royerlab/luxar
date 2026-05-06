@@ -132,7 +132,13 @@ export class RecordingPanel {
   private keepAliveCallbackId = 'recording-keepalive';
   private turntableCallbackId = 'recording-turntable';
   private syncCompleteHandler: (() => void) | null = null;
+  private syncPlayTimeout: ReturnType<typeof setTimeout> | null = null;
   private savedAutoRotate: boolean = false;
+
+  // Event/listener cleanup handles for transient recording DOM
+  private recordingIndicatorClickCleanup: (() => void) | null = null;
+  private offlineOverlayCleanup: (() => void) | null = null;
+  private confirmationDialogCancel: (() => void) | null = null;
 
   // EXR sequence recording state
   private isEXRSequenceRecording: boolean = false;
@@ -244,11 +250,26 @@ export class RecordingPanel {
   }
 
   dispose(): void {
+    if (this.disposed) return;
     this.disposed = true;
+
+    this.confirmationDialogCancel?.();
+
     if (this.isRecording) {
       this.stopVideoRecording();
     }
+    if (this.durationTimer) {
+      clearTimeout(this.durationTimer);
+      this.durationTimer = null;
+    }
+
+    this.offlineOverlayCleanup?.();
     this.hideRecordingIndicator();
+    this.animationController.removePerFrameCallback(this.keepAliveCallbackId);
+    this.animationController.removePerFrameCallback(this.turntableCallbackId);
+    this.cleanupSyncListener();
+    this.restoreAutoRotate();
+    this.restoreRecordingState();
     this.gui.destroy();
   }
 
@@ -358,7 +379,7 @@ export class RecordingPanel {
     }
 
     const confirmed = await this.showConfirmationDialog();
-    if (!confirmed) return;
+    if (!confirmed || this.disposed) return;
 
     this.hideAllPanels();
 
@@ -372,6 +393,7 @@ export class RecordingPanel {
     });
     if (this.options.videoResolution > 0) {
       await new Promise((r) => requestAnimationFrame(r));
+      if (this.disposed) return;
     }
 
     const canvas = this.sceneManager.renderer.domElement;
@@ -400,6 +422,13 @@ export class RecordingPanel {
     };
 
     this.mediaRecorder.onstop = () => {
+      if (this.disposed) {
+        this.recordedChunks = [];
+        this.isRecording = false;
+        this.hideRecordingIndicator();
+        return;
+      }
+
       const blob = new Blob(this.recordedChunks, { type: mimeType });
       const totalElapsed = ((Date.now() - this.recordingStartTime) / 1000).toFixed(1);
       log.info(
@@ -412,14 +441,12 @@ export class RecordingPanel {
       this.isRecording = false;
       this.hideRecordingIndicator();
 
-      if (!this.disposed) {
-        this.animationController.removePerFrameCallback(this.keepAliveCallbackId);
-        this.animationController.removePerFrameCallback(this.turntableCallbackId);
-        this.cleanupSyncListener();
-        this.restoreAutoRotate();
-        this.restoreRecordingState();
-        showToast('Video saved');
-      }
+      this.animationController.removePerFrameCallback(this.keepAliveCallbackId);
+      this.animationController.removePerFrameCallback(this.turntableCallbackId);
+      this.cleanupSyncListener();
+      this.restoreAutoRotate();
+      this.restoreRecordingState();
+      showToast('Video saved');
     };
 
     this.mediaRecorder.start(100);
@@ -490,7 +517,7 @@ export class RecordingPanel {
     mode: 'exr' | 'webm' | 'mp4' | 'mkv' | 'png' | 'webp' | 'jpeg'
   ): Promise<void> {
     const confirmed = await this.showConfirmationDialog();
-    if (!confirmed) return;
+    if (!confirmed || this.disposed) return;
 
     this.hideAllPanels();
 
@@ -557,11 +584,28 @@ export class RecordingPanel {
       '.luxar-recording-overlay__preview'
     ) as HTMLCanvasElement;
     const previewCtx = previewCanvas.getContext('2d');
-    overlay.querySelector('.luxar-recording-overlay__cancel')?.addEventListener('click', () => {
+    const cancelButton = overlay.querySelector('.luxar-recording-overlay__cancel');
+    const handleCancel = (): void => {
       this.isRecording = false;
-    });
+    };
+    const stopOverlayKeydown = (e: KeyboardEvent): void => e.stopPropagation();
+    cancelButton?.addEventListener('click', handleCancel);
     // Block all pointer/keyboard events from reaching the canvas
-    overlay.addEventListener('keydown', (e) => e.stopPropagation(), true);
+    overlay.addEventListener('keydown', stopOverlayKeydown, true);
+
+    let overlayCleaned = false;
+    const cleanupOfflineOverlay = (): void => {
+      if (overlayCleaned) return;
+      overlayCleaned = true;
+      cancelButton?.removeEventListener('click', handleCancel);
+      overlay.removeEventListener('keydown', stopOverlayKeydown, true);
+      overlay.remove();
+      if (this.offlineOverlayCleanup === cleanupOfflineOverlay) {
+        this.offlineOverlayCleanup = null;
+      }
+    };
+    this.offlineOverlayCleanup = cleanupOfflineOverlay;
+
     document.body.appendChild(overlay);
 
     const counterEl = overlay.querySelector('.luxar-recording-overlay__counter');
@@ -897,7 +941,7 @@ export class RecordingPanel {
     }
 
     // Remove overlay, restore all saved state
-    overlay.remove();
+    cleanupOfflineOverlay();
     this.restoreAutoRotate();
     this.restoreRecordingState();
   }
@@ -918,6 +962,8 @@ export class RecordingPanel {
     const dimIndex = this.options.syncDimensionIndex;
     if (dimIndex < 0 || !this.animationManager) return;
 
+    this.cleanupSyncListener();
+
     const ranges = sceneDimsManager.getDimensionRanges();
     if (ranges && ranges[dimIndex]) {
       const [min] = ranges[dimIndex];
@@ -930,13 +976,20 @@ export class RecordingPanel {
     };
     this.animationManager.addEventListener('complete', this.syncCompleteHandler as any);
 
-    // Small delay to let the initial position update propagate
-    setTimeout(() => {
-      this.animationManager?.play(dimIndex, { loopMode: 'once', direction: 'forward' });
+    // Small delay to let the initial position update propagate.
+    this.syncPlayTimeout = setTimeout(() => {
+      this.syncPlayTimeout = null;
+      if (!this.disposed) {
+        this.animationManager?.play(dimIndex, { loopMode: 'once', direction: 'forward' });
+      }
     }, 100);
   }
 
   private cleanupSyncListener(): void {
+    if (this.syncPlayTimeout !== null) {
+      clearTimeout(this.syncPlayTimeout);
+      this.syncPlayTimeout = null;
+    }
     if (this.syncCompleteHandler && this.animationManager) {
       this.animationManager.removeEventListener('complete', this.syncCompleteHandler as any);
       this.syncCompleteHandler = null;
@@ -1503,33 +1556,43 @@ export class RecordingPanel {
         </div>
       `;
 
+      let settled = false;
+      const finish = (result: boolean): void => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve(result);
+      };
+
       const trapKeyboard = (e: KeyboardEvent) => {
         e.stopPropagation();
         if (e.key === 'Escape') {
-          cleanup();
-          resolve(false);
+          finish(false);
         } else if (e.key === 'Enter') {
-          cleanup();
-          resolve(true);
+          finish(true);
         }
       };
 
       const handleClick = (e: MouseEvent) => {
         const action = (e.target as HTMLElement).dataset.action;
         if (action === 'cancel') {
-          cleanup();
-          resolve(false);
+          finish(false);
         } else if (action === 'start') {
-          cleanup();
-          resolve(true);
+          finish(true);
         }
       };
 
       const cleanup = () => {
-        overlay.removeEventListener('keydown', trapKeyboard);
+        overlay.removeEventListener('keydown', trapKeyboard, true);
         overlay.removeEventListener('click', handleClick);
         overlay.remove();
+        if (this.confirmationDialogCancel === cancelConfirmation) {
+          this.confirmationDialogCancel = null;
+        }
       };
+
+      const cancelConfirmation = (): void => finish(false);
+      this.confirmationDialogCancel = cancelConfirmation;
 
       overlay.addEventListener('keydown', trapKeyboard, true);
       overlay.addEventListener('click', handleClick);
@@ -1542,6 +1605,8 @@ export class RecordingPanel {
   // ========== Recording Indicator ==========
 
   private showRecordingIndicator(): void {
+    this.hideRecordingIndicator();
+
     const indicator = document.createElement('div');
     indicator.className = 'luxar-recording-indicator';
     indicator.innerHTML = `
@@ -1550,7 +1615,12 @@ export class RecordingPanel {
       <span class="luxar-recording-indicator__time">00:00</span>
     `;
     indicator.title = 'Click to stop recording';
-    indicator.addEventListener('click', () => this.stopVideoRecording());
+    const handleIndicatorClick = (): void => this.stopVideoRecording();
+    indicator.addEventListener('click', handleIndicatorClick);
+    this.recordingIndicatorClickCleanup = () => {
+      indicator.removeEventListener('click', handleIndicatorClick);
+      this.recordingIndicatorClickCleanup = null;
+    };
     document.body.appendChild(indicator);
     this.recordingIndicator = indicator;
 
@@ -1577,6 +1647,7 @@ export class RecordingPanel {
       clearInterval(this.recordingTimeInterval);
       this.recordingTimeInterval = null;
     }
+    this.recordingIndicatorClickCleanup?.();
     if (this.recordingIndicator) {
       this.recordingIndicator.remove();
       this.recordingIndicator = null;
@@ -1721,10 +1792,7 @@ export class RecordingPanel {
    * Composite visible DOM overlays onto a capture canvas using Canvas 2D.
    * Handles text, image, and HTML overlays with positioning, opacity, and blend modes.
    */
-  private compositeOverlays(
-    canvas: HTMLCanvasElement,
-    ctx: CanvasRenderingContext2D
-  ): void {
+  private compositeOverlays(canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D): void {
     const overlays = this.overlayManager!.getVisibleOverlays();
     if (overlays.length === 0) return;
 
@@ -1736,8 +1804,7 @@ export class RecordingPanel {
 
       // Blend mode
       if (config.blend_mode && config.blend_mode !== 'normal') {
-        ctx.globalCompositeOperation =
-          BLEND_MODE_TO_COMPOSITE[config.blend_mode] ?? 'source-over';
+        ctx.globalCompositeOperation = BLEND_MODE_TO_COMPOSITE[config.blend_mode] ?? 'source-over';
       }
 
       // Opacity
@@ -1775,8 +1842,7 @@ export class RecordingPanel {
 
     // Font size: config.font_size is in vh-relative units (multiplied by 100 for CSS vh)
     const fontSize = (config.font_size ?? 0.03) * canvasH;
-    const fontFamily =
-      FONT_PRESETS[config.font ?? 'sans'] ?? config.font ?? FONT_PRESETS.sans;
+    const fontFamily = FONT_PRESETS[config.font ?? 'sans'] ?? config.font ?? FONT_PRESETS.sans;
     ctx.font = `${fontSize}px ${fontFamily}`;
     ctx.textBaseline = 'top';
 
@@ -1909,11 +1975,14 @@ export class RecordingPanel {
       ctx.drawImage(img, x, y, drawW, drawH);
     } else {
       // Attempt async decode — won't help THIS frame but logs the issue
-      img.decode().then(() => {
-        log.info(Modules.RECORDING, '[Overlay] HTML overlay rasterized async (missed frame)');
-      }).catch(() => {
-        log.warning(Modules.RECORDING, '[Overlay] Failed to rasterize HTML overlay');
-      });
+      img
+        .decode()
+        .then(() => {
+          log.info(Modules.RECORDING, '[Overlay] HTML overlay rasterized async (missed frame)');
+        })
+        .catch(() => {
+          log.warning(Modules.RECORDING, '[Overlay] Failed to rasterize HTML overlay');
+        });
     }
   }
 

@@ -32,6 +32,7 @@ from ..typing_utils.aliases import ColorArray, PositionArray
 if TYPE_CHECKING:
     from ..core.scene import Scene
     from ..gsplats.gsplat_data import GSplatData
+    from ..io.writer import ZarrWriterProtocol
 
 # Default radius used when radii are not provided
 DEFAULT_POINT_RADIUS = 0.5
@@ -89,6 +90,19 @@ class Group(Node):
         )
 
     # ---------------------------------------------------------- internal helpers
+
+    def _require_scene_writer(self, scene: Scene) -> ZarrWriterProtocol:
+        """Return the scene writer or fail with an explicit runtime error.
+
+        Data-adding methods require scenes created by LuxarZarrCompiler. Do not
+        rely on ``assert`` here: assertions can be stripped with ``python -O``.
+        """
+        writer = scene._writer
+        if writer is None:
+            raise RuntimeError(
+                "Scene writer is not initialized. Use LuxarZarrCompiler to create scenes."
+            )
+        return writer
 
     def _apply_dim_order_positions(
         self,
@@ -280,8 +294,7 @@ class Group(Node):
                 radii = DEFAULT_POINT_RADIUS
                 aprint(f"  📐 Using default radius: {DEFAULT_POINT_RADIUS}")
 
-            writer = scene._writer
-            assert writer is not None, "Scene writer is not initialized"
+            writer = self._require_scene_writer(scene)
             path = f"{parent_node.path}/{name}" if parent_node.path else name
             metadata = writer.write_points(
                 path,
@@ -426,8 +439,7 @@ class Group(Node):
 
             parent_node = parent or self
 
-            writer = scene._writer
-            assert writer is not None, "Scene writer is not initialized"
+            writer = self._require_scene_writer(scene)
             path = f"{parent_node.path}/{name}" if parent_node.path else name
             metadata = writer.write_lines(
                 path,
@@ -571,8 +583,7 @@ class Group(Node):
 
             parent_node = parent or self
 
-            writer = scene._writer
-            assert writer is not None, "Scene writer is not initialized"
+            writer = self._require_scene_writer(scene)
             path = f"{parent_node.path}/{name}" if parent_node.path else name
             metadata = writer.write_gsplats(
                 path,
@@ -755,8 +766,7 @@ class Group(Node):
                 )
 
             parent_node = parent or self
-            writer = scene._writer
-            assert writer is not None, "Scene writer is not initialized"
+            writer = self._require_scene_writer(scene)
             path = f"{parent_node.path}/{name}" if parent_node.path else name
 
             metadata = writer.write_gsplats_multi_lod(  # type: ignore[attr-defined]

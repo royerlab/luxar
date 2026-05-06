@@ -12,6 +12,11 @@
 import { defineConfig, devices } from '@playwright/test';
 import * as path from 'path';
 import * as fs from 'fs';
+import { fileURLToPath } from 'url';
+
+// `package.json` declares `"type": "module"`, so the CommonJS `__dirname`
+// global is undefined at config load. Reconstruct it from `import.meta.url`.
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /**
  * See https://playwright.dev/docs/test-configuration
@@ -30,10 +35,10 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
 
   // Retry flaky tests
-  // WebGL tests can be flaky due to GPU timing, driver variability, and resource contention
-  // - Local: 1 retry (handles transient GPU issues without masking real bugs)
-  // - CI: 2 retries (CI environments have more variability)
-  retries: process.env.CI ? 2 : 1,
+  // WebGL tests can be flaky due to GPU timing, driver variability, and resource contention.
+  // - Local: 0 retries so developers see flaky failures immediately.
+  // - CI: 2 retries because CI environments have more variability.
+  retries: process.env.CI ? 2 : 0,
 
   // Local: 2 workers for ~2x speedup (most GPUs handle 2 concurrent WebGL contexts)
   // CI: 1 worker (software rendering is slower and less stable with concurrency)
@@ -124,9 +129,8 @@ export default defineConfig({
       stderr: 'pipe',
     },
     {
-      // Python HTTP server to serve examples directory
-      // This makes /examples/*.zarr accessible for E2E tests
-      // NOTE: Run 'make run-examples' first to generate datasets
+      // Python HTTP server to serve repository datasets/examples for E2E tests.
+      // E2E global setup checks expected datasets and reports any missing fixtures.
       // Using port 9000 (ports 8000-8001 are used by luxar serve)
       command: 'python3 -m http.server 9000',
       url: 'http://localhost:9000',

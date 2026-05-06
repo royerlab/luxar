@@ -457,6 +457,16 @@ describe('RecordingPanel', () => {
 
       expect(indicator.parentNode).toBeNull();
     });
+
+    it('should resolve an active confirmation dialog when disposed', async () => {
+      const promise = (panel as any).showConfirmationDialog();
+      expect(document.querySelector('.luxar-recording-confirm')).toBeTruthy();
+
+      panel.dispose();
+
+      await expect(promise).resolves.toBe(false);
+      expect(document.querySelector('.luxar-recording-confirm')).toBeNull();
+    });
   });
 
   describe('recording indicator', () => {
@@ -484,6 +494,16 @@ describe('RecordingPanel', () => {
       (panel as any).hideRecordingIndicator();
 
       expect(clearIntervalSpy).toHaveBeenCalled();
+    });
+
+    it('should remove indicator click listener when hiding indicator', () => {
+      (panel as any).showRecordingIndicator();
+      const indicator = document.querySelector('.luxar-recording-indicator') as HTMLElement;
+      const removeSpy = vi.spyOn(indicator, 'removeEventListener');
+
+      (panel as any).hideRecordingIndicator();
+
+      expect(removeSpy).toHaveBeenCalledWith('click', expect.any(Function));
     });
   });
 
@@ -733,6 +753,29 @@ describe('RecordingPanel', () => {
       };
       panel.setAnimationManager(mockAnimManager as any);
       expect((panel as any).animationManager).toBe(mockAnimManager);
+    });
+
+    it('should clear delayed slider playback on dispose', () => {
+      vi.useFakeTimers();
+      const mockAnimManager = {
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        play: vi.fn(),
+      };
+      panel.setAnimationManager(mockAnimManager as any);
+      (panel as any).options.syncDimensionIndex = 3;
+
+      (panel as any).startSliderSync();
+      panel.dispose();
+      vi.advanceTimersByTime(150);
+
+      expect(mockAnimManager.play).not.toHaveBeenCalled();
+      expect(mockAnimManager.removeEventListener).toHaveBeenCalledWith(
+        'complete',
+        expect.any(Function)
+      );
+
+      vi.useRealTimers();
     });
 
     it('should set adaptive DPR manager via setter', () => {

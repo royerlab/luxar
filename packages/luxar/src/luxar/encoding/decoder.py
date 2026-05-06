@@ -4,7 +4,7 @@ The decoder reads encoding metadata and applies appropriate decoding
 transformations to recover original data.
 """
 
-from typing import Optional
+from typing import Any, Optional
 
 import numpy as np
 import zarr
@@ -17,6 +17,26 @@ class ArrayDecoder:
     the appropriate inverse transformation. It supports recursive decoding
     for array references.
     """
+
+    DIRECT_ENCODINGS = {
+        "none",
+        "float16",
+        "float32",
+        "uint8",
+        "uint16",
+        "uint32",
+        "uint64",
+    }
+    QUANTIZED_ENCODINGS = {
+        "bounded_scalar_uint8",
+        "bounded_scalar_uint16",
+        "log_scalar_uint8",
+        "log_scalar_uint16",
+        "rgb_uint8",
+        "rgb_uint16",
+    }
+    SPECIAL_ENCODINGS = {"broadcasted", "array_ref", "lut_uint8", "lut_uint16"}
+    KNOWN_ENCODINGS = DIRECT_ENCODINGS | QUANTIZED_ENCODINGS | SPECIAL_ENCODINGS
 
     def decode(
         self,
@@ -42,15 +62,15 @@ class ArrayDecoder:
             ValueError: If metadata is missing or invalid
             ValueError: If array_ref target not found
         """
-        enc = zarr_array.attrs.get("encoding", {})
-        name = enc.get("name", "none")
+        enc = self._encoding_metadata(zarr_array)
+        name = enc["name"]
 
         # Special encodings (must handle first)
         if name == "broadcasted":
             return self._expand_broadcasted(zarr_array, enc)
         elif name == "array_ref":
             return self._follow_ref(zarr_array, enc, zarr_root)
-        elif name == "lut_uint8":
+        elif name in {"lut_uint8", "lut_uint16"}:
             return self._decode_lut(zarr_array, enc)
 
         # Quantized encodings (require inverse transformation)
@@ -67,9 +87,58 @@ class ArrayDecoder:
         elif name == "rgb_uint16":
             return self._decode_color(zarr_array, enc)
 
-        # Passthrough (none, float16, float32, uint8, etc.)
-        else:
+        # Direct dtype encodings mean the stored values are already decoded.
+        elif name in self.DIRECT_ENCODINGS:
             return np.asarray(zarr_array[:])
+
+        # ``_encoding_metadata`` validates this path, so this is defensive only.
+        else:  # pragma: no cover
+            raise ValueError(f"Unknown encoding name: {name}")
+
+    def _encoding_metadata(self, zarr_array: zarr.Array) -> dict[str, Any]:
+        """Return validated encoding metadata.
+
+        Missing ``encoding`` metadata means direct storage. If the ``encoding``
+        object exists, it must be explicit and name a known encoder.
+        """
+        raw = zarr_array.attrs.get("encoding", None)
+        if raw is None:
+            return {"name": "none"}
+        if not isinstance(raw, dict):
+            raise ValueError("encoding metadata must be an object")
+
+        enc = dict(raw)
+        name = enc.get("name")
+        if not isinstance(name, str) or not name:
+            raise ValueError("encoding.name is required when encoding metadata is present")
+        if name not in self.KNOWN_ENCODINGS:
+            raise ValueError(f"Unknown encoding name: {name}")
+        if name == "array_ref":
+            self._require_fields(enc, "array_ref", ("target",))
+        elif "target" in enc:
+            raise ValueError("encoding.target is only valid for array_ref")
+
+        if name == "broadcasted":
+            self._require_fields(enc, name, ("n_elements",))
+        elif name in {"lut_uint8", "lut_uint16"}:
+            self._require_fields(enc, name, ("lut", "original_dtype"))
+        elif name in {"bounded_scalar_uint8", "bounded_scalar_uint16"}:
+            self._require_fields(enc, name, ("min", "max", "bits", "original_dtype"))
+        elif name in {"log_scalar_uint8", "log_scalar_uint16"}:
+            self._require_fields(enc, name, ("max_log", "bits", "original_dtype"))
+        elif name in {"rgb_uint8", "rgb_uint16"}:
+            self._require_fields(enc, name, ("original_dtype",))
+
+        return enc
+
+    def _require_fields(
+        self, enc: dict[str, Any], encoding_name: str, fields: tuple[str, ...]
+    ) -> None:
+        """Validate required metadata fields for an encoder."""
+        missing = [field for field in fields if field not in enc]
+        if missing:
+            joined = ", ".join(missing)
+            raise ValueError(f"{encoding_name} encoding requires metadata field(s): {joined}")
 
     def _decode_bounded_scalar(self, arr: zarr.Array, enc: dict) -> np.ndarray:
         """Decode bounded scalar: uint → original dtype using min/max.
@@ -80,11 +149,25 @@ class ArrayDecoder:
 
         Returns:
             Decoded array with original dtype
+
+        Raises:
+            ValueError: If metadata is malformed (non-finite bounds,
+                ``max <= min``, or ``bits <= 0``).
         """
         data = np.asarray(arr[:])
         min_val = float(enc["min"])
         max_val = float(enc["max"])
         bits = int(enc["bits"])
+        if not (np.isfinite(min_val) and np.isfinite(max_val)):
+            raise ValueError(
+                f"bounded_scalar requires finite min/max, got min={min_val} max={max_val}"
+            )
+        if max_val <= min_val:
+            raise ValueError(
+                f"bounded_scalar requires max > min, got min={min_val} max={max_val}"
+            )
+        if bits <= 0:
+            raise ValueError(f"bounded_scalar requires bits > 0, got {bits}")
         original_dtype = np.dtype(enc.get("original_dtype", "float32"))
 
         # Use float64 intermediate for precision, then cast to original dtype
@@ -101,10 +184,20 @@ class ArrayDecoder:
 
         Returns:
             Decoded array with original dtype
+
+        Raises:
+            ValueError: If metadata is malformed (non-finite or
+                non-positive ``max_log``, or ``bits <= 0``).
         """
         data = np.asarray(arr[:])
         max_log = float(enc["max_log"])
         bits = int(enc["bits"])
+        if not np.isfinite(max_log) or max_log <= 0.0:
+            raise ValueError(
+                f"log_scalar requires finite, positive max_log, got {max_log}"
+            )
+        if bits <= 0:
+            raise ValueError(f"log_scalar requires bits > 0, got {bits}")
         original_dtype = np.dtype(enc.get("original_dtype", "float32"))
 
         # Use float64 intermediate for precision, then cast to original dtype

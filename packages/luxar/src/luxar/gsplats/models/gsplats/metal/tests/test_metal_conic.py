@@ -11,12 +11,17 @@ import pytest
 import torch
 
 from luxar.gsplats.models.gsplats.metal import is_metal_available
-from luxar.gsplats.models.gsplats.metal.gsplat_model_metal import cholesky_to_conic
 
 pytestmark = pytest.mark.skipif(
-    not is_metal_available() or not torch.backends.mps.is_available(),
-    reason="Metal backend or MPS not available",
+    not is_metal_available(), reason="Metal backend not available"
 )
+
+if is_metal_available():
+    from luxar.gsplats.models.gsplats.metal.gsplat_model_metal import (
+        cholesky_to_conic,
+    )
+else:
+    cholesky_to_conic = None  # type: ignore[assignment]
 
 
 # Import the extension module after the skip check
@@ -43,16 +48,13 @@ class TestMetalConicAccuracy:
         # Compute in PyTorch (outputs in [Z,Y,X] order)
         conic_pytorch_zyx = cholesky_to_conic(L)
 
-        # Compute in Metal (outputs in [X,Y,Z] order)
+        # Compute in Metal (outputs in native [Z,Y,X] order)
         L_mps = L.to("mps")
-        conic_metal_xyz = metal_splatting_backend.compute_conic_metal(L_mps).cpu()
-
-        # Reorder PyTorch to [X,Y,Z] for comparison
-        conic_pytorch_xyz = conic_pytorch_zyx[:, [5, 4, 2, 3, 1, 0]]
+        conic_metal_zyx = metal_splatting_backend.compute_conic_metal(L_mps).cpu()
 
         # Should be identical
-        assert torch.allclose(conic_metal_xyz, conic_pytorch_xyz, atol=1e-6), (
-            f"Metal conic differs:\nMetal [X,Y,Z]:   {conic_metal_xyz}\nPyTorch [X,Y,Z]: {conic_pytorch_xyz}"
+        assert torch.allclose(conic_metal_zyx, conic_pytorch_zyx, atol=1e-6), (
+            f"Metal conic differs:\nMetal [Z,Y,X]:   {conic_metal_zyx}\nPyTorch [Z,Y,X]: {conic_pytorch_zyx}"
         )
 
     def test_non_diagonal_L(self):
@@ -67,15 +69,12 @@ class TestMetalConicAccuracy:
         # Compute in PyTorch (outputs [Z,Y,X])
         conic_pytorch_zyx = cholesky_to_conic(L)
 
-        # Compute in Metal (outputs [X,Y,Z])
+        # Compute in Metal (outputs [Z,Y,X])
         L_mps = L.to("mps")
-        conic_metal_xyz = metal_splatting_backend.compute_conic_metal(L_mps).cpu()
-
-        # Reorder PyTorch to [X,Y,Z] for comparison
-        conic_pytorch_xyz = conic_pytorch_zyx[:, [5, 4, 2, 3, 1, 0]]
+        conic_metal_zyx = metal_splatting_backend.compute_conic_metal(L_mps).cpu()
 
         # Should match within floating-point precision
-        max_diff = (conic_metal_xyz - conic_pytorch_xyz).abs().max().item()
+        max_diff = (conic_metal_zyx - conic_pytorch_zyx).abs().max().item()
         assert max_diff < 1e-6, f"Metal conic error too large: {max_diff}"
 
     def test_batch_processing(self):
@@ -91,22 +90,18 @@ class TestMetalConicAccuracy:
 
         # Compute both ways
         conic_pytorch_zyx = cholesky_to_conic(L)
-        conic_pytorch_xyz = conic_pytorch_zyx[
-            :, [5, 4, 2, 3, 1, 0]
-        ]  # Reorder to [X,Y,Z]
-
-        conic_metal_xyz = metal_splatting_backend.compute_conic_metal(L.to("mps")).cpu()
+        conic_metal_zyx = metal_splatting_backend.compute_conic_metal(L.to("mps")).cpu()
 
         # Check all match
-        max_diff = (conic_metal_xyz - conic_pytorch_xyz).abs().max().item()
-        mean_diff = (conic_metal_xyz - conic_pytorch_xyz).abs().mean().item()
+        max_diff = (conic_metal_zyx - conic_pytorch_zyx).abs().max().item()
+        mean_diff = (conic_metal_zyx - conic_pytorch_zyx).abs().mean().item()
 
         # float32 precision limits: 1e-4 is reasonable for batch processing
         assert max_diff < 1e-4, f"Max difference too large: {max_diff}"
         assert mean_diff < 1e-5, f"Mean difference too large: {mean_diff}"
 
     def test_coordinate_ordering(self):
-        """Verify Metal conic outputs in correct [X,Y,Z] order."""
+        """Verify Metal conic outputs in native [Z,Y,X] order."""
         metal_splatting_backend = _get_metal_backend()
 
         # L with different values to check ordering
@@ -123,16 +118,16 @@ class TestMetalConicAccuracy:
 
         conic = metal_splatting_backend.compute_conic_metal(L.to("mps")).cpu()
 
-        # Conic should be in [X,Y,Z] order: [c_xx, c_xy, c_xz, c_yy, c_yz, c_zz]
-        # Expected: [1/1²=1.0, 0, 0, 1/2²=0.25, 0, 1/3²=0.111]
-        assert torch.allclose(conic[0, 0], torch.tensor(1.0), atol=1e-6), (
-            "c_xx should be 1.0"
+        # Conic should be in [Z,Y,X] order: [c_zz, c_zy, c_zx, c_yy, c_yx, c_xx]
+        # Expected: [1/3²=0.111, 0, 0, 1/2²=0.25, 0, 1/1²=1.0]
+        assert torch.allclose(conic[0, 0], torch.tensor(1 / 9), atol=1e-6), (
+            "c_zz should be 1/9"
         )
         assert torch.allclose(conic[0, 3], torch.tensor(0.25), atol=1e-6), (
             "c_yy should be 0.25"
         )
-        assert torch.allclose(conic[0, 5], torch.tensor(1 / 9), atol=1e-6), (
-            "c_zz should be 1/9"
+        assert torch.allclose(conic[0, 5], torch.tensor(1.0), atol=1e-6), (
+            "c_xx should be 1.0"
         )
 
 

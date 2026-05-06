@@ -297,7 +297,3 @@ class TestScaleInfoPreserved:
             assert np.all(result.cholesky_factors[:, 0] > 0), (
                 "Diagonal Cholesky elements should be positive (sigma > 0)"
             )
-
-
-if __name__ == "__main__":
-    pytest.main([__file__])

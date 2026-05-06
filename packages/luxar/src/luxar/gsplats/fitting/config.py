@@ -161,7 +161,6 @@ class FitConfig:
     # Metal acceleration (with defaults - must come after required fields)
     use_metal: bool = True  # Enable Metal acceleration when available (macOS + MPS)
     metal_intensity_floor: float = 1e-5  # Early culling threshold for Metal kernels
-    metal_tile_size: int = 4  # Tile size for 3D binning (4=64 threads, 8=512 threads)
 
     # CUDA acceleration (with defaults)
     use_cuda: bool = True  # Enable custom CUDA kernels when available (NVIDIA GPUs)

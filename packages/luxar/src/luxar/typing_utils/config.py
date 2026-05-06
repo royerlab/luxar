@@ -6,10 +6,10 @@ from pathlib import Path
 from typing import Any, Final, Literal, Optional
 
 from ..typing_utils.constants import (
-    CHUNK_SIZE_DEFAULT,
-    CHUNK_SIZE_MAX,
-    CHUNK_SIZE_MIN,
     LUXAR_VERSION_CURRENT,
+    MAX_CHUNK_BYTES,
+    MIN_CHUNK_BYTES,
+    TARGET_CHUNK_BYTES,
 )
 from ..typing_utils.enums import PhysicalUnit
 from ..typing_utils.protocols import CompressorProtocol
@@ -22,12 +22,9 @@ LuxarVersion = Literal["0.1", "0.2", "0.3"]
 # Core Configuration Constants
 # =============================================================================
 
-# Default Zarr chunk size for points
-DEFAULT_CHUNK_SIZE: Final[int] = CHUNK_SIZE_DEFAULT
-
-# Minimum and maximum chunk sizes for validation
-MIN_CHUNK_SIZE: Final[int] = CHUNK_SIZE_MIN
-MAX_CHUNK_SIZE: Final[int] = CHUNK_SIZE_MAX
+# Zarr chunk target/bounds in bytes. Consumers convert to element counts using
+# the array's dtype itemsize.
+DEFAULT_CHUNK_BYTES: Final[int] = TARGET_CHUNK_BYTES
 
 # Default version for Luxar scenes
 DEFAULT_VERSION: Final[str] = LUXAR_VERSION_CURRENT
@@ -135,32 +132,67 @@ except ImportError:
 # =============================================================================
 
 
-def validate_chunk_size(chunk_size: Any) -> int:
-    """Validate chunk size is within acceptable bounds.
+def validate_chunk_bytes(chunk_bytes: Any) -> int:
+    """Validate that a chunk size in **bytes** is within configured bounds.
+
+    The bounds are :data:`~luxar.typing_utils.constants.MIN_CHUNK_BYTES`
+    (16 KiB) and :data:`~luxar.typing_utils.constants.MAX_CHUNK_BYTES`
+    (256 KiB). Returns the value unchanged if valid; raises ``ValueError``
+    otherwise.
+
+    .. note::
+        Earlier versions of this function were named ``validate_chunk_size``
+        and operated on element counts; the units flipped to bytes when the
+        chunking heuristic became byte-targeted (commit 9f284ff2). Callers
+        passing pre-migration element counts (e.g. 1024) will now hit the
+        "too small" branch. The legacy name is preserved as a deprecated
+        alias that emits ``DeprecationWarning`` — update call sites at your
+        earliest convenience.
 
     Args:
-        chunk_size: Chunk size to validate
+        chunk_bytes: Chunk size in bytes.
 
     Returns:
-        Validated chunk size
+        Validated chunk size, in bytes.
 
     Raises:
-        ValueError: If chunk size is invalid
+        ValueError: If ``chunk_bytes`` is not an int or is outside the
+            configured byte band.
     """
-    if not isinstance(chunk_size, int):
-        raise ValueError("Chunk size must be an integer")
+    if not isinstance(chunk_bytes, int):
+        raise ValueError("Chunk size must be an integer (bytes)")
 
-    if chunk_size < MIN_CHUNK_SIZE:
+    if chunk_bytes < MIN_CHUNK_BYTES:
         raise ValueError(
-            f"Chunk size {chunk_size} is too small (min: {MIN_CHUNK_SIZE})"
+            f"Chunk size {chunk_bytes} bytes is too small "
+            f"(min: {MIN_CHUNK_BYTES} bytes)"
         )
 
-    if chunk_size > MAX_CHUNK_SIZE:
+    if chunk_bytes > MAX_CHUNK_BYTES:
         raise ValueError(
-            f"Chunk size {chunk_size} is too large (max: {MAX_CHUNK_SIZE})"
+            f"Chunk size {chunk_bytes} bytes is too large "
+            f"(max: {MAX_CHUNK_BYTES} bytes)"
         )
 
-    return chunk_size
+    return chunk_bytes
+
+
+def validate_chunk_size(chunk_size: Any) -> int:
+    """Deprecated alias for :func:`validate_chunk_bytes`.
+
+    The unit flipped from elements to bytes in commit 9f284ff2; the new name
+    makes that explicit. This shim emits ``DeprecationWarning`` and
+    forwards.
+    """
+    import warnings
+
+    warnings.warn(
+        "validate_chunk_size is deprecated; use validate_chunk_bytes "
+        "(unit is now bytes, not elements).",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return validate_chunk_bytes(chunk_size)
 
 
 def validate_compression_level(level: Any) -> int:

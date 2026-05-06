@@ -11,6 +11,7 @@ This package provides utility functions for:
 For detailed documentation, see SPECIFICATIONS.md.
 """
 
+from luxar.gsplats.utils.device import is_mps_available, resolve_torch_device
 from luxar.gsplats.utils.trils import (
     calculate_gradient_dilution_factor,
     embed_cholesky_packed,
@@ -22,6 +23,8 @@ from luxar.gsplats.utils.trils import (
 )
 
 __all__ = [
+    "is_mps_available",
+    "resolve_torch_device",
     "tril_size",
     "calculate_gradient_dilution_factor",
     "pack_tril",

@@ -20,6 +20,7 @@ from ..core.group import Group
 from ..core.overlay import Overlay
 from ..core.viewer_config import ViewerConfig
 from ..io.writer import ZarrWriterProtocol
+from ..utils.atomic_copy import atomic_copytree
 
 
 class Scene(Group):
@@ -408,6 +409,12 @@ class Scene(Group):
         Returns:
             Dimensions object (always present - required at construction)
         """
+        if self._dimensions is None:
+            raise RuntimeError(
+                "Scene dimensions are not initialized. This indicates a bug in "
+                "scene construction. Use LuxarZarrCompiler.create_scene() with "
+                "a Dimensions object."
+            )
         return self._dimensions
 
     @dimensions.setter
@@ -943,13 +950,59 @@ class Scene(Group):
     # ---------------------------------------------------------- export
 
     def to_zarr(self, path: PathLike) -> None:
-        """Export scene to a new Zarr store location.
+        """Finalize and copy the backing Zarr store to ``path``.
+
+        Luxar scenes are written progressively as nodes are added; the scene
+        object itself does not keep an in-memory copy of geometry arrays. This
+        method therefore exports by finalizing the current backing store and
+        copying that on-disk Zarr directory to a new location.
+
+        Calling this method finalizes the associated writer. Do not add more
+        nodes to this scene after calling ``to_zarr()``; create a new
+        ``LuxarZarrCompiler`` if additional writes are needed.
 
         Args:
-            path: Destination path for the Zarr store
+            path: Destination path for the copied Zarr store. The destination
+                must not already exist unless it is the current backing store.
 
         Raises:
-            NotImplementedError: Scene export is not yet implemented
+            FileExistsError: If ``path`` already exists and is not the current
+                backing store.
+            ValueError: If the destination is inside the source store or the
+                source store is unavailable.
         """
-        aprint(f"Exporting scene to {path}")
-        raise NotImplementedError("Scene export not yet implemented")
+        writer = self._writer
+        if writer is None:
+            raise ValueError("Scene has no backing writer; cannot export to Zarr")
+
+        source = Path(self.get_store_path()).resolve()
+        destination = Path(path).expanduser().resolve()
+
+        if not source.exists() or not source.is_dir():
+            raise ValueError(
+                f"Scene backing store is not an existing directory: {source}"
+            )
+
+        # Same-location export is useful as an explicit finalize operation.
+        if destination == source:
+            aprint(f"Finalizing scene at {source}")
+            writer.finalize()
+            return
+
+        if destination.exists():
+            raise FileExistsError(
+                f"Destination already exists: {destination}. Remove it first or choose "
+                "a different path."
+            )
+
+        if destination.is_relative_to(source):
+            raise ValueError(
+                f"Destination {destination} cannot be inside source Zarr store {source}"
+            )
+
+        aprint(f"Exporting scene from {source} to {destination}")
+        writer.finalize()
+        # CL-1: atomic copy — a failure mid-copy leaves no half-written
+        # zarr store at `destination`.
+        atomic_copytree(source, destination)
+        aprint(f"✓ Scene exported to {destination}")

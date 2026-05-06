@@ -325,15 +325,18 @@ export class SceneManager extends THREE.EventDispatcher<{
         // Force renderer to recreate its internal state
         this.renderer.resetState();
 
-        // Recreate post-processing resources (render targets, shaders)
-        // Note: This is handled by PostProcessingManager's dispose/recreate cycle
-        // For now, we log that resources need recreation
-        log.info(
-          Modules.SCENE_MANAGER,
-          'Post-processing resources will be recreated on next render'
-        );
+        // Rebuild post-processing GPU-bound resources in place. The
+        // PostProcessingManager identity is preserved across the rebuild so
+        // PickingSystem, AnimationController, and RenderingControls keep
+        // their cached references valid; user settings (bloom, exposure,
+        // tone mapping, DOF, etc.) are preserved end-to-end.
+        if (this.postProcessing) {
+          this.postProcessing.rebuildAfterContextRestore();
+        }
+        this.markSceneResourcesDirtyForContextRestore();
+        this.updateRendererSize();
 
-        // Trigger a render to force resource recreation
+        // Trigger a render to force Three.js material/program resource recreation.
         this.dispatchEvent({ type: 'change' });
 
         hideLoadingIndicator();
@@ -349,6 +352,44 @@ export class SceneManager extends THREE.EventDispatcher<{
     canvas.addEventListener('webglcontextrestored', this.contextRestoredHandler, false);
 
     log.info(Modules.SCENE_MANAGER, 'WebGL context loss handling initialized');
+  }
+
+  /**
+   * Mark scene GPU resources dirty after WebGL context restoration.
+   *
+   * Three.js will recreate buffers/programs lazily, but explicitly marking
+   * attributes/materials dirty makes the recovery path deterministic for custom
+   * shader materials, instanced geometry, and pooled buffer attributes.
+   */
+  private markSceneResourcesDirtyForContextRestore(): void {
+    this.scene.traverse((obj) => {
+      if (
+        obj instanceof THREE.Mesh ||
+        obj instanceof THREE.Points ||
+        obj instanceof THREE.InstancedMesh
+      ) {
+        const geometry = obj.geometry;
+        if (geometry) {
+          const attributes = geometry.attributes as Record<
+            string,
+            THREE.BufferAttribute | THREE.InterleavedBufferAttribute
+          >;
+          for (const attribute of Object.values(attributes)) {
+            attribute.needsUpdate = true;
+          }
+          if (geometry.index) {
+            geometry.index.needsUpdate = true;
+          }
+        }
+
+        const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
+        for (const material of materials) {
+          if (material) {
+            material.needsUpdate = true;
+          }
+        }
+      }
+    });
   }
 
   /**
@@ -761,7 +802,7 @@ export class SceneManager extends THREE.EventDispatcher<{
         }
       }
 
-      // Handle InstancedMesh objects (legacy) and instanced Mesh objects
+      // Handle both THREE.InstancedMesh and Mesh + InstancedBufferGeometry objects
       // Lines and GSplats use THREE.Mesh with InstancedBufferGeometry (not InstancedMesh)
       // to avoid exceeding WebGL's 16 attribute location limit
       const isLineMesh =

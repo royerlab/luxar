@@ -158,10 +158,10 @@ Each LOD subgroup has the same internal structure as the v1.0 `splats/` group (a
   "n_splats": 10000,
   "ndim": 3,
   "has_colors": true,
-  "ordering": "morton",           // "morton", "hilbert", or "none"
-  "morton_min": [0.0, 0.0, 0.0],  // Bounds for Morton normalization (all dimensions)
-  "morton_max": [256.0, 256.0, 128.0],
-  "morton_bits_per_dim": 21,      // Bits per dimension in Morton code
+  "ordering": "morton",             // "morton", "hilbert", or "none"
+  "ordering_min": [0.0, 0.0, 0.0],  // Bounds for normalization (all dimensions)
+  "ordering_max": [256.0, 256.0, 128.0],
+  "ordering_bits_per_dim": 21,      // Bits per dimension in ordering code
   "chunk_size": 2048,             // Elements per chunk
   "amplitude_range": {"min": 0.01, "max": 1.5},
   "center_bounds": {
@@ -263,8 +263,8 @@ chunk_bounds[i, d, 1] = max(centers[chunk_i, d] + extent[chunk_i, d])
 
 **Ordering Metadata** (stored in `splats/.zattrs`):
 - `ordering`: "morton", "hilbert", or "none"
-- `morton_min`, `morton_max`: Coordinate bounds for normalization
-- `morton_bits_per_dim`: Bits allocated per dimension (typically 21 for 3D)
+- `ordering_min`, `ordering_max`: Coordinate bounds for normalization
+- `ordering_bits_per_dim`: Bits allocated per dimension (typically 21 for 3D)
 
 **Spatial Index Array**:
 - `chunk_bounds`: (num_chunks, d, 2) float32 array

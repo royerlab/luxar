@@ -395,12 +395,12 @@ export class NodeFactory {
   }
 
   /**
-   * Validate transform matrix format (detect row-major vs column-major).
-   *
-   * THREE.js expects column-major (OpenGL-style) where translation is at indices [12, 13, 14].
-   * NumPy uses row-major (C-style) where translation is at indices [3, 7, 11].
+   * Validate transform matrix format. Throws when the matrix appears to be
+   * stored row-major (NumPy) rather than column-major (THREE.js / OpenGL),
+   * which is almost always a producer bug — column-major translation lives
+   * at indices [12,13,14], row-major at [3,7,11].
    */
-  validateTransformFormat(transform: number[]): boolean {
+  validateTransformFormat(transform: number[]): void {
     const colMajorTranslation = [transform[12], transform[13], transform[14]];
     const rowMajorTranslation = [transform[3], transform[7], transform[11]];
 
@@ -408,25 +408,24 @@ export class NodeFactory {
     const rowMajorNonZero = rowMajorTranslation.some((v) => Math.abs(v) > 0.001);
 
     if (rowMajorNonZero && !colMajorNonZero) {
-      log.warning(
-        Modules.SCENE_LOADER,
-        'Transform matrix appears to be in row-major (NumPy) format instead of column-major (THREE.js). ' +
-          'Translation detected at wrong indices [3,7,11] instead of [12,13,14]. ' +
-          'Python should transpose before storing: matrix.T.ravel().tolist()'
+      throw new Error(
+        'Transform matrix appears to be stored in row-major (NumPy) format ' +
+          'instead of column-major (THREE.js). Translation detected at ' +
+          'indices [3,7,11] instead of [12,13,14]. Python should transpose ' +
+          'before storing: matrix.T.ravel().tolist()'
       );
-      return false;
     }
-
-    return true;
   }
 
   /**
-   * Apply transformation matrix to a THREE.js object.
+   * Apply transformation matrix to a THREE.js object. Throws when the
+   * transform is malformed or stored row-major.
    */
   applyTransform(object: THREE.Object3D, transform: number[]): void {
     if (transform.length !== 16) {
-      log.warning(Modules.SCENE_LOADER, `Invalid transform length: ${transform.length}`);
-      return;
+      throw new Error(
+        `Invalid transform length: ${transform.length} (expected 16)`
+      );
     }
 
     this.validateTransformFormat(transform);

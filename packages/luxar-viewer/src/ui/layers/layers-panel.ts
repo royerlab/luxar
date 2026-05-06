@@ -264,6 +264,7 @@ export class LayersPanel {
     this.container.appendChild(panel);
 
     // Track panel size changes to keep the GUI positioned below
+    this.resizeObserver?.disconnect();
     this.resizeObserver = new ResizeObserver(() => {
       if (this.visible) this.repositionGUI();
     });

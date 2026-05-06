@@ -140,32 +140,6 @@ describe('AnimationController', () => {
     });
   });
 
-  describe('legacy setPerFrameCallback', () => {
-    it('should add a legacy callback', () => {
-      const callback = vi.fn();
-      controller.setPerFrameCallback(callback);
-
-      expect(controller.hasPerFrameCallback('legacy')).toBe(true);
-    });
-
-    it('should clear legacy callback with null', () => {
-      const callback = vi.fn();
-      controller.setPerFrameCallback(callback);
-      controller.setPerFrameCallback(null);
-
-      expect(controller.hasPerFrameCallback('legacy')).toBe(false);
-    });
-
-    it('should execute legacy callback during animation', () => {
-      const callback = vi.fn();
-      controller.setPerFrameCallback(callback);
-
-      controller.startAnimation();
-
-      expect(callback).toHaveBeenCalled();
-    });
-  });
-
   describe('setAdaptiveDPRManager', () => {
     it('should set the adaptive DPR manager', () => {
       const mockDPRManager = {

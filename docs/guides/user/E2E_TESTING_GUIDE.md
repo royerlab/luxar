@@ -39,6 +39,28 @@ pnpm agent:debug:visible      # Visible browser
 
 ---
 
+## 🔗 Data Source URL Format
+
+Use the viewer's `src` parameter for every dataset URL and add `debug` when tests
+need `window.__luxarDebug`:
+
+```text
+✅ http://localhost:5173/?src=http://127.0.0.1:8000/datasets/test.zarr&debug
+❌ http://localhost:5173/?data=http://127.0.0.1:8000/datasets/test.zarr&debug
+❌ http://localhost:5173/?src=http://127.0.0.1:8000/datasets/test.zarr/&debug
+```
+
+Best practices:
+
+- Use `?src=<dataset>&debug`, not the old `?data=` parameter.
+- Do **not** put a trailing slash on the data-source URL. Zarr paths are formed
+  by appending metadata and chunk paths; a trailing slash can produce malformed
+  requests on stricter servers and can split cache keys for the same dataset.
+- Prefer explicit loopback hosts and ports in E2E tests (`127.0.0.1:<port>`) so
+  tests do not depend on external DNS or network access.
+
+---
+
 ## 🧪 Test Suite Organization
 
 ### Test Files (check `packages/luxar-viewer/src/tests/e2e/` for current count)

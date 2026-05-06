@@ -67,7 +67,6 @@ describe('Lines Types', () => {
           has_sharpness: false,
           ordering: 'none',
         },
-        spatialIndex: null,
       };
 
       expect(isLinesUserData(validUserData)).toBe(true);

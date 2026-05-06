@@ -408,9 +408,9 @@ class TestChunkBoundsZarrAlignment:
 
         spatial = {"chunk_size": 512}
 
-        # Without spatial data: uses default
+        # Without spatial data: uses byte-based default (64 KiB / float32)
         result = _calculate_intelligent_chunks((10000,))
-        assert result == (min(10000, 32768),)
+        assert result == (10000,)
 
         # With spatial data: uses chunk_size
         result = _calculate_intelligent_chunks((10000,), spatial_index_data=spatial)
@@ -426,10 +426,10 @@ class TestChunkBoundsZarrAlignment:
 
         spatial = {"chunk_size": 1024}
 
-        # Without spatial data: uses default
+        # Without spatial data: uses byte-based default (64 KiB / float32 / 4 dims)
         result = _calculate_intelligent_chunks((5000, 4))
         assert result[1] == 4
-        assert result[0] == min(5000, 32768 // 4)
+        assert result[0] == min(5000, (65536 // 4) // 4)
 
         # With spatial data: uses chunk_size
         result = _calculate_intelligent_chunks((5000, 4), spatial_index_data=spatial)
@@ -822,3 +822,102 @@ class TestPositionBounds:
             for i in range(3):
                 assert abs(node_bounds["min"][i] - expected_min[i]) < 1e-5
                 assert abs(node_bounds["max"][i] - expected_max[i]) < 1e-5
+
+
+class TestCalculateIntelligentChunksDtype:
+    """CC-1-r: chunk-size heuristic must scale with the array dtype itemsize.
+
+    Pre-fix the helper accepted ``itemsize: int = 4`` which silently
+    under-chunked any non-float32 caller. The current API takes ``dtype=``
+    so the contract is explicit at the call site.
+    """
+
+    def test_chunk_size_scales_with_dtype_itemsize(self) -> None:
+        from luxar.io.compiler import _calculate_intelligent_chunks
+        from luxar.typing_utils.constants import (
+            MAX_CHUNK_BYTES,
+            MIN_CHUNK_BYTES,
+            TARGET_CHUNK_BYTES,
+        )
+
+        shape = (1_000_000, 3)
+
+        for dtype_str in ("uint8", "uint16", "float32", "float64"):
+            dtype = np.dtype(dtype_str)
+            chunks = _calculate_intelligent_chunks(shape, dtype=dtype)
+            chunk_rows = chunks[0]
+            chunk_bytes = chunk_rows * shape[1] * dtype.itemsize
+
+            # Every dtype should land within the byte-target band.
+            assert MIN_CHUNK_BYTES <= chunk_bytes <= MAX_CHUNK_BYTES, (
+                f"{dtype_str}: {chunk_bytes} bytes outside "
+                f"[{MIN_CHUNK_BYTES}, {MAX_CHUNK_BYTES}]"
+            )
+            # And close to the target — the heuristic is byte-targeted, not
+            # element-targeted, so smaller dtypes get more rows per chunk.
+            assert chunk_bytes <= TARGET_CHUNK_BYTES, (
+                f"{dtype_str}: {chunk_bytes} > target {TARGET_CHUNK_BYTES}"
+            )
+
+    def test_default_dtype_is_float32(self) -> None:
+        from luxar.io.compiler import _calculate_intelligent_chunks
+
+        # Without an explicit dtype, behaviour matches the explicit float32
+        # default. This pins the default contract so a future signature
+        # change is caught.
+        shape = (10_000, 3)
+        implicit = _calculate_intelligent_chunks(shape)
+        explicit = _calculate_intelligent_chunks(shape, dtype=np.dtype(np.float32))
+        assert implicit == explicit
+
+
+class TestFinalizeGuards:
+    """CL-2: writes after finalize() must raise rather than silently no-op or
+    corrupt the consolidated metadata."""
+
+    def test_write_points_after_finalize_raises(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path = Path(tmpdir) / "test.zarr"
+
+            compiler = LuxarZarrCompiler(zarr_path)
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_points("a", np.random.randn(5, 3).astype(np.float32))
+            compiler.finalize()
+
+            with pytest.raises(RuntimeError, match="finalized"):
+                compiler.write_points(
+                    "b", np.random.randn(5, 3).astype(np.float32)
+                )
+
+    def test_create_scene_after_finalize_raises(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path = Path(tmpdir) / "test.zarr"
+
+            compiler = LuxarZarrCompiler(zarr_path)
+            compiler.create_scene(dimensions=Dimensions.default_3d())
+            compiler.finalize()
+
+            with pytest.raises(RuntimeError, match="finalized"):
+                compiler.create_scene(dimensions=Dimensions.default_3d())
+
+    def test_write_group_after_finalize_raises(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path = Path(tmpdir) / "test.zarr"
+
+            compiler = LuxarZarrCompiler(zarr_path)
+            compiler.create_scene(dimensions=Dimensions.default_3d())
+            compiler.finalize()
+
+            with pytest.raises(RuntimeError, match="finalized"):
+                compiler.write_group("/group", attr="value")
+
+    def test_writes_inside_context_still_work(self) -> None:
+        """Sanity check: the guard only fires after finalize, not at context entry."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            zarr_path = Path(tmpdir) / "test.zarr"
+
+            with LuxarZarrCompiler(zarr_path) as compiler:
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+                scene.add_points("a", np.random.randn(5, 3).astype(np.float32))
+                # No exception expected here.
+                scene.add_points("b", np.random.randn(5, 3).astype(np.float32))

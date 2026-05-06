@@ -7,7 +7,6 @@ and 90% amplitude scaling (to avoid overlap and divergence during optimization).
 """
 
 import numpy as np
-import pytest
 
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.seeds import (
@@ -338,7 +337,3 @@ def test_grid_produces_isotropic_shapes() -> None:
     assert np.allclose(L00, expected_sigma), (
         f"Expected σ={expected_sigma}, got {L00[0]}"
     )
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])

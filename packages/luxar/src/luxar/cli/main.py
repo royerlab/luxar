@@ -35,6 +35,8 @@ from .network_simulation import (
     print_network_params,
 )
 from .utils import (
+    _DEFAULT_CORS_ORIGIN,
+    _LOCAL_CORS_ORIGIN_REGEX,
     build_viewer,
     check_viewer_built,
     find_available_port,
@@ -47,22 +49,127 @@ from .utils import (
     open_browser as open_browser_func,
 )
 
+# Note: _DEFAULT_CORS_ORIGIN / _LOCAL_CORS_ORIGIN_REGEX live in utils.py
+# (rather than at module scope here) so subcommand modules — e.g.
+# gsplat_commands.py — can import them without forming a cycle through
+# this file (main.py imports gsplat_commands at module bottom to attach
+# the subcommand tree).
 
-def _add_cors(api: FastAPI, cors_origin: str = "*") -> None:
+
+def _add_cors(api: FastAPI, cors_origin: str = _DEFAULT_CORS_ORIGIN) -> None:
     """Add CORS middleware to a FastAPI application.
+
+    ``cors_origin="local"`` is the safe development default: browser clients
+    on localhost/127.0.0.1/::1 may read served data from any port. Pass
+    ``"*"`` explicitly to allow any origin; credentials are disabled for that
+    mode because wildcard origins and credentials are an unsafe combination.
 
     Args:
         api: FastAPI app to extend.
-        cors_origin: Origin to allow. Defaults to ``"*"`` (any origin). All
-            methods and headers are permitted and credentials are allowed.
+        cors_origin: Origin to allow. ``"local"`` allows loopback origins.
+            ``"*"`` allows any origin without credentials. Comma-separated
+            explicit origins are also accepted.
     """
+    origin = cors_origin.strip() or _DEFAULT_CORS_ORIGIN
+    allow_origins: list[str]
+    allow_origin_regex: str | None = None
+    allow_credentials = True
+
+    if origin == _DEFAULT_CORS_ORIGIN:
+        allow_origins = []
+        allow_origin_regex = _LOCAL_CORS_ORIGIN_REGEX
+    elif origin == "*":
+        allow_origins = ["*"]
+        allow_credentials = False
+    else:
+        allow_origins = [item.strip() for item in origin.split(",") if item.strip()]
+
     api.add_middleware(
         CORSMiddleware,
-        allow_origins=[cors_origin],
-        allow_credentials=True,
+        allow_origins=allow_origins,
+        allow_origin_regex=allow_origin_regex,
+        allow_credentials=allow_credentials,
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "0.0.0.0"})
+
+
+def _warn_if_lan_exposed(host: str, cors_origin: str) -> None:
+    """Warn when the user is binding non-loopback AND opening CORS to all.
+
+    ``host`` is the bind address. ``0.0.0.0`` is treated as loopback for this
+    warning's purpose because it is the conventional "all interfaces" sentinel
+    on the server side; the *real* exposure risk is when a developer passes
+    a routable LAN address (an internal IP, a hostname, ``::``).
+    """
+    if cors_origin.strip() != "*":
+        return
+    bind_host = host.strip().lower()
+    if bind_host in _LOOPBACK_HOSTS:
+        return
+    aprint(
+        f"⚠️  Serving on host={host} with --cors-origin '*'. "
+        "This exposes the data to anything that can reach this machine on "
+        "the network. Pass --cors-origin local (or an explicit origin) "
+        "if that was not intended."
+    )
+
+
+def _path_is_within(path: Path, base: Path) -> bool:
+    """Return True if ``path`` resolves inside ``base``."""
+    try:
+        path.resolve().relative_to(base.resolve())
+    except ValueError:
+        return False
+    return True
+
+
+def _is_sensitive_serve_path(path: Path) -> bool:
+    """Return True for obvious system locations that should not be served.
+
+    This intentionally does not block ordinary project directories under a
+    user's home or temporary directory. It only catches filesystem roots and
+    well-known sensitive system roots.
+    """
+    resolved = path.resolve()
+    if resolved == Path(resolved.anchor):
+        return True
+
+    # System roots that are never legitimate to serve over a dev HTTP server.
+    # /home and /Users are intentionally NOT on this list — users routinely
+    # store project data there. /var and /private/var are also omitted because
+    # macOS' TMPDIR resolves under /private/var/folders/... and the test
+    # suite (and many user workflows) legitimately serves from tmpdirs.
+    sensitive_roots = [
+        Path("/etc"),
+        Path("/private/etc"),
+        Path("/proc"),
+        Path("/sys"),
+        Path("/dev"),
+        Path("/root"),
+        Path("/usr"),
+        Path("/boot"),
+    ]
+    for root in sensitive_roots:
+        try:
+            root_resolved = root.resolve(strict=False)
+            if resolved == root_resolved or resolved.is_relative_to(root_resolved):
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def _validate_serve_path(path: Path, *, allow_sensitive_path: bool = False) -> None:
+    """Validate that a path is safe enough for the local development server."""
+    if _is_sensitive_serve_path(path) and not allow_sensitive_path:
+        raise ValueError(
+            f"Refusing to serve sensitive system path: {path.resolve()}. "
+            "Pass --allow-sensitive-path if you really intend to expose it."
+        )
 
 
 class DirectoryListingStaticFiles(StaticFiles):
@@ -70,21 +177,19 @@ class DirectoryListingStaticFiles(StaticFiles):
 
     async def get_response(self, path: str, scope: MutableMapping[str, Any]) -> Any:
         """Override to provide directory listing."""
+        from starlette.responses import Response
+
         # Handle OPTIONS requests for CORS
         if scope.get("method") == "OPTIONS":
-            from starlette.responses import Response
-
-            return Response(
-                headers={
-                    "Access-Control-Allow-Origin": "*",
-                    "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
-                    "Access-Control-Allow-Headers": "*",
-                }
-            )
+            return Response(status_code=204)
 
         if self.directory is None:
             raise ValueError("Directory not set")
-        full_path = Path(self.directory) / path if path else Path(self.directory)
+
+        base_path = Path(self.directory).resolve()
+        full_path = (base_path / path).resolve() if path else base_path
+        if not _path_is_within(full_path, base_path):
+            return Response("Forbidden", status_code=403)
 
         # If it's a directory, provide listing
         if full_path.exists() and full_path.is_dir():
@@ -118,8 +223,6 @@ class DirectoryListingStaticFiles(StaticFiles):
                         }
                     )
             except PermissionError:
-                from starlette.responses import Response
-
                 return Response("Permission denied", status_code=403)
 
             # Return JSON for API requests
@@ -151,7 +254,13 @@ class DirectoryListingStaticFiles(StaticFiles):
         return await super().get_response(path, scope)
 
 
-def create_server_app(path: str, serve_viewer: bool = False) -> FastAPI:
+def create_server_app(
+    path: str,
+    serve_viewer: bool = False,
+    *,
+    cors_origin: str = _DEFAULT_CORS_ORIGIN,
+    allow_sensitive_path: bool = False,
+) -> FastAPI:
     """Create a FastAPI server application for serving Zarr data.
 
     This function is used by both the CLI and integration tests to create
@@ -160,12 +269,17 @@ def create_server_app(path: str, serve_viewer: bool = False) -> FastAPI:
     Args:
         path: Path to directory or Zarr dataset to serve
         serve_viewer: Whether to include viewer static files (not used in basic tests)
+        cors_origin: Allowed CORS origin. ``"local"`` allows loopback origins.
+        allow_sensitive_path: If True, permit serving system directories.
 
     Returns:
         FastAPI application instance
     """
+    serve_path = Path(path)
+    _validate_serve_path(serve_path, allow_sensitive_path=allow_sensitive_path)
+
     api = FastAPI(title="Luxar static server", docs_url=None, redoc_url=None)
-    _add_cors(api)
+    _add_cors(api, cors_origin)
 
     # Add health check endpoint
     @api.get("/health")
@@ -174,14 +288,14 @@ def create_server_app(path: str, serve_viewer: bool = False) -> FastAPI:
         return {"status": "ok"}
 
     # Mount the static files handler with directory listing
-    api.mount("/", DirectoryListingStaticFiles(directory=path, html=True))
+    api.mount("/", DirectoryListingStaticFiles(directory=serve_path, html=True))
 
     return api
 
 
 def _version_callback(value: bool) -> None:
     if value:
-        print(f"luxar {__version__}")
+        aprint(f"luxar {__version__}")
         raise typer.Exit()
 
 
@@ -201,7 +315,7 @@ def main_callback(
 ) -> None:
     """luxar – build and serve Zarr-backed nD scenes."""
     if not ctx.invoked_subcommand:
-        print(ctx.get_help())
+        aprint(ctx.get_help())
         raise typer.Exit(0)
 
 
@@ -257,9 +371,17 @@ def serve(
         help="Packet loss rate (e.g., '1%', '0.01', '5%')",
     ),
     cors_origin: str = typer.Option(
-        "*",
+        _DEFAULT_CORS_ORIGIN,
         "--cors-origin",
-        help="Allowed CORS origin (default: '*' allows all)",
+        help=(
+            "Allowed CORS origin. Default 'local' allows localhost/127.0.0.1/::1. "
+            "Use '*' to allow any origin without credentials."
+        ),
+    ),
+    allow_sensitive_path: bool = typer.Option(
+        False,
+        "--allow-sensitive-path",
+        help="Allow serving obvious system paths such as /, /etc, /proc, /sys, /dev.",
     ),
 ) -> None:
     """Serve a directory, Zarr dataset, or viewer via HTTP.
@@ -299,7 +421,8 @@ def serve(
         latency (str, optional): Network latency.
         jitter (str, optional): Latency jitter percentage.
         packet_loss (str, optional): Packet loss rate.
-        cors_origin (str, optional): Allowed CORS origin. Defaults to "*".
+        cors_origin (str, optional): Allowed CORS origin. Defaults to "local".
+        allow_sensitive_path (bool, optional): Permit serving system paths.
     """
     try:
         # Warn about conflicting flags
@@ -309,6 +432,7 @@ def serve(
             aprint(
                 "⚠️  --viewer-only already includes the viewer; --viewer is redundant"
             )
+        _warn_if_lan_exposed(host, cors_origin)
 
         # Handle viewer-only mode
         if viewer_only:
@@ -328,13 +452,15 @@ def serve(
                     f"⚠️  Viewer port {viewer_port} busy, using {actual_viewer_port} instead"
                 )
 
-            _serve_viewer(host, actual_viewer_port, None, open_browser)
+            _serve_viewer(host, actual_viewer_port, None, open_browser, cors_origin)
             return
 
         # Require path for data serving
         if path is None:
             aprint("❌ Error: Path required unless using --viewer-only")
             raise typer.Exit(1)
+
+        _validate_serve_path(path, allow_sensitive_path=allow_sensitive_path)
 
         # Determine what we're serving
         if path.is_dir():
@@ -406,7 +532,7 @@ def serve(
                 data_url = f"http://{host}:{actual_port}"  # No trailing slash
                 viewer_thread = threading.Thread(
                     target=_serve_viewer,
-                    args=(host, actual_viewer_port, data_url, False),
+                    args=(host, actual_viewer_port, data_url, False, cors_origin),
                     daemon=True,
                 )
                 viewer_thread.start()
@@ -454,7 +580,11 @@ def serve(
 
 
 def _serve_viewer(
-    host: str, port: int, data_url: Optional[str] = None, open_browser_flag: bool = True
+    host: str,
+    port: int,
+    data_url: Optional[str] = None,
+    open_browser_flag: bool = True,
+    cors_origin: str = _DEFAULT_CORS_ORIGIN,
 ) -> None:
     """Internal function to serve the viewer.
 
@@ -466,11 +596,12 @@ def _serve_viewer(
             in viewer fetches).
         open_browser_flag: If True, open the viewer URL in the system browser
             shortly after the server starts.
+        cors_origin: Allowed CORS origin (see :func:`_add_cors`).
     """
     viewer_dist = get_viewer_dist_path()
 
     api = FastAPI(title="Luxar Viewer", docs_url=None, redoc_url=None)
-    _add_cors(api)
+    _add_cors(api, cors_origin)
 
     # Mount viewer static files
     api.mount("/", StaticFiles(directory=str(viewer_dist), html=True))
@@ -529,6 +660,19 @@ def viewer(
         "--packet-loss",
         help="Packet loss rate (e.g., '1%', '0.01')",
     ),
+    cors_origin: str = typer.Option(
+        _DEFAULT_CORS_ORIGIN,
+        "--cors-origin",
+        help=(
+            "Allowed CORS origin. Default 'local' allows localhost/127.0.0.1/::1. "
+            "Use '*' to allow any origin without credentials."
+        ),
+    ),
+    allow_sensitive_path: bool = typer.Option(
+        False,
+        "--allow-sensitive-path",
+        help="Allow serving obvious system paths such as /, /etc, /proc, /sys, /dev.",
+    ),
 ) -> None:
     """Serve the Luxar viewer, optionally with data.
 
@@ -555,8 +699,13 @@ def viewer(
         latency (str, optional): Network latency (applies to data server only).
         jitter (str, optional): Latency jitter percentage (applies to data server only).
         packet_loss (str, optional): Packet loss rate (applies to data server only).
+        cors_origin (str, optional): Allowed CORS origin for both viewer and
+            data servers. Defaults to "local" (loopback only).
+        allow_sensitive_path (bool, optional): Permit serving system paths.
     """
     try:
+        _warn_if_lan_exposed(host, cors_origin)
+
         # Check if viewer is built
         if not check_viewer_built():
             aprint("❌ Viewer not built. Building now...")
@@ -596,6 +745,7 @@ def viewer(
             if not data.exists():
                 aprint(f"❌ Data path does not exist: {data}")
                 raise typer.Exit(1)
+            _validate_serve_path(data, allow_sensitive_path=allow_sensitive_path)
 
             # Find available port for data server
             actual_data_port = find_available_port(data_port)
@@ -614,6 +764,8 @@ def viewer(
                     latency_ms,
                     jitter_percent,
                     packet_loss_rate,
+                    allow_sensitive_path,
+                    cors_origin,
                 ),
                 daemon=True,
             )
@@ -633,7 +785,7 @@ def viewer(
             aprint(f"⚠️  Viewer port {port} busy, using {actual_viewer_port} instead")
 
         # Serve viewer
-        _serve_viewer(host, actual_viewer_port, data_url, open_browser)
+        _serve_viewer(host, actual_viewer_port, data_url, open_browser, cors_origin)
 
     except KeyboardInterrupt:
         aprint("\n🛑 Shutting down viewer...")
@@ -650,6 +802,8 @@ def _serve_data(
     latency_ms: Optional[float] = None,
     jitter_percent: float = 0.0,
     packet_loss_rate: float = 0.0,
+    allow_sensitive_path: bool = False,
+    cors_origin: str = _DEFAULT_CORS_ORIGIN,
 ) -> None:
     """Internal function to serve data in background.
 
@@ -661,9 +815,13 @@ def _serve_data(
         latency_ms: Latency in milliseconds (optional)
         jitter_percent: Jitter as percentage (0.0-1.0)
         packet_loss_rate: Packet loss rate (0.0-1.0)
+        allow_sensitive_path: Permit serving system paths.
+        cors_origin: Allowed CORS origin (see :func:`_add_cors`).
     """
+    _validate_serve_path(path, allow_sensitive_path=allow_sensitive_path)
+
     api = FastAPI(title="Luxar Data Server", docs_url=None, redoc_url=None)
-    _add_cors(api)
+    _add_cors(api, cors_origin)
 
     # Determine serve path
     if path.is_dir():
@@ -699,7 +857,12 @@ def _serve_data(
 def demo(
     output: Optional[Path] = typer.Option(None, "--output", "-o", help="Output path"),
     n_points: int = typer.Option(10000, "--points", "-n", help="Number of points"),
-    demo_type: str = typer.Option("lorenz", "--type", "-t", help="Demo type"),
+    demo_type: str = typer.Option(
+        "lorenz",
+        "--type",
+        "-t",
+        help="Demo type (currently only 'lorenz' supported)",
+    ),
     seed: Optional[int] = typer.Option(None, "--seed", "-s", help="Random seed"),
     serve: bool = typer.Option(True, "--serve/--no-serve", help="Serve with viewer"),
     open_browser: bool = typer.Option(True, "--open/--no-open", help="Open browser"),
@@ -733,6 +896,14 @@ def demo(
         None,
         "--packet-loss",
         help="Packet loss rate (e.g., '1%', '0.01')",
+    ),
+    cors_origin: str = typer.Option(
+        _DEFAULT_CORS_ORIGIN,
+        "--cors-origin",
+        help=(
+            "Allowed CORS origin. Default 'local' allows localhost/127.0.0.1/::1. "
+            "Use '*' to allow any origin without credentials."
+        ),
     ),
 ) -> None:
     """Generate a demo dataset and optionally serve with viewer.
@@ -768,6 +939,8 @@ def demo(
         latency (str, optional): Network latency.
         jitter (str, optional): Latency jitter percentage.
         packet_loss (str, optional): Packet loss rate.
+        cors_origin (str, optional): Allowed CORS origin for both viewer and
+            data servers. Defaults to "local" (loopback only).
     """
     # Validate inputs early
     if n_points <= 0:
@@ -850,6 +1023,8 @@ def demo(
                     latency_ms,
                     jitter_percent,
                     packet_loss_rate,
+                    False,  # allow_sensitive_path
+                    cors_origin,
                 ),
                 daemon=True,
             )
@@ -861,7 +1036,13 @@ def demo(
 
             # Serve viewer (this blocks)
             aprint("\n🎉 Demo ready! Starting viewer...")
-            _serve_viewer("127.0.0.1", actual_viewer_port, data_url, open_browser)
+            _serve_viewer(
+                "127.0.0.1",
+                actual_viewer_port,
+                data_url,
+                open_browser,
+                cors_origin,
+            )
 
     except KeyboardInterrupt:
         aprint("\n🛑 Shutting down demo...")
@@ -1108,6 +1289,16 @@ def export(
         "--name",
         help="Bundle name (defaults to the zarr stem). Used with --native.",
     ),
+    zip_app: bool = typer.Option(
+        True,
+        "--zip/--no-zip",
+        help=(
+            "When --native macos is requested, also produce a sibling "
+            "<name>.app.zip via ditto (or zipfile fallback). On by default "
+            "so users get a single shareable artifact with the .app's "
+            "permissions and resource forks intact. Pass --no-zip to skip."
+        ),
+    ),
 ) -> None:
     """Export a zarr scene + viewer as a standalone offline folder.
 
@@ -1133,6 +1324,7 @@ def export(
                 overwrite=overwrite,
                 native=native,
                 name=name,
+                zip_app=zip_app,
             )
             return
 
@@ -1180,6 +1372,7 @@ def _run_native_export(
     overwrite: bool,
     native: str,
     name: Optional[str],
+    zip_app: bool = True,
 ) -> None:
     """Helper for ``luxar export --native``: validate args, then bundle.
 
@@ -1196,6 +1389,7 @@ def _run_native_export(
         bundle_linux_folder,
         bundle_macos_app,
         get_launcher_path,
+        zip_macos_app,
     )
     from .utils import check_viewer_built, get_viewer_dist_path, validate_zarr_store
 
@@ -1239,14 +1433,15 @@ def _run_native_export(
         produced: list[Path] = []
         for plat in requested:
             if plat == "macos":
-                produced.append(
-                    bundle_macos_app(
-                        viewer_dist=viewer_dist,
-                        zarr_data=source,
-                        output=output,
-                        app_name=bundle_name,
-                    )
+                app_path = bundle_macos_app(
+                    viewer_dist=viewer_dist,
+                    zarr_data=source,
+                    output=output,
+                    app_name=bundle_name,
                 )
+                produced.append(app_path)
+                if zip_app:
+                    produced.append(zip_macos_app(app_path))
             elif plat.startswith("linux-"):
                 arch = plat.split("-", 1)[1]
                 produced.append(

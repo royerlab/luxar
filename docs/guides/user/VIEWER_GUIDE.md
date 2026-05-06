@@ -28,8 +28,9 @@ cd packages/luxar-viewer
 pnpm dev
 ```
 
-Then open `http://localhost:5173/?src=http://127.0.0.1:8005` in a browser,
-pointing `src` at a running Luxar data server.
+Then open `http://localhost:5173/?src=http://127.0.0.1:8000` in a browser,
+pointing `src` at a running Luxar data server. Port `8000` is the default for
+`luxar serve`; use your configured `--port` value if you changed it.
 
 **Important:** Data source URLs must NOT end with a trailing slash. A trailing
 slash causes the Zarr loader to produce 404 errors.
@@ -56,7 +57,7 @@ Flag parameters do not take a value; their presence activates the feature.
 Example:
 
 ```
-http://localhost:5173/?src=http://127.0.0.1:8005&theme=dark&no-cache
+http://localhost:5173/?src=http://127.0.0.1:8000&theme=dark&no-cache
 ```
 
 ---
@@ -272,6 +273,17 @@ slice position for that dimension.
   dimensions to find populated slices.
 - For 4D time-lapse data, use animation playback (see next section) to step
   through time automatically.
+
+### Performance limit: 16 dimensions
+
+The viewer's WASM-accelerated kernels (spatial queries, effective-radius
+slicing, GSplat attenuation) are bounded to **16 dimensions**. Scenes with
+more dimensions still load and render correctly via a TypeScript fallback,
+but interactive performance can drop noticeably on large point or splat
+collections. For best performance on high-dim source data, pre-slice or
+pre-aggregate before export. See
+[LUXAR_ZARR_FORMAT.md → Viewer Constraints and Performance](LUXAR_ZARR_FORMAT.md#viewer-constraints-and-performance)
+for details.
 
 ---
 

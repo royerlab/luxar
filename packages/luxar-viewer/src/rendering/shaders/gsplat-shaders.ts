@@ -58,13 +58,24 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
         );
     }
 
+    bool invalidFloat(float v) {
+        return isnan(v) || isinf(v);
+    }
+
+    bool invalidCov2D(mat2 S) {
+        return invalidFloat(S[0][0]) || invalidFloat(S[0][1]) || invalidFloat(S[1][0]) || invalidFloat(S[1][1]);
+    }
+
     // Compute 2D Cholesky from 2D covariance (symmetric positive definite)
     // OPTIMIZATION: Returns [1/L00, L10, 1/L11] for faster fragment shader (MUL instead of DIV)
     vec3 cholesky2x2(mat2 S) {
-        float L00 = sqrt(max(S[0][0], 1e-8));
+        float s00 = max(S[0][0], 1e-6);
+        float s10 = invalidFloat(S[1][0]) ? 0.0 : S[1][0];
+        float s11 = invalidFloat(S[1][1]) ? 1e-6 : S[1][1];
+        float L00 = sqrt(s00);
         float invL00 = 1.0 / L00;
-        float L10 = S[1][0] * invL00;  // Use reciprocal here too
-        float L11 = sqrt(max(S[1][1] - L10 * L10, 1e-8));
+        float L10 = s10 * invL00;  // Use reciprocal here too
+        float L11 = sqrt(max(s11 - L10 * L10, 1e-6));
         float invL11 = 1.0 / L11;
         return vec3(invL00, L10, invL11);  // Pack reciprocals for fragment shader
     }
@@ -160,6 +171,11 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
         Sigma2D[1][0] = JS0.x * J[0].y + JS1.x * J[1].y + JS2.x * J[2].y;
         Sigma2D[0][1] = Sigma2D[1][0];  // Symmetric (J*S*J^T preserves symmetry)
         Sigma2D[1][1] = JS0.y * J[0].y + JS1.y * J[1].y + JS2.y * J[2].y;
+
+        if (invalidCov2D(Sigma2D) || invalidFloat(aAmplitude)) {
+            gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
+            return;
+        }
 
         // Projection mode determines amplitude calculation:
         // - Sum projection (uProjectionMode = 0): Integrate Gaussian along ray → ray boost

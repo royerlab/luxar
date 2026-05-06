@@ -701,6 +701,7 @@ class TestCategoriesValidation:
         # Many categories
         categories = [f"cat_{i}" for i in range(100)]
         result = validate_categories(categories)
+        assert result is not None
         assert len(result) == 100
 
     def test_none_categories(self) -> None:
@@ -716,13 +717,13 @@ class TestCategoriesValidation:
     def test_non_list_rejected(self) -> None:
         """Test that non-list types are rejected."""
         with pytest.raises(TypeError, match="must be a list or None"):
-            validate_categories(("a", "b", "c"))  # tuple
+            validate_categories(("a", "b", "c"))  # type: ignore[arg-type]
 
         with pytest.raises(TypeError, match="must be a list or None"):
-            validate_categories({"a", "b", "c"})  # set
+            validate_categories({"a", "b", "c"})  # type: ignore[arg-type]
 
         with pytest.raises(TypeError, match="must be a list or None"):
-            validate_categories("abc")  # string
+            validate_categories("abc")  # type: ignore[arg-type]
 
     def test_empty_string_category_rejected(self) -> None:
         """Test that empty string categories are rejected."""

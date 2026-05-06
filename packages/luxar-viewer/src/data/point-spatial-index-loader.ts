@@ -22,13 +22,6 @@ import {
   ScalarArray,
 } from './data-loader-types';
 import {
-  loadChunkSpatialIndex,
-  queryChunksForView,
-  chunkIndicesToRanges,
-  mergePointRanges,
-  type ChunkSpatialIndex,
-} from './chunk-spatial-index';
-import {
   calculateEffectiveRadii,
   calculateSpatialQueryTolerance,
   shouldApplyEffectiveRadius,
@@ -42,7 +35,8 @@ import type {
   QueryInfo,
 } from '../ui/data-monitor-types';
 import { ArrayDecoder, ArrayRefRegistry, type ArrayMetadata } from './array-decoder';
-import { RangeLoader, type LoadRange } from './loaders';
+import { fetchChunkBoundsArray } from './loaders/chunk-bounds-loader';
+import { RangeLoader, SpatialQueryBuilder, type BaseViewState, type LoadRange } from './loaders';
 import type { ZarrSceneAttrs } from '../types/zarr';
 import type { PointsMetadata } from '../types/points';
 import { LoadedPointsDataAccumulator, type AccumulatorStats } from './data-accumulator';
@@ -50,6 +44,52 @@ import { config as appConfig } from '../config';
 import { getWorkerPool } from '../workers/worker-pool';
 import type { UpdateProfiler, UpdateSession } from '../profiling/update-profiler';
 import { DecompressedChunkCache, wrapWithCache, ChunkPrefetcher } from '../cache';
+
+type WritableNumericArray = {
+  length: number;
+  [index: number]: number;
+};
+
+/**
+ * Points-specific chunk spatial index, extending the canonical shape with
+ * descriptive metadata (ordering algorithm, ordering/slice dims, totals)
+ * surfaced by the points loader for logging and stats. The query path passes
+ * just the canonical {chunkBounds, chunkCount, metadata: {ndim, chunk_size}}
+ * subset to `SpatialQueryBuilder`.
+ */
+interface PointsChunkIndex {
+  chunkBounds: Float32Array;
+  chunkCount: number;
+  metadata: {
+    ordering: 'morton' | 'hilbert';
+    ordering_dims: number[];
+    slice_dims: number[];
+    ordering_bits_per_dim: number;
+    chunk_size: number;
+    total_points: number;
+    total_chunks: number;
+    ndim: number;
+  };
+}
+
+interface PointsNodeAttrs {
+  ordering?: 'morton' | 'hilbert' | 'none';
+  ordering_dims?: number[];
+  slice_dims?: number[];
+  ordering_bits_per_dim?: number;
+  chunk_size?: number;
+  n_points?: number;
+  ndim?: number;
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isNotFoundError(error: unknown): boolean {
+  const message = getErrorMessage(error);
+  return message.includes('404') || message.includes('Not Found');
+}
 
 /**
  * Loader implementation that uses spatial indices for efficient nD queries.
@@ -61,7 +101,7 @@ import { DecompressedChunkCache, wrapWithCache, ChunkPrefetcher } from '../cache
  * - Real-time monitoring and performance tracking
  */
 export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
-  private chunkIndex: ChunkSpatialIndex | null = null;
+  private chunkIndex: PointsChunkIndex | null = null;
   // Total points count for datasets without chunk-based index (simple fallback)
   private totalPointsNoIndex: number = 0;
   private _effectiveRadiusConfig: EffectiveRadiusConfig | null = null;
@@ -154,9 +194,9 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
    * Initialize the loader by loading spatial index and opening arrays
    */
   async initialize(): Promise<void> {
-    // Load chunk-based spatial index (NEW: replaces grid-based index)
+    // Load chunk-based spatial index
     try {
-      this.chunkIndex = await loadChunkSpatialIndex(this.zarrLocation, this.node.attrs);
+      this.chunkIndex = await this.loadChunkBounds(this.node.attrs as PointsNodeAttrs);
 
       if (!this.chunkIndex) {
         // For 3D datasets without Morton ordering, fall back to loading all points
@@ -280,9 +320,9 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
         colorsArray = wrapWithCache(colorsArray, this.l0Cache, `${this.node.path}/colors`);
       }
       this.arrays.colors = colorsArray;
-    } catch (e: any) {
+    } catch (e: unknown) {
       // Colors are optional - only log if it's not a 404
-      if (!e.message?.includes('404') && !e.message?.includes('Not Found')) {
+      if (!isNotFoundError(e)) {
         log.info(Modules.SPATIAL_INDEX_LOADER, 'No colors array found (using default colors)');
       }
     }
@@ -295,41 +335,30 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
         radiiArray = wrapWithCache(radiiArray, this.l0Cache, `${this.node.path}/radii`);
       }
       this.arrays.radii = radiiArray;
-    } catch (e: any) {
+    } catch (e: unknown) {
       // Radii are optional - only log if it's not a 404
-      if (!e.message?.includes('404') && !e.message?.includes('Not Found')) {
+      if (!isNotFoundError(e)) {
         log.info(Modules.SPATIAL_INDEX_LOADER, 'No radii array found (using default radii)');
       }
     }
 
     try {
-      // Try plural name first (current format), fall back to singular (legacy)
-      let sharpnessArray: zarr.Array<zarr.DataType, zarr.Readable>;
-      let sharpnessName: string;
-      try {
-        sharpnessArray = await zarr.open(this.zarrLocation.resolve('sharpnesses'), {
-          kind: 'array',
-        });
-        sharpnessName = 'sharpnesses';
-      } catch {
-        sharpnessArray = await zarr.open(this.zarrLocation.resolve('sharpness'), {
-          kind: 'array',
-        });
-        sharpnessName = 'sharpness';
-      }
-      this.registerBounds(sharpnessName, sharpnessArray);
+      let sharpnessArray = await zarr.open(this.zarrLocation.resolve('sharpnesses'), {
+        kind: 'array',
+      });
+      this.registerBounds('sharpnesses', sharpnessArray);
       // Wrap with L0 cache if enabled
       if (this.l0Cache) {
         sharpnessArray = wrapWithCache(
           sharpnessArray,
           this.l0Cache,
-          `${this.node.path}/${sharpnessName}`
+          `${this.node.path}/sharpnesses`
         );
       }
       this.arrays.sharpness = sharpnessArray;
-    } catch (e: any) {
+    } catch (e: unknown) {
       // Sharpness is optional - only log if it's not a 404
-      if (!e.message?.includes('404') && !e.message?.includes('Not Found')) {
+      if (!isNotFoundError(e)) {
         log.info(
           Modules.SPATIAL_INDEX_LOADER,
           'No sharpness array found (using default sharpness)'
@@ -647,13 +676,16 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
   }
 
   /**
-   * Update view for new position (more efficient than full reload)
+   * Update view for a new slice position.
+   *
+   * The spatial index makes each reload proportional to the visible ranges,
+   * so re-querying those ranges is the canonical update path for now. This
+   * keeps buffer ownership and range-cache behavior deterministic.
+   *
    * @param viewState - Current view state
    * @param session - Optional profiler session for nested timing
    */
   async updateView(viewState: ViewState, session?: UpdateSession): Promise<LoadedPointsData> {
-    // For now, just reload everything
-    // TODO: Implement incremental updates
     const result = await this.loadPoints(viewState, session);
     if (!this._initialLoadDone) {
       this._initialLoadDone = true;
@@ -663,146 +695,186 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
   }
 
   /**
-   * Query spatial index for visible point ranges
-   * Phase 2: Made async to support worker-based queries
+   * Probe the points `chunk_bounds` array.
+   *
+   * Returns null when no spatial ordering is set (3D datasets without Morton/
+   * Hilbert indexing); the loader then falls back to loading all points.
+   */
+  private async loadChunkBounds(nodeAttrs: PointsNodeAttrs): Promise<PointsChunkIndex | null> {
+    if (!nodeAttrs.ordering || nodeAttrs.ordering === 'none') {
+      log.info(Modules.SPATIAL_INDEX, 'No spatial ordering — skipping chunk_bounds probe');
+      return null;
+    }
+
+    const result = await fetchChunkBoundsArray(
+      this.zarrLocation,
+      'chunk_bounds',
+      Modules.SPATIAL_INDEX,
+      'No chunk_bounds found - dataset has no spatial indexing'
+    );
+    if (!result) return null;
+
+    const [numChunks, ndim, _two] = result.shape;
+    if (_two !== 2) {
+      log.error(
+        Modules.SPATIAL_INDEX,
+        `Invalid chunk_bounds shape: expected [..., 2], got [..., ${_two}]`
+      );
+      return null;
+    }
+
+    const expectedLength = numChunks * ndim * 2;
+    if (result.data.length !== expectedLength) {
+      log.warning(
+        Modules.SPATIAL_INDEX,
+        `Chunk bounds array length mismatch: expected ${expectedLength} (${numChunks}×${ndim}×2), got ${result.data.length}`
+      );
+    }
+
+    const positionDims = nodeAttrs.ndim;
+    if (positionDims !== undefined && positionDims !== ndim) {
+      log.warning(
+        Modules.SPATIAL_INDEX,
+        `Dimensionality mismatch: chunk_bounds has ${ndim}D but node attributes indicate ${positionDims}D`
+      );
+    }
+
+    const orderingDims = nodeAttrs.ordering_dims ?? [];
+    const sliceDims = nodeAttrs.slice_dims ?? [];
+    const allDims = new Set([...orderingDims, ...sliceDims]);
+    if (allDims.size > 0 && allDims.size !== ndim) {
+      log.warning(
+        Modules.SPATIAL_INDEX,
+        `Dimension coverage mismatch: ordering_dims[${orderingDims.length}] + slice_dims[${sliceDims.length}] = ${allDims.size}, but ndim=${ndim}`
+      );
+    }
+
+    const ordering = nodeAttrs.ordering === 'morton' ? 'morton' : 'hilbert';
+    return {
+      chunkBounds: result.data,
+      chunkCount: numChunks,
+      metadata: {
+        ordering,
+        ordering_dims: orderingDims,
+        slice_dims: sliceDims,
+        ordering_bits_per_dim: nodeAttrs.ordering_bits_per_dim ?? 21,
+        chunk_size: nodeAttrs.chunk_size ?? 0,
+        total_points: nodeAttrs.n_points ?? 0,
+        total_chunks: numChunks,
+        ndim,
+      },
+    };
+  }
+
+  /**
+   * Query spatial index for visible point ranges.
+   *
+   * Tolerance is computed by the points-specific
+   * `calculateSpatialQueryTolerance` (`EffectiveRadiusConfig`-aware) and passed
+   * to the canonical `SpatialQueryBuilder` via its `tolerance` option. Falls
+   * back to a uniform tolerance derived from `viewState.tolerance`/maxRadius
+   * for nodes without an `EffectiveRadiusConfig`.
+   *
+   * The builder also handles the `extend_to_all` short-circuit; we only emit
+   * the defensive metadata-missing warning ourselves.
    */
   private async queryVisiblePointRanges(viewState: ViewState): Promise<PointRange[]> {
-    // Check if this node has extend_to_all dimensions
     const extendDims = this.node.attrs.extend_to_all || [];
 
-    if (extendDims.length > 0) {
-      // DEFENSIVE CHECK: Warn if dimensions not available for extend_to_all
-      if (!viewState.dimensions?.metadata || viewState.dimensions.metadata.length === 0) {
-        log.warning(
-          Modules.SPATIAL_INDEX_LOADER,
-          `extend_to_all=[${extendDims.join(', ')}] specified for ${this.node.path} but ` +
-            'viewState.dimensions.metadata is undefined. extend_to_all will not work. ' +
-            'Ensure scene dimensions are initialized before loading nodes.'
-        );
-      }
+    if (
+      extendDims.length > 0 &&
+      (!viewState.dimensions?.metadata || viewState.dimensions.metadata.length === 0)
+    ) {
+      log.warning(
+        Modules.SPATIAL_INDEX_LOADER,
+        `extend_to_all=[${extendDims.join(', ')}] specified for ${this.node.path} but ` +
+          'viewState.dimensions.metadata is undefined. extend_to_all will not work. ' +
+          'Ensure scene dimensions are initialized before loading nodes.'
+      );
+    }
 
-      // Check if we're navigating through an extended dimension
-      const currentNonDisplayedDims =
-        viewState.dimensions?.metadata
-          ?.filter((_meta, idx) => !viewState.displayDims.includes(idx))
-          ?.map((meta) => meta.name)
-          ?.filter((name) => name) || [];
+    if (!this.chunkIndex) {
+      // No chunk index - load all points (fallback for 3D datasets without Morton/Hilbert ordering)
+      const totalPoints: number = (this.node.attrs.n_points ||
+        this.totalPointsNoIndex ||
+        0) as number;
+      log.query(Modules.SPATIAL_INDEX_LOADER, `No index: loading all ${totalPoints} points`);
+      return [{ start: 0, end: totalPoints }];
+    }
 
-      const isExtending = extendDims.some((edim) => currentNonDisplayedDims.includes(edim));
-
-      if (isExtending) {
-        if (!this._initialLoadDone) {
-          log.custom(
-            LogEmoji.BROADCAST,
-            Modules.SPATIAL_INDEX_LOADER,
-            `Extending ${this.node.path} visibility across: ${extendDims.join(', ')}`
-          );
-        }
-        // Return all points for extended dimensions
-        const totalPoints =
-          this.node.attrs.n_points ||
-          this.chunkIndex?.metadata.total_points ||
-          this.totalPointsNoIndex ||
-          0;
-        return [{ start: 0, end: totalPoints }];
-      }
+    if (!this._initialLoadDone && extendDims.length > 0) {
+      log.custom(
+        LogEmoji.BROADCAST,
+        Modules.SPATIAL_INDEX_LOADER,
+        `${this.node.path} configured with extend_to_all: ${extendDims.join(', ')}`
+      );
     }
 
     const { slicePosition, tolerance } = viewState;
-
-    // Use max radius from node attributes if available
     const maxRadius = this.node.attrs.max_radius ?? appConfig.dataLoading.spatial.defaultMaxRadius;
+    const fullDim = this.chunkIndex.metadata.ndim;
 
-    // Get full dimension count from index metadata or default to 3D
-    const fullDim = this.chunkIndex?.metadata.ndim || 3;
-
-    // Build tolerance array based on spatial extension configuration
+    // Build query tolerance. EffectiveRadiusConfig-aware path knows about
+    // discrete dims and the `>= 1e9` extend-to-all sentinel; without it we use
+    // a uniform fallback (infinite for displayed, explicit/maxRadius otherwise).
+    // TODO(spatial-index-consolidation-v2): unify into computeTolerance('points', …)
+    // once the rendering-side filter (calculateEffectiveRadii) is migrated together.
     let queryTolerance: number[];
-
     if (this._effectiveRadiusConfig) {
-      // Use spatial-aware tolerance calculation
       queryTolerance = calculateSpatialQueryTolerance(
         viewState,
         this._effectiveRadiusConfig,
         fullDim
       );
-
-      // Debug logging for tolerance values
       log.info(
         Modules.SPATIAL_INDEX_LOADER,
         `Query tolerance (with discrete awareness): [${queryTolerance.map((t) => t.toFixed(3)).join(', ')}]`
       );
     } else {
-      // Fallback to old behavior - uniform tolerance for all non-displayed dims
-      queryTolerance = new Array(fullDim).fill(0);
-      const displayedDims = viewState.displayDims;
-
+      queryTolerance = new Array<number>(fullDim).fill(0);
       for (let d = 0; d < fullDim; d++) {
-        if (displayedDims.includes(d)) {
-          // Displayed dimensions need INFINITE tolerance for chunk-based queries
-          // We want to see ALL points regardless of their position in displayed dims
-          queryTolerance[d] = 1e10;
-        } else {
-          // Non-displayed dims use explicit tolerance or maxRadius
-          queryTolerance[d] = tolerance[d] ?? maxRadius;
-        }
+        queryTolerance[d] = viewState.displayDims.includes(d) ? 1e10 : (tolerance[d] ?? maxRadius);
       }
-    }
-
-    // Fill in missing slice positions with defaults
-    const querySlicePos = new Array(fullDim).fill(0);
-    for (let d = 0; d < fullDim && d < slicePosition.length; d++) {
-      querySlicePos[d] = slicePosition[d] ?? 0;
     }
 
     log.query(Modules.SPATIAL_INDEX_LOADER, 'Querying spatial index:');
     log.info(Modules.SPATIAL_INDEX_LOADER, `  Full dimensions: ${fullDim}`);
     log.info(
       Modules.SPATIAL_INDEX_LOADER,
-      `  Query position: [${querySlicePos.map((p) => p.toFixed(2)).join(', ')}]`
+      `  Query position: [${slicePosition
+        .slice(0, fullDim)
+        .map((p) => (p ?? 0).toFixed(2))
+        .join(', ')}]`
     );
 
-    // Query chunk-based spatial index
-    let ranges: PointRange[];
+    // Translate ViewState (with `.dimensions: SimpleDims`) to BaseViewState
+    // (with `.dimensions: DimensionMetadata[]`) — `SimpleDims.metadata` is
+    // structurally what the builder needs.
+    const baseViewState: BaseViewState = {
+      displayDims: viewState.displayDims,
+      slicePosition: viewState.slicePosition,
+      tolerance: viewState.tolerance,
+      dimensions: viewState.dimensions?.metadata,
+    };
 
-    if (this.chunkIndex) {
-      // Always query on main thread — AABB scan is O(chunks × ndim) and completes in
-      // microseconds. Worker roundtrips add ~3ms each (structured clone, postMessage,
-      // deserialization), which dominates when many nodes query concurrently.
-      const chunkIndices = queryChunksForView(this.chunkIndex, querySlicePos, queryTolerance);
-
-      ranges = chunkIndicesToRanges(
-        chunkIndices,
-        this.chunkIndex.metadata.chunk_size,
-        this.chunkIndex.metadata.total_points
-      );
-
-      const totalPoints = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
-      log.query(
-        Modules.SPATIAL_INDEX_LOADER,
-        `Chunk query: ${chunkIndices.length} chunks → ${ranges.length} ranges → ${totalPoints} points`
-      );
-    } else {
-      // No chunk index - load all points (fallback for 3D datasets without Morton ordering)
-      const totalPoints: number = (this.node.attrs.n_points ||
-        this.totalPointsNoIndex ||
-        0) as number;
-      ranges = [{ start: 0, end: totalPoints }];
-      log.query(Modules.SPATIAL_INDEX_LOADER, `No index: loading all ${totalPoints} points`);
-    }
-
-    // Merge adjacent ranges for more efficient loading
-    const merged = mergePointRanges(ranges);
-
-    if (merged.length !== ranges.length) {
-      const totalPoints = merged.reduce((sum, r) => sum + (r.end - r.start), 0);
-      log.info(
-        Modules.SPATIAL_INDEX_LOADER,
-        `Merged ${ranges.length} ranges → ${merged.length} continuous ranges (${totalPoints} points)`
-      );
-    }
-
-    return merged;
+    return new SpatialQueryBuilder(
+      {
+        chunkBounds: this.chunkIndex.chunkBounds,
+        chunkCount: this.chunkIndex.chunkCount,
+        metadata: {
+          ndim: fullDim,
+          chunk_size: this.chunkIndex.metadata.chunk_size,
+        },
+      },
+      baseViewState,
+      {
+        tolerance: queryTolerance,
+        totalElements: this.chunkIndex.metadata.total_points,
+        chunkSize: this.chunkIndex.metadata.chunk_size,
+        extendDims,
+        logModule: Modules.SPATIAL_INDEX_LOADER,
+      }
+    ).execute();
   }
 
   /**
@@ -834,8 +906,8 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
     }
     if (dtype === 'float16' || dtype === '|f2' || dtype === '<f2' || dtype === '>f2') {
       // Float16 with fallback
-      if (typeof (globalThis as any).Float16Array !== 'undefined') {
-        return new (globalThis as any).Float16Array(totalElements);
+      if (typeof Float16Array !== 'undefined') {
+        return new Float16Array(totalElements);
       }
       log.warning(Modules.SPATIAL_INDEX_LOADER, 'Float16Array not supported, using Float32Array');
     }
@@ -938,9 +1010,10 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
         output.set(data, destOffset);
       } else {
         // Fallback: convert if types don't match (shouldn't happen with proper dtype detection)
-        const len = (data as ArrayLike<number>).length;
-        for (let i = 0; i < len; i++) {
-          (output as any)[destOffset + i] = (data as ArrayLike<number>)[i];
+        const source = data as ArrayLike<number>;
+        const destination = output as WritableNumericArray;
+        for (let i = 0; i < source.length; i++) {
+          destination[destOffset + i] = source[i];
         }
       }
 
@@ -1690,7 +1763,7 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
   getMetrics(): LoaderMetrics {
     // Update spatial index metrics if available
     if (this.chunkIndex) {
-      // NEW: Chunk-based index metrics
+      // Chunk-based index metrics
       const totalChunks = this.chunkIndex.metadata.total_chunks;
       const avgChunksPerQuery =
         this.metrics.queries > 0 ? this.lastQueryCells / this.metrics.queries : 0;

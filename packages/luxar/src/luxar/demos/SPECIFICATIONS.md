@@ -1,7 +1,7 @@
 # luxar.demos - Technical Specification
 
-**Version**: 1.1.0
-**Last Updated**: 2026-01-16
+**Version**: 1.2.0
+**Last Updated**: 2026-05-01
 
 ## Purpose
 
@@ -106,6 +106,13 @@ with tempfile.TemporaryDirectory() as tmpdir:
 - Particle systems with forces
 - N-body gravitational simulation
 - Fluid-like behaviors
+
+**6. Graph-Derived Flow Fields**
+- Centrality-based edge orientation (e.g. low→high PageRank)
+- Signed sparse adjacency / flow-profile matrices for directed-role UMAP layouts
+- KD-tree candidate lookup for point-to-edge vector-field construction
+- Regularized inverse-cubic edge blending and Gaussian component smoothing
+- Vectorized RK4 streamline integration through normalized vector fields
 
 ---
 
@@ -258,6 +265,8 @@ if __name__ == "__main__":
 | `demo_earthquakes_3d.py` | Global earthquake visualization from USGS on 3D Earth sphere |
 | `demo_cosmicflows_laniakea.py` | Cosmicflows-4 galaxies and RK4 velocity-field streamlines in supergalactic coordinates |
 | `demo_storm_3d_microtubules.py` | 3D STORM super-resolution microscopy of microtubules |
+| `demo_huri_interactome.py` | HuRI human PPI network with spectral+UMAP graph layout |
+| `demo_ppi_flow_field.py` | HuRI PPI signed-adjacency UMAP with PageRank-oriented vector-field streamlines |
 
 ### Embeddings & High-Dimensional Data
 

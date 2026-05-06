@@ -254,6 +254,40 @@ def dump_default_config(preset: str = "standard") -> str:
 # ---------------------------------------------------------------------------
 
 
+def decode_flat_channel_index(channel: int, channel_shape: Tuple[int, ...]) -> Tuple[int, ...]:
+    """Decode a flat channel task index into folded channel-axis coordinates.
+
+    For data with multiple non-spatial, channel-like axes (for example
+    ``camera`` and ``channel``), batch planning treats each axis combination as
+    one flat channel task. This helper uses row-major order to map the flat
+    index back to per-axis coordinates.
+    """
+    if channel < 0:
+        raise ValueError(f"channel index must be non-negative, got {channel}")
+    if not channel_shape:
+        if channel == 0:
+            return ()
+        raise ValueError("channel index > 0 is invalid when there are no channel axes")
+
+    total = 1
+    for size in channel_shape:
+        if size <= 0:
+            raise ValueError(f"channel axis sizes must be positive, got {channel_shape}")
+        total *= size
+    if channel >= total:
+        raise ValueError(
+            f"flat channel index {channel} is out of range for channel_shape={channel_shape} "
+            f"(total={total})"
+        )
+
+    coords: List[int] = []
+    remaining = channel
+    for dim_size in reversed(channel_shape):
+        coords.insert(0, remaining % dim_size)
+        remaining //= dim_size
+    return tuple(coords)
+
+
 def load_volume(
     path: Path,
     channel: Optional[int] = None,
@@ -410,22 +444,16 @@ def _load_zarr_volume(
     # For nD data where ndim > 5, consume leading dimensions using
     # timepoint and channel indices (defaulting to 0 for each).
     if ndim >= 6:
-        # Generic >5D: treat first dim as T, slice the rest by channel
-        # until we're down to 3D spatial.
+        # Generic >5D: treat first dim as T, fold all leading non-spatial
+        # dimensions before the final 3 spatial axes into one flat channel index.
         t = timepoint if timepoint is not None else 0
-        idx = [t]
-        # Consume non-spatial leading dims (all except last 3) as channel indices
         remaining_non_spatial = ndim - 4  # -1 for time, -3 for spatial
-        if channel is not None and remaining_non_spatial > 0:
-            # Decode flat channel index into multi-dim indices
-            c_flat = channel
-            non_spatial_shape = shape[1 : 1 + remaining_non_spatial]
-            for dim_size in reversed(non_spatial_shape):
-                idx.insert(1, c_flat % dim_size)
-                c_flat //= dim_size
+        channel_shape = tuple(shape[1 : 1 + remaining_non_spatial])
+        if channel is None:
+            channel_coords = tuple(0 for _ in channel_shape)
         else:
-            for i in range(remaining_non_spatial):
-                idx.append(0)
+            channel_coords = decode_flat_channel_index(channel, channel_shape)
+        idx = [t, *channel_coords]
         aprint(f"  Slicing {ndim}D: indices {idx} → 3D spatial")
         volume = np.array(arr[tuple(idx)])
     elif ndim == 5:
@@ -468,7 +496,13 @@ class OMEZarrInfo:
     """Size of the T dimension (1 if absent)."""
 
     n_channels: int
-    """Size of the C dimension (1 if absent)."""
+    """Number of flat channel tasks (product of channel-like axes, or 1)."""
+
+    channel_axes: List[str]
+    """Axis labels folded into the flat channel task index."""
+
+    channel_shape: Tuple[int, ...]
+    """Shape of axes folded into the flat channel task index."""
 
     spatial_shape: Tuple[int, ...]
     """ZYX (or YX) portion of the shape."""
@@ -616,6 +650,8 @@ def _parse_ngff_metadata(
             spatial_axes.append(aname)
 
     n_t = shape[t_idx] if t_idx is not None else 1
+    channel_axes = [axes[c_idx]] if c_idx is not None else []
+    channel_shape = (shape[c_idx],) if c_idx is not None else ()
     n_c = shape[c_idx] if c_idx is not None else 1
     spatial_shape = tuple(shape[i] for i in spatial_indices)
 
@@ -650,6 +686,8 @@ def _parse_ngff_metadata(
         shape=shape,
         n_timepoints=n_t,
         n_channels=n_c,
+        channel_axes=channel_axes,
+        channel_shape=channel_shape,
         spatial_shape=spatial_shape,
         spatial_axes=spatial_axes,
         voxel_size=voxel_size,
@@ -695,9 +733,11 @@ def _parse_custom_axes_attr(
             spatial_indices.append(i)
 
     n_t = shape[t_idx] if t_idx is not None else 1
+    channel_shape = tuple(shape[i] for i in channel_indices)
+    channel_axes = [axes[i] for i in channel_indices]
     n_c = 1
-    for ci in channel_indices:
-        n_c *= shape[ci]
+    for size in channel_shape:
+        n_c *= size
 
     spatial_shape = tuple(shape[i] for i in spatial_indices)
     spatial_axes = [axes[i] for i in spatial_indices]
@@ -707,6 +747,8 @@ def _parse_custom_axes_attr(
         shape=shape,
         n_timepoints=n_t,
         n_channels=n_c,
+        channel_axes=channel_axes,
+        channel_shape=channel_shape,
         spatial_shape=spatial_shape,
         spatial_axes=spatial_axes,
         path=path,
@@ -722,6 +764,8 @@ def _heuristic_ome_info(shape: Tuple[int, ...], ndim: int, path: Path) -> OMEZar
             shape=shape,
             n_timepoints=shape[0],
             n_channels=shape[1],
+            channel_axes=["c"],
+            channel_shape=(shape[1],),
             spatial_shape=shape[2:],
             spatial_axes=["z", "y", "x"],
             path=path,
@@ -733,6 +777,8 @@ def _heuristic_ome_info(shape: Tuple[int, ...], ndim: int, path: Path) -> OMEZar
             shape=shape,
             n_timepoints=1,
             n_channels=shape[0],
+            channel_axes=["c"],
+            channel_shape=(shape[0],),
             spatial_shape=shape[1:],
             spatial_axes=["z", "y", "x"],
             path=path,
@@ -743,6 +789,8 @@ def _heuristic_ome_info(shape: Tuple[int, ...], ndim: int, path: Path) -> OMEZar
             shape=shape,
             n_timepoints=1,
             n_channels=1,
+            channel_axes=[],
+            channel_shape=(),
             spatial_shape=shape,
             spatial_axes=["z", "y", "x"],
             path=path,
@@ -753,6 +801,8 @@ def _heuristic_ome_info(shape: Tuple[int, ...], ndim: int, path: Path) -> OMEZar
             shape=shape,
             n_timepoints=1,
             n_channels=1,
+            channel_axes=[],
+            channel_shape=(),
             spatial_shape=shape,
             spatial_axes=["y", "x"],
             path=path,
@@ -765,6 +815,8 @@ def _heuristic_ome_info(shape: Tuple[int, ...], ndim: int, path: Path) -> OMEZar
             shape=shape,
             n_timepoints=1,
             n_channels=1,
+            channel_axes=[],
+            channel_shape=(),
             spatial_shape=shape,
             spatial_axes=axes,
             path=path,

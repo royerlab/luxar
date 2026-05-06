@@ -27,11 +27,16 @@ data/
 ├── zarr-loader.ts                 # Main API entry point for loading scenes
 ├── scene-loader.ts                # Orchestrates hierarchical scene loading (points + lines)
 ├── scene-loader-manager.ts        # Singleton manager for SceneLoader instances
-├── chunk-spatial-index.ts         # Chunk-based spatial index queries (points)
 ├── point-spatial-index-loader.ts  # Loads points using chunk-based spatial queries
+│                                  #   Inlines its own `chunk_bounds` zarr probe; delegates the
+│                                  #   AABB scan to `loaders/spatial-query-builder.SpatialQueryBuilder`
+│                                  #   with pre-computed tolerance from `effective-radius-calculator`.
 ├── lines-spatial-index-loader.ts  # Loads lines with nD clipping and attribute interpolation
-├── lines-chunk-spatial-index.ts   # Dual spatial index for lines (vertices + segments)
+│                                  #   Inlines the dual-bounds zarr probe (vertex + segment); query
+│                                  #   path uses the segment side via `SpatialQueryBuilder`.
 ├── gsplats-spatial-index-loader.ts # Loads Gaussian splats with nD visibility
+│                                  #   Inlines its `chunk_bounds` probe; query via `SpatialQueryBuilder`
+│                                  #   with `geometryType: 'gsplats'`.
 ├── array-decoder.ts               # Decodes Python luxar.encoding arrays
 ├── data-monitor-manager.ts        # Singleton manager for monitoring UI instances
 ├── directory-navigator.ts         # Multi-strategy server directory browsing
@@ -39,23 +44,28 @@ data/
 │                                  #   Given a world-space query (slicePosition + tolerance) and a
 │                                  #   composed nd_transform, produces the equivalent local-space query.
 │                                  #   Avoids transforming geometry data — all loader internals unchanged.
-├── gsplats-chunk-spatial-index.ts  # Spatial index loading and querying for GSplats
 ├── gsplats-progressive-loader.ts  # Progressive multi-LOD GSplats loader (Composite pattern)
-├── effective-radius-calculator.ts # Calculates effective radii for nD slicing
+├── effective-radius-calculator.ts # Calculates effective radii for nD slicing (points-specific
+│                                  #   tolerance helper, paired with `calculateEffectiveRadii`).
 ├── data-loader-types.ts           # TypeScript interfaces and types
 ├── data-accumulator.ts            # Zero-allocation buffer pooling
 ├── scene-graph-builder.ts         # Scene hierarchy builder (extracted from SceneLoader)
 ├── view-state-manager.ts          # Centralized ViewState initialization and validation
 ├── stats-aggregator.ts            # Accumulator stats aggregation across loaders
 ├── loader-registry.ts             # Lifecycle management for geometry loaders (Points, Lines, GSplats)
-├── tolerance-computer.ts          # Unified tolerance computation for spatial queries
+├── tolerance-computer.ts          # Canonical tolerance computer (`computeTolerance`) used by all
+│                                  #   geometry types via `SpatialQueryBuilder` + by SceneLoader
+│                                  #   for lines projection clipping.
 ├── index.ts                       # Package exports
 ├── README.md                      # This documentation
 │
 ├── loaders/                       # Unified loader infrastructure (see loaders/README.md)
 │   ├── base-types.ts              # Common types (BaseViewState, LoadRange)
 │   ├── range-loader.ts            # Unified encoding dispatch
-│   ├── spatial-query-builder.ts   # Spatial query utilities
+│   ├── spatial-query-builder.ts   # Canonical chunk-bounds query API
+│   │                              #   `SpatialQueryBuilder` accepts either a `geometryType` (delegates
+│   │                              #   tolerance to `tolerance-computer.computeTolerance`) or a
+│   │                              #   pre-computed `tolerance: number[]`.
 │   └── transferable-accumulator.ts # Zero-allocation buffer management
 │
 └── (related: ../workers/)         # Web Worker infrastructure
@@ -214,96 +224,74 @@ export async function updateSceneForDimensions(
 
 ### 2. Chunk-Based Spatial Index
 
-The `chunk-spatial-index.ts` provides efficient nD point queries using Morton/Hilbert-ordered chunks with bounding boxes.
+The chunk-bounds spatial-query API lives in `loaders/spatial-query-builder.ts` and is used by all three geometry loaders (Points, Lines, GSplats). Each loader inlines its own `chunk_bounds` zarr probe — the array names differ slightly (`chunk_bounds` for points/gsplats, `vertex_chunk_bounds` + `segment_chunk_bounds` for lines) — and then delegates the AABB scan, range conversion, and range merge to the canonical `SpatialQueryBuilder`.
 
-**Core Features:**
+**Core features:**
 
-- **Chunk-Based Indexing**: Uses Morton/Hilbert space-filling curves for spatial locality
-- **Bounding Box Queries**: Each chunk has a bounding box for fast intersection tests
-- **Memory Efficient**: Only stores chunk bounds, not individual point indices
-- **nD Support**: Works with arbitrary dimensional data
-- **Cache-Friendly**: Points sorted by space-filling curve for better cache utilization
-- **Progressive Loading**: Load only chunks that intersect the current slice
+- **Chunk-based indexing** with Morton/Hilbert space-filling curves for spatial locality.
+- **Bounding-box queries** — each chunk has a `(ndim, 2)` AABB; queries are linear scans.
+- **Memory-efficient** — only chunk bounds are stored, never per-element indices.
+- **nD support** — arbitrary dimensionality.
+- **Cache-friendly** — elements are sorted by space-filling curve order.
+- **Progressive loading** — only chunks intersecting the current slice are loaded.
 
-**How It Works:**
+**How it works (gsplats / lines geometry-aware path):**
 
 ```typescript
-// 1. Load chunk spatial index from zarr (chunk_bounds array)
-const chunkIndex = await loadChunkSpatialIndex(location, attrs);
+import { SpatialQueryBuilder, type ChunkSpatialIndex } from './loaders';
 
-// 2. Query for chunks near slice position
-const chunkIndices = queryChunksForView(
-  chunkIndex,
-  slicePosition, // Current position in nD space
-  tolerance // Search radius per dimension
-);
+// 1. Probe chunk_bounds from zarr (loader-private; differs per geometry type).
+const index: ChunkSpatialIndex = await this.loadChunkBounds(attrs);
 
-// 3. Convert chunk indices to point ranges
-const ranges = chunkIndicesToRanges(chunkIndex, chunkIndices);
+// 2. One call: build position, compute tolerance via geometry strategy,
+//    run the AABB scan, convert chunks to ranges, merge contiguous ranges.
+const ranges = await new SpatialQueryBuilder(index, viewState, {
+  geometryType: 'gsplats', // or 'lines'
+  totalElements: attrs.n_splats,
+  chunkSize: attrs.chunk_size,
+  extendDims: attrs.extend_to_all,
+}).execute();
 
-// 4. Merge adjacent ranges for efficient loading
-const merged = mergePointRanges(ranges);
-
-// 5. Load only required data
-for (const range of merged) {
-  loadPointRange(range.start, range.end);
+// 3. Load only the required data.
+for (const range of ranges) {
+  loadElementRange(range.start, range.end);
 }
 ```
 
-**Chunk Index Structure:**
+**Pre-computed tolerance path (points):** the points loader computes tolerance via
+`effective-radius-calculator.calculateSpatialQueryTolerance` (which knows about
+`EffectiveRadiusConfig` and the `>= 1e9` extend-to-all sentinel) and passes the
+result to the builder verbatim:
+
+```typescript
+const tolerance = calculateSpatialQueryTolerance(viewState, config, fullDim);
+const ranges = await new SpatialQueryBuilder(index, viewState, {
+  tolerance,
+  totalElements: attrs.n_points,
+  chunkSize: attrs.chunk_size,
+  extendDims: attrs.extend_to_all,
+}).execute();
+```
+
+**Canonical type:**
 
 ```typescript
 interface ChunkSpatialIndex {
+  chunkBounds: Float32Array; // shape (numChunks, ndim, 2) flattened row-major
+  chunkCount: number;
   metadata: {
-    ordering: 'morton' | 'hilbert'; // Space-filling curve (default: hilbert)
-    ordering_dims: number[]; // Dimensions used for curve ordering
-    slice_dims: number[]; // Dimensions used for slicing
-    ordering_bits_per_dim: number; // Bits per dimension for encoding
-    chunk_size: number;
-    total_points: number;
-    total_chunks: number;
     ndim: number;
+    chunk_size?: number;
   };
-  chunkBounds: Float32Array; // Shape: (num_chunks, ndim, 2) - min/max per dimension
 }
 ```
 
-**Key Functions:**
+**Performance benefits:**
 
-```typescript
-export async function loadChunkSpatialIndex(
-  location: any,
-  attrs: any
-): Promise<ChunkSpatialIndex | null> {
-  // Load chunk spatial index from zarr chunk_bounds array
-}
-
-export function queryChunksForView(
-  index: ChunkSpatialIndex,
-  slicePos: number[],
-  tolerance: number[]
-): number[] {
-  // Query for chunks that intersect the query box
-}
-
-export function chunkIndicesToRanges(
-  index: ChunkSpatialIndex,
-  chunkIndices: number[]
-): PointRange[] {
-  // Convert chunk indices to point ranges
-}
-
-export function mergePointRanges(ranges: PointRange[]): PointRange[] {
-  // Merge overlapping/adjacent ranges
-}
-```
-
-**Performance Benefits:**
-
-- **10-100x faster queries** for large datasets with spatial locality
-- **Reduced memory usage** by loading only visible points
-- **Better cache utilization** through space-filling curve ordering
-- **Simple architecture**: No complex grid structures, just bounding box checks
+- **10–100× faster queries** on datasets with spatial locality.
+- **Reduced memory usage** — only visible elements are loaded.
+- **Better cache utilization** via space-filling curve ordering.
+- **One canonical API** — the same builder serves all three geometry types.
 
 ### 3. Directory Navigator
 
@@ -578,9 +566,12 @@ The chunk-based spatial index dramatically improves performance for large nD dat
 // For nD datasets with Morton ordering, uses chunk_bounds for fast queries
 // For 3D datasets without Morton ordering, falls back to loading all points
 
-// The PointSpatialIndexLoader uses the index internally:
-const chunkIndices = queryChunksForView(index, slicePos, tolerance);
-const ranges = chunkIndicesToRanges(index, chunkIndices);
+// The PointSpatialIndexLoader delegates to the canonical builder:
+const ranges = await new SpatialQueryBuilder(index, viewState, {
+  tolerance, // pre-computed via calculateSpatialQueryTolerance for points
+  totalElements: attrs.n_points,
+  chunkSize: attrs.chunk_size,
+}).execute();
 const visiblePoints = await loadRanges(ranges);
 
 // Query performance:
@@ -1025,14 +1016,24 @@ location /data/ {
 | `clearCache()`                        | Clear cached data                         |
 | `dispose()`                           | Clean up resources                        |
 
-### Chunk Spatial Index Functions (chunk-spatial-index.ts)
+### Spatial-query API (loaders/spatial-query-builder.ts)
 
-| Function                                    | Description                                     |
-| ------------------------------------------- | ----------------------------------------------- |
-| `loadChunkSpatialIndex(location, attrs)`    | Load chunk spatial index from zarr chunk_bounds |
-| `queryChunksForView(index, pos, tol)`       | Query chunks that intersect the given box       |
-| `chunkIndicesToRanges(index, chunkIndices)` | Convert chunk indices to point ranges           |
-| `mergePointRanges(ranges)`                  | Merge overlapping or adjacent ranges            |
+| Symbol                                            | Description                                                          |
+| ------------------------------------------------- | -------------------------------------------------------------------- |
+| `class SpatialQueryBuilder`                       | Canonical chunk-bounds query API used by all three geometry loaders. |
+| `interface ChunkSpatialIndex`                     | Canonical index shape: `{chunkBounds, chunkCount, metadata}`.        |
+| `executeSpatialQuery(params)`                     | AABB scan (lower-level helper).                                      |
+| `chunkIndicesToRanges(indices, chunkSize, total)` | Convert chunk indices to load ranges.                                |
+| `mergeRanges(ranges)`                             | Merge overlapping or adjacent ranges.                                |
+| `buildQueryPosition(viewState, ndim)`             | Pad/truncate `viewState.slicePosition` to `ndim`.                    |
+| `shouldExtendVisibility(extendDims, viewState)`   | True if any extend-to-all dim is currently hidden.                   |
+| `createLoadAllRange(totalElements)`               | Single range covering the whole dataset.                             |
+
+### Tolerance computer (tolerance-computer.ts)
+
+| Symbol                                                              | Description                                                                                  |
+| ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `computeTolerance(geometryType, displayDims, ndim, dims?, options?)` | Geometry-aware per-dimension tolerance. Used by `SpatialQueryBuilder`'s geometry-aware path. |
 
 ### Monitoring Management (data-monitor-manager.ts)
 

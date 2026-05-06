@@ -1,6 +1,7 @@
 """Tests for nD transform validation and composition."""
 
 import warnings
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -179,6 +180,24 @@ class TestValidateWithDimensions:
                 dimensions=dims_5d,
             )
 
+    def test_reject_empty_categorical_dimension(self) -> None:
+        dims = SimpleNamespace(
+            dimensions=[
+                SimpleNamespace(
+                    name="Category",
+                    display=False,
+                    is_categorical=True,
+                    discrete=False,
+                    categories=[],
+                )
+            ]
+        )
+        with pytest.raises(ValueError, match="at least one category"):
+            validate_nd_transform(
+                {"Category": {"permutation": []}},
+                dimensions=dims,
+            )
+
 
 class TestComposeNdTransforms:
     """Test compose_nd_transforms function."""
@@ -288,6 +307,28 @@ class TestApplyNdTransformToBounds:
         bounds = {"min": [0, 0, 0, 0], "max": [10, 10, 10, 50]}
         result = apply_nd_transform_to_bounds(bounds, {}, dims_4d)
         assert result == bounds
+
+    def test_mismatched_bounds_lengths_raise_value_error(self, dims_4d) -> None:
+        # EN-2: silently skipping a mismatched bounds entry would yield mixed
+        # transformed and untransformed bounds for the trailing dims, skewing
+        # scene extents downstream. Fail fast so corrupt zarr metadata
+        # surfaces clearly at the call site.
+        bounds = {"min": [0, 0, 0, 0], "max": [10, 10, 10]}
+        nd_t = {"Time": {"scale": 2.0, "offset": 10.0}}
+
+        with pytest.raises(ValueError, match="Bounds length mismatch"):
+            apply_nd_transform_to_bounds(bounds, nd_t, dims_4d)
+
+    def test_bounds_shorter_than_dims_raise_value_error(self, dims_4d) -> None:
+        # The companion case: bounds arrays are well-formed (equal lengths)
+        # but cover fewer dims than the dimensions schema. Silently skipping
+        # the missing dim would still produce mixed transformed/untransformed
+        # bounds for any dim a downstream caller assumes is present.
+        bounds = {"min": [0, 0, 0], "max": [10, 10, 10]}
+        nd_t = {"Time": {"scale": 2.0, "offset": 10.0}}
+
+        with pytest.raises(ValueError, match="out of range for bounds arrays"):
+            apply_nd_transform_to_bounds(bounds, nd_t, dims_4d)
 
 
 class TestNodeNdTransformIntegration:

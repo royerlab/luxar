@@ -1,8 +1,5 @@
 // bindings.mm
-// C++ dispatcher for Metal-accelerated Gaussian splatting
-//
-// This file provides Python bindings for Metal compute kernels.
-// It handles Metal device/queue management, buffer allocation, and kernel dispatch.
+// PyTorch extension bindings for Luxar's 3D FP32 Metal Gaussian splatting backend.
 
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
@@ -10,7 +7,12 @@
 #import <torch/extension.h>
 #import <torch/torch.h>
 
+#include <algorithm>
+#include <cmath>
+#include <dlfcn.h>
+#include <limits>
 #include <map>
+#include <numeric>
 #include <string>
 #include <vector>
 
@@ -18,14 +20,43 @@
 // Helper Types
 // ============================================================================
 
-// uint3 struct for passing to Metal kernels (matches Metal's uint3 layout)
+// Matches Metal's uint3 ABI for setBytes constants.
 struct uint3 {
     uint32_t x, y, z;
 };
 
+constexpr uint32_t kThreadgroupSize = 64;
+
 // ============================================================================
 // Metal Context Management
 // ============================================================================
+
+static std::string g_library_path;
+
+void set_library_path(const std::string& path);
+
+static NSArray<NSString*>* metalLibraryCandidatePaths() {
+    NSMutableArray<NSString*>* paths = [NSMutableArray array];
+
+    if (!g_library_path.empty()) {
+        [paths addObject:[NSString stringWithUTF8String:g_library_path.c_str()]];
+    }
+
+    Dl_info info;
+    if (dladdr((const void*)&metalLibraryCandidatePaths, &info) && info.dli_fname) {
+        NSString* extensionPath = [NSString stringWithUTF8String:info.dli_fname];
+        NSString* extensionDir = [extensionPath stringByDeletingLastPathComponent];
+        [paths addObject:[extensionDir stringByAppendingPathComponent:@"src/default.metallib"]];
+        [paths addObject:[extensionDir stringByAppendingPathComponent:@"default.metallib"]];
+    }
+
+    NSString* sourcePath = [NSString stringWithUTF8String:__FILE__];
+    NSString* sourceDir = [sourcePath stringByDeletingLastPathComponent];
+    [paths addObject:[sourceDir stringByAppendingPathComponent:@"default.metallib"]];
+    [paths addObject:[sourceDir stringByAppendingPathComponent:@"src/default.metallib"]];
+
+    return paths;
+}
 
 struct MetalContext {
     id<MTLDevice> device;
@@ -33,50 +64,50 @@ struct MetalContext {
     id<MTLLibrary> library;
     std::map<std::string, id<MTLComputePipelineState>> pipelines;
 
-    MetalContext() {
-        // Get default Metal device
-        device = MTLCreateSystemDefaultDevice();
-        if (!device) {
-            throw std::runtime_error("Failed to create Metal device. Is this running on macOS with Metal support?");
-        }
+    MetalContext() : device(nil), queue(nil), library(nil) {
+        // MET-4: exception-safe construction. The C++ destructor only runs
+        // after a constructor returns normally, so any throw mid-init must
+        // release whatever has already been retained — otherwise device /
+        // queue accumulate +1 retain counts forever.
+        @autoreleasepool {
+            device = MTLCreateSystemDefaultDevice();
+            if (!device) {
+                throw std::runtime_error(
+                    "Failed to create Metal device. Is this running on macOS with Metal support?");
+            }
 
-        // Create command queue
-        queue = [device newCommandQueue];
-        if (!queue) {
-            throw std::runtime_error("Failed to create Metal command queue");
-        }
+            queue = [device newCommandQueue];
+            if (!queue) {
+                [device release]; device = nil;
+                throw std::runtime_error("Failed to create Metal command queue");
+            }
 
-        // Load precompiled Metal library
-        // Try multiple locations to find the library
-        NSArray* searchPaths = @[
-            // Relative to source directory (build time and runtime)
-            [[NSString stringWithUTF8String:__FILE__] stringByDeletingLastPathComponent],
-            // Current directory (fallback)
-            [[NSFileManager defaultManager] currentDirectoryPath]
-        ];
+            NSError* error = nil;
+            NSMutableArray<NSString*>* attempted = [NSMutableArray array];
 
-        NSError* error = nil;
-        NSString* foundPath = nil;
-
-        for (NSString* searchDir in searchPaths) {
-            NSString* libPath = [searchDir stringByAppendingPathComponent:@"default.metallib"];
-            if ([[NSFileManager defaultManager] fileExistsAtPath:libPath]) {
-                library = [device newLibraryWithFile:libPath error:&error];
-                if (library) {
-                    foundPath = libPath;
-                    break;
+            for (NSString* libPath in metalLibraryCandidatePaths()) {
+                [attempted addObject:libPath];
+                if ([[NSFileManager defaultManager] fileExistsAtPath:libPath]) {
+                    library = [device newLibraryWithFile:libPath error:&error];
+                    if (library) {
+                        break;
+                    }
                 }
             }
-        }
 
-        if (!library) {
-            NSString* msg = error ? [error localizedDescription] : @"Library not found in search paths";
-            throw std::runtime_error([[NSString stringWithFormat:@"Failed to load Metal library: %@", msg] UTF8String]);
+            if (!library) {
+                NSString* msg = error ? [error localizedDescription] : @"Library not found";
+                NSString* paths = [attempted componentsJoinedByString:@"\n  - "];
+                std::string err = [[NSString stringWithFormat:
+                    @"Failed to load Metal library: %@\nSearched:\n  - %@", msg, paths] UTF8String];
+                [queue release];  queue = nil;
+                [device release]; device = nil;
+                throw std::runtime_error(err);
+            }
         }
     }
 
     ~MetalContext() {
-        // Release Metal objects (ARC disabled)
         for (auto& pair : pipelines) {
             [pair.second release];
         }
@@ -108,55 +139,69 @@ struct MetalContext {
     }
 };
 
-// Global context (lazy initialization)
 static MetalContext* g_ctx = nullptr;
 
+// set_library_path is meant to be called once at extension import (see
+// __init__.py), before any kernel dispatch. If a context already exists, the
+// path may have been baked into pipelines that command buffers are using;
+// silently destroying it could crash an in-flight dispatch. We therefore only
+// honor a no-context call and treat re-set as a programming error.
+void set_library_path(const std::string& path) {
+    TORCH_CHECK(
+        g_ctx == nullptr,
+        "set_library_path() must be called before any Metal dispatch; "
+        "a MetalContext has already been initialized."
+    );
+    g_library_path = path;
+}
+
+static MetalContext* metalContext() {
+    if (!g_ctx) {
+        g_ctx = new MetalContext();
+    }
+    return g_ctx;
+}
+
 // ============================================================================
-// Helper Functions
+// Tensor / Metal Buffer Helpers
 // ============================================================================
 
-// Get MTLBuffer from PyTorch MPS tensor
-// The STORAGE's data_ptr() is the id<MTLBuffer> on MPS
-// (not the tensor's data_ptr(), which includes offset)
 id<MTLBuffer> tensorToMTLBuffer(const torch::Tensor& t) {
     TORCH_CHECK(t.device().is_mps(), "Tensor must be on MPS device");
     TORCH_CHECK(t.is_contiguous(), "Tensor must be contiguous");
 
-    // Get the storage's data pointer, which is the MTLBuffer
     void* storage_ptr = t.storage().data_ptr().get();
-
-    // Cast to MTLBuffer (MPS tensors are backed by MTLBuffers)
     id<MTLBuffer> buffer = (__bridge id<MTLBuffer>)storage_ptr;
-
     return buffer;
 }
 
-// Set buffer with correct offset handling
+id<MTLBuffer> tensorToMTLBufferUnchecked(const torch::Tensor& t) {
+    TORCH_CHECK(t.device().is_mps(), "Tensor must be on MPS device");
+
+    void* storage_ptr = t.storage().data_ptr().get();
+    id<MTLBuffer> buffer = (__bridge id<MTLBuffer>)storage_ptr;
+    return buffer;
+}
+
 void setBufferWithOffset(
     id<MTLComputeCommandEncoder> enc,
     const torch::Tensor& t,
     int index
 ) {
-    // Handle empty tensors
     if (t.numel() == 0) {
         [enc setBuffer:nil offset:0 atIndex:index];
         return;
     }
 
-    // Validate tensor
     TORCH_CHECK(t.device().is_mps(),
         "Tensor at index ", index, " must be on MPS device, got ", t.device());
     TORCH_CHECK(t.is_contiguous(),
         "Tensor at index ", index, " must be contiguous. Use .contiguous() first.");
 
-    // Get MTLBuffer from storage
     id<MTLBuffer> buf = tensorToMTLBuffer(t);
     TORCH_CHECK(buf != nil, "Failed to get MTLBuffer for tensor at index ", index);
 
-    // Compute byte offset
     NSUInteger offset = t.storage_offset() * t.element_size();
-
-    // Validate offset doesn't exceed buffer bounds
     NSUInteger buffer_size = [buf length];
     NSUInteger required_size = offset + (t.numel() * t.element_size());
     TORCH_CHECK(required_size <= buffer_size,
@@ -166,417 +211,529 @@ void setBufferWithOffset(
     [enc setBuffer:buf offset:offset atIndex:index];
 }
 
+void checkCommandBuffer(id<MTLCommandBuffer> cmd, NSString* label) {
+    if ([cmd status] == MTLCommandBufferStatusError) {
+        NSString* errMsg = [[cmd error] localizedDescription];
+        throw std::runtime_error([[NSString stringWithFormat:@"%@: %@", label, errMsg] UTF8String]);
+    }
+}
+
+void validate_shape_3d(const std::vector<int64_t>& shape) {
+    TORCH_CHECK(shape.size() == 3, "3D Metal kernels require shape (D, H, W)");
+    TORCH_CHECK(shape[0] > 0 && shape[1] > 0 && shape[2] > 0,
+        "shape dimensions must be positive");
+
+    int64_t numel = shape[0] * shape[1] * shape[2];
+    TORCH_CHECK(numel <= std::numeric_limits<uint32_t>::max(),
+        "Metal 3D kernels currently support at most uint32_t output elements, got ", numel);
+
+    // MET-3: per-splat AABB voxel counts inside the kernels are tracked in
+    // 32-bit unsigned ints. A volume large enough to let a single wide splat
+    // overflow that counter would silently drop the splat. Cap conservatively
+    // at 2e9 voxels (well below UINT_MAX) and fail fast with a clear error.
+    constexpr uint64_t kMaxVoxels = 2'000'000'000ULL;
+    uint64_t total_voxels = static_cast<uint64_t>(shape[0])
+                          * static_cast<uint64_t>(shape[1])
+                          * static_cast<uint64_t>(shape[2]);
+    TORCH_CHECK(total_voxels <= kMaxVoxels,
+        "Volume D*H*W=", total_voxels,
+        " exceeds Metal backend's per-splat AABB capacity (", kMaxVoxels, " voxels). "
+        "This is a hard cap to prevent silent splat drops; reduce volume size or "
+        "tile the workload.");
+}
+
+int64_t shape_numel(const std::vector<int64_t>& shape) {
+    return shape[0] * shape[1] * shape[2];
+}
+
+void validate_splat_tensors_3d(
+    const torch::Tensor& centers,
+    const torch::Tensor& conic,
+    const torch::Tensor& amps,
+    const std::vector<int64_t>& shape
+) {
+    validate_shape_3d(shape);
+
+    TORCH_CHECK(centers.device().is_mps() && conic.device().is_mps() && amps.device().is_mps(),
+        "3D Metal tensors must be on MPS device");
+    TORCH_CHECK(centers.scalar_type() == torch::kFloat32
+            && conic.scalar_type() == torch::kFloat32
+            && amps.scalar_type() == torch::kFloat32,
+        "3D Metal tensors must be float32");
+    TORCH_CHECK(centers.is_contiguous() && conic.is_contiguous() && amps.is_contiguous(),
+        "3D Metal tensors must be contiguous");
+
+    TORCH_CHECK(centers.dim() == 2 && centers.size(1) == 3,
+        "centers must have shape (N, 3)");
+    TORCH_CHECK(conic.dim() == 2 && conic.size(1) == 6,
+        "conic must have shape (N, 6)");
+    TORCH_CHECK(amps.dim() == 1, "amps must have shape (N,)");
+    TORCH_CHECK(conic.size(0) == centers.size(0) && amps.size(0) == centers.size(0),
+        "centers, conic, and amps batch dimensions must match");
+    TORCH_CHECK(centers.size(0) <= std::numeric_limits<uint32_t>::max(),
+        "Metal 3D kernels currently support at most uint32_t splats");
+}
+
+void validate_splat_L_tensors_3d(
+    const torch::Tensor& centers,
+    const torch::Tensor& Ls,
+    const torch::Tensor& amps,
+    const std::vector<int64_t>& shape
+) {
+    validate_shape_3d(shape);
+
+    TORCH_CHECK(centers.device().is_mps() && Ls.device().is_mps() && amps.device().is_mps(),
+        "3D Metal tensors must be on MPS device");
+    TORCH_CHECK(centers.scalar_type() == torch::kFloat32
+            && Ls.scalar_type() == torch::kFloat32
+            && amps.scalar_type() == torch::kFloat32,
+        "3D Metal tensors must be float32");
+    TORCH_CHECK(centers.is_contiguous() && Ls.is_contiguous() && amps.is_contiguous(),
+        "3D Metal tensors must be contiguous");
+
+    TORCH_CHECK(centers.dim() == 2 && centers.size(1) == 3,
+        "centers must have shape (N, 3)");
+    TORCH_CHECK(Ls.dim() == 3 && Ls.size(1) == 3 && Ls.size(2) == 3,
+        "Ls must have shape (N, 3, 3)");
+    TORCH_CHECK(amps.dim() == 1, "amps must have shape (N,)");
+    TORCH_CHECK(Ls.size(0) == centers.size(0) && amps.size(0) == centers.size(0),
+        "centers, Ls, and amps batch dimensions must match");
+    TORCH_CHECK(centers.size(0) <= std::numeric_limits<uint32_t>::max(),
+        "Metal 3D kernels currently support at most uint32_t splats");
+}
+
+
+void validate_raw_splat_tensors_3d(
+    const torch::Tensor& raw_mu,
+    const torch::Tensor& raw_L_diag,
+    const torch::Tensor& L_off,
+    const torch::Tensor& raw_a,
+    const torch::Tensor& sigma_min_diag,
+    const std::vector<int64_t>& shape
+) {
+    validate_shape_3d(shape);
+
+    TORCH_CHECK(raw_mu.device().is_mps() && raw_L_diag.device().is_mps()
+            && L_off.device().is_mps() && raw_a.device().is_mps()
+            && sigma_min_diag.device().is_mps(),
+        "3D Metal raw tensors must be on MPS device");
+    TORCH_CHECK(raw_mu.scalar_type() == torch::kFloat32
+            && raw_L_diag.scalar_type() == torch::kFloat32
+            && L_off.scalar_type() == torch::kFloat32
+            && raw_a.scalar_type() == torch::kFloat32
+            && sigma_min_diag.scalar_type() == torch::kFloat32,
+        "3D Metal raw tensors must be float32");
+    TORCH_CHECK(raw_mu.is_contiguous() && raw_L_diag.is_contiguous()
+            && L_off.is_contiguous() && raw_a.is_contiguous()
+            && sigma_min_diag.is_contiguous(),
+        "3D Metal raw tensors must be contiguous");
+
+    TORCH_CHECK(raw_mu.dim() == 2 && raw_mu.size(1) == 3,
+        "raw_mu must have shape (N, 3)");
+    TORCH_CHECK(raw_L_diag.dim() == 2 && raw_L_diag.size(1) == 3,
+        "raw_L_diag must have shape (N, 3)");
+    TORCH_CHECK(L_off.dim() == 2 && L_off.size(1) == 3,
+        "L_off must have shape (N, 3) for 3D raw Metal kernels");
+    TORCH_CHECK(raw_a.dim() == 1, "raw_a must have shape (N,)");
+    TORCH_CHECK(sigma_min_diag.dim() == 1 && sigma_min_diag.size(0) == 3,
+        "sigma_min_diag must have shape (3,)");
+    TORCH_CHECK(raw_L_diag.size(0) == raw_mu.size(0)
+            && L_off.size(0) == raw_mu.size(0)
+            && raw_a.size(0) == raw_mu.size(0),
+        "raw_mu, raw_L_diag, L_off, and raw_a batch dimensions must match");
+    TORCH_CHECK(raw_mu.size(0) <= std::numeric_limits<uint32_t>::max(),
+        "Metal 3D kernels currently support at most uint32_t splats");
+}
+
 // ============================================================================
-// Optional: Compute Conic from L in Metal (faster alternative)
+// Optional: Compute Conic from L in Metal
 // ============================================================================
 
 torch::Tensor compute_conic_metal(torch::Tensor Ls) {
-    if (!g_ctx) g_ctx = new MetalContext();
+    TORCH_CHECK(Ls.device().is_mps(), "Ls must be on MPS device");
+    TORCH_CHECK(Ls.scalar_type() == torch::kFloat32, "Ls must be float32");
+    TORCH_CHECK(Ls.is_contiguous(), "Ls must be contiguous");
+    TORCH_CHECK(Ls.dim() == 3 && Ls.size(1) == 3 && Ls.size(2) == 3,
+        "Ls must have shape (N, 3, 3)");
+    TORCH_CHECK(Ls.size(0) <= std::numeric_limits<uint32_t>::max(),
+        "compute_conic_metal supports at most uint32_t splats");
 
-    int N = Ls.size(0);
-    auto conic = torch::zeros({N, 6}, torch::TensorOptions().dtype(torch::kFloat32).device(torch::kMPS));
+    auto conic = torch::empty({Ls.size(0), 6}, Ls.options().dtype(torch::kFloat32));
+    if (Ls.size(0) == 0) {
+        return conic;
+    }
 
-    torch::mps::synchronize();
+    // MET-1: wrap the dispatch body in an autorelease pool. Compiled with
+    // -fno-objc-arc (manual reference counting), so MTLCommandBuffer /
+    // MTLComputeCommandEncoder / NSString returned by Cocoa convenience
+    // initializers would otherwise accumulate on the thread's outer pool —
+    // a slow but real leak over thousands of training iterations.
+    @autoreleasepool {
+        MetalContext* ctx = metalContext();
+        torch::mps::synchronize();
 
-    id<MTLCommandBuffer> cmd = [g_ctx->queue commandBuffer];
-    id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
-    [enc setComputePipelineState:g_ctx->getPipeline("compute_conic_from_L_3d")];
+        id<MTLCommandBuffer> cmd = [ctx->queue commandBuffer];
+        id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
+        [enc setComputePipelineState:ctx->getPipeline("compute_conic_from_L_3d")];
 
-    setBufferWithOffset(enc, Ls, 0);
-    setBufferWithOffset(enc, conic, 1);
+        setBufferWithOffset(enc, Ls, 0);
+        setBufferWithOffset(enc, conic, 1);
 
-    uint32_t n_splats = (uint32_t)N;
-    [enc setBytes:&n_splats length:sizeof(uint32_t) atIndex:2];
+        uint32_t n_splats = static_cast<uint32_t>(Ls.size(0));
+        [enc setBytes:&n_splats length:sizeof(uint32_t) atIndex:2];
 
-    MTLSize gridSize = MTLSizeMake(N, 1, 1);
-    MTLSize groupSize = MTLSizeMake(std::min(256, std::max(1, N)), 1, 1);
-    [enc dispatchThreadgroups:MTLSizeMake((N + 255) / 256, 1, 1)
-          threadsPerThreadgroup:groupSize];
-    [enc endEncoding];
-    [cmd commit];
-    [cmd waitUntilCompleted];
-
-    if ([cmd status] == MTLCommandBufferStatusError) {
-        NSString* errMsg = [[cmd error] localizedDescription];
-        throw std::runtime_error([[NSString stringWithFormat:@"compute_conic_from_L_3d failed: %@", errMsg] UTF8String]);
+        MTLSize threads = MTLSizeMake(n_splats, 1, 1);
+        MTLSize group = MTLSizeMake(std::min<uint32_t>(kThreadgroupSize, n_splats), 1, 1);
+        [enc dispatchThreads:threads threadsPerThreadgroup:group];
+        [enc endEncoding];
+        [cmd commit];
+        [cmd waitUntilCompleted];
+        checkCommandBuffer(cmd, @"compute_conic_from_L_3d failed");
     }
 
     return conic;
 }
 
 // ============================================================================
-// Forward Pass (3D with tiling)
+// Splat-Centric Forward Pass
 // ============================================================================
 
-std::vector<torch::Tensor> dispatch_forward_3d(
-    torch::Tensor centers,   // (N, 3)
-    torch::Tensor conic,     // (N, 6) - precomputed in PyTorch
-    torch::Tensor amps,      // (N,)
-    torch::Tensor Ls,        // (N, 3, 3) - needed for sigma_diag in binning
-    std::vector<int64_t> shape,  // [D, H, W]
+torch::Tensor dispatch_forward_splat_3d(
+    torch::Tensor centers,
+    torch::Tensor conic,
+    torch::Tensor amps,
+    std::vector<int64_t> shape,
     float truncate,
-    float intensity_floor,
-    int tile_size            // Configurable tile size (e.g., 4 or 8)
+    float intensity_floor
 ) {
-    if (!g_ctx) g_ctx = new MetalContext();
+    validate_splat_tensors_3d(centers, conic, amps, shape);
 
-    int N = centers.size(0);
-    int D = shape[0], H = shape[1], W = shape[2];
+    // MET-10 (review-flagged minor): handle N=0 BEFORE allocating the output
+    // tensor, avoiding a wasted allocation on the empty path.
+    if (centers.size(0) == 0) {
+        return torch::zeros(shape, centers.options().dtype(torch::kFloat32));
+    }
 
-    // Grid dimensions based on configurable tile size
-    // NOTE: Metal uint3 uses (x,y,z) = (W,H,D) order
-    uint32_t grid_x = (W + tile_size - 1) / tile_size;
-    uint32_t grid_y = (H + tile_size - 1) / tile_size;
-    uint32_t grid_z = (D + tile_size - 1) / tile_size;
-    int num_tiles = grid_x * grid_y * grid_z;
+    auto output = torch::empty(shape, centers.options().dtype(torch::kFloat32));
+    int64_t total_pixels_i64 = shape_numel(shape);
+    uint32_t total_pixels = static_cast<uint32_t>(total_pixels_i64);
 
-    // Allocate buffers
-    auto tile_counts = torch::zeros({num_tiles}, torch::TensorOptions().dtype(torch::kInt32).device(torch::kMPS));
-    auto output = torch::zeros(shape, torch::TensorOptions().dtype(torch::kFloat32).device(torch::kMPS));
+    // MET-1: see compute_conic_metal — same MRC autorelease-pool rationale.
+    @autoreleasepool {
+        MetalContext* ctx = metalContext();
+        torch::mps::synchronize();
 
-    // CRITICAL: Synchronize MPS before Metal kernel dispatch
-    // This ensures MPS tensor allocation is complete before Metal accesses them
-    torch::mps::synchronize();
+        id<MTLCommandBuffer> cmd = [ctx->queue commandBuffer];
 
-    // === Pass 1: Preprocess (count splats per tile) ===
-    {
-        id<MTLCommandBuffer> cmd = [g_ctx->queue commandBuffer];
-        id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
-        [enc setComputePipelineState:g_ctx->getPipeline("preprocess_3d")];
-
-        setBufferWithOffset(enc, centers, 0);
-        setBufferWithOffset(enc, Ls, 1);
-        setBufferWithOffset(enc, tile_counts, 2);
-
-        [enc setBytes:&truncate length:sizeof(float) atIndex:3];
-
-        uint3 grid_dims_metal = {grid_x, grid_y, grid_z};
-        [enc setBytes:&grid_dims_metal length:sizeof(uint3) atIndex:4];
-
-        uint32_t n_splats = (uint32_t)N;
-        [enc setBytes:&n_splats length:sizeof(uint32_t) atIndex:5];
-
-        int32_t tile_size_param = (int32_t)tile_size;
-        [enc setBytes:&tile_size_param length:sizeof(int32_t) atIndex:6];
-
-        // CRITICAL FIX: Use proper threadgroup sizing
-        // With gridSize=(1,1,1) and groupSize=(1,1,1), some Metal GPUs may not dispatch
-        // Use at least 32 threads per group (one SIMD group) or dispatch as threadgroups
-        MTLSize gridSize = MTLSizeMake(N, 1, 1);
-        MTLSize groupSize = MTLSizeMake(std::min(64, std::max(1, N)), 1, 1);
-        [enc dispatchThreadgroups:MTLSizeMake((N + 63) / 64, 1, 1)
-              threadsPerThreadgroup:groupSize];
-        [enc endEncoding];
-        [cmd commit];
-        [cmd waitUntilCompleted];
-
-        // Check for Metal errors
-        if ([cmd status] == MTLCommandBufferStatusError) {
-            NSString* errMsg = [[cmd error] localizedDescription];
-            throw std::runtime_error([[NSString stringWithFormat:@"preprocess_3d failed: %@", errMsg] UTF8String]);
+        // Zero the output in the same command buffer as the splat scatter pass.
+        {
+            id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
+            [enc setComputePipelineState:ctx->getPipeline("zero_float_buffer")];
+            setBufferWithOffset(enc, output, 0);
+            [enc setBytes:&total_pixels length:sizeof(uint32_t) atIndex:1];
+            MTLSize threads = MTLSizeMake(total_pixels, 1, 1);
+            MTLSize group = MTLSizeMake(std::min<uint32_t>(kThreadgroupSize, total_pixels), 1, 1);
+            [enc dispatchThreads:threads threadsPerThreadgroup:group];
+            [enc endEncoding];
         }
-    }
 
-    // === Pass 2: Prefix sum (GPU via PyTorch cumsum) ===
-    auto zeros = torch::zeros({1}, torch::TensorOptions().dtype(torch::kInt32).device(torch::kMPS));
-    auto counts_padded = torch::cat({zeros, tile_counts.slice(0, 0, num_tiles - 1)});
-    auto tile_offsets = torch::cumsum(counts_padded, 0, torch::kInt32);
+        {
+            id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
+            [enc setComputePipelineState:ctx->getPipeline("rasterize_forward_splat_centric_3d")];
 
-    // Get total (this forces a CPU sync since we call .item())
-    int total = (tile_offsets[-1] + tile_counts[-1]).item<int>();
+            setBufferWithOffset(enc, centers, 0);
+            setBufferWithOffset(enc, conic, 1);
+            setBufferWithOffset(enc, amps, 2);
+            setBufferWithOffset(enc, output, 3);
 
-    auto tile_content = torch::zeros({std::max(total, 1)}, torch::TensorOptions().dtype(torch::kInt32).device(torch::kMPS));
-    auto tile_write_heads = torch::zeros({num_tiles}, torch::TensorOptions().dtype(torch::kInt32).device(torch::kMPS));
+            uint3 shape_dhw = {
+                static_cast<uint32_t>(shape[0]),
+                static_cast<uint32_t>(shape[1]),
+                static_cast<uint32_t>(shape[2]),
+            };
+            [enc setBytes:&shape_dhw length:sizeof(uint3) atIndex:4];
 
-    // Sync before Metal kernels (ensures PyTorch MPS ops complete)
-    // NOTE: The .item() call above already forced a sync, but explicit is safer
-    torch::mps::synchronize();
+            uint32_t n_splats = static_cast<uint32_t>(centers.size(0));
+            [enc setBytes:&n_splats length:sizeof(uint32_t) atIndex:5];
+            [enc setBytes:&truncate length:sizeof(float) atIndex:6];
+            [enc setBytes:&intensity_floor length:sizeof(float) atIndex:7];
 
-    // === Pass 3: Binning ===
-    {
-        id<MTLCommandBuffer> cmd = [g_ctx->queue commandBuffer];
-        id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
-        [enc setComputePipelineState:g_ctx->getPipeline("bin_3d")];
+            MTLSize groups = MTLSizeMake(n_splats, 1, 1);
+            MTLSize threadsPerGroup = MTLSizeMake(kThreadgroupSize, 1, 1);
+            [enc dispatchThreadgroups:groups threadsPerThreadgroup:threadsPerGroup];
+            [enc endEncoding];
+        }
 
-        setBufferWithOffset(enc, centers, 0);
-        setBufferWithOffset(enc, Ls, 1);
-        setBufferWithOffset(enc, tile_offsets, 2);
-        setBufferWithOffset(enc, tile_write_heads, 3);
-        setBufferWithOffset(enc, tile_content, 4);
-        [enc setBytes:&truncate length:sizeof(float) atIndex:5];
-
-        uint3 grid_dims_metal = {grid_x, grid_y, grid_z};
-        [enc setBytes:&grid_dims_metal length:sizeof(uint3) atIndex:6];
-
-        uint32_t n_splats = (uint32_t)N;
-        [enc setBytes:&n_splats length:sizeof(uint32_t) atIndex:7];
-
-        int32_t tile_size_param = (int32_t)tile_size;
-        [enc setBytes:&tile_size_param length:sizeof(int32_t) atIndex:8];
-
-        MTLSize gridSize = MTLSizeMake(N, 1, 1);
-        MTLSize groupSize = MTLSizeMake(std::min(256, N), 1, 1);
-        [enc dispatchThreads:gridSize threadsPerThreadgroup:groupSize];
-        [enc endEncoding];
         [cmd commit];
         [cmd waitUntilCompleted];
+        checkCommandBuffer(cmd, @"rasterize_forward_splat_centric_3d failed");
     }
 
-    // === Pass 4: Rasterization ===
-    {
-        id<MTLCommandBuffer> cmd = [g_ctx->queue commandBuffer];
-        id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
-        [enc setComputePipelineState:g_ctx->getPipeline("rasterize_fwd_3d")];
-
-        setBufferWithOffset(enc, centers, 0);
-        setBufferWithOffset(enc, conic, 1);
-        setBufferWithOffset(enc, amps, 2);
-        setBufferWithOffset(enc, tile_offsets, 3);
-        setBufferWithOffset(enc, tile_counts, 4);
-        setBufferWithOffset(enc, tile_content, 5);
-        setBufferWithOffset(enc, output, 6);
-
-        uint3 img_size = {(uint32_t)W, (uint32_t)H, (uint32_t)D};
-        [enc setBytes:&img_size length:sizeof(uint3) atIndex:7];
-
-        uint3 grid_dims_metal = {grid_x, grid_y, grid_z};
-        [enc setBytes:&grid_dims_metal length:sizeof(uint3) atIndex:8];
-
-        [enc setBytes:&truncate length:sizeof(float) atIndex:9];
-        [enc setBytes:&intensity_floor length:sizeof(float) atIndex:10];
-
-        // CRITICAL: Pad grid to multiple of tile size for full threadgroups
-        int W_padded = ((W + tile_size - 1) / tile_size) * tile_size;
-        int H_padded = ((H + tile_size - 1) / tile_size) * tile_size;
-        int D_padded = ((D + tile_size - 1) / tile_size) * tile_size;
-
-        MTLSize gridSize = MTLSizeMake(W_padded, H_padded, D_padded);
-        MTLSize groupSize = MTLSizeMake(tile_size, tile_size, tile_size);
-        [enc dispatchThreads:gridSize threadsPerThreadgroup:groupSize];
-        [enc endEncoding];
-        [cmd commit];
-        [cmd waitUntilCompleted];
-    }
-
-    // Return output AND intermediate buffers for backward pass
-    return {output, tile_counts, tile_offsets, tile_content};
+    return output;
 }
 
 // ============================================================================
-// Backward Pass (3D with tiling and SIMD reduction)
+// Splat-Centric Backward Pass
 // ============================================================================
 
-std::vector<torch::Tensor> dispatch_backward_3d(
-    torch::Tensor grad_output,    // (D, H, W)
-    torch::Tensor centers,        // (N, 3)
-    torch::Tensor conic,          // (N, 6)
-    torch::Tensor amps,           // (N,)
-    torch::Tensor tile_offsets,   // From forward pass
-    torch::Tensor tile_counts,    // From forward pass
-    torch::Tensor tile_content,   // From forward pass
-    std::vector<int64_t> shape,   // [D, H, W]
+std::vector<torch::Tensor> dispatch_backward_splat_3d(
+    torch::Tensor grad_output,
+    torch::Tensor centers,
+    torch::Tensor conic,
+    torch::Tensor amps,
+    std::vector<int64_t> shape,
     float truncate,
-    float intensity_floor,
-    int tile_size                 // Must match forward pass!
+    float intensity_floor
 ) {
-    if (!g_ctx) g_ctx = new MetalContext();
+    validate_splat_tensors_3d(centers, conic, amps, shape);
+    TORCH_CHECK(grad_output.device().is_mps(), "grad_output must be on MPS device");
+    TORCH_CHECK(grad_output.scalar_type() == torch::kFloat32, "grad_output must be float32");
+    TORCH_CHECK(grad_output.is_contiguous(), "grad_output must be contiguous");
+    TORCH_CHECK(grad_output.dim() == 3
+            && grad_output.size(0) == shape[0]
+            && grad_output.size(1) == shape[1]
+            && grad_output.size(2) == shape[2],
+        "grad_output shape must match the provided 3D shape");
 
-    int N = centers.size(0);
-    int D = shape[0], H = shape[1], W = shape[2];
+    int64_t N = centers.size(0);
+    auto opts = centers.options().dtype(torch::kFloat32);
+    if (N == 0) {
+        return {
+            torch::zeros({N, 3}, opts),
+            torch::zeros({N, 6}, opts),
+            torch::zeros({N}, opts),
+        };
+    }
+    auto d_centers = torch::empty({N, 3}, opts);
+    auto d_conic = torch::empty({N, 6}, opts);
+    auto d_amps = torch::empty({N}, opts);
 
-    // Grid dimensions (must match forward!)
-    uint32_t grid_x = (W + tile_size - 1) / tile_size;
-    uint32_t grid_y = (H + tile_size - 1) / tile_size;
-    uint32_t grid_z = (D + tile_size - 1) / tile_size;
+    // MET-1: see compute_conic_metal — same MRC autorelease-pool rationale.
+    @autoreleasepool {
+        MetalContext* ctx = metalContext();
+        torch::mps::synchronize();
 
-    // CRITICAL: Zero-initialize gradient buffers
-    auto d_centers = torch::zeros({N, 3}, torch::TensorOptions().dtype(torch::kFloat32).device(torch::kMPS));
-    auto d_conic = torch::zeros({N, 6}, torch::TensorOptions().dtype(torch::kFloat32).device(torch::kMPS));
-    auto d_amps = torch::zeros({N}, torch::TensorOptions().dtype(torch::kFloat32).device(torch::kMPS));
-
-    // Ensure MPS operations complete
-    torch::mps::synchronize();
-
-    // === Backward Rasterization Kernel ===
-    {
-        id<MTLCommandBuffer> cmd = [g_ctx->queue commandBuffer];
+        id<MTLCommandBuffer> cmd = [ctx->queue commandBuffer];
         id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
-        [enc setComputePipelineState:g_ctx->getPipeline("rasterize_bwd_3d")];
+        [enc setComputePipelineState:ctx->getPipeline("rasterize_backward_splat_centric_3d")];
 
-        // Input buffers
         setBufferWithOffset(enc, grad_output, 0);
         setBufferWithOffset(enc, centers, 1);
         setBufferWithOffset(enc, conic, 2);
         setBufferWithOffset(enc, amps, 3);
-        setBufferWithOffset(enc, tile_offsets, 4);
-        setBufferWithOffset(enc, tile_counts, 5);
-        setBufferWithOffset(enc, tile_content, 6);
+        setBufferWithOffset(enc, d_centers, 4);
+        setBufferWithOffset(enc, d_conic, 5);
+        setBufferWithOffset(enc, d_amps, 6);
 
-        // Output gradient buffers
-        setBufferWithOffset(enc, d_centers, 7);
-        setBufferWithOffset(enc, d_conic, 8);
-        setBufferWithOffset(enc, d_amps, 9);
+        uint3 shape_dhw = {
+            static_cast<uint32_t>(shape[0]),
+            static_cast<uint32_t>(shape[1]),
+            static_cast<uint32_t>(shape[2]),
+        };
+        [enc setBytes:&shape_dhw length:sizeof(uint3) atIndex:7];
 
-        // Constants
-        uint3 img_size = {(uint32_t)W, (uint32_t)H, (uint32_t)D};
-        [enc setBytes:&img_size length:sizeof(uint3) atIndex:10];
+        uint32_t n_splats = static_cast<uint32_t>(N);
+        [enc setBytes:&n_splats length:sizeof(uint32_t) atIndex:8];
+        [enc setBytes:&truncate length:sizeof(float) atIndex:9];
+        [enc setBytes:&intensity_floor length:sizeof(float) atIndex:10];
 
-        uint3 grid_dims_metal = {grid_x, grid_y, grid_z};
-        [enc setBytes:&grid_dims_metal length:sizeof(uint3) atIndex:11];
-
-        [enc setBytes:&truncate length:sizeof(float) atIndex:12];
-        [enc setBytes:&intensity_floor length:sizeof(float) atIndex:13];
-
-        // CRITICAL: Pad grid to multiple of tile size for full threadgroups
-        int W_padded = ((W + tile_size - 1) / tile_size) * tile_size;
-        int H_padded = ((H + tile_size - 1) / tile_size) * tile_size;
-        int D_padded = ((D + tile_size - 1) / tile_size) * tile_size;
-
-        MTLSize gridSize = MTLSizeMake(W_padded, H_padded, D_padded);
-        MTLSize groupSize = MTLSizeMake(tile_size, tile_size, tile_size);
-        [enc dispatchThreads:gridSize threadsPerThreadgroup:groupSize];
+        MTLSize groups = MTLSizeMake(n_splats, 1, 1);
+        MTLSize threadsPerGroup = MTLSizeMake(kThreadgroupSize, 1, 1);
+        [enc dispatchThreadgroups:groups threadsPerThreadgroup:threadsPerGroup];
         [enc endEncoding];
         [cmd commit];
         [cmd waitUntilCompleted];
+        checkCommandBuffer(cmd, @"rasterize_backward_splat_centric_3d failed");
     }
 
     return {d_centers, d_conic, d_amps};
 }
 
-// ============================================================================
-// Forward Pass (nD generic)
-// ============================================================================
-
-std::vector<torch::Tensor> dispatch_forward_nd(
-    torch::Tensor centers,        // (N, dim)
-    torch::Tensor Ls,             // (N, dim, dim)
-    torch::Tensor amps,           // (N,)
-    std::vector<int64_t> shape,   // [s_0, s_1, ..., s_{dim-1}]
-    float truncate,
-    float intensity_floor
-) {
-    if (!g_ctx) g_ctx = new MetalContext();
-
-    int N = centers.size(0);
-    int dim = centers.size(1);
-
-    TORCH_CHECK(dim <= 8, "Metal nD kernel supports up to 8 dimensions");
-    TORCH_CHECK(shape.size() == dim, "Shape must match dimensionality");
-
-    // Compute total size
-    int64_t total_size = 1;
-    for (int i = 0; i < dim; i++) total_size *= shape[i];
-
-    auto output = torch::zeros(shape, torch::TensorOptions().dtype(torch::kFloat32).device(torch::kMPS));
-
-    torch::mps::synchronize();
-
-    // === Rasterization Kernel ===
-    {
-        id<MTLCommandBuffer> cmd = [g_ctx->queue commandBuffer];
-        id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
-        [enc setComputePipelineState:g_ctx->getPipeline("rasterize_fwd_nd")];
-
-        setBufferWithOffset(enc, centers, 0);
-        setBufferWithOffset(enc, Ls, 1);
-        setBufferWithOffset(enc, amps, 2);
-        setBufferWithOffset(enc, output, 3);
-
-        uint32_t n_splats = (uint32_t)N;
-        [enc setBytes:&n_splats length:sizeof(uint32_t) atIndex:4];
-
-        uint32_t dim_u = (uint32_t)dim;
-        [enc setBytes:&dim_u length:sizeof(uint32_t) atIndex:5];
-
-        // Pass shape as array
-        uint32_t shape_arr[8] = {0};
-        for (int i = 0; i < dim; i++) shape_arr[i] = (uint32_t)shape[i];
-        [enc setBytes:shape_arr length:sizeof(shape_arr) atIndex:6];
-
-        [enc setBytes:&truncate length:sizeof(float) atIndex:7];
-        [enc setBytes:&intensity_floor length:sizeof(float) atIndex:8];
-
-        MTLSize gridSize = MTLSizeMake(total_size, 1, 1);
-        MTLSize groupSize = MTLSizeMake(std::min((int64_t)256, total_size), 1, 1);
-        [enc dispatchThreads:gridSize threadsPerThreadgroup:groupSize];
-        [enc endEncoding];
-        [cmd commit];
-        [cmd waitUntilCompleted];
-    }
-
-    return {output};
-}
 
 // ============================================================================
-// Backward Pass (nD generic with SIMD reduction)
+// Raw-Parameter Splat-Centric Forward/Backward Passes
 // ============================================================================
 
-std::vector<torch::Tensor> dispatch_backward_nd(
-    torch::Tensor grad_output,    // Shape matches forward output
-    torch::Tensor centers,        // (N, dim)
-    torch::Tensor Ls,             // (N, dim, dim)
-    torch::Tensor amps,           // (N,)
+torch::Tensor dispatch_forward_raw_splat_3d(
+    torch::Tensor raw_mu,
+    torch::Tensor raw_L_diag,
+    torch::Tensor L_off,
+    torch::Tensor raw_a,
+    torch::Tensor sigma_min_diag,
     std::vector<int64_t> shape,
     float truncate,
     float intensity_floor
 ) {
-    if (!g_ctx) g_ctx = new MetalContext();
+    validate_raw_splat_tensors_3d(raw_mu, raw_L_diag, L_off, raw_a, sigma_min_diag, shape);
+    TORCH_CHECK(truncate > 0.0f, "truncate must be > 0; got ", truncate);
 
-    int N = centers.size(0);
-    int dim = centers.size(1);
+    // Early-return for the zero-splat case BEFORE allocating ``output`` —
+    // otherwise the empty allocation is wasted (the constrained forward
+    // path already follows this order).
+    if (raw_mu.size(0) == 0) {
+        return torch::zeros(shape, raw_mu.options().dtype(torch::kFloat32));
+    }
 
-    TORCH_CHECK(dim <= 8, "Metal nD kernel supports up to 8 dimensions");
+    auto output = torch::empty(shape, raw_mu.options().dtype(torch::kFloat32));
+    int64_t total_pixels_i64 = shape_numel(shape);
+    uint32_t total_pixels = static_cast<uint32_t>(total_pixels_i64);
 
-    // Compute total size
-    int64_t total_size = 1;
-    for (int i = 0; i < dim; i++) total_size *= shape[i];
+    @autoreleasepool {
+        MetalContext* ctx = metalContext();
+        torch::mps::synchronize();
 
-    // CRITICAL: Zero-initialize gradient buffers
-    auto d_centers = torch::zeros({N, dim}, torch::TensorOptions().dtype(torch::kFloat32).device(torch::kMPS));
-    auto d_Ls = torch::zeros({N, dim, dim}, torch::TensorOptions().dtype(torch::kFloat32).device(torch::kMPS));
-    auto d_amps = torch::zeros({N}, torch::TensorOptions().dtype(torch::kFloat32).device(torch::kMPS));
+        id<MTLCommandBuffer> cmd = [ctx->queue commandBuffer];
 
-    torch::mps::synchronize();
+        {
+            id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
+            [enc setComputePipelineState:ctx->getPipeline("zero_float_buffer")];
+            setBufferWithOffset(enc, output, 0);
+            [enc setBytes:&total_pixels length:sizeof(uint32_t) atIndex:1];
+            MTLSize threads = MTLSizeMake(total_pixels, 1, 1);
+            MTLSize group = MTLSizeMake(std::min<uint32_t>(kThreadgroupSize, total_pixels), 1, 1);
+            [enc dispatchThreads:threads threadsPerThreadgroup:group];
+            [enc endEncoding];
+        }
 
-    // === Backward Kernel ===
-    {
-        id<MTLCommandBuffer> cmd = [g_ctx->queue commandBuffer];
+        {
+            id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
+            [enc setComputePipelineState:ctx->getPipeline("rasterize_forward_raw_splat_centric_3d")];
+
+            setBufferWithOffset(enc, raw_mu, 0);
+            setBufferWithOffset(enc, raw_L_diag, 1);
+            setBufferWithOffset(enc, L_off, 2);
+            setBufferWithOffset(enc, raw_a, 3);
+            setBufferWithOffset(enc, sigma_min_diag, 4);
+            setBufferWithOffset(enc, output, 5);
+
+            uint3 shape_dhw = {
+                static_cast<uint32_t>(shape[0]),
+                static_cast<uint32_t>(shape[1]),
+                static_cast<uint32_t>(shape[2]),
+            };
+            [enc setBytes:&shape_dhw length:sizeof(uint3) atIndex:6];
+
+            uint32_t n_splats = static_cast<uint32_t>(raw_mu.size(0));
+            [enc setBytes:&n_splats length:sizeof(uint32_t) atIndex:7];
+            float shift_C = std::exp(-0.5f * truncate * truncate);
+            float inv_one_minus_C = 1.0f / (1.0f - shift_C);
+            [enc setBytes:&truncate length:sizeof(float) atIndex:8];
+            [enc setBytes:&intensity_floor length:sizeof(float) atIndex:9];
+            [enc setBytes:&shift_C length:sizeof(float) atIndex:10];
+            [enc setBytes:&inv_one_minus_C length:sizeof(float) atIndex:11];
+
+            MTLSize groups = MTLSizeMake(n_splats, 1, 1);
+            MTLSize threadsPerGroup = MTLSizeMake(kThreadgroupSize, 1, 1);
+            [enc dispatchThreadgroups:groups threadsPerThreadgroup:threadsPerGroup];
+            [enc endEncoding];
+        }
+
+        [cmd commit];
+        [cmd waitUntilCompleted];
+        checkCommandBuffer(cmd, @"rasterize_forward_raw_splat_centric_3d failed");
+    }
+
+    return output;
+}
+
+std::vector<torch::Tensor> dispatch_backward_raw_splat_3d(
+    torch::Tensor grad_output,
+    torch::Tensor raw_mu,
+    torch::Tensor raw_L_diag,
+    torch::Tensor L_off,
+    torch::Tensor raw_a,
+    torch::Tensor sigma_min_diag,
+    std::vector<int64_t> shape,
+    float truncate,
+    float intensity_floor
+) {
+    validate_raw_splat_tensors_3d(raw_mu, raw_L_diag, L_off, raw_a, sigma_min_diag, shape);
+    TORCH_CHECK(truncate > 0.0f, "truncate must be > 0; got ", truncate);
+    TORCH_CHECK(grad_output.device().is_mps(), "grad_output must be on MPS device");
+    TORCH_CHECK(grad_output.scalar_type() == torch::kFloat32, "grad_output must be float32");
+    TORCH_CHECK(grad_output.dim() == 3
+            && grad_output.size(0) == shape[0]
+            && grad_output.size(1) == shape[1]
+            && grad_output.size(2) == shape[2],
+        "grad_output shape must match the provided 3D shape");
+    bool grad_output_is_scalar = grad_output.stride(0) == 0
+        && grad_output.stride(1) == 0
+        && grad_output.stride(2) == 0;
+    TORCH_CHECK(grad_output.is_contiguous() || grad_output_is_scalar,
+        "grad_output must be contiguous or scalar-expanded");
+
+    int64_t N = raw_mu.size(0);
+    auto opts = raw_mu.options().dtype(torch::kFloat32);
+    if (N == 0) {
+        return {
+            torch::zeros({N, 3}, opts),
+            torch::zeros({N, 3}, opts),
+            torch::zeros({N, 3}, opts),
+            torch::zeros({N}, opts),
+        };
+    }
+
+    auto d_raw_mu = torch::empty({N, 3}, opts);
+    auto d_raw_L_diag = torch::empty({N, 3}, opts);
+    auto d_L_off = torch::empty({N, 3}, opts);
+    auto d_raw_a = torch::empty({N}, opts);
+
+    @autoreleasepool {
+        MetalContext* ctx = metalContext();
+        torch::mps::synchronize();
+
+        id<MTLCommandBuffer> cmd = [ctx->queue commandBuffer];
         id<MTLComputeCommandEncoder> enc = [cmd computeCommandEncoder];
-        [enc setComputePipelineState:g_ctx->getPipeline("rasterize_bwd_nd")];
+        [enc setComputePipelineState:ctx->getPipeline("rasterize_backward_raw_splat_centric_3d")];
 
-        setBufferWithOffset(enc, grad_output, 0);
-        setBufferWithOffset(enc, centers, 1);
-        setBufferWithOffset(enc, Ls, 2);
-        setBufferWithOffset(enc, amps, 3);
+        if (grad_output_is_scalar) {
+            id<MTLBuffer> grad_buf = tensorToMTLBufferUnchecked(grad_output);
+            TORCH_CHECK(grad_buf != nil, "Failed to get MTLBuffer for scalar grad_output");
+            NSUInteger grad_offset = grad_output.storage_offset() * grad_output.element_size();
+            TORCH_CHECK(grad_offset + grad_output.element_size() <= [grad_buf length],
+                "Scalar grad_output storage offset is outside its Metal buffer");
+            [enc setBuffer:grad_buf offset:grad_offset atIndex:0];
+        } else {
+            setBufferWithOffset(enc, grad_output, 0);
+        }
+        setBufferWithOffset(enc, raw_mu, 1);
+        setBufferWithOffset(enc, raw_L_diag, 2);
+        setBufferWithOffset(enc, L_off, 3);
+        setBufferWithOffset(enc, raw_a, 4);
+        setBufferWithOffset(enc, sigma_min_diag, 5);
+        setBufferWithOffset(enc, d_raw_mu, 6);
+        setBufferWithOffset(enc, d_raw_L_diag, 7);
+        setBufferWithOffset(enc, d_L_off, 8);
+        setBufferWithOffset(enc, d_raw_a, 9);
 
-        // Output gradient buffers
-        setBufferWithOffset(enc, d_centers, 4);
-        setBufferWithOffset(enc, d_Ls, 5);
-        setBufferWithOffset(enc, d_amps, 6);
+        uint3 shape_dhw = {
+            static_cast<uint32_t>(shape[0]),
+            static_cast<uint32_t>(shape[1]),
+            static_cast<uint32_t>(shape[2]),
+        };
+        [enc setBytes:&shape_dhw length:sizeof(uint3) atIndex:10];
 
-        uint32_t n_splats = (uint32_t)N;
-        [enc setBytes:&n_splats length:sizeof(uint32_t) atIndex:7];
+        uint32_t n_splats = static_cast<uint32_t>(N);
+        [enc setBytes:&n_splats length:sizeof(uint32_t) atIndex:11];
+        float shift_C = std::exp(-0.5f * truncate * truncate);
+        float inv_one_minus_C = 1.0f / (1.0f - shift_C);
+        [enc setBytes:&truncate length:sizeof(float) atIndex:12];
+        [enc setBytes:&intensity_floor length:sizeof(float) atIndex:13];
+        [enc setBytes:&shift_C length:sizeof(float) atIndex:14];
+        [enc setBytes:&inv_one_minus_C length:sizeof(float) atIndex:15];
+        uint32_t grad_output_scalar_flag = grad_output_is_scalar ? 1u : 0u;
+        [enc setBytes:&grad_output_scalar_flag length:sizeof(uint32_t) atIndex:16];
 
-        uint32_t dim_u = (uint32_t)dim;
-        [enc setBytes:&dim_u length:sizeof(uint32_t) atIndex:8];
-
-        // Shape and constants
-        uint32_t shape_arr[8] = {0};
-        for (int i = 0; i < dim; i++) shape_arr[i] = (uint32_t)shape[i];
-        [enc setBytes:shape_arr length:sizeof(shape_arr) atIndex:9];
-
-        [enc setBytes:&truncate length:sizeof(float) atIndex:10];
-        [enc setBytes:&intensity_floor length:sizeof(float) atIndex:11];
-
-        MTLSize gridSize = MTLSizeMake(total_size, 1, 1);
-        MTLSize groupSize = MTLSizeMake(std::min((int64_t)256, total_size), 1, 1);
-        [enc dispatchThreads:gridSize threadsPerThreadgroup:groupSize];
+        MTLSize groups = MTLSizeMake(n_splats, 1, 1);
+        MTLSize threadsPerGroup = MTLSizeMake(kThreadgroupSize, 1, 1);
+        [enc dispatchThreadgroups:groups threadsPerThreadgroup:threadsPerGroup];
         [enc endEncoding];
         [cmd commit];
         [cmd waitUntilCompleted];
+        checkCommandBuffer(cmd, @"rasterize_backward_raw_splat_centric_3d failed");
     }
 
-    return {d_centers, d_Ls, d_amps};
+    return {d_raw_mu, d_raw_L_diag, d_L_off, d_raw_a};
 }
 
 // ============================================================================
@@ -584,20 +741,23 @@ std::vector<torch::Tensor> dispatch_backward_nd(
 // ============================================================================
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-    m.doc() = "Metal-accelerated Gaussian splatting backend for Luxar";
+    m.doc() = "Splat-centric Metal Gaussian splatting backend for Luxar";
+
+    m.def("set_library_path", &set_library_path,
+          "Set the path to default.metallib used by the Metal kernels");
 
     m.def("compute_conic_metal", &compute_conic_metal,
-          "Compute conic (Σ⁻¹) from L in Metal - faster alternative to PyTorch");
+          "Compute 3D packed conic (Σ⁻¹) from Cholesky factors in [Z,Y,X] order");
 
-    m.def("forward_3d", &dispatch_forward_3d,
-          "Metal forward pass (3D tiled) - returns [output, tile_counts, tile_offsets, tile_content]");
+    m.def("forward_splat_3d", &dispatch_forward_splat_3d,
+          "Splat-centric 3D Metal forward pass");
 
-    m.def("backward_3d", &dispatch_backward_3d,
-          "Metal backward pass (3D tiled with SIMD reduction) - returns [d_centers, d_conic, d_amps]");
+    m.def("backward_splat_3d", &dispatch_backward_splat_3d,
+          "Splat-centric 3D Metal backward pass");
 
-    m.def("forward_nd", &dispatch_forward_nd,
-          "Metal forward pass (generic nD) - returns [output]");
+    m.def("forward_raw_splat_3d", &dispatch_forward_raw_splat_3d,
+          "Splat-centric 3D Metal forward pass from unconstrained raw parameters");
 
-    m.def("backward_nd", &dispatch_backward_nd,
-          "Metal backward pass (generic nD with SIMD reduction) - returns [d_centers, d_Ls, d_amps]");
+    m.def("backward_raw_splat_3d", &dispatch_backward_raw_splat_3d,
+          "Splat-centric 3D Metal backward pass to unconstrained raw parameters");
 }

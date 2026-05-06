@@ -581,7 +581,3 @@ class TestEdgeCases:
                 simple_2d_image, scales=[1, 2], n_iters=20, alpha=alpha, verbose=False
             )
             assert len(scales_list) == 2
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])

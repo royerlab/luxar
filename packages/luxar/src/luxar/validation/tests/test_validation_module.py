@@ -179,8 +179,9 @@ class TestRadiiValidation:
             validate_radii_for_writing(radii, 100)
 
         assert "must be positive" in str(exc_info.value)
-        assert "Found zero values" in str(exc_info.value)
-        assert "radii[radii == 0] = 0.01" in str(exc_info.value)
+        assert "Found zero or negative values" in str(exc_info.value)
+        assert "minimum: 0.000" in str(exc_info.value)
+        assert "np.clip(radii, 0.01, None)" in str(exc_info.value)
 
     def test_negative_radii(self) -> None:
         """Test error for negative radii."""
@@ -190,8 +191,9 @@ class TestRadiiValidation:
             validate_radii_for_writing(radii, 100)
 
         assert "must be positive" in str(exc_info.value)
-        assert "Found minimum value: -0.500" in str(exc_info.value)
-        assert "np.abs(radii)" in str(exc_info.value)
+        assert "Found zero or negative values" in str(exc_info.value)
+        assert "minimum: -0.500" in str(exc_info.value)
+        assert "np.clip(radii, 0.01, None)" in str(exc_info.value)
 
 
 class TestSharpnessValidation:

@@ -47,12 +47,6 @@ TARGET_CHUNK_BYTES: Final[int] = 65_536  # 64KB target chunk size
 MIN_CHUNK_BYTES: Final[int] = 16_384  # 16KB minimum to amortize HTTP overhead
 MAX_CHUNK_BYTES: Final[int] = 262_144  # 256KB maximum for responsive streaming
 
-# Legacy aliases (deprecated, use byte-based constants above)
-CHUNK_SIZE_MIN: Final[int] = 1_024  # Deprecated: use MIN_CHUNK_BYTES
-CHUNK_SIZE_DEFAULT: Final[int] = 32_768  # Deprecated: use TARGET_CHUNK_BYTES
-DEFAULT_CHUNK_SIZE: Final[int] = 32_768  # Deprecated: use TARGET_CHUNK_BYTES
-CHUNK_SIZE_MAX: Final[int] = 1_048_576  # Deprecated: use MAX_CHUNK_BYTES
-
 # Memory constants
 KB_TO_BYTES: Final[int] = 1024
 MB_TO_BYTES: Final[int] = 1024 * 1024

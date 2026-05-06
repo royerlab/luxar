@@ -19,6 +19,7 @@ import torch.nn.functional as F
 from arbol import aprint, asection
 
 from luxar.gsplats.models.utils.inverse_softplus import stable_inverse_softplus_torch
+from luxar.gsplats.utils.device import resolve_torch_device
 
 
 def _cubic_upsample_2x_1d(img: torch.Tensor, axis: int) -> torch.Tensor:
@@ -1040,17 +1041,14 @@ def decompose_image(
     - Reconstruction: V ≈ Σₖ upsample(scales_list[k])
     - Higher alpha values push more energy to coarse scales
     """
-    # Auto-detect device
-    if device is None:
-        if torch.cuda.is_available():
-            device = "cuda"
-        elif torch.backends.mps.is_available():
-            device = "mps"
-        else:
-            device = "cpu"
+    # Auto-detect device (centralized helper handles CUDA/MPS/CPU and missing
+    # ``torch.backends.mps`` on older PyTorch builds; explicit value passed
+    # through). Returned as a ``torch.device`` so downstream tensor ops avoid
+    # repeated string-to-device coercion.
+    resolved_device: torch.device = resolve_torch_device(device)
 
     # Convert to torch tensor
-    V_tensor = torch.tensor(V, dtype=torch.float32, device=device)
+    V_tensor = torch.tensor(V, dtype=torch.float32, device=resolved_device)
 
     # Set convergence threshold (adaptive if not specified)
     if max_abs_error_threshold is None:
@@ -1104,7 +1102,7 @@ def decompose_image(
         if verbose:
             aprint(f"Input shape: {V.shape} ({V.ndim}D)")
             aprint(f"Scales: {scales}")
-            aprint(f"Device: {device}")
+            aprint(f"Device: {resolved_device}")
             asymmetric_str = (
                 f"{asymmetric_penalty}" if asymmetric_penalty is not None else "None"
             )
@@ -1133,7 +1131,7 @@ def decompose_image(
 
         model = MultiScaleDecomposer(
             V.shape, scales=scales, interpolation=interpolation
-        ).to(device)
+        ).to(resolved_device)
 
         if init_method == "finest":
             model.initialize_finest_scale(V_tensor)

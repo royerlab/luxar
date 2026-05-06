@@ -271,6 +271,19 @@ describe('ControlsManager', () => {
 
       expect(endHandler).toHaveBeenCalled();
     });
+
+    it('should detach forwarded listeners from disposed controls when switching modes', () => {
+      const oldControls = controlsManager.getControls() as any;
+      const changeHandler = vi.fn();
+      controlsManager.addEventListener('change', changeHandler);
+
+      controlsManager.setControlType('fly');
+      changeHandler.mockClear();
+
+      oldControls.dispatchEvent({ type: 'change' });
+
+      expect(changeHandler).not.toHaveBeenCalled();
+    });
   });
 
   describe('focus target', () => {

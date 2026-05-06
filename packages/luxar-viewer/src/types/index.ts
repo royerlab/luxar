@@ -11,13 +11,7 @@ export type { DimensionMetadata, SimpleDims } from './dims';
 export { initializeDims, getDimensionRanges } from './dims';
 
 // Points types
-export type {
-  PointsMetadata,
-  PointsChunkSpatialIndex,
-  PointsViewState,
-  PointsDataLoader,
-  PointsUserData,
-} from './points';
+export type { PointsMetadata, PointsViewState, PointsDataLoader, PointsUserData } from './points';
 export { isPointsMetadata, isPointsUserData } from './points';
 
 // Lines types
@@ -25,7 +19,6 @@ export type {
   OrderingMetadata,
   LineType,
   LinesMetadata,
-  LinesChunkSpatialIndex,
   SegmentRange,
   LoadedLinesData,
   ProcessedLinesData,
@@ -41,7 +34,6 @@ export type {
   ValueRange,
   CoordinateBounds,
   GSplatsMetadata,
-  GSplatsChunkSpatialIndex,
   SplatRange,
   LoadedGSplatsData,
   ProcessedGSplatsData,

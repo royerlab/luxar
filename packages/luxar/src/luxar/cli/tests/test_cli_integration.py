@@ -8,14 +8,33 @@ Following the principle from TESTING_GUIDELINES.md: mock only external dependenc
 import socket
 import threading
 import time
+from pathlib import Path
 
 import numpy as np
 import pytest
 import requests
+from fastapi.testclient import TestClient
 
 from luxar import Dimensions, LuxarZarrCompiler
 from luxar.cli.utils import find_available_port
 from luxar.utils.demos import create_lorenz_attractor
+
+
+class _ImmediateThread:
+    """threading.Thread stand-in that runs target inline; used to make CLI
+    invocations deterministic in tests that exercise the data-server thread."""
+
+    def __init__(self, target=None, args=(), kwargs=None, daemon=None):
+        self._target = target
+        self._args = args
+        self._kwargs = kwargs or {}
+
+    def start(self):
+        if self._target is not None:
+            self._target(*self._args, **self._kwargs)
+
+    def join(self, *_a, **_k):
+        return None
 
 
 @pytest.fixture
@@ -141,15 +160,191 @@ class TestServeIntegration:
         assert array_meta["dtype"] in ["<f4", ">f4", "float32"]
 
     def test_cors_headers(self, test_server):
-        """Test that CORS headers are set correctly."""
+        """Test that local CORS origins are allowed by default."""
         # CORS headers appear when Origin header is present (cross-origin request)
         origin = "http://localhost:5173"
         headers = {"Origin": origin}
         response = requests.get(f"{test_server}/health", headers=headers)
         assert "Access-Control-Allow-Origin" in response.headers
-        # With allow_credentials=True, the CORS spec forbids wildcard "*" —
-        # the middleware echoes back the specific requesting origin instead.
-        assert response.headers["Access-Control-Allow-Origin"] in ("*", origin)
+        assert response.headers["Access-Control-Allow-Origin"] == origin
+
+    def test_non_local_cors_origin_rejected_by_default(self, sample_scene):
+        """Default CORS policy should only allow loopback browser clients."""
+        from luxar.cli.main import create_server_app
+
+        client = TestClient(create_server_app(str(sample_scene)))
+        response = client.get("/health", headers={"Origin": "https://evil.example"})
+        assert "Access-Control-Allow-Origin" not in response.headers
+
+    def test_wildcard_cors_requires_explicit_opt_in(self, sample_scene):
+        """Wildcard CORS is still available, but credentials are disabled."""
+        from luxar.cli.main import create_server_app
+
+        client = TestClient(create_server_app(str(sample_scene), cors_origin="*"))
+        response = client.get("/health", headers={"Origin": "https://example.org"})
+        assert response.headers["Access-Control-Allow-Origin"] == "*"
+        assert response.headers.get("Access-Control-Allow-Credentials") != "true"
+
+    def test_viewer_command_threads_cors_origin(self, sample_scene, monkeypatch):
+        """`luxar viewer --cors-origin X` must propagate X to both servers."""
+        from typer.testing import CliRunner
+
+        from luxar.cli import app
+        from luxar.cli import main as cli_main
+
+        captured: dict[str, str] = {}
+
+        def fake_serve_viewer(host, port, data_url=None, open_browser_flag=True,
+                              cors_origin="local"):
+            captured["viewer"] = cors_origin
+
+        def fake_serve_data(path, host, port, *args, **kwargs):
+            cors_origin = kwargs.get("cors_origin")
+            if cors_origin is None and len(args) >= 6:
+                cors_origin = args[5]
+            captured["data"] = cors_origin or "local"
+
+        monkeypatch.setattr(cli_main, "_serve_viewer", fake_serve_viewer)
+        monkeypatch.setattr(cli_main, "_serve_data", fake_serve_data)
+        monkeypatch.setattr(cli_main, "check_viewer_built", lambda: True)
+        monkeypatch.setattr(cli_main.threading, "Thread", _ImmediateThread)
+        monkeypatch.setattr(cli_main.time, "sleep", lambda *_a, **_k: None)
+
+        result = CliRunner().invoke(
+            app,
+            [
+                "viewer",
+                "--data",
+                str(sample_scene),
+                "--cors-origin",
+                "https://example.com",
+                "--no-open",
+            ],
+        )
+        assert result.exit_code == 0, result.stdout
+        assert captured["viewer"] == "https://example.com"
+        assert captured["data"] == "https://example.com"
+
+    def test_demo_command_threads_cors_origin(self, monkeypatch, tmp_path):
+        """`luxar demo --cors-origin X` must propagate X to both servers."""
+        from typer.testing import CliRunner
+
+        from luxar.cli import app
+        from luxar.cli import main as cli_main
+
+        captured: dict[str, str] = {}
+
+        def fake_serve_viewer(host, port, data_url=None, open_browser_flag=True,
+                              cors_origin="local"):
+            captured["viewer"] = cors_origin
+
+        def fake_serve_data(path, host, port, *args, **kwargs):
+            cors_origin = kwargs.get("cors_origin")
+            if cors_origin is None and len(args) >= 6:
+                cors_origin = args[5]
+            captured["data"] = cors_origin or "local"
+
+        monkeypatch.setattr(cli_main, "_serve_viewer", fake_serve_viewer)
+        monkeypatch.setattr(cli_main, "_serve_data", fake_serve_data)
+        monkeypatch.setattr(cli_main, "check_viewer_built", lambda: True)
+        monkeypatch.setattr(cli_main.threading, "Thread", _ImmediateThread)
+        monkeypatch.setattr(cli_main.time, "sleep", lambda *_a, **_k: None)
+
+        out = tmp_path / "demo.zarr"
+        result = CliRunner().invoke(
+            app,
+            [
+                "demo",
+                "--no-open",
+                "--points",
+                "100",
+                "--output",
+                str(out),
+                "--cors-origin",
+                "https://example.com",
+            ],
+        )
+        assert result.exit_code == 0, result.stdout
+        assert captured["viewer"] == "https://example.com"
+        assert captured["data"] == "https://example.com"
+
+    def test_directory_listing_blocks_parent_traversal(self, tmp_path):
+        """Custom directory listings must not escape the served root."""
+        from luxar.cli.main import create_server_app
+
+        serve_root = tmp_path / "served"
+        serve_root.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "secret.txt").write_text("secret")
+
+        client = TestClient(create_server_app(str(serve_root)))
+        response = client.get("/%2e%2e/outside/", headers={"Accept": "application/json"})
+        assert response.status_code == 403
+
+    def test_sensitive_system_path_requires_opt_in(self):
+        """Serving filesystem roots is blocked unless explicitly allowed."""
+        from luxar.cli.main import create_server_app
+
+        with pytest.raises(ValueError, match="Refusing to serve sensitive system path"):
+            create_server_app(Path(Path.cwd().anchor))
+
+    def test_sensitive_system_paths_blocked(self):
+        """System roots are flagged as sensitive."""
+        from luxar.cli.main import _is_sensitive_serve_path
+
+        # Posix-only paths — skipped on Windows where these aren't sensitive.
+        if not Path("/etc").exists():
+            pytest.skip("system /etc not present (probably Windows)")
+
+        assert _is_sensitive_serve_path(Path("/etc")) is True
+        assert _is_sensitive_serve_path(Path("/usr")) is True
+        # Subdirectories of sensitive roots stay sensitive.
+        assert _is_sensitive_serve_path(Path("/etc/passwd")) is True
+
+    def test_tmpdir_not_sensitive(self):
+        """Tempdirs (under /var on macOS, /tmp on Linux) must be servable."""
+        import tempfile
+
+        from luxar.cli.main import _is_sensitive_serve_path
+
+        with tempfile.TemporaryDirectory() as td:
+            assert _is_sensitive_serve_path(Path(td)) is False
+
+    def test_user_directories_not_sensitive(self):
+        """/home and /Users hold legitimate project data and must be servable."""
+        from luxar.cli.main import _is_sensitive_serve_path
+
+        # These paths may not exist on every machine — check that *if* they
+        # exist, they are not classified as sensitive.
+        for candidate in (Path("/Users"), Path("/home")):
+            if candidate.exists():
+                assert _is_sensitive_serve_path(candidate / "fakeuser") is False
+
+    def test_lan_warning_silent_for_loopback_or_local_cors(self, capsys):
+        """No LAN warning when bind is loopback or CORS is not wildcard."""
+        from luxar.cli.main import _warn_if_lan_exposed
+
+        # Loopback host with wildcard CORS — no warning.
+        _warn_if_lan_exposed("127.0.0.1", "*")
+        _warn_if_lan_exposed("localhost", "*")
+        _warn_if_lan_exposed("::1", "*")
+        _warn_if_lan_exposed("0.0.0.0", "*")
+        # Non-loopback host with restricted CORS — no warning.
+        _warn_if_lan_exposed("192.168.1.10", "local")
+        _warn_if_lan_exposed("my-server.lan", "https://example.com")
+
+        captured = capsys.readouterr()
+        assert "Serving on host" not in captured.out
+
+    def test_lan_warning_fires_for_lan_bind_with_wildcard(self, capsys):
+        """LAN-routable bind + wildcard CORS triggers the warning."""
+        from luxar.cli.main import _warn_if_lan_exposed
+
+        _warn_if_lan_exposed("192.168.1.10", "*")
+        captured = capsys.readouterr()
+        assert "Serving on host=192.168.1.10" in captured.out
+        assert "--cors-origin '*'" in captured.out
 
     def test_404_for_nonexistent_path(self, test_server):
         """Test that nonexistent paths return 404."""

@@ -4,13 +4,15 @@ This module tests the validation of positions, colors, radii, and sharpness
 parameters when adding points to a scene.
 """
 
+import warnings
+
 import numpy as np
 import pytest
 import zarr
 
 from luxar import Dimensions, LuxarZarrCompiler
 from luxar.encoding import ArrayDecoder, EncodingMode
-from luxar.validation import ValidationError
+from luxar.validation import ValidationError, validate_colors_for_writing
 
 # =============================================================================
 # Position Validation Tests
@@ -35,6 +37,70 @@ def test_mismatched_colors(tmp_path) -> None:
         col = np.ones((5, 3), np.uint8)
         with pytest.raises(ValueError, match="colors.*doesn't match"):
             scene.add_points("Nope", pos, col, parent=scene)
+
+
+@pytest.mark.parametrize(
+    "field,kwargs,error_pattern",
+    [
+        (
+            "positions_nan",
+            {"positions": np.array([[0.0, np.nan, 1.0]], dtype=np.float32)},
+            "positions: Contains 1 NaN or Inf",
+        ),
+        (
+            "positions_inf",
+            {"positions": np.array([[0.0, np.inf, 1.0]], dtype=np.float32)},
+            "positions: Contains 1 NaN or Inf",
+        ),
+        (
+            "colors_nan",
+            {"colors": np.array([[1.0, np.nan, 0.0]], dtype=np.float32)},
+            "colors: Contains 1 NaN or Inf",
+        ),
+        (
+            "radii_inf",
+            {"radii": np.array([np.inf], dtype=np.float32)},
+            "radii: Contains 1 NaN or Inf",
+        ),
+        (
+            "sharpness_nan",
+            {"sharpness": np.array([np.nan], dtype=np.float32)},
+            "sharpness: Contains 1 NaN or Inf",
+        ),
+    ],
+)
+def test_non_finite_point_attributes_rejected(
+    tmp_path, field: str, kwargs: dict[str, np.ndarray], error_pattern: str
+) -> None:
+    """NaN/Inf values should fail before corrupting stored Zarr arrays."""
+    store = tmp_path / f"bad_{field}.zarr"
+    positions = kwargs.pop(
+        "positions", np.array([[0.0, 1.0, 2.0]], dtype=np.float32)
+    )
+
+    with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:
+        compiler.create_scene(dimensions=Dimensions.default_3d())
+        with pytest.raises(ValidationError, match=error_pattern):
+            compiler.write_points("bad", positions, **kwargs)
+
+
+def test_empty_colors_are_valid_only_for_zero_points() -> None:
+    """Empty colors should not reach min/max reductions."""
+    validate_colors_for_writing(np.empty((0, 3), dtype=np.float32), n_points=0)
+
+    with pytest.raises(ValidationError, match="Number of colors"):
+        validate_colors_for_writing(np.empty((0, 3), dtype=np.float32), n_points=5)
+
+
+def test_integer_color_ranges_do_not_emit_hdr_warning() -> None:
+    """Integer SDR colors use native integer ranges, not HDR float ranges."""
+    colors = np.array([[255, 0, 0], [0, 128, 255]], dtype=np.uint8)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        validate_colors_for_writing(colors, n_points=2)
+
+    assert caught == []
 
 
 # =============================================================================

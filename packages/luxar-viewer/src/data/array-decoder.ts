@@ -40,7 +40,7 @@ export interface EncodingMetadata {
    */
   original_dtype?: string;
 
-  /** Quantization bounds [min, max] (legacy format) */
+  /** Quantization bounds [min, max] */
   bounds?: [number, number];
 
   /** Quantization min (current format) */
@@ -152,6 +152,7 @@ export class ArrayDecoder {
     zarrRootLoc?: zarr.Location<zarr.Readable>
   ): Promise<Float32Array> {
     const enc = attrs.encoding;
+    ArrayDecoder.validateEncodingMetadata(enc);
 
     // ENCODING PRIORITY ORDER (CRITICAL - must match spec):
     // 1. Broadcasting → 2. Array Reference → 3. LUT → 4. Dtype
@@ -189,7 +190,7 @@ export class ArrayDecoder {
     }
 
     // PRIORITY 2: Check for array reference (second priority per spec)
-    if (enc?.target) {
+    if (enc?.name === 'array_ref') {
       // Early warning if zarrRootLoc missing (will fail later if not cached)
       if (!zarrRootLoc && !enc.hash) {
         log.warning(
@@ -198,7 +199,7 @@ export class ArrayDecoder {
             'This will fail if the reference is not already cached.'
         );
       }
-      return this.decodeArrayRef(enc.target, enc.hash, expectedElements, zarrRootLoc);
+      return this.decodeArrayRef(enc.target!, enc.hash, expectedElements, zarrRootLoc);
     }
 
     // Load raw data from zarr (needed for LUT, quantization, dtype)
@@ -247,15 +248,17 @@ export class ArrayDecoder {
     })();
 
     // PRIORITY 3: Check for LUT encoding (third priority per spec)
-    // Python generates names like: lut_uint8, lut_uint16
-    if (enc?.name?.startsWith('lut') && enc?.lut) {
+    if (enc && ArrayDecoder.isLUTEncodingName(enc.name)) {
+      if (!enc.lut) {
+        throw new Error(`[ArrayDecoder] Missing LUT metadata for encoding: ${enc.name}`);
+      }
       // Get k (feature dimension) from original_shape in encoding metadata
       // original_shape is [n, k] where n is number of points, k is feature dimension
       // CRITICAL: Default to 1 for scalar mode, but MUST check original_shape for vector data
       const k = enc.original_shape && enc.original_shape.length > 1 ? enc.original_shape[1] : 1;
 
       // Get LUT mode from metadata (scalar vs row)
-      const lutMode = (enc as any).lut_mode || 'row'; // Default to row mode
+      const lutMode = enc.lut_mode || 'row'; // Default to row mode
 
       // Decode LUT with correct mode
       const decoded = this.decodeLUT(data, enc.lut, k, lutMode);
@@ -272,20 +275,23 @@ export class ArrayDecoder {
       return decoded;
     }
 
-    // Check for LOG-SPACE scalar encoding (log_scalar_uint8, log_scalar_uint16)
-    // MUST be checked BEFORE generic quantization since both contain 'uint'/'scalar'
-    if (enc?.name?.startsWith('log_scalar') && enc?.max_log !== undefined) {
+    // Check for LOG-SPACE scalar encoding.
+    // MUST be checked BEFORE generic quantization since both contain 'uint'/'scalar'.
+    if (ArrayDecoder.isLogScalarEncodingName(enc?.name) && enc?.max_log !== undefined) {
       // CRITICAL: Use zarrArray.dtype, NOT attrs.dtype (which may be undefined)
       // Python encoder writes uint8/uint16 data but attrs.dtype may not be set.
-      const actualDtype = (zarrArray.dtype as string) || 'uint8';
-      return this.decodeLogScalar(data, enc.max_log, actualDtype);
+      const actualDtype = zarrArray.dtype;
+      if (actualDtype === undefined || actualDtype === null || String(actualDtype) === '') {
+        throw new Error(`[ArrayDecoder] Missing zarr dtype for quantized encoding: ${enc.name}`);
+      }
+      return this.decodeLogScalar(data, enc.max_log, String(actualDtype));
     }
 
-    // Check for quantization (name contains "uint", bounds present OR implicit)
-    // NOTE: Some encodings like rgb_uint8 have implicit bounds [0, 1]
-    if (enc?.name && (enc.name.includes('uint') || enc.name.includes('scalar'))) {
+    // Check for quantization (known quantized encodings, bounds present OR implicit)
+    // NOTE: Dtype encodings like "uint8"/"uint16" are direct storage, not quantization.
+    if (enc?.name && ArrayDecoder.isQuantizedEncoding(attrs)) {
       // Bounds can be stored as:
-      // 1. Array: bounds = [min, max] (legacy format)
+      // 1. Array: bounds = [min, max]
       // 2. Separate fields: min, max (current format)
       // 3. Inferred from encoding name (implicit for known types)
       let bounds: [number, number] | null = null;
@@ -312,7 +318,7 @@ export class ArrayDecoder {
             'Quantized arrays require either:\n' +
             '  1. Explicit bounds field: encoding.bounds = [min, max]\n' +
             '  2. Separate min/max fields: encoding.min, encoding.max\n' +
-            '  3. Implicit bounds for known types (rgb_uint8, hdr_uint8)\n' +
+            '  3. Implicit bounds for known types (rgb_uint8/rgb_uint16)\n' +
             `Got encoding: ${JSON.stringify(enc)}`
         );
       }
@@ -320,15 +326,22 @@ export class ArrayDecoder {
       // Get actual dtype from zarr array, NOT from attrs (Python encoder doesn't write attrs.dtype)
       // zarrArray.dtype has the real storage dtype (e.g., '|u1', '<u1', 'uint8')
       // Do NOT use enc.name (e.g., 'rgb_uint8') - that's the encoding name, not the dtype
-      const actualDtype = (zarrArray.dtype as string) || 'uint8';
+      const actualDtype = zarrArray.dtype;
+      if (actualDtype === undefined || actualDtype === null || String(actualDtype) === '') {
+        throw new Error(`[ArrayDecoder] Missing zarr dtype for quantized encoding: ${enc.name}`);
+      }
       log.info(
         Modules.ZARR_LOADER,
-        `Quantized array: encoding=${enc.name}, zarr_dtype=${zarrArray.dtype}, actualDtype=${actualDtype}`
+        `Quantized array: encoding=${enc.name}, zarr_dtype=${zarrArray.dtype}, actualDtype=${String(actualDtype)}`
       );
-      return this.dequantize(data, bounds, actualDtype);
+      return this.dequantize(data, bounds, String(actualDtype));
     }
 
-    // Direct mode (no encoding or name: "none" / "float16" / "float32")
+    // Direct mode (no encoding or name: "none" / dtype names)
+    if (enc?.name && !ArrayDecoder.isDirectEncodingName(enc.name)) {
+      throw new Error(`[ArrayDecoder] Unknown encoding name: ${enc.name}`);
+    }
+
     // Register for potential array ref usage
     if (enc?.hash) {
       this.refRegistry.register(enc.hash, data);
@@ -342,7 +355,6 @@ export class ArrayDecoder {
    *
    * Some encodings have implicit bounds that don't need to be stored:
    * - rgb_uint8/rgb_uint16: [0, 1] (standard RGB range)
-   * - hdr_uint8/hdr_uint16: [0, 10] (HDR range, though bounds may be explicit)
    * - Others: return null (must have explicit bounds field)
    *
    * @param encName - Encoding name (e.g., "rgb_uint8", "bounded_scalar_uint16")
@@ -351,9 +363,6 @@ export class ArrayDecoder {
   private inferBounds(encName: string): [number, number] | null {
     if (encName === 'rgb_uint8' || encName === 'rgb_uint16') {
       return [0, 1]; // Standard RGB range
-    }
-    if (encName === 'hdr_uint8' || encName === 'hdr_uint16') {
-      return [0, 10]; // HDR range (may be overridden by explicit bounds)
     }
     return null; // Must have explicit bounds field
   }
@@ -488,7 +497,10 @@ export class ArrayDecoder {
    * Format: uint8 or uint16 → float with bounds [min, max]
    */
   private dequantize(data: Float32Array, bounds: [number, number], dtype: string): Float32Array {
-    const [min_val, max_val] = bounds;
+    const [min_val, max_val] = ArrayDecoder.validateQuantizationBounds(
+      bounds,
+      'quantization bounds'
+    );
 
     // Determine max integer value from dtype
     // NumPy dtype formats: 'uint8', '<u1' (little-endian), '|u1' (native byte order for single-byte)
@@ -526,6 +538,12 @@ export class ArrayDecoder {
    * Used for positive scalars with wide dynamic range (e.g., radii)
    */
   private decodeLogScalar(data: Float32Array, maxLog: number, dtype: string): Float32Array {
+    if (!Number.isFinite(maxLog) || maxLog <= 0) {
+      throw new Error(
+        `[ArrayDecoder] Invalid log_scalar max_log: ${maxLog}. Must be finite and > 0.`
+      );
+    }
+
     // Determine max integer value from dtype
     // NumPy dtype formats: 'uint8', '<u1' (little-endian), '|u1' (native byte order for single-byte)
     let max_int: number;
@@ -646,12 +664,10 @@ export class ArrayDecoder {
 
     // Check for any encoding mode
     return !!(
-      enc.target || // array reference
+      enc.name === 'array_ref' || // array reference
       enc.name === 'broadcasted' || // broadcasting
-      enc.name?.startsWith('lut') || // LUT encoding (lut_uint8, lut_uint16)
-      enc.name?.startsWith('log_scalar') || // log-space scalar (log_scalar_uint8, log_scalar_uint16)
-      enc.name?.includes('uint') || // quantization (rgb_uint8, bounded_scalar_uint16, etc.)
-      enc.bounds // explicit quantization bounds
+      ArrayDecoder.isLUTEncodingName(enc.name) || // LUT encoding (lut_uint8, lut_uint16)
+      ArrayDecoder.isQuantizedEncoding(attrs) // quantization (rgb_uint8, bounded_scalar_uint16, etc.)
     );
   }
 
@@ -666,11 +682,11 @@ export class ArrayDecoder {
     if (!enc || !enc.name) return 'direct';
 
     // Map encoding name to mode
-    if (enc.target) return 'array_ref';
+    if (enc.name === 'array_ref') return 'array_ref';
     if (enc.name === 'broadcasted') return 'broadcasted';
-    if (enc.name?.startsWith('lut')) return 'lut';
-    if (enc.name?.startsWith('log_scalar')) return 'log_scalar';
-    if (enc.name?.includes('uint') || enc.bounds) return 'quantized';
+    if (ArrayDecoder.isLUTEncodingName(enc.name)) return 'lut';
+    if (ArrayDecoder.isLogScalarEncodingName(enc.name)) return 'log_scalar';
+    if (ArrayDecoder.isQuantizedEncoding(attrs)) return 'quantized';
 
     return 'direct';
   }
@@ -686,7 +702,7 @@ export class ArrayDecoder {
     if (!attrs) return false;
     const enc = attrs.encoding;
     if (!enc || !enc.name) return false;
-    return !!(enc.name?.startsWith('lut') && enc.lut);
+    return !!(ArrayDecoder.isLUTEncodingName(enc.name) && enc.lut);
   }
 
   /**
@@ -711,9 +727,155 @@ export class ArrayDecoder {
   static isArrayRef(attrs: ArrayMetadata): boolean {
     if (!attrs) return false;
     const enc = attrs.encoding;
-    if (!enc) return false;
-    if (enc.name && enc.name !== 'array_ref') return false;
-    return !!enc.target;
+    if (!enc || !enc.name) return false;
+    return enc.name === 'array_ref' && !!enc.target;
+  }
+
+  /**
+   * Helper: Check if an encoding name means direct stored values.
+   */
+  static isDirectEncodingName(name: string | undefined): boolean {
+    return (
+      name === undefined ||
+      name === 'none' ||
+      name === 'float16' ||
+      name === 'float32' ||
+      name === 'uint8' ||
+      name === 'uint16' ||
+      name === 'uint32' ||
+      name === 'uint64'
+    );
+  }
+
+  /**
+   * Helper: Check if an encoding name is a known LUT encoding.
+   */
+  static isLUTEncodingName(name: string | undefined): boolean {
+    return name === 'lut_uint8' || name === 'lut_uint16';
+  }
+
+  /**
+   * Helper: Check if an encoding name is a known log-scalar encoding.
+   */
+  static isLogScalarEncodingName(name: string | undefined): boolean {
+    return name === 'log_scalar_uint8' || name === 'log_scalar_uint16';
+  }
+
+  /**
+   * Validate encoding metadata shape before dispatch.
+   */
+  static validateEncodingMetadata(enc: EncodingMetadata | undefined): void {
+    if (!enc) return;
+    if (!enc.name) {
+      throw new Error('[ArrayDecoder] encoding.name is required when encoding metadata is present');
+    }
+    if (enc.name === 'array_ref' && !enc.target) {
+      throw new Error('[ArrayDecoder] array_ref encoding requires encoding.target');
+    }
+    if (enc.name !== 'array_ref' && enc.target) {
+      throw new Error('[ArrayDecoder] encoding.target is only valid for array_ref');
+    }
+    if (!ArrayDecoder.isKnownEncodingName(enc.name)) {
+      throw new Error(`[ArrayDecoder] Unknown encoding name: ${enc.name}`);
+    }
+    if (enc.name === 'broadcasted' && enc.n_elements === undefined) {
+      throw new Error('[ArrayDecoder] broadcasted encoding requires encoding.n_elements');
+    }
+    if (ArrayDecoder.isLUTEncodingName(enc.name) && enc.lut === undefined) {
+      throw new Error('[ArrayDecoder] LUT encoding requires encoding.lut');
+    }
+    const hasBounds = enc.bounds !== undefined || enc.min !== undefined || enc.max !== undefined;
+    if (!ArrayDecoder.isQuantizedEncodingName(enc.name) && hasBounds) {
+      throw new Error(
+        '[ArrayDecoder] bounds/min/max metadata is only valid for quantized encodings'
+      );
+    }
+    if (!ArrayDecoder.isLogScalarEncodingName(enc.name) && enc.max_log !== undefined) {
+      throw new Error('[ArrayDecoder] max_log metadata is only valid for log_scalar encodings');
+    }
+    if (
+      (enc.name === 'bounded_scalar_uint8' || enc.name === 'bounded_scalar_uint16') &&
+      !hasBounds
+    ) {
+      throw new Error('[ArrayDecoder] bounded_scalar encoding requires bounds or min/max');
+    }
+    if ((enc.min === undefined) !== (enc.max === undefined)) {
+      throw new Error('[ArrayDecoder] encoding.min and encoding.max must be provided together');
+    }
+    if (ArrayDecoder.isQuantizedEncodingName(enc.name)) {
+      if (enc.bounds !== undefined) {
+        ArrayDecoder.validateQuantizationBounds(enc.bounds, 'encoding.bounds');
+      } else if (enc.min !== undefined && enc.max !== undefined) {
+        ArrayDecoder.validateQuantizationBounds([enc.min, enc.max], 'encoding.min/max');
+      }
+    }
+    if (ArrayDecoder.isLogScalarEncodingName(enc.name) && enc.max_log === undefined) {
+      throw new Error('[ArrayDecoder] log_scalar encoding requires encoding.max_log');
+    }
+    if (
+      ArrayDecoder.isLogScalarEncodingName(enc.name) &&
+      enc.max_log !== undefined &&
+      (!Number.isFinite(enc.max_log) || enc.max_log <= 0)
+    ) {
+      throw new Error(
+        `[ArrayDecoder] Invalid log_scalar max_log: ${enc.max_log}. Must be finite and > 0.`
+      );
+    }
+    if (
+      (ArrayDecoder.isLUTEncodingName(enc.name) ||
+        ArrayDecoder.isQuantizedEncodingName(enc.name)) &&
+      !enc.original_dtype
+    ) {
+      throw new Error('[ArrayDecoder] encoded arrays require encoding.original_dtype');
+    }
+  }
+
+  /**
+   * Validate quantization bounds before dequantization.
+   */
+  private static validateQuantizationBounds(
+    bounds: [number, number],
+    context: string
+  ): [number, number] {
+    const [minVal, maxVal] = bounds;
+    if (!Number.isFinite(minVal) || !Number.isFinite(maxVal)) {
+      throw new Error(
+        `[ArrayDecoder] Invalid ${context}: [${minVal}, ${maxVal}]. Bounds must be finite.`
+      );
+    }
+    if (maxVal <= minVal) {
+      throw new Error(
+        `[ArrayDecoder] Invalid ${context}: max (${maxVal}) must be greater than min (${minVal}).`
+      );
+    }
+    return bounds;
+  }
+
+  /**
+   * Helper: Check if an encoding name is known by the decoder.
+   */
+  static isKnownEncodingName(name: string): boolean {
+    return (
+      ArrayDecoder.isDirectEncodingName(name) ||
+      name === 'broadcasted' ||
+      name === 'array_ref' ||
+      ArrayDecoder.isLUTEncodingName(name) ||
+      ArrayDecoder.isQuantizedEncodingName(name)
+    );
+  }
+
+  /**
+   * Helper: Check if an encoding name is quantized (uint8/uint16 with bounds).
+   */
+  static isQuantizedEncodingName(name: string | undefined): boolean {
+    return !!(
+      name === 'log_scalar_uint8' ||
+      name === 'log_scalar_uint16' ||
+      name === 'bounded_scalar_uint8' ||
+      name === 'bounded_scalar_uint16' ||
+      name === 'rgb_uint8' ||
+      name === 'rgb_uint16'
+    );
   }
 
   /**
@@ -733,14 +895,7 @@ export class ArrayDecoder {
     const enc = attrs.encoding;
     if (!enc || !enc.name) return false;
 
-    // Check for quantization-related encodings
-    // NOTE: Check log_scalar BEFORE generic uint check (both contain 'uint')
-    return !!(
-      enc.name?.startsWith('log_scalar') || // log_scalar_uint8, log_scalar_uint16
-      enc.name?.startsWith('bounded_scalar') || // bounded_scalar_uint8, bounded_scalar_uint16
-      enc.name?.startsWith('rgb_uint') || // rgb_uint8, rgb_uint16
-      enc.name?.startsWith('hdr_uint') // hdr_uint8, hdr_uint16 (if ever used)
-    );
+    return ArrayDecoder.isQuantizedEncodingName(enc.name);
   }
 
   /**
@@ -750,39 +905,29 @@ export class ArrayDecoder {
    * Returns null if not quantized.
    *
    * @param attrs - Array metadata from .zattrs
-   * @param zarrDtype - Optional actual zarr array dtype (e.g., 'uint16', '<u2').
-   *                    IMPORTANT: Pass this to avoid the attrs.dtype bug where Python
-   *                    encoder doesn't write attrs.dtype, causing wrong max_int (256x error).
+   * @param zarrDtype - Actual zarr array dtype (e.g., 'uint16', '<u2').
+   *                    Required because Python stores the quantized dtype on
+   *                    the zarr array, not in attrs.dtype.
    */
   static getQuantizationMetadata(
     attrs: ArrayMetadata,
-    zarrDtype?: string
+    zarrDtype: string
   ): { bounds: [number, number]; dtype: 'uint8' | 'uint16'; isLogSpace: boolean } | null {
     if (!attrs) return null;
     const enc = attrs.encoding;
     if (!enc || !enc.name) return null;
 
-    // Determine dtype: prefer zarrDtype (actual storage), fall back to attrs.dtype
-    // CRITICAL: Python encoder writes dtype to zarr array, NOT to attrs.dtype!
-    const rawDtype = zarrDtype || attrs.dtype || 'uint8';
-    const dtype = ArrayDecoder.normalizeDtype(rawDtype);
-
     // Check for log-space encoding first (special case)
-    if (enc.name?.startsWith('log_scalar') && enc.max_log !== undefined) {
+    if (ArrayDecoder.isLogScalarEncodingName(enc.name) && enc.max_log !== undefined) {
       return {
-        bounds: [0, enc.max_log], // Log space uses [0, max_log]
-        dtype,
+        bounds: ArrayDecoder.validateQuantizationBounds([0, enc.max_log], 'encoding.max_log'),
+        dtype: ArrayDecoder.normalizeQuantizedDtype(zarrDtype),
         isLogSpace: true,
       };
     }
 
-    // Check for regular quantization (rgb, bounded_scalar, hdr)
-    if (
-      enc.name?.includes('uint') ||
-      enc.name?.startsWith('bounded_scalar') ||
-      enc.name?.startsWith('rgb') ||
-      enc.name?.startsWith('hdr')
-    ) {
+    // Check for regular quantization (rgb, bounded_scalar)
+    if (ArrayDecoder.isQuantizedEncoding(attrs)) {
       // Extract bounds from encoding metadata
       let bounds: [number, number] | null = null;
 
@@ -794,13 +939,15 @@ export class ArrayDecoder {
         // Try to infer bounds for known types
         if (enc.name === 'rgb_uint8' || enc.name === 'rgb_uint16') {
           bounds = [0, 1];
-        } else if (enc.name === 'hdr_uint8' || enc.name === 'hdr_uint16') {
-          bounds = [0, 10];
         }
       }
 
       if (bounds) {
-        return { bounds, dtype, isLogSpace: false };
+        return {
+          bounds: ArrayDecoder.validateQuantizationBounds(bounds, 'quantization metadata'),
+          dtype: ArrayDecoder.normalizeQuantizedDtype(zarrDtype),
+          isLogSpace: false,
+        };
       }
     }
 
@@ -814,11 +961,11 @@ export class ArrayDecoder {
    * - 'uint8', '|u1', '<u1', '>u1' → 'uint8'
    * - 'uint16', '|u2', '<u2', '>u2' → 'uint16'
    */
-  private static normalizeDtype(dtype: string): 'uint8' | 'uint16' {
+  private static normalizeQuantizedDtype(dtype: string): 'uint8' | 'uint16' {
     if (dtype === 'uint8' || dtype === '|u1' || dtype === '<u1' || dtype === '>u1') return 'uint8';
     if (dtype === 'uint16' || dtype === '|u2' || dtype === '<u2' || dtype === '>u2')
       return 'uint16';
-    return 'uint8';
+    throw new Error(`[ArrayDecoder] Unsupported quantized zarr dtype: ${dtype}`);
   }
 
   /**
@@ -832,7 +979,7 @@ export class ArrayDecoder {
   ): { lut: number[] | number[][]; lutMode: string; k: number } | null {
     if (!attrs) return null;
     const enc = attrs.encoding;
-    if (!enc || !enc.name?.startsWith('lut') || !enc.lut) return null;
+    if (!enc || !ArrayDecoder.isLUTEncodingName(enc.name) || !enc.lut) return null;
 
     const k = enc.original_shape && enc.original_shape.length > 1 ? enc.original_shape[1] : 1;
     const lutMode = enc.lut_mode || 'row';

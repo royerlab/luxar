@@ -12,7 +12,6 @@
 
 import type { DimensionMetadata } from './dims';
 import type { LoadedPointsData } from '../data/data-loader-types';
-import type { ChunkSpatialIndex } from '../data/chunk-spatial-index';
 import type { UpdateSession } from '../profiling/update-profiler';
 
 // ============================================================================
@@ -111,18 +110,6 @@ export interface PointsMetadata {
 }
 
 // ============================================================================
-// Spatial Index Types
-// ============================================================================
-
-/**
- * Re-export ChunkSpatialIndex as PointsChunkSpatialIndex for consistency.
- *
- * Points use chunk-based spatial indexing with Morton/Hilbert ordering.
- * The index contains bounding boxes for each chunk enabling efficient nD queries.
- */
-export type PointsChunkSpatialIndex = ChunkSpatialIndex;
-
-// ============================================================================
 // View State Types
 // ============================================================================
 
@@ -188,9 +175,6 @@ export interface PointsUserData {
 
   /** Maximum point radius (for bounding box expansion) */
   maxRadius?: number;
-
-  /** Spatial index for queries (optional, may not exist for 3D data) */
-  spatialIndex?: PointsChunkSpatialIndex;
 
   /** Currently visible point count after nD slicing (updated on view change) */
   visiblePointCount?: number;

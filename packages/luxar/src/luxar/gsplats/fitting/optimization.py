@@ -54,28 +54,6 @@ def _compute_max_abs_error(pred: torch.Tensor, target: torch.Tensor) -> float:
     return torch.max(torch.abs(pred - target)).item()
 
 
-def _compute_rel_l2(pred: torch.Tensor, target: torch.Tensor) -> float:
-    """
-    Compute relative L2 error: ||pred - target||₂ / ||target||₂.
-
-    Parameters
-    ----------
-    pred : torch.Tensor
-        Model prediction
-    target : torch.Tensor
-        Target values
-
-    Returns
-    -------
-    float
-        Relative L2 error (0 = perfect, 1 = error magnitude equals signal)
-    """
-    return float(
-        torch.linalg.norm((pred - target).reshape(-1))
-        / (torch.linalg.norm(target.reshape(-1)) + 1e-12)
-    )
-
-
 def _compute_eval_metrics(
     pred: torch.Tensor, target: torch.Tensor
 ) -> tuple[float, float]:
@@ -362,7 +340,8 @@ def run_optimization_loop(
                     "max_abs_error": current_max_abs_error,
                     "rel_l2": current_rel_l2,
                     "n_splats": (
-                        model.n_splats() if hasattr(model, "n_splats")
+                        model.n_splats()
+                        if hasattr(model, "n_splats")
                         else preprocessed_data.N
                     ),
                 }
@@ -432,6 +411,26 @@ def run_optimization_loop(
 
     # Get final parameters (will be overwritten by best state if available)
     if best_state is not None:
+        centers = best_state["centers"]
+        Ls = best_state["Ls"]
+        amps = best_state["amps"]
+
+        # Restore the selected state into the model and recompute all reported
+        # quality values from that exact state. Periodic eval metrics can be
+        # stale because full evaluation is intentionally skipped on most
+        # iterations, and the saved best state may not be the final live model.
+        if not hasattr(model, "replace_with"):
+            raise TypeError(
+                "Optimization model must implement replace_with() to restore "
+                "and score the selected best state."
+            )
+        with torch.no_grad():
+            model.replace_with(centers, Ls, amps)
+            pred_best = model()
+            best_loss = float(loss_fn(pred_best).detach().item())
+            best_max_abs_error, best_rel_l2 = _compute_eval_metrics(pred_best, V_t)
+        del pred_best
+
         if config.verbose:
             if best_iteration != actual_iters:
                 aprint(
@@ -440,20 +439,12 @@ def run_optimization_loop(
                 )
             else:
                 aprint("★ Best state is from final iteration")
-
-        centers = best_state["centers"]
-        Ls = best_state["Ls"]
-        amps = best_state["amps"]
-        best_loss = best_state["loss"]
-        best_max_abs_error = best_state["max_abs_error"]
-        best_rel_l2 = best_state["rel_l2"]
     else:
         # Fallback to final state if no best state saved
         with torch.no_grad():
             centers, Ls, amps = model.current_params()
             pred_final = model()
-            best_max_abs_error = _compute_max_abs_error(pred_final, V_t)
-            best_rel_l2 = _compute_rel_l2(pred_final, V_t)
+            best_max_abs_error, best_rel_l2 = _compute_eval_metrics(pred_final, V_t)
 
     return OptimizationResults(
         centers=centers,

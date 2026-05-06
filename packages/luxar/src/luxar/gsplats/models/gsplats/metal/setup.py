@@ -4,6 +4,14 @@ Build script for Metal-accelerated Gaussian splatting extension.
 This script compiles Metal shaders and builds the C++ extension for Apple Silicon.
 """
 
+# mypy: warn-unreachable=False
+# Reason: this module's hot path is gated by a `sys.platform != "darwin"`
+# early-return. mypy on Linux narrows sys.platform there and flags the
+# entire macOS-only branch as unreachable. The narrowing is platform-
+# correct on Linux and platform-incorrect on macOS, so per-line ignores
+# disagree across mypy versions/platforms; disabling the warning at file
+# scope is the cleanest expression of "this file is platform-conditional".
+
 from __future__ import annotations
 
 import subprocess
@@ -71,13 +79,13 @@ class CustomBuildExtension(BuildExtension):
     """Build extension with Metal shader compilation."""
 
     def run(self) -> None:
-        # Check platform
+        # Check platform.
         if sys.platform != "darwin":
             aprint("WARNING: Metal extension only supported on macOS")
             return
 
         # Compile Metal shaders first
-        compile_metal_shaders()  # type: ignore[unreachable]  # reachable on macOS
+        compile_metal_shaders()
 
         # Then build C++ extension
         super().run()

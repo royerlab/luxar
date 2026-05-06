@@ -27,6 +27,7 @@ luxar info my_data.zarr --stats
 - Use `luxar profiles` to list network simulation profiles
 - Use `luxar serve --help` for all serving options
 - Use `luxar export --native macos` (or `linux-amd64`/`linux-arm64`) for double-clickable native bundles backed by an embedded Go launcher (requires `make build-launchers` first)
+- For complete working scripts that generate datasets for these commands, see `packages/luxar/examples/` and repository-level `examples/` when present.
 
 ## Module Structure
 
@@ -59,6 +60,13 @@ luxar serve data.zarr --viewer # Serve with viewer
 luxar serve --viewer-only      # Serve only viewer
 ```
 
+Security defaults are optimized for local development: CORS allows local
+browser origins (`localhost`, `127.0.0.1`, `0.0.0.0`, `::1`) by default, directory listing
+requests cannot escape the served root, and obvious system paths such as `/`,
+`/etc`, `/proc`, `/sys`, and `/dev` are refused unless you pass
+`--allow-sensitive-path`. Use `--cors-origin '*'` only when you intentionally
+want any website to read the served data; wildcard mode disables credentials.
+
 ### `luxar viewer`
 Serve the Luxar viewer with optional data.
 ```bash
@@ -83,7 +91,7 @@ luxar profiles                # Display all network profiles with descriptions
 
 **Available profiles:** 3g, 4g, 5g, slow-broadband, broadband, fast-broadband, satellite, rural, congested
 
-Use these profiles with `serve`, `viewer`, or `demo` commands via the `--network-profile` option to simulate various network conditions for testing.
+Use these profiles with `serve`, `viewer`, or `demo` commands via the `--profile` option to simulate various network conditions for testing.
 
 
 ### `luxar export`
@@ -107,7 +115,7 @@ luxar export my_scene.zarr -o out/ --native macos,linux-amd64,linux-arm64 \
                                           --name MyScene                # All three at once
 ```
 
-**Options** (in addition to the parent command's): `--native PLATFORMS` (comma-separated; choices: `macos`, `linux-amd64`, `linux-arm64`), `--name NAME` (defaults to the zarr stem).
+**Options** (in addition to the parent command's): `--native PLATFORMS` (comma-separated; choices: `macos`, `linux-amd64`, `linux-arm64`), `--name NAME` (defaults to the zarr stem), `--zip/--no-zip` (when `--native macos`, also produces a sibling `<name>.app.zip` — via `ditto` on Darwin to preserve resource forks and extended attributes, or `zipfile` on cross-build hosts with executable-bit preservation; on by default, pass `--no-zip` to skip).
 
 **Prerequisites**: run `make build-launchers` first to populate `cli/_launchers/` with the host-platform binary. CGO blocks pure cross-compilation, so Linux + Windows binaries must be built on hosts of the matching OS (typically via CI).
 

@@ -28,6 +28,8 @@ class TestManifest:
             output_dir=str(tmp_path),
             n_timepoints=5,
             n_channels=2,
+            channel_axes=["camera", "channel"],
+            channel_shape=(1, 2),
             spatial_shape=(128, 256, 256),
             tile_size=128,
             n_tiles=4,
@@ -43,6 +45,7 @@ class TestManifest:
                 tile_index=0,
                 output_filename="t00_c00_tile000.gsplats.zarr",
                 estimated_wall_seconds=300.0,
+                channel_coords=(0, 0),
             )
         ]
 
@@ -51,9 +54,12 @@ class TestManifest:
 
         assert loaded.n_timepoints == 5
         assert loaded.n_channels == 2
+        assert loaded.channel_axes == ["camera", "channel"]
+        assert loaded.channel_shape == (1, 2)
         assert loaded.spatial_shape == (128, 256, 256)
         assert len(loaded.jobs) == 1
         assert loaded.jobs[0].task_id == 0
+        assert loaded.jobs[0].channel_coords == (0, 0)
 
     def test_decode_task_id(self) -> None:
         from luxar.gsplats.batch.manifest import BatchManifest, decode_task_id
@@ -110,6 +116,46 @@ class TestManifest:
 
         assert output_filename(0, 0, 0) == "t00_c00_tile000.gsplats.zarr"
         assert output_filename(5, 2, 15) == "t05_c02_tile015.gsplats.zarr"
+
+    def test_sliced_batch_jobs_use_real_indices_in_filenames(self) -> None:
+        from luxar.cli.gsplat_config import decode_flat_channel_index
+        from luxar.gsplats.batch.manifest import BatchJob, output_filename
+
+        t_indices = [0, 72]
+        c_indices = [1, 5]
+        n_t = len(t_indices)
+        n_c = len(c_indices)
+        n_tiles = 2
+        jobs = []
+        for task_id in range(n_t * n_c * n_tiles):
+            t_seq = task_id // (n_c * n_tiles)
+            r = task_id % (n_c * n_tiles)
+            c_seq = r // n_tiles
+            k = r % n_tiles
+            t_real = t_indices[t_seq]
+            c_real = c_indices[c_seq]
+            jobs.append(
+                BatchJob(
+                    task_id=task_id,
+                    timepoint=t_real,
+                    channel=c_real,
+                    tile_index=k,
+                    output_filename=output_filename(
+                        t_real,
+                        c_real,
+                        k,
+                        max(t_indices) + 1,
+                        max(c_indices) + 1,
+                        n_tiles,
+                    ),
+                    estimated_wall_seconds=1.0,
+                    channel_coords=decode_flat_channel_index(c_real, (2, 3)),
+                )
+            )
+
+        assert jobs[0].output_filename == "t00_c01_tile000.gsplats.zarr"
+        assert jobs[-1].output_filename == "t72_c05_tile001.gsplats.zarr"
+        assert jobs[-1].channel_coords == (1, 2)
 
 
 # ====================================================================
@@ -441,6 +487,8 @@ class TestOMEZarrDiscovery:
         info = discover_ome_zarr_shape(store_path)
         assert info.n_timepoints == 5
         assert info.n_channels == 2
+        assert info.channel_axes == ["c"]
+        assert info.channel_shape == (2,)
         assert info.spatial_shape == (32, 64, 64)
         assert info.spatial_axes == ["z", "y", "x"]
         assert info.voxel_size == (0.5, 0.3, 0.3)
@@ -477,6 +525,8 @@ class TestBatchPlanRegression:
         )
         assert info.n_timepoints == 10
         assert info.n_channels == 8  # 2*4
+        assert info.channel_axes == ["camera", "channel"]
+        assert info.channel_shape == (2, 4)
         assert info.spatial_shape == (97, 627, 1383)
 
         # 4D TimeFused-style
@@ -487,6 +537,8 @@ class TestBatchPlanRegression:
         )
         assert info2.n_timepoints == 1434
         assert info2.n_channels == 1
+        assert info2.channel_axes == []
+        assert info2.channel_shape == ()
         assert info2.spatial_shape == (108, 1352, 532)
 
         # All spatial (no time, no channel)
@@ -553,22 +605,29 @@ class TestBatchPlanRegression:
         assert default == 0.95
 
     def test_6d_channel_decoding(self) -> None:
-        """Flat channel index should correctly decode to multi-dim indices for 6D."""
-        shape = (10, 2, 4, 97, 627, 1383)
-        ndim = len(shape)
-        timepoint = 3
-        channel = 5  # flat index
+        """Flat channel index should decode to channel-like axis coordinates."""
+        from luxar.cli.gsplat_config import decode_flat_channel_index
 
-        t = timepoint
-        idx = [t]
-        remaining_non_spatial = ndim - 4
-        c_flat = channel
-        non_spatial_shape = shape[1 : 1 + remaining_non_spatial]
-        for dim_size in reversed(non_spatial_shape):
-            idx.insert(1, c_flat % dim_size)
-            c_flat //= dim_size
+        assert decode_flat_channel_index(5, (2, 4)) == (1, 1)
+        assert decode_flat_channel_index(0, (2, 4)) == (0, 0)
+        assert decode_flat_channel_index(7, (2, 4)) == (1, 3)
+        with pytest.raises(ValueError, match="out of range"):
+            decode_flat_channel_index(8, (2, 4))
 
-        assert idx == [3, 1, 1]
+    def test_6d_zarr_volume_load_uses_flat_channel_index(self, tmp_path: Path) -> None:
+        import zarr
+
+        from luxar.cli.gsplat_config import _load_zarr_volume
+
+        path = tmp_path / "sixd.zarr"
+        data = np.arange(3 * 2 * 4 * 2 * 3 * 5, dtype=np.float32).reshape(
+            3, 2, 4, 2, 3, 5
+        )
+        root = zarr.open(str(path), mode="w")
+        root.create_dataset("0", data=data)
+
+        loaded = _load_zarr_volume(path, channel=5, timepoint=2, array_key=None)
+        np.testing.assert_array_equal(loaded, data[2, 1, 1])
 
     def test_tasks_per_job_manifest(self) -> None:
         """Manifest fields are serializable and have correct defaults."""

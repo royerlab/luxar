@@ -191,6 +191,34 @@ describe('RenderingControls', () => {
     }
   });
 
+  describe('lifecycle cleanup', () => {
+    it('should cancel deferred click-outside setup on dispose', () => {
+      vi.useFakeTimers();
+      const addSpy = vi.spyOn(document, 'addEventListener');
+
+      renderingControls.show();
+      renderingControls.dispose();
+      vi.advanceTimersByTime(150);
+
+      expect(addSpy).not.toHaveBeenCalledWith('mousedown', expect.any(Function), true);
+
+      addSpy.mockRestore();
+      vi.useRealTimers();
+    });
+
+    it('should remove active click-outside handler on dispose', () => {
+      const removeSpy = vi.spyOn(document, 'removeEventListener');
+
+      (renderingControls as any).addClickOutsideHandler();
+      const handler = (renderingControls as any).clickOutsideHandler;
+      renderingControls.dispose();
+
+      expect(removeSpy).toHaveBeenCalledWith('mousedown', handler, true);
+
+      removeSpy.mockRestore();
+    });
+  });
+
   describe('Bug Fix #1: Exposure Value Sync', () => {
     it('should sync exposure value when resetting to defaults', () => {
       // Setup: Change exposure to non-default value

@@ -92,6 +92,23 @@ def simple_3d_setup():
 class TestGaussianSplatModelInitialization:
     """Test model initialization and parameter setup."""
 
+    def test_default_device_is_mps_on_macos(self, simple_2d_setup) -> None:
+        """On macOS the default device auto-resolves to MPS (use_metal=True).
+
+        Pre-rewrite, GaussianSplatModel never auto-selected MPS even when it
+        was available. This test guards the deliberate default-flip introduced
+        with the centralized device.resolve_torch_device helper. On systems
+        without MPS the test skips so non-Mac CI stays clean.
+        """
+        from luxar.gsplats.utils.device import is_mps_available
+
+        if not is_mps_available():
+            pytest.skip("MPS backend not available")
+
+        # use_cuda=False so a CUDA-enabled mac (rare but possible) doesn't beat MPS
+        model = GaussianSplatModel(**simple_2d_setup, truncate=2.0, use_cuda=False)
+        assert model.raw_mu.device.type == "mps"
+
     def test_model_creation_2d(self, simple_2d_setup) -> None:
         """Test basic model creation in 2D."""
         setup = simple_2d_setup
@@ -180,6 +197,23 @@ class TestGaussianSplatModelInitialization:
         if torch.cuda.is_available():
             model_cuda = GaussianSplatModel(**setup, device=torch.device("cuda"))
             assert model_cuda.raw_mu.device.type == "cuda"
+
+    def test_auto_device_honors_accelerator_opt_outs(
+        self, simple_2d_setup, monkeypatch
+    ) -> None:
+        """Auto device selection should respect use_cuda/use_metal flags."""
+        setup = simple_2d_setup
+
+        class FakeMPSBackend:
+            def is_available(self) -> bool:
+                return True
+
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+        monkeypatch.setattr(torch.backends, "mps", FakeMPSBackend(), raising=False)
+
+        model = GaussianSplatModel(**setup, use_cuda=False, use_metal=False)
+
+        assert model.raw_mu.device.type == "cpu"
 
     def test_parameter_validation(self) -> None:
         """Test parameter validation during initialization."""
@@ -729,7 +763,3 @@ class TestVoxelSizeEccentricity:
         diag = torch.diagonal(L[0])
         ratio = diag.max() / diag.min()
         assert ratio.item() <= 2.0 + 0.01  # sqrt(4)
-
-
-if __name__ == "__main__":
-    pytest.main([__file__])

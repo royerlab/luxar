@@ -394,6 +394,17 @@ Microtubule cytoskeleton at nanometer resolution using real STORM super-resoluti
 
 ---
 
+#### demo_ppi_flow_field.py - HuRI PPI Flow Field (Signed Network Streamlines)
+Turns the HuRI protein-protein interaction graph into a continuous 3D flow landscape. PageRank orients each interaction from lower-centrality to higher-centrality protein; UMAP embeds a signed sparse adjacency / flow-profile matrix so upstream and downstream roles separate; a cubic vector field blends nearby oriented edges with a regularized `1/d^3` weight; Gaussian-smoothed streamlines are seeded from proteins and advected forward through the volume.
+
+**Run**: `hatch run python packages/luxar/src/luxar/demos/demo_ppi_flow_field.py [--preset preview|full]`
+
+**Requires**: Internet access on first run (reuses the HuRI/HGNC cache in `~/.cache/luxar/huri/`), `networkx>=3.0`, `umap-learn`, `scipy`, `pandas`, `requests`. The default `full` preset builds the requested 256³ vector field and caches a larger `.npz` file; use `--preset preview` for a faster 128³ authoring run.
+
+**Demonstrates**: Directed biological **network flow** visualization, PageRank-oriented interactions, signed sparse adjacency UMAP, KD-tree-accelerated point-to-edge vector-field construction, regularized inverse-cubic edge weighting, Gaussian vector-field smoothing, vectorized RK4 streamline advection, optional tapered directed PPI edge layer, HDR additive Lines rendering.
+
+---
+
 #### demo_caida_as_topology.py - CAIDA AS Topology (The Internet as a Graph)
 ~80k Autonomous Systems as Points and ~350k BGP relationships as Lines, laid out in 3D from graph structure alone. Auto-fetches the latest CAIDA serial-2 snapshot. Edges are styled by RELATIONSHIP TYPE — warm amber tapered lines for provider-customer (thick at provider, thin at customer, encoding direction), cool cyan uniform lines for peers. Nodes colored by Louvain community or country (CAIDA as2org). Tier-1 ASes (no upstream providers) get a size bump so the backbone pops. Edge hovers narrate the relationship ("Tier-1 transit" / "Tier-1 peering" / "Provider → Customer" / etc.) with both endpoints' org names and countries.
 
@@ -767,6 +778,7 @@ hatch run python packages/luxar/src/luxar/demos/demo_gaia_milky_way_8m.py
 hatch run python packages/luxar/src/luxar/demos/demo_earthquakes_3d.py
 hatch run python packages/luxar/src/luxar/demos/demo_storm_3d_microtubules.py
 hatch run python packages/luxar/src/luxar/demos/demo_huri_interactome.py
+hatch run python packages/luxar/src/luxar/demos/demo_ppi_flow_field.py
 hatch run python packages/luxar/src/luxar/demos/demo_caida_as_topology.py
 
 # --- GSplats: 2D ---

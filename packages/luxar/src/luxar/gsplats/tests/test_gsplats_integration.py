@@ -15,6 +15,7 @@ from luxar.gsplats.models.gsplats import (
     render_gaussians_numpy,
 )
 from luxar.gsplats.seeds import seed_from_grid
+from luxar.gsplats.utils.device import resolve_torch_device
 from luxar.gsplats.utils.trils import tril_size, unpack_tril
 
 
@@ -260,8 +261,9 @@ class TestGaussianSplatsIntegration:
         # Render with numpy
         recon_numpy = render_gaussians_numpy(image.shape, result)
 
-        # Render with batched PyTorch
-        device = torch.device("cuda" if torch.cuda.is_available() else "mps")
+        # Render with batched PyTorch (CUDA preferred, MPS otherwise; the skip
+        # above guarantees one of them is available, so CPU fallback is unused).
+        device = resolve_torch_device()
         d = 2
         # Extract parameters manually for PyTorch rendering
         centers = torch.tensor(result.centers, device=device)

@@ -105,11 +105,11 @@ describe('RangeLoader.detectEncoding', () => {
 
   // --- Array ref ---
 
-  it('detects array_ref when target is present without name', () => {
+  it('rejects encoding metadata without a name', () => {
     const attrs: ArrayMetadata = {
       encoding: { target: '/SharedNode/colors' },
     };
-    expect(RangeLoader.detectEncoding(attrs)).toBe('array_ref');
+    expect(() => RangeLoader.detectEncoding(attrs)).toThrow('encoding.name is required');
   });
 
   it('detects array_ref when name is explicit', () => {
@@ -125,6 +125,7 @@ describe('RangeLoader.detectEncoding', () => {
     const attrs: ArrayMetadata = {
       encoding: {
         name: 'lut_uint8',
+        original_dtype: 'float32',
         lut: [
           [1.0, 0.0, 0.0],
           [0.0, 1.0, 0.0],
@@ -140,6 +141,7 @@ describe('RangeLoader.detectEncoding', () => {
     const attrs: ArrayMetadata = {
       encoding: {
         name: 'lut_uint16',
+        original_dtype: 'float32',
         lut: [0.5, 1.5, 2.5],
         lut_mode: 'scalar',
         original_shape: [100, 1],
@@ -148,87 +150,122 @@ describe('RangeLoader.detectEncoding', () => {
     expect(RangeLoader.detectEncoding(attrs)).toBe('lut');
   });
 
-  it('does NOT detect lut when lut data is missing', () => {
+  it('rejects malformed lut metadata', () => {
     const attrs: ArrayMetadata = {
       encoding: { name: 'lut_uint8' },
     };
-    // No lut field => falls through to quantized (name contains 'uint')
-    expect(RangeLoader.detectEncoding(attrs)).toBe('quantized');
+    expect(() => RangeLoader.detectEncoding(attrs)).toThrow('LUT encoding requires encoding.lut');
   });
 
   // --- Quantized ---
 
   it('detects quantized for rgb_uint8 with bounds', () => {
     const attrs: ArrayMetadata = {
-      encoding: { name: 'rgb_uint8', bounds: [0, 1] },
+      encoding: { name: 'rgb_uint8', bounds: [0, 1], original_dtype: 'float32' },
     };
     expect(RangeLoader.detectEncoding(attrs)).toBe('quantized');
   });
 
   it('detects quantized for rgb_uint16 with min/max', () => {
     const attrs: ArrayMetadata = {
-      encoding: { name: 'rgb_uint16', min: 0, max: 1 },
+      encoding: { name: 'rgb_uint16', min: 0, max: 1, original_dtype: 'float32' },
     };
     expect(RangeLoader.detectEncoding(attrs)).toBe('quantized');
   });
 
   it('detects quantized for bounded_scalar_uint8', () => {
     const attrs: ArrayMetadata = {
-      encoding: { name: 'bounded_scalar_uint8', bounds: [0.1, 5.0] },
+      encoding: { name: 'bounded_scalar_uint8', bounds: [0.1, 5.0], original_dtype: 'float32' },
     };
     expect(RangeLoader.detectEncoding(attrs)).toBe('quantized');
   });
 
   it('detects quantized for bounded_scalar_uint16', () => {
     const attrs: ArrayMetadata = {
-      encoding: { name: 'bounded_scalar_uint16', min: 0, max: 10 },
+      encoding: { name: 'bounded_scalar_uint16', min: 0, max: 10, original_dtype: 'float32' },
     };
     expect(RangeLoader.detectEncoding(attrs)).toBe('quantized');
   });
 
   it('detects quantized for log_scalar_uint8', () => {
     const attrs: ArrayMetadata = {
-      encoding: { name: 'log_scalar_uint8', max_log: 3.5 },
+      encoding: { name: 'log_scalar_uint8', max_log: 3.5, original_dtype: 'float32' },
     };
     expect(RangeLoader.detectEncoding(attrs)).toBe('quantized');
   });
 
   it('detects quantized for log_scalar_uint16', () => {
     const attrs: ArrayMetadata = {
-      encoding: { name: 'log_scalar_uint16', max_log: 5.0 },
+      encoding: { name: 'log_scalar_uint16', max_log: 5.0, original_dtype: 'float32' },
     };
     expect(RangeLoader.detectEncoding(attrs)).toBe('quantized');
   });
 
-  it('detects quantized when encoding has bounds but no name', () => {
-    const attrs: ArrayMetadata = {
+  it('rejects malformed quantized metadata', () => {
+    expect(() =>
+      RangeLoader.detectEncoding({ encoding: { name: 'bounded_scalar_uint8' } })
+    ).toThrow('bounded_scalar encoding requires bounds or min/max');
+    expect(() => RangeLoader.detectEncoding({ encoding: { name: 'log_scalar_uint8' } })).toThrow(
+      'log_scalar encoding requires encoding.max_log'
+    );
+  });
+
+  it('rejects nameless bounds metadata', () => {
+    const boundsAttrs: ArrayMetadata = {
       encoding: { bounds: [0, 1] },
     };
-    expect(RangeLoader.detectEncoding(attrs)).toBe('quantized');
-  });
-
-  it('detects quantized when encoding has min/max but no name', () => {
-    const attrs: ArrayMetadata = {
+    const minMaxAttrs: ArrayMetadata = {
       encoding: { min: 0, max: 100 },
     };
-    expect(RangeLoader.detectEncoding(attrs)).toBe('quantized');
+
+    expect(() => RangeLoader.detectEncoding(boundsAttrs)).toThrow('encoding.name is required');
+    expect(() => RangeLoader.detectEncoding(minMaxAttrs)).toThrow('encoding.name is required');
+  });
+
+  it('treats dtype encodings as direct storage, not quantization', () => {
+    for (const name of ['uint8', 'uint16', 'uint32', 'uint64', 'float32', 'float16']) {
+      const attrs: ArrayMetadata = { encoding: { name } };
+      expect(RangeLoader.detectEncoding(attrs)).toBe('direct');
+    }
+  });
+
+  it('rejects quantization bounds on dtype encodings', () => {
+    const attrs: ArrayMetadata = { encoding: { name: 'uint8', bounds: [0, 1] } };
+    expect(() => RangeLoader.detectEncoding(attrs)).toThrow(
+      'bounds/min/max metadata is only valid for quantized encodings'
+    );
+  });
+
+  it('rejects unknown encoding names', () => {
+    const attrs: ArrayMetadata = { encoding: { name: 'mystery_encoder' } };
+    expect(() => RangeLoader.detectEncoding(attrs)).toThrow('Unknown encoding name');
+  });
+
+  it('rejects malformed prefix-matching encoding names', () => {
+    for (const name of ['lut_float32', 'bounded_scalar_uint32', 'log_scalar_float32', 'rgb_uint32']) {
+      const attrs: ArrayMetadata = { encoding: { name } };
+      expect(() => RangeLoader.detectEncoding(attrs)).toThrow('Unknown encoding name');
+    }
   });
 
   // --- Priority ---
 
-  it('broadcasted takes priority over target (array_ref)', () => {
-    // Unlikely in practice, but validates the priority chain
+  it('rejects target metadata on broadcasted encodings', () => {
     const attrs: ArrayMetadata = {
       encoding: { name: 'broadcasted', target: '/foo' },
     };
-    expect(RangeLoader.detectEncoding(attrs)).toBe('broadcasted');
+    expect(() => RangeLoader.detectEncoding(attrs)).toThrow(
+      'encoding.target is only valid for array_ref'
+    );
   });
 
-  it('array_ref (target) takes priority over lut', () => {
+  it('rejects target metadata on non-array_ref encodings', () => {
     const attrs: ArrayMetadata = {
       encoding: { name: 'lut_uint8', target: '/foo', lut: [1, 2, 3] },
     };
-    expect(RangeLoader.detectEncoding(attrs)).toBe('array_ref');
+    expect(() => RangeLoader.detectEncoding(attrs)).toThrow(
+      'encoding.target is only valid for array_ref'
+    );
   });
 });
 
@@ -409,7 +446,7 @@ describe('RangeLoader.loadQuantized (via loadRanges)', () => {
     setMockData(new Uint8Array([0, 127, 255]));
 
     const attrs: ArrayMetadata = {
-      encoding: { name: 'rgb_uint8', bounds: [0, 1] as [number, number] },
+      encoding: { name: 'rgb_uint8', bounds: [0, 1] as [number, number], original_dtype: 'float32' },
     };
     const output = new Float32Array(3);
     const ranges: LoadRange[] = [{ start: 0, end: 3 }];
@@ -430,7 +467,11 @@ describe('RangeLoader.loadQuantized (via loadRanges)', () => {
     setMockData(new Uint8Array([0, 128, 255]));
 
     const attrs: ArrayMetadata = {
-      encoding: { name: 'bounded_scalar_uint8', bounds: [2.0, 10.0] as [number, number] },
+      encoding: {
+        name: 'bounded_scalar_uint8',
+        bounds: [2.0, 10.0] as [number, number],
+        original_dtype: 'float32',
+      },
     };
     const output = new Float32Array(3);
     const ranges: LoadRange[] = [{ start: 0, end: 3 }];
@@ -449,7 +490,7 @@ describe('RangeLoader.loadQuantized (via loadRanges)', () => {
     setMockData(new Uint16Array([0, 32767, 65535]));
 
     const attrs: ArrayMetadata = {
-      encoding: { name: 'rgb_uint16', bounds: [0, 1] as [number, number] },
+      encoding: { name: 'rgb_uint16', bounds: [0, 1] as [number, number], original_dtype: 'float32' },
     };
     const output = new Float32Array(3);
     const ranges: LoadRange[] = [{ start: 0, end: 3 }];
@@ -467,7 +508,7 @@ describe('RangeLoader.loadQuantized (via loadRanges)', () => {
     setMockData(new Uint8Array([0, 255]));
 
     const attrs: ArrayMetadata = {
-      encoding: { name: 'bounded_scalar_uint8', min: -5.0, max: 5.0 },
+      encoding: { name: 'bounded_scalar_uint8', min: -5.0, max: 5.0, original_dtype: 'float32' },
     };
     const output = new Float32Array(2);
     const ranges: LoadRange[] = [{ start: 0, end: 2 }];
@@ -485,7 +526,7 @@ describe('RangeLoader.loadQuantized (via loadRanges)', () => {
     setMockData(new Uint8Array([0, 0, 0, 255, 128, 64]));
 
     const attrs: ArrayMetadata = {
-      encoding: { name: 'rgb_uint8', bounds: [0, 1] as [number, number] },
+      encoding: { name: 'rgb_uint8', bounds: [0, 1] as [number, number], original_dtype: 'float32' },
     };
     const output = new Float32Array(6);
     const ranges: LoadRange[] = [{ start: 0, end: 2 }];
@@ -509,7 +550,7 @@ describe('RangeLoader.loadQuantized (via loadRanges)', () => {
     setMockData(new Uint8Array([0, 128, 255]));
 
     const attrs: ArrayMetadata = {
-      encoding: { name: 'log_scalar_uint8', max_log: maxLog },
+      encoding: { name: 'log_scalar_uint8', max_log: maxLog, original_dtype: 'float32' },
     };
     const output = new Float32Array(3);
     const ranges: LoadRange[] = [{ start: 0, end: 3 }];
@@ -528,7 +569,7 @@ describe('RangeLoader.loadQuantized (via loadRanges)', () => {
     setMockData(new Uint16Array([0, 65535]));
 
     const attrs: ArrayMetadata = {
-      encoding: { name: 'log_scalar_uint16', max_log: maxLog },
+      encoding: { name: 'log_scalar_uint16', max_log: maxLog, original_dtype: 'float32' },
     };
     const output = new Float32Array(2);
     const ranges: LoadRange[] = [{ start: 0, end: 2 }];
@@ -548,7 +589,11 @@ describe('RangeLoader.loadQuantized (via loadRanges)', () => {
       .mockResolvedValueOnce({ data: new Uint8Array([128]) } as any);
 
     const attrs: ArrayMetadata = {
-      encoding: { name: 'bounded_scalar_uint8', bounds: [0, 10] as [number, number] },
+      encoding: {
+        name: 'bounded_scalar_uint8',
+        bounds: [0, 10] as [number, number],
+        original_dtype: 'float32',
+      },
     };
     const output = new Float32Array(3);
     const ranges: LoadRange[] = [
@@ -586,6 +631,7 @@ describe('RangeLoader.loadLUT (via loadRanges)', () => {
     const attrs: ArrayMetadata = {
       encoding: {
         name: 'lut_uint8',
+        original_dtype: 'float32',
         lut: [
           [1.0, 0.0, 0.0],
           [0.0, 1.0, 0.0],
@@ -617,6 +663,7 @@ describe('RangeLoader.loadLUT (via loadRanges)', () => {
     const attrs: ArrayMetadata = {
       encoding: {
         name: 'lut_uint8',
+        original_dtype: 'float32',
         lut: [10.0, 20.0, 30.0],
         lut_mode: 'scalar',
         original_shape: [4, 1],
@@ -640,6 +687,7 @@ describe('RangeLoader.loadLUT (via loadRanges)', () => {
     const attrs: ArrayMetadata = {
       encoding: {
         name: 'lut_uint8',
+        original_dtype: 'float32',
         lut: [1.0, 0.0, 0.0, 1.0], // flat: row0=[1,0], row1=[0,1]
         lut_mode: 'row',
         original_shape: [2, 2],
@@ -662,6 +710,7 @@ describe('RangeLoader.loadLUT (via loadRanges)', () => {
     const attrs: ArrayMetadata = {
       encoding: {
         name: 'lut_uint16',
+        original_dtype: 'float32',
         lut: [[100.0], [200.0], [300.0]],
         lut_mode: 'row',
         original_shape: [2, 1],
@@ -685,6 +734,7 @@ describe('RangeLoader.loadLUT (via loadRanges)', () => {
     const attrs: ArrayMetadata = {
       encoding: {
         name: 'lut_uint8',
+        original_dtype: 'float32',
         lut: [
           [1.0, 2.0],
           [3.0, 4.0],
@@ -713,6 +763,7 @@ describe('RangeLoader.loadLUT (via loadRanges)', () => {
     const attrs: ArrayMetadata = {
       encoding: {
         name: 'lut_uint8',
+        original_dtype: 'float32',
         lut: [[5.0], [10.0]],
         // lut_mode not set => defaults to 'row'
         original_shape: [2, 1],
@@ -741,9 +792,9 @@ describe('RangeLoader.loadArrayRef (via loadRanges)', () => {
     mockZarrGet.mockReset();
   });
 
-  it('throws when array_ref encoding is encountered (not yet implemented)', async () => {
+  it('throws when array_ref reaches RangeLoader without spatial-loader pre-resolution', async () => {
     const attrs: ArrayMetadata = {
-      encoding: { target: '/SharedNode/colors', hash: 'abc123' },
+      encoding: { name: 'array_ref', target: '/SharedNode/colors', hash: 'abc123' },
     };
     const output = new Float32Array(10);
     const ranges: LoadRange[] = [{ start: 0, end: 5 }];
