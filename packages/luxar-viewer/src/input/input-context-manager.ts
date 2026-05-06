@@ -13,6 +13,10 @@
 
 import { config } from '../config';
 import { log, Modules, LogEmoji } from '../utils/log';
+import {
+  isKeyAllowedInContext as isKeyAllowedInContextPure,
+  sortContextsByPriority,
+} from './context-routing-utils';
 
 /**
  * Available input contexts
@@ -455,17 +459,7 @@ export class InputContextManager {
    * @private
    */
   private isKeyAllowedInContext(key: string, config: ContextConfig): boolean {
-    // Check blocked keys
-    if (config.blockedKeys && config.blockedKeys.includes(key)) {
-      return false;
-    }
-
-    // Check allowed keys
-    if (config.allowedKeys && !config.allowedKeys.includes(key)) {
-      return false;
-    }
-
-    return true;
+    return isKeyAllowedInContextPure(key, config);
   }
 
   /**
@@ -483,10 +477,7 @@ export class InputContextManager {
    * @private
    */
   private tryLowerContexts(event: KeyboardEvent, type: 'down' | 'up'): boolean {
-    // Sort contexts by priority
-    const sortedContexts = Array.from(this.contextConfigs.entries())
-      .filter(([ctx]) => ctx !== this.currentContext)
-      .sort((a, b) => (b[1].priority || 0) - (a[1].priority || 0));
+    const sortedContexts = sortContextsByPriority(this.contextConfigs, this.currentContext);
 
     for (const [context, config] of sortedContexts) {
       if (this.isKeyAllowedInContext(event.key, config)) {
