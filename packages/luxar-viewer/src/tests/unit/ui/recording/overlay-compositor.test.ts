@@ -14,7 +14,7 @@ import {
   compositeImageOverlay,
 } from '../../../../ui/recording/overlay-compositor';
 import type { OverlayManager } from '../../../../ui/overlay-manager';
-import type { OverlayConfig } from '../../../../ui/overlay-loader';
+import type { OverlayConfig } from '../../../../data/overlay-loader';
 
 interface FakeCtx {
   canvas: { width: number; height: number };

@@ -90,7 +90,7 @@ import {
 } from './stats-aggregator';
 import { LoaderRegistry } from './loader-registry';
 import { computeTolerance } from './tolerance-computer';
-import { loadOverlayConfigs } from '../ui/overlay-loader';
+import { loadOverlayConfigs } from './overlay-loader';
 import { showToast } from '../ui/helpers';
 
 /** Check if an object has any own properties (avoids Object.keys() allocation). */
