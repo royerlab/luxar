@@ -1770,8 +1770,9 @@ export class SceneLoader {
     // Create appropriate loader
     const loader = this.createLoader(node, loc);
 
-    // Store loader for updates
-    this.loaders.set(node.path, loader);
+    // Store loader for updates (route through the registry's
+    // register* methods rather than mutating its internal map).
+    this.registry.registerPointsLoader(node.path, loader);
 
     try {
       // Load points data
@@ -1875,8 +1876,8 @@ export class SceneLoader {
     // Create lines loader
     const loader = this.createLinesLoader(node, loc);
 
-    // Store loader for updates
-    this.linesLoaders.set(node.path, loader);
+    // Store loader for updates (route through registry).
+    this.registry.registerLinesLoader(node.path, loader);
 
     try {
       // Load lines data
@@ -2031,8 +2032,8 @@ export class SceneLoader {
         ? await this.createProgressiveGSplatsLoader(node, loc, nLods)
         : this.createGSplatsLoader(node, loc);
 
-    // Store loader for updates
-    this.gsplatLoaders.set(node.path, loader);
+    // Store loader for updates (route through registry).
+    this.registry.registerGSplatsLoader(node.path, loader);
 
     try {
       // Build gsplats view state with tolerance override for extend_to_all dimensions
