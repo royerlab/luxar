@@ -17,6 +17,7 @@ import { setupPostProcessingControls } from './rendering-controls/post-processin
 import { CinematicModeController } from './rendering-controls/cinematic-mode';
 import { applyRenderingSettings } from './rendering-controls/apply-settings';
 import { syncCurrentState as syncCurrentStateImpl } from './rendering-controls/sync-current-state';
+import { FocusManager } from './rendering-controls/focus-manager';
 import {
   buildBaseDefaults,
   buildResetDefaults,
@@ -94,8 +95,8 @@ export class RenderingControls {
   /** Visibility state */
   private visible: boolean = false;
 
-  /** Deferred setup handle for outside-click focus management. */
-  private clickOutsideTimeout: ReturnType<typeof setTimeout> | null = null;
+  /** Outside-click + focus management for the panel. */
+  private readonly focusManager: FocusManager;
 
   /** References to GUI controllers for updates */
   private controllers: RenderingControllers = {};
@@ -168,6 +169,11 @@ export class RenderingControls {
       settings: this.settings,
       getNearPlane: () => this.controllers.nearPlane,
       getFarPlane: () => this.controllers.farPlane,
+    });
+
+    this.focusManager = new FocusManager({
+      panel: this.gui.domElement,
+      canvas: this.sceneManager.renderer.domElement,
     });
 
     this.setupControls();
@@ -777,49 +783,20 @@ export class RenderingControls {
    * ```
    */
   show(): void {
-    // Sync current state from scene manager before showing
     this.syncCurrentState();
-
     this.gui.show();
     this.visible = true;
-
-    // Add click handler to auto-blur inputs when clicking outside them.
-    // This helps prevent focus getting stuck. Track the timer so dispose()/hide()
-    // cannot race with the delayed registration and leave a document listener behind.
-    if (this.clickOutsideTimeout !== null) {
-      clearTimeout(this.clickOutsideTimeout);
-    }
-    this.clickOutsideTimeout = setTimeout(() => {
-      this.clickOutsideTimeout = null;
-      this.addClickOutsideHandler();
-    }, 100);
+    this.focusManager.onPanelShown();
   }
 
   /**
-   * Hide the rendering controls panel.
-   *
-   * Blurs any focused input element to return focus to canvas, ensuring
-   * keyboard shortcuts work after closing. Removes click-outside handler.
-   *
-   * Triggered by R key when controls are visible, or by Escape key.
+   * Hide the rendering controls panel. Returns focus to the canvas so
+   * keyboard shortcuts keep working. Triggered by R or Escape.
    */
   hide(): void {
-    // Blur any focused element to return focus to the main document
-    // This ensures keyboard shortcuts work after closing the panel
-    const activeElement = document.activeElement as HTMLElement;
-    if (activeElement && activeElement.blur) {
-      activeElement.blur();
-    }
-
-    // Remove pending/active click outside handler
-    this.clearClickOutsideTimer();
-    this.removeClickOutsideHandler();
-
     this.gui.hide();
     this.visible = false;
-
-    // Focus the canvas to ensure keyboard events work
-    this.sceneManager.renderer.domElement.focus();
+    this.focusManager.onPanelHidden();
   }
 
   /**
@@ -864,45 +841,6 @@ export class RenderingControls {
   }
 
   /**
-   * Add click outside handler to blur inputs
-   */
-  private clickOutsideHandler?: (e: MouseEvent) => void;
-
-  private addClickOutsideHandler(): void {
-    if (this.clickOutsideHandler) return;
-
-    this.clickOutsideHandler = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
-      // If clicking outside the GUI panel, blur any focused element within it
-      if (!this.gui.domElement.contains(target)) {
-        const activeElement = document.activeElement as HTMLElement;
-        if (activeElement && activeElement.blur && this.gui.domElement.contains(activeElement)) {
-          activeElement.blur();
-          // Also focus the canvas for good measure
-          this.sceneManager.renderer.domElement.focus();
-        }
-      }
-    };
-
-    // Use capture phase to ensure we get the event first
-    document.addEventListener('mousedown', this.clickOutsideHandler, true);
-  }
-
-  private clearClickOutsideTimer(): void {
-    if (this.clickOutsideTimeout !== null) {
-      clearTimeout(this.clickOutsideTimeout);
-      this.clickOutsideTimeout = null;
-    }
-  }
-
-  private removeClickOutsideHandler(): void {
-    if (this.clickOutsideHandler) {
-      document.removeEventListener('mousedown', this.clickOutsideHandler, true);
-      this.clickOutsideHandler = undefined;
-    }
-  }
-
-  /**
    * Update the cinematic mode checkbox to reflect the current state.
    * Called after toggleCinematicMode or when 'C' key is pressed.
    */
@@ -936,8 +874,7 @@ export class RenderingControls {
     }
     this.cleanupCallbacks = [];
 
-    this.clearClickOutsideTimer();
-    this.removeClickOutsideHandler();
+    this.focusManager.dispose();
 
     // Auto-blur cleanup is now handled by the custom GUI library
     this.gui.destroy();
