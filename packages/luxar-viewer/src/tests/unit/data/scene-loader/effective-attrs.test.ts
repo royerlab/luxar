@@ -11,7 +11,7 @@ import { applyEffectiveAttrs } from '../../../../data/scene-loader/effective-att
 import type { SceneNode } from '../../../../data/data-loader-types';
 
 function makeNode(path: string, attrs: SceneNode['attrs'] = {}): SceneNode {
-  return { path, type: 'points', attrs };
+  return { path, type: 'points', attrs, hasSpatialIndex: false };
 }
 
 describe('applyEffectiveAttrs', () => {

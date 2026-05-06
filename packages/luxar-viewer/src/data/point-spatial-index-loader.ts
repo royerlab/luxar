@@ -27,6 +27,7 @@ import {
   shouldApplyEffectiveRadius,
   type EffectiveRadiusConfig,
 } from './effective-radius-calculator';
+import { computeLoadLatency, recordLoadEvent } from './point-loader/loader-metrics';
 import type {
   MonitorEvent,
   MonitorEventListener,
@@ -945,15 +946,11 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
    * Update metrics and emit load event after successful load.
    */
   private recordLoadMetrics(arrayName: string, totalPoints: number, output: ArrayBufferView): void {
-    const loadTime =
-      Date.now() - (this.activeQueries.values().next().value?.startTime || Date.now());
+    const queryStart = this.activeQueries.values().next().value?.startTime;
+    const loadTime = computeLoadLatency(queryStart);
     const bytes = output.byteLength;
 
-    this.metrics.loads++;
-    this.metrics.pointsLoaded += totalPoints;
-    this.metrics.bytesLoaded += bytes;
-    this.metrics.avgLoadTime =
-      (this.metrics.avgLoadTime * (this.metrics.loads - 1) + loadTime) / this.metrics.loads;
+    recordLoadEvent(this.metrics, totalPoints, bytes, loadTime);
 
     this.emitEvent({
       type: 'load',
