@@ -30,17 +30,16 @@ export default defineConfig({
       // band. Long-term target: 80% across the board.
       thresholds: {
         lines: 58,
-        functions: 60,
+        functions: 61,
         branches: 48,
         statements: 57,
       },
-      // Note: actuals after Phase 1 hardening (WASM bounds for
-      // projection/decode entry points + worker timeout helper +
-      // MaterialManager rebuild + InputContextManager guard) land at
-      // ~58.3% lines / 60.8% functions / 57.7% statements / 48.1%
-      // branches. Statements dropped slightly because the new
-      // data-worker validation paths add code to a test-stub-mocked
-      // file; lines/functions held steady. Floor moves accordingly.
+      // Note: actuals after Phases 1, 2, 3.1-3.4, 7.3-7.4 land at
+      // ~58.6% lines / 61.3% functions / 57.9% statements / 48.3%
+      // branches. Coverage gain comes from the new ManagerRegistry,
+      // Result<T,E>, MaterialManager LRU, GPU pool batch-eviction,
+      // and worker-timeout test suites (~60 new tests). Floor moves
+      // accordingly.
     },
   },
   resolve: {
