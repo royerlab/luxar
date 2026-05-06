@@ -8,7 +8,6 @@ import { AnimationController } from '../scene/animation-controller';
 import { config, type RenderingSettings } from '../config';
 
 import type { RenderingControllers } from '../controls/types';
-import { isOrbitControls } from '../controls/types';
 import { log, Modules } from '../utils/log';
 import { setupNavigationControls } from './rendering-controls/navigation-setup';
 import { setupCameraControls } from './rendering-controls/camera-setup';
@@ -17,6 +16,7 @@ import { setupAntiAliasingControls } from './rendering-controls/anti-aliasing-se
 import { setupPostProcessingControls } from './rendering-controls/post-processing-setup';
 import { CinematicModeController } from './rendering-controls/cinematic-mode';
 import { applyRenderingSettings } from './rendering-controls/apply-settings';
+import { syncCurrentState as syncCurrentStateImpl } from './rendering-controls/sync-current-state';
 import {
   buildBaseDefaults,
   buildResetDefaults,
@@ -736,137 +736,15 @@ export class RenderingControls {
    * This ensures the GUI reflects the actual state when opened
    */
   public syncCurrentState(): void {
-    // Sync camera settings
-    this.settings.fov = this.sceneManager.currentFov;
-    this.settings.near = this.sceneManager.camera.near;
-    this.settings.far = this.sceneManager.camera.far;
-
-    // Check if current FOV matches any preset
-    const currentPreset = Object.entries(config.camera.fovPresets).find(
-      ([_, fovValue]) => fovValue > 0 && Math.abs(fovValue - this.settings.fov) < 0.5
-    );
-    this.settings.fovPreset = (
-      currentPreset ? currentPreset[0] : 'Custom'
-    ) as typeof this.settings.fovPreset;
-
-    // Get current control type
-    const currentControlType = this.sceneManager.controls.getControlType();
-    this.settings.controlType = currentControlType;
-
-    // Get current controls instance
-    const controls = this.sceneManager.controls.getControls();
-
-    // Always get fly controls config from ControlsManager
-    // This ensures settings persist even when in orbit mode
-    const flyConfig = this.sceneManager.controls.getFlyConfig();
-    this.settings.flyInertialMode = flyConfig.inertialMode;
-    this.settings.flyMovementSpeed = flyConfig.movementSpeed;
-    this.settings.flyRotationSpeed = flyConfig.rotationSpeed;
-    this.settings.flyDamping = flyConfig.damping;
-    this.settings.flyRotationDamping = flyConfig.rotationDamping;
-
-    // Update orbit controls state using type guard
-    if (isOrbitControls(controls)) {
-      this.settings.autoRotate = controls.autoRotate;
-      this.settings.autoRotateSpeed = controls.autoRotateSpeed;
-    }
-
-    // Update specific controllers that we have references to
-    if (this.controllers.controlType) {
-      this.controllers.controlType.setValue(currentControlType);
-      this.controllers.controlType.updateDisplay();
-    }
-
-    if (this.controllers.flyInertialMode) {
-      this.controllers.flyInertialMode.setValue(this.settings.flyInertialMode);
-      this.controllers.flyInertialMode.updateDisplay();
-    }
-
-    if (this.controllers.flyMovementSpeed) {
-      this.controllers.flyMovementSpeed.setValue(this.settings.flyMovementSpeed);
-      this.controllers.flyMovementSpeed.updateDisplay();
-    }
-
-    if (this.controllers.flyRotationSpeed) {
-      this.controllers.flyRotationSpeed.setValue(this.settings.flyRotationSpeed);
-      this.controllers.flyRotationSpeed.updateDisplay();
-    }
-
-    if (this.controllers.flyDamping) {
-      this.controllers.flyDamping.setValue(this.settings.flyDamping);
-      this.controllers.flyDamping.updateDisplay();
-      // Show/hide damping based on inertial mode
-      if (this.settings.flyInertialMode) {
-        this.controllers.flyDamping.show();
-      } else {
-        this.controllers.flyDamping.hide();
-      }
-    }
-
-    if (this.controllers.flyRotationDamping) {
-      this.controllers.flyRotationDamping.setValue(this.settings.flyRotationDamping);
-      this.controllers.flyRotationDamping.updateDisplay();
-      // Show/hide rotation damping based on inertial mode
-      if (this.settings.flyInertialMode) {
-        this.controllers.flyRotationDamping.show();
-      } else {
-        this.controllers.flyRotationDamping.hide();
-      }
-    }
-
-    if (this.controllers.autoRotate) {
-      this.controllers.autoRotate.setValue(this.settings.autoRotate);
-      this.controllers.autoRotate.updateDisplay();
-    }
-
-    if (this.controllers.autoRotateSpeed) {
-      this.controllers.autoRotateSpeed.setValue(this.settings.autoRotateSpeed);
-      this.controllers.autoRotateSpeed.updateDisplay();
-    }
-
-    if (this.controllers.fov) {
-      this.controllers.fov.setValue(this.settings.fov);
-      this.controllers.fov.updateDisplay();
-    }
-
-    if (this.controllers.fovPreset) {
-      this.controllers.fovPreset.setValue(this.settings.fovPreset);
-      this.controllers.fovPreset.updateDisplay();
-    }
-
-    if (this.controllers.nearPlane) {
-      this.controllers.nearPlane.setValue(this.settings.near);
-      this.controllers.nearPlane.updateDisplay();
-    }
-
-    if (this.controllers.farPlane) {
-      this.controllers.farPlane.setValue(this.settings.far);
-      this.controllers.farPlane.updateDisplay();
-    }
-
-    // Sync dynamic clipping state from scene manager
-    const dynamicClippingState = this.sceneManager.getDynamicClippingState();
-    this.settings.dynamicClippingEnabled = dynamicClippingState.enabled;
-
-    if (this.controllers.dynamicClippingEnabled) {
-      this.controllers.dynamicClippingEnabled.setValue(this.settings.dynamicClippingEnabled);
-      this.controllers.dynamicClippingEnabled.updateDisplay();
-    }
-
-    // Update near/far control state based on dynamic clipping
-    this.updateClippingControlsState(this.settings.dynamicClippingEnabled);
-
-    // Sync logarithmic HDR slider
-    // Update all controllers
-    this.gui.controllersRecursive().forEach((controller) => {
-      controller.updateDisplay();
+    syncCurrentStateImpl({
+      gui: this.gui,
+      settings: this.settings,
+      sceneManager: this.sceneManager,
+      controllers: this.controllers,
+      updateClippingControlsState: (enabled) => this.updateClippingControlsState(enabled),
+      updateCinematicModeCheckbox: () => this.updateCinematicModeCheckbox(),
+      updateNavigationControls: (controlType) => this.updateNavigationControls(controlType),
     });
-
-    // Update cinematic mode checkbox based on current effects state
-    this.updateCinematicModeCheckbox();
-
-    // Update folder visibility based on current control type
-    this.updateNavigationControls(currentControlType);
   }
 
   /** Apply current settings to the rendering pipeline. Delegates to a pure helper. */
