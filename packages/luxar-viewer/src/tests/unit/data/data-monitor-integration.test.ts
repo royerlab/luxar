@@ -26,7 +26,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { DataMonitorManager, cycleDataMonitor } from '../../../data/data-monitor-manager';
 import { SceneLoader } from '../../../data/scene-loader';
 import { SceneLoaderManager } from '../../../data/scene-loader-manager';
-import type { LoaderMonitor, MonitorEvent } from '../../../ui/data-monitor-types';
+import type { LoaderMonitor, MonitorEvent } from '../../../types/data-monitor-types';
 
 // Mock zarr module
 vi.mock('zarr', () => ({

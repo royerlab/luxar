@@ -20,7 +20,7 @@ import type {
   CacheStatsProvider,
   SceneGraphNode,
   SceneGraphState,
-} from './data-monitor-types';
+} from '../types/data-monitor-types';
 
 // Performance timeline removed - now using hierarchical timing panel
 import { LoadingAdvisor } from './components/loading-advisor';

@@ -16,7 +16,7 @@ import type {
   CacheMetrics,
   SceneGraphNode,
   SceneGraphState,
-} from './data-monitor-types';
+} from '../types/data-monitor-types';
 import { escapeHtml } from '../utils/escape-html';
 
 /**

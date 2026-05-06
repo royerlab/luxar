@@ -4,7 +4,7 @@
 
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { DataLoadingMonitor } from '../../../ui/data-loading-monitor';
-import type { MonitorEvent, LoaderMonitor, LoaderMetrics } from '../../../ui/data-monitor-types';
+import type { MonitorEvent, LoaderMonitor, LoaderMetrics } from '../../../types/data-monitor-types';
 
 // Mock DOM environment
 beforeEach(() => {

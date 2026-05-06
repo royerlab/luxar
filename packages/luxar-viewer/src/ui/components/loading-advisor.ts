@@ -5,7 +5,7 @@
  * for optimization. Detects common issues and suggests solutions.
  */
 
-import type { MonitorEvent, Recommendation, LoaderMetrics } from '../data-monitor-types';
+import type { MonitorEvent, Recommendation, LoaderMetrics } from '../../types/data-monitor-types';
 import type { MemoryMetrics } from '../data-monitor-templates';
 import { config } from '../../config';
 

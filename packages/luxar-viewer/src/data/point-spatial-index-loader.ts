@@ -33,7 +33,7 @@ import type {
   LoaderMonitor,
   LoaderMetrics,
   QueryInfo,
-} from '../ui/data-monitor-types';
+} from '../types/data-monitor-types';
 import { ArrayDecoder, ArrayRefRegistry, type ArrayMetadata } from './array-decoder';
 import { fetchChunkBoundsArray } from './loaders/chunk-bounds-loader';
 import { RangeLoader, SpatialQueryBuilder, type BaseViewState, type LoadRange } from './loaders';

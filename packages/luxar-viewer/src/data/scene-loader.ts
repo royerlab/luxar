@@ -17,7 +17,7 @@ import {
   LoaderConfig,
   LoadedPointsData,
 } from './data-loader-types';
-import type { SceneGraphNode } from '../ui/data-monitor-types';
+import type { SceneGraphNode } from '../types/data-monitor-types';
 import { ZarrSceneAttrs, ZarrNodeAttrs, hasContentsMethod } from '../types/zarr';
 import { updateInstancedLinesMesh } from '../rendering/line-geometry';
 import { DataMonitorManager } from './data-monitor-manager';

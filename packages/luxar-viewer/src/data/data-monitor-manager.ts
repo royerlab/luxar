@@ -6,7 +6,7 @@
  */
 
 import { DataLoadingMonitor } from '../ui/data-loading-monitor';
-import type { MonitorConfig } from '../ui/data-monitor-types';
+import type { MonitorConfig } from '../types/data-monitor-types';
 
 /**
  * Manager for DataLoadingMonitor instances.
