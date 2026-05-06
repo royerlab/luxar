@@ -44,6 +44,7 @@ import {
   float32ToHalfFloat,
   flipPixelsVerticallyRGBA,
 } from './hdr-pixel-utils';
+import { toneMappingModeName } from './tone-mapping-mode-names';
 
 /**
  * Manages HDR post-processing effects using pmndrs/postprocessing library.
@@ -1201,15 +1202,6 @@ export class PostProcessingManager {
     lensDistortion: boolean;
     chromaticLensDistortion: boolean;
   } {
-    const toneMappingNames: Record<ToneMappingMode, string> = {
-      [ToneMappingMode.LINEAR]: 'Linear',
-      [ToneMappingMode.REINHARD]: 'Reinhard',
-      [ToneMappingMode.OPTIMIZED_CINEON]: 'Cineon',
-      [ToneMappingMode.ACES_FILMIC]: 'ACES Filmic',
-      [ToneMappingMode.AGX]: 'AgX',
-      [ToneMappingMode.NEUTRAL]: 'Neutral',
-    };
-
     return {
       bloom: !!this.bloomEffect,
       detectorNoise: !!this.detectorNoiseEffect,
@@ -1219,9 +1211,7 @@ export class PostProcessingManager {
       smaa: this.smaaEnabled,
       msaa: this.msaaEnabled,
       ssaa: this.ssaaEnabled,
-      toneMapping: this.toneMappingEffect
-        ? (toneMappingNames[this.toneMappingEffect.mode] ?? 'Unknown')
-        : 'Off',
+      toneMapping: toneMappingModeName(this.toneMappingEffect?.mode),
       vignette: !!this.vignetteEffect,
       ao: !!this.aoEffect,
       lensDistortion: false, // Old effect removed - now part of ChromaticLensDistortion
