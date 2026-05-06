@@ -150,8 +150,8 @@ export class DimensionSliders {
 
   /** Stored event handlers for animation manager events (for cleanup) */
   private animationEventHandlers: {
-    play?: (e: any) => void;
-    pause?: (e: any) => void;
+    play?: (e: { dimIndex: number }) => void;
+    pause?: (e: { dimIndex: number }) => void;
   } = {};
 
   /**

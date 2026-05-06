@@ -185,7 +185,7 @@ export class PerformanceMonitor {
    */
   cyclePanels(): void {
     if (this.isVisible) {
-      const currentPanel = (this.stats.dom as any).panel || 0;
+      const currentPanel = (this.stats.dom as HTMLElement & { panel?: number }).panel ?? 0;
       const nextPanel = (currentPanel + 1) % 3; // 0: fps, 1: ms, 2: mb
       this.stats.showPanel(nextPanel);
     }

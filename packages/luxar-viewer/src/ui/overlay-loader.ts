@@ -181,13 +181,19 @@ async function listGroupChildren(store: zarr.Readable, parentPath: string): Prom
   }
 
   // Fallback: try the store's list method if available
-  if ('list' in store && typeof (store as any).list === 'function') {
+  const storeWithList = store as { list?: (prefix: string) => Promise<unknown[]> };
+  if (typeof storeWithList.list === 'function') {
     try {
-      const listing = await (store as any).list(parentPath + '/');
+      const listing = await storeWithList.list(parentPath + '/');
       const seen = new Set<string>();
       const children: string[] = [];
       for (const item of listing) {
-        const key = typeof item === 'string' ? item : item.key || item.path || '';
+        const key =
+          typeof item === 'string'
+            ? item
+            : ((item as { key?: string; path?: string }).key ??
+              (item as { key?: string; path?: string }).path ??
+              '');
         const relative = key.startsWith(prefix) ? key.slice(prefix.length) : key;
         const childName = relative.split('/')[0];
         if (
