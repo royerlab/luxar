@@ -3,6 +3,7 @@ import { sceneDimsManager } from '../scene/scene-dims-manager';
 import type { DimensionAnimationManager } from '../scene/dimension-animation-manager';
 import { config } from '../config';
 import { log, Modules } from '../utils/log';
+import { EventGroup } from '../utils/event-group';
 import {
   clampWithCyclicWrap,
   valueToFraction,
@@ -97,22 +98,15 @@ export class DimensionSliders {
   private toggles: Map<number, HTMLElement> = new Map();
 
   /**
-   * Map to store bound event handlers for cleanup.
+   * Cleanup group for all per-slider DOM listeners (input, keydown, change,
+   * toggle click, play-button click + contextmenu). The group is rebuilt on
+   * every `createSliders()` call so that disposing it removes every listener
+   * from the previous render in one shot — no per-handler bookkeeping.
    *
    * Hover/focus visual states are handled entirely by CSS `:hover` and
    * `:focus` pseudo-classes — no JS listeners are attached for those.
    */
-  private eventHandlers: Map<
-    number,
-    {
-      input?: () => void;
-      keydown?: (e: KeyboardEvent) => void;
-      change?: () => void;
-      toggleClick?: () => void;
-      playClick?: () => void;
-      contextMenu?: (e: MouseEvent) => void;
-    }
-  > = new Map();
+  private sliderEvents: EventGroup = new EventGroup();
 
   /** Animation manager for dimension playback (set by InputHandler) */
   private animationManager?: DimensionAnimationManager;
@@ -148,11 +142,12 @@ export class DimensionSliders {
     clickOutsideTimeout?: ReturnType<typeof setTimeout>;
   } = {};
 
-  /** Stored event handlers for animation manager events (for cleanup) */
-  private animationEventHandlers: {
-    play?: (e: { dimIndex: number }) => void;
-    pause?: (e: { dimIndex: number }) => void;
-  } = {};
+  /**
+   * Cleanup group for animation-manager listeners. Rebuilt every time
+   * `setAnimationManager()` is called so that re-binding to a new manager
+   * (or detaching from the old one) is a single dispose.
+   */
+  private animationManagerEvents: EventGroup = new EventGroup();
 
   /**
    * Create and initialize the dimension slider UI component.
@@ -215,29 +210,24 @@ export class DimensionSliders {
    * @param manager - The animation manager instance
    */
   public setAnimationManager(manager: DimensionAnimationManager): void {
-    // Remove listeners from old manager if it exists
-    if (this.animationManager && this.animationEventHandlers.play) {
-      this.animationManager.removeEventListener('play', this.animationEventHandlers.play);
-      this.animationManager.removeEventListener('pause', this.animationEventHandlers.pause!);
-    }
+    // Tear down listeners from any previous manager.
+    this.animationManagerEvents.dispose();
+    this.animationManagerEvents = new EventGroup();
 
     this.animationManager = manager;
 
     // Add animation controls to existing sliders
     this.addAnimationControlsToSliders();
 
-    // Create and store event handlers for cleanup
-    this.animationEventHandlers.play = (e) => {
+    const playHandler = (e: { dimIndex: number }): void =>
       this.updatePlayButtonState(e.dimIndex, true);
-    };
-
-    this.animationEventHandlers.pause = (e) => {
+    const pauseHandler = (e: { dimIndex: number }): void =>
       this.updatePlayButtonState(e.dimIndex, false);
-    };
 
-    // Listen for animation events to update UI
-    this.animationManager.addEventListener('play', this.animationEventHandlers.play);
-    this.animationManager.addEventListener('pause', this.animationEventHandlers.pause);
+    manager.addEventListener('play', playHandler);
+    manager.addEventListener('pause', pauseHandler);
+    this.animationManagerEvents.add(() => manager.removeEventListener('play', playHandler));
+    this.animationManagerEvents.add(() => manager.removeEventListener('pause', pauseHandler));
   }
 
   /**
@@ -279,44 +269,15 @@ export class DimensionSliders {
    * @private
    */
   private createSliders(): void {
-    // Remove event listeners from existing sliders before clearing
-    for (const [dimIndex, slider] of this.sliders) {
-      const handlers = this.eventHandlers.get(dimIndex);
-      if (handlers) {
-        if (handlers.input) {
-          slider.removeEventListener('input', handlers.input);
-        }
-        if (handlers.keydown) {
-          slider.removeEventListener('keydown', handlers.keydown);
-        }
-      }
-    }
-
-    // Remove event listeners from existing dropdowns
-    for (const [dimIndex, dropdown] of this.dropdowns) {
-      const handlers = this.eventHandlers.get(dimIndex);
-      if (handlers) {
-        if (handlers.change) dropdown.removeEventListener('change', handlers.change);
-        if (handlers.keydown) dropdown.removeEventListener('keydown', handlers.keydown);
-        // Hover/focus handlers removed - now handled by CSS
-      }
-    }
-
-    // Remove event listeners from existing toggles
-    for (const [dimIndex, toggle] of this.toggles) {
-      const handlers = this.eventHandlers.get(dimIndex);
-      if (handlers) {
-        if (handlers.toggleClick) toggle.removeEventListener('click', handlers.toggleClick);
-        if (handlers.keydown) toggle.removeEventListener('keydown', handlers.keydown);
-      }
-    }
+    // Tear down all listeners from the previous render in one shot.
+    this.sliderEvents.dispose();
+    this.sliderEvents = new EventGroup();
 
     // Clear any existing slider UI to prevent duplicates
     this.slidersContainer.innerHTML = '';
     this.sliders.clear();
     this.dropdowns.clear();
     this.toggles.clear();
-    this.eventHandlers.clear();
     this.sliderElements.clear();
 
     // Add title section with status text
@@ -513,15 +474,9 @@ export class DimensionSliders {
       }
     };
 
-    // Add event listeners with bound handlers
-    dropdown.addEventListener('change', changeHandler);
-    dropdown.addEventListener('keydown', keydownHandler);
-
-    // Store handlers for cleanup (hover/focus handled by CSS now)
-    this.eventHandlers.set(dimIndex, {
-      change: changeHandler,
-      keydown: keydownHandler,
-    });
+    // Cleanup handled centrally by sliderEvents.dispose() in createSliders().
+    this.sliderEvents.on(dropdown, 'change', changeHandler);
+    this.sliderEvents.on(dropdown, 'keydown', keydownHandler);
 
     dropdownItem.appendChild(label);
     dropdownItem.appendChild(dropdown);
@@ -623,14 +578,8 @@ export class DimensionSliders {
       }
     };
 
-    toggle.addEventListener('click', clickHandler);
-    toggle.addEventListener('keydown', keydownHandler);
-
-    // Store handlers for cleanup
-    this.eventHandlers.set(dimIndex, {
-      toggleClick: clickHandler,
-      keydown: keydownHandler,
-    });
+    this.sliderEvents.on(toggle, 'click', clickHandler);
+    this.sliderEvents.on(toggle, 'keydown', keydownHandler);
 
     toggleItem.appendChild(label);
     toggleItem.appendChild(toggle);
@@ -803,12 +752,8 @@ export class DimensionSliders {
       }
     };
 
-    // Add event listeners with bound handlers
-    slider.addEventListener('input', inputHandler);
-    slider.addEventListener('keydown', keydownHandler);
-
-    // Store handlers for cleanup
-    this.eventHandlers.set(dimIndex, { input: inputHandler, keydown: keydownHandler });
+    this.sliderEvents.on(slider, 'input', inputHandler);
+    this.sliderEvents.on(slider, 'keydown', keydownHandler);
 
     sliderContainer.appendChild(progressBar);
     sliderContainer.appendChild(slider);
@@ -1101,15 +1046,9 @@ export class DimensionSliders {
       this.showContextMenu(dimIndex, e.clientX, e.clientY);
     };
 
-    // Add event listeners
-    playButton.addEventListener('click', playClickHandler);
-    playButton.addEventListener('contextmenu', contextMenuHandler);
-
-    // Store handlers and button reference
-    const handlers = this.eventHandlers.get(dimIndex) || {};
-    handlers.playClick = playClickHandler;
-    handlers.contextMenu = contextMenuHandler;
-    this.eventHandlers.set(dimIndex, handlers);
+    // Cleanup handled centrally by sliderEvents.dispose() in createSliders().
+    this.sliderEvents.on(playButton, 'click', playClickHandler);
+    this.sliderEvents.on(playButton, 'contextmenu', contextMenuHandler);
     this.playButtons.set(dimIndex, playButton);
 
     // Create a wrapper to hold play button and slider track horizontally
@@ -1374,70 +1313,19 @@ export class DimensionSliders {
    * ```
    */
   public dispose(): void {
-    // Remove all event listeners from sliders
-    for (const [dimIndex, slider] of this.sliders) {
-      const handlers = this.eventHandlers.get(dimIndex);
-      if (handlers) {
-        if (handlers.input) {
-          slider.removeEventListener('input', handlers.input);
-        }
-        if (handlers.keydown) {
-          slider.removeEventListener('keydown', handlers.keydown);
-        }
-      }
-    }
-
-    // Remove all event listeners from dropdowns
-    for (const [dimIndex, dropdown] of this.dropdowns) {
-      const handlers = this.eventHandlers.get(dimIndex);
-      if (handlers) {
-        if (handlers.change) dropdown.removeEventListener('change', handlers.change);
-        if (handlers.keydown) dropdown.removeEventListener('keydown', handlers.keydown);
-        // Hover/focus handlers removed - now handled by CSS
-      }
-    }
-
-    // Remove all event listeners from toggles
-    for (const [dimIndex, toggle] of this.toggles) {
-      const handlers = this.eventHandlers.get(dimIndex);
-      if (handlers) {
-        if (handlers.toggleClick) toggle.removeEventListener('click', handlers.toggleClick);
-        if (handlers.keydown) toggle.removeEventListener('keydown', handlers.keydown);
-      }
-    }
-
-    // Remove all event listeners from animation controls
-    for (const [dimIndex, playButton] of this.playButtons) {
-      const handlers = this.eventHandlers.get(dimIndex);
-      if (handlers?.playClick) {
-        playButton.removeEventListener('click', handlers.playClick);
-      }
-      if (handlers?.contextMenu) {
-        playButton.removeEventListener('contextmenu', handlers.contextMenu);
-      }
-    }
+    // Tear down DOM listeners + animation-manager listeners in one shot each.
+    this.sliderEvents.dispose();
+    this.animationManagerEvents.dispose();
 
     // Close any open context menu
     this.closeContextMenu();
 
-    // Remove event listeners from animation manager
-    if (this.animationManager) {
-      if (this.animationEventHandlers.play) {
-        this.animationManager.removeEventListener('play', this.animationEventHandlers.play);
-      }
-      if (this.animationEventHandlers.pause) {
-        this.animationManager.removeEventListener('pause', this.animationEventHandlers.pause);
-      }
-    }
-
     // Clear all maps
-    this.eventHandlers.clear();
     this.sliders.clear();
     this.dropdowns.clear();
     this.toggles.clear();
     this.playButtons.clear();
     this.sliderElements.clear();
-    this.animationEventHandlers = {};
 
     // Remove DOM elements
     this.slidersContainer.remove();
