@@ -12,6 +12,7 @@ import { LineMaterial } from './line-material';
 import { GSplatMaterial } from './gsplat-material';
 import type { CameraAwareMaterial } from './camera-aware-material';
 import { log, Modules } from '../utils/log';
+import { config } from '../config';
 
 /**
  * Supported blending modes for materials.
@@ -61,12 +62,25 @@ export interface GSplatMaterialProperties {
 /**
  * Manages all materials in the scene with caching and global updates.
  * Supports points, lines, and future material types.
+ *
+ * The three caches are bounded LRU maps: each `getXMaterial()` call
+ * promotes the entry to most-recently-used by re-inserting it; on
+ * insert past `cacheMaxSize`, the least-recently-used entry is
+ * disposed and dropped. Without this bound the cache would grow
+ * unbounded as users animate attribute sliders, leaking GPU shader
+ * programs.
+ *
+ * The bound is configured from
+ * `config.dataLoading.performance.materialCacheMaxSize` (default 200).
+ * `0` disables eviction.
  */
 export class MaterialManager {
   private pointMaterialCache = new Map<string, PointMaterial>();
   private lineMaterialCache = new Map<string, LineMaterial>();
   private gsplatMaterialCache = new Map<string, GSplatMaterial>();
   private registeredMaterials = new Set<THREE.Material & CameraAwareMaterial>();
+  /** Per-cache eviction count (read by getCacheStats; no behavior). */
+  private evictionCount = 0;
   /**
    * Materials registered for camera updates but not owned by a cache entry.
    *
@@ -80,6 +94,58 @@ export class MaterialManager {
   private currentIsOrtho = false;
   private currentNearCull: number | undefined = undefined;
   // Note: Global HDR multiplier has been replaced by exposure/offset/gamma in post-processing
+
+  /**
+   * LRU-aware cache lookup. On hit, promote the entry to
+   * most-recently-used by re-inserting it (Map preserves insertion
+   * order, so the first key is the LRU). Returns the cached value or
+   * undefined.
+   */
+  private lruGet<T>(cache: Map<string, T>, key: string): T | undefined {
+    const value = cache.get(key);
+    if (value !== undefined) {
+      // Re-insert to bump to MRU.
+      cache.delete(key);
+      cache.set(key, value);
+    }
+    return value;
+  }
+
+  /**
+   * LRU-aware cache insert. If the cache is at its bound, evict the
+   * LRU entry (first key in insertion order), dispose the material,
+   * and remove it from the registered-materials set so global camera
+   * updates stop targeting it. `materialCacheMaxSize: 0` disables
+   * eviction (legacy unbounded behavior).
+   */
+  private lruSet<T extends THREE.Material & CameraAwareMaterial>(
+    cache: Map<string, T>,
+    key: string,
+    value: T
+  ): void {
+    const maxSize = config.dataLoading.performance.materialCacheMaxSize;
+    if (maxSize > 0) {
+      while (cache.size >= maxSize) {
+        const lruKey = cache.keys().next().value;
+        if (lruKey === undefined) break;
+        const lruMat = cache.get(lruKey);
+        cache.delete(lruKey);
+        if (lruMat) {
+          this.registeredMaterials.delete(lruMat);
+          try {
+            lruMat.dispose();
+          } catch (err) {
+            log.warning(
+              Modules.RENDERER,
+              `Error disposing evicted material '${lruKey}': ${err}`
+            );
+          }
+          this.evictionCount++;
+        }
+      }
+    }
+    cache.set(key, value);
+  }
 
   /**
    * Get or create a point material with caching
@@ -103,8 +169,8 @@ export class MaterialManager {
     const transparent = !isOpaque;
     const key = `point_${props.blendingMode}_o${opacityBucket}_g${gammaBucket}_i${intensityBucket}_f${offsetBucket}_r${radiusBucket}_s${sharpnessBucket}_t${transparent ? 1 : 0}`;
 
-    // Check cache first
-    let material = this.pointMaterialCache.get(key);
+    // Check cache first (LRU-promoting)
+    let material = this.lruGet(this.pointMaterialCache, key);
     if (material) {
       return material;
     }
@@ -148,8 +214,8 @@ export class MaterialManager {
         `Resolution=${this.currentResolution.x}x${this.currentResolution.y}`
     );
 
-    // Cache it
-    this.pointMaterialCache.set(key, material);
+    // Cache it (LRU-bounded)
+    this.lruSet(this.pointMaterialCache, key, material);
 
     log.info(Modules.RENDERER, `Created point material: ${key}`);
     return material;
@@ -168,8 +234,8 @@ export class MaterialManager {
     const lineTransparent = props.blendingMode !== 'opaque';
     const key = `line_${props.blendingMode}_o${opacityBucket}_g${gammaBucket}_i${intensityBucket}_f${offsetBucket}_t${lineTransparent ? 1 : 0}`;
 
-    // Check cache first
-    let material = this.lineMaterialCache.get(key);
+    // Check cache first (LRU-promoting)
+    let material = this.lruGet(this.lineMaterialCache, key);
     if (material) {
       return material;
     }
@@ -189,8 +255,8 @@ export class MaterialManager {
     // Update with current camera params
     material.updateCameraParams(this.currentFov, this.currentResolution, this.currentIsOrtho);
 
-    // Cache it
-    this.lineMaterialCache.set(key, material);
+    // Cache it (LRU-bounded)
+    this.lruSet(this.lineMaterialCache, key, material);
 
     log.info(Modules.RENDERER, `Created line material: ${key}`);
     return material;
@@ -210,8 +276,8 @@ export class MaterialManager {
     const gsplatTransparent = props.blendingMode !== 'opaque';
     const key = `gsplat_${props.blendingMode}_o${opacityBucket}_g${gammaBucket}_i${intensityBucket}_f${offsetBucket}_tr${truncBucket}_t${gsplatTransparent ? 1 : 0}`;
 
-    // Check cache first
-    let material = this.gsplatMaterialCache.get(key);
+    // Check cache first (LRU-promoting)
+    let material = this.lruGet(this.gsplatMaterialCache, key);
     if (material) {
       return material;
     }
@@ -232,8 +298,8 @@ export class MaterialManager {
     // Update with current camera params
     material.updateCameraParams(this.currentFov, this.currentResolution, this.currentIsOrtho);
 
-    // Cache it
-    this.gsplatMaterialCache.set(key, material);
+    // Cache it (LRU-bounded)
+    this.lruSet(this.gsplatMaterialCache, key, material);
 
     log.info(Modules.RENDERER, `Created gsplat material: ${key}`);
     return material;
@@ -399,6 +465,10 @@ export class MaterialManager {
       cachedMaterials:
         this.pointMaterialCache.size + this.lineMaterialCache.size + this.gsplatMaterialCache.size,
       totalRegistered: this.registeredMaterials.size,
+      /** Cumulative LRU evictions across all three caches since creation. */
+      evictions: this.evictionCount,
+      /** Configured cache bound (`0` = disabled). */
+      maxSize: config.dataLoading.performance.materialCacheMaxSize,
       keys: [
         ...Array.from(this.pointMaterialCache.keys()),
         ...Array.from(this.lineMaterialCache.keys()),

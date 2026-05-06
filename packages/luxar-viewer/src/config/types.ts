@@ -431,6 +431,14 @@ export interface DataLoadingPerformanceConfig {
   gpuPoolMaxSize: number;
   gpuPoolEvictionFrames: number;
 
+  /**
+   * Maximum number of cached materials per type (point, line, gsplat).
+   * Materials are bucketed by attribute (opacity / gamma / intensity / …);
+   * an unbounded cache leaks GPU shader programs over long sessions when
+   * users animate sliders. Set to 0 to disable LRU eviction.
+   */
+  materialCacheMaxSize: number;
+
   // Debugging
   enablePerformanceMonitoring: boolean;
 }

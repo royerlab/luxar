@@ -450,6 +450,10 @@ export const config: AppConfig = {
       // projection over millions of items is slow. 0 disables timeout enforcement.
       workerVisibilityTimeoutMs: 30000,
       workerProjectionTimeoutMs: 60000,
+      // Material cache eviction: 200 entries × 3 types = 600 cached materials
+      // max. Tuning is per-session; users animating sliders can blow this
+      // through quickly so eviction keeps memory bounded.
+      materialCacheMaxSize: 200,
 
       // Phase 3: WASM Acceleration - Documentation flag
       // Actual WASM loading is automatic via initWasm() when workers enabled
