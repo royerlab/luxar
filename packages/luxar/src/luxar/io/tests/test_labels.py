@@ -17,11 +17,13 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 
 
 def _make_3d_dims():
-    return Dimensions([
-        Dimension("X", display=True),
-        Dimension("Y", display=True),
-        Dimension("Z", display=True),
-    ])
+    return Dimensions(
+        [
+            Dimension("X", display=True),
+            Dimension("Y", display=True),
+            Dimension("Z", display=True),
+        ]
+    )
 
 
 def _decode_labels_from_zarr(zarr_path: str, node_name: str) -> list[str]:
@@ -165,7 +167,9 @@ class TestHoverOverlayAutoInjection:
             scene.add_points("pts", positions)
 
         store = zarr.open_group(path, mode="r")
-        assert "overlays" not in store or "__hover_text" not in store.get("overlays", {})
+        assert "overlays" not in store or "__hover_text" not in store.get(
+            "overlays", {}
+        )
 
     def test_no_injection_when_user_provides_hover_overlay(self, tmp_path):
         path = str(tmp_path / "test.zarr")
@@ -180,7 +184,11 @@ class TestHoverOverlayAutoInjection:
                 "my_hover",
                 "overlay_text",
                 (0.1, 0.1),
-                {"type": "overlay_text", "hover": True, "text": "Custom: {hover_label}"},
+                {
+                    "type": "overlay_text",
+                    "hover": True,
+                    "text": "Custom: {hover_label}",
+                },
             )
 
         store = zarr.open_group(path, mode="r")

@@ -305,7 +305,9 @@ def main() -> None:
     # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
     if "--no-serve" in sys.argv:
         output_path = get_demos_output_dir() / "mouse_multiome_peak_umap.zarr"
-        _n_points = create_mouse_scene(output_path, coordinates, attributes, category_maps)
+        _n_points = create_mouse_scene(
+            output_path, coordinates, attributes, category_maps
+        )
         aprint(f"Dataset generated at {output_path}")
         return
 
@@ -314,7 +316,9 @@ def main() -> None:
         output_path = Path(tmpdir) / "mouse_umap.zarr"
 
         # Create scene
-        _n_points = create_mouse_scene(output_path, coordinates, attributes, category_maps)
+        _n_points = create_mouse_scene(
+            output_path, coordinates, attributes, category_maps
+        )
 
         aprint("")
         aprint("=" * 70)

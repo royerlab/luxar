@@ -158,7 +158,10 @@ def load_spotify_data(
         # Extract metadata
         track_names = df["track_name"].astype(str).tolist()
         # Truncate long artist lists to first artist
-        artists = [a.split(";")[0].strip() if ";" in a else a for a in df["artists"].astype(str)]
+        artists = [
+            a.split(";")[0].strip() if ";" in a else a
+            for a in df["artists"].astype(str)
+        ]
         genres = df["track_genre"].astype(str).tolist()
         popularity = df["popularity"].values.astype(np.float32)
 
@@ -189,7 +192,9 @@ def reduce_to_3d(
 
     from umap import UMAP
 
-    with asection(f"UMAP reduction ({features.shape[0]:,} × {features.shape[1]}D → 3D)"):
+    with asection(
+        f"UMAP reduction ({features.shape[0]:,} × {features.shape[1]}D → 3D)"
+    ):
         reducer = UMAP(
             n_components=3,
             n_neighbors=30,

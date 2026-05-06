@@ -194,8 +194,19 @@ def _classify_organism(organism: str) -> str:
     # Bacterial genus suffix heuristics
     first_word = org_lower.split()[0] if org_lower else ""
     bacterial_suffixes = (
-        "bacillus", "coccus", "monas", "bacter", "bacterium", "spirillum",
-        "vibrio", "plasma", "phila", "oides", "ella", "inia", "eria",
+        "bacillus",
+        "coccus",
+        "monas",
+        "bacter",
+        "bacterium",
+        "spirillum",
+        "vibrio",
+        "plasma",
+        "phila",
+        "oides",
+        "ella",
+        "inia",
+        "eria",
     )
     if any(first_word.endswith(s) for s in bacterial_suffixes):
         return "Other Bacteria"
@@ -254,12 +265,16 @@ def _parse_swissprot_fasta(
                         # Name is everything before " OS="
                         os_match = re.search(r"\s+OS=", rest)
                         if os_match:
-                            current_name = rest[rest.index(" ") + 1 : os_match.start()].strip()
+                            current_name = rest[
+                                rest.index(" ") + 1 : os_match.start()
+                            ].strip()
                         else:
                             current_name = rest.split()[0] if rest else ""
 
                         # Organism: between OS= and OX= (or end)
-                        os_match2 = re.search(r"OS=(.+?)(?:\s+OX=|\s+GN=|\s+PE=|$)", rest)
+                        os_match2 = re.search(
+                            r"OS=(.+?)(?:\s+OX=|\s+GN=|\s+PE=|$)", rest
+                        )
                         current_org = os_match2.group(1).strip() if os_match2 else ""
                     else:
                         current_acc = line[1:].split()[0]
@@ -300,13 +315,17 @@ def _compute_esm3_embeddings(
     Returns (N, d_model) float32 array.
     """
     embeddings_cache = cache_dir / f"embeddings_{model_name.replace('-', '_')}.npy"
-    checkpoint_path = cache_dir / f"embeddings_{model_name.replace('-', '_')}_checkpoint.npz"
+    checkpoint_path = (
+        cache_dir / f"embeddings_{model_name.replace('-', '_')}_checkpoint.npz"
+    )
 
     # Check for completed cache
     if embeddings_cache.exists():
         with asection("Loading cached ESM embeddings"):
             embeddings = np.load(embeddings_cache)
-            aprint(f"✓ Loaded {embeddings.shape[0]:,} × {embeddings.shape[1]}D embeddings")
+            aprint(
+                f"✓ Loaded {embeddings.shape[0]:,} × {embeddings.shape[1]}D embeddings"
+            )
             return embeddings
 
     import torch
@@ -394,7 +413,9 @@ def _compute_esm3_embeddings(
     np.save(embeddings_cache, embeddings)
     if checkpoint_path.exists():
         checkpoint_path.unlink()
-    aprint(f"✓ Saved to {embeddings_cache} ({embeddings_cache.stat().st_size / 1e9:.1f} GB)")
+    aprint(
+        f"✓ Saved to {embeddings_cache} ({embeddings_cache.stat().st_size / 1e9:.1f} GB)"
+    )
 
     return embeddings
 
@@ -416,7 +437,9 @@ def _reduce_to_3d(
 
     from umap import UMAP
 
-    with asection(f"UMAP reduction ({embeddings.shape[0]:,} × {embeddings.shape[1]}D → 3D)"):
+    with asection(
+        f"UMAP reduction ({embeddings.shape[0]:,} × {embeddings.shape[1]}D → 3D)"
+    ):
         aprint("Parameters: n_neighbors=15, min_dist=0.1, metric=cosine")
         aprint("This may take 30-60 minutes for ~500K proteins...")
 
@@ -489,7 +512,9 @@ def generate_esm3_landscape(
                     raise RuntimeError("All Swiss-Prot mirrors failed")
 
         # --- Step 2: Parse FASTA ---
-        accessions, protein_names, organism_names, sequences = _parse_swissprot_fasta(fasta_path)
+        accessions, protein_names, organism_names, sequences = _parse_swissprot_fasta(
+            fasta_path
+        )
         kingdoms = [_classify_organism(org) for org in organism_names]
 
         # Subsample
@@ -693,8 +718,12 @@ def main() -> None:
         aprint("=" * 70)
         aprint("")
         aprint("Explore the protein universe:")
-        aprint("  - Blue = Eukaryota, Green = Bacteria, Orange = Archaea, Red = Viruses")
-        aprint("  - Clusters = proteins with similar ESM-3 embeddings (shared function/fold)")
+        aprint(
+            "  - Blue = Eukaryota, Green = Bacteria, Orange = Archaea, Red = Viruses"
+        )
+        aprint(
+            "  - Clusters = proteins with similar ESM-3 embeddings (shared function/fold)"
+        )
         aprint("  - Hover over any point to see protein name and organism")
         aprint("")
         aprint(f"Total proteins: {n:,}")

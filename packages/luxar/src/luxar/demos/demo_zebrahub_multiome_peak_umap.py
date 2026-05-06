@@ -268,16 +268,24 @@ def create_zebrahub_scene(
             )
 
             attr_labels = [
-                "Cell Type", "Chromosome", "Leiden Coarse",
-                "Leiden Fine", "Lineage", "Peak Type", "Timepoint",
+                "Cell Type",
+                "Chromosome",
+                "Leiden Coarse",
+                "Leiden Fine",
+                "Lineage",
+                "Peak Type",
+                "Timepoint",
             ]
             attr_keys = [
-                "celltype", "chromosome", "leiden_coarse",
-                "leiden_fine", "lineage", "peak_type", "timepoint",
+                "celltype",
+                "chromosome",
+                "leiden_coarse",
+                "leiden_fine",
+                "lineage",
+                "peak_type",
+                "timepoint",
             ]
-            for attr_id, (label, attr_key) in enumerate(
-                zip(attr_labels, attr_keys)
-            ):
+            for attr_id, (label, attr_key) in enumerate(zip(attr_labels, attr_keys)):
                 scene.add_text(
                     f"Colored by: {label}",
                     position=(0.02, 0.97),
@@ -347,7 +355,9 @@ def main() -> None:
     # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
     if "--no-serve" in sys.argv:
         output_path = get_demos_output_dir() / "zebrahub_multiome_peak_umap.zarr"
-        _n_points = create_zebrahub_scene(output_path, coordinates, attributes, category_maps)
+        _n_points = create_zebrahub_scene(
+            output_path, coordinates, attributes, category_maps
+        )
         aprint(f"Dataset generated at {output_path}")
         return
 
@@ -356,7 +366,9 @@ def main() -> None:
         output_path = Path(tmpdir) / "zebrahub_umap.zarr"
 
         # Create scene
-        _n_points = create_zebrahub_scene(output_path, coordinates, attributes, category_maps)
+        _n_points = create_zebrahub_scene(
+            output_path, coordinates, attributes, category_maps
+        )
 
         aprint("")
         aprint("=" * 70)

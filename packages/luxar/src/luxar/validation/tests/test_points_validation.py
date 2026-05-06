@@ -74,9 +74,7 @@ def test_non_finite_point_attributes_rejected(
 ) -> None:
     """NaN/Inf values should fail before corrupting stored Zarr arrays."""
     store = tmp_path / f"bad_{field}.zarr"
-    positions = kwargs.pop(
-        "positions", np.array([[0.0, 1.0, 2.0]], dtype=np.float32)
-    )
+    positions = kwargs.pop("positions", np.array([[0.0, 1.0, 2.0]], dtype=np.float32))
 
     with LuxarZarrCompiler(store, enable_spatial_index=False) as compiler:
         compiler.create_scene(dimensions=Dimensions.default_3d())

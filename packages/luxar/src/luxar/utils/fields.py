@@ -152,9 +152,7 @@ def unit_flow(field: FlowField, points: np.ndarray) -> np.ndarray:
     return out
 
 
-def rk4_step(
-    points: np.ndarray, step_size: float, field: FlowField
-) -> np.ndarray:
+def rk4_step(points: np.ndarray, step_size: float, field: FlowField) -> np.ndarray:
     """Vectorized 4-stage Runge-Kutta step for ``dx/ds = unit_flow(x)``.
 
     Returns ``(N, 3)`` advected points; rows that fall out of bounds at
@@ -244,9 +242,18 @@ def add_reference_cube_to_scene(
     )
     edges = np.array(
         [
-            [0, 1], [1, 2], [2, 3], [3, 0],  # bottom face
-            [4, 5], [5, 6], [6, 7], [7, 4],  # top face
-            [0, 4], [1, 5], [2, 6], [3, 7],  # vertical edges
+            [0, 1],
+            [1, 2],
+            [2, 3],
+            [3, 0],  # bottom face
+            [4, 5],
+            [5, 6],
+            [6, 7],
+            [7, 4],  # top face
+            [0, 4],
+            [1, 5],
+            [2, 6],
+            [3, 7],  # vertical edges
         ],
         dtype=np.uint32,
     )
