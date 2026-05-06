@@ -699,11 +699,16 @@ export class TwoLevelCachingStore implements AsyncReadable {
   }
 
   /**
-   * Conditional logging based on debug mode.
+   * Conditional logging based on debug mode. Errors always emit; info/warn
+   * only when `debug` is on. All output is routed through the shared
+   * `log` utility so it shows up consistently in the debug-console overlay.
    */
   private log(message: string, level: 'info' | 'warn' | 'error' = 'info'): void {
-    if (level === 'error' || this.debug) {
-      console[level](`[Cache] ${message}`);
+    if (level === 'error') {
+      log.error(Modules.CACHE, message);
+    } else if (this.debug) {
+      if (level === 'warn') log.warning(Modules.CACHE, message);
+      else log.info(Modules.CACHE, message);
     }
   }
 }

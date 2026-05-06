@@ -692,7 +692,9 @@ describe('TwoLevelCachingStore', () => {
     });
 
     it('should enable debug logging with ?cache-debug', async () => {
-      const consoleLog = vi.spyOn(console, 'info');
+      // Debug logging is routed through `log.info`, which calls `console.log`
+      // (the central log utility's standardised channel for INFO-level output).
+      const consoleLog = vi.spyOn(console, 'log');
 
       const debugStore = new TwoLevelCachingStore('https://example.com/test.zarr', {
         debug: true,
@@ -701,7 +703,6 @@ describe('TwoLevelCachingStore', () => {
 
       await debugStore.get('test');
 
-      // Debug logs should appear
       expect(consoleLog).toHaveBeenCalled();
       consoleLog.mockRestore();
     });
