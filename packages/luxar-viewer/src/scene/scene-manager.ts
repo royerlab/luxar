@@ -24,7 +24,6 @@ import {
 } from '../utils/hdr-detection';
 import {
   validateFOV,
-  calculateCameraDistance,
   getBoundingBoxDiagonal,
   getBoundingBoxCenter,
   BoundingBox,
@@ -46,6 +45,10 @@ import {
   resetCameraToInitialPosition,
 } from './scene-setup/camera-setup';
 import {
+  computeSceneBoundingBox,
+  fitCameraToBounds,
+} from './scene-setup/camera-framing';
+import {
   type LuxarCamera,
   isPerspectiveCamera,
   isOrthographicCamera,
@@ -54,12 +57,6 @@ import {
   getOrthoFrustumHeight,
 } from './camera-utils';
 import type { ControlType } from '../controls/controls-manager';
-
-/**
- * How far the user can zoom in or out relative to the "scene fits in view" distance/zoom.
- * A value of 100 means 100x zoom-in and 100x zoom-out from the auto-framed view.
- */
-const ZOOM_RANGE_FACTOR = 100;
 
 /**
  * SceneManager orchestrates all Three.js components for 3D rendering
@@ -623,163 +620,28 @@ export class SceneManager extends THREE.EventDispatcher<{
    * ```
    */
   public centerCameraOnScene(): void {
-    // Ensure world matrices are up to date before computing bounds
+    // Ensure world matrices are up to date before computing bounds.
     this.scene.updateMatrixWorld(true);
 
-    // Create a bounding box that encompasses all visible objects
-    const box = new THREE.Box3();
-    let totalPrimitiveCount = 0;
+    const { box, primitiveCount } = computeSceneBoundingBox(this.scene);
+    if (box.isEmpty() || primitiveCount === 0) {
+      log.warning(Modules.SCENE_MANAGER, 'No visible geometry found to center camera on');
+      return;
+    }
 
-    // Traverse the scene and expand the box to include all geometries
-    this.scene.traverse((object) => {
-      // Handle Points objects (point clouds)
-      if (object instanceof THREE.Points) {
-        const geometry = object.geometry;
+    const center = box.getCenter(new THREE.Vector3());
+    this.lastBoundingBoxCenter.copy(center);
 
-        // For points, compute bounding box from position attribute
-        const positions = geometry.attributes.position;
-        if (positions && positions.count > 0) {
-          totalPrimitiveCount += positions.count;
-
-          // First, compute the bounding box
-          if (!geometry.boundingBox) {
-            geometry.computeBoundingBox();
-          }
-
-          if (geometry.boundingBox) {
-            const tempBox = geometry.boundingBox.clone();
-
-            // Apply object's world transform
-            tempBox.applyMatrix4(object.matrixWorld);
-
-            // Only include if box has valid size (not empty)
-            if (!tempBox.isEmpty()) {
-              box.union(tempBox);
-            }
-          }
-        }
-      }
-
-      // Handle both THREE.InstancedMesh and Mesh + InstancedBufferGeometry objects
-      // Lines and GSplats use THREE.Mesh with InstancedBufferGeometry (not InstancedMesh)
-      // to avoid exceeding WebGL's 16 attribute location limit
-      const isLineMesh =
-        object instanceof THREE.Mesh &&
-        object.userData?.nodeType === 'lines' &&
-        object.geometry instanceof THREE.InstancedBufferGeometry;
-
-      const isGSplatMesh =
-        object instanceof THREE.Mesh &&
-        object.userData?.nodeType === 'gsplats' &&
-        object.geometry instanceof THREE.InstancedBufferGeometry;
-
-      if (object instanceof THREE.InstancedMesh || isLineMesh || isGSplatMesh) {
-        const geometry = object.geometry;
-
-        // For instanced meshes/geometries, use the precomputed bounding box
-        if (!geometry.boundingBox) {
-          geometry.computeBoundingBox();
-        }
-
-        if (geometry.boundingBox) {
-          // Get instance count (InstancedMesh has count, InstancedBufferGeometry has instanceCount)
-          const instanceCount =
-            object instanceof THREE.InstancedMesh
-              ? object.count
-              : ((geometry as THREE.InstancedBufferGeometry).instanceCount ?? 0);
-          totalPrimitiveCount += instanceCount;
-
-          const tempBox = geometry.boundingBox.clone();
-
-          // Apply object's world transform
-          tempBox.applyMatrix4(object.matrixWorld);
-
-          // Only include if box has valid size (not empty)
-          if (!tempBox.isEmpty()) {
-            box.union(tempBox);
-          }
-        }
-      }
-    });
-
-    // Only center camera if we have geometry
-    if (!box.isEmpty() && totalPrimitiveCount > 0) {
-      const size = box.getSize(new THREE.Vector3());
-
-      // Update scale-aware controls from geometry bounding box
-      const diagonal = size.length();
-      if (diagonal > 0) {
-        this.controls.setSceneScale(diagonal);
-      }
-
-      const center = box.getCenter(new THREE.Vector3());
-
-      // Store the center for later use
-      this.lastBoundingBoxCenter.copy(center);
-
-      // Compute optimal distance using FOV-aware calculation
-      const geoBounds: BoundingBox = {
+    fitCameraToBounds(
+      this.camera,
+      this.controls,
+      {
         min: { x: box.min.x, y: box.min.y, z: box.min.z },
         max: { x: box.max.x, y: box.max.y, z: box.max.z },
-      };
-
-      if (isPerspectiveCamera(this.camera)) {
-        const cameraConfig = {
-          fov: this.camera.fov,
-          aspect: this.camera.aspect,
-          near: this.camera.near,
-          far: this.camera.far,
-        };
-        const distance = calculateCameraDistance(geoBounds, cameraConfig);
-        this.camera.position.set(center.x, center.y, center.z + distance);
-
-        // Set distance limits relative to the scene-fitting distance
-        this.controls.setDistanceLimits(distance / ZOOM_RANGE_FACTOR, distance * ZOOM_RANGE_FACTOR);
-      } else if (isOrthographicCamera(this.camera)) {
-        const frustumHeight = this.camera.top - this.camera.bottom;
-        const frustumWidth = this.camera.right - this.camera.left;
-        const maxDim = Math.max(size.x, size.y, size.z);
-        if (maxDim > 0 && frustumHeight > 0 && frustumWidth > 0) {
-          const fitRatio = config.scene.defaultFitRatio;
-          const zoomH = frustumHeight / (maxDim / fitRatio);
-          const zoomW = frustumWidth / (maxDim / fitRatio);
-          this.camera.zoom = Math.min(zoomH, zoomW);
-          this.camera.updateProjectionMatrix();
-
-          // Set zoom limits relative to the scene-fitting zoom (100x in each direction)
-          this.controls.setZoomLimits(
-            this.camera.zoom / ZOOM_RANGE_FACTOR,
-            this.camera.zoom * ZOOM_RANGE_FACTOR
-          );
-        }
-        this.camera.position.set(center.x, center.y, center.z + diagonal);
-      }
-
-      // Point camera at the center
-      this.camera.lookAt(center);
-      this.camera.updateMatrixWorld(true);
-
-      // Sync orbit controls with the new camera state.
-      // CRITICAL: Set target first, then reinitialize() so the controls re-derive
-      // their internal distance from the camera position we just set.
-      this.controls.setTarget(center);
-      this.controls.reinitialize();
-      this.controls.update();
-
-      // Save the new centered state as the default
-      // NOTE: Do NOT call reset() before saveState() - that would undo the centering!
-      // reset() reverts to the previously saved state, defeating the purpose
-      this.controls.saveState();
-
-      log.success(Modules.CONTROLS, 'Controls target updated and state saved');
-
-      log.success(
-        Modules.SCENE_MANAGER,
-        `Camera centered on scene (center: [${center.x.toFixed(2)}, ${center.y.toFixed(2)}, ${center.z.toFixed(2)}])`
-      );
-    } else {
-      log.warning(Modules.SCENE_MANAGER, 'No visible geometry found to center camera on');
-    }
+      },
+      { lookAtTarget: center, logLabel: 'Camera centered on scene' }
+    );
+    log.success(Modules.CONTROLS, 'Controls target updated and state saved');
   }
 
   /**
@@ -1154,86 +1016,25 @@ export class SceneManager extends THREE.EventDispatcher<{
       return;
     }
 
+    // Determine the look-at target: author's target if set, otherwise bounding box center.
     const center = getBoundingBoxCenter(bounds);
-    const diagonal = getBoundingBoxDiagonal(bounds);
-
-    if (diagonal <= 0) {
-      log.warning(Modules.SCENE_MANAGER, 'Scene bounds have zero extent, skipping auto-frame');
-      return;
-    }
-
-    // Adapt control speeds to scene scale
-    this.controls.setSceneScale(diagonal);
-
-    // Determine the look-at target: author's target if set, otherwise bounding box center
     const lookAtTarget = preserveTarget
       ? this.controls.getFocusTarget()
       : new THREE.Vector3(center.x, center.y, center.z);
 
-    if (isPerspectiveCamera(this.camera)) {
-      // Compute optimal distance using FOV, aspect ratio, and fitRatio
-      const cameraConfig = {
-        fov: this.camera.fov,
-        aspect: this.camera.aspect,
-        near: this.camera.near,
-        far: this.camera.far,
-      };
-      const distance = calculateCameraDistance(bounds, cameraConfig);
-
-      this.camera.position.set(lookAtTarget.x, lookAtTarget.y, lookAtTarget.z + distance);
-
-      // Set distance limits relative to the scene-fitting distance
-      this.controls.setDistanceLimits(distance / ZOOM_RANGE_FACTOR, distance * ZOOM_RANGE_FACTOR);
-    } else if (isOrthographicCamera(this.camera)) {
-      // For ortho, compute zoom to fit the scene in the frustum
-      const frustumHeight = this.camera.top - this.camera.bottom;
-      const frustumWidth = this.camera.right - this.camera.left;
-      const maxDim = Math.max(
-        bounds.max.x - bounds.min.x,
-        bounds.max.y - bounds.min.y,
-        bounds.max.z - bounds.min.z
-      );
-      if (maxDim > 0 && frustumHeight > 0 && frustumWidth > 0) {
-        const fitRatio = config.scene.defaultFitRatio;
-        const zoomH = frustumHeight / (maxDim / fitRatio);
-        const zoomW = frustumWidth / (maxDim / fitRatio);
-        this.camera.zoom = Math.min(zoomH, zoomW);
-        this.camera.updateProjectionMatrix();
-
-        // Set zoom limits relative to the scene-fitting zoom (100x in each direction)
-        this.controls.setZoomLimits(
-          this.camera.zoom / ZOOM_RANGE_FACTOR,
-          this.camera.zoom * ZOOM_RANGE_FACTOR
-        );
-      }
-      // Position along Z for correct depth ordering
-      this.camera.position.set(lookAtTarget.x, lookAtTarget.y, lookAtTarget.z + diagonal);
+    const diagonal = fitCameraToBounds(this.camera, this.controls, bounds, {
+      lookAtTarget,
+      preserveControlsTarget: preserveTarget,
+      logLabel: 'Auto-framed camera on scene',
+    });
+    if (diagonal === 0) {
+      log.warning(Modules.SCENE_MANAGER, 'Scene bounds have zero extent, skipping auto-frame');
+      return;
     }
-
-    // Point camera at the look-at target
-    this.camera.lookAt(lookAtTarget);
-    this.camera.updateMatrixWorld(true);
-
-    // Sync orbit controls with the new camera state.
-    // CRITICAL: We must set the target first, then reinitialize() so the controls
-    // re-derive their internal distance from the camera position we just set.
-    // Without reinitialize(), the next update() would snap the camera back to the
-    // old distance (e.g., the default 8 units from resetControls).
-    if (!preserveTarget) {
-      this.controls.setTarget(lookAtTarget);
-    }
-    this.controls.reinitialize();
-    this.controls.update();
-    this.controls.saveState();
 
     // Track centering state
     this.isCenteredOnBoundingBox = !preserveTarget;
     this.lastBoundingBoxCenter.set(center.x, center.y, center.z);
-
-    log.success(
-      Modules.SCENE_MANAGER,
-      `Auto-framed camera on scene (target: [${lookAtTarget.x.toFixed(2)}, ${lookAtTarget.y.toFixed(2)}, ${lookAtTarget.z.toFixed(2)}], diagonal: ${diagonal.toFixed(2)})`
-    );
   }
 
   /**
