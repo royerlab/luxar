@@ -20,6 +20,14 @@ import {
   clearAllCaches as clearAllCachesHelper,
   type CacheStatsSnapshot,
 } from './scene-loader/cache-api';
+import {
+  processLinesData as processLinesDataHelper,
+  commitLinesGeometry as commitLinesGeometryHelper,
+  projectLinesTo3DUsingWorker as projectLinesTo3DUsingWorkerHelper,
+  type StagedLinesCommit,
+} from './scene-loader/data-processor-lines';
+
+export type { StagedLinesCommit } from './scene-loader/data-processor-lines';
 import { LinesSpatialIndexLoader, buildInstanceBuffers } from './lines-spatial-index-loader';
 import {
   DataLoader,
@@ -30,7 +38,6 @@ import {
 } from './data-loader-types';
 import type { SceneGraphNode } from '../types/data-monitor-types';
 import { ZarrSceneAttrs, ZarrNodeAttrs, hasContentsMethod } from '../types/zarr';
-import { updateInstancedLinesMesh } from '../rendering/line-geometry';
 import { DataMonitorManager } from './data-monitor-manager';
 import { ArrayRefRegistry } from './array-decoder';
 import {
@@ -141,12 +148,6 @@ function isSceneDimensions(value: unknown): value is SceneDimensions {
 interface StagedPointsCommit {
   path: string;
   data: LoadedPointsData;
-}
-
-/** Staged lines data ready for GPU commit (already projected to 3D) */
-export interface StagedLinesCommit {
-  path: string;
-  processed: ProcessedLinesData;
 }
 
 /** Staged gsplats data ready for GPU commit (already projected + Cholesky packed) */
@@ -1256,6 +1257,10 @@ export class SceneLoader {
   /**
    * Process lines data: compute tolerance, project to 3D (async).
    * Returns staged commit data without mutating any mesh geometry.
+   *
+   * Implementation lives in `scene-loader/data-processor-lines.ts`; this
+   * method is a thin delegate so the pipeline can be tested in isolation
+   * without instantiating a SceneLoader.
    */
   private async processLinesData(
     path: string,
@@ -1267,74 +1272,14 @@ export class SceneLoader {
     },
     session?: UpdateSession
   ): Promise<StagedLinesCommit | null> {
-    if (!this.rootGroup) return null;
-
-    const mesh = this.rootGroup.getObjectByName(path) as THREE.Mesh;
-    if (!mesh || !isLinesUserData(mesh.userData)) return null;
-
-    // Build new instance buffers
-    const ndim = data.ndim;
-    let tolerance = computeTolerance('lines', viewState.displayDims, ndim, viewState.dimensions);
-
-    // CRITICAL: For extend_to_all dimensions, set tolerance to infinity
-    const attrs = mesh.userData.attrs as { extend_to_all?: string[] };
-    const extendDims: string[] = attrs.extend_to_all || [];
-    if (extendDims.length > 0 && viewState.dimensions) {
-      tolerance = [...tolerance]; // Make a copy to avoid mutating shared array
-      for (const dimName of extendDims) {
-        const dimIndex = viewState.dimensions.findIndex(
-          (d: { name?: string }) => d.name === dimName
-        );
-        if (dimIndex >= 0 && dimIndex < tolerance.length) {
-          tolerance[dimIndex] = 1e10; // Effectively infinite tolerance
-        }
-      }
-    }
-
-    // Build instance buffers with timing
-    // Strategy: use worker for larger datasets when enabled
-    const useWorkerProjection =
-      appConfig.dataLoading.performance.useWebWorkers && data.segmentCount > 1000;
-
-    let processed: ProcessedLinesData;
-    if (session) {
-      const buildSession = session.begin('Project to 3D');
-      try {
-        if (useWorkerProjection) {
-          processed = await this.projectLinesTo3DUsingWorker(data, viewState, tolerance);
-        } else {
-          processed = buildInstanceBuffers(
-            data,
-            viewState.slicePosition,
-            tolerance,
-            viewState.displayDims
-          );
-        }
-      } finally {
-        buildSession.end();
-      }
-    } else {
-      if (useWorkerProjection) {
-        processed = await this.projectLinesTo3DUsingWorker(data, viewState, tolerance);
-      } else {
-        processed = buildInstanceBuffers(
-          data,
-          viewState.slicePosition,
-          tolerance,
-          viewState.displayDims
-        );
-      }
-    }
-
-    // Log visible segment count after projection
-    if (this._updateVersion <= 1) {
-      log.info(
-        Modules.SCENE_LOADER,
-        `[GEOM] lines ${path}: ${processed.segmentCount}/${data.segmentCount} visible after projection`
-      );
-    }
-
-    return { path, processed };
+    return processLinesDataHelper(
+      path,
+      data,
+      viewState,
+      this.rootGroup,
+      this._updateVersion,
+      session
+    );
   }
 
   /**
@@ -1342,100 +1287,7 @@ export class SceneLoader {
    * Called as part of the atomic commit phase — no async operations allowed.
    */
   private commitLinesGeometry(staged: StagedLinesCommit): void {
-    if (!this.rootGroup) return;
-
-    const mesh = this.rootGroup.getObjectByName(staged.path) as THREE.Mesh;
-    if (!mesh || !isLinesUserData(mesh.userData)) return;
-
-    const { processed } = staged;
-
-    if (this._gpuBufferPool) {
-      const geometry = this._gpuBufferPool.acquireLinesGeometry(
-        staged.path,
-        processed.segmentCount
-      );
-      this._gpuBufferPool.updateLinesGeometry(geometry, processed, processed.segmentCount);
-      mesh.geometry = geometry;
-    } else {
-      updateInstancedLinesMesh(mesh, processed);
-    }
-
-    if (isLinesUserData(mesh.userData)) {
-      mesh.userData.visibleSegmentCount = processed.segmentCount;
-    }
-
-    if (processed.segmentCount === 0) {
-      log.info(
-        Modules.SCENE_LOADER,
-        `Clearing lines for ${staged.path} (no visible segments at current slice)`
-      );
-    }
-  }
-
-  /**
-   * Project lines to 3D using a web worker.
-   *
-   * Offloads CPU-intensive segment clipping and interpolation to a worker thread.
-   * Uses Comlink.transfer() for zero-copy ArrayBuffer transfer.
-   */
-  private async projectLinesTo3DUsingWorker(
-    data: LoadedLinesData,
-    viewState: { displayDims: readonly number[]; slicePosition: readonly number[] },
-    tolerance: readonly number[]
-  ): Promise<ProcessedLinesData> {
-    try {
-      const worker = await getWorkerPool().getWorker();
-
-      if (this._updateVersion <= 1) {
-        log.info(
-          Modules.SCENE_LOADER,
-          `Projecting ${data.segmentCount} line segments to 3D using worker`
-        );
-      }
-
-      const workerResult = await worker.projectLinesTo3D({
-        positions: data.positions,
-        segments: data.segments,
-        widths: data.widths,
-        colors: data.colors,
-        sharpness: data.sharpness,
-        slicePosition: viewState.slicePosition,
-        tolerance,
-        displayDims: viewState.displayDims,
-        ndim: data.ndim,
-        segmentCount: data.segmentCount,
-      });
-
-      if (this._updateVersion <= 1) {
-        log.info(
-          Modules.SCENE_LOADER,
-          `Worker projection complete: ${workerResult.visibleSegmentCount}/${data.segmentCount} visible segments`
-        );
-      }
-
-      return {
-        startPositions: workerResult.startPositions,
-        endPositions: workerResult.endPositions,
-        startColors: workerResult.startColors,
-        endColors: workerResult.endColors,
-        startWidths: workerResult.startWidths,
-        endWidths: workerResult.endWidths,
-        startSharpness: workerResult.startSharpness,
-        endSharpness: workerResult.endSharpness,
-        segmentLengths: workerResult.segmentLengths,
-        startClipped: workerResult.startClipped,
-        endClipped: workerResult.endClipped,
-        segmentCount: workerResult.visibleSegmentCount,
-      };
-    } catch (error) {
-      // Fallback to main thread on worker failure
-      log.warning(
-        Modules.SCENE_LOADER,
-        'Worker lines projection failed, falling back to main thread:',
-        error
-      );
-      return buildInstanceBuffers(data, viewState.slicePosition, tolerance, viewState.displayDims);
-    }
+    commitLinesGeometryHelper(staged, this.rootGroup, this._gpuBufferPool);
   }
 
   /**
@@ -1961,7 +1813,12 @@ export class SceneLoader {
 
       let processed: ProcessedLinesData;
       if (useWorkerProjection) {
-        processed = await this.projectLinesTo3DUsingWorker(data, linesViewState, tolerance);
+        processed = await projectLinesTo3DUsingWorkerHelper(
+          data,
+          linesViewState,
+          tolerance,
+          this._updateVersion
+        );
       } else {
         processed = buildInstanceBuffers(
           data,
