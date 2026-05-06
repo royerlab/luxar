@@ -9,7 +9,6 @@ import GUI, { type Controller } from './gui';
 import { config } from '../config';
 import { log, Modules } from '../utils/log';
 import { showToast } from './helpers';
-import { sceneDimsManager } from '../scene/scene-dims-manager';
 // HDR video encoder kept for future use when browser 10-bit support matures
 // import { isHDRVideoSupported, HDRVideoEncoder } from '../utils/hdr-video-encoder';
 import {
@@ -40,6 +39,11 @@ import {
   normalizeScreenshotFormat,
   downloadBlob as downloadBlobHelper,
 } from './recording/screenshot-exporter';
+import {
+  getTurntableInfo as getTurntableInfoHelper,
+  getNavigableDimensionOptions as getNavigableDimensionOptionsHelper,
+  SliderSyncCoordinator,
+} from './recording/animation-sync';
 
 export type RecordingMode = 'image' | 'video' | 'turntable';
 
@@ -133,8 +137,7 @@ export class RecordingPanel {
   private durationTimer: ReturnType<typeof setTimeout> | null = null;
   private keepAliveCallbackId = 'recording-keepalive';
   private turntableCallbackId = 'recording-turntable';
-  private syncCompleteHandler: (() => void) | null = null;
-  private syncPlayTimeout: ReturnType<typeof setTimeout> | null = null;
+  private sliderSync = new SliderSyncCoordinator();
   private savedAutoRotate: boolean = false;
 
   // Event/listener cleanup handles for transient recording DOM
@@ -957,41 +960,17 @@ export class RecordingPanel {
   // ========== Slider Sync ==========
 
   private startSliderSync(): void {
-    const dimIndex = this.options.syncDimensionIndex;
-    if (dimIndex < 0 || !this.animationManager) return;
-
-    this.cleanupSyncListener();
-
-    const ranges = sceneDimsManager.getDimensionRanges();
-    if (ranges && ranges[dimIndex]) {
-      const [min] = ranges[dimIndex];
-      sceneDimsManager.setDimensionValue(dimIndex, min);
-    }
-
-    this.syncCompleteHandler = () => {
-      log.info(Modules.RECORDING, 'Slider sync complete — stopping recording');
-      this.stopVideoRecording();
-    };
-    this.animationManager.addEventListener('complete', this.syncCompleteHandler as any);
-
-    // Small delay to let the initial position update propagate.
-    this.syncPlayTimeout = setTimeout(() => {
-      this.syncPlayTimeout = null;
-      if (!this.disposed) {
-        this.animationManager?.play(dimIndex, { loopMode: 'once', direction: 'forward' });
-      }
-    }, 100);
+    if (!this.animationManager) return;
+    this.sliderSync.start(
+      this.options.syncDimensionIndex,
+      this.animationManager,
+      () => this.stopVideoRecording(),
+      () => !this.disposed
+    );
   }
 
   private cleanupSyncListener(): void {
-    if (this.syncPlayTimeout !== null) {
-      clearTimeout(this.syncPlayTimeout);
-      this.syncPlayTimeout = null;
-    }
-    if (this.syncCompleteHandler && this.animationManager) {
-      this.animationManager.removeEventListener('complete', this.syncCompleteHandler as any);
-      this.syncCompleteHandler = null;
-    }
+    this.sliderSync.cleanup(this.animationManager);
   }
 
   /** Restore auto-rotation to its pre-turntable state. */
@@ -1335,27 +1314,12 @@ export class RecordingPanel {
 
   /** Compute turntable info string from current speed and FPS */
   private getTurntableInfo(): string {
-    const duration = 360 / this.options.turntableSpeed;
-    const frames = Math.ceil(duration * this.options.videoFPS);
-    return `${duration.toFixed(1)}s, ${frames} frames`;
+    return getTurntableInfoHelper(this.options.turntableSpeed, this.options.videoFPS);
   }
 
   /** Get navigable dimension names as dropdown options */
   private getNavigableDimensionOptions(): Record<string, number> {
-    const options: Record<string, number> = {};
-    const dims = sceneDimsManager.getDims();
-    if (dims) {
-      const names = sceneDimsManager.getDimensionNames();
-      for (let i = 0; i < dims.ndim; i++) {
-        if (!dims.displayed.includes(i)) {
-          options[names[i] || `dim ${i}`] = i;
-        }
-      }
-    }
-    if (Object.keys(options).length === 0) {
-      options['(no dimensions)'] = -1;
-    }
-    return options;
+    return getNavigableDimensionOptionsHelper();
   }
 
   /** Show/hide controls based on current mode */
