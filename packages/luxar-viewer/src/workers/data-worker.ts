@@ -232,7 +232,7 @@ async function computeNDVisibilityLines(params: {
   }
   if (segments.length < numSegments * 2) {
     throw new Error(
-      `computeNDVisibilityLines: segments array too short ` +
+      'computeNDVisibilityLines: segments array too short ' +
         `(got ${segments.length}, expected ≥ ${numSegments * 2})`
     );
   }
@@ -298,7 +298,7 @@ async function computeNDVisibilityGSplats(params: {
   const expectedCholesky = numSplats * ((ndim * (ndim + 1)) / 2);
   if (choleskyFactors.length < expectedCholesky) {
     throw new Error(
-      `computeNDVisibilityGSplats: choleskyFactors too short ` +
+      'computeNDVisibilityGSplats: choleskyFactors too short ' +
         `(got ${choleskyFactors.length}, expected ≥ ${expectedCholesky})`
     );
   }
