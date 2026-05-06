@@ -203,8 +203,13 @@ export interface SceneNode {
 
   /** Rendering and node attributes from Zarr */
   attrs: {
-    /** Transformation matrix (16 elements for 4x4 matrix) */
-    transform?: number[];
+    /**
+     * Transformation matrix (16 elements for a column-major 4x4 matrix).
+     * Typed as `readonly number[]` because zarr metadata is parsed
+     * dynamically; see {@link import('../types/zarr').Matrix4x4} for the
+     * narrowed 16-tuple shape.
+     */
+    transform?: readonly number[];
 
     /** Per-dimension transforms for non-displayed dimensions */
     nd_transform?: import('../types/zarr').NdTransformMap;

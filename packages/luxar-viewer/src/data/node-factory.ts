@@ -425,7 +425,7 @@ export class NodeFactory {
    * which is almost always a producer bug — column-major translation lives
    * at indices [12,13,14], row-major at [3,7,11].
    */
-  validateTransformFormat(transform: number[]): void {
+  validateTransformFormat(transform: readonly number[]): void {
     const colMajorTranslation = [transform[12], transform[13], transform[14]];
     const rowMajorTranslation = [transform[3], transform[7], transform[11]];
 
@@ -446,7 +446,7 @@ export class NodeFactory {
    * Apply transformation matrix to a THREE.js object. Throws when the
    * transform is malformed or stored row-major.
    */
-  applyTransform(object: THREE.Object3D, transform: number[]): void {
+  applyTransform(object: THREE.Object3D, transform: readonly number[]): void {
     if (transform.length !== 16) {
       throw new Error(
         `Invalid transform length: ${transform.length} (expected 16)`
@@ -455,7 +455,8 @@ export class NodeFactory {
 
     this.validateTransformFormat(transform);
 
-    const matrix = new THREE.Matrix4().fromArray(transform);
+    // THREE.Matrix4.fromArray takes ArrayLike<number>; the readonly tuple is fine.
+    const matrix = new THREE.Matrix4().fromArray(transform as number[]);
     const position = new THREE.Vector3();
     const quaternion = new THREE.Quaternion();
     const scale = new THREE.Vector3();
