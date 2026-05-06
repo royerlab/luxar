@@ -32,14 +32,14 @@ export default defineConfig({
       // next band. Long-term target: 80% across the board.
       thresholds: {
         lines: 57,
-        functions: 57,
-        branches: 46,
-        statements: 56,
+        functions: 58,
+        branches: 47,
+        statements: 57,
       },
-      // Note: actuals as of the loadColorRanges share land at ~57.3% lines /
-      // 57.9% functions / 56.7% statements / 46.4% branches. The floor here
-      // is intentionally 0.3-0.5pp below those numbers so re-runs don't
-      // flicker around the threshold.
+      // Note: actuals after the hdr-detection / label-loader / range-loader
+      // singleton tests land at ~57.9% lines / 58.5% functions /
+      // 57.2% statements / 47.0% branches. The floor here is set 0-0.5pp
+      // below those numbers so re-runs don't flicker around the threshold.
     },
   },
   resolve: {
