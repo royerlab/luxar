@@ -168,10 +168,13 @@ export function applyBloomSettings(
     target.luminanceMaterial.threshold = partial.threshold;
   }
 
+  // Symmetric `|| 0` everywhere — matches the original updateBloomSettings
+  // log path byte-for-byte. (The radius / threshold sub-objects may be
+  // missing during disposal; falsy fallback gives a sane 0 either way.)
   const resolved: BloomSettings = {
     intensity: target.intensity || 0,
-    radius: target.mipmapBlurPass?.radius ?? 0,
-    threshold: target.luminanceMaterial?.threshold ?? 0,
+    radius: target.mipmapBlurPass?.radius || 0,
+    threshold: target.luminanceMaterial?.threshold || 0,
   };
 
   log.update(
