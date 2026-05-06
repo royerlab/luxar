@@ -449,6 +449,54 @@ describe('validateConfig', () => {
         expect.stringContaining('Invalid spatial default max radius')
       );
     });
+
+    it('should error when workerVisibilityTimeoutMs is negative', () => {
+      const cfg = cloneConfig();
+      cfg.dataLoading.performance.workerVisibilityTimeoutMs = -100;
+
+      const result = validateConfig(cfg);
+
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(
+        expect.stringContaining('Invalid workerVisibilityTimeoutMs')
+      );
+    });
+
+    it('should error when workerVisibilityTimeoutMs is non-finite', () => {
+      const cfg = cloneConfig();
+      cfg.dataLoading.performance.workerVisibilityTimeoutMs = Number.POSITIVE_INFINITY;
+
+      const result = validateConfig(cfg);
+
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(
+        expect.stringContaining('Invalid workerVisibilityTimeoutMs')
+      );
+    });
+
+    it('should error when workerProjectionTimeoutMs is negative', () => {
+      const cfg = cloneConfig();
+      cfg.dataLoading.performance.workerProjectionTimeoutMs = -1;
+
+      const result = validateConfig(cfg);
+
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(
+        expect.stringContaining('Invalid workerProjectionTimeoutMs')
+      );
+    });
+
+    it('should accept 0 timeouts (disabled)', () => {
+      const cfg = cloneConfig();
+      cfg.dataLoading.performance.workerVisibilityTimeoutMs = 0;
+      cfg.dataLoading.performance.workerProjectionTimeoutMs = 0;
+
+      const result = validateConfig(cfg);
+
+      // Doesn't matter if other rules fail; the timeout rules specifically
+      // should not contribute errors.
+      expect(result.errors.find((e) => e.includes('Timeout'))).toBeUndefined();
+    });
   });
 
   describe('scene validation', () => {

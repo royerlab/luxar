@@ -409,6 +409,18 @@ export interface DataLoadingPerformanceConfig {
   // Web Workers (Phase 2)
   useWebWorkers: boolean;
   workerCount: number;
+  /**
+   * Soft timeout for visibility-class worker calls (computeNDVisibility*).
+   * Reject the awaiting promise after this many ms with a
+   * `WorkerTimeoutError` and remove the worker from the pool. 0 disables.
+   */
+  workerVisibilityTimeoutMs: number;
+  /**
+   * Soft timeout for projection-class worker calls (project*To3D).
+   * Same semantics as `workerVisibilityTimeoutMs` but typically larger
+   * since projection over millions of items takes longer than visibility.
+   */
+  workerProjectionTimeoutMs: number;
 
   // WASM acceleration (Phase 3)
   useWASM: boolean;

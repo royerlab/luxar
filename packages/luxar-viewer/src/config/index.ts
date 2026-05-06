@@ -446,6 +446,10 @@ export const config: AppConfig = {
       // WASM module built (17KB): public/wasm/luxar_wasm_bg.wasm
       useWebWorkers: true, // ✅ ACTIVATED - Offloads projection/visibility/decoding to workers
       workerCount: 0, // 0 = auto (uses navigator.hardwareConcurrency - 1)
+      // Per-call worker timeouts. Visibility is fast (chunk-bounding-box test);
+      // projection over millions of items is slow. 0 disables timeout enforcement.
+      workerVisibilityTimeoutMs: 30000,
+      workerProjectionTimeoutMs: 60000,
 
       // Phase 3: WASM Acceleration - Documentation flag
       // Actual WASM loading is automatic via initWasm() when workers enabled

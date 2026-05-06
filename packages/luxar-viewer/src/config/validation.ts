@@ -199,6 +199,22 @@ function validateDataLoading(config: AppConfig, errors: string[], _warnings: str
       );
     }
   }
+
+  // Worker timeouts: 0 disables; otherwise must be a finite positive number
+  // (we don't restrict the upper bound — long-running fits can legitimately
+  // exceed any "sane" ceiling).
+  const visTimeout = dataLoading.performance.workerVisibilityTimeoutMs;
+  if (!Number.isFinite(visTimeout) || visTimeout < 0) {
+    errors.push(
+      `Invalid workerVisibilityTimeoutMs: ${visTimeout} (must be ≥ 0; 0 disables timeout)`
+    );
+  }
+  const projTimeout = dataLoading.performance.workerProjectionTimeoutMs;
+  if (!Number.isFinite(projTimeout) || projTimeout < 0) {
+    errors.push(
+      `Invalid workerProjectionTimeoutMs: ${projTimeout} (must be ≥ 0; 0 disables timeout)`
+    );
+  }
 }
 
 /**

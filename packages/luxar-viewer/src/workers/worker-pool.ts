@@ -22,6 +22,21 @@ export interface WorkerInstance {
 }
 
 /**
+ * Thrown when a Comlink-routed worker call exceeds its configured
+ * timeout. Carries the worker's pool index and the operation name so
+ * callers can distinguish a hung worker from a genuine task failure.
+ */
+export class WorkerTimeoutError extends Error {
+  constructor(
+    public readonly operation: string,
+    public readonly timeoutMs: number
+  ) {
+    super(`Worker call '${operation}' exceeded ${timeoutMs}ms timeout`);
+    this.name = 'WorkerTimeoutError';
+  }
+}
+
+/**
  * Optional override for the data-worker module URL.
  *
  * The default `new Worker(new URL('./data-worker.ts', import.meta.url))`
@@ -210,6 +225,48 @@ export class WorkerPool {
         `Worker removed from pool (${reason}); ${this.workers.length} worker(s) remaining`
       );
     }
+  }
+
+  /**
+   * Race a worker-routed Promise against a timeout. On timeout, log
+   * the failure, evict the responsible worker (if known) via
+   * {@link handleWorkerFailure}, and reject with
+   * {@link WorkerTimeoutError}. A `timeoutMs` of 0 disables the
+   * timeout — callers that don't need it can still use this helper as
+   * a thin pass-through to keep the call-site uniform.
+   *
+   * `worker` may be omitted when the caller cannot identify which
+   * worker handled the call (e.g. round-robin selection); the timeout
+   * still fires, but the pool isn't pruned.
+   */
+  withTimeout<T>(
+    operation: string,
+    call: Promise<T>,
+    timeoutMs: number,
+    worker?: Worker
+  ): Promise<T> {
+    if (timeoutMs <= 0 || !Number.isFinite(timeoutMs)) {
+      return call;
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        log.error(
+          Modules.WORKER_POOL,
+          `Worker call '${operation}' timed out after ${timeoutMs}ms; evicting worker`
+        );
+        if (worker) {
+          this.handleWorkerFailure(worker, `timeout(${operation}, ${timeoutMs}ms)`);
+        }
+        reject(new WorkerTimeoutError(operation, timeoutMs));
+      }, timeoutMs);
+    });
+    return Promise.race([
+      call.finally(() => {
+        if (timer !== undefined) clearTimeout(timer);
+      }),
+      timeout,
+    ]);
   }
 
   /**
