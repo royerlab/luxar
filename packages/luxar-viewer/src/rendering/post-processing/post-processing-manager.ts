@@ -49,6 +49,21 @@ import {
   formatHDRExrLogLine,
   pickResultBuffer,
 } from './hdr-capture';
+import {
+  type PostProcessingDurableState,
+  applyBloomState,
+  applyChromaticLensDistortionState,
+  applyDOFFocusDistance,
+  applyDetectorNoiseState,
+  applyToneMappingState,
+  applyVignetteState,
+  captureBloomState,
+  captureChromaticLensDistortionState,
+  captureDOFState,
+  captureDetectorNoiseState,
+  captureToneMappingState,
+  captureVignetteState,
+} from './context-recovery';
 import { toneMappingModeName } from './tone-mapping-mode-names';
 import {
   applyToneMapping,
@@ -1310,66 +1325,9 @@ export class PostProcessingManager {
    * Recreate composer with updated AA settings and proper state preservation
    */
   private recreateComposer(): void {
-    // Save ALL current effects state with proper typing
-    const bloom = this.bloomEffect as any;
-    const savedEffects = {
-      bloom:
-        this.bloomEffect && isBloomEffectTyped(this.bloomEffect)
-          ? {
-              intensity: bloom.intensity,
-              luminanceThreshold: bloom.luminanceMaterial?.threshold,
-              radius: bloom.mipmapBlurPass?.radius,
-            }
-          : null,
-      toneMapping: this.toneMappingEffect
-        ? {
-            mode: this.toneMappingEffect.mode,
-            whitePoint: this.toneMappingEffect.whitePoint,
-            exposure: this.toneMappingEffect.exposure,
-            globalOffset: this.toneMappingEffect.globalOffset,
-            globalGamma: this.toneMappingEffect.globalGamma,
-          }
-        : null,
-      dof:
-        this.dofEffect && isDepthOfFieldEffectTyped(this.dofEffect)
-          ? {
-              enabled: true,
-              bokehScale: this.dofEffect.bokehScale,
-              focusDistance:
-                this.dofEffect.circleOfConfusionMaterial?.uniforms?.focusDistance?.value,
-            }
-          : null,
-      vignette:
-        this.vignetteEffect && isRobustVignetteEffect(this.vignetteEffect)
-          ? {
-              darkness: this.vignetteEffect.darkness,
-              offset: this.vignetteEffect.offset,
-            }
-          : null,
-      chromaticLensDistortion:
-        this.chromaticLensDistortionEffect &&
-        isChromaticLensDistortionEffect(this.chromaticLensDistortionEffect)
-          ? {
-              distortion: this.chromaticLensDistortionEffect.distortion.clone(),
-              principalPoint: this.chromaticLensDistortionEffect.principalPoint.clone(),
-              focalLength: this.chromaticLensDistortionEffect.focalLength.clone(),
-              skew: this.chromaticLensDistortionEffect.skew,
-              dispersion: this.chromaticLensDistortionEffect.dispersion,
-            }
-          : null,
-      detectorNoise:
-        this.detectorNoiseEffect && isDetectorNoiseEffect(this.detectorNoiseEffect)
-          ? {
-              readoutSigma: this.detectorNoiseEffect.readoutSigma,
-              photonGain: this.detectorNoiseEffect.photonGain,
-              fpnSigma: this.detectorNoiseEffect.fpnSigma,
-            }
-          : null,
-      // Save AA states
-      ao: this.aoEffect ? { enabled: true } : null,
-      smaa: { enabled: this.smaaEnabled },
-      fxaa: { enabled: this.fxaaEnabled },
-    };
+    // Snapshot every effect's user-visible state so the rebuild is
+    // transparent to the user. Same shape used by rebuildAfterContextRestore.
+    const state = this.captureDurableState();
 
     // Dispose effect passes before disposing composer
     if (this.effectPass) {
@@ -1396,102 +1354,31 @@ export class PostProcessingManager {
       this.secondaryPass = undefined;
     }
 
-    // Dispose old composer
     this.composer.dispose();
 
-    // Recreate composer with new settings
+    // Recreate composer with new MSAA setting. Do NOT call composer.setSize()
+    // here — all callers (setSSAAEnabled, setSSAAMultiplier, setMSAAEnabled,
+    // setMSAASamples) call updateRendererSize() afterward which handles both
+    // renderer.setSize() and composer.setSize() in one pass.
     this.composer = new EffectComposer(this.renderer, {
       frameBufferType: THREE.HalfFloatType,
       multisampling: this.msaaEnabled ? this.msaaSamples : 0,
     });
 
-    // NOTE: Do NOT call composer.setSize() here — all callers
-    // (setSSAAEnabled, setSSAAMultiplier, setMSAAEnabled, setMSAASamples)
-    // call updateRendererSize() afterward which handles both
-    // renderer.setSize() and composer.setSize() in one pass.
-
-    // Re-add render pass
     this.renderPass = new RenderPass(this.scene, this.camera);
     this.composer.addPass(this.renderPass);
 
-    // Restore ALL effects settings with proper type checking
-    if (savedEffects.bloom && this.bloomEffect && isBloomEffectTyped(this.bloomEffect)) {
-      const restoredBloom = this.bloomEffect as any;
-      restoredBloom.intensity = savedEffects.bloom.intensity;
-      if (savedEffects.bloom.luminanceThreshold && restoredBloom.luminanceMaterial) {
-        restoredBloom.luminanceMaterial.threshold = savedEffects.bloom.luminanceThreshold;
-      }
-      if (savedEffects.bloom.radius && restoredBloom.mipmapBlurPass) {
-        restoredBloom.mipmapBlurPass.radius = savedEffects.bloom.radius;
-      }
-    }
+    // Re-apply user state to the freshly-defaulted effects.
+    applyBloomState(this.bloomEffect, state.bloom);
+    applyToneMappingState(this.toneMappingEffect, state.toneMapping);
+    applyDOFFocusDistance(this.dofEffect, state.dof);
+    applyChromaticLensDistortionState(
+      this.chromaticLensDistortionEffect,
+      state.chromaticLensDistortion
+    );
+    applyVignetteState(this.vignetteEffect, state.vignette);
+    applyDetectorNoiseState(this.detectorNoiseEffect, state.detectorNoise);
 
-    if (savedEffects.toneMapping && this.toneMappingEffect) {
-      this.toneMappingEffect.mode = savedEffects.toneMapping.mode;
-      if (savedEffects.toneMapping.whitePoint !== undefined) {
-        this.toneMappingEffect.whitePoint = savedEffects.toneMapping.whitePoint;
-      }
-      if (savedEffects.toneMapping.exposure !== undefined) {
-        this.toneMappingEffect.exposure = savedEffects.toneMapping.exposure;
-      }
-      if (savedEffects.toneMapping.globalOffset !== undefined) {
-        this.toneMappingEffect.globalOffset = savedEffects.toneMapping.globalOffset;
-      }
-      if (savedEffects.toneMapping.globalGamma !== undefined) {
-        this.toneMappingEffect.globalGamma = savedEffects.toneMapping.globalGamma;
-      }
-    }
-
-    // Restore DOF focus distance if it was saved
-    if (savedEffects.dof && this.dofEffect && isDepthOfFieldEffectTyped(this.dofEffect)) {
-      if (
-        savedEffects.dof.focusDistance &&
-        this.dofEffect.circleOfConfusionMaterial?.uniforms?.focusDistance
-      ) {
-        this.dofEffect.circleOfConfusionMaterial.uniforms.focusDistance.value =
-          savedEffects.dof.focusDistance;
-      }
-    }
-
-    // Restore chromatic lens distortion settings if they were saved
-    if (
-      savedEffects.chromaticLensDistortion &&
-      this.chromaticLensDistortionEffect &&
-      isChromaticLensDistortionEffect(this.chromaticLensDistortionEffect)
-    ) {
-      this.chromaticLensDistortionEffect.distortion =
-        savedEffects.chromaticLensDistortion.distortion.clone();
-      this.chromaticLensDistortionEffect.principalPoint =
-        savedEffects.chromaticLensDistortion.principalPoint.clone();
-      this.chromaticLensDistortionEffect.focalLength =
-        savedEffects.chromaticLensDistortion.focalLength.clone();
-      this.chromaticLensDistortionEffect.skew = savedEffects.chromaticLensDistortion.skew;
-      this.chromaticLensDistortionEffect.dispersion =
-        savedEffects.chromaticLensDistortion.dispersion;
-    }
-
-    // Restore vignette settings if they were saved
-    if (
-      savedEffects.vignette &&
-      this.vignetteEffect &&
-      isRobustVignetteEffect(this.vignetteEffect)
-    ) {
-      this.vignetteEffect.darkness = savedEffects.vignette.darkness;
-      this.vignetteEffect.offset = savedEffects.vignette.offset;
-    }
-
-    // Restore detector noise settings if they were saved
-    if (
-      savedEffects.detectorNoise &&
-      this.detectorNoiseEffect &&
-      isDetectorNoiseEffect(this.detectorNoiseEffect)
-    ) {
-      this.detectorNoiseEffect.readoutSigma = savedEffects.detectorNoise.readoutSigma;
-      this.detectorNoiseEffect.photonGain = savedEffects.detectorNoise.photonGain;
-      this.detectorNoiseEffect.fpnSigma = savedEffects.detectorNoise.fpnSigma;
-    }
-
-    // Rebuild effect pass (this will recreate the effect chain)
     this.rebuildEffectPass();
 
     log.info(
@@ -1923,59 +1810,33 @@ export class PostProcessingManager {
    * rebuild — see `applyDurableState()`.
    */
   private captureDurableState(): PostProcessingDurableState {
-    const bloom = this.bloomEffect as any;
+    const bloomTarget =
+      this.bloomEffect && isBloomEffectTyped(this.bloomEffect)
+        ? (this.bloomEffect as unknown as Parameters<typeof captureBloomState>[0])
+        : null;
+    const dofTarget =
+      this.dofEffect && isDepthOfFieldEffectTyped(this.dofEffect) ? this.dofEffect : null;
+    const vignetteTarget =
+      this.vignetteEffect && isRobustVignetteEffect(this.vignetteEffect)
+        ? this.vignetteEffect
+        : null;
+    const chromaticTarget =
+      this.chromaticLensDistortionEffect &&
+      isChromaticLensDistortionEffect(this.chromaticLensDistortionEffect)
+        ? this.chromaticLensDistortionEffect
+        : null;
+    const detectorTarget =
+      this.detectorNoiseEffect && isDetectorNoiseEffect(this.detectorNoiseEffect)
+        ? this.detectorNoiseEffect
+        : null;
+
     return {
-      bloom:
-        this.bloomEffect && isBloomEffectTyped(this.bloomEffect)
-          ? {
-              intensity: bloom.intensity,
-              luminanceThreshold: bloom.luminanceMaterial?.threshold,
-              radius: bloom.mipmapBlurPass?.radius,
-            }
-          : null,
-      toneMapping: this.toneMappingEffect
-        ? {
-            mode: this.toneMappingEffect.mode,
-            whitePoint: this.toneMappingEffect.whitePoint,
-            exposure: this.toneMappingEffect.exposure,
-            globalOffset: this.toneMappingEffect.globalOffset,
-            globalGamma: this.toneMappingEffect.globalGamma,
-          }
-        : null,
-      dof:
-        this.dofEffect && isDepthOfFieldEffectTyped(this.dofEffect)
-          ? {
-              bokehScale: this.dofEffect.bokehScale,
-              focusDistance:
-                this.dofEffect.circleOfConfusionMaterial?.uniforms?.focusDistance?.value,
-            }
-          : null,
-      vignette:
-        this.vignetteEffect && isRobustVignetteEffect(this.vignetteEffect)
-          ? {
-              darkness: this.vignetteEffect.darkness,
-              offset: this.vignetteEffect.offset,
-            }
-          : null,
-      chromaticLensDistortion:
-        this.chromaticLensDistortionEffect &&
-        isChromaticLensDistortionEffect(this.chromaticLensDistortionEffect)
-          ? {
-              distortion: this.chromaticLensDistortionEffect.distortion.clone(),
-              principalPoint: this.chromaticLensDistortionEffect.principalPoint.clone(),
-              focalLength: this.chromaticLensDistortionEffect.focalLength.clone(),
-              skew: this.chromaticLensDistortionEffect.skew,
-              dispersion: this.chromaticLensDistortionEffect.dispersion,
-            }
-          : null,
-      detectorNoise:
-        this.detectorNoiseEffect && isDetectorNoiseEffect(this.detectorNoiseEffect)
-          ? {
-              readoutSigma: this.detectorNoiseEffect.readoutSigma,
-              photonGain: this.detectorNoiseEffect.photonGain,
-              fpnSigma: this.detectorNoiseEffect.fpnSigma,
-            }
-          : null,
+      bloom: captureBloomState(bloomTarget),
+      toneMapping: captureToneMappingState(this.toneMappingEffect),
+      dof: captureDOFState(dofTarget),
+      vignette: captureVignetteState(vignetteTarget),
+      chromaticLensDistortion: captureChromaticLensDistortionState(chromaticTarget),
+      detectorNoise: captureDetectorNoiseState(detectorTarget),
       aoEnabled: !!this.aoEffect,
     };
   }
@@ -1995,35 +1856,17 @@ export class PostProcessingManager {
     // previously configured. If the user had bloom disabled before rebuild,
     // dispose the freshly-created default instance.
     if (state.bloom && this.bloomEffect && isBloomEffectTyped(this.bloomEffect)) {
-      const restoredBloom = this.bloomEffect as any;
-      restoredBloom.intensity = state.bloom.intensity;
-      if (state.bloom.luminanceThreshold !== undefined && restoredBloom.luminanceMaterial) {
-        restoredBloom.luminanceMaterial.threshold = state.bloom.luminanceThreshold;
-      }
-      if (state.bloom.radius !== undefined && restoredBloom.mipmapBlurPass) {
-        restoredBloom.mipmapBlurPass.radius = state.bloom.radius;
-      }
+      applyBloomState(
+        this.bloomEffect as unknown as Parameters<typeof applyBloomState>[0],
+        state.bloom
+      );
     } else if (!state.bloom && this.bloomEffect) {
       safeDisposeEffect(this.bloomEffect, 'Bloom (rebuild: was disabled)');
       this.bloomEffect = undefined;
     }
 
     // Tone mapping: always present after init; restore user-facing fields.
-    if (state.toneMapping && this.toneMappingEffect) {
-      this.toneMappingEffect.mode = state.toneMapping.mode;
-      if (state.toneMapping.whitePoint !== undefined) {
-        this.toneMappingEffect.whitePoint = state.toneMapping.whitePoint;
-      }
-      if (state.toneMapping.exposure !== undefined) {
-        this.toneMappingEffect.exposure = state.toneMapping.exposure;
-      }
-      if (state.toneMapping.globalOffset !== undefined) {
-        this.toneMappingEffect.globalOffset = state.toneMapping.globalOffset;
-      }
-      if (state.toneMapping.globalGamma !== undefined) {
-        this.toneMappingEffect.globalGamma = state.toneMapping.globalGamma;
-      }
-    }
+    applyToneMappingState(this.toneMappingEffect, state.toneMapping);
 
     // Optional effects: recreate via their toggle methods, then re-apply
     // settings on the new instance. Each toggle calls rebuildEffectPass()
@@ -2061,14 +1904,10 @@ export class PostProcessingManager {
         this.chromaticLensDistortionEffect &&
         isChromaticLensDistortionEffect(this.chromaticLensDistortionEffect)
       ) {
-        this.chromaticLensDistortionEffect.distortion =
-          state.chromaticLensDistortion.distortion.clone();
-        this.chromaticLensDistortionEffect.principalPoint =
-          state.chromaticLensDistortion.principalPoint.clone();
-        this.chromaticLensDistortionEffect.focalLength =
-          state.chromaticLensDistortion.focalLength.clone();
-        this.chromaticLensDistortionEffect.skew = state.chromaticLensDistortion.skew;
-        this.chromaticLensDistortionEffect.dispersion = state.chromaticLensDistortion.dispersion;
+        applyChromaticLensDistortionState(
+          this.chromaticLensDistortionEffect,
+          state.chromaticLensDistortion
+        );
       }
     }
     if (state.detectorNoise) {
@@ -2120,29 +1959,3 @@ export class PostProcessingManager {
   }
 }
 
-/**
- * Snapshot of every user-visible setting of a `PostProcessingManager`.
- * Captured before a context-restore rebuild and re-applied to the freshly
- * recreated effects so the rebuild is transparent to the user.
- */
-interface PostProcessingDurableState {
-  bloom: { intensity: number; luminanceThreshold?: number; radius?: number } | null;
-  toneMapping: {
-    mode: ToneMappingMode;
-    whitePoint?: number;
-    exposure?: number;
-    globalOffset?: number;
-    globalGamma?: number;
-  } | null;
-  dof: { bokehScale?: number; focusDistance?: number } | null;
-  vignette: { darkness: number; offset: number } | null;
-  chromaticLensDistortion: {
-    distortion: THREE.Vector2;
-    principalPoint: THREE.Vector2;
-    focalLength: THREE.Vector2;
-    skew: number;
-    dispersion: number;
-  } | null;
-  detectorNoise: { readoutSigma: number; photonGain: number; fpnSigma: number } | null;
-  aoEnabled: boolean;
-}
