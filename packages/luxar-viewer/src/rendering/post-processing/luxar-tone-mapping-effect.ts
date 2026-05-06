@@ -19,8 +19,8 @@ import {
   BlendFunction,
   ToneMappingMode,
   LuminancePass,
-  // @ts-ignore — AdaptiveLuminancePass is exported at runtime but not in the .d.ts
   AdaptiveLuminancePass,
+  AdaptiveLuminanceMaterial,
 } from 'postprocessing';
 import { LinearMipmapLinearFilter, REVISION, Uniform, WebGLRenderTarget } from 'three';
 import type { WebGLRenderer } from 'three';
@@ -135,7 +135,7 @@ export class LuxarToneMappingEffect extends Effect {
   /** @internal Luminance pass for adaptive tone mapping */
   readonly luminancePass: LuminancePass;
   /** @internal Adaptive luminance pass */
-  private adaptiveLuminancePass: any; // AdaptiveLuminancePass type not in .d.ts
+  private adaptiveLuminancePass: AdaptiveLuminancePass;
 
   constructor(config: LuxarToneMappingConfig = {}) {
     const {
@@ -154,7 +154,7 @@ export class LuxarToneMappingEffect extends Effect {
 
     super('LuxarToneMappingEffect', LUXAR_TONE_MAPPING_SHADER, {
       blendFunction,
-      uniforms: new Map<string, Uniform<any>>([
+      uniforms: new Map<string, Uniform<unknown>>([
         ['luminanceBuffer', new Uniform(null)],
         ['maxLuminance', new Uniform(whitePoint)], // Legacy alias
         ['whitePoint', new Uniform(whitePoint)],
@@ -172,7 +172,7 @@ export class LuxarToneMappingEffect extends Effect {
       minFilter: LinearMipmapLinearFilter,
       depthBuffer: false,
     });
-    (this.renderTargetLuminance.texture as any).generateMipmaps = true;
+    this.renderTargetLuminance.texture.generateMipmaps = true;
     this.renderTargetLuminance.texture.name = 'Luminance';
 
     this.luminancePass = new LuminancePass({
@@ -264,8 +264,8 @@ export class LuxarToneMappingEffect extends Effect {
     this.uniforms.get('averageLuminance')!.value = value;
   }
 
-  get adaptiveLuminanceMaterial(): any {
-    return this.adaptiveLuminancePass.fullscreenMaterial;
+  get adaptiveLuminanceMaterial(): AdaptiveLuminanceMaterial {
+    return this.adaptiveLuminancePass.fullscreenMaterial as AdaptiveLuminanceMaterial;
   }
 
   get resolution(): number {
@@ -327,7 +327,7 @@ export class LuxarToneMappingEffect extends Effect {
   update(renderer: WebGLRenderer, inputBuffer: WebGLRenderTarget, deltaTime?: number): void {
     if (this.adaptiveLuminancePass.enabled) {
       this.luminancePass.render(renderer, inputBuffer, this.renderTargetLuminance);
-      (this.adaptiveLuminancePass as any).render(renderer, null, null, deltaTime);
+      this.adaptiveLuminancePass.render(renderer, null, null, deltaTime);
     }
   }
 
