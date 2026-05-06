@@ -34,7 +34,12 @@ import {
   generateFilename as generateFilenamePure,
   getSupportedMimeType as getSupportedMimeTypePure,
 } from './recording/media-utilities';
-import { compositeOverlays as compositeOverlaysHelper } from './recording/overlay-compositor';
+import {
+  renderFrameToCanvas as renderFrameToCanvasHelper,
+  encodeScreenshotBlob,
+  normalizeScreenshotFormat,
+  downloadBlob as downloadBlobHelper,
+} from './recording/screenshot-exporter';
 
 export type RecordingMode = 'image' | 'video' | 'turntable';
 
@@ -297,18 +302,7 @@ export class RecordingPanel {
         this.sceneManager.scene.background = null;
       }
 
-      let format = this.options.outputFormat;
-
-      // Guard: video formats are not valid for screenshots — fall back to PNG.
-      // Normally unreachable (updateControlVisibility auto-corrects), but defends
-      // against programmatic callers or future format-filtering changes.
-      if (format === 'mp4' || format === 'webm' || format === 'mkv') {
-        log.warning(
-          Modules.RECORDING,
-          `Screenshot format '${format}' is a video format, falling back to PNG`
-        );
-        format = 'png';
-      }
+      const format = this.options.outputFormat;
 
       if (format === 'exr') {
         const exrData = await this.sceneManager.postProcessing.captureHDRAsEXR();
@@ -318,16 +312,23 @@ export class RecordingPanel {
       } else {
         const captureCanvas = this.renderFrameToCanvas();
 
-        let effectiveFormat = format;
-        if (this.options.transparentBackground && effectiveFormat === 'jpeg') {
-          effectiveFormat = 'png';
+        const { format: effectiveFormat, warning } = normalizeScreenshotFormat(
+          format,
+          this.options.transparentBackground
+        );
+        if (warning === 'video-fallback') {
+          log.warning(
+            Modules.RECORDING,
+            `Screenshot format '${format}' is a video format, falling back to PNG`
+          );
+        } else if (warning === 'jpeg-no-alpha') {
           showToast('Switched to PNG (JPEG has no alpha)');
         }
-        const mimeType = `image/${effectiveFormat === 'jpeg' ? 'jpeg' : effectiveFormat}`;
-        const quality = effectiveFormat === 'png' ? undefined : this.options.imageQuality;
 
-        const blob = await new Promise<Blob | null>((resolve) =>
-          captureCanvas.toBlob(resolve, mimeType, quality)
+        const blob = await encodeScreenshotBlob(
+          captureCanvas,
+          effectiveFormat,
+          this.options.imageQuality
         );
 
         if (blob) {
@@ -1771,32 +1772,9 @@ export class RecordingPanel {
    * The returned canvas can be passed to toBlob() or to VideoSample.
    */
   private renderFrameToCanvas(): HTMLCanvasElement {
-    const imgData = this.sceneManager.postProcessing.renderToImageData();
-    const canvas = document.createElement('canvas');
-    canvas.width = imgData.width;
-    canvas.height = imgData.height;
-    const ctx = canvas.getContext('2d')!;
-    ctx.putImageData(imgData, 0, 0);
-
-    if (this.options.includeOverlays && this.overlayManager) {
-      this.compositeOverlays(canvas, ctx);
-    }
-
-    return canvas;
-  }
-
-  /**
-   * Composite visible DOM overlays onto a capture canvas using Canvas 2D.
-   *
-   * Implementation lives in `recording/overlay-compositor.ts`; this
-   * method is a thin delegate that supplies the OverlayManager and
-   * the renderer's GL canvas needed for HTML-overlay coordinate mapping.
-   */
-  private compositeOverlays(canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D): void {
-    if (!this.overlayManager) return;
-    compositeOverlaysHelper(
-      canvas,
-      ctx,
+    return renderFrameToCanvasHelper(
+      this.sceneManager.postProcessing,
+      this.options.includeOverlays,
       this.overlayManager,
       this.sceneManager.renderer.domElement
     );
@@ -1827,16 +1805,6 @@ export class RecordingPanel {
   }
 
   private downloadBlob(blob: Blob, filename: string): void {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.style.display = 'none';
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => {
-      a.remove();
-      URL.revokeObjectURL(url);
-    }, 100);
+    downloadBlobHelper(blob, filename);
   }
 }
