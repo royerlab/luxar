@@ -135,5 +135,4 @@ test.describe('WebGL Context Restore (CR-1)', () => {
     // No unhandled exceptions during the loss/restore cycle.
     expect(errors).toEqual([]);
   });
-
 });

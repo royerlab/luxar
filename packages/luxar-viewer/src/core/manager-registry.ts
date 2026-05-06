@@ -94,10 +94,7 @@ export class ManagerRegistry {
       try {
         manager.dispose();
       } catch (err) {
-        log.warning(
-          Modules.LUXAR,
-          `ManagerRegistry: error disposing '${name}': ${err}`
-        );
+        log.warning(Modules.LUXAR, `ManagerRegistry: error disposing '${name}': ${err}`);
       }
       this.disposed.add(name);
     }

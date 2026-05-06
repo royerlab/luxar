@@ -37,8 +37,7 @@ export class DatasetBrowser {
     this.container = config.container;
     this.onDatasetSelect = config.onDatasetSelect;
     this.onClose = config.onClose;
-    this.origin =
-      config.origin ?? (typeof window !== 'undefined' ? window.location.origin : '');
+    this.origin = config.origin ?? (typeof window !== 'undefined' ? window.location.origin : '');
 
     const src = (config.currentSrc ?? '').trim();
 

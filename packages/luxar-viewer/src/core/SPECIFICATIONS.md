@@ -132,9 +132,18 @@ async function shouldShowBrowser(src: string): Promise<boolean> {
   // 2. Check for Zarr markers (.zgroup, .zattrs, zarr.json) via Promise.any()
   try {
     await Promise.any([
-      fetch(src + '/.zgroup', { method: 'HEAD' }).then(r => { if (!r.ok) throw r; return r; }),
-      fetch(src + '/.zattrs', { method: 'HEAD' }).then(r => { if (!r.ok) throw r; return r; }),
-      fetch(src + '/zarr.json', { method: 'HEAD' }).then(r => { if (!r.ok) throw r; return r; }),
+      fetch(src + '/.zgroup', { method: 'HEAD' }).then((r) => {
+        if (!r.ok) throw r;
+        return r;
+      }),
+      fetch(src + '/.zattrs', { method: 'HEAD' }).then((r) => {
+        if (!r.ok) throw r;
+        return r;
+      }),
+      fetch(src + '/zarr.json', { method: 'HEAD' }).then((r) => {
+        if (!r.ok) throw r;
+        return r;
+      }),
     ]);
     return false; // Valid Zarr, load directly
   } catch {
@@ -330,11 +339,11 @@ interface LuxarApp {
 
 ```typescript
 interface LuxarAppOptions {
-  canvas: HTMLCanvasElement;     // Render target (resolved by main.ts)
-  src?: string;                  // Dataset URL (defaults to config.defaultZarrPath)
-  debug?: boolean;               // Enable window.__luxarDebug + verbose logging
-  loaderConfig?: LoaderConfig;   // Cache and prefetch flags
-  updateBrowserUrl?: boolean;    // Mirror selected dataset into URL bar (default false; standalone sets true)
+  canvas: HTMLCanvasElement; // Render target (resolved by main.ts)
+  src?: string; // Dataset URL (defaults to config.defaultZarrPath)
+  debug?: boolean; // Enable window.__luxarDebug + verbose logging
+  loaderConfig?: LoaderConfig; // Cache and prefetch flags
+  updateBrowserUrl?: boolean; // Mirror selected dataset into URL bar (default false; standalone sets true)
 }
 ```
 
@@ -807,11 +816,11 @@ interface LuxarApp {
 
 ```typescript
 interface LuxarAppOptions {
-  canvas: HTMLCanvasElement;     // Render target (resolved by main.ts)
-  src?: string;                  // Dataset URL (defaults to config.defaultZarrPath)
-  debug?: boolean;               // Enable window.__luxarDebug + verbose logging
-  loaderConfig?: LoaderConfig;   // Cache and prefetch flags
-  updateBrowserUrl?: boolean;    // Mirror selected dataset into URL bar (default false; standalone sets true)
+  canvas: HTMLCanvasElement; // Render target (resolved by main.ts)
+  src?: string; // Dataset URL (defaults to config.defaultZarrPath)
+  debug?: boolean; // Enable window.__luxarDebug + verbose logging
+  loaderConfig?: LoaderConfig; // Cache and prefetch flags
+  updateBrowserUrl?: boolean; // Mirror selected dataset into URL bar (default false; standalone sets true)
 }
 ```
 

@@ -9,19 +9,11 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import {
-  PointsBuilder,
-  LinesBuilder,
-  GSplatsBuilder,
-} from '../../builders/test-data-builders';
+import { PointsBuilder, LinesBuilder, GSplatsBuilder } from '../../builders/test-data-builders';
 
 describe('PointsBuilder smoke', () => {
   it('produces positions of length numPoints * dimensions when randomized', () => {
-    const data = new PointsBuilder()
-      .withPoints(50)
-      .withDimensions(3)
-      .withRandomPositions()
-      .build();
+    const data = new PointsBuilder().withPoints(50).withDimensions(3).withRandomPositions().build();
 
     expect(data.positions).toBeInstanceOf(Float32Array);
     expect(data.positions.length).toBe(50 * 3);
@@ -48,9 +40,7 @@ describe('LinesBuilder smoke', () => {
 
     expect(data.segments).toBeInstanceOf(Uint32Array);
     expect(data.segments.length).toBe(20 * 2);
-    expect(Array.from(data.segments)).toEqual(
-      Array.from({ length: 40 }, (_, i) => i)
-    );
+    expect(Array.from(data.segments)).toEqual(Array.from({ length: 40 }, (_, i) => i));
 
     expect(data.colors).toBeNull();
     expect(data.sharpness).toBeNull();
@@ -76,10 +66,7 @@ describe('LinesBuilder smoke', () => {
   });
 
   it('honors withVaryingWidths within the requested range', () => {
-    const data = new LinesBuilder()
-      .withSegments(20)
-      .withVaryingWidths(0.2, 0.8)
-      .build();
+    const data = new LinesBuilder().withSegments(20).withVaryingWidths(0.2, 0.8).build();
     for (const w of data.widths) {
       expect(w).toBeGreaterThanOrEqual(0.2);
       expect(w).toBeLessThanOrEqual(0.8);

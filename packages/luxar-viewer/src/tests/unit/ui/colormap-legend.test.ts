@@ -154,27 +154,21 @@ describe('ColormapLegend', () => {
 
     it('formats integer min/max as plain integer string', () => {
       layerState.setLayers([makeLayer({ displayMin: 0, displayMax: 100 })]);
-      const labels = legend
-        .getElement()
-        .querySelectorAll('.luxar-colormap-legend__labels span');
+      const labels = legend.getElement().querySelectorAll('.luxar-colormap-legend__labels span');
       expect(labels[0].textContent).toBe('0');
       expect(labels[1].textContent).toBe('100');
     });
 
     it('formats fractional min/max with two decimals', () => {
       layerState.setLayers([makeLayer({ displayMin: 0.5, displayMax: 12.345 })]);
-      const labels = legend
-        .getElement()
-        .querySelectorAll('.luxar-colormap-legend__labels span');
+      const labels = legend.getElement().querySelectorAll('.luxar-colormap-legend__labels span');
       expect(labels[0].textContent).toBe('0.50');
       expect(labels[1].textContent).toBe('12.35');
     });
 
     it('formats very small numbers in exponential', () => {
       layerState.setLayers([makeLayer({ displayMin: 0.001, displayMax: 0.005 })]);
-      const labels = legend
-        .getElement()
-        .querySelectorAll('.luxar-colormap-legend__labels span');
+      const labels = legend.getElement().querySelectorAll('.luxar-colormap-legend__labels span');
       expect(labels[0].textContent).toMatch(/e/);
       expect(labels[1].textContent).toMatch(/e/);
     });

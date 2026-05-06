@@ -38,8 +38,7 @@ export function recordLoadEvent(
   counters.loads += 1;
   counters.pointsLoaded += points;
   counters.bytesLoaded += bytes;
-  counters.avgLoadTime =
-    (counters.avgLoadTime * (counters.loads - 1) + loadTime) / counters.loads;
+  counters.avgLoadTime = (counters.avgLoadTime * (counters.loads - 1) + loadTime) / counters.loads;
   return counters;
 }
 

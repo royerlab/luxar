@@ -174,11 +174,7 @@ class ConsoleInterceptor {
   /**
    * Capture a console message using ring buffer pattern
    */
-  private captureMessage(
-    type: BufferedMessage['type'],
-    args: unknown[],
-    stack?: string
-  ): void {
+  private captureMessage(type: BufferedMessage['type'], args: unknown[], stack?: string): void {
     const message: BufferedMessage = {
       type,
       timestamp: new Date(),
@@ -315,23 +311,20 @@ class ConsoleInterceptor {
  * the bootstrap path that wants buffered console output (e.g. main.ts for
  * the standalone app, LuxarApp.init({ debug: true }) for embedded use).
  */
-export const consoleInterceptor: ConsoleInterceptor = new Proxy(
-  {} as ConsoleInterceptor,
-  {
-    get(_target, prop, receiver) {
-      const instance = ConsoleInterceptor.getInstance();
-      const value = Reflect.get(instance, prop, receiver);
-      return typeof value === 'function' ? value.bind(instance) : value;
-    },
-    set(_target, prop, value, receiver) {
-      const instance = ConsoleInterceptor.getInstance();
-      return Reflect.set(instance, prop, value, receiver);
-    },
-    has(_target, prop) {
-      return prop in ConsoleInterceptor.getInstance();
-    },
-  }
-);
+export const consoleInterceptor: ConsoleInterceptor = new Proxy({} as ConsoleInterceptor, {
+  get(_target, prop, receiver) {
+    const instance = ConsoleInterceptor.getInstance();
+    const value = Reflect.get(instance, prop, receiver);
+    return typeof value === 'function' ? value.bind(instance) : value;
+  },
+  set(_target, prop, value, receiver) {
+    const instance = ConsoleInterceptor.getInstance();
+    return Reflect.set(instance, prop, value, receiver);
+  },
+  has(_target, prop) {
+    return prop in ConsoleInterceptor.getInstance();
+  },
+});
 
 // Also export the type for the singleton
 export type { ConsoleInterceptor };

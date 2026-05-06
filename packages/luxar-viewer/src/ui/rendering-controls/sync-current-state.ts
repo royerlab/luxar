@@ -51,9 +51,7 @@ export function syncCurrentState(context: SyncCurrentStateContext): void {
   const currentPreset = Object.entries(config.camera.fovPresets).find(
     ([, fovValue]) => fovValue > 0 && Math.abs(fovValue - settings.fov) < 0.5
   );
-  settings.fovPreset = (
-    currentPreset ? currentPreset[0] : 'Custom'
-  ) as typeof settings.fovPreset;
+  settings.fovPreset = (currentPreset ? currentPreset[0] : 'Custom') as typeof settings.fovPreset;
 
   // Control type + active controls instance.
   const currentControlType = sceneManager.controls.getControlType();

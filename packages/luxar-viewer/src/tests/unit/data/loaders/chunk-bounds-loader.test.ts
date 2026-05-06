@@ -67,10 +67,7 @@ describe('fetchChunkBoundsArray', () => {
     );
 
     expect(result).toBeNull();
-    expect(infoSpy).toHaveBeenCalledWith(
-      Modules.SPATIAL_INDEX_LOADER,
-      'No bounds available'
-    );
+    expect(infoSpy).toHaveBeenCalledWith(Modules.SPATIAL_INDEX_LOADER, 'No bounds available');
     expect(warnSpy).not.toHaveBeenCalled();
   });
 

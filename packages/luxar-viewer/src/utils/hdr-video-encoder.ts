@@ -175,7 +175,9 @@ export class HDRVideoEncoder {
     };
     const sample = new VideoSample(
       yuv,
-      init as Required<Pick<VideoSampleInit, 'format' | 'codedWidth' | 'codedHeight' | 'timestamp'>> &
+      init as Required<
+        Pick<VideoSampleInit, 'format' | 'codedWidth' | 'codedHeight' | 'timestamp'>
+      > &
         VideoSampleInit
     );
 

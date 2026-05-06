@@ -110,10 +110,7 @@ describe('readBloomSettings', () => {
 
 describe('buildBloomConstructorOptions', () => {
   it('includes the constants pmndrs requires plus the resolved settings', () => {
-    const opts = buildBloomConstructorOptions(
-      { intensity: 1, radius: 0.4, threshold: 0.7 },
-      6
-    );
+    const opts = buildBloomConstructorOptions({ intensity: 1, radius: 0.4, threshold: 0.7 }, 6);
     expect(opts).toEqual({
       intensity: 1,
       luminanceThreshold: 0.7,
@@ -162,10 +159,9 @@ describe('applyBloomSettings', () => {
       mipmapBlurPass: { radius: 0.3 },
       luminanceMaterial: { threshold: 0.8 },
     });
-    const out = applyBloomSettings(
-      effect as unknown as Parameters<typeof applyBloomSettings>[0],
-      { intensity: 2 }
-    );
+    const out = applyBloomSettings(effect as unknown as Parameters<typeof applyBloomSettings>[0], {
+      intensity: 2,
+    });
     expect(out).toEqual({ intensity: 2, radius: 0.3, threshold: 0.8 });
     expect(effect.intensity).toBe(2);
     expect(effect.mipmapBlurPass?.radius).toBe(0.3);
@@ -178,10 +174,10 @@ describe('applyBloomSettings', () => {
       mipmapBlurPass: { radius: 0.3 },
       luminanceMaterial: { threshold: 0.8 },
     });
-    const out = applyBloomSettings(
-      effect as unknown as Parameters<typeof applyBloomSettings>[0],
-      { radius: 0.6, threshold: 0.4 }
-    );
+    const out = applyBloomSettings(effect as unknown as Parameters<typeof applyBloomSettings>[0], {
+      radius: 0.6,
+      threshold: 0.4,
+    });
     expect(out).toEqual({ intensity: 1, radius: 0.6, threshold: 0.4 });
     expect(effect.mipmapBlurPass?.radius).toBe(0.6);
     expect(effect.luminanceMaterial?.threshold).toBe(0.4);
@@ -189,10 +185,10 @@ describe('applyBloomSettings', () => {
 
   it('skips radius/threshold writes when sub-objects are missing', () => {
     const effect: BloomStub = { intensity: 1, mipmapBlurPass: { radius: 0 } };
-    const out = applyBloomSettings(
-      effect as unknown as Parameters<typeof applyBloomSettings>[0],
-      { radius: 0.6, threshold: 0.4 }
-    );
+    const out = applyBloomSettings(effect as unknown as Parameters<typeof applyBloomSettings>[0], {
+      radius: 0.6,
+      threshold: 0.4,
+    });
     expect(out).toEqual({ intensity: 1, radius: 0.6, threshold: 0 });
     expect(effect.mipmapBlurPass?.radius).toBe(0.6);
   });

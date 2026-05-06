@@ -160,9 +160,7 @@ describe('loadDirectColorRanges', () => {
     ];
 
     await loadDirectColorRanges(array, ranges, out);
-    expect(Array.from(out)).toEqual([
-      0.1, 0.2, 0.3, 0.4, 0.5, 0.6,
-    ].map((v) => Math.fround(v)));
+    expect(Array.from(out)).toEqual([0.1, 0.2, 0.3, 0.4, 0.5, 0.6].map((v) => Math.fround(v)));
   });
 
   it('falls back to Float32 widening when source and output kinds disagree', async () => {

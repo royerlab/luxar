@@ -25,10 +25,7 @@ vi.mock('../../../config', () => ({
   },
 }));
 
-import {
-  AdaptiveDPRManager,
-  type DPRRenderer,
-} from '../../../rendering/adaptive-dpr-manager';
+import { AdaptiveDPRManager, type DPRRenderer } from '../../../rendering/adaptive-dpr-manager';
 
 // ---------------------------------------------------------------------
 // Test fixtures

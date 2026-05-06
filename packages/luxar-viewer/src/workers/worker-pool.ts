@@ -186,10 +186,7 @@ export class WorkerPool {
       if (typeof event.preventDefault === 'function') event.preventDefault();
     };
     worker.onmessageerror = () => {
-      log.error(
-        Modules.WORKER_POOL,
-        `Worker ${workerNumber} produced an unserializable message`
-      );
+      log.error(Modules.WORKER_POOL, `Worker ${workerNumber} produced an unserializable message`);
       this.handleWorkerFailure(worker, 'unserializable message');
     };
   }

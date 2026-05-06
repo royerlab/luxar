@@ -135,10 +135,7 @@ export class MaterialManager {
           try {
             lruMat.dispose();
           } catch (err) {
-            log.warning(
-              Modules.RENDERER,
-              `Error disposing evicted material '${lruKey}': ${err}`
-            );
+            log.warning(Modules.RENDERER, `Error disposing evicted material '${lruKey}': ${err}`);
           }
           this.evictionCount++;
         }

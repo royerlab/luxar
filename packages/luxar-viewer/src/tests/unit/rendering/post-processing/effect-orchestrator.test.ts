@@ -129,7 +129,11 @@ describe('partitionEffectsIntoPasses', () => {
       e('ChromaticLensDistortion'),
     ]);
     expect(partition.passANames).toEqual(['Bloom']);
-    expect(partition.passBNames).toEqual(['ChromaticLensDistortion', 'Bloom', 'ChromaticLensDistortion']);
+    expect(partition.passBNames).toEqual([
+      'ChromaticLensDistortion',
+      'Bloom',
+      'ChromaticLensDistortion',
+    ]);
     expect(partition.splitAt).toBe('ChromaticLensDistortion');
   });
 });

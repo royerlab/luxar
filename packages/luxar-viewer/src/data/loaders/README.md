@@ -156,11 +156,11 @@ const ranges = mergeRanges(chunkIndicesToRanges(chunkIndices, chunkSize, totalEl
 Unified tolerance logic lives in `data/tolerance-computer.ts::computeTolerance`
 and is selected by `geometryType`:
 
-| Geometry  | Hidden spatial dim                      | Hidden discrete dim   |
-| --------- | --------------------------------------- | --------------------- |
-| `points`  | `maxRadius` (or 0.5 if `spatialExtendDims[d]` is false) | 0.5 |
-| `lines`   | 0 (segment bounds already include line width)           | `step / 2` (or 0.5 fallback) |
-| `gsplats` | `step × gsplatsDefaultTolerance` (default 3 σ; or 3.0 fallback) | 0.5 |
+| Geometry  | Hidden spatial dim                                              | Hidden discrete dim          |
+| --------- | --------------------------------------------------------------- | ---------------------------- |
+| `points`  | `maxRadius` (or 0.5 if `spatialExtendDims[d]` is false)         | 0.5                          |
+| `lines`   | 0 (segment bounds already include line width)                   | `step / 2` (or 0.5 fallback) |
+| `gsplats` | `step × gsplatsDefaultTolerance` (default 3 σ; or 3.0 fallback) | 0.5                          |
 
 Displayed dimensions always get `1e10` (effectively infinite).
 

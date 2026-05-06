@@ -57,9 +57,7 @@ function validateNDArrays(
   radii?: Float32Array
 ): void {
   if (!Number.isInteger(ndim) || ndim < 1 || ndim > MAX_WASM_DIMS) {
-    throw new Error(
-      `${fnName}: ndim=${ndim} out of range [1, ${MAX_WASM_DIMS}]`
-    );
+    throw new Error(`${fnName}: ndim=${ndim} out of range [1, ${MAX_WASM_DIMS}]`);
   }
   if (!Number.isInteger(numItems) || numItems < 0) {
     throw new Error(`${fnName}: numItems=${numItems} must be a non-negative integer`);
@@ -76,14 +74,10 @@ function validateNDArrays(
     );
   }
   if (tolerance.length < ndim) {
-    throw new Error(
-      `${fnName}: tolerance too short (got ${tolerance.length}, expected ≥ ${ndim})`
-    );
+    throw new Error(`${fnName}: tolerance too short (got ${tolerance.length}, expected ≥ ${ndim})`);
   }
   if (radii && radii.length < numItems) {
-    throw new Error(
-      `${fnName}: radii too short (got ${radii.length}, expected ≥ ${numItems})`
-    );
+    throw new Error(`${fnName}: radii too short (got ${radii.length}, expected ≥ ${numItems})`);
   }
 }
 
@@ -103,9 +97,7 @@ function validateProjectionInputs(
   positionsPerItem: number = ndim
 ): void {
   if (!Number.isInteger(ndim) || ndim < 1 || ndim > MAX_WASM_DIMS) {
-    throw new Error(
-      `${fnName}: ndim=${ndim} out of range [1, ${MAX_WASM_DIMS}]`
-    );
+    throw new Error(`${fnName}: ndim=${ndim} out of range [1, ${MAX_WASM_DIMS}]`);
   }
   if (!Number.isInteger(numItems) || numItems < 0) {
     throw new Error(`${fnName}: numItems=${numItems} must be a non-negative integer`);
@@ -117,16 +109,12 @@ function validateProjectionInputs(
     );
   }
   if (displayDims.length === 0 || displayDims.length > 3) {
-    throw new Error(
-      `${fnName}: displayDims must have 1–3 entries (got ${displayDims.length})`
-    );
+    throw new Error(`${fnName}: displayDims must have 1–3 entries (got ${displayDims.length})`);
   }
   for (let i = 0; i < displayDims.length; i++) {
     const d = displayDims[i];
     if (!Number.isInteger(d) || d < 0 || d >= ndim) {
-      throw new Error(
-        `${fnName}: displayDims[${i}]=${d} out of range [0, ${ndim - 1}]`
-      );
+      throw new Error(`${fnName}: displayDims[${i}]=${d} out of range [0, ${ndim - 1}]`);
     }
   }
   if (slicePosition.length < ndim) {
@@ -334,9 +322,7 @@ async function computeNDVisibilityLines(params: {
   // references two vertices. We at least require the vertex array to be
   // long enough for the highest segment index referenced.
   if (!Number.isInteger(ndim) || ndim < 1 || ndim > MAX_WASM_DIMS) {
-    throw new Error(
-      `computeNDVisibilityLines: ndim=${ndim} out of range [1, ${MAX_WASM_DIMS}]`
-    );
+    throw new Error(`computeNDVisibilityLines: ndim=${ndim} out of range [1, ${MAX_WASM_DIMS}]`);
   }
   if (!Number.isInteger(numSegments) || numSegments < 0) {
     throw new Error(
@@ -355,9 +341,7 @@ async function computeNDVisibilityLines(params: {
     );
   }
   if (slicePosition.length < ndim || tolerance.length < ndim) {
-    throw new Error(
-      `computeNDVisibilityLines: slicePosition/tolerance too short for ndim=${ndim}`
-    );
+    throw new Error(`computeNDVisibilityLines: slicePosition/tolerance too short for ndim=${ndim}`);
   }
 
   // Ensure buffer capacity
@@ -1412,9 +1396,7 @@ async function decodeBroadcasted(params: {
 
   const { value, numPoints, elementsPerPoint } = params;
   if (!Number.isInteger(numPoints) || numPoints < 0) {
-    throw new Error(
-      `decodeBroadcasted: numPoints=${numPoints} must be a non-negative integer`
-    );
+    throw new Error(`decodeBroadcasted: numPoints=${numPoints} must be a non-negative integer`);
   }
   if (!Number.isInteger(elementsPerPoint) || elementsPerPoint < 1) {
     throw new Error(

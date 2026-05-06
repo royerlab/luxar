@@ -62,7 +62,15 @@ describe('SceneLoader cache accessors', () => {
 
       const stubCachingStore = {
         getStats: () => ({
-          l1: { metadataSize: 0, chunksSize: 0, metadataCount: 0, chunksCount: 0, hits: 0, misses: 0, evictions: 0 },
+          l1: {
+            metadataSize: 0,
+            chunksSize: 0,
+            metadataCount: 0,
+            chunksCount: 0,
+            hits: 0,
+            misses: 0,
+            evictions: 0,
+          },
           l2: { size: 0, count: 0, reads: 0, writes: 0 },
           network: { bytesTransferred: 0, requestCount: 0, bandwidth: 0 },
         }),

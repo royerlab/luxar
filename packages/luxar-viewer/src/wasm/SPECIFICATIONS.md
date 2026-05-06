@@ -49,7 +49,7 @@ Behaviour:
 - **Subsequent calls**: return the cached promise from the first call —
   the loader is idempotent.
 - **`isWasmSupported()`**: synchronous probe. Returns `true` only when
-  `WebAssembly` is defined *and* `instantiateStreaming` is available.
+  `WebAssembly` is defined _and_ `instantiateStreaming` is available.
 - **`getFallback()`**: forces the TypeScript implementation — useful for
   parity tests.
 
@@ -66,61 +66,61 @@ thread.
 
 ### 2.1 Spatial Queries
 
-| Method                        | Purpose                                      |
-| ----------------------------- | -------------------------------------------- |
-| `query_chunks_for_view(...)`  | Find chunks intersecting an nD slice         |
+| Method                       | Purpose                              |
+| ---------------------------- | ------------------------------------ |
+| `query_chunks_for_view(...)` | Find chunks intersecting an nD slice |
 
 ### 2.2 nD Visibility
 
-| Method                              | Purpose                                       |
-| ----------------------------------- | --------------------------------------------- |
-| `compute_nd_visibility_points(...)` | Hypersphere intersection for point clouds     |
-| `compute_nd_visibility_lines(...)`  | Endpoint-based visibility for line segments   |
-| `compute_nd_visibility_gsplats(...)`| Ellipsoid extent for Gaussian splats          |
-| `calculate_effective_radii(...)`    | Slice-through-higher-D radius                 |
-| `radii_to_visibility_mask(...)`     | Convert effective radii to a boolean mask     |
+| Method                               | Purpose                                     |
+| ------------------------------------ | ------------------------------------------- |
+| `compute_nd_visibility_points(...)`  | Hypersphere intersection for point clouds   |
+| `compute_nd_visibility_lines(...)`   | Endpoint-based visibility for line segments |
+| `compute_nd_visibility_gsplats(...)` | Ellipsoid extent for Gaussian splats        |
+| `calculate_effective_radii(...)`     | Slice-through-higher-D radius               |
+| `radii_to_visibility_mask(...)`      | Convert effective radii to a boolean mask   |
 
 ### 2.3 Decoding (multi-typed-array hot path)
 
-| Method                                                  | Purpose                          |
-| ------------------------------------------------------- | -------------------------------- |
-| `decode_quantized_u8` / `decode_quantized_u16`          | Dequantise compressed arrays     |
-| `decode_log_scalar_u8` / `decode_log_scalar_u16`        | Log-space decoding               |
-| `decode_lut_scalar_u8` / `decode_lut_scalar_u16`        | LUT scalar decoding              |
-| `decode_lut_row_u8` / `decode_lut_row_u16`              | LUT row (vector) decoding        |
-| `decode_broadcasted`                                    | Expand broadcast-encoded arrays  |
+| Method                                           | Purpose                         |
+| ------------------------------------------------ | ------------------------------- |
+| `decode_quantized_u8` / `decode_quantized_u16`   | Dequantise compressed arrays    |
+| `decode_log_scalar_u8` / `decode_log_scalar_u16` | Log-space decoding              |
+| `decode_lut_scalar_u8` / `decode_lut_scalar_u16` | LUT scalar decoding             |
+| `decode_lut_row_u8` / `decode_lut_row_u16`       | LUT row (vector) decoding       |
+| `decode_broadcasted`                             | Expand broadcast-encoded arrays |
 
 ### 2.4 Projection
 
-| Method                       | Purpose                                       |
-| ---------------------------- | --------------------------------------------- |
-| `extract_3d_positions`       | Extract display dims from nD positions        |
-| `calculate_bounds_3d`        | Compute 3D bbox from nD data                  |
-| `compact_by_mask`            | Remove invisible elements by boolean mask     |
-| `count_visible`              | Count non-zero mask values                    |
+| Method                 | Purpose                                   |
+| ---------------------- | ----------------------------------------- |
+| `extract_3d_positions` | Extract display dims from nD positions    |
+| `calculate_bounds_3d`  | Compute 3D bbox from nD data              |
+| `compact_by_mask`      | Remove invisible elements by boolean mask |
+| `count_visible`        | Count non-zero mask values                |
 
 ### 2.5 Gaussian Splats
 
-| Method                              | Purpose                                  |
-| ----------------------------------- | ---------------------------------------- |
-| `compute_gsplats_attenuation`       | Gaussian attenuation from nD distance    |
-| `extract_visible_cholesky_3d`       | Extract 3D Cholesky factors from nD      |
-| `compact_attenuated_amplitudes`     | Remove fully attenuated splats           |
-| `extract_cholesky_submatrix`        | Raw Cholesky submatrix for given dims    |
-| `mahalanobis_distance`              | nD Mahalanobis distance                  |
+| Method                          | Purpose                               |
+| ------------------------------- | ------------------------------------- |
+| `compute_gsplats_attenuation`   | Gaussian attenuation from nD distance |
+| `extract_visible_cholesky_3d`   | Extract 3D Cholesky factors from nD   |
+| `compact_attenuated_amplitudes` | Remove fully attenuated splats        |
+| `extract_cholesky_submatrix`    | Raw Cholesky submatrix for given dims |
+| `mahalanobis_distance`          | nD Mahalanobis distance               |
 
 ### 2.6 Line Clipping
 
-| Method                              | Purpose                                  |
-| ----------------------------------- | ---------------------------------------- |
-| `clip_segment_single`               | Clip one segment, return interp params   |
-| `clip_segments_batch`               | Clip many segments to nD slice bounds    |
-| `interpolate_clipped_positions`     | Reposition endpoints at clip boundaries  |
-| `interpolate_scalars_batch`         | Interpolate scalar attributes            |
-| `interpolate_colors_batch`          | Interpolate color attributes             |
-| `calculate_segment_lengths`         | Compute segment lengths for LOD          |
-| `mark_clipped_endpoints`            | Mark endpoints for cap-factor adjustment |
-| `lerp` / `lerp_vec3` / `distance_3d`| Math helpers                             |
+| Method                               | Purpose                                  |
+| ------------------------------------ | ---------------------------------------- |
+| `clip_segment_single`                | Clip one segment, return interp params   |
+| `clip_segments_batch`                | Clip many segments to nD slice bounds    |
+| `interpolate_clipped_positions`      | Reposition endpoints at clip boundaries  |
+| `interpolate_scalars_batch`          | Interpolate scalar attributes            |
+| `interpolate_colors_batch`           | Interpolate color attributes             |
+| `calculate_segment_lengths`          | Compute segment lengths for LOD          |
+| `mark_clipped_endpoints`             | Mark endpoints for cap-factor adjustment |
+| `lerp` / `lerp_vec3` / `distance_3d` | Math helpers                             |
 
 ---
 
@@ -129,7 +129,7 @@ thread.
 Crossing into WASM with a malformed buffer either crashes the worker
 (memory misalignment, OOB read) or produces silently wrong output. Every
 public entry point now has a JS-side validator that throws a descriptive
-`Error` *before* the call lands in WASM.
+`Error` _before_ the call lands in WASM.
 
 Two helpers cover the bulk:
 
@@ -203,9 +203,9 @@ WASM operates on JS `Uint8Array` / `Uint16Array` / `Float32Array` /
   resize / detach the buffer mid-call.
 - **Outputs are returned**: WASM allocates output buffers in its own
   heap and returns a copy to JS. The fallback mimics this — it
-  always returns *new* arrays, never a view into the input.
+  always returns _new_ arrays, never a view into the input.
 - **Worker boundary**: data crosses to/from the DataWorker as a
-  *transferable* (`postMessage(payload, [buffer])`). This requires the
+  _transferable_ (`postMessage(payload, [buffer])`). This requires the
   output buffer to be detachable, which is why the WASM side allocates
   a fresh buffer rather than overwriting an input.
 
@@ -226,11 +226,11 @@ make benchmark-wasm# Run wasm-vs-typescript benchmarks
 
 Output (committed to `public/wasm/` so the dev server can fetch them):
 
-| File                  | Purpose                              |
-| --------------------- | ------------------------------------ |
-| `luxar_wasm_bg.wasm`  | Compiled WASM binary                 |
-| `luxar_wasm.js`       | wasm-bindgen-generated JS bindings   |
-| `luxar_wasm.d.ts`     | TypeScript type definitions          |
+| File                 | Purpose                            |
+| -------------------- | ---------------------------------- |
+| `luxar_wasm_bg.wasm` | Compiled WASM binary               |
+| `luxar_wasm.js`      | wasm-bindgen-generated JS bindings |
+| `luxar_wasm.d.ts`    | TypeScript type definitions        |
 
 The Rust source lives in `src/wasm/rust/`; the parallel TS fallback in
 `src/wasm/typescript/`. New API additions touch all three: Rust impl,

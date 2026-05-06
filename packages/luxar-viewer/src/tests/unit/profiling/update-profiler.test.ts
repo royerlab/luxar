@@ -389,7 +389,10 @@ describe('UpdateProfiler — hierarchy', () => {
     });
     profiler.endUpdate();
 
-    const names = profiler.getTimings().children.map((c) => c.name).sort();
+    const names = profiler
+      .getTimings()
+      .children.map((c) => c.name)
+      .sort();
     expect(names).toEqual(['Inner', 'Outer']);
   });
 });

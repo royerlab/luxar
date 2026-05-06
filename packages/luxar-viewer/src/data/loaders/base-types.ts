@@ -144,8 +144,10 @@ export interface BaseLoader {
  * TViewState: The view state type (PointsViewState, LinesViewState, GSplatsViewState)
  * TLoadedData: The loaded data type (LoadedPointsData, LoadedLinesData, LoadedGSplatsData)
  */
-export interface SpatialDataLoader<TViewState extends BaseViewState, TLoadedData>
-  extends BaseLoader {
+export interface SpatialDataLoader<
+  TViewState extends BaseViewState,
+  TLoadedData,
+> extends BaseLoader {
   /**
    * Load data for the given view state.
    *

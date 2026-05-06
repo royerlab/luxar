@@ -77,10 +77,7 @@ describe('stats-aggregator', () => {
 
   it('skips loaders that do not expose getAccumulatorStats', () => {
     const loaders = new Map<string, DataLoader>([
-      [
-        'with',
-        makeLoader<DataLoader>(makeStats({ capacity: 10, memoryMB: 2 })),
-      ],
+      ['with', makeLoader<DataLoader>(makeStats({ capacity: 10, memoryMB: 2 }))],
       ['without', makeLoader<DataLoader>(undefined)],
     ]);
 
@@ -92,10 +89,7 @@ describe('stats-aggregator', () => {
 
   it('skips loaders whose getAccumulatorStats returns null', () => {
     const loaders = new Map<string, DataLoader>([
-      [
-        'real',
-        makeLoader<DataLoader>(makeStats({ capacity: 7, allocations: 1 })),
-      ],
+      ['real', makeLoader<DataLoader>(makeStats({ capacity: 7, allocations: 1 }))],
       ['nulled', makeLoader<DataLoader>(null)],
     ]);
 
@@ -107,14 +101,8 @@ describe('stats-aggregator', () => {
 
   it('aggregates lines loaders identically to points', () => {
     const loaders = new Map<string, LinesDataLoader>([
-      [
-        'a',
-        makeLoader<LinesDataLoader>(makeStats({ capacity: 200, growthEvents: 1 })),
-      ],
-      [
-        'b',
-        makeLoader<LinesDataLoader>(makeStats({ capacity: 100, growthEvents: 2 })),
-      ],
+      ['a', makeLoader<LinesDataLoader>(makeStats({ capacity: 200, growthEvents: 1 }))],
+      ['b', makeLoader<LinesDataLoader>(makeStats({ capacity: 100, growthEvents: 2 }))],
     ]);
 
     const aggregated = getAggregatedLinesAccumulatorStats(loaders);
@@ -125,14 +113,8 @@ describe('stats-aggregator', () => {
 
   it('aggregates gsplats loaders identically to points', () => {
     const loaders = new Map<string, GSplatsDataLoader>([
-      [
-        'a',
-        makeLoader<GSplatsDataLoader>(makeStats({ allocations: 5, memoryMB: 12.5 })),
-      ],
-      [
-        'b',
-        makeLoader<GSplatsDataLoader>(makeStats({ allocations: 2, memoryMB: 3.5 })),
-      ],
+      ['a', makeLoader<GSplatsDataLoader>(makeStats({ allocations: 5, memoryMB: 12.5 }))],
+      ['b', makeLoader<GSplatsDataLoader>(makeStats({ allocations: 2, memoryMB: 3.5 }))],
     ]);
 
     const aggregated = getAggregatedGSplatsAccumulatorStats(loaders);

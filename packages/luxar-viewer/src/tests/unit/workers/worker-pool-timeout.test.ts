@@ -108,12 +108,7 @@ describe('WorkerPool.withTimeout', () => {
     expect(pool.getWorkerCount()).toBe(2);
 
     const neverResolves = new Promise<number>(() => {});
-    const raced = pool.withTimeout(
-      'project',
-      neverResolves,
-      100,
-      workers[1] as unknown as Worker
-    );
+    const raced = pool.withTimeout('project', neverResolves, 100, workers[1] as unknown as Worker);
     vi.advanceTimersByTime(110);
     await expect(raced).rejects.toThrow();
 

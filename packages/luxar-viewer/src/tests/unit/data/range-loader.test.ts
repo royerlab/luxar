@@ -253,7 +253,12 @@ describe('RangeLoader.detectEncoding', () => {
   });
 
   it('rejects malformed prefix-matching encoding names', () => {
-    for (const name of ['lut_float32', 'bounded_scalar_uint32', 'log_scalar_float32', 'rgb_uint32']) {
+    for (const name of [
+      'lut_float32',
+      'bounded_scalar_uint32',
+      'log_scalar_float32',
+      'rgb_uint32',
+    ]) {
       const attrs: ArrayMetadata = { encoding: { name } };
       expect(() => RangeLoader.detectEncoding(attrs)).toThrow('Unknown encoding name');
     }
@@ -457,7 +462,11 @@ describe('RangeLoader.loadQuantized (via loadRanges)', () => {
     setMockData(new Uint8Array([0, 127, 255]));
 
     const attrs: ArrayMetadata = {
-      encoding: { name: 'rgb_uint8', bounds: [0, 1] as [number, number], original_dtype: 'float32' },
+      encoding: {
+        name: 'rgb_uint8',
+        bounds: [0, 1] as [number, number],
+        original_dtype: 'float32',
+      },
     };
     const output = new Float32Array(3);
     const ranges: LoadRange[] = [{ start: 0, end: 3 }];
@@ -501,7 +510,11 @@ describe('RangeLoader.loadQuantized (via loadRanges)', () => {
     setMockData(new Uint16Array([0, 32767, 65535]));
 
     const attrs: ArrayMetadata = {
-      encoding: { name: 'rgb_uint16', bounds: [0, 1] as [number, number], original_dtype: 'float32' },
+      encoding: {
+        name: 'rgb_uint16',
+        bounds: [0, 1] as [number, number],
+        original_dtype: 'float32',
+      },
     };
     const output = new Float32Array(3);
     const ranges: LoadRange[] = [{ start: 0, end: 3 }];
@@ -537,7 +550,11 @@ describe('RangeLoader.loadQuantized (via loadRanges)', () => {
     setMockData(new Uint8Array([0, 0, 0, 255, 128, 64]));
 
     const attrs: ArrayMetadata = {
-      encoding: { name: 'rgb_uint8', bounds: [0, 1] as [number, number], original_dtype: 'float32' },
+      encoding: {
+        name: 'rgb_uint8',
+        bounds: [0, 1] as [number, number],
+        original_dtype: 'float32',
+      },
     };
     const output = new Float32Array(6);
     const ranges: LoadRange[] = [{ start: 0, end: 2 }];

@@ -64,14 +64,14 @@ Groups:
 
 ### 1.2 Typography Tokens
 
-| Field          | Values                                            |
-| -------------- | ------------------------------------------------- |
-| `family.base`  | UI font stack                                     |
-| `family.mono`  | Code/monospace stack                              |
-| `family.display` | Headings                                        |
-| `size`         | `xs / sm / md / lg / xl / 2xl / 3xl`              |
-| `weight`       | `normal / medium / semibold / bold`               |
-| `lineHeight`   | `tight / normal / relaxed`                        |
+| Field            | Values                               |
+| ---------------- | ------------------------------------ |
+| `family.base`    | UI font stack                        |
+| `family.mono`    | Code/monospace stack                 |
+| `family.display` | Headings                             |
+| `size`           | `xs / sm / md / lg / xl / 2xl / 3xl` |
+| `weight`         | `normal / medium / semibold / bold`  |
+| `lineHeight`     | `tight / normal / relaxed`           |
 
 ### 1.3 Spacing Scale
 
@@ -95,16 +95,16 @@ consumers always go through `ThemeManager.getInstance()`.
 
 ### 2.1 Public API
 
-| Method                         | Returns / Side effect                                  |
-| ------------------------------ | ------------------------------------------------------ |
-| `getInstance()`                | The singleton                                          |
-| `setTheme(id)`                 | Activates a theme + persists choice + notifies listeners |
-| `getCurrentTheme()`            | The active `Theme`                                     |
-| `getTheme(id)`                 | Lookup by id (returns `undefined` if not registered)   |
-| `getAllThemes()`               | Array of registered themes                             |
-| `registerTheme(theme)`         | Adds to the registry; idempotent on duplicate id       |
-| `onChange(listener)`           | Subscribe; returns unsubscribe function                |
-| `resetInstance()`              | **Tests only** — wipe the singleton                    |
+| Method                 | Returns / Side effect                                    |
+| ---------------------- | -------------------------------------------------------- |
+| `getInstance()`        | The singleton                                            |
+| `setTheme(id)`         | Activates a theme + persists choice + notifies listeners |
+| `getCurrentTheme()`    | The active `Theme`                                       |
+| `getTheme(id)`         | Lookup by id (returns `undefined` if not registered)     |
+| `getAllThemes()`       | Array of registered themes                               |
+| `registerTheme(theme)` | Adds to the registry; idempotent on duplicate id         |
+| `onChange(listener)`   | Subscribe; returns unsubscribe function                  |
+| `resetInstance()`      | **Tests only** — wipe the singleton                      |
 
 ### 2.2 Initialisation Order
 
@@ -132,11 +132,11 @@ Every Theme field is flattened to a CSS custom property on `:root`:
 
 ```css
 :root {
-  --luxar-color-bg-primary:   #111111;
+  --luxar-color-bg-primary: #111111;
   --luxar-color-text-primary: #f5f5f5;
-  --luxar-spacing-md:         8px;
-  --luxar-radius-md:          6px;
-  --luxar-z-modal:            2000;
+  --luxar-spacing-md: 8px;
+  --luxar-radius-md: 6px;
+  --luxar-z-modal: 2000;
   /* ... */
 }
 ```
@@ -146,8 +146,8 @@ Component CSS reads these directly:
 ```css
 .luxar-panel {
   background: var(--luxar-color-bg-secondary);
-  color:      var(--luxar-color-text-primary);
-  padding:    var(--luxar-spacing-md);
+  color: var(--luxar-color-text-primary);
+  padding: var(--luxar-spacing-md);
   border-radius: var(--luxar-radius-md);
 }
 ```
@@ -204,11 +204,21 @@ import type { Theme } from './themes/types';
 
 const cyberpunk: Theme = {
   meta: { id: 'cyberpunk', name: 'Cyberpunk' },
-  colors: { /* ... */ },
-  typography: { /* ... */ },
-  spacing: { /* ... */ },
-  effects: { /* ... */ },
-  zIndex: { /* ... */ },
+  colors: {
+    /* ... */
+  },
+  typography: {
+    /* ... */
+  },
+  spacing: {
+    /* ... */
+  },
+  effects: {
+    /* ... */
+  },
+  zIndex: {
+    /* ... */
+  },
 };
 
 ThemeManager.getInstance().registerTheme(cyberpunk);

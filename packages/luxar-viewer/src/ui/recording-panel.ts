@@ -2002,12 +2002,7 @@ export class RecordingPanel {
 
   /** Compute video bitrate based on canvas size, FPS, and quality preset */
   private computeVideoBitrate(width: number, height: number): number {
-    return computeVideoBitratePure(
-      width,
-      height,
-      this.options.videoFPS,
-      this.options.videoQuality
-    );
+    return computeVideoBitratePure(width, height, this.options.videoFPS, this.options.videoQuality);
   }
 
   /**

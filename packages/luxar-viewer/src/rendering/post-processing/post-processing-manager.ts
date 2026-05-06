@@ -43,11 +43,7 @@ import {
   float32ToHalfFloat,
   flipPixelsVerticallyRGBA,
 } from './hdr-pixel-utils';
-import {
-  estimatePostProcMemoryMB,
-  formatHDRExrLogLine,
-  pickResultBuffer,
-} from './hdr-capture';
+import { estimatePostProcMemoryMB, formatHDRExrLogLine, pickResultBuffer } from './hdr-capture';
 import {
   type PostProcessingDurableState,
   applyBloomState,
@@ -63,10 +59,7 @@ import {
   captureToneMappingState,
   captureVignetteState,
 } from './context-recovery';
-import {
-  type OrderedEffect,
-  partitionEffectsIntoPasses,
-} from './effect-orchestrator';
+import { type OrderedEffect, partitionEffectsIntoPasses } from './effect-orchestrator';
 import { toneMappingModeName } from './tone-mapping-mode-names';
 import {
   applyToneMapping,
@@ -555,7 +548,10 @@ export class PostProcessingManager {
       this.bloomEffect = new BloomEffect(
         buildBloomConstructorOptions(settings, this.bloomLevels)
       ) as BloomEffectTyped;
-      applyBloomRadius(this.bloomEffect as unknown as { mipmapBlurPass?: { radius: number } }, settings.radius);
+      applyBloomRadius(
+        this.bloomEffect as unknown as { mipmapBlurPass?: { radius: number } },
+        settings.radius
+      );
 
       this.rebuildEffectPass();
       log.success(Modules.POST_PROCESSING, 'Bloom enabled');
@@ -1661,7 +1657,11 @@ export class PostProcessingManager {
     // The helper allocates with `new Uint8ClampedArray(N)` which is always
     // ArrayBuffer-backed in practice; the cast widens TS's defensive
     // ArrayBufferLike to the concrete ArrayBuffer that ImageData wants.
-    const flipped = flipPixelsVerticallyRGBA(pixels, width, height) as Uint8ClampedArray<ArrayBuffer>;
+    const flipped = flipPixelsVerticallyRGBA(
+      pixels,
+      width,
+      height
+    ) as Uint8ClampedArray<ArrayBuffer>;
     return new ImageData(flipped, width, height);
   }
 
@@ -1931,4 +1931,3 @@ export class PostProcessingManager {
     log.success(Modules.POST_PROCESSING, 'PostProcessing resources disposed');
   }
 }
-

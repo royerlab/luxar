@@ -56,10 +56,7 @@ export interface MSAASampleValidation {
  * Pure: takes the requested count and the GPU max, returns the
  * applied count plus an optional warning string.
  */
-export function validateMSAASamples(
-  requested: number,
-  maxSamples: number
-): MSAASampleValidation {
+export function validateMSAASamples(requested: number, maxSamples: number): MSAASampleValidation {
   let samples = requested;
   let warning: string | undefined;
 

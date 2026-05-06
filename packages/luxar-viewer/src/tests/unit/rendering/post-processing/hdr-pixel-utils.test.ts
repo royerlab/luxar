@@ -81,15 +81,57 @@ describe('flipPixelsVerticallyRGBA', () => {
     // 2 wide × 3 tall, 4 components per pixel. Rows are 8 bytes each.
     // y=0 row: [1..8], y=1 row: [9..16], y=2 row: [17..24].
     const pixels = new Uint8Array([
-      1, 2, 3, 4, 5, 6, 7, 8, // y=0
-      9, 10, 11, 12, 13, 14, 15, 16, // y=1
-      17, 18, 19, 20, 21, 22, 23, 24, // y=2
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8, // y=0
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16, // y=1
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24, // y=2
     ]);
     const out = flipPixelsVerticallyRGBA(pixels, 2, 3);
     expect(Array.from(out)).toEqual([
-      17, 18, 19, 20, 21, 22, 23, 24, // y=0 ← was y=2
-      9, 10, 11, 12, 13, 14, 15, 16, // y=1 unchanged
-      1, 2, 3, 4, 5, 6, 7, 8, // y=2 ← was y=0
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24, // y=0 ← was y=2
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16, // y=1 unchanged
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8, // y=2 ← was y=0
     ]);
   });
 

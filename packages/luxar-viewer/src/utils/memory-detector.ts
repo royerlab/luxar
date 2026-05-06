@@ -63,7 +63,6 @@ export function detectMemory(): MemoryInfo {
   // Try device memory API (gives total device RAM in GB)
   const deviceGB = getDeviceMemoryGB();
   if (deviceGB !== undefined) {
-
     // Estimate available JS heap based on device RAM
     // Browsers typically allow ~25-50% of system RAM for JS heap
     // We'll use a conservative estimate

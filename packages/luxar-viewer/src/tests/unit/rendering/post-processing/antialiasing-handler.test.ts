@@ -89,7 +89,8 @@ describe('checkMSAACapability', () => {
     return {
       MAX_SAMPLES: 0x8d57,
       getParameter: (p: number) => (p === 0x8d57 ? maxSamples : 0),
-      getExtension: (name: string) => (name === 'EXT_color_buffer_float' && hasFloatExt ? {} : null),
+      getExtension: (name: string) =>
+        name === 'EXT_color_buffer_float' && hasFloatExt ? {} : null,
     } as unknown as WebGL2RenderingContext;
   }
 

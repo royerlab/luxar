@@ -57,9 +57,7 @@ function createDisplayRow(label: string, tooltip: string): HTMLElement {
   return row;
 }
 
-export function setupPerformanceControls(
-  context: PerformanceSetupContext
-): PerformanceSetupResult {
+export function setupPerformanceControls(context: PerformanceSetupContext): PerformanceSetupResult {
   const { gui, settings, manager, saveSettings, triggerAnimation } = context;
 
   const performanceFolder = gui.addFolder('⚡ Performance');

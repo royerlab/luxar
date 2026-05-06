@@ -1031,8 +1031,8 @@ location /data/ {
 
 ### Tolerance computer (tolerance-computer.ts)
 
-| Symbol                                                              | Description                                                                                  |
-| ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Symbol                                                               | Description                                                                                  |
+| -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
 | `computeTolerance(geometryType, displayDims, ndim, dims?, options?)` | Geometry-aware per-dimension tolerance. Used by `SpatialQueryBuilder`'s geometry-aware path. |
 
 ### Monitoring Management (data-monitor-manager.ts)

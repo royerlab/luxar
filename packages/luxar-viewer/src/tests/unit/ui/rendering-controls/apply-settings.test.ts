@@ -46,7 +46,14 @@ function makeStubs() {
   const updateClippingControlsState = vi.fn();
   const triggerAnimation = vi.fn();
 
-  return { settings, postProcessing, sceneManager, animationController, updateClippingControlsState, triggerAnimation };
+  return {
+    settings,
+    postProcessing,
+    sceneManager,
+    animationController,
+    updateClippingControlsState,
+    triggerAnimation,
+  };
 }
 
 let stubs: ReturnType<typeof makeStubs>;

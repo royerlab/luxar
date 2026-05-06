@@ -43,9 +43,7 @@ describe('threeToPmndrsToneMapping', () => {
     expect(threeToPmndrsToneMapping(THREE.CineonToneMapping)).toBe(
       ToneMappingMode.OPTIMIZED_CINEON
     );
-    expect(threeToPmndrsToneMapping(THREE.ACESFilmicToneMapping)).toBe(
-      ToneMappingMode.ACES_FILMIC
-    );
+    expect(threeToPmndrsToneMapping(THREE.ACESFilmicToneMapping)).toBe(ToneMappingMode.ACES_FILMIC);
     expect(threeToPmndrsToneMapping(THREE.AgXToneMapping)).toBe(ToneMappingMode.AGX);
     expect(threeToPmndrsToneMapping(THREE.NeutralToneMapping)).toBe(ToneMappingMode.NEUTRAL);
   });

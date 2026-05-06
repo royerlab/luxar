@@ -26,12 +26,9 @@ const _origConstruct = Reflect.construct;
 Reflect.construct = function patchedConstruct<T extends object>(
   target: (...args: unknown[]) => unknown,
   argumentsList: ArrayLike<unknown>,
-  newTarget?: (...args: unknown[]) => unknown,
+  newTarget?: (...args: unknown[]) => unknown
 ): T {
-  if (
-    typeof target === 'function' &&
-    (target as { prototype?: unknown }).prototype === undefined
-  ) {
+  if (typeof target === 'function' && (target as { prototype?: unknown }).prototype === undefined) {
     const arrow = target as AnyFn;
     const wrapped = function wrapped(this: unknown, ...args: unknown[]) {
       return arrow.apply(this, args);
@@ -39,13 +36,13 @@ Reflect.construct = function patchedConstruct<T extends object>(
     return _origConstruct(
       wrapped as unknown as new (...a: unknown[]) => T,
       argumentsList,
-      (newTarget ?? wrapped) as unknown as new (...a: unknown[]) => T,
+      (newTarget ?? wrapped) as unknown as new (...a: unknown[]) => T
     );
   }
   return _origConstruct(
     target as unknown as new (...a: unknown[]) => T,
     argumentsList,
-    newTarget as unknown as new (...a: unknown[]) => T,
+    newTarget as unknown as new (...a: unknown[]) => T
   );
 } as typeof Reflect.construct;
 

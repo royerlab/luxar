@@ -95,9 +95,7 @@ export function applyToneMapping(
  * Read the current tone-mapping mode back as a THREE constant. Returns
  * `ACESFilmicToneMapping` when the effect is absent.
  */
-export function readToneMapping(
-  effect: ToneMappingTarget | null | undefined
-): THREE.ToneMapping {
+export function readToneMapping(effect: ToneMappingTarget | null | undefined): THREE.ToneMapping {
   if (!effect) return THREE.ACESFilmicToneMapping;
   return pmndrsToThreeToneMapping(effect.mode);
 }
@@ -106,10 +104,7 @@ export function readToneMapping(
  * Set the global exposure (log2 stops) on the tone-mapping effect.
  * No-op when the effect is absent.
  */
-export function applyExposure(
-  effect: ToneMappingTarget | null | undefined,
-  value: number
-): void {
+export function applyExposure(effect: ToneMappingTarget | null | undefined, value: number): void {
   if (effect) effect.exposure = value;
 }
 

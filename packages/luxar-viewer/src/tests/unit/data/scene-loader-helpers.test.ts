@@ -102,4 +102,3 @@ describe('applyEffectiveAttrs', () => {
     expect(result.opacity).toBeCloseTo(0.125, 5);
   });
 });
-

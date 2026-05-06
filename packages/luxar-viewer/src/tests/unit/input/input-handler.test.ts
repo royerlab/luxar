@@ -331,21 +331,14 @@ describe('InputHandler Utilities', () => {
   describe('generateNavigationHelp', () => {
     it('reports the all-displayed sentinel when no hidden dimensions exist', () => {
       const dims = createDims(3, [0, 1, 2]);
-      expect(generateNavigationHelp(0, dims)).toEqual([
-        'All dimensions are displayed (3D view)',
-      ]);
+      expect(generateNavigationHelp(0, dims)).toEqual(['All dimensions are displayed (3D view)']);
     });
 
     it('reports the selected dimension and its formatted current value', () => {
       const dims = createDims(
         4,
         [0, 1, 2],
-        [
-          { name: 'X' },
-          { name: 'Y' },
-          { name: 'Z' },
-          { name: 'time', step: 1, discrete: true },
-        ]
+        [{ name: 'X' }, { name: 'Y' }, { name: 'Z' }, { name: 'time', step: 1, discrete: true }]
       );
       dims.currentStep[3] = 7;
 
@@ -433,16 +426,12 @@ describe('InputHandler Utilities', () => {
 });
 
 describe('InputHandler Type Definitions', () => {
-  it(
-    'should export InputHandler class',
-    { timeout: 15_000 },
-    async () => {
-      // Dynamic import to avoid triggering complex dependencies.
-      // The import pulls in the full dependency graph (THREE.js, scene managers,
-      // UI components), which normally takes ~600ms but can exceed 5s under load.
-      const module = await import('../../../input/input-handler');
-      expect(module.InputHandler).toBeDefined();
-      expect(typeof module.InputHandler).toBe('function');
-    }
-  );
+  it('should export InputHandler class', { timeout: 15_000 }, async () => {
+    // Dynamic import to avoid triggering complex dependencies.
+    // The import pulls in the full dependency graph (THREE.js, scene managers,
+    // UI components), which normally takes ~600ms but can exceed 5s under load.
+    const module = await import('../../../input/input-handler');
+    expect(module.InputHandler).toBeDefined();
+    expect(typeof module.InputHandler).toBe('function');
+  });
 });

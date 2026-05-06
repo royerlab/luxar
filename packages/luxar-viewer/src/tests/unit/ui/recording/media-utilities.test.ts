@@ -51,9 +51,9 @@ describe('getSupportedMimeType', () => {
   });
 
   it('falls back to VP8 when VP9 unsupported', () => {
-    expect(
-      getSupportedMimeType(makeRecorderStub(['video/webm;codecs=vp8', 'video/webm']))
-    ).toBe('video/webm;codecs=vp8');
+    expect(getSupportedMimeType(makeRecorderStub(['video/webm;codecs=vp8', 'video/webm']))).toBe(
+      'video/webm;codecs=vp8'
+    );
   });
 
   it('falls back to bare video/webm', () => {

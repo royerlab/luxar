@@ -137,11 +137,7 @@ export class GPUBufferPool {
     gsplats: { allocations: 0, reuses: 0, evictions: 0 },
   };
 
-  constructor(
-    maxPoolSize: number = 20,
-    evictionFrames: number = 300,
-    evictBatchSize: number = 5
-  ) {
+  constructor(maxPoolSize: number = 20, evictionFrames: number = 300, evictBatchSize: number = 5) {
     this.maxPoolSize = maxPoolSize;
     this.evictionFrames = evictionFrames;
     this.evictBatchSize = Math.max(1, evictBatchSize);
@@ -1030,8 +1026,7 @@ export class GPUBufferPool {
     const pointsEvicted = evictFromPool(this.pointBuffers, batchCap);
     const remaining1 = batchCap === Number.POSITIVE_INFINITY ? batchCap : batchCap - pointsEvicted;
     const linesEvicted = evictFromPool(this.lineBuffers, remaining1);
-    const remaining2 =
-      batchCap === Number.POSITIVE_INFINITY ? batchCap : remaining1 - linesEvicted;
+    const remaining2 = batchCap === Number.POSITIVE_INFINITY ? batchCap : remaining1 - linesEvicted;
     const gsplatsEvicted = evictFromPool(this.gsplatBuffers, remaining2);
 
     evicted = pointsEvicted + linesEvicted + gsplatsEvicted;

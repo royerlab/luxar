@@ -89,9 +89,7 @@ describe('detectHDRCapabilities (no renderer)', () => {
   });
 
   it('prefers Rec2020 when both Rec2020 gamut AND HDR are detected', () => {
-    const restore = installMatchMedia(
-      new Set(['(color-gamut: rec2020)', '(dynamic-range: high)'])
-    );
+    const restore = installMatchMedia(new Set(['(color-gamut: rec2020)', '(dynamic-range: high)']));
     try {
       const caps = detectHDRCapabilities();
       expect(caps.rec2020Gamut).toBe(true);
@@ -104,9 +102,7 @@ describe('detectHDRCapabilities (no renderer)', () => {
 
   it('falls back to display-p3 when Rec2020 is matched but HDR is not', () => {
     // Rec2020 without HDR signal → not promoted, P3 (matched here too) wins.
-    const restore = installMatchMedia(
-      new Set(['(color-gamut: rec2020)', '(color-gamut: p3)'])
-    );
+    const restore = installMatchMedia(new Set(['(color-gamut: rec2020)', '(color-gamut: p3)']));
     try {
       const caps = detectHDRCapabilities();
       expect(caps.recommendedColorSpace).toBe('display-p3');
@@ -200,9 +196,7 @@ describe('detectHDRCapabilities (with renderer)', () => {
 describe('isHDRDisplay', () => {
   it('returns true only when ALL four signals are present and a wide gamut is matched', () => {
     expect(
-      isHDRDisplay(
-        makeCaps({ hdr: true, deepColor: true, floatTextures: true, p3Gamut: true })
-      )
+      isHDRDisplay(makeCaps({ hdr: true, deepColor: true, floatTextures: true, p3Gamut: true }))
     ).toBe(true);
     expect(
       isHDRDisplay(
@@ -213,23 +207,15 @@ describe('isHDRDisplay', () => {
 
   it('returns false when any single requirement is missing', () => {
     expect(
-      isHDRDisplay(
-        makeCaps({ hdr: false, deepColor: true, floatTextures: true, p3Gamut: true })
-      )
+      isHDRDisplay(makeCaps({ hdr: false, deepColor: true, floatTextures: true, p3Gamut: true }))
     ).toBe(false);
     expect(
-      isHDRDisplay(
-        makeCaps({ hdr: true, deepColor: false, floatTextures: true, p3Gamut: true })
-      )
+      isHDRDisplay(makeCaps({ hdr: true, deepColor: false, floatTextures: true, p3Gamut: true }))
     ).toBe(false);
     expect(
-      isHDRDisplay(
-        makeCaps({ hdr: true, deepColor: true, floatTextures: false, p3Gamut: true })
-      )
+      isHDRDisplay(makeCaps({ hdr: true, deepColor: true, floatTextures: false, p3Gamut: true }))
     ).toBe(false);
-    expect(
-      isHDRDisplay(makeCaps({ hdr: true, deepColor: true, floatTextures: true }))
-    ).toBe(false); // no wide gamut
+    expect(isHDRDisplay(makeCaps({ hdr: true, deepColor: true, floatTextures: true }))).toBe(false); // no wide gamut
   });
 
   it('returns false for the all-defaults capabilities', () => {
@@ -249,9 +235,7 @@ describe('getOptimalRenderTargetType', () => {
   });
 
   it('returns HalfFloatType when only floatTextures is present (better SDR gradients)', () => {
-    expect(getOptimalRenderTargetType(makeCaps({ floatTextures: true }))).toBe(
-      THREE.HalfFloatType
-    );
+    expect(getOptimalRenderTargetType(makeCaps({ floatTextures: true }))).toBe(THREE.HalfFloatType);
   });
 
   it('falls back to UnsignedByteType when floatTextures is missing', () => {
@@ -277,10 +261,7 @@ describe('configureHDRRenderer', () => {
   });
 
   it('logs the Rec2020+HDR success message', () => {
-    configureHDRRenderer(
-      {} as THREE.WebGLRenderer,
-      makeCaps({ rec2020Gamut: true, hdr: true })
-    );
+    configureHDRRenderer({} as THREE.WebGLRenderer, makeCaps({ rec2020Gamut: true, hdr: true }));
     expect(logSpy).toHaveBeenCalled();
     const messages: string[] = logSpy.mock.calls.map((c: unknown[]) => c[0] as string);
     expect(messages.some((m) => m.includes('Rec2020 gamut'))).toBe(true);

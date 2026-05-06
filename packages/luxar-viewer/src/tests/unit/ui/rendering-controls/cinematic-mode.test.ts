@@ -69,7 +69,15 @@ function makeStubContext(overrides: Partial<RenderingSettings> = {}): {
     refreshAllControllers,
   };
 
-  return { ctx, settings, postProcessing, sceneManager, saveSettings, triggerAnimation, refreshAllControllers };
+  return {
+    ctx,
+    settings,
+    postProcessing,
+    sceneManager,
+    saveSettings,
+    triggerAnimation,
+    refreshAllControllers,
+  };
 }
 
 describe('TONE_MAPPING_MAP', () => {

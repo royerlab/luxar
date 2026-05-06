@@ -169,10 +169,7 @@ export class RangeLoader {
     if (attrs && ArrayDecoder.isArrayRef(attrs)) {
       const targetPath = attrs.encoding!.target!;
       if (this._verbose) {
-        log.info(
-          this.config.logModule,
-          `${logPrefix ?? 'RangeLoader'}: Array ref → ${targetPath}`
-        );
+        log.info(this.config.logModule, `${logPrefix ?? 'RangeLoader'}: Array ref → ${targetPath}`);
       }
 
       const targetLoc = zarr.root(zarrStore).resolve(targetPath);

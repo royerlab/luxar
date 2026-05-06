@@ -456,9 +456,7 @@ export class NodeFactory {
    */
   applyTransform(object: THREE.Object3D, transform: readonly number[]): void {
     if (transform.length !== 16) {
-      throw new Error(
-        `Invalid transform length: ${transform.length} (expected 16)`
-      );
+      throw new Error(`Invalid transform length: ${transform.length} (expected 16)`);
     }
 
     this.validateTransformFormat(transform);

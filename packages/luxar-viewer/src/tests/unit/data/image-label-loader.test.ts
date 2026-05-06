@@ -78,10 +78,7 @@ function createLoader(maxCacheBytes = 50 * 1024 * 1024): ImageLabelLoader {
   return new ImageLabelLoader(store, rootLoc, maxCacheBytes);
 }
 
-function setupMocks(
-  offsets: BigUint64Array,
-  imageData: Uint8Array
-): void {
+function setupMocks(offsets: BigUint64Array, imageData: Uint8Array): void {
   const mockOffsetsArr = { dtype: 'uint64' };
   const mockBytesArr = { dtype: 'uint8' };
 
@@ -109,11 +106,7 @@ describe('ImageLabelLoader', () => {
     it('returns a blob URL for a valid image', async () => {
       const loader = createLoader();
       const offsets = makeOffsets([6, 8, 6]); // 3 images
-      const imageData = new Uint8Array([
-        ...JPEG_HEADER,
-        ...PNG_HEADER,
-        ...JPEG_HEADER,
-      ]);
+      const imageData = new Uint8Array([...JPEG_HEADER, ...PNG_HEADER, ...JPEG_HEADER]);
       setupMocks(offsets, imageData);
 
       const url = await loader.getImageUrl('/node', 0);

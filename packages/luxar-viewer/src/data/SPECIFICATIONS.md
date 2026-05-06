@@ -1143,9 +1143,7 @@ async function loadLinesForView(
   const vertices = await loadVertexRanges(store, vertexRanges, attrs.ndim);
   const widths = await loadWidthRanges(store, vertexRanges);
   const colors = attrs.has_colors ? await loadColorRanges(store, vertexRanges) : null;
-  const sharpness = attrs.has_sharpness
-    ? await loadSharpnessRanges(store, vertexRanges)
-    : null;
+  const sharpness = attrs.has_sharpness ? await loadSharpnessRanges(store, vertexRanges) : null;
 
   // Build local index remapping
   // Map global vertex indices → local array indices

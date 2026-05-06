@@ -230,10 +230,22 @@ export interface ZarrSceneAttrs {
  * rejects row-major payloads with translation at indices [3,7,11].
  */
 export type Matrix4x4 = readonly [
-  number, number, number, number,
-  number, number, number, number,
-  number, number, number, number,
-  number, number, number, number,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
 ];
 
 /**

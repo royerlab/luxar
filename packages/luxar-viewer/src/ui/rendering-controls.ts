@@ -32,10 +32,7 @@ import type { AdaptiveDPRManager } from '../rendering/adaptive-dpr-manager';
 import type { ZarrViewerConfig } from '../types/zarr';
 import { extractRenderingOverrides } from '../config/viewer-config-utils';
 
-export type {
-  CinematicSnapshot,
-  CinematicSnapshotKeys,
-} from './rendering-controls/cinematic-mode';
+export type { CinematicSnapshot, CinematicSnapshotKeys } from './rendering-controls/cinematic-mode';
 
 /**
  * Advanced rendering parameters GUI for real-time visual control.

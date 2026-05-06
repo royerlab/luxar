@@ -102,9 +102,11 @@ export interface PointsAccumulatorTypes {
  *
  * Type is detected on first fill() and remains fixed for the accumulator's lifetime.
  */
-export class LoadedPointsDataAccumulator
-  implements DataAccumulator<LoadedPointsData, [number], [number, Partial<LoadedPointsData>]>
-{
+export class LoadedPointsDataAccumulator implements DataAccumulator<
+  LoadedPointsData,
+  [number],
+  [number, Partial<LoadedPointsData>]
+> {
   // Persistent buffers (typed based on data)
   private positionBuffer: Float32Array; // Always Float32
   private colorBuffer: Float32Array | Uint8Array | Uint16Array;
@@ -514,14 +516,11 @@ export interface LinesAccumulatorTypes {
  *
  * Type is detected on first fill() and remains fixed for the accumulator's lifetime.
  */
-export class LinesDataAccumulator
-  implements
-    DataAccumulator<
-      LoadedLinesData,
-      [number, number],
-      [number, number, Partial<LoadedLinesData>]
-    >
-{
+export class LinesDataAccumulator implements DataAccumulator<
+  LoadedLinesData,
+  [number, number],
+  [number, number, Partial<LoadedLinesData>]
+> {
   // FLAT buffers (not nested!)
   private vertexBuffer: Float32Array; // ndim-dimensional vertices
   private segmentBuffer: Uint32Array; // index pairs
@@ -800,9 +799,11 @@ export interface GSplatsAccumulatorTypes {
  *
  * Type is detected on first fill() and remains fixed for the accumulator's lifetime.
  */
-export class GSplatsDataAccumulator
-  implements DataAccumulator<LoadedGSplatsData, [number], [number, Partial<LoadedGSplatsData>]>
-{
+export class GSplatsDataAccumulator implements DataAccumulator<
+  LoadedGSplatsData,
+  [number],
+  [number, Partial<LoadedGSplatsData>]
+> {
   private centerBuffer: Float32Array;
   private amplitudeBuffer: Float32Array;
   private choleskyBuffer: Float32Array; // CORRECT: for choleskyFactors field

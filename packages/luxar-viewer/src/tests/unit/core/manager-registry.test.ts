@@ -13,8 +13,7 @@ interface FakeManager {
   dispose: ReturnType<typeof vi.fn> & (() => void);
 }
 
-const fake = (): FakeManager =>
-  ({ dispose: vi.fn() }) as unknown as FakeManager;
+const fake = (): FakeManager => ({ dispose: vi.fn() }) as unknown as FakeManager;
 
 describe('ManagerRegistry', () => {
   beforeEach(() => {

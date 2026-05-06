@@ -130,7 +130,8 @@ describe('PostProcessingManager.captureHDRAsEXR', () => {
    */
   async function callCaptureHDR(options?: { type?: THREE.TextureDataType }) {
     // Dynamically import to get the actual method
-    const { PostProcessingManager } = await import('../../../rendering/post-processing/post-processing-manager');
+    const { PostProcessingManager } =
+      await import('../../../rendering/post-processing/post-processing-manager');
 
     // Create an instance with mocked internals
     const manager = Object.create(PostProcessingManager.prototype);

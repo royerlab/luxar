@@ -136,9 +136,7 @@ test.describe('Test Fixture Rendering', () => {
         drawRangeCount !== undefined && drawRangeCount !== Infinity
           ? Math.min(drawRangeCount, colorAttr.count)
           : colorAttr.count;
-      const colorArr = Array.from(
-        colorAttr.array.subarray(0, actualCount * 3)
-      ) as number[];
+      const colorArr = Array.from(colorAttr.array.subarray(0, actualCount * 3)) as number[];
       // The fixture stores points along the X axis with index == x-position, so
       // sort by x to recover the input ordering (the loader/spatial index does
       // not preserve insertion order).
