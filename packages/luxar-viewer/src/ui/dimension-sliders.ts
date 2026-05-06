@@ -3,6 +3,13 @@ import { sceneDimsManager } from '../scene/scene-dims-manager';
 import type { DimensionAnimationManager } from '../scene/dimension-animation-manager';
 import { config } from '../config';
 import { log, Modules } from '../utils/log';
+import {
+  clampWithCyclicWrap,
+  valueToFraction,
+  fractionToValue,
+  fractionToThumbLeft,
+  clampInteger,
+} from './slider-math-utils';
 
 /**
  * Configuration interface for initializing dimension sliders.
@@ -474,16 +481,10 @@ export class DimensionSliders {
 
       if (event.key === 'ArrowUp' || event.key === 'ArrowLeft' || event.key === '[') {
         event.preventDefault();
-        newVal = currentVal - 1;
-        if (newVal < min) {
-          newVal = isCyclic ? max : min; // Wrap if cyclic
-        }
+        newVal = clampWithCyclicWrap(currentVal - 1, min, max, isCyclic);
       } else if (event.key === 'ArrowDown' || event.key === 'ArrowRight' || event.key === ']') {
         event.preventDefault();
-        newVal = currentVal + 1;
-        if (newVal > max) {
-          newVal = isCyclic ? min : max; // Wrap if cyclic
-        }
+        newVal = clampWithCyclicWrap(currentVal + 1, min, max, isCyclic);
       }
 
       if (newVal !== null) {
@@ -732,9 +733,7 @@ export class DimensionSliders {
     if (isDiscrete) {
       slider.value = String(currentValue);
     } else {
-      const range = max - min;
-      const fraction = range === 0 ? 0.5 : (currentValue - min) / range;
-      slider.value = String(Math.round(fraction * 1000));
+      slider.value = String(Math.round(valueToFraction(currentValue, min, max) * 1000));
     }
 
     this.updateSliderVisuals(dimIndex, currentValue, isDiscrete);
@@ -747,9 +746,7 @@ export class DimensionSliders {
       } else {
         const fraction = parseInt(slider.value) / 1000;
         const [min, max] = this.dimensionRanges[dimIndex];
-        const range = max - min;
-        // Handle edge case: dimension with no range (single value)
-        value = range === 0 ? min : min + fraction * range;
+        value = fractionToValue(fraction, min, max);
       }
 
       sceneDimsManager.setDimensionValue(dimIndex, value);
@@ -765,25 +762,19 @@ export class DimensionSliders {
         if (isDiscrete) {
           const currentVal = parseFloat(slider.value);
           const sliderStep = parseFloat(slider.step);
-          let newVal =
+          const candidate =
             event.key === 'ArrowLeft' ? currentVal - sliderStep : currentVal + sliderStep;
 
-          // Apply cyclic wrapping or clamping
-          if (newVal < min) {
-            newVal = isCyclic ? max : min;
-          } else if (newVal > max) {
-            newVal = isCyclic ? min : max;
-          }
-
-          slider.value = String(newVal);
+          slider.value = String(clampWithCyclicWrap(candidate, min, max, isCyclic));
         } else {
           const stepSize = event.shiftKey ? 10 : 1;
           const currentVal = parseInt(slider.value);
-          let newVal = event.key === 'ArrowLeft' ? currentVal - stepSize : currentVal + stepSize;
+          const candidate =
+            event.key === 'ArrowLeft' ? currentVal - stepSize : currentVal + stepSize;
 
-          // Clamp to range (continuous dimensions don't typically use cyclic)
-          newVal = Math.max(0, Math.min(1000, newVal));
-          slider.value = String(newVal);
+          // Continuous dimensions use the 0–1000 internal slider range and
+          // never wrap (cyclic is not meaningful for continuous values here).
+          slider.value = String(clampInteger(candidate, 0, 1000));
         }
         slider.dispatchEvent(new Event('input'));
       }
@@ -865,9 +856,7 @@ export class DimensionSliders {
 
     // Calculate fraction for visual position
     const [min, max] = this.dimensionRanges[dimIndex];
-    const range = max - min;
-    // Handle edge case: dimension with no range (single value)
-    const fraction = range === 0 ? 0.5 : (value - min) / range;
+    const fraction = valueToFraction(value, min, max);
 
     // Update progress bar
     const progressBar = document.getElementById(`luxar-dim-progress-${dimIndex}`);
@@ -880,8 +869,7 @@ export class DimensionSliders {
     if (thumb) {
       const containerWidth = thumb.parentElement?.offsetWidth || 300;
       const thumbWidth = 16;
-      const left = fraction * (containerWidth - thumbWidth);
-      thumb.style.left = `${left}px`;
+      thumb.style.left = `${fractionToThumbLeft(fraction, containerWidth, thumbWidth)}px`;
     }
   }
 
