@@ -501,60 +501,22 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
 
     // Use target buffer or allocate (ZERO allocation when targetBuffer provided!)
     const output = targetBuffer ? targetBuffer : new Float32Array(totalElements);
-
-    // Check for array_ref - needs special handling (zarrStore access to resolve target)
     const attrs = array.attrs as unknown as ArrayMetadata;
-    const isArrayRef = ArrayDecoder.isArrayRef(attrs);
 
-    if (isArrayRef) {
-      // Array reference: Resolve target and use RangeLoader for target
-      const targetPath = attrs.encoding!.target!;
-      log.info(
-        Modules.GSPLATS_SPATIAL_INDEX_LOADER,
-        `GSplats: Array ref: ${arrayName} → ${targetPath} (using RangeLoader)`
-      );
-
-      const storeToUse = this.zarrStore || this.zarrLocation.store;
-      const zarrRootLoc = zarr.root(storeToUse);
-      const targetLoc = zarrRootLoc.resolve(targetPath);
-      const targetArray = await zarr.open(targetLoc, { kind: 'array' });
-      const targetAttrs = targetArray.attrs as unknown as ArrayMetadata;
-
-      // Determine actual elements per splat from target array shape
-      const targetShape = targetArray.shape;
-      const actualElementsPerSplat = targetShape.length === 2 ? targetShape[1] : 1;
-
-      // Use RangeLoader for target
-      const encoding = RangeLoader.detectEncoding(targetAttrs);
-      log.info(
-        Modules.GSPLATS_SPATIAL_INDEX_LOADER,
-        `GSplats: Array ref target encoding: ${encoding}`
-      );
-
-      await this.rangeLoader.loadRanges(
-        targetArray,
-        targetAttrs,
-        ranges as LoadRange[],
-        output,
-        totalSplats,
-        actualElementsPerSplat
-      );
-
-      return output;
-    }
-
-    // Use RangeLoader for all other encodings (broadcasted, quantized, lut, direct)
-    // Determine actual elements per splat from array shape
-    const shape = array.shape;
-    const actualElementsPerSplat = shape.length === 2 ? shape[1] : 1;
-
-    await this.rangeLoader.loadRanges(
+    // The shared helper resolves array_ref against zarrStore when needed and
+    // delegates to RangeLoader.loadRanges for everything else. The hint
+    // elementsPerItem is only consulted when no ref is in play; ref targets
+    // recompute it from their own shape.
+    const storeToUse = this.zarrStore || this.zarrLocation.store;
+    await this.rangeLoader.loadRangesResolvingRef(
       array,
       attrs,
       ranges as LoadRange[],
       output,
       totalSplats,
-      actualElementsPerSplat
+      elementsPerSplat,
+      storeToUse,
+      'GSplats'
     );
 
     return output;
@@ -618,46 +580,28 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     const decodedFloat32 =
       targetBuffer instanceof Float32Array ? targetBuffer : new Float32Array(totalElements);
 
-    if (isArrayRef) {
-      // Resolve array_ref and load target
-      const targetPath = attrs.encoding!.target!;
-      const storeToUse = this.zarrStore || this.zarrLocation.store;
-      const zarrRootLoc = zarr.root(storeToUse);
-      const targetLoc = zarrRootLoc.resolve(targetPath);
-      const targetArray = await zarr.open(targetLoc, { kind: 'array' });
-      const targetAttrs = targetArray.attrs as unknown as ArrayMetadata;
-
-      await this.rangeLoader.loadRanges(
-        targetArray,
-        targetAttrs,
-        ranges as LoadRange[],
-        decodedFloat32,
-        totalSplats,
-        3
-      );
-
-      // Restore original_dtype from array_ref encoding
-      return this.restoreOriginalDtype(
-        decodedFloat32,
-        attrs.encoding?.original_dtype,
-        totalElements
-      );
-    }
-
-    // Use RangeLoader for encoded arrays
+    // Single dispatch for the encoded-direct AND array_ref cases. For ref,
+    // the helper opens the target and recomputes per-item element count from
+    // its shape; for direct, the hint below (the array's own shape[1] or 1)
+    // is used.
     const shape = array.shape;
     const actualElementsPerSplat = shape.length === 2 ? shape[1] : 1;
+    const storeToUse = this.zarrStore || this.zarrLocation.store;
 
-    await this.rangeLoader.loadRanges(
+    await this.rangeLoader.loadRangesResolvingRef(
       array,
       attrs,
       ranges as LoadRange[],
       decodedFloat32,
       totalSplats,
-      actualElementsPerSplat
+      actualElementsPerSplat,
+      storeToUse,
+      'GSplats'
     );
 
-    // Restore original_dtype for encoded arrays
+    // Original-dtype restoration uses the CALLER attrs (not the target's)
+    // so that array_ref'd colors with original_dtype=uint8 still bring back
+    // uint8 even though the target storage might be float32.
     return this.restoreOriginalDtype(decodedFloat32, attrs.encoding?.original_dtype, totalElements);
   }
 

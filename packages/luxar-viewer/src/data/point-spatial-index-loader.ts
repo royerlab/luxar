@@ -915,7 +915,13 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
   }
 
   /**
-   * Load array reference by resolving target and using RangeLoader.
+   * Load an array_ref attribute. Delegates to the shared
+   * RangeLoader.loadRangesResolvingRef helper, which opens the target,
+   * recomputes per-item element count from the target's shape, and runs
+   * RangeLoader.loadRanges against it.
+   *
+   * `actualElementsPerPoint` is passed as the non-ref hint; when an
+   * array_ref is in play it's ignored in favour of the target's shape.
    */
   private async loadArrayRefRanges(
     attrs: ArrayMetadata,
@@ -924,27 +930,20 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
     totalPoints: number,
     actualElementsPerPoint: number
   ): Promise<number> {
-    const targetPath = attrs.encoding!.target!;
-    log.info(Modules.SPATIAL_INDEX_LOADER, `Array ref: → ${targetPath} (using RangeLoader)`);
-
-    // Resolve target array
+    // The synthetic array_ref attrs has no usable .arrays handle of its own —
+    // pass the same Float32Array-shaped placeholder the original code did
+    // and let the helper switch into ref-resolution.
+    const placeholder = {} as zarr.Array<zarr.DataType, zarr.FetchStore>;
     const storeToUse = this.zarrStore || this.zarrLocation.store;
-    const zarrRootLoc = zarr.root(storeToUse);
-    const targetLoc = zarrRootLoc.resolve(targetPath);
-    const targetArray = await zarr.open(targetLoc, { kind: 'array' });
-    const targetAttrs = targetArray.attrs as unknown as ArrayMetadata;
-
-    // Use RangeLoader for target array (handles quantized, lut, broadcasted, direct)
-    const encoding = RangeLoader.detectEncoding(targetAttrs);
-    log.info(Modules.SPATIAL_INDEX_LOADER, `Array ref target encoding: ${encoding}`);
-
-    return this.rangeLoader.loadRanges(
-      targetArray,
-      targetAttrs,
+    return this.rangeLoader.loadRangesResolvingRef(
+      placeholder,
+      attrs,
       ranges,
       output,
       totalPoints,
-      actualElementsPerPoint
+      actualElementsPerPoint,
+      storeToUse,
+      'Points'
     );
   }
 

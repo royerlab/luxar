@@ -758,57 +758,21 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
 
     // Use target buffer or allocate (ZERO allocation when targetBuffer provided!)
     const output = targetBuffer ? targetBuffer : new Float32Array(totalElements);
-
-    // Check for array_ref - needs special handling (zarrStore access to resolve target)
     const attrs = array.attrs as unknown as ArrayMetadata;
-    const isArrayRef = ArrayDecoder.isArrayRef(attrs);
 
-    if (isArrayRef) {
-      // Array reference: Resolve target and use RangeLoader for target
-      const targetPath = attrs.encoding!.target!;
-      log.info(
-        Modules.LINES_LOADER,
-        `Lines: Array ref: ${arrayName} → ${targetPath} (using RangeLoader)`
-      );
-
-      const storeToUse = this.zarrStore || this.zarrLocation.store;
-      const zarrRootLoc = zarr.root(storeToUse);
-      const targetLoc = zarrRootLoc.resolve(targetPath);
-      const targetArray = await zarr.open(targetLoc, { kind: 'array' });
-      const targetAttrs = targetArray.attrs as unknown as ArrayMetadata;
-
-      // Determine actual elements per vertex from target array shape
-      const targetShape = targetArray.shape;
-      const actualElementsPerVertex = targetShape.length === 2 ? targetShape[1] : 1;
-
-      // Use RangeLoader for target
-      const encoding = RangeLoader.detectEncoding(targetAttrs);
-      log.info(Modules.LINES_LOADER, `Lines: Array ref target encoding: ${encoding}`);
-
-      await this.rangeLoader.loadRanges(
-        targetArray,
-        targetAttrs,
-        ranges as LoadRange[],
-        output,
-        totalVertices,
-        actualElementsPerVertex
-      );
-
-      return output;
-    }
-
-    // Use RangeLoader for all other encodings (broadcasted, quantized, lut, direct)
-    // Determine actual elements per vertex from array shape
-    const shape = array.shape;
-    const actualElementsPerVertex = shape.length === 2 ? shape[1] : 1;
-
-    await this.rangeLoader.loadRanges(
+    // Helper resolves array_ref via zarrStore when needed and delegates to
+    // RangeLoader.loadRanges otherwise. The hint elementsPerVertex is only
+    // used for the non-ref path; ref targets recompute from their own shape.
+    const storeToUse = this.zarrStore || this.zarrLocation.store;
+    await this.rangeLoader.loadRangesResolvingRef(
       array,
       attrs,
       ranges as LoadRange[],
       output,
       totalVertices,
-      actualElementsPerVertex
+      elementsPerVertex,
+      storeToUse,
+      `Lines:${arrayName}`
     );
 
     return output;
@@ -872,46 +836,26 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     const decodedFloat32 =
       targetBuffer instanceof Float32Array ? targetBuffer : new Float32Array(totalElements);
 
-    if (isArrayRef) {
-      // Resolve array_ref and load target
-      const targetPath = attrs.encoding!.target!;
-      const storeToUse = this.zarrStore || this.zarrLocation.store;
-      const zarrRootLoc = zarr.root(storeToUse);
-      const targetLoc = zarrRootLoc.resolve(targetPath);
-      const targetArray = await zarr.open(targetLoc, { kind: 'array' });
-      const targetAttrs = targetArray.attrs as unknown as ArrayMetadata;
-
-      await this.rangeLoader.loadRanges(
-        targetArray,
-        targetAttrs,
-        ranges as LoadRange[],
-        decodedFloat32,
-        totalVertices,
-        3
-      );
-
-      // Restore original_dtype from array_ref encoding
-      return this.restoreOriginalDtype(
-        decodedFloat32,
-        attrs.encoding?.original_dtype,
-        totalElements
-      );
-    }
-
-    // Use RangeLoader for encoded arrays
+    // Single dispatch — helper resolves array_ref against zarrStore when
+    // present and otherwise delegates to RangeLoader.loadRanges directly.
     const shape = array.shape;
     const actualElementsPerVertex = shape.length === 2 ? shape[1] : 1;
+    const storeToUse = this.zarrStore || this.zarrLocation.store;
 
-    await this.rangeLoader.loadRanges(
+    await this.rangeLoader.loadRangesResolvingRef(
       array,
       attrs,
       ranges as LoadRange[],
       decodedFloat32,
       totalVertices,
-      actualElementsPerVertex
+      actualElementsPerVertex,
+      storeToUse,
+      'Lines'
     );
 
-    // Restore original_dtype for encoded arrays
+    // original_dtype is taken from the CALLER's attrs so an array_ref to a
+    // float32-stored target still restores back to e.g. uint8 if that was
+    // the original format on the line node.
     return this.restoreOriginalDtype(decodedFloat32, attrs.encoding?.original_dtype, totalElements);
   }
 

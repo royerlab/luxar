@@ -132,6 +132,72 @@ export class RangeLoader {
   }
 
   /**
+   * Like {@link loadRanges} but transparently resolves `array_ref` encodings
+   * by opening the target array and delegating to `loadRanges` against it.
+   *
+   * `loadRanges` itself rejects unresolved refs as a defensive check — every
+   * caller of `loadRanges` directly should pre-resolve. This method is the
+   * standard entry point for the spatial-index loaders, which all need the
+   * same resolve-or-passthrough behavior. Pass the original `zarrStore` so
+   * the target path can be resolved relative to the dataset root.
+   *
+   * The target's true `elementsPerItem` is recomputed from its shape (the
+   * caller's `elementsPerItem` is used only when no ref is in play). Logs
+   * the redirect once at INFO when verbose, then again from the underlying
+   * encoding-specific loader.
+   *
+   * @param array - The directly-attached array (may be an array_ref).
+   * @param attrs - That array's metadata.
+   * @param ranges - Ranges to load.
+   * @param output - Pre-allocated output buffer.
+   * @param totalElements - Item count (e.g. number of points/splats).
+   * @param elementsPerItem - Used only when no ref is present.
+   * @param zarrStore - Store used to resolve the target path on a ref.
+   * @param logPrefix - Optional caller tag for the "Array ref → target" line
+   *   (e.g. "Points", "Lines"). Falls back to "RangeLoader" when omitted.
+   */
+  async loadRangesResolvingRef(
+    array: zarr.Array<zarr.DataType, zarr.FetchStore>,
+    attrs: ArrayMetadata | undefined,
+    ranges: LoadRange[],
+    output: Float32Array,
+    totalElements: number,
+    elementsPerItem: number,
+    zarrStore: zarr.Readable,
+    logPrefix?: string
+  ): Promise<number> {
+    if (attrs && ArrayDecoder.isArrayRef(attrs)) {
+      const targetPath = attrs.encoding!.target!;
+      if (this._verbose) {
+        log.info(
+          this.config.logModule,
+          `${logPrefix ?? 'RangeLoader'}: Array ref → ${targetPath}`
+        );
+      }
+
+      const targetLoc = zarr.root(zarrStore).resolve(targetPath);
+      const targetArray = await zarr.open(targetLoc, { kind: 'array' });
+      const targetAttrs = targetArray.attrs as unknown as ArrayMetadata;
+
+      // The target's per-item element count is whatever the target array
+      // says — the caller's hint applies only to the unresolved direct case.
+      const targetShape = targetArray.shape;
+      const targetElementsPerItem = targetShape.length === 2 ? targetShape[1] : 1;
+
+      return this.loadRanges(
+        targetArray as zarr.Array<zarr.DataType, zarr.FetchStore>,
+        targetAttrs,
+        ranges,
+        output,
+        totalElements,
+        targetElementsPerItem
+      );
+    }
+
+    return this.loadRanges(array, attrs, ranges, output, totalElements, elementsPerItem);
+  }
+
+  /**
    * Load broadcasted array (single value replicated to all elements)
    */
   private async loadBroadcasted(
