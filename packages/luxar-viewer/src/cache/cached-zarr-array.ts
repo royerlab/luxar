@@ -115,7 +115,11 @@ export function wrapWithCache<D extends zarr.DataType>(
           // Cache the decompressed result.
           // Clone the data to prevent callers from mutating the cached copy
           // (ArrayBufferViews are references to underlying ArrayBuffers).
-          const clonedData = (chunk.data as any).slice() as ArrayBufferView;
+          // Every TypedArray (and DataView) has `.slice()` returning the
+          // same view subtype; the union type lacks a common slice in the
+          // public d.ts, so we cast to the shared shape here.
+          const clonedData = (chunk.data as ArrayBufferView & { slice(): ArrayBufferView })
+            .slice() as ArrayBufferView;
           const cacheEntry: DecompressedChunk = {
             data: clonedData,
             shape: chunk.shape.slice(),

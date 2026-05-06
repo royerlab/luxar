@@ -64,6 +64,6 @@ export interface SetupResult {
   /** Shadow objects for special UI patterns (optional) */
   shadowObjects?: {
     hdrLogValue?: { log: number };
-    [key: string]: any;
+    [key: string]: unknown;
   };
 }

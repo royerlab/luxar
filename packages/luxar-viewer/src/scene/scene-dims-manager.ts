@@ -98,9 +98,10 @@ export class SceneDimsManager {
     }
 
     // Step 4: Parse and normalize dimension metadata
-    const metadata: DimensionMetadata[] = sceneDimensions.dimensions.map((dim: any) => ({
-      name: dim.name,
-      unit: dim.unit,
+    type RawDim = Partial<DimensionMetadata> & { range?: number[] };
+    const metadata: DimensionMetadata[] = sceneDimensions.dimensions.map((dim: RawDim) => ({
+      name: dim.name as string,
+      unit: dim.unit as string,
       scale: dim.scale || 1.0,
       range: dim.range ? [dim.range[0], dim.range[1]] : undefined,
       display: dim.display,

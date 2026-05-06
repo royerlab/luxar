@@ -701,7 +701,7 @@ export class GPUBufferPool {
 
     // CRITICAL: Force THREE.js to recalculate _maxInstanceCount.
 
-    delete (geometry as any)._maxInstanceCount;
+    delete (geometry as unknown as { _maxInstanceCount?: number })._maxInstanceCount;
 
     // CRITICAL: Recompute bounding box after position updates
     // Without this, frustum culling uses stale bounds from previous frame/time slice
@@ -895,7 +895,7 @@ export class GPUBufferPool {
     // Without this, geometries initially created with 0 instances cache _maxInstanceCount=0,
     // causing the renderer to draw min(instanceCount, 0) = 0 instances even after updating.
 
-    delete (geometry as any)._maxInstanceCount;
+    delete (geometry as unknown as { _maxInstanceCount?: number })._maxInstanceCount;
 
     // CRITICAL: Recompute bounding box from updated center positions
     // GSplats use aCenter attribute for positions in frustum culling

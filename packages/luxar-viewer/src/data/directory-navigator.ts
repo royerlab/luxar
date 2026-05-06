@@ -197,7 +197,8 @@ export class DirectoryNavigator {
           const data = await jsonResponse.json();
           if (data.entries && Array.isArray(data.entries)) {
             // Parse JSON directory listing from luxar serve
-            const entries: DirectoryEntry[] = data.entries.map((entry: any) => ({
+            type ServeEntry = { name: string; type: string; size?: number };
+            const entries: DirectoryEntry[] = data.entries.map((entry: ServeEntry) => ({
               name: entry.name,
               path: this.currentPath ? `${this.currentPath}/${entry.name}` : entry.name,
               type: entry.type as 'file' | 'directory' | 'zarr',
@@ -319,7 +320,14 @@ export class DirectoryNavigator {
       const index = await response.json();
       if (!index.entries || !Array.isArray(index.entries)) return null;
 
-      const entries: DirectoryEntry[] = index.entries.map((entry: any) => ({
+      type IndexEntry = {
+        name: string;
+        type?: string;
+        size?: number;
+        isDirectory?: boolean;
+        modified?: string | number;
+      };
+      const entries: DirectoryEntry[] = index.entries.map((entry: IndexEntry) => ({
         name: entry.name,
         path: this.currentPath ? `${this.currentPath}/${entry.name}` : entry.name,
         type:

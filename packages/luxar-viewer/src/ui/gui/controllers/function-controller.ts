@@ -10,7 +10,7 @@ export class FunctionController extends Controller<Function> {
 
   private button!: HTMLButtonElement;
 
-  constructor(object: Record<string, any>, property: string) {
+  constructor(object: Record<string, unknown>, property: string) {
     super(object, property);
 
     // Initialize DOM

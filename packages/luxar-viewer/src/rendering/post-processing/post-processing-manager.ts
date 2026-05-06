@@ -353,7 +353,9 @@ export class PostProcessingManager {
   setCamera(camera: THREE.Camera): void {
     this.camera = camera;
     if (this.renderPass) {
-      (this.renderPass as any).mainCamera = camera;
+      // postprocessing's RenderPass.mainCamera is mutable but not typed
+      // as such in the public d.ts; structural cast targets just that field.
+      (this.renderPass as unknown as { mainCamera: THREE.Camera }).mainCamera = camera;
     }
     // Effect passes capture the camera at construction — rebuild them
     this.rebuildEffectPass();
@@ -1191,7 +1193,7 @@ export class PostProcessingManager {
     if (enabled) {
       log.info(
         Modules.POST_PROCESSING,
-        `MSAA enabled with ${this.msaaSamples} samples (actual: ${(this.composer as any).multisampling || 0})`
+        `MSAA enabled with ${this.msaaSamples} samples (actual: ${(this.composer as unknown as { multisampling?: number }).multisampling || 0})`
       );
     } else {
       log.update(Modules.POST_PROCESSING, 'MSAA disabled');
@@ -1218,7 +1220,7 @@ export class PostProcessingManager {
       this.updateRendererSize();
       log.info(
         Modules.POST_PROCESSING,
-        `MSAA samples set to ${samples} (actual: ${(this.composer as any).multisampling || 0})`
+        `MSAA samples set to ${samples} (actual: ${(this.composer as unknown as { multisampling?: number }).multisampling || 0})`
       );
     }
   }
@@ -1239,13 +1241,18 @@ export class PostProcessingManager {
     if (!this.msaaEnabled) return 0;
 
     // Try to get the actual multisampling value from composer
-    const composerMultisampling = (this.composer as any).multisampling;
+    const composerMultisampling = (this.composer as unknown as { multisampling?: number }).multisampling;
     if (composerMultisampling !== undefined) {
       return composerMultisampling;
     }
 
     // Fallback: check if the render target has MSAA
-    const renderTarget = (this.composer as any).inputBuffer || (this.composer as any).renderTarget;
+    type ComposerRTAccess = {
+      inputBuffer?: { samples?: number };
+      renderTarget?: { samples?: number };
+    };
+    const composerRT = this.composer as unknown as ComposerRTAccess;
+    const renderTarget = composerRT.inputBuffer || composerRT.renderTarget;
     if (renderTarget && renderTarget.samples !== undefined) {
       return renderTarget.samples;
     }
@@ -1534,7 +1541,7 @@ export class PostProcessingManager {
     ].filter(Boolean) as object[];
 
     for (const effect of ldrEffects) {
-      const e = effect as any;
+      const e = effect as { enabled: boolean };
       effectStates.set(effect, e.enabled !== false);
       e.enabled = false;
     }
@@ -1578,7 +1585,7 @@ export class PostProcessingManager {
         p.renderToScreen = savedPassStates[i];
       });
       for (const effect of ldrEffects) {
-        const e = effect as any;
+        const e = effect as { enabled: boolean };
         e.enabled = effectStates.get(effect) ?? true;
       }
     }

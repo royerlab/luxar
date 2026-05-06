@@ -53,8 +53,10 @@ export function captureViewerState(
   // --- Background color ---
   if (sceneManager.scene.background) {
     const bg = sceneManager.scene.background;
-    if ('isColor' in bg && (bg as any).isColor) {
-      result.background_color = '#' + (bg as any).getHexString();
+    // Three.Color's isColor flag is a runtime tag — narrow on the
+    // structural shape rather than importing the full type.
+    if ('isColor' in bg && (bg as { isColor: boolean }).isColor) {
+      result.background_color = '#' + (bg as { getHexString: () => string }).getHexString();
     }
   }
 

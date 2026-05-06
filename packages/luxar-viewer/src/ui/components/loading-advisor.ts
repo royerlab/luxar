@@ -230,7 +230,7 @@ export class LoadingAdvisor {
   /**
    * Update recommendations based on global stats
    */
-  updateRecommendations(_stats: any): void {
+  updateRecommendations(_stats: unknown): void {
     // Clear old global recommendations
     const toRemove: string[] = [];
     for (const [id, rec] of this.recommendations) {

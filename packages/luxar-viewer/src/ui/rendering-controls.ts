@@ -287,7 +287,6 @@ export class RenderingControls {
   /** Build the cinematic-mode controller. `animationController` is read lazily so
    * the cinematic toggle works correctly after `setAnimationController()` runs. */
   private createCinematicController(): CinematicModeController {
-    // eslint-disable-next-line @typescript-eslint/no-this-alias
     const self = this;
     return new CinematicModeController({
       settings: this.settings,
@@ -617,8 +616,15 @@ export class RenderingControls {
     const newStep = Math.max(0.01, scaledSpeed * 0.01);
 
     if (this.controllers.flyMovementSpeed) {
-      // NumberController supports dynamic .min()/.max()/.step()
-      const ctrl = this.controllers.flyMovementSpeed as any;
+      // NumberController supports dynamic .min()/.max()/.step() but the
+      // base Controller type doesn't expose them; structural cast targets
+      // just those three fluent methods.
+      type ChainableNumber = {
+        min(v: number): ChainableNumber;
+        max(v: number): ChainableNumber;
+        step(v: number): ChainableNumber;
+      };
+      const ctrl = this.controllers.flyMovementSpeed as unknown as ChainableNumber;
       if (typeof ctrl.min === 'function') {
         ctrl.min(newMin).max(newMax).step(newStep);
       }

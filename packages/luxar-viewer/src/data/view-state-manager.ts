@@ -94,9 +94,10 @@ export class ViewStateManager {
    * Extract and normalize metadata from scene dimensions
    */
   private static extractMetadata(sceneDims: SceneDimensions): DimensionMetadata[] {
-    return sceneDims.dimensions.map((dim: any) => ({
-      name: dim.name,
-      unit: dim.unit,
+    type RawDim = Partial<DimensionMetadata> & { range?: unknown };
+    return sceneDims.dimensions.map((dim: RawDim) => ({
+      name: dim.name as string,
+      unit: dim.unit as string,
       scale: dim.scale || 1.0, // Required, default to 1.0
       range: dim.range as [number, number] | undefined,
       display: dim.display,
