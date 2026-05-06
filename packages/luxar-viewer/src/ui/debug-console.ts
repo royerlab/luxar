@@ -63,6 +63,13 @@ export class DebugConsole {
   private boundDragMouseUp: (() => void) | null = null;
   private boundResizeMouseMove: ((e: MouseEvent) => void) | null = null;
   private boundResizeMouseUp: (() => void) | null = null;
+  /**
+   * Stop any in-flight drag/resize when the window loses focus or the
+   * tab is hidden. Otherwise the drag/resize state stays "active"
+   * indefinitely — if the user releases the mouse off-window, we never
+   * see the mouseup and the next mousemove would resume dragging.
+   */
+  private boundStopDragOnBlur: (() => void) | null = null;
 
   /**
    * Create and initialize debug console panel.
@@ -304,6 +311,19 @@ export class DebugConsole {
 
     document.addEventListener('mousemove', this.boundResizeMouseMove);
     document.addEventListener('mouseup', this.boundResizeMouseUp);
+
+    // Clear any active drag/resize when the window loses focus so the
+    // state doesn't survive into the next interaction.
+    if (!this.boundStopDragOnBlur) {
+      this.boundStopDragOnBlur = () => {
+        // Trigger the same end-of-drag/resize cleanup the natural mouseup
+        // would have, by invoking the bound mouseup handlers directly.
+        this.boundDragMouseUp?.();
+        this.boundResizeMouseUp?.();
+      };
+      window.addEventListener('blur', this.boundStopDragOnBlur);
+      document.addEventListener('visibilitychange', this.boundStopDragOnBlur);
+    }
   }
 
   /**
@@ -633,6 +653,11 @@ export class DebugConsole {
     if (this.boundResizeMouseUp) {
       document.removeEventListener('mouseup', this.boundResizeMouseUp);
       this.boundResizeMouseUp = null;
+    }
+    if (this.boundStopDragOnBlur) {
+      window.removeEventListener('blur', this.boundStopDragOnBlur);
+      document.removeEventListener('visibilitychange', this.boundStopDragOnBlur);
+      this.boundStopDragOnBlur = null;
     }
 
     // Remove panel from DOM. Styles live in src/styles/components/

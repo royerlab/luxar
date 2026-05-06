@@ -762,7 +762,13 @@ export class PostProcessingManager {
   ): void {
     if (enabled && !this.detectorNoiseEffect) {
       const settings = resolveNoiseDefaults({ readoutSigma, photonGain, fpnSigma });
+      // Persist the user-configured base settings so subsequent setDPRScale()
+      // calls can derive the scaled effect values from the right baseline,
+      // not from the class-field defaults.
+      this.baseNoiseSettings = { ...settings };
       this.detectorNoiseEffect = new DetectorNoiseEffect(settings);
+      // Apply DPR scaling immediately if a non-1.0 DPR is already in effect.
+      this.applyScaledNoiseSettings();
 
       this.rebuildEffectPass();
       log.info(
@@ -1113,7 +1119,12 @@ export class PostProcessingManager {
       smaa: this.smaaEnabled,
       msaa: this.msaaEnabled,
       ssaa: this.ssaaEnabled,
-      toneMapping: toneMappingModeName(this.toneMappingEffect?.mode),
+      // Preserve original semantics: 'Off' iff effect missing; 'Unknown'
+      // iff effect exists but mode is somehow undefined; otherwise the
+      // canonical display name.
+      toneMapping: this.toneMappingEffect
+        ? toneMappingModeName(this.toneMappingEffect.mode)
+        : 'Off',
       vignette: !!this.vignetteEffect,
       ao: !!this.aoEffect,
       lensDistortion: false, // Old effect removed - now part of ChromaticLensDistortion

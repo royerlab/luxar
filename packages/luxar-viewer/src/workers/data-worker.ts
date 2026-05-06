@@ -27,6 +27,67 @@ let wasmModule: WasmModule | null = null;
 let visibilityMaskBuffer: Uint8Array | null = null;
 
 /**
+ * Maximum number of dimensions WASM supports. The compiled Rust code
+ * uses fixed-size arrays (`[f32; MAX_DIMS]` = 16) for performance, so
+ * inputs above this limit must be rejected at the worker boundary
+ * rather than triggering an out-of-bounds read inside WASM.
+ */
+const MAX_WASM_DIMS = 16;
+
+/**
+ * Validate the typed-array inputs that flow into WASM visibility /
+ * projection calls. The compiled Rust code reads from `positions`,
+ * `slicePosition`, `tolerance`, etc. assuming caller-supplied lengths
+ * match `numItems × ndim` and `ndim`; if a malformed payload reaches
+ * WASM, the read goes off the end of the buffer (undefined behavior in
+ * WASM, may return garbage or trip a memory.fill panic). This helper
+ * rejects bad inputs at the JS boundary with a clear error message
+ * instead of letting the worker silently corrupt or crash.
+ *
+ * `radii` is optional: present for points, absent for lines/gsplats.
+ */
+function validateNDArrays(
+  fnName: string,
+  positions: Float32Array,
+  slicePosition: Float32Array,
+  tolerance: Float32Array,
+  ndim: number,
+  numItems: number,
+  positionsPerItem: number = ndim,
+  radii?: Float32Array
+): void {
+  if (!Number.isInteger(ndim) || ndim < 1 || ndim > MAX_WASM_DIMS) {
+    throw new Error(
+      `${fnName}: ndim=${ndim} out of range [1, ${MAX_WASM_DIMS}]`
+    );
+  }
+  if (!Number.isInteger(numItems) || numItems < 0) {
+    throw new Error(`${fnName}: numItems=${numItems} must be a non-negative integer`);
+  }
+  const expectedPositions = numItems * positionsPerItem;
+  if (positions.length < expectedPositions) {
+    throw new Error(
+      `${fnName}: positions array too short (got ${positions.length}, expected ≥ ${expectedPositions})`
+    );
+  }
+  if (slicePosition.length < ndim) {
+    throw new Error(
+      `${fnName}: slicePosition too short (got ${slicePosition.length}, expected ≥ ${ndim})`
+    );
+  }
+  if (tolerance.length < ndim) {
+    throw new Error(
+      `${fnName}: tolerance too short (got ${tolerance.length}, expected ≥ ${ndim})`
+    );
+  }
+  if (radii && radii.length < numItems) {
+    throw new Error(
+      `${fnName}: radii too short (got ${radii.length}, expected ≥ ${numItems})`
+    );
+  }
+}
+
+/**
  * Initialize worker (called once at startup).
  *
  * Loads the WASM module via initWasm(); if that fails catastrophically (including
@@ -106,6 +167,16 @@ async function computeNDVisibilityPoints(params: {
   }
 
   const { positions, radii, slicePosition, tolerance, ndim, numPoints } = params;
+  validateNDArrays(
+    'computeNDVisibilityPoints',
+    positions,
+    slicePosition,
+    tolerance,
+    ndim,
+    numPoints,
+    ndim,
+    radii
+  );
 
   // Ensure buffer capacity
   if (!visibilityMaskBuffer || visibilityMaskBuffer.length < numPoints) {
@@ -146,6 +217,35 @@ async function computeNDVisibilityLines(params: {
   }
 
   const { vertices, segments, widths, slicePosition, tolerance, ndim, numSegments } = params;
+  // For lines, vertices is laid out as numVertices × ndim, but each segment
+  // references two vertices. We at least require the vertex array to be
+  // long enough for the highest segment index referenced.
+  if (!Number.isInteger(ndim) || ndim < 1 || ndim > MAX_WASM_DIMS) {
+    throw new Error(
+      `computeNDVisibilityLines: ndim=${ndim} out of range [1, ${MAX_WASM_DIMS}]`
+    );
+  }
+  if (!Number.isInteger(numSegments) || numSegments < 0) {
+    throw new Error(
+      `computeNDVisibilityLines: numSegments=${numSegments} must be a non-negative integer`
+    );
+  }
+  if (segments.length < numSegments * 2) {
+    throw new Error(
+      `computeNDVisibilityLines: segments array too short ` +
+        `(got ${segments.length}, expected ≥ ${numSegments * 2})`
+    );
+  }
+  if (widths.length < numSegments) {
+    throw new Error(
+      `computeNDVisibilityLines: widths too short (got ${widths.length}, expected ≥ ${numSegments})`
+    );
+  }
+  if (slicePosition.length < ndim || tolerance.length < ndim) {
+    throw new Error(
+      `computeNDVisibilityLines: slicePosition/tolerance too short for ndim=${ndim}`
+    );
+  }
 
   // Ensure buffer capacity
   if (!visibilityMaskBuffer || visibilityMaskBuffer.length < numSegments) {
@@ -186,6 +286,22 @@ async function computeNDVisibilityGSplats(params: {
   }
 
   const { centers, choleskyFactors, slicePosition, tolerance, ndim, numSplats } = params;
+  validateNDArrays(
+    'computeNDVisibilityGSplats',
+    centers,
+    slicePosition,
+    tolerance,
+    ndim,
+    numSplats
+  );
+  // Cholesky factors: packed lower-triangular has ndim*(ndim+1)/2 entries per splat.
+  const expectedCholesky = numSplats * ((ndim * (ndim + 1)) / 2);
+  if (choleskyFactors.length < expectedCholesky) {
+    throw new Error(
+      `computeNDVisibilityGSplats: choleskyFactors too short ` +
+        `(got ${choleskyFactors.length}, expected ≥ ${expectedCholesky})`
+    );
+  }
 
   // Ensure buffer capacity
   if (!visibilityMaskBuffer || visibilityMaskBuffer.length < numSplats) {

@@ -90,6 +90,12 @@ export class WorkerPool {
             ? new Worker(dataWorkerUrlOverride, { type: 'module' })
             : new DataWorker();
 
+          // Install runtime-error handlers BEFORE the first message — a
+          // worker can crash during its own boot sequence (e.g. WASM init
+          // OOM), and we want those failures to be surfaced as worker
+          // failures rather than uncaught browser-level errors.
+          this.attachWorkerErrorHandlers(worker, index + 1);
+
           const api = wrap<DataWorkerAPI>(worker);
 
           try {
@@ -142,6 +148,68 @@ export class WorkerPool {
     })();
 
     return this.initPromise;
+  }
+
+  /**
+   * Install `onerror` and `onmessageerror` handlers on a freshly-created
+   * worker so a crash inside the worker (uncaught throw, OOM during WASM
+   * init, unserializable Comlink message) surfaces as a logged failure
+   * and is removed from the active pool, rather than escaping to the
+   * browser's `window.onerror` and freezing requests that are awaiting
+   * Comlink replies from this worker.
+   *
+   * Note: this is a best-effort safety net. Comlink-wrapped calls that
+   * are mid-flight when the worker dies will still hang their callers —
+   * a per-call timeout is the right complement (added separately).
+   */
+  private attachWorkerErrorHandlers(worker: Worker, workerNumber: number): void {
+    worker.onerror = (event) => {
+      const message = event instanceof ErrorEvent ? event.message : 'unknown error';
+      log.error(Modules.WORKER_POOL, `Worker ${workerNumber} runtime error: ${message}`);
+      this.handleWorkerFailure(worker, `runtime error: ${message}`);
+      // Don't propagate to window.onerror — we've already logged it.
+      if (typeof event.preventDefault === 'function') event.preventDefault();
+    };
+    worker.onmessageerror = () => {
+      log.error(
+        Modules.WORKER_POOL,
+        `Worker ${workerNumber} produced an unserializable message`
+      );
+      this.handleWorkerFailure(worker, 'unserializable message');
+    };
+  }
+
+  /**
+   * Remove a failed worker from the pool and terminate it. If this drops
+   * the pool to zero workers, log a clear error so the surrounding
+   * application can decide whether to fall back to the main-thread
+   * implementation or surface a failure dialog.
+   */
+  private handleWorkerFailure(worker: Worker, reason: string): void {
+    const idx = this.workers.findIndex((w) => w.worker === worker);
+    if (idx < 0) {
+      // Already removed (idempotent on multiple error events).
+      return;
+    }
+    this.workers.splice(idx, 1);
+    try {
+      worker.terminate();
+    } catch {
+      // Terminating a dead worker can throw on some browsers; swallow.
+    }
+    if (this.workers.length === 0) {
+      log.error(
+        Modules.WORKER_POOL,
+        `All data workers failed (${reason}); subsequent calls will fail until reinitialization`
+      );
+      // Allow the next initialize() call to attempt a fresh pool.
+      this.initPromise = null;
+    } else {
+      log.warning(
+        Modules.WORKER_POOL,
+        `Worker removed from pool (${reason}); ${this.workers.length} worker(s) remaining`
+      );
+    }
   }
 
   /**

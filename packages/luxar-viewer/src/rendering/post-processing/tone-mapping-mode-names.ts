@@ -25,12 +25,17 @@ const TONE_MAPPING_MODE_NAMES: Record<ToneMappingMode, string> = {
 /**
  * Look up the display name of a {@link ToneMappingMode} value.
  *
- * Returns `'Off'` when `mode` is `null`/`undefined` (used by the status
- * snapshot when no tone-mapping effect is active) and `'Unknown'` when
- * the value falls outside the table — defensive in case the upstream
- * library adds new modes faster than this table is updated.
+ * Returns `'Unknown'` for `null`, `undefined`, or any value outside the
+ * table — defensive in case the upstream library adds new modes faster
+ * than this table is updated, or an effect is in a transient state where
+ * its `mode` property has not been assigned.
+ *
+ * Callers that need to distinguish "no effect at all" from "effect with
+ * unknown mode" should branch *before* calling this helper, e.g.:
+ *
+ *   effect ? toneMappingModeName(effect.mode) : 'Off'
  */
 export function toneMappingModeName(mode: ToneMappingMode | null | undefined): string {
-  if (mode === null || mode === undefined) return 'Off';
+  if (mode === null || mode === undefined) return 'Unknown';
   return TONE_MAPPING_MODE_NAMES[mode] ?? 'Unknown';
 }

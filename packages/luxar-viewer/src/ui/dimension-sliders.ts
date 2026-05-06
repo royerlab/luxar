@@ -127,6 +127,14 @@ export class DimensionSliders {
   private contextMenuCleanup: {
     clickOutside?: (e: MouseEvent) => void;
     escape?: (e: KeyboardEvent) => void;
+    /**
+     * Pending setTimeout that will install the click-outside handler.
+     * Tracked so closeContextMenu() can cancel it if the menu is closed
+     * before the deferred handler is attached — without this, the
+     * listener gets attached but never removed, leaking on every
+     * Escape-cancel.
+     */
+    clickOutsideTimeout?: ReturnType<typeof setTimeout>;
   } = {};
 
   /** Stored event handlers for animation manager events (for cleanup) */
@@ -1233,8 +1241,17 @@ export class DimensionSliders {
       }
     };
     this.contextMenuCleanup.clickOutside = closeOnClickOutside;
-    setTimeout(() => {
-      document.addEventListener('click', closeOnClickOutside);
+    // Defer attaching the click-outside listener by one tick so the
+    // contextmenu's own click event doesn't immediately trigger close.
+    // Track the timeout so closeContextMenu() can cancel it if the menu
+    // is closed (e.g. via Escape) before the listener gets attached.
+    this.contextMenuCleanup.clickOutsideTimeout = setTimeout(() => {
+      this.contextMenuCleanup.clickOutsideTimeout = undefined;
+      // Only attach if the menu is still open — otherwise we'd add a
+      // listener for a menu that's already gone.
+      if (this.activeContextMenu) {
+        document.addEventListener('click', closeOnClickOutside);
+      }
     }, 0);
 
     // Close on escape - store handler for cleanup
@@ -1255,6 +1272,14 @@ export class DimensionSliders {
     if (this.activeContextMenu) {
       this.activeContextMenu.remove();
       this.activeContextMenu = null;
+    }
+
+    // Cancel a pending click-outside attach if the menu was closed before
+    // the deferred attach fired. Otherwise the listener would be added
+    // for a menu that no longer exists and never removed.
+    if (this.contextMenuCleanup.clickOutsideTimeout !== undefined) {
+      clearTimeout(this.contextMenuCleanup.clickOutsideTimeout);
+      this.contextMenuCleanup.clickOutsideTimeout = undefined;
     }
 
     // Remove document-level event listeners

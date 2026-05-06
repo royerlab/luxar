@@ -16,13 +16,12 @@ describe('toneMappingModeName', () => {
     expect(toneMappingModeName(ToneMappingMode.NEUTRAL)).toBe('Neutral');
   });
 
-  it('returns "Off" for null and undefined', () => {
-    expect(toneMappingModeName(null)).toBe('Off');
-    expect(toneMappingModeName(undefined)).toBe('Off');
-  });
-
-  it('returns "Unknown" for a value outside the table', () => {
-    // -1 is not a defined ToneMappingMode value — defensive fallback.
+  it('returns "Unknown" for null, undefined, and out-of-table values', () => {
+    // The helper now returns 'Unknown' for every non-canonical input; the
+    // distinction between "no effect" and "effect with unknown mode" is
+    // resolved at the call site (e.g. status snapshot in the manager).
+    expect(toneMappingModeName(null)).toBe('Unknown');
+    expect(toneMappingModeName(undefined)).toBe('Unknown');
     expect(toneMappingModeName(-1 as unknown as ToneMappingMode)).toBe('Unknown');
   });
 });
