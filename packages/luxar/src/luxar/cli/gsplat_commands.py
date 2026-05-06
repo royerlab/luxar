@@ -2609,6 +2609,249 @@ def compare_quality(
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# cal — Calibrate splat count K via blind-spot cross-validation
+# ═══════════════════════════════════════════════════════════════════════
+
+
+@app_gsplat.command("cal")
+def calibrate_command(
+    input_path: Path = typer.Argument(
+        ..., exists=True, help="Input volume (.zarr, .zarr.zip, .tiff, .npy, .npz)"
+    ),
+    output_json: Path = typer.Argument(
+        ..., help="Output JSON with full sweep curves and recommended K*"
+    ),
+    # K grid
+    k_grid: Optional[str] = typer.Option(
+        None,
+        "--k-grid",
+        help="Explicit comma-separated K values (e.g. '1000,4000,16000'). Overrides --n-grid/--k-min/--k-max.",
+    ),
+    n_grid: int = typer.Option(
+        10, "--n-grid", help="Number of K values when --k-grid is not given"
+    ),
+    k_min: int = typer.Option(1_000, "--k-min", help="Smallest K in the sweep"),
+    k_max: int = typer.Option(512_000, "--k-max", help="Largest K in the sweep"),
+    progression: str = typer.Option(
+        "exp",
+        "--progression",
+        help="Spacing of the K grid: 'exp' (geometric/log-spaced) or 'power' (polynomial)",
+    ),
+    power: int = typer.Option(
+        2, "--power", help="Exponent when --progression power (1=linear, 2=quadratic, ...)"
+    ),
+    # CV mask
+    mask_seed: int = typer.Option(42, "--mask-seed", help="RNG seed for the held-out mask"),
+    mask_fraction: float = typer.Option(
+        0.05, "--mask-fraction", help="Fraction of voxels to hold out (default 5%)"
+    ),
+    # Fit configuration (delegated to existing config loader)
+    preset: str = typer.Option(
+        "standard", "--preset", help="Fit preset: draft, standard, hifi, ultra"
+    ),
+    config: Optional[Path] = typer.Option(
+        None, "--config", help="YAML overrides for fit parameters"
+    ),
+    device: Optional[str] = typer.Option(
+        None, "--device", "-d", help="Device: auto/cpu/cuda/mps"
+    ),
+    # Volume loader pass-through (matches `compare` and `fit`)
+    channel: Optional[int] = typer.Option(
+        None, "--channel", "-c", help="Channel index for OME-Zarr inputs"
+    ),
+    timepoint: Optional[int] = typer.Option(
+        None, "--timepoint", help="Timepoint index for OME-Zarr inputs"
+    ),
+    array_key: Optional[str] = typer.Option(
+        None, "--array-key", help="Array key within .npz / nested zarr"
+    ),
+    # Optional outputs
+    pdf_report: Optional[Path] = typer.Option(
+        None, "--pdf", help="Generate calibration PDF report (rate-distortion + slice montages + CV curves)"
+    ),
+    keep_fits: Optional[Path] = typer.Option(
+        None,
+        "--keep-fits",
+        help="Directory to persist per-K .gsplats.zarr fits for later inspection",
+    ),
+    quiet: bool = typer.Option(
+        False,
+        "--quiet",
+        "-q",
+        help="Suppress the terminal summary table (the JSON file is still written)",
+    ),
+) -> None:
+    """Calibrate splat count via blind-spot cross-validation.
+
+    Sweeps Gaussian-splat fits over a grid of K values, evaluates held-out
+    PSNR at masked voxels, and reports the recommended K* (the held-out
+    peak) plus the dataset's noise-floor PSNR ceiling.
+
+    The fit at each K runs against a 5%-donut-median-filled volume so the
+    optimiser never sees the original noisy values at masked positions —
+    this is the Noise2Self protocol from Batson & Royer (2019), as used
+    in the Luxar manuscript's model-selection analysis.
+
+    Examples:
+        luxar gsplat cal kidney_dapi.tiff cal.json
+        luxar gsplat cal volume.zarr cal.json --n-grid 5 --k-max 128000 --preset draft
+        luxar gsplat cal volume.zarr cal.json --k-grid '1000,4000,16000,64000,256000'
+        luxar gsplat cal volume.tiff cal.json --pdf report.pdf --keep-fits fits/
+    """
+    try:
+        import math
+
+        from luxar.cli.gsplat_config import load_fit_config, load_volume
+        from luxar.gsplats.calibration import build_k_grid, calibrate
+
+        # 1. Resolve K grid
+        explicit: Optional[list[int]] = None
+        if k_grid is not None:
+            explicit = [int(x.strip()) for x in k_grid.split(",") if x.strip()]
+        ks = build_k_grid(
+            explicit=explicit,
+            n_points=n_grid,
+            k_min=k_min,
+            k_max=k_max,
+            progression=progression,
+            power=power,
+        )
+
+        # 2. Load volume (reuse the loader used by `compare` and `fit`)
+        with asection(f"Calibration: {input_path.name}"):
+            with asection("Loading volume"):
+                volume = load_volume(
+                    input_path,
+                    channel=channel,
+                    timepoint=timepoint,
+                    array_key=array_key,
+                )
+
+            aprint(
+                f"Mask: {mask_fraction * 100:.1f}% (seed={mask_seed}); donut radius=1"
+            )
+            aprint(f"K grid ({len(ks)} points): {ks}")
+
+            # 3. Build fit kwargs from preset + YAML config + CLI overrides
+            fit_kwargs = load_fit_config(
+                preset=preset,
+                config_path=config,
+                cli_overrides={"device": device},
+            )
+            # Calibration runs many fits — keep them quiet
+            fit_kwargs["verbose"] = False
+
+            if keep_fits is not None:
+                keep_fits = Path(keep_fits)
+                keep_fits.mkdir(parents=True, exist_ok=True)
+                aprint(f"Per-K fits will be saved under {keep_fits}")
+
+            # 4. Run sweep
+            def _on_progress(i: int, n: int, msg: str) -> None:
+                aprint(f"  [{i + 1}/{n}] {msg}")
+
+            with asection(f"Sweeping {len(ks)} fits"):
+                t0 = time.perf_counter()
+                result = calibrate(
+                    volume,
+                    k_grid=ks,
+                    fit_kwargs=fit_kwargs,
+                    mask_seed=mask_seed,
+                    mask_fraction=mask_fraction,
+                    keep_fits=keep_fits,
+                    progress_callback=_on_progress,
+                )
+                elapsed = time.perf_counter() - t0
+
+            # 5. Write JSON
+            with asection("Writing results"):
+                output_json.parent.mkdir(parents=True, exist_ok=True)
+                result.to_json(output_json)
+                aprint(f"Wrote {output_json}")
+
+            # 6. Optional PDF
+            if pdf_report is not None:
+                with asection("Generating PDF report"):
+                    try:
+                        from luxar.gsplats.calibration_report import (
+                            render_calibration_report,
+                        )
+
+                        pdf_report.parent.mkdir(parents=True, exist_ok=True)
+                        render_calibration_report(
+                            result=result,
+                            volume=volume,
+                            output_path=pdf_report,
+                            splat_paths=result.splat_paths,
+                        )
+                        aprint(f"Wrote {pdf_report}")
+                    except ImportError as exc:
+                        aprint(
+                            f"Skipping PDF report: optional dependency missing ({exc})"
+                        )
+                        aprint(
+                            "Install matplotlib to enable --pdf: pip install matplotlib"
+                        )
+
+        # 7. Print formatted table
+        if not quiet:
+            aprint("\n" + "═" * 64)
+            aprint(f"  CALIBRATION  —  {input_path.name}")
+            aprint("═" * 64)
+            aprint(f"  Volume:         {tuple(result.volume_shape)} {result.volume_dtype}")
+            sigma = result.noise_floor.sigma_hat
+            ceil_db = result.noise_floor.psnr_max_db
+            sigma_str = f"{sigma:.4f}" if math.isfinite(sigma) else "—"
+            ceil_str = (
+                f"{ceil_db:.1f} dB"
+                if math.isfinite(ceil_db)
+                else (">60 dB" if math.isinf(ceil_db) else "—")
+            )
+            aprint(f"  Noise floor:    σ = {sigma_str}, PSNR ceiling = {ceil_str}")
+            aprint("")
+            aprint(
+                "    K_req     K_eff    PSNR_train  PSNR_held-out   PSNR_full   SSIM_full   fit (s)"
+            )
+            aprint("    " + "-" * 76)
+            for i, k_req in enumerate(result.k_values_requested):
+                k_eff = result.k_values_effective[i]
+                pt = result.train_psnr_db[i]
+                ph = result.held_out_psnr_db[i]
+                pf = result.full_psnr_db[i]
+                sf = result.full_ssim[i]
+                ft = result.fit_times_seconds[i]
+
+                def _f(x: float) -> str:
+                    if math.isnan(x):
+                        return "  nan"
+                    if math.isinf(x):
+                        return "  inf"
+                    return f"{x:6.2f}"
+
+                marker = "★" if k_req == result.held_out_peak.k_star else " "
+                aprint(
+                    f"  {marker} {k_req:7d}  {k_eff:7d}    {_f(pt)} dB     {_f(ph)} dB    {_f(pf)} dB    {sf:5.3f}    {ft:6.1f}"
+                )
+            aprint("")
+            aprint(
+                f"  ★ Recommended K* = {result.held_out_peak.k_star:,}  "
+                f"(type: {result.held_out_peak.type}, "
+                f"confidence: {result.held_out_peak.confidence_db:.2f} dB)"
+            )
+            aprint(f"  Total wall-clock: {elapsed:.1f} s")
+            aprint("═" * 64)
+
+    except typer.Exit:
+        raise
+    except Exception as exc:
+        aprint(f"Error: {exc}")
+        import traceback
+
+        traceback.print_exc()
+        raise typer.Exit(1)
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # merge — Combine multiple gsplat datasets
 # ═══════════════════════════════════════════════════════════════════════
 
