@@ -10,6 +10,7 @@ import type { Readable } from '@zarrita/storage';
 import * as THREE from 'three';
 import { PointSpatialIndexLoader } from './point-spatial-index-loader';
 import { normalizeURL } from './scene-loader/url-normalization';
+import { applyEffectiveAttrs as applyEffectiveAttrsHelper } from './scene-loader/effective-attrs';
 import { LinesSpatialIndexLoader, buildInstanceBuffers } from './lines-spatial-index-loader';
 import {
   DataLoader,
@@ -53,7 +54,6 @@ import { processGSplats } from './gsplats-processor';
 import { updateInstancedGSplatsMesh, packCholeskyForShader } from '../rendering/gsplat-geometry';
 import { GPUBufferPool } from '../rendering/gpu-buffer-pool';
 import { invertNdTransformForQuery, computeWorldNdTransform } from './nd-transform';
-import { getEffectiveAttrs } from './attrs-composer';
 import { NodeFactory } from './node-factory';
 import { UpdateProfiler, type UpdateSession } from '../profiling/update-profiler';
 import { getWorkerPool } from '../workers/worker-pool';
@@ -284,16 +284,7 @@ export class SceneLoader {
    * If the scene graph is unavailable, falls back to the node's raw attrs.
    */
   private applyEffectiveAttrs(node: SceneNode): SceneNode['attrs'] {
-    if (!this._sceneGraph) return node.attrs;
-    const eff = getEffectiveAttrs(this._sceneGraph, node.path);
-    return {
-      ...node.attrs,
-      opacity: eff.opacity,
-      gamma: eff.gamma,
-      intensity: eff.intensity,
-      offset: eff.offset,
-      blending_mode: eff.blending_mode,
-    };
+    return applyEffectiveAttrsHelper(this._sceneGraph, node);
   }
 
   constructor(config: LoaderConfig = {}, id?: string, profiler?: UpdateProfiler) {
