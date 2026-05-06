@@ -44,7 +44,6 @@ import type { ScaleBar } from '../ui/components/scale-bar';
 import type { ColormapLegend } from '../ui/components/colormap-legend';
 import type { OverlayManager } from '../ui/overlay-manager';
 import { showHelpOverlay, hideHelpOverlay, showToast } from '../ui/helpers';
-import { config } from '../config';
 import { captureViewerState } from '../config/viewer-state-capture';
 import { DimensionSliders } from '../ui/dimension-sliders';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
@@ -54,6 +53,7 @@ import { computeDimensionStep, resolveSelectedDimension } from './handlers/dimen
 import { PanelCoordinator } from './handlers/panel-coordinator';
 import { WindowEventHandler } from './handlers/window-event-handler';
 import { AnimationShortcuts } from './handlers/animation-shortcuts';
+import { registerAllKeyBindings } from './handlers/key-bindings';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { updateSceneForDimensions, cycleDataMonitor } from '../data';
 
@@ -566,350 +566,35 @@ export class InputHandler {
    * @private
    */
   private registerAllKeyBindings(): void {
-    // ===== NAVIGATION CONTEXT BINDINGS =====
-    // These work in the default orbit navigation mode
-
-    // Ctrl/Cmd key - disable zoom while held so Ctrl+scroll only adjusts FOV.
-    // Use a counter so releasing one key while the other is held doesn't re-enable zoom.
-    let fovKeyHeldCount = 0;
-    const resetFovKeyState = (): void => {
-      if (fovKeyHeldCount === 0) return;
-      fovKeyHeldCount = 0;
-      this.sceneManager.controls.setEnableZoom(true);
-    };
-    const resetFovKeyStateWhenHidden = (): void => {
-      if (document.visibilityState === 'hidden') resetFovKeyState();
-    };
-
-    for (const key of ['Control', 'Meta']) {
-      this.contextManager.registerBinding(InputContext.NAVIGATION, {
-        key,
-        handler: () => {
-          fovKeyHeldCount++;
-          this.sceneManager.controls.setEnableZoom(false);
-        },
-        keyupHandler: () => {
-          fovKeyHeldCount = Math.max(0, fovKeyHeldCount - 1);
-          if (fovKeyHeldCount === 0) {
-            this.sceneManager.controls.setEnableZoom(true);
-          }
-        },
-        description: 'FOV control (hold Ctrl/Cmd + scroll to adjust field of view)',
-      });
-    }
-    window.addEventListener('blur', resetFovKeyState);
-    document.addEventListener('visibilitychange', resetFovKeyStateWhenHidden);
-    this.eventListeners.push(
-      () => window.removeEventListener('blur', resetFovKeyState),
-      () => document.removeEventListener('visibilitychange', resetFovKeyStateWhenHidden)
-    );
-
-    // Dimension navigation
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: '[',
-      handler: () => this.handleDimensionNavigation(-1),
-      preventDefault: true,
-      description: 'Navigate dimension backward',
-    });
-
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: ']',
-      handler: () => this.handleDimensionNavigation(1),
-      preventDefault: true,
-      description: 'Navigate dimension forward',
-    });
-
-    // Dimension selection (keys 1-9, only without modifiers)
-    for (let i = 1; i <= 9; i++) {
-      this.contextManager.registerBinding(InputContext.NAVIGATION, {
-        key: String(i),
-        handler: (event) => {
-          if (!event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
-            event.preventDefault();
-            this.selectDimension(i - 1);
-          }
-        },
-        preventDefault: false,
-        description: `Select dimension ${i}`,
-      });
-    }
-
-    // Help overlay
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: 'h',
-      handler: () => this.toggleHelp(),
-      preventDefault: true,
-      description: 'Toggle help overlay',
-    });
-
-    // Dimension sliders
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: 'n',
-      handler: () => this.toggleDimensionSliders(),
-      preventDefault: true,
-      description: 'Toggle dimension sliders',
-    });
-
-    // Dataset browser
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: 'o',
-      handler: () => window.dispatchEvent(new CustomEvent('open-dataset-browser')),
-      preventDefault: true,
-      description: 'Open dataset browser',
-    });
-
-    // Performance stats
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: 'p',
-      handler: () => this.togglePerformanceStats(),
-      preventDefault: true,
-      description: 'Toggle performance stats',
-    });
-
-    // Rendering controls (only without modifiers)
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: 'r',
-      handler: (event) => {
-        if (!event.metaKey && !event.ctrlKey && !event.shiftKey) {
-          event.preventDefault();
-          this.toggleRenderingControls();
-        }
+    registerAllKeyBindings({
+      contextManager: this.contextManager,
+      sceneManager: this.sceneManager,
+      debugConsole: this.debugConsole,
+      cleanups: this.eventListeners,
+      panels: {
+        getScaleBar: () => this.scaleBar,
+        getColormapLegend: () => this.colormapLegend,
+        getOverlayManager: () => this.overlayManager,
+        getRecordingPanel: () => this.recordingPanel,
+        getLayersPanel: () => this.layersPanel,
       },
-      preventDefault: false,
-      description: 'Toggle rendering controls',
-    });
-
-    // Scale bar overlay
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: 'b',
-      handler: () => this.scaleBar?.toggle(),
-      preventDefault: true,
-      description: 'Toggle scale bar',
-    });
-
-    // Colormap legend overlay
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: config.input.keyboard.shortcuts.toggleColormapLegend,
-      handler: () => this.colormapLegend?.toggle(),
-      preventDefault: true,
-      description: 'Toggle colormap legend',
-    });
-
-    // Screen-space overlays toggle
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: config.input.keyboard.shortcuts.toggleOverlays,
-      handler: () => this.overlayManager?.toggle(),
-      preventDefault: true,
-      description: 'Toggle overlays',
-    });
-
-    // Recording panel toggle
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: 't',
-      handler: () => this.recordingPanel?.toggle(),
-      preventDefault: true,
-      description: 'Toggle recording panel',
-    });
-
-    // Quick screenshot
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: 'g',
-      handler: () => this.recordingPanel?.captureScreenshot(),
-      preventDefault: true,
-      description: 'Quick screenshot',
-    });
-
-    // Layers panel (L key without modifiers).
-    // If the focus is already inside the panel (e.g. on a range slider,
-    // select, or bound-edit text input), swallow L so dragging sliders
-    // doesn't accidentally close the panel.
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: config.input.keyboard.shortcuts.toggleLayers,
-      handler: (event) => {
-        if (event.metaKey || event.ctrlKey || event.shiftKey) return;
-        const active = document.activeElement as HTMLElement | null;
-        if (active && active.closest('.luxar-layers-panel')) return;
-        event.preventDefault();
-        this.layersPanel?.toggle();
+      commands: {
+        navigateDimension: (direction) => this.handleDimensionNavigation(direction),
+        selectDimension: (index) => this.selectDimension(index),
+        toggleHelp: () => this.toggleHelp(),
+        toggleDimensionSliders: () => this.toggleDimensionSliders(),
+        togglePerformanceStats: () => this.togglePerformanceStats(),
+        toggleRenderingControls: () => this.toggleRenderingControls(),
+        toggleControlMode: () => this.toggleControlMode(),
+        toggleInertialMode: () => this.toggleInertialMode(),
+        toggleCinematicMode: () => this.toggleCinematicMode(),
+        toggleFullscreen: () => this.toggleFullscreen(),
+        cycleDataMonitor: () => this.handleDataMonitorCycle(),
+        recenterCamera: () => this.recenterCamera(),
+        exportViewerState: () => this.exportViewerState(),
+        handleEscape: () => this.handleEscapeKey(),
+        shouldHandleSpaceKey: () => this.shouldHandleSpaceKey(),
       },
-      preventDefault: false,
-      description: 'Toggle layers panel',
-    });
-
-    // Debug console (Ctrl+L)
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: 'l',
-      modifiers: { ctrl: true },
-      handler: () => {
-        this.debugConsole.toggle();
-        log.info(
-          Modules.DEBUG_CONSOLE,
-          `Debug console ${this.debugConsole.getIsVisible() ? 'opened' : 'closed'}`
-        );
-      },
-      preventDefault: true,
-      description: 'Toggle debug console',
-    });
-
-    // Data loading monitor (M key, no modifiers)
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: 'm',
-      handler: (event) => {
-        if (!event.ctrlKey && !event.metaKey && !event.shiftKey) {
-          event.preventDefault();
-          this.handleDataMonitorCycle();
-        }
-      },
-      preventDefault: false,
-      description: 'Cycle data loading monitor',
-    });
-
-    // Recenter camera (F key, no modifiers)
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: 'f',
-      handler: (event) => {
-        if (!event.ctrlKey && !event.metaKey && !event.shiftKey) {
-          event.preventDefault();
-          this.recenterCamera();
-        }
-      },
-      preventDefault: false,
-      description: 'Recenter camera on scene',
-    });
-
-    // Toggle control mode (V key, no modifiers)
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: 'v',
-      handler: (event) => {
-        if (!event.ctrlKey && !event.metaKey && !event.shiftKey) {
-          event.preventDefault();
-          this.toggleControlMode();
-        }
-      },
-      preventDefault: false,
-      description: 'Cycle control mode (orbit/fly/ortho)',
-    });
-
-    // Toggle inertial mode (I key, no modifiers)
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: 'i',
-      handler: (event) => {
-        if (!event.ctrlKey && !event.metaKey && !event.shiftKey) {
-          event.preventDefault();
-          this.toggleInertialMode();
-        }
-      },
-      preventDefault: false,
-      description: 'Toggle inertial mode (fly controls)',
-    });
-
-    // Toggle cinematic mode (C key, no modifiers)
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: 'c',
-      handler: (event) => {
-        if (!event.ctrlKey && !event.metaKey && !event.shiftKey) {
-          event.preventDefault();
-          this.toggleCinematicMode();
-        }
-      },
-      preventDefault: false,
-      description: 'Toggle cinematic mode',
-    });
-
-    // Fullscreen toggle (Space, context-aware)
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: ' ',
-      handler: (event) => {
-        if (this.shouldHandleSpaceKey()) {
-          event.preventDefault();
-          this.toggleFullscreen();
-        }
-      },
-      preventDefault: false,
-      description: 'Toggle fullscreen',
-    });
-
-    // Escape key - context-aware panel closing
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: 'Escape',
-      handler: () => this.handleEscapeKey(),
-      preventDefault: true,
-      description: 'Close panels / Exit fullscreen',
-    });
-
-    // Export viewer state (Ctrl+Shift+S)
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: 's',
-      modifiers: { ctrl: true, shift: true },
-      handler: (event) => {
-        event.preventDefault();
-        this.exportViewerState();
-      },
-      preventDefault: true,
-      description: 'Export viewer state to clipboard',
-    });
-
-    // ===== FLY CONTROLS CONTEXT BINDINGS =====
-    // These are active when in fly mode (WASD movement)
-    // Fly controls must work with ANY modifiers:
-    // - Shift: Speed boost
-    // - Alt: Vertical movement (W/S only)
-    // - Shift+Alt: Fast vertical movement
-
-    // Get fly controls reference once
-    const getFlyControls = () => this.sceneManager.controls.getFlyControls();
-
-    // WASD movement keys - register with all relevant modifier combinations
-    // Need both keydown (start movement) and keyup (stop movement) handlers
-    const flyMovementKeys = ['w', 'a', 's', 'd', 'q', 'e'];
-    const modifierCombinations = [
-      {}, // No modifiers
-      { shift: true }, // Shift only (speed boost)
-      { alt: true }, // Alt only (vertical for W/S)
-      { shift: true, alt: true }, // Shift+Alt (fast vertical)
-    ];
-
-    for (const key of flyMovementKeys) {
-      for (const modifiers of modifierCombinations) {
-        this.contextManager.registerBinding(InputContext.FLY_CONTROLS, {
-          key,
-          modifiers: Object.keys(modifiers).length > 0 ? modifiers : undefined,
-          handler: (event) => getFlyControls()?.handleKeyDown(event),
-          keyupHandler: (event) => getFlyControls()?.handleKeyUp(event),
-          description: `Fly: ${key.toUpperCase()}${
-            modifiers.shift ? '+Shift' : ''
-          }${modifiers.alt ? '+Alt' : ''}`,
-        });
-      }
-    }
-
-    // Arrow keys for look direction (with and without Shift)
-    const arrowKeys = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
-    for (const key of arrowKeys) {
-      // Base arrow key
-      this.contextManager.registerBinding(InputContext.FLY_CONTROLS, {
-        key,
-        handler: (event) => getFlyControls()?.handleKeyDown(event),
-        keyupHandler: (event) => getFlyControls()?.handleKeyUp(event),
-        description: `Fly look: ${key}`,
-      });
-
-      // Arrow + Shift (potentially faster look)
-      this.contextManager.registerBinding(InputContext.FLY_CONTROLS, {
-        key,
-        modifiers: { shift: true },
-        handler: (event) => getFlyControls()?.handleKeyDown(event),
-        keyupHandler: (event) => getFlyControls()?.handleKeyUp(event),
-        description: `Fly look: ${key}+Shift`,
-      });
-    }
-
-    // Shift key in fly mode - also used for speed boost
-    this.contextManager.registerBinding(InputContext.FLY_CONTROLS, {
-      key: 'Shift',
-      handler: () => this.sceneManager.controls.setEnableZoom(false),
-      keyupHandler: () => this.sceneManager.controls.setEnableZoom(true),
-      description: 'Speed boost + zoom control',
     });
   }
 
