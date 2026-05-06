@@ -36,6 +36,7 @@ import {
   loadDirectColorRanges,
   restoreOriginalDtype,
 } from './loaders/color-attribute-utils';
+import { OnceInit } from './loaders/once-init';
 import { choleskyPackedSize } from '../types/gsplats';
 import { GSplatsDataAccumulator, type AccumulatorStats } from './data-accumulator';
 import { config as appConfig } from '../config';
@@ -54,7 +55,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
   private chunkIndex: ChunkSpatialIndex | null = null;
   private zarrLocation: zarr.Location<zarr.Readable>;
   private node: SceneNode;
-  private initPromise: Promise<void> | null = null;
+  private _onceInit = new OnceInit();
   private rangeLoader: RangeLoader;
   private zarrStore: zarr.Readable | null = null;
 
@@ -218,14 +219,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     viewState: GSplatsViewState,
     session?: UpdateSession
   ): Promise<LoadedGSplatsData> {
-    // Prevent race conditions during initialization; null on rejection allows retry
-    if (!this.initPromise) {
-      this.initPromise = this.initialize().catch((err) => {
-        this.initPromise = null; // Allow retry on next call
-        throw err;
-      });
-    }
-    await this.initPromise;
+    await this._onceInit.ensure(() => this.initialize());
 
     if (!this.arrays.centers || !this.arrays.amplitudes || !this.arrays.cholesky_factors) {
       throw new Error('GSplats loader not properly initialized');
@@ -638,14 +632,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
    * only be thrown away.
    */
   async prefetchChunks(viewState: GSplatsViewState): Promise<void> {
-    // Ensure initialization (same guard as loadGSplats)
-    if (!this.initPromise) {
-      this.initPromise = this.initialize().catch((err) => {
-        this.initPromise = null;
-        throw err;
-      });
-    }
-    await this.initPromise;
+    await this._onceInit.ensure(() => this.initialize());
 
     // Query which splat ranges are visible
     const splatRanges = await this.queryVisibleSplatRanges(viewState);
@@ -691,7 +678,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
   dispose(): void {
     this.chunkIndex = null;
     this.arrays = {};
-    this.initPromise = null;
+    this._onceInit.reset();
 
     // Dispose accumulator
     if (this._accumulator) {

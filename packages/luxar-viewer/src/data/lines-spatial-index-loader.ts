@@ -40,6 +40,7 @@ import {
   loadDirectColorRanges,
   restoreOriginalDtype,
 } from './loaders/color-attribute-utils';
+import { OnceInit } from './loaders/once-init';
 import { LinesDataAccumulator, type AccumulatorStats } from './data-accumulator';
 import { config as appConfig } from '../config';
 import type { UpdateProfiler, UpdateSession } from '../profiling/update-profiler';
@@ -145,7 +146,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
   private chunkIndex: LinesDualChunkIndex | null = null;
   private zarrLocation: zarr.Location<zarr.Readable>;
   private node: SceneNode;
-  private initPromise: Promise<void> | null = null;
+  private _onceInit = new OnceInit();
   private rangeLoader: RangeLoader;
   private zarrStore: zarr.Readable | null = null;
 
@@ -325,14 +326,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
    * @param session - Optional profiler session for nested timing
    */
   async loadLines(viewState: LinesViewState, session?: UpdateSession): Promise<LoadedLinesData> {
-    // Prevent race conditions during initialization; null on rejection allows retry
-    if (!this.initPromise) {
-      this.initPromise = this.initialize().catch((err) => {
-        this.initPromise = null; // Allow retry on next call
-        throw err;
-      });
-    }
-    await this.initPromise;
+    await this._onceInit.ensure(() => this.initialize());
 
     if (!this.arrays.vertices || !this.arrays.segments) {
       throw new Error('Lines loader not properly initialized');
@@ -904,7 +898,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
   dispose(): void {
     this.chunkIndex = null;
     this.arrays = {};
-    this.initPromise = null;
+    this._onceInit.reset();
 
     // Dispose accumulator
     if (this._accumulator) {

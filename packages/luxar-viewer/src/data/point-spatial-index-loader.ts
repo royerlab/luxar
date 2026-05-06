@@ -37,6 +37,7 @@ import type {
 import { ArrayDecoder, ArrayRefRegistry, type ArrayMetadata } from './array-decoder';
 import { fetchChunkBoundsArray } from './loaders/chunk-bounds-loader';
 import { RangeLoader, SpatialQueryBuilder, type BaseViewState, type LoadRange } from './loaders';
+import { OnceInit } from './loaders/once-init';
 import type { ZarrSceneAttrs } from '../types/zarr';
 import type { PointsMetadata } from '../types/points';
 import { LoadedPointsDataAccumulator, type AccumulatorStats } from './data-accumulator';
@@ -107,7 +108,7 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
   private _effectiveRadiusConfig: EffectiveRadiusConfig | null = null;
   private zarrLocation: zarr.Location<zarr.Readable>;
   private node: SceneNode;
-  private initPromise: Promise<void> | null = null;
+  private _onceInit = new OnceInit();
   private arrays: {
     positions?: zarr.Array<zarr.DataType, zarr.Readable>;
     colors?: zarr.Array<zarr.DataType, zarr.Readable>;
@@ -400,14 +401,7 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
     const queryId = `${this.node.path}-${startTime}`;
 
     try {
-      // Prevent race conditions during initialization; null on rejection allows retry
-      if (!this.initPromise) {
-        this.initPromise = this.initialize().catch((err) => {
-          this.initPromise = null; // Allow retry on next call
-          throw err;
-        });
-      }
-      await this.initPromise;
+      await this._onceInit.ensure(() => this.initialize());
 
       // Check if loader is properly initialized (chunk index OR fallback with total points count)
       if (!this.chunkIndex && this.totalPointsNoIndex === 0) {
@@ -1889,7 +1883,7 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
   dispose(): void {
     this.chunkIndex = null;
     this.arrays = {};
-    this.initPromise = null;
+    this._onceInit.reset();
     this.eventListeners.clear();
 
     // Dispose accumulator
