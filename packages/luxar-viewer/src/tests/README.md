@@ -287,7 +287,7 @@ Tests for memory management and performance optimization.
   - Async file operations
   - Error handling
 
-- `two-level-caching-store.test.ts` - Memory + OPFS integration
+- `multi-level-caching-store.test.ts` - Memory + OPFS integration
   - Hot data in memory (fast)
   - Warm data in OPFS (persistent)
   - Automatic tier management
@@ -296,7 +296,7 @@ Tests for memory management and performance optimization.
 
 - **lru-cache**: Simple LRU for general use
 - **segmented-lru-cache**: Segmented LRU for better locality
-- **two-level-caching-store**: Hot data in memory, warm data in OPFS
+- **multi-level-caching-store**: Hot data in memory, warm data in OPFS
 
 ---
 

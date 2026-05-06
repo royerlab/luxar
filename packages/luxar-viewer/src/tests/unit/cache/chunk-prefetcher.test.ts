@@ -6,7 +6,7 @@
  * - Adjacent chunk calculation
  * - Queue management and deduplication
  * - Concurrency limiting
- * - Integration with TwoLevelCachingStore
+ * - Integration with MultiLevelCachingStore
  * - URL parameter handling
  * - Race condition safety
  */
@@ -25,7 +25,7 @@ async function waitFor(condition: () => boolean, timeout = 2000): Promise<void> 
   }
 }
 
-// Mock TwoLevelCachingStore for unit tests
+// Mock MultiLevelCachingStore for unit tests
 class MockStore {
   get = vi.fn().mockResolvedValue(new Uint8Array([1, 2, 3]));
   setPrefetcher = vi.fn();
@@ -382,7 +382,7 @@ describe('ChunkPrefetcher - Unit Tests', () => {
 });
 
 describe('ChunkPrefetcher - Integration Tests', () => {
-  it('should integrate with TwoLevelCachingStore via setPrefetcher', () => {
+  it('should integrate with MultiLevelCachingStore via setPrefetcher', () => {
     // Create mock store (don't need real initialization)
     const mockIntegrationStore = {
       get: vi.fn().mockResolvedValue(new Uint8Array([1, 2, 3])),

@@ -217,7 +217,7 @@ export class RangeLoader {
       );
     }
 
-    // Fetch single value (cached via TwoLevelCachingStore)
+    // Fetch single value (cached via MultiLevelCachingStore)
     const fullData = await get(array);
     const broadcastValue = fullData.data as Float32Array | Uint8Array | Uint16Array;
 
@@ -290,7 +290,7 @@ export class RangeLoader {
           ? [slice(range.start, range.end), slice(null)]
           : [slice(range.start, range.end)];
 
-      // Main thread fetches (cached via TwoLevelCachingStore)
+      // Main thread fetches (cached via MultiLevelCachingStore)
       const chunkData = await get(array, sliceSpec);
       const quantizedData = chunkData.data as Uint8Array | Uint16Array;
 

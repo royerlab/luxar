@@ -31,7 +31,7 @@ import {
 } from './view-state-manager';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { config as appConfig } from '../config';
-import { TwoLevelCachingStore, ChunkPrefetcher, DecompressedChunkCache } from '../cache';
+import { MultiLevelCachingStore, ChunkPrefetcher, DecompressedChunkCache } from '../cache';
 import type { PointsMetadata } from '../types/points';
 import { isPointsUserData } from '../types/points';
 import type {
@@ -165,7 +165,7 @@ export class SceneLoader {
   get zarrStore(): zarr.Readable | null {
     return this._zarrStore;
   }
-  private cachingStore: TwoLevelCachingStore | null = null;
+  private cachingStore: MultiLevelCachingStore | null = null;
   // L0 decompressed chunk cache - caches decoded zarr chunks to avoid Blosc decompression
   private l0Cache: DecompressedChunkCache | null = null;
   private registry = new LoaderRegistry();
@@ -215,7 +215,7 @@ export class SceneLoader {
   // Cache surface
   //
   // SceneLoader owns the L0 (decompressed-chunk) cache and the L1/L2
-  // TwoLevelCachingStore. These methods expose a typed, public API that
+  // MultiLevelCachingStore. These methods expose a typed, public API that
   // tools (debug interface, embedders) can call without reaching into
   // private fields. Each method gracefully no-ops if the cache layer is
   // unavailable (e.g. when `noCache` is set in LoaderConfig).
@@ -227,8 +227,8 @@ export class SceneLoader {
    */
   getCacheStats(): {
     l0: ReturnType<DecompressedChunkCache['getStats']> | null;
-    l1: ReturnType<TwoLevelCachingStore['getStats']>['l1'] | null;
-    l2: ReturnType<TwoLevelCachingStore['getStats']>['l2'] | null;
+    l1: ReturnType<MultiLevelCachingStore['getStats']>['l1'] | null;
+    l2: ReturnType<MultiLevelCachingStore['getStats']>['l2'] | null;
   } {
     const l1l2 = this.cachingStore?.getStats();
     return {
@@ -240,7 +240,7 @@ export class SceneLoader {
 
   /** List datasets currently held by the L1/L2 caching store. */
   async listCachedDatasets(): Promise<
-    ReturnType<TwoLevelCachingStore['listDatasets']> extends Promise<infer R> ? R : never
+    ReturnType<MultiLevelCachingStore['listDatasets']> extends Promise<infer R> ? R : never
   > {
     if (!this.cachingStore) return [];
     return this.cachingStore.listDatasets();
@@ -388,7 +388,7 @@ export class SceneLoader {
    * }
    * ```
    *
-   * @see {@link TwoLevelCachingStore} for caching implementation
+   * @see {@link MultiLevelCachingStore} for caching implementation
    * @see SPECIFICATIONS.md - Section 4 for complete scene loading protocol
    */
   async loadScene(url: string): Promise<THREE.Group> {
@@ -442,7 +442,7 @@ export class SceneLoader {
     // Open zarr store with caching
     let rawStore: Readable;
     if (appConfig.cache.enabled && !noCache) {
-      const cachingStore = new TwoLevelCachingStore(this.normalizeURL(url), {
+      const cachingStore = new MultiLevelCachingStore(this.normalizeURL(url), {
         l1MaxSize: appConfig.cache.l1MaxSizeMB * 1024 * 1024,
         l2MaxSize: appConfig.cache.l2MaxSizeMB * 1024 * 1024,
         debug: cacheDebug || appConfig.cache.debug,

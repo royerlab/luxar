@@ -1,4 +1,4 @@
-import type { TwoLevelCachingStore } from './two-level-caching-store';
+import type { MultiLevelCachingStore } from './multi-level-caching-store';
 import { log, Modules, LogEmoji } from '../utils/log';
 
 export interface ChunkPrefetcherOptions {
@@ -31,7 +31,7 @@ export interface ChunkPrefetcherOptions {
  * See: docs/CACHE_PREFETCHING_SPEC.md
  */
 export class ChunkPrefetcher {
-  private store: TwoLevelCachingStore;
+  private store: MultiLevelCachingStore;
   private maxConcurrent: number;
   private enabled: boolean;
   private debug: boolean;
@@ -54,7 +54,7 @@ export class ChunkPrefetcher {
   /** Upper bounds per array path for suppressing out-of-range prefetch requests */
   private maxChunkIndices = new Map<string, number[]>();
 
-  constructor(store: TwoLevelCachingStore, options?: ChunkPrefetcherOptions) {
+  constructor(store: MultiLevelCachingStore, options?: ChunkPrefetcherOptions) {
     this.store = store;
     this.maxConcurrent = options?.maxConcurrent ?? 4;
     this.enabled = options?.enabled ?? true;

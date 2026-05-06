@@ -388,7 +388,7 @@ export interface SceneGraphState {
 
 /**
  * Interface for objects that provide cache statistics.
- * Used for loose coupling between TwoLevelCachingStore and DataLoadingMonitor.
+ * Used for loose coupling between MultiLevelCachingStore and DataLoadingMonitor.
  */
 export interface CacheStatsProvider {
   /** Get current cache statistics */

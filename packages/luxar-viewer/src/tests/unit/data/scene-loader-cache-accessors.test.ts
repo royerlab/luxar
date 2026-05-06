@@ -36,7 +36,7 @@ describe('SceneLoader cache accessors', () => {
 
   describe('with stub cache instances injected (smoke)', () => {
     /**
-     * We don't construct real TwoLevelCachingStore / DecompressedChunkCache
+     * We don't construct real MultiLevelCachingStore / DecompressedChunkCache
      * here — both touch IndexedDB, OPFS, or zarr. Instead, we inject minimal
      * shape-compatible stubs by reaching into the private fields through a
      * narrow interface. This validates that the public methods forward to the

@@ -807,14 +807,14 @@ The data loading system integrates with the two-level caching architecture provi
 
 **Architecture**:
 
-- `TwoLevelCachingStore` wraps the zarr.FetchStore
+- `MultiLevelCachingStore` wraps the zarr.FetchStore
 - All zarr chunk fetches automatically go through the cache
 - Spatial index queries benefit from cached chunk metadata
 - No manual cache management needed at data layer
 
 **For Complete Details**: See `../cache/SPECIFICATIONS.md` (v1.2.1) for full cache architecture specification
 
-**Integration Point**: SceneLoader creates TwoLevelCachingStore when loading scenes (see scene-loader.ts:89-112)
+**Integration Point**: SceneLoader creates MultiLevelCachingStore when loading scenes (see scene-loader.ts:89-112)
 
 ### 5.1 Legacy Note
 

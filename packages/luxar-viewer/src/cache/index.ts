@@ -8,11 +8,7 @@
 export { LRUCache } from './lru-cache';
 export { SegmentedLRUCache } from './segmented-lru-cache';
 export { OPFSStore } from './opfs-store';
-export {
-  MultiLevelCachingStore,
-  /** @deprecated Renamed to MultiLevelCachingStore. */
-  TwoLevelCachingStore,
-} from './two-level-caching-store';
+export { MultiLevelCachingStore } from './multi-level-caching-store';
 export { ChunkPrefetcher } from './chunk-prefetcher';
 
 // L0 decompressed chunk cache (caches decoded zarr chunks to avoid Blosc decompression)
@@ -20,11 +16,7 @@ export { DecompressedChunkCache } from './decompressed-chunk-cache';
 export { wrapWithCache, isCachedArray, unwrapCachedArray } from './cached-zarr-array';
 
 // Types
-export type {
-  MultiLevelCachingStoreOptions,
-  /** @deprecated Renamed to MultiLevelCachingStoreOptions. */
-  TwoLevelCachingStoreOptions,
-} from './two-level-caching-store';
+export type { MultiLevelCachingStoreOptions } from './multi-level-caching-store';
 export type { ChunkPrefetcherOptions } from './chunk-prefetcher';
 export type { CacheStats, ExtendedCacheStats, OPFSMetadata } from './types';
 export type {

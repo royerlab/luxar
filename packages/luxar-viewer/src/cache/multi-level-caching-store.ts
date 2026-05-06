@@ -57,20 +57,10 @@ export interface MultiLevelCachingStoreOptions {
 }
 
 /**
- * @deprecated Use `MultiLevelCachingStoreOptions` instead — kept as an alias so
- * existing call sites continue to compile while we migrate.
- */
-export type TwoLevelCachingStoreOptions = MultiLevelCachingStoreOptions;
-
-/**
  * Multi-level caching store that implements zarrita's AsyncReadable
  * interface. Orchestrates three tiers — L0 (decompressed in-memory chunk
  * cache, owned by the zarrita layer), L1 (memory, in-process), L2
  * (OPFS, cross-tab) — plus an HTTP fallback for zarr chunks.
- *
- * The class was previously named `TwoLevelCachingStore`. The deprecated
- * alias below preserves the old export name during migration; new code
- * should import `MultiLevelCachingStore` directly.
  */
 export class MultiLevelCachingStore implements AsyncReadable {
   private l1Cache: SegmentedLRUCache;
@@ -114,7 +104,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
   private bandwidthWindow: { timestamp: number; bytes: number }[] = [];
   private static readonly BANDWIDTH_WINDOW_MS = 10_000;
 
-  constructor(baseUrl: string, options?: TwoLevelCachingStoreOptions) {
+  constructor(baseUrl: string, options?: MultiLevelCachingStoreOptions) {
     this.baseUrl = baseUrl;
 
     this.enabled = !(options?.noCache ?? false);
@@ -122,11 +112,11 @@ export class MultiLevelCachingStore implements AsyncReadable {
     this.shouldClearOnInit = options?.clearCache ?? false;
 
     // Initialize L1 (always, even if disabled)
-    const l1Size = options?.l1MaxSize ?? TwoLevelCachingStore.DEFAULT_L1_SIZE;
+    const l1Size = options?.l1MaxSize ?? MultiLevelCachingStore.DEFAULT_L1_SIZE;
     this.l1Cache = new SegmentedLRUCache(l1Size);
 
     // Save L2 max size for later initialization
-    this.l2MaxSize = options?.l2MaxSize ?? TwoLevelCachingStore.DEFAULT_L2_SIZE;
+    this.l2MaxSize = options?.l2MaxSize ?? MultiLevelCachingStore.DEFAULT_L2_SIZE;
   }
 
   /**
@@ -176,7 +166,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
    *
    * @example
    * ```typescript
-   * const store = new TwoLevelCachingStore(url, {
+   * const store = new MultiLevelCachingStore(url, {
    *   l1MaxSize: 100 * 1024 * 1024,  // 100MB
    *   l2MaxSize: 2 * 1024 * 1024 * 1024  // 2GB
    * });
@@ -373,7 +363,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
    *
    * Validation is serialized per dataset via a static queue keyed on
    * `datasetId`, which is `SHA-256(baseUrl)` (see {@link hashUrl}). All
-   * `TwoLevelCachingStore` instances pointing at the same URL share the
+   * `MultiLevelCachingStore` instances pointing at the same URL share the
    * same id and therefore the same queue, so rapid same-URL switches
    * cannot let an older validation finish after a newer one and restore
    * stale metadata. Each entry registers an `AbortController` so a
@@ -383,7 +373,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
    */
   private async validateCache(datasetId: string): Promise<void> {
     const abort = new AbortController();
-    const previous = TwoLevelCachingStore.validationQueues.get(datasetId);
+    const previous = MultiLevelCachingStore.validationQueues.get(datasetId);
     const validation = (previous?.promise ?? Promise.resolve())
       .catch(() => undefined)
       .then(() => {
@@ -395,14 +385,14 @@ export class MultiLevelCachingStore implements AsyncReadable {
       });
 
     const entry = { promise: validation, abort };
-    TwoLevelCachingStore.validationQueues.set(datasetId, entry);
+    MultiLevelCachingStore.validationQueues.set(datasetId, entry);
     try {
       await validation;
     } finally {
       // Only delete the entry if it's still ours — a newer validation may
       // have replaced it after we started.
-      if (TwoLevelCachingStore.validationQueues.get(datasetId) === entry) {
-        TwoLevelCachingStore.validationQueues.delete(datasetId);
+      if (MultiLevelCachingStore.validationQueues.get(datasetId) === entry) {
+        MultiLevelCachingStore.validationQueues.delete(datasetId);
       }
     }
   }
@@ -535,8 +525,8 @@ export class MultiLevelCachingStore implements AsyncReadable {
 
       if (attempt < maxAttempts - 1) {
         const delayMs = Math.min(
-          TwoLevelCachingStore.INITIAL_RETRY_DELAY_MS * 2 ** attempt,
-          TwoLevelCachingStore.MAX_RETRY_DELAY_MS
+          MultiLevelCachingStore.INITIAL_RETRY_DELAY_MS * 2 ** attempt,
+          MultiLevelCachingStore.MAX_RETRY_DELAY_MS
         );
         await this.sleep(delayMs);
       }
@@ -622,7 +612,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
   } {
     // Calculate bandwidth using sliding window (last ~10 seconds)
     const now = Date.now();
-    const windowStart = now - TwoLevelCachingStore.BANDWIDTH_WINDOW_MS;
+    const windowStart = now - MultiLevelCachingStore.BANDWIDTH_WINDOW_MS;
 
     // Prune entries older than the window
     while (this.bandwidthWindow.length > 0 && this.bandwidthWindow[0].timestamp < windowStart) {
@@ -697,10 +687,10 @@ export class MultiLevelCachingStore implements AsyncReadable {
 
     // Cancel any in-flight or queued validation belonging to this instance.
     if (this.datasetId !== undefined) {
-      const queued = TwoLevelCachingStore.validationQueues.get(this.datasetId);
+      const queued = MultiLevelCachingStore.validationQueues.get(this.datasetId);
       if (queued) {
         queued.abort.abort();
-        TwoLevelCachingStore.validationQueues.delete(this.datasetId);
+        MultiLevelCachingStore.validationQueues.delete(this.datasetId);
       }
     }
 
@@ -724,14 +714,3 @@ export class MultiLevelCachingStore implements AsyncReadable {
     }
   }
 }
-
-/**
- * @deprecated The class was renamed to `MultiLevelCachingStore` because
- * the actual implementation has three tiers (L0 decompressed-chunk cache,
- * L1 memory, L2 OPFS) plus an HTTP fallback. Imports of the old name
- * still work via this alias; please update call sites when convenient.
- */
-// eslint-disable-next-line no-redeclare
-export const TwoLevelCachingStore = MultiLevelCachingStore;
-// eslint-disable-next-line no-redeclare
-export type TwoLevelCachingStore = MultiLevelCachingStore;

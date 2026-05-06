@@ -2,8 +2,6 @@
 
 Three-level caching system with intelligent prefetching for zarr chunks enabling offline viewing, instant reloads, and reduced bandwidth.
 
-> **Note**: The main class is named `TwoLevelCachingStore` for historical reasons (it predates the addition of the L0 decompressed cache level). The system actually implements three cache levels (L0, L1, L2) as described below.
-
 ## Overview
 
 This package implements a transparent caching and prefetching layer for zarr datasets:
@@ -38,11 +36,11 @@ Request → L0 (Decompressed) → L1 (Memory) → L2 (OPFS) → Remote HTTP
 The cache is **enabled by default** and works transparently through zarrita:
 
 ```typescript
-import { TwoLevelCachingStore } from '../cache';
+import { MultiLevelCachingStore } from '../cache';
 import * as zarr from 'zarrita';
 
 // Create caching store
-const store = new TwoLevelCachingStore('https://example.com/dataset.zarr', {
+const store = new MultiLevelCachingStore('https://example.com/dataset.zarr', {
   l1MaxSize: 100 * 1024 * 1024, // 100MB (optional)
   l2MaxSize: 2 * 1024 * 1024 * 1024, // 2GB (optional)
   debug: false, // Set true for verbose logging (optional)
@@ -200,14 +198,14 @@ For full details, see [`docs/guides/specs/CACHE_PREFETCHING_SPEC.md`](../../../.
 
 ## API Reference
 
-### TwoLevelCachingStore
+### MultiLevelCachingStore
 
 Main class implementing zarrita's `AsyncReadable` interface.
 
 #### Constructor
 
 ```typescript
-new TwoLevelCachingStore(baseUrl: string, options?: {
+new MultiLevelCachingStore(baseUrl: string, options?: {
   l1MaxSize?: number;      // L1 size in bytes (default: 100MB)
   l2MaxSize?: number;      // L2 size in bytes (default: 2GB)
   debug?: boolean;         // Enable debug logging (default: false)
@@ -314,7 +312,7 @@ Intelligent prefetcher for proactive adjacent chunk loading.
 #### Constructor
 
 ```typescript
-new ChunkPrefetcher(store: TwoLevelCachingStore, options?: {
+new ChunkPrefetcher(store: MultiLevelCachingStore, options?: {
   maxConcurrent?: number;       // Max concurrent prefetches (default: 4)
   enabled?: boolean;            // Enable/disable (default: true)
   useFetchPriority?: boolean;   // Use Fetch Priority API (default: true, not yet implemented)
@@ -359,7 +357,7 @@ Dispose the prefetcher, clearing all internal state (seen set, parsed cache, bou
 
 **wrapWithCache** - ES6 Proxy wrapper to add L0 caching to zarr.Array
 
-**TwoLevelCachingStore** - Main orchestrator for L1/L2 caching, implements AsyncReadable interface
+**MultiLevelCachingStore** - Main orchestrator for L1/L2 caching, implements AsyncReadable interface
 
 **ChunkPrefetcher** - Intelligent adjacent chunk prefetcher (enabled by default)
 
@@ -468,10 +466,10 @@ Dataset content changed (new content_hash)
 ## Cache Invalidation Chain
 
 L1/L2 invalidation is the root signal for the whole cache stack. Components that
-cache derived data must subscribe with `TwoLevelCachingStore.onInvalidate()`:
+cache derived data must subscribe with `MultiLevelCachingStore.onInvalidate()`:
 
 ```typescript
-const store = new TwoLevelCachingStore(datasetUrl);
+const store = new MultiLevelCachingStore(datasetUrl);
 const decompressedCache = new DecompressedChunkCache();
 store.onInvalidate(() => decompressedCache.clear());
 ```
@@ -499,7 +497,7 @@ All Luxar-generated datasets include hierarchical content hashes:
 **TypeScript side** (automatic):
 
 ```typescript
-// On TwoLevelCachingStore.init():
+// On MultiLevelCachingStore.init():
 // - Reads root .zattrs['content_hash']
 // - Compares with cached hash
 // - Clears cache if mismatch
@@ -601,5 +599,5 @@ See [SPECIFICATIONS.md](./SPECIFICATIONS.md) for detailed algorithms and design 
 
 ## Related Packages
 
-- **Scene Loader** (`../data/scene-loader.ts`) - Uses TwoLevelCachingStore transparently
+- **Scene Loader** (`../data/scene-loader.ts`) - Uses MultiLevelCachingStore transparently
 - **Configuration** (`../config/index.ts`) - Cache configuration options

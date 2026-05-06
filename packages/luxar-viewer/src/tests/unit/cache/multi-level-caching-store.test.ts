@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { TwoLevelCachingStore } from '../../../cache/two-level-caching-store';
+import { MultiLevelCachingStore } from '../../../cache/multi-level-caching-store';
 
 // Create comprehensive mocks
 const createMocks = () => {
@@ -99,13 +99,13 @@ const createMocks = () => {
   return { files, metaFiles, fetchedUrls, mockDirHandle };
 };
 
-describe('TwoLevelCachingStore', () => {
-  let store: TwoLevelCachingStore;
+describe('MultiLevelCachingStore', () => {
+  let store: MultiLevelCachingStore;
   let mocks: ReturnType<typeof createMocks>;
 
   beforeEach(async () => {
     mocks = createMocks();
-    store = new TwoLevelCachingStore('https://example.com/data.zarr', {
+    store = new MultiLevelCachingStore('https://example.com/data.zarr', {
       l1MaxSize: 20 * 1024 * 1024, // 20MB (must exceed SegmentedLRU MIN_METADATA_SIZE of 10MB)
       l2MaxSize: 4096, // 4KB
     });
@@ -125,7 +125,7 @@ describe('TwoLevelCachingStore', () => {
     });
 
     it('should respect URL parameters', async () => {
-      const noCacheStore = new TwoLevelCachingStore('https://example.com/test.zarr', {
+      const noCacheStore = new MultiLevelCachingStore('https://example.com/test.zarr', {
         noCache: true,
       });
       await noCacheStore.init();
@@ -136,7 +136,7 @@ describe('TwoLevelCachingStore', () => {
     });
 
     it('should enable debug mode via URL parameter', async () => {
-      const debugStore = new TwoLevelCachingStore('https://example.com/test.zarr', {
+      const debugStore = new MultiLevelCachingStore('https://example.com/test.zarr', {
         debug: true,
       });
       await debugStore.init();
@@ -212,7 +212,7 @@ describe('TwoLevelCachingStore', () => {
         return { ok: false } as Response;
       }) as any;
 
-      const noHashStore = new TwoLevelCachingStore('https://example.com/no-hash.zarr');
+      const noHashStore = new MultiLevelCachingStore('https://example.com/no-hash.zarr');
       await noHashStore.init(); // Should not throw
       expect(noHashStore).toBeDefined();
     });
@@ -294,7 +294,7 @@ describe('TwoLevelCachingStore', () => {
 
       // Validation should detect the difference
       // Even though .zattrs is in cache with old hash!
-      const testStore = new TwoLevelCachingStore('https://example.com/data.zarr');
+      const testStore = new MultiLevelCachingStore('https://example.com/data.zarr');
       await testStore.init();
 
       // CRITICAL: Validation MUST have fetched .zattrs directly from HTTP
@@ -341,7 +341,7 @@ describe('TwoLevelCachingStore', () => {
 
       // Create new store instance and init - should fetch AGAIN
       // even though .zattrs might be in cache
-      const newStore = new TwoLevelCachingStore('https://example.com/data.zarr');
+      const newStore = new MultiLevelCachingStore('https://example.com/data.zarr');
       await newStore.init();
 
       // CRITICAL: fetchCount should have increased
@@ -503,7 +503,7 @@ describe('TwoLevelCachingStore', () => {
         },
       });
 
-      const store = new TwoLevelCachingStore('https://example.com/test.zarr');
+      const store = new MultiLevelCachingStore('https://example.com/test.zarr');
       await store.init(); // Should not throw
 
       // Should still work with L1 only
@@ -525,7 +525,7 @@ describe('TwoLevelCachingStore', () => {
     });
 
     it('should not throw on dispose without init', async () => {
-      const newStore = new TwoLevelCachingStore('https://example.com/test.zarr');
+      const newStore = new MultiLevelCachingStore('https://example.com/test.zarr');
       await newStore.dispose(); // Should not throw
       expect(newStore).toBeDefined();
     });
@@ -550,7 +550,7 @@ describe('TwoLevelCachingStore', () => {
         });
       }) as any;
 
-      const slowStore = new TwoLevelCachingStore('https://example.com/slow.zarr', {
+      const slowStore = new MultiLevelCachingStore('https://example.com/slow.zarr', {
         l1MaxSize: 20 * 1024 * 1024,
         l2MaxSize: 4096,
       });
@@ -591,7 +591,7 @@ describe('TwoLevelCachingStore', () => {
         });
       }) as any;
 
-      const timeoutStore = new TwoLevelCachingStore('https://example.com/timeout.zarr', {
+      const timeoutStore = new MultiLevelCachingStore('https://example.com/timeout.zarr', {
         l1MaxSize: 20 * 1024 * 1024,
         l2MaxSize: 4096,
       });
@@ -674,7 +674,7 @@ describe('TwoLevelCachingStore', () => {
 
   describe('URL Parameter Handling', () => {
     it('should disable caching with ?no-cache', async () => {
-      const noCacheStore = new TwoLevelCachingStore('https://example.com/test.zarr', {
+      const noCacheStore = new MultiLevelCachingStore('https://example.com/test.zarr', {
         noCache: true,
       });
       await noCacheStore.init();
@@ -696,7 +696,7 @@ describe('TwoLevelCachingStore', () => {
       // (the central log utility's standardised channel for INFO-level output).
       const consoleLog = vi.spyOn(console, 'log');
 
-      const debugStore = new TwoLevelCachingStore('https://example.com/test.zarr', {
+      const debugStore = new MultiLevelCachingStore('https://example.com/test.zarr', {
         debug: true,
       });
       await debugStore.init();
@@ -712,7 +712,7 @@ describe('TwoLevelCachingStore', () => {
       await store.get('test1');
       await store.dispose();
 
-      const clearStore = new TwoLevelCachingStore('https://example.com/data.zarr', {
+      const clearStore = new MultiLevelCachingStore('https://example.com/data.zarr', {
         clearCache: true,
       });
       await clearStore.init();
@@ -871,7 +871,7 @@ describe('TwoLevelCachingStore', () => {
       mocks.fetchedUrls.length = 0;
 
       // Store created with NO trailing slash
-      const storeNoSlash = new TwoLevelCachingStore('https://example.com/data.zarr');
+      const storeNoSlash = new MultiLevelCachingStore('https://example.com/data.zarr');
       await storeNoSlash.init();
       mocks.fetchedUrls.length = 0;
 
@@ -887,7 +887,7 @@ describe('TwoLevelCachingStore', () => {
       mocks.fetchedUrls.length = 0;
 
       // Store created WITH trailing slash (as normalizeURL would produce)
-      const storeWithSlash = new TwoLevelCachingStore('https://example.com/data.zarr/');
+      const storeWithSlash = new MultiLevelCachingStore('https://example.com/data.zarr/');
       await storeWithSlash.init();
       mocks.fetchedUrls.length = 0;
 
@@ -903,7 +903,7 @@ describe('TwoLevelCachingStore', () => {
       mocks.fetchedUrls.length = 0;
 
       // Store with trailing slash + key with leading slash = potential triple slash
-      const storeWithSlash = new TwoLevelCachingStore('https://example.com/data.zarr/');
+      const storeWithSlash = new MultiLevelCachingStore('https://example.com/data.zarr/');
       await storeWithSlash.init();
       mocks.fetchedUrls.length = 0;
 
@@ -921,7 +921,7 @@ describe('TwoLevelCachingStore', () => {
       mocks.fetchedUrls.length = 0;
 
       // Store with MULTIPLE trailing slashes (edge case)
-      const storeMultiSlash = new TwoLevelCachingStore('https://example.com/data.zarr///');
+      const storeMultiSlash = new MultiLevelCachingStore('https://example.com/data.zarr///');
       await storeMultiSlash.init();
       mocks.fetchedUrls.length = 0;
 
@@ -934,7 +934,7 @@ describe('TwoLevelCachingStore', () => {
     it('should handle multiple leading slashes in key', async () => {
       mocks.fetchedUrls.length = 0;
 
-      const storeWithSlash = new TwoLevelCachingStore('https://example.com/data.zarr/');
+      const storeWithSlash = new MultiLevelCachingStore('https://example.com/data.zarr/');
       await storeWithSlash.init();
       mocks.fetchedUrls.length = 0;
 
@@ -948,7 +948,7 @@ describe('TwoLevelCachingStore', () => {
       mocks.fetchedUrls.length = 0;
 
       // Store with trailing slash
-      const storeWithSlash = new TwoLevelCachingStore('https://example.com/data.zarr/');
+      const storeWithSlash = new MultiLevelCachingStore('https://example.com/data.zarr/');
       await storeWithSlash.init();
 
       // .zattrs should be fetched correctly during init

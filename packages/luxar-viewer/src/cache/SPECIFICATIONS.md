@@ -14,7 +14,7 @@ The cache package provides a three-level caching system with intelligent prefetc
 ### Data Pipeline Position
 
 ```
-HTTP Request → TwoLevelCachingStore → zarrita decompression → L0 Cache → ArrayDecoder → Rendering
+HTTP Request → MultiLevelCachingStore → zarrita decompression → L0 Cache → ArrayDecoder → Rendering
                 ↑                            ↑                    ↑
             Caches compressed chunks    ~2ms overhead     Caches decompressed chunks
             (L1/L2)                   (skipped on L0 hit)      (~1μs access)
@@ -463,7 +463,7 @@ For complete details, see: [`docs/guides/specs/CACHE_PREFETCHING_SPEC.md`](../..
 
 ```
 1. zarrita requests chunk "points/positions/0.0.0"
-2. TwoLevelCachingStore.get()
+2. MultiLevelCachingStore.get()
    a. Check L1 → miss
    b. Check L2 → miss
    c. HTTP fetch → 32KB compressed chunk
@@ -478,7 +478,7 @@ For complete details, see: [`docs/guides/specs/CACHE_PREFETCHING_SPEC.md`](../..
 
 ```
 1. zarrita requests chunk
-2. TwoLevelCachingStore.get()
+2. MultiLevelCachingStore.get()
    a. Check L1 → HIT! (~1μs)
    b. Return immediately
 3. zarrita decompresses
@@ -489,7 +489,7 @@ For complete details, see: [`docs/guides/specs/CACHE_PREFETCHING_SPEC.md`](../..
 
 ```
 1. zarrita requests chunk
-2. TwoLevelCachingStore.get()
+2. MultiLevelCachingStore.get()
    a. Check L1 → miss (cleared on page load)
    b. Check L2 → HIT! (~1ms)
    c. Promote to L1
@@ -654,7 +654,7 @@ if data.byteLength != expectedSize:
 
 ### Cache Statistics Interface
 
-The `TwoLevelCachingStore` provides comprehensive statistics via `getStats()`:
+The `MultiLevelCachingStore` provides comprehensive statistics via `getStats()`:
 
 ```typescript
 interface CacheStats {
@@ -874,7 +874,7 @@ An earlier architecture included a 4-layer cache system with an L0 "RangeCache" 
   - Removed `getRootAttrs()` method (was reading from cache, causing false positives)
   - Fixes issue where switching datasets on same port showed stale data
   - Added 2 comprehensive unit tests verifying bypass behavior
-  - See: `two-level-caching-store.ts:172-192`
+  - See: `multi-level-caching-store.ts:172-192`
 
 - **v1.2.0** (2025-12-06): Shallow bucketing for OPFS storage
   - Added 256-bucket directory structure to distribute files
