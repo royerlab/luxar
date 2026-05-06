@@ -31,10 +31,10 @@ export default defineConfig({
       // in a dedicated commit each time a phase of new tests crosses the
       // next band. Long-term target: 80% across the board.
       thresholds: {
-        lines: 56,
+        lines: 57,
         functions: 57,
-        branches: 44,
-        statements: 55,
+        branches: 46,
+        statements: 56,
       },
     },
   },
