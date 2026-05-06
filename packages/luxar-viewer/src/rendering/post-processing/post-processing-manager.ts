@@ -28,8 +28,8 @@ import {
 } from './chromatic-lens-distortion-effect';
 import * as THREE from 'three';
 import { EXRExporter, ZIP_COMPRESSION } from 'three/examples/jsm/exporters/EXRExporter.js';
-import { log, Modules } from '../utils/log';
-import { config } from '../config';
+import { log, Modules } from '../../utils/log';
+import { config } from '../../config';
 import {
   BloomEffectTyped,
   DepthOfFieldEffectTyped,
@@ -37,8 +37,8 @@ import {
   isBloomEffectTyped,
   isDepthOfFieldEffectTyped,
 } from './postprocessing-types';
-import { safeDisposeEffect } from './post-processing/effect-disposal';
-import { computeEffectiveRenderSize } from './post-processing/render-target-sizing';
+import { safeDisposeEffect } from './effect-disposal';
+import { computeEffectiveRenderSize } from './render-target-sizing';
 
 /**
  * Manages HDR post-processing effects using pmndrs/postprocessing library.

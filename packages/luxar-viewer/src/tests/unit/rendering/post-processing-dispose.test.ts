@@ -11,7 +11,7 @@ vi.mock('../../../utils/log', () => ({
   Modules: { POST_PROCESSING: 'PostProcessing' },
 }));
 
-import { PostProcessingManager } from '../../../rendering/post-processing-manager';
+import { PostProcessingManager } from '../../../rendering/post-processing/post-processing-manager';
 
 type Disposable = { dispose: ReturnType<typeof vi.fn> };
 type DisposableEffectKey =

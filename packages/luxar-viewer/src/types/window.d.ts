@@ -19,7 +19,7 @@ import type { InputHandler } from '../input/input-handler';
 import type { RenderingControls } from '../ui/rendering-controls';
 import type { RecordingPanel } from '../ui/recording-panel';
 import type { ControlsManager } from '../controls/controls-manager';
-import type { PostProcessingManager } from '../rendering/post-processing-manager';
+import type { PostProcessingManager } from '../rendering/post-processing/post-processing-manager';
 import type { SceneDimsManager } from '../scene/scene-dims-manager';
 import type * as THREE from 'three';
 

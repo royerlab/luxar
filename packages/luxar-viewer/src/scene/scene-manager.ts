@@ -15,7 +15,7 @@ import { showLoadingIndicator, hideLoadingIndicator, showError } from '../ui/hel
 import { config } from '../config';
 import { extractCameraOverrides, extractBackgroundColor } from '../config/viewer-config-utils';
 import type { ZarrViewerConfig } from '../types/zarr';
-import { PostProcessingManager } from '../rendering/post-processing-manager';
+import { PostProcessingManager } from '../rendering/post-processing/post-processing-manager';
 import { materialManager } from '../rendering/material-manager';
 import {
   detectHDRCapabilities,

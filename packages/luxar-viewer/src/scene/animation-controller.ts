@@ -9,7 +9,7 @@
 import { ControlsManager } from '../controls/controls-manager';
 import { config } from '../config';
 import { PerformanceMonitor } from '../ui/performance-monitor';
-import { PostProcessingManager } from '../rendering/post-processing-manager';
+import { PostProcessingManager } from '../rendering/post-processing/post-processing-manager';
 import { AdaptiveDPRManager } from '../rendering/adaptive-dpr-manager';
 
 /**

@@ -3,7 +3,7 @@
 
 import GUI, { Folder } from './gui';
 import * as THREE from 'three';
-import { PostProcessingManager } from '../rendering/post-processing-manager';
+import { PostProcessingManager } from '../rendering/post-processing/post-processing-manager';
 import { SceneManager } from '../scene/scene-manager';
 import { AnimationController } from '../scene/animation-controller';
 import { config, type RenderingSettings } from '../config';
