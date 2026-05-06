@@ -16,7 +16,12 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import type { ArrayMetadata } from '../../../data/array-decoder';
 import { ArrayRefRegistry } from '../../../data/array-decoder';
-import { RangeLoader } from '../../../data/loaders/range-loader';
+import {
+  RangeLoader,
+  getSharedRangeLoader,
+  getSharedRefRegistry,
+  resetSharedRangeLoader,
+} from '../../../data/loaders/range-loader';
 import type { LoadRange } from '../../../data/loaders/range-loader';
 
 // ---------------------------------------------------------------------------
@@ -917,5 +922,63 @@ describe('RangeLoader.loadRangesResolvingRef', () => {
 
     expect(written).toBe(2);
     expect(Array.from(output)).toEqual([7, 8]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Shared singleton helpers
+// ---------------------------------------------------------------------------
+
+describe('getSharedRangeLoader / getSharedRefRegistry / reset', () => {
+  beforeEach(() => {
+    resetSharedRangeLoader();
+  });
+
+  it('returns the same instance across calls (singleton)', () => {
+    const a = getSharedRangeLoader();
+    const b = getSharedRangeLoader();
+    expect(a).toBe(b);
+  });
+
+  it('uses the supplied registry on first construction', () => {
+    const reg = new ArrayRefRegistry();
+    const a = getSharedRangeLoader(reg);
+    const b = getSharedRangeLoader();
+    expect(a).toBe(b);
+    // The shared registry should match the one we supplied initially.
+    expect(getSharedRefRegistry()).toBe(reg);
+  });
+
+  it('ignores a registry passed AFTER first construction', () => {
+    const r1 = new ArrayRefRegistry();
+    const r2 = new ArrayRefRegistry();
+    getSharedRangeLoader(r1);
+    getSharedRangeLoader(r2); // ignored
+    expect(getSharedRefRegistry()).toBe(r1);
+  });
+
+  it('getSharedRefRegistry() lazily creates a registry when called first', () => {
+    const reg = getSharedRefRegistry();
+    expect(reg).toBeInstanceOf(ArrayRefRegistry);
+    // Subsequent call returns the same one.
+    expect(getSharedRefRegistry()).toBe(reg);
+  });
+
+  it('resetSharedRangeLoader() forces a fresh singleton on next access', () => {
+    const before = getSharedRangeLoader();
+    resetSharedRangeLoader();
+    const after = getSharedRangeLoader();
+    expect(after).not.toBe(before);
+  });
+});
+
+describe('RangeLoader.getDecoder', () => {
+  it('returns the underlying ArrayDecoder', () => {
+    const reg = new ArrayRefRegistry();
+    const loader = new RangeLoader(reg);
+    const decoder = loader.getDecoder();
+    expect(decoder).toBeDefined();
+    // Two calls return the same instance (no rebuild per call).
+    expect(loader.getDecoder()).toBe(decoder);
   });
 });
