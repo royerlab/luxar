@@ -23,6 +23,8 @@
 
 import * as zarr from 'zarrita';
 import { get, slice } from 'zarrita';
+import { ArrayDecoder, type ArrayMetadata } from '../array-decoder';
+import type { RangeLoader, LoadRange } from './range-loader';
 
 /** Minimal shape needed by the helpers — both SplatRange and SegmentRange match. */
 export interface ColorRange {
@@ -151,4 +153,93 @@ export function restoreOriginalDtype(
   }
 
   return decoded;
+}
+
+/**
+ * End-to-end load for a colors array, encoded or unencoded, with native-type
+ * preservation and original_dtype restoration. Composes the helpers above to
+ * reproduce the load-color flow that lines and gsplats both run.
+ *
+ * Branches:
+ * 1. Direct (unencoded, no array_ref): allocate or reuse a typed buffer of the
+ *    right kind, stream raw values in via {@link loadDirectColorRanges}.
+ * 2. `rgb_uint8` / `rgb_uint16` encoded colors with a target buffer of the
+ *    matching kind: skip the decode pipeline and stream raw bytes directly
+ *    (downstream renderer normalizes 0-255 → 0-1).
+ * 3. Anything else (quantized / LUT / broadcasted / array_ref): decode to
+ *    Float32, optionally resolve array_ref against `zarrStore`, then cast
+ *    back to `original_dtype` if the encoding records one.
+ *
+ * RGB layout (3 channels) is hard-coded to match the existing loaders.
+ *
+ * @param array - The colors zarr array.
+ * @param ranges - Item ranges to load (splats / vertices etc).
+ * @param rangeLoader - Shared encoding-dispatch loader.
+ * @param zarrStore - Store used to resolve array_ref targets.
+ * @param logPrefix - Caller tag for the array_ref resolution log line.
+ * @param targetBuffer - Optional pre-allocated buffer (zero-allocation path).
+ */
+export async function loadColorRanges(
+  array: zarr.Array<zarr.DataType, zarr.FetchStore>,
+  ranges: ColorRange[],
+  rangeLoader: RangeLoader,
+  zarrStore: zarr.Readable,
+  logPrefix: string,
+  targetBuffer?: ColorBuffer
+): Promise<ColorBuffer> {
+  const totalItems = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
+  const totalElements = totalItems * 3; // RGB
+
+  const attrs = array.attrs as unknown as ArrayMetadata;
+  const isEncoded =
+    ArrayDecoder.isQuantizedEncoding(attrs) ||
+    ArrayDecoder.isLUTEncoded(attrs) ||
+    ArrayDecoder.isBroadcasted(attrs);
+  const isArrayRef = ArrayDecoder.isArrayRef(attrs);
+
+  // 1. Direct (unencoded) path — preserve native type.
+  if (!isEncoded && !isArrayRef) {
+    const dtype = String(array.dtype);
+    const expectedType = getExpectedColorType(dtype);
+    const output =
+      targetBuffer && colorBufferTypeMatches(targetBuffer, expectedType)
+        ? targetBuffer
+        : allocateColorBuffer(totalElements, false, dtype);
+    await loadDirectColorRanges(array, ranges, output);
+    return output;
+  }
+
+  // 2. rgb_uint8 / rgb_uint16 with matching target → skip decode, raw stream.
+  const encName = attrs.encoding?.name;
+  if (encName === 'rgb_uint8' && targetBuffer instanceof Uint8Array) {
+    await loadDirectColorRanges(array, ranges, targetBuffer);
+    return targetBuffer;
+  }
+  if (encName === 'rgb_uint16' && targetBuffer instanceof Uint16Array) {
+    await loadDirectColorRanges(array, ranges, targetBuffer);
+    return targetBuffer;
+  }
+
+  // 3. Encoded or array_ref → decode to Float32 (resolving any ref), then
+  //    restore original dtype using the CALLER attrs (not the target's), so
+  //    an array_ref'd uint8 colors attribute still ends up uint8 even when
+  //    the target storage is float32.
+  const decodedFloat32 =
+    targetBuffer instanceof Float32Array ? targetBuffer : new Float32Array(totalElements);
+
+  const shape = array.shape;
+  const actualElementsPerItem = shape.length === 2 ? shape[1] : 1;
+
+  await rangeLoader.loadRangesResolvingRef(
+    array,
+    attrs,
+    ranges as LoadRange[],
+    decodedFloat32,
+    totalItems,
+    actualElementsPerItem,
+    zarrStore,
+    logPrefix
+  );
+
+  return restoreOriginalDtype(decodedFloat32, attrs.encoding?.original_dtype, totalElements);
 }

@@ -12,8 +12,10 @@ import {
   colorBufferTypeMatches,
   loadDirectColorRanges,
   restoreOriginalDtype,
+  loadColorRanges,
   type ColorRange,
 } from '../../../../data/loaders/color-attribute-utils';
+import type { RangeLoader } from '../../../../data/loaders/range-loader';
 
 vi.mock('zarrita', async () => {
   const actual = await vi.importActual('zarrita');
@@ -172,5 +174,112 @@ describe('loadDirectColorRanges', () => {
 
     await loadDirectColorRanges(array, ranges, out);
     expect(Array.from(out)).toEqual([10, 20, 30]);
+  });
+});
+
+describe('loadColorRanges (orchestrator)', () => {
+  beforeEach(() => {
+    mockZarrGet.mockReset();
+  });
+
+  /** A RangeLoader stand-in whose `loadRangesResolvingRef` we can spy on. */
+  function makeFakeRangeLoader() {
+    return {
+      loadRangesResolvingRef: vi.fn(async (_array, _attrs, _ranges, _out, _total, _epi, _store) => {
+        return 0;
+      }),
+    } as unknown as RangeLoader & {
+      loadRangesResolvingRef: ReturnType<typeof vi.fn>;
+    };
+  }
+
+  it('takes the direct path for unencoded uint8 colors and never invokes RangeLoader', async () => {
+    mockZarrGet.mockResolvedValueOnce({ data: new Uint8Array([10, 20, 30, 40, 50, 60]) } as never);
+    const array = {
+      dtype: 'uint8',
+      shape: [10, 3],
+      attrs: {}, // no encoding
+    } as never;
+    const rl = makeFakeRangeLoader();
+    const ranges: ColorRange[] = [{ start: 0, end: 2 }];
+
+    const out = await loadColorRanges(array, ranges, rl, {} as never, 'TEST');
+
+    expect(out).toBeInstanceOf(Uint8Array);
+    expect(Array.from(out as Uint8Array)).toEqual([10, 20, 30, 40, 50, 60]);
+    expect(rl.loadRangesResolvingRef).not.toHaveBeenCalled();
+  });
+
+  it('reuses the target buffer on the direct path when its kind matches', async () => {
+    mockZarrGet.mockResolvedValueOnce({ data: new Uint8Array([1, 2, 3]) } as never);
+    const array = { dtype: 'uint8', shape: [10, 3], attrs: {} } as never;
+    const rl = makeFakeRangeLoader();
+    const target = new Uint8Array(3);
+    const ranges: ColorRange[] = [{ start: 0, end: 1 }];
+
+    const out = await loadColorRanges(array, ranges, rl, {} as never, 'TEST', target);
+
+    expect(out).toBe(target);
+    expect(Array.from(target)).toEqual([1, 2, 3]);
+    expect(rl.loadRangesResolvingRef).not.toHaveBeenCalled();
+  });
+
+  it('skips the decode pipeline for rgb_uint8 with a Uint8Array target', async () => {
+    mockZarrGet.mockResolvedValueOnce({ data: new Uint8Array([5, 6, 7]) } as never);
+    const array = {
+      dtype: 'uint8',
+      shape: [10, 3],
+      attrs: { encoding: { name: 'rgb_uint8' } },
+    } as never;
+    const rl = makeFakeRangeLoader();
+    const target = new Uint8Array(3);
+
+    const out = await loadColorRanges(array, [{ start: 0, end: 1 }], rl, {} as never, 'T', target);
+
+    expect(out).toBe(target);
+    expect(Array.from(target)).toEqual([5, 6, 7]);
+    expect(rl.loadRangesResolvingRef).not.toHaveBeenCalled();
+  });
+
+  it('routes encoded colors through RangeLoader.loadRangesResolvingRef', async () => {
+    const array = {
+      dtype: 'float32',
+      shape: [10, 3],
+      attrs: {
+        encoding: { name: 'bounded_scalar_uint8', original_dtype: 'uint8', min: 0, max: 1 },
+      },
+    } as never;
+    const rl = makeFakeRangeLoader();
+    rl.loadRangesResolvingRef.mockImplementationOnce(
+      async (_a, _attrs, _ranges, output: Float32Array) => {
+        // Pretend the loader filled the buffer with values that, when clamped
+        // back to uint8, give a clear signal.
+        output.set([0.5, 100.5, 250.5, 1000.0, -50.0, 128.7]);
+        return 6;
+      }
+    );
+    const ranges: ColorRange[] = [{ start: 0, end: 2 }];
+
+    const out = await loadColorRanges(array, ranges, rl, {} as never, 'TEST');
+
+    // original_dtype=uint8 → restoreOriginalDtype rounds and clamps [0,255].
+    expect(out).toBeInstanceOf(Uint8Array);
+    expect(Array.from(out as Uint8Array)).toEqual([1, 101, 251, 255, 0, 129]);
+    expect(rl.loadRangesResolvingRef).toHaveBeenCalledTimes(1);
+    expect(rl.loadRangesResolvingRef.mock.calls[0][7]).toBe('TEST'); // logPrefix
+  });
+
+  it('passes the supplied logPrefix through to the RangeLoader call', async () => {
+    const array = {
+      dtype: 'float32',
+      shape: [10, 3],
+      attrs: { encoding: { name: 'broadcasted' } },
+    } as never;
+    const rl = makeFakeRangeLoader();
+
+    await loadColorRanges(array, [{ start: 0, end: 1 }], rl, {} as never, 'GSplats');
+
+    expect(rl.loadRangesResolvingRef).toHaveBeenCalled();
+    expect(rl.loadRangesResolvingRef.mock.calls[0][7]).toBe('GSplats');
   });
 });

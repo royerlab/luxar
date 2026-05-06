@@ -24,7 +24,7 @@ import type {
   SegmentRange,
 } from '../types/lines';
 import type { SceneNode } from './data-loader-types';
-import { ArrayDecoder, ArrayRefRegistry, type ArrayMetadata } from './array-decoder';
+import { ArrayRefRegistry, type ArrayMetadata } from './array-decoder';
 import { fetchChunkBoundsArray } from './loaders/chunk-bounds-loader';
 import {
   RangeLoader,
@@ -33,13 +33,7 @@ import {
   type ChunkSpatialIndex,
   type LoadRange,
 } from './loaders';
-import {
-  allocateColorBuffer,
-  getExpectedColorType,
-  colorBufferTypeMatches,
-  loadDirectColorRanges,
-  restoreOriginalDtype,
-} from './loaders/color-attribute-utils';
+import { getExpectedColorType, loadColorRanges } from './loaders/color-attribute-utils';
 import { OnceInit } from './loaders/once-init';
 import { LinesDataAccumulator, type AccumulatorStats } from './data-accumulator';
 import { config as appConfig } from '../config';
@@ -793,71 +787,8 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     if (!array) {
       throw new Error('Colors array not initialized');
     }
-
-    const totalVertices = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
-    const totalElements = totalVertices * 3; // RGB
-
-    const attrs = array.attrs as unknown as ArrayMetadata;
-    const isEncoded =
-      ArrayDecoder.isQuantizedEncoding(attrs) ||
-      ArrayDecoder.isLUTEncoded(attrs) ||
-      ArrayDecoder.isBroadcasted(attrs);
-    const isArrayRef = ArrayDecoder.isArrayRef(attrs);
-
-    // For direct (unencoded) arrays, preserve native type
-    if (!isEncoded && !isArrayRef) {
-      const dtype = String(array.dtype);
-
-      // Use target buffer if provided and type matches, otherwise allocate
-      const expectedType = getExpectedColorType(dtype);
-      const output =
-        targetBuffer && colorBufferTypeMatches(targetBuffer, expectedType)
-          ? targetBuffer
-          : allocateColorBuffer(totalElements, false, dtype);
-
-      // Load directly with type preservation
-      await loadDirectColorRanges(array, ranges, output);
-      return output;
-    }
-
-    // Special case: rgb_uint8/rgb_uint16 encoded colors with matching target buffer
-    // Skip decoding - load raw uint8/uint16 values directly. The lines processor
-    // will normalize them (Uint8 [0-255] → Float32 [0-1])
-    const encName = attrs.encoding?.name;
-    if (encName === 'rgb_uint8' && targetBuffer instanceof Uint8Array) {
-      await loadDirectColorRanges(array, ranges, targetBuffer);
-      return targetBuffer;
-    }
-    if (encName === 'rgb_uint16' && targetBuffer instanceof Uint16Array) {
-      await loadDirectColorRanges(array, ranges, targetBuffer);
-      return targetBuffer;
-    }
-
-    // For other encoded arrays or array_ref, decode to Float32Array then restore original_dtype
-    const decodedFloat32 =
-      targetBuffer instanceof Float32Array ? targetBuffer : new Float32Array(totalElements);
-
-    // Single dispatch — helper resolves array_ref against zarrStore when
-    // present and otherwise delegates to RangeLoader.loadRanges directly.
-    const shape = array.shape;
-    const actualElementsPerVertex = shape.length === 2 ? shape[1] : 1;
     const storeToUse = this.zarrStore || this.zarrLocation.store;
-
-    await this.rangeLoader.loadRangesResolvingRef(
-      array,
-      attrs,
-      ranges as LoadRange[],
-      decodedFloat32,
-      totalVertices,
-      actualElementsPerVertex,
-      storeToUse,
-      'Lines'
-    );
-
-    // original_dtype is taken from the CALLER's attrs so an array_ref to a
-    // float32-stored target still restores back to e.g. uint8 if that was
-    // the original format on the line node.
-    return restoreOriginalDtype(decodedFloat32, attrs.encoding?.original_dtype, totalElements);
+    return loadColorRanges(array, ranges, this.rangeLoader, storeToUse, 'Lines', targetBuffer);
   }
 
   /**

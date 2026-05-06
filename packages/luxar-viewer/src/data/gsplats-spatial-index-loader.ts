@@ -21,7 +21,7 @@ import type {
   SplatRange,
 } from '../types/gsplats';
 import type { SceneNode } from './data-loader-types';
-import { ArrayDecoder, ArrayRefRegistry, type ArrayMetadata } from './array-decoder';
+import { ArrayRefRegistry, type ArrayMetadata } from './array-decoder';
 import { fetchChunkBoundsArray } from './loaders/chunk-bounds-loader';
 import {
   RangeLoader,
@@ -29,13 +29,7 @@ import {
   type ChunkSpatialIndex,
   type LoadRange,
 } from './loaders';
-import {
-  allocateColorBuffer,
-  getExpectedColorType,
-  colorBufferTypeMatches,
-  loadDirectColorRanges,
-  restoreOriginalDtype,
-} from './loaders/color-attribute-utils';
+import { getExpectedColorType, loadColorRanges } from './loaders/color-attribute-utils';
 import { OnceInit } from './loaders/once-init';
 import { choleskyPackedSize } from '../types/gsplats';
 import { GSplatsDataAccumulator, type AccumulatorStats } from './data-accumulator';
@@ -537,73 +531,8 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     if (!array) {
       throw new Error('Colors array not initialized');
     }
-
-    const totalSplats = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
-    const totalElements = totalSplats * 3; // RGB
-
-    const attrs = array.attrs as unknown as ArrayMetadata;
-    const isEncoded =
-      ArrayDecoder.isQuantizedEncoding(attrs) ||
-      ArrayDecoder.isLUTEncoded(attrs) ||
-      ArrayDecoder.isBroadcasted(attrs);
-    const isArrayRef = ArrayDecoder.isArrayRef(attrs);
-
-    // For direct (unencoded) arrays, preserve native type
-    if (!isEncoded && !isArrayRef) {
-      const dtype = String(array.dtype);
-
-      // Use target buffer if provided and type matches, otherwise allocate
-      const expectedType = getExpectedColorType(dtype);
-      const output =
-        targetBuffer && colorBufferTypeMatches(targetBuffer, expectedType)
-          ? targetBuffer
-          : allocateColorBuffer(totalElements, false, dtype);
-
-      // Load directly with type preservation
-      await loadDirectColorRanges(array, ranges, output);
-      return output;
-    }
-
-    // Special case: rgb_uint8/rgb_uint16 encoded colors with matching target buffer
-    // Skip decoding - load raw uint8/uint16 values directly. The gsplat processor
-    // will normalize them (Uint8 [0-255] → Float32 [0-1])
-    const encName = attrs.encoding?.name;
-    if (encName === 'rgb_uint8' && targetBuffer instanceof Uint8Array) {
-      await loadDirectColorRanges(array, ranges, targetBuffer);
-      return targetBuffer;
-    }
-    if (encName === 'rgb_uint16' && targetBuffer instanceof Uint16Array) {
-      await loadDirectColorRanges(array, ranges, targetBuffer);
-      return targetBuffer;
-    }
-
-    // For other encoded arrays or array_ref, decode to Float32Array then restore original_dtype
-    const decodedFloat32 =
-      targetBuffer instanceof Float32Array ? targetBuffer : new Float32Array(totalElements);
-
-    // Single dispatch for the encoded-direct AND array_ref cases. For ref,
-    // the helper opens the target and recomputes per-item element count from
-    // its shape; for direct, the hint below (the array's own shape[1] or 1)
-    // is used.
-    const shape = array.shape;
-    const actualElementsPerSplat = shape.length === 2 ? shape[1] : 1;
     const storeToUse = this.zarrStore || this.zarrLocation.store;
-
-    await this.rangeLoader.loadRangesResolvingRef(
-      array,
-      attrs,
-      ranges as LoadRange[],
-      decodedFloat32,
-      totalSplats,
-      actualElementsPerSplat,
-      storeToUse,
-      'GSplats'
-    );
-
-    // Original-dtype restoration uses the CALLER attrs (not the target's)
-    // so that array_ref'd colors with original_dtype=uint8 still bring back
-    // uint8 even though the target storage might be float32.
-    return restoreOriginalDtype(decodedFloat32, attrs.encoding?.original_dtype, totalElements);
+    return loadColorRanges(array, ranges, this.rangeLoader, storeToUse, 'GSplats', targetBuffer);
   }
 
   /**
