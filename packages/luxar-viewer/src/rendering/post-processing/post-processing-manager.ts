@@ -11,6 +11,7 @@ import {
   EffectPass,
   BloomEffect,
   DepthOfFieldEffect,
+  Effect,
   ToneMappingMode,
   SMAAEffect,
   SMAAPreset,
@@ -412,8 +413,10 @@ export class PostProcessingManager {
       this.secondaryPass = undefined;
     }
 
-    // Define effects in correct visual order
-    const orderedEffects: OrderedEffect<any>[] = [];
+    // Define effects in correct visual order. The orchestrator only reads
+    // the `effect.constructor.name` and `effect.fragmentShader` slots — any
+    // pmndrs Effect subclass works.
+    const orderedEffects: OrderedEffect<Effect>[] = [];
 
     // Build ordered list of active effects - CORRECT ORDER per user requirements
     // HDR effects (before tone mapping)
