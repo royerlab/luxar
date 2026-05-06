@@ -47,28 +47,19 @@ afterEach(() => {
 
 describe('DebugConsole - Critical Fixes', () => {
   describe('Memory Leak Prevention - Resize Handlers', () => {
-    it('should have bound handlers ready for cleanup', () => {
+    it('registers a non-empty EventGroup on construction and clears it on dispose', () => {
       const debugConsole = new DebugConsole();
-
-      // Access private properties to verify handlers are initialized
-      const console_any = debugConsole as any;
-
-      // Handlers should be functions (created during construction via makeDraggable/makeResizable)
-      expect(console_any.boundDragMouseMove).toBeInstanceOf(Function);
-      expect(console_any.boundDragMouseUp).toBeInstanceOf(Function);
-      expect(console_any.boundResizeMouseMove).toBeInstanceOf(Function);
-      expect(console_any.boundResizeMouseUp).toBeInstanceOf(Function);
+      const events = (debugConsole as unknown as { events: { size: number } }).events;
+      // makeDraggable + makeResizable + the toolbar buttons attach a
+      // double-digit number of listeners; we don't enumerate exactly to
+      // avoid over-coupling, just verify the group has tracked listeners.
+      expect(events.size).toBeGreaterThan(0);
 
       debugConsole.dispose();
-
-      // After dispose, should be null
-      expect(console_any.boundDragMouseMove).toBeNull();
-      expect(console_any.boundDragMouseUp).toBeNull();
-      expect(console_any.boundResizeMouseMove).toBeNull();
-      expect(console_any.boundResizeMouseUp).toBeNull();
+      expect(events.size).toBe(0);
     });
 
-    it('should clean up all 4 global event listeners (drag + resize)', () => {
+    it('clean up all global drag + resize listeners on dispose', () => {
       const debugConsole = new DebugConsole();
 
       // Verify dispose removes listeners

@@ -34,6 +34,7 @@
 import { consoleInterceptor, type BufferedMessage } from '../utils/console-interceptor';
 import { config } from '../config';
 import { log, Modules, LogEmoji } from '../utils/log';
+import { EventGroup } from '../utils/event-group';
 
 export interface ConsoleMessage {
   type: 'log' | 'warn' | 'error' | 'info' | 'debug';
@@ -58,18 +59,15 @@ export class DebugConsole {
   private filter: string = '';
   private messageListenerCallback: ((message: BufferedMessage) => void) | null = null;
 
-  // Store bound resize handlers for cleanup
-  private boundDragMouseMove: ((e: MouseEvent) => void) | null = null;
-  private boundDragMouseUp: (() => void) | null = null;
-  private boundResizeMouseMove: ((e: MouseEvent) => void) | null = null;
-  private boundResizeMouseUp: (() => void) | null = null;
   /**
-   * Stop any in-flight drag/resize when the window loses focus or the
-   * tab is hidden. Otherwise the drag/resize state stays "active"
+   * Cleanup group covering every DOM listener attached by this panel:
+   * the toolbar buttons, drag/resize global listeners, and the
+   * blur/visibilitychange watchers that stop in-flight drag/resize when
+   * the window loses focus (otherwise the state stays "active"
    * indefinitely — if the user releases the mouse off-window, we never
-   * see the mouseup and the next mousemove would resume dragging.
+   * see the mouseup and the next mousemove would resume dragging).
    */
-  private boundStopDragOnBlur: (() => void) | null = null;
+  private events: EventGroup = new EventGroup();
 
   /**
    * Create and initialize debug console panel.
@@ -164,35 +162,31 @@ export class DebugConsole {
    * Setup event handlers for the panel
    */
   private setupEventHandlers(panel: HTMLElement): void {
-    // Close button
-    panel.querySelector('.luxar-debug-console__close-btn')?.addEventListener('click', () => {
-      this.hide();
-    });
+    const closeBtn = panel.querySelector<HTMLElement>('.luxar-debug-console__close-btn');
+    if (closeBtn) this.events.on(closeBtn, 'click', () => this.hide());
 
-    // Clear button
-    panel.querySelector('.luxar-debug-console__clear-btn')?.addEventListener('click', () => {
-      this.clear();
-    });
+    const clearBtn = panel.querySelector<HTMLElement>('.luxar-debug-console__clear-btn');
+    if (clearBtn) this.events.on(clearBtn, 'click', () => this.clear());
 
-    // Copy button
-    panel.querySelector('.luxar-debug-console__copy-btn')?.addEventListener('click', () => {
-      this.copyToClipboard();
-    });
+    const copyBtn = panel.querySelector<HTMLElement>('.luxar-debug-console__copy-btn');
+    if (copyBtn) this.events.on(copyBtn, 'click', () => this.copyToClipboard());
 
-    // Filter input
-    const filterInput = panel.querySelector('.luxar-debug-console__filter') as HTMLInputElement;
-    filterInput?.addEventListener('input', (e) => {
-      this.filter = (e.target as HTMLInputElement).value;
-      this.applyFilter();
-    });
+    const filterInput = panel.querySelector<HTMLInputElement>('.luxar-debug-console__filter');
+    if (filterInput) {
+      this.events.on(filterInput, 'input', (e) => {
+        this.filter = (e.target as HTMLInputElement).value;
+        this.applyFilter();
+      });
+    }
 
-    // Auto-scroll checkbox
-    const autoScrollCheckbox = panel.querySelector(
+    const autoScrollCheckbox = panel.querySelector<HTMLInputElement>(
       '.luxar-debug-console__autoscroll input'
-    ) as HTMLInputElement;
-    autoScrollCheckbox?.addEventListener('change', (e) => {
-      this.autoScroll = (e.target as HTMLInputElement).checked;
-    });
+    );
+    if (autoScrollCheckbox) {
+      this.events.on(autoScrollCheckbox, 'change', (e) => {
+        this.autoScroll = (e.target as HTMLInputElement).checked;
+      });
+    }
 
     // Make panel draggable
     this.makeDraggable(panel);
@@ -214,7 +208,7 @@ export class DebugConsole {
 
     header.style.cursor = 'move';
 
-    header.addEventListener('mousedown', (e) => {
+    this.events.on(header, 'mousedown', (e) => {
       if (
         (e.target as HTMLElement).tagName === 'BUTTON' ||
         (e.target as HTMLElement).tagName === 'INPUT'
@@ -231,25 +225,28 @@ export class DebugConsole {
       e.preventDefault();
     });
 
-    // Create bound handlers for cleanup
-    this.boundDragMouseMove = (e: MouseEvent) => {
+    const dragMouseMove = (e: MouseEvent): void => {
       if (!isDragging) return;
-
       const deltaX = e.clientX - startX;
       const deltaY = e.clientY - startY;
-
       panel.style.left = `${initialX + deltaX}px`;
       panel.style.top = `${initialY + deltaY}px`;
       panel.style.right = 'auto';
       panel.style.bottom = 'auto';
     };
 
-    this.boundDragMouseUp = () => {
+    const dragMouseUp = (): void => {
       isDragging = false;
     };
 
-    document.addEventListener('mousemove', this.boundDragMouseMove);
-    document.addEventListener('mouseup', this.boundDragMouseUp);
+    this.events.on(document, 'mousemove', dragMouseMove);
+    this.events.on(document, 'mouseup', dragMouseUp);
+
+    // Stop the in-flight drag if focus leaves the window — see comment on
+    // `events` field for the reasoning.
+    const stopOnBlur = (): void => dragMouseUp();
+    this.events.on(window, 'blur', stopOnBlur);
+    this.events.on(document, 'visibilitychange', stopOnBlur);
   }
 
   /**
@@ -263,7 +260,7 @@ export class DebugConsole {
     let startWidth = 0;
     let startHeight = 0;
 
-    panel.addEventListener('mousedown', (e) => {
+    this.events.on(panel, 'mousedown', (e) => {
       const rect = panel.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
@@ -283,10 +280,8 @@ export class DebugConsole {
       }
     });
 
-    // Create bound handlers for cleanup
-    this.boundResizeMouseMove = (e: MouseEvent) => {
+    const resizeMouseMove = (e: MouseEvent): void => {
       if (!isResizing) return;
-
       if (resizeDirection === 'n') {
         const deltaY = startY - e.clientY;
         const newHeight = Math.max(
@@ -304,26 +299,20 @@ export class DebugConsole {
       }
     };
 
-    this.boundResizeMouseUp = () => {
+    const resizeMouseUp = (): void => {
       isResizing = false;
       resizeDirection = '';
     };
 
-    document.addEventListener('mousemove', this.boundResizeMouseMove);
-    document.addEventListener('mouseup', this.boundResizeMouseUp);
+    this.events.on(document, 'mousemove', resizeMouseMove);
+    this.events.on(document, 'mouseup', resizeMouseUp);
 
-    // Clear any active drag/resize when the window loses focus so the
-    // state doesn't survive into the next interaction.
-    if (!this.boundStopDragOnBlur) {
-      this.boundStopDragOnBlur = () => {
-        // Trigger the same end-of-drag/resize cleanup the natural mouseup
-        // would have, by invoking the bound mouseup handlers directly.
-        this.boundDragMouseUp?.();
-        this.boundResizeMouseUp?.();
-      };
-      window.addEventListener('blur', this.boundStopDragOnBlur);
-      document.addEventListener('visibilitychange', this.boundStopDragOnBlur);
-    }
+    // makeDraggable's blur/visibilitychange listeners already invoke the
+    // shared "drag is over" reset; resize state needs the same — wire a
+    // dedicated stop-on-blur for the resize path.
+    const stopResizeOnBlur = (): void => resizeMouseUp();
+    this.events.on(window, 'blur', stopResizeOnBlur);
+    this.events.on(document, 'visibilitychange', stopResizeOnBlur);
   }
 
   /**
@@ -637,28 +626,8 @@ export class DebugConsole {
       consoleInterceptor.removeListener(this.messageListenerCallback);
     }
 
-    // Remove global event listeners for dragging and resizing
-    if (this.boundDragMouseMove) {
-      document.removeEventListener('mousemove', this.boundDragMouseMove);
-      this.boundDragMouseMove = null;
-    }
-    if (this.boundDragMouseUp) {
-      document.removeEventListener('mouseup', this.boundDragMouseUp);
-      this.boundDragMouseUp = null;
-    }
-    if (this.boundResizeMouseMove) {
-      document.removeEventListener('mousemove', this.boundResizeMouseMove);
-      this.boundResizeMouseMove = null;
-    }
-    if (this.boundResizeMouseUp) {
-      document.removeEventListener('mouseup', this.boundResizeMouseUp);
-      this.boundResizeMouseUp = null;
-    }
-    if (this.boundStopDragOnBlur) {
-      window.removeEventListener('blur', this.boundStopDragOnBlur);
-      document.removeEventListener('visibilitychange', this.boundStopDragOnBlur);
-      this.boundStopDragOnBlur = null;
-    }
+    // Tear down every DOM listener (toolbar buttons, drag/resize, blur watchers).
+    this.events.dispose();
 
     // Remove panel from DOM. Styles live in src/styles/components/
     // debug-console.css and are loaded by Vite — there is no inline
