@@ -59,6 +59,7 @@
     "typedoc": "typedoc",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --ext .ts,.tsx",
+    "check:layers": "depcruise src --config .dependency-cruiser.cjs",
     "format": "prettier --write src",
     "check": "pnpm run typecheck && pnpm run lint && pnpm test --run"
   },
@@ -80,6 +81,7 @@
     "@vitest/coverage-v8": "^4.1.5",
     "@vitest/ui": "^4.1.5",
     "@zarrita/storage": "^0.1.3",
+    "dependency-cruiser": "^16.10.4",
     "eslint": "^9.39.4",
     "globals": "^16.5.0",
     "jsdom": "^24.1.3",

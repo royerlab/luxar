@@ -218,6 +218,21 @@ thread. Conventions:
   layer-crossing cycles.
 - **Type-only imports** use `import type` — keeps emission lean and
   makes the intent obvious.
+- **Layer order** (see `.dependency-cruiser.cjs`):
+
+      types → config → cache → data → rendering → scene → input → ui → core
+
+  Each layer may import from layers to its **left**. Cross-cutting
+  helpers (`utils/`, `themes/`, `wasm/`, `workers/`, `profiling/`,
+  `controls/`) may be imported anywhere. Type-only imports are exempt
+  — they're erased at compile time.
+
+  Run `pnpm check:layers` to surface violations. Severity is `warn`
+  while we work down the existing list (mostly `data` reaching into
+  `rendering` for geometry helpers, and various layers reaching into
+  `ui/helpers.ts` for showToast/showError). New code should not add
+  warnings — and ideally each cleanup pass moves a violation to
+  `error`.
 
 ## 11. Types
 
