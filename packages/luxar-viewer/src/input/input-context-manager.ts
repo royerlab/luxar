@@ -19,6 +19,19 @@ import {
 } from './context-routing-utils';
 
 /**
+ * Maximum recursion depth for {@link InputContextManager.handleKeyEvent}.
+ * A binding handler that (re-)dispatches a keyboard event through this
+ * manager would otherwise recurse forever; this cap limits the
+ * blast radius to a finite stack and surfaces the misconfiguration
+ * via a single `log.error`.
+ *
+ * 10 is comfortably above any realistic UI depth (the deepest
+ * documented passthrough chain is `TYPING → UI_INTERACTION →
+ * NAVIGATION`, depth 3).
+ */
+export const MAX_KEY_EVENT_DEPTH = 10;
+
+/**
  * Available input contexts
  */
 export enum InputContext {
@@ -97,6 +110,14 @@ export class InputContextManager {
   private bindings = new Map<string, Map<string, KeyBinding>>();
   private contextConfigs = new Map<InputContext, ContextConfig>();
   private enabled = true;
+
+  /**
+   * Re-entrance depth for `handleKeyEvent`. A binding handler that
+   * (mis)configured itself to dispatch keyboard events back through
+   * the context manager could otherwise recurse infinitely; cap at
+   * {@link MAX_KEY_EVENT_DEPTH} and bail with a single error log.
+   */
+  private keyEventDepth = 0;
 
   /**
    * Create a new input context manager with default context configurations.
@@ -384,6 +405,26 @@ export class InputContextManager {
   public handleKeyEvent(event: KeyboardEvent, type: 'down' | 'up'): boolean {
     if (!this.enabled) return false;
 
+    // Re-entrance guard: a misbehaving binding handler that triggers
+    // another keyboard event through this manager could otherwise
+    // recurse indefinitely. Cap at MAX_KEY_EVENT_DEPTH and bail.
+    if (this.keyEventDepth >= MAX_KEY_EVENT_DEPTH) {
+      log.error(
+        Modules.INPUT,
+        `handleKeyEvent recursion limit (${MAX_KEY_EVENT_DEPTH}) reached for key '${event.key}'; ` +
+          'a binding handler is dispatching keyboard events back through the context manager.'
+      );
+      return false;
+    }
+    this.keyEventDepth++;
+    try {
+      return this.handleKeyEventInternal(event, type);
+    } finally {
+      this.keyEventDepth--;
+    }
+  }
+
+  private handleKeyEventInternal(event: KeyboardEvent, type: 'down' | 'up'): boolean {
     // Check if we're in a typing context
     if (this.isTypingContext()) {
       // Allow Escape to exit typing contexts
