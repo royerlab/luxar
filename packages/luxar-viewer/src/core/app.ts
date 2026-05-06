@@ -9,6 +9,7 @@ import { cleanupUI, clearError, showError, showHelpOverlay } from '../ui/helpers
 import { config } from '../config';
 import { DatasetBrowser } from '../ui/dataset-browser';
 import { log, Modules } from '../utils/log';
+import { getManagerRegistry } from './manager-registry';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
 import { AdaptiveDPRManager } from '../rendering/adaptive-dpr-manager';
 import { ResolutionIndicator } from '../ui/components/resolution-indicator';
@@ -1163,6 +1164,12 @@ export class LuxarApp {
       // open-dataset-browser, and any picking-system subscriptions added later
       // via this.events.add()) in one call.
       this.events.dispose();
+
+      // Dispose any singletons that registered themselves with the
+      // ManagerRegistry. Walks them in reverse registration order so
+      // the most-recently-created tears down first. Idempotent on
+      // repeat calls; non-disposed managers fall through silently.
+      getManagerRegistry().disposeAll();
     } catch (error) {
       log.error(Modules.LUXAR, 'Error during dispose:', error);
     } finally {
