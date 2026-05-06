@@ -1,3 +1,11 @@
+# mypy: warn-unreachable=False
+# Reason: this module's hot path is gated by a `sys.platform != "darwin"`
+# early-return. mypy on Linux narrows sys.platform there and flags the
+# macOS-only branches as unreachable. The narrowing is platform-correct
+# on Linux and platform-incorrect on macOS, so per-line ignores disagree
+# across mypy versions/platforms; disabling the warning at file scope is
+# the cleanest expression of "this file is platform-conditional".
+
 """
 Metal-accelerated Gaussian splatting renderer for Apple Silicon.
 

@@ -47,10 +47,11 @@ from .utils import (
     open_browser as open_browser_func,
 )
 
-# 0.0.0.0 is a bind address, not a routable origin — browsers never send it
-# as Origin — so it is intentionally absent from this regex.
-_LOCAL_CORS_ORIGIN_REGEX = r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$"
-_DEFAULT_CORS_ORIGIN = "local"
+# CORS regex + default constant moved to utils.py so subcommand modules
+# (e.g. gsplat_commands.py) can import them without creating a cycle
+# through main.py. Re-imported here so existing references compile
+# unchanged.
+from .utils import _DEFAULT_CORS_ORIGIN, _LOCAL_CORS_ORIGIN_REGEX  # noqa: E402
 
 
 def _add_cors(api: FastAPI, cors_origin: str = _DEFAULT_CORS_ORIGIN) -> None:

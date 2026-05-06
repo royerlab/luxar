@@ -11,8 +11,7 @@ from typing import TYPE_CHECKING, Any, Literal, Optional
 import typer
 from arbol import aprint, asection
 
-from .main import _DEFAULT_CORS_ORIGIN
-from .utils import format_memory_size
+from .utils import _DEFAULT_CORS_ORIGIN, format_memory_size
 
 if TYPE_CHECKING:
     import numpy as np
