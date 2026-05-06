@@ -45,6 +45,13 @@ import {
   flipPixelsVerticallyRGBA,
 } from './hdr-pixel-utils';
 import { toneMappingModeName } from './tone-mapping-mode-names';
+import {
+  applyToneMapping,
+  readToneMapping,
+  applyExposure,
+  applyGlobalOffset,
+  applyGlobalGamma,
+} from './tone-mapping-handler';
 
 /**
  * Manages HDR post-processing effects using pmndrs/postprocessing library.
@@ -618,29 +625,7 @@ export class PostProcessingManager {
    *               CineonToneMapping, ACESFilmicToneMapping, AgXToneMapping, NeutralToneMapping)
    */
   setToneMapping(mode: THREE.ToneMapping): void {
-    // Map THREE.js tone mapping constants to pmndrs ToneMappingMode
-    const modeMap: Record<number, ToneMappingMode> = {
-      [THREE.NoToneMapping]: ToneMappingMode.LINEAR,
-      [THREE.LinearToneMapping]: ToneMappingMode.LINEAR,
-      [THREE.ReinhardToneMapping]: ToneMappingMode.REINHARD,
-      [THREE.CineonToneMapping]: ToneMappingMode.OPTIMIZED_CINEON,
-      [THREE.ACESFilmicToneMapping]: ToneMappingMode.ACES_FILMIC,
-      [THREE.AgXToneMapping]: ToneMappingMode.AGX,
-      [THREE.NeutralToneMapping]: ToneMappingMode.NEUTRAL,
-    };
-
-    const mappedMode = modeMap[mode] ?? ToneMappingMode.ACES_FILMIC;
-    if (!this.toneMappingEffect) {
-      // Effect is absent (post-dispose or pre-init); keep the call a no-op
-      // rather than throwing — the desired mode is reapplied on rebuild.
-      return;
-    }
-    this.toneMappingEffect.mode = mappedMode;
-
-    const modeName = Object.keys(ToneMappingMode).find(
-      (key) => ToneMappingMode[key as keyof typeof ToneMappingMode] === mappedMode
-    );
-    log.update(Modules.POST_PROCESSING, `Tone mapping set to: ${modeName}`);
+    applyToneMapping(this.toneMappingEffect, mode);
   }
 
   /**
@@ -649,22 +634,7 @@ export class PostProcessingManager {
    * @returns Active tone mapping algorithm
    */
   getToneMapping(): THREE.ToneMapping {
-    // Map back from pmndrs to THREE constants
-    const reverseMap: Record<ToneMappingMode, THREE.ToneMapping> = {
-      [ToneMappingMode.LINEAR]: THREE.LinearToneMapping,
-      [ToneMappingMode.REINHARD]: THREE.ReinhardToneMapping,
-      [ToneMappingMode.REINHARD2]: THREE.ReinhardToneMapping,
-      [ToneMappingMode.REINHARD2_ADAPTIVE]: THREE.ReinhardToneMapping,
-      [ToneMappingMode.UNCHARTED2]: THREE.CineonToneMapping,
-      [ToneMappingMode.OPTIMIZED_CINEON]: THREE.CineonToneMapping,
-      [ToneMappingMode.CINEON]: THREE.CineonToneMapping,
-      [ToneMappingMode.ACES_FILMIC]: THREE.ACESFilmicToneMapping,
-      [ToneMappingMode.AGX]: THREE.AgXToneMapping,
-      [ToneMappingMode.NEUTRAL]: THREE.NeutralToneMapping,
-    };
-
-    if (!this.toneMappingEffect) return THREE.ACESFilmicToneMapping;
-    return reverseMap[this.toneMappingEffect.mode] ?? THREE.ACESFilmicToneMapping;
+    return readToneMapping(this.toneMappingEffect);
   }
 
   // ======================================================================
@@ -676,27 +646,21 @@ export class PostProcessingManager {
    * 0 = neutral, +1 = 2x brighter, -1 = half.
    */
   updateExposure(value: number): void {
-    if (this.toneMappingEffect) {
-      this.toneMappingEffect.exposure = value;
-    }
+    applyExposure(this.toneMappingEffect, value);
   }
 
   /**
    * Update global offset (additive brightness shift).
    */
   updateGlobalOffset(value: number): void {
-    if (this.toneMappingEffect) {
-      this.toneMappingEffect.globalOffset = value;
-    }
+    applyGlobalOffset(this.toneMappingEffect, value);
   }
 
   /**
    * Update global gamma correction.
    */
   updateGlobalGamma(value: number): void {
-    if (this.toneMappingEffect) {
-      this.toneMappingEffect.globalGamma = value;
-    }
+    applyGlobalGamma(this.toneMappingEffect, value);
   }
 
   /**
