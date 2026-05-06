@@ -29,17 +29,17 @@ export default defineConfig({
       // dedicated commit each time a phase of new tests crosses the next
       // band. Long-term target: 80% across the board.
       thresholds: {
-        lines: 58,
-        functions: 61,
-        branches: 48,
-        statements: 57,
+        lines: 60,
+        functions: 62,
+        branches: 49,
+        statements: 59,
       },
-      // Note: actuals after Phases 1, 2, 3.1-3.4, 7.3-7.4 land at
-      // ~58.6% lines / 61.3% functions / 57.9% statements / 48.3%
-      // branches. Coverage gain comes from the new ManagerRegistry,
-      // Result<T,E>, MaterialManager LRU, GPU pool batch-eviction,
-      // and worker-timeout test suites (~60 new tests). Floor moves
-      // accordingly.
+      // Note: actuals after Phases 1, 2, 3.1-3.4, 7.3-7.4, plus the
+      // Phase-4.1 rendering-controls extractions and the 5.4 RangeSlider
+      // / focus-manager / clipping-display / cinematic-mode test suites
+      // (~88 new tests across this branch) land at ~59.6% lines /
+      // 62.5% functions / 60.3% statements / 49.1% branches. Floor moves
+      // up by ~1pp per band; long-term target stays 80% across the board.
     },
   },
   resolve: {
