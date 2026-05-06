@@ -9,11 +9,11 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { RangeSlider } from '../../../ui/layers/range-slider';
+import { RangeSlider, type RangeSliderOptions } from '../../../ui/layers/range-slider';
 
 let host: HTMLElement;
 
-function makeSlider(opts: Partial<Parameters<typeof RangeSlider['prototype']['constructor']>[0]> = {}) {
+function makeSlider(opts: Partial<RangeSliderOptions> = {}) {
   const onChange = vi.fn();
   const onBoundsChange = vi.fn();
   const slider = new RangeSlider({
@@ -112,7 +112,7 @@ describe('RangeSlider — onChange invariant', () => {
 
   it('clamps low ≤ high when the user drags low past high', () => {
     const { onChange } = makeSlider();
-    const { low, high } = getInputs();
+    const { low } = getInputs();
     low.value = '0.95';
     low.dispatchEvent(new Event('input'));
     // low gets pinned to high (0.8); the underlying input is rewritten in place.
@@ -122,7 +122,7 @@ describe('RangeSlider — onChange invariant', () => {
 
   it('clamps high ≥ low when the user drags high below low', () => {
     const { onChange } = makeSlider({ valueLow: 0.4, valueHigh: 0.7 });
-    const { low, high } = getInputs();
+    const { high } = getInputs();
     high.value = '0.1';
     high.dispatchEvent(new Event('input'));
     expect(high.value).toBe('0.4');
