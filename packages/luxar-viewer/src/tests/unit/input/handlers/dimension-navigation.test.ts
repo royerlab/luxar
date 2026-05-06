@@ -5,6 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   computeDimensionStep,
+  getSelectedDimensionIndex,
   resolveSelectedDimension,
 } from '../../../../input/handlers/dimension-navigation';
 import type { SimpleDims, DimensionMetadata } from '../../../../types/dims';
@@ -160,6 +161,32 @@ describe('computeDimensionStep', () => {
     const result = computeDimensionStep(1, 0, dims, ranges);
     // Cyclic → wraps from 100+5 back into [0, 100], NOT clamped to 100
     expect(result!.newValue).not.toBe(100);
+  });
+});
+
+describe('getSelectedDimensionIndex', () => {
+  it('returns -1 when selectedDimension is negative', () => {
+    expect(getSelectedDimensionIndex(-1, makeDims())).toBe(-1);
+  });
+
+  it('returns -1 when dims is null', () => {
+    expect(getSelectedDimensionIndex(0, null)).toBe(-1);
+  });
+
+  it('returns -1 when selectedDimension is past the navigable range', () => {
+    // 5D dataset, 2 navigable (3, 4). Select index 5.
+    expect(getSelectedDimensionIndex(5, makeDims())).toBe(-1);
+  });
+
+  it('returns the actual dim index for a valid 0-based selection', () => {
+    expect(getSelectedDimensionIndex(0, makeDims())).toBe(3); // first navigable = Time
+    expect(getSelectedDimensionIndex(1, makeDims())).toBe(4); // second navigable = Channel
+  });
+
+  it('returns -1 for any selection in a 3D-all-displayed dataset', () => {
+    const dims = makeDims({ ndim: 3, currentStep: [0, 0, 0], displayed: [0, 1, 2] });
+    expect(getSelectedDimensionIndex(0, dims)).toBe(-1);
+    expect(getSelectedDimensionIndex(1, dims)).toBe(-1);
   });
 });
 

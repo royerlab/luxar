@@ -46,18 +46,14 @@ import type { OverlayManager } from '../ui/overlay-manager';
 import { showHelpOverlay, hideHelpOverlay, showToast } from '../ui/helpers';
 import { config } from '../config';
 import { captureViewerState } from '../config/viewer-state-capture';
-import { SimpleDims } from '../types/dims';
 import { DimensionSliders } from '../ui/dimension-sliders';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
 import { DebugConsole } from '../ui/debug-console';
 import { InputContextManager, InputContext } from './input-context-manager';
-import { getNonDisplayedDimensions } from './input-handler-utils';
-import {
-  computeDimensionStep,
-  resolveSelectedDimension,
-} from './handlers/dimension-navigation';
+import { computeDimensionStep, resolveSelectedDimension } from './handlers/dimension-navigation';
 import { PanelCoordinator } from './handlers/panel-coordinator';
 import { WindowEventHandler } from './handlers/window-event-handler';
+import { AnimationShortcuts } from './handlers/animation-shortcuts';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { updateSceneForDimensions, cycleDataMonitor } from '../data';
 
@@ -413,119 +409,18 @@ export class InputHandler {
         this.animationController
       );
 
-      // Register animation shortcuts
-      this.registerAnimationShortcuts();
+      // Register animation shortcuts via the dedicated AnimationShortcuts
+      // concern. The context callbacks read instance state at dispatch
+      // time so subsequent dim selections / animation-manager swaps are
+      // picked up automatically.
+      const shortcuts = new AnimationShortcuts(this.contextManager, {
+        getSelectedDimension: () => this.selectedDimension,
+        getAnimationManager: () => this.animationManager,
+      });
+      shortcuts.register();
     }
   }
 
-  /**
-   * Get the actual dimension index from the selected position.
-   * Converts from position in navigable dimensions list to actual dimension index.
-   *
-   * @returns Dimension index, or -1 if no dimension selected
-   * @private
-   */
-  private getSelectedDimensionIndex(): number {
-    if (this.selectedDimension < 0) {
-      return -1;
-    }
-    const dims = sceneDimsManager.getDims();
-    if (!dims) {
-      return -1;
-    }
-    const navigableDims = this.getNavigableDimensionsList(dims);
-    if (this.selectedDimension >= navigableDims.length) return -1;
-    return navigableDims[this.selectedDimension];
-  }
-
-  /**
-   * Register dimension animation keyboard shortcuts
-   * Uses InputContextManager for proper context handling
-   * @private
-   */
-  private registerAnimationShortcuts(): void {
-    // K - Toggle play/pause
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: 'k',
-      handler: () => {
-        const dimIndex = this.getSelectedDimensionIndex();
-        if (dimIndex >= 0 && this.animationManager) {
-          const isPlaying = this.animationManager.togglePlay(dimIndex);
-          log.info(Modules.ANIMATION, `Dimension ${dimIndex} ${isPlaying ? 'playing' : 'paused'}`);
-        }
-      },
-      preventDefault: true,
-      description: 'Toggle dimension animation (K)',
-    });
-
-    // Home - Jump to start
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: 'Home',
-      handler: () => {
-        const dimIndex = this.getSelectedDimensionIndex();
-        if (dimIndex >= 0) {
-          const ranges = sceneDimsManager.getDimensionRanges();
-          if (ranges) {
-            sceneDimsManager.setDimensionValue(dimIndex, ranges[dimIndex][0]);
-            log.info(Modules.ANIMATION, `Jumped to start of dimension ${dimIndex}`);
-          }
-        }
-      },
-      preventDefault: true,
-      description: 'Jump to dimension start (Home)',
-    });
-
-    // End - Jump to end
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: 'End',
-      handler: () => {
-        const dimIndex = this.getSelectedDimensionIndex();
-        if (dimIndex >= 0) {
-          const ranges = sceneDimsManager.getDimensionRanges();
-          if (ranges) {
-            sceneDimsManager.setDimensionValue(dimIndex, ranges[dimIndex][1]);
-            log.info(Modules.ANIMATION, `Jumped to end of dimension ${dimIndex}`);
-          }
-        }
-      },
-      preventDefault: true,
-      description: 'Jump to dimension end (End)',
-    });
-
-    // Shift+Up - Increase speed
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: 'ArrowUp',
-      modifiers: { shift: true },
-      handler: () => {
-        const dimIndex = this.getSelectedDimensionIndex();
-        if (dimIndex >= 0 && this.animationManager) {
-          this.animationManager.increaseSpeed(dimIndex);
-          const fps = this.animationManager.getState(dimIndex)?.targetFPS;
-          log.info(Modules.ANIMATION, `Increased speed to ${fps} FPS`);
-        }
-      },
-      preventDefault: true,
-      description: 'Increase animation speed (Shift+↑)',
-    });
-
-    // Shift+Down - Decrease speed
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: 'ArrowDown',
-      modifiers: { shift: true },
-      handler: () => {
-        const dimIndex = this.getSelectedDimensionIndex();
-        if (dimIndex >= 0 && this.animationManager) {
-          this.animationManager.decreaseSpeed(dimIndex);
-          const fps = this.animationManager.getState(dimIndex)?.targetFPS;
-          log.info(Modules.ANIMATION, `Decreased speed to ${fps} FPS`);
-        }
-      },
-      preventDefault: true,
-      description: 'Decrease animation speed (Shift+↓)',
-    });
-
-    log.success(Modules.ANIMATION, 'Animation keyboard shortcuts registered');
-  }
 
   /**
    * Update all nD nodes (points, lines, splats) with current dimension values.
@@ -1394,21 +1289,6 @@ export class InputHandler {
         `Dimension ${index + 1} not available (only ${result.navigableCount} non-displayed dimensions)`
       );
     }
-  }
-
-  /**
-   * Get list of navigable (non-displayed) dimension indices.
-   *
-   * Delegates to the extracted utility function getNonDisplayedDimensions.
-   * Returns dimensions that are not part of the 3D spatial view and can be
-   * controlled with keyboard navigation.
-   *
-   * @param dims - Dimension configuration
-   * @returns Array of non-displayed dimension indices
-   * @private
-   */
-  private getNavigableDimensionsList(dims: SimpleDims): number[] {
-    return getNonDisplayedDimensions(dims);
   }
 
   /**

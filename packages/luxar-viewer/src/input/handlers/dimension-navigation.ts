@@ -84,6 +84,35 @@ export function computeDimensionStep(
 }
 
 /**
+ * Resolve the actual dimension index from a `selectedDimension` slot
+ * (a 0-based index into the navigable-dimension list).
+ *
+ * Returns `-1` for any of the "no resolvable dim" cases the caller
+ * needs to short-circuit on:
+ *   - `selectedDimension < 0` (sentinel for "nothing selected");
+ *   - `dims` is null / undefined (no scene loaded);
+ *   - `selectedDimension >= navigableDims.length` (slot now points
+ *     past the available navigable dims, e.g. after a scene reload
+ *     reduced the dim count).
+ *
+ * Used by the keyboard bindings that operate on the currently
+ * selected dimension (K, Home, End, Shift+↑/↓ animation shortcuts)
+ * and by InputHandler's `selectDimension` callsite — sharing the
+ * helper here keeps the "what does selectedDimension mean" rule in
+ * one place.
+ */
+export function getSelectedDimensionIndex(
+  selectedDimension: number,
+  dims: SimpleDims | null | undefined
+): number {
+  if (selectedDimension < 0) return -1;
+  if (!dims) return -1;
+  const navigableDims = getNonDisplayedDimensions(dims);
+  if (selectedDimension >= navigableDims.length) return -1;
+  return navigableDims[selectedDimension];
+}
+
+/**
  * Translate a 0-based key index (e.g. 0 for the '1' key, 1 for '2',
  * etc.) into the new `selectedDimension` value, or `null` when the
  * key falls past the available navigable dimensions.
