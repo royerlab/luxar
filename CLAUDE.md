@@ -253,6 +253,19 @@ luxar gsplat render splats.gsplats.zarr rendered.npy --shape 128,128,128
 luxar gsplat compare fitted.gsplats.zarr original.tiff
 luxar gsplat compare fitted.gsplats.zarr original.npy --output-json metrics.json --device cuda
 
+# Calibrate splat count K via blind-spot cross-validation
+# Sweeps K, identifies the held-out PSNR peak (K*), and reports the noise floor.
+# Uses the manuscript's Noise2Self protocol: 5% donut-median masking; held-out
+# evaluation against the original (pre-mask) values at masked voxels.
+luxar gsplat cal volume.tiff cal.json                            # 10-point sweep, [1K, 512K]
+luxar gsplat cal volume.zarr cal.json --n-grid 5 --k-max 128000  # Faster: 5-point sweep
+luxar gsplat cal volume.zarr cal.json --k-grid '1000,4000,16000,64000,256000'  # Explicit
+luxar gsplat cal volume.tiff cal.json --pdf cal_report.pdf       # Multi-page PDF report
+luxar gsplat cal volume.tiff cal.json --pdf rep.pdf --keep-fits fits/  # Slice montages too
+luxar gsplat cal volume.zarr cal.json --progression power --power 2  # Polynomial K spacing
+# Output: K* + curve type {peak | plateau | signal_limited} + noise-floor σ̂ + PSNR ceiling.
+# Then re-run fit at the recommended K: luxar gsplat fit volume.zarr out.zarr --seeds <K*>
+
 # Split into parts
 luxar gsplat split splats.gsplats.zarr output_dir/ --parts 4
 luxar gsplat split splats.gsplats.zarr output_dir/ --indices "1000,5000"

@@ -6,6 +6,18 @@ _GSPLATS_IMPORT_ERROR: Optional[ImportError] = None
 
 if TYPE_CHECKING:
     from luxar.gsplats import clahe, preprocessing, seeds
+    from luxar.gsplats.calibration import (
+        CalibrationResult,
+        HeldOutPeak,
+        NoiseFloor,
+        build_k_grid,
+        calibrate,
+        cv_mask,
+        donut_median_fill,
+        estimate_noise_floor,
+        find_k_star,
+        held_out_psnr,
+    )
     from luxar.gsplats.culling import CullResult, cull_by_contribution
     from luxar.gsplats.fit_gsplats import GaussianSplatFitter, fit_gaussian_splats
     from luxar.gsplats.fit_progressive_gsplats import fit_progressive_gaussian_splats
@@ -24,6 +36,18 @@ if TYPE_CHECKING:
 else:
     try:
         from luxar.gsplats import clahe, preprocessing, seeds
+        from luxar.gsplats.calibration import (
+            CalibrationResult,
+            HeldOutPeak,
+            NoiseFloor,
+            build_k_grid,
+            calibrate,
+            cv_mask,
+            donut_median_fill,
+            estimate_noise_floor,
+            find_k_star,
+            held_out_psnr,
+        )
         from luxar.gsplats.culling import CullResult, cull_by_contribution
         from luxar.gsplats.fit_gsplats import GaussianSplatFitter, fit_gaussian_splats
         from luxar.gsplats.fit_progressive_gsplats import (
@@ -110,6 +134,40 @@ else:
             def __init__(self, *_args: Any, **_kwargs: Any) -> None:
                 _raise_gsplats_import_error()
 
+        # Calibration (blind-spot CV)
+        def cv_mask(*_args: Any, **_kwargs: Any) -> Any:
+            _raise_gsplats_import_error()
+
+        def donut_median_fill(*_args: Any, **_kwargs: Any) -> Any:
+            _raise_gsplats_import_error()
+
+        def held_out_psnr(*_args: Any, **_kwargs: Any) -> Any:
+            _raise_gsplats_import_error()
+
+        def estimate_noise_floor(*_args: Any, **_kwargs: Any) -> Any:
+            _raise_gsplats_import_error()
+
+        def build_k_grid(*_args: Any, **_kwargs: Any) -> Any:
+            _raise_gsplats_import_error()
+
+        def find_k_star(*_args: Any, **_kwargs: Any) -> Any:
+            _raise_gsplats_import_error()
+
+        def calibrate(*_args: Any, **_kwargs: Any) -> Any:
+            _raise_gsplats_import_error()
+
+        class NoiseFloor:
+            def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+                _raise_gsplats_import_error()
+
+        class HeldOutPeak:
+            def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+                _raise_gsplats_import_error()
+
+        class CalibrationResult:
+            def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+                _raise_gsplats_import_error()
+
 
 __all__ = [
     # Culling
@@ -134,6 +192,17 @@ __all__ = [
     "seed_from_decomposition",
     "seed_from_grid",
     "seed_from_edges",
+    # Calibration (blind-spot CV)
+    "cv_mask",
+    "donut_median_fill",
+    "held_out_psnr",
+    "estimate_noise_floor",
+    "build_k_grid",
+    "find_k_star",
+    "calibrate",
+    "NoiseFloor",
+    "HeldOutPeak",
+    "CalibrationResult",
     # Submodules
     "seeds",
     "clahe",
