@@ -165,20 +165,27 @@ export class PerspectiveDepthMapper {
 /**
  * Type guard functions for safe type checking
  */
-export function isBloomEffectTyped(effect: any): effect is BloomEffectTyped {
+export function isBloomEffectTyped(effect: unknown): effect is BloomEffectTyped {
   // The BloomEffect from pmndrs has specific structure:
   // - intensity is a direct property
   // - radius is on mipmapBlurPass.radius
   // - threshold is on luminanceMaterial.threshold
-  if (!effect) return false;
+  if (!effect || typeof effect !== 'object') return false;
+
+  const candidate = effect as {
+    intensity?: unknown;
+    mipmapBlurPass?: unknown;
+    luminanceMaterial?: unknown;
+  };
 
   try {
     // Check for the key identifying properties of BloomEffect
-    const hasIntensity = typeof effect.intensity === 'number' || effect.intensity !== undefined;
+    const hasIntensity =
+      typeof candidate.intensity === 'number' || candidate.intensity !== undefined;
 
     // Check for the sub-objects that contain other properties
-    const hasMipmapBlurPass = effect.mipmapBlurPass !== undefined;
-    const hasLuminanceMaterial = effect.luminanceMaterial !== undefined;
+    const hasMipmapBlurPass = candidate.mipmapBlurPass !== undefined;
+    const hasLuminanceMaterial = candidate.luminanceMaterial !== undefined;
 
     // A valid bloom effect should have intensity and at least one of the sub-objects
     return hasIntensity && (hasMipmapBlurPass || hasLuminanceMaterial);
@@ -188,14 +195,16 @@ export function isBloomEffectTyped(effect: any): effect is BloomEffectTyped {
   }
 }
 
-export function isToneMappingEffectTyped(effect: any): effect is ToneMappingEffectTyped {
-  return effect && 'mode' in effect;
+export function isToneMappingEffectTyped(effect: unknown): effect is ToneMappingEffectTyped {
+  return typeof effect === 'object' && effect !== null && 'mode' in effect;
 }
 
-export function isDepthOfFieldEffectTyped(effect: any): effect is DepthOfFieldEffectTyped {
-  return effect && 'bokehScale' in effect;
+export function isDepthOfFieldEffectTyped(effect: unknown): effect is DepthOfFieldEffectTyped {
+  return typeof effect === 'object' && effect !== null && 'bokehScale' in effect;
 }
 
-export function isVignetteEffectTyped(effect: any): effect is VignetteEffectTyped {
-  return effect && 'darkness' in effect && 'offset' in effect;
+export function isVignetteEffectTyped(effect: unknown): effect is VignetteEffectTyped {
+  return (
+    typeof effect === 'object' && effect !== null && 'darkness' in effect && 'offset' in effect
+  );
 }
