@@ -2,7 +2,13 @@
  * dependency-cruiser config — enforces the package layering documented
  * in `src/CONVENTIONS.md`:
  *
- *   types → config → cache → data → rendering → scene → input → ui → core
+ *   types → config → cache → rendering → data → scene → input → ui → core
+ *
+ * (Note: `rendering` sits BELOW `data` because rendering primitives —
+ * materials, geometries, GPU buffer pools — are foundational
+ * lower-level building blocks that the data layer assembles into
+ * meshes. The original plan had data before rendering; this order
+ * matches the actual dependency direction in the codebase.)
  *
  * Each layer may only import from layers to its left (plus `utils`,
  * `themes`, `wasm`, `workers`, `profiling`, `controls`, which are
@@ -35,17 +41,17 @@ module.exports = {
     layerRule('types', [
       'config',
       'cache',
-      'data',
       'rendering',
+      'data',
       'scene',
       'input',
       'ui',
       'core',
     ]),
-    layerRule('config', ['cache', 'data', 'rendering', 'scene', 'input', 'ui', 'core']),
-    layerRule('cache', ['data', 'rendering', 'scene', 'input', 'ui', 'core']),
-    layerRule('data', ['rendering', 'scene', 'input', 'ui', 'core']),
-    layerRule('rendering', ['scene', 'input', 'ui', 'core']),
+    layerRule('config', ['cache', 'rendering', 'data', 'scene', 'input', 'ui', 'core']),
+    layerRule('cache', ['rendering', 'data', 'scene', 'input', 'ui', 'core']),
+    layerRule('rendering', ['data', 'scene', 'input', 'ui', 'core']),
+    layerRule('data', ['scene', 'input', 'ui', 'core']),
     layerRule('scene', ['input', 'ui', 'core']),
     layerRule('input', ['ui', 'core']),
     layerRule('ui', ['core']),
