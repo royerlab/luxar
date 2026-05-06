@@ -38,7 +38,7 @@ import { log, Modules, LogEmoji } from '../utils/log';
 export interface ConsoleMessage {
   type: 'log' | 'warn' | 'error' | 'info' | 'debug';
   timestamp: Date;
-  args: any[];
+  args: unknown[];
   formatted: string;
   stack?: string;
 }
@@ -343,7 +343,7 @@ export class DebugConsole {
   /**
    * Format arguments for display
    */
-  private formatArgs(args: any[]): string {
+  private formatArgs(args: unknown[]): string {
     return args
       .map((arg) => {
         if (arg === undefined) return 'undefined';
@@ -355,7 +355,7 @@ export class DebugConsole {
           try {
             return JSON.stringify(arg, null, 2);
           } catch {
-            return arg.toString();
+            return String(arg);
           }
         }
         return String(arg);
@@ -413,7 +413,7 @@ export class DebugConsole {
   /**
    * Format an argument as a DOM element (safe, no XSS)
    */
-  private formatArgAsDOMElement(arg: any): HTMLElement {
+  private formatArgAsDOMElement(arg: unknown): HTMLElement {
     const span = document.createElement('span');
 
     if (arg === undefined) {
