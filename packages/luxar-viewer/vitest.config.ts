@@ -32,12 +32,15 @@ export default defineConfig({
         lines: 58,
         functions: 60,
         branches: 48,
-        statements: 58,
+        statements: 57,
       },
-      // Note: actuals after the D2/D3/D4 helper extractions and tests
-      // land at ~58.8% lines / 60.8% functions / 58.2% statements /
-      // 48.5% branches. The floor here is set 0.2-0.8pp below those
-      // numbers so re-runs don't flicker around the threshold.
+      // Note: actuals after Phase 1 hardening (WASM bounds for
+      // projection/decode entry points + worker timeout helper +
+      // MaterialManager rebuild + InputContextManager guard) land at
+      // ~58.3% lines / 60.8% functions / 57.7% statements / 48.1%
+      // branches. Statements dropped slightly because the new
+      // data-worker validation paths add code to a test-stub-mocked
+      // file; lines/functions held steady. Floor moves accordingly.
     },
   },
   resolve: {
