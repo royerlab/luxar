@@ -33,6 +33,13 @@ import {
   type ChunkSpatialIndex,
   type LoadRange,
 } from './loaders';
+import {
+  allocateColorBuffer,
+  getExpectedColorType,
+  colorBufferTypeMatches,
+  loadDirectColorRanges,
+  restoreOriginalDtype,
+} from './loaders/color-attribute-utils';
 import { LinesDataAccumulator, type AccumulatorStats } from './data-accumulator';
 import { config as appConfig } from '../config';
 import type { UpdateProfiler, UpdateSession } from '../profiling/update-profiler';
@@ -440,7 +447,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
         const colorAttrs = this.arrays.colors.attrs as unknown as ArrayMetadata;
         const originalDtype = colorAttrs?.encoding?.original_dtype;
         const colorDtype = originalDtype || String(this.arrays.colors.dtype);
-        const colorType = this.getExpectedColorType(colorDtype);
+        const colorType = getExpectedColorType(colorDtype);
         // Create a small typed array to initialize accumulator types
         const sampleColors =
           colorType === 'Uint8Array'
@@ -808,14 +815,14 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       const dtype = String(array.dtype);
 
       // Use target buffer if provided and type matches, otherwise allocate
-      const expectedType = this.getExpectedColorType(dtype);
+      const expectedType = getExpectedColorType(dtype);
       const output =
-        targetBuffer && this.colorBufferTypeMatches(targetBuffer, expectedType)
+        targetBuffer && colorBufferTypeMatches(targetBuffer, expectedType)
           ? targetBuffer
-          : this.allocateColorBuffer(totalElements, false, dtype);
+          : allocateColorBuffer(totalElements, false, dtype);
 
       // Load directly with type preservation
-      await this.loadDirectColorRanges(array, ranges, output);
+      await loadDirectColorRanges(array, ranges, output);
       return output;
     }
 
@@ -824,11 +831,11 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     // will normalize them (Uint8 [0-255] → Float32 [0-1])
     const encName = attrs.encoding?.name;
     if (encName === 'rgb_uint8' && targetBuffer instanceof Uint8Array) {
-      await this.loadDirectColorRanges(array, ranges, targetBuffer);
+      await loadDirectColorRanges(array, ranges, targetBuffer);
       return targetBuffer;
     }
     if (encName === 'rgb_uint16' && targetBuffer instanceof Uint16Array) {
-      await this.loadDirectColorRanges(array, ranges, targetBuffer);
+      await loadDirectColorRanges(array, ranges, targetBuffer);
       return targetBuffer;
     }
 
@@ -856,132 +863,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     // original_dtype is taken from the CALLER's attrs so an array_ref to a
     // float32-stored target still restores back to e.g. uint8 if that was
     // the original format on the line node.
-    return this.restoreOriginalDtype(decodedFloat32, attrs.encoding?.original_dtype, totalElements);
-  }
-
-  /**
-   * Allocate color buffer based on dtype
-   */
-  private allocateColorBuffer(
-    totalElements: number,
-    isEncoded: boolean,
-    dtype: string
-  ): Float32Array | Uint8Array | Uint16Array {
-    if (isEncoded) {
-      return new Float32Array(totalElements);
-    }
-    if (dtype === 'uint8' || dtype === '|u1' || dtype === '<u1' || dtype === '>u1') {
-      return new Uint8Array(totalElements);
-    }
-    if (dtype === 'uint16' || dtype === '|u2' || dtype === '<u2' || dtype === '>u2') {
-      return new Uint16Array(totalElements);
-    }
-    return new Float32Array(totalElements);
-  }
-
-  /**
-   * Get expected color buffer type from dtype string
-   */
-  private getExpectedColorType(dtype: string): 'Float32Array' | 'Uint8Array' | 'Uint16Array' {
-    if (dtype === 'uint8' || dtype === '|u1' || dtype === '<u1' || dtype === '>u1') {
-      return 'Uint8Array';
-    }
-    if (dtype === 'uint16' || dtype === '|u2' || dtype === '<u2' || dtype === '>u2') {
-      return 'Uint16Array';
-    }
-    return 'Float32Array';
-  }
-
-  /**
-   * Check if target buffer type matches expected type
-   */
-  private colorBufferTypeMatches(
-    buffer: Float32Array | Uint8Array | Uint16Array,
-    expectedType: 'Float32Array' | 'Uint8Array' | 'Uint16Array'
-  ): boolean {
-    if (expectedType === 'Uint8Array') return buffer instanceof Uint8Array;
-    if (expectedType === 'Uint16Array') return buffer instanceof Uint16Array;
-    return buffer instanceof Float32Array;
-  }
-
-  /**
-   * Load direct (unencoded) color ranges with type preservation
-   */
-  private async loadDirectColorRanges(
-    array: zarr.Array<zarr.DataType, zarr.FetchStore>,
-    ranges: SegmentRange[],
-    output: Float32Array | Uint8Array | Uint16Array
-  ): Promise<void> {
-    let destOffset = 0;
-    const shape = array.shape;
-
-    for (const range of ranges) {
-      const sliceSpec: zarr.Slice[] =
-        shape.length === 2
-          ? [slice(range.start, range.end), slice(null)]
-          : [slice(range.start, range.end)];
-
-      const chunkData = await get(array, sliceSpec);
-      const data = chunkData.data;
-
-      // Copy data preserving type (no conversion!)
-      if (output instanceof Float32Array && data instanceof Float32Array) {
-        output.set(data, destOffset);
-      } else if (output instanceof Uint8Array && data instanceof Uint8Array) {
-        output.set(data, destOffset);
-      } else if (output instanceof Uint16Array && data instanceof Uint16Array) {
-        output.set(data, destOffset);
-      } else {
-        // Fallback: convert values (not buffer reinterpretation!)
-        const float32Data =
-          data instanceof Float32Array ? data : new Float32Array(data as ArrayLike<number>);
-        (output as Float32Array).set(float32Data, destOffset);
-      }
-
-      destOffset += (range.end - range.start) * 3;
-    }
-  }
-
-  /**
-   * Restore original dtype for encoded arrays
-   */
-  private restoreOriginalDtype(
-    decodedFloat32: Float32Array,
-    originalDtype: string | undefined,
-    totalElements: number
-  ): Float32Array | Uint8Array | Uint16Array {
-    if (!originalDtype) {
-      return decodedFloat32;
-    }
-
-    if (
-      originalDtype === 'uint8' ||
-      originalDtype === '|u1' ||
-      originalDtype === '<u1' ||
-      originalDtype === '>u1'
-    ) {
-      const uint8Output = new Uint8Array(totalElements);
-      for (let i = 0; i < totalElements; i++) {
-        uint8Output[i] = Math.round(Math.max(0, Math.min(255, decodedFloat32[i])));
-      }
-      return uint8Output;
-    }
-
-    if (
-      originalDtype === 'uint16' ||
-      originalDtype === '|u2' ||
-      originalDtype === '<u2' ||
-      originalDtype === '>u2'
-    ) {
-      const uint16Output = new Uint16Array(totalElements);
-      for (let i = 0; i < totalElements; i++) {
-        uint16Output[i] = Math.round(Math.max(0, Math.min(65535, decodedFloat32[i])));
-      }
-      return uint16Output;
-    }
-
-    // For float32/float64 or unspecified, keep as Float32Array
-    return decodedFloat32;
+    return restoreOriginalDtype(decodedFloat32, attrs.encoding?.original_dtype, totalElements);
   }
 
   /**
