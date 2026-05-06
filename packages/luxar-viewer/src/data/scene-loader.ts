@@ -81,7 +81,7 @@ import { processGSplats } from './gsplats-processor';
 import { packCholeskyForShader } from '../rendering/gsplat-geometry';
 import { GPUBufferPool } from '../rendering/gpu-buffer-pool';
 import { invertNdTransformForQuery, computeWorldNdTransform } from './nd-transform';
-import { NodeFactory } from './node-factory';
+import { NodeFactory } from '../rendering/node-factory';
 import { UpdateProfiler, type UpdateSession } from '../profiling/update-profiler';
 import {
   getAggregatedPointsAccumulatorStats,

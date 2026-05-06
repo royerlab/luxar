@@ -12,26 +12,26 @@
  */
 
 import * as THREE from 'three';
-import { materialManager, type BlendingMode } from '../rendering/material-manager';
-import { getColormapTexture } from '../rendering/colormap-textures';
+import { materialManager, type BlendingMode } from './material-manager';
+import { getColormapTexture } from './colormap-textures';
 import {
   createInstancedLinesMesh,
   type InstancedLinesMeshConfig,
-} from '../rendering/line-geometry';
+} from './line-geometry';
 import {
   createInstancedGSplatsMesh,
   type InstancedGSplatsMeshConfig,
-} from '../rendering/gsplat-geometry';
-import { GSplatMaterial } from '../rendering/gsplat-material';
-import type { LoadedPointsData, DataLoader } from './data-loader-types';
+} from './gsplat-geometry';
+import { GSplatMaterial } from './gsplat-material';
+import type { LoadedPointsData, DataLoader } from '../data/data-loader-types';
 import type { PointsMetadata, PointsUserData } from '../types/points';
 import type { LinesMetadata, LinesUserData, LinesDataLoader } from '../types/lines';
 import type { GSplatsMetadata, GSplatsUserData, GSplatsDataLoader } from '../types/gsplats';
 import { log, Modules } from '../utils/log';
-import type { PickingSystem } from '../rendering/picking/picking-system';
-import { PointPickingMaterial } from '../rendering/picking/point-picking-material';
-import { LinePickingMaterial } from '../rendering/picking/line-picking-material';
-import { GSplatPickingMaterial } from '../rendering/picking/gsplat-picking-material';
+import type { PickingSystem } from './picking/picking-system';
+import { PointPickingMaterial } from './picking/point-picking-material';
+import { LinePickingMaterial } from './picking/line-picking-material';
+import { GSplatPickingMaterial } from './picking/gsplat-picking-material';
 
 export class NodeFactory {
   private pickingSystem: PickingSystem | null = null;

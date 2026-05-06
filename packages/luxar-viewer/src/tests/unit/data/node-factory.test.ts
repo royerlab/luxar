@@ -9,7 +9,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import * as THREE from 'three';
-import { NodeFactory } from '../../../data/node-factory';
+import { NodeFactory } from '../../../rendering/node-factory';
 import type { LoadedPointsData } from '../../../data/data-loader-types';
 
 // Helper to create mock LoadedPointsData

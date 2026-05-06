@@ -10,7 +10,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as THREE from 'three';
 import { commitPointsGeometry } from '../../../../data/scene-loader/geometry-commit-handler';
 import type { LoadedPointsData } from '../../../../data/data-loader-types';
-import type { NodeFactory } from '../../../../data/node-factory';
+import type { NodeFactory } from '../../../../rendering/node-factory';
 
 function makeData(pointCount: number, withRadii = false): LoadedPointsData {
   return {

@@ -25,7 +25,7 @@ import { isPointsUserData } from '../../types/points';
 import { log, Modules } from '../../utils/log';
 import type { UpdateSession } from '../../profiling/update-profiler';
 import type { GPUBufferPool } from '../../rendering/gpu-buffer-pool';
-import type { NodeFactory } from '../node-factory';
+import type { NodeFactory } from '../../rendering/node-factory';
 
 /**
  * Synchronous GPU commit step for a points node. Same behavior as the
