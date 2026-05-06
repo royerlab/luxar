@@ -26,8 +26,15 @@ import {
   projectLinesTo3DUsingWorker as projectLinesTo3DUsingWorkerHelper,
   type StagedLinesCommit,
 } from './scene-loader/data-processor-lines';
+import {
+  processGSplatsData as processGSplatsDataHelper,
+  commitGSplatsGeometry as commitGSplatsGeometryHelper,
+  projectGSplatsTo3DUsingWorker as projectGSplatsTo3DUsingWorkerHelper,
+  type StagedGSplatsCommit,
+} from './scene-loader/data-processor-gsplats';
 
 export type { StagedLinesCommit } from './scene-loader/data-processor-lines';
+export type { StagedGSplatsCommit } from './scene-loader/data-processor-gsplats';
 import { LinesSpatialIndexLoader, buildInstanceBuffers } from './lines-spatial-index-loader';
 import {
   DataLoader,
@@ -67,12 +74,11 @@ import type {
 import { GSplatsSpatialIndexLoader } from './gsplats-spatial-index-loader';
 import { GSplatsProgressiveLoader } from './gsplats-progressive-loader';
 import { processGSplats } from './gsplats-processor';
-import { updateInstancedGSplatsMesh, packCholeskyForShader } from '../rendering/gsplat-geometry';
+import { packCholeskyForShader } from '../rendering/gsplat-geometry';
 import { GPUBufferPool } from '../rendering/gpu-buffer-pool';
 import { invertNdTransformForQuery, computeWorldNdTransform } from './nd-transform';
 import { NodeFactory } from './node-factory';
 import { UpdateProfiler, type UpdateSession } from '../profiling/update-profiler';
-import { getWorkerPool } from '../workers/worker-pool';
 import {
   getAggregatedPointsAccumulatorStats,
   getAggregatedLinesAccumulatorStats,
@@ -148,15 +154,6 @@ function isSceneDimensions(value: unknown): value is SceneDimensions {
 interface StagedPointsCommit {
   path: string;
   data: LoadedPointsData;
-}
-
-/** Staged gsplats data ready for GPU commit (already projected + Cholesky packed) */
-export interface StagedGSplatsCommit {
-  path: string;
-  processed: ReturnType<typeof processGSplats>;
-  cholesky01: Float32Array;
-  cholesky23: Float32Array;
-  cholesky45: Float32Array;
 }
 
 /**
@@ -1293,6 +1290,8 @@ export class SceneLoader {
   /**
    * Process gsplats data: project nD to 3D, pack Cholesky factors (async).
    * Returns staged commit data without mutating any mesh geometry.
+   *
+   * Implementation lives in `scene-loader/data-processor-gsplats.ts`.
    */
   private async processGSplatsData(
     path: string,
@@ -1300,72 +1299,14 @@ export class SceneLoader {
     viewState: GSplatsViewState,
     session?: UpdateSession
   ): Promise<StagedGSplatsCommit | null> {
-    if (!this.rootGroup) return null;
-
-    const mesh = this.rootGroup.getObjectByName(path) as THREE.Mesh;
-    if (!mesh || mesh.userData?.nodeType !== 'gsplats') {
-      log.warning(
-        Modules.SCENE_LOADER,
-        `GSplats update skipped for ${path}: ${!mesh ? 'mesh not found in scene' : `unexpected nodeType=${mesh.userData?.nodeType}`}. ` +
-          `Data had ${data.splatCount} splats.`
-      );
-      return null;
-    }
-
-    // Strategy: use worker for larger datasets when enabled (nD only, not 3D)
-    const useWorkerProjection =
-      appConfig.dataLoading.performance.useWebWorkers && data.splatCount > 1000 && data.ndim > 3; // Only worth offloading for nD processing
-
-    // Read truncation radius from material (propagated from zarr metadata via node-factory)
-    const truncate =
-      (mesh.material as { uniforms?: { uTruncate?: { value: number } } })?.uniforms?.uTruncate
-        ?.value ?? 3.0;
-
-    // Process nD data to 3D for rendering (with timing)
-    let processed: ReturnType<typeof processGSplats>;
-    let cholesky01: Float32Array;
-    let cholesky23: Float32Array;
-    let cholesky45: Float32Array;
-
-    if (session) {
-      const projectSession = session.begin('Project to 3D');
-      try {
-        if (useWorkerProjection) {
-          processed = await this.projectGSplatsTo3DUsingWorker(data, viewState, truncate);
-        } else {
-          processed = processGSplats(data, viewState, truncate);
-        }
-        // Pack Cholesky factors for shader
-        const packed = packCholeskyForShader(processed.choleskyFactors3D, processed.splatCount);
-        cholesky01 = packed.cholesky01;
-        cholesky23 = packed.cholesky23;
-        cholesky45 = packed.cholesky45;
-      } finally {
-        projectSession.end();
-      }
-    } else {
-      if (useWorkerProjection) {
-        processed = await this.projectGSplatsTo3DUsingWorker(data, viewState, truncate);
-      } else {
-        processed = processGSplats(data, viewState, truncate);
-      }
-      // Pack Cholesky factors for shader
-      const packed = packCholeskyForShader(processed.choleskyFactors3D, processed.splatCount);
-      cholesky01 = packed.cholesky01;
-      cholesky23 = packed.cholesky23;
-      cholesky45 = packed.cholesky45;
-    }
-
-    // Warn if all loaded splats were filtered out (unexpected in normal operation)
-    if (data.splatCount > 0 && processed.splatCount === 0) {
-      log.warning(
-        Modules.SCENE_LOADER,
-        `GSplats ${path}: all ${data.splatCount} loaded splats were filtered out during nD→3D processing. ` +
-          `slicePosition=[${viewState.slicePosition.join(', ')}], displayDims=[${viewState.displayDims.join(', ')}], ndim=${data.ndim}`
-      );
-    }
-
-    return { path, processed, cholesky01, cholesky23, cholesky45 };
+    return processGSplatsDataHelper(
+      path,
+      data,
+      viewState,
+      this.rootGroup,
+      this._updateVersion,
+      session
+    );
   }
 
   /**
@@ -1373,138 +1314,7 @@ export class SceneLoader {
    * Called as part of the atomic commit phase — no async operations allowed.
    */
   private commitGSplatsGeometry(staged: StagedGSplatsCommit): void {
-    if (!this.rootGroup) return;
-
-    const mesh = this.rootGroup.getObjectByName(staged.path) as THREE.Mesh;
-    if (!mesh || mesh.userData?.nodeType !== 'gsplats') return;
-
-    const { processed, cholesky01, cholesky23, cholesky45 } = staged;
-
-    if (this._gpuBufferPool) {
-      const geometry = this._gpuBufferPool.acquireGSplatsGeometry(
-        staged.path,
-        processed.splatCount
-      );
-      // Read truncation radius from material for correct frustum culling
-      const truncationRadius =
-        (mesh.material as { uniforms?: { uTruncate?: { value: number } } })?.uniforms?.uTruncate
-          ?.value ?? 3.0;
-      this._gpuBufferPool.updateGSplatsGeometry(
-        geometry,
-        {
-          centers3D: processed.centers3D,
-          amplitudes: processed.amplitudes,
-          cholesky01,
-          cholesky23,
-          cholesky45,
-          colors: processed.colors,
-          splatCount: processed.splatCount,
-        },
-        processed.splatCount,
-        truncationRadius
-      );
-      mesh.geometry = geometry;
-    } else {
-      updateInstancedGSplatsMesh(mesh, {
-        centers: processed.centers3D,
-        cholesky01,
-        cholesky23,
-        cholesky45,
-        amplitudes: processed.amplitudes,
-        colors: processed.colors,
-        splatCount: processed.splatCount,
-      });
-    }
-
-    if (mesh.userData) {
-      (mesh.userData as GSplatsUserData).visibleSplatCount = processed.splatCount;
-    }
-
-    if (processed.splatCount === 0) {
-      log.info(
-        Modules.SCENE_LOADER,
-        `Clearing gsplats for ${staged.path} (no visible splats at current slice)`
-      );
-    }
-  }
-
-  /**
-   * Project GSplats to 3D using a web worker.
-   *
-   * Offloads CPU-intensive Mahalanobis distance calculation and Cholesky
-   * submatrix extraction to a worker thread.
-   * Uses Comlink.transfer() for zero-copy ArrayBuffer transfer.
-   */
-  private async projectGSplatsTo3DUsingWorker(
-    data: LoadedGSplatsData,
-    viewState: GSplatsViewState,
-    truncate: number = 3.0
-  ): Promise<ReturnType<typeof processGSplats>> {
-    try {
-      const worker = await getWorkerPool().getWorker();
-
-      if (this._updateVersion <= 1) {
-        log.info(
-          Modules.SCENE_LOADER,
-          `Projecting ${data.splatCount} gsplats to 3D using worker (ndim=${data.ndim})`
-        );
-      }
-
-      // Extract discrete dimension info and extend_to_all dims for worker.
-      const discreteDims: number[] = [];
-      const discreteSteps: Record<number, number> = {};
-      const extendToAllDims: number[] = [];
-      if (viewState.dimensions) {
-        for (let d = 0; d < viewState.dimensions.length; d++) {
-          if (viewState.displayDims.includes(d)) continue;
-          if (viewState.tolerance[d] >= 1e9) {
-            extendToAllDims.push(d);
-          } else if (viewState.dimensions[d]?.discrete) {
-            discreteDims.push(d);
-            discreteSteps[d] = viewState.dimensions[d].step ?? 1.0;
-          }
-        }
-      }
-
-      const workerResult = await worker.projectGSplatsTo3D({
-        positions: data.positions,
-        choleskyFactors: data.choleskyFactors,
-        amplitudes: data.amplitudes,
-        colors: data.colors,
-        sharpness: null,
-        displayDims: viewState.displayDims,
-        slicePosition: viewState.slicePosition,
-        ndim: data.ndim,
-        splatCount: data.splatCount,
-        discreteDims,
-        discreteSteps,
-        extendToAllDims,
-        truncate,
-      });
-
-      if (this._updateVersion <= 1) {
-        log.info(
-          Modules.SCENE_LOADER,
-          `Worker projection complete: ${workerResult.visibleCount}/${data.splatCount} visible splats`
-        );
-      }
-
-      return {
-        centers3D: workerResult.centers3D,
-        choleskyFactors3D: workerResult.choleskyFactors3D,
-        amplitudes: workerResult.amplitudes,
-        colors: workerResult.colors,
-        splatCount: workerResult.visibleCount,
-      };
-    } catch (error) {
-      // Fallback to main thread on worker failure
-      log.warning(
-        Modules.SCENE_LOADER,
-        'Worker GSplats projection failed, falling back to main thread:',
-        error
-      );
-      return processGSplats(data, viewState, truncate);
-    }
+    commitGSplatsGeometryHelper(staged, this.rootGroup, this._gpuBufferPool);
   }
 
   /**
@@ -1964,7 +1774,12 @@ export class SceneLoader {
 
       let processed: ReturnType<typeof processGSplats>;
       if (useWorkerProjection) {
-        processed = await this.projectGSplatsTo3DUsingWorker(data, gsplatsViewState, truncate);
+        processed = await projectGSplatsTo3DUsingWorkerHelper(
+          data,
+          gsplatsViewState,
+          truncate,
+          this._updateVersion
+        );
       } else {
         processed = processGSplats(data, gsplatsViewState, truncate);
       }
