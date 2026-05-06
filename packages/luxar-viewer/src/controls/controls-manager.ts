@@ -20,6 +20,7 @@ import { LuxarOrbitControls } from './luxar-orbit-controls';
 import { LuxarFlyControls } from './luxar-fly-controls';
 import { config } from '../config';
 import { log, Modules, LogEmoji } from '../utils/log';
+import { EventGroup } from '../utils/event-group';
 import type { LuxarCamera } from '../scene/camera-utils';
 import type { ControlType } from './types';
 export type { ControlType };
@@ -50,18 +51,17 @@ type ControlEventMap = {
 type ActiveControls = LuxarOrbitControls | LuxarFlyControls;
 type ControlEventDispatcher = THREE.EventDispatcher<ControlEventMap>;
 
-interface ForwardedControlHandlers {
-  change: () => void;
-  start: () => void;
-  end: () => void;
-}
-
 export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventMap> {
   private camera: LuxarCamera;
   private domElement: HTMLElement;
   // Current control instance
   private currentControls: ActiveControls | null = null;
-  private currentControlHandlers: ForwardedControlHandlers | null = null;
+  /**
+   * Cleanup group for the change/start/end event-forwarders attached to
+   * the active controls instance. Rebuilt on every switch so disposing
+   * the previous group detaches the old listeners atomically.
+   */
+  private controlEvents: EventGroup = new EventGroup();
   private currentType: ControlType = 'orbit';
 
   // Configuration - uses defaults from config
@@ -291,27 +291,31 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   }
 
   private attachControlEventForwarders(controls: ControlEventDispatcher): void {
-    const handlers: ForwardedControlHandlers = {
-      change: () => this.dispatchEvent({ type: 'change' }),
-      start: () => this.dispatchEvent({ type: 'start' }),
-      end: () => this.dispatchEvent({ type: 'end' }),
+    const change = (): void => {
+      this.dispatchEvent({ type: 'change' });
+    };
+    const start = (): void => {
+      this.dispatchEvent({ type: 'start' });
+    };
+    const end = (): void => {
+      this.dispatchEvent({ type: 'end' });
     };
 
-    controls.addEventListener('change', handlers.change);
-    controls.addEventListener('start', handlers.start);
-    controls.addEventListener('end', handlers.end);
-    this.currentControlHandlers = handlers;
+    controls.addEventListener('change', change);
+    controls.addEventListener('start', start);
+    controls.addEventListener('end', end);
+
+    // THREE.EventDispatcher isn't a DOM EventTarget so EventGroup.on()
+    // doesn't apply; register manual cleanup callbacks instead.
+    this.controlEvents.add(() => controls.removeEventListener('change', change));
+    this.controlEvents.add(() => controls.removeEventListener('start', start));
+    this.controlEvents.add(() => controls.removeEventListener('end', end));
   }
 
   private disposeCurrentControls(): void {
     if (this.currentControls) {
-      if (this.currentControlHandlers) {
-        const controls = this.currentControls as ControlEventDispatcher;
-        controls.removeEventListener('change', this.currentControlHandlers.change);
-        controls.removeEventListener('start', this.currentControlHandlers.start);
-        controls.removeEventListener('end', this.currentControlHandlers.end);
-        this.currentControlHandlers = null;
-      }
+      this.controlEvents.dispose();
+      this.controlEvents = new EventGroup();
       this.currentControls.dispose();
       this.currentControls = null;
     }
