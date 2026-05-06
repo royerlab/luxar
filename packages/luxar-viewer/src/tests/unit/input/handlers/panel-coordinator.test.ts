@@ -86,11 +86,13 @@ function makeRecordingPanel(opts: {
 }
 
 function makePerformanceStats(initiallyVisible = true): {
-  stats: { visible: boolean; hide: ReturnType<typeof vi.fn> };
+  stats: { visible: boolean; hide(): void };
   hide: ReturnType<typeof vi.fn>;
 } {
   const hide = vi.fn();
-  return { stats: { visible: initiallyVisible, hide }, hide };
+  // Cast the mock to a plain `(): void` so it matches PerformanceStatsHandle.
+  const stats = { visible: initiallyVisible, hide: hide as unknown as () => void };
+  return { stats, hide };
 }
 
 describe('PanelCoordinator.closeAll', () => {

@@ -57,6 +57,7 @@ import {
   resolveSelectedDimension,
 } from './handlers/dimension-navigation';
 import { PanelCoordinator } from './handlers/panel-coordinator';
+import { WindowEventHandler } from './handlers/window-event-handler';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { updateSceneForDimensions, cycleDataMonitor } from '../data';
 
@@ -110,6 +111,13 @@ export class InputHandler {
   private panelCoordinator: PanelCoordinator;
 
   /**
+   * Window-event concern: owns resize / wheel / fullscreenchange.
+   * Keyboard listeners stay in InputHandler — they're a separate
+   * concern coordinating with InputContextManager.
+   */
+  private windowEvents: WindowEventHandler;
+
+  /**
    * Create a new input handler for nD visualization interaction.
    *
    * Sets up the complete input handling infrastructure including context
@@ -157,6 +165,11 @@ export class InputHandler {
       debugConsole: this.debugConsole,
       performanceStats: this.animationController.performanceStats,
     });
+
+    this.windowEvents = new WindowEventHandler(
+      this.sceneManager,
+      this.animationController
+    );
   }
 
   /**
@@ -182,6 +195,7 @@ export class InputHandler {
   setRenderingControls(controls: RenderingControls): void {
     this.renderingControls = controls;
     this.panelCoordinator.setRenderingControls(controls);
+    this.windowEvents.setRenderingControls(controls);
   }
 
   setScaleBar(scaleBar: ScaleBar): void {
@@ -568,28 +582,23 @@ export class InputHandler {
    * @private
    */
   private setupWindowEvents(): void {
-    const onResize = this.onWindowResize.bind(this);
-    const onWheel = this.onWheel.bind(this);
+    // Window-level resize / wheel / fullscreenchange — owned by
+    // WindowEventHandler. Keyboard stays here because it has to
+    // coordinate with InputContextManager and the registered
+    // key-binding table.
+    this.windowEvents.attach(this.eventListeners);
+
     const onKeyDown = this.onKeyDown.bind(this);
     const onKeyUp = this.onKeyUp.bind(this);
-    const onFullscreenChange = this.onFullscreenChange.bind(this);
-
-    window.addEventListener('resize', onResize);
-    window.addEventListener('wheel', onWheel);
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
-    document.addEventListener('fullscreenchange', onFullscreenChange);
 
     // Register all key bindings with context manager
     this.registerAllKeyBindings();
 
-    // Store cleanup functions
     this.eventListeners.push(
-      () => window.removeEventListener('resize', onResize),
-      () => window.removeEventListener('wheel', onWheel),
       () => window.removeEventListener('keydown', onKeyDown),
-      () => window.removeEventListener('keyup', onKeyUp),
-      () => document.removeEventListener('fullscreenchange', onFullscreenChange)
+      () => window.removeEventListener('keyup', onKeyUp)
     );
   }
 
@@ -634,88 +643,6 @@ export class InputHandler {
       () => canvas.removeEventListener('mousedown', startAnimation),
       () => canvas.removeEventListener('touchstart', startAnimation)
     );
-  }
-
-  /**
-   * Handle window resize events.
-   *
-   * Updates canvas size, camera aspect ratio, and renderer dimensions
-   * when browser window is resized. Triggers re-render to display
-   * resized view without distortion.
-   *
-   * @private
-   */
-  private onWindowResize(): void {
-    this.sceneManager.updateSize();
-    // Trigger animation to render the resized scene
-    this.animationController.startAnimation();
-  }
-
-  /**
-   * Handle fullscreen mode enter/exit events.
-   *
-   * Adjusts canvas inline styles so the canvas fills the entire viewport
-   * while in fullscreen, and clears those styles on exit. Page-level
-   * background is the host page's responsibility (see index.html).
-   *
-   * Fullscreen is triggered by Space key (when not focused on UI element).
-   *
-   * @private
-   */
-  private onFullscreenChange(): void {
-    const canvas = this.sceneManager.renderer.domElement;
-
-    if (document.fullscreenElement) {
-      // Entering fullscreen - ensure canvas fills the entire screen
-      canvas.style.width = '100vw';
-      canvas.style.height = '100vh';
-      canvas.style.position = 'fixed';
-      canvas.style.top = '0';
-      canvas.style.left = '0';
-      // Ensure the canvas has full opacity and no filters
-      canvas.style.opacity = '1';
-      canvas.style.filter = 'none';
-    } else {
-      // Exiting fullscreen - completely clear all inline styles
-      canvas.removeAttribute('style');
-    }
-
-    // Single resize after browser has applied fullscreen layout.
-    // Modern browsers fire fullscreenchange after the transition completes,
-    // so one rAF is sufficient to capture final dimensions.
-    requestAnimationFrame(() => {
-      this.sceneManager.updateSize();
-      this.animationController.startAnimation();
-    });
-  }
-
-  /**
-   * Handle mouse wheel events for zoom and FOV control.
-   *
-   * Normal wheel: Zoom in/out via orbit controls
-   * Ctrl+wheel: Adjust field of view (wide angle vs telephoto)
-   * (Shift+wheel is used for view-axis rotation in orbit/ortho modes)
-   *
-   * FOV changes update rendering controls display if active, switching
-   * preset to "Custom" since FOV was manually adjusted.
-   *
-   * @param event - Wheel event with deltaY for scroll direction/amount
-   * @private
-   */
-  private onWheel(event: WheelEvent): void {
-    this.animationController.startAnimation();
-
-    if (event.ctrlKey || event.metaKey) {
-      event.preventDefault();
-      this.sceneManager.updateFOV(event.deltaY);
-
-      // Update rendering controls display if available
-      if (this.renderingControls) {
-        // Ctrl+wheel FOV change should switch to Custom preset
-        this.renderingControls.settings.fovPreset = 'Custom';
-        this.renderingControls.syncCurrentState();
-      }
-    }
   }
 
   /**
