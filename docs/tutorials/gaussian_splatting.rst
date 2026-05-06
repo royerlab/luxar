@@ -310,6 +310,56 @@ Quality vs Compression Tradeoff
 * **Publication figures**: High quality (best reconstruction)
 * **Network-limited**: High compression (fast transfer)
 
+Calibrating K via Blind-Spot Cross-Validation
+----------------------------------------------
+
+Picking the splat count by eye is hard — too few and you under-fit, too
+many and you start memorising noise. The ``luxar gsplat cal`` command
+sweeps :math:`K` and reports the principled optimum :math:`K^{\star}`
+(the held-out PSNR peak) plus the dataset's noise-floor PSNR ceiling.
+
+.. code-block:: bash
+
+   # Default 10-point sweep matching the manuscript ({1K, 2K, ..., 512K})
+   luxar gsplat cal kidney_dapi.tiff cal.json --device cuda
+
+   # Faster: 5-point sweep
+   luxar gsplat cal volume.zarr cal.json --n-grid 5 --k-max 128000
+
+   # Explicit grid
+   luxar gsplat cal volume.zarr cal.json --k-grid '1000,4000,16000,64000'
+
+   # Multi-page PDF report (with --keep-fits also enables slice montages)
+   luxar gsplat cal volume.tiff cal.json --pdf cal.pdf --keep-fits fits/
+
+Or programmatically:
+
+.. code-block:: python
+
+   from luxar.gsplats.calibration import calibrate, build_k_grid
+
+   ks = build_k_grid(n_points=10, k_min=1_000, k_max=512_000)
+   result = calibrate(volume, k_grid=ks, fit_kwargs={"device": "cuda"})
+
+   print(f"K* = {result.held_out_peak.k_star:,}")
+   print(f"type = {result.held_out_peak.type}")  # peak | plateau | signal_limited
+   print(f"noise floor σ̂ = {result.noise_floor.sigma_hat:.4f}")
+
+The blind-spot trick: 5% of voxels are masked and replaced with the
+median of their 26-neighbour donut before fitting. The optimiser never
+sees the original noisy values at those positions, so PSNR computed at
+the held-out positions against the *original* values measures *signal*
+recovery rather than fidelity to the noise. Adding capacity beyond
+:math:`K^{\star}` starts memorising noise — held-out PSNR drops, even
+though training PSNR keeps rising. See ``manuscript/supp_doc/splat_count_vs_quality/``
+for the full theory and per-dataset curves.
+
+After calibration, re-run the fit at the recommended budget:
+
+.. code-block:: bash
+
+   luxar gsplat fit volume.zarr out.gsplats.zarr --seeds <K*>
+
 Summary
 -------
 
