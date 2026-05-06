@@ -342,15 +342,9 @@ def load_cytoself_data(
             aprint(f"Cached to {umap_cache}")
 
     aprint(f"Coordinates: {len(coordinates):,} points")
-    aprint(
-        f"  X range: [{coordinates[:, 0].min():.1f}, {coordinates[:, 0].max():.1f}]"
-    )
-    aprint(
-        f"  Y range: [{coordinates[:, 1].min():.1f}, {coordinates[:, 1].max():.1f}]"
-    )
-    aprint(
-        f"  Z range: [{coordinates[:, 2].min():.1f}, {coordinates[:, 2].max():.1f}]"
-    )
+    aprint(f"  X range: [{coordinates[:, 0].min():.1f}, {coordinates[:, 0].max():.1f}]")
+    aprint(f"  Y range: [{coordinates[:, 1].min():.1f}, {coordinates[:, 1].max():.1f}]")
+    aprint(f"  Z range: [{coordinates[:, 2].min():.1f}, {coordinates[:, 2].max():.1f}]")
 
     return coordinates, attributes, category_maps
 
@@ -431,7 +425,9 @@ def _build_test_index_mapping(
             label_dfs.append(df)
 
         full_labels = pd.concat(label_dfs, ignore_index=True)
-        aprint(f"Full label table: {len(full_labels):,} rows x {full_labels.shape[1]} cols")
+        aprint(
+            f"Full label table: {len(full_labels):,} rows x {full_labels.shape[1]} cols"
+        )
 
         # Load test-split labels
         test_labels = pd.read_csv(cache_dir / "label.csv")
@@ -571,9 +567,7 @@ def load_cytoself_images(
                     encoded = _encode_crops_to_webp(subset)
 
                     # Map encoded blobs back to test indices
-                    local_to_encoded = {
-                        li: ei for ei, li in enumerate(unique_local)
-                    }
+                    local_to_encoded = {li: ei for ei, li in enumerate(unique_local)}
                     for local_idx, test_idx in local_to_test_map:
                         encoded_idx = local_to_encoded[local_idx]
                         result_blobs[test_idx] = encoded[encoded_idx]
@@ -611,9 +605,7 @@ def load_cytoself_images(
 
     # Cache the test-aligned thumbnails
     with asection("Caching test-aligned thumbnails"):
-        np.savez(
-            thumbnails_cache, blobs=np.array(final_blobs, dtype=object)
-        )
+        np.savez(thumbnails_cache, blobs=np.array(final_blobs, dtype=object))
         aprint(f"Cached {len(final_blobs):,} thumbnails to {thumbnails_cache}")
 
     return final_blobs
@@ -670,9 +662,7 @@ def create_cytoself_scene(
             all_colors.append(colors)
 
             n_unique = len(np.unique(attributes[attr_name]))
-            aprint(
-                f"  Attribute {attr_idx} ({attr_name}): {n_unique} unique values"
-            )
+            aprint(f"  Attribute {attr_idx} ({attr_name}): {n_unique} unique values")
 
         positions_combined = np.vstack(all_positions)
         colors_combined = np.vstack(all_colors)
@@ -720,9 +710,7 @@ def create_cytoself_scene(
                         name = str(cats[code]) if code < len(cats) else str(code)
                         parts.append(name)
                     per_cell_labels.append("\n".join(parts))
-            labels = (
-                per_cell_labels * len(available_attrs) if per_cell_labels else None
-            )
+            labels = per_cell_labels * len(available_attrs) if per_cell_labels else None
 
             # Image labels: replicate per attribute view (same as text labels).
             # Only use if count matches embeddings — the image .npy files may
@@ -761,9 +749,7 @@ def create_cytoself_scene(
 
             attr_labels = available_labels
             attr_keys = available_attrs
-            for attr_id, (label, attr_key) in enumerate(
-                zip(attr_labels, attr_keys)
-            ):
+            for attr_id, (label, attr_key) in enumerate(zip(attr_labels, attr_keys)):
                 scene.add_text(
                     f"Colored by: {label}",
                     position=(0.02, 0.97),
@@ -913,7 +899,10 @@ def main() -> None:
     if "--no-serve" in sys.argv:
         output_path = get_demos_output_dir() / "cytoself_protein_landscape.zarr"
         _n_points = create_cytoself_scene(
-            output_path, coordinates, attributes, category_maps,
+            output_path,
+            coordinates,
+            attributes,
+            category_maps,
             image_labels=image_labels,
         )
         aprint(f"Dataset generated at {output_path}")
@@ -923,7 +912,10 @@ def main() -> None:
         output_path = Path(tmpdir) / "cytoself_landscape.zarr"
 
         _n_points = create_cytoself_scene(
-            output_path, coordinates, attributes, category_maps,
+            output_path,
+            coordinates,
+            attributes,
+            category_maps,
             image_labels=image_labels,
         )
 

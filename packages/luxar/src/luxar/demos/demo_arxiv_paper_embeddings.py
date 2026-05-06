@@ -502,7 +502,11 @@ def generate_paper_landscape(
             # Hover labels: title (citations, field)
             paper_labels = []
             for i in range(n_papers):
-                title = papers_clean[i].get("title", "Unknown") if i < len(papers_clean) else "Unknown"
+                title = (
+                    papers_clean[i].get("title", "Unknown")
+                    if i < len(papers_clean)
+                    else "Unknown"
+                )
                 title_short = title[:60] + ("…" if len(title) > 60 else "")
                 cites = int(citation_counts[i]) if i < len(citation_counts) else 0
                 field = primary_fields[i] if i < len(primary_fields) else "Unknown"

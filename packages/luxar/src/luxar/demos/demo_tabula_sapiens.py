@@ -196,9 +196,7 @@ def _discover_tissue_assets() -> list[dict]:
     import requests
 
     with asection("Querying CELLxGENE API for Tabula Sapiens tissue datasets"):
-        resp = requests.get(
-            f"{CELLXGENE_API}/collections/{COLLECTION_ID}", timeout=30
-        )
+        resp = requests.get(f"{CELLXGENE_API}/collections/{COLLECTION_ID}", timeout=30)
         resp.raise_for_status()
         collection = resp.json()
 
@@ -327,9 +325,7 @@ def _load_via_census(
     aprint(f"  Unique cell types: {len(set(cell_types))}")
     aprint(f"  Unique tissues: {len(set(tissues))}")
 
-    _save_processed_cache(
-        processed_cache, cache_dir, umap_coords, cell_types, tissues
-    )
+    _save_processed_cache(processed_cache, cache_dir, umap_coords, cell_types, tissues)
     return umap_coords, None, cell_types, tissues
 
 
@@ -376,7 +372,9 @@ def _load_via_h5ad_download(
             size_mb = asset["filesize"] / (1024**2)
             h5ad_path = h5ad_dir / f"{tissue_name.lower().replace(' ', '_')}.h5ad"
 
-            with asection(f"{tissue_name} ({asset['cell_count']:,} cells, {size_mb:.0f} MB)"):
+            with asection(
+                f"{tissue_name} ({asset['cell_count']:,} cells, {size_mb:.0f} MB)"
+            ):
                 # robust_download handles skip-if-complete and resume-if-truncated
                 robust_download(
                     asset["url"],
@@ -397,7 +395,9 @@ def _load_via_h5ad_download(
                         pca_local = None
                         for emb_key in ["X_scvi", "X_pca"]:
                             if emb_key in f["obsm"]:
-                                pca_local = np.array(f["obsm"][emb_key]).astype(np.float32)
+                                pca_local = np.array(f["obsm"][emb_key]).astype(
+                                    np.float32
+                                )
                                 break
 
                         # Read cell type
@@ -441,7 +441,9 @@ def _load_via_h5ad_download(
                     all_cell_types.extend(cell_types)
                     all_tissues.extend(tissues_local)
                     total_cells += len(cell_types)
-                    aprint(f"  ✓ Extracted {len(cell_types):,} cells (total: {total_cells:,})")
+                    aprint(
+                        f"  ✓ Extracted {len(cell_types):,} cells (total: {total_cells:,})"
+                    )
 
                 except Exception as e:
                     aprint(f"  ⚠ Failed to read {tissue_name}: {e}")
@@ -473,7 +475,11 @@ def _load_via_h5ad_download(
     aprint(f"  Unique tissues: {len(set(all_tissues))}")
 
     _save_processed_cache(
-        processed_cache, cache_dir, umap_coords, all_cell_types, all_tissues,
+        processed_cache,
+        cache_dir,
+        umap_coords,
+        all_cell_types,
+        all_tissues,
         pca=pca_combined,
     )
     return umap_coords, pca_combined, all_cell_types, all_tissues
@@ -608,7 +614,9 @@ def generate_tabula_sapiens(
     elif pca is not None:
         from umap import UMAP
 
-        with asection(f"Computing 3D UMAP from {pca.shape[1]}D embeddings ({n_cells:,} cells)"):
+        with asection(
+            f"Computing 3D UMAP from {pca.shape[1]}D embeddings ({n_cells:,} cells)"
+        ):
             aprint("This may take a few minutes for large datasets...")
             reducer = UMAP(
                 n_components=3,
@@ -626,9 +634,7 @@ def generate_tabula_sapiens(
     else:
         # Fallback: flat 2D UMAP with z=0 (no PCA available)
         aprint("⚠ No PCA/scVI embeddings — using flat 2D UMAP (z=0)")
-        positions = np.column_stack([
-            umap_2d, np.zeros(n_cells, dtype=np.float32)
-        ])
+        positions = np.column_stack([umap_2d, np.zeros(n_cells, dtype=np.float32)])
         positions -= positions.mean(axis=0)
 
     # Generate visualization

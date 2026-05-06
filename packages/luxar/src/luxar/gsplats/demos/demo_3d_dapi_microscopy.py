@@ -391,9 +391,13 @@ with asection("3D DAPI Gaussian Splatting Demo"):
         import torch
 
         if USE_CUDA and torch.cuda.is_available():
-            aprint("🚀 CUDA available - will use custom CUDA kernels (substantial speedup, GPU-dependent!)")
+            aprint(
+                "🚀 CUDA available - will use custom CUDA kernels (substantial speedup, GPU-dependent!)"
+            )
         elif USE_METAL and is_metal_available() and torch.backends.mps.is_available():
-            aprint("🚀 Metal available - will use MPS device (substantial speedup, chip-dependent!)")
+            aprint(
+                "🚀 Metal available - will use MPS device (substantial speedup, chip-dependent!)"
+            )
         else:
             aprint("Using CPU device (no GPU acceleration available)")
     else:

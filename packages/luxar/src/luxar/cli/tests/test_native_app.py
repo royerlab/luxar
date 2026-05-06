@@ -85,7 +85,9 @@ def _patch_launchers(fake_launchers_dir: Path):
 
 
 class TestGetLauncherPath:
-    def test_returns_path_for_supported_platform(self, fake_launchers_dir: Path) -> None:
+    def test_returns_path_for_supported_platform(
+        self, fake_launchers_dir: Path
+    ) -> None:
         with _patch_launchers(fake_launchers_dir):
             for plat in SUPPORTED_PLATFORMS:
                 assert get_launcher_path(plat).exists()

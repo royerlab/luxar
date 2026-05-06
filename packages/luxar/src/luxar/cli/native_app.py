@@ -72,8 +72,7 @@ def get_launcher_path(platform_name: str) -> Path:
     binary = LAUNCHERS_DIR / PLATFORM_BINARIES[platform_name]
     if not binary.exists():
         raise LauncherNotBuiltError(
-            f"Native launcher not found at {binary}.\n"
-            "Run: make build-launchers"
+            f"Native launcher not found at {binary}.\nRun: make build-launchers"
         )
     return binary
 
@@ -103,10 +102,7 @@ def bundle_macos_app(
         bundled_launcher = macos_dir / "launcher"
         shutil.copy2(launcher, bundled_launcher)
         bundled_launcher.chmod(
-            bundled_launcher.stat().st_mode
-            | stat.S_IEXEC
-            | stat.S_IXGRP
-            | stat.S_IXOTH
+            bundled_launcher.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH
         )
 
         shutil.copytree(viewer_dist, resources / "viewer", dirs_exist_ok=True)
@@ -160,10 +156,7 @@ def bundle_linux_folder(
         bundled_launcher = folder / "luxar-launcher"
         shutil.copy2(launcher, bundled_launcher)
         bundled_launcher.chmod(
-            bundled_launcher.stat().st_mode
-            | stat.S_IEXEC
-            | stat.S_IXGRP
-            | stat.S_IXOTH
+            bundled_launcher.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH
         )
 
         shutil.copytree(viewer_dist, folder / "viewer", dirs_exist_ok=True)
@@ -198,10 +191,7 @@ def _macos_info_plist(app_name: str, *, with_icon: bool = True) -> str:
     safe_bundle_id = xml_escape(bundle_id)
     icon_keys = ""
     if with_icon:
-        icon_keys = (
-            "    <key>CFBundleIconFile</key>\n"
-            "    <string>AppIcon</string>\n"
-        )
+        icon_keys = "    <key>CFBundleIconFile</key>\n    <string>AppIcon</string>\n"
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -338,9 +328,7 @@ def zip_macos_app(app_path: Path) -> Path:
                 raise
             aprint(f"  ✓ {archive_path.name}")
     else:
-        with asection(
-            f"Zipping {app_path.name} with zipfile (ditto unavailable)"
-        ):
+        with asection(f"Zipping {app_path.name} with zipfile (ditto unavailable)"):
             with zipfile.ZipFile(
                 archive_path, "w", compression=zipfile.ZIP_DEFLATED
             ) as zf:

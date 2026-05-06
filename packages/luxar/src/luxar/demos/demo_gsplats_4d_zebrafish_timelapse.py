@@ -579,7 +579,9 @@ def show_roundtrip_comparison(
     try:
         import matplotlib.pyplot as plt
     except ImportError:
-        aprint("matplotlib is required for --show-roundtrip. Install with: pip install matplotlib")
+        aprint(
+            "matplotlib is required for --show-roundtrip. Install with: pip install matplotlib"
+        )
         return
 
     n_total = len(volumes)
@@ -590,7 +592,9 @@ def show_roundtrip_comparison(
         sample_indices = [0, n_total // 2, n_total - 1]
     n_show = len(sample_indices)
 
-    with asection(f"Round-trip reconstruction comparison ({n_show} of {n_total} timepoints)"):
+    with asection(
+        f"Round-trip reconstruction comparison ({n_show} of {n_total} timepoints)"
+    ):
         reconstructions = []
         for t in sample_indices:
             with asection(f"Rendering timepoint {t}"):
@@ -602,9 +606,7 @@ def show_roundtrip_comparison(
                 psnr = 10 * np.log10(1.0 / mse) if mse > 0 else float("inf")
                 aprint(f"  T={t}: PSNR: {psnr:.2f} dB, MSE: {mse:.6g}")
 
-        fig, axes = plt.subplots(
-            n_show, 3, figsize=(14, 4.5 * n_show), squeeze=False
-        )
+        fig, axes = plt.subplots(n_show, 3, figsize=(14, 4.5 * n_show), squeeze=False)
 
         for row, (t, recon) in enumerate(zip(sample_indices, reconstructions)):
             volume = volumes[t]

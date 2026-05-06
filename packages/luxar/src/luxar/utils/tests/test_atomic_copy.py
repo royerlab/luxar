@@ -73,7 +73,9 @@ class TestAtomicCopytree:
             original_copytree(s, d, **kwargs)
             raise OSError("simulated mid-copy failure")
 
-        with patch("luxar.utils.atomic_copy.shutil.copytree", side_effect=failing_copytree):
+        with patch(
+            "luxar.utils.atomic_copy.shutil.copytree", side_effect=failing_copytree
+        ):
             with pytest.raises(OSError, match="simulated mid-copy failure"):
                 atomic_copytree(src, dst)
 

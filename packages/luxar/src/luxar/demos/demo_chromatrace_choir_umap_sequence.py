@@ -309,9 +309,7 @@ def grouped_tsp_order(
 
         # Pick a starting type closest to previous group's endpoint
         if prev_endpoint_centroid is not None and len(terms_list) > 1:
-            d_to_prev = np.linalg.norm(
-                centroid_arr - prev_endpoint_centroid, axis=1
-            )
+            d_to_prev = np.linalg.norm(centroid_arr - prev_endpoint_centroid, axis=1)
             start = int(np.argmin(d_to_prev))
         else:
             start = None  # try all starts, pick best NN-path
@@ -379,8 +377,10 @@ def build_sequence_scene(
                 if hex_str:
                     highlight_rgb[term_code_of_cell == i] = _hex_to_rgb_float(hex_str)
 
-        aprint(f"  palette: {len(ordered_real)} terms in legend order"
-               f"{' + unannotated slot' if has_unannotated else ''}")
+        aprint(
+            f"  palette: {len(ordered_real)} terms in legend order"
+            f"{' + unannotated slot' if has_unannotated else ''}"
+        )
 
         # Map each cell → its slot index (its position on the cell_type dim).
         # TSP order defines the slot index for each real term; "unannotated"
@@ -456,9 +456,7 @@ def build_sequence_scene(
         )
 
         with LuxarZarrCompiler(output_path) as compiler:
-            scene = compiler.create_scene(
-                dimensions=dims, viewer_config=viewer_config
-            )
+            scene = compiler.create_scene(dimensions=dims, viewer_config=viewer_config)
 
             # Backdrop layer: always visible across every slider slot.
             scene.add_points(
@@ -602,12 +600,16 @@ def main() -> None:
         palette_order.extend(grp.get("cell_types", []))
 
     if "--no-serve" in sys.argv:
-        output_path = (
-            get_demos_output_dir() / "chromatrace_choir_umap_sequence.zarr"
-        )
+        output_path = get_demos_output_dir() / "chromatrace_choir_umap_sequence.zarr"
         n = build_sequence_scene(
-            output_path, coords, attributes, category_maps,
-            term_colors, palette_order, groups, use_tsp=use_tsp,
+            output_path,
+            coords,
+            attributes,
+            category_maps,
+            term_colors,
+            palette_order,
+            groups,
+            use_tsp=use_tsp,
         )
         aprint(f"Dataset generated at {output_path} ({n:,} cells)")
         return
@@ -615,8 +617,14 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="luxar_chromatrace_seq_") as tmpdir:
         output_path = Path(tmpdir) / "chromatrace_choir_umap_sequence.zarr"
         n = build_sequence_scene(
-            output_path, coords, attributes, category_maps,
-            term_colors, palette_order, groups, use_tsp=use_tsp,
+            output_path,
+            coords,
+            attributes,
+            category_maps,
+            term_colors,
+            palette_order,
+            groups,
+            use_tsp=use_tsp,
         )
 
         aprint("")

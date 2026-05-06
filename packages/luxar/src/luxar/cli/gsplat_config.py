@@ -254,7 +254,9 @@ def dump_default_config(preset: str = "standard") -> str:
 # ---------------------------------------------------------------------------
 
 
-def decode_flat_channel_index(channel: int, channel_shape: Tuple[int, ...]) -> Tuple[int, ...]:
+def decode_flat_channel_index(
+    channel: int, channel_shape: Tuple[int, ...]
+) -> Tuple[int, ...]:
     """Decode a flat channel task index into folded channel-axis coordinates.
 
     For data with multiple non-spatial, channel-like axes (for example
@@ -272,7 +274,9 @@ def decode_flat_channel_index(channel: int, channel_shape: Tuple[int, ...]) -> T
     total = 1
     for size in channel_shape:
         if size <= 0:
-            raise ValueError(f"channel axis sizes must be positive, got {channel_shape}")
+            raise ValueError(
+                f"channel axis sizes must be positive, got {channel_shape}"
+            )
         total *= size
     if channel >= total:
         raise ValueError(
