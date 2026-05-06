@@ -30,26 +30,52 @@ async function waitForTheme(page: Page, themeId: string): Promise<void> {
 }
 
 /**
- * Test error dialog in all themes
+ * Test error dialog in all themes.
+ *
+ * The dialog is driven directly through the debug-only
+ * `__luxarDebug.showError(message)` hook (registered in
+ * `bootstrap.ts`) rather than via a known-bad `?src=`. URL routing has
+ * its own behaviours — relative-path failures fall back to the dataset
+ * browser since `app.ts:shouldShowBrowser`'s zarr-metadata HEAD probes —
+ * and coupling the dialog's visual regression to those routing semantics
+ * was the original cause of false test failures when the routing
+ * improved. Driving the dialog directly tests exactly what this spec
+ * cares about: the dialog's appearance per theme.
  */
 for (const theme of THEMES) {
   test(`error dialog - ${theme} theme`, async ({ page }) => {
-    // Navigate with theme and invalid dataset to trigger error
-    await page.goto(`/?src=invalid-dataset.zarr&theme=${theme}`);
+    // Navigate with debug enabled so __luxarDebug.showError is exposed.
+    await page.goto(`/?theme=${theme}&debug`);
 
-    // Wait for theme to be applied
+    // Wait for the theme to be applied AND the debug interface to be
+    // populated. The bootstrap seeds __luxarDebug before init() runs, so
+    // showError is available before the first paint.
     await waitForTheme(page, theme);
+    await page.waitForFunction(
+      () => typeof (window as any).__luxarDebug?.showError === 'function',
+      null,
+      { timeout: 10_000 }
+    );
 
-    // Wait for error dialog to appear
+    // Trigger the same message bootstrap.ts uses on init failure so the
+    // dialog content matches the production error path.
+    await page.evaluate(() => {
+      (window as any).__luxarDebug?.showError?.(
+        'Failed to start the application. Please check the console for details.'
+      );
+    });
+
+    // Wait for the dialog to render. luxar-error-dialog is the styling
+    // class; error-message is the legacy E2E hook (kept for compatibility).
     const errorDialog = page.locator('.luxar-error-dialog');
     await expect(errorDialog).toBeVisible({ timeout: 5000 });
 
-    // Extra wait for frosted-glass theme which has animation/blur effects
+    // Frosted-glass uses backdrop-filter blur + an entrance animation; let
+    // it settle so the screenshot is stable.
     if (theme === 'frosted-glass') {
       await page.waitForTimeout(500);
     }
 
-    // Take screenshot for visual regression
     await expect(errorDialog).toHaveScreenshot(`error-dialog-${theme}.png`, {
       maxDiffPixelRatio: 0.1,
       threshold: 0.3,

@@ -17,6 +17,11 @@ import { test, expect } from '@playwright/test';
 import { waitForLuxarReady, waitForSpatialQuery, waitForNextRender } from './helpers';
 import * as fs from 'fs';
 import * as path from 'path';
+import { fileURLToPath } from 'url';
+
+// `package.json` declares `"type": "module"`, so the CommonJS `__dirname`
+// global is undefined at module load. Reconstruct it from `import.meta.url`.
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Per-machine baseline (gitignored). Each successful run rewrites it so the
 // file tracks the rolling minimum/typical timing for the local hardware
