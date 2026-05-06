@@ -24,6 +24,7 @@ import {
   saveSettingsToStorage,
   loadSettingsFromStorage,
 } from './rendering-controls/settings-persistence';
+import { setupPerformanceControls } from './rendering-controls/performance-setup';
 import type { AdaptiveDPRManager } from '../rendering/adaptive-dpr-manager';
 import type { ZarrViewerConfig } from '../types/zarr';
 import { extractRenderingOverrides } from '../config/viewer-config-utils';
@@ -450,159 +451,17 @@ export class RenderingControls {
   setAdaptiveDPRManager(manager: AdaptiveDPRManager): void {
     this.adaptiveDPRManager = manager;
 
-    // Create Performance folder with adaptive DPR controls
-    const performanceFolder = this.gui.addFolder('⚡ Performance');
-
-    performanceFolder.domElement?.setAttribute(
-      'title',
-      'Performance: Controls that trade visual quality for speed\n\n' +
-        '• Adaptive Resolution: Automatically lowers pixel ratio when FPS drops,\n' +
-        '  then gradually restores quality when the GPU catches up.\n' +
-        '• Manual DPR: Set a fixed pixel ratio (lower = faster but blurrier).\n\n' +
-        'Useful for large datasets or lower-end GPUs where smooth interaction\n' +
-        'matters more than pixel-perfect sharpness.'
-    );
-
-    // Adaptive Resolution toggle (onChange registered below after manual DPR control is created)
-    const adaptiveToggle = performanceFolder
-      .add(this.settings, 'adaptiveDPREnabled')
-      .name('Adaptive Resolution');
-
-    adaptiveToggle.domElement.setAttribute(
-      'title',
-      'Adaptive Resolution: Automatically adjusts rendering quality for smooth FPS\n' +
-        '• When FPS drops below 50, reduces pixel ratio\n' +
-        '• Gradually restores quality when FPS stabilizes above 58\n' +
-        '• Minimum DPR: 0.5 (50% of native resolution)'
-    );
-
-    // Manual DPR control (shown when adaptive is OFF)
-    const nativeDPR = manager.getNativeDPR();
-    const manualDPRSettings = { dpr: nativeDPR };
-
-    const manualDPRControl = performanceFolder
-      .add(manualDPRSettings, 'dpr', 0.25, nativeDPR, 0.05)
-      .name('Manual DPR')
-      .onChange((value: number) => {
-        if (this.adaptiveDPRManager && !this.settings.adaptiveDPREnabled) {
-          this.adaptiveDPRManager.setManualDPR(value);
-          this.triggerAnimation();
-        }
-      });
-
-    manualDPRControl.domElement.setAttribute(
-      'title',
-      'Manual Device Pixel Ratio (when adaptive is off)\n' +
-        `• Native: ${nativeDPR.toFixed(2)}\n` +
-        '• Lower values = better performance, less sharpness\n' +
-        '• 1.0 = 100% resolution, 0.5 = 50% resolution'
-    );
-
-    // Create simple text displays for DPR and FPS (read-only info, shown when adaptive is ON)
-    const createDisplayRow = (label: string, tooltip: string): HTMLElement => {
-      const row = document.createElement('div');
-      row.className = 'luxar-gui__controller';
-      row.style.opacity = '0.7';
-      row.setAttribute('title', tooltip);
-
-      const nameEl = document.createElement('div');
-      nameEl.className = 'luxar-gui__controller-name';
-      nameEl.textContent = label;
-
-      const valueEl = document.createElement('div');
-      valueEl.className = 'luxar-gui__controller-widget';
-      valueEl.style.textAlign = 'right';
-      valueEl.style.paddingRight = '8px';
-      valueEl.style.fontFamily = 'monospace';
-
-      row.appendChild(nameEl);
-      row.appendChild(valueEl);
-      return row;
-    };
-
-    const dprRow = createDisplayRow(
-      'Current DPR',
-      `Current Device Pixel Ratio\n• Native: ${nativeDPR.toFixed(2)}\n• Lower values = better performance, less sharpness`
-    );
-    const dprValue = dprRow.querySelector('.luxar-gui__controller-widget') as HTMLElement;
-
-    const fpsRow = createDisplayRow(
-      'Current FPS',
-      'Current Frames Per Second\n• Target: 55-60 FPS\n• Scales down if below 50 FPS'
-    );
-    const fpsValue = fpsRow.querySelector('.luxar-gui__controller-widget') as HTMLElement;
-
-    // Access folder's children container to append display rows
-    const folderEl = performanceFolder.domElement;
-    if (folderEl) {
-      const childrenContainer = folderEl.querySelector('.luxar-gui__children');
-      if (childrenContainer) {
-        childrenContainer.appendChild(dprRow);
-        childrenContainer.appendChild(fpsRow);
-      }
-    }
-
-    // Helper function to update visibility of controls based on adaptive state
-    const updateControlVisibility = (adaptiveEnabled: boolean) => {
-      if (adaptiveEnabled) {
-        // Adaptive ON: show display rows, hide manual control
-        manualDPRControl.hide();
-        dprRow.style.display = '';
-        fpsRow.style.display = '';
-        // Update display values immediately
-        if (this.adaptiveDPRManager) {
-          const state = this.adaptiveDPRManager.getState();
-          dprValue.textContent = state.currentDPR.toFixed(2);
-          fpsValue.textContent = Math.round(state.currentFPS).toString();
-        }
-      } else {
-        // Adaptive OFF: show manual control, hide display rows
-        manualDPRControl.show();
-        // Sync manual DPR slider with current value
-        manualDPRSettings.dpr = this.adaptiveDPRManager?.getCurrentDPR() ?? nativeDPR;
-        manualDPRControl.updateDisplay();
-        dprRow.style.display = 'none';
-        fpsRow.style.display = 'none';
-      }
-    };
-
-    // Store visibility update callback for use by loadSettings
-    this.updateAdaptiveDPRVisibility = updateControlVisibility;
-
-    // Sync initial state from manager BEFORE setting visibility
-    this.settings.adaptiveDPREnabled = manager.isActive();
-    adaptiveToggle.updateDisplay();
-
-    // Set initial visibility based on synced state
-    updateControlVisibility(this.settings.adaptiveDPREnabled);
-
-    // Register onChange handler for adaptive toggle
-    adaptiveToggle.onChange((enabled: boolean) => {
-      if (this.adaptiveDPRManager) {
-        this.adaptiveDPRManager.setEnabled(enabled);
-      }
-      this.saveSettings();
-      log.info(Modules.RENDERER, `Adaptive resolution ${enabled ? 'enabled' : 'disabled'}`);
-      updateControlVisibility(enabled);
+    const result = setupPerformanceControls({
+      gui: this.gui,
+      settings: this.settings,
+      manager,
+      saveSettings: () => this.saveSettings(),
+      triggerAnimation: () => this.triggerAnimation(),
     });
 
-    // Update displays periodically (only when adaptive is enabled)
-    const updateInterval = setInterval(() => {
-      if (this.adaptiveDPRManager && this.settings.adaptiveDPREnabled) {
-        const state = this.adaptiveDPRManager.getState();
-        dprValue.textContent = state.currentDPR.toFixed(2);
-        fpsValue.textContent = Math.round(state.currentFPS).toString();
-      }
-    }, 500);
-
-    // Register cleanup for the update interval
-    this.cleanupCallbacks.push(() => clearInterval(updateInterval));
-
-    // Close folder by default
-    performanceFolder.close();
-
-    // Store controller references
-    this.controllers.adaptiveDPREnabled = adaptiveToggle;
+    this.controllers.adaptiveDPREnabled = result.adaptiveDPREnabled;
+    this.updateAdaptiveDPRVisibility = result.updateVisibility;
+    this.cleanupCallbacks.push(result.cleanup);
 
     // Cinematic Mode checkbox (added before reset button)
     const cinematicModeControl = this.gui
