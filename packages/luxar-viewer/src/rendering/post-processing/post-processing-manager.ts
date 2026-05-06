@@ -44,6 +44,11 @@ import {
   float32ToHalfFloat,
   flipPixelsVerticallyRGBA,
 } from './hdr-pixel-utils';
+import {
+  estimatePostProcMemoryMB,
+  formatHDRExrLogLine,
+  pickResultBuffer,
+} from './hdr-capture';
 import { toneMappingModeName } from './tone-mapping-mode-names';
 import {
   applyToneMapping,
@@ -1615,18 +1620,15 @@ export class PostProcessingManager {
     const fps =
       this.performanceMetrics.avgFrameTime > 0 ? 1000 / this.performanceMetrics.avgFrameTime : 0;
 
-    // Estimate memory usage
-    const pixelCount = this.renderSize.width * this.renderSize.height;
-    const ssaaMultiplier = this.ssaaEnabled ? this.ssaaMultiplier * this.ssaaMultiplier : 1;
-    const msaaMultiplier = this.msaaEnabled ? this.msaaSamples : 1;
-
-    // 16-bit float = 2 bytes per channel, RGBA = 8 bytes per pixel
-    const bytesPerPixel = 8;
-    const totalPixels = pixelCount * ssaaMultiplier * msaaMultiplier;
-
-    // Account for multiple buffers (main, bloom, effects)
-    const bufferCount = 3 + (this.bloomEffect ? 2 : 0) + (this.aoEffect ? 1 : 0);
-    const memoryUsageMB = (totalPixels * bytesPerPixel * bufferCount) / (1024 * 1024);
+    const memoryUsageMB = estimatePostProcMemoryMB({
+      pixelCount: this.renderSize.width * this.renderSize.height,
+      ssaaEnabled: this.ssaaEnabled,
+      ssaaMultiplier: this.ssaaMultiplier,
+      msaaEnabled: this.msaaEnabled,
+      msaaSamples: this.msaaSamples,
+      hasBloom: !!this.bloomEffect,
+      hasAO: !!this.aoEffect,
+    });
 
     return {
       avgFrameTime: this.performanceMetrics.avgFrameTime,
@@ -1647,15 +1649,11 @@ export class PostProcessingManager {
    * reads stale intermediate data from the wrong buffer.
    */
   private getResultBuffer(): THREE.WebGLRenderTarget {
-    // Count enabled passes that actually swap buffers.
-    // Only passes with needsSwap === true trigger a buffer swap in the composer;
-    // counting all enabled passes would give the wrong buffer when some passes
-    // (e.g. ClearPass, MaskPass) don't swap.
-    let swapCount = 0;
-    for (const pass of this.composer.passes) {
-      if (pass.enabled && pass.needsSwap) swapCount++;
-    }
-    return swapCount % 2 === 0 ? this.composer.inputBuffer : this.composer.outputBuffer;
+    return pickResultBuffer(
+      this.composer.passes,
+      this.composer.inputBuffer,
+      this.composer.outputBuffer
+    );
   }
 
   /**
@@ -1767,9 +1765,7 @@ export class PostProcessingManager {
 
     log.info(
       Modules.POST_PROCESSING,
-      `HDR EXR captured: ${width}x${height}, ` +
-        `${exrType === THREE.HalfFloatType ? 'half-float' : 'float'}, ` +
-        `${(exrData.byteLength / (1024 * 1024)).toFixed(1)} MB`
+      formatHDRExrLogLine(width, height, exrType === THREE.HalfFloatType, exrData.byteLength)
     );
 
     return exrData;
