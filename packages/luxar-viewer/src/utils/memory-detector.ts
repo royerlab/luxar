@@ -10,13 +10,32 @@ export interface MemoryInfo {
   source: 'api' | 'device' | 'default';
 }
 
+// Non-standard, Chrome-only `performance.memory` and `navigator.deviceMemory`.
+// Typed locally instead of with a global declare to keep the surface area
+// minimal — reads always go through these narrowing helpers.
+interface PerformanceMemory {
+  readonly jsHeapSizeLimit: number;
+  readonly totalJSHeapSize: number;
+  readonly usedJSHeapSize: number;
+}
+
+function getPerformanceMemory(): PerformanceMemory | undefined {
+  const mem = (performance as Performance & { memory?: PerformanceMemory }).memory;
+  return mem && typeof mem.jsHeapSizeLimit === 'number' ? mem : undefined;
+}
+
+function getDeviceMemoryGB(): number | undefined {
+  const value = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
+  return typeof value === 'number' ? value : undefined;
+}
+
 /**
  * Detect available memory and recommend cache size
  */
 export function detectMemory(): MemoryInfo {
   // Try Chrome's memory API first (most accurate - gives actual JS heap size)
-  if ((performance as any).memory) {
-    const mem = (performance as any).memory;
+  const mem = getPerformanceMemory();
+  if (mem) {
     const heapLimitMB = mem.jsHeapSizeLimit / (1024 * 1024);
     const usedMB = mem.usedJSHeapSize / (1024 * 1024);
     const availableMB = heapLimitMB - usedMB;
@@ -42,8 +61,8 @@ export function detectMemory(): MemoryInfo {
   }
 
   // Try device memory API (gives total device RAM in GB)
-  if ((navigator as any).deviceMemory) {
-    const deviceGB = (navigator as any).deviceMemory;
+  const deviceGB = getDeviceMemoryGB();
+  if (deviceGB !== undefined) {
 
     // Estimate available JS heap based on device RAM
     // Browsers typically allow ~25-50% of system RAM for JS heap
@@ -111,10 +130,11 @@ export class MemoryMonitor {
 
   start(): void {
     // Only monitor if we have the performance.memory API
-    if (!(performance as any).memory) return;
+    if (!getPerformanceMemory()) return;
 
     this.intervalId = window.setInterval(() => {
-      const mem = (performance as any).memory;
+      const mem = getPerformanceMemory();
+      if (!mem) return;
       const usagePercent = mem.usedJSHeapSize / mem.jsHeapSizeLimit;
 
       // Adjust cache size based on memory pressure
