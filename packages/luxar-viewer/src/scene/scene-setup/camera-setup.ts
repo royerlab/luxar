@@ -25,7 +25,7 @@ import { extractCameraOverrides, extractBackgroundColor } from '../../config/vie
 import type { ZarrViewerConfig } from '../../types/zarr';
 import type { ControlsManager } from '../../controls/controls-manager';
 import { log, Modules } from '../../utils/log';
-import type { LuxarCamera } from '../camera-utils';
+import type { LuxarCamera } from '../../utils/camera-utils';
 
 /**
  * Build a fresh `PerspectiveCamera` configured with the FOV /

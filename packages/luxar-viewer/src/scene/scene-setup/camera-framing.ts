@@ -30,7 +30,7 @@ import {
   isPerspectiveCamera,
   isOrthographicCamera,
   type LuxarCamera,
-} from '../camera-utils';
+} from '../../utils/camera-utils';
 import type { ControlsManager } from '../../controls/controls-manager';
 
 /**

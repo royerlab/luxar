@@ -21,7 +21,7 @@ import { LuxarFlyControls } from './luxar-fly-controls';
 import { config } from '../config';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { EventGroup } from '../utils/event-group';
-import type { LuxarCamera } from '../scene/camera-utils';
+import type { LuxarCamera } from '../utils/camera-utils';
 import type { ControlType } from './types';
 export type { ControlType };
 

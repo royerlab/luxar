@@ -56,7 +56,7 @@ import {
   getCameraFovRadians,
   updateCameraAspect,
   getOrthoFrustumHeight,
-} from './camera-utils';
+} from '../utils/camera-utils';
 import type { ControlType } from '../controls/controls-manager';
 
 /**

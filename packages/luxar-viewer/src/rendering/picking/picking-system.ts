@@ -24,8 +24,8 @@ import {
   getCameraFovRadians,
   isOrthographicCamera,
   getOrthoFrustumHeight,
-} from '../../scene/camera-utils';
-import type { LuxarCamera } from '../../scene/camera-utils';
+} from '../../utils/camera-utils';
+import type { LuxarCamera } from '../../utils/camera-utils';
 import { log, Modules } from '../../utils/log';
 
 /** Result of a successful pick operation. */

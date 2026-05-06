@@ -13,7 +13,7 @@
  */
 
 import * as THREE from 'three';
-import type { LuxarCamera } from '../scene/camera-utils';
+import type { LuxarCamera } from '../utils/camera-utils';
 
 export interface LuxarOrbitControlsConfig {
   enableDamping?: boolean;

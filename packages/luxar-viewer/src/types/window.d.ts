@@ -13,7 +13,7 @@
 
 import type { LuxarApp } from '../core/app';
 import type { ConsoleInterceptor } from '../utils/console-interceptor';
-import type { LuxarCamera } from '../scene/camera-utils';
+import type { LuxarCamera } from '../utils/camera-utils';
 import type { AnimationController } from '../scene/animation-controller';
 import type { InputHandler } from '../input/input-handler';
 import type { RenderingControls } from '../ui/rendering-controls';
