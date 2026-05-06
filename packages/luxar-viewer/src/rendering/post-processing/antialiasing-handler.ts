@@ -48,9 +48,10 @@ export interface MSAASampleValidation {
 /**
  * Validate a requested MSAA sample count. Two failure modes:
  *   1. Not in {@link VALID_MSAA_SAMPLES} — fall back to 4.
- *   2. Above the GPU's `maxSamples` — clamp to `maxSamples` (still
- *      rounded down to the nearest valid count, since `MAX_SAMPLES`
- *      can be odd values like 6).
+ *   2. Above the GPU's `maxSamples` — clamp to `maxSamples`. Note that
+ *      `MAX_SAMPLES` can advertise non-power-of-two values (e.g. 6) and
+ *      this helper does *not* round down to the nearest entry of
+ *      {@link VALID_MSAA_SAMPLES}; preserving the original behavior.
  *
  * Pure: takes the requested count and the GPU max, returns the
  * applied count plus an optional warning string.

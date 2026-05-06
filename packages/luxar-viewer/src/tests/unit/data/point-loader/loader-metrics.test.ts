@@ -16,11 +16,17 @@ function makeCounters(): LoaderMetricsCounters {
 describe('computeLoadLatency', () => {
   it('subtracts queryStart from now', () => {
     expect(computeLoadLatency(100, 350)).toBe(250);
-    expect(computeLoadLatency(0, 1)).toBe(1);
+    expect(computeLoadLatency(50, 1050)).toBe(1000);
   });
 
   it('returns 0 when queryStart is undefined', () => {
     expect(computeLoadLatency(undefined, 1000)).toBe(0);
+  });
+
+  it('returns 0 when queryStart is 0 (falsy fallback matches the original)', () => {
+    // The original code used `start || Date.now()`, so a 0 start was
+    // treated as missing and produced a 0 latency. We preserve that.
+    expect(computeLoadLatency(0, 1000)).toBe(0);
   });
 
   it('returns negative when now < queryStart (clock skew)', () => {

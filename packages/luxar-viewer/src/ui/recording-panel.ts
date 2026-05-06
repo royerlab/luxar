@@ -50,8 +50,10 @@ const BLEND_MODE_TO_COMPOSITE: Record<string, GlobalCompositeOperation> = {
 
 export type RecordingMode = 'image' | 'video' | 'turntable';
 
-/** Video quality presets — maps to bits-per-pixel multiplier */
-export type VideoQuality = 'low' | 'medium' | 'high' | 'max';
+// Video quality presets — defined in media-utilities; re-exported here for
+// existing consumers that import VideoQuality from this module.
+import type { VideoQuality } from './recording/media-utilities';
+export type { VideoQuality };
 
 /** Video resolution presets — 0 means native canvas size */
 export type VideoResolution = 0 | 1080 | 1440 | 2160;

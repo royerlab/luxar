@@ -95,10 +95,13 @@ export function readBloomSettings(
   effect: BloomTarget,
   defaults: BloomSettings = getDefaultBloomSettings()
 ): BloomSettings {
+  // Use `||` (not `??`) for symmetry with the original setBloomLevels save
+  // path, which falls back to defaults whenever the read value is falsy
+  // (incl. zero). Preserves byte-identical behavior pre/post the extraction.
   return {
     intensity: effect.intensity || defaults.intensity,
-    radius: effect.mipmapBlurPass?.radius ?? defaults.radius,
-    threshold: effect.luminanceMaterial?.threshold ?? defaults.threshold,
+    radius: effect.mipmapBlurPass?.radius || defaults.radius,
+    threshold: effect.luminanceMaterial?.threshold || defaults.threshold,
   };
 }
 

@@ -16,8 +16,6 @@ import {
   SMAAPreset,
   FXAAEffect,
   SSAOEffect,
-  KernelSize,
-  BlendFunction,
 } from 'postprocessing';
 import { LuxarToneMappingEffect } from './luxar-tone-mapping-effect';
 import { DetectorNoiseEffect, isDetectorNoiseEffect } from './detector-noise-effect';
@@ -277,23 +275,17 @@ export class PostProcessingManager {
    * Creates the initial set of effects with default settings
    */
   private createInitialEffects(): void {
-    // Bloom effect with HDR support - use config defaults
-    // Using mipmapBlur for better quality and performance
-    this.bloomEffect = new BloomEffect({
-      intensity: config.renderingControls.defaults.bloomStrength,
-      luminanceThreshold: config.renderingControls.defaults.bloomThreshold,
-      luminanceSmoothing: 0.01, // Very low to minimize dark halo with additive blending
-      mipmapBlur: true, // Use mipmap blur for better quality bloom
-      kernelSize: KernelSize.LARGE, // Standard kernel size
-      blendFunction: BlendFunction.ADD, // ADD works better with additive points
-      levels: config.renderingControls.defaults.bloomLevels, // Number of mipmap levels
-    }) as BloomEffectTyped;
-
-    // Set radius on mipmapBlurPass after creation
-    const bloom = this.bloomEffect as any;
-    if (bloom.mipmapBlurPass) {
-      bloom.mipmapBlurPass.radius = config.renderingControls.defaults.bloomRadius;
-    }
+    // Bloom effect with HDR support — using config defaults via the shared
+    // bloom-handler helpers so the constructor-options table has a single
+    // source of truth.
+    const initialBloomSettings = resolveBloomSettings();
+    this.bloomEffect = new BloomEffect(
+      buildBloomConstructorOptions(initialBloomSettings, this.bloomLevels)
+    ) as BloomEffectTyped;
+    applyBloomRadius(
+      this.bloomEffect as unknown as { mipmapBlurPass?: { radius: number } },
+      initialBloomSettings.radius
+    );
 
     log.info(
       Modules.POST_PROCESSING,

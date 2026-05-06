@@ -45,13 +45,15 @@ export function recordLoadEvent(
 
 /**
  * Compute load latency given a query-start timestamp and the current
- * timestamp. Returns 0 when the start is missing (covers the
- * defensive `?? Date.now()` fallback in the original code).
+ * timestamp. Returns 0 when the start is falsy (undefined or 0). The
+ * truthy check matches the original `startTime || Date.now()` fallback
+ * pattern in the spatial-index loader, so a missing start yields a
+ * latency of 0 rather than a huge nonsense value.
  */
 export function computeLoadLatency(
   queryStartMs: number | undefined,
   nowMs: number = Date.now()
 ): number {
-  if (queryStartMs === undefined) return 0;
+  if (!queryStartMs) return 0;
   return nowMs - queryStartMs;
 }
