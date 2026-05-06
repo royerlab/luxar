@@ -180,6 +180,26 @@ export class PickingSystem {
     return this.nodeMap.size;
   }
 
+  /**
+   * Drop all node registrations *without* disposing the pick
+   * materials. Used after a WebGL context-loss event: the pick
+   * materials' shader programs are already invalid (the context they
+   * were compiled against is gone), and calling `dispose()` on them
+   * would throw on some drivers. The caller (`NodeFactory.rebuildAfterContextRestore`)
+   * is responsible for re-registering every scene node afterward,
+   * which produces fresh pick materials against the new context.
+   *
+   * Distinct from `unregisterNode(id)` which intentionally disposes
+   * the pick material when removing a single live node.
+   */
+  clearRegistrationsForRebuild(): void {
+    this.nodeMap.clear();
+    while (this.pickScene.children.length > 0) {
+      this.pickScene.remove(this.pickScene.children[0]);
+    }
+    this._dirty = true;
+  }
+
   /** Update camera reference (e.g., after perspective ↔ orthographic swap). */
   setCamera(camera: THREE.Camera): void {
     this.camera = camera;

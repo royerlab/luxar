@@ -251,6 +251,21 @@ export class LuxarApp {
         }
       });
 
+      // Re-register picking-system / GPU-pool resources after a WebGL
+      // context-restore event. SceneManager rebuilds the renderer +
+      // post-processing + material cache before dispatching, then we
+      // call NodeFactory.rebuildAfterContextRestore on the loaded
+      // scene so the picking system gets fresh registrations against
+      // the new context.
+      if (typeof this.sceneManager.addEventListener === 'function') {
+        this.sceneManager.addEventListener('webgl-context-restored', () => {
+          const sceneLoader = getSceneLoader('default');
+          if (sceneLoader && this.sceneManager.scene) {
+            sceneLoader.nodeFactory.rebuildAfterContextRestore(this.sceneManager.scene);
+          }
+        });
+      }
+
       // Initialize input handler
       this.inputHandler = new InputHandler(this.sceneManager, this.animationController);
       this.inputHandler.init();

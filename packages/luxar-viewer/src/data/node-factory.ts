@@ -97,6 +97,31 @@ export class NodeFactory {
     );
   }
 
+  /**
+   * Rebuild picking-system registrations after a WebGL context-restore
+   * event. The pick materials in `pickingSystem.nodeMap` were compiled
+   * against the now-dead WebGL context, so we drop the registrations
+   * (without disposing — see `PickingSystem.clearRegistrationsForRebuild`)
+   * and re-create them via {@link registerExistingSceneNodes}, which
+   * produces fresh pick materials against the new context.
+   *
+   * Mirror of `MaterialManager.rebuildAfterContextRestore` — both are
+   * called from `SceneManager.contextRestoredHandler` in the order
+   * post-processing → materials → nodes.
+   */
+  rebuildAfterContextRestore(root: THREE.Object3D): void {
+    if (!this.pickingSystem) return;
+    this.pickingSystem.clearRegistrationsForRebuild();
+    // Reset every scene node's pickId so registerExistingSceneNodes
+    // re-allocates a fresh one on the rebuilt picking system.
+    root.traverse((obj) => {
+      if (obj.userData?.pickId != null) {
+        obj.userData.pickId = undefined;
+      }
+    });
+    this.registerExistingSceneNodes(root);
+  }
+
   // ============================================================================
   // Points Node Creation
   // ============================================================================

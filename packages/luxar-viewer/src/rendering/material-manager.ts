@@ -358,6 +358,35 @@ export class MaterialManager {
   }
 
   /**
+   * Rebuild GPU-bound material state after a WebGL context-restore
+   * event. The previous shader programs are now invalid (the WebGL
+   * context they were compiled against is gone), so we drop the cache
+   * and the registry. The renderer's next request via
+   * `getPointMaterial` / `getLineMaterial` / `getGSplatMaterial` will
+   * compile fresh shaders against the new context.
+   *
+   * Implementation choice: lazy rebuild. Eager re-creation would
+   * require us to remember every (props, key) pair that was ever
+   * cached and to re-create all of them, but most are transient
+   * (hidden layers, off-screen panels) and the renderer will
+   * re-request only the materials it actually needs in the next frame.
+   *
+   * Mirror of the durable-state pattern in
+   * `rendering/post-processing/context-recovery.ts`: this method is
+   * idempotent and safe to call repeatedly. Unlike `dispose()`,
+   * however, it does NOT call `material.dispose()` on the entries —
+   * those programs are already detached from a dead WebGL context, and
+   * calling `dispose` on them tends to throw on some drivers.
+   */
+  rebuildAfterContextRestore(): void {
+    this.registeredMaterials.clear();
+    this.ownedMaterials.clear();
+    this.pointMaterialCache.clear();
+    this.lineMaterialCache.clear();
+    this.gsplatMaterialCache.clear();
+  }
+
+  /**
    * Get cache statistics
    */
   getCacheStats() {

@@ -75,6 +75,14 @@ const ZOOM_RANGE_FACTOR = 100;
 export class SceneManager extends THREE.EventDispatcher<{
   change: {};
   'camera-changed': {};
+  /**
+   * Fired after a successful WebGL context restore. Subscribers (e.g.
+   * SceneLoader, which owns the NodeFactory and picking registrations)
+   * use this to re-register / rebuild any GPU-bound resources their
+   * objects depend on. SceneManager itself rebuilds the renderer +
+   * post-processing + material cache before dispatching.
+   */
+  'webgl-context-restored': {};
 }> {
   /** Three.js WebGL renderer - handles all GPU-accelerated rendering */
   public renderer!: THREE.WebGLRenderer;
@@ -333,8 +341,18 @@ export class SceneManager extends THREE.EventDispatcher<{
         if (this.postProcessing) {
           this.postProcessing.rebuildAfterContextRestore();
         }
+        // Drop the material cache so the renderer re-compiles shaders
+        // against the new context on the next render. The cached
+        // materials' programs are invalid now; re-creation is lazy.
+        materialManager.rebuildAfterContextRestore();
         this.markSceneResourcesDirtyForContextRestore();
         this.updateRendererSize();
+
+        // Notify subscribers (e.g. SceneLoader) so they can re-register
+        // their picking-system / GPU-pool resources against the new
+        // context. Order is intentional: post-processing →
+        // materials → subscribers (which include node-factory).
+        this.dispatchEvent({ type: 'webgl-context-restored' });
 
         // Trigger a render to force Three.js material/program resource recreation.
         this.dispatchEvent({ type: 'change' });
