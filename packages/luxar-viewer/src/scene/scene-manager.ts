@@ -48,6 +48,7 @@ import {
   computeSceneBoundingBox,
   fitCameraToBounds,
 } from './scene-setup/camera-framing';
+import { WebGLContextRecovery } from './scene-setup/webgl-context-recovery';
 import {
   type LuxarCamera,
   isPerspectiveCamera,
@@ -118,10 +119,13 @@ export class SceneManager extends THREE.EventDispatcher<{
   private resizeRAF: number | null = null;
   private pendingResize: { width: number; height: number } | null = null;
 
-  /** WebGL context loss handling */
-  private isContextLost: boolean = false;
-  private contextLostHandler: ((event: Event) => void) | null = null;
-  private contextRestoredHandler: ((event: Event) => void) | null = null;
+  /**
+   * WebGL context-loss / restoration concern. Constructed lazily in
+   * setupContextLossHandling() once the canvas + renderer are wired
+   * up. The class owns the canvas listeners and the isContextLost
+   * flag — SceneManager just forwards events through it.
+   */
+  private contextRecovery: WebGLContextRecovery | null = null;
 
   /** When true, resize events are suppressed (used during recording to prevent resolution changes) */
   public resizeLocked: boolean = false;
@@ -300,127 +304,34 @@ export class SceneManager extends THREE.EventDispatcher<{
   }
 
   /**
-   * Setup WebGL context loss and restoration handling
-   *
-   * WebGL context can be lost due to:
-   * - GPU driver crashes or resets
-   * - System sleep/hibernate
-   * - Too many contexts (browser limit)
-   * - Out of GPU memory
-   *
-   * This setup ensures the app can recover gracefully instead of crashing.
+   * Construct the WebGLContextRecovery concern and attach its
+   * canvas listeners. Thin delegate over scene-setup/webgl-context-recovery.
+   * The recovery instance owns the loss/restored handlers, the
+   * `isContextLost` flag, and the deterministic rebuild order.
    */
   private setupContextLossHandling(): void {
-    const canvas = this.canvasElement;
-
-    // Handle context loss - prevent default and prepare for restoration
-    this.contextLostHandler = (event: Event) => {
-      event.preventDefault(); // Required to allow context restoration
-      this.isContextLost = true;
-
-      log.error(
-        Modules.SCENE_MANAGER,
-        'WebGL context lost! This can happen due to GPU driver issues, system sleep, or memory pressure.'
-      );
-
-      showError(
-        'Graphics context lost - attempting to restore. This can happen if your GPU driver crashes or the system runs out of video memory. The app will try to recover automatically.'
-      );
-    };
-
-    // Handle context restoration - recreate all WebGL resources
-    this.contextRestoredHandler = async (_event: Event) => {
-      log.info(Modules.SCENE_MANAGER, 'WebGL context restored - recreating resources...');
-
-      try {
-        // Mark context as restored
-        this.isContextLost = false;
-
-        // Force renderer to recreate its internal state
-        this.renderer.resetState();
-
-        // Rebuild post-processing GPU-bound resources in place. The
-        // PostProcessingManager identity is preserved across the rebuild so
-        // PickingSystem, AnimationController, and RenderingControls keep
-        // their cached references valid; user settings (bloom, exposure,
-        // tone mapping, DOF, etc.) are preserved end-to-end.
-        if (this.postProcessing) {
-          this.postProcessing.rebuildAfterContextRestore();
-        }
-        // Drop the material cache so the renderer re-compiles shaders
-        // against the new context on the next render. The cached
-        // materials' programs are invalid now; re-creation is lazy.
-        materialManager.rebuildAfterContextRestore();
-        this.markSceneResourcesDirtyForContextRestore();
-        this.updateRendererSize();
-
-        // Notify subscribers (e.g. SceneLoader) so they can re-register
-        // their picking-system / GPU-pool resources against the new
-        // context. Order is intentional: post-processing →
-        // materials → subscribers (which include node-factory).
-        this.dispatchEvent({ type: 'webgl-context-restored' });
-
-        // Trigger a render to force Three.js material/program resource recreation.
-        this.dispatchEvent({ type: 'change' });
-
-        hideLoadingIndicator();
-        log.success(Modules.SCENE_MANAGER, 'WebGL context successfully restored');
-      } catch (error) {
-        log.error(Modules.SCENE_MANAGER, 'Failed to restore WebGL context:', error);
-        showError('Failed to restore graphics context. Please refresh the page to continue.');
-      }
-    };
-
-    // Add event listeners
-    canvas.addEventListener('webglcontextlost', this.contextLostHandler, false);
-    canvas.addEventListener('webglcontextrestored', this.contextRestoredHandler, false);
-
-    log.info(Modules.SCENE_MANAGER, 'WebGL context loss handling initialized');
-  }
-
-  /**
-   * Mark scene GPU resources dirty after WebGL context restoration.
-   *
-   * Three.js will recreate buffers/programs lazily, but explicitly marking
-   * attributes/materials dirty makes the recovery path deterministic for custom
-   * shader materials, instanced geometry, and pooled buffer attributes.
-   */
-  private markSceneResourcesDirtyForContextRestore(): void {
-    this.scene.traverse((obj) => {
-      if (
-        obj instanceof THREE.Mesh ||
-        obj instanceof THREE.Points ||
-        obj instanceof THREE.InstancedMesh
-      ) {
-        const geometry = obj.geometry;
-        if (geometry) {
-          const attributes = geometry.attributes as Record<
-            string,
-            THREE.BufferAttribute | THREE.InterleavedBufferAttribute
-          >;
-          for (const attribute of Object.values(attributes)) {
-            attribute.needsUpdate = true;
-          }
-          if (geometry.index) {
-            geometry.index.needsUpdate = true;
-          }
-        }
-
-        const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
-        for (const material of materials) {
-          if (material) {
-            material.needsUpdate = true;
-          }
-        }
-      }
+    this.contextRecovery = new WebGLContextRecovery({
+      canvas: this.canvasElement,
+      // Lazy lookup — `setupContextLossHandling` runs before
+      // `setupScene` in init() order; capturing `this.scene` at
+      // construction would freeze in `undefined`.
+      getScene: () => this.scene,
+      renderer: this.renderer,
+      getPostProcessing: () => this.postProcessing ?? null,
+      updateRendererSize: () => this.updateRendererSize(),
+      onContextRestored: () => this.dispatchEvent({ type: 'webgl-context-restored' }),
+      triggerChange: () => this.dispatchEvent({ type: 'change' }),
     });
+    this.contextRecovery.attach();
   }
 
   /**
-   * Check if WebGL context is currently lost
+   * Check if WebGL context is currently lost. Forwards to the
+   * recovery instance; returns `false` when recovery hasn't been
+   * wired up yet (pre-init / post-dispose).
    */
   public isWebGLContextLost(): boolean {
-    return this.isContextLost;
+    return this.contextRecovery?.getIsContextLost() ?? false;
   }
 
   /**
@@ -1221,14 +1132,10 @@ export class SceneManager extends THREE.EventDispatcher<{
     }
     this.pendingResize = null;
 
-    // Remove WebGL context loss event listeners
-    if (this.contextLostHandler) {
-      this.canvasElement.removeEventListener('webglcontextlost', this.contextLostHandler);
-      this.contextLostHandler = null;
-    }
-    if (this.contextRestoredHandler) {
-      this.canvasElement.removeEventListener('webglcontextrestored', this.contextRestoredHandler);
-      this.contextRestoredHandler = null;
+    // Tear down the WebGL context-recovery listeners.
+    if (this.contextRecovery) {
+      this.contextRecovery.dispose();
+      this.contextRecovery = null;
     }
 
     // Dispose post-processing resources first

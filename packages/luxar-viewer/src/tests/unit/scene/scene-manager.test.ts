@@ -247,6 +247,11 @@ vi.mock('../rendering/post-processing', () => ({
     dispose: vi.fn(),
     updateBloomParams: vi.fn(),
     setEnabled: vi.fn(),
+    // Required by WebGLContextRecovery's restore handler — without it, the
+    // context-restored callback throws inside its try/catch and the
+    // downstream markSceneResourcesDirtyForContextRestore + onContextRestored
+    // calls never run.
+    rebuildAfterContextRestore: vi.fn(),
   })),
 }));
 
