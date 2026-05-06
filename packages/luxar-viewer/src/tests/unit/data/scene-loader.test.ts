@@ -203,6 +203,13 @@ vi.mock('../../../rendering/material-manager', () => ({
   },
 }));
 
+// Mock UI helpers (showToast inserts a DOM element; we spy to assert it
+// was called from the >16D scene-dimensions branch without depending on
+// jsdom DOM mutation timing).
+vi.mock('../../../ui/helpers', () => ({
+  showToast: vi.fn(),
+}));
+
 // NOTE: Previous mocks for DataLoadingMonitor ('../ui/data-loading-monitor'),
 // PointSpatialIndexLoader ('../data/point-spatial-index-loader'), and
 // DataMonitorManager ('../data/data-monitor-manager') were removed because
@@ -471,10 +478,22 @@ describe('SceneLoader', () => {
       mockZarrGroup.attrs = {
         type: 'points',
         transform: [
-          1, 0, 0, 0, // Column 0
-          0, 1, 0, 0, // Column 1
-          0, 0, 1, 0, // Column 2
-          10, 20, 30, 1, // Column 3 (translation)
+          1,
+          0,
+          0,
+          0, // Column 0
+          0,
+          1,
+          0,
+          0, // Column 1
+          0,
+          0,
+          1,
+          0, // Column 2
+          10,
+          20,
+          30,
+          1, // Column 3 (translation)
         ],
       };
 
@@ -488,16 +507,28 @@ describe('SceneLoader', () => {
       mockZarrGroup.attrs = {
         type: 'points',
         transform: [
-          1, 0, 0, 10, // Row 0 (tx at [3])
-          0, 1, 0, 20, // Row 1 (ty at [7])
-          0, 0, 1, 30, // Row 2 (tz at [11])
-          0, 0, 0, 1,
+          1,
+          0,
+          0,
+          10, // Row 0 (tx at [3])
+          0,
+          1,
+          0,
+          20, // Row 1 (ty at [7])
+          0,
+          0,
+          1,
+          30, // Row 2 (tz at [11])
+          0,
+          0,
+          0,
+          1,
         ],
       };
 
-      await expect(
-        sceneLoader.loadScene('http://localhost:8000/test.zarr')
-      ).rejects.toThrow(/row-major/);
+      await expect(sceneLoader.loadScene('http://localhost:8000/test.zarr')).rejects.toThrow(
+        /row-major/
+      );
     });
 
     it('should reject invalid transform lengths', async () => {
@@ -506,9 +537,9 @@ describe('SceneLoader', () => {
         transform: [1, 2, 3], // Invalid length
       };
 
-      await expect(
-        sceneLoader.loadScene('http://localhost:8000/test.zarr')
-      ).rejects.toThrow(/Invalid transform length/);
+      await expect(sceneLoader.loadScene('http://localhost:8000/test.zarr')).rejects.toThrow(
+        /Invalid transform length/
+      );
     });
   });
 
@@ -1146,6 +1177,39 @@ describe('SceneLoader', () => {
       // Should handle gracefully even with too many displayed dimensions
       const scene = await sceneLoader.loadScene('http://localhost:8000/test.zarr');
       expect(scene).toBeDefined();
+    });
+
+    it('does NOT toast on a 16D scene (≤ WASM ceiling)', async () => {
+      const { showToast } = await import('../../../ui/helpers');
+      const dims = Array.from({ length: 16 }, (_, i) => ({
+        name: `d${i}`,
+        unit: '',
+        range: [0, 10] as [number, number],
+        display: i < 3,
+        step: 1,
+      }));
+      mockZarrGroup.attrs = { scene_dimensions: { dimensions: dims } };
+
+      await sceneLoader.loadScene('http://localhost:8000/test.zarr');
+      expect(showToast).not.toHaveBeenCalled();
+    });
+
+    it('toasts on > 16D scenes warning about WASM fallback', async () => {
+      const { showToast } = await import('../../../ui/helpers');
+      const dims = Array.from({ length: 18 }, (_, i) => ({
+        name: `d${i}`,
+        unit: '',
+        range: [0, 10] as [number, number],
+        display: i < 3,
+        step: 1,
+      }));
+      mockZarrGroup.attrs = { scene_dimensions: { dimensions: dims } };
+
+      await sceneLoader.loadScene('http://localhost:8000/test.zarr');
+      expect(showToast).toHaveBeenCalledWith(
+        expect.stringContaining('18 dimensions'),
+        expect.any(Number)
+      );
     });
   });
 

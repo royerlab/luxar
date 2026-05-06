@@ -65,6 +65,7 @@ import {
 import { LoaderRegistry } from './loader-registry';
 import { computeTolerance } from './tolerance-computer';
 import { loadOverlayConfigs } from '../ui/overlay-loader';
+import { showToast } from '../ui/helpers';
 
 /** Check if an object has any own properties (avoids Object.keys() allocation). */
 function hasOwnProperties(obj: Record<string, unknown>): boolean {
@@ -491,11 +492,24 @@ export class SceneLoader {
       this.rootGroup.userData.sceneDimensions = sceneAttrs.scene_dimensions;
 
       // Log dimension initialization status for debugging
-      if (this.viewState.dimensions?.metadata) {
+      const ndim = this.viewState.dimensions?.metadata?.length ?? 0;
+      if (ndim > 0) {
         log.success(
           Modules.SCENE_LOADER,
-          `Scene dimensions initialized: ${this.viewState.dimensions.metadata.length} dimensions, ` +
+          `Scene dimensions initialized: ${ndim} dimensions, ` +
             `displayed=[${this.viewState.displayDims.join(', ')}]`
+        );
+      }
+
+      // Surface a user-facing toast when the scene exceeds the WASM
+      // 16-dim ceiling — the worker auto-falls-back to TS, which is
+      // correct but slower, and silent fallback can confuse users
+      // wondering why interaction feels sluggish.
+      if (ndim > 16) {
+        showToast(
+          `Scene has ${ndim} dimensions — WASM acceleration limited to 16D, using TypeScript fallback. ` +
+            'Consider reducing dimensions for better performance.',
+          5000
         );
       }
     } else {
