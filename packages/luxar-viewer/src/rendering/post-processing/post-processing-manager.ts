@@ -60,6 +60,12 @@ import {
   readBloomSettings,
   resolveBloomSettings,
 } from './bloom-handler';
+import {
+  checkMSAACapability,
+  clampSSAAMultiplier,
+  mapSMAAPreset,
+  validateMSAASamples,
+} from './antialiasing-handler';
 
 /**
  * Manages HDR post-processing effects using pmndrs/postprocessing library.
@@ -658,20 +664,8 @@ export class PostProcessingManager {
   updateSMAASettings(preset?: 'LOW' | 'MEDIUM' | 'HIGH' | 'ULTRA'): void {
     if (!this.smaaEffect || !preset) return;
 
-    const presetMap = {
-      LOW: SMAAPreset.LOW,
-      MEDIUM: SMAAPreset.MEDIUM,
-      HIGH: SMAAPreset.HIGH,
-      ULTRA: SMAAPreset.ULTRA,
-    };
-
-    // Dispose old SMAA effect before recreating
     safeDisposeEffect(this.smaaEffect, 'SMAA (preset change)');
-
-    // Need to recreate SMAA effect with new preset
-    this.smaaEffect = new SMAAEffect({
-      preset: presetMap[preset] ?? SMAAPreset.HIGH,
-    });
+    this.smaaEffect = new SMAAEffect({ preset: mapSMAAPreset(preset) });
 
     if (this.smaaEnabled) {
       this.rebuildEffectPass();
@@ -1177,22 +1171,17 @@ export class PostProcessingManager {
   setMSAAEnabled(enabled: boolean): void {
     if (this.msaaEnabled === enabled) return;
 
-    // Validate MSAA support
     if (enabled) {
       const gl = this.renderer.getContext() as WebGL2RenderingContext;
-      const maxSamples = gl.getParameter(gl.MAX_SAMPLES);
-
-      if (maxSamples < 2) {
+      const cap = checkMSAACapability(gl);
+      if (!cap.supported) {
         log.error(
           Modules.POST_PROCESSING,
-          `MSAA not supported by GPU (MAX_SAMPLES: ${maxSamples})`
+          `MSAA not supported by GPU (MAX_SAMPLES: ${cap.maxSamples})`
         );
         return;
       }
-
-      // Check if float buffers support MSAA
-      const ext = gl.getExtension('EXT_color_buffer_float');
-      if (!ext) {
+      if (!cap.floatBuffersOK) {
         log.warning(
           Modules.POST_PROCESSING,
           'Float color buffers not fully supported - MSAA may not work with HDR'
@@ -1219,23 +1208,13 @@ export class PostProcessingManager {
    * Set MSAA sample count (2, 4, 8, 16)
    */
   setMSAASamples(samples: number): void {
-    // Validate samples
-    const validSamples = [0, 2, 4, 8, 16];
-    if (!validSamples.includes(samples)) {
-      log.warning(Modules.POST_PROCESSING, `Invalid MSAA samples: ${samples}. Using 4.`);
-      samples = 4;
-    }
-
-    // Check GPU maximum supported samples
     const gl = this.renderer.getContext() as WebGL2RenderingContext;
-    const maxSamples = gl.getParameter(gl.MAX_SAMPLES);
-    if (samples > maxSamples) {
-      log.warning(
-        Modules.POST_PROCESSING,
-        `Requested ${samples} MSAA samples but GPU only supports ${maxSamples}. Using ${maxSamples}.`
-      );
-      samples = Math.min(samples, maxSamples);
+    const maxSamples = (gl.getParameter(gl.MAX_SAMPLES) as number) ?? 0;
+    const validation = validateMSAASamples(samples, maxSamples);
+    if (validation.warning) {
+      log.warning(Modules.POST_PROCESSING, validation.warning);
     }
+    samples = validation.samples;
 
     if (this.msaaSamples === samples) return;
 
@@ -1303,8 +1282,7 @@ export class PostProcessingManager {
    * Set SSAA resolution multiplier (1.5, 2.0, 3.0, 4.0)
    */
   setSSAAMultiplier(multiplier: number): void {
-    // Clamp multiplier to reasonable range
-    multiplier = Math.max(1.0, Math.min(4.0, multiplier));
+    multiplier = clampSSAAMultiplier(multiplier);
 
     if (this.ssaaMultiplier === multiplier) return;
 
