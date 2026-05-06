@@ -422,6 +422,11 @@ export class LuxarApp {
     // Clear any existing dimension UI
     this.inputHandler.clearDimensionUI();
 
+    // Dispose previous-scene overlays upfront so they are cleared in lockstep
+    // with clearSceneContent() — otherwise a failing scene load leaves the old
+    // overlay DOM elements visible on top of an empty canvas.
+    this.disposeOverlays();
+
     // Note: Monitor cleanup is handled by SceneLoader.loadScene() which calls
     // monitor.disconnectAllLoaders() when loading a new scene
 
@@ -572,15 +577,23 @@ export class LuxarApp {
   }
 
   /**
-   * Initialize screen-space overlays from zarr metadata.
-   * Creates an OverlayManager if the loaded scene contains overlays.
+   * Tear down the current OverlayManager, removing its DOM elements.
    */
-  private async initOverlays(): Promise<void> {
-    // Dispose previous overlay manager if reloading
+  private disposeOverlays(): void {
     if (this.overlayManager) {
       this.overlayManager.dispose();
       this.overlayManager = undefined;
     }
+  }
+
+  /**
+   * Initialize screen-space overlays from zarr metadata.
+   * Creates an OverlayManager if the loaded scene contains overlays.
+   */
+  private async initOverlays(): Promise<void> {
+    // Defensive: loadDataset() already disposes overlays upfront, but keep
+    // this idempotent in case initOverlays() is called from another path.
+    this.disposeOverlays();
 
     const root = this.sceneManager.scene?.children?.find((c) => c.name === 'LuxarScene') as
       | THREE.Group
