@@ -21,6 +21,9 @@ vi.mock('three', async () => {
 
   // Mock ShaderMaterial to avoid WebGL dependencies
   const ShaderMaterial = vi.fn(function (this: any, params: any) {
+    // Minimal EventDispatcher surface: MaterialManager subscribes to
+    // the synchronous `dispose` event for automatic registry cleanup.
+    const listeners: Record<string, ((e: unknown) => void)[]> = {};
     Object.assign(this, {
       uniforms: params.uniforms,
       vertexShader: params.vertexShader,
@@ -31,7 +34,20 @@ vi.mock('three', async () => {
       toneMapped: params.toneMapped,
       blending: params.blending,
       userData: {},
-      dispose: vi.fn(),
+      addEventListener: vi.fn((type: string, l: (e: unknown) => void) => {
+        (listeners[type] ??= []).push(l);
+      }),
+      removeEventListener: vi.fn((type: string, l: (e: unknown) => void) => {
+        if (listeners[type]) {
+          listeners[type] = listeners[type].filter((x) => x !== l);
+        }
+      }),
+      dispatchEvent: vi.fn((event: { type: string }) => {
+        listeners[event.type]?.forEach((l) => l(event));
+      }),
+      dispose: vi.fn(function (this: any) {
+        this.dispatchEvent?.({ type: 'dispose', target: this });
+      }),
       clone: vi.fn(function (this: any) {
         // Simple clone for testing
         return {

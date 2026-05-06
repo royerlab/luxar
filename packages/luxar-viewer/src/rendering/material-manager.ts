@@ -145,6 +145,59 @@ export class MaterialManager {
   }
 
   /**
+   * Subscribe to a material's `dispose` event so the manager can clean
+   * up its registry / cache entries automatically. THREE.Material's
+   * EventDispatcher fires `dispose` synchronously inside `dispose()`,
+   * so by the time super.dispose() returns, the manager has already
+   * forgotten about this material.
+   *
+   * Wiring cleanup this way (manager → material) instead of having
+   * materials call `materialManager.unregister(this)` (material →
+   * manager) breaks the import cycle that previously existed between
+   * material-manager.ts and {point,line,gsplat}-material.ts.
+   */
+  private subscribeToDispose(material: THREE.Material & CameraAwareMaterial): void {
+    const onDispose = (): void => {
+      this.removeFromRegistries(material);
+      material.removeEventListener('dispose', onDispose);
+    };
+    material.addEventListener('dispose', onDispose);
+  }
+
+  /**
+   * Internal cleanup: remove `material` from every registry and cache.
+   * Called from the dispose listener and (for backwards compatibility)
+   * from the public `unregister` method. Idempotent.
+   */
+  private removeFromRegistries(material: THREE.Material & CameraAwareMaterial): void {
+    this.registeredMaterials.delete(material);
+    this.ownedMaterials.delete(material);
+
+    if (material instanceof PointMaterial) {
+      for (const [key, cachedMaterial] of this.pointMaterialCache.entries()) {
+        if (cachedMaterial === material) {
+          this.pointMaterialCache.delete(key);
+          break;
+        }
+      }
+    } else if (material instanceof LineMaterial) {
+      for (const [key, cachedMaterial] of this.lineMaterialCache.entries()) {
+        if (cachedMaterial === material) {
+          this.lineMaterialCache.delete(key);
+          break;
+        }
+      }
+    } else if (material instanceof GSplatMaterial) {
+      for (const [key, cachedMaterial] of this.gsplatMaterialCache.entries()) {
+        if (cachedMaterial === material) {
+          this.gsplatMaterialCache.delete(key);
+          break;
+        }
+      }
+    }
+  }
+
+  /**
    * Get or create a point material with caching
    */
   getPointMaterial(props: PointMaterialProperties): PointMaterial {
@@ -200,6 +253,7 @@ export class MaterialManager {
 
     // Register for global updates
     this.registeredMaterials.add(material);
+    this.subscribeToDispose(material);
 
     // Update with current camera params
     material.updateCameraParams(this.currentFov, this.currentResolution, this.currentIsOrtho);
@@ -248,6 +302,7 @@ export class MaterialManager {
 
     // Register for global updates
     this.registeredMaterials.add(material);
+    this.subscribeToDispose(material);
 
     // Update with current camera params
     material.updateCameraParams(this.currentFov, this.currentResolution, this.currentIsOrtho);
@@ -291,6 +346,7 @@ export class MaterialManager {
 
     // Register for global updates
     this.registeredMaterials.add(material);
+    this.subscribeToDispose(material);
 
     // Update with current camera params
     material.updateCameraParams(this.currentFov, this.currentResolution, this.currentIsOrtho);
@@ -362,6 +418,7 @@ export class MaterialManager {
   register(material: THREE.Material & CameraAwareMaterial): void {
     this.registeredMaterials.add(material);
     this.ownedMaterials.add(material);
+    this.subscribeToDispose(material);
     // Immediately update with current camera params so the material is in sync
     material.updateCameraParams(
       this.currentFov,
@@ -372,36 +429,15 @@ export class MaterialManager {
   }
 
   /**
-   * Unregister a material from global updates
-   * This should be called when a material is disposed to prevent memory leaks
+   * Unregister a material from global updates.
+   *
+   * @deprecated Cleanup is now automatic via the material's `dispose`
+   *   event listener registered by `subscribeToDispose`. This method
+   *   stays for the rare external caller that needs to drop a material
+   *   from the registry without disposing it.
    */
   unregister(material: THREE.Material & CameraAwareMaterial): void {
-    this.registeredMaterials.delete(material);
-    this.ownedMaterials.delete(material);
-
-    // Also remove from cache based on material type
-    if (material instanceof PointMaterial) {
-      for (const [key, cachedMaterial] of this.pointMaterialCache.entries()) {
-        if (cachedMaterial === material) {
-          this.pointMaterialCache.delete(key);
-          break;
-        }
-      }
-    } else if (material instanceof LineMaterial) {
-      for (const [key, cachedMaterial] of this.lineMaterialCache.entries()) {
-        if (cachedMaterial === material) {
-          this.lineMaterialCache.delete(key);
-          break;
-        }
-      }
-    } else if (material instanceof GSplatMaterial) {
-      for (const [key, cachedMaterial] of this.gsplatMaterialCache.entries()) {
-        if (cachedMaterial === material) {
-          this.gsplatMaterialCache.delete(key);
-          break;
-        }
-      }
-    }
+    this.removeFromRegistries(material);
   }
 
   /**

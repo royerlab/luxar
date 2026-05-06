@@ -6,7 +6,6 @@
  */
 
 import * as THREE from 'three';
-import { materialManager } from './material-manager';
 import { POINT_VERTEX_SHADER, POINT_FRAGMENT_SHADER } from './shaders/point-shaders';
 import type { CameraAwareMaterial } from './camera-aware-material';
 
@@ -255,16 +254,9 @@ export class PointMaterial extends THREE.ShaderMaterial implements CameraAwareMa
     return cloned as this;
   }
 
-  /**
-   * Dispose this material and unregister from MaterialManager
-   * This prevents memory leaks by removing the material from global update lists
-   */
-  dispose(): void {
-    // Unregister from material manager to prevent memory leaks
-    // This removes the material from global update lists and cache
-    materialManager.unregister(this);
-
-    // Call parent dispose to free GPU resources (shaders, uniforms)
-    super.dispose();
-  }
+  // Note: `dispose()` is inherited from THREE.ShaderMaterial.
+  // MaterialManager subscribes to the synchronous `dispose` event the
+  // base class fires, so the material is removed from the registry +
+  // cache automatically. No explicit unregister callback needed here,
+  // which keeps this file out of the manager's import graph.
 }

@@ -15,7 +15,6 @@
  */
 
 import * as THREE from 'three';
-import { materialManager } from './material-manager';
 import { LINE_VERTEX_SHADER, LINE_FRAGMENT_SHADER } from './shaders/line-shaders';
 import type { CameraAwareMaterial } from './camera-aware-material';
 
@@ -266,11 +265,8 @@ export class LineMaterial extends THREE.ShaderMaterial implements CameraAwareMat
     return cloned as this;
   }
 
-  /**
-   * Dispose this material and unregister from MaterialManager.
-   */
-  dispose(): void {
-    materialManager.unregister(this);
-    super.dispose();
-  }
+  // Dispose is inherited from THREE.ShaderMaterial. The MaterialManager
+  // subscribes to the synchronous `dispose` event THREE fires from
+  // super.dispose(), so registry cleanup happens automatically without
+  // this file needing to import the manager (which would create a cycle).
 }
