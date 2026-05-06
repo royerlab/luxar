@@ -188,9 +188,9 @@ vi.mock('zarrita', () => ({
   slice: vi.fn((start, end) => ({ start, end })),
 }));
 
-// Mock material manager (depends on WebGL shader compilation - must be mocked)
-// TODO: Consider extracting material creation logic into pure functions that can be tested
-// without WebGL, reducing the need for this mock.
+// Mock material manager (depends on WebGL shader compilation - must be mocked).
+// NOTE: shader-side material plumbing is intentionally untested in jsdom; the
+// pure factory paths are covered separately in `material-manager.test.ts`.
 vi.mock('../../../rendering/material-manager', () => ({
   materialManager: {
     getPointMaterial: vi.fn().mockReturnValue({

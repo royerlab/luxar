@@ -126,12 +126,11 @@ vi.mock('three', () => {
 // relative to this test file (src/tests/unit/data/) to a non-existent module,
 // making it dead code. The actual SceneLoader is imported from '../../../data'.
 
-// TODO: This test file mocks SceneLoaderManager (owned code) heavily. The tests verify
-// that the thin zarr-loader facade correctly delegates to SceneLoaderManager, but
-// because SceneLoaderManager is fully mocked, we're mostly testing mock behavior.
-// Consider refactoring to either:
-// 1. Test zarr-loader.ts functions with a real SceneLoaderManager + mocked SceneLoader
-// 2. Or test SceneLoaderManager directly with mocked external deps (zarr, THREE.js)
+// NOTE: This test file mocks SceneLoaderManager (owned code) heavily.
+// The tests verify the thin zarr-loader facade's delegation, not the
+// manager's own behaviour. Tracked under Phase 5.5 (reduce internal-
+// module mocking); the cleanup blocks on the SceneLoader decomposition
+// (Phase 4.6) which will expose narrower seams.
 
 // Mock SceneLoaderManager (owned code - mocked because it internally creates SceneLoader
 // which depends on zarr I/O and WebGL. Ideally the facade tests would use a real manager

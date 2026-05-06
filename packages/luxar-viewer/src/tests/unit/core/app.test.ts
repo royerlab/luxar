@@ -9,8 +9,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 // NOTE: This test file mocks 10 internal modules (below). This tests
 // initialization order and mock wiring, but not real component behavior.
-// See CLAUDE.md "Over-Mocking in Tests" for guidance on improving this.
-// TODO: Add integration tests with fewer mocks as modules become more testable.
+// Tracked under Phase 5.5 (reduce internal-module mocking) — covered
+// once the heavy modules become testable post-decomposition.
 
 // Mock all dependencies before importing LuxarApp
 vi.mock('../../../scene/scene-manager');

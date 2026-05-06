@@ -56,9 +56,9 @@ const ALL_EXAMPLES = [
   'transform_example.zarr',
 ];
 
-// Known-flaky large datasets that require investigation
-// These have edge cases with effective radius filtering or WebGL buffer issues
-// TODO: Investigate and fix these issues in point-spatial-index-loader.ts
+// Known-flaky large datasets that require investigation. These have edge
+// cases with effective-radius filtering or WebGL buffer issues — tracked
+// for the post-decomposition (Phase 4.2) point-spatial-index-loader work.
 const KNOWN_FLAKY_LARGE_DATASETS = [
   'temporal_spiral_sphere_4d_example.zarr', // 102M points - effective radius filtering edge case
   'time_series_4d_example.zarr', // Large 4D - occasional WebGL buffer issues

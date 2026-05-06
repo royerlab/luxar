@@ -228,28 +228,18 @@ describe('PostProcessingManager.captureHDRAsEXR', () => {
     );
   });
 
-  // TODO(test-review): Fix captureHDRPixels source to use try/finally around
-  // the render call so effects are restored on error. Once fixed, this test
-  // should verify effects.forEach(e => expect(e.enabled).toBe(originalState)).
   it('should restore effects even if render throws', async () => {
     mockComposer.render.mockImplementation(() => {
       throw new Error('render failed');
     });
 
-    // The method should throw but effects should still be restored.
-    // Currently captureHDRAsEXR does NOT use try/finally around composer.render(),
-    // so effects are NOT restored on error. This test documents the gap.
-    try {
-      await callCaptureHDR();
-    } catch {
-      // Expected - render throws
-    }
+    // The method should throw but the try/finally in captureHDRPixels()
+    // must still flip effects back to their original `enabled=true`.
+    await expect(callCaptureHDR()).rejects.toThrow('render failed');
 
-    // These assertions currently CANNOT pass because effects are not restored
-    // on error. Uncomment once captureHDRAsEXR uses try/finally:
-    // expect(mockToneMappingEffect.enabled).toBe(true);
-    // expect(mockVignetteEffect.enabled).toBe(true);
-    // expect(mockSmaaEffect.enabled).toBe(true);
-    // expect(mockFxaaEffect.enabled).toBe(true);
+    expect(mockToneMappingEffect.enabled).toBe(true);
+    expect(mockVignetteEffect.enabled).toBe(true);
+    expect(mockSmaaEffect.enabled).toBe(true);
+    expect(mockFxaaEffect.enabled).toBe(true);
   });
 });
