@@ -5,7 +5,7 @@ import { SceneManager } from '../scene/scene-manager';
 import { AnimationController } from '../scene/animation-controller';
 import { InputHandler } from '../input/input-handler';
 import { RenderingControls } from '../ui/rendering-controls';
-import { cleanupUI, clearError, showHelpOverlay } from '../ui/helpers';
+import { cleanupUI, clearError, showError, showHelpOverlay } from '../ui/helpers';
 import { config } from '../config';
 import { DatasetBrowser } from '../ui/dataset-browser';
 import { log, Modules } from '../utils/log';
@@ -977,6 +977,12 @@ export class LuxarApp {
           log.info(Modules.CACHE, 'All caches cleared (L0, L1, L2)');
         },
       },
+
+      // Test-friendly hook for the error-dialog component. Lets
+      // visual-regression specs render the dialog directly without going
+      // through URL-routing failure paths (whose semantics evolve
+      // independently of the dialog's appearance).
+      showError,
 
       // Mark that runtime components are now available
       runtimeReady: true,

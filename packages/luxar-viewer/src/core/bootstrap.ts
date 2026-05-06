@@ -165,10 +165,16 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     // that hook into `window.__luxarDebug` can rely on `.app` being there
     // even while init() is still in flight. LuxarApp.setupDebugInterface()
     // extends this object with runtime references after init completes.
+    //
+    // `showError` is exposed so tests (visual-regression in particular) can
+    // drive the error-dialog component directly without depending on the
+    // URL-routing semantics in shouldShowBrowser, which evolve independently
+    // of the dialog's appearance.
     window.__luxarDebug = {
       app,
       consoleInterceptor,
       version: '1.0.0',
+      showError,
     };
     log.custom(LogEmoji.CONSOLE, Modules.LUXAR, 'Debug interface available at window.__luxarDebug');
   }
