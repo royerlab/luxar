@@ -173,6 +173,7 @@ export const Modules = {
   PERFORMANCE: 'Performance',
   CONSOLE_INTERCEPTOR: 'ConsoleInterceptor',
   ADAPTIVE_DPR: 'AdaptiveDPR',
+  EVENT_GROUP: 'EventGroup',
 } as const;
 
 /**
