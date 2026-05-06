@@ -9,6 +9,7 @@ import * as zarr from 'zarrita';
 import type { Readable } from '@zarrita/storage';
 import * as THREE from 'three';
 import { PointSpatialIndexLoader } from './point-spatial-index-loader';
+import { normalizeURL } from './scene-loader/url-normalization';
 import { LinesSpatialIndexLoader, buildInstanceBuffers } from './lines-spatial-index-loader';
 import {
   DataLoader,
@@ -2451,12 +2452,7 @@ export class SceneLoader {
    * Normalize URL for zarr store access
    */
   private normalizeURL(url: string): string {
-    if (url.startsWith('http://') || url.startsWith('https://')) {
-      return url.endsWith('/') ? url : url + '/';
-    }
-    const baseUrl = window.location.origin;
-    const cleanPath = url.startsWith('/') ? url : '/' + url;
-    return baseUrl + cleanPath + (cleanPath.endsWith('/') ? '' : '/');
+    return normalizeURL(url, window.location.origin);
   }
 
   /**

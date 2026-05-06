@@ -1,0 +1,31 @@
+/**
+ * URL normalization helpers for the scene loader.
+ *
+ * Pure: turns user-supplied dataset URLs into the absolute, slash-
+ * terminated form the zarr loader expects. Centralized here so the
+ * various edge cases (relative paths, missing protocol, missing
+ * trailing slash) get a single canonical form.
+ *
+ * The original implementation used `window.location.origin` directly;
+ * this version takes the origin as a parameter so it's testable
+ * without a DOM.
+ *
+ * @module data/scene-loader/url-normalization
+ */
+
+/**
+ * Normalize a dataset URL to absolute, slash-terminated form.
+ *
+ * - Absolute URLs (http://, https://): return as-is, ensuring a trailing slash.
+ * - Relative paths: prepend the supplied `windowOrigin`, ensuring a leading
+ *   slash on the path and a trailing slash on the result.
+ *
+ * Pure given an explicit origin.
+ */
+export function normalizeURL(url: string, windowOrigin: string): string {
+  if (url.startsWith('http://') || url.startsWith('https://')) {
+    return url.endsWith('/') ? url : url + '/';
+  }
+  const cleanPath = url.startsWith('/') ? url : '/' + url;
+  return windowOrigin + cleanPath + (cleanPath.endsWith('/') ? '' : '/');
+}
