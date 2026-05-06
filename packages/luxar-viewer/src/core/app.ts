@@ -859,17 +859,31 @@ export class LuxarApp {
       getState: () => {
         const scene = this.sceneManager.scene;
 
+        type PointCloudInfo = {
+          name: string;
+          pointCount: number;
+          visible: boolean;
+          hasColors: boolean;
+          hasRadii: boolean;
+          hasSharpness: boolean;
+        };
+        type GSplatMeshInfo = {
+          name: string;
+          splatCount: number;
+          visible: boolean;
+        };
+
         // Count points across all point clouds
         let totalPoints = 0;
-        const pointClouds: any[] = [];
+        const pointClouds: PointCloudInfo[] = [];
 
         // Count gsplats across all gsplat meshes
         let totalGSplats = 0;
-        const gsplatMeshes: any[] = [];
+        const gsplatMeshes: GSplatMeshInfo[] = [];
 
         scene.traverse((object) => {
-          if (object.type === 'Points') {
-            const geometry = (object as any).geometry;
+          if (object instanceof THREE.Points) {
+            const geometry = object.geometry;
             // Use drawRange.count if set (GPU buffer pool uses drawRange to limit rendering)
             // Fall back to position.count for geometries without drawRange
             const drawRangeCount = geometry?.drawRange?.count;
@@ -894,7 +908,7 @@ export class LuxarApp {
           // Count gsplat instances (Mesh with InstancedBufferGeometry and nodeType 'gsplats')
           if (
             object instanceof THREE.Mesh &&
-            (object as any).userData?.nodeType === 'gsplats' &&
+            (object.userData as { nodeType?: string })?.nodeType === 'gsplats' &&
             object.geometry instanceof THREE.InstancedBufferGeometry
           ) {
             const splatCount = (object.geometry as THREE.InstancedBufferGeometry).instanceCount;
