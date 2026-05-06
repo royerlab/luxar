@@ -120,6 +120,17 @@ export class DimensionSliders {
   /** Map of dimension indices to play button elements */
   private playButtons: Map<number, HTMLButtonElement> = new Map();
 
+  /**
+   * Cached DOM refs for the per-slider visual children. Filled in
+   * `createSlider`, read by `updateSliderVisuals` to avoid three
+   * `document.getElementById` lookups per call (this method runs at
+   * up to 60 fps during animation playback).
+   */
+  private sliderElements: Map<
+    number,
+    { valueLabel: HTMLElement; progressBar: HTMLElement; thumb: HTMLElement }
+  > = new Map();
+
   /** Active context menu element (only one can be open at a time) */
   private activeContextMenu: HTMLElement | null = null;
 
@@ -306,6 +317,7 @@ export class DimensionSliders {
     this.dropdowns.clear();
     this.toggles.clear();
     this.eventHandlers.clear();
+    this.sliderElements.clear();
 
     // Add title section with status text
     const titleContainer = document.createElement('div');
@@ -736,6 +748,9 @@ export class DimensionSliders {
     thumb.id = `luxar-dim-thumb-${dimIndex}`;
     thumb.className = 'luxar-dimension-slider__thumb';
 
+    // Cache the per-slider visual children for fast lookup in updateSliderVisuals.
+    this.sliderElements.set(dimIndex, { valueLabel, progressBar, thumb });
+
     // Set initial value
     const currentValue = this.dims.currentStep[dimIndex];
     if (isDiscrete) {
@@ -826,7 +841,13 @@ export class DimensionSliders {
   private updateSliderVisuals(dimIndex: number, value: number, isDiscrete: boolean): void {
     const dimMeta = this.dims.metadata?.[dimIndex];
     const unit = this.dimensionUnits[dimIndex] || '';
-    const valueLabel = document.getElementById(`luxar-dim-value-${dimIndex}`);
+
+    // Prefer the cached refs created in createSlider — this method runs every
+    // animation frame so avoiding three getElementById calls per slider per
+    // frame matters. Fall back to a getElementById lookup for the rare case
+    // where a slider was reused without going through createSlider.
+    const cached = this.sliderElements.get(dimIndex);
+    const valueLabel = cached?.valueLabel ?? document.getElementById(`luxar-dim-value-${dimIndex}`);
 
     if (valueLabel) {
       const categories = dimMeta?.categories;
@@ -867,13 +888,14 @@ export class DimensionSliders {
     const fraction = valueToFraction(value, min, max);
 
     // Update progress bar
-    const progressBar = document.getElementById(`luxar-dim-progress-${dimIndex}`);
+    const progressBar =
+      cached?.progressBar ?? document.getElementById(`luxar-dim-progress-${dimIndex}`);
     if (progressBar) {
       progressBar.style.width = `${fraction * 100}%`;
     }
 
     // Update thumb position
-    const thumb = document.getElementById(`luxar-dim-thumb-${dimIndex}`);
+    const thumb = cached?.thumb ?? document.getElementById(`luxar-dim-thumb-${dimIndex}`);
     if (thumb) {
       const containerWidth = thumb.parentElement?.offsetWidth || 300;
       const thumbWidth = 16;
@@ -1414,6 +1436,7 @@ export class DimensionSliders {
     this.dropdowns.clear();
     this.toggles.clear();
     this.playButtons.clear();
+    this.sliderElements.clear();
     this.animationEventHandlers = {};
 
     // Remove DOM elements
