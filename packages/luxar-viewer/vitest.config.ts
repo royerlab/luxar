@@ -36,6 +36,10 @@ export default defineConfig({
         branches: 46,
         statements: 56,
       },
+      // Note: actuals as of the loadColorRanges share land at ~57.3% lines /
+      // 57.9% functions / 56.7% statements / 46.4% branches. The floor here
+      // is intentionally 0.3-0.5pp below those numbers so re-runs don't
+      // flicker around the threshold.
     },
   },
   resolve: {
