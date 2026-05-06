@@ -25,21 +25,19 @@ export default defineConfig({
         'dist/',
       ],
       // Coverage thresholds: ratcheted floor that should always be at or
-      // below the actual measured coverage. The values below match the
-      // current actuals (~56% lines, ~56% statements, ~57% functions,
-      // ~45% branches) with a small safety margin. They are bumped upward
-      // in a dedicated commit each time a phase of new tests crosses the
-      // next band. Long-term target: 80% across the board.
+      // below the actual measured coverage. They are bumped upward in a
+      // dedicated commit each time a phase of new tests crosses the next
+      // band. Long-term target: 80% across the board.
       thresholds: {
         lines: 58,
-        functions: 59,
+        functions: 60,
         branches: 47,
-        statements: 57,
+        statements: 58,
       },
-      // Note: actuals after adding loader-registry / log / adaptive-dpr-manager
-      // unit tests land at ~58.4% lines / 59.9% functions / 57.7% statements /
-      // 47.5% branches. The floor here is set 0.4-0.9pp below those numbers
-      // so re-runs don't flicker around the threshold.
+      // Note: actuals after the D1 post-processing-handler extractions
+      // land at ~58.7% lines / 60.6% functions / 58.1% statements /
+      // 48.3% branches. The floor here is set 0.1-0.6pp below those
+      // numbers so re-runs don't flicker around the threshold.
     },
   },
   resolve: {
