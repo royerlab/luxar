@@ -8,7 +8,6 @@
 import * as zarr from 'zarrita';
 import type { Readable } from '@zarrita/storage';
 import * as THREE from 'three';
-import { PointSpatialIndexLoader } from './point-spatial-index-loader';
 import { normalizeURL } from './scene-loader/url-normalization';
 import { applyEffectiveAttrs as applyEffectiveAttrsHelper } from './scene-loader/effective-attrs';
 import {
@@ -32,10 +31,17 @@ import {
   projectGSplatsTo3DUsingWorker as projectGSplatsTo3DUsingWorkerHelper,
   type StagedGSplatsCommit,
 } from './scene-loader/data-processor-gsplats';
+import {
+  createPointsLoader as createPointsLoaderHelper,
+  createLinesLoader as createLinesLoaderHelper,
+  createGSplatsLoader as createGSplatsLoaderHelper,
+  createProgressiveGSplatsLoader as createProgressiveGSplatsLoaderHelper,
+  type LoaderFactoryDeps,
+} from './scene-loader/loader-factory';
 
 export type { StagedLinesCommit } from './scene-loader/data-processor-lines';
 export type { StagedGSplatsCommit } from './scene-loader/data-processor-gsplats';
-import { LinesSpatialIndexLoader, buildInstanceBuffers } from './lines-spatial-index-loader';
+import { buildInstanceBuffers } from './lines-spatial-index-loader';
 import {
   DataLoader,
   ViewState,
@@ -71,8 +77,6 @@ import type {
   GSplatsViewState,
   LoadedGSplatsData,
 } from '../types/gsplats';
-import { GSplatsSpatialIndexLoader } from './gsplats-spatial-index-loader';
-import { GSplatsProgressiveLoader } from './gsplats-progressive-loader';
 import { processGSplats } from './gsplats-processor';
 import { packCholeskyForShader } from '../rendering/gsplat-geometry';
 import { GPUBufferPool } from '../rendering/gpu-buffer-pool';
@@ -1670,22 +1674,19 @@ export class SceneLoader {
   /**
    * Create a lines loader for a node
    */
+  /** Build the per-call dependency snapshot for the loader factory. */
+  private factoryDeps(): LoaderFactoryDeps {
+    return {
+      zarrStore: this._zarrStore!,
+      arrayRefRegistry: this.arrayRefRegistry,
+      profiler: this.profiler,
+      l0Cache: this.l0Cache,
+      cachingStore: this.cachingStore,
+    };
+  }
+
   private createLinesLoader(node: SceneNode, loc: zarr.Location<zarr.Readable>): LinesDataLoader {
-    const nodeLoc =
-      node.path === '/' ? loc : zarr.root(this._zarrStore!).resolve(node.path.slice(1));
-
-    log.query(Modules.SCENE_LOADER, `Using LinesSpatialIndexLoader for ${node.path}`);
-    const loader = new LinesSpatialIndexLoader(
-      nodeLoc,
-      node,
-      this.arrayRefRegistry,
-      this._zarrStore!,
-      this.profiler ?? undefined,
-      this.l0Cache ?? undefined,
-      this.cachingStore?.getPrefetcher() ?? undefined
-    );
-
-    return loader;
+    return createLinesLoaderHelper(node, loc, this.factoryDeps());
   }
 
   /**
@@ -1828,123 +1829,41 @@ export class SceneLoader {
     }
   }
 
-  /**
-   * Create a gsplats loader for a node
-   */
+  /** Create a single-LOD gsplats loader for a node. */
   private createGSplatsLoader(
     node: SceneNode,
     loc: zarr.Location<zarr.Readable>
   ): GSplatsDataLoader {
-    const nodeLoc =
-      node.path === '/' ? loc : zarr.root(this._zarrStore!).resolve(node.path.slice(1));
-
-    log.query(Modules.SCENE_LOADER, `Using GSplatsSpatialIndexLoader for ${node.path}`);
-    const loader = new GSplatsSpatialIndexLoader(
-      nodeLoc,
-      node,
-      this.arrayRefRegistry,
-      this._zarrStore!,
-      this.profiler ?? undefined,
-      this.l0Cache ?? undefined,
-      this.cachingStore?.getPrefetcher() ?? undefined
-    );
-
-    return loader;
+    return createGSplatsLoaderHelper(node, loc, this.factoryDeps());
   }
 
   /**
-   * Create a progressive gsplats loader for a multi-LOD node.
-   *
-   * Opens each lod_i/ zarr subgroup, reads its attrs to build a synthetic
-   * SceneNode, and creates a GSplatsSpatialIndexLoader per LOD. Wraps them
-   * all in a GSplatsProgressiveLoader.
+   * Create a progressive gsplats loader for a multi-LOD node. The
+   * parent's effective rendering attrs are composed up the scene-graph
+   * ancestry here (not in the helper) so the LOD synthetic nodes see
+   * ancestor opacity/intensity/etc.
    */
-  private async createProgressiveGSplatsLoader(
+  private createProgressiveGSplatsLoader(
     node: SceneNode,
     _loc: zarr.Location<zarr.Readable>,
     nLods: number
   ): Promise<GSplatsDataLoader> {
-    const parentLoc = zarr
-      .root(this._zarrStore!)
-      .resolve(node.path === '/' ? '' : node.path.slice(1));
-
-    log.query(
-      Modules.SCENE_LOADER,
-      `Creating progressive GSplats loader for ${node.path} (${nLods} LODs)`
+    return createProgressiveGSplatsLoaderHelper(
+      node,
+      nLods,
+      this.applyEffectiveAttrs(node),
+      this.factoryDeps()
     );
-
-    const lodLoaders: GSplatsSpatialIndexLoader[] = [];
-    // Compose the parent's effective rendering attrs once so every LOD's
-    // synthetic SceneNode sees values already composed through the graph
-    // ancestry rather than just the parent's direct zarr attrs. Without
-    // this, progressive LODs of a nested gsplats node wouldn't reflect
-    // ancestor group opacity/intensity/etc.
-    const composedParent = this.applyEffectiveAttrs(node);
-
-    for (let i = 0; i < nLods; i++) {
-      const lodLoc = parentLoc.resolve(`lod_${i}`);
-
-      // Read per-LOD attrs from zarr to build a synthetic SceneNode
-      const lodGroup = await zarr.open(lodLoc, { kind: 'group' });
-      const lodAttrs = lodGroup.attrs as Record<string, unknown>;
-
-      const lodNode: SceneNode = {
-        path: `${node.path}/lod_${i}`,
-        type: 'gsplats',
-        attrs: {
-          ...lodAttrs,
-          opacity: composedParent.opacity,
-          gamma: composedParent.gamma,
-          intensity: composedParent.intensity,
-          offset: composedParent.offset,
-          blending_mode: composedParent.blending_mode,
-          extend_to_all: node.attrs.extend_to_all,
-        },
-        hasSpatialIndex: false,
-        children: [],
-      };
-
-      const loader = new GSplatsSpatialIndexLoader(
-        lodLoc,
-        lodNode,
-        this.arrayRefRegistry,
-        this._zarrStore!,
-        this.profiler ?? undefined,
-        this.l0Cache ?? undefined,
-        this.cachingStore?.getPrefetcher() ?? undefined
-      );
-
-      lodLoaders.push(loader);
-    }
-
-    return new GSplatsProgressiveLoader(lodLoaders, nLods);
   }
 
   /**
-   * Create the spatial index loader for a node
+   * Create the points spatial index loader for a node and connect it to
+   * the data monitor (the monitor wiring stays here because it touches
+   * SceneManager-only state — the factory only constructs the loader).
    */
   private createLoader(node: SceneNode, loc: zarr.Location<zarr.Readable>): DataLoader {
-    // Resolve the correct location for this node
-    const nodeLoc =
-      node.path === '/' ? loc : zarr.root(this._zarrStore!).resolve(node.path.slice(1));
+    const loader = createPointsLoaderHelper(node, loc, this.config, this.factoryDeps());
 
-    // Use PointSpatialIndexLoader for all nodes (it will handle 3D datasets without indices)
-    log.query(Modules.SCENE_LOADER, `Using PointSpatialIndexLoader for ${node.path}`);
-    // Pass the store reference for array_ref resolution (needed by ArrayDecoder)
-    // Also pass profiler for hierarchical timing instrumentation
-    // Pass L0 cache for decompressed chunk caching (avoids Blosc decompression overhead)
-    const loader = new PointSpatialIndexLoader(
-      nodeLoc,
-      node,
-      this.config,
-      this.arrayRefRegistry,
-      this._zarrStore!,
-      this.profiler ?? undefined,
-      this.l0Cache ?? undefined,
-      this.cachingStore?.getPrefetcher() ?? undefined
-    );
-
-    // Connect to monitor if available
     if (this.monitorId) {
       const monitor = DataMonitorManager.getInstance().getMonitor(this.monitorId);
       if (monitor) {
