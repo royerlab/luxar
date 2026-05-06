@@ -44,6 +44,15 @@ import {
   getNavigableDimensionOptions as getNavigableDimensionOptionsHelper,
   SliderSyncCoordinator,
 } from './recording/animation-sync';
+import {
+  getValidFormatsForMode,
+  getDefaultFormatForMode,
+  isImageSequenceFormat,
+  isVideoContainerFormat,
+  getMediaRecorderCodecs,
+  FORMAT_LABEL_TO_VALUE,
+  CODEC_LABEL_TO_VALUE,
+} from './recording/gui-builder';
 
 export type RecordingMode = 'image' | 'video' | 'turntable';
 
@@ -1328,40 +1337,24 @@ export class RecordingPanel {
     const isVideo = this.mode === 'video';
     const isTurntable = this.mode === 'turntable';
 
-    // Filter format dropdown options based on mode:
-    // - Image: PNG, WebP, JPEG, EXR (screenshots)
-    // - Video: WebM only (real-time MediaRecorder outputs WebM)
-    // - Turntable: image formats (→ ZIP) + video formats (→ offline encode)
-    const imageFormats = ['png', 'webp', 'jpeg', 'exr'];
-    const videoFormats = ['webm'];
-    const turntableFormats = ['png', 'webp', 'jpeg', 'exr', 'mp4', 'webm', 'mkv'];
-    const validFormats = isImage ? imageFormats : isTurntable ? turntableFormats : videoFormats;
+    const validFormats = getValidFormatsForMode(this.mode);
 
     // Show/hide <option> elements in the format dropdown.
     // Note: our GUI uses the display label as option.value (e.g., "PNG" not "png"),
     // and maps labels→values internally. We match by label→value mapping.
-    const labelToValue: Record<string, string> = {
-      PNG: 'png',
-      WebP: 'webp',
-      JPEG: 'jpeg',
-      EXR: 'exr',
-      MP4: 'mp4',
-      WebM: 'webm',
-      MKV: 'mkv',
-    };
     const selectEl = this.formatController?.domElement.querySelector(
       'select'
     ) as HTMLSelectElement | null;
     if (selectEl?.options) {
       for (const opt of Array.from(selectEl.options)) {
-        const val = labelToValue[opt.value] || opt.value;
-        opt.hidden = !validFormats.includes(val);
+        const val = FORMAT_LABEL_TO_VALUE[opt.value] || opt.value;
+        opt.hidden = !validFormats.includes(val as OutputFormat);
       }
     }
 
     // Auto-correct if current format is invalid for this mode
     if (!validFormats.includes(this.options.outputFormat)) {
-      this.options.outputFormat = isVideo ? 'webm' : isImage ? 'webp' : 'mp4';
+      this.options.outputFormat = getDefaultFormatForMode(this.mode);
       this.formatController?.updateDisplay();
     }
     const fmt = this.options.outputFormat;
@@ -1389,26 +1382,20 @@ export class RecordingPanel {
       isVideo || isTurntable ? ctrl.show() : ctrl.hide();
     }
     // Codec dropdown: only show for video formats (MP4/WebM/MKV)
-    const isVideoFormat = fmt === 'mp4' || fmt === 'webm' || fmt === 'mkv';
+    const isVideoFormat = isVideoContainerFormat(fmt);
     if (!isVideoFormat) {
       this.videoCodecController?.hide();
     }
     // Filter codec options by mode: MediaRecorder (Video) only supports VP9/VP8.
     // Turntable (mediabunny) supports all codecs.
     if (isVideo && isVideoFormat) {
-      const codecLabelToValue: Record<string, string> = {
-        'H.265': 'h265',
-        VP9: 'vp9',
-        'H.264': 'h264',
-        VP8: 'vp8',
-      };
-      const mediaRecorderCodecs = ['vp9', 'vp8'];
+      const mediaRecorderCodecs = getMediaRecorderCodecs();
       const codecSelect = this.videoCodecController?.domElement.querySelector(
         'select'
       ) as HTMLSelectElement | null;
       if (codecSelect?.options) {
         for (const opt of Array.from(codecSelect.options)) {
-          const val = codecLabelToValue[opt.value] || opt.value;
+          const val = CODEC_LABEL_TO_VALUE[opt.value] || opt.value;
           opt.hidden = !mediaRecorderCodecs.includes(val);
         }
       }
@@ -1425,9 +1412,7 @@ export class RecordingPanel {
     }
     // Video quality: hide only for image sequence formats where bitrate is irrelevant.
     // Both MediaRecorder (Video mode) and mediabunny (Turntable video) use computeVideoBitrate().
-    const isImageSequenceFormat =
-      fmt === 'exr' || fmt === 'png' || fmt === 'webp' || fmt === 'jpeg';
-    if ((isVideo || isTurntable) && isImageSequenceFormat) {
+    if ((isVideo || isTurntable) && isImageSequenceFormat(fmt)) {
       this.videoQualityController?.hide();
     }
     // Turntable: hide duration limit and sync (turntable has its own computed duration from speed)
