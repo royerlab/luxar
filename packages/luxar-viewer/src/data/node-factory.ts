@@ -136,8 +136,8 @@ export class NodeFactory {
     data: LoadedPointsData,
     loader: DataLoader
   ): THREE.Points {
-    const maxRadius = (attrs.max_radius as number | undefined) ?? 1.0;
-    const maxSharpness = ((attrs as any).max_sharpness as number | undefined) ?? 31.0;
+    const maxRadius = attrs.max_radius ?? 1.0;
+    const maxSharpness = attrs.max_sharpness ?? 31.0;
     const geometry = this.createPointsGeometry(data, maxRadius, maxSharpness);
 
     const radiusScale = geometry.userData.radiusScale ?? 1.0;
@@ -391,8 +391,16 @@ export class NodeFactory {
   /**
    * Validate color mode consistency.
    * Ensures color array type matches expected encoding.
+   *
+   * `nodeMetadata` is typed loosely as `Record<string, unknown>` because
+   * it can come from either the typed `LoadedPointsData.metadata`
+   * (no `color_mode` today) or from a zarr attrs dict in tests. We
+   * only read `color_mode` from it.
    */
-  validateColorMode(colors: Uint8Array | Uint16Array | Float32Array, nodeMetadata: any): void {
+  validateColorMode(
+    colors: Uint8Array | Uint16Array | Float32Array,
+    nodeMetadata: Record<string, unknown> | null | undefined
+  ): void {
     const isHDR = colors instanceof Float32Array;
     const isSDR = colors instanceof Uint8Array || colors instanceof Uint16Array;
 
@@ -487,8 +495,8 @@ export class NodeFactory {
 
     // Set positions (handle Float16Array conversion if needed)
     if (
-      typeof (globalThis as any).Float16Array !== 'undefined' &&
-      data.positions instanceof (globalThis as any).Float16Array
+      typeof globalThis.Float16Array !== 'undefined' &&
+      data.positions instanceof globalThis.Float16Array
     ) {
       const float32Positions = new Float32Array(data.positions);
       geometry.setAttribute('position', new THREE.BufferAttribute(float32Positions, 3));
@@ -501,7 +509,7 @@ export class NodeFactory {
 
     // Set colors if available
     if (data.colors) {
-      this.validateColorMode(data.colors, data.metadata as any);
+      this.validateColorMode(data.colors, data.metadata);
       const needsNormalization =
         data.colors instanceof Uint8Array || data.colors instanceof Uint16Array;
       geometry.setAttribute('color', new THREE.BufferAttribute(data.colors, 3, needsNormalization));
@@ -512,8 +520,8 @@ export class NodeFactory {
 
     if (data.radii) {
       if (
-        typeof (globalThis as any).Float16Array !== 'undefined' &&
-        data.radii instanceof (globalThis as any).Float16Array
+        typeof globalThis.Float16Array !== 'undefined' &&
+        data.radii instanceof globalThis.Float16Array
       ) {
         const float32Radii = new Float32Array(data.radii);
         geometry.setAttribute('radius', new THREE.BufferAttribute(float32Radii, 1));
@@ -540,8 +548,8 @@ export class NodeFactory {
 
     if (data.sharpness) {
       if (
-        typeof (globalThis as any).Float16Array !== 'undefined' &&
-        data.sharpness instanceof (globalThis as any).Float16Array
+        typeof globalThis.Float16Array !== 'undefined' &&
+        data.sharpness instanceof globalThis.Float16Array
       ) {
         const float32Sharpness = new Float32Array(data.sharpness);
         geometry.setAttribute('sharpness', new THREE.BufferAttribute(float32Sharpness, 1));
@@ -579,9 +587,12 @@ export class NodeFactory {
   /**
    * Create material for points rendering.
    * Public because SceneLoader tests and update paths access it.
+   *
+   * Accepts a `Partial<PointsMetadata>` because callers (and tests)
+   * frequently pass narrowed attribute subsets.
    */
   createPointsMaterial(
-    attrs: any,
+    attrs: Partial<PointsMetadata>,
     radiusScale: number = 1.0,
     sharpnessScale: number = 1.0
   ): THREE.ShaderMaterial {
@@ -595,7 +606,7 @@ export class NodeFactory {
       sharpnessScale: sharpnessScale,
     });
 
-    const ptColormapName = attrs.colormap as string | undefined;
+    const ptColormapName = attrs.colormap;
     const ptHasScalars = !!attrs.has_scalars;
     if (ptColormapName && ptHasScalars) {
       const ptColormapTex = getColormapTexture(ptColormapName);
@@ -603,7 +614,7 @@ export class NodeFactory {
         material = material.clone() as typeof material;
         materialManager.register(material);
         material.updateColormapTexture(ptColormapTex);
-        const ptScalarRange = (attrs.scalar_data_range as [number, number]) ?? [0, 1];
+        const ptScalarRange = attrs.scalar_data_range ?? [0, 1];
         material.updateScalarRange(ptScalarRange[0], ptScalarRange[1]);
       }
     }

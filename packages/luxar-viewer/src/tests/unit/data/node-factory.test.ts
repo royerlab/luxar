@@ -357,7 +357,7 @@ describe('NodeFactory', () => {
     });
 
     it('should pass radius and sharpness scales', () => {
-      const attrs = { opacity: 0.8, gamma: 2.2, blending_mode: 'additive' };
+      const attrs = { opacity: 0.8, gamma: 2.2, blending_mode: 'additive' as const };
       const material = factory.createPointsMaterial(attrs, 2.0, 10.0);
 
       expect(material).toBeInstanceOf(THREE.ShaderMaterial);

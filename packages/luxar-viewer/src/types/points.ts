@@ -37,8 +37,20 @@ export interface PointsMetadata {
   /** Maximum point radius in world units */
   max_radius?: number;
 
+  /** Maximum sharpness value (used to scale Uint8-quantised sharpness arrays back to [0, max_sharpness]). Default 31.0. */
+  max_sharpness?: number;
+
   /** Whether colors array is present */
   has_colors?: boolean;
+
+  /** Whether per-element scalar values are present (drives colormap). */
+  has_scalars?: boolean;
+
+  /** Colormap name applied to per-element scalars (e.g. 'viridis', 'plasma'). */
+  colormap?: string;
+
+  /** [min, max] of the scalar data range used to remap into the colormap LUT. */
+  scalar_data_range?: [number, number];
 
   /** Whether radii array is present */
   has_radii?: boolean;
