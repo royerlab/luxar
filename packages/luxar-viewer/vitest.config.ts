@@ -26,13 +26,13 @@ export default defineConfig({
       ],
       // Coverage thresholds: ratcheted floor that should always be at or
       // below the actual measured coverage. The values below match the
-      // current actuals (~55% lines/functions/statements, ~44% branches)
-      // with a tiny safety margin. They are bumped upward in a dedicated
-      // commit each time a phase of new tests crosses the next 5pp band.
-      // Long-term target: 80% across the board.
+      // current actuals (~56% lines, ~56% statements, ~57% functions,
+      // ~45% branches) with a small safety margin. They are bumped upward
+      // in a dedicated commit each time a phase of new tests crosses the
+      // next band. Long-term target: 80% across the board.
       thresholds: {
-        lines: 55,
-        functions: 55,
+        lines: 56,
+        functions: 57,
         branches: 44,
         statements: 55,
       },
