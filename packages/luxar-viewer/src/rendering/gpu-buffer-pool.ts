@@ -111,6 +111,17 @@ export class GPUBufferPool {
 
   private maxPoolSize: number;
   private evictionFrames: number;
+  /**
+   * Maximum geometries the pool will dispose in a single
+   * `evictUnused()` call when not over the hard limit. Without this
+   * cap, a single eviction sweep can dispose dozens of buffers
+   * synchronously — each `geometry.dispose()` is 5–20 ms on slow
+   * GPUs, so a burst stutters visibly. Remaining evictable buffers
+   * are deferred to the next frame's eviction sweep. The
+   * `mustEvict` (pool-over-limit) path ignores this cap so the pool
+   * never grows unbounded.
+   */
+  private evictBatchSize: number;
 
   private stats = {
     allocations: 0,
@@ -126,9 +137,14 @@ export class GPUBufferPool {
     gsplats: { allocations: 0, reuses: 0, evictions: 0 },
   };
 
-  constructor(maxPoolSize: number = 20, evictionFrames: number = 300) {
+  constructor(
+    maxPoolSize: number = 20,
+    evictionFrames: number = 300,
+    evictBatchSize: number = 5
+  ) {
     this.maxPoolSize = maxPoolSize;
     this.evictionFrames = evictionFrames;
+    this.evictBatchSize = Math.max(1, evictBatchSize);
   }
 
   /**
@@ -966,18 +982,33 @@ export class GPUBufferPool {
     // If pool is over limit, evict aggressively
     const mustEvict = totalPooled > this.maxPoolSize;
 
-    // Helper to evict from a pool, returns count evicted
-    const evictFromPool = (pool: Map<number, PooledBuffer[]>): number => {
+    // Per-call eviction batch cap. Without this, a frame in which many
+    // buckets simultaneously cross the eviction threshold (common after
+    // a long pause + a viewport change) would burst-dispose every
+    // qualifying buffer in a single frame. Each `geometry.dispose()`
+    // can take 5–20 ms on slow GPUs; a 50-buffer burst stutters
+    // visibly. By capping the per-call batch, the remaining evictable
+    // buffers are deferred to the next frame's `acquire*` call. The
+    // `mustEvict` over-limit path bypasses the cap so we never let the
+    // pool drift unbounded above its limit.
+    const batchCap = mustEvict ? Number.POSITIVE_INFINITY : this.evictBatchSize;
+
+    // Helper to evict from a pool, returns count evicted. Stops early
+    // when the per-call budget is exhausted.
+    const evictFromPool = (pool: Map<number, PooledBuffer[]>, budget: number): number => {
       let poolEvicted = 0;
+      if (budget <= 0) return 0;
       for (const [bucket, buffers] of pool.entries()) {
         const kept: PooledBuffer[] = [];
 
         for (const buffer of buffers) {
           const framesSinceUse = currentFrame - buffer.lastUsedFrame;
+          const evictable =
+            framesSinceUse > this.evictionFrames || (mustEvict && framesSinceUse > 60);
 
-          // Evict if: unused for >evictionFrames OR pool over limit
-          if (framesSinceUse > this.evictionFrames || (mustEvict && framesSinceUse > 60)) {
-            // Dispose geometry
+          // Evict if: unused for >evictionFrames OR pool over limit,
+          // AND we're under the per-call batch cap.
+          if (evictable && poolEvicted < budget) {
             buffer.geometry.dispose();
             poolEvicted++;
           } else {
@@ -990,13 +1021,18 @@ export class GPUBufferPool {
         } else {
           pool.delete(bucket);
         }
+
+        if (poolEvicted >= budget) break;
       }
       return poolEvicted;
     };
 
-    const pointsEvicted = evictFromPool(this.pointBuffers);
-    const linesEvicted = evictFromPool(this.lineBuffers);
-    const gsplatsEvicted = evictFromPool(this.gsplatBuffers);
+    const pointsEvicted = evictFromPool(this.pointBuffers, batchCap);
+    const remaining1 = batchCap === Number.POSITIVE_INFINITY ? batchCap : batchCap - pointsEvicted;
+    const linesEvicted = evictFromPool(this.lineBuffers, remaining1);
+    const remaining2 =
+      batchCap === Number.POSITIVE_INFINITY ? batchCap : remaining1 - linesEvicted;
+    const gsplatsEvicted = evictFromPool(this.gsplatBuffers, remaining2);
 
     evicted = pointsEvicted + linesEvicted + gsplatsEvicted;
     this.stats.evictions += evicted;

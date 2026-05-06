@@ -430,6 +430,16 @@ export interface DataLoadingPerformanceConfig {
   useGPUBufferPool: boolean;
   gpuPoolMaxSize: number;
   gpuPoolEvictionFrames: number;
+  /**
+   * Per-call eviction-batch cap for the GPU buffer pool. When many
+   * pooled buffers cross the eviction threshold in the same frame
+   * (common after a long pause + viewport change), without this cap
+   * `evictUnused` would dispose every qualifying buffer synchronously,
+   * stuttering the frame. The cap defers excess evictions to the
+   * next frame. The pool-over-limit path bypasses the cap so memory
+   * still stays bounded.
+   */
+  gpuPoolEvictBatchSize: number;
 
   /**
    * Maximum number of cached materials per type (point, line, gsplat).

@@ -15,18 +15,19 @@ import {
 } from '../../../rendering/material-manager';
 import { config } from '../../../config';
 
-const baseProps = (over: Record<string, number | boolean | string> = {}) => ({
-  opacity: 1.0,
-  gamma: 1.0,
-  intensity: 1.0,
-  offset: 0.0,
-  blendingMode: 'additive',
-  hdrColors: false,
-  hdrIntensityMultiplier: 1.0,
-  pointSizeScale: 1.0,
-  customColorMode: false,
-  ...over,
-});
+const baseProps = (over: Record<string, number | boolean | string> = {}) =>
+  ({
+    opacity: 1.0,
+    gamma: 1.0,
+    intensity: 1.0,
+    offset: 0.0,
+    blendingMode: 'additive',
+    hdrColors: false,
+    hdrIntensityMultiplier: 1.0,
+    pointSizeScale: 1.0,
+    customColorMode: false,
+    ...over,
+  }) as Parameters<MaterialManager['getPointMaterial']>[0];
 
 describe('MaterialManager LRU eviction', () => {
   let originalCap: number;

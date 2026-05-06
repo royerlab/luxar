@@ -467,6 +467,7 @@ export const config: AppConfig = {
       useGPUBufferPool: true,
       gpuPoolMaxSize: 20,
       gpuPoolEvictionFrames: 300,
+      gpuPoolEvictBatchSize: 5,
 
       // Debugging
       enablePerformanceMonitoring: false,

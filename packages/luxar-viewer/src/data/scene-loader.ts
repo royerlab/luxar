@@ -303,12 +303,14 @@ export class SceneLoader {
     if (appConfig.dataLoading.performance.useGPUBufferPool) {
       this._gpuBufferPool = new GPUBufferPool(
         appConfig.dataLoading.performance.gpuPoolMaxSize,
-        appConfig.dataLoading.performance.gpuPoolEvictionFrames
+        appConfig.dataLoading.performance.gpuPoolEvictionFrames,
+        appConfig.dataLoading.performance.gpuPoolEvictBatchSize
       );
       log.info(
         Modules.GPU_BUFFER_POOL,
         `GPU buffer pool enabled (max size: ${appConfig.dataLoading.performance.gpuPoolMaxSize}, ` +
-          `eviction: ${appConfig.dataLoading.performance.gpuPoolEvictionFrames} frames)`
+          `eviction: ${appConfig.dataLoading.performance.gpuPoolEvictionFrames} frames, ` +
+          `batch cap: ${appConfig.dataLoading.performance.gpuPoolEvictBatchSize})`
       );
     }
 
