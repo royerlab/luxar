@@ -66,6 +66,19 @@ import {
   mapSMAAPreset,
   validateMSAASamples,
 } from './antialiasing-handler';
+import {
+  DOF_DEFAULT_FOCUS,
+  DOF_DEFAULT_STRENGTH,
+  clampDPRScale,
+  computeDOFFocalLength,
+  dprScaleChanged,
+  mergeVector2,
+  resolveChromaticDistortionDefaults,
+  resolveNoiseDefaults,
+  resolveVignetteDefaults,
+  scaleNoiseSettings,
+  strengthToBokehScale,
+} from './visual-effects-handler';
 
 /**
  * Manages HDR post-processing effects using pmndrs/postprocessing library.
@@ -679,25 +692,18 @@ export class PostProcessingManager {
    */
   setDOF(enabled: boolean, focus?: number, strength?: number): void {
     if (enabled && !this.dofEffect && this.camera instanceof THREE.PerspectiveCamera) {
-      // Create DOF effect with proper perspective depth mapping
-      // IMPORTANT: pmndrs DepthOfFieldEffect expects focus distance as a value between 0 and 1
-      // We use inverse depth mapping for better precision distribution
-      const focusDistance = focus ?? 10.0;
-
-      // Use proper perspective depth mapping instead of linear interpolation
+      const focusDistance = focus ?? DOF_DEFAULT_FOCUS;
       const normalizedFocus = PerspectiveDepthMapper.worldToNormalizedDepth(
         focusDistance,
         this.camera.near,
         this.camera.far
       );
-
-      // Calculate focal length based on camera FOV for more realistic bokeh
-      const focalLength = 0.035 * (50.0 / this.camera.fov); // Normalize to 50mm equivalent
+      const focalLength = computeDOFFocalLength(this.camera.fov);
 
       this.dofEffect = new DepthOfFieldEffect(this.camera, {
         focusDistance: normalizedFocus,
         focalLength: focalLength,
-        bokehScale: (strength ?? 0.5) * 4.0,
+        bokehScale: strengthToBokehScale(strength ?? DOF_DEFAULT_STRENGTH),
         height: 480,
       }) as DepthOfFieldEffectTyped;
 
@@ -751,7 +757,7 @@ export class PostProcessingManager {
     }
 
     if (params.strength !== undefined) {
-      this.dofEffect.bokehScale = params.strength * 4.0;
+      this.dofEffect.bokehScale = strengthToBokehScale(params.strength);
       log.update(Modules.POST_PROCESSING, `DOF strength updated: ${params.strength}`);
     }
   }
@@ -776,16 +782,13 @@ export class PostProcessingManager {
     fpnSigma?: number
   ): void {
     if (enabled && !this.detectorNoiseEffect) {
-      this.detectorNoiseEffect = new DetectorNoiseEffect({
-        readoutSigma: readoutSigma ?? 0.01,
-        photonGain: photonGain ?? 0.01,
-        fpnSigma: fpnSigma ?? 0.005,
-      });
+      const settings = resolveNoiseDefaults({ readoutSigma, photonGain, fpnSigma });
+      this.detectorNoiseEffect = new DetectorNoiseEffect(settings);
 
       this.rebuildEffectPass();
       log.info(
         Modules.POST_PROCESSING,
-        `Detector noise enabled: readout=${readoutSigma ?? 0.01}, gain=${photonGain ?? 0.01}, fpn=${fpnSigma ?? 0.005}`
+        `Detector noise enabled: readout=${settings.readoutSigma}, gain=${settings.photonGain}, fpn=${settings.fpnSigma}`
       );
     } else if (!enabled && this.detectorNoiseEffect) {
       safeDisposeEffect(this.detectorNoiseEffect, 'DetectorNoise');
@@ -847,13 +850,10 @@ export class PostProcessingManager {
     if (!this.detectorNoiseEffect || !isDetectorNoiseEffect(this.detectorNoiseEffect)) {
       return;
     }
-
-    const scale = this.currentDPRScale;
-    // Gaussian noise: σ scales linearly with DPR
-    this.detectorNoiseEffect.readoutSigma = this.baseNoiseSettings.readoutSigma * scale;
-    this.detectorNoiseEffect.fpnSigma = this.baseNoiseSettings.fpnSigma * scale;
-    // Shot noise: σ ∝ √photonGain, so photonGain must scale by DPR² for σ to scale by DPR
-    this.detectorNoiseEffect.photonGain = this.baseNoiseSettings.photonGain * scale * scale;
+    const scaled = scaleNoiseSettings(this.baseNoiseSettings, this.currentDPRScale);
+    this.detectorNoiseEffect.readoutSigma = scaled.readoutSigma;
+    this.detectorNoiseEffect.fpnSigma = scaled.fpnSigma;
+    this.detectorNoiseEffect.photonGain = scaled.photonGain;
   }
 
   /**
@@ -865,10 +865,9 @@ export class PostProcessingManager {
    * @param dpr - Current device pixel ratio (1.0 = native, <1.0 = reduced)
    */
   setDPRScale(dpr: number): void {
-    // Clamp to reasonable range
-    const scale = Math.max(0.25, Math.min(1.0, dpr));
+    const scale = clampDPRScale(dpr);
 
-    if (Math.abs(scale - this.currentDPRScale) < 0.01) {
+    if (!dprScaleChanged(this.currentDPRScale, scale)) {
       return; // No significant change
     }
 
@@ -888,16 +887,12 @@ export class PostProcessingManager {
    */
   setVignetteEnabled(enabled: boolean, darkness?: number, offset?: number): void {
     if (enabled && !this.vignetteEffect) {
-      // Use RobustVignetteEffect - identical to pmndrs VignetteEffect but handles HDR overflow
-      // This prevents NaN artifacts when Infinity × 0 occurs at vignette edges
-      this.vignetteEffect = new RobustVignetteEffect({
-        darkness: darkness ?? 0.5,
-        offset: offset ?? 0.5,
-      });
+      const settings = resolveVignetteDefaults({ darkness, offset });
+      this.vignetteEffect = new RobustVignetteEffect(settings);
       this.rebuildEffectPass();
       log.success(
         Modules.POST_PROCESSING,
-        `Vignette enabled (HDR-safe): darkness=${darkness ?? 0.5}, offset=${offset ?? 0.5}`
+        `Vignette enabled (HDR-safe): darkness=${settings.darkness}, offset=${settings.offset}`
       );
     } else if (!enabled && this.vignetteEffect) {
       safeDisposeEffect(this.vignetteEffect, 'Vignette');
@@ -948,12 +943,22 @@ export class PostProcessingManager {
     skew?: number
   ): void {
     if (enabled && !this.chromaticLensDistortionEffect) {
+      const cd = resolveChromaticDistortionDefaults({
+        distortionX,
+        distortionY,
+        dispersion,
+        principalPointX,
+        principalPointY,
+        focalLengthX,
+        focalLengthY,
+        skew,
+      });
       this.chromaticLensDistortionEffect = new ChromaticLensDistortionEffect({
-        distortion: new THREE.Vector2(distortionX ?? 0, distortionY ?? 0),
-        dispersion: dispersion ?? 0.0,
-        principalPoint: new THREE.Vector2(principalPointX ?? 0, principalPointY ?? 0),
-        focalLength: new THREE.Vector2(focalLengthX ?? 1, focalLengthY ?? 1),
-        skew: skew ?? 0,
+        distortion: new THREE.Vector2(cd.distortionX, cd.distortionY),
+        dispersion: cd.dispersion,
+        principalPoint: new THREE.Vector2(cd.principalPointX, cd.principalPointY),
+        focalLength: new THREE.Vector2(cd.focalLengthX, cd.focalLengthY),
+        skew: cd.skew,
       });
 
       this.rebuildEffectPass();
@@ -1007,10 +1012,10 @@ export class PostProcessingManager {
     }
 
     if (params.distortionX !== undefined || params.distortionY !== undefined) {
-      const currentDistortion = this.chromaticLensDistortionEffect.distortion;
-      this.chromaticLensDistortionEffect.distortion = new THREE.Vector2(
-        params.distortionX ?? currentDistortion.x,
-        params.distortionY ?? currentDistortion.y
+      this.chromaticLensDistortionEffect.distortion = mergeVector2(
+        this.chromaticLensDistortionEffect.distortion,
+        params.distortionX,
+        params.distortionY
       );
     }
 
@@ -1019,18 +1024,18 @@ export class PostProcessingManager {
     }
 
     if (params.principalPointX !== undefined || params.principalPointY !== undefined) {
-      const currentPrincipalPoint = this.chromaticLensDistortionEffect.principalPoint;
-      this.chromaticLensDistortionEffect.principalPoint = new THREE.Vector2(
-        params.principalPointX ?? currentPrincipalPoint.x,
-        params.principalPointY ?? currentPrincipalPoint.y
+      this.chromaticLensDistortionEffect.principalPoint = mergeVector2(
+        this.chromaticLensDistortionEffect.principalPoint,
+        params.principalPointX,
+        params.principalPointY
       );
     }
 
     if (params.focalLengthX !== undefined || params.focalLengthY !== undefined) {
-      const currentFocalLength = this.chromaticLensDistortionEffect.focalLength;
-      this.chromaticLensDistortionEffect.focalLength = new THREE.Vector2(
-        params.focalLengthX ?? currentFocalLength.x,
-        params.focalLengthY ?? currentFocalLength.y
+      this.chromaticLensDistortionEffect.focalLength = mergeVector2(
+        this.chromaticLensDistortionEffect.focalLength,
+        params.focalLengthX,
+        params.focalLengthY
       );
     }
 
