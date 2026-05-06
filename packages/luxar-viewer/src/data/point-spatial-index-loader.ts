@@ -29,6 +29,12 @@ import {
 } from './effective-radius-calculator';
 import { computeLoadLatency, recordLoadEvent } from './point-loader/loader-metrics';
 import { LoaderEventEmitter } from './point-loader/monitor-events';
+import {
+  loadPointsChunkIndex,
+  registerArrayBounds,
+  type PointsChunkIndex,
+  type PointsNodeAttrsForIndex,
+} from './point-loader/chunk-index-loader';
 import type {
   MonitorEvent,
   MonitorEventListener,
@@ -37,7 +43,6 @@ import type {
   QueryInfo,
 } from '../types/data-monitor-types';
 import { ArrayDecoder, ArrayRefRegistry, type ArrayMetadata } from './array-decoder';
-import { fetchChunkBoundsArray } from './loaders/chunk-bounds-loader';
 import { RangeLoader, SpatialQueryBuilder, type BaseViewState, type LoadRange } from './loaders';
 import { OnceInit } from './loaders/once-init';
 import {
@@ -58,36 +63,11 @@ type WritableNumericArray = {
 };
 
 /**
- * Points-specific chunk spatial index, extending the canonical shape with
- * descriptive metadata (ordering algorithm, ordering/slice dims, totals)
- * surfaced by the points loader for logging and stats. The query path passes
- * just the canonical {chunkBounds, chunkCount, metadata: {ndim, chunk_size}}
- * subset to `SpatialQueryBuilder`.
+ * `PointsNodeAttrs` and `PointsChunkIndex` are now defined alongside the
+ * chunk-index probe in `data/point-loader/chunk-index-loader.ts`; the
+ * loader keeps the original `PointsNodeAttrs` alias for in-file readability.
  */
-interface PointsChunkIndex {
-  chunkBounds: Float32Array;
-  chunkCount: number;
-  metadata: {
-    ordering: 'morton' | 'hilbert';
-    ordering_dims: number[];
-    slice_dims: number[];
-    ordering_bits_per_dim: number;
-    chunk_size: number;
-    total_points: number;
-    total_chunks: number;
-    ndim: number;
-  };
-}
-
-interface PointsNodeAttrs {
-  ordering?: 'morton' | 'hilbert' | 'none';
-  ordering_dims?: number[];
-  slice_dims?: number[];
-  ordering_bits_per_dim?: number;
-  chunk_size?: number;
-  n_points?: number;
-  ndim?: number;
-}
+type PointsNodeAttrs = PointsNodeAttrsForIndex;
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -190,11 +170,13 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
     };
   }
 
-  /** Register array shape with the prefetcher for upper-bounds checking. */
+  /**
+   * Register array shape with the prefetcher for upper-bounds checking.
+   * Thin wrapper around the shared `registerArrayBounds` helper so the
+   * three call sites in `initialize()` keep their compact form.
+   */
   private registerBounds(arrayName: string, array: zarr.Array<zarr.DataType, zarr.Readable>): void {
-    if (!this.prefetcher) return;
-    const path = `${this.node.path.startsWith('/') ? this.node.path.slice(1) : this.node.path}/${arrayName}`;
-    this.prefetcher.registerArrayBounds(path, array.shape, array.chunks);
+    registerArrayBounds(this.prefetcher, this.node.path, arrayName, array);
   }
 
   /**
@@ -203,7 +185,10 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
   async initialize(): Promise<void> {
     // Load chunk-based spatial index
     try {
-      this.chunkIndex = await this.loadChunkBounds(this.node.attrs as PointsNodeAttrs);
+      this.chunkIndex = await loadPointsChunkIndex(
+        this.zarrLocation,
+        this.node.attrs as PointsNodeAttrs
+      );
 
       if (!this.chunkIndex) {
         // For 3D datasets without Morton ordering, fall back to loading all points
@@ -692,78 +677,6 @@ export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
       this.rangeLoader.setVerbose(false);
     }
     return result;
-  }
-
-  /**
-   * Probe the points `chunk_bounds` array.
-   *
-   * Returns null when no spatial ordering is set (3D datasets without Morton/
-   * Hilbert indexing); the loader then falls back to loading all points.
-   */
-  private async loadChunkBounds(nodeAttrs: PointsNodeAttrs): Promise<PointsChunkIndex | null> {
-    if (!nodeAttrs.ordering || nodeAttrs.ordering === 'none') {
-      log.info(Modules.SPATIAL_INDEX, 'No spatial ordering — skipping chunk_bounds probe');
-      return null;
-    }
-
-    const result = await fetchChunkBoundsArray(
-      this.zarrLocation,
-      'chunk_bounds',
-      Modules.SPATIAL_INDEX,
-      'No chunk_bounds found - dataset has no spatial indexing'
-    );
-    if (!result) return null;
-
-    const [numChunks, ndim, _two] = result.shape;
-    if (_two !== 2) {
-      log.error(
-        Modules.SPATIAL_INDEX,
-        `Invalid chunk_bounds shape: expected [..., 2], got [..., ${_two}]`
-      );
-      return null;
-    }
-
-    const expectedLength = numChunks * ndim * 2;
-    if (result.data.length !== expectedLength) {
-      log.warning(
-        Modules.SPATIAL_INDEX,
-        `Chunk bounds array length mismatch: expected ${expectedLength} (${numChunks}×${ndim}×2), got ${result.data.length}`
-      );
-    }
-
-    const positionDims = nodeAttrs.ndim;
-    if (positionDims !== undefined && positionDims !== ndim) {
-      log.warning(
-        Modules.SPATIAL_INDEX,
-        `Dimensionality mismatch: chunk_bounds has ${ndim}D but node attributes indicate ${positionDims}D`
-      );
-    }
-
-    const orderingDims = nodeAttrs.ordering_dims ?? [];
-    const sliceDims = nodeAttrs.slice_dims ?? [];
-    const allDims = new Set([...orderingDims, ...sliceDims]);
-    if (allDims.size > 0 && allDims.size !== ndim) {
-      log.warning(
-        Modules.SPATIAL_INDEX,
-        `Dimension coverage mismatch: ordering_dims[${orderingDims.length}] + slice_dims[${sliceDims.length}] = ${allDims.size}, but ndim=${ndim}`
-      );
-    }
-
-    const ordering = nodeAttrs.ordering === 'morton' ? 'morton' : 'hilbert';
-    return {
-      chunkBounds: result.data,
-      chunkCount: numChunks,
-      metadata: {
-        ordering,
-        ordering_dims: orderingDims,
-        slice_dims: sliceDims,
-        ordering_bits_per_dim: nodeAttrs.ordering_bits_per_dim ?? 21,
-        chunk_size: nodeAttrs.chunk_size ?? 0,
-        total_points: nodeAttrs.n_points ?? 0,
-        total_chunks: numChunks,
-        ndim,
-      },
-    };
   }
 
   /**
