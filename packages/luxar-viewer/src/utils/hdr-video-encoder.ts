@@ -11,6 +11,7 @@ import {
   BufferTarget,
   VideoSampleSource,
   VideoSample,
+  type VideoSampleInit,
   canEncodeVideo,
 } from 'mediabunny';
 import { rgbaFloatToI420P10 } from './hdr-color-conversion';
@@ -150,22 +151,32 @@ export class HDRVideoEncoder {
 
     const yuv = rgbaFloatToI420P10(rgba, this.encWidth, this.encHeight);
 
-    // TS lacks dom-webcodecs types for I420P10 + BT.2020 color space
+    // mediabunny's VideoSample takes the packed YUV via its
+    // AllowSharedBufferSource overload. The BT.2020/PQ color-space members
+    // (primaries='bt2020', transfer='pq', matrix='bt2020-ncl') are valid in
+    // browsers and the WebCodecs spec, but are not yet in
+    // @types/dom-webcodecs / lib.dom.d.ts unions; the directives below
+    // flag themselves and can be deleted once the upstream types catch up.
+    const init: VideoSampleInit = {
+      format: 'I420P10',
+      codedWidth: this.encWidth,
+      codedHeight: this.encHeight,
+      timestamp: this.frameIndex * this.frameDuration,
+      duration: this.frameDuration,
+      colorSpace: {
+        // @ts-expect-error: HDR primaries not in lib.dom.d.ts yet
+        primaries: 'bt2020',
+        // @ts-expect-error: PQ transfer not in lib.dom.d.ts yet
+        transfer: 'pq',
+        // @ts-expect-error: BT.2020 matrix not in lib.dom.d.ts yet
+        matrix: 'bt2020-ncl',
+        fullRange: false,
+      },
+    };
     const sample = new VideoSample(
-      yuv as any,
-      {
-        format: 'I420P10' as any,
-        codedWidth: this.encWidth,
-        codedHeight: this.encHeight,
-        timestamp: this.frameIndex * this.frameDuration,
-        duration: this.frameDuration,
-        colorSpace: {
-          primaries: 'bt2020' as any,
-          transfer: 'pq' as any,
-          matrix: 'bt2020-ncl' as any,
-          fullRange: false,
-        },
-      } as any
+      yuv,
+      init as Required<Pick<VideoSampleInit, 'format' | 'codedWidth' | 'codedHeight' | 'timestamp'>> &
+        VideoSampleInit
     );
 
     await this.videoSource.add(sample);
