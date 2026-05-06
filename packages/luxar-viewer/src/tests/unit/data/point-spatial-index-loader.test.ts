@@ -36,21 +36,22 @@ vi.mock('zarrita', () => ({
   slice: vi.fn((start, end) => ({ start, end })),
 }));
 
-// Mock chunk-based spatial index functions (NEW)
-vi.mock('../../../data/chunk-spatial-index', () => ({
-  loadChunkSpatialIndex: vi.fn(),
-  queryChunksForView: vi.fn(),
-  chunkIndicesToRanges: vi.fn(),
-  mergePointRanges: vi.fn(),
-}));
+// Mock the canonical SpatialQueryBuilder so the test exercises the loader's
+// orchestration rather than the AABB scan (which has its own unit tests).
+const mockExecute = vi.fn();
+vi.mock('../../../data/loaders/spatial-query-builder', async () => {
+  const actual = await vi.importActual<
+    typeof import('../../../data/loaders/spatial-query-builder')
+  >('../../../data/loaders/spatial-query-builder');
+  return {
+    ...actual,
+    SpatialQueryBuilder: vi.fn().mockImplementation(() => ({
+      execute: mockExecute,
+    })),
+  };
+});
 
-// Import mocked modules
-import {
-  loadChunkSpatialIndex,
-  queryChunksForView,
-  chunkIndicesToRanges,
-  mergePointRanges,
-} from '../../../data/chunk-spatial-index';
+import { SpatialQueryBuilder } from '../../../data/loaders/spatial-query-builder';
 
 describe('PointSpatialIndexLoader', () => {
   let loader: PointSpatialIndexLoader;
@@ -86,42 +87,41 @@ describe('PointSpatialIndexLoader', () => {
       resolve: vi.fn().mockImplementation((path) => `mock://${path}`),
     };
 
-    // Setup mock scene node
+    // Setup mock scene node — `ordering: 'hilbert'` triggers the chunk_bounds
+    // probe; missing/`'none'` would skip it and fall back to load-all.
     mockNode = {
       path: '/test_points',
       type: 'points',
       attrs: {
         n_points: 10000,
         max_radius: 0.5,
-      },
-      hasSpatialIndex: true,
-    };
-
-    // Configure chunk-based index mocks (NEW)
-    const mockChunkIndex = {
-      metadata: {
-        ordering: 'hilbert' as const,
+        ordering: 'hilbert',
         ordering_dims: [0, 1, 2],
         slice_dims: [3],
         ordering_bits_per_dim: 21,
         chunk_size: 100,
-        total_points: 10000,
-        total_chunks: 100,
         ndim: 4,
       },
-      chunkBounds: new Float32Array(100 * 4 * 2), // 100 chunks, 4D, min/max
+      hasSpatialIndex: true,
     };
 
-    (loadChunkSpatialIndex as any).mockResolvedValue(mockChunkIndex);
-    (queryChunksForView as any).mockReturnValue([0, 2]); // Returns chunk indices
-    (chunkIndicesToRanges as any).mockReturnValue([
+    // Default builder behaviour: return two ranges so range-merge logic exists.
+    mockExecute.mockResolvedValue([
       { start: 0, end: 100 },
       { start: 200, end: 300 },
     ]);
-    (mergePointRanges as any).mockImplementation((_ranges: any) => _ranges);
 
+    // Mock zarr.open to provide:
+    //   - chunk_bounds → array with shape [100, 4, 2] for the load probe
+    //   - positions/colors/radii/sharpness → standard mock arrays
+    const chunkBoundsArray = {
+      shape: [100, 4, 2],
+      dtype: 'float32',
+      attrs: {},
+    };
     (zarr.open as any).mockImplementation((_location: any) => {
       const path = _location.toString();
+      if (path.includes('chunk_bounds')) return Promise.resolve(chunkBoundsArray);
       if (path.includes('positions')) return Promise.resolve(mockArrays.positions);
       if (path.includes('colors')) return Promise.resolve(mockArrays.colors);
       if (path.includes('radii')) return Promise.resolve(mockArrays.radii);
@@ -130,6 +130,10 @@ describe('PointSpatialIndexLoader', () => {
     });
 
     (zarr.get as any).mockImplementation((_array: any, _slices: any) => {
+      // Chunk bounds probe: no slices, returns the full bounds buffer.
+      if (_array === chunkBoundsArray) {
+        return Promise.resolve({ data: new Float32Array(100 * 4 * 2) });
+      }
       const numPoints = _slices[0].end - _slices[0].start;
       const dims = _array === mockArrays.positions ? 4 : _array === mockArrays.colors ? 3 : 1;
       return Promise.resolve({
@@ -157,16 +161,25 @@ describe('PointSpatialIndexLoader', () => {
 
       await loader.loadPoints(viewState);
 
-      // NEW: Check chunk-based index loading
-      expect(loadChunkSpatialIndex).toHaveBeenCalledWith(mockZarrLocation, mockNode.attrs);
+      // Check chunk-based index loading
+      // chunk_bounds probe should fire alongside the data array opens.
+      expect(
+        (zarr.open as any).mock.calls.some((c: any[]) => String(c[0]).includes('chunk_bounds'))
+      ).toBe(true);
       expect(zarr.open).toHaveBeenCalled(); // positions, colors, radii, sharpness
     });
 
     it('should handle missing spatial index gracefully for 3D datasets', async () => {
-      // Mock chunk-based index to return null (no chunk index available)
-      (loadChunkSpatialIndex as any).mockResolvedValue(null);
+      // No spatial ordering → chunk_bounds probe is skipped, falls back to load-all.
+      const noOrderingNode: SceneNode = {
+        ...mockNode,
+        attrs: { ...mockNode.attrs, ordering: 'none' },
+      };
 
-      // Mock positions array to determine point count
+      // Re-create the loader with the no-ordering node.
+      loader.dispose();
+      loader = new PointSpatialIndexLoader(mockZarrLocation, noOrderingNode);
+
       (zarr.open as any).mockImplementation((_location: any) => {
         const path = _location.toString();
         if (path.includes('positions')) {
@@ -229,9 +242,10 @@ describe('PointSpatialIndexLoader', () => {
 
       await loader.loadPoints(viewState);
 
-      expect(queryChunksForView).toHaveBeenCalled();
-      const [, , queryTolerance] = (queryChunksForView as any).mock.calls[0];
-      expect(queryTolerance[3]).toBe(0);
+      // Builder is constructed once per query; tolerance is the third arg.
+      expect(SpatialQueryBuilder).toHaveBeenCalled();
+      const [, , options] = (SpatialQueryBuilder as any).mock.calls[0];
+      expect(options.tolerance[3]).toBe(0);
     });
 
     it('should respect max_radius=0 when tolerance is missing', async () => {
@@ -249,9 +263,9 @@ describe('PointSpatialIndexLoader', () => {
 
       await zeroRadiusLoader.loadPoints(viewState);
 
-      expect(queryChunksForView).toHaveBeenCalled();
-      const [, , queryTolerance] = (queryChunksForView as any).mock.calls[0];
-      expect(queryTolerance[3]).toBe(0);
+      expect(SpatialQueryBuilder).toHaveBeenCalled();
+      const [, , options] = (SpatialQueryBuilder as any).mock.calls[0];
+      expect(options.tolerance[3]).toBe(0);
 
       zeroRadiusLoader.dispose();
     });
@@ -263,22 +277,23 @@ describe('PointSpatialIndexLoader', () => {
         tolerance: [0, 0, 0, 0.1],
       };
 
-      // Start multiple loads concurrently
       const promises = [
         loader.loadPoints(viewState),
         loader.loadPoints(viewState),
         loader.loadPoints(viewState),
       ];
-
       await Promise.all(promises);
 
-      // Should only initialize once (NEW: check chunk-based loading)
-      expect(loadChunkSpatialIndex).toHaveBeenCalledTimes(1);
+      // chunk_bounds should be opened once across concurrent loadPoints calls.
+      const chunkBoundsOpens = (zarr.open as any).mock.calls.filter((c: any[]) =>
+        String(c[0]).includes('chunk_bounds')
+      ).length;
+      expect(chunkBoundsOpens).toBe(1);
     });
   });
 
   describe('spatial index queries', () => {
-    it('should query chunk-based index with correct parameters', async () => {
+    it('should construct the query builder with index, viewState, and options', async () => {
       const viewState: ViewState = {
         displayDims: [0, 1, 2],
         slicePosition: [0, 0, 0, 5.5],
@@ -287,21 +302,18 @@ describe('PointSpatialIndexLoader', () => {
 
       await loader.loadPoints(viewState);
 
-      // NEW: Check chunk-based query
-      expect(queryChunksForView).toHaveBeenCalled();
-      expect(chunkIndicesToRanges).toHaveBeenCalled();
-
-      // Verify chunk query was called with the index
-      const chunkQueryCall = (queryChunksForView as any).mock.calls[0];
-      expect(chunkQueryCall[0]).toBeDefined(); // Chunk index
-      expect(chunkQueryCall[1]).toBeDefined(); // Slice position
-      expect(chunkQueryCall[2]).toBeDefined(); // Tolerance
+      expect(SpatialQueryBuilder).toHaveBeenCalled();
+      const [index, vs, options] = (SpatialQueryBuilder as any).mock.calls[0];
+      expect(index.chunkBounds).toBeInstanceOf(Float32Array);
+      expect(index.chunkCount).toBeGreaterThan(0);
+      expect(vs.displayDims).toEqual([0, 1, 2]);
+      expect(options.totalElements).toBe(10000);
+      expect(options.chunkSize).toBe(100);
+      expect(Array.isArray(options.tolerance)).toBe(true);
     });
 
-    it('should return empty points when no points visible', async () => {
-      // NEW: Use chunk-based query which returns chunk indices (empty array = no chunks match)
-      (queryChunksForView as any).mockReturnValue([]);
-      (chunkIndicesToRanges as any).mockReturnValue([]);
+    it('should return empty points when builder returns no ranges', async () => {
+      mockExecute.mockResolvedValueOnce([]);
 
       const viewState: ViewState = {
         displayDims: [0, 1, 2],
@@ -314,64 +326,23 @@ describe('PointSpatialIndexLoader', () => {
       expect(result.metadata.loadedPoints).toBe(0);
       expect(result.positions.length).toBe(0);
     });
-
-    it('should merge adjacent ranges for efficiency', async () => {
-      // NEW: Mock chunk-based query to return multiple chunks
-      (queryChunksForView as any).mockReturnValue([0, 1, 3]); // Chunks 0, 1, 3
-      (chunkIndicesToRanges as any).mockReturnValue([
-        { start: 0, end: 100 },
-        { start: 100, end: 200 }, // Adjacent
-        { start: 300, end: 400 },
-      ]);
-
-      (mergePointRanges as any).mockReturnValue([
-        { start: 0, end: 200 }, // Merged
-        { start: 300, end: 400 },
-      ]);
-
-      const viewState: ViewState = {
-        displayDims: [0, 1, 2],
-        slicePosition: [0, 0, 0, 5],
-        tolerance: [0, 0, 0, 0.5],
-      };
-
-      await loader.loadPoints(viewState);
-
-      expect(mergePointRanges).toHaveBeenCalled();
-    });
   });
 
   describe('extend_to_all', () => {
-    it('should return all points when extended dimension is navigated', async () => {
-      // Setup node with extend_to_all dimensions
+    // The actual extend-or-not decision lives inside `SpatialQueryBuilder.execute()`
+    // (covered by `spatial-query-builder.test.ts`). At this layer we verify the
+    // loader wires `extendDims` through to the builder constructor and that the
+    // translated viewState carries `dimensions.metadata` correctly.
+
+    it('forwards extend_to_all and dimension metadata to the builder', async () => {
       mockNode.attrs.extend_to_all = ['time'];
 
-      const viewState: ViewState = {
-        displayDims: [0, 1, 2], // x, y, z displayed
-        slicePosition: [0, 0, 0, 5], // Navigating time
-        tolerance: [0, 0, 0, 0.1],
-        dimensions: {
-          ndim: 4,
-          currentStep: [0, 0, 0, 5],
-          displayed: [0, 1, 2],
-          metadata: Object.assign([], {
-            0: { name: 'x', unit: 'um', display: true },
-            1: { name: 'y', unit: 'um', display: true },
-            2: { name: 'z', unit: 'um', display: true },
-            3: { name: 'time', unit: 's', display: false },
-          }),
-        },
-      };
-
-      // Should not call queryPointSpatialIndex but return all points
-      const result = await loader.loadPoints(viewState);
-
-      // When extending, returns all points
-      expect(result.metadata.totalPoints).toBeGreaterThan(0);
-    });
-
-    it('should use spatial index when not extending', async () => {
-      mockNode.attrs.extend_to_all = ['channel']; // Different dimension
+      const dimsMetadata = Object.assign([], {
+        0: { name: 'x', unit: 'um', display: true },
+        1: { name: 'y', unit: 'um', display: true },
+        2: { name: 'z', unit: 'um', display: true },
+        3: { name: 'time', unit: 's', display: false },
+      });
 
       const viewState: ViewState = {
         displayDims: [0, 1, 2],
@@ -381,24 +352,38 @@ describe('PointSpatialIndexLoader', () => {
           ndim: 4,
           currentStep: [0, 0, 0, 5],
           displayed: [0, 1, 2],
-          metadata: Object.assign([], {
-            3: { name: 'time', unit: 's', display: false },
-          }),
+          metadata: dimsMetadata,
         },
       };
 
       await loader.loadPoints(viewState);
 
-      // NEW: Check chunk-based query was used
-      expect(queryChunksForView).toHaveBeenCalled();
+      expect(SpatialQueryBuilder).toHaveBeenCalled();
+      const [, baseViewState, options] = (SpatialQueryBuilder as any).mock.calls[0];
+      expect(options.extendDims).toEqual(['time']);
+      // ViewState.dimensions.metadata must be flattened to BaseViewState.dimensions
+      expect(baseViewState.dimensions).toBe(dimsMetadata);
+    });
+
+    it('passes empty extendDims when extend_to_all is not configured', async () => {
+      delete mockNode.attrs.extend_to_all;
+
+      const viewState: ViewState = {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 5],
+        tolerance: [0, 0, 0, 0.1],
+      };
+
+      await loader.loadPoints(viewState);
+
+      const [, , options] = (SpatialQueryBuilder as any).mock.calls[0];
+      expect(options.extendDims).toEqual([]);
     });
   });
 
   describe('data projection', () => {
     it('should project nD points to 3D correctly', async () => {
-      // NEW: Use chunk-based query that returns ranges for 2 points
-      (queryChunksForView as any).mockReturnValue([0]);
-      (chunkIndicesToRanges as any).mockReturnValue([{ start: 0, end: 2 }]);
+      mockExecute.mockResolvedValueOnce([{ start: 0, end: 2 }]);
 
       // Mock 4D data - need proper amount based on ranges
       (zarr.get as any).mockImplementation((array: any, _slices: any) => {
@@ -637,8 +622,8 @@ describe('PointSpatialIndexLoader', () => {
       const result = await loader.updateView(viewState2);
 
       expect(result).toBeDefined();
-      // NEW: Check chunk-based query was called twice (once per view)
-      expect(queryChunksForView).toHaveBeenCalledTimes(2);
+      // Builder is constructed once per query (twice across the two views).
+      expect(SpatialQueryBuilder).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -704,11 +689,12 @@ describe('PointSpatialIndexLoader', () => {
     });
 
     it('should restore original_dtype for encoded arrays', async () => {
-      // Mock encoded colors with original_dtype=uint8
-      // This simulates quantized uint8 colors being decoded
+      // Mock encoded colors with original_dtype=uint8.
+      // Use a known semantic quantized encoding; plain dtype names are direct storage.
+      mockArrays.colors.dtype = 'uint8';
       mockArrays.colors.attrs = {
         encoding: {
-          name: 'quantized_uint8',
+          name: 'bounded_scalar_uint8',
           bounds: [0, 255],
           original_dtype: 'uint8',
           original_shape: [2, 3],
@@ -740,23 +726,6 @@ describe('PointSpatialIndexLoader', () => {
       expect(result.colors).toBeInstanceOf(Uint8Array);
       expect(result.colors![0]).toBe(255);
       expect(result.colors![1]).toBe(0);
-    });
-  });
-
-  describe('3D datasets without spatial index (fallback)', () => {
-    // NOTE: These tests test internal implementation details of the spatial index
-    // fallback mechanism. The implementation now uses chunk-based indexing
-    // which has a different structure. These tests are skipped because:
-    // 1. They test private implementation details (spatialIndex structure)
-    // 2. The mock setup is complex and fragile
-    // 3. The actual functionality is tested via E2E tests with real data
-
-    it.skip('should create dummy spatial index for 3D datasets (IMPLEMENTATION DETAIL)', async () => {
-      // This tests internal spatialIndex structure which varies by implementation
-    });
-
-    it.skip('should load all points when no spatial index present (TESTED VIA E2E)', async () => {
-      // This functionality is tested via E2E tests with real 3D zarr datasets
     });
   });
 });

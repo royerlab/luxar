@@ -168,13 +168,13 @@ function logSceneStats(scene: THREE.Group): void {
       if (positions) {
         totalPoints += positions.count;
       }
-      if (obj.userData.attrs?.has_spatial_index || obj.userData.spatialIndex) {
+      if (obj.userData.attrs?.has_spatial_index) {
         usedSpatialIndex++;
       }
     } else if (obj instanceof THREE.Mesh && obj.userData?.nodeType === 'gsplats') {
       totalGSplatsObjects++;
       totalGSplats += obj.userData.visibleSplatCount ?? 0;
-      if (obj.userData.spatialIndex) {
+      if (obj.userData.attrs?.has_spatial_index) {
         usedSpatialIndex++;
       }
     }

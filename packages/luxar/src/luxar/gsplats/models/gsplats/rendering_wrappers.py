@@ -151,7 +151,7 @@ def render_gaussians_batched(
     Ls: torch.Tensor,
     amps: torch.Tensor,
     truncate: float = 3.0,
-    intensity_floor: float = 1e-5,
+    intensity_floor: Optional[float] = 1e-5,
     chunk_size: Optional[int] = None,
 ) -> torch.Tensor:
     """
@@ -169,8 +169,9 @@ def render_gaussians_batched(
         Amplitudes.
     truncate : float, default=3.0
         Truncation radius.
-    intensity_floor : float, default=1e-5
-        Minimum intensity for culling.
+    intensity_floor : float or None, default=1e-5
+        Minimum intensity for amplitude-aware culling.
+        Pass ``None`` (or a non-positive value) to disable culling entirely.
     chunk_size : int, optional
         Chunk size for memory management.
 

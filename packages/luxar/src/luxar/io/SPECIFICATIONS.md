@@ -1022,9 +1022,10 @@ assert len(data['chunk_bounds']) > 0
 - Morton bits per dimension = `floor(64 / n_dims)` (computed dynamically)
 
 **Chunk Sizing** (existing in `typing_utils/constants.py`):
-- `CHUNK_SIZE_DEFAULT` - Default elements per chunk
-- `CHUNK_SIZE_MIN` - Minimum chunk size
-- `CHUNK_SIZE_MAX` - Maximum chunk size
+- `TARGET_CHUNK_BYTES` - Default target chunk payload size in bytes
+- `MIN_CHUNK_BYTES` - Minimum target chunk payload size in bytes
+- `MAX_CHUNK_BYTES` - Maximum target chunk payload size in bytes
+- Legacy `CHUNK_SIZE_*` element-count constants have been removed; compiler code converts byte targets to element counts based on array dtype/shape.
 
 **Sharpness** (existing in `typing_utils/constants.py`):
 - `SHARPNESS_MIN = 0.001`

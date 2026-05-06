@@ -1,34 +1,22 @@
 /**
  * Unified Loader Architecture - Shared Components
  *
- * This module provides the foundation for the unified spatial index loader architecture,
- * enabling code reuse across Points, Lines, and GSplats loaders.
+ * Foundation for the unified spatial-index loader architecture, shared by the
+ * Points, Lines, and GSplats loaders.
  *
- * ## Components
+ * - **base-types.ts** — common type definitions (`BaseViewState`, `LoadRange`,
+ *   `BaseChunkSpatialIndex`, `SpatialDataLoader`).
+ * - **range-loader.ts** — unified encoding dispatch (broadcasted, quantized,
+ *   LUT, array_ref, direct), with worker offload + main-thread fallback.
+ * - **spatial-query-builder.ts** — canonical chunk-bounds query API.
+ *   `SpatialQueryBuilder` accepts either a `geometryType` (delegates tolerance
+ *   to `tolerance-computer.computeTolerance`) or a pre-computed `tolerance`
+ *   (used by points, which has bespoke `EffectiveRadiusConfig` semantics).
+ * - **transferable-accumulator.ts** — zero-allocation buffers transferable to
+ *   workers for CPU-offloaded projection.
  *
- * ### base-types.ts
- * Common type definitions shared by all loaders:
- * - BaseViewState: Common view state interface
- * - LoadRange: Generic range for array loading
- * - BaseChunkSpatialIndex: Common spatial index interface
- * - SpatialDataLoader: Generic loader interface
- *
- * ### range-loader.ts
- * Unified encoding dispatch for range-based array loading:
- * - RangeLoader: Handles broadcasted, quantized, LUT, array_ref, and direct encodings
- * - Worker dispatch with main thread fallback
- * - Replaces ~600 lines of duplicated code
- *
- * ### spatial-query-builder.ts
- * Unified spatial query logic:
- * - SpatialQueryBuilder: Fluent API for building and executing spatial queries
- * - computeQueryTolerance: Unified tolerance calculation
- * - executeSpatialQuery: Main-thread AABB spatial queries
- * - Replaces ~300 lines of duplicated code
- *
- * ## Usage
- *
- * ```typescript
+ * @example
+ * ```ts
  * import {
  *   RangeLoader,
  *   SpatialQueryBuilder,
@@ -36,34 +24,15 @@
  *   type LoadRange,
  * } from './loaders';
  *
- * // Build spatial query
- * const builder = new SpatialQueryBuilder(chunkIndex, viewState, totalElements);
- * const ranges = await builder.withMaxRadius(5.0).execute();
+ * const ranges = await new SpatialQueryBuilder(chunkIndex, viewState, {
+ *   geometryType: 'gsplats',
+ *   totalElements: attrs.n_splats,
+ *   chunkSize: attrs.chunk_size,
+ *   extendDims: attrs.extend_to_all,
+ * }).execute();
  *
- * // Load data with encoding dispatch
  * const rangeLoader = new RangeLoader(refRegistry);
- * const elementsWritten = await rangeLoader.loadRanges(
- *   array, attrs, ranges, outputBuffer, totalElements
- * );
- * ```
- *
- * ## Architecture
- *
- * ```
- * ┌─────────────────────────────────────────────────────────────┐
- * │                    UNIFIED LOADERS                          │
- * │  (Points, Lines, GSplats extend common patterns)            │
- * │                          │                                  │
- * │          ┌───────────────┼───────────────┐                  │
- * │          ▼               ▼               ▼                  │
- * │   SpatialQueryBuilder  RangeLoader   Accumulator            │
- * │   (query logic)     (encoding)    (buffer reuse)            │
- * │          │               │               │                  │
- * │          └───────────────┼───────────────┘                  │
- * │                          ▼                                  │
- * │                    WorkerPool                               │
- * │              (CPU offload + WASM)                           │
- * └─────────────────────────────────────────────────────────────┘
+ * await rangeLoader.loadRanges(array, attrs, ranges, outputBuffer, totalElements);
  * ```
  *
  * @module data/loaders
@@ -99,17 +68,15 @@ export {
 // Spatial query builder
 export {
   SpatialQueryBuilder,
-  computeQueryTolerance,
+  type SpatialQueryOptions,
+  type ChunkSpatialIndex,
+  type SpatialQueryParams,
   buildQueryPosition,
   executeSpatialQuery,
   chunkIndicesToRanges,
   mergeRanges,
   shouldExtendVisibility,
   createLoadAllRange,
-  type ToleranceConfig,
-  type SpatialQueryParams,
-  DEFAULT_HIDDEN_DIM_TOLERANCE,
-  DISPLAYED_DIM_TOLERANCE,
 } from './spatial-query-builder';
 
 // Transferable accumulator (zero-allocation + worker offload)
@@ -126,10 +93,3 @@ export {
   type WorkerProjectionRequest,
   type WorkerProjectionResponse,
 } from './transferable-accumulator';
-
-// Integration example (reference implementation)
-export {
-  PointsLoaderIntegrationExample,
-  queryVisibleRangesExample,
-  fullLoadingPipelineExample,
-} from './integration-example';

@@ -39,7 +39,8 @@ Low-level rendering engine with specialized fast paths:
 | `group_by_box_gpu(aabb_lo, aabb_hi, shape)` | GPU spatial grouping |
 | `cached_base_and_offsets(lo, hi, device)` | Cached coordinate grid generation |
 | `calculate_optimal_chunk_size(K, d, device, dtype)` | Memory-aware chunk size selection |
-| `clear_grid_cache()` | Clear coordinate grid caches |
+| `clear_grid_cache()` | Clear byte-budgeted coordinate grid caches |
+| `get_grid_cache_stats()` | Inspect per-device grid-cache occupancy and budgets |
 | `linear_strides(shape)` | Compute linear memory strides |
 
 ### Rendering Wrappers (`rendering_wrappers.py`)
@@ -81,14 +82,41 @@ volume = render_gaussians(
 )
 ```
 
+## Grid Cache Tuning
+
+The PyTorch renderer caches local support grids by shape, stride, dtype, and
+device so repeated AABB shapes can reuse coordinate tensors. The cache is
+byte-budgeted per device instead of entry-count-limited:
+
+- CUDA default: `min(10% of currently free VRAM, 2 GiB)`
+- MPS default: `512 MiB`
+- CPU default: `min(5% of available RAM, 4 GiB)` when available, otherwise `512 MiB`
+- Default per-entry cap: 75% of the total budget
+
+HPC or large-volume jobs can tune or disable the cache explicitly:
+
+```bash
+# Disable support-grid caching entirely
+export LUXAR_GSPLAT_GRID_CACHE_MAX_BYTES=0
+
+# Allow up to 8 GiB per device and up to 6 GiB for one repeated support grid
+export LUXAR_GSPLAT_GRID_CACHE_MAX_GB=8
+export LUXAR_GSPLAT_GRID_CACHE_MAX_ENTRY_GB=6
+```
+
+Large entries that exceed the active cap are still used for the current render,
+but are not retained as long-lived CPU/GPU tensors. Use `clear_grid_cache()`
+between unrelated large jobs, and `get_grid_cache_stats()` to inspect current
+occupancy.
+
 ## Accelerated Backends
 
 For GPU-accelerated rendering, see the backend-specific subpackages:
 
 - **CUDA** (`cuda/`): NVIDIA GPU acceleration (2D-8D), substantial speedup (often orders of magnitude, GPU-dependent)
-- **Metal** (`metal/`): Apple Silicon acceleration (3D only), substantial speedup (chip-dependent)
+- **Metal** (`metal/`): Apple Silicon acceleration for 3D MPS volumes using splat-centric Metal kernels. The unconstrained 3D training path consumes raw model parameters directly in Metal and returns raw gradients; constrained 3D paths use post-activation Cholesky tensors, and other supported MPS dimensions use PyTorch rendering. Speedup is chip- and workload-dependent.
 
-Both backends provide drop-in replacements (`GaussianSplatModelCUDA`, `GaussianSplatModelMetal`) with the same API.
+Both backends provide model classes (`GaussianSplatModelCUDA`, `GaussianSplatModelMetal`) with matching parameter-management APIs. CUDA provides custom kernels for 2D-8D; Metal accepts 2D-8D MPS models but only dispatches to custom splat-centric Metal kernels for 3D float32 tensors.
 
 ## File Structure
 

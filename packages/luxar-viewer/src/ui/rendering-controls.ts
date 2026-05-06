@@ -159,6 +159,9 @@ export class RenderingControls {
   /** Visibility state */
   private visible: boolean = false;
 
+  /** Deferred setup handle for outside-click focus management. */
+  private clickOutsideTimeout: ReturnType<typeof setTimeout> | null = null;
+
   /** References to GUI controllers for updates */
   private controllers: RenderingControllers = {};
 
@@ -1027,7 +1030,11 @@ export class RenderingControls {
       localStorage.setItem(key, serializeSettings(this.settings));
     } catch (err) {
       // Ignore quota / disabled-storage errors — settings just don't persist.
-      log.warning(Modules.RENDERING_CONTROLS, 'Failed to save rendering settings to localStorage', err);
+      log.warning(
+        Modules.RENDERING_CONTROLS,
+        'Failed to save rendering settings to localStorage',
+        err
+      );
     }
   }
 
@@ -1045,7 +1052,11 @@ export class RenderingControls {
       const key = StorageKeys.rendering(this.sceneId);
       stored = localStorage.getItem(key);
     } catch (err) {
-      log.warning(Modules.RENDERING_CONTROLS, 'Failed to read rendering settings from localStorage', err);
+      log.warning(
+        Modules.RENDERING_CONTROLS,
+        'Failed to read rendering settings from localStorage',
+        err
+      );
     }
     this.hasStoredLocalSettings = !!stored;
 
@@ -1340,9 +1351,14 @@ export class RenderingControls {
     this.gui.show();
     this.visible = true;
 
-    // Add click handler to auto-blur inputs when clicking outside them
-    // This helps prevent focus getting stuck
-    setTimeout(() => {
+    // Add click handler to auto-blur inputs when clicking outside them.
+    // This helps prevent focus getting stuck. Track the timer so dispose()/hide()
+    // cannot race with the delayed registration and leave a document listener behind.
+    if (this.clickOutsideTimeout !== null) {
+      clearTimeout(this.clickOutsideTimeout);
+    }
+    this.clickOutsideTimeout = setTimeout(() => {
+      this.clickOutsideTimeout = null;
       this.addClickOutsideHandler();
     }, 100);
   }
@@ -1363,7 +1379,8 @@ export class RenderingControls {
       activeElement.blur();
     }
 
-    // Remove click outside handler
+    // Remove pending/active click outside handler
+    this.clearClickOutsideTimer();
     this.removeClickOutsideHandler();
 
     this.gui.hide();
@@ -1437,6 +1454,13 @@ export class RenderingControls {
 
     // Use capture phase to ensure we get the event first
     document.addEventListener('mousedown', this.clickOutsideHandler, true);
+  }
+
+  private clearClickOutsideTimer(): void {
+    if (this.clickOutsideTimeout !== null) {
+      clearTimeout(this.clickOutsideTimeout);
+      this.clickOutsideTimeout = null;
+    }
   }
 
   private removeClickOutsideHandler(): void {
@@ -1641,6 +1665,9 @@ export class RenderingControls {
       cb();
     }
     this.cleanupCallbacks = [];
+
+    this.clearClickOutsideTimer();
+    this.removeClickOutsideHandler();
 
     // Auto-blur cleanup is now handled by the custom GUI library
     this.gui.destroy();

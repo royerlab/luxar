@@ -11,6 +11,7 @@ This module provides ASGI middleware to simulate realistic network conditions in
 from __future__ import annotations
 
 import asyncio
+import os
 import random
 import time
 from typing import Any, Callable, Dict, Optional, TypedDict
@@ -304,6 +305,31 @@ def parse_network_options(
     return bandwidth_mbps, latency_ms, jitter_percent, packet_loss_rate
 
 
+def _truthy_env(value: Optional[str]) -> bool:
+    """Return True for common truthy environment variable values."""
+    if value is None:
+        return False
+    return value.strip().lower() not in {"", "0", "false", "no", "off"}
+
+
+def _production_guard_enabled() -> bool:
+    """Whether network simulation should be refused for production envs.
+
+    Triggers when ``LUXAR_PRODUCTION`` is truthy, or ``LUXAR_ENV`` names
+    a non-development environment (``prod``, ``production``, or
+    ``staging``). ``staging`` is included because it is closer to prod
+    than dev — running latency/packet-loss simulations against a staging
+    server is just as misleading as against prod.
+    """
+    if _truthy_env(os.getenv("LUXAR_PRODUCTION")):
+        return True
+    return os.getenv("LUXAR_ENV", "").strip().lower() in {
+        "prod",
+        "production",
+        "staging",
+    }
+
+
 def has_network_simulation(
     bandwidth_mbps: Optional[float],
     latency_ms: Optional[float],
@@ -408,6 +434,16 @@ class NetworkSimulationMiddleware:
         self.latency_ms = latency_ms
         self.jitter_percent = jitter_percent
         self.packet_loss_rate = packet_loss_rate
+
+        if _production_guard_enabled() and has_network_simulation(
+            bandwidth_limit_mbps, latency_ms, jitter_percent, packet_loss_rate
+        ):
+            raise RuntimeError(
+                "Network simulation is for development/testing only and is disabled "
+                "when LUXAR_ENV=production/prod or LUXAR_PRODUCTION is set. "
+                "Remove --profile/--bandwidth/--latency/--jitter/--packet-loss "
+                "or unset the production environment flag."
+            )
 
         # Convert bandwidth to bytes per second
         self.bytes_per_second = (

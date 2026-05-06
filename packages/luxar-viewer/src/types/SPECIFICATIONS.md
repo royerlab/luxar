@@ -912,32 +912,14 @@ interface OrderingMetadata {
 }
 ```
 
-### 7.2 LinesChunkSpatialIndex
+### 7.2 Spatial Index for Lines
 
-**Purpose**: Spatial index for efficient line queries.
-
-```typescript
-/**
- * Chunk-based spatial index for Lines
- * Supports dual ordering (vertices + segments)
- */
-interface LinesChunkSpatialIndex {
-  /** Lines metadata */
-  metadata: LinesMetadata;
-
-  /** Vertex chunk bounding boxes (num_v_chunks * ndim * 2) */
-  vertexChunkBounds: Float32Array;
-
-  /** Segment chunk bounding boxes (num_s_chunks * ndim * 2) */
-  segmentChunkBounds: Float32Array;
-
-  /** Total vertex chunks */
-  vertexChunkCount: number;
-
-  /** Total segment chunks */
-  segmentChunkCount: number;
-}
-```
+Lines have a dual spatial ordering (vertices + segments). The chunk-bounds
+spatial query consumes the segment side via the canonical `ChunkSpatialIndex`
+from `data/loaders/spatial-query-builder.ts`. The vertex-side chunk bounds are
+loaded by `LinesSpatialIndexLoader` privately and used only for upper-bound
+checks; they are not exposed as a separate type. Tolerance is selected at
+query time via `SpatialQueryBuilder({ geometryType: 'lines', … })`.
 
 ### 7.3 LoadedLinesData
 
@@ -1012,9 +994,6 @@ interface LinesUserData {
 
   /** Zarr group attributes */
   attrs: LinesMetadata;
-
-  /** Spatial index for queries (optional, may not exist for non-indexed data) */
-  spatialIndex?: LinesChunkSpatialIndex;
 
   /** Maximum line width (for bounding box expansion, NOT tolerance) */
   maxWidth: number;
@@ -1150,32 +1129,24 @@ interface PointsMetadata {
 }
 ```
 
-### 8.2 PointsChunkSpatialIndex
+### 8.2 Spatial Index for Points
 
-**Purpose**: Spatial index for efficient point queries. Re-exports `ChunkSpatialIndex` from data module.
+Points use the canonical `ChunkSpatialIndex` from
+`data/loaders/spatial-query-builder.ts`. Tolerance comes from the points-side
+`calculateSpatialQueryTolerance` (in `effective-radius-calculator.ts`) and is
+passed to `SpatialQueryBuilder` via the pre-computed-tolerance variant of
+`SpatialQueryOptions`. The points loader's private `PointsChunkIndex` carries
+the canonical fields plus descriptive metadata (ordering algorithm,
+ordering/slice dims, totals) used only for logging and stats.
 
 ```typescript
-/**
- * Chunk-based spatial index for Points
- * Uses Morton/Hilbert ordering for efficient nD queries
- */
-type PointsChunkSpatialIndex = ChunkSpatialIndex;
-
 interface ChunkSpatialIndex {
-  /** Metadata from node attributes */
+  chunkBounds: Float32Array; // shape (num_chunks, ndim, 2) flattened row-major
+  chunkCount: number;
   metadata: {
-    ordering: 'morton' | 'hilbert';
-    ordering_dims: number[];
-    slice_dims: number[];
-    ordering_bits_per_dim: number;
-    chunk_size: number;
-    total_points: number;
-    total_chunks: number;
     ndim: number;
+    chunk_size?: number;
   };
-
-  /** Chunk bounding boxes: shape (num_chunks, ndim, 2) flattened */
-  chunkBounds: Float32Array;
 }
 ```
 
@@ -1262,9 +1233,6 @@ interface PointsUserData {
 
   /** Maximum point radius (for bounding box expansion) */
   maxRadius?: number;
-
-  /** Spatial index for queries (optional, may not exist for 3D data) */
-  spatialIndex?: PointsChunkSpatialIndex;
 
   /** Currently visible point count after nD slicing */
   visiblePointCount?: number;
@@ -1449,15 +1417,11 @@ interface CoordinateBounds {
 
 ### 10.3 Spatial Index Types
 
-#### GSplatsChunkSpatialIndex
-
-```typescript
-interface GSplatsChunkSpatialIndex {
-  metadata: GSplatsMetadata;
-  chunkBounds: Float32Array; // (num_chunks * ndim * 2), flattened row-major
-  chunkCount: number; // ceil(n_splats / chunk_size)
-}
-```
+GSplats use the canonical `ChunkSpatialIndex` from
+`data/loaders/spatial-query-builder.ts`. There is no GSplats-specific spatial
+index type — the chunk-bounds shape is identical across geometry types and
+geometry-specific tolerance is selected at query time via
+`SpatialQueryBuilder({ geometryType: 'gsplats', … })`.
 
 #### SplatRange
 
@@ -1529,7 +1493,6 @@ interface GSplatsUserData {
   nodeType: 'gsplats';
   loader: GSplatsDataLoader;
   attrs: GSplatsMetadata;
-  spatialIndex?: GSplatsChunkSpatialIndex;
   visibleSplatCount?: number;
 }
 ```

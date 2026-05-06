@@ -89,7 +89,12 @@ export class DimensionSliders {
   /** Map of dimension indices to their corresponding toggle elements (binary categoricals) */
   private toggles: Map<number, HTMLElement> = new Map();
 
-  /** Map to store bound event handlers for cleanup */
+  /**
+   * Map to store bound event handlers for cleanup.
+   *
+   * Hover/focus visual states are handled entirely by CSS `:hover` and
+   * `:focus` pseudo-classes — no JS listeners are attached for those.
+   */
   private eventHandlers: Map<
     number,
     {
@@ -97,10 +102,6 @@ export class DimensionSliders {
       keydown?: (e: KeyboardEvent) => void;
       change?: () => void;
       toggleClick?: () => void;
-      mouseenter?: () => void;
-      mouseleave?: () => void;
-      focus?: () => void;
-      blur?: () => void;
       playClick?: () => void;
       contextMenu?: (e: MouseEvent) => void;
     }

@@ -31,6 +31,30 @@ class ValidationError(ValueError):
         super().__init__(full_message)
 
 
+def _validate_numeric_finite_values(array: NDArray[Any], context: str) -> None:
+    """Validate that an array has numeric dtype and contains only finite values."""
+    if not np.issubdtype(array.dtype, np.number):
+        raise ValidationError(
+            f"{context}: Expected numeric array, got dtype {array.dtype}",
+            "Convert your data to a numeric dtype such as np.float32",
+        )
+
+    try:
+        finite_mask = np.isfinite(array)
+    except TypeError as exc:
+        raise ValidationError(
+            f"{context}: Expected numeric finite values, got dtype {array.dtype}",
+            "Convert your data to a numeric dtype and remove invalid values",
+        ) from exc
+
+    if not bool(np.all(finite_mask)):
+        invalid_count = int(np.size(array) - np.count_nonzero(finite_mask))
+        raise ValidationError(
+            f"{context}: Contains {invalid_count} NaN or Inf value(s)",
+            "Remove or replace invalid values before writing, e.g. np.nan_to_num(data)",
+        )
+
+
 def validate_positions_for_writing(
     positions: NDArray[Any], context: str = "positions"
 ) -> Tuple[int, int]:
@@ -83,6 +107,8 @@ def validate_positions_for_writing(
             f"{context}: Points have 0 dimensions",
             "Each point must have at least 1 dimension (e.g., 1D, 2D, 3D)",
         )
+
+    _validate_numeric_finite_values(positions, context)
 
     if n_dims > 10:
         import warnings
@@ -142,6 +168,17 @@ def validate_colors_for_writing(
                 f"{context}: Expected shape {expected_shape} or {broadcast_shape}, got {colors.shape}"
             )
 
+    _validate_numeric_finite_values(colors, context)
+
+    if colors.size == 0:
+        if n_points == 0 and colors.shape == expected_shape:
+            return
+        raise ValidationError(
+            f"{context}: Empty colors array is only valid when n_points=0 "
+            f"and shape is {expected_shape}. Got shape {colors.shape}.",
+            "Provide one broadcast color with shape (1, 3) or a full colors array",
+        )
+
     # Check for invalid values
     if np.any(colors < 0):
         min_val: float = float(np.min(colors))
@@ -150,9 +187,10 @@ def validate_colors_for_writing(
             "Ensure all color values are >= 0. Use np.clip(colors, 0, None) to fix",
         )
 
-    # Warn about extreme HDR values
+    # Warn about extreme HDR values for floating-point HDR/SDR colors.
+    # Integer color arrays are SDR storage in their native integer range.
     max_val: float = float(np.max(colors))
-    if max_val > 10.0:
+    if np.issubdtype(colors.dtype, np.floating) and max_val > 10.0:
         import warnings
 
         warnings.warn(
@@ -201,19 +239,16 @@ def validate_radii_for_writing(
             f"Provide exactly {n_points} radii values or use shape (1,) for broadcasting",
         )
 
+    _validate_numeric_finite_values(radii, context)
+
     # Check for invalid values
     if np.any(radii <= 0):
         min_val: float = float(np.min(radii))
-        if min_val == 0:
-            raise ValidationError(
-                f"{context}: Radii must be positive (> 0). Found zero values.",
-                "Replace zeros with small positive values: radii[radii == 0] = 0.01",
-            )
-        else:
-            raise ValidationError(
-                f"{context}: Radii must be positive. Found minimum value: {min_val:.3f}",
-                "Use np.abs(radii) or np.clip(radii, 0.01, None) to ensure positive values",
-            )
+        raise ValidationError(
+            f"{context}: Radii must be positive (> 0). "
+            f"Found zero or negative values (minimum: {min_val:.3f}).",
+            "Use np.clip(radii, 0.01, None) to ensure positive values",
+        )
 
 
 def validate_sharpness_for_writing(
@@ -254,6 +289,8 @@ def validate_sharpness_for_writing(
             f"number of points ({n_points}) and is not 1 (broadcast)",
             f"Provide exactly {n_points} sharpness values or use shape (1,) for broadcasting",
         )
+
+    _validate_numeric_finite_values(sharpness, context)
 
     # Check for invalid values
     if np.any(sharpness <= 0):
@@ -338,7 +375,11 @@ def validate_zarr_attributes(attrs: dict, is_root: bool = False) -> None:
                 f"Use one of: {', '.join(valid_types)}",
             )
 
-    # Validate version if present
+    # Validate version if present. Keep this import local: typing_utils.config
+    # itself imports io.reader.DEFAULT_COMP via a lazy/inline path, and io.reader
+    # transitively imports core.dimensions which imports validation.category_validation.
+    # validation.base is imported early enough that an unconditional top-level
+    # import here would risk re-entering this module via that chain.
     if "luxar_version" in attrs:
         from ..typing_utils.config import SUPPORTED_VERSIONS
 

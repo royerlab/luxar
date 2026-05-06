@@ -356,6 +356,29 @@ class TestNetworkSimulationMiddleware:
         assert middleware.packet_loss_rate == 0.01
         assert middleware.bytes_per_second == 1_000_000 / 8  # 1 Mbps = 125 KB/s
 
+    def test_production_guard_rejects_active_simulation(self, monkeypatch):
+        """Test network simulation is refused in production environments."""
+        monkeypatch.setenv("LUXAR_ENV", "production")
+
+        with pytest.raises(RuntimeError, match="development/testing only"):
+            NetworkSimulationMiddleware(lambda *_args: None, latency_ms=10.0)
+
+    def test_production_guard_rejects_staging(self, monkeypatch):
+        """Staging counts as a non-development environment for the guard."""
+        monkeypatch.setenv("LUXAR_ENV", "staging")
+
+        with pytest.raises(RuntimeError, match="development/testing only"):
+            NetworkSimulationMiddleware(lambda *_args: None, latency_ms=10.0)
+
+    def test_production_guard_allows_inactive_middleware(self, monkeypatch):
+        """Test production guard allows no-op middleware instances."""
+        monkeypatch.setenv("LUXAR_PRODUCTION", "1")
+
+        middleware = NetworkSimulationMiddleware(lambda *_args: None)
+
+        assert middleware.latency_ms is None
+        assert middleware.bandwidth_limit_mbps is None
+
     def test_middleware_passes_through_non_http(self):
         """Test middleware passes through non-HTTP requests."""
         called = False
@@ -402,9 +425,23 @@ class TestNetworkSimulationMiddleware:
         assert elapsed >= 0.09  # 90ms (allow 10% tolerance)
         assert message_count == 2  # Should have sent response
 
-    @pytest.mark.skip(reason="Timing-sensitive test flaky on CI runners")
-    def test_bandwidth_throttling(self):
-        """Test that bandwidth throttling works."""
+    def test_bandwidth_throttling(self, monkeypatch):
+        """Test that bandwidth throttling computes deterministic sleep delays.
+
+        Both ``asyncio.sleep`` and ``time.time`` are monkeypatched so the
+        elapsed delta the middleware computes is exactly zero, regardless
+        of how slow the test runner is. Without freezing ``time.time``,
+        the assertion ``sleep_calls[0] == approx(0.08)`` flakes on slow CI.
+        """
+
+        sleep_calls: list[float] = []
+
+        async def fake_sleep(seconds: float) -> None:
+            sleep_calls.append(seconds)
+
+        monkeypatch.setattr("luxar.cli.network_simulation.asyncio.sleep", fake_sleep)
+        # Freeze the wall clock so elapsed = 0 inside the middleware.
+        monkeypatch.setattr("luxar.cli.network_simulation.time.time", lambda: 0.0)
 
         async def dummy_app(scope, receive, send):
             await send({"type": "http.response.start", "status": 200, "headers": []})
@@ -412,7 +449,7 @@ class TestNetworkSimulationMiddleware:
             await send({"type": "http.response.body", "body": b"x" * 10000})
 
         async def test_async():
-            # 1 Mbps = 125 KB/s, so 10KB should take ~0.08s
+            # 1 Mbps = 125 KB/s, so 10KB should take exactly 0.08s
             middleware = NetworkSimulationMiddleware(
                 dummy_app, bandwidth_limit_mbps=1.0
             )
@@ -426,16 +463,15 @@ class TestNetworkSimulationMiddleware:
             async def receive():
                 return {}
 
-            start = time.time()
             await middleware(scope, receive, send)
-            elapsed = time.time() - start
-            return elapsed, len(messages)
+            return len(messages)
 
-        elapsed, message_count = asyncio.run(test_async())
+        message_count = asyncio.run(test_async())
 
-        # 10KB at 125 KB/s = 0.08s, allow generous tolerance
-        assert elapsed >= 0.06  # At least 60ms (75% of expected)
-        assert elapsed <= 0.15  # At most 150ms (allow overhead)
+        # 10KB at 1 Mbps = 10_000 / 125_000 = 0.08s. With time.time frozen
+        # the middleware sleeps the entire expected_time deterministically.
+        assert len(sleep_calls) == 1
+        assert sleep_calls[0] == pytest.approx(0.08, abs=1e-9)
         assert message_count == 2
 
     def test_packet_loss_drops_requests(self):

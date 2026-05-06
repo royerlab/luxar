@@ -1,3 +1,11 @@
+# mypy: warn-unreachable=False
+# Reason: this module's hot path is gated by a `sys.platform != "darwin"`
+# early-return. mypy on Linux narrows sys.platform there and flags the
+# macOS-only branches as unreachable. The narrowing is platform-correct
+# on Linux and platform-incorrect on macOS, so per-line ignores disagree
+# across mypy versions/platforms; disabling the warning at file scope is
+# the cleanest expression of "this file is platform-conditional".
+
 """
 Metal-accelerated Gaussian splatting renderer for Apple Silicon.
 
@@ -24,15 +32,55 @@ from typing import Optional, Tuple
 # Package directory
 _METAL_DIR = Path(__file__).parent
 _SRC_DIR = _METAL_DIR / "src"
-_EXTENSION_PATTERN = "metal_splatting_backend.cpython-*.so"
+# Filter compiled extensions to the running Python's ABI tag so a stale build
+# from a different interpreter (e.g. cpython-311 alongside cpython-312) is not
+# picked up; loading it would fail at import time with a confusing error.
+_PYTHON_ABI_TAG = f"cpython-{sys.version_info.major}{sys.version_info.minor}"
+_EXTENSION_PATTERN = f"metal_splatting_backend.{_PYTHON_ABI_TAG}-*.so"
 
 
 def _find_extension() -> Optional[Path]:
-    """Find the compiled extension file if it exists."""
+    """Find the newest compiled extension matching the active Python ABI."""
     extensions = list(_METAL_DIR.glob(_EXTENSION_PATTERN))
     if extensions:
-        return extensions[0]
+        return max(extensions, key=lambda path: path.stat().st_mtime)
     return None
+
+
+def _extension_sources() -> list[Path]:
+    """Return source files that require the Python extension to be rebuilt."""
+    return [_METAL_DIR / "setup.py", _SRC_DIR / "bindings.mm"]
+
+
+def _extension_is_stale(extension: Path) -> bool:
+    """Return True when compiled Metal artifacts are older than their sources."""
+    extension_mtime = extension.stat().st_mtime
+    if any(
+        src.exists() and src.stat().st_mtime > extension_mtime
+        for src in _extension_sources()
+    ):
+        return True
+
+    metallib = _SRC_DIR / "default.metallib"
+    kernels = _SRC_DIR / "kernels.metal"
+    return not metallib.exists() or (
+        kernels.exists() and kernels.stat().st_mtime > metallib.stat().st_mtime
+    )
+
+
+def _mark_build_outputs_fresh(extension: Path) -> None:
+    """Touch generated artifacts so distutils no-op rebuilds do not stay stale."""
+    sources = [src for src in _extension_sources() if src.exists()]
+    kernels = _SRC_DIR / "kernels.metal"
+    if kernels.exists():
+        sources.append(kernels)
+    newest_source_mtime = max((src.stat().st_mtime for src in sources), default=0.0)
+    fresh_mtime = max(newest_source_mtime + 1e-3, extension.stat().st_mtime)
+    os.utime(extension, (fresh_mtime, fresh_mtime))
+
+    metallib = _SRC_DIR / "default.metallib"
+    if metallib.exists():
+        os.utime(metallib, (fresh_mtime, fresh_mtime))
 
 
 def _check_xcode_setup() -> Tuple[bool, str]:
@@ -167,9 +215,9 @@ def _auto_build_extension() -> Tuple[bool, str]:
     """
     from arbol import aprint, asection
 
-    # Check if already built
+    # Check if already built and up to date
     existing = _find_extension()
-    if existing and existing.exists():
+    if existing and existing.exists() and not _extension_is_stale(existing):
         return True, f"Using existing extension: {existing.name}"
 
     with asection("Metal Backend: Auto-compiling (first-time setup)"):
@@ -208,6 +256,7 @@ def _auto_build_extension() -> Tuple[bool, str]:
             # Verify build succeeded
             built_extension = _find_extension()
             if built_extension and built_extension.exists():
+                _mark_build_outputs_fresh(built_extension)
                 msg = _BUILD_SUCCESS_MESSAGE.format(extension_path=built_extension)
                 aprint(msg)
                 return True, msg
@@ -267,7 +316,7 @@ def _validate_mps_interop() -> bool:
     except Exception as e:
         warnings.warn(
             f"MPS-Metal interop validation failed: {e}. "
-            f"Metal acceleration disabled. Using PyTorch fallback.",
+            "Metal backend disabled; use GaussianSplatModel instead.",
             RuntimeWarning,
         )
         return False
@@ -284,6 +333,10 @@ def _try_import_extension() -> bool:
             sys.path.insert(0, str(_METAL_DIR))
 
         import metal_splatting_backend
+
+        metallib = _SRC_DIR / "default.metallib"
+        if metallib.exists() and hasattr(metal_splatting_backend, "set_library_path"):
+            metal_splatting_backend.set_library_path(str(metallib))
 
         return True
 
@@ -302,25 +355,30 @@ if sys.platform == "darwin":
     _mps_interop_valid = _validate_mps_interop()
 
     if _mps_interop_valid:
-        # Try to import existing extension
-        if _try_import_extension():
-            _metal_available = True
-            _init_message = "Metal backend loaded successfully"
-        else:
-            # Extension not found - try auto-build
-            build_success, build_msg = _auto_build_extension()
+        existing_extension = _find_extension()
+        needs_build = existing_extension is None or _extension_is_stale(
+            existing_extension
+        )
 
-            if build_success:
-                # Try import again after build
-                if _try_import_extension():
-                    _metal_available = True
-                    _init_message = "Metal backend compiled and loaded"
-                else:
-                    _init_message = "Build succeeded but import failed. Check Python version compatibility."
-                    warnings.warn(_init_message, RuntimeWarning)
-            else:
+        if needs_build:
+            build_success, build_msg = _auto_build_extension()
+            if not build_success:
                 _init_message = build_msg
                 # Don't warn here - the build function already printed detailed help
+
+        if not _init_message:
+            if _try_import_extension():
+                _metal_available = True
+                _init_message = (
+                    "Metal backend compiled and loaded"
+                    if needs_build
+                    else "Metal backend loaded successfully"
+                )
+            else:
+                _init_message = (
+                    "Metal extension import failed. Check Python version compatibility."
+                )
+                warnings.warn(_init_message, RuntimeWarning)
 
 
 def is_metal_available() -> bool:
@@ -332,7 +390,7 @@ def is_metal_available() -> bool:
     2. MPS-Metal interop validated
     3. Metal extension successfully imported
 
-    If False, the package will use PyTorch CPU/MPS fallback instead.
+    If False, callers should use the reference PyTorch `GaussianSplatModel`.
     """
     return _metal_available and _mps_interop_valid
 
@@ -346,7 +404,7 @@ def get_metal_status() -> str:
     """
     if sys.platform != "darwin":
         return "Metal backend only available on macOS"
-    if not _mps_interop_valid:  # type: ignore[unreachable]  # reachable on macOS
+    if not _mps_interop_valid:
         return "MPS-Metal interop validation failed. PyTorch MPS may not be available."
     if _metal_available:
         return "Metal backend available and loaded"

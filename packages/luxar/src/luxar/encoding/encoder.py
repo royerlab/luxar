@@ -12,6 +12,7 @@ from typing import Any, Literal, Optional, Union
 import numpy as np
 import zarr
 
+from ..validation.base import _validate_numeric_finite_values
 from .modes import EncodingMode
 from .registry import ArrayRefRegistry
 from .semantic_types import SemanticType
@@ -81,9 +82,14 @@ class ArrayEncoder:
             name: Array name within the group
             semantic_type: Semantic type (REQUIRED - must be explicit)
             mode: Encoding mode (AUTO, PRECISION, MEMORY, CUSTOM)
-            n_elements: Number of elements the scalar represents.
-                        - Required if data is scalar
-                        - Optional if data is array (for validation)
+            n_elements: Broadcast target element count.
+                        - Required if data is scalar/tuple/list because the
+                          scalar value is stored once and represents this many
+                          elements.
+                        - Optional for array input, but when provided it opts
+                          into broadcast/uniform validation: arrays must have
+                          shape (1, ...) or be a full-length uniform array.
+                          Omit n_elements for non-uniform full arrays.
             bounds: Min/max bounds for BOUNDED_SCALAR (None = auto-detect)
             positive_scalar_encoding: "linear" or "log" for POSITIVE_SCALAR
             custom_encoder: Explicit encoder name for CUSTOM mode
@@ -135,6 +141,13 @@ class ArrayEncoder:
             )
             return
 
+        # Empty array handling: pass through without encoding. This must run
+        # before the n_elements uniformity check below — `_is_uniform` indexes
+        # `data[0]` and would raise IndexError on an empty array.
+        if data.size == 0:
+            self._write_passthrough(zarr_group, name, data, chunks, compressor)
+            return
+
         # Array input path - validate n_elements if provided
         if n_elements is not None:
             if data.shape[0] != n_elements and data.shape[0] != 1:
@@ -150,11 +163,6 @@ class ArrayEncoder:
                     f"n_elements={n_elements} provided with full array, but array has "
                     f"varying values. For non-uniform data, omit n_elements parameter."
                 )
-
-        # Empty array handling: pass through without encoding
-        if data.size == 0:
-            self._write_passthrough(zarr_group, name, data, chunks, compressor)
-            return
 
         # Validate input data
         self._validate_input(data, semantic_type, color_mode)
@@ -310,12 +318,13 @@ class ArrayEncoder:
         Raises:
             ValueError: If constraints are violated
         """
-        # Check for NaN or Inf
-        if np.issubdtype(data.dtype, np.floating):
-            if np.any(np.isnan(data)):
-                raise ValueError("Input data contains NaN values")
-            if np.any(np.isinf(data)):
-                raise ValueError("Input data contains Inf values")
+        # EN-1: route NaN/Inf detection through the canonical validator so
+        # error messages, suggestions, and fast-path semantics stay in lock-
+        # step with `validation.base._validate_numeric_finite_values`. The
+        # helper handles both NaN and Inf in a single np.isfinite scan and
+        # raises ValidationError (a ValueError subclass).
+        if np.issubdtype(data.dtype, np.number):
+            _validate_numeric_finite_values(data, "input data")
 
         # Semantic type specific validation
         if semantic_type == SemanticType.COLOR:
@@ -323,12 +332,27 @@ class ArrayEncoder:
             if np.any(data < 0):
                 raise ValueError("COLOR semantic type requires non-negative values")
 
+            if np.issubdtype(data.dtype, np.integer):
+                if data.dtype not in (np.dtype("uint8"), np.dtype("uint16")):
+                    raise ValueError(
+                        "Integer COLOR arrays must use dtype uint8 or uint16 "
+                        f"(got {data.dtype})"
+                    )
+                if color_mode not in (None, "sdr"):
+                    raise ValueError(
+                        "Integer COLOR arrays are SDR; color_mode must be None or 'sdr'"
+                    )
+
             # Float colors require explicit color_mode
             if np.issubdtype(data.dtype, np.floating):
                 if color_mode is None:
                     raise ValueError(
                         "Float COLOR arrays require explicit color_mode "
                         "parameter ('sdr' or 'hdr')"
+                    )
+                if color_mode not in ("sdr", "hdr"):
+                    raise ValueError(
+                        f"color_mode must be 'sdr' or 'hdr', got {color_mode!r}"
                     )
                 if color_mode == "sdr":
                     # SDR mode: values must be in [0, 1]

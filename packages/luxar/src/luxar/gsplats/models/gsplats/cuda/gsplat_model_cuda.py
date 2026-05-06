@@ -15,6 +15,7 @@ import numpy as np
 import torch
 
 from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
+from luxar.gsplats.utils.device import resolve_torch_device
 
 # Import CUDA extension when available
 try:
@@ -399,16 +400,9 @@ class GaussianSplatModelCUDA(torch.nn.Module):
                 f"For higher dimensions, use GaussianSplatModel."
             )
 
-        # Device validation
-        resolved_device: torch.device
-        if device is None:
-            resolved_device = torch.device(
-                "cuda" if torch.cuda.is_available() else "cpu"
-            )
-        elif isinstance(device, str):
-            resolved_device = torch.device(device)
-        else:
-            resolved_device = device
+        # Device validation: this backend is CUDA-only, so opt out of Metal in
+        # auto-selection and surface a clear error for any other device.
+        resolved_device = resolve_torch_device(device, use_metal=False)
 
         if resolved_device.type != "cuda":
             raise ValueError(

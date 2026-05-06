@@ -187,6 +187,13 @@ test.describe('Error Recovery - Network Failures', () => {
     // Wait for the viewer to handle the partial load: either it recovers
     // (initialized === true) or it surfaces an error / falls back to the
     // dataset browser. Poll the disjunction until met or budget elapses.
+    //
+    // Budget rationale: with `route.abort('connectionfailed')`, each chunk
+    // walks the full cache-retry chain (4 attempts with backoff) before
+    // returning undefined. On a real dataset that's tens of chunks
+    // serialized per array, so the total load can legitimately take ~45 s
+    // before the loader settles on a final state. The test's CONTRACT is
+    // "viewer doesn't hang indefinitely" — 60 s comfortably bounds that.
     await page
       .waitForFunction(
         () =>
@@ -196,7 +203,7 @@ test.describe('Error Recovery - Network Failures', () => {
           document.querySelector('.luxar-dataset-browser') !== null ||
           (window as any).__luxarDebug?.getState?.()?.initialized === true,
         null,
-        { timeout: 15000 }
+        { timeout: 60000 }
       )
       .catch(() => {
         /* fall through to assertion for a meaningful failure message */
@@ -223,6 +230,9 @@ test.describe('Error Recovery - WebGL Failures', () => {
 
     await page.goto('/?debug');
     await waitForLuxarReady(page);
+
+    // Snapshot state before context loss so we can verify it survives the cycle
+    const stateBefore = await getLuxarState(page);
 
     // Simulate WebGL context loss via the WEBGL_lose_context extension
     const contextLostTriggered = await page.evaluate(() => {
@@ -251,6 +261,25 @@ test.describe('Error Recovery - WebGL Failures', () => {
       });
 
       await page.waitForTimeout(1000);
+
+      // Verify the viewer state survived the loss/restore cycle. The
+      // post-restore handler in scene-manager.ts disposes/recreates
+      // post-processing and re-marks geometry/materials dirty so the next
+      // render re-uploads everything to the GPU.
+      const stateAfter = await getLuxarState(page);
+      expect(stateAfter.initialized).toBe(true);
+      expect(stateAfter.totalPoints).toBe(stateBefore.totalPoints);
+
+      // renderOnce must not throw against the restored context
+      const renderOk = await page.evaluate(() => {
+        try {
+          (window as any).__luxarDebug?.renderOnce?.();
+          return true;
+        } catch {
+          return false;
+        }
+      });
+      expect(renderOk).toBe(true);
     }
 
     // The key assertion: no unhandled exceptions during context loss/restore cycle

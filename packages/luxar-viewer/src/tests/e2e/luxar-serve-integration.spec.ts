@@ -15,6 +15,11 @@ import { test, expect } from '@playwright/test';
 import { waitForLuxarReady, waitForPointsLoaded, assertNoConsoleErrors } from './helpers';
 import { spawn, execSync, type ChildProcess } from 'child_process';
 import * as path from 'path';
+import { fileURLToPath } from 'url';
+
+// `package.json` declares `"type": "module"`, so the CommonJS `__dirname`
+// global is undefined at module load. Reconstruct it from `import.meta.url`.
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const SERVE_PORT = 8005;
 const PROJECT_ROOT = path.resolve(__dirname, '../../../../..');

@@ -147,22 +147,33 @@ def denoise_nlm(
 
         try:
             return nlm_cuda_denoise(volume, h, patch_size, search_distance)
-        except ValueError as exc:
-            # Unsupported params (e.g., search_distance too large for GPU
-            # shared memory) — fall back to PyTorch backend
-            import warnings
+        except (ValueError, torch.cuda.OutOfMemoryError) as exc:
+            # Unsupported params (ValueError: e.g. search_distance too large
+            # for GPU shared memory) or OOM — fall back to PyTorch backend.
+            fall_back_reason: Exception = exc
+        except RuntimeError as exc:
+            # Only fall back for CUDA-driver / kernel-launch failures.
+            # Other RuntimeErrors (shape mismatches, dtype bugs in the
+            # wrapper) should surface so they get fixed instead of being
+            # silently masked by the slow PyTorch path.
+            msg = str(exc).lower()
+            if "cuda" not in msg and "cudnn" not in msg and "driver" not in msg:
+                raise
+            fall_back_reason = exc
 
-            warnings.warn(
-                f"CUDA NLM: {exc} — falling back to PyTorch backend "
-                f"(slower but supports any parameter combination).",
-                UserWarning,
-                stacklevel=2,
-            )
-            from .nlm_pytorch import nlm_pytorch_denoise
+        import warnings
 
-            return nlm_pytorch_denoise(
-                volume, h, patch_size, search_distance, chunk_size=chunk_size
-            )
+        warnings.warn(
+            f"CUDA NLM: {fall_back_reason} — falling back to PyTorch backend "
+            f"(slower but supports any parameter combination).",
+            UserWarning,
+            stacklevel=2,
+        )
+        from .nlm_pytorch import nlm_pytorch_denoise
+
+        return nlm_pytorch_denoise(
+            volume, h, patch_size, search_distance, chunk_size=chunk_size
+        )
     elif resolved == "pytorch":
         from .nlm_pytorch import nlm_pytorch_denoise
 

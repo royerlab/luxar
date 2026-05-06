@@ -358,7 +358,3 @@ class TestRecoveryStrategies:
             assert "points_5d" not in store
             assert "points_7d" not in store
             assert "points_2d" not in store
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])

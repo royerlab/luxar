@@ -74,21 +74,16 @@ export class RangeLoader {
     if (!attrs?.encoding) return 'direct';
 
     const enc = attrs.encoding;
+    ArrayDecoder.validateEncodingMetadata(enc);
 
     // Priority order (must match Python spec)
     if (enc.name === 'broadcasted') return 'broadcasted';
-    if (enc.target) return 'array_ref';
-    if (enc.name?.startsWith('lut') && enc.lut) return 'lut';
-    if (
-      enc.name?.startsWith('log_scalar') ||
-      enc.name?.includes('uint') ||
-      enc.bounds ||
-      (enc.min !== undefined && enc.max !== undefined)
-    ) {
-      return 'quantized';
-    }
+    if (enc.name === 'array_ref') return 'array_ref';
+    if (ArrayDecoder.isLUTEncodingName(enc.name)) return 'lut';
+    if (ArrayDecoder.isQuantizedEncoding(attrs)) return 'quantized';
+    if (ArrayDecoder.isDirectEncodingName(enc.name)) return 'direct';
 
-    return 'direct';
+    throw new Error(`Unknown encoding name: ${enc.name}`);
   }
 
   /**

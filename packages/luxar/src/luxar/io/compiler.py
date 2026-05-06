@@ -42,8 +42,8 @@ from ..encoding import (
 from ..io.reader import DEFAULT_COMP
 from ..io.writer import ZarrWriterProtocol
 from ..typing_utils.aliases import ChunkSpec, MaxShape, NodePath, PointsMetadata
-from ..typing_utils.config import DEFAULT_CHUNK_SIZE, DEFAULT_VERSION
-from ..typing_utils.constants import SHARPNESS_MAX
+from ..typing_utils.config import DEFAULT_VERSION
+from ..typing_utils.constants import SHARPNESS_MAX, TARGET_CHUNK_BYTES
 from ..typing_utils.protocols import CompressorProtocol
 
 # Ordering functions will be imported locally where needed to avoid circular imports
@@ -51,26 +51,41 @@ from ..typing_utils.protocols import CompressorProtocol
 
 def _calculate_intelligent_chunks(
     shape: Tuple[int, ...],
-    target_chunk_size: int = DEFAULT_CHUNK_SIZE,
+    target_chunk_bytes: int = TARGET_CHUNK_BYTES,
     spatial_index_data: Optional[Dict[str, Any]] = None,
+    *,
+    dtype: np.dtype = np.dtype(np.float32),
 ) -> Tuple[int, ...]:
     """Calculate optimal chunk shape for a dataset.
 
     When spatial ordering data is available, uses chunk_size from ordering.
 
+    The byte-target heuristic depends on dtype itemsize: a uint8 colors
+    array of shape (N, 3) yields different optimal chunks than a float32
+    positions array of the same shape. CC-1-r: previous versions of this
+    helper accepted ``itemsize: int = 4`` which silently under-chunked any
+    non-float32 caller that forgot to thread the parameter through. The
+    ``dtype=`` form makes the contract explicit at every call site.
+
     Args:
-        shape: Shape of the dataset
-        target_chunk_size: Target size for chunks in elements
-        spatial_index_data: Optional ordering data (with chunk_size)
+        shape: Shape of the dataset.
+        target_chunk_bytes: Target chunk payload size in bytes.
+        spatial_index_data: Optional ordering data (with chunk_size).
+        dtype: NumPy dtype of the array being chunked. Defaults to float32
+            for backwards compatibility but every call site should pass the
+            actual array dtype explicitly.
 
     Returns:
-        Optimized chunk shape
+        Optimized chunk shape.
     """
+    element_size = max(1, int(dtype.itemsize))
+    target_elements = max(1, int(target_chunk_bytes) // element_size)
+
     if len(shape) == 1:
         # 1D array - use spatial index chunk_size if available for alignment
         if spatial_index_data and "chunk_size" in spatial_index_data:
             return (min(shape[0], spatial_index_data["chunk_size"]),)
-        return (min(shape[0], target_chunk_size),)
+        return (min(shape[0], target_elements),)
 
     if len(shape) == 2:
         # 2D array (e.g., positions) - chunk along first dimension
@@ -81,12 +96,12 @@ def _calculate_intelligent_chunks(
             chunk_points = spatial_index_data["chunk_size"]
             return (chunk_points, n_dims)
 
-        # Fallback to standard chunking
-        chunk_points = min(n_points, target_chunk_size // n_dims)
+        # Fallback to standard byte-based chunking
+        chunk_points = min(n_points, max(1, target_elements // n_dims))
         return (chunk_points, n_dims)
 
-    # For higher dimensions, use reasonable defaults
-    return tuple(min(s, target_chunk_size) for s in shape)
+    # For higher dimensions, use reasonable byte-based defaults
+    return tuple(min(s, target_elements) for s in shape)
 
 
 class LuxarZarrCompiler(ZarrWriterProtocol):
@@ -204,6 +219,24 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         """Enter context manager."""
         return self
 
+    def _check_not_finalized(self, op: str) -> None:
+        """Refuse mutating operations after finalize() has run.
+
+        CL-2: ``finalize()`` writes the consolidated zarr metadata; any
+        subsequent ``write_*`` / ``create_*`` call would silently produce a
+        store with stale ``.zmetadata`` (the chunk would land but the
+        consolidated index would not see it). Failing fast surfaces the
+        misuse at the call site rather than as a downstream "missing data"
+        symptom.
+        """
+        if self._is_finalized:
+            raise RuntimeError(
+                f"Cannot {op} after the writer has been finalized. "
+                "All mutating calls must run inside the active "
+                "LuxarZarrCompiler context, before context exit or before "
+                "Scene.to_zarr() finalizes the store."
+            )
+
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Exit context manager and finalize."""
         if not self._is_finalized:
@@ -234,6 +267,8 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         Raises:
             ValueError: If dimensions is None or invalid
         """
+        self._check_not_finalized("create_scene")
+
         # Import here to avoid circular dependency
         from ..core.scene import Scene
 
@@ -262,6 +297,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             path: Path for the group within the store
             **attrs: Attributes to attach to the group
         """
+        self._check_not_finalized("write_group")
         # Handle root path
         if path == "/" or path == "":
             group = self.store
@@ -347,6 +383,8 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         Returns:
             Metadata dictionary about the written data
         """
+        self._check_not_finalized("write_points")
+
         # Import validation functions locally to avoid circular imports
         from ..validation.base import (
             validate_colors_for_writing,
@@ -564,6 +602,8 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         Returns:
             Metadata dictionary about the written lines
         """
+        self._check_not_finalized("write_lines")
+
         from ..validation.base import (
             validate_colors_for_writing,
             validate_positions_for_writing,
@@ -766,6 +806,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                         spatial_index_data=ordering_data.get("vertex_ordering")
                         if ordering_data
                         else None,
+                        dtype=colors.dtype,
                     )
                     n_elems_color = None
 
@@ -1204,7 +1245,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                     chunks_colors = None
                 else:
                     chunks_colors = _calculate_intelligent_chunks(
-                        colors.shape, spatial_index_data=ordering_data
+                        colors.shape,
+                        spatial_index_data=ordering_data,
+                        dtype=colors.dtype,
                     )
                     n_elems_color = None
 
@@ -1359,6 +1402,8 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         Returns:
             Metadata dictionary about the written gsplats
         """
+        self._check_not_finalized("write_gsplats")
+
         path = path.lstrip("/")
         group = self.store.require_group(path)
 
@@ -1475,6 +1520,8 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         Returns:
             Metadata dictionary about the written gsplats (aggregate).
         """
+        self._check_not_finalized("write_gsplats_multi_lod")
+
         if not lods:
             raise ValueError("lods must contain at least one LOD")
 
@@ -1633,6 +1680,8 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         Returns:
             Zarr dataset handle
         """
+        self._check_not_finalized("create_resizable_dataset")
+
         path = path.lstrip("/")
 
         # Parse parent group and dataset name
@@ -1975,8 +2024,8 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         # Calculate intelligent chunks (aligned with spatial index if available)
         chunks = _calculate_intelligent_chunks(
             positions.shape,
-            target_chunk_size=DEFAULT_CHUNK_SIZE,
             spatial_index_data=spatial_index_data,
+            dtype=positions.dtype,
         )
 
         # Use ArrayEncoder for positions (COORDINATE semantic type)
@@ -2028,7 +2077,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             else:
                 n_elems = None
                 color_chunks = _calculate_intelligent_chunks(
-                    colors.shape, spatial_index_data=spatial_index_data
+                    colors.shape,
+                    spatial_index_data=spatial_index_data,
+                    dtype=colors.dtype,
                 )
 
             # Detect color_mode for float arrays

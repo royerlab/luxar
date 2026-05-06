@@ -8,14 +8,14 @@ Speed optimisations (validated via autoresearch, 38 experiments)
    the base loss and the asymmetric over-prediction penalty.  Previously
    it was computed twice (once for sum, once for the masked over-prediction sum).
 
-2. **torch.compile** (−14.4%): ``@torch.compile(fullgraph=False)`` on
-   ``_compute_poisson_loss`` fuses the clamp/div/xlogy/where/sum element-wise
-   operations into fewer CUDA kernels, dramatically reducing kernel launch
-   overhead for the 62M-element volume tensors.
+2. **torch.compile on CUDA** (−14.4% in benchmarked cases): CUDA loss kernels
+   are compiled opportunistically with a safe eager fallback. CPU and MPS use
+   eager PyTorch to avoid runtime C++ toolchain requirements.
 """
 
 from __future__ import annotations
 
+import warnings
 from typing import TYPE_CHECKING, Callable
 
 import torch
@@ -56,6 +56,10 @@ def create_loss_function(
     l1_diag = preprocessed_data.l1_diag
     boundary_penalty = config.boundary_penalty
 
+    poisson_loss = _compile_loss_kernel(_compute_poisson_loss, V_t.device)
+    l1_loss = _compile_loss_kernel(_compute_l1_loss, V_t.device)
+    mse_loss = _compile_loss_kernel(_compute_mse_loss, V_t.device)
+
     def loss_fn(pred: torch.Tensor) -> torch.Tensor:
         """
         Compute loss between prediction and target.
@@ -71,12 +75,12 @@ def create_loss_function(
             Computed loss value
         """
         if loss_type.lower() == "poisson":
-            data = _compute_poisson_loss(pred, V_t, asymmetric_penalty)
+            data = poisson_loss(pred, V_t, asymmetric_penalty)
         elif loss_type.lower() == "l1":
-            data = _compute_l1_loss(pred, V_t, asymmetric_penalty)
+            data = l1_loss(pred, V_t, asymmetric_penalty)
         else:
             # MSE loss (fallback for loss_type == "mse")
-            data = _compute_mse_loss(pred, V_t, asymmetric_penalty)
+            data = mse_loss(pred, V_t, asymmetric_penalty)
 
         # Add L1 regularization on amplitudes if specified
         if l1_amp is not None and l1_amp > 0:
@@ -114,7 +118,46 @@ def create_loss_function(
     return loss_fn
 
 
-@torch.compile(fullgraph=False)
+def _compile_loss_kernel(
+    fn: Callable[[torch.Tensor, torch.Tensor, float | None], torch.Tensor],
+    device: torch.device,
+) -> Callable[[torch.Tensor, torch.Tensor, float | None], torch.Tensor]:
+    """Compile CUDA loss kernels with a runtime-safe eager fallback."""
+    if device.type != "cuda":
+        return fn
+
+    try:
+        compiled_fn = torch.compile(fn, fullgraph=False)
+    except Exception as exc:
+        warnings.warn(
+            f"torch.compile unavailable for loss kernel {fn.__name__}; using eager PyTorch: {exc}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return fn
+
+    compile_failed = False
+
+    def wrapped(
+        pred: torch.Tensor, target: torch.Tensor, asymmetric_penalty: float | None
+    ) -> torch.Tensor:
+        nonlocal compile_failed
+        if compile_failed:
+            return fn(pred, target, asymmetric_penalty)
+        try:
+            return compiled_fn(pred, target, asymmetric_penalty)
+        except Exception as exc:
+            compile_failed = True
+            warnings.warn(
+                f"torch.compile failed for loss kernel {fn.__name__}; using eager PyTorch: {exc}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            return fn(pred, target, asymmetric_penalty)
+
+    return wrapped
+
+
 def _compute_poisson_loss(
     pred: torch.Tensor, target: torch.Tensor, asymmetric_penalty: float | None
 ) -> torch.Tensor:
@@ -140,7 +183,6 @@ def _compute_poisson_loss(
     return data
 
 
-@torch.compile(fullgraph=False)
 def _compute_l1_loss(
     pred: torch.Tensor, target: torch.Tensor, asymmetric_penalty: float | None
 ) -> torch.Tensor:
@@ -164,7 +206,6 @@ def _compute_l1_loss(
     return data
 
 
-@torch.compile(fullgraph=False)
 def _compute_mse_loss(
     pred: torch.Tensor, target: torch.Tensor, asymmetric_penalty: float | None
 ) -> torch.Tensor:

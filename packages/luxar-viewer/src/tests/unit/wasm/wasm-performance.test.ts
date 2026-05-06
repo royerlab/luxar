@@ -19,12 +19,14 @@ import { TypeScriptFallback } from '../../../wasm/typescript';
 // adds significant overhead to the tight loops used by performance benchmarks.
 vi.setConfig({ testTimeout: 30_000 });
 
-// Check if WASM files exist
+// Check if WASM files exist. Benchmarks are skipped when artifacts are absent
+// unless LUXAR_REQUIRE_WASM_TESTS=1 is set, in which case a smoke test fails.
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const wasmJsPath = join(__dirname, '../../../../public/wasm/luxar_wasm.js');
 const wasmBinaryPath = join(__dirname, '../../../../public/wasm/luxar_wasm_bg.wasm');
 const wasmFilesExist = existsSync(wasmJsPath) && existsSync(wasmBinaryPath);
+const requireWasmTests = process.env.LUXAR_REQUIRE_WASM_TESTS === '1';
 
 // Benchmark configuration
 const WARMUP_ITERATIONS = 10;
@@ -88,6 +90,12 @@ function benchmark<T>(
     speedup,
   });
 }
+
+describe('WASM benchmark artifact requirement', () => {
+  it.runIf(requireWasmTests)('has built WASM artifacts when benchmarks are required', () => {
+    expect(wasmFilesExist).toBe(true);
+  });
+});
 
 describe.skipIf(!wasmFilesExist)('WASM Performance Benchmarks', () => {
   let wasmModule: WasmModule;

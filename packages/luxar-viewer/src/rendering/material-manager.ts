@@ -67,6 +67,14 @@ export class MaterialManager {
   private lineMaterialCache = new Map<string, LineMaterial>();
   private gsplatMaterialCache = new Map<string, GSplatMaterial>();
   private registeredMaterials = new Set<THREE.Material & CameraAwareMaterial>();
+  /**
+   * Materials registered for camera updates but not owned by a cache entry.
+   *
+   * Examples: per-node colormap material clones and GPU-picking materials. These
+   * still need global camera uniforms and manager-level disposal, but they must
+   * be tracked separately from cached shared materials for leak diagnostics.
+   */
+  private ownedMaterials = new Set<THREE.Material & CameraAwareMaterial>();
   private currentFov = (60 * Math.PI) / 180; // Current FOV in radians (or frustumHeight for ortho)
   private currentResolution = new THREE.Vector2(1920, 1080); // Use reasonable default
   private currentIsOrtho = false;
@@ -283,10 +291,14 @@ export class MaterialManager {
 
   /**
    * Register a material for global camera parameter updates.
-   * Use this for cloned materials that need to receive updateCameraParams() calls.
+   *
+   * Use this for non-cached materials such as per-node colormap clones and
+   * picking materials. Cached materials are registered internally by
+   * getPointMaterial()/getLineMaterial()/getGSplatMaterial().
    */
   register(material: THREE.Material & CameraAwareMaterial): void {
     this.registeredMaterials.add(material);
+    this.ownedMaterials.add(material);
     // Immediately update with current camera params so the material is in sync
     material.updateCameraParams(
       this.currentFov,
@@ -302,6 +314,7 @@ export class MaterialManager {
    */
   unregister(material: THREE.Material & CameraAwareMaterial): void {
     this.registeredMaterials.delete(material);
+    this.ownedMaterials.delete(material);
 
     // Also remove from cache based on material type
     if (material instanceof PointMaterial) {
@@ -335,6 +348,7 @@ export class MaterialManager {
     // Snapshot and clear first so unregister() calls during dispose are no-ops
     const materials = [...this.registeredMaterials];
     this.registeredMaterials.clear();
+    this.ownedMaterials.clear();
     this.pointMaterialCache.clear();
     this.lineMaterialCache.clear();
     this.gsplatMaterialCache.clear();
@@ -347,11 +361,14 @@ export class MaterialManager {
    * Get cache statistics
    */
   getCacheStats() {
-    // Returns { pointMaterials, lineMaterials, gsplatMaterials, totalRegistered, keys }
+    // Returns cache and ownership statistics for diagnostics/tests.
     return {
       pointMaterials: this.pointMaterialCache.size,
       lineMaterials: this.lineMaterialCache.size,
       gsplatMaterials: this.gsplatMaterialCache.size,
+      ownedMaterials: this.ownedMaterials.size,
+      cachedMaterials:
+        this.pointMaterialCache.size + this.lineMaterialCache.size + this.gsplatMaterialCache.size,
       totalRegistered: this.registeredMaterials.size,
       keys: [
         ...Array.from(this.pointMaterialCache.keys()),

@@ -20,7 +20,11 @@
 import * as THREE from 'three';
 import type { PostProcessingManager } from '../post-processing-manager';
 import { isCameraAwareMaterial } from '../camera-aware-material';
-import { getCameraFovRadians, isOrthographicCamera, getOrthoFrustumHeight } from '../../scene/camera-utils';
+import {
+  getCameraFovRadians,
+  isOrthographicCamera,
+  getOrthoFrustumHeight,
+} from '../../scene/camera-utils';
 import type { LuxarCamera } from '../../scene/camera-utils';
 import { log, Modules } from '../../utils/log';
 
@@ -44,6 +48,24 @@ interface PickNodeEntry {
 
 /** Size of the pick buffer in pixels (5x5 = 25 pixels). */
 const PICK_SIZE = 5;
+
+/**
+ * Hard cap on either dimension of the pick render target. Pick IDs do not
+ * need pixel-perfect resolution, so on 4K/5K screens we stop scaling up to
+ * keep per-pick GPU cost bounded.
+ */
+export const MAX_PICK_BUFFER_DIM = 1024;
+
+/**
+ * Compute the pick render target size from the renderer's drawing-buffer
+ * size: half resolution per axis, capped at MAX_PICK_BUFFER_DIM, never
+ * smaller than 1 pixel.
+ */
+export function computePickBufferSize(drawW: number, drawH: number): { w: number; h: number } {
+  const w = Math.max(1, Math.min(MAX_PICK_BUFFER_DIM, Math.floor(drawW / 2)));
+  const h = Math.max(1, Math.min(MAX_PICK_BUFFER_DIM, Math.floor(drawH / 2)));
+  return { w, h };
+}
 
 /** Debounce delay in milliseconds before triggering a pick re-render. */
 const DEBOUNCE_MS = 10;
@@ -128,9 +150,29 @@ export class PickingSystem {
     this.nodeMap.set(pickId, { main: mainNode, pick: pickNode });
   }
 
-  /** Unregister a node by its pick ID. */
+  /** Unregister a node by its pick ID and dispose its pick material. */
   unregisterNode(pickId: number): void {
+    const entry = this.nodeMap.get(pickId);
+    if (entry) {
+      this._disposePickMaterial(entry.pick as THREE.Mesh);
+    }
     this.nodeMap.delete(pickId);
+  }
+
+  /**
+   * Dispose the material(s) attached to a pick mesh. Handles the rare
+   * `material: array` case so a future custom-multi-material pick node
+   * doesn't leak shaders.
+   */
+  private _disposePickMaterial(mesh: THREE.Mesh): void {
+    const material = mesh.material;
+    if (Array.isArray(material)) {
+      for (const m of material) {
+        m?.dispose?.();
+      }
+    } else {
+      material?.dispose?.();
+    }
   }
 
   /** Number of registered pick nodes. */
@@ -215,8 +257,7 @@ export class PickingSystem {
 
     // Dispose all pick materials (unregisters from materialManager automatically)
     for (const entry of this.nodeMap.values()) {
-      const material = (entry.pick as THREE.Mesh).material as THREE.ShaderMaterial;
-      if (material?.dispose) material.dispose();
+      this._disposePickMaterial(entry.pick as THREE.Mesh);
     }
 
     // Clean up pick scene children (paranoia — should be empty between renders)
@@ -226,6 +267,7 @@ export class PickingSystem {
 
     this.pickTarget.dispose();
     this.nodeMap.clear();
+    this.postProcessing = null;
     log.info(Modules.RENDERER, 'PickingSystem disposed');
   }
 
@@ -248,9 +290,11 @@ export class PickingSystem {
     if (width === 0 || height === 0) return;
 
     // Pick buffer at half resolution (IDs don't need full res, 4× fewer pixels)
+    // and additionally capped at MAX_PICK_BUFFER_DIM per axis so 4K/5K screens
+    // do not pay full cost. Cursor coordinates rescale automatically below
+    // because they are computed from pickW/width and pickH/height.
     const drawBuf = this.renderer.getDrawingBufferSize(this._drawBufSize);
-    const pickW = Math.max(1, Math.floor(drawBuf.x / 2));
-    const pickH = Math.max(1, Math.floor(drawBuf.y / 2));
+    const { w: pickW, h: pickH } = computePickBufferSize(drawBuf.x, drawBuf.y);
 
     // Check if pick target needs resize (also triggers re-render)
     const sizeChanged = this.pickTarget.width !== pickW || this.pickTarget.height !== pickH;

@@ -96,42 +96,51 @@ Supported encodings:
 
 ### 3. spatial-query-builder.ts
 
-Fluent API for spatial queries:
+Canonical chunk-bounds query API consumed by Points, Lines, and GSplats loaders.
+The constructor takes a discriminated-union `SpatialQueryOptions` — pass either
+`geometryType` (delegates tolerance to `tolerance-computer.computeTolerance`) or
+a pre-computed `tolerance: number[]` (used by points, which has bespoke
+`EffectiveRadiusConfig` semantics).
+
+Geometry-aware path (gsplats / lines):
 
 ```typescript
 import { SpatialQueryBuilder } from './loaders';
 
-// Build and execute query
-const builder = new SpatialQueryBuilder(chunkIndex, viewState, totalElements, chunkSize);
-
-const ranges = await builder
-  .withExtendToAll(['time']) // extend_to_all support
-  .withMaxRadius(5.0) // tolerance fallback
-  .withStepMultiplier(1.5) // tolerance = step * 1.5
-  .execute();
+const ranges = await new SpatialQueryBuilder(chunkIndex, viewState, {
+  geometryType: 'gsplats',
+  totalElements: attrs.n_splats,
+  chunkSize: attrs.chunk_size,
+  extendDims: attrs.extend_to_all,
+  toleranceOptions: { gsplatsDefaultTolerance: 3.0 }, // optional tuning
+}).execute();
 ```
 
-Lower-level functions:
+Pre-computed tolerance path (points):
+
+```typescript
+const tolerance = calculateSpatialQueryTolerance(viewState, config, ndim);
+
+const ranges = await new SpatialQueryBuilder(chunkIndex, viewState, {
+  tolerance,
+  totalElements: attrs.n_points,
+  chunkSize: attrs.chunk_size,
+  extendDims: attrs.extend_to_all,
+}).execute();
+```
+
+Lower-level functional helpers (used internally by the builder, exported for
+direct use when needed):
 
 ```typescript
 import {
-  computeQueryTolerance,
   buildQueryPosition,
   executeSpatialQuery,
+  chunkIndicesToRanges,
   mergeRanges,
 } from './loaders';
 
-// Build tolerance array
-const tolerance = computeQueryTolerance(viewState, ndim, {
-  defaultTolerance: 3.0,
-  stepMultiplier: 1.0,
-  maxRadius: 5.0,
-});
-
-// Build position array
 const position = buildQueryPosition(viewState, ndim);
-
-// Execute query (main thread AABB scan)
 const chunkIndices = executeSpatialQuery({
   chunkBounds,
   queryPosition: position,
@@ -139,18 +148,21 @@ const chunkIndices = executeSpatialQuery({
   numChunks,
   ndim,
 });
+const ranges = mergeRanges(chunkIndicesToRanges(chunkIndices, chunkSize, totalElements));
 ```
 
-## Tolerance Calculation
+## Tolerance calculation
 
-Unified tolerance logic across all loaders:
+Unified tolerance logic lives in `data/tolerance-computer.ts::computeTolerance`
+and is selected by `geometryType`:
 
-| Dimension Type                 | Tolerance Value                    |
-| ------------------------------ | ---------------------------------- |
-| Displayed (in displayDims)     | `1e10` (infinite - see all points) |
-| Hidden with step               | `step * stepMultiplier`            |
-| Hidden with explicit tolerance | `viewState.tolerance[d]`           |
-| Hidden (fallback)              | `maxRadius` or `defaultTolerance`  |
+| Geometry  | Hidden spatial dim                      | Hidden discrete dim   |
+| --------- | --------------------------------------- | --------------------- |
+| `points`  | `maxRadius` (or 0.5 if `spatialExtendDims[d]` is false) | 0.5 |
+| `lines`   | 0 (segment bounds already include line width)           | `step / 2` (or 0.5 fallback) |
+| `gsplats` | `step × gsplatsDefaultTolerance` (default 3 σ; or 3.0 fallback) | 0.5 |
+
+Displayed dimensions always get `1e10` (effectively infinite).
 
 ## Worker Integration
 
@@ -271,8 +283,6 @@ accumulator.adopt(result.outputBuffers);
 - Enables BOTH accumulator pattern AND worker CPU offload
 - Buffers cycle between main thread and worker without copying
 
-See `integration-example.ts` for a complete reference implementation.
-
 ### Phase 3 (FUTURE): Unified Base Class
 
 All loaders extend base class:
@@ -293,9 +303,8 @@ src/data/loaders/
 ├── README.md                     # This file
 ├── base-types.ts                 # Common type definitions
 ├── range-loader.ts               # Encoding dispatch
-├── spatial-query-builder.ts      # Spatial query logic
-├── transferable-accumulator.ts   # Zero-allocation + worker pattern
-└── integration-example.ts        # Reference implementation
+├── spatial-query-builder.ts      # Canonical chunk-bounds query API
+└── transferable-accumulator.ts   # Zero-allocation + worker pattern
 ```
 
 ## Testing
@@ -307,18 +316,19 @@ pnpm test src/tests/unit/data/loaders/
 # Run specific tests
 pnpm test src/tests/unit/data/loaders/spatial-query-builder.test.ts
 pnpm test src/tests/unit/data/loaders/transferable-accumulator.test.ts
-pnpm test src/tests/unit/data/loaders/integration-example.test.ts
 ```
 
-### Test Coverage
+### Test coverage
 
 - **spatial-query-builder.test.ts**
-  - `computeQueryTolerance`: Displayed dims, hidden dims with step/tolerance/fallback
-  - `buildQueryPosition`: Position array building
-  - `chunkIndicesToRanges`: Chunk → range conversion
-  - `mergeRanges`: Range merging logic
-  - `shouldExtendVisibility`: extend_to_all handling
-  - `SpatialQueryBuilder`: Full query execution
+  - `buildQueryPosition`: position-array padding/truncation
+  - `chunkIndicesToRanges`: chunk → range conversion
+  - `mergeRanges`: range coalescing
+  - `executeSpatialQuery`: AABB scan
+  - `shouldExtendVisibility`, `createLoadAllRange`: extend_to_all helpers
+  - `SpatialQueryBuilder` geometry-aware path (delegates to `computeTolerance`)
+  - `SpatialQueryBuilder` pre-computed-tolerance path (used by points)
+  - `SpatialQueryBuilder` extend-to-all short-circuit and `chunkSize` fallback
 
 - **transferable-accumulator.test.ts**
   - Basic operations, capacity management
@@ -327,11 +337,9 @@ pnpm test src/tests/unit/data/loaders/integration-example.test.ts
   - Points, Lines, GSplats factory functions
   - Memory tracking statistics
 
-- **integration-example.test.ts**
-  - PointsLoaderIntegrationExample lifecycle
-  - 3D projection with colors and radii
-  - Capacity growth and buffer reuse tracking
-  - SpatialQueryBuilder integration
+- **../tolerance-computer.test.ts** (sibling)
+  - `computeTolerance` for points / lines / gsplats with displayed/hidden,
+    discrete/spatial, with/without step, and option overrides
 
 ## See Also
 

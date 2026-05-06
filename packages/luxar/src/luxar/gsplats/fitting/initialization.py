@@ -172,7 +172,6 @@ def initialize_optimization(
                     max_eccentricity=config.max_eccentricity,
                     truncate=config.truncate,
                     intensity_floor=config.metal_intensity_floor,
-                    tile_size=config.metal_tile_size,
                     voxel_size=config.voxel_size,
                     device=config.device,
                 )

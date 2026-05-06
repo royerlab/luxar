@@ -15,6 +15,32 @@ Main Thread (rendering, UI)
 
 Communication between main thread and workers uses [Comlink](https://github.com/GoogleChromeLabs/comlink) for typed RPC.
 
+## Data Flow
+
+```mermaid
+sequenceDiagram
+    participant Loader as Main thread loader
+    participant Cache as Chunk cache
+    participant Pool as WorkerPool
+    participant Worker as DataWorker
+    participant WASM as WASM / TypeScript fallback
+    participant GPU as WebGL buffers
+
+    Loader->>Cache: Fetch raw Zarr chunk bytes
+    Cache-->>Loader: Return ArrayBuffer / cached bytes
+    Loader->>Pool: Request least-busy worker
+    Pool-->>Loader: DataWorker API + tracking hooks
+    Loader->>Worker: Decode arrays / compute nD visibility
+    Worker->>WASM: Run accelerated kernel if available
+    WASM-->>Worker: Decoded or filtered typed arrays
+    Worker-->>Loader: Transfer result buffers
+    Loader->>GPU: Update geometry/material buffers
+```
+
+The main thread owns network I/O, cache coordination, and GPU updates. Workers
+own CPU-heavy decoding, projection, clipping, and visibility kernels. Result
+buffers are transferred back to the main thread to avoid copying where possible.
+
 ## Usage
 
 ```typescript

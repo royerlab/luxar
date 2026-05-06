@@ -70,6 +70,28 @@ class TestLUTDecoding:
             assert decoded.dtype == np.float32
             assert set(decoded) == {0.0, 0.5, 1.0, 2.0}
 
+    def test_decode_lut_uint16_external(self):
+        """Decoder must dispatch lut_uint16 even though the encoder only emits uint8.
+
+        Some external producers (and the TypeScript decoder) recognise lut_uint16,
+        so the Python decoder must keep parity with the cross-language contract.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(tmpdir, mode="w")
+            decoder = ArrayDecoder()
+
+            indices = np.array([0, 1, 2, 1, 0], dtype=np.uint16)
+            group.create_dataset("test", data=indices)
+            group["test"].attrs["encoding"] = {
+                "name": "lut_uint16",
+                "lut": [10.0, 20.0, 30.0],
+                "original_dtype": "float32",
+            }
+
+            decoded = decoder.decode(group["test"])
+            assert decoded.dtype == np.float32
+            assert decoded.tolist() == [10.0, 20.0, 30.0, 20.0, 10.0]
+
     def test_decode_lut_color_row_mode(self):
         """Test decoding color LUT in row mode."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -252,6 +274,59 @@ class TestPassthroughDecoding:
 class TestErrorHandling:
     """Test decoder error handling."""
 
+    def test_missing_encoding_name_raises(self):
+        """Encoding metadata must explicitly name a known encoder."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(tmpdir, mode="w")
+            decoder = ArrayDecoder()
+
+            group.create_dataset("test", data=np.array([1, 2, 3], dtype=np.uint8))
+            group["test"].attrs["encoding"] = {"bounds": [0, 1]}
+
+            with pytest.raises(ValueError, match="encoding.name is required"):
+                decoder.decode(group["test"])
+
+    def test_unknown_encoding_name_raises(self):
+        """Unknown encoder names must fail instead of falling through."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(tmpdir, mode="w")
+            decoder = ArrayDecoder()
+
+            group.create_dataset("test", data=np.array([1, 2, 3], dtype=np.uint8))
+            group["test"].attrs["encoding"] = {"name": "quantized_uint8"}
+
+            with pytest.raises(ValueError, match="Unknown encoding name"):
+                decoder.decode(group["test"])
+
+    def test_target_without_array_ref_raises(self):
+        """Only array_ref metadata may contain a target path."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(tmpdir, mode="w")
+            decoder = ArrayDecoder()
+
+            group.create_dataset("test", data=np.array([1, 2, 3], dtype=np.uint8))
+            group["test"].attrs["encoding"] = {"name": "uint8", "target": "other"}
+
+            with pytest.raises(ValueError, match="target is only valid for array_ref"):
+                decoder.decode(group["test"])
+
+    def test_array_ref_missing_target_metadata(self):
+        """array_ref metadata must include a target path."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(tmpdir, mode="w")
+            decoder = ArrayDecoder()
+
+            group.create_dataset("test", data=np.array([], dtype=np.float32))
+            group["test"].attrs["encoding"] = {
+                "name": "array_ref",
+                "hash": "xxh64:abc123",
+                "original_shape": [100],
+                "original_dtype": "float32",
+            }
+
+            with pytest.raises(ValueError, match="array_ref encoding requires"):
+                decoder.decode(group["test"], group)
+
     def test_array_ref_missing_target(self):
         """Test error when array_ref target not found."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -293,3 +368,81 @@ class TestErrorHandling:
             # Should raise error when zarr_root is None
             with pytest.raises(ValueError, match="zarr_root required"):
                 decoder.decode(group["test"], zarr_root=None)
+
+    def test_bounded_scalar_rejects_non_finite_bounds(self):
+        """Bounded scalar metadata must have finite min/max."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(tmpdir, mode="w")
+            decoder = ArrayDecoder()
+            group.create_dataset("test", data=np.array([0, 128, 255], dtype=np.uint8))
+            group["test"].attrs["encoding"] = {
+                "name": "bounded_scalar_uint8",
+                "min": float("nan"),
+                "max": 1.0,
+                "bits": 8,
+                "original_dtype": "float32",
+            }
+            with pytest.raises(ValueError, match="finite min/max"):
+                decoder.decode(group["test"])
+
+    def test_bounded_scalar_rejects_max_le_min(self):
+        """Bounded scalar metadata must have max > min."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(tmpdir, mode="w")
+            decoder = ArrayDecoder()
+            group.create_dataset("test", data=np.array([0, 128, 255], dtype=np.uint8))
+            group["test"].attrs["encoding"] = {
+                "name": "bounded_scalar_uint8",
+                "min": 5.0,
+                "max": 5.0,
+                "bits": 8,
+                "original_dtype": "float32",
+            }
+            with pytest.raises(ValueError, match="max > min"):
+                decoder.decode(group["test"])
+
+    def test_bounded_scalar_rejects_zero_bits(self):
+        """Bounded scalar metadata must have bits > 0."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(tmpdir, mode="w")
+            decoder = ArrayDecoder()
+            group.create_dataset("test", data=np.array([0, 128, 255], dtype=np.uint8))
+            group["test"].attrs["encoding"] = {
+                "name": "bounded_scalar_uint8",
+                "min": 0.0,
+                "max": 1.0,
+                "bits": 0,
+                "original_dtype": "float32",
+            }
+            with pytest.raises(ValueError, match="bits > 0"):
+                decoder.decode(group["test"])
+
+    def test_log_scalar_rejects_non_positive_max_log(self):
+        """Log scalar metadata must have positive, finite max_log."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(tmpdir, mode="w")
+            decoder = ArrayDecoder()
+            group.create_dataset("test", data=np.array([0, 128, 255], dtype=np.uint8))
+            group["test"].attrs["encoding"] = {
+                "name": "log_scalar_uint8",
+                "max_log": -1.0,
+                "bits": 8,
+                "original_dtype": "float32",
+            }
+            with pytest.raises(ValueError, match="finite, positive max_log"):
+                decoder.decode(group["test"])
+
+    def test_log_scalar_rejects_inf_max_log(self):
+        """Log scalar metadata must have finite max_log."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            group = zarr.open_group(tmpdir, mode="w")
+            decoder = ArrayDecoder()
+            group.create_dataset("test", data=np.array([0, 128, 255], dtype=np.uint8))
+            group["test"].attrs["encoding"] = {
+                "name": "log_scalar_uint8",
+                "max_log": float("inf"),
+                "bits": 8,
+                "original_dtype": "float32",
+            }
+            with pytest.raises(ValueError, match="finite, positive max_log"):
+                decoder.decode(group["test"])

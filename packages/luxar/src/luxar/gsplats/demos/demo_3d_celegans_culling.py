@@ -57,7 +57,9 @@ NLM_PATCH_SIZE = 3
 NLM_SEARCH_DISTANCE = 5
 CLAHE_TILE_SIZE = 16
 CLAHE_CLIP_LIMIT = 2.0
-DEVICE = "cuda" if __import__("torch").cuda.is_available() else "cpu"
+from luxar.gsplats.utils.device import resolve_torch_device  # noqa: E402
+
+DEVICE = str(resolve_torch_device())
 
 Arbol.max_depth = 5
 

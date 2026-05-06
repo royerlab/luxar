@@ -730,6 +730,15 @@ export class InputHandler {
     // Ctrl/Cmd key - disable zoom while held so Ctrl+scroll only adjusts FOV.
     // Use a counter so releasing one key while the other is held doesn't re-enable zoom.
     let fovKeyHeldCount = 0;
+    const resetFovKeyState = (): void => {
+      if (fovKeyHeldCount === 0) return;
+      fovKeyHeldCount = 0;
+      this.sceneManager.controls.setEnableZoom(true);
+    };
+    const resetFovKeyStateWhenHidden = (): void => {
+      if (document.visibilityState === 'hidden') resetFovKeyState();
+    };
+
     for (const key of ['Control', 'Meta']) {
       this.contextManager.registerBinding(InputContext.NAVIGATION, {
         key,
@@ -746,6 +755,12 @@ export class InputHandler {
         description: 'FOV control (hold Ctrl/Cmd + scroll to adjust field of view)',
       });
     }
+    window.addEventListener('blur', resetFovKeyState);
+    document.addEventListener('visibilitychange', resetFovKeyStateWhenHidden);
+    this.eventListeners.push(
+      () => window.removeEventListener('blur', resetFovKeyState),
+      () => document.removeEventListener('visibilitychange', resetFovKeyStateWhenHidden)
+    );
 
     // Dimension navigation
     this.contextManager.registerBinding(InputContext.NAVIGATION, {

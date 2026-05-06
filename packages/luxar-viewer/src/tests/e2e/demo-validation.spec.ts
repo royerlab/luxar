@@ -14,6 +14,11 @@ import { test, expect } from '@playwright/test';
 import { execSync } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
+import { fileURLToPath } from 'url';
+
+// `package.json` declares `"type": "module"`, so the CommonJS `__dirname`
+// global is undefined at module load. Reconstruct it from `import.meta.url`.
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Project root (5 levels up: src/tests/e2e -> tests -> src -> luxar-viewer -> packages -> root)
 const PROJECT_ROOT = path.resolve(__dirname, '../../../../..');

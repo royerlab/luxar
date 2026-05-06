@@ -22,7 +22,7 @@
  * await app.init({
  *   canvas,
  *   src: 'https://example.com/cells.zarr',
- *   updateBrowserUrl: false,         // do NOT rewrite host page URL
+ *   updateBrowserUrl: false,         // default: do NOT rewrite host page URL
  * });
  *
  * // Later, when the host wants to tear the viewer down:
@@ -40,7 +40,7 @@ export { bootstrapStandalone, type BootstrapOptions } from './core/bootstrap';
 
 // URL parsing — useful for embedders that want to honor a few of the
 // standalone-app's URL flags without taking the whole bootstrap path.
-export { readUrlParams, type UrlParams } from './config/url-params';
+export { normalizeDataSourceUrl, readUrlParams, type UrlParams } from './config/url-params';
 
 // Storage namespacing — exposed so an embedder can clear Luxar-owned keys
 // (e.g. on uninstall) without grepping the codebase for prefixes.

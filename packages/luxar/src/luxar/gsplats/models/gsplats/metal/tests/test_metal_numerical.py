@@ -10,35 +10,27 @@ Tests:
 
 from __future__ import annotations
 
-import sys
-
 import numpy as np
 import pytest
 import torch
 from arbol import aprint
 
 from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
+from luxar.gsplats.models.gsplats.metal import is_metal_available
 from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
 
-# Skip entire module on non-macOS platforms
 pytestmark = pytest.mark.skipif(
-    sys.platform != "darwin" or not torch.backends.mps.is_available(),
-    reason="Metal backend only available on macOS with MPS",
+    not is_metal_available(), reason="Metal backend not available"
 )
 
-# Import Metal-specific modules only on macOS
-if sys.platform == "darwin":
-    from luxar.gsplats.models.gsplats.metal import (
-        GaussianSplatModelMetal,
-        is_metal_available,
-    )
+if is_metal_available():
+    from luxar.gsplats.models.gsplats.metal import GaussianSplatModelMetal
     from luxar.gsplats.models.gsplats.metal.gsplat_model_metal import (
         cholesky_to_conic,
     )
 else:
     # Provide dummies for type checking
     GaussianSplatModelMetal = None  # type: ignore[misc, assignment]
-    is_metal_available = lambda: False  # noqa: E731
     cholesky_to_conic = None  # type: ignore[misc, assignment]
 
 
@@ -57,18 +49,19 @@ class TestCholeskyToConic:
         expected_diag = 1.0 / (1.5**2)
 
         assert conic.shape == (1, 6)
+        # Packed [Z, Y, X] order: [c_zz, c_zy, c_zx, c_yy, c_yx, c_xx].
         assert torch.allclose(
             conic[0, 0], torch.tensor(expected_diag), atol=1e-6
-        )  # c_xx
+        )  # c_zz
         assert torch.allclose(
             conic[0, 3], torch.tensor(expected_diag), atol=1e-6
         )  # c_yy
         assert torch.allclose(
             conic[0, 5], torch.tensor(expected_diag), atol=1e-6
-        )  # c_zz
-        assert torch.allclose(conic[0, 1], torch.tensor(0.0), atol=1e-6)  # c_xy
-        assert torch.allclose(conic[0, 2], torch.tensor(0.0), atol=1e-6)  # c_xz
-        assert torch.allclose(conic[0, 4], torch.tensor(0.0), atol=1e-6)  # c_yz
+        )  # c_xx
+        assert torch.allclose(conic[0, 1], torch.tensor(0.0), atol=1e-6)  # c_zy
+        assert torch.allclose(conic[0, 2], torch.tensor(0.0), atol=1e-6)  # c_zx
+        assert torch.allclose(conic[0, 4], torch.tensor(0.0), atol=1e-6)  # c_yx
 
     def test_general_matrix(self):
         """Test with non-diagonal Cholesky factors."""
@@ -86,17 +79,18 @@ class TestCholeskyToConic:
         Sigma = L @ L.transpose(-2, -1)
         Sigma_inv_expected = torch.linalg.inv(Sigma)
 
-        # Reconstruct full matrix from conic
+        # Reconstruct full matrix from conic.
+        # Packed order is [Z, Y, X]: [c_zz, c_zy, c_zx, c_yy, c_yx, c_xx].
         Sigma_inv_reconstructed = torch.zeros(1, 3, 3, dtype=torch.float32)
-        Sigma_inv_reconstructed[0, 0, 0] = conic[0, 0]  # c_xx
-        Sigma_inv_reconstructed[0, 0, 1] = conic[0, 1]  # c_xy
-        Sigma_inv_reconstructed[0, 1, 0] = conic[0, 1]  # c_xy (symmetric)
-        Sigma_inv_reconstructed[0, 0, 2] = conic[0, 2]  # c_xz
-        Sigma_inv_reconstructed[0, 2, 0] = conic[0, 2]  # c_xz
+        Sigma_inv_reconstructed[0, 0, 0] = conic[0, 0]  # c_zz
+        Sigma_inv_reconstructed[0, 0, 1] = conic[0, 1]  # c_zy
+        Sigma_inv_reconstructed[0, 1, 0] = conic[0, 1]  # c_zy (symmetric)
+        Sigma_inv_reconstructed[0, 0, 2] = conic[0, 2]  # c_zx
+        Sigma_inv_reconstructed[0, 2, 0] = conic[0, 2]  # c_zx
         Sigma_inv_reconstructed[0, 1, 1] = conic[0, 3]  # c_yy
-        Sigma_inv_reconstructed[0, 1, 2] = conic[0, 4]  # c_yz
-        Sigma_inv_reconstructed[0, 2, 1] = conic[0, 4]  # c_yz
-        Sigma_inv_reconstructed[0, 2, 2] = conic[0, 5]  # c_zz
+        Sigma_inv_reconstructed[0, 1, 2] = conic[0, 4]  # c_yx
+        Sigma_inv_reconstructed[0, 2, 1] = conic[0, 4]  # c_yx
+        Sigma_inv_reconstructed[0, 2, 2] = conic[0, 5]  # c_xx
 
         assert torch.allclose(Sigma_inv_reconstructed, Sigma_inv_expected, atol=1e-5), (
             "Conic should match Σ^(-1)"
@@ -297,7 +291,7 @@ class TestMetalGradients:
             sigma_min_diag=[0.3, 0.3, 0.3],
             truncate=2.0,
             intensity_floor=1e-6,
-            device="cpu",  # gradcheck requires CPU
+            device="mps",
         )
 
         # Get parameters
@@ -325,12 +319,46 @@ class TestMetalGradients:
             aprint(f"  gradcheck error: {e}")
             pass_gradcheck = False
 
-        # Note: Numerical gradcheck on GPU compute is notoriously finicky
+        # Note: Numerical gradcheck on custom GPU compute is notoriously finicky
         # If this fails, it doesn't necessarily mean gradients are wrong
         # The integration tests and convergence tests are more reliable.
         # Using xfail (not skip) so failures are visible in CI reports.
         if not pass_gradcheck:
             pytest.xfail("gradcheck failed (expected for GPU numerics)")
+
+    def test_fully_truncated_splat_backward_yields_no_nan(self):
+        """A splat whose entire support is culled by `truncate` must have safe gradients.
+
+        With `truncate` small enough that no voxel passes the dist²<=truncate² test,
+        the per-splat accumulators stay at their zero-initialized register values.
+        This guards against the divide-by-near-zero risks in the backward kernel
+        (e.g. 1/max(amp, 1e-10) and 1/(1-shift_C)) that would surface only when an
+        otherwise-valid splat happens to fall fully outside its truncation window.
+        """
+        from luxar.gsplats.models.gsplats.metal.gsplat_model_metal import (
+            MetalSplatFunction,
+        )
+
+        shape = (16, 16, 16)
+        # Splat far outside the volume so its truncation window covers no voxels.
+        centers = torch.tensor(
+            [[100.0, 100.0, 100.0]], device="mps", requires_grad=True
+        )
+        L = torch.tensor([[[0.5, 0, 0], [0, 0.5, 0], [0, 0, 0.5]]], device="mps")
+        amps = torch.tensor([1.0], device="mps", requires_grad=True)
+
+        output = MetalSplatFunction.apply(centers, L, amps, shape, 1.0, 1e-5, False)
+        loss = (output**2).sum()
+        loss.backward()
+
+        # Gradients must exist and contain no NaN/Inf.
+        assert centers.grad is not None
+        assert amps.grad is not None
+        assert torch.isfinite(centers.grad).all(), centers.grad
+        assert torch.isfinite(amps.grad).all(), amps.grad
+        # Fully-culled splat should produce exactly zero gradient.
+        assert torch.all(centers.grad == 0), centers.grad
+        assert torch.all(amps.grad == 0), amps.grad
 
     def test_gradient_sign_correctness(self):
         """Test that gradient signs point in the correct direction to minimize loss.
@@ -361,7 +389,7 @@ class TestMetalGradients:
         target[16, 16, 16] = 1.0
 
         # Forward and backward
-        output = MetalSplatFunction.apply(centers, L, amps, shape, 3.0, 1e-5, 4, False)
+        output = MetalSplatFunction.apply(centers, L, amps, shape, 3.0, 1e-5, False)
         loss = ((output - target) ** 2).sum()
         loss.backward()
 
@@ -421,7 +449,6 @@ class TestMetalGradients:
             shape,
             3.0,
             1e-5,
-            4,
             False,
         )
         loss_metal = ((output_metal - target.to("mps")) ** 2).sum()
@@ -466,9 +493,7 @@ class TestMetalGradients:
         # Run optimization
         lr = 0.5
         for _ in range(30):
-            output = MetalSplatFunction.apply(
-                centers, L, amps, shape, 3.0, 1e-5, 4, False
-            )
+            output = MetalSplatFunction.apply(centers, L, amps, shape, 3.0, 1e-5, False)
             loss = ((output - target) ** 2).sum()
             loss.backward()
 

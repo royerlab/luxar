@@ -61,6 +61,14 @@ declare global {
       renderOnce?: () => void;
       getSceneLoader?: () => unknown;
 
+      /**
+       * Render the error dialog directly with the supplied message, without
+       * going through URL-routing or load failures. Used by visual-
+       * regression tests so the dialog's appearance can be verified in
+       * isolation from the routing logic in `app.ts:shouldShowBrowser`.
+       */
+      showError?: (message: string) => void;
+
       cache?: {
         getStats: () => unknown;
         listDatasets: () => unknown;

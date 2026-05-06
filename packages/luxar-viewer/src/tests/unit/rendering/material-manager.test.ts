@@ -381,6 +381,7 @@ describe('MaterialManager', () => {
       // Cache should be cleared
       const stats = manager.getCacheStats();
       expect(stats.pointMaterials).toBe(0);
+      expect(stats.ownedMaterials).toBe(0);
       expect(stats.totalRegistered).toBe(0);
     });
 
@@ -398,6 +399,52 @@ describe('MaterialManager', () => {
       manager.dispose();
 
       expect(manager.getCacheStats().pointMaterials).toBe(0);
+    });
+
+    it('should track and dispose registered non-cached material clones', () => {
+      const cached = manager.getPointMaterial({
+        blendingMode: 'additive',
+        opacity: 1.0,
+        gamma: 1.0,
+        intensity: 1.0,
+        offset: 0.0,
+      });
+      const clone = new PointMaterial({ opacity: 0.5 });
+
+      manager.register(clone);
+
+      let stats = manager.getCacheStats();
+      expect(stats.pointMaterials).toBe(1);
+      expect(stats.cachedMaterials).toBe(1);
+      expect(stats.ownedMaterials).toBe(1);
+      expect(stats.totalRegistered).toBe(2);
+
+      manager.dispose();
+
+      expect(cached.dispose).toHaveBeenCalled();
+      expect(clone.dispose).toHaveBeenCalled();
+      stats = manager.getCacheStats();
+      expect(stats.ownedMaterials).toBe(0);
+      expect(stats.totalRegistered).toBe(0);
+    });
+
+    it('should unregister non-cached material clones without touching cache entries', () => {
+      manager.getPointMaterial({
+        blendingMode: 'additive',
+        opacity: 1.0,
+        gamma: 1.0,
+        intensity: 1.0,
+        offset: 0.0,
+      });
+      const clone = new PointMaterial({ opacity: 0.5 });
+      manager.register(clone);
+
+      manager.unregister(clone);
+
+      const stats = manager.getCacheStats();
+      expect(stats.pointMaterials).toBe(1);
+      expect(stats.ownedMaterials).toBe(0);
+      expect(stats.totalRegistered).toBe(1);
     });
   });
 

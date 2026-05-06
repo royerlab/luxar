@@ -370,6 +370,13 @@ Use LUT encoding when:
 
 **Rationale for 256 threshold**: Beyond 256 unique values, uint16 indices (2 bytes) offer no advantage over float16 (2 bytes), which preserves more precision.
 
+**`lut_uint16` is decode-only.** Both the Python decoder (`ArrayDecoder._decode_lut`)
+and the TypeScript decoder (`array-decoder.ts:isLUTEncodingName`) accept the
+`lut_uint16` encoding name for forward-compatibility with external producers,
+but the canonical encoder (`ArrayEncoder._encode_lut`) only ever emits
+`lut_uint8`. Round-trips through `ArrayEncoder` will never produce `lut_uint16`
+metadata.
+
 ### 6.3 Storage Format
 
 **Indices array**: dtype `uint8`, shape depends on LUT mode:
@@ -814,6 +821,8 @@ The specific parameters depend on the encoder (see Section 10.3 for examples).
 |-------|------|-------------|
 | `name` | string | Encoder identifier (e.g., "bounded_scalar_uint8") |
 
+If an `encoding` object is present, `name` is required. Unknown encoder names are invalid and must fail loudly in decoders. Direct dtype names (`"none"`, `"float32"`, `"float16"`, `"uint8"`, `"uint16"`, `"uint32"`, `"uint64"`) mean direct stored values, not quantization. The `target` field is valid only when `name == "array_ref"`.
+
 ### 10.3 Encoder-Specific Fields
 
 **BoundedScalarEncoder**:
@@ -1043,6 +1052,18 @@ The `ArrayDecoder` handles reading encoded arrays back to numpy.
 class ArrayDecoder:
     """Decode any encoded array from zarr."""
 
+    DIRECT_ENCODINGS = {"none", "float16", "float32", "uint8", "uint16", "uint32", "uint64"}
+    QUANTIZED_ENCODINGS = {
+        "bounded_scalar_uint8",
+        "bounded_scalar_uint16",
+        "log_scalar_uint8",
+        "log_scalar_uint16",
+        "rgb_uint8",
+        "rgb_uint16",
+    }
+    SPECIAL_ENCODINGS = {"broadcasted", "array_ref", "lut_uint8", "lut_uint16"}
+    KNOWN_ENCODINGS = DIRECT_ENCODINGS | QUANTIZED_ENCODINGS | SPECIAL_ENCODINGS
+
     def decode(
         self,
         zarr_array: zarr.Array,
@@ -1057,15 +1078,15 @@ class ArrayDecoder:
         - Passthrough returns stored dtype
         - Broadcasted returns stored dtype (expanded to full size)
         """
-        enc = zarr_array.attrs.get("encoding", {})
-        name = enc.get("name", "none")
+        enc = self._encoding_metadata(zarr_array)
+        name = enc["name"]
 
         # Special encodings
         if name == "broadcasted":
             return self._expand_broadcasted(zarr_array, enc)
         elif name == "array_ref":
             return self._follow_ref(zarr_array, enc, zarr_root)
-        elif name == "lut_uint8":
+        elif name in {"lut_uint8", "lut_uint16"}:
             return self._decode_lut(zarr_array, enc)
 
         # Quantized encodings (require inverse transformation)
@@ -1077,12 +1098,33 @@ class ArrayDecoder:
             return self._decode_log_scalar(zarr_array, enc)
         elif name == "log_scalar_uint16":
             return self._decode_log_scalar(zarr_array, enc)
-        elif name == "rgb_uint8":
+        elif name in {"rgb_uint8", "rgb_uint16"}:
             return self._decode_color(zarr_array, enc)
 
-        # Passthrough (none, float16, float32, etc.)
-        else:
+        # Direct dtype encodings mean stored values are already decoded.
+        elif name in self.DIRECT_ENCODINGS:
             return zarr_array[:]
+
+        else:
+            raise ValueError(f"Unknown encoding name: {name}")
+
+    def _encoding_metadata(self, zarr_array) -> dict:
+        raw = zarr_array.attrs.get("encoding", None)
+        if raw is None:
+            return {"name": "none"}
+        if not isinstance(raw, dict):
+            raise ValueError("encoding metadata must be an object")
+        enc = dict(raw)
+        name = enc.get("name")
+        if not isinstance(name, str) or not name:
+            raise ValueError("encoding.name is required when encoding metadata is present")
+        if name not in self.KNOWN_ENCODINGS:
+            raise ValueError(f"Unknown encoding name: {name}")
+        if name == "array_ref" and "target" not in enc:
+            raise ValueError("array_ref encoding requires metadata field(s): target")
+        if name != "array_ref" and "target" in enc:
+            raise ValueError("encoding.target is only valid for array_ref")
+        return enc
 
     def _decode_bounded_scalar(self, arr, enc) -> np.ndarray:
         """Decode bounded scalar: uint -> original dtype using min/max."""

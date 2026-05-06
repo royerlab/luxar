@@ -9,7 +9,7 @@ The utils package provides essential mathematical utilities for Gaussian splatti
 
 1. **Matrix Operations**: Packing/unpacking lower-triangular matrices (Cholesky factors)
 2. **Gradient Dilution**: Calculating compensation factors for higher-dimensional optimization
-3. **Future Extensions**: Placeholder for additional utility functions
+3. **Device Selection**: Centralized PyTorch device resolution with accelerator opt-out flags
 
 **Related Specifications**:
 - **Gradient Dilution Usage**: [optim/SPECIFICATIONS.md](../optim/SPECIFICATIONS.md) → Gradient Dilution Compensation
@@ -20,6 +20,7 @@ The utils package provides essential mathematical utilities for Gaussian splatti
 
 ```
 utils/
+├── device.py               # PyTorch device auto-selection helpers
 ├── trils.py                # Lower-triangular matrix operations and gradient dilution
 └── __init__.py
 ```
@@ -37,8 +38,31 @@ utils/
 | `validate_cholesky_shape(...)` | Validate shape of packed Cholesky factors |
 | `embed_cholesky_packed(...)` | Embed lower-dimensional Cholesky factors into higher dimensions |
 | `permute_cholesky_packed(...)` | Permute dimensions of packed Cholesky factors |
+| `is_mps_available()` | Robustly check PyTorch MPS availability |
+| `resolve_torch_device(...)` | Resolve explicit or auto-selected PyTorch devices |
 
-### 1. Lower-Triangular Size Calculation
+### 1. Device Selection
+
+```python
+def resolve_torch_device(
+    device: Optional[str | torch.device] = None,
+    *,
+    use_cuda: bool = True,
+    use_metal: bool = True,
+) -> torch.device:
+    """Resolve explicit or auto-selected PyTorch devices."""
+```
+
+**Rules**:
+- Explicit `device` values always win.
+- If `device is None`, CUDA is preferred when `use_cuda=True` and available.
+- MPS/Metal is selected next when `use_metal=True` and available.
+- CPU is the final fallback.
+
+This helper is shared by the high-level fitter and `GaussianSplatModel` so
+accelerator opt-out flags behave consistently.
+
+### 2. Lower-Triangular Size Calculation
 
 ```python
 def tril_size(d: int) -> int:
@@ -71,7 +95,7 @@ def tril_size(d: int) -> int:
 - Only `d*(d+1)//2` elements of L are non-zero (below/on diagonal)
 - Packed storage saves memory and transmission bandwidth
 
-### 2. Gradient Dilution Factor Calculation
+### 3. Gradient Dilution Factor Calculation
 
 ```python
 def calculate_gradient_dilution_factor(d: int) -> float:
@@ -150,7 +174,7 @@ assert calculate_gradient_dilution_factor(3) == 1.8
 assert abs(calculate_gradient_dilution_factor(4) - 8.5) < 0.2  # ≈ 8.5
 ```
 
-### 3. Pack Lower-Triangular Matrices
+### 4. Pack Lower-Triangular Matrices
 
 ```python
 def pack_tril(L: np.ndarray) -> np.ndarray:
@@ -208,7 +232,7 @@ def pack_tril(L: np.ndarray) -> np.ndarray:
     return out
 ```
 
-### 4. Unpack Lower-Triangular Matrices
+### 5. Unpack Lower-Triangular Matrices
 
 ```python
 def unpack_tril(v: np.ndarray, d: int) -> np.ndarray:
@@ -266,7 +290,7 @@ def unpack_tril(v: np.ndarray, d: int) -> np.ndarray:
     return L
 ```
 
-### 5. Validate Cholesky Shape
+### 6. Validate Cholesky Shape
 
 ```python
 def validate_cholesky_shape(
@@ -287,7 +311,7 @@ Validates that packed Cholesky factors have the correct shape for the given dime
 
 **Returns:** Tuple of `(is_uniform, actual_n_splats)` where `is_uniform` is True if shape is (k,).
 
-### 6. Permute Cholesky Packed
+### 7. Permute Cholesky Packed
 
 ```python
 def permute_cholesky_packed(
@@ -310,7 +334,7 @@ Permutes dimensions of packed Cholesky factors. Given packed Cholesky factors L 
 - Coordinate convention changes (e.g., [Z,Y,X] to [X,Y,Z])
 - Dimension reordering for compatibility between systems
 
-### 7. Embed Cholesky Packed
+### 8. Embed Cholesky Packed
 
 ```python
 def embed_cholesky_packed(

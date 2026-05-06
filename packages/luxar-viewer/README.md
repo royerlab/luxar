@@ -43,7 +43,7 @@ const app = new LuxarApp();
 await app.init({
   canvas,
   src: 'https://example.com/data.zarr',
-  updateBrowserUrl: false,           // don't rewrite host URL on dataset change
+  updateBrowserUrl: false,           // default: don't rewrite host URL on dataset change
 });
 
 // Later (e.g. when the host route unmounts):
@@ -58,7 +58,7 @@ app.dispose();                       // removes all listeners, GPU resources, UI
 | `src`               | `string`         | config  | Initial Zarr URL. Empty/missing shows the dataset browser.                                          |
 | `debug`             | `boolean`        | `false` | Exposes `window.__luxarDebug` for Playwright / dev console.                                         |
 | `loaderConfig`      | `LoaderConfig`   | —       | Cache and prefetch flags (`noCache`, `cacheDebug`, `clearCache`, `noPrefetch`, `prefetchDebug`).    |
-| `updateBrowserUrl`  | `boolean`        | `true`  | **Set `false` in embeds.** Otherwise picking a dataset rewrites the host page URL.                  |
+| `updateBrowserUrl`  | `boolean`        | `false` | Opt in to mirroring picked datasets into the browser URL. `bootstrapStandalone()` sets this to `true`. |
 | `wasmPath`          | `string`         | —       | Override for bundlers that don't resolve `import.meta.url` for WASM (webpack 4, Parcel 1, etc.).     |
 | `workerPath`        | `string`         | —       | Same, for the data worker.                                                                          |
 
@@ -618,7 +618,7 @@ renderingControls: {
 ### Performance Optimization
 
 - **Element Count**: Optimize for datasets with millions of elements
-- **Chunk Size**: Zarr chunk sizes of 64KB-1MB work well
+- **Chunk Size**: Zarr chunk sizes of 16KB-256KB (target 64KB) — matches `TARGET_CHUNK_BYTES` in `luxar.typing_utils.constants`
 - **LOD**: Consider implementing level-of-detail for very large datasets
 - **Compression**: Use Zarr compression (e.g., blosc) to reduce network transfer
 

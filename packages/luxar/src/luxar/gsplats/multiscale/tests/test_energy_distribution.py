@@ -250,7 +250,3 @@ class TestEnergyPreservation:
         assert 0.9 < energy_ratio < 1.1, (
             f"Energy not preserved: ratio = {energy_ratio:.3f}"
         )
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])

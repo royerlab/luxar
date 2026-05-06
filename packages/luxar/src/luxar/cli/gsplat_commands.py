@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Literal, Optional
 import typer
 from arbol import aprint, asection
 
-from .utils import format_memory_size
+from .utils import _DEFAULT_CORS_ORIGIN, format_memory_size
 
 if TYPE_CHECKING:
     import numpy as np
@@ -458,6 +458,14 @@ def quick_view(
     port: int = typer.Option(8000, "--port", "-p", help="Data server port"),
     viewer_port: int = typer.Option(5173, "--viewer-port", help="Viewer port"),
     open_browser: bool = typer.Option(True, "--open/--no-open", help="Open browser"),
+    cors_origin: str = typer.Option(
+        _DEFAULT_CORS_ORIGIN,
+        "--cors-origin",
+        help=(
+            "Allowed CORS origin. Default 'local' allows localhost/127.0.0.1/::1. "
+            "Use '*' to allow any origin without credentials."
+        ),
+    ),
 ) -> None:
     """Quick view of a Gaussian splat dataset in the Luxar web viewer.
 
@@ -471,6 +479,7 @@ def quick_view(
         port: Port for data server
         viewer_port: Port for viewer
         open_browser: Whether to open browser automatically
+        cors_origin: Allowed CORS origin for both servers (default "local").
     """
     try:
         import threading
@@ -574,7 +583,17 @@ def quick_view(
                 # Start data server in background
                 data_thread = threading.Thread(
                     target=_serve_data,
-                    args=(scene_path, "127.0.0.1", actual_port, None, None, 0.0, 0.0),
+                    args=(
+                        scene_path,
+                        "127.0.0.1",
+                        actual_port,
+                        None,  # bandwidth_mbps
+                        None,  # latency_ms
+                        0.0,   # jitter_percent
+                        0.0,   # packet_loss_rate
+                        False,  # allow_sensitive_path
+                        cors_origin,
+                    ),
                     daemon=True,
                 )
                 data_thread.start()
@@ -585,7 +604,13 @@ def quick_view(
 
                 # Serve viewer (this blocks)
                 aprint("\n🎉 Viewer ready!")
-                _serve_viewer("127.0.0.1", actual_viewer_port, data_url, open_browser)
+                _serve_viewer(
+                    "127.0.0.1",
+                    actual_viewer_port,
+                    data_url,
+                    open_browser,
+                    cors_origin,
+                )
 
     except KeyboardInterrupt:
         aprint("\n🛑 Shutting down viewer...")
@@ -1688,11 +1713,13 @@ def denoise_volume_cmd(
             import torch
 
             from luxar.gsplats.preprocessing import calibrate_nlm_h
+            from luxar.gsplats.utils.device import resolve_torch_device
 
             with asection("Auto-calibrating h (Noise2Self)"):
                 norm_vol, _, _ = normalize_volume(volume)
                 t_vol = torch.from_numpy(norm_vol)
-                dev = torch.device(device) if device else None
+                # Auto-select CUDA > MPS > CPU when --device is omitted.
+                dev = resolve_torch_device(device) if device else resolve_torch_device()
                 effective_h = calibrate_nlm_h(
                     t_vol,
                     patch_size=patch_size,
@@ -1946,11 +1973,13 @@ def fit_volume(
                     from luxar.gsplats.preprocessing.denoise_pipeline import (
                         normalize_volume,
                     )
+                    from luxar.gsplats.utils.device import resolve_torch_device
 
                     with asection("Calibrating NLM h"):
                         norm_vol, _, _ = normalize_volume(volume)
                         t_vol = torch.from_numpy(norm_vol)
-                        dev = torch.device(device) if device else None
+                        # Auto-select CUDA > MPS > CPU when --device is omitted.
+                        dev = resolve_torch_device(device) if device else resolve_torch_device()
                         _denoise_effective_h = calibrate_nlm_h(
                             t_vol,
                             patch_size=denoise_patch_size,
@@ -3137,6 +3166,7 @@ def batch_plan(
 
         from luxar.cli.gsplat_config import (
             PRESETS,
+            decode_flat_channel_index,
             discover_ome_zarr_shape,
         )
         from luxar.gsplats.batch.env_capture import (
@@ -3236,6 +3266,20 @@ def batch_plan(
                 if channels_slice
                 else list(range(n_c_full))
             )
+            if not t_indices:
+                raise ValueError("--timepoints selected no timepoints")
+            if not c_indices:
+                raise ValueError("--channels selected no channels")
+            bad_t = [idx for idx in t_indices if idx < 0 or idx >= n_t_full]
+            bad_c = [idx for idx in c_indices if idx < 0 or idx >= n_c_full]
+            if bad_t:
+                raise ValueError(
+                    f"--timepoints selected out-of-range indices {bad_t}; valid range is 0..{n_t_full - 1}"
+                )
+            if bad_c:
+                raise ValueError(
+                    f"--channels selected out-of-range flat channel indices {bad_c}; valid range is 0..{n_c_full - 1}"
+                )
             n_t = len(t_indices)
             n_c = len(c_indices)
             if timepoints_slice or channels_slice:
@@ -3455,6 +3499,8 @@ def batch_plan(
             array_key=array_key,
             n_timepoints=n_t,
             n_channels=n_c,
+            channel_axes=ome_info.channel_axes,
+            channel_shape=ome_info.channel_shape,
             spatial_shape=spatial,
             tile_size=tile_size,
             tile_overlap=tile_overlap,
@@ -3495,21 +3541,32 @@ def batch_plan(
             calibration_samples=batch_calibration_samples,
         )
 
-        # Build job list
+        # Build job list. Store real dataset indices in filenames so status,
+        # merge, and generated Slurm scripts agree when --timepoints/--channels
+        # select non-contiguous values.
         jobs = []
+        t_width_base = max(t_indices) + 1
+        c_width_base = max(c_indices) + 1
         for task_id in range(total_tasks):
-            t = task_id // (n_c * n_tiles)
+            t_seq = task_id // (n_c * n_tiles)
             r = task_id % (n_c * n_tiles)
-            c = r // n_tiles
+            c_seq = r // n_tiles
             k = r % n_tiles
+            t_real = t_indices[t_seq]
+            c_real = c_indices[c_seq]
             jobs.append(
                 BatchJob(
                     task_id=task_id,
-                    timepoint=t,
-                    channel=c,
+                    timepoint=t_real,
+                    channel=c_real,
                     tile_index=k,
-                    output_filename=output_filename(t, c, k, n_t, n_c, n_tiles),
+                    output_filename=output_filename(
+                        t_real, c_real, k, t_width_base, c_width_base, n_tiles
+                    ),
                     estimated_wall_seconds=est_seconds,
+                    channel_coords=decode_flat_channel_index(
+                        c_real, ome_info.channel_shape
+                    ),
                 )
             )
         manifest.jobs = jobs

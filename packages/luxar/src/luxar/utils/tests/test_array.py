@@ -8,7 +8,20 @@ Tests cover:
 import numpy as np
 import pytest
 
+import luxar.utils.array as array_utils
 from luxar.utils.array import ensure_float32, validate_array_shape
+
+
+def test_obsolete_broadcast_helpers_are_not_reintroduced() -> None:
+    """Scalar broadcasting should stay centralized in ArrayEncoder.
+
+    These were the historical names removed in commit 7cb08da9; guard
+    each removed symbol so any reintroduction surfaces as a test failure.
+    """
+    assert not hasattr(array_utils, "broadcast_color_to_points")
+    assert not hasattr(array_utils, "broadcast_scalar_to_points")
+    assert not hasattr(array_utils, "broadcast_radii_to_points")
+    assert not hasattr(array_utils, "broadcast_sharpness_to_points")
 
 
 class TestEnsureFloat32:

@@ -50,7 +50,7 @@ This diagram shows how data flows from Python creation through storage to WebGL 
 │  ┌──────────────────┐                                                      │
 │  │ Spatial ordering │  Morton/Hilbert space-filling curves                 │
 │  │ Compound sort    │  Discrete dims (time) → spatial (x,y,z)              │
-│  │ Chunking         │  Split into 32KB-1MB chunks                          │
+│  │ Chunking         │  Split into 16KB-256KB chunks (target 64KB)          │
 │  │ AABB calculation │  Per-chunk bounding boxes                            │
 │  └────────┬─────────┘                                                      │
 │           │                                                                 │
@@ -774,20 +774,36 @@ In data arrays, use integer indices (0-based): 0='DAPI', 1='GFP', 2='mCherry', 3
 - Radius-based visibility for spatial dimensions: points visible if their nD hypersphere intersects the current slice
 - Exact matching for discrete dimensions: only points at the exact value are shown
 
+## Viewer Constraints and Performance
+
+Luxar's storage format supports arbitrary-dimensional scenes, but the web viewer
+uses optimized kernels with practical limits:
+
+- **WASM-accelerated nD kernels support up to 16 dimensions.** This covers
+  spatial queries, effective-radius slicing, Mahalanobis distance, and GSplat
+  attenuation paths backed by fixed-size WebAssembly workspaces.
+- **Datasets with more than 16 dimensions still load**, but those operations use
+  the TypeScript fallback path automatically. This preserves correctness but can
+  be significantly slower for large point, line, or GSplat collections.
+- **For best interactive performance**, keep exported viewer scenes at 16
+  dimensions or fewer when possible. For higher-dimensional source data,
+  pre-slice, aggregate, or encode rarely navigated axes as categorical subsets
+  before export.
+
 ## Chunking Strategy
 
 Optimal chunk sizes balance memory usage and access patterns:
-- **Default chunk size:** 32,768 elements
-- **Minimum chunk size:** 1,024 elements
-- **Maximum chunk size:** 262,144 elements
-- **2D arrays (positions, colors):** Chunk along first dimension only
-- **1D arrays (radii, sharpness):** Simple 1D chunking
+- **Target chunk payload:** 64KB (`TARGET_CHUNK_BYTES`)
+- **Minimum chunk payload:** 16KB (`MIN_CHUNK_BYTES`)
+- **Maximum chunk payload:** 256KB (`MAX_CHUNK_BYTES`)
+- **2D arrays (positions, colors):** Chunk along first dimension only, deriving element counts from dtype and row width
+- **1D arrays (radii, sharpness):** Simple 1D chunking, deriving element counts from dtype
 
 ### Chunking with Spatial Index
 
 When using spatial indices:
 - **Chunk Alignment**: Zarr chunks are automatically aligned with spatial index chunks
-- **Typical Strategy**: `chunk_size` is computed based on target memory per chunk (~32KB)
+- **Typical Strategy**: `chunk_size` is computed based on target memory per chunk (~64KB, see `TARGET_CHUNK_BYTES`)
 - **Benefits**: Loading a chunk index range loads exactly that zarr chunk
 - **Morton Ordering**: Points within a chunk are spatially nearby due to Morton ordering
 

@@ -59,7 +59,6 @@ from .aliases import (
 from .constants import (
     CATEGORICAL_STEP,
     DEFAULT_BLENDING_MODE,
-    DEFAULT_CHUNK_SIZE,
     DEFAULT_COMPRESSOR,
     DEFAULT_GAMMA,
     DEFAULT_OPACITY,
@@ -152,7 +151,6 @@ __all__ = [
     # From constants
     "CATEGORICAL_STEP",
     "DEFAULT_BLENDING_MODE",
-    "DEFAULT_CHUNK_SIZE",
     "DEFAULT_COMPRESSOR",
     "DEFAULT_GAMMA",
     "DEFAULT_OPACITY",

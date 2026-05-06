@@ -280,7 +280,9 @@ def generate_fit_sbatch(
 
     if manifest.parallel_tasks_per_job:
         # Parallel mode: launch all tasks as background processes, then wait.
-        # Each process gets its own CUDA stream; GPU memory is shared.
+        # Each process owns its own CUDA context (process-level isolation);
+        # kernels share the same GPU and memory pool but execute on independent
+        # default streams across processes.
         lines.extend(
             [
                 "# --- Parallel mode: launch tasks concurrently on the same GPU ---",

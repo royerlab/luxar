@@ -5,6 +5,44 @@ import type { ChunkPrefetcher } from './chunk-prefetcher';
 import { log, Modules } from '../utils/log';
 import { config } from '../config';
 
+type IterableFileSystemDirectoryHandle = FileSystemDirectoryHandle & {
+  entries(): AsyncIterableIterator<[string, FileSystemHandle]>;
+};
+
+/**
+ * Merge a primary `AbortSignal` (e.g. per-attempt timeout) with an optional
+ * caller signal (e.g. dispose-cancellation) so abort wins immediately on
+ * either path.
+ *
+ * Uses native `AbortSignal.any` when available (Node 22+, modern browsers);
+ * falls back to a hand-rolled relay otherwise.
+ */
+function mergeAbortSignals(primary: AbortSignal, caller?: AbortSignal): AbortSignal {
+  if (!caller) return primary;
+  type StaticAny = { any?: (signals: AbortSignal[]) => AbortSignal };
+  const anyImpl = (AbortSignal as unknown as StaticAny).any;
+  if (typeof anyImpl === 'function') {
+    return anyImpl([primary, caller]);
+  }
+  // Fallback: relay aborts onto a fresh controller.
+  const relay = new AbortController();
+  const onAbort = (): void => relay.abort();
+  if (primary.aborted || caller.aborted) {
+    relay.abort();
+  } else {
+    primary.addEventListener('abort', onAbort, { once: true });
+    caller.addEventListener('abort', onAbort, { once: true });
+  }
+  return relay.signal;
+}
+
+interface CacheMetadataFile {
+  baseUrl?: string;
+  contentHash?: string;
+  totalSize?: number;
+  entries?: unknown[];
+}
+
 export interface TwoLevelCachingStoreOptions {
   /** L1 memory cache size in bytes (default: 100MB) */
   l1MaxSize?: number;
@@ -34,6 +72,24 @@ export class TwoLevelCachingStore implements AsyncReadable {
 
   private static readonly DEFAULT_L1_SIZE = config.cache.l1MaxSizeMB * 1024 * 1024;
   private static readonly DEFAULT_L2_SIZE = config.cache.l2MaxSizeMB * 1024 * 1024;
+  /**
+   * Per-dataset validation queue keyed by `datasetId` (URL hash). Two stores
+   * pointing at the same URL serialize their validations across instances so
+   * a slower-finishing older validation cannot overwrite a newer
+   * content-hash. Each entry carries an `AbortController` so `dispose()`
+   * can both cancel the in-flight fetch AND remove the queue entry,
+   * preventing a closure that captured `this` from running
+   * `setContentHash()` against a disposed L2 store.
+   */
+  private static readonly validationQueues = new Map<
+    string,
+    { promise: Promise<void>; abort: AbortController }
+  >();
+  private static readonly INITIAL_RETRY_DELAY_MS = 50;
+  private static readonly MAX_RETRY_DELAY_MS = 500;
+
+  // Captured during init() so dispose() can find this instance's queue entry.
+  private datasetId?: string;
 
   // Invalidation callbacks (e.g., L0 DecompressedChunkCache clearing on L1/L2 invalidation)
   private invalidationCallbacks: (() => void)[] = [];
@@ -142,6 +198,7 @@ export class TwoLevelCachingStore implements AsyncReadable {
 
     // Generate dataset ID from URL and create L2 store
     const datasetId = await this.hashUrl(this.baseUrl);
+    this.datasetId = datasetId;
     this.l2Store = new OPFSStore(datasetId, this.baseUrl, this.l2MaxSize);
 
     await this.l2Store.init();
@@ -152,8 +209,10 @@ export class TwoLevelCachingStore implements AsyncReadable {
       await this.clearAll();
     }
 
-    // Validate cache using content hash
-    await this.validateCache();
+    // Validate cache using content hash. Validation is serialized per dataset
+    // ID so rapid same-URL dataset switches cannot let an older validation
+    // finish after a newer one and restore stale content_hash metadata.
+    await this.validateCache(datasetId);
   }
 
   /**
@@ -241,7 +300,7 @@ export class TwoLevelCachingStore implements AsyncReadable {
    * @see {@link setPrefetcher} for enabling automatic adjacent chunk loading
    * @see SPECIFICATIONS.md - Section 3 for complete cache algorithm
    */
-  async get(key: string, _options?: any): Promise<Uint8Array | undefined> {
+  async get(key: string, _options?: unknown): Promise<Uint8Array | undefined> {
     // L1: Memory check (fastest, ~1μs)
     const l1Hit = this.l1Cache.get(key);
     if (l1Hit) {
@@ -265,11 +324,8 @@ export class TwoLevelCachingStore implements AsyncReadable {
     // L3: Remote fetch (~100ms)
     try {
       this.log(`HTTP fetch: ${key}`, 'info');
-      // Ensure proper URL joining regardless of trailing/leading slashes
-      const cleanBase = this.baseUrl.replace(/\/+$/, '');
-      const cleanKey = key.replace(/^\/+/, '');
-      const response = await fetch(`${cleanBase}/${cleanKey}`);
-      if (!response.ok) return undefined;
+      const response = await this.fetchWithRetry(this.buildUrl(key));
+      if (!response?.ok) return undefined;
 
       const data = new Uint8Array(await response.arrayBuffer());
 
@@ -302,15 +358,58 @@ export class TwoLevelCachingStore implements AsyncReadable {
 
   /**
    * Validate cache using content hash. Clears cache if content changed.
+   *
+   * Validation is serialized per dataset via a static queue keyed on
+   * `datasetId`, which is `SHA-256(baseUrl)` (see {@link hashUrl}). All
+   * `TwoLevelCachingStore` instances pointing at the same URL share the
+   * same id and therefore the same queue, so rapid same-URL switches
+   * cannot let an older validation finish after a newer one and restore
+   * stale metadata. Each entry registers an `AbortController` so a
+   * subsequent `dispose()` on this instance can cancel both the
+   * in-flight HTTP fetch and any waiting follow-up validation that
+   * captured `this`.
    */
-  private async validateCache(): Promise<void> {
+  private async validateCache(datasetId: string): Promise<void> {
+    const abort = new AbortController();
+    const previous = TwoLevelCachingStore.validationQueues.get(datasetId);
+    const validation = (previous?.promise ?? Promise.resolve())
+      .catch(() => undefined)
+      .then(() => {
+        // Skip the validation entirely if dispose() aborted while we were
+        // waiting in line. The closure captured `this`, so running
+        // doValidateCache() now would write into a disposed l2Store.
+        if (abort.signal.aborted) return;
+        return this.doValidateCache(abort.signal);
+      });
+
+    const entry = { promise: validation, abort };
+    TwoLevelCachingStore.validationQueues.set(datasetId, entry);
+    try {
+      await validation;
+    } finally {
+      // Only delete the entry if it's still ours — a newer validation may
+      // have replaced it after we started.
+      if (TwoLevelCachingStore.validationQueues.get(datasetId) === entry) {
+        TwoLevelCachingStore.validationQueues.delete(datasetId);
+      }
+    }
+  }
+
+  private async doValidateCache(signal: AbortSignal): Promise<void> {
     try {
       // Fetch current content_hash directly from server (bypass cache)
-      const remoteHash = await this.getRemoteContentHash();
+      const remoteHash = await this.getRemoteContentHash(signal);
 
       // No hash → skip validation (external dataset handling)
       if (!remoteHash) {
         this.log('No content_hash, skipping validation');
+        return;
+      }
+
+      // If dispose() aborted between the fetch and the L2 write, bail out
+      // before touching the (possibly already-disposed) l2Store.
+      if (signal.aborted) {
+        this.log('Validation aborted (caller disposed)');
         return;
       }
 
@@ -336,13 +435,18 @@ export class TwoLevelCachingStore implements AsyncReadable {
    * Get content_hash directly from remote server, bypassing cache.
    * Used for cache validation to detect dataset changes.
    * This ensures we always check the TRUE current hash, not a cached one.
+   *
+   * Uses the dedicated `validationTimeoutMs` budget (default 5 s) so a flaky
+   * network never blocks scene loading for the full data-fetch timeout.
    */
-  private async getRemoteContentHash(): Promise<string | null> {
+  private async getRemoteContentHash(signal?: AbortSignal): Promise<string | null> {
     try {
       // Direct HTTP fetch, no cache lookup
-      const cleanBase = this.baseUrl.replace(/\/+$/, '');
-      const response = await fetch(`${cleanBase}/.zattrs`);
-      if (!response.ok) return null;
+      const response = await this.fetchWithRetry(this.buildUrl('.zattrs'), {
+        timeoutMsOverride: config.dataLoading.network.validationTimeoutMs,
+        signal,
+      });
+      if (!response?.ok) return null;
 
       const data = await response.arrayBuffer();
       const attrs = JSON.parse(new TextDecoder().decode(data));
@@ -353,6 +457,88 @@ export class TwoLevelCachingStore implements AsyncReadable {
       this.log(`Failed to fetch remote content_hash: ${errorMsg}`, 'warn');
       return null;
     }
+  }
+
+  /**
+   * Build a remote URL without producing duplicate slashes.
+   */
+  private buildUrl(key: string): string {
+    const cleanBase = this.baseUrl.replace(/\/+$/, '');
+    const cleanKey = key.replace(/^\/+/, '');
+    return `${cleanBase}/${cleanKey}`;
+  }
+
+  /**
+   * Fetch with retries for transient failures.
+   *
+   * 4xx responses are returned immediately because retrying cannot fix a
+   * missing zarr key. Network errors, timeouts, 429, and 5xx responses are
+   * retried using the configured retry budget. The configured timeout is
+   * treated as a total budget across attempts so retries do not multiply
+   * worst-case load time.
+   *
+   * @param url - URL to fetch.
+   * @param options - Optional `timeoutMsOverride` (e.g. for cache-validation
+   *   probes that want a shorter budget than the data-fetch timeout) and a
+   *   caller `signal` for dispose-cancel propagation. The caller signal is
+   *   merged with the per-attempt timeout signal so either abort source
+   *   wins immediately. A caller-aborted call exits without consuming
+   *   retry budget.
+   */
+  private async fetchWithRetry(
+    url: string,
+    options?: { timeoutMsOverride?: number; signal?: AbortSignal }
+  ): Promise<Response | undefined> {
+    const maxAttempts = Math.max(1, config.dataLoading.network.retryAttempts + 1);
+    const totalTimeoutMs = options?.timeoutMsOverride ?? config.dataLoading.network.timeoutMs;
+    const timeoutPerAttemptMs = Math.max(1, Math.ceil(totalTimeoutMs / maxAttempts));
+    let lastError: unknown;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      // Caller-aborted requests must not be retried; bail out before the
+      // next attempt.
+      if (options?.signal?.aborted) {
+        return undefined;
+      }
+
+      const timeoutController = new AbortController();
+      const timeoutId = setTimeout(() => timeoutController.abort(), timeoutPerAttemptMs);
+      const signal = mergeAbortSignals(timeoutController.signal, options?.signal);
+
+      try {
+        const response = await fetch(url, { signal });
+        if (response.ok || (response.status < 500 && response.status !== 429)) {
+          return response;
+        }
+        lastError = new Error(`HTTP ${response.status} for ${url}`);
+      } catch (error) {
+        lastError = error;
+        // Caller-aborted: exit immediately rather than retrying.
+        if (options?.signal?.aborted) {
+          return undefined;
+        }
+      } finally {
+        clearTimeout(timeoutId);
+      }
+
+      if (attempt < maxAttempts - 1) {
+        const delayMs = Math.min(
+          TwoLevelCachingStore.INITIAL_RETRY_DELAY_MS * 2 ** attempt,
+          TwoLevelCachingStore.MAX_RETRY_DELAY_MS
+        );
+        await this.sleep(delayMs);
+      }
+    }
+
+    if (lastError) {
+      const message = lastError instanceof Error ? lastError.message : String(lastError);
+      log.warning(Modules.CACHE, `Fetch failed after ${maxAttempts} attempt(s): ${message}`);
+    }
+    return undefined;
+  }
+
+  private sleep(delayMs: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, delayMs));
   }
 
   /**
@@ -377,13 +563,15 @@ export class TwoLevelCachingStore implements AsyncReadable {
       const opfsRoot = await navigator.storage.getDirectory();
 
       // Iterate all zarr-cache-* directories
-      for await (const [name, handle] of (opfsRoot as any).entries()) {
+      const iterableRoot = opfsRoot as IterableFileSystemDirectoryHandle;
+      for await (const [name, handle] of iterableRoot.entries()) {
         if (name.startsWith('zarr-cache-') && handle.kind === 'directory') {
           try {
             // Read _cache_meta.json from this dataset
-            const metaHandle = await handle.getFileHandle('_cache_meta.json');
+            const directoryHandle = handle as FileSystemDirectoryHandle;
+            const metaHandle = await directoryHandle.getFileHandle('_cache_meta.json');
             const file = await metaHandle.getFile();
-            const meta = JSON.parse(await file.text());
+            const meta = JSON.parse(await file.text()) as CacheMetadataFile;
 
             datasets.push({
               url: meta.baseUrl || 'unknown',
@@ -483,11 +671,26 @@ export class TwoLevelCachingStore implements AsyncReadable {
   }
 
   /**
-   * Dispose the cache store. Flushes pending writes and clears L1.
+   * Dispose the cache store. Flushes pending writes, cancels any in-flight
+   * cache-validation fetch, removes the dataset from the static validation
+   * queue, and clears L1.
+   *
+   * The validation cancellation matters because two stores against the same
+   * URL share the static queue; without it, a closure that captured `this`
+   * could run `setContentHash()` against a disposed l2Store.
    */
   async dispose(): Promise<void> {
     // Clear prefetcher reference (in-flight requests will complete harmlessly)
     this.prefetcher = null;
+
+    // Cancel any in-flight or queued validation belonging to this instance.
+    if (this.datasetId !== undefined) {
+      const queued = TwoLevelCachingStore.validationQueues.get(this.datasetId);
+      if (queued) {
+        queued.abort.abort();
+        TwoLevelCachingStore.validationQueues.delete(this.datasetId);
+      }
+    }
 
     if (this.l2Store) {
       await this.l2Store.dispose();

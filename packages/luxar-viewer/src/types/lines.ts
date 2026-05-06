@@ -127,36 +127,6 @@ export interface LinesMetadata {
 }
 
 // ============================================================================
-// Spatial Index Types
-// ============================================================================
-
-/**
- * Chunk-based spatial index for Lines.
- *
- * Lines have dual spatial ordering:
- * - Vertex chunks: Bounding boxes in D-space for efficient vertex lookup
- * - Segment chunks: Bounding boxes in D-space (union of start/end) for segment queries
- *
- * The segment bounds already include line width, so spatial queries use tolerance=0.
- */
-export interface LinesChunkSpatialIndex {
-  /** Lines metadata from zarr attributes */
-  metadata: LinesMetadata;
-
-  /** Vertex chunk bounding boxes (num_v_chunks * ndim * 2), flattened row-major */
-  vertexChunkBounds: Float32Array;
-
-  /** Segment chunk bounding boxes (num_s_chunks * ndim * 2), flattened row-major */
-  segmentChunkBounds: Float32Array;
-
-  /** Computed: ceil(n_vertices / vertex_ordering.chunk_size) */
-  vertexChunkCount: number;
-
-  /** Computed: ceil(n_segments / segment_ordering.chunk_size) */
-  segmentChunkCount: number;
-}
-
-// ============================================================================
 // Loaded Data Types
 // ============================================================================
 
@@ -343,9 +313,6 @@ export interface LinesUserData {
 
   /** Maximum line width (for bounding box expansion) */
   maxWidth: number;
-
-  /** Spatial index for queries (optional, may not exist for non-indexed data) */
-  spatialIndex?: LinesChunkSpatialIndex;
 
   /** Currently visible segment count after nD clipping (updated on view change) */
   visibleSegmentCount?: number;

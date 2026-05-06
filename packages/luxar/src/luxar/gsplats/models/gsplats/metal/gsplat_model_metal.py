@@ -1,34 +1,23 @@
 """
-Metal-accelerated Gaussian splatting model for Apple Silicon.
+Metal/MPS Gaussian splatting model for Apple Silicon.
 
-This module provides a high-performance replacement for GaussianSplatModel
-using Metal compute shaders for the forward and backward passes.
+The optimized custom Metal path currently targets the production-critical 3D
+case. The public model mirrors :class:`GaussianSplatModelCUDA` and uses
+Luxar's PyTorch renderer for other supported MPS dimensions, so callers can use
+the same model-management interface on MPS and CUDA systems.
 """
 
 from __future__ import annotations
 
-from typing import (
-    Any,
-    Iterator,
-    Mapping,
-    Optional,
-    Sequence,
-    Tuple,
-    TypeVar,
-    cast,
-    overload,
-)
+import builtins
+from typing import Any, Optional, Sequence, Tuple, cast
 
 import numpy as np
 import torch
-from arbol import aprint
-from torch.nn.modules.module import _IncompatibleKeys
 
 from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
+from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
 
-T_destination = TypeVar("T_destination", bound=dict[str, Any])
-
-# Import C++ extension (compiled separately)
 try:
     import metal_splatting_backend
 
@@ -38,377 +27,264 @@ except ImportError:
 
 
 def cholesky_to_conic(L: torch.Tensor) -> torch.Tensor:
+    """Convert Cholesky factors to packed inverse-covariance form.
+
+    Parameters
+    ----------
+    L:
+        ``(N, d, d)`` lower-triangular Cholesky factors where
+        ``Σ = L @ L.T``.
+
+    Returns
+    -------
+    torch.Tensor
+        ``(N, d * (d + 1) // 2)`` packed upper-triangular elements of
+        ``Σ⁻¹`` in row-major order. For 3D this is
+        ``[c00, c01, c02, c11, c12, c22]`` in the input coordinate order
+        (Luxar volumes use ``[Z, Y, X]``).
     """
-    Convert Cholesky factors to conic (inverse covariance) representation.
+    if L.ndim != 3 or L.shape[1] != L.shape[2]:
+        raise ValueError(f"Expected L with shape (N, d, d), got {tuple(L.shape)}")
 
-    Args:
-        L: (N, d, d) lower-triangular Cholesky factors in [Z,Y,X] row order
+    n_splats, dim, _ = L.shape
+    device = L.device
 
-    Returns:
-        conic: (N, d*(d+1)//2) upper-triangular elements of Σ^(-1)
-               For 3D: (N, 6) with [c_zz, c_yz, c_xz, c_yy, c_xy, c_xx] (Z,Y,X upper triangle)
+    if dim == 2:
+        l00 = L[:, 0, 0]
+        l10 = L[:, 1, 0]
+        l11 = L[:, 1, 1]
 
-    WARNING: Variable names in the 3D implementation use c_xx, c_yy, c_zz but these
-             actually correspond to matrix indices [0,0], [1,1], [2,2] which are
-             Z,Z, Y,Y, X,X respectively! The variable names are backwards.
-    """
-    N, d, _ = L.shape
+        k00 = 1.0 / (l00 + 1e-9)
+        k11 = 1.0 / (l11 + 1e-9)
+        k10 = -l10 * k00 * k11
 
-    # Manual implementation of C = Σ^(-1) = (L @ L^T)^(-1) = L^(-T) @ L^(-1)
-    # Works on all devices (MPS, CPU, CUDA) and avoids MPS cholesky_inverse issues.
-    # Compute K = L^(-1) via forward substitution, then C = K^T @ K
+        c00 = k00 * k00 + k10 * k10
+        c01 = k10 * k11
+        c11 = k11 * k11
+        return torch.stack([c00, c01, c11], dim=1)
 
-    if d == 3:
-        # Extract elements (row-major)
-        L00 = L[:, 0, 0]
-        L10 = L[:, 1, 0]
-        L11 = L[:, 1, 1]
-        L20 = L[:, 2, 0]
-        L21 = L[:, 2, 1]
-        L22 = L[:, 2, 2]
+    if dim == 3:
+        l00 = L[:, 0, 0]
+        l10 = L[:, 1, 0]
+        l11 = L[:, 1, 1]
+        l20 = L[:, 2, 0]
+        l21 = L[:, 2, 1]
+        l22 = L[:, 2, 2]
 
-        # Compute K = L^(-1) via forward substitution
-        K00 = 1.0 / (L00 + 1e-9)
-        K11 = 1.0 / (L11 + 1e-9)
-        K22 = 1.0 / (L22 + 1e-9)
-        K10 = -L10 * K00 * K11
-        K21 = -L21 * K11 * K22
-        K20 = -(L20 * K00 + L21 * K10) * K22
+        k00 = 1.0 / (l00 + 1e-9)
+        k11 = 1.0 / (l11 + 1e-9)
+        k22 = 1.0 / (l22 + 1e-9)
+        k10 = -l10 * k00 * k11
+        k21 = -l21 * k11 * k22
+        k20 = -(l20 * k00 + l21 * k10) * k22
 
-        # Compute C = K^T @ K
-        c_xx = K00 * K00 + K10 * K10 + K20 * K20
-        c_xy = K10 * K11 + K20 * K21
-        c_xz = K20 * K22
-        c_yy = K11 * K11 + K21 * K21
-        c_yz = K21 * K22
-        c_zz = K22 * K22
+        c00 = k00 * k00 + k10 * k10 + k20 * k20
+        c01 = k10 * k11 + k20 * k21
+        c02 = k20 * k22
+        c11 = k11 * k11 + k21 * k21
+        c12 = k21 * k22
+        c22 = k22 * k22
+        return torch.stack([c00, c01, c02, c11, c12, c22], dim=1)
 
-        conic = torch.stack([c_xx, c_xy, c_xz, c_yy, c_yz, c_zz], dim=1)
-
-    elif d == 2:
-        # 2D case
-        L00 = L[:, 0, 0]
-        L10 = L[:, 1, 0]
-        L11 = L[:, 1, 1]
-
-        K00 = 1.0 / (L00 + 1e-9)
-        K11 = 1.0 / (L11 + 1e-9)
-        K10 = -L10 * K00 * K11
-
-        c_xx = K00 * K00 + K10 * K10
-        c_xy = K10 * K11
-        c_yy = K11 * K11
-
-        conic = torch.stack([c_xx, c_xy, c_yy], dim=1)
-
-    else:
-        # Generic nD: use torch.linalg.inv (slower but works)
-        # Move to CPU if on MPS since MPS has limited support
-        device = L.device
-        L_cpu = L.cpu() if L.device.type == "mps" else L
-
-        Sigma = L_cpu @ L_cpu.transpose(-2, -1)
-        Sigma_inv = torch.linalg.inv(Sigma)
-
-        # Extract upper triangle
-        indices = torch.triu_indices(d, d)
-        conic = Sigma_inv[:, indices[0], indices[1]]
-
-        conic = conic.to(device)
-
-    return conic
+    eye = torch.eye(dim, device=device, dtype=L.dtype).expand(n_splats, -1, -1)
+    l_inv = torch.linalg.solve_triangular(L, eye, upper=False)
+    sigma_inv = l_inv.transpose(-2, -1) @ l_inv
+    rows, cols = torch.triu_indices(dim, dim, device=device)
+    result: torch.Tensor = sigma_inv[:, rows, cols]
+    return result
 
 
 class MetalSplatFunction(torch.autograd.Function):
-    """Custom autograd function for Metal-accelerated splatting."""
+    """Custom autograd function for the splat-centric 3D Metal renderer."""
 
     @staticmethod
     def forward(
         ctx: Any,
-        centers: torch.Tensor,  # (N, d)
-        Ls: torch.Tensor,  # (N, d, d)
-        amps: torch.Tensor,  # (N,)
+        centers: torch.Tensor,
+        Ls: torch.Tensor,
+        amps: torch.Tensor,
         shape: Tuple[int, ...],
         truncate: float,
-        intensity_floor: float = 1e-5,  # For early culling of invisible contributions
-        tile_size: int = 4,  # Configurable tile size for 3D binning
-        use_metal_conic: bool = False,  # Use Metal for L→Conic (experimental speedup)
+        intensity_floor: float = 1e-5,
+        use_metal_conic: bool = False,
     ) -> torch.Tensor:
-        """
-        Forward pass: render Gaussians to volume.
+        dim = len(shape)
+        if not METAL_AVAILABLE:
+            raise RuntimeError("Metal splatting backend is not available")
+        if dim != 3:
+            raise ValueError(f"MetalSplatFunction requires 3D volumes, got {dim}D")
+        if (
+            centers.device.type != "mps"
+            or Ls.device.type != "mps"
+            or amps.device.type != "mps"
+        ):
+            raise ValueError(
+                "MetalSplatFunction requires MPS tensors, got "
+                f"centers={centers.device}, Ls={Ls.device}, amps={amps.device}"
+            )
 
-        L → Conic conversion happens in PyTorch for graph consistency.
-        Metal handles the pixel-parallel rendering.
-        """
-        d = len(shape)
-        device = centers.device
+        ctx.shape = tuple(int(s) for s in shape)
+        ctx.truncate = float(truncate)
+        ctx.intensity_floor = float(intensity_floor)
 
-        # === L → Conic Conversion ===
-        # Use Metal L→Conic for speed (enabled by default, validated)
-        if use_metal_conic and d == 3 and METAL_AVAILABLE:
-            # Compute conic in Metal for speed
-            Ls_mps_for_conic = Ls.contiguous().to("mps")
-            conic_metal = metal_splatting_backend.compute_conic_metal(Ls_mps_for_conic)
-            conic = conic_metal.to(device).detach()  # Already in [X,Y,Z] order!
+        if (
+            centers.dtype != torch.float32
+            or Ls.dtype != torch.float32
+            or amps.dtype != torch.float32
+        ):
+            raise TypeError(
+                "Metal custom kernels require float32 centers, Ls, and amps"
+            )
 
-            # Still need Ls_for_conic for backward (will recompute in PyTorch for gradients)
-            Ls_for_conic = Ls.detach().clone().requires_grad_(True)
+        # L -> conic. The splat-centric kernels use Luxar/PyTorch's native
+        # [Z, Y, X] coordinate order and row-major packed upper triangle. We
+        # compute the conic ONCE per forward (via the Metal kernel when
+        # ``use_metal_conic`` is set, otherwise via the PyTorch helper) so the
+        # rasterization kernel does not redo the Cholesky → conic math
+        # per-splat-per-thread.
+        Ls_for_conic = Ls.detach().clone().requires_grad_(True)
+        if use_metal_conic:
+            conic_zyx = metal_splatting_backend.compute_conic_metal(
+                Ls.contiguous()
+            ).detach()
         else:
-            # Standard PyTorch path
-            Ls_for_conic = Ls.detach().clone().requires_grad_(True)
-            conic = cholesky_to_conic(Ls_for_conic)
+            conic_zyx = cholesky_to_conic(Ls_for_conic).detach().contiguous()
 
-        # === Dispatch to Metal ===
-        # Note: Metal computes sigma_diag internally from Ls for AABB
-        if d == 3 and METAL_AVAILABLE:
-            # CRITICAL: Coordinate convention handling
-            # PyTorch/numpy uses [Z,Y,X], Metal kernel expects [X,Y,Z] for conic/distance
-
-            if use_metal_conic:
-                # Conic already in [X,Y,Z] order from Metal kernel - no reordering needed!
-                conic_mps = conic.detach().contiguous().to("mps")
-            else:
-                # Conic from PyTorch is in [Z,Y,X], need to reorder to [X,Y,Z]
-                # PyTorch: [c_zz, c_yz, c_xz, c_yy, c_xy, c_xx] (Z,Y,X upper triangle)
-                # Metal:   [c_xx, c_xy, c_xz, c_yy, c_yz, c_zz] (X,Y,Z upper triangle)
-                # Mapping: [ 0,   1,    2,    3,    4,    5  ] → [ 5,  4,  2,  3,  1,  0]
-                conic_reordered = conic[:, [5, 4, 2, 3, 1, 0]]
-                conic_mps = conic_reordered.detach().contiguous().to("mps")
-
-            # Centers and L stay in [Z,Y,X] order
-            centers_mps = centers.contiguous().to("mps")
-            amps_mps = amps.contiguous().to("mps")
-            Ls_mps = Ls.contiguous().to("mps")  # Needed for sigma_diag in binning
-
-            # Forward returns: [output, tile_counts, tile_offsets, tile_content]
-            result = metal_splatting_backend.forward_3d(
-                centers_mps,
-                conic_mps,
-                amps_mps,
-                Ls_mps,
+        output = cast(
+            torch.Tensor,
+            metal_splatting_backend.forward_splat_3d(
+                centers.contiguous(),
+                conic_zyx.contiguous(),
+                amps.contiguous(),
                 list(shape),
-                truncate,
-                intensity_floor,
-                tile_size,  # Configurable tile size
-            )
-            output = cast(torch.Tensor, result[0].to(device))
+                float(truncate),
+                float(intensity_floor),
+            ),
+        )
+        if output.shape != torch.Size(shape):
+            output = output.view(shape)
 
-            # CRITICAL: Save tile data for backward pass (no grad needed)
-            tile_counts = result[1]
-            tile_offsets = result[2]
-            tile_content = result[3]
-        else:
-            # Fallback to PyTorch (for nD or when Metal unavailable)
-            from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
-
-            output = render_gaussians(
-                shape, centers, Ls, amps, truncate, intensity_floor
-            )
-            # No tile data for PyTorch path
-            tile_counts = None
-            tile_offsets = None
-            tile_content = None
-
-        # Save for backward - include tile data for Metal backward
-        ctx.save_for_backward(centers, Ls, Ls_for_conic, conic, amps)
-
-        # Save non-tensor data and tile buffers separately
-        ctx.shape = shape
-        ctx.truncate = truncate
-        ctx.intensity_floor = intensity_floor
-        ctx.tile_size = tile_size
-        ctx.use_metal_conic = use_metal_conic  # CRITICAL: Need this for backward!
-        ctx.d = d
-        ctx.tile_counts = tile_counts
-        ctx.tile_offsets = tile_offsets
-        ctx.tile_content = tile_content
-
+        ctx.save_for_backward(centers, Ls_for_conic, conic_zyx, amps)
         return output
 
     @staticmethod
     def backward(
         ctx: Any, grad_output: torch.Tensor
     ) -> Tuple[Optional[torch.Tensor], ...]:
-        """
-        Backward pass: compute gradients.
+        centers, Ls_for_conic, conic_zyx, amps = ctx.saved_tensors
 
-        Metal computes: d_centers, d_conic, d_amps
-        PyTorch handles: d_conic → d_Ls (chain rule)
+        d_centers, d_conic_zyx, d_amps = metal_splatting_backend.backward_splat_3d(
+            grad_output.contiguous(),
+            centers.contiguous(),
+            conic_zyx.contiguous(),
+            amps.contiguous(),
+            list(ctx.shape),
+            ctx.truncate,
+            ctx.intensity_floor,
+        )
 
-        CRITICAL: Uses saved tile_counts/offsets/content from forward pass
-        to avoid recomputing binning (saves time and ensures determinism).
-        """
-        (centers, Ls, Ls_for_conic, conic, amps) = ctx.saved_tensors
-        shape = ctx.shape
-        truncate = ctx.truncate
-        intensity_floor = ctx.intensity_floor
-        tile_size = ctx.tile_size
-        use_metal_conic = ctx.use_metal_conic  # CRITICAL: Must match forward!
-        d = ctx.d
+        # Chain rule: Metal returns d(conic) in the same [Z, Y, X] packed
+        # order as cholesky_to_conic(), so no coordinate reorder is needed.
+        with torch.enable_grad():
+            conic_recomputed_zyx = cholesky_to_conic(Ls_for_conic)
+        (d_Ls,) = torch.autograd.grad(
+            outputs=conic_recomputed_zyx,
+            inputs=Ls_for_conic,
+            grad_outputs=d_conic_zyx,
+            retain_graph=False,
+            create_graph=False,
+            allow_unused=False,
+        )
 
-        device = centers.device
+        return d_centers, d_Ls, d_amps, None, None, None, None
 
-        if d == 3 and METAL_AVAILABLE and ctx.tile_counts is not None:
-            # === Metal: Compute gradients using saved tile data ===
-            # CRITICAL: Reorder conic to [X,Y,Z] (same as forward!)
-            # PyTorch: [c_zz, c_yz, c_xz, c_yy, c_xy, c_xx] → Metal: [c_xx, c_xy, c_xz, c_yy, c_yz, c_zz]
-            conic_reordered = conic[:, [5, 4, 2, 3, 1, 0]]  # [Z,Y,X] → [X,Y,Z]
 
-            grad_mps = grad_output.contiguous().to("mps")
-            centers_mps = centers.contiguous().to("mps")
-            conic_mps = conic_reordered.contiguous().to("mps")  # Use reordered conic!
-            amps_mps = amps.contiguous().to("mps")
+class MetalRawSplatFunction(torch.autograd.Function):
+    """Custom autograd function that keeps raw 3D parameters in Metal."""
 
-            # Reuse tile data from forward pass (CRITICAL for performance)
-            (d_centers, d_conic, d_amps) = metal_splatting_backend.backward_3d(
-                grad_mps,
-                centers_mps,
-                conic_mps,
-                amps_mps,
-                ctx.tile_offsets,
-                ctx.tile_counts,
-                ctx.tile_content,
+    @staticmethod
+    def forward(
+        ctx: Any,
+        raw_mu: torch.Tensor,
+        raw_L_diag: torch.Tensor,
+        L_off: torch.Tensor,
+        raw_a: torch.Tensor,
+        sigma_min_diag: torch.Tensor,
+        shape: Tuple[int, ...],
+        truncate: float,
+        intensity_floor: float = 1e-5,
+    ) -> torch.Tensor:
+        if not METAL_AVAILABLE:
+            raise RuntimeError("Metal splatting backend is not available")
+        if len(shape) != 3:
+            raise ValueError("MetalRawSplatFunction requires 3D volumes")
+        if (
+            raw_mu.device.type != "mps"
+            or raw_L_diag.device.type != "mps"
+            or L_off.device.type != "mps"
+            or raw_a.device.type != "mps"
+            or sigma_min_diag.device.type != "mps"
+        ):
+            raise ValueError("MetalRawSplatFunction requires MPS tensors")
+        if (
+            raw_mu.dtype != torch.float32
+            or raw_L_diag.dtype != torch.float32
+            or L_off.dtype != torch.float32
+            or raw_a.dtype != torch.float32
+            or sigma_min_diag.dtype != torch.float32
+        ):
+            raise TypeError("Metal raw kernels require float32 tensors")
+
+        ctx.shape = tuple(int(s) for s in shape)
+        ctx.truncate = float(truncate)
+        ctx.intensity_floor = float(intensity_floor)
+        ctx.save_for_backward(raw_mu, raw_L_diag, L_off, raw_a, sigma_min_diag)
+
+        output = cast(
+            torch.Tensor,
+            metal_splatting_backend.forward_raw_splat_3d(
+                raw_mu.contiguous(),
+                raw_L_diag.contiguous(),
+                L_off.contiguous(),
+                raw_a.contiguous(),
+                sigma_min_diag.contiguous(),
                 list(shape),
-                truncate,
-                intensity_floor,
-                tile_size,  # Must match forward!
+                float(truncate),
+                float(intensity_floor),
+            ),
+        )
+        if output.shape != torch.Size(shape):
+            output = output.view(shape)
+        return output
+
+    @staticmethod
+    def backward(
+        ctx: Any, grad_output: torch.Tensor
+    ) -> Tuple[Optional[torch.Tensor], ...]:
+        raw_mu, raw_L_diag, L_off, raw_a, sigma_min_diag = ctx.saved_tensors
+        d_raw_mu, d_raw_L_diag, d_L_off, d_raw_a = (
+            metal_splatting_backend.backward_raw_splat_3d(
+                grad_output,
+                raw_mu.contiguous(),
+                raw_L_diag.contiguous(),
+                L_off.contiguous(),
+                raw_a.contiguous(),
+                sigma_min_diag.contiguous(),
+                list(ctx.shape),
+                ctx.truncate,
+                ctx.intensity_floor,
             )
-
-            # === DEBUG PROBE: Check raw Metal output ===
-            import os
-
-            if os.environ.get("DEBUG_METAL_GRADIENTS"):
-                aprint("\n" + "=" * 80)
-                aprint("DEBUG: RAW METAL BACKWARD OUTPUT")
-                aprint("=" * 80)
-                aprint(f"grad_output shape: {grad_output.shape}")
-                aprint(f"grad_output sum: {grad_output.sum().item():.6f}")
-                aprint(f"\nd_centers shape: {d_centers.shape}")
-                aprint("d_centers (first 3 splats):")
-                for i in range(min(3, d_centers.shape[0])):
-                    dc = (
-                        d_centers[i].cpu().numpy()
-                        if d_centers.device.type == "mps"
-                        else d_centers[i].numpy()
-                    )
-                    aprint(
-                        f"  Splat {i}: [Z={dc[0]:.6e}, Y={dc[1]:.6e}, X={dc[2]:.6e}]"
-                    )
-                aprint(
-                    "\nPython reference expects: [Z=2.707e-01, Y=-6.601e-08, X=-1.346e-07]"
-                )
-                aprint("If Y gradient is already wrong here, bug is in METAL.")
-                aprint(
-                    "If Y gradient is correct here, bug is in PYTHON chain rule below."
-                )
-                aprint("=" * 80 + "\n")
-            # === END DEBUG PROBE ===
-
-            # Move back to original device and reorder d_conic
-            d_centers = d_centers.to(device)  # Already in [Z,Y,X], no reorder needed
-
-            # d_conic is in [X,Y,Z] order, reorder back to [Z,Y,X]
-            # Metal:   [c_xx, c_xy, c_xz, c_yy, c_yz, c_zz] (current order)
-            # PyTorch: [c_zz, c_yz, c_xz, c_yy, c_xy, c_xx] (target order)
-            # Inverse of [5,4,2,3,1,0] is [5,4,2,3,1,0] (self-inverse)
-
-            # === DEBUG PROBE: Check d_conic before and after reordering ===
-            if os.environ.get("DEBUG_METAL_GRADIENTS"):
-                aprint("DEBUG: d_conic from Metal (before reorder, [X,Y,Z] order):")
-                aprint("  [c_xx, c_xy, c_xz, c_yy, c_yz, c_zz]")
-                dc_before = (
-                    d_conic[0].cpu().numpy()
-                    if d_conic.device.type == "mps"
-                    else d_conic[0].numpy()
-                )
-                aprint(f"  {dc_before}")
-
-            d_conic = d_conic[:, [5, 4, 2, 3, 1, 0]].to(device)
-
-            if os.environ.get("DEBUG_METAL_GRADIENTS"):
-                aprint("DEBUG: d_conic after reorder ([Z,Y,X] order):")
-                aprint("  [c_zz, c_yz, c_xz, c_yy, c_xy, c_xx]")
-                dc_after = d_conic[0].detach().cpu().numpy()
-                aprint(f"  {dc_after}")
-                aprint("  Note: Contributions come from ALL pixels, not just peak")
-                aprint()
-
-            d_amps = d_amps.to(device)
-
-            # === PyTorch: Chain rule d_conic → d_Ls ===
-            # CRITICAL: Custom autograd.Function.backward runs with grad mode disabled!
-            # Must explicitly enable grad mode for the recomputation.
-            with torch.enable_grad():
-                conic_recomputed = cholesky_to_conic(Ls_for_conic)  # In [Z,Y,X]
-
-            # CRITICAL: d_conic is in [X,Y,Z], but recomputed conic is in [Z,Y,X]
-            # They must be in same order for chain rule to work!
-            if use_metal_conic:
-                # Forward used Metal conic (already gave us d_conic in [X,Y,Z])
-                # Need to reorder d_conic to [Z,Y,X] to match recomputed conic
-                # [xx,xy,xz,yy,yz,zz] → [zz,zy,zx,yy,yx,xx]
-                # Actually, we already reordered it above! So this is correct.
-                # But we need to make sure recomputed conic is also in [Z,Y,X]
-                # It already is (cholesky_to_conic outputs [Z,Y,X])
-                d_conic_for_chain = d_conic  # Already reordered to [Z,Y,X] above
-            else:
-                # Forward used PyTorch conic (both in [Z,Y,X])
-                # d_conic was reordered to [Z,Y,X] above
-                d_conic_for_chain = d_conic
-
-            # === DEBUG: Check inputs to chain rule ===
-            if os.environ.get("DEBUG_METAL_GRADIENTS"):
-                aprint("DEBUG: Chain rule inputs:")
-                aprint(f"  conic_recomputed shape: {conic_recomputed.shape}")
-                aprint(
-                    f"  conic_recomputed[0]: {conic_recomputed[0].detach().cpu().numpy()}"
-                )
-                aprint(
-                    f"  d_conic_for_chain[0]: {d_conic_for_chain[0].detach().cpu().numpy()}"
-                )
-                aprint()
-
-            # Use torch.autograd.grad for chain rule
-            (d_Ls,) = torch.autograd.grad(
-                outputs=conic_recomputed,
-                inputs=Ls_for_conic,
-                grad_outputs=d_conic_for_chain,
-                retain_graph=False,
-                create_graph=False,
-                allow_unused=False,
-            )
-
-            # === DEBUG: Check chain rule output ===
-            if os.environ.get("DEBUG_METAL_GRADIENTS"):
-                aprint("DEBUG: Chain rule output (d_Ls):")
-                aprint(f"  d_Ls shape: {d_Ls.shape}")
-                aprint("  d_Ls[0]:")
-                aprint(f"{d_Ls[0].detach().cpu().numpy()}")
-                aprint()
-
-        else:
-            # Fallback: PyTorch forward was used, so PyTorch Autograd handled it
-            # We don't need to compute gradients - they're already in the graph
-            # Just return None for all outputs (Autograd will handle it)
-            # NOTE: This should never be called if forward used PyTorch fallback,
-            # because render_gaussians is already tracked by Autograd
-            return (None, None, None, None, None, None, None, None)
-
-        # Return gradients: (centers, Ls, amps, shape, truncate, intensity_floor, tile_size, use_metal_conic)
-        return d_centers, d_Ls, d_amps, None, None, None, None, None
+        )
+        return d_raw_mu, d_raw_L_diag, d_L_off, d_raw_a, None, None, None, None
 
 
-class GaussianSplatModelMetal(torch.nn.Module):
-    """
-    Metal-accelerated Gaussian splat model for Apple Silicon.
+class GaussianSplatModelMetal(GaussianSplatModel):
+    """Gaussian splat model with an optimized Metal/MPS rendering backend.
 
-    This class wraps a standard GaussianSplatModel and overrides the forward()
-    method to use Metal compute shaders. All parameter management is delegated
-    to the base model for consistency.
-
-    Uses composition rather than inheritance to avoid double-registration of
-    parameters and to maintain clean separation between parameter management
-    and rendering strategy.
+    The constructor mirrors :class:`GaussianSplatModelCUDA` where practical. The
+    custom Metal kernel is used for 3D MPS tensors. For 2D and 4D-8D MPS
+    shapes, the model uses Luxar's PyTorch renderer while preserving the same
+    parameter-management interface.
     """
 
     def __init__(
@@ -423,50 +299,46 @@ class GaussianSplatModelMetal(torch.nn.Module):
         max_eccentricity: Optional[float] = None,
         truncate: float = 3.0,
         intensity_floor: float = 1e-5,
-        tile_size: int = 4,  # Tile size for 3D binning (4 is optimal)
-        use_metal_conic: bool = False,  # DISABLED: Gradient bug found, investigating
+        use_fp16: bool = False,
+        use_metal_conic: bool = False,
         voxel_size: Optional[np.ndarray] = None,
         device: Optional[torch.device | str] = None,
     ) -> None:
-        super().__init__()
-
-        # CRITICAL: Feature parity check - prevent silent failures
-        # Metal backend ONLY for 3D (2D overhead > benefit, nD not supported)
-        d = len(shape)
-        if d != 3:
+        dim = len(shape)
+        if dim < 2 or dim > 8:
             raise ValueError(
-                f"Metal backend only supports 3D volumes (got {d}D). "
-                f"For 2D images or nD data, use GaussianSplatModel (faster for small problems). "
-                f"Metal overhead exceeds benefit for dimensions != 3."
+                f"Metal backend supports 2D-8D volumes (got {dim}D). "
+                "For higher dimensions, use GaussianSplatModel."
             )
-
-        # Validate device compatibility
-        if device is not None:
-            device_str = str(device) if isinstance(device, str) else device.type
-            if device_str not in ("mps", "cpu", "mps:0"):
+        if not METAL_AVAILABLE:
+            raise RuntimeError(
+                "Metal extension is not loaded. Check is_metal_available() before "
+                "constructing GaussianSplatModelMetal."
+            )
+        if use_fp16:
+            raise ValueError(
+                "Metal backend does not support FP16 kernels yet. "
+                "Use use_fp16=False with float32 parameters."
+            )
+        if device is None:
+            if not torch.backends.mps.is_available():
                 raise ValueError(
-                    f"Metal backend requires MPS or CPU device (got {device_str}). "
-                    f"For CUDA, use GaussianSplatModel."
+                    "Metal backend requires an available MPS device. "
+                    "For CPU, use GaussianSplatModel."
                 )
+            resolved_device = torch.device("mps")
+        elif isinstance(device, str):
+            resolved_device = torch.device(device)
+        else:
+            resolved_device = device
 
-        # Check for unsupported future features (extensibility safeguard)
-        # If base model adds new parameters, we should detect them here
-        import inspect
-
-        base_params = inspect.signature(GaussianSplatModel.__init__).parameters
-        if len(base_params) > 13:  # Expected: ~12 parameters (self + 11 init params)
-            import warnings
-
-            warnings.warn(
-                "GaussianSplatModel has more parameters than expected. "
-                "Metal backend may not support all features. "
-                "Validate results carefully or use use_metal=False.",
-                RuntimeWarning,
+        if resolved_device.type != "mps":
+            raise ValueError(
+                f"Metal backend requires an MPS device (got {resolved_device}). "
+                "For CPU, use GaussianSplatModel. For CUDA, use GaussianSplatModelCUDA."
             )
 
-        # Create base model for parameter management
-        base_device = torch.device(device) if isinstance(device, str) else device
-        self._base = GaussianSplatModel(
+        super().__init__(
             shape=shape,
             centers0=centers0,
             L0=L0,
@@ -477,194 +349,226 @@ class GaussianSplatModelMetal(torch.nn.Module):
             max_eccentricity=max_eccentricity,
             truncate=truncate,
             voxel_size=voxel_size,
-            device=base_device,
+            device=resolved_device,
         )
 
-        # Store Metal-specific parameters
-        self._shape = shape
-        self._truncate = truncate
-        self._intensity_floor = intensity_floor
-        self._tile_size = tile_size
-        self._use_metal_conic = use_metal_conic
+        self._intensity_floor = float(intensity_floor)
+        self._use_metal_conic = bool(use_metal_conic)
+        self._use_fp16 = False
 
-        # Cache for current_params() (23% speedup!)
-        self._params_cache = None
-        self._params_cache_valid = False
+    @property
+    def _uses_custom_metal(self) -> bool:
+        return METAL_AVAILABLE and self.dim == 3 and self.raw_mu.device.type == "mps"
 
-    def _invalidate_cache(self) -> None:
-        """Invalidate cached parameters (call after optimizer.step())."""
-        self._params_cache_valid = False
+    @property
+    def _uses_raw_custom_metal(self) -> bool:
+        return (
+            self._uses_custom_metal
+            and self.sigma_max_diag is None
+            and self.amp_max is None
+            and self.max_eccentricity is None
+            and self.voxel_size is None
+            and self.L_off.shape[1] == 3
+        )
 
     def forward(self) -> torch.Tensor:
-        """
-        Render Gaussians to volume using Metal acceleration.
+        if self._uses_raw_custom_metal:
+            return cast(
+                torch.Tensor,
+                MetalRawSplatFunction.apply(  # type: ignore[no-untyped-call]
+                    self.raw_mu,
+                    self.raw_L_diag,
+                    self.L_off,
+                    self.raw_a,
+                    self.sigma_min_diag,
+                    self.shape,
+                    self.truncate,
+                    self._intensity_floor,
+                ),
+            )
 
-        Overrides base model's forward() to use MetalSplatFunction.
-        """
-        # Get current parameters from base model
-        centers, Ls, amps = self._base.current_params()
+        centers, Ls, amps = self.current_params()
+        if self._uses_custom_metal:
+            return cast(
+                torch.Tensor,
+                MetalSplatFunction.apply(  # type: ignore[no-untyped-call]
+                    centers,
+                    Ls,
+                    amps,
+                    self.shape,
+                    self.truncate,
+                    self._intensity_floor,
+                    self._use_metal_conic,
+                ),
+            )
 
-        # Use Metal-accelerated forward pass
-        output = cast(
-            torch.Tensor,
-            MetalSplatFunction.apply(  # type: ignore[no-untyped-call]
-                centers,
-                Ls,
-                amps,
-                self._shape,
-                self._truncate,
-                self._intensity_floor,
-                self._tile_size,  # Configurable tile size
-                self._use_metal_conic,  # Optional: Metal L→Conic (faster)
-            ),
+        return render_gaussians(
+            self.shape,
+            centers,
+            Ls,
+            amps,
+            truncate=self.truncate,
+            intensity_floor=self._intensity_floor,
         )
 
-        return output
-
-    # Delegate all other methods to base model
-    def current_params(
-        self,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Get current parameter values."""
-        return self._base.current_params()
-
-    def prune_(self, mask: torch.Tensor) -> None:
-        """Remove splats according to boolean mask."""
-        self._base.prune_(mask)
-
-    def append_(
-        self,
-        centers: torch.Tensor,
-        Ls: torch.Tensor,
-        amps: torch.Tensor,
+    @staticmethod
+    def _validate_mps_tensor(
+        name: str, tensor: torch.Tensor, *, require_float32: bool = True
     ) -> None:
-        """Add new splats to the model."""
-        self._base.append_(centers, Ls, amps)
+        if tensor.device.type != "mps":
+            raise ValueError(
+                f"Metal backend requires {name} to be on MPS (got {tensor.device})."
+            )
+        if require_float32 and tensor.dtype != torch.float32:
+            raise ValueError(
+                f"Metal backend requires {name} to be float32 (got {tensor.dtype})."
+            )
 
     def replace_with(
-        self,
-        centers: torch.Tensor,
-        Ls: torch.Tensor,
-        amps: torch.Tensor,
+        self, centers: torch.Tensor, Ls: torch.Tensor, amps: torch.Tensor
     ) -> None:
-        """Replace all splats with new values."""
-        self._base.replace_with(centers, Ls, amps)
+        """Replace all splats, requiring MPS float32 tensors."""
+        self._validate_mps_tensor("centers", centers)
+        self._validate_mps_tensor("Ls", Ls)
+        self._validate_mps_tensor("amps", amps)
+        super().replace_with(centers, Ls, amps)
 
-    def n_splats(self) -> int:
-        """Return number of splats."""
-        return self._base.n_splats()
+    def append_(
+        self, centers: torch.Tensor, Ls: torch.Tensor, amps: torch.Tensor
+    ) -> None:
+        """Append splats, requiring MPS float32 tensors."""
+        self._validate_mps_tensor("centers", centers)
+        self._validate_mps_tensor("Ls", Ls)
+        self._validate_mps_tensor("amps", amps)
+        super().append_(centers, Ls, amps)
 
-    def parameters(self, recurse: bool = True) -> Iterator[torch.nn.Parameter]:
-        """Return iterator over model parameters."""
-        # Delegate to base model to avoid double-registration
-        return self._base.parameters(recurse=recurse)
+    def prune_(self, mask: torch.Tensor) -> None:
+        """Prune splats, requiring an MPS boolean keep mask."""
+        self._validate_mps_tensor("mask", mask, require_float32=False)
+        if mask.dtype != torch.bool:
+            raise ValueError(
+                f"Metal backend requires mask to be bool (got {mask.dtype})."
+            )
+        super().prune_(mask)
 
-    def named_parameters(
-        self,
-        prefix: str = "",
-        recurse: bool = True,
-        remove_duplicate: bool = True,
-    ) -> Iterator[tuple[str, torch.nn.Parameter]]:
-        """Return iterator over (name, parameter) pairs."""
-        return self._base.named_parameters(
-            prefix=prefix, recurse=recurse, remove_duplicate=remove_duplicate
-        )
+    @staticmethod
+    def _validate_requested_device(device: torch.device | str | int | None) -> None:
+        if device is None:
+            return
+        if isinstance(device, int):
+            raise ValueError(
+                f"Metal backend requires an MPS device (got device index {device}). "
+                "For CPU, use GaussianSplatModel. For CUDA, use GaussianSplatModelCUDA."
+            )
+        resolved = torch.device(device)
+        if resolved.type != "mps":
+            raise ValueError(
+                f"Metal backend requires an MPS device (got {resolved}). "
+                "For CPU, use GaussianSplatModel. For CUDA, use GaussianSplatModelCUDA."
+            )
 
-    @overload
-    def state_dict(
-        self,
-        *,
-        destination: T_destination,
-        prefix: str = "",
-        keep_vars: bool = False,
-    ) -> T_destination: ...
+    @staticmethod
+    def _validate_requested_dtype(dtype: torch.dtype | None) -> None:
+        if dtype is not None and dtype != torch.float32:
+            raise ValueError(
+                f"Metal backend requires float32 parameters (got {dtype}). "
+                "FP16/BF16/FP64 Metal kernels are not implemented."
+            )
 
-    @overload
-    def state_dict(
-        self, *, prefix: str = "", keep_vars: bool = False
-    ) -> dict[str, Any]: ...
+    def _validate_to_args(self, *args: Any, **kwargs: Any) -> None:
+        for arg in args:
+            if isinstance(arg, torch.Tensor):
+                self._validate_requested_device(arg.device)
+                self._validate_requested_dtype(arg.dtype)
+            elif isinstance(arg, torch.device):
+                self._validate_requested_device(arg)
+            elif isinstance(arg, str):
+                self._validate_requested_device(arg)
+            elif isinstance(arg, torch.dtype):
+                self._validate_requested_dtype(arg)
 
-    def state_dict(
-        self,
-        *,
-        destination: Optional[T_destination] = None,
-        prefix: str = "",
-        keep_vars: bool = False,
-    ) -> dict[str, Any] | T_destination:
-        """Return state dict for serialization."""
-        if destination is None:
-            return self._base.state_dict(prefix=prefix, keep_vars=keep_vars)
-        return self._base.state_dict(
-            destination=destination, prefix=prefix, keep_vars=keep_vars
-        )
-
-    def load_state_dict(
-        self,
-        state_dict: Mapping[str, Any],
-        strict: bool = True,
-        assign: bool = False,
-    ) -> _IncompatibleKeys:
-        """Load state dict from serialization."""
-        return cast(
-            _IncompatibleKeys,
-            self._base.load_state_dict(state_dict, strict=strict, assign=assign),
-        )
+        device_kw = kwargs.get("device")
+        if device_kw is not None:
+            self._validate_requested_device(device_kw)
+        dtype_kw = kwargs.get("dtype")
+        if dtype_kw is not None:
+            self._validate_requested_dtype(dtype_kw)
 
     def to(self, *args: Any, **kwargs: Any) -> "GaussianSplatModelMetal":
-        """Move model to device."""
-        self._base = self._base.to(*args, **kwargs)
+        """Move the model while preserving Metal's MPS/float32 invariants."""
+        self._validate_to_args(*args, **kwargs)
+        super().to(*args, **kwargs)
         return self
 
-    # Expose base model attributes needed by optimizer and utilities
-    @property
-    def shape(self) -> Tuple[int, ...]:
-        """Return volume shape (required by optimizer)."""
-        return self._base.shape
+    def to_empty(
+        self, *, device: torch.device | str | int | None, recurse: bool = True
+    ) -> "GaussianSplatModelMetal":
+        """Move storage while preserving Metal's MPS-device invariant."""
+        self._validate_requested_device(device)
+        super().to_empty(device=device, recurse=recurse)
+        return self
+
+    def type(self, dst_type: Any) -> "GaussianSplatModelMetal":
+        """Tensor-type migration is disabled to preserve MPS/float32 invariants."""
+        _ = dst_type
+        raise ValueError(
+            "Metal backend requires MPS float32 tensors; use .to('mps') or .float()."
+        )
+
+    def cpu(self) -> "GaussianSplatModelMetal":
+        """CPU tensors are not valid for the Metal backend."""
+        raise ValueError(
+            "Metal backend requires an MPS device; use GaussianSplatModel for CPU."
+        )
+
+    def cuda(self, device: Any = None) -> "GaussianSplatModelMetal":
+        """CUDA tensors are not valid for the Metal backend."""
+        _ = device
+        raise ValueError(
+            "Metal backend requires an MPS device; use GaussianSplatModelCUDA for CUDA."
+        )
+
+    def half(self) -> "GaussianSplatModelMetal":
+        """FP16 tensors are not valid for the current Metal kernels."""
+        raise ValueError(
+            "Metal backend requires float32 parameters; FP16 is unsupported."
+        )
+
+    def bfloat16(self) -> "GaussianSplatModelMetal":
+        """BF16 tensors are not valid for the current Metal kernels."""
+        raise ValueError(
+            "Metal backend requires float32 parameters; BF16 is unsupported."
+        )
+
+    def double(self) -> "GaussianSplatModelMetal":
+        """FP64 tensors are not valid for the current Metal kernels."""
+        raise ValueError(
+            "Metal backend requires float32 parameters; FP64 is unsupported."
+        )
+
+    def float(self) -> "GaussianSplatModelMetal":
+        """Keep the model in the supported float32 dtype."""
+        super().float()
+        return self
 
     @property
-    def dim(self) -> int:
-        """Return dimensionality (required by optimizer)."""
-        return self._base.dim
+    def use_fp16(self) -> bool:
+        return self._use_fp16
 
     @property
-    def truncate(self) -> float:
-        """Return truncate value (required by some utilities)."""
-        return self._base.truncate
+    def intensity_floor(self) -> builtins.float:
+        return self._intensity_floor
 
     @property
-    def raw_mu(self) -> torch.Tensor:
-        """Delegate to base model (required by optimizer)."""
-        return self._base.raw_mu
-
-    @property
-    def raw_L_diag(self) -> torch.Tensor:
-        """Delegate to base model (required by optimizer)."""
-        return self._base.raw_L_diag
-
-    @property
-    def L_off(self) -> torch.Tensor:
-        """Delegate to base model (required by optimizer)."""
-        return self._base.L_off
-
-    @property
-    def raw_a(self) -> torch.Tensor:
-        """Delegate to base model (required by optimizer)."""
-        return self._base.raw_a
-
-    @property
-    def sigma_min_diag(self) -> torch.Tensor:
-        """Delegate to base model (required by optimizer)."""
-        return self._base.sigma_min_diag
-
-    @property
-    def sigma_max_diag(self) -> Optional[torch.Tensor]:
-        """Delegate to base model (required by optimizer)."""
-        return self._base.sigma_max_diag
-
-    @property
-    def voxel_size(self) -> Optional[torch.Tensor]:
-        """Delegate to base model."""
-        return self._base.voxel_size
+    def use_metal_conic(self) -> bool:
+        return self._use_metal_conic
 
     def __repr__(self) -> str:
-        return f"GaussianSplatModelMetal(n_splats={self.n_splats()}, shape={self._shape}, device={next(self.parameters()).device})"
+        backend = "metal" if self._uses_custom_metal else "pytorch"
+        return (
+            "GaussianSplatModelMetal("
+            f"n_splats={self.n_splats()}, "
+            f"shape={self.shape}, "
+            f"device={next(self.parameters()).device}, "
+            f"backend={backend})"
+        )

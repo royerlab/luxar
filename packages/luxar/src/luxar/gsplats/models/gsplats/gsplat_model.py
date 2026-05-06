@@ -21,6 +21,7 @@ from luxar.gsplats.models.utils.inverse_softplus import (
     stable_inverse_softplus,
     stable_inverse_softplus_torch,
 )
+from luxar.gsplats.utils import resolve_torch_device
 
 
 class GaussianSplatModel(nn.Module):
@@ -68,8 +69,12 @@ class GaussianSplatModel(nn.Module):
         eccentricity is the variance ratio, axis ratio = sqrt(eccentricity)).
     truncate : float, default=3.0
         Truncation radius in standard deviations for computational efficiency.
-    device : torch.device, optional
-        PyTorch device for computations.
+    device : str or torch.device, optional
+        PyTorch device for computations. Explicit values override auto-detection.
+    use_cuda : bool, default=True
+        Allow CUDA during auto-detection when ``device`` is not provided.
+    use_metal : bool, default=True
+        Allow MPS/Metal during auto-detection when ``device`` is not provided.
     """
 
     # Class-level type annotations for register_buffer attributes.
@@ -94,7 +99,9 @@ class GaussianSplatModel(nn.Module):
         max_eccentricity: Optional[float] = None,  # Max ratio of longest/shortest axis
         truncate: float = 3.0,
         voxel_size: Optional[np.ndarray] = None,
-        device: Optional[torch.device] = None,
+        device: Optional[str | torch.device] = None,
+        use_cuda: bool = True,
+        use_metal: bool = True,
     ) -> None:
         super().__init__()
         self.shape = tuple(shape)
@@ -103,15 +110,16 @@ class GaussianSplatModel(nn.Module):
         N = centers0.shape[0]
         d = self.dim
 
-        # Auto-detect best performing device: CUDA → CPU
-        # Note: MPS is supported but currently slower than CPU for typical workloads
-        if device is None:
-            if torch.cuda.is_available():
-                device = torch.device("cuda")
-            else:
-                device = torch.device("cpu")
+        # Auto-detect best available accelerator consistently with the fitting API:
+        # CUDA → MPS/Metal → CPU, honoring explicit accelerator opt-out flags.
+        resolved_device = resolve_torch_device(
+            device,
+            use_cuda=use_cuda,
+            use_metal=use_metal,
+        )
 
-        aprint(f"GaussianSplatModel: using device '{device}'")
+        aprint(f"GaussianSplatModel: using device '{resolved_device}'")
+        device = resolved_device
 
         # Store voxel_size for physical-space constraint enforcement
         # register_buffer ensures it moves with .to() calls
@@ -397,7 +405,21 @@ class GaussianSplatModel(nn.Module):
         Ls: torch.Tensor,
         amps: torch.Tensor,
     ) -> None:
-        """Hard replace the whole parameter set."""
+        """Hard-replace the whole parameter set in-place.
+
+        .. warning::
+            Reassigning ``nn.Parameter`` attributes invalidates any optimizer
+            state (Adam moments, momentum buffers, etc.) registered against
+            the *previous* parameter tensors. Callers that intend to keep
+            training after a ``replace_with`` must rebuild the optimizer —
+            ``initialize_optimization`` is the canonical entry point.
+
+            The current best-state restore path
+            (``optimization.py::_restore_best_state``) is safe because it
+            runs purely under ``torch.no_grad()`` and does NOT call
+            ``optimizer.step()`` afterwards: it only re-evaluates the loss
+            so the reported metrics match the restored parameters.
+        """
         raw_mu, L_diag_raw, L_off, amp_raw = self._to_internal_params(centers, Ls, amps)
         self.raw_mu = torch.nn.Parameter(raw_mu)
         self.raw_L_diag = torch.nn.Parameter(L_diag_raw)

@@ -11,6 +11,16 @@ from typing import Any, Optional
 import zarr
 from arbol import aprint
 
+# CORS configuration shared across the CLI. Lives here (not in main.py)
+# so subcommand modules like gsplat_commands.py can import it without
+# creating a cycle through main.py — main.py also imports gsplat_commands
+# to attach the subcommand tree, so the constant must live below both.
+#
+# 0.0.0.0 is a bind address, not a routable origin — browsers never send it
+# as Origin — so it is intentionally absent from this regex.
+_LOCAL_CORS_ORIGIN_REGEX = r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$"
+_DEFAULT_CORS_ORIGIN = "local"
+
 
 def open_browser(url: str, suppress_errors: bool = False) -> bool:
     """Open a URL in the default web browser.
@@ -282,7 +292,7 @@ def get_zarr_info(store_path: Path, detailed: bool = False) -> dict[str, Any]:
                     "n_dims": positions.shape[1] if len(positions.shape) > 1 else 1,
                     "has_colors": "colors" in group,
                     "has_radii": "radii" in group,
-                    "has_sharpness": "sharpness" in group,
+                    "has_sharpness": "sharpnesses" in group,
                 }
                 if detailed:
                     point_info["shape"] = list(positions.shape)

@@ -14,6 +14,7 @@ This package provides low-level utilities for working with Gaussian splat parame
 - `validate_cholesky_shape(cholesky_factors, ndim, ...)` - Validate packed Cholesky factor shapes
 - `permute_cholesky_packed(packed, d, perm)` - Reorder dimensions of packed Cholesky factors
 - `embed_cholesky_packed(packed, d_src, d_dst, dim_mapping, ...)` - Embed lower-dim Cholesky into higher-dim space
+- `resolve_torch_device(device, use_cuda=True, use_metal=True)` - Shared PyTorch device auto-selection helper
 
 ## Installation
 
@@ -22,7 +23,12 @@ Part of `luxar.gsplats` package. No additional installation required.
 ## Quick Start
 
 ```python
-from luxar.gsplats.utils import pack_tril, unpack_tril, calculate_gradient_dilution_factor
+from luxar.gsplats.utils import (
+    calculate_gradient_dilution_factor,
+    pack_tril,
+    resolve_torch_device,
+    unpack_tril,
+)
 import numpy as np
 
 # Pack a batch of Cholesky factors for storage
@@ -34,6 +40,9 @@ L_restored = unpack_tril(packed, d=2)  # Returns shape (1, 2, 2)
 
 # Calculate gradient dilution for 3D optimization
 factor = calculate_gradient_dilution_factor(3)  # Returns ~1.8
+
+# Resolve a PyTorch device with accelerator opt-out flags
+fit_device = resolve_torch_device(None, use_cuda=False, use_metal=True)
 ```
 
 ## Core Functions
@@ -282,9 +291,9 @@ except ValueError as e:
 
 ## Testing
 
-**Test File**: `tests/test_trils.py`
+**Test Files**: `tests/test_trils.py`, `tests/test_device.py`
 
-**Test Classes**:
+**`test_trils.py` classes**:
 - `TestCalculateGradientDilutionFactor` - Gradient dilution factor for 1D through 8D, monotonic increase, type checks
 - `TestTrilSize` - Formula validation for various dimensions
 - `TestPackTril` - Single/batch packing, upper triangle ignored, dtype preservation
@@ -294,6 +303,13 @@ except ValueError as e:
 - `TestValidateCholeskShape` - Per-splat/uniform validation, error cases
 - `TestEmbedCholeskyPackedNoNan` - Regression tests for degenerate inputs (zeros, near-singular)
 
+**`test_device.py` functions** (no test classes — flat layout):
+- `test_resolve_explicit_device_overrides_accelerator_flags` - Explicit device wins over `use_cuda=False/use_metal=False`
+- `test_resolve_honors_accelerator_opt_outs` - Both accelerators disabled → CPU
+- `test_resolve_prefers_cuda_over_mps_when_both_enabled` - CUDA priority on hosts with both
+- `test_resolve_uses_mps_when_cuda_disabled` - MPS fallback on macOS when CUDA off
+- `test_is_mps_available_handles_missing_backend` - Older PyTorch without `torch.backends.mps`
+
 ---
 
 ## Implementation Details
@@ -302,9 +318,11 @@ except ValueError as e:
 ```
 gsplats/utils/
 ├── __init__.py              # Public API exports
-├── trils.py                 # Implementation
+├── device.py                # PyTorch device auto-selection helpers
+├── trils.py                 # Cholesky pack/unpack and gradient dilution
 ├── tests/
-│   └── test_trils.py        # Comprehensive test suite
+│   ├── test_device.py       # Device-resolution tests
+│   └── test_trils.py        # Comprehensive trils test suite
 ├── SPECIFICATIONS.md        # Technical specification
 └── README.md                # This file
 ```
@@ -319,6 +337,8 @@ from luxar.gsplats.utils import (
     validate_cholesky_shape,
     permute_cholesky_packed,    # Reorder dimensions of packed Cholesky factors
     embed_cholesky_packed,      # Embed lower-dim Cholesky into higher-dim space
+    is_mps_available,           # Robustly detect a working MPS backend
+    resolve_torch_device,       # CUDA > MPS > CPU device auto-selection
 )
 ```
 
