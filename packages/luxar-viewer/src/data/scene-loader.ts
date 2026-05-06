@@ -38,6 +38,7 @@ import {
   createProgressiveGSplatsLoader as createProgressiveGSplatsLoaderHelper,
   type LoaderFactoryDeps,
 } from './scene-loader/loader-factory';
+import { commitPointsGeometry as commitPointsGeometryHelper } from './scene-loader/geometry-commit-handler';
 
 export type { StagedLinesCommit } from './scene-loader/data-processor-lines';
 export type { StagedGSplatsCommit } from './scene-loader/data-processor-gsplats';
@@ -62,7 +63,6 @@ import { log, Modules, LogEmoji } from '../utils/log';
 import { config as appConfig } from '../config';
 import { MultiLevelCachingStore, ChunkPrefetcher, DecompressedChunkCache } from '../cache';
 import type { PointsMetadata } from '../types/points';
-import { isPointsUserData } from '../types/points';
 import type {
   LinesMetadata,
   LinesDataLoader,
@@ -1875,93 +1875,23 @@ export class SceneLoader {
   }
 
   /**
-   * Update geometry for a specific points
+   * Update geometry for a specific points node.
+   *
+   * Implementation lives in `scene-loader/geometry-commit-handler.ts`.
    */
   private updatePointsGeometry(
     path: string,
     data: LoadedPointsData,
     session?: UpdateSession
   ): void {
-    if (!this.rootGroup) return;
-
-    // Find the points object
-    const points = this.rootGroup.getObjectByName(path) as THREE.Points;
-    if (!points) return;
-
-    // Log if updating to empty geometry (clearing points)
-    if (data.pointCount === 0) {
-      log.info(
-        Modules.SCENE_LOADER,
-        `Clearing points for ${path} (no visible points at current slice)`
-      );
-    }
-
-    // Update visible point count in userData (following Lines/GSplats pattern)
-    if (isPointsUserData(points.userData)) {
-      points.userData.visiblePointCount = data.pointCount;
-    }
-
-    // Phase 4: Use GPU buffer pool if enabled (now supports all TypedArray types!)
-    const bufferSession = session?.begin('Update Buffers');
-    try {
-      if (this._gpuBufferPool) {
-        // Acquire geometry from pool (type-aware: matches capacity AND attribute types)
-        const geometry = this._gpuBufferPool.acquirePointsGeometry(path, data, data.pointCount);
-
-        // Update attributes in place (zero GPU allocations on reuse)
-        this._gpuBufferPool.updatePointsGeometry(geometry, data, data.pointCount);
-
-        // Update bounding box
-        if (data.metadata.bounds) {
-          geometry.boundingBox = data.metadata.bounds.clone();
-        }
-
-        // Assign to mesh (might be same geometry, reused)
-        points.geometry = geometry;
-      } else {
-        // Fallback: GPU buffer pool disabled
-        const oldGeometry = points.geometry;
-        const oldPositionAttr = oldGeometry?.getAttribute(
-          'position'
-        ) as THREE.BufferAttribute | null;
-        const oldCount = oldPositionAttr ? oldPositionAttr.count : 0;
-
-        if (oldCount === data.pointCount && data.pointCount > 0) {
-          // Same size: update in place (zero GPU allocation)
-          (oldPositionAttr!.array as Float32Array).set(data.positions as Float32Array);
-          oldPositionAttr!.needsUpdate = true;
-
-          const colorAttr = oldGeometry.getAttribute('color') as THREE.BufferAttribute;
-          if (colorAttr && data.colors) {
-            (colorAttr.array as ArrayLike<number> & { set: Function }).set(data.colors);
-            colorAttr.needsUpdate = true;
-          }
-
-          const radiiAttr = oldGeometry.getAttribute('radius') as THREE.BufferAttribute;
-          if (radiiAttr && data.radii) {
-            (radiiAttr.array as ArrayLike<number> & { set: Function }).set(data.radii);
-            radiiAttr.needsUpdate = true;
-          }
-
-          const sharpAttr = oldGeometry.getAttribute('sharpness') as THREE.BufferAttribute;
-          if (sharpAttr && data.sharpness) {
-            (sharpAttr.array as ArrayLike<number> & { set: Function }).set(data.sharpness);
-            sharpAttr.needsUpdate = true;
-          }
-
-          oldGeometry.computeBoundingBox();
-          oldGeometry.computeBoundingSphere();
-        } else {
-          // Different size: dispose + create (handles complex dtype logic)
-          if (oldGeometry) {
-            oldGeometry.dispose();
-          }
-          points.geometry = this.nodeFactory.createPointsGeometry(data);
-        }
-      }
-    } finally {
-      bufferSession?.end();
-    }
+    commitPointsGeometryHelper(
+      path,
+      data,
+      this.rootGroup,
+      this._gpuBufferPool,
+      this.nodeFactory,
+      session
+    );
   }
 
   /**

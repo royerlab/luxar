@@ -50,10 +50,10 @@ function makeStubLoc(path: string): { kind: 'resolved'; path: string; resolve: (
     resolve: (s: string) => makeStubLoc(path === '' ? s : `${path}/${s}`),
   };
 }
-const zarrOpenMock = vi.fn(async () => ({ attrs: { foo: 'bar' } }));
+const zarrOpenMock = vi.fn(async (_loc: unknown, _opts: unknown) => ({ attrs: { foo: 'bar' } }));
 vi.mock('zarrita', () => ({
   root: (_store: unknown) => makeStubLoc(''),
-  open: (...args: unknown[]) => zarrOpenMock(...args),
+  open: (loc: unknown, opts: unknown) => zarrOpenMock(loc, opts),
 }));
 
 import {
