@@ -304,11 +304,14 @@ export class LayersPanel {
       row.classList.toggle('luxar-layer-row--selected', layer.selected);
       row.classList.toggle('luxar-layer-row--hidden', !layer.visible);
 
-      // Update eye button text
+      // Update eye button text + ARIA state
       const eyeBtn = row.querySelector('.luxar-layer-row__eye') as HTMLButtonElement | null;
       if (eyeBtn) {
         eyeBtn.textContent = layer.visible ? '\u{1F441}' : '\u{1F441}\u200D\u{1F5E8}';
-        eyeBtn.title = layer.visible ? 'Hide layer' : 'Show layer';
+        const tooltip = layer.visible ? 'Hide layer' : 'Show layer';
+        eyeBtn.title = tooltip;
+        eyeBtn.setAttribute('aria-label', `${tooltip}: ${layer.name}`);
+        eyeBtn.setAttribute('aria-pressed', layer.visible ? 'true' : 'false');
       }
     }
   }
@@ -319,11 +322,17 @@ export class LayersPanel {
     if (layer.selected) row.classList.add('luxar-layer-row--selected');
     if (!layer.visible) row.classList.add('luxar-layer-row--hidden');
 
-    // Eye toggle — visibility is independent of selection
+    // Eye toggle — visibility is independent of selection. <button> already
+    // has role=button, is focusable, and triggers click on Space/Enter, so we
+    // only need aria-pressed + a descriptive aria-label for screen readers.
     const eyeBtn = document.createElement('button');
+    eyeBtn.type = 'button';
     eyeBtn.className = 'luxar-layer-row__eye';
     eyeBtn.textContent = layer.visible ? '\u{1F441}' : '\u{1F441}\u200D\u{1F5E8}';
-    eyeBtn.title = layer.visible ? 'Hide layer' : 'Show layer';
+    const tooltip = layer.visible ? 'Hide layer' : 'Show layer';
+    eyeBtn.title = tooltip;
+    eyeBtn.setAttribute('aria-label', `${tooltip}: ${layer.name}`);
+    eyeBtn.setAttribute('aria-pressed', layer.visible ? 'true' : 'false');
     eyeBtn.addEventListener('click', (e) => {
       e.stopPropagation(); // Don't trigger row selection
 
