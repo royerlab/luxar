@@ -43,7 +43,7 @@ import type { LayersPanel } from '../ui/layers';
 import type { ScaleBar } from '../ui/components/scale-bar';
 import type { ColormapLegend } from '../ui/components/colormap-legend';
 import type { OverlayManager } from '../ui/overlay-manager';
-import { showHelpOverlay, hideHelpOverlay, clearError, showToast } from '../ui/helpers';
+import { showHelpOverlay, hideHelpOverlay, showToast } from '../ui/helpers';
 import { config } from '../config';
 import { captureViewerState } from '../config/viewer-state-capture';
 import { SimpleDims } from '../types/dims';
@@ -56,8 +56,9 @@ import {
   computeDimensionStep,
   resolveSelectedDimension,
 } from './handlers/dimension-navigation';
+import { PanelCoordinator } from './handlers/panel-coordinator';
 import { log, Modules, LogEmoji } from '../utils/log';
-import { updateSceneForDimensions, cycleDataMonitor, hideDataMonitor } from '../data';
+import { updateSceneForDimensions, cycleDataMonitor } from '../data';
 
 /**
  * Central coordinator for all user input events and nD navigation.
@@ -102,6 +103,13 @@ export class InputHandler {
   private contextManager: InputContextManager;
 
   /**
+   * Panel-coordination concern: owns the priority-ordered "close all
+   * panels" flow used by Escape. Constructed in the InputHandler ctor
+   * once `debugConsole` and `animationController` are available.
+   */
+  private panelCoordinator: PanelCoordinator;
+
+  /**
    * Create a new input handler for nD visualization interaction.
    *
    * Sets up the complete input handling infrastructure including context
@@ -140,6 +148,15 @@ export class InputHandler {
 
     // Initialize input context manager
     this.contextManager = new InputContextManager();
+
+    // Wire the panel coordinator with the always-present panels.
+    // Optional panels (renderingControls, dimensionSliders, recordingPanel)
+    // are pushed in via setRenderingControls / initDimensionSliders /
+    // setRecordingPanel as they're created.
+    this.panelCoordinator = new PanelCoordinator({
+      debugConsole: this.debugConsole,
+      performanceStats: this.animationController.performanceStats,
+    });
   }
 
   /**
@@ -164,6 +181,7 @@ export class InputHandler {
    */
   setRenderingControls(controls: RenderingControls): void {
     this.renderingControls = controls;
+    this.panelCoordinator.setRenderingControls(controls);
   }
 
   setScaleBar(scaleBar: ScaleBar): void {
@@ -176,6 +194,7 @@ export class InputHandler {
 
   setRecordingPanel(panel: RecordingPanel): void {
     this.recordingPanel = panel;
+    this.panelCoordinator.setRecordingPanel(panel);
   }
 
   setOverlayManager(manager: OverlayManager): void {
@@ -241,6 +260,7 @@ export class InputHandler {
     if (this.dimensionSliders) {
       this.dimensionSliders.dispose();
       this.dimensionSliders = undefined;
+      this.panelCoordinator.setDimensionSliders(undefined);
     }
 
     // Dispose of animation manager
@@ -327,6 +347,7 @@ export class InputHandler {
       dimensionNames,
       dimensionUnits,
     });
+    this.panelCoordinator.setDimensionSliders(this.dimensionSliders);
 
     // Show sliders only if we have non-displayed dimensions
     this.dimensionSliders.setVisible(sceneDimsManager.hasNonDisplayedDimensions());
@@ -1475,78 +1496,14 @@ export class InputHandler {
    *
    * @private
    */
-  private handleEscapeKey(): void {
-    // If recording video, stop recording first (takes priority)
-    if (this.recordingPanel?.isCurrentlyRecording()) {
-      this.recordingPanel.stopVideoRecording();
-      return;
-    }
-
-    // Only close panels if we're NOT in fullscreen
-    // When in fullscreen, the browser handles ESC to exit fullscreen
-    if (!document.fullscreenElement) {
-      this.closeAllPanels();
-    }
-  }
-
   /**
-   * Close all open UI panels and overlays.
-   *
-   * Closes in priority order (topmost first):
-   * 1. Help overlay
-   * 2. Dataset browser
-   * 3. Rendering controls
-   * 4. Data loading monitor
-   * 5. Dimension sliders
-   * 6. Debug console
-   * 7. Performance stats
-   *
-   * Used by Escape key handling to provide clean "exit all UI" behavior.
-   *
-   * @private
+   * Escape-key dispatch. Delegates to PanelCoordinator which owns the
+   * recording-priority and fullscreen-defer rules.
    */
-  private closeAllPanels(): void {
-    // Close all open panels (starting with topmost)
-    // Close help overlay (usually topmost) - use hideHelpOverlay to clean up click listener
-    hideHelpOverlay();
-
-    // Close error messages
-    clearError();
-
-    // Close dataset browser
-    const datasetBrowser = document.getElementById('luxar-dataset-browser');
-    if (datasetBrowser) {
-      datasetBrowser.remove();
-    }
-
-    // Close rendering controls
-    if (this.renderingControls?.isVisible()) {
-      this.renderingControls.hide();
-    }
-
-    // Close data loading monitor
-    hideDataMonitor();
-
-    // Close dimension sliders
-    if (this.dimensionSliders?.getIsVisible()) {
-      this.dimensionSliders.hide();
-    }
-
-    // Close debug console
-    if (this.debugConsole.getIsVisible()) {
-      this.debugConsole.hide();
-    }
-
-    // Close recording panel
-    if (this.recordingPanel?.isVisible()) {
-      this.recordingPanel.hide();
-    }
-
-    // Close performance stats
-    if (this.animationController.performanceStats.visible) {
-      this.animationController.performanceStats.hide();
-    }
+  private handleEscapeKey(): void {
+    this.panelCoordinator.handleEscape();
   }
+
 
   /**
    * Frame camera to fit the entire scene.
