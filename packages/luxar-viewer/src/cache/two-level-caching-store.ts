@@ -43,7 +43,7 @@ interface CacheMetadataFile {
   entries?: unknown[];
 }
 
-export interface TwoLevelCachingStoreOptions {
+export interface MultiLevelCachingStoreOptions {
   /** L1 memory cache size in bytes (default: 100MB) */
   l1MaxSize?: number;
   /** L2 OPFS cache size in bytes (default: 2GB) */
@@ -57,10 +57,22 @@ export interface TwoLevelCachingStoreOptions {
 }
 
 /**
- * Two-level caching store that implements zarrita's AsyncReadable interface.
- * Orchestrates L1 (memory), L2 (OPFS), and HTTP fallback for zarr chunks.
+ * @deprecated Use `MultiLevelCachingStoreOptions` instead — kept as an alias so
+ * existing call sites continue to compile while we migrate.
  */
-export class TwoLevelCachingStore implements AsyncReadable {
+export type TwoLevelCachingStoreOptions = MultiLevelCachingStoreOptions;
+
+/**
+ * Multi-level caching store that implements zarrita's AsyncReadable
+ * interface. Orchestrates three tiers — L0 (decompressed in-memory chunk
+ * cache, owned by the zarrita layer), L1 (memory, in-process), L2
+ * (OPFS, cross-tab) — plus an HTTP fallback for zarr chunks.
+ *
+ * The class was previously named `TwoLevelCachingStore`. The deprecated
+ * alias below preserves the old export name during migration; new code
+ * should import `MultiLevelCachingStore` directly.
+ */
+export class MultiLevelCachingStore implements AsyncReadable {
   private l1Cache: SegmentedLRUCache;
   private l2Store: OPFSStore | null = null;
   private prefetcher: ChunkPrefetcher | null = null;
@@ -712,3 +724,14 @@ export class TwoLevelCachingStore implements AsyncReadable {
     }
   }
 }
+
+/**
+ * @deprecated The class was renamed to `MultiLevelCachingStore` because
+ * the actual implementation has three tiers (L0 decompressed-chunk cache,
+ * L1 memory, L2 OPFS) plus an HTTP fallback. Imports of the old name
+ * still work via this alias; please update call sites when convenient.
+ */
+// eslint-disable-next-line no-redeclare
+export const TwoLevelCachingStore = MultiLevelCachingStore;
+// eslint-disable-next-line no-redeclare
+export type TwoLevelCachingStore = MultiLevelCachingStore;
