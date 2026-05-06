@@ -13,7 +13,7 @@ import { loadScene } from '../data';
 import type { LoaderConfig } from '../data/data-loader-types';
 import { showLoadingIndicator, hideLoadingIndicator, showError } from '../ui/helpers';
 import { config } from '../config';
-import { extractCameraOverrides, extractBackgroundColor } from '../config/viewer-config-utils';
+import { extractCameraOverrides } from '../config/viewer-config-utils';
 import type { ZarrViewerConfig } from '../types/zarr';
 import { PostProcessingManager } from '../rendering/post-processing/post-processing-manager';
 import { materialManager } from '../rendering/material-manager';
@@ -40,6 +40,11 @@ import {
   clearLoadedSceneContent,
   disposeSceneGraphResources,
 } from './scene-setup/scene-disposal';
+import {
+  applyZarrViewerConfig as applyZarrViewerConfigHelper,
+  createDefaultPerspectiveCamera,
+  resetCameraToInitialPosition,
+} from './scene-setup/camera-setup';
 import {
   type LuxarCamera,
   isPerspectiveCamera,
@@ -430,38 +435,12 @@ export class SceneManager extends THREE.EventDispatcher<{
   }
 
   /**
-   * Initialize perspective camera with optimal 3D viewing parameters
-   *
-   * Perspective camera provides realistic 3D projection with depth perception.
-   * Key parameters:
-   * - FOV: Field of view angle (wider = more visible, narrower = more focused)
-   * - Aspect ratio: Width/height ratio matching canvas dimensions
-   * - Near/far planes: Define visible depth range (Z-clipping)
-   * - Initial position: Starting camera location in 3D space
+   * Initialize the perspective camera. Thin delegate over
+   * `createDefaultPerspectiveCamera` in scene-setup/camera-setup so
+   * the FOV/clip/initial-position pose is unit-testable in isolation.
    */
   private setupCamera(): void {
-    // Get canvas dimensions for proper aspect ratio
-    const canvas = this.renderer.domElement;
-    const width = canvas.clientWidth || window.innerWidth;
-    const height = canvas.clientHeight || window.innerHeight;
-
-    // Create perspective camera with realistic 3D projection
-    // FOV of 60° provides natural human-like viewing angle
-    this.camera = new THREE.PerspectiveCamera(
-      config.renderingControls.defaults.fov, // Field of view (60 degrees)
-      width / height, // Aspect ratio (canvas width/height)
-      config.renderingControls.defaults.near, // Near clipping plane (0.1 units)
-      config.renderingControls.defaults.far // Far clipping plane (1000 units)
-    );
-
-    // Position camera at initial viewing location
-    // Z=8 provides good overview of typical points scenes
-    // X=0, Y=0 centers the view on the origin
-    this.camera.position.set(
-      config.camera.initialPosition.x, // X position (0 = centered)
-      config.camera.initialPosition.y, // Y position (0 = centered)
-      config.camera.initialPosition.z // Z position (8 = pulled back for overview)
-    );
+    this.camera = createDefaultPerspectiveCamera(this.renderer.domElement);
   }
 
   /**
@@ -500,30 +479,17 @@ export class SceneManager extends THREE.EventDispatcher<{
   }
 
   /**
-   * Reset controls to default state
-   * This is needed when loading a new dataset to prevent accumulated transformations
+   * Reset camera + controls to default state when loading a new
+   * dataset. Camera-side reset is delegated to
+   * `resetCameraToInitialPosition`; the controls-side state machine
+   * (reset → update → saveState) stays here because it's the
+   * controls manager's contract.
    */
   private resetControls(): void {
-    // Reset camera to default position
-    this.camera.position.set(
-      config.camera.initialPosition.x,
-      config.camera.initialPosition.y,
-      config.camera.initialPosition.z
-    );
-
-    // Reset camera rotation to look at origin
-    this.camera.lookAt(0, 0, 0);
-    this.camera.updateMatrixWorld(true);
-
-    // Reset controls to default state
+    resetCameraToInitialPosition(this.camera);
     this.controls.reset();
-
-    // Update controls to sync with camera
     this.controls.update();
-
-    // Save this configuration as the new default state
     this.controls.saveState();
-
     log.success(Modules.CONTROLS, 'Controls reset to default state');
   }
 
@@ -618,100 +584,14 @@ export class SceneManager extends THREE.EventDispatcher<{
   }
 
   /**
-   * Apply viewer config from zarr (camera position/target/up, background color).
-   * Camera config is applied on every load — it's the data author's intended "home" view.
+   * Apply viewer config from zarr (camera position/target/up, background
+   * color). Thin delegate over `applyZarrViewerConfig` in
+   * scene-setup/camera-setup; the helper returns whether an explicit
+   * camera position was applied so `loadSceneData` can suppress
+   * auto-framing. (Author target alone does NOT suppress auto-framing.)
    */
   private applyZarrViewerConfig(root: THREE.Group): void {
-    const viewerConfig = root.userData?.viewerConfig as ZarrViewerConfig | undefined;
-    if (!viewerConfig) return;
-
-    // Apply camera position/target/up
-    const camOverrides = extractCameraOverrides(viewerConfig);
-    if (camOverrides.position) {
-      this.camera.position.set(
-        camOverrides.position.x,
-        camOverrides.position.y,
-        camOverrides.position.z
-      );
-    }
-
-    // target_node takes precedence over explicit target coordinates.
-    // Use setTarget() (not lookAt()) to avoid an intermediate update() that
-    // would snap the camera back before reinitialize() derives the new orbit state.
-    if (camOverrides.targetNode) {
-      const resolved = this.resolveTargetNode(root, camOverrides.targetNode);
-      if (resolved) {
-        this.controls.setTarget(resolved);
-        log.info(
-          Modules.SCENE_MANAGER,
-          `Resolved target_node '${camOverrides.targetNode}' to (${resolved.x.toFixed(2)}, ${resolved.y.toFixed(2)}, ${resolved.z.toFixed(2)})`
-        );
-      } else {
-        log.warning(
-          Modules.SCENE_MANAGER,
-          `target_node '${camOverrides.targetNode}' not found in scene graph`
-        );
-      }
-    } else if (camOverrides.target) {
-      const targetVec = new THREE.Vector3(
-        camOverrides.target.x,
-        camOverrides.target.y,
-        camOverrides.target.z
-      );
-      this.controls.setTarget(targetVec);
-    }
-
-    if (camOverrides.up) {
-      this.camera.up.set(camOverrides.up.x, camOverrides.up.y, camOverrides.up.z);
-      // Sync camera.quaternion with the new up vector so that
-      // reinitialize() (which reads quaternion, not camera.up) picks up the
-      // author's roll.  Use the current orbit target as the look-at point.
-      this.camera.lookAt(this.controls.getFocusTarget());
-    }
-    if (
-      camOverrides.position ||
-      camOverrides.target ||
-      camOverrides.targetNode ||
-      camOverrides.up
-    ) {
-      this.camera.updateMatrixWorld(true);
-      this.controls.reinitialize();
-      this.controls.update();
-      log.info(Modules.SCENE_MANAGER, 'Applied camera config from zarr viewer_config');
-    }
-
-    // Apply background color
-    const bgColor = extractBackgroundColor(viewerConfig);
-    if (bgColor) {
-      this.scene.background = new THREE.Color(bgColor);
-      log.info(Modules.SCENE_MANAGER, `Applied background color from zarr: ${bgColor}`);
-    }
-  }
-
-  /**
-   * Find a named node in the scene graph and return its bounding box center.
-   *
-   * @param root - Scene graph root to search
-   * @param nodeName - Name of the node to find
-   * @returns Bounding box center, or null if node not found
-   */
-  private resolveTargetNode(root: THREE.Group, nodeName: string): THREE.Vector3 | null {
-    let targetObject: THREE.Object3D | null = null;
-
-    root.traverse((obj) => {
-      if (obj.name === nodeName && !targetObject) {
-        targetObject = obj;
-      }
-    });
-
-    if (!targetObject) return null;
-
-    const box = new THREE.Box3().setFromObject(targetObject);
-    if (box.isEmpty()) return null;
-
-    const center = new THREE.Vector3();
-    box.getCenter(center);
-    return center;
+    applyZarrViewerConfigHelper(root, this.camera, this.controls, this.scene);
   }
 
   /**
