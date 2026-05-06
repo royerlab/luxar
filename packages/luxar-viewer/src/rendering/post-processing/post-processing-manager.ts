@@ -64,6 +64,10 @@ import {
   captureToneMappingState,
   captureVignetteState,
 } from './context-recovery';
+import {
+  type OrderedEffect,
+  partitionEffectsIntoPasses,
+} from './effect-orchestrator';
 import { toneMappingModeName } from './tone-mapping-mode-names';
 import {
   applyToneMapping,
@@ -417,7 +421,7 @@ export class PostProcessingManager {
     }
 
     // Define effects in correct visual order
-    const orderedEffects: { effect: any; name: string }[] = [];
+    const orderedEffects: OrderedEffect<any>[] = [];
 
     // Build ordered list of active effects - CORRECT ORDER per user requirements
     // HDR effects (before tone mapping)
@@ -458,54 +462,17 @@ export class PostProcessingManager {
     else if (this.fxaaEnabled && this.fxaaEffect)
       orderedEffects.push({ effect: this.fxaaEffect, name: 'FXAA' });
 
-    // Sequential pass assignment: try adding effects to Pass A until incompatibility
-    let passAEffects: any[] = [];
-    let passBEffects: any[] = [];
-    let usingPassB = false;
-    const passANames: string[] = [];
-    const passBNames: string[] = [];
-
-    // Known incompatibility rules based on pmndrs documentation
-    const isUVTransformEffect = (name: string): boolean => {
-      return name === 'ChromaticLensDistortion'; // UV transformation effects
-    };
-
-    const isConvolutionEffect = (name: string): boolean => {
-      // Bloom uses mipmapBlur which samples multiple texels - it's a convolution effect
-      // Convolution effects are incompatible with UV transform effects in the same pass
-      return name === 'Bloom';
-    };
-
-    for (const { effect, name } of orderedEffects) {
-      if (!usingPassB) {
-        // Check if this effect would be incompatible with Pass A
-        const hasUVTransform = passANames.some(isUVTransformEffect);
-        const hasConvolution = passANames.some(isConvolutionEffect);
-
-        const wouldBeIncompatible =
-          (isUVTransformEffect(name) && hasConvolution) ||
-          (isConvolutionEffect(name) && hasUVTransform);
-
-        if (wouldBeIncompatible) {
-          // Switch to Pass B for this and all remaining effects
-          usingPassB = true;
-          passBEffects.push(effect);
-          passBNames.push(name);
-
-          log.info(
-            Modules.POST_PROCESSING,
-            `Effect incompatibility detected at ${name}, switching to Pass B`
-          );
-        } else {
-          // Add to Pass A
-          passAEffects.push(effect);
-          passANames.push(name);
-        }
-      } else {
-        // Add remaining effects to Pass B
-        passBEffects.push(effect);
-        passBNames.push(name);
-      }
+    // Partition into Pass A / Pass B based on pmndrs effect-compatibility rules.
+    const partition = partitionEffectsIntoPasses(orderedEffects);
+    const passAEffects = partition.passA;
+    const passBEffects = partition.passB;
+    const passANames = partition.passANames;
+    const passBNames = partition.passBNames;
+    if (partition.splitAt) {
+      log.info(
+        Modules.POST_PROCESSING,
+        `Effect incompatibility detected at ${partition.splitAt}, switching to Pass B`
+      );
     }
 
     // Create Pass A with error recovery (always created if we have effects)
