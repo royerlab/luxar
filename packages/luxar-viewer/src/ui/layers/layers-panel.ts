@@ -471,7 +471,7 @@ export class LayersPanel {
     this.opacitySlider.className = 'luxar-layers-panel__slider';
     this.opacitySlider.addEventListener('input', () => {
       this.controlsInteracting = true;
-      const val = Math.max(0, Math.min(1, parseFloat(this.opacitySlider!.value)));
+      const val = clamp(parseFloat(this.opacitySlider!.value), 0, 1);
       this.opacityValueEl!.textContent = val.toFixed(2);
       this.state.applyToSelected((l) => {
         l.opacity = val;

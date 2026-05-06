@@ -10,6 +10,8 @@
  * @module ui/slider-math-utils
  */
 
+import { clamp } from './gui/utils/value-formatting';
+
 /**
  * Clamp `value` into `[min, max]`. When `isCyclic` is true, an underflow
  * (value below min) wraps to `max` and an overflow wraps to `min`. When it
@@ -99,5 +101,5 @@ export function fractionToThumbLeft(
  * @returns A value in `[lo, hi]`.
  */
 export function clampInteger(value: number, lo: number, hi: number): number {
-  return Math.max(lo, Math.min(hi, value));
+  return clamp(value, lo, hi);
 }
