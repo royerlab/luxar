@@ -11,7 +11,7 @@ import * as THREE from 'three';
 import { ControlsManager } from '../controls/controls-manager';
 import { loadScene } from '../data';
 import type { LoaderConfig } from '../data/data-loader-types';
-import { showLoadingIndicator, hideLoadingIndicator, showError } from '../ui/helpers';
+import { notifier } from '../utils/notifier';
 import { config } from '../config';
 import { extractCameraOverrides } from '../config/viewer-config-utils';
 import type { ZarrViewerConfig } from '../types/zarr';
@@ -252,7 +252,7 @@ export class SceneManager extends THREE.EventDispatcher<{
       }
     } catch (error) {
       log.error(Modules.SCENE_MANAGER, 'Error creating WebGL2 context:', error);
-      showError('Failed to create WebGL2 context. Your browser may not support WebGL2.');
+      notifier.error('Failed to create WebGL2 context. Your browser may not support WebGL2.');
     }
 
     // Create WebGL renderer using configuration values.
@@ -430,7 +430,7 @@ export class SceneManager extends THREE.EventDispatcher<{
    * parameters in main.ts).
    */
   async loadSceneData(src: string, loaderConfig?: LoaderConfig): Promise<void> {
-    showLoadingIndicator();
+    notifier.showLoading();
 
     try {
       // Clear existing scene content (keep lights and background)
@@ -445,7 +445,7 @@ export class SceneManager extends THREE.EventDispatcher<{
       }
 
       const root = await loadScene(src, loaderConfig);
-      hideLoadingIndicator();
+      notifier.hideLoading();
       this.scene.add(root);
       this.invalidateBoundsCache();
 
@@ -476,9 +476,9 @@ export class SceneManager extends THREE.EventDispatcher<{
 
       log.info(Modules.SCENE_MANAGER, 'Scene loaded. Press F to re-center camera on bounding box.');
     } catch (error) {
-      hideLoadingIndicator();
+      notifier.hideLoading();
       log.error(Modules.SCENE_MANAGER, 'Failed to load scene:', error);
-      showError(`Failed to load scene from "${src}". Please check the path and try again.`);
+      notifier.error(`Failed to load scene from "${src}". Please check the path and try again.`);
       throw error;
     }
   }

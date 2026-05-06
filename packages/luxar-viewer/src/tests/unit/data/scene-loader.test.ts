@@ -203,11 +203,21 @@ vi.mock('../../../rendering/material-manager', () => ({
   },
 }));
 
-// Mock UI helpers (showToast inserts a DOM element; we spy to assert it
-// was called from the >16D scene-dimensions branch without depending on
-// jsdom DOM mutation timing).
-vi.mock('../../../ui/helpers', () => ({
-  showToast: vi.fn(),
+// SceneLoader now uses `notifier.toast` for the >16D scene-dimensions
+// warning. Mock the notifier so the test can assert toast() was called.
+const notifierMocks = vi.hoisted(() => ({
+  toast: vi.fn(),
+}));
+vi.mock('../../../utils/notifier', () => ({
+  notifier: {
+    toast: notifierMocks.toast,
+    error: vi.fn(),
+    showHelp: vi.fn(),
+    hideHelp: vi.fn(),
+    showLoading: vi.fn(),
+    hideLoading: vi.fn(),
+    clearError: vi.fn(),
+  },
 }));
 
 // NOTE: Previous mocks for DataLoadingMonitor ('../ui/data-loading-monitor'),
@@ -1180,7 +1190,7 @@ describe('SceneLoader', () => {
     });
 
     it('does NOT toast on a 16D scene (≤ WASM ceiling)', async () => {
-      const { showToast } = await import('../../../ui/helpers');
+      notifierMocks.toast.mockClear();
       const dims = Array.from({ length: 16 }, (_, i) => ({
         name: `d${i}`,
         unit: '',
@@ -1191,11 +1201,11 @@ describe('SceneLoader', () => {
       mockZarrGroup.attrs = { scene_dimensions: { dimensions: dims } };
 
       await sceneLoader.loadScene('http://localhost:8000/test.zarr');
-      expect(showToast).not.toHaveBeenCalled();
+      expect(notifierMocks.toast).not.toHaveBeenCalled();
     });
 
     it('toasts on > 16D scenes warning about WASM fallback', async () => {
-      const { showToast } = await import('../../../ui/helpers');
+      notifierMocks.toast.mockClear();
       const dims = Array.from({ length: 18 }, (_, i) => ({
         name: `d${i}`,
         unit: '',
@@ -1206,7 +1216,7 @@ describe('SceneLoader', () => {
       mockZarrGroup.attrs = { scene_dimensions: { dimensions: dims } };
 
       await sceneLoader.loadScene('http://localhost:8000/test.zarr');
-      expect(showToast).toHaveBeenCalledWith(
+      expect(notifierMocks.toast).toHaveBeenCalledWith(
         expect.stringContaining('18 dimensions'),
         expect.any(Number)
       );

@@ -43,7 +43,7 @@ import type { LayersPanel } from '../ui/layers';
 import type { ScaleBar } from '../ui/components/scale-bar';
 import type { ColormapLegend } from '../ui/components/colormap-legend';
 import type { OverlayManager } from '../ui/overlay-manager';
-import { showHelpOverlay, hideHelpOverlay, showToast } from '../ui/helpers';
+import { notifier } from '../utils/notifier';
 import { captureViewerState } from '../config/viewer-state-capture';
 import { DimensionSliders } from '../ui/dimension-sliders';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
@@ -639,9 +639,9 @@ export class InputHandler {
   private toggleHelp(): void {
     const helpOverlay = document.getElementById('luxar-help-overlay');
     if (helpOverlay) {
-      hideHelpOverlay();
+      notifier.hideHelp();
     } else {
-      showHelpOverlay();
+      notifier.showHelp();
     }
   }
 
@@ -769,12 +769,12 @@ export class InputHandler {
     navigator.clipboard
       .writeText(json)
       .then(() => {
-        showToast('Viewer state copied to clipboard');
+        notifier.toast('Viewer state copied to clipboard');
         log.info(Modules.INPUT, 'Viewer state exported to clipboard');
       })
       .catch((err) => {
         log.error(Modules.INPUT, 'Failed to copy state to clipboard:', err);
-        showToast('Failed to copy state to clipboard');
+        notifier.toast('Failed to copy state to clipboard');
       });
 
     // Also store on debug interface for programmatic access

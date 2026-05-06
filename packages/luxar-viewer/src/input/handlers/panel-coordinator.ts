@@ -15,7 +15,7 @@
  * @module input/handlers/panel-coordinator
  */
 
-import { showHelpOverlay, hideHelpOverlay, clearError } from '../../ui/helpers';
+import { notifier } from '../../utils/notifier';
 import { hideDataMonitor } from '../../data';
 import type { RenderingControls } from '../../ui/rendering-controls';
 import type { RecordingPanel } from '../../ui/recording-panel';
@@ -94,10 +94,10 @@ export class PanelCoordinator {
   closeAll(): void {
     // Close help overlay (usually topmost) — `hideHelpOverlay` also
     // cleans up its click-outside listener.
-    hideHelpOverlay();
+    notifier.hideHelp();
 
     // Close error messages
-    clearError();
+    notifier.clearError();
 
     // Close dataset browser (the only panel with no instance handle —
     // looked up by element id).
@@ -150,7 +150,5 @@ export class PanelCoordinator {
   }
 }
 
-// Re-export the help overlay opener so callers don't need a separate
-// import path. Kept here so `panel-coordinator` is the single mental
-// model for "the overlay/panel concern."
-export { showHelpOverlay };
+// Help overlay open is now exposed via `notifier.showHelp()` from
+// `utils/notifier`. Callers should import it from there directly.

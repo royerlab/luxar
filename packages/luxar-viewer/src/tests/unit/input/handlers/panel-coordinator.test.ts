@@ -15,17 +15,31 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-vi.mock('../../../../ui/helpers', () => ({
-  hideHelpOverlay: vi.fn(),
+// PanelCoordinator now goes through `notifier` for help/error UI; mock
+// the notifier surface instead of the underlying ui/helpers. Spies
+// must come from vi.hoisted to be defined when the mock factory runs.
+const notifierMocks = vi.hoisted(() => ({
+  hideHelp: vi.fn(),
   clearError: vi.fn(),
-  showHelpOverlay: vi.fn(),
+}));
+vi.mock('../../../../utils/notifier', () => ({
+  notifier: {
+    hideHelp: notifierMocks.hideHelp,
+    clearError: notifierMocks.clearError,
+    error: vi.fn(),
+    toast: vi.fn(),
+    showHelp: vi.fn(),
+    showLoading: vi.fn(),
+    hideLoading: vi.fn(),
+  },
 }));
 
 vi.mock('../../../../data', () => ({
   hideDataMonitor: vi.fn(),
 }));
 
-import { hideHelpOverlay, clearError } from '../../../../ui/helpers';
+const hideHelpOverlay = notifierMocks.hideHelp;
+const clearError = notifierMocks.clearError;
 import { hideDataMonitor } from '../../../../data';
 import { PanelCoordinator } from '../../../../input/handlers/panel-coordinator';
 import type { RenderingControls } from '../../../../ui/rendering-controls';

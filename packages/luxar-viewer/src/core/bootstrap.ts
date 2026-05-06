@@ -22,7 +22,16 @@ import { config } from '../config';
 import { validateAndLog } from '../config/validation';
 import { readUrlParams, type UrlParams } from '../config/url-params';
 import { StorageKeys } from '../utils/storage-keys';
-import { showError } from '../ui/helpers';
+import {
+  showError,
+  showToast,
+  showHelpOverlay,
+  hideHelpOverlay,
+  showLoadingIndicator,
+  hideLoadingIndicator,
+  clearError,
+} from '../ui/helpers';
+import { setNotifierBackend } from '../utils/notifier';
 import { ThemeManager } from '../themes/theme-manager';
 import { consoleInterceptor } from '../utils/console-interceptor';
 import { log, Modules, LogEmoji } from '../utils/log';
@@ -98,6 +107,20 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   if (patchConsole) {
     consoleInterceptor.patch();
   }
+
+  // Wire the cross-layer notifier surface to the concrete UI helpers.
+  // Lower layers (data, scene, input) call notifier.toast / .error /
+  // .showHelp etc. without importing ui/helpers directly — that's what
+  // keeps the dependency-cruiser layer order clean.
+  setNotifierBackend({
+    showError,
+    showToast,
+    showHelpOverlay,
+    hideHelpOverlay,
+    showLoadingIndicator,
+    hideLoadingIndicator,
+    clearError,
+  });
 
   if (validateConfig) {
     const ok = validateAndLog(config);

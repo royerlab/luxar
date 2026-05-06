@@ -32,7 +32,7 @@
 
 import * as THREE from 'three';
 import { log, Modules } from '../../utils/log';
-import { showError, hideLoadingIndicator } from '../../ui/helpers';
+import { notifier } from '../../utils/notifier';
 import { materialManager } from '../../rendering/material-manager';
 import type { PostProcessingManager } from '../../rendering/post-processing/post-processing-manager';
 
@@ -155,7 +155,7 @@ export class WebGLContextRecovery {
         Modules.SCENE_MANAGER,
         'WebGL context lost! This can happen due to GPU driver issues, system sleep, or memory pressure.'
       );
-      showError(
+      notifier.error(
         'Graphics context lost - attempting to restore. This can happen if your GPU driver crashes or the system runs out of video memory. The app will try to recover automatically.'
       );
     };
@@ -194,11 +194,11 @@ export class WebGLContextRecovery {
         // Trigger a render to force Three.js material/program resource recreation.
         this.deps.triggerChange();
 
-        hideLoadingIndicator();
+        notifier.hideLoading();
         log.success(Modules.SCENE_MANAGER, 'WebGL context successfully restored');
       } catch (error) {
         log.error(Modules.SCENE_MANAGER, 'Failed to restore WebGL context:', error);
-        showError('Failed to restore graphics context. Please refresh the page to continue.');
+        notifier.error('Failed to restore graphics context. Please refresh the page to continue.');
       }
     };
 

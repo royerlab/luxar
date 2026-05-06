@@ -91,7 +91,7 @@ import {
 import { LoaderRegistry } from './loader-registry';
 import { computeTolerance } from './tolerance-computer';
 import { loadOverlayConfigs } from './overlay-loader';
-import { showToast } from '../ui/helpers';
+import { notifier } from '../utils/notifier';
 
 /** Check if an object has any own properties (avoids Object.keys() allocation). */
 function hasOwnProperties(obj: Record<string, unknown>): boolean {
@@ -504,7 +504,7 @@ export class SceneLoader {
       // correct but slower, and silent fallback can confuse users
       // wondering why interaction feels sluggish.
       if (ndim > 16) {
-        showToast(
+        notifier.toast(
           `Scene has ${ndim} dimensions — WASM acceleration limited to 16D, using TypeScript fallback. ` +
             'Consider reducing dimensions for better performance.',
           5000

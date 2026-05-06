@@ -300,15 +300,29 @@ vi.mock('../../../data', () => ({
   dispose: vi.fn(),
 }));
 
-// Mock UI helpers module
-vi.mock('../../../ui/helpers', () => ({
-  showLoadingIndicator: vi.fn().mockReturnValue({
-    id: 'loading-indicator',
-    remove: vi.fn(),
-  }),
-  hideLoadingIndicator: vi.fn(),
-  showError: vi.fn(),
+// SceneManager now talks to UI feedback through `notifier`. Mock the
+// notifier surface so tests can assert on showLoading/hideLoading/error.
+// vi.mock hoists, so the spies must come from vi.hoisted to be defined
+// when the factory runs.
+const notifierMocks = vi.hoisted(() => ({
+  showLoading: vi.fn(),
+  hideLoading: vi.fn(),
+  error: vi.fn(),
 }));
+vi.mock('../../../utils/notifier', () => ({
+  notifier: {
+    showLoading: notifierMocks.showLoading,
+    hideLoading: notifierMocks.hideLoading,
+    error: notifierMocks.error,
+    toast: vi.fn(),
+    showHelp: vi.fn(),
+    hideHelp: vi.fn(),
+    clearError: vi.fn(),
+  },
+}));
+const mockShowLoading = notifierMocks.showLoading;
+const mockHideLoading = notifierMocks.hideLoading;
+const mockShowError = notifierMocks.error;
 
 vi.mock('../../../utils/hdr-detection', () => ({
   detectHDRCapabilities: vi.fn(() => ({
@@ -323,11 +337,8 @@ vi.mock('../../../utils/hdr-detection', () => ({
 // Import after mocks are set up
 import { SceneManager } from '../../../scene/scene-manager';
 import { loadScene as mockLoadScene } from '../../../data';
-import {
-  showLoadingIndicator as mockShowLoadingIndicator,
-  hideLoadingIndicator as mockHideLoadingIndicator,
-  showError as mockShowError,
-} from '../../../ui/helpers';
+const mockShowLoadingIndicator = mockShowLoading;
+const mockHideLoadingIndicator = mockHideLoading;
 
 describe('SceneManager', () => {
   let sceneManager: SceneManager;
