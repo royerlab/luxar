@@ -6,7 +6,6 @@ import { PostProcessingManager } from '../rendering/post-processing/post-process
 import { SceneManager } from '../scene/scene-manager';
 import { AnimationController } from '../scene/animation-controller';
 import { config, type RenderingSettings } from '../config';
-import { ThemeManager } from '../themes/theme-manager';
 
 import type { RenderingControllers } from '../controls/types';
 import { isOrbitControls } from '../controls/types';
@@ -16,7 +15,8 @@ import { setupCameraControls } from './rendering-controls/camera-setup';
 import { setupHDRControls } from './rendering-controls/hdr-setup';
 import { setupAntiAliasingControls } from './rendering-controls/anti-aliasing-setup';
 import { setupPostProcessingControls } from './rendering-controls/post-processing-setup';
-import { CinematicModeController, TONE_MAPPING_MAP } from './rendering-controls/cinematic-mode';
+import { CinematicModeController } from './rendering-controls/cinematic-mode';
+import { applyRenderingSettings } from './rendering-controls/apply-settings';
 import {
   buildBaseDefaults,
   buildResetDefaults,
@@ -25,6 +25,8 @@ import {
   loadSettingsFromStorage,
 } from './rendering-controls/settings-persistence';
 import { setupPerformanceControls } from './rendering-controls/performance-setup';
+import { setupThemeControls } from './rendering-controls/theme-setup';
+import { ClippingDisplay } from './rendering-controls/clipping-display';
 import type { AdaptiveDPRManager } from '../rendering/adaptive-dpr-manager';
 import type { ZarrViewerConfig } from '../types/zarr';
 import { extractRenderingOverrides } from '../config/viewer-config-utils';
@@ -108,9 +110,8 @@ export class RenderingControls {
   /** Callback to update adaptive DPR control visibility (set by setAdaptiveDPRManager) */
   private updateAdaptiveDPRVisibility?: (enabled: boolean) => void;
 
-  /** RAF ID for periodic clipping display updates when dynamic clipping is enabled */
-  private clippingDisplayRAF: number | null = null;
-  private lastClippingDisplayUpdate: number = 0;
+  /** RAF-driven mirror of the camera near/far values into the slider displays. */
+  private readonly clippingDisplay: ClippingDisplay;
 
   /** Cleanup callbacks collected during setup, called on dispose */
   private cleanupCallbacks: (() => void)[] = [];
@@ -161,6 +162,13 @@ export class RenderingControls {
     this.gui.hide();
 
     // Custom styling now in src/styles/components/rendering-controls.css
+
+    this.clippingDisplay = new ClippingDisplay({
+      sceneManager: this.sceneManager,
+      settings: this.settings,
+      getNearPlane: () => this.controllers.nearPlane,
+      getFarPlane: () => this.controllers.farPlane,
+    });
 
     this.setupControls();
   }
@@ -265,7 +273,7 @@ export class RenderingControls {
     Object.assign(this.controllers, ppResult.controllers);
 
     // Theme selector
-    this.setupThemeControls();
+    setupThemeControls({ gui: this.gui, triggerAnimation: () => this.triggerAnimation() });
 
     // Note: Reset to Defaults button is added at the end of setAdaptiveDPRManager
     // to ensure it appears after the Performance folder
@@ -292,60 +300,6 @@ export class RenderingControls {
         this.gui.controllersRecursive().forEach((c) => c.updateDisplay());
       },
     });
-  }
-
-  /**
-   * Setup theme controls
-   */
-  private setupThemeControls(): void {
-    const themeFolder = this.gui.addFolder('🎨 Theme');
-
-    themeFolder.domElement?.setAttribute(
-      'title',
-      'Theme: Choose the visual appearance of the viewer UI\n\n' +
-        'Themes change the background, panel colors, and overall look.\n' +
-        'Your choice is automatically saved and restored next session.'
-    );
-
-    const themeManager = ThemeManager.getInstance();
-    const themes = themeManager.getAllThemes();
-
-    // Create theme options object { 'Dark Theme': 'dark', 'Light Theme': 'light', ... }
-    const themeOptions = themes.reduce(
-      (acc, theme) => {
-        acc[theme.name] = theme.id;
-        return acc;
-      },
-      {} as Record<string, string>
-    );
-
-    const themeSettings = {
-      theme: themeManager.getCurrentTheme().id,
-    };
-
-    const themeControl = themeFolder
-      .add(themeSettings, 'theme', themeOptions)
-      .name('Active Theme')
-      .onChange((themeId: string) => {
-        themeManager.setTheme(themeId);
-        // Theme is persisted automatically by ThemeManager
-        log.info(Modules.RENDERER, `Theme changed to: ${themeId}`);
-
-        // Trigger re-render to apply theme changes immediately
-        this.triggerAnimation();
-      });
-
-    themeControl.domElement.setAttribute(
-      'title',
-      'Switch between visual themes\n' +
-        '• Dark: Default scientific visualization theme\n' +
-        '• Light: Bright theme for well-lit environments\n' +
-        '• Frosted Glass: Subtle translucent glassmorphism\n' +
-        '• Liquid Glass: True glass effect with inner glow and tint'
-    );
-
-    // Close folder by default
-    themeFolder.close();
   }
 
   /**
@@ -635,76 +589,7 @@ export class RenderingControls {
    * - Disable pointer events so sliders can't be manually adjusted
    */
   private updateClippingControlsState(dynamicEnabled: boolean): void {
-    const opacity = dynamicEnabled ? '0.5' : '1.0';
-    const pointerEvents = dynamicEnabled ? 'none' : 'auto';
-
-    if (this.controllers.nearPlane) {
-      const container = this.controllers.nearPlane.domElement.closest('.luxar-gui__controller');
-      if (container instanceof HTMLElement) {
-        container.style.opacity = opacity;
-        container.style.pointerEvents = pointerEvents;
-      }
-    }
-
-    if (this.controllers.farPlane) {
-      const container = this.controllers.farPlane.domElement.closest('.luxar-gui__controller');
-      if (container instanceof HTMLElement) {
-        container.style.opacity = opacity;
-        container.style.pointerEvents = pointerEvents;
-      }
-    }
-
-    // Cancel any existing RAF loop
-    if (this.clippingDisplayRAF !== null) {
-      cancelAnimationFrame(this.clippingDisplayRAF);
-      this.clippingDisplayRAF = null;
-    }
-
-    // When dynamic clipping is enabled, update slider displays synced to RAF
-    // (throttled to ~100ms to avoid excessive DOM updates)
-    if (dynamicEnabled) {
-      this.updateClippingSliderDisplays();
-
-      const scheduleClippingUpdate = () => {
-        this.clippingDisplayRAF = requestAnimationFrame((timestamp) => {
-          if (timestamp - this.lastClippingDisplayUpdate >= 100) {
-            this.updateClippingSliderDisplays();
-            this.lastClippingDisplayUpdate = timestamp;
-          }
-          scheduleClippingUpdate();
-        });
-      };
-      scheduleClippingUpdate();
-    }
-  }
-
-  /**
-   * Update the near/far clipping slider displays to show actual camera values.
-   * Called periodically when dynamic clipping is enabled.
-   */
-  private updateClippingSliderDisplays(): void {
-    const camera = this.sceneManager.camera;
-    if (!camera) return;
-
-    // Update near plane slider display (don't trigger onChange)
-    if (this.controllers.nearPlane) {
-      // Only update if value actually changed to avoid unnecessary DOM updates
-      const currentNear = camera.near;
-      if (Math.abs(this.settings.near - currentNear) > 0.0001) {
-        this.settings.near = currentNear;
-        this.controllers.nearPlane.updateDisplay();
-      }
-    }
-
-    // Update far plane slider display (don't trigger onChange)
-    if (this.controllers.farPlane) {
-      // Only update if value actually changed to avoid unnecessary DOM updates
-      const currentFar = camera.far;
-      if (Math.abs(this.settings.far - currentFar) > 0.1) {
-        this.settings.far = currentFar;
-        this.controllers.farPlane.updateDisplay();
-      }
-    }
+    this.clippingDisplay.setDynamicEnabled(dynamicEnabled);
   }
 
   /**
@@ -984,95 +869,16 @@ export class RenderingControls {
     this.updateNavigationControls(currentControlType);
   }
 
-  /**
-   * Apply current settings to rendering pipeline
-   */
+  /** Apply current settings to the rendering pipeline. Delegates to a pure helper. */
   private applySettings(): void {
-    // Apply bloom settings (enabled state + parameters)
-    this.postProcessing.setBloomEnabled(
-      this.settings.bloomEnabled,
-      this.settings.bloomStrength,
-      this.settings.bloomRadius,
-      this.settings.bloomThreshold
-    );
-    this.postProcessing.setBloomLevels(this.settings.bloomLevels);
-
-    // Apply global EOG (Exposure-Offset-Gamma) — routed to post-processing
-    this.sceneManager.updateExposure(this.settings.exposure);
-    this.sceneManager.updateGlobalOffset(this.settings.globalOffset);
-    this.sceneManager.updateGlobalGamma(this.settings.globalGamma);
-
-    // Apply SSAA settings
-    this.postProcessing.setSSAAEnabled(this.settings.ssaaEnabled);
-    this.postProcessing.setSSAAMultiplier(this.settings.ssaaMultiplier);
-
-    // Apply FXAA setting
-    this.postProcessing.setFXAAEnabled(this.settings.fxaaEnabled);
-
-    // Apply MSAA settings
-    this.postProcessing.setMSAAEnabled(this.settings.msaaEnabled);
-    this.postProcessing.setMSAASamples(this.settings.msaaSamples);
-
-    // Apply SMAA settings
-    this.postProcessing.setSMAAEnabled(this.settings.smaaEnabled);
-    if (this.settings.smaaEnabled) {
-      this.postProcessing.updateSMAASettings();
-    }
-
-    // Apply tone mapping
-    this.postProcessing.setToneMapping(TONE_MAPPING_MAP[this.settings.toneMapping]);
-
-    // Apply DOF settings
-    this.postProcessing.setDOF(
-      this.settings.dofEnabled,
-      this.settings.dofFocus,
-      this.settings.dofStrength
-    );
-
-    // Apply detector noise effect
-    this.postProcessing.setDetectorNoiseEnabled(
-      this.settings.detectorNoiseEnabled,
-      this.settings.detectorNoiseReadoutSigma,
-      this.settings.detectorNoisePhotonGain,
-      this.settings.detectorNoiseFpnSigma
-    );
-
-    // Start animation if detector noise is enabled (from loaded settings)
-    if (this.settings.detectorNoiseEnabled) {
-      this.animationController?.startAnimation();
-    }
-
-    // Apply vignette effect
-    this.postProcessing.setVignetteEnabled(
-      this.settings.vignetteEnabled,
-      this.settings.vignetteDarkness,
-      this.settings.vignetteOffset
-    );
-
-    // Apply chromatic lens distortion effect (replaces old separate effects)
-    this.postProcessing.setChromaticLensDistortionEnabled(
-      this.settings.chromaticLensDistortionEnabled,
-      this.settings.chromaticLensDistortionX,
-      this.settings.chromaticLensDistortionY,
-      this.settings.chromaticLensDispersion,
-      this.settings.chromaticLensPrincipalPointX,
-      this.settings.chromaticLensPrincipalPointY,
-      this.settings.chromaticLensFocalLengthX,
-      this.settings.chromaticLensFocalLengthY,
-      this.settings.chromaticLensSkew
-    );
-
-    // Apply ambient occlusion (always call to ensure proper enable/disable)
-    this.postProcessing.setAOEnabled(this.settings.aoEnabled, this.settings.aoQuality);
-
-    // Apply dynamic clipping settings
-    this.sceneManager.setDynamicClipping(this.settings.dynamicClippingEnabled);
-
-    // Update near/far control state based on dynamic clipping
-    this.updateClippingControlsState(this.settings.dynamicClippingEnabled);
-
-    // Trigger render to ensure changes are visible
-    this.triggerAnimation();
+    applyRenderingSettings({
+      settings: this.settings,
+      postProcessing: this.postProcessing,
+      sceneManager: this.sceneManager,
+      animationController: this.animationController,
+      updateClippingControlsState: (enabled) => this.updateClippingControlsState(enabled),
+      triggerAnimation: () => this.triggerAnimation(),
+    });
   }
 
   /**
@@ -1244,10 +1050,7 @@ export class RenderingControls {
    */
   dispose(): void {
     // Clean up clipping display RAF loop
-    if (this.clippingDisplayRAF !== null) {
-      cancelAnimationFrame(this.clippingDisplayRAF);
-      this.clippingDisplayRAF = null;
-    }
+    this.clippingDisplay.dispose();
 
     // Run all registered cleanup callbacks (e.g., adaptive DPR update interval)
     for (const cb of this.cleanupCallbacks) {
