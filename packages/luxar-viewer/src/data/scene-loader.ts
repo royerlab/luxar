@@ -637,6 +637,98 @@ export class SceneLoader {
   }
 
   /**
+   * Derive a per-node view state from `this.viewState`, folding in
+   * `extend_to_all` tolerance overrides and the inverse `nd_transform`
+   * for the node's path.
+   *
+   * The single source of truth for query-state derivation: both the
+   * main update path and `retryFailedLoader` go through this method so
+   * a retry cannot load a different query region than a fresh update
+   * would. The pre-extraction retry skipped both adjustments, which
+   * could produce a "successful" retry rendering incorrect data.
+   *
+   * Returns `{ skip: 'extend_to_all' }` if the node's `extend_to_all`
+   * dims fully cover all non-displayed dims (the work is a no-op),
+   * otherwise the derived view state.
+   *
+   * @param path  Scene-graph path of the node, used to compose the
+   *              world `nd_transform` from this node up to the root.
+   * @param attrs Node attrs (only `extend_to_all` is read here).
+   * @param opts.applyPartialExtendTolerance
+   *              When `true`, partial `extend_to_all` coverage triggers
+   *              a tolerance override via `getOrComputeExtendedTolerance`.
+   *              Points/GSplats: true. Lines: false (lines path didn't
+   *              historically apply this; preserve current behavior).
+   * @param opts.extendedToleranceCache
+   *              Optional cross-node cache for the partial-extend
+   *              tolerance array. Main update path passes one cache per
+   *              cycle; retry passes nothing (fresh).
+   */
+  private deriveNodeViewState(
+    path: string,
+    attrs: { extend_to_all?: string[] } | undefined,
+    opts: {
+      applyPartialExtendTolerance: boolean;
+      extendedToleranceCache?: Map<string, number[]>;
+    }
+  ): { skip: 'extend_to_all' } | { skip: false; viewState: ViewState } {
+    const extendDims: string[] = attrs?.extend_to_all ?? [];
+
+    let derived: ViewState = {
+      displayDims: this.viewState.displayDims,
+      slicePosition: this.viewState.slicePosition,
+      tolerance: this.viewState.tolerance,
+      dimensions: this.viewState.dimensions,
+    };
+
+    // Phase 1: full-extend skip check.
+    if (extendDims.length > 0 && this.viewState.dimensions) {
+      const dims = this.viewState.dimensions;
+      validateExtendDims(extendDims, dims);
+      const nonDisplayedDims = dims
+        .filter((_: { name?: string }, idx: number) => !this.viewState.displayDims.includes(idx))
+        .map((d: { name?: string }) => d.name)
+        .filter((name: string | undefined): name is string => !!name);
+
+      const isFullyExtended = nonDisplayedDims.every((dimName: string) =>
+        extendDims.includes(dimName)
+      );
+      if (isFullyExtended) {
+        return { skip: 'extend_to_all' };
+      }
+
+      // Phase 2: partial-extend tolerance override (Points + GSplats only).
+      if (opts.applyPartialExtendTolerance) {
+        const tolerance = getOrComputeExtendedTolerance(
+          this.viewState.tolerance,
+          extendDims,
+          this.viewState.dimensions,
+          opts.extendedToleranceCache ?? new Map<string, number[]>()
+        );
+        derived = { ...derived, tolerance };
+      }
+    }
+
+    // Phase 3: nd_transform inverse for world→local query mapping.
+    if (this._sceneGraph && derived.dimensions) {
+      const worldNdT = computeWorldNdTransform(this._sceneGraph, path);
+      if (hasOwnProperties(worldNdT)) {
+        const dimNames = derived.dimensions.map((d: { name?: string }) => d.name ?? '');
+        const inverted = invertNdTransformForQuery(
+          derived.slicePosition,
+          derived.tolerance,
+          worldNdT,
+          dimNames,
+          derived.displayDims
+        );
+        derived = { ...derived, ...inverted };
+      }
+    }
+
+    return { skip: false, viewState: derived };
+  }
+
+  /**
    * Update all points and lines for a new view state.
    *
    * Uses serialized execution to prevent race conditions: only one update runs at a time.
@@ -708,70 +800,22 @@ export class SceneLoader {
       const pointsLoaders = Array.from(this.loaders.entries()).map(async ([path, loader]) => {
         const updateFn = async (session: UpdateSession): Promise<StagedPointsCommit | null> => {
           try {
-            // Get points object to check extend_to_all attribute
             const pointsObj = this.rootGroup?.getObjectByName(path) as THREE.Points | undefined;
             const attrs = pointsObj?.userData?.attrs as { extend_to_all?: string[] } | undefined;
-            const extendDims: string[] = attrs?.extend_to_all || [];
 
-            // Check if we can skip this update (extend_to_all optimization)
-            if (extendDims.length > 0 && this.viewState.dimensions) {
-              const dims = this.viewState.dimensions;
-              validateExtendDims(extendDims, dims);
-              const nonDisplayedDims = dims
-                .filter(
-                  (_: { name?: string }, idx: number) => !this.viewState.displayDims.includes(idx)
-                )
-                .map((d: { name?: string }) => d.name)
-                .filter((name: string | undefined): name is string => !!name);
-
-              const isFullyExtended = nonDisplayedDims.every((dimName: string) =>
-                extendDims.includes(dimName)
+            const derived = this.deriveNodeViewState(path, attrs, {
+              applyPartialExtendTolerance: true,
+              extendedToleranceCache,
+            });
+            if (derived.skip) {
+              log.info(
+                Modules.SCENE_LOADER,
+                `Skipping update for ${path} - all non-displayed dims are extended`
               );
-
-              if (isFullyExtended) {
-                log.info(
-                  Modules.SCENE_LOADER,
-                  `Skipping update for ${path} - all non-displayed dims are extended`
-                );
-                session.markSkipped('extend_to_all');
-                return null;
-              }
+              session.markSkipped(derived.skip);
+              return null;
             }
-
-            // Build viewState with tolerance override for extend_to_all dimensions
-            let pointsViewState = this.viewState;
-            if (extendDims.length > 0 && this.viewState.dimensions) {
-              const tolerance = getOrComputeExtendedTolerance(
-                this.viewState.tolerance,
-                extendDims,
-                this.viewState.dimensions,
-                extendedToleranceCache
-              );
-              pointsViewState = { ...this.viewState, tolerance };
-            }
-
-            // Apply nd_transform inverse: convert world query to local coordinates
-            // Uses composed world nd_transform (inherits from parent groups)
-            if (this._sceneGraph && pointsViewState.dimensions) {
-              const worldNdT = computeWorldNdTransform(this._sceneGraph, path);
-              if (hasOwnProperties(worldNdT)) {
-                const dimNames = pointsViewState.dimensions.map(
-                  (d: { name?: string }) => d.name ?? ''
-                );
-                const inverted = invertNdTransformForQuery(
-                  pointsViewState.slicePosition,
-                  pointsViewState.tolerance,
-                  worldNdT,
-                  dimNames,
-                  pointsViewState.displayDims
-                );
-                pointsViewState = {
-                  ...pointsViewState,
-                  slicePosition: inverted.slicePosition,
-                  tolerance: inverted.tolerance,
-                };
-              }
-            }
+            const pointsViewState = derived.viewState;
 
             const points = await loader.updateView(pointsViewState, session);
             if (points) {
@@ -816,63 +860,19 @@ export class SceneLoader {
           try {
             const mesh = this.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
             const attrs = mesh?.userData?.attrs as { extend_to_all?: string[] } | undefined;
-            const extendDims: string[] = attrs?.extend_to_all || [];
 
-            // Check if we can skip this update (extend_to_all optimization)
-            if (extendDims.length > 0 && this.viewState.dimensions) {
-              const dims = this.viewState.dimensions;
-              validateExtendDims(extendDims, dims);
-              const nonDisplayedDims = dims
-                .filter(
-                  (_: { name?: string }, idx: number) => !this.viewState.displayDims.includes(idx)
-                )
-                .map((d: { name?: string }) => d.name)
-                .filter((name: string | undefined): name is string => !!name);
-
-              const isFullyExtended = nonDisplayedDims.every((dimName: string) =>
-                extendDims.includes(dimName)
+            const derived = this.deriveNodeViewState(path, attrs, {
+              applyPartialExtendTolerance: false,
+            });
+            if (derived.skip) {
+              log.info(
+                Modules.SCENE_LOADER,
+                `Skipping update for ${path} - all non-displayed dims are extended`
               );
-
-              if (isFullyExtended) {
-                log.info(
-                  Modules.SCENE_LOADER,
-                  `Skipping update for ${path} - all non-displayed dims are extended`
-                );
-                session.markSkipped('extend_to_all');
-                return null;
-              }
+              session.markSkipped(derived.skip);
+              return null;
             }
-
-            let linesViewState: {
-              displayDims: readonly number[];
-              slicePosition: readonly number[];
-              tolerance: readonly number[];
-              dimensions?: import('../types/dims').DimensionMetadata[];
-            } = {
-              displayDims: this.viewState.displayDims,
-              slicePosition: this.viewState.slicePosition,
-              tolerance: this.viewState.tolerance,
-              dimensions: this.viewState.dimensions,
-            };
-
-            // Apply nd_transform inverse for lines query
-            // Uses composed world nd_transform (inherits from parent groups)
-            if (this._sceneGraph && linesViewState.dimensions) {
-              const worldNdT = computeWorldNdTransform(this._sceneGraph, path);
-              if (hasOwnProperties(worldNdT)) {
-                const dimNames = linesViewState.dimensions.map(
-                  (d: { name?: string }) => d.name ?? ''
-                );
-                const inverted = invertNdTransformForQuery(
-                  linesViewState.slicePosition,
-                  linesViewState.tolerance,
-                  worldNdT,
-                  dimNames,
-                  linesViewState.displayDims
-                );
-                linesViewState = { ...linesViewState, ...inverted };
-              }
-            }
+            const linesViewState = derived.viewState;
 
             const data = await loader.updateView(linesViewState, session);
             if (data) {
@@ -919,68 +919,21 @@ export class SceneLoader {
             try {
               const mesh = this.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
               const attrs = mesh?.userData?.attrs as GSplatsMetadata | undefined;
-              const extendDims: string[] = attrs?.extend_to_all || [];
 
-              // Check if we can skip this update (extend_to_all optimization)
-              if (extendDims.length > 0 && this.viewState.dimensions) {
-                const dims = this.viewState.dimensions;
-                validateExtendDims(extendDims, dims);
-                const nonDisplayedDims = dims
-                  .filter(
-                    (_: { name?: string }, idx: number) => !this.viewState.displayDims.includes(idx)
-                  )
-                  .map((d: { name?: string }) => d.name)
-                  .filter((name: string | undefined): name is string => !!name);
-
-                const isFullyExtended = nonDisplayedDims.every((dimName: string) =>
-                  extendDims.includes(dimName)
+              const derived = this.deriveNodeViewState(path, attrs, {
+                applyPartialExtendTolerance: true,
+                extendedToleranceCache,
+              });
+              if (derived.skip) {
+                log.info(
+                  Modules.SCENE_LOADER,
+                  `Skipping gsplats update for ${path} - all non-displayed dims are extended`
                 );
-
-                if (isFullyExtended) {
-                  log.info(
-                    Modules.SCENE_LOADER,
-                    `Skipping gsplats update for ${path} - all non-displayed dims are extended`
-                  );
-                  session.markSkipped('extend_to_all');
-                  return null;
-                }
+                session.markSkipped(derived.skip);
+                return null;
               }
+              const gsplatsViewState: GSplatsViewState = derived.viewState;
 
-              // Build viewState with tolerance override for extend_to_all dimensions
-              let gsplatsViewState: GSplatsViewState = {
-                displayDims: this.viewState.displayDims,
-                slicePosition: this.viewState.slicePosition,
-                tolerance: this.viewState.tolerance,
-                dimensions: this.viewState.dimensions,
-              };
-              if (extendDims.length > 0 && this.viewState.dimensions) {
-                const tolerance = getOrComputeExtendedTolerance(
-                  this.viewState.tolerance,
-                  extendDims,
-                  this.viewState.dimensions,
-                  extendedToleranceCache
-                );
-                gsplatsViewState = { ...gsplatsViewState, tolerance };
-              }
-
-              // Apply nd_transform inverse for gsplats query
-              // Uses composed world nd_transform (inherits from parent groups)
-              if (this._sceneGraph && gsplatsViewState.dimensions) {
-                const worldNdT = computeWorldNdTransform(this._sceneGraph, path);
-                if (hasOwnProperties(worldNdT)) {
-                  const dimNames = gsplatsViewState.dimensions.map(
-                    (d: { name?: string }) => d.name ?? ''
-                  );
-                  const inverted = invertNdTransformForQuery(
-                    gsplatsViewState.slicePosition,
-                    gsplatsViewState.tolerance,
-                    worldNdT,
-                    dimNames,
-                    gsplatsViewState.displayDims
-                  );
-                  gsplatsViewState = { ...gsplatsViewState, ...inverted };
-                }
-              }
 
               const data = await loader.updateView(gsplatsViewState, session);
               if (data) {
@@ -2056,23 +2009,41 @@ export class SceneLoader {
     const gsplatsLoader = this.gsplatLoaders.get(path);
 
     try {
+      // Look up the per-node attrs for the same extend_to_all / nd_transform
+      // adjustments the main update path applies. Previously retry passed a
+      // raw view state, which silently rendered an incorrect query region for
+      // transformed or extended nodes.
+      const obj = this.rootGroup?.getObjectByName(path) as
+        | THREE.Object3D
+        | THREE.Mesh
+        | THREE.Points
+        | undefined;
+      const attrs = obj?.userData?.attrs as { extend_to_all?: string[] } | undefined;
+
       if (pointsLoader) {
-        // Retry points loader
-        const points = await pointsLoader.updateView(this.viewState);
-        if (points) {
-          this.updatePointsGeometry(path, points);
+        const derived = this.deriveNodeViewState(path, attrs, {
+          applyPartialExtendTolerance: true,
+        });
+        if (derived.skip) {
+          this.failedLoaders.delete(path);
+          log.info(Modules.SCENE_LOADER, `Retry skipped ${path} (extend_to_all fully covers)`);
+          return true;
         }
+        const points = await pointsLoader.updateView(derived.viewState);
+        if (points) this.updatePointsGeometry(path, points);
         this.failedLoaders.delete(path);
         log.success(Modules.SCENE_LOADER, `Successfully retried points loader: ${path}`);
         return true;
       } else if (linesLoader) {
-        // Retry lines loader
-        const linesViewState = {
-          displayDims: this.viewState.displayDims,
-          slicePosition: this.viewState.slicePosition,
-          tolerance: this.viewState.tolerance,
-          dimensions: this.viewState.dimensions,
-        };
+        const derived = this.deriveNodeViewState(path, attrs, {
+          applyPartialExtendTolerance: false,
+        });
+        if (derived.skip) {
+          this.failedLoaders.delete(path);
+          log.info(Modules.SCENE_LOADER, `Retry skipped ${path} (extend_to_all fully covers)`);
+          return true;
+        }
+        const linesViewState = derived.viewState;
         const data = await linesLoader.updateView(linesViewState);
         if (data) {
           const staged = await this.processLinesData(path, data, linesViewState);
@@ -2082,13 +2053,15 @@ export class SceneLoader {
         log.success(Modules.SCENE_LOADER, `Successfully retried lines loader: ${path}`);
         return true;
       } else if (gsplatsLoader) {
-        // Retry gsplats loader
-        const gsplatsViewState: GSplatsViewState = {
-          displayDims: this.viewState.displayDims,
-          slicePosition: this.viewState.slicePosition,
-          tolerance: this.viewState.tolerance,
-          dimensions: this.viewState.dimensions,
-        };
+        const derived = this.deriveNodeViewState(path, attrs, {
+          applyPartialExtendTolerance: true,
+        });
+        if (derived.skip) {
+          this.failedLoaders.delete(path);
+          log.info(Modules.SCENE_LOADER, `Retry skipped ${path} (extend_to_all fully covers)`);
+          return true;
+        }
+        const gsplatsViewState: GSplatsViewState = derived.viewState;
         const data = await gsplatsLoader.updateView(gsplatsViewState);
         if (data) {
           const staged = await this.processGSplatsData(path, data, gsplatsViewState);
