@@ -692,7 +692,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
     warnExtendToAllNoDimensions({
       extendDims,
       hasResolvedDimensions:
-        !!viewState.dimensions?.metadata && viewState.dimensions.metadata.length > 0,
+        !!viewState.dimensions && viewState.dimensions.length > 0,
       nodePath: this.node.path,
       logModule: Modules.SPATIAL_INDEX_LOADER,
     });
@@ -766,7 +766,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
       displayDims: viewState.displayDims,
       slicePosition: viewState.slicePosition,
       tolerance: viewState.tolerance,
-      dimensions: viewState.dimensions?.metadata,
+      dimensions: viewState.dimensions,
     };
 
     return new SpatialQueryBuilder(

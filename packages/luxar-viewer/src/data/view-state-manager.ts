@@ -50,16 +50,12 @@ export class ViewStateManager {
     const slicePosition = this.calculateInitialSlice(metadata, displayed);
     const tolerance = this.buildToleranceArray(metadata, displayed);
 
+    void ndim;
     return {
       displayDims: displayed,
       slicePosition,
       tolerance,
-      dimensions: {
-        ndim,
-        currentStep: slicePosition,
-        displayed,
-        metadata,
-      },
+      dimensions: metadata,
     };
   }
 

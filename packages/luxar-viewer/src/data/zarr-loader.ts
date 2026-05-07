@@ -103,7 +103,7 @@ export async function updateSceneForDimensions(
     displayDims: [...dims.displayed], // Copy to avoid reference mutation
     slicePosition: [...dims.currentStep], // Copy to avoid reference mutation
     tolerance: new Array(dims.ndim).fill(config.dataLoading.spatial.defaultTolerance), // Default tolerance
-    dimensions: dims,
+    dimensions: dims.metadata,
   };
 
   // Update max radius from scene metadata if available

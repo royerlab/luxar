@@ -5,7 +5,7 @@
  * with proper spatial indexing support and aligned attribute loading.
  */
 
-import { SimpleDims } from '../types/dims';
+import type { DimensionMetadata } from '../types/dims';
 import * as THREE from 'three';
 import { log, Modules } from '../utils/log';
 
@@ -42,12 +42,13 @@ export interface ViewState {
    *
    * Always provide dimensions when using nD datasets with extend_to_all.
    *
-   * **NOTE**: This is `SimpleDims` (with `.metadata`, `.ndim`, `.displayed`, `.currentStep`).
-   * `BaseViewState.dimensions` in `loaders/base-types.ts` is `DimensionMetadata[]` (the raw
-   * metadata array). When passing ViewState data to BaseViewState-consuming code (e.g.,
-   * `SpatialQueryBuilder`), extract `.metadata` first: `viewState.dimensions?.metadata`.
+   * Same shape as `LinesViewState.dimensions`, `GSplatsViewState.dimensions`,
+   * `PointsViewState.dimensions`, and `BaseViewState.dimensions`. The other
+   * `SimpleDims` fields (.ndim, .displayed, .currentStep) are not consumed
+   * via this field — callers that need them read them off `sceneDimsManager`
+   * instead.
    */
-  dimensions?: SimpleDims;
+  dimensions?: DimensionMetadata[];
 }
 
 /**

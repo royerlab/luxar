@@ -348,12 +348,7 @@ describe('PointsSpatialIndexLoader', () => {
         displayDims: [0, 1, 2],
         slicePosition: [0, 0, 0, 5],
         tolerance: [0, 0, 0, 0.1],
-        dimensions: {
-          ndim: 4,
-          currentStep: [0, 0, 0, 5],
-          displayed: [0, 1, 2],
-          metadata: dimsMetadata,
-        },
+        dimensions: dimsMetadata,
       };
 
       await loader.loadPoints(viewState);

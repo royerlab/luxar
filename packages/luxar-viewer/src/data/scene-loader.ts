@@ -487,7 +487,7 @@ export class SceneLoader {
       this.rootGroup.userData.sceneDimensions = sceneAttrs.scene_dimensions;
 
       // Log dimension initialization status for debugging
-      const ndim = this.viewState.dimensions?.metadata?.length ?? 0;
+      const ndim = this.viewState.dimensions?.length ?? 0;
       if (ndim > 0) {
         log.success(
           Modules.SCENE_LOADER,
@@ -700,8 +700,8 @@ export class SceneLoader {
             const extendDims: string[] = attrs?.extend_to_all || [];
 
             // Check if we can skip this update (extend_to_all optimization)
-            if (extendDims.length > 0 && this.viewState.dimensions?.metadata) {
-              const dims = this.viewState.dimensions.metadata;
+            if (extendDims.length > 0 && this.viewState.dimensions) {
+              const dims = this.viewState.dimensions;
               validateExtendDims(extendDims, dims);
               const nonDisplayedDims = dims
                 .filter(
@@ -726,11 +726,11 @@ export class SceneLoader {
 
             // Build viewState with tolerance override for extend_to_all dimensions
             let pointsViewState = this.viewState;
-            if (extendDims.length > 0 && this.viewState.dimensions?.metadata) {
+            if (extendDims.length > 0 && this.viewState.dimensions) {
               const tolerance = getOrComputeExtendedTolerance(
                 this.viewState.tolerance,
                 extendDims,
-                this.viewState.dimensions.metadata,
+                this.viewState.dimensions,
                 extendedToleranceCache
               );
               pointsViewState = { ...this.viewState, tolerance };
@@ -738,10 +738,10 @@ export class SceneLoader {
 
             // Apply nd_transform inverse: convert world query to local coordinates
             // Uses composed world nd_transform (inherits from parent groups)
-            if (this._sceneGraph && pointsViewState.dimensions?.metadata) {
+            if (this._sceneGraph && pointsViewState.dimensions) {
               const worldNdT = computeWorldNdTransform(this._sceneGraph, path);
               if (hasOwnProperties(worldNdT)) {
-                const dimNames = pointsViewState.dimensions.metadata.map(
+                const dimNames = pointsViewState.dimensions.map(
                   (d: { name?: string }) => d.name ?? ''
                 );
                 const inverted = invertNdTransformForQuery(
@@ -805,8 +805,8 @@ export class SceneLoader {
             const extendDims: string[] = attrs?.extend_to_all || [];
 
             // Check if we can skip this update (extend_to_all optimization)
-            if (extendDims.length > 0 && this.viewState.dimensions?.metadata) {
-              const dims = this.viewState.dimensions.metadata;
+            if (extendDims.length > 0 && this.viewState.dimensions) {
+              const dims = this.viewState.dimensions;
               validateExtendDims(extendDims, dims);
               const nonDisplayedDims = dims
                 .filter(
@@ -838,7 +838,7 @@ export class SceneLoader {
               displayDims: this.viewState.displayDims,
               slicePosition: this.viewState.slicePosition,
               tolerance: this.viewState.tolerance,
-              dimensions: this.viewState.dimensions?.metadata,
+              dimensions: this.viewState.dimensions,
             };
 
             // Apply nd_transform inverse for lines query
@@ -908,8 +908,8 @@ export class SceneLoader {
               const extendDims: string[] = attrs?.extend_to_all || [];
 
               // Check if we can skip this update (extend_to_all optimization)
-              if (extendDims.length > 0 && this.viewState.dimensions?.metadata) {
-                const dims = this.viewState.dimensions.metadata;
+              if (extendDims.length > 0 && this.viewState.dimensions) {
+                const dims = this.viewState.dimensions;
                 validateExtendDims(extendDims, dims);
                 const nonDisplayedDims = dims
                   .filter(
@@ -937,13 +937,13 @@ export class SceneLoader {
                 displayDims: this.viewState.displayDims,
                 slicePosition: this.viewState.slicePosition,
                 tolerance: this.viewState.tolerance,
-                dimensions: this.viewState.dimensions?.metadata,
+                dimensions: this.viewState.dimensions,
               };
-              if (extendDims.length > 0 && this.viewState.dimensions?.metadata) {
+              if (extendDims.length > 0 && this.viewState.dimensions) {
                 const tolerance = getOrComputeExtendedTolerance(
                   this.viewState.tolerance,
                   extendDims,
-                  this.viewState.dimensions.metadata,
+                  this.viewState.dimensions,
                   extendedToleranceCache
                 );
                 gsplatsViewState = { ...gsplatsViewState, tolerance };
@@ -1161,13 +1161,13 @@ export class SceneLoader {
               displayDims: this.viewState.displayDims,
               slicePosition: this.viewState.slicePosition,
               tolerance: this.viewState.tolerance,
-              dimensions: this.viewState.dimensions?.metadata,
+              dimensions: this.viewState.dimensions,
             };
 
-            if (extendDims.length > 0 && this.viewState.dimensions?.metadata) {
+            if (extendDims.length > 0 && this.viewState.dimensions) {
               const tolerance = [...this.viewState.tolerance];
               for (const dimName of extendDims) {
-                const dimIndex = this.viewState.dimensions.metadata.findIndex(
+                const dimIndex = this.viewState.dimensions.findIndex(
                   (d: { name?: string }) => d.name === dimName
                 );
                 if (dimIndex >= 0 && dimIndex < tolerance.length) {
@@ -1460,11 +1460,11 @@ export class SceneLoader {
       // Build viewState with tolerance override for extend_to_all dimensions
       const extendDims: string[] = (node.attrs.extend_to_all as string[]) || [];
       let pointsViewState = this.viewState;
-      if (extendDims.length > 0 && this.viewState.dimensions?.metadata) {
+      if (extendDims.length > 0 && this.viewState.dimensions) {
         // Create modified tolerance array with infinite tolerance for extended dims
         const tolerance = [...this.viewState.tolerance];
         for (const dimName of extendDims) {
-          const dimIndex = this.viewState.dimensions.metadata.findIndex(
+          const dimIndex = this.viewState.dimensions.findIndex(
             (d: { name?: string }) => d.name === dimName
           );
           if (dimIndex >= 0 && dimIndex < tolerance.length) {
@@ -1479,10 +1479,10 @@ export class SceneLoader {
       }
 
       // Apply nd_transform inverse for initial load (same as update path)
-      if (this._sceneGraph && pointsViewState.dimensions?.metadata) {
+      if (this._sceneGraph && pointsViewState.dimensions) {
         const worldNdT = computeWorldNdTransform(this._sceneGraph, node.path);
         if (hasOwnProperties(worldNdT)) {
-          const dimNames = pointsViewState.dimensions.metadata.map(
+          const dimNames = pointsViewState.dimensions.map(
             (d: { name?: string }) => d.name ?? ''
           );
           const inverted = invertNdTransformForQuery(
@@ -1563,7 +1563,7 @@ export class SceneLoader {
         displayDims: this.viewState.displayDims,
         slicePosition: this.viewState.slicePosition,
         tolerance: this.viewState.tolerance,
-        dimensions: this.viewState.dimensions?.metadata,
+        dimensions: this.viewState.dimensions,
       };
 
       // Apply nd_transform inverse for initial load
@@ -1717,12 +1717,12 @@ export class SceneLoader {
         displayDims: this.viewState.displayDims,
         slicePosition: this.viewState.slicePosition,
         tolerance: this.viewState.tolerance,
-        dimensions: this.viewState.dimensions?.metadata,
+        dimensions: this.viewState.dimensions,
       };
-      if (extendDims.length > 0 && this.viewState.dimensions?.metadata) {
+      if (extendDims.length > 0 && this.viewState.dimensions) {
         const tolerance = [...this.viewState.tolerance];
         for (const dimName of extendDims) {
-          const dimIndex = this.viewState.dimensions.metadata.findIndex(
+          const dimIndex = this.viewState.dimensions.findIndex(
             (d: { name?: string }) => d.name === dimName
           );
           if (dimIndex >= 0 && dimIndex < tolerance.length) {
@@ -2076,7 +2076,7 @@ export class SceneLoader {
           displayDims: this.viewState.displayDims,
           slicePosition: this.viewState.slicePosition,
           tolerance: this.viewState.tolerance,
-          dimensions: this.viewState.dimensions?.metadata,
+          dimensions: this.viewState.dimensions,
         };
         const data = await linesLoader.updateView(linesViewState);
         if (data) {
@@ -2092,7 +2092,7 @@ export class SceneLoader {
           displayDims: this.viewState.displayDims,
           slicePosition: this.viewState.slicePosition,
           tolerance: this.viewState.tolerance,
-          dimensions: this.viewState.dimensions?.metadata,
+          dimensions: this.viewState.dimensions,
         };
         const data = await gsplatsLoader.updateView(gsplatsViewState);
         if (data) {
