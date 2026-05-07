@@ -224,12 +224,16 @@ export class RangeLoader {
 
     if (useWorkers && totalElements > this.config.workerThreshold) {
       try {
-        const worker = await getWorkerPool().getWorker();
-        const decoded = await worker.decodeBroadcasted({
-          value: valueAsFloat32,
-          numPoints: totalElements,
-          elementsPerPoint: elementsPerItem,
-        });
+        const decoded = await getWorkerPool().runWithTimeout(
+          'decodeBroadcasted',
+          'decode',
+          (api) =>
+            api.decodeBroadcasted({
+              value: valueAsFloat32,
+              numPoints: totalElements,
+              elementsPerPoint: elementsPerItem,
+            })
+        );
         output.set(decoded);
         return;
       } catch (error) {
@@ -295,20 +299,28 @@ export class RangeLoader {
 
       if (shouldUseWorkers) {
         try {
-          const worker = await getWorkerPool().getWorker();
-
           if (quantMetadata.isLogSpace) {
-            dequantized = await worker.decodeLogScalar({
-              data: quantizedData,
-              maxLog: quantMetadata.bounds[1],
-              dtype: quantMetadata.dtype, // Already normalized by getQuantizationMetadata
-            });
+            dequantized = await getWorkerPool().runWithTimeout(
+              'decodeLogScalar',
+              'decode',
+              (api) =>
+                api.decodeLogScalar({
+                  data: quantizedData,
+                  maxLog: quantMetadata.bounds[1],
+                  dtype: quantMetadata.dtype, // Already normalized by getQuantizationMetadata
+                })
+            );
           } else {
-            dequantized = await worker.decodeQuantized({
-              data: quantizedData,
-              bounds: quantMetadata.bounds,
-              dtype: quantMetadata.dtype, // Already normalized by getQuantizationMetadata
-            });
+            dequantized = await getWorkerPool().runWithTimeout(
+              'decodeQuantized',
+              'decode',
+              (api) =>
+                api.decodeQuantized({
+                  data: quantizedData,
+                  bounds: quantMetadata.bounds,
+                  dtype: quantMetadata.dtype, // Already normalized by getQuantizationMetadata
+                })
+            );
           }
         } catch (error) {
           log.warning(
@@ -380,13 +392,14 @@ export class RangeLoader {
 
       if (shouldUseWorkers) {
         try {
-          const worker = await getWorkerPool().getWorker();
-          decoded = await worker.decodeLUT({
-            indices,
-            lut: flatLUT,
-            k: lutMetadata.k,
-            lutMode: lutMetadata.lutMode as 'row' | 'scalar',
-          });
+          decoded = await getWorkerPool().runWithTimeout('decodeLUT', 'decode', (api) =>
+            api.decodeLUT({
+              indices,
+              lut: flatLUT,
+              k: lutMetadata.k,
+              lutMode: lutMetadata.lutMode as 'row' | 'scalar',
+            })
+          );
         } catch (error) {
           log.warning(
             this.config.logModule,

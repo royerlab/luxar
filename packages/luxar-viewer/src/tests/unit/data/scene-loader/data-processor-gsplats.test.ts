@@ -175,7 +175,7 @@ describe('processGSplatsData', () => {
       visibleCount: 0,
     }));
     mockGetWorkerPool.mockReturnValue({
-      getWorker: vi.fn(async () => ({ projectGSplatsTo3D })),
+      runWithTimeout: vi.fn(async (_op, _kind, fn) => fn({ projectGSplatsTo3D })),
     });
 
     const result = await processGSplatsData(
@@ -239,7 +239,7 @@ describe('projectGSplatsTo3DUsingWorker', () => {
       visibleCount: 1,
     }));
     mockGetWorkerPool.mockReturnValue({
-      getWorker: vi.fn(async () => ({ projectGSplatsTo3D })),
+      runWithTimeout: vi.fn(async (_op, _kind, fn) => fn({ projectGSplatsTo3D })),
     });
 
     const result = await projectGSplatsTo3DUsingWorker(
@@ -254,7 +254,7 @@ describe('projectGSplatsTo3DUsingWorker', () => {
 
   it('falls back to main thread on worker failure', async () => {
     mockGetWorkerPool.mockReturnValue({
-      getWorker: vi.fn(async () => {
+      runWithTimeout: vi.fn(async () => {
         throw new Error('boom');
       }),
     });

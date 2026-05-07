@@ -75,8 +75,6 @@ export async function projectGSplatsTo3DUsingWorker(
   updateVersion: number
 ): Promise<ReturnType<typeof processGSplats>> {
   try {
-    const worker = await getWorkerPool().getWorker();
-
     if (updateVersion <= 1) {
       log.info(
         Modules.SCENE_LOADER,
@@ -102,21 +100,26 @@ export async function projectGSplatsTo3DUsingWorker(
       }
     }
 
-    const workerResult = await worker.projectGSplatsTo3D({
-      positions: data.positions,
-      choleskyFactors: data.choleskyFactors,
-      amplitudes: data.amplitudes,
-      colors: data.colors,
-      sharpness: null,
-      displayDims: viewState.displayDims,
-      slicePosition: viewState.slicePosition,
-      ndim: data.ndim,
-      splatCount: data.splatCount,
-      discreteDims,
-      discreteSteps,
-      extendToAllDims,
-      truncate,
-    });
+    const workerResult = await getWorkerPool().runWithTimeout(
+      'projectGSplatsTo3D',
+      'projection',
+      (api) =>
+        api.projectGSplatsTo3D({
+          positions: data.positions,
+          choleskyFactors: data.choleskyFactors,
+          amplitudes: data.amplitudes,
+          colors: data.colors,
+          sharpness: null,
+          displayDims: viewState.displayDims,
+          slicePosition: viewState.slicePosition,
+          ndim: data.ndim,
+          splatCount: data.splatCount,
+          discreteDims,
+          discreteSteps,
+          extendToAllDims,
+          truncate,
+        })
+    );
 
     if (updateVersion <= 1) {
       log.info(

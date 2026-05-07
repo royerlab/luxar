@@ -22,6 +22,19 @@ export interface WorkerInstance {
 }
 
 /**
+ * Class of worker call, used to pick a default timeout from config.
+ *
+ * - `'visibility'` — `compute_nd_visibility_*` calls. Bounded by ndim,
+ *   typically sub-second; uses `workerVisibilityTimeoutMs`.
+ * - `'projection'` — `project*To3D` round-trips that include WASM
+ *   visibility + compaction. Uses `workerProjectionTimeoutMs`.
+ * - `'decode'` — `decode*` array-decode calls. Same magnitude as
+ *   projection on large chunks; piggybacks on `workerProjectionTimeoutMs`
+ *   for now.
+ */
+export type TimeoutKind = 'visibility' | 'projection' | 'decode';
+
+/**
  * Thrown when a Comlink-routed worker call exceeds its configured
  * timeout. Carries the worker's pool index and the operation name so
  * callers can distinguish a hung worker from a genuine task failure.
@@ -175,7 +188,8 @@ export class WorkerPool {
    *
    * Note: this is a best-effort safety net. Comlink-wrapped calls that
    * are mid-flight when the worker dies will still hang their callers —
-   * a per-call timeout is the right complement (added separately).
+   * route hot paths through {@link runWithTimeout} for the per-call
+   * timeout that complements this handler.
    */
   private attachWorkerErrorHandlers(worker: Worker, workerNumber: number): void {
     worker.onerror = (event) => {
@@ -267,6 +281,22 @@ export class WorkerPool {
   }
 
   /**
+   * Pick the next round-robin {@link WorkerInstance}. Internal — exposes the
+   * underlying `Worker` so {@link runWithTimeout} can evict it on timeout.
+   */
+  private async nextWorkerInstance(): Promise<WorkerInstance> {
+    await this.initialize();
+
+    if (this.workers.length === 0) {
+      throw new Error('[WorkerPool] No workers available after initialization');
+    }
+
+    const wi = this.workers[this.nextWorkerIndex];
+    this.nextWorkerIndex = (this.nextWorkerIndex + 1) % this.workers.length;
+    return wi;
+  }
+
+  /**
    * Get a worker API using round-robin selection.
    *
    * Untracked callers receive workers in rotating order. For load-aware
@@ -274,16 +304,42 @@ export class WorkerPool {
    * {@link getWorkerWithTracking} instead.
    */
   async getWorker(): Promise<Remote<DataWorkerAPI>> {
-    await this.initialize();
+    return (await this.nextWorkerInstance()).api;
+  }
 
-    if (this.workers.length === 0) {
-      throw new Error('[WorkerPool] No workers available after initialization');
-    }
+  /**
+   * Pick the kind-appropriate timeout from config. Visibility uses
+   * `workerVisibilityTimeoutMs`; projection AND decode share
+   * `workerProjectionTimeoutMs` (both are long-running CPU-bound calls
+   * — a dedicated decode knob can be added later if telemetry shows a
+   * need).
+   */
+  private pickTimeoutMs(kind: TimeoutKind): number {
+    const perf = config.dataLoading.performance;
+    return kind === 'visibility'
+      ? perf.workerVisibilityTimeoutMs
+      : perf.workerProjectionTimeoutMs;
+  }
 
-    // Round-robin selection for untracked callers
-    const worker = this.workers[this.nextWorkerIndex];
-    this.nextWorkerIndex = (this.nextWorkerIndex + 1) % this.workers.length;
-    return worker.api;
+  /**
+   * Run a worker call through {@link withTimeout} on a round-robin-selected
+   * worker. The single production entry point for any Comlink-routed call
+   * that needs a hang-detection guard — direct `await` against a worker
+   * `Remote` lets a dead worker hang the caller forever (the `onerror`
+   * handler can't settle a Comlink promise that's already in flight).
+   *
+   * On timeout the responsible worker is evicted via
+   * {@link handleWorkerFailure} and the caller receives a
+   * {@link WorkerTimeoutError} that the existing geometry-loader try/catch
+   * blocks already route to the main-thread fallback.
+   */
+  async runWithTimeout<T>(
+    op: string,
+    kind: TimeoutKind,
+    fn: (api: Remote<DataWorkerAPI>) => Promise<T>
+  ): Promise<T> {
+    const wi = await this.nextWorkerInstance();
+    return this.withTimeout(op, fn(wi.api), this.pickTimeoutMs(kind), wi.worker);
   }
 
   /**

@@ -54,8 +54,6 @@ export async function projectLinesTo3DUsingWorker(
   updateVersion: number
 ): Promise<ProcessedLinesData> {
   try {
-    const worker = await getWorkerPool().getWorker();
-
     if (updateVersion <= 1) {
       log.info(
         Modules.SCENE_LOADER,
@@ -63,18 +61,23 @@ export async function projectLinesTo3DUsingWorker(
       );
     }
 
-    const workerResult = await worker.projectLinesTo3D({
-      positions: data.positions,
-      segments: data.segments,
-      widths: data.widths,
-      colors: data.colors,
-      sharpness: data.sharpness,
-      slicePosition: viewState.slicePosition,
-      tolerance,
-      displayDims: viewState.displayDims,
-      ndim: data.ndim,
-      segmentCount: data.segmentCount,
-    });
+    const workerResult = await getWorkerPool().runWithTimeout(
+      'projectLinesTo3D',
+      'projection',
+      (api) =>
+        api.projectLinesTo3D({
+          positions: data.positions,
+          segments: data.segments,
+          widths: data.widths,
+          colors: data.colors,
+          sharpness: data.sharpness,
+          slicePosition: viewState.slicePosition,
+          tolerance,
+          displayDims: viewState.displayDims,
+          ndim: data.ndim,
+          segmentCount: data.segmentCount,
+        })
+    );
 
     if (updateVersion <= 1) {
       log.info(

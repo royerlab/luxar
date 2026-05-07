@@ -535,27 +535,30 @@ export async function projectPointsTo3DUsingWorker(
   }
 
   try {
-    const worker = await getWorkerPool().getWorker();
-
     log.info(
       Modules.SPATIAL_INDEX_LOADER,
       `Projecting ${totalPoints} points to 3D using worker (ndim=${ndim})`
     );
 
-    const workerResult = await worker.projectPointsTo3D({
-      positions: positionsFloat32,
-      colors: colorsMultiType,
-      radii: radiiFloat32,
-      sharpness: sharpnessFloat32,
-      viewState: {
-        displayDims: viewState.displayDims,
-        slicePosition: viewState.slicePosition,
-        tolerance: viewState.tolerance,
-      },
-      effectiveRadiusConfig: workerEffectiveRadiusConfig,
-      ndim,
-      numPoints: totalPoints,
-    });
+    const workerResult = await getWorkerPool().runWithTimeout(
+      'projectPointsTo3D',
+      'projection',
+      (api) =>
+        api.projectPointsTo3D({
+          positions: positionsFloat32,
+          colors: colorsMultiType,
+          radii: radiiFloat32,
+          sharpness: sharpnessFloat32,
+          viewState: {
+            displayDims: viewState.displayDims,
+            slicePosition: viewState.slicePosition,
+            tolerance: viewState.tolerance,
+          },
+          effectiveRadiusConfig: workerEffectiveRadiusConfig,
+          ndim,
+          numPoints: totalPoints,
+        })
+    );
 
     // Handle empty result
     if (workerResult.visibleCount === 0) {

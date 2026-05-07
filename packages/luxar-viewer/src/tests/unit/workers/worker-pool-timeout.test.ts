@@ -11,7 +11,11 @@ interface MockWorker {
   onmessageerror: (() => void) | null;
 }
 
-async function loadWorkerPool(workerCount = 2) {
+async function loadWorkerPool(
+  workerCount = 2,
+  perf: Record<string, number> = {},
+  apiMethods: Record<string, unknown> = {}
+) {
   vi.resetModules();
   const log = {
     info: vi.fn(),
@@ -24,14 +28,23 @@ async function loadWorkerPool(workerCount = 2) {
   let nextWorkerIndex = 0;
 
   vi.doMock('../../../config', () => ({
-    config: { dataLoading: { performance: { workerCount } } },
+    config: {
+      dataLoading: {
+        performance: {
+          workerCount,
+          workerVisibilityTimeoutMs: 30000,
+          workerProjectionTimeoutMs: 60000,
+          ...perf,
+        },
+      },
+    },
   }));
   vi.doMock('../../../utils/log', () => ({
     log,
     Modules: { WORKER_POOL: 'WorkerPool' },
   }));
   vi.doMock('comlink', () => ({
-    wrap: vi.fn(() => ({ initialize: vi.fn(async () => {}) })),
+    wrap: vi.fn(() => ({ initialize: vi.fn(async () => {}), ...apiMethods })),
   }));
   vi.doMock('../../../workers/data-worker?worker', () => ({
     default: class MockDataWorker {
@@ -131,6 +144,104 @@ describe('WorkerPool.withTimeout', () => {
 
     // Advance past the original timeout — nothing should reject.
     vi.advanceTimersByTime(2000);
+  });
+});
+
+describe('WorkerPool.runWithTimeout', () => {
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+    vi.stubGlobal('navigator', { hardwareConcurrency: 16 });
+    vi.useRealTimers();
+  });
+
+  it('resolves with the call result on the happy path', async () => {
+    const fakeApi = {
+      decodeBroadcasted: vi.fn().mockResolvedValue(new Float32Array([1, 2, 3])),
+    };
+    const { WorkerPool } = await loadWorkerPool(2, {}, fakeApi);
+    const pool = new WorkerPool();
+    const out = await pool.runWithTimeout('decodeBroadcasted', 'decode', (api) =>
+      (api as unknown as { decodeBroadcasted: () => Promise<Float32Array> }).decodeBroadcasted()
+    );
+    expect(Array.from(out)).toEqual([1, 2, 3]);
+    expect(fakeApi.decodeBroadcasted).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects with WorkerTimeoutError when the call exceeds the projection timeout', async () => {
+    vi.useFakeTimers();
+    const { WorkerPool, WorkerTimeoutError } = await loadWorkerPool(
+      2,
+      { workerProjectionTimeoutMs: 50 },
+      { neverResolves: vi.fn(() => new Promise<never>(() => {})) }
+    );
+    const pool = new WorkerPool();
+    const raced = pool
+      .runWithTimeout('projectPointsTo3D', 'projection', (api) =>
+        (api as unknown as { neverResolves: () => Promise<never> }).neverResolves()
+      )
+      .catch((e: unknown) => e);
+    await vi.advanceTimersByTimeAsync(60);
+    const err = await raced;
+    expect(err).toBeInstanceOf(WorkerTimeoutError);
+    expect(err).toMatchObject({ operation: 'projectPointsTo3D', timeoutMs: 50 });
+  });
+
+  it('uses workerVisibilityTimeoutMs for visibility kind', async () => {
+    vi.useFakeTimers();
+    const { WorkerPool, WorkerTimeoutError } = await loadWorkerPool(
+      2,
+      { workerVisibilityTimeoutMs: 30, workerProjectionTimeoutMs: 5000 },
+      { neverResolves: vi.fn(() => new Promise<never>(() => {})) }
+    );
+    const pool = new WorkerPool();
+    const raced = pool
+      .runWithTimeout('computeNDVisibilityPoints', 'visibility', (api) =>
+        (api as unknown as { neverResolves: () => Promise<never> }).neverResolves()
+      )
+      .catch((e: unknown) => e);
+    await vi.advanceTimersByTimeAsync(40);
+    const err = await raced;
+    expect(err).toBeInstanceOf(WorkerTimeoutError);
+    expect(err).toMatchObject({ timeoutMs: 30 });
+  });
+
+  it('decode kind uses the projection timeout knob (no dedicated decode knob)', async () => {
+    vi.useFakeTimers();
+    const { WorkerPool } = await loadWorkerPool(
+      2,
+      { workerProjectionTimeoutMs: 25, workerVisibilityTimeoutMs: 10000 },
+      { neverResolves: vi.fn(() => new Promise<never>(() => {})) }
+    );
+    const pool = new WorkerPool();
+    const raced = pool
+      .runWithTimeout('decodeQuantized', 'decode', (api) =>
+        (api as unknown as { neverResolves: () => Promise<never> }).neverResolves()
+      )
+      .catch((e: unknown) => e);
+    await vi.advanceTimersByTimeAsync(35);
+    expect(await raced).toMatchObject({ timeoutMs: 25 });
+  });
+
+  it('evicts the responsible worker on timeout (pool shrinks)', async () => {
+    vi.useFakeTimers();
+    const { WorkerPool } = await loadWorkerPool(
+      3,
+      { workerProjectionTimeoutMs: 20 },
+      { neverResolves: vi.fn(() => new Promise<never>(() => {})) }
+    );
+    const pool = new WorkerPool();
+    await pool.initialize();
+    expect(pool.getWorkerCount()).toBe(3);
+
+    const raced = pool
+      .runWithTimeout('projectGSplatsTo3D', 'projection', (api) =>
+        (api as unknown as { neverResolves: () => Promise<never> }).neverResolves()
+      )
+      .catch((e: unknown) => e);
+    await vi.advanceTimersByTimeAsync(30);
+    await raced;
+
+    expect(pool.getWorkerCount()).toBe(2);
   });
 });
 

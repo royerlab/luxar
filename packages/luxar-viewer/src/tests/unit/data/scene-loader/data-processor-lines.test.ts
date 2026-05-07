@@ -161,7 +161,7 @@ describe('processLinesData', () => {
       visibleSegmentCount: 0,
     }));
     mockGetWorkerPool.mockReturnValue({
-      getWorker: vi.fn(async () => ({ projectLinesTo3D })),
+      runWithTimeout: vi.fn(async (_op, _kind, fn) => fn({ projectLinesTo3D })),
     });
 
     const result = await processLinesData(
@@ -246,7 +246,7 @@ describe('projectLinesTo3DUsingWorker', () => {
       visibleSegmentCount: 1,
     }));
     mockGetWorkerPool.mockReturnValue({
-      getWorker: vi.fn(async () => ({ projectLinesTo3D })),
+      runWithTimeout: vi.fn(async (_op, _kind, fn) => fn({ projectLinesTo3D })),
     });
 
     const result = await projectLinesTo3DUsingWorker(
@@ -261,7 +261,7 @@ describe('projectLinesTo3DUsingWorker', () => {
 
   it('falls back to main thread on worker failure', async () => {
     mockGetWorkerPool.mockReturnValue({
-      getWorker: vi.fn(async () => {
+      runWithTimeout: vi.fn(async () => {
         throw new Error('boom');
       }),
     });
