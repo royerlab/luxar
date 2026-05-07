@@ -5,14 +5,101 @@
  * handling of point data throughout the viewer.
  *
  * This module follows the same pattern as types/lines.ts and types/gsplats.ts
- * for consistency across all node types.
+ * for consistency across all node types — every node-type's loaded /
+ * processed / view-state / metadata interfaces, plus the point-specific
+ * array-element type aliases (Float16Array support is points-only),
+ * live in types/{node-type}.ts.
  *
  * @module types/points
  */
 
+import * as THREE from 'three';
 import type { DimensionMetadata } from './dims';
-import type { LoadedPointsData } from '../data/data-loader-types';
 import type { UpdateSession } from '../profiling/update-profiler';
+
+// ============================================================================
+// Element Array Types (Float16 is points-specific)
+// ============================================================================
+
+/** Position array variants. Float16 support is points-only. */
+export type PositionArray = Float32Array | Float16Array;
+
+/** Color array variants. Uint8 / Uint16 are dtype-preserved (255 vs 1.0 semantics). */
+export type ColorArray = Float32Array | Uint8Array | Uint16Array;
+
+/** Scalar attribute array variants (radii, sharpness). */
+export type ScalarArray = Float32Array | Float16Array | Uint8Array;
+
+// ============================================================================
+// Loaded / Range Types (post-spatial-index slice, ready for GPU upload)
+// ============================================================================
+
+/**
+ * Loaded points data ready for GPU rendering.
+ * All arrays are properly aligned with the same point ordering.
+ * Arrays can be in different data types for memory efficiency.
+ *
+ * Named with "Loaded" prefix for consistency with LoadedLinesData and
+ * LoadedGSplatsData.
+ */
+export interface LoadedPointsData {
+  /** 3D positions extracted from nD space (size: numPoints * 3) */
+  positions: PositionArray;
+
+  /** RGB colors (size: numPoints * 3, optional) */
+  colors?: ColorArray;
+
+  /** Point radii in world units (size: numPoints, optional) */
+  radii?: ScalarArray;
+
+  /** Point sharpness values (size: numPoints, optional) */
+  sharpness?: ScalarArray;
+
+  /** Number of points loaded (top-level for consistency with Lines/GSplats) */
+  pointCount: number;
+
+  /** Original nD dimensionality (top-level for consistency with Lines/GSplats) */
+  ndim: number;
+
+  /** Metadata about the loaded data */
+  metadata: {
+    /** Total points in the full dataset */
+    totalPoints: number;
+
+    /** Number of points actually loaded (also available as top-level pointCount) */
+    loadedPoints: number;
+
+    /** Bounding box of loaded points */
+    bounds: THREE.Box3;
+
+    /** Whether spatial index was used */
+    usedSpatialIndex: boolean;
+
+    /** Whether effective radius calculation was applied */
+    usedEffectiveRadius?: boolean;
+
+    /** Original data types from zarr (for proper conversion) */
+    dtypes?: {
+      positions?: string;
+      colors?: string;
+      radii?: string;
+      sharpness?: string;
+    };
+  };
+}
+
+/**
+ * Range of points to load (for spatial index queries). Mirrors
+ * `SegmentRange` in `types/lines.ts` and `SplatRange` in
+ * `types/gsplats.ts`.
+ */
+export interface PointRange {
+  /** Starting index (inclusive) */
+  start: number;
+
+  /** Ending index (exclusive) */
+  end: number;
+}
 
 // ============================================================================
 // Metadata Types (from zarr .zattrs)

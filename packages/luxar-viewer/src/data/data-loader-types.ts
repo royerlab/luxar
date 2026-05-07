@@ -75,73 +75,30 @@ export function validateViewStateForExtendToAll(
   return true;
 }
 
-/**
- * Supported TypedArray types for points attributes
- * Note: Float16Array is supported in modern browsers (2024+)
- * We include it in the type but handle fallback at runtime
- */
-export type PositionArray = Float32Array | Float16Array;
-export type ColorArray = Float32Array | Uint8Array | Uint16Array;
-export type ScalarArray = Float32Array | Float16Array | Uint8Array;
-
-/**
- * Loaded points data ready for GPU rendering.
- * All arrays are properly aligned with the same point ordering.
- * Arrays can be in different data types for memory efficiency.
- *
- * Named with "Loaded" prefix for consistency with LoadedLinesData and LoadedGSplatsData.
- */
-export interface LoadedPointsData {
-  /** 3D positions extracted from nD space (size: numPoints * 3) */
-  positions: PositionArray;
-
-  /** RGB colors (size: numPoints * 3, optional) */
-  colors?: ColorArray;
-
-  /** Point radii in world units (size: numPoints, optional) */
-  radii?: ScalarArray;
-
-  /** Point sharpness values (size: numPoints, optional) */
-  sharpness?: ScalarArray;
-
-  /** Number of points loaded (top-level for consistency with Lines/GSplats) */
-  pointCount: number;
-
-  /** Original nD dimensionality (top-level for consistency with Lines/GSplats) */
-  ndim: number;
-
-  /** Metadata about the loaded data */
-  metadata: {
-    /** Total points in the full dataset */
-    totalPoints: number;
-
-    /** Number of points actually loaded (also available as top-level pointCount) */
-    loadedPoints: number;
-
-    /** Bounding box of loaded points */
-    bounds: THREE.Box3;
-
-    /** Whether spatial index was used */
-    usedSpatialIndex: boolean;
-
-    /** Whether effective radius calculation was applied */
-    usedEffectiveRadius?: boolean;
-
-    /** Original data types from zarr (for proper conversion) */
-    dtypes?: {
-      positions?: string;
-      colors?: string;
-      radii?: string;
-      sharpness?: string;
-    };
-  };
-}
+// Re-export the points-specific types (LoadedPointsData, PointRange,
+// PositionArray, ColorArray, ScalarArray) from `types/points.ts` —
+// kept here for back-compat with consumers using the historical
+// `from '../data/data-loader-types'` import path. New code should
+// import from `types/points` directly.
+export type {
+  LoadedPointsData,
+  PointRange,
+  PositionArray,
+  ColorArray,
+  ScalarArray,
+} from '../types/points';
 
 import type { UpdateSession } from '../profiling/update-profiler';
+import type { LoadedPointsData, PointRange } from '../types/points';
 
 /**
- * Core interface for data loaders.
- * Implementations handle different loading strategies (spatial index vs fallback).
+ * Core interface for points data loaders. Implementations handle
+ * different loading strategies (spatial index vs fallback).
+ *
+ * Mirrors `LinesDataLoader` and `GSplatsDataLoader` in
+ * `types/{lines,gsplats}.ts`. Aliased as `PointsDataLoader` in
+ * `types/points.ts` (using a slightly different `PointsViewState`
+ * shape) — collapsing the two is tracked as Phase 11.4.
  */
 export interface DataLoader {
   /** Load points data for the given view state */
@@ -178,17 +135,6 @@ export interface LoaderConfig {
 
   /** Verbose prefetch logging. */
   prefetchDebug?: boolean;
-}
-
-/**
- * Range of points to load (for spatial index queries)
- */
-export interface PointRange {
-  /** Starting index (inclusive) */
-  start: number;
-
-  /** Ending index (exclusive) */
-  end: number;
 }
 
 /**
