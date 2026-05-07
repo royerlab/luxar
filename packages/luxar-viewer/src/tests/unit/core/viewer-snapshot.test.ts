@@ -154,9 +154,10 @@ describe('restoreSnapshot', () => {
     expect(result.dimsApplied).toBe(false);
     expect(sm.camera.position.toArray()).toEqual([100, 200, 300]);
     expect(sm.camera.up.toArray()).toEqual([0, 0, 1]);
-    expect(sm.camera.near).toBe(0.5);
-    expect(sm.camera.far).toBe(5000);
-    expect((sm.camera as THREE.PerspectiveCamera).fov).toBe(45);
+    const persp = sm.camera as THREE.PerspectiveCamera;
+    expect(persp.near).toBe(0.5);
+    expect(persp.far).toBe(5000);
+    expect(persp.fov).toBe(45);
     expect(sm.controls.getFocusTarget().toArray()).toEqual([9, 8, 7]);
     expect(sm.controls.reinitialize).toHaveBeenCalledOnce();
   });

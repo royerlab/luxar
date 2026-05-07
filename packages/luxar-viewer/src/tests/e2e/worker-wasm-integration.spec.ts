@@ -120,7 +120,11 @@ test.describe('Worker Integration E2E', () => {
     // Rapid navigation should queue queries correctly
     for (let i = 0; i < 5; i++) {
       await page.keyboard.press('ArrowRight');
-      await page.waitForTimeout(50); // Rapid updates
+      // Intentional: rapid-update pacing exercises the worker's
+      // ability to coalesce/cancel in-flight requests as new ones
+      // arrive. Replacing with a tighter loop changes the contention
+      // shape being tested.
+      await page.waitForTimeout(50);
     }
 
     await waitForNextRender(page); // Let queries settle
@@ -243,7 +247,9 @@ test.describe('WASM Integration E2E', () => {
     // Navigate multiple times to stress test WASM
     for (let i = 0; i < 10; i++) {
       await page.keyboard.press(']');
-      await page.waitForTimeout(100); // Rapid sequential navigation
+      // Intentional: same rapid-sequential pacing pattern as
+      // spatial-index-accuracy.spec.ts.
+      await page.waitForTimeout(100);
     }
 
     // Wait for operations to settle
@@ -280,7 +286,9 @@ test.describe('Worker + WASM Combined Performance', () => {
 
     await page.keyboard.press('4');
     await page.keyboard.press('[');
-    await page.waitForTimeout(2000); // Let query complete
+    // Let the worker query + projection round-trip complete; this is
+    // the actual "query complete" signal rather than a fixed sleep.
+    await waitForDataLoaded(page);
 
     const endTime = Date.now();
     const totalTime = endTime - startTime;

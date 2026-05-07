@@ -124,7 +124,10 @@ test.describe('Colormap System', () => {
   test('should not crash when toggling legend rapidly', async ({ page }) => {
     await focusCanvas(page);
 
-    // Rapid toggle
+    // Rapid toggle. The 50 ms pacing is intentional: the test
+    // exercises the colormap-cycle race window where successive J
+    // presses land in the same render frame batch. See the same
+    // pattern in post-processing-pipeline.spec.ts.
     for (let i = 0; i < 10; i++) {
       await page.keyboard.press('j');
       await page.waitForTimeout(50);

@@ -95,7 +95,10 @@ test.describe('Data Loading Monitor Metrics', () => {
     const initialPoints = initialState.totalPoints;
     expect(initialPoints).toBeGreaterThan(0);
 
-    // Perform some interactions that trigger re-renders
+    // Perform some interactions that trigger re-renders. The pacing
+    // sleep between wheel events is intentional: the test simulates
+    // discrete user-driven zoom events rather than a single tight burst,
+    // so the viewer's per-event damping/render path runs each time.
     await focusCanvas(page);
     for (let i = 0; i < 5; i++) {
       await page.mouse.wheel(0, 100); // Zoom

@@ -11,6 +11,14 @@
  *
  * This test suite provides critical coverage for the input system refactoring
  * that migrated from dual-track architecture to unified binding system.
+ *
+ * **A note on `page.waitForTimeout()`.** The fly-control tests below
+ * use the `keyboard.down(X) → waitForTimeout(N) → keyboard.up(X)`
+ * pattern intentionally: the camera moves at a fixed velocity per
+ * frame while the key is held, so the wait *is* the input — replacing
+ * it with an event-based signal would defeat the test. Same idea for
+ * the "wait and check if still moving" inertia-decay observations.
+ * These are the only fixed sleeps in this file by design.
  */
 
 import { test, expect } from '@playwright/test';

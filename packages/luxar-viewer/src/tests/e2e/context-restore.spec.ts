@@ -29,14 +29,20 @@ async function loseAndRestoreContext(page: import('@playwright/test').Page): Pro
     return true;
   });
   if (!lost) return false;
-  // Allow the lost event to propagate.
+  // Intentional fixed sleeps: WEBGL_lose_context dispatches the lost
+  // and restored events asynchronously through the browser's GL queue,
+  // which is not exposed via a JS-observable signal. The 300/800 ms
+  // windows give the lost handler (post-processing dispose, scene
+  // resource invalidation) and the restore handler
+  // (rebuildAfterContextRestore + dirty marking) time to complete.
+  // These are wall-clock waits on browser-internal events; an
+  // event-driven wait would need a custom hook in scene-manager.
   await page.waitForTimeout(300);
   await page.evaluate(() => {
     const canvas = document.querySelector('canvas') as HTMLCanvasElement | null;
     const gl = canvas?.getContext('webgl2') as WebGL2RenderingContext | null;
     gl?.getExtension('WEBGL_lose_context')?.restoreContext();
   });
-  // Allow the restored handler to run (rebuildAfterContextRestore + dirty marking).
   await page.waitForTimeout(800);
   return true;
 }

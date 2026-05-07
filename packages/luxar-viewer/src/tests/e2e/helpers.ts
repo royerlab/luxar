@@ -40,7 +40,10 @@ export async function renderOnce(page: Page): Promise<void> {
   await page.evaluate(() => {
     (window as any).__luxarDebug.renderOnce();
   });
-  // Wait for render to complete
+  // Intentional fixed sleep: renderOnce() schedules a single
+  // requestAnimationFrame, but the actual paint lands on the next
+  // browser frame which is not directly observable from JS. 100 ms
+  // is one paint cycle past 60 fps with margin.
   await page.waitForTimeout(100);
 }
 
@@ -869,7 +872,10 @@ export async function dismissDatasetBrowser(page: Page): Promise<void> {
   });
 
   if (dismissed) {
-    // Give the UI a moment to settle after removing the modal
+    // Intentional fixed sleep: the modal node is removed synchronously
+    // above, but its dismiss-animation styles + any lingering layout/
+    // scroll-state need a paint cycle before subsequent canvas clicks
+    // see the cleared input target.
     await page.waitForTimeout(100);
   }
 }

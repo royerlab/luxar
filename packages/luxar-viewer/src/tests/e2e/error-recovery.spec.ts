@@ -248,7 +248,9 @@ test.describe('Error Recovery - WebGL Failures', () => {
       return false;
     });
 
-    // Wait for loss event to propagate
+    // Intentional fixed sleep: WEBGL_lose_context dispatches the lost
+    // event asynchronously through the browser's GL queue, with no
+    // JS-observable signal. Same shape as context-restore.spec.ts.
     await page.waitForTimeout(500);
 
     // Restore context
@@ -260,6 +262,9 @@ test.describe('Error Recovery - WebGL Failures', () => {
         ext?.restoreContext();
       });
 
+      // Same as the loss event above — give the restore handler
+      // (rebuildAfterContextRestore + dirty marking) wall-clock time
+      // to complete before reading state.
       await page.waitForTimeout(1000);
 
       // Verify the viewer state survived the loss/restore cycle. The

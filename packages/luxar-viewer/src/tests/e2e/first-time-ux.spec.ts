@@ -17,16 +17,9 @@ test.describe('First-Time User Experience', () => {
     // Navigate with no dataset parameter
     await page.goto('/?debug');
 
-    // Wait a moment for initialization
-    await page.waitForTimeout(2000);
-
-    // Dataset browser should appear automatically
-    const browserVisible = await page
-      .locator('.dataset-browser')
-      .isVisible()
-      .catch(() => false);
-
-    expect(browserVisible).toBe(true);
+    // Dataset browser should appear automatically. expect.toBeVisible
+    // retries with its own timeout; no fixed sleep needed.
+    await expect(page.locator('.dataset-browser')).toBeVisible({ timeout: 10000 });
   });
 
   test('should show welcome banner in dataset browser', async ({ page }) => {

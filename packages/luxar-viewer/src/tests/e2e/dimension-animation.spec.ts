@@ -550,7 +550,10 @@ test.describe('Dimension Animation - Animation Behavior', () => {
     await page.keyboard.press('k');
     await waitForNextRender(page);
 
-    // Wait long enough to pass end and wrap (should take < 1 second at 30 FPS)
+    // Intentional fixed sleep: this test asserts the animation is *still
+    // playing* after a known wall-clock window long enough for it to have
+    // hit the end and wrapped (≈1 s at 30 FPS). An event-driven wait would
+    // not exercise the wrap behaviour we're verifying.
     await page.waitForTimeout(2000);
 
     // In loop mode: either wrapped to start, or still progressing
@@ -701,7 +704,11 @@ test.describe('Dimension Animation - Animation Behavior', () => {
     await page.keyboard.press('k');
     await waitForNextRender(page);
 
-    // Wait for bounce (should reverse and move backward at 60 FPS)
+    // Intentional fixed sleep: this test verifies the animation *bounces*
+    // (reverses direction and continues) after hitting the end. The 2 s
+    // window is the time for the animation to reach the end and reverse;
+    // event-driven detection of a direction change is possible but adds
+    // complexity that doesn't pay off here.
     await page.waitForTimeout(2000);
 
     // After bounce, the animation should still be running
@@ -731,7 +738,10 @@ test.describe('Dimension Animation - Animation Behavior', () => {
     await page.keyboard.press('k');
     await waitForNextRender(page);
 
-    // Value should stay roughly constant while paused (allow for frames in flight during pause)
+    // Intentional fixed sleep: this assertion is "the value should *not*
+    // change while paused". An event-driven wait can prove the absence of
+    // change only by waiting a known wall-clock window — the sleep IS the
+    // observation window.
     await page.waitForTimeout(1000);
     const pausedValue = await getDimensionValue(page, 3);
     // Allow ~0.5 difference for animation frames that may complete during pause transition

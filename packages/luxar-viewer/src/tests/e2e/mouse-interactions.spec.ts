@@ -122,6 +122,9 @@ test.describe('Mouse Interactions', () => {
         debug?.renderOnce?.();
       }
     });
+    // OrbitControls.update() runs damping math each call; the visible
+    // result lands on the next paint. Fixed sleep here gives the
+    // browser one paint cycle past the synchronous renderOnce loop.
     await page.waitForTimeout(300);
 
     // Read camera position and FOV after scroll
@@ -172,6 +175,7 @@ test.describe('Mouse Interactions', () => {
         debug?.renderOnce?.();
       }
     });
+    // Damping settle — see the wheel-zoom test above for the rationale.
     await page.waitForTimeout(300);
 
     // Read quaternion after rotation

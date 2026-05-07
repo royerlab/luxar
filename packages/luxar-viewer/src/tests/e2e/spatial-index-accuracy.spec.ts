@@ -259,7 +259,10 @@ test.describe('Spatial Index - Navigation Outside Bounds', () => {
 
     for (let i = 0; i < 25; i++) {
       await page.keyboard.press(']');
-      await page.waitForTimeout(100); // Rapid sequential navigation
+      // Intentional: rapid-sequential pacing simulates a user scrubbing
+      // through dimensions. The test exercises the loader's ability to
+      // handle in-flight queries being superseded.
+      await page.waitForTimeout(100);
     }
     await waitForSpatialQuery(page);
     await waitForNavigationComplete(page);
@@ -410,7 +413,9 @@ test.describe('Spatial Index - Error Handling', () => {
     // Navigate forward many times (will go well outside bounds)
     for (let i = 0; i < 20; i++) {
       await page.keyboard.press(']');
-      await page.waitForTimeout(200); // Rapid sequential navigation
+      // Same rapid-sequential pacing as the test above; 200 ms here
+      // matches the slightly slower step this test drives.
+      await page.waitForTimeout(200);
     }
 
     await waitForSpatialQuery(page);

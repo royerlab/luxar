@@ -25,7 +25,11 @@ async function waitForTheme(page: Page, themeId: string): Promise<void> {
     { timeout: 2000 }
   );
 
-  // Wait a bit for CSS to apply
+  // Intentional fixed sleep: the data-theme attribute is set above, but
+  // CSS variables that drive ::after / backdrop-filter / transitions need
+  // a moment to apply on next paint. Frosted-glass and animation-driven
+  // themes especially benefit from this small settle window before any
+  // screenshot is taken.
   await page.waitForTimeout(200);
 }
 

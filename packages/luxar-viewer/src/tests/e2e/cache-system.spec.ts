@@ -316,8 +316,27 @@ test.describe('Three-Level Cache System (L0/L1/L2)', () => {
     const state = await getLuxarState(page);
     expect(state.totalPoints).toBeGreaterThan(0);
 
-    // Give a moment for cache operations to complete and logs to be captured
-    await page.waitForTimeout(1000);
+    // Wait for at least one cache- or opfs-related log to be intercepted
+    // before reading the buffer. Replaces a 1 s fixed sleep with the
+    // actual signal the assertion below depends on.
+    await page
+      .waitForFunction(
+        () => {
+          const debug = (window as any).__luxarDebug;
+          const msgs = debug?.consoleInterceptor?.getBufferedMessages?.();
+          if (!msgs) return false;
+          return msgs.some((m: { text?: string; args?: unknown[] }) => {
+            const text = String(m.text ?? m.args?.join(' ') ?? m).toLowerCase();
+            return text.includes('cache') || text.includes('opfs');
+          });
+        },
+        null,
+        { timeout: 5000 }
+      )
+      .catch(() => {
+        // No cache logs surfaced yet — the assertion below will fail
+        // loudly with a clearer message than a missed sleep.
+      });
 
     // Check console for content hash validation logs
     const consoleLogs = await page.evaluate(() => {
