@@ -3,7 +3,8 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { SceneLoaderManager, DataMonitorManager, dispose } from '../../../data';
+import { SceneLoaderManager, dispose } from '../../../data';
+import { DataMonitorManager } from '../../../ui/data-monitor-manager';
 
 describe('Global State Management', () => {
   beforeEach(() => {

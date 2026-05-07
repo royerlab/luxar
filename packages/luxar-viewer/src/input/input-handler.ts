@@ -56,7 +56,8 @@ import { WindowEventHandler } from './handlers/window-event-handler';
 import { AnimationShortcuts } from './handlers/animation-shortcuts';
 import { registerAllKeyBindings } from './handlers/key-bindings';
 import { log, Modules, LogEmoji } from '../utils/log';
-import { updateSceneForDimensions, cycleDataMonitor } from '../data';
+import { updateSceneForDimensions } from '../data';
+import { cycleDataMonitor } from '../ui/data-monitor-manager';
 
 /**
  * Central coordinator for all user input events and nD navigation.

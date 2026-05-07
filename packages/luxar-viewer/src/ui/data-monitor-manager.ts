@@ -5,7 +5,7 @@
  * polluting the global window object.
  */
 
-import { DataLoadingMonitor } from '../ui/data-loading-monitor';
+import { DataLoadingMonitor } from './data-loading-monitor';
 import type { MonitorConfig } from '../types/data-monitor-types';
 
 /**

@@ -34,13 +34,14 @@ vi.mock('../../../../utils/notifier', () => ({
   },
 }));
 
-vi.mock('../../../../data', () => ({
+// Phase 8.6: data-monitor-manager moved from data/ to ui/.
+vi.mock('../../../../ui/data-monitor-manager', () => ({
   hideDataMonitor: vi.fn(),
 }));
 
 const hideHelpOverlay = notifierMocks.hideHelp;
 const clearError = notifierMocks.clearError;
-import { hideDataMonitor } from '../../../../data';
+import { hideDataMonitor } from '../../../../ui/data-monitor-manager';
 import { PanelCoordinator } from '../../../../input/handlers/panel-coordinator';
 import type { RenderingControls } from '../../../../ui/rendering-controls';
 import type { RecordingPanel } from '../../../../ui/recording-panel';

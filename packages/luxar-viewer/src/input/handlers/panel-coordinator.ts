@@ -16,7 +16,7 @@
  */
 
 import { notifier } from '../../utils/notifier';
-import { hideDataMonitor } from '../../data';
+import { hideDataMonitor } from '../../ui/data-monitor-manager';
 import type { RenderingControls } from '../../ui/rendering-controls';
 import type { RecordingPanel } from '../../ui/recording-panel';
 import type { DimensionSliders } from '../../ui/dimension-sliders';
