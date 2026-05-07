@@ -14,7 +14,6 @@ import type { BlendingMode } from '../../rendering/material-manager';
 import type { CameraAwareMaterial } from '../../rendering/camera-aware-material';
 import {
   LayerStateManager,
-  computeUniforms,
   type LayerInfo,
   type SelectionMode,
 } from './layer-state';
@@ -34,12 +33,12 @@ import {
   type ComposableAttrs,
   type EffectiveAttrs,
 } from '../../data/utils/attrs-composer';
+import {
+  clampGamma,
+  getBlendingState,
+  liveLayerAttrs as deriveLiveLayerAttrs,
+} from './layer-attrs-utils';
 import { clamp } from '../gui/utils/value-formatting';
-
-/** Clamp a gamma value to a safe range for the shader (prevents division by zero and extreme exponents) */
-function clampGamma(gamma: number): number {
-  return clamp(gamma, 0.2, 5.0);
-}
 
 // Type guard: does this material have our update* methods?
 export interface LuxarMaterial extends THREE.Material, CameraAwareMaterial {
@@ -609,19 +608,12 @@ export class LayersPanel {
   }
 
   /**
-   * Compute the layer's current live composable attributes. For layers
-   * whose user hasn't touched a control, these match the authored zarr
-   * values — so composition stays a no-op for untouched scenes.
+   * Compute the layer's current live composable attributes. Thin wrapper
+   * around {@link liveLayerAttrs} so the four call sites in this file
+   * keep their compact `this.liveLayerAttrs(...)` shape.
    */
   private liveLayerAttrs(layer: LayerInfo): ComposableAttrs {
-    const { intensity, offset } = computeUniforms(layer.displayMin, layer.displayMax);
-    return {
-      opacity: layer.opacity,
-      gamma: clampGamma(layer.gamma),
-      intensity,
-      offset,
-      blending_mode: layer.blendingMode as string,
-    };
+    return deriveLiveLayerAttrs(layer);
   }
 
   /**
@@ -647,38 +639,13 @@ export class LayersPanel {
   }
 
   private applyBlendingStateToMaterial(mat: LuxarMaterial, mode: string): void {
-    switch (mode) {
-      case 'additive':
-        mat.blending = THREE.AdditiveBlending;
-        mat.depthTest = false;
-        mat.depthWrite = false;
-        mat.transparent = true;
-        break;
-      case 'normal':
-        mat.blending = THREE.NormalBlending;
-        mat.depthTest = true;
-        mat.depthWrite = false;
-        mat.transparent = true;
-        break;
-      case 'max':
-        mat.blending = THREE.CustomBlending;
-        mat.blendEquation = THREE.MaxEquation;
-        mat.depthTest = true;
-        mat.depthWrite = false;
-        mat.transparent = true;
-        break;
-      case 'opaque':
-        mat.blending = THREE.NormalBlending;
-        mat.depthTest = true;
-        mat.depthWrite = true;
-        mat.transparent = false;
-        break;
-      case 'luminous':
-        mat.blending = THREE.AdditiveBlending;
-        mat.depthTest = true;
-        mat.depthWrite = false;
-        mat.transparent = true;
-        break;
+    const state = getBlendingState(mode);
+    mat.blending = state.blending;
+    mat.depthTest = state.depthTest;
+    mat.depthWrite = state.depthWrite;
+    mat.transparent = state.transparent;
+    if (state.blendEquation !== undefined) {
+      mat.blendEquation = state.blendEquation;
     }
     mat.needsUpdate = true;
   }
