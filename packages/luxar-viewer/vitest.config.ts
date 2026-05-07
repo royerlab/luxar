@@ -29,23 +29,19 @@ export default defineConfig({
       // dedicated commit each time a phase of new tests crosses the next
       // band. Long-term target: 80% across the board.
       thresholds: {
-        lines: 63,
-        functions: 65,
-        branches: 52,
-        statements: 62,
+        lines: 64,
+        functions: 67,
+        branches: 54,
+        statements: 64,
       },
-      // Note: after the Phase 4.5 + 4.6 decompositions added ~81 unit
-      // tests for the scene-loader / recording-panel sub-modules,
-      // measured coverage rose to 63.98 % lines / 66.28 % functions /
-      // 53.19 % branches / 63.28 % statements. Floor moves up ~2pp per
-      // band with a ~1pp safety margin; long-term target stays 80 %.
-      //
-      // After Phase 8.x reorganisation + 9.2/9.3/9.5 (≈22 new tests)
-      // the measurement is 64.37 % L / 66.36 % F / 53.31 % B / 63.62 % S.
-      // Each metric is only ~1.4 pp above its floor — not yet a full
-      // band, so the floor stays where it is. Holding for the next
-      // batch of unit tests (5.x) to push past 65 / 67 / 54 / 64 before
-      // the next ratchet.
+      // Phase 5.x continued: ~280 new tests landed across multiple
+      // commits — WASM-fallback projection / visibility, layer-attrs,
+      // dataset-url, debug-console formatters, fov-utils, value-
+      // formatting, browser-decision, extend-tolerance, scene-graph-
+      // converter, auto-blur dispatch, types/{points,lines,gsplats}
+      // type guards. Measurement is now 64.49 % L / 67.87 % F /
+      // 54.68 % B / 65.08 % S. Floor advances 1pp on each metric
+      // (~1pp safety margin retained); long-term target stays 80 %.
     },
   },
   resolve: {
