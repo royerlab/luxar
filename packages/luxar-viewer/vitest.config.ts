@@ -29,16 +29,16 @@ export default defineConfig({
       // dedicated commit each time a phase of new tests crosses the next
       // band. Long-term target: 80% across the board.
       thresholds: {
-        lines: 70,
+        lines: 71,
         functions: 73,
         branches: 59,
         statements: 70,
       },
-      // Phase 5.4x landed gsplats-progressive-loader tests (+23) on top
-      // of 5.4v + 5.4w. Measurement is now 70.94 % L / 73.63 % F /
-      // 59.48 % B / 70.39 % S. Floor advances on functions / branches /
-      // statements (lines holds, ~0.94pp safety margin). Long-term
-      // target stays 80 %.
+      // Phase 5.4y landed rendering-controls camera-setup tests (+17)
+      // on top of 5.4x. Measurement is now 71.40 % L / 73.88 % F /
+      // 59.72 % B / 70.83 % S. Floor advances 1pp on lines (others
+      // hold one cycle to keep ~0.7pp safety margin). Long-term target
+      // stays 80 %.
     },
   },
   resolve: {
