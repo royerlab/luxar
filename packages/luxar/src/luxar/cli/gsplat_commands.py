@@ -4471,3 +4471,226 @@ def batch_denoise_preprocess_cmd(
     except Exception as e:
         aprint(f"Error: {e}")
         raise typer.Exit(1) from e
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# lod — Build LOD ladders from a fitted gsplat dataset
+# ═══════════════════════════════════════════════════════════════════════
+
+app_lod = typer.Typer(help="Build LOD ladders from a fitted gsplat dataset")
+app_gsplat.add_typer(app_lod, name="lod")
+
+
+def _parse_lod_breakpoints(spec: str) -> "str | list[int] | list[float]":
+    """Parse the ``--breakpoints`` CLI string into the form expected by
+    :func:`luxar.gsplats.lod.make_additive_lod`.
+
+    Accepted forms:
+      - ``equal-count``  → literal ``'equal-count'``.
+      - ``counts:5,10,15,20`` → ``[5, 10, 15, 20]`` (cumulative splat counts).
+      - ``energy:0.5,0.9,0.99,1.0`` → ``[0.5, 0.9, 0.99, 1.0]``
+        (cumulative energy fractions in (0, 1]).
+    """
+    s = spec.strip()
+    if s == "equal-count":
+        return "equal-count"
+    if s.startswith("counts:"):
+        body = s[len("counts:") :]
+        try:
+            values_int = [int(p.strip()) for p in body.split(",") if p.strip()]
+        except ValueError as e:
+            raise typer.BadParameter(
+                f"counts breakpoints must be ints; got {body!r}"
+            ) from e
+        if not values_int:
+            raise typer.BadParameter("counts breakpoints list is empty")
+        return values_int
+    if s.startswith("energy:"):
+        body = s[len("energy:") :]
+        try:
+            values_flt = [float(p.strip()) for p in body.split(",") if p.strip()]
+        except ValueError as e:
+            raise typer.BadParameter(
+                f"energy breakpoints must be floats; got {body!r}"
+            ) from e
+        if not values_flt:
+            raise typer.BadParameter("energy breakpoints list is empty")
+        return values_flt
+    raise typer.BadParameter(
+        f"breakpoints must be 'equal-count', 'counts:...', or 'energy:...'; "
+        f"got {spec!r}"
+    )
+
+
+@app_lod.command("additive")
+def lod_additive(
+    input_path: Path = typer.Argument(
+        ..., exists=True, help="Input .gsplats.zarr (single- or multi-LOD)"
+    ),
+    output_path: Path = typer.Argument(
+        ..., help="Output .gsplats.zarr (multi-LOD)"
+    ),
+    n_lods: int = typer.Option(
+        4,
+        "--n-lods",
+        help="Number of LOD levels when --breakpoints=equal-count",
+        min=1,
+    ),
+    method: str = typer.Option(
+        "greedy",
+        "--method",
+        "-m",
+        help=(
+            "Ordering method: greedy (default), self_energy, mass, "
+            "amplitude, spectral, random. greedy is provably (1-1/e)-optimal "
+            "at every prefix; self_energy is the recommended O(N log N) "
+            "fallback for very large N."
+        ),
+    ),
+    breakpoints: str = typer.Option(
+        "equal-count",
+        "--breakpoints",
+        "-b",
+        help=(
+            "How to slice the ordered set into LODs. "
+            "'equal-count' uses --n-lods bins of equal size. "
+            "'counts:5,10,15,20' uses explicit cumulative splat counts. "
+            "'energy:0.5,0.9,1.0' uses cumulative energy fractions in (0, 1]."
+        ),
+    ),
+    truncation_sigmas: float = typer.Option(
+        3.0,
+        "--truncation-sigmas",
+        help="Mahalanobis cutoff (in sigmas) for sparse-Gram pruning. "
+        "Larger keeps more pairs (slower but tighter); smaller is faster.",
+    ),
+    max_n_dense: int = typer.Option(
+        2000,
+        "--max-n-dense",
+        help="At N <= this, greedy uses a dense Gram + scan-greedy. "
+        "Above it, sparse Gram + lazy greedy.",
+    ),
+    seed: Optional[int] = typer.Option(
+        None, "--seed", help="Random seed for --method=random."
+    ),
+    overwrite: bool = typer.Option(
+        False, "--overwrite", help="Overwrite output if it exists."
+    ),
+    encoding_mode: Literal["auto", "precision", "memory"] = typer.Option(
+        "auto",
+        "--encoding",
+        "-e",
+        help="Encoding mode for output",
+    ),
+    compress: Optional[str] = typer.Option(
+        None,
+        "--compress",
+        help="Optional output compression: 'zip' or 'tar.gz' for an archive; "
+        "omit for a plain .gsplats.zarr directory.",
+    ),
+) -> None:
+    """Build an additive LOD ladder from a fitted gsplat dataset.
+
+    The original splats are reordered by the chosen method, then sliced into
+    ``--n-lods`` (or as many levels as ``--breakpoints`` implies) so that
+    ``up_to_lod(k)`` is the best L^2 approximation of the full scene at
+    that splat budget.
+
+    \b
+    Examples:
+        luxar gsplat lod additive in.gsplats.zarr out.gsplats.zarr
+        luxar gsplat lod additive in.gsplats.zarr out.gsplats.zarr --n-lods 6
+        luxar gsplat lod additive in.gsplats.zarr out.gsplats.zarr \\
+            --breakpoints energy:0.5,0.9,0.99,1.0
+        luxar gsplat lod additive in.gsplats.zarr out.gsplats.zarr \\
+            --breakpoints counts:1000,5000,25000
+        luxar gsplat lod additive in.gsplats.zarr out.gsplats.zarr \\
+            --method self_energy
+    """
+    try:
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.lod import make_additive_lod
+
+        method_norm = method.strip().replace("-", "_")
+        valid_methods = {
+            "greedy",
+            "self_energy",
+            "mass",
+            "amplitude",
+            "spectral",
+            "random",
+        }
+        if method_norm not in valid_methods:
+            raise typer.BadParameter(
+                f"--method must be one of {sorted(valid_methods)}, "
+                f"got {method!r}"
+            )
+
+        bp = _parse_lod_breakpoints(breakpoints)
+        encoding_mode_obj = _resolve_encoding_mode(encoding_mode)
+
+        if compress not in (None, "zip", "tar.gz"):
+            raise typer.BadParameter(
+                f"--compress must be 'zip' or 'tar.gz'; got {compress!r}"
+            )
+
+        if output_path.exists() and not overwrite:
+            raise typer.BadParameter(
+                f"Output {output_path} exists; pass --overwrite to replace it."
+            )
+
+        with asection(f"LOD additive: {input_path.name}"):
+            with asection("Loading dataset"):
+                data = GSplatData.load(input_path, include_stats=True)
+                aprint(f"Loaded {data.n_splats:,} splats ({data.ndim}D)")
+                if data.n_lods > 1:
+                    aprint(
+                        f"Input is multi-LOD ({data.n_lods} LODs); "
+                        "operating on the flattened concatenation."
+                    )
+
+            with asection(f"Ordering ({method_norm})"):
+                t0 = time.time()
+                ladder = make_additive_lod(
+                    data,
+                    n_lods=n_lods,
+                    method=method_norm,  # type: ignore[arg-type]
+                    breakpoints=bp,  # type: ignore[arg-type]
+                    truncation_sigmas=truncation_sigmas,
+                    max_n_dense=max_n_dense,
+                    seed=seed,
+                )
+                aprint(
+                    f"Built {ladder.n_lods}-level ladder in "
+                    f"{time.time() - t0:.2f}s"
+                )
+                cuts = ladder.stats.get("lod_cutpoints", [])
+                kind = ladder.stats.get("lod_breakpoints_kind", "?")
+                aprint(f"Cutpoints ({kind}): {cuts}")
+                for level in range(ladder.n_lods):
+                    lod = ladder.at_lod(level)
+                    aprint(f"  LOD {level}: {lod.n_splats:,} splats")
+
+            with asection("Saving"):
+                if output_path.exists() and overwrite:
+                    if output_path.is_dir():
+                        shutil.rmtree(output_path)
+                    else:
+                        output_path.unlink()
+                ladder.save(
+                    output_path,
+                    encoding_mode=encoding_mode_obj,
+                    compress=compress,  # type: ignore[arg-type]
+                )
+                aprint(f"Saved to {output_path}")
+
+    except typer.Exit:
+        raise
+    except typer.BadParameter:
+        raise
+    except Exception as e:
+        aprint(f"Error: {e}")
+        import traceback
+
+        traceback.print_exc()
+        raise typer.Exit(1) from e
