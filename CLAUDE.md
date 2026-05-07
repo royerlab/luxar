@@ -266,6 +266,20 @@ luxar gsplat cal volume.zarr cal.json --progression power --power 2  # Polynomia
 # Output: K* + curve type {peak | plateau | signal_limited} + noise-floor σ̂ + PSNR ceiling.
 # Then re-run fit at the recommended K: luxar gsplat fit volume.zarr out.zarr --seeds <K*>
 
+# Build an additive LOD ladder from a fitted gsplat dataset (post-fit ordering)
+# Progressive fitting now returns a single flattened dataset; the LOD ladder is
+# built explicitly here via the supp-doc additive-LOD algorithm (greedy /
+# matching-pursuit ordering). Default method is `greedy`; for very large N use
+# `self_energy` (cheap O(N log N), 2-10% AUC gap on real datasets).
+luxar gsplat lod additive in.gsplats.zarr out.gsplats.zarr                 # 4 equal-count levels (default)
+luxar gsplat lod additive in.gsplats.zarr out.gsplats.zarr --n-lods 6      # 6 equal-count levels
+luxar gsplat lod additive in.gsplats.zarr out.gsplats.zarr \
+    --breakpoints energy:0.5,0.9,0.99,1.0                                   # cumulative energy fractions
+luxar gsplat lod additive in.gsplats.zarr out.gsplats.zarr \
+    --breakpoints counts:1000,5000,25000                                    # explicit cumulative splat counts
+luxar gsplat lod additive in.gsplats.zarr out.gsplats.zarr --method self_energy  # cheap O(N log N) fallback
+luxar gsplat lod additive in.gsplats.zarr out.gsplats.zarr -m mass -b counts:500,2000,10000
+
 # Split into parts
 luxar gsplat split splats.gsplats.zarr output_dir/ --parts 4
 luxar gsplat split splats.gsplats.zarr output_dir/ --indices "1000,5000"
