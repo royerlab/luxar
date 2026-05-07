@@ -97,6 +97,7 @@ import {
   isSceneDimensions,
   validateExtendDims,
 } from './scene-loader/extend-tolerance';
+import { convertToSceneGraphNode } from './scene-loader/scene-graph-converter';
 
 // ============================================================================
 // Staged commit types for atomic geometry updates
@@ -1896,38 +1897,7 @@ export class SceneLoader {
    * Convert internal SceneNode to SceneGraphNode for monitor display
    */
   private convertToSceneGraphNode(node: SceneNode): SceneGraphNode {
-    // Get display name from path
-    const name =
-      node.path === '/' ? 'Scene' : node.path.split('/').filter(Boolean).pop() || node.path;
-
-    // Determine node type for display
-    const type = node.type as 'scene' | 'group' | 'points' | 'lines' | 'gsplats' | 'mesh';
-
-    // Build the graph node
-    const graphNode: SceneGraphNode = {
-      path: node.path,
-      name,
-      type: type === 'scene' || !type ? 'scene' : type,
-      children: [],
-      hasSpatialIndex: node.hasSpatialIndex,
-    };
-
-    // Add type-specific stats
-    if (node.type === 'points') {
-      graphNode.pointCount = node.attrs.n_points;
-    } else if (node.type === 'lines') {
-      graphNode.segmentCount = node.attrs.n_segments as number | undefined;
-      graphNode.vertexCount = node.attrs.n_vertices as number | undefined;
-    } else if (node.type === 'gsplats') {
-      graphNode.splatCount = node.attrs.n_splats as number | undefined;
-    }
-
-    // Convert children recursively
-    if (node.children) {
-      graphNode.children = node.children.map((child) => this.convertToSceneGraphNode(child));
-    }
-
-    return graphNode;
+    return convertToSceneGraphNode(node);
   }
 
   /**
