@@ -26,7 +26,7 @@ export type { PointsSpatialIndexLoader } from '../points/points-spatial-index-lo
 import { LinesSpatialIndexLoader } from '../lines/lines-spatial-index-loader';
 import { GSplatsSpatialIndexLoader } from '../gsplats/gsplats-spatial-index-loader';
 import { GSplatsProgressiveLoader } from '../gsplats/gsplats-progressive-loader';
-import type { LoaderConfig, SceneNode } from '../data-loader-types';
+import type { SceneNode } from '../data-loader-types';
 import type { LinesDataLoader } from '../../types/lines';
 import type { GSplatsDataLoader } from '../../types/gsplats';
 import { ArrayRefRegistry } from '../utils/array-decoder';
@@ -64,7 +64,6 @@ function resolveNodeLoc(
 export function createPointsLoader(
   node: SceneNode,
   loc: zarr.Location<zarr.Readable>,
-  config: LoaderConfig,
   deps: LoaderFactoryDeps
 ): PointsSpatialIndexLoader {
   const nodeLoc = resolveNodeLoc(node, loc, deps.zarrStore);
@@ -72,7 +71,6 @@ export function createPointsLoader(
   return new PointsSpatialIndexLoader(
     nodeLoc,
     node,
-    config,
     deps.arrayRefRegistry,
     deps.zarrStore,
     deps.profiler ?? undefined,

@@ -96,25 +96,24 @@ beforeEach(() => {
 describe('createPointsLoader', () => {
   it('uses the supplied loc directly for the root node', () => {
     const sentinel = { kind: 'origin' } as unknown;
-    createPointsLoader(makeNode('/'), sentinel as never, {}, makeDeps());
+    createPointsLoader(makeNode('/'), sentinel as never, makeDeps());
     expect(pointsCtorArgs[0][0]).toBe(sentinel);
   });
 
   it('resolves nested node paths via zarr.root().resolve', () => {
-    createPointsLoader(makeNode('/group/points'), {} as never, {}, makeDeps());
+    createPointsLoader(makeNode('/group/points'), {} as never, makeDeps());
     const loc = pointsCtorArgs[0][0] as { kind: string; path: string };
     expect(loc.kind).toBe('resolved');
     expect(loc.path).toBe('group/points');
   });
 
-  it('passes config and registry through to PointsSpatialIndexLoader', () => {
-    const config = { noCache: true } as const;
+  it('passes registry and store through to PointsSpatialIndexLoader', () => {
     const deps = makeDeps();
-    createPointsLoader(makeNode('/p'), {} as never, config, deps);
-    // Constructor signature: (loc, node, config, registry, store, profiler?, l0?, prefetcher?)
-    expect(pointsCtorArgs[0][2]).toBe(config);
-    expect(pointsCtorArgs[0][3]).toBe(deps.arrayRefRegistry);
-    expect(pointsCtorArgs[0][4]).toBe(deps.zarrStore);
+    createPointsLoader(makeNode('/p'), {} as never, deps);
+    // Constructor signature (post-Phase-11.7):
+    //   (loc, node, registry, store, profiler?, l0?, prefetcher?)
+    expect(pointsCtorArgs[0][2]).toBe(deps.arrayRefRegistry);
+    expect(pointsCtorArgs[0][3]).toBe(deps.zarrStore);
   });
 });
 

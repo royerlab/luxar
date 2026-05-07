@@ -13,7 +13,6 @@ import {
   DataLoader,
   ViewState,
   LoadedPointsData,
-  LoaderConfig,
   PointRange,
   SceneNode,
   type ColorArray,
@@ -137,7 +136,6 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
   constructor(
     zarrLocation: zarr.Location<zarr.Readable>,
     node: SceneNode,
-    _config: LoaderConfig = {},
     refRegistry?: ArrayRefRegistry,
     zarrStore?: zarr.Readable,
     profiler?: UpdateProfiler,

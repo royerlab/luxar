@@ -1862,7 +1862,7 @@ export class SceneLoader {
    * SceneManager-only state — the factory only constructs the loader).
    */
   private createLoader(node: SceneNode, loc: zarr.Location<zarr.Readable>): DataLoader {
-    const loader = createPointsLoaderHelper(node, loc, this.config, this.factoryDeps());
+    const loader = createPointsLoaderHelper(node, loc, this.factoryDeps());
 
     if (this.monitorId) {
       const monitor = DataMonitorManager.getInstance().getMonitor(this.monitorId);
