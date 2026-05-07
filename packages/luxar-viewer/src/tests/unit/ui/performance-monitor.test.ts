@@ -123,20 +123,35 @@ describe('PerformanceMonitor', () => {
     });
   });
 
-  describe('begin/end gating', () => {
-    it('begin() and end() are no-ops while hidden', () => {
+  describe('frame-timing subscriptions', () => {
+    it('does not forward bus events to stats while hidden (no subscription)', async () => {
       const stats = (monitor as unknown as { stats: MockStatsLike }).stats;
-      monitor.begin();
-      monitor.end();
+      const { eventBus } = await import('../../../utils/event-bus');
+      eventBus.emit('frame-start', {});
+      eventBus.emit('frame-end', {});
       expect(stats.begin).not.toHaveBeenCalled();
       expect(stats.end).not.toHaveBeenCalled();
     });
 
-    it('begin() and end() forward to stats while visible', () => {
+    it('forwards bus events to stats.begin/end while visible', async () => {
       const stats = (monitor as unknown as { stats: MockStatsLike }).stats;
+      const { eventBus } = await import('../../../utils/event-bus');
       monitor.show();
-      monitor.begin();
-      monitor.end();
+      eventBus.emit('frame-start', {});
+      eventBus.emit('frame-end', {});
+      expect(stats.begin).toHaveBeenCalledTimes(1);
+      expect(stats.end).toHaveBeenCalledTimes(1);
+    });
+
+    it('hide() unsubscribes so subsequent bus events stop driving stats', async () => {
+      const stats = (monitor as unknown as { stats: MockStatsLike }).stats;
+      const { eventBus } = await import('../../../utils/event-bus');
+      monitor.show();
+      eventBus.emit('frame-start', {});
+      eventBus.emit('frame-end', {});
+      monitor.hide();
+      eventBus.emit('frame-start', {});
+      eventBus.emit('frame-end', {});
       expect(stats.begin).toHaveBeenCalledTimes(1);
       expect(stats.end).toHaveBeenCalledTimes(1);
     });

@@ -9,87 +9,93 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createEventBus, eventBus } from '../../../utils/event-bus';
 
+// Custom test event-map — keeps tests decoupled from the production
+// LuxarEventMap so renaming/restructuring real events doesn't churn
+// these unit tests.
+type TestMap = {
+  ping: { value: number };
+  pong: { value: number };
+};
+
 describe('TypedEventBus', () => {
   it('delivers an emitted event to a subscribed listener', () => {
-    const bus = createEventBus();
+    const bus = createEventBus<TestMap>();
     const listener = vi.fn();
-    bus.on('fps-sample', listener);
-    bus.emit('fps-sample', { fps: 60, frameTimeMs: 16.7 });
+    bus.on('ping', listener);
+    bus.emit('ping', { value: 60 });
     expect(listener).toHaveBeenCalledTimes(1);
-    expect(listener).toHaveBeenCalledWith({ fps: 60, frameTimeMs: 16.7 });
+    expect(listener).toHaveBeenCalledWith({ value: 60 });
   });
 
   it('drops events with no listeners (silent no-op)', () => {
-    const bus = createEventBus();
-    expect(() =>
-      bus.emit('fps-sample', { fps: 0, frameTimeMs: 0 })
-    ).not.toThrow();
+    const bus = createEventBus<TestMap>();
+    expect(() => bus.emit('ping', { value: 0 })).not.toThrow();
   });
 
   it('delivers the same event to every subscriber', () => {
-    const bus = createEventBus();
+    const bus = createEventBus<TestMap>();
     const a = vi.fn();
     const b = vi.fn();
-    bus.on('fps-sample', a);
-    bus.on('fps-sample', b);
-    bus.emit('fps-sample', { fps: 30, frameTimeMs: 33.3 });
+    bus.on('ping', a);
+    bus.on('ping', b);
+    bus.emit('ping', { value: 30 });
     expect(a).toHaveBeenCalledTimes(1);
     expect(b).toHaveBeenCalledTimes(1);
   });
 
   it('isolates listeners by event type', () => {
-    const bus = createEventBus();
+    const bus = createEventBus<TestMap>();
     const fpsListener = vi.fn();
     const progressListener = vi.fn();
-    bus.on('fps-sample', fpsListener);
-    bus.on('loading-progress', progressListener);
+    bus.on('ping', fpsListener);
+    bus.on('pong', progressListener);
 
-    bus.emit('fps-sample', { fps: 60, frameTimeMs: 16.7 });
+    bus.emit('ping', { value: 60 });
     expect(fpsListener).toHaveBeenCalledTimes(1);
     expect(progressListener).not.toHaveBeenCalled();
   });
 
   it('returns an unsubscribe thunk that removes the listener', () => {
-    const bus = createEventBus();
+    const bus = createEventBus<TestMap>();
     const listener = vi.fn();
-    const unsubscribe = bus.on('fps-sample', listener);
+    const unsubscribe = bus.on('ping', listener);
 
-    bus.emit('fps-sample', { fps: 60, frameTimeMs: 16.7 });
+    bus.emit('ping', { value: 60 });
     expect(listener).toHaveBeenCalledTimes(1);
 
     unsubscribe();
-    bus.emit('fps-sample', { fps: 30, frameTimeMs: 33.3 });
+    bus.emit('ping', { value: 30 });
     expect(listener).toHaveBeenCalledTimes(1); // unchanged
   });
 
   it('treats double unsubscribe as a no-op', () => {
-    const bus = createEventBus();
+    const bus = createEventBus<TestMap>();
     const listener = vi.fn();
-    const unsubscribe = bus.on('fps-sample', listener);
+    const unsubscribe = bus.on('ping', listener);
     unsubscribe();
     expect(() => unsubscribe()).not.toThrow();
   });
 
   it('replays the last emitted payload when replayLast is set', () => {
-    const bus = createEventBus();
-    bus.emit('fps-sample', { fps: 144, frameTimeMs: 6.94 });
+    const bus = createEventBus<TestMap>();
+    bus.emit('ping', { value: 144 });
 
     const listener = vi.fn();
-    bus.on('fps-sample', listener, { replayLast: true });
+    bus.on('ping', listener, { replayLast: true });
 
     expect(listener).toHaveBeenCalledTimes(1);
-    expect(listener).toHaveBeenCalledWith({ fps: 144, frameTimeMs: 6.94 });
+    expect(listener).toHaveBeenCalledWith({ value: 144 });
   });
 
   it('does not replay when no payload has been emitted yet', () => {
-    const bus = createEventBus();
+    const bus = createEventBus<TestMap>();
     const listener = vi.fn();
-    bus.on('fps-sample', listener, { replayLast: true });
+    bus.on('ping', listener, { replayLast: true });
     expect(listener).not.toHaveBeenCalled();
   });
 
   it('snapshots subscribers before iteration so reentrant unsubscribe is safe', () => {
-    const bus = createEventBus();
+    const bus = createEventBus<TestMap>();
     let unsubscribeB: (() => void) | null = null;
     const a = vi.fn(() => {
       // a unsubscribes b mid-emit; b should still receive THIS event
@@ -97,63 +103,53 @@ describe('TypedEventBus', () => {
       unsubscribeB?.();
     });
     const b = vi.fn();
-    bus.on('fps-sample', a);
-    unsubscribeB = bus.on('fps-sample', b);
+    bus.on('ping', a);
+    unsubscribeB = bus.on('ping', b);
 
-    bus.emit('fps-sample', { fps: 60, frameTimeMs: 16.7 });
+    bus.emit('ping', { value: 60 });
     expect(b).toHaveBeenCalledTimes(1);
 
-    bus.emit('fps-sample', { fps: 30, frameTimeMs: 33.3 });
+    bus.emit('ping', { value: 30 });
     expect(b).toHaveBeenCalledTimes(1); // b unsubscribed during first emit
     expect(a).toHaveBeenCalledTimes(2);
   });
 
   it('clear() with no args drops every subscriber', () => {
-    const bus = createEventBus();
+    const bus = createEventBus<TestMap>();
     const a = vi.fn();
     const b = vi.fn();
-    bus.on('fps-sample', a);
-    bus.on('loading-progress', b);
+    bus.on('ping', a);
+    bus.on('pong', b);
 
     bus.clear();
-    bus.emit('fps-sample', { fps: 60, frameTimeMs: 16.7 });
-    bus.emit('loading-progress', {
-      loaderId: 'x',
-      loaded: 0,
-      total: 0,
-      activeQueries: 0,
-    });
+    bus.emit('ping', { value: 60 });
+    bus.emit('pong', { value: 0 });
     expect(a).not.toHaveBeenCalled();
     expect(b).not.toHaveBeenCalled();
   });
 
   it('clear(type) drops only that event type', () => {
-    const bus = createEventBus();
+    const bus = createEventBus<TestMap>();
     const a = vi.fn();
     const b = vi.fn();
-    bus.on('fps-sample', a);
-    bus.on('loading-progress', b);
+    bus.on('ping', a);
+    bus.on('pong', b);
 
-    bus.clear('fps-sample');
-    bus.emit('fps-sample', { fps: 60, frameTimeMs: 16.7 });
-    bus.emit('loading-progress', {
-      loaderId: 'x',
-      loaded: 0,
-      total: 0,
-      activeQueries: 0,
-    });
+    bus.clear('ping');
+    bus.emit('ping', { value: 60 });
+    bus.emit('pong', { value: 0 });
     expect(a).not.toHaveBeenCalled();
     expect(b).toHaveBeenCalledTimes(1);
   });
 
   it('clear() also drops the cached last-payload', () => {
-    const bus = createEventBus();
-    bus.emit('fps-sample', { fps: 60, frameTimeMs: 16.7 });
+    const bus = createEventBus<TestMap>();
+    bus.emit('ping', { value: 60 });
 
-    bus.clear('fps-sample');
+    bus.clear('ping');
 
     const listener = vi.fn();
-    bus.on('fps-sample', listener, { replayLast: true });
+    bus.on('ping', listener, { replayLast: true });
     expect(listener).not.toHaveBeenCalled(); // no cached value to replay
   });
 

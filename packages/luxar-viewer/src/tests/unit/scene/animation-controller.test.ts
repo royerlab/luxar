@@ -363,13 +363,24 @@ describe('AnimationController', () => {
       expect(controller.isActive).toBe(false);
     });
 
-    it('should return performance monitor via performanceStats', () => {
-      const stats = controller.performanceStats;
+    it('emits frame-start and frame-end on the event bus per frame', async () => {
+      const { eventBus } = await import('../../../utils/event-bus');
+      const startListener = vi.fn();
+      const endListener = vi.fn();
+      const offStart = eventBus.on('frame-start', startListener);
+      const offEnd = eventBus.on('frame-end', endListener);
 
-      expect(stats).toBeDefined();
-      expect(stats.begin).toBeDefined();
-      expect(stats.end).toBeDefined();
-      expect(stats.dispose).toBeDefined();
+      try {
+        controller.startAnimation();
+        // The mock requestAnimationFrame should have fired the loop body
+        // at least once already (see makeMockRAF in this file's setup).
+        expect(startListener).toHaveBeenCalled();
+        expect(endListener).toHaveBeenCalled();
+      } finally {
+        offStart();
+        offEnd();
+        controller.stopAnimation();
+      }
     });
   });
 });

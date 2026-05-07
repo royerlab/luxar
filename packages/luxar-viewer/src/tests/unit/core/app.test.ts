@@ -23,6 +23,19 @@ vi.mock('../../../ui/dataset-browser');
 vi.mock('../../../ui/helpers');
 vi.mock('../../../ui/layers');
 vi.mock('../../../scene/scene-dims-manager');
+// Phase 8.6 migrated PerformanceMonitor ownership from
+// AnimationController to LuxarApp. Mock here so stats.js's
+// document.createElement call doesn't run in the stubbed-window env.
+vi.mock('../../../ui/performance-monitor', () => ({
+  PerformanceMonitor: vi.fn().mockImplementation(() => ({
+    show: vi.fn(),
+    hide: vi.fn(),
+    toggle: vi.fn(),
+    cyclePanels: vi.fn(),
+    dispose: vi.fn(),
+    visible: false,
+  })),
+}));
 
 // Setup global mocks
 const mockAddEventListener = vi.fn();
@@ -188,7 +201,13 @@ describe('LuxarApp', () => {
       mockFetch.mockResolvedValue({ ok: true });
       await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
 
-      expect(InputHandler).toHaveBeenCalledWith(mockSceneManager, mockAnimationController);
+      // Phase 8.6: InputHandler now also receives the PerformanceMonitor
+      // instance (constructed at app level rather than in AnimationController).
+      expect(InputHandler).toHaveBeenCalledWith(
+        mockSceneManager,
+        mockAnimationController,
+        expect.any(Object)
+      );
       expect(mockInputHandler.init).toHaveBeenCalled();
     });
 

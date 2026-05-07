@@ -32,8 +32,18 @@
  */
 export interface LuxarEventMap {
   // ── Publisher events (lower layers push state) ──────────────
-  /** Per-frame FPS / frame-time sample from the animation loop. */
-  'fps-sample': { fps: number; frameTimeMs: number };
+  /**
+   * Animation-loop frame-start hook. Fired right before per-frame
+   * work begins. Subscribers (e.g., stats.js-backed
+   * `PerformanceMonitor`) use this to drive their begin/end timing.
+   */
+  'frame-start': Record<string, never>;
+  /**
+   * Animation-loop frame-end hook. Fired right after per-frame
+   * work — including post-processing render — completes. Pair with
+   * `frame-start` for timing.
+   */
+  'frame-end': Record<string, never>;
   /**
    * Aggregate loading progress from the data layer. Used by the
    * loading-monitor UI to render the progress bar / spinner.

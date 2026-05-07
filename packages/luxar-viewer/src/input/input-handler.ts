@@ -48,6 +48,7 @@ import { captureViewerState } from '../config/viewer-state-capture';
 import { DimensionSliders } from '../ui/dimension-sliders';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
 import { DebugConsole } from '../ui/debug-console';
+import type { PerformanceMonitor } from '../ui/performance-monitor';
 import { InputContextManager, InputContext } from './input-context-manager';
 import { computeDimensionStep, resolveSelectedDimension } from './handlers/dimension-navigation';
 import { PanelCoordinator } from './handlers/panel-coordinator';
@@ -145,7 +146,8 @@ export class InputHandler {
    */
   constructor(
     private sceneManager: SceneManager,
-    private animationController: AnimationController
+    private animationController: AnimationController,
+    private performanceMonitor: PerformanceMonitor
   ) {
     // Initialize debug console
     this.debugConsole = new DebugConsole();
@@ -159,7 +161,7 @@ export class InputHandler {
     // setRecordingPanel as they're created.
     this.panelCoordinator = new PanelCoordinator({
       debugConsole: this.debugConsole,
-      performanceStats: this.animationController.performanceStats,
+      performanceStats: this.performanceMonitor,
     });
 
     this.windowEvents = new WindowEventHandler(
@@ -672,7 +674,7 @@ export class InputHandler {
    * @private
    */
   private togglePerformanceStats(): void {
-    this.animationController.performanceStats.toggle();
+    this.performanceMonitor.toggle();
   }
 
   /**

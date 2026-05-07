@@ -8,9 +8,9 @@
 
 import { ControlsManager } from '../controls/controls-manager';
 import { config } from '../config';
-import { PerformanceMonitor } from '../ui/performance-monitor';
 import { PostProcessingManager } from '../rendering/post-processing/post-processing-manager';
 import { AdaptiveDPRManager } from '../rendering/adaptive-dpr-manager';
+import { eventBus } from '../utils/event-bus';
 
 /**
  * AnimationController manages the main rendering loop and performance optimization
@@ -37,9 +37,6 @@ export class AnimationController {
 
   /** Timeout ID for auto-pause functionality */
   private idleTimeout: ReturnType<typeof setTimeout> | null = null;
-
-  /** Performance monitoring instance for FPS/timing metrics */
-  private performanceMonitor: PerformanceMonitor;
 
   /** Per-frame callbacks for additional updates (keyed by ID for safe add/remove) */
   private perFrameCallbacks: Map<string, { callback: () => void; continuous: boolean }> = new Map();
@@ -68,10 +65,7 @@ export class AnimationController {
   constructor(
     private controls: ControlsManager,
     private postProcessing: PostProcessingManager
-  ) {
-    // Initialize performance monitoring for frame timing analysis
-    this.performanceMonitor = new PerformanceMonitor();
-  }
+  ) {}
 
   /**
    * Add a per-frame callback with a unique identifier.
@@ -169,9 +163,11 @@ export class AnimationController {
     // Early exit if animation is paused - prevents unnecessary GPU work
     if (!this.isAnimating) return;
 
-    // Begin frame timing measurement for performance analysis
-    // This records the start timestamp for FPS and frame time calculations
-    this.performanceMonitor.begin();
+    // Begin frame timing measurement for performance analysis.
+    // Emits on the event bus so subscribers (e.g., the
+    // PerformanceMonitor UI panel) can record the start timestamp
+    // without animation-controller importing UI code directly.
+    eventBus.emit('frame-start', {});
 
     // Record frame for adaptive DPR - tracks FPS and adjusts pixel ratio
     if (this.adaptiveDPRManager) {
@@ -196,9 +192,11 @@ export class AnimationController {
     // Includes vertex shaders, fragment shaders, HDR buffers, bloom blur, ACES tone mapping
     this.postProcessing.render();
 
-    // End frame timing measurement - calculates frame duration and updates FPS
-    // Now includes the cost of HDR post-processing in performance metrics
-    this.performanceMonitor.end();
+    // End frame timing — pair with the frame-start emit above. The
+    // PerformanceMonitor UI panel subscribes to both events when
+    // visible and feeds them into stats.js for FPS / frame-time
+    // readouts.
+    eventBus.emit('frame-end', {});
   };
 
   /**
@@ -315,26 +313,17 @@ export class AnimationController {
   /**
    * Get performance monitor for FPS and timing metrics.
    *
-   * Provides access to stats.js panel for toggling visibility (P key)
-   * and retrieving performance data.
-   *
-   * @returns PerformanceMonitor instance tracking FPS and frame time
-   */
-  get performanceStats(): PerformanceMonitor {
-    return this.performanceMonitor;
-  }
-
-  /**
    * Stop animation loop and clean up resources.
    *
-   * Stops rendering, cancels timers, and disposes performance monitor.
-   * Should be called during application teardown.
+   * Stops rendering and cancels timers. The PerformanceMonitor UI
+   * panel that previously lived here was migrated up to LuxarApp
+   * (Phase 8.6) and is disposed there; this controller now only emits
+   * `frame-start` / `frame-end` on the event bus per frame.
    *
    * After calling dispose(), the animation controller cannot be reused.
    */
   dispose(): void {
     this.stopAnimation();
     this.perFrameCallbacks.clear();
-    this.performanceMonitor.dispose();
   }
 }

@@ -13,6 +13,7 @@ import { getManagerRegistry } from './manager-registry';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
 import { AdaptiveDPRManager } from '../rendering/adaptive-dpr-manager';
 import { ResolutionIndicator } from '../ui/components/resolution-indicator';
+import { PerformanceMonitor } from '../ui/performance-monitor';
 import { SceneLoaderManager, getSceneLoader } from '../data/scene-loader-manager';
 import { ScaleBar } from '../ui/components/scale-bar';
 import { ColormapLegend } from '../ui/components/colormap-legend';
@@ -84,6 +85,7 @@ export interface LuxarAppOptions {
 export class LuxarApp {
   private sceneManager!: SceneManager;
   private animationController!: AnimationController;
+  private performanceMonitor!: PerformanceMonitor;
   private inputHandler!: InputHandler;
   private renderingControls!: RenderingControls;
   private adaptiveDPRManager!: AdaptiveDPRManager;
@@ -221,11 +223,16 @@ export class LuxarApp {
         debug: this.options.debug,
       });
 
-      // Initialize animation controller with HDR post-processing
+      // Initialize animation controller with HDR post-processing.
+      // The PerformanceMonitor UI panel is constructed up here (not in
+      // the controller) and subscribes to the bus events the
+      // controller emits each frame. Owning it at the app level keeps
+      // the lower scene/ layer free of UI imports.
       this.animationController = new AnimationController(
         this.sceneManager.controls,
         this.sceneManager.postProcessing
       );
+      this.performanceMonitor = new PerformanceMonitor();
 
       // Set up per-frame callback for dynamic clipping plane updates
       // Uses unique ID so it won't conflict with other per-frame callbacks (e.g., dimension animation)
@@ -268,7 +275,11 @@ export class LuxarApp {
       }
 
       // Initialize input handler
-      this.inputHandler = new InputHandler(this.sceneManager, this.animationController);
+      this.inputHandler = new InputHandler(
+        this.sceneManager,
+        this.animationController,
+        this.performanceMonitor
+      );
       this.inputHandler.init();
 
       // Initialize rendering controls
@@ -514,7 +525,7 @@ export class LuxarApp {
       if (ui.show_rendering_controls === true) this.renderingControls.show();
       if (ui.show_rendering_controls === false) this.renderingControls.hide();
       if (ui.show_performance_monitor === true) {
-        this.animationController.performanceStats?.show();
+        this.performanceMonitor.show();
       }
       if (ui.show_dimensions === true) {
         this.inputHandler.showDimensionSliders();

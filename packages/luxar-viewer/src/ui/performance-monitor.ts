@@ -6,6 +6,7 @@
 
 import Stats from 'stats.js';
 import { config } from '../config';
+import { eventBus, type Unsubscribe } from '../utils/event-bus';
 
 /**
  * PerformanceMonitor manages real-time performance statistics display
@@ -23,6 +24,14 @@ export class PerformanceMonitor {
 
   /** Current visibility state of the performance panel */
   private isVisible = false;
+
+  /**
+   * Bus subscriptions for frame-start / frame-end timing. Set when
+   * the panel is visible, cleared when hidden so stats.js incurs no
+   * cost while the user can't see the readout.
+   */
+  private frameStartUnsubscribe: Unsubscribe | null = null;
+  private frameEndUnsubscribe: Unsubscribe | null = null;
 
   constructor() {
     // Initialize stats.js - this is a lightweight library that measures
@@ -106,48 +115,42 @@ export class PerformanceMonitor {
   }
 
   /**
-   * Start performance monitoring (call at beginning of render loop)
-   *
-   * This should be called at the very beginning of each animation frame,
-   * before any Three.js rendering operations. It starts the high-precision
-   * timer that measures frame duration.
-   *
-   * Only measures when visible to avoid performance overhead when not needed.
+   * Subscribe to frame-start / frame-end on the event bus so stats.js
+   * gets driven by the animation loop. Idempotent — subsequent calls
+   * are no-ops.
    */
-  begin(): void {
-    if (this.isVisible) {
-      // stats.begin() records the current timestamp using performance.now()
-      // This provides microsecond precision timing
+  private subscribeToFrameTiming(): void {
+    if (this.frameStartUnsubscribe) return;
+    this.frameStartUnsubscribe = eventBus.on('frame-start', () => {
       this.stats.begin();
-    }
-  }
-
-  /**
-   * End performance monitoring (call at end of render loop)
-   *
-   * This should be called at the very end of each animation frame,
-   * after all Three.js rendering operations are complete. It calculates
-   * the frame time and updates FPS metrics.
-   *
-   * The stats.js library automatically:
-   * - Calculates frame time (end - begin)
-   * - Updates FPS counter (frames per second)
-   * - Tracks memory usage (if supported by browser)
-   * - Updates the visual display
-   */
-  end(): void {
-    if (this.isVisible) {
-      // stats.end() calculates frame metrics and updates the display
+    });
+    this.frameEndUnsubscribe = eventBus.on('frame-end', () => {
       this.stats.end();
-    }
+    });
+  }
+
+  /** Drop the bus subscriptions. Idempotent. */
+  private unsubscribeFromFrameTiming(): void {
+    this.frameStartUnsubscribe?.();
+    this.frameEndUnsubscribe?.();
+    this.frameStartUnsubscribe = null;
+    this.frameEndUnsubscribe = null;
   }
 
   /**
-   * Toggle stats visibility
+   * Toggle stats visibility. When shown, the panel subscribes to the
+   * animation loop's frame-start / frame-end events; when hidden it
+   * unsubscribes so stats.js incurs no cost.
    */
   toggle(): void {
     this.isVisible = !this.isVisible;
     this.stats.dom.style.display = this.isVisible ? 'block' : 'none';
+
+    if (this.isVisible) {
+      this.subscribeToFrameTiming();
+    } else {
+      this.unsubscribeFromFrameTiming();
+    }
 
     // Don't focus to avoid blue outline
     // if (this.isVisible) {
@@ -195,6 +198,7 @@ export class PerformanceMonitor {
    * Clean up resources
    */
   dispose(): void {
+    this.unsubscribeFromFrameTiming();
     if (this.stats.dom.parentNode) {
       this.stats.dom.parentNode.removeChild(this.stats.dom);
     }
