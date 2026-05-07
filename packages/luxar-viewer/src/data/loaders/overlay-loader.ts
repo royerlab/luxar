@@ -6,8 +6,8 @@
  */
 
 import * as zarr from 'zarrita';
-import { hasContentsMethod } from '../types/zarr';
-import { log, Modules } from '../utils/log';
+import { hasContentsMethod } from '../../types/zarr';
+import { log, Modules } from '../../utils/log';
 
 /** Configuration for a single overlay, as stored in zarr .zattrs */
 export interface OverlayConfig {

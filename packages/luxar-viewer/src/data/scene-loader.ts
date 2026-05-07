@@ -77,7 +77,7 @@ import type {
   GSplatsViewState,
   LoadedGSplatsData,
 } from '../types/gsplats';
-import { processGSplats } from './gsplats-processor';
+import { processGSplats } from './utils/gsplats-processor';
 import { packCholeskyForShader } from '../rendering/gsplat-geometry';
 import { GPUBufferPool } from '../rendering/gpu-buffer-pool';
 import { invertNdTransformForQuery, computeWorldNdTransform } from './transforms/nd-transform';
@@ -88,9 +88,9 @@ import {
   getAggregatedLinesAccumulatorStats,
   getAggregatedGSplatsAccumulatorStats,
 } from './utils/stats-aggregator';
-import { LoaderRegistry } from './loader-registry';
+import { LoaderRegistry } from './loaders/loader-registry';
 import { computeTolerance } from './utils/tolerance-computer';
-import { loadOverlayConfigs } from './overlay-loader';
+import { loadOverlayConfigs } from './loaders/overlay-loader';
 import { notifier } from '../utils/notifier';
 
 /** Check if an object has any own properties (avoids Object.keys() allocation). */

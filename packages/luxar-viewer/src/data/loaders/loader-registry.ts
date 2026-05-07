@@ -8,10 +8,10 @@
  * @module data/loader-registry
  */
 
-import type { DataLoader } from './data-loader-types';
-import type { LinesDataLoader } from '../types/lines';
-import type { GSplatsDataLoader } from '../types/gsplats';
-import { log, Modules } from '../utils/log';
+import type { DataLoader } from '../data-loader-types';
+import type { LinesDataLoader } from '../../types/lines';
+import type { GSplatsDataLoader } from '../../types/gsplats';
+import { log, Modules } from '../../utils/log';
 
 /**
  * Error information tracked for failed loaders.

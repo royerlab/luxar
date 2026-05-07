@@ -13,7 +13,7 @@
  */
 
 import * as zarr from 'zarrita';
-import { log, Modules } from '../utils/log';
+import { log, Modules } from '../../utils/log';
 
 export class LabelLoader {
   /** Cache of decoded labels per node path. */

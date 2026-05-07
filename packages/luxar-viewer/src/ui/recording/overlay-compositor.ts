@@ -19,7 +19,7 @@
 
 import type { OverlayManager } from '../overlay-manager';
 import { FONT_PRESETS } from '../overlay-manager';
-import type { OverlayConfig } from '../../data/overlay-loader';
+import type { OverlayConfig } from '../../data/loaders/overlay-loader';
 import { anchorOffset as computeAnchorOffset } from './media-utilities';
 import { log, Modules } from '../../utils/log';
 

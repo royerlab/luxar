@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { LabelLoader } from '../../../data/label-loader';
+import { LabelLoader } from '../../../data/loaders/label-loader';
 
 vi.mock('zarrita', async () => {
   const actual = await vi.importActual('zarrita');

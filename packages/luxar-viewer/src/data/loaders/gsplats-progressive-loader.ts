@@ -18,10 +18,10 @@
  * @module data/gsplats-progressive-loader
  */
 
-import type { GSplatsDataLoader, GSplatsViewState, LoadedGSplatsData } from '../types/gsplats';
-import type { GSplatsSpatialIndexLoader } from './gsplats-spatial-index-loader';
-import type { UpdateSession } from '../profiling/update-profiler';
-import { log, Modules, LogEmoji } from '../utils/log';
+import type { GSplatsDataLoader, GSplatsViewState, LoadedGSplatsData } from '../../types/gsplats';
+import type { GSplatsSpatialIndexLoader } from '../gsplats-spatial-index-loader';
+import type { UpdateSession } from '../../profiling/update-profiler';
+import { log, Modules, LogEmoji } from '../../utils/log';
 
 /**
  * Time threshold (ms) for considering a LOD load "fast" (likely a cache hit).

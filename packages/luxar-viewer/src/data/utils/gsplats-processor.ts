@@ -10,7 +10,7 @@
  * @module data/gsplats-processor
  */
 
-import type { LoadedGSplatsData, ProcessedGSplatsData, GSplatsViewState } from '../types/gsplats';
+import type { LoadedGSplatsData, ProcessedGSplatsData, GSplatsViewState } from '../../types/gsplats';
 
 /**
  * Compute the packed index for a Cholesky element L[row, col].

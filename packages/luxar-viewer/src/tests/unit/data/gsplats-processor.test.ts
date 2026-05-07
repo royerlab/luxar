@@ -3,7 +3,7 @@ import {
   processGSplatsTo3D,
   processGSplats3DOnly,
   processGSplats,
-} from '../../../data/gsplats-processor';
+} from '../../../data/utils/gsplats-processor';
 import type { LoadedGSplatsData, GSplatsViewState } from '../../../types/gsplats';
 
 describe('processGSplats3DOnly', () => {

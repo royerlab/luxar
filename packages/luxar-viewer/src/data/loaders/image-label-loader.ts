@@ -18,8 +18,8 @@
 
 import * as zarr from 'zarrita';
 import { get, slice } from 'zarrita';
-import { LRUCache } from '../cache/lru-cache';
-import { log, Modules } from '../utils/log';
+import { LRUCache } from '../../cache/lru-cache';
+import { log, Modules } from '../../utils/log';
 
 /** Cached image entry with blob URL and size for LRU tracking. */
 interface CachedImage {

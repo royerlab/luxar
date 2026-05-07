@@ -37,10 +37,8 @@ data/
 ├── gsplats-spatial-index-loader.ts # Loads Gaussian splats with nD visibility
 │                                  #   Inlines its `chunk_bounds` probe; query via `SpatialQueryBuilder`
 │                                  #   with `geometryType: 'gsplats'`.
-├── gsplats-progressive-loader.ts  # Progressive multi-LOD GSplats loader (Composite pattern)
 ├── data-loader-types.ts           # TypeScript interfaces and types
 ├── view-state-manager.ts          # Centralized ViewState initialization and validation
-├── loader-registry.ts             # Lifecycle management for geometry loaders (Points, Lines, GSplats)
 ├── index.ts                       # Package exports
 ├── README.md                      # This documentation
 │
@@ -56,6 +54,7 @@ data/
 │   ├── data-accumulator.ts        # Zero-allocation buffer pooling
 │   ├── directory-navigator.ts     # Multi-strategy server directory browsing
 │   ├── effective-radius-calculator.ts # Effective-radii math for nD slicing (points-specific)
+│   ├── gsplats-processor.ts       # nD → 3D GSplats data processor (centers, Cholesky, attenuation)
 │   ├── scene-graph-builder.ts     # Scene hierarchy builder (extracted from SceneLoader)
 │   ├── stats-aggregator.ts        # Accumulator stats aggregation across loaders
 │   └── tolerance-computer.ts      # Canonical tolerance computer (`computeTolerance`) used by all
@@ -69,7 +68,12 @@ data/
 │   │                              #   `SpatialQueryBuilder` accepts either a `geometryType` (delegates
 │   │                              #   tolerance to `utils/tolerance-computer.computeTolerance`) or a
 │   │                              #   pre-computed `tolerance: number[]`.
-│   └── transferable-accumulator.ts # Zero-allocation buffer management
+│   ├── transferable-accumulator.ts # Zero-allocation buffer management
+│   ├── image-label-loader.ts      # Lazy per-element image fetching from zarr
+│   ├── label-loader.ts            # Lazy CSR-style label fetching from zarr
+│   ├── overlay-loader.ts          # Reads overlay configurations from zarr store
+│   ├── gsplats-progressive-loader.ts # Progressive multi-LOD GSplats loader (Composite pattern)
+│   └── loader-registry.ts         # Lifecycle management for geometry loaders
 │
 └── (related: ../workers/)         # Web Worker infrastructure
     ├── worker-pool.ts             # Pool manager with load balancing

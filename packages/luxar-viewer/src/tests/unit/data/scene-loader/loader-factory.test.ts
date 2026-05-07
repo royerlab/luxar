@@ -35,7 +35,7 @@ vi.mock('../../../../data/gsplats-spatial-index-loader', () => ({
     gsplatsCtorArgs.push(args);
   }),
 }));
-vi.mock('../../../../data/gsplats-progressive-loader', () => ({
+vi.mock('../../../../data/loaders/gsplats-progressive-loader', () => ({
   GSplatsProgressiveLoader: vi.fn(function (...args: unknown[]) {
     progressiveCtorArgs.push(args);
   }),
