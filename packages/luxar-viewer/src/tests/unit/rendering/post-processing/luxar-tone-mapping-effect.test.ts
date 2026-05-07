@@ -87,3 +87,70 @@ describe('LuxarToneMappingEffect — mode switching', () => {
     expect(fx.mode).toBe(ToneMappingMode.AGX);
   });
 });
+
+describe('LuxarToneMappingEffect — adaptive helpers', () => {
+  it('adaptive getter is true iff mode is REINHARD2_ADAPTIVE', () => {
+    const fx = new LuxarToneMappingEffect();
+    fx.mode = ToneMappingMode.REINHARD2;
+    expect(fx.adaptive).toBe(false);
+    fx.mode = ToneMappingMode.REINHARD2_ADAPTIVE;
+    expect(fx.adaptive).toBe(true);
+    fx.mode = ToneMappingMode.AGX;
+    expect(fx.adaptive).toBe(false);
+  });
+
+  it('adaptive setter switches between REINHARD2 and REINHARD2_ADAPTIVE', () => {
+    const fx = new LuxarToneMappingEffect();
+    fx.adaptive = true;
+    expect(fx.mode).toBe(ToneMappingMode.REINHARD2_ADAPTIVE);
+    fx.adaptive = false;
+    expect(fx.mode).toBe(ToneMappingMode.REINHARD2);
+  });
+});
+
+describe('LuxarToneMappingEffect — pmndrs passthrough setters', () => {
+  it('whitePoint round-trips through the uniform', () => {
+    const fx = new LuxarToneMappingEffect();
+    fx.whitePoint = 4.0;
+    expect(fx.whitePoint).toBe(4.0);
+    fx.whitePoint = 16.0;
+    expect(fx.whitePoint).toBe(16.0);
+  });
+
+  it('middleGrey round-trips through the uniform', () => {
+    const fx = new LuxarToneMappingEffect();
+    fx.middleGrey = 0.18;
+    expect(fx.middleGrey).toBe(0.18);
+    fx.middleGrey = 0.5;
+    expect(fx.middleGrey).toBe(0.5);
+  });
+
+  it('averageLuminance round-trips through the uniform', () => {
+    const fx = new LuxarToneMappingEffect();
+    fx.averageLuminance = 1.0;
+    expect(fx.averageLuminance).toBe(1.0);
+    fx.averageLuminance = 0.25;
+    expect(fx.averageLuminance).toBe(0.25);
+  });
+
+  it('adaptationRate round-trips through the underlying material', () => {
+    const fx = new LuxarToneMappingEffect();
+    fx.adaptationRate = 1.5;
+    expect(fx.adaptationRate).toBe(1.5);
+    fx.adaptationRate = 0.5;
+    expect(fx.adaptationRate).toBe(0.5);
+  });
+
+  it('resolution setter rounds up to the next power of two', () => {
+    const fx = new LuxarToneMappingEffect();
+    // resolution=300 → exponent=9 → size=512
+    fx.resolution = 300;
+    expect(fx.resolution).toBe(512);
+    // resolution=128 → exponent=7 → size=128
+    fx.resolution = 128;
+    expect(fx.resolution).toBe(128);
+    // resolution=1 → exponent=0 → size=1
+    fx.resolution = 1;
+    expect(fx.resolution).toBe(1);
+  });
+});
