@@ -47,7 +47,7 @@ import { notifier } from '../utils/notifier';
 import { captureViewerState } from '../config/viewer-state-capture';
 import { DimensionSliders } from '../ui/dimension-sliders';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
-import { DebugConsole } from '../ui/debug-console';
+import type { DebugConsole } from '../ui/debug-console';
 import type { PerformanceMonitor } from '../ui/performance-monitor';
 import { InputContextManager, InputContext } from './input-context-manager';
 import { computeDimensionStep, resolveSelectedDimension } from './handlers/dimension-navigation';
@@ -148,10 +148,13 @@ export class InputHandler {
   constructor(
     private sceneManager: SceneManager,
     private animationController: AnimationController,
-    private performanceMonitor: PerformanceMonitor
+    private performanceMonitor: PerformanceMonitor,
+    debugConsole: DebugConsole
   ) {
-    // Initialize debug console
-    this.debugConsole = new DebugConsole();
+    // DebugConsole is now constructed at the app level (Phase 8.6.c)
+    // and passed in here, so InputHandler doesn't need to import the
+    // class — keeps the input → ui layer-cruiser rule clean.
+    this.debugConsole = debugConsole;
 
     // Initialize input context manager
     this.contextManager = new InputContextManager();

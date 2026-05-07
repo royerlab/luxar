@@ -23,9 +23,10 @@ vi.mock('../../../ui/dataset-browser');
 vi.mock('../../../ui/helpers');
 vi.mock('../../../ui/layers');
 vi.mock('../../../scene/scene-dims-manager');
-// Phase 8.6 migrated PerformanceMonitor ownership from
-// AnimationController to LuxarApp. Mock here so stats.js's
-// document.createElement call doesn't run in the stubbed-window env.
+// Phase 8.6 migrated PerformanceMonitor and DebugConsole ownership
+// from AnimationController / InputHandler to LuxarApp. Mock both here
+// so stats.js / DebugConsole's document.createElement calls don't run
+// in the stubbed-window env.
 vi.mock('../../../ui/performance-monitor', () => ({
   PerformanceMonitor: vi.fn().mockImplementation(() => ({
     show: vi.fn(),
@@ -34,6 +35,15 @@ vi.mock('../../../ui/performance-monitor', () => ({
     cyclePanels: vi.fn(),
     dispose: vi.fn(),
     visible: false,
+  })),
+}));
+vi.mock('../../../ui/debug-console', () => ({
+  DebugConsole: vi.fn().mockImplementation(() => ({
+    show: vi.fn(),
+    hide: vi.fn(),
+    toggle: vi.fn(),
+    dispose: vi.fn(),
+    getIsVisible: vi.fn(() => false),
   })),
 }));
 
@@ -202,10 +212,12 @@ describe('LuxarApp', () => {
       await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
 
       // Phase 8.6: InputHandler now also receives the PerformanceMonitor
-      // instance (constructed at app level rather than in AnimationController).
+      // and DebugConsole instances (both constructed at app level
+      // rather than in AnimationController / InputHandler).
       expect(InputHandler).toHaveBeenCalledWith(
         mockSceneManager,
         mockAnimationController,
+        expect.any(Object),
         expect.any(Object)
       );
       expect(mockInputHandler.init).toHaveBeenCalled();
