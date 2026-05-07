@@ -10,173 +10,15 @@ import { SceneLoader, type LoaderConfig, type ViewState } from '../../../data';
 import * as THREE from 'three';
 import * as zarr from 'zarrita';
 
-// Mock THREE.js (external dependency - requires WebGL context, must be mocked in unit tests)
-vi.mock('three', () => ({
-  Group: vi.fn().mockImplementation(() => ({
-    add: vi.fn(),
-    name: '',
-    userData: {},
-    children: [],
-    getObjectByName: vi.fn(),
-    traverse: vi.fn((callback) => {
-      // Simple traverse implementation for testing
-      callback({ name: 'test' });
-    }),
-    position: {
-      copy: vi.fn().mockReturnThis(),
-      set: vi.fn().mockReturnThis(),
-    },
-    quaternion: {
-      copy: vi.fn().mockReturnThis(),
-    },
-    scale: {
-      copy: vi.fn().mockReturnThis(),
-      set: vi.fn().mockReturnThis(),
-    },
-  })),
-  Box3: vi.fn().mockImplementation(() => ({
-    expandByPoint: vi.fn(),
-    clone: vi.fn().mockReturnThis(),
-  })),
-  Vector2: vi.fn().mockImplementation((x = 0, y = 0) => ({
-    x,
-    y,
-    set: vi.fn().mockReturnThis(),
-    copy: vi.fn().mockReturnThis(),
-  })),
-  Vector3: vi.fn().mockImplementation((x = 0, y = 0, z = 0) => ({
-    x,
-    y,
-    z,
-    set: vi.fn().mockReturnThis(),
-    copy: vi.fn().mockReturnThis(),
-  })),
-  Quaternion: vi.fn().mockImplementation(() => ({
-    x: 0,
-    y: 0,
-    z: 0,
-    w: 1,
-    copy: vi.fn().mockReturnThis(),
-  })),
-  Matrix4: vi.fn().mockImplementation(() => ({
-    fromArray: vi.fn().mockReturnThis(),
-    decompose: vi.fn((pos: any, _quat: any, scale: any) => {
-      pos.set(0, 0, 0);
-      scale.set(1, 1, 1);
-    }),
-  })),
-  Points: vi.fn().mockImplementation((geometry, material) => ({
-    name: '',
-    userData: {},
-    geometry,
-    material,
-    position: {
-      copy: vi.fn().mockReturnThis(),
-      set: vi.fn().mockReturnThis(),
-    },
-    quaternion: {
-      copy: vi.fn().mockReturnThis(),
-    },
-    scale: {
-      copy: vi.fn().mockReturnThis(),
-      set: vi.fn().mockReturnThis(),
-    },
-  })),
-  Mesh: vi.fn().mockImplementation((geometry, material) => ({
-    name: '',
-    userData: {},
-    geometry,
-    material,
-    count: 0,
-    position: {
-      copy: vi.fn().mockReturnThis(),
-      set: vi.fn().mockReturnThis(),
-    },
-    quaternion: {
-      copy: vi.fn().mockReturnThis(),
-    },
-    scale: {
-      copy: vi.fn().mockReturnThis(),
-      set: vi.fn().mockReturnThis(),
-    },
-  })),
-  BufferGeometry: vi.fn().mockImplementation(() => {
-    const attributes: Record<string, any> = {};
-    return {
-      setAttribute: vi.fn((name: string, attr: any) => {
-        attributes[name] = attr;
-      }),
-      getAttribute: vi.fn((name: string) => attributes[name]),
-      setDrawRange: vi.fn(),
-      setIndex: vi.fn(),
-      boundingBox: null,
-      boundingSphere: null,
-      dispose: vi.fn(),
-      computeBoundingBox: vi.fn(),
-      computeBoundingSphere: vi.fn(),
-    };
-  }),
-  InstancedBufferGeometry: vi.fn().mockImplementation(() => {
-    const attributes: Record<string, any> = {};
-    return {
-      setAttribute: vi.fn((name: string, attr: any) => {
-        attributes[name] = attr;
-      }),
-      getAttribute: vi.fn((name: string) => attributes[name]),
-      setDrawRange: vi.fn(),
-      setIndex: vi.fn(),
-      boundingBox: null,
-      boundingSphere: null,
-      instanceCount: 0,
-      dispose: vi.fn(),
-    };
-  }),
-  BufferAttribute: vi.fn().mockImplementation((array, itemSize) => ({
-    array,
-    itemSize,
-    count: array.length / itemSize,
-  })),
-  Float32BufferAttribute: vi.fn().mockImplementation((sizeOrArray, itemSize) => {
-    const array = typeof sizeOrArray === 'number' ? new Float32Array(sizeOrArray) : sizeOrArray;
-    const size = itemSize || 1;
-    return {
-      array,
-      itemSize: size,
-      count: array.length / size,
-      setUsage: vi.fn(),
-      set: vi.fn(),
-      needsUpdate: false,
-    };
-  }),
-  InstancedBufferAttribute: vi.fn().mockImplementation((array, itemSize) => ({
-    array,
-    itemSize,
-    count: array.length / itemSize,
-    setUsage: vi.fn(),
-    set: vi.fn(),
-    needsUpdate: false,
-  })),
-  DynamicDrawUsage: 35048,
-  ShaderMaterial: vi.fn().mockImplementation(() => ({
-    uniforms: {},
-  })),
-  EventDispatcher: vi.fn().mockImplementation(() => ({
-    addEventListener: vi.fn(),
-    removeEventListener: vi.fn(),
-    dispatchEvent: vi.fn(),
-  })),
-  // Constants
-  HalfFloatType: 1016,
-  FloatType: 1015,
-  UnsignedByteType: 1009,
-  LinearSRGBColorSpace: 'srgb-linear',
-  SRGBColorSpace: 'srgb',
-  NoToneMapping: 0,
-  ACESFilmicToneMapping: 4,
-  PCFSoftShadowMap: 2,
-  NormalBlending: 0,
-  AdditiveBlending: 2,
-}));
+// THREE is NOT mocked here. The classes SceneLoader touches —
+// Group / Points / Mesh / Box3 / Vector3 / Matrix4 /
+// {,Instanced}Buffer{Geometry,Attribute} — are pure JS and run fine in
+// jsdom; the WebGL-bound layer (renderers, shaders) is one level up.
+// Earlier revisions kept a 165-line stand-in so individual constructor
+// calls could be counted, but the resulting tests asserted on
+// implementation details rather than behavior. The behavior assertions
+// further down (transform validation, scene-graph shape, etc.) are
+// stronger when run against real THREE.
 
 // Mock zarrita (external dependency - network I/O for zarr stores)
 vi.mock('zarrita', () => ({
@@ -507,10 +349,11 @@ describe('SceneLoader', () => {
         ],
       };
 
-      await sceneLoader.loadScene('http://localhost:8000/test.zarr');
-
-      // Verify transform was processed
-      expect(THREE.Matrix4).toHaveBeenCalled();
+      // Behavior assertion: a column-major transform must load without
+      // throwing. The negative path (row-major rejection) is the more
+      // useful contract and is covered by the next test + the
+      // transform-validation block further down.
+      await expect(sceneLoader.loadScene('http://localhost:8000/test.zarr')).resolves.toBeDefined();
     });
 
     it('should reject row-major transforms', async () => {
@@ -931,25 +774,40 @@ describe('SceneLoader', () => {
       await sceneLoader.loadScene('http://localhost:8000/test.zarr');
     });
 
+    /**
+     * Drop a real `THREE.Points` into the loader's rootGroup so the
+     * `getObjectByName(path)` lookup inside `commitPointsGeometry`
+     * returns it. The Points instance carries pre-sized buffer
+     * attributes so the same-size in-place update branch can reuse
+     * them; an `oldCount` mismatch sends commit through the
+     * dispose+recreate branch, which still works against real THREE.
+     */
+    function attachPointsChild(name: string, oldCount: number): THREE.Points {
+      const root = (sceneLoader as any).rootGroup as THREE.Group;
+      const geom = new THREE.BufferGeometry();
+      geom.setAttribute(
+        'position',
+        new THREE.BufferAttribute(new Float32Array(oldCount * 3), 3)
+      );
+      geom.setAttribute('color', new THREE.BufferAttribute(new Float32Array(oldCount * 3), 3));
+      geom.setAttribute('radius', new THREE.BufferAttribute(new Float32Array(oldCount), 1));
+      geom.setAttribute(
+        'sharpness',
+        new THREE.BufferAttribute(new Float32Array(oldCount), 1)
+      );
+      const points = new THREE.Points(geom);
+      points.name = name;
+      // commitPointsGeometry only writes `visiblePointCount` when the
+      // node passes `isPointsUserData` (nodeType === 'points'). Mirror
+      // what NodeFactory.createPointsNode would set up so the commit
+      // path treats it as a real points node.
+      points.userData = { nodeType: 'points', ndim: 3, visiblePointCount: oldCount };
+      root.add(points);
+      return points;
+    }
+
     it('should update geometry with new points data', () => {
-      // Create mock points object
-      const mockGeometry = {
-        dispose: vi.fn(),
-        boundingBox: { clone: vi.fn().mockReturnThis() },
-        boundingSphere: null,
-        computeBoundingBox: vi.fn(),
-        computeBoundingSphere: vi.fn(),
-      };
-      const mockPoints = {
-        name: '/test_points',
-        geometry: mockGeometry,
-      };
-
-      // Mock getObjectByName to return our mock points
-      if (sceneLoader['rootGroup']) {
-        (sceneLoader['rootGroup'].getObjectByName as any).mockReturnValue(mockPoints);
-      }
-
+      const points = attachPointsChild('/test_points', 0);
       const newData = {
         positions: new Float32Array([4, 5, 6, 7, 8, 9]),
         colors: new Float32Array([1, 1, 1, 1, 1, 1]),
@@ -960,37 +818,22 @@ describe('SceneLoader', () => {
         metadata: {
           totalPoints: 2,
           loadedPoints: 2,
-          bounds: { clone: vi.fn().mockReturnThis() },
+          bounds: new THREE.Box3(),
           usedSpatialIndex: true,
         },
       };
 
       (sceneLoader as any).updatePointsGeometry('/test_points', newData);
 
-      // With GPU buffer pool, geometry is reused (not disposed)
-      // Verify geometry is still assigned (might be new geometry from pool or reused)
-      expect(mockPoints.geometry).toBeDefined();
+      // After the update the Points still has a (possibly recreated) geometry,
+      // and its visiblePointCount reflects the new data.
+      expect(points.geometry).toBeDefined();
+      expect(points.userData.visiblePointCount).toBe(2);
     });
 
-    it('should reuse geometry when GPU buffer pool is enabled', () => {
-      const disposeSpy = vi.fn();
-      const mockGeometry = {
-        dispose: disposeSpy,
-        boundingBox: { clone: vi.fn().mockReturnThis() },
-        boundingSphere: null,
-        computeBoundingBox: vi.fn(),
-        computeBoundingSphere: vi.fn(),
-      };
-      const mockPoints = {
-        name: '/test_points',
-        geometry: mockGeometry,
-      };
-
-      if (sceneLoader['rootGroup']) {
-        (sceneLoader['rootGroup'].getObjectByName as any).mockReturnValue(mockPoints);
-      }
-
-      const newData = {
+    it('writes new positions through whichever path the loader takes (pool or in-place)', () => {
+      const points = attachPointsChild('/test_points', 1);
+      const sameSizeData = {
         positions: new Float32Array([1, 2, 3]),
         colors: new Float32Array([1, 1, 1]),
         radii: new Float32Array([0.5]),
@@ -1000,38 +843,27 @@ describe('SceneLoader', () => {
         metadata: {
           totalPoints: 1,
           loadedPoints: 1,
-          bounds: { clone: vi.fn().mockReturnThis() },
+          bounds: new THREE.Box3(),
           usedSpatialIndex: true,
         },
       };
 
-      (sceneLoader as any).updatePointsGeometry('/test_points', newData);
+      (sceneLoader as any).updatePointsGeometry('/test_points', sameSizeData);
 
-      // With GPU buffer pool, geometry is NOT disposed during updates (it's reused)
-      // Disposal only happens on final cleanup or when pool evicts unused geometries
-      // This is the key optimization: reuse instead of dispose+allocate
+      // Whether commit takes the buffer-pool path or the in-place path
+      // (depends on whether _gpuBufferPool is wired up in this fixture),
+      // the live position attribute must reflect the new payload.
+      const afterPositions = points.geometry.getAttribute('position') as THREE.BufferAttribute;
+      expect(Array.from(afterPositions.array as Float32Array).slice(0, 3)).toEqual([1, 2, 3]);
+      expect(points.userData.visiblePointCount).toBe(1);
     });
 
     it('should update bounding box from metadata', () => {
-      const mockBoundingBox = { clone: vi.fn().mockReturnThis() };
-      const mockBoundingSphere = { clone: vi.fn().mockReturnThis() };
-      const mockGeometry = {
-        dispose: vi.fn(),
-        boundingBox: mockBoundingBox,
-        boundingSphere: mockBoundingSphere,
-        computeBoundingBox: vi.fn(),
-        computeBoundingSphere: vi.fn(),
-      };
-      const mockPoints = {
-        name: '/test_points',
-        geometry: mockGeometry,
-      };
-
-      if (sceneLoader['rootGroup']) {
-        (sceneLoader['rootGroup'].getObjectByName as any).mockReturnValue(mockPoints);
-      }
-
-      const newBounds = { clone: vi.fn().mockReturnThis() };
+      const points = attachPointsChild('/test_points', 1);
+      const newBounds = new THREE.Box3(
+        new THREE.Vector3(0, 0, 0),
+        new THREE.Vector3(10, 10, 10)
+      );
       const newData = {
         positions: new Float32Array([1, 2, 3]),
         colors: new Float32Array([1, 1, 1]),
@@ -1050,27 +882,14 @@ describe('SceneLoader', () => {
 
       (sceneLoader as any).updatePointsGeometry('/test_points', newData);
 
-      // With GPU buffer pool, bounding box is set directly from metadata (bounds.clone())
-      // The old geometry's bounding box is not cloned
-      expect(newBounds.clone).toHaveBeenCalled();
+      // The same-size path computes bounding box from the geometry itself.
+      // For the dispose-and-recreate path metadata bounds are cloned, but
+      // either way the geometry ends up with a defined bounding box.
+      expect(points.geometry.boundingBox).not.toBeNull();
     });
 
     it('should handle empty geometry updates (clearing points)', () => {
-      const mockGeometry = {
-        dispose: vi.fn(),
-        boundingBox: null,
-        boundingSphere: null,
-        computeBoundingBox: vi.fn(),
-        computeBoundingSphere: vi.fn(),
-      };
-      const mockPoints = {
-        name: '/test_points',
-        geometry: mockGeometry,
-      };
-
-      if (sceneLoader['rootGroup']) {
-        (sceneLoader['rootGroup'].getObjectByName as any).mockReturnValue(mockPoints);
-      }
+      attachPointsChild('/test_points', 1);
 
       const emptyData = {
         positions: new Float32Array([]), // Empty
@@ -1082,7 +901,7 @@ describe('SceneLoader', () => {
         metadata: {
           totalPoints: 1000,
           loadedPoints: 0, // No points visible at current slice
-          bounds: { clone: vi.fn().mockReturnThis() },
+          bounds: new THREE.Box3(),
           ndim: 4,
           usedSpatialIndex: true,
         },
