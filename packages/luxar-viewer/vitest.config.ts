@@ -29,17 +29,17 @@ export default defineConfig({
       // dedicated commit each time a phase of new tests crosses the next
       // band. Long-term target: 80% across the board.
       thresholds: {
-        lines: 68,
-        functions: 71,
+        lines: 70,
+        functions: 72,
         branches: 58,
-        statements: 68,
+        statements: 69,
       },
-      // Phase 5.4s/t/u landed hdr-setup, anti-aliasing-setup,
-      // theme-setup, performance-setup, and navigation-setup tests
-      // (+63 unit tests) on top of Phase 5.4q/r. Measurement is now
-      // 69.72 % L / 71.74 % F / 58.43 % B / 69.17 % S. Floor advances
-      // 0–1pp per metric (~0.5pp safety margin retained); long-term
-      // target stays 80 %.
+      // Phase 5.4v + 5.4w landed post-processing-setup (+33) and
+      // loading-advisor (+26) tests on top of 5.4s/t/u. Measurement is
+      // now 70.48 % L / 73.13 % F / 58.89 % B / 69.89 % S. Floor
+      // advances 1–2pp on lines/functions/statements (branches hold —
+      // bigger jump deferred to next phase). Long-term target stays
+      // 80 %.
     },
   },
   resolve: {
