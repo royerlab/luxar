@@ -22,23 +22,15 @@
 
 import * as THREE from 'three';
 import { buildInstanceBuffers } from '../lines/projection';
-import type { LoadedLinesData, ProcessedLinesData } from '../../types/lines';
+import type { LinesViewState, LoadedLinesData, ProcessedLinesData } from '../../types/lines';
 import { isLinesUserData } from '../../types/lines';
 import { computeTolerance } from '../utils/tolerance-computer';
-import type { DimensionMetadata } from '../view-state-manager';
 import { config as appConfig } from '../../config';
 import { log, Modules } from '../../utils/log';
 import { getWorkerPool } from '../../workers/worker-pool';
 import type { UpdateSession } from '../../profiling/update-profiler';
 import type { GPUBufferPool } from '../../rendering/gpu-buffer-pool';
 import { updateInstancedLinesMesh } from '../../rendering/line-geometry';
-
-/** Subset of `ViewState` the lines processor reads. */
-export interface LinesProcessViewState {
-  displayDims: readonly number[];
-  slicePosition: readonly number[];
-  dimensions?: DimensionMetadata[];
-}
 
 /** Staged data carried between the async process phase and the GPU commit. */
 export interface StagedLinesCommit {
@@ -57,7 +49,7 @@ export interface StagedLinesCommit {
  */
 export async function projectLinesTo3DUsingWorker(
   data: LoadedLinesData,
-  viewState: { displayDims: readonly number[]; slicePosition: readonly number[] },
+  viewState: LinesViewState,
   tolerance: readonly number[],
   updateVersion: number
 ): Promise<ProcessedLinesData> {
@@ -130,7 +122,7 @@ export async function projectLinesTo3DUsingWorker(
 export async function processLinesData(
   path: string,
   data: LoadedLinesData,
-  viewState: LinesProcessViewState,
+  viewState: LinesViewState,
   rootGroup: THREE.Group | null,
   updateVersion: number,
   session?: UpdateSession

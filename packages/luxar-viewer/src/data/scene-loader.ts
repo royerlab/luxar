@@ -54,11 +54,7 @@ import type { SceneGraphNode } from '../types/data-monitor-types';
 import { ZarrSceneAttrs, ZarrNodeAttrs, hasContentsMethod } from '../types/zarr';
 import { DataMonitorManager } from '../ui/monitors/data-monitor-manager';
 import { ArrayRefRegistry } from './utils/array-decoder';
-import {
-  ViewStateManager,
-  type SceneDimensions,
-  type DimensionMetadata,
-} from './view-state-manager';
+import { ViewStateManager, type SceneDimensions } from './view-state-manager';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { config as appConfig } from '../config';
 import { MultiLevelCachingStore, ChunkPrefetcher, DecompressedChunkCache } from '../cache';
@@ -66,6 +62,7 @@ import type { PointsMetadata } from '../types/points';
 import type {
   LinesMetadata,
   LinesDataLoader,
+  LinesViewState,
   LoadedLinesData,
   ProcessedLinesData,
 } from '../types/lines';
@@ -1266,11 +1263,7 @@ export class SceneLoader {
   private async processLinesData(
     path: string,
     data: LoadedLinesData,
-    viewState: {
-      displayDims: readonly number[];
-      slicePosition: readonly number[];
-      dimensions?: DimensionMetadata[];
-    },
+    viewState: LinesViewState,
     session?: UpdateSession
   ): Promise<StagedLinesCommit | null> {
     return processLinesDataHelper(

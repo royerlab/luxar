@@ -99,6 +99,7 @@ describe('processLinesData', () => {
     const result = await processLinesData('/foo', makeData(), {
       displayDims: [0, 1, 2],
       slicePosition: [0, 0, 0],
+      tolerance: [0, 0, 0],
     }, null, 1);
     expect(result).toBeNull();
   });
@@ -108,6 +109,7 @@ describe('processLinesData', () => {
     const result = await processLinesData('/missing', makeData(), {
       displayDims: [0, 1, 2],
       slicePosition: [0, 0, 0],
+      tolerance: [0, 0, 0],
     }, root, 1);
     expect(result).toBeNull();
   });
@@ -121,6 +123,7 @@ describe('processLinesData', () => {
     const result = await processLinesData('/foo', makeData(), {
       displayDims: [0, 1, 2],
       slicePosition: [0, 0, 0],
+      tolerance: [0, 0, 0],
     }, root, 1);
     expect(result).toBeNull();
   });
@@ -131,7 +134,7 @@ describe('processLinesData', () => {
     const result = await processLinesData(
       '/lines',
       makeData(500),
-      { displayDims: [0, 1, 2], slicePosition: [0, 0, 0] },
+      { displayDims: [0, 1, 2], slicePosition: [0, 0, 0], tolerance: [0, 0, 0] },
       root,
       1
     );
@@ -164,7 +167,7 @@ describe('processLinesData', () => {
     const result = await processLinesData(
       '/lines',
       makeData(2000), // > 1000 → worker path
-      { displayDims: [0, 1, 2], slicePosition: [0, 0, 0] },
+      { displayDims: [0, 1, 2], slicePosition: [0, 0, 0], tolerance: [0, 0, 0] },
       root,
       1
     );
@@ -186,6 +189,7 @@ describe('processLinesData', () => {
       {
         displayDims: [0, 1, 2],
         slicePosition: [0, 0, 0, 0],
+        tolerance: [0, 0, 0, 0],
         dimensions: [
           { name: 'x', unit: 'px', scale: 1 },
           { name: 'y', unit: 'px', scale: 1 },
@@ -247,7 +251,7 @@ describe('projectLinesTo3DUsingWorker', () => {
 
     const result = await projectLinesTo3DUsingWorker(
       makeData(),
-      { displayDims: [0, 1, 2], slicePosition: [0, 0, 0] },
+      { displayDims: [0, 1, 2], slicePosition: [0, 0, 0], tolerance: [0, 0, 0] },
       [1, 1, 1],
       1
     );
@@ -265,7 +269,7 @@ describe('projectLinesTo3DUsingWorker', () => {
 
     const result = await projectLinesTo3DUsingWorker(
       makeData(),
-      { displayDims: [0, 1, 2], slicePosition: [0, 0, 0] },
+      { displayDims: [0, 1, 2], slicePosition: [0, 0, 0], tolerance: [0, 0, 0] },
       [1, 1, 1],
       1
     );
