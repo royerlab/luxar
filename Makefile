@@ -565,12 +565,12 @@ run-pre-commit:  ## Run pre-commit on all files
 check-all:  ## Run all quality checks (Python and TypeScript)
 	@echo "🐍 Running Python checks..."
 	hatch run check
-	@echo "📘 Running TypeScript checks..."
+	@echo "📘 Running TypeScript checks (CI: typecheck + lint + layers + coverage)..."
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
 		echo "📦 Installing TypeScript dependencies first..."; \
 		cd packages/luxar-viewer && pnpm install; \
 	fi
-	cd packages/luxar-viewer && pnpm run typecheck && pnpm run lint && pnpm test --run
+	cd packages/luxar-viewer && pnpm run check:ci
 
 # Documentation checks (Phase 4 automation)
 check-docs:  ## Check documentation quality and coverage

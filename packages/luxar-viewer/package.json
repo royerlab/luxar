@@ -61,7 +61,8 @@
     "lint": "eslint src --ext .ts,.tsx",
     "check:layers": "depcruise src --config .dependency-cruiser.cjs",
     "format": "prettier --write src",
-    "check": "pnpm run typecheck && pnpm run lint && pnpm test --run"
+    "check": "pnpm run typecheck && pnpm run lint && pnpm test --run",
+    "check:ci": "pnpm run typecheck && pnpm run lint && pnpm run check:layers && pnpm run test:coverage"
   },
   "dependencies": {
     "comlink": "^4.4.2",

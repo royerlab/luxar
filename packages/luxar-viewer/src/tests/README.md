@@ -25,7 +25,18 @@ pnpm test:with-fixtures       # Generate + run tests
 # Coverage
 pnpm run test:coverage        # Generate coverage report
 open coverage/typescript/index.html
+
+# Quality gates
+pnpm run check                # Fast dev-loop: typecheck + lint + unit tests
+pnpm run check:ci             # Merge gate: typecheck + lint + layers + coverage thresholds
 ```
+
+`check` keeps the iteration fast. `check:ci` is what `make check-all`
+runs and what should run in CI — it adds the dependency-cruiser
+layer rule check and enforces the ratcheted coverage thresholds
+declared in `vitest.config.ts`. A PR can pass `check` while
+violating layers or dropping coverage; that cannot happen with
+`check:ci`.
 
 ---
 
