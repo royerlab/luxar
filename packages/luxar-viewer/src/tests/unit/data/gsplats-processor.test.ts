@@ -3,8 +3,13 @@ import {
   processGSplatsTo3D,
   processGSplats3DOnly,
   processGSplats,
+  createEmptyGSplatsData,
 } from '../../../data/gsplats/gsplats-processor';
-import type { LoadedGSplatsData, GSplatsViewState } from '../../../types/gsplats';
+import type {
+  LoadedGSplatsData,
+  GSplatsViewState,
+  GSplatsMetadata,
+} from '../../../types/gsplats';
 
 describe('processGSplats3DOnly', () => {
   it('should copy 3D data directly', () => {
@@ -797,5 +802,49 @@ describe('discrete dimension handling', () => {
     const invScale4 = 1.0 / (1.0 - shiftC4);
     const expected = invScale4 * (Math.exp(-0.5 * 0.25) - shiftC4);
     expect(result.amplitudes[0]).toBeCloseTo(expected, 4);
+  });
+});
+
+describe('createEmptyGSplatsData', () => {
+  function makeAttrs(overrides: Partial<GSplatsMetadata> = {}): GSplatsMetadata {
+    return {
+      type: 'gsplats',
+      ndim: 3,
+      n_splats: 0,
+      ...overrides,
+    } as GSplatsMetadata;
+  }
+
+  it('returns zero-length typed arrays with the canonical "no visible splats" shape', () => {
+    const data = createEmptyGSplatsData(makeAttrs());
+    expect(data.positions).toBeInstanceOf(Float32Array);
+    expect(data.positions.length).toBe(0);
+    expect(data.amplitudes).toBeInstanceOf(Float32Array);
+    expect(data.amplitudes.length).toBe(0);
+    expect(data.choleskyFactors).toBeInstanceOf(Float32Array);
+    expect(data.choleskyFactors.length).toBe(0);
+    expect(data.splatCount).toBe(0);
+  });
+
+  it('omits the optional colors array', () => {
+    const data = createEmptyGSplatsData(makeAttrs());
+    expect(data.colors).toBeNull();
+  });
+
+  it('forwards ndim from the metadata', () => {
+    const data3 = createEmptyGSplatsData(makeAttrs({ ndim: 3 }));
+    expect(data3.ndim).toBe(3);
+    const data5 = createEmptyGSplatsData(makeAttrs({ ndim: 5 }));
+    expect(data5.ndim).toBe(5);
+    const data10 = createEmptyGSplatsData(makeAttrs({ ndim: 10 }));
+    expect(data10.ndim).toBe(10);
+  });
+
+  it('returns fresh arrays on each call (no shared buffer state)', () => {
+    const a = createEmptyGSplatsData(makeAttrs());
+    const b = createEmptyGSplatsData(makeAttrs());
+    expect(a.positions).not.toBe(b.positions);
+    expect(a.amplitudes).not.toBe(b.amplitudes);
+    expect(a.choleskyFactors).not.toBe(b.choleskyFactors);
   });
 });

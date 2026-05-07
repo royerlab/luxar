@@ -6,11 +6,12 @@ import {
   clipSegmentToSlice,
   buildInstanceBuffers,
   buildInstanceBuffersWASM,
+  createEmptyLinesData,
   lerp,
   lerpVec3,
   distance3D,
 } from '../../../data/lines/projection';
-import type { LoadedLinesData } from '../../../types/lines';
+import type { LinesMetadata, LoadedLinesData } from '../../../types/lines';
 
 // Check if WASM files exist for comparison tests
 const __filename = fileURLToPath(import.meta.url);
@@ -881,5 +882,56 @@ describe.skipIf(!wasmFilesExist)('buildInstanceBuffersWASM vs buildInstanceBuffe
 
     compareResults(tsResult, wasmResult);
     expect(wasmResult.segmentCount).toBe(0);
+  });
+});
+
+describe('createEmptyLinesData', () => {
+  function makeAttrs(overrides: Partial<LinesMetadata> = {}): LinesMetadata {
+    return {
+      type: 'lines',
+      ndim: 3,
+      n_vertices: 0,
+      n_segments: 0,
+      ...overrides,
+    } as LinesMetadata;
+  }
+
+  it('returns zero-length typed arrays with the canonical "no visible lines" shape', () => {
+    const data = createEmptyLinesData(makeAttrs());
+
+    expect(data.positions).toBeInstanceOf(Float32Array);
+    expect(data.positions.length).toBe(0);
+    expect(data.segments).toBeInstanceOf(Uint32Array);
+    expect(data.segments.length).toBe(0);
+    expect(data.widths).toBeInstanceOf(Float32Array);
+    expect(data.widths.length).toBe(0);
+    expect(data.segmentCount).toBe(0);
+    expect(data.vertexCount).toBe(0);
+  });
+
+  it('omits optional colors and sharpness arrays', () => {
+    const data = createEmptyLinesData(makeAttrs());
+
+    expect(data.colors).toBeNull();
+    expect(data.sharpness).toBeNull();
+  });
+
+  it('forwards ndim from the metadata', () => {
+    const data3 = createEmptyLinesData(makeAttrs({ ndim: 3 }));
+    expect(data3.ndim).toBe(3);
+
+    const data5 = createEmptyLinesData(makeAttrs({ ndim: 5 }));
+    expect(data5.ndim).toBe(5);
+
+    const data10 = createEmptyLinesData(makeAttrs({ ndim: 10 }));
+    expect(data10.ndim).toBe(10);
+  });
+
+  it('returns fresh arrays on each call (no shared buffer state)', () => {
+    const a = createEmptyLinesData(makeAttrs());
+    const b = createEmptyLinesData(makeAttrs());
+    expect(a.positions).not.toBe(b.positions);
+    expect(a.segments).not.toBe(b.segments);
+    expect(a.widths).not.toBe(b.widths);
   });
 });
