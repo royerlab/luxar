@@ -35,6 +35,11 @@ import { consoleInterceptor, type BufferedMessage } from '../../utils/console-in
 import { config } from '../../config';
 import { log, Modules, LogEmoji } from '../../utils/log';
 import { EventGroup } from '../../utils/event-group';
+import {
+  formatArgs as formatArgsImpl,
+  formatConsoleTimestamp,
+  messageMatchesFilter,
+} from './debug-console-formatters';
 
 export interface ConsoleMessage {
   type: 'log' | 'warn' | 'error' | 'info' | 'debug';
@@ -333,23 +338,7 @@ export class DebugConsole {
    * Format arguments for display
    */
   private formatArgs(args: unknown[]): string {
-    return args
-      .map((arg) => {
-        if (arg === undefined) return 'undefined';
-        if (arg === null) return 'null';
-        if (typeof arg === 'string') return arg;
-        if (typeof arg === 'number') return arg.toString();
-        if (typeof arg === 'boolean') return arg.toString();
-        if (typeof arg === 'object') {
-          try {
-            return JSON.stringify(arg, null, 2);
-          } catch {
-            return String(arg);
-          }
-        }
-        return String(arg);
-      })
-      .join(' ');
+    return formatArgsImpl(args);
   }
 
   /**
@@ -359,14 +348,7 @@ export class DebugConsole {
     const messageEl = document.createElement('div');
     messageEl.className = `luxar-console-message luxar-console-message-${message.type}`;
 
-    // Format timestamp
-    const timestamp = message.timestamp.toLocaleTimeString('en-US', {
-      hour12: false,
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      fractionalSecondDigits: 3,
-    });
+    const timestamp = formatConsoleTimestamp(message.timestamp);
 
     // Create timestamp element safely (no innerHTML)
     const timestampEl = document.createElement('span');
@@ -391,8 +373,7 @@ export class DebugConsole {
       messageEl.appendChild(stackEl);
     }
 
-    // Check filter
-    if (this.filter && !message.formatted.toLowerCase().includes(this.filter.toLowerCase())) {
+    if (!messageMatchesFilter(message.formatted, this.filter)) {
       messageEl.style.display = 'none';
     }
 
@@ -443,7 +424,7 @@ export class DebugConsole {
     messages.forEach((el) => {
       const messageEl = el as HTMLElement;
       const text = messageEl.textContent || '';
-      if (this.filter && !text.toLowerCase().includes(this.filter.toLowerCase())) {
+      if (!messageMatchesFilter(text, this.filter)) {
         messageEl.style.display = 'none';
       } else {
         messageEl.style.display = '';
