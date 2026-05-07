@@ -31,14 +31,15 @@ export default defineConfig({
       thresholds: {
         lines: 71,
         functions: 73,
-        branches: 59,
-        statements: 70,
+        branches: 60,
+        statements: 71,
       },
-      // Phase 5.4y landed rendering-controls camera-setup tests (+17)
-      // on top of 5.4x. Measurement is now 71.40 % L / 73.88 % F /
-      // 59.72 % B / 70.83 % S. Floor advances 1pp on lines (others
-      // hold one cycle to keep ~0.7pp safety margin). Long-term target
-      // stays 80 %.
+      // Phase 5.4z + 5.4aa extracted applyViewerConfigState +
+      // computeDebugState helpers from app.ts and tested both. +43 unit
+      // tests; measurement is now 71.60 % L / 73.92 % F / 60.31 % B /
+      // 71.08 % S. Floor advances 1pp on branches + statements; lines
+      // and functions hold one cycle (~0.6pp safety margin). Long-term
+      // target stays 80 %.
     },
   },
   resolve: {
