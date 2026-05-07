@@ -19,6 +19,7 @@ import {
   type SelectionMode,
 } from './layer-state';
 import { RangeSlider } from './range-slider';
+import { LabeledSlider } from './labeled-slider';
 import { config } from '../../config';
 import { materialManager } from '../../rendering/material-manager';
 import { log, Modules } from '../../utils/log';
@@ -75,10 +76,8 @@ export class LayersPanel {
   private listEl: HTMLElement | null = null;
   private controlsEl: HTMLElement | null = null;
   private rangeSlider: RangeSlider | null = null;
-  private gammaSlider: HTMLInputElement | null = null;
-  private gammaValueEl: HTMLElement | null = null;
-  private opacitySlider: HTMLInputElement | null = null;
-  private opacityValueEl: HTMLElement | null = null;
+  private gammaSlider: LabeledSlider | null = null;
+  private opacitySlider: LabeledSlider | null = null;
   private blendSelect: HTMLSelectElement | null = null;
   private colormapSelect: HTMLSelectElement | null = null;
   private visible = false;
@@ -211,10 +210,10 @@ export class LayersPanel {
     if (wasVisible) this.repositionGUI();
     this.rangeSlider?.dispose();
     this.rangeSlider = null;
+    this.gammaSlider?.dispose();
     this.gammaSlider = null;
-    this.gammaValueEl = null;
+    this.opacitySlider?.dispose();
     this.opacitySlider = null;
-    this.opacityValueEl = null;
     this.blendSelect = null;
     this.rowElements.clear();
     this.panelEl?.remove();
@@ -416,74 +415,45 @@ export class LayersPanel {
       },
     });
 
-    // Gamma
-    const gammaGroup = document.createElement('div');
-    gammaGroup.className = 'luxar-layers-panel__control-group';
-    const gammaLabel = document.createElement('div');
-    gammaLabel.className = 'luxar-layers-panel__control-label';
-
-    const gammaText = document.createElement('span');
-    gammaText.textContent = 'Gamma';
-    this.gammaValueEl = document.createElement('span');
-    this.gammaValueEl.className = 'luxar-layers-panel__control-value';
-    gammaLabel.appendChild(gammaText);
-    gammaLabel.appendChild(this.gammaValueEl);
-
-    this.gammaSlider = document.createElement('input');
-    this.gammaSlider.type = 'range';
-    this.gammaSlider.min = '0.2';
-    this.gammaSlider.max = '5.0';
-    this.gammaSlider.step = '0.01';
-    this.gammaSlider.className = 'luxar-layers-panel__slider';
-    this.gammaSlider.addEventListener('input', () => {
-      this.controlsInteracting = true;
-      const val = clampGamma(parseFloat(this.gammaSlider!.value));
-      this.gammaValueEl!.textContent = val.toFixed(2);
-      this.state.applyToSelected((l) => {
-        l.gamma = val;
-      });
-      for (const sel of this.state.getSelected()) {
-        this.applyGamma(sel);
-      }
-      this.controlsInteracting = false;
+    this.gammaSlider = new LabeledSlider({
+      container: this.controlsEl,
+      label: 'Gamma',
+      min: 0.2,
+      max: 5.0,
+      step: 0.01,
+      initialValue: 1.0,
+      constrain: clampGamma,
+      onChange: (val) => {
+        this.controlsInteracting = true;
+        this.state.applyToSelected((l) => {
+          l.gamma = val;
+        });
+        for (const sel of this.state.getSelected()) {
+          this.applyGamma(sel);
+        }
+        this.controlsInteracting = false;
+      },
     });
-    gammaGroup.appendChild(gammaLabel);
-    gammaGroup.appendChild(this.gammaSlider);
-    this.controlsEl.appendChild(gammaGroup);
 
-    // Opacity
-    const opacityGroup = document.createElement('div');
-    opacityGroup.className = 'luxar-layers-panel__control-group';
-    const opacityLabel = document.createElement('div');
-    opacityLabel.className = 'luxar-layers-panel__control-label';
-    const opacityText = document.createElement('span');
-    opacityText.textContent = 'Opacity';
-    this.opacityValueEl = document.createElement('span');
-    this.opacityValueEl.className = 'luxar-layers-panel__control-value';
-    opacityLabel.appendChild(opacityText);
-    opacityLabel.appendChild(this.opacityValueEl);
-
-    this.opacitySlider = document.createElement('input');
-    this.opacitySlider.type = 'range';
-    this.opacitySlider.min = '0';
-    this.opacitySlider.max = '1';
-    this.opacitySlider.step = '0.01';
-    this.opacitySlider.className = 'luxar-layers-panel__slider';
-    this.opacitySlider.addEventListener('input', () => {
-      this.controlsInteracting = true;
-      const val = clamp(parseFloat(this.opacitySlider!.value), 0, 1);
-      this.opacityValueEl!.textContent = val.toFixed(2);
-      this.state.applyToSelected((l) => {
-        l.opacity = val;
-      });
-      for (const sel of this.state.getSelected()) {
-        this.applyOpacity(sel);
-      }
-      this.controlsInteracting = false;
+    this.opacitySlider = new LabeledSlider({
+      container: this.controlsEl,
+      label: 'Opacity',
+      min: 0,
+      max: 1,
+      step: 0.01,
+      initialValue: 1.0,
+      constrain: (v) => clamp(v, 0, 1),
+      onChange: (val) => {
+        this.controlsInteracting = true;
+        this.state.applyToSelected((l) => {
+          l.opacity = val;
+        });
+        for (const sel of this.state.getSelected()) {
+          this.applyOpacity(sel);
+        }
+        this.controlsInteracting = false;
+      },
     });
-    opacityGroup.appendChild(opacityLabel);
-    opacityGroup.appendChild(this.opacitySlider);
-    this.controlsEl.appendChild(opacityGroup);
 
     // Blending mode
     const blendGroup = document.createElement('div');
@@ -569,19 +539,8 @@ export class LayersPanel {
       this.rangeSlider.setValues(primary.displayMin, primary.displayMax);
     }
 
-    if (this.gammaSlider) {
-      this.gammaSlider.value = String(primary.gamma);
-    }
-    if (this.gammaValueEl) {
-      this.gammaValueEl.textContent = primary.gamma.toFixed(2);
-    }
-
-    if (this.opacitySlider) {
-      this.opacitySlider.value = String(primary.opacity);
-    }
-    if (this.opacityValueEl) {
-      this.opacityValueEl.textContent = primary.opacity.toFixed(2);
-    }
+    this.gammaSlider?.setValue(primary.gamma);
+    this.opacitySlider?.setValue(primary.opacity);
 
     if (this.blendSelect) {
       this.blendSelect.value = primary.blendingMode;
