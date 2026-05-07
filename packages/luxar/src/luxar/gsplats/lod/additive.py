@@ -33,10 +33,10 @@ from typing import Any, Literal, Sequence, Union
 import numpy as np
 from scipy import sparse
 from scipy.sparse.linalg import eigsh
-from scipy.spatial import cKDTree
 
 from luxar.gsplats.gsplat_data import GSplatData, GSplatLOD
 from luxar.gsplats.utils.trils import unpack_tril
+from luxar.utils.spatial_hash import BatchedSpatialHashGrid
 
 MethodName = Literal[
     "greedy", "self_energy", "mass", "amplitude", "spectral", "random"
@@ -148,12 +148,18 @@ def _build_sparse_gram(
         vals.append(K_ii)
 
     if N > 1 and r_max > 0.0:
-        tree = cKDTree(centers)
+        # All per-query radii ``radii[i] + r_max`` are <= ``2 * r_max``;
+        # build the spatial hash with that as cell size and run a single
+        # batched radius query. Per-pair tightening to
+        # ``radii[i] + radii[j]`` happens in the inner filter below.
+        coarse_radius = 2.0 * r_max
+        grid = BatchedSpatialHashGrid.from_points(
+            centers, cell_size=coarse_radius, device="auto"
+        )
+        candidates_per_i = grid.query_radius(centers, radius=coarse_radius)
         for i in range(N):
-            candidates = tree.query_ball_point(
-                centers[i], r=float(radii[i] + r_max)
-            )
-            for j in candidates:
+            for j in candidates_per_i[i]:
+                j = int(j)
                 if j <= i:
                     continue
                 d = centers[i] - centers[j]
