@@ -30,16 +30,16 @@ export default defineConfig({
       // band. Long-term target: 80% across the board.
       thresholds: {
         lines: 68,
-        functions: 70,
-        branches: 57,
-        statements: 67,
+        functions: 71,
+        branches: 58,
+        statements: 68,
       },
-      // Phase 5.4r landed 17 hierarchical-timing-panel tests on top of
-      // Phase 5.4q (dataset-browser) and Phase 5.2 body. Measurement is
-      // now 68.97 % L / 70.84 % F / 58.22 % B / 68.46 % S. Floor
-      // advances 1pp on lines + branches (functions and statements
-      // hold one cycle so the safety margin stays >= ~0.5pp); long-
-      // term target stays 80 %.
+      // Phase 5.4s/t/u landed hdr-setup, anti-aliasing-setup,
+      // theme-setup, performance-setup, and navigation-setup tests
+      // (+63 unit tests) on top of Phase 5.4q/r. Measurement is now
+      // 69.72 % L / 71.74 % F / 58.43 % B / 69.17 % S. Floor advances
+      // 0–1pp per metric (~0.5pp safety margin retained); long-term
+      // target stays 80 %.
     },
   },
   resolve: {
