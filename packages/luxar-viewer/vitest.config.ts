@@ -30,16 +30,15 @@ export default defineConfig({
       // band. Long-term target: 80% across the board.
       thresholds: {
         lines: 70,
-        functions: 72,
-        branches: 58,
-        statements: 69,
+        functions: 73,
+        branches: 59,
+        statements: 70,
       },
-      // Phase 5.4v + 5.4w landed post-processing-setup (+33) and
-      // loading-advisor (+26) tests on top of 5.4s/t/u. Measurement is
-      // now 70.48 % L / 73.13 % F / 58.89 % B / 69.89 % S. Floor
-      // advances 1–2pp on lines/functions/statements (branches hold —
-      // bigger jump deferred to next phase). Long-term target stays
-      // 80 %.
+      // Phase 5.4x landed gsplats-progressive-loader tests (+23) on top
+      // of 5.4v + 5.4w. Measurement is now 70.94 % L / 73.63 % F /
+      // 59.48 % B / 70.39 % S. Floor advances on functions / branches /
+      // statements (lines holds, ~0.94pp safety margin). Long-term
+      // target stays 80 %.
     },
   },
   resolve: {
