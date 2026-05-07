@@ -19,7 +19,7 @@
  */
 
 import type { GSplatsDataLoader, GSplatsViewState, LoadedGSplatsData } from '../../types/gsplats';
-import type { GSplatsSpatialIndexLoader } from '../gsplats/gsplats-spatial-index-loader';
+import type { GSplatsSpatialIndexLoader } from './gsplats-spatial-index-loader';
 import type { UpdateSession } from '../../profiling/update-profiler';
 import { log, Modules, LogEmoji } from '../../utils/log';
 

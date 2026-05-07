@@ -25,7 +25,7 @@ import { PointSpatialIndexLoader } from '../points/point-spatial-index-loader';
 export type { PointSpatialIndexLoader } from '../points/point-spatial-index-loader';
 import { LinesSpatialIndexLoader } from '../lines/lines-spatial-index-loader';
 import { GSplatsSpatialIndexLoader } from '../gsplats/gsplats-spatial-index-loader';
-import { GSplatsProgressiveLoader } from '../loaders/gsplats-progressive-loader';
+import { GSplatsProgressiveLoader } from '../gsplats/gsplats-progressive-loader';
 import type { LoaderConfig, SceneNode } from '../data-loader-types';
 import type { LinesDataLoader } from '../../types/lines';
 import type { GSplatsDataLoader } from '../../types/gsplats';

@@ -43,9 +43,10 @@ data/
 ├── lines/                         # Lines geometry — facade (decomposition pending Phase 10.2)
 │   └── lines-spatial-index-loader.ts  # Loads lines with nD clipping + attribute interpolation
 │
-├── gsplats/                       # GSplats geometry — facade + processor (decomposition pending Phase 10.3)
-│   ├── gsplats-spatial-index-loader.ts # Loads Gaussian splats with nD visibility
-│   └── gsplats-processor.ts           # nD → 3D pure-math companion (centers, Cholesky, attenuation)
+├── gsplats/                       # GSplats geometry — facade + processor + multi-LOD wrapper (decomposition pending Phase 10.3)
+│   ├── gsplats-spatial-index-loader.ts  # Loads Gaussian splats with nD visibility
+│   ├── gsplats-progressive-loader.ts    # Composite-pattern multi-LOD facade (loads N LODs sequentially)
+│   └── gsplats-processor.ts             # nD → 3D pure-math companion (centers, Cholesky, attenuation)
 │
 ├── transforms/                    # nD transform helpers
 │   └── nd-transform.ts            # Inverse-query for non-displayed dimensions
@@ -75,7 +76,6 @@ data/
 │   ├── image-label-loader.ts      # Lazy per-element image fetching from zarr
 │   ├── label-loader.ts            # Lazy CSR-style label fetching from zarr
 │   ├── overlay-loader.ts          # Reads overlay configurations from zarr store
-│   ├── gsplats-progressive-loader.ts # GSplats-specific multi-LOD; will move to gsplats/ in Phase 10.5
 │   └── loader-registry.ts         # Lifecycle management for geometry loaders
 │
 └── (related: ../workers/)         # Web Worker infrastructure
