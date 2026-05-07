@@ -52,7 +52,7 @@ import {
 } from './data-loader-types';
 import type { SceneGraphNode } from '../types/data-monitor-types';
 import { ZarrSceneAttrs, ZarrNodeAttrs, hasContentsMethod } from '../types/zarr';
-import { DataMonitorManager } from '../ui/data-monitor-manager';
+import { DataMonitorManager } from '../ui/monitors/data-monitor-manager';
 import { ArrayRefRegistry } from './utils/array-decoder';
 import {
   ViewStateManager,

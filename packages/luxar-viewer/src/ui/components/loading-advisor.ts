@@ -6,7 +6,7 @@
  */
 
 import type { MonitorEvent, Recommendation, LoaderMetrics } from '../../types/data-monitor-types';
-import type { MemoryMetrics } from '../data-monitor-templates';
+import type { MemoryMetrics } from '../monitors/data-monitor-templates';
 import { config } from '../../config';
 
 const PerformanceThresholds = config.dataLoading.monitor.thresholds;

@@ -48,7 +48,7 @@ import { captureViewerState } from '../config/viewer-state-capture';
 import { DimensionSliders } from '../ui/dimension-sliders';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
 import type { DebugConsole } from '../ui/debug-console';
-import type { PerformanceMonitor } from '../ui/performance-monitor';
+import type { PerformanceMonitor } from '../ui/monitors/performance-monitor';
 import { InputContextManager, InputContext } from './input-context-manager';
 import { computeDimensionStep, resolveSelectedDimension } from './handlers/dimension-navigation';
 import { PanelCoordinator } from './handlers/panel-coordinator';

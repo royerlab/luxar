@@ -18,7 +18,7 @@ vi.mock('../../../rendering/post-processing-manager', () => ({
   PostProcessingManager: vi.fn(),
 }));
 
-vi.mock('../../../ui/performance-monitor', () => {
+vi.mock('../../../ui/monitors/performance-monitor', () => {
   return {
     PerformanceMonitor: class MockPerformanceMonitor {
       begin = vi.fn();

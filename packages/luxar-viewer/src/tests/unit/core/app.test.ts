@@ -27,7 +27,7 @@ vi.mock('../../../scene/scene-dims-manager');
 // from AnimationController / InputHandler to LuxarApp. Mock both here
 // so stats.js / DebugConsole's document.createElement calls don't run
 // in the stubbed-window env.
-vi.mock('../../../ui/performance-monitor', () => ({
+vi.mock('../../../ui/monitors/performance-monitor', () => ({
   PerformanceMonitor: vi.fn().mockImplementation(() => ({
     show: vi.fn(),
     hide: vi.fn(),

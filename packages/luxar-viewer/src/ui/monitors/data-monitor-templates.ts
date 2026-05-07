@@ -16,8 +16,8 @@ import type {
   CacheMetrics,
   SceneGraphNode,
   SceneGraphState,
-} from '../types/data-monitor-types';
-import { escapeHtml } from '../utils/escape-html';
+} from '../../types/data-monitor-types';
+import { escapeHtml } from '../../utils/escape-html';
 
 /**
  * Semantic color names mapped to CSS class modifiers.

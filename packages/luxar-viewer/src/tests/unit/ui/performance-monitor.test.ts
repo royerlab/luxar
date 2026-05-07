@@ -32,7 +32,7 @@ vi.mock('stats.js', () => {
   return { default: MockStats };
 });
 
-import { PerformanceMonitor } from '../../../ui/performance-monitor';
+import { PerformanceMonitor } from '../../../ui/monitors/performance-monitor';
 
 describe('PerformanceMonitor', () => {
   let monitor: PerformanceMonitor;

@@ -13,7 +13,7 @@ import { getManagerRegistry } from './manager-registry';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
 import { AdaptiveDPRManager } from '../rendering/adaptive-dpr-manager';
 import { ResolutionIndicator } from '../ui/components/resolution-indicator';
-import { PerformanceMonitor } from '../ui/performance-monitor';
+import { PerformanceMonitor } from '../ui/monitors/performance-monitor';
 import { DebugConsole } from '../ui/debug-console';
 import { SceneLoaderManager, getSceneLoader } from '../data/scene-loader-manager';
 import { ScaleBar } from '../ui/components/scale-bar';

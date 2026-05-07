@@ -6,8 +6,8 @@
  */
 
 import { DataLoadingMonitor } from './data-loading-monitor';
-import type { MonitorConfig } from '../types/data-monitor-types';
-import { eventBus, type Unsubscribe } from '../utils/event-bus';
+import type { MonitorConfig } from '../../types/data-monitor-types';
+import { eventBus, type Unsubscribe } from '../../utils/event-bus';
 
 /**
  * Manager for DataLoadingMonitor instances.

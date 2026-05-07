@@ -5,8 +5,8 @@
 // performance overhead.
 
 import Stats from 'stats.js';
-import { config } from '../config';
-import { eventBus, type Unsubscribe } from '../utils/event-bus';
+import { config } from '../../config';
+import { eventBus, type Unsubscribe } from '../../utils/event-bus';
 
 /**
  * PerformanceMonitor manages real-time performance statistics display
