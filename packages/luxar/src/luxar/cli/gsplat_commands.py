@@ -4694,3 +4694,220 @@ def lod_additive(
 
         traceback.print_exc()
         raise typer.Exit(1) from e
+
+
+_VALID_SUBSTITUTIVE_METHODS = (
+    "kmeans",
+    "kmeans_lloyd",
+    "greedy",
+    "greedy_lloyd",
+)
+
+
+@app_lod.command("substitutive")
+def lod_substitutive(
+    input_path: Path = typer.Argument(
+        ..., exists=True, help="Input .gsplats.zarr (single- or multi-LOD)"
+    ),
+    output_dir: Path = typer.Argument(
+        ...,
+        help=(
+            "Output directory; one .gsplats.zarr per level + manifest.json. "
+            "Each level is loadable independently with `luxar gsplat info`."
+        ),
+    ),
+    compression_factor: int = typer.Option(
+        4,
+        "--K",
+        "-K",
+        help="Per-level compression factor (each level shrinks by this).",
+        min=2,
+    ),
+    levels: int = typer.Option(
+        3,
+        "--L",
+        "-L",
+        help="Number of coarser levels to produce.",
+        min=1,
+    ),
+    method: str = typer.Option(
+        "kmeans_lloyd",
+        "--method",
+        "-m",
+        help=(
+            "Partition algorithm: kmeans_lloyd (default, recommended), "
+            "kmeans (no Lloyd; warning: worse than amplitude culling on "
+            "real anisotropic data), greedy (quality-leaning, ~8x slower), "
+            "greedy_lloyd."
+        ),
+    ),
+    lloyd_iterations: int = typer.Option(
+        5,
+        "--lloyd-iters",
+        help="Max Lloyd refinement passes per level (only for *_lloyd methods).",
+        min=0,
+    ),
+    candidate_bins_k: int = typer.Option(
+        12,
+        "--candidate-bins-k",
+        help="Top-k spatial-hash candidates per splat during Lloyd.",
+        min=1,
+    ),
+    device: str = typer.Option(
+        "auto",
+        "--device",
+        help="PyTorch device: auto | cpu | cuda | mps.",
+    ),
+    seed: Optional[int] = typer.Option(
+        None, "--seed", help="RNG seed for k-means++ and Lloyd's scan order."
+    ),
+    overwrite: bool = typer.Option(
+        False, "--overwrite", help="Overwrite output directory if it exists."
+    ),
+    encoding_mode: Literal["auto", "precision", "memory"] = typer.Option(
+        "auto",
+        "--encoding",
+        "-e",
+        help="Encoding mode for output .gsplats.zarr levels.",
+    ),
+    compress: Optional[str] = typer.Option(
+        None,
+        "--compress",
+        help=(
+            "Optional per-level compression: 'zip' or 'tar.gz'. "
+            "Omit for plain .gsplats.zarr directories."
+        ),
+    ),
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v", help="Per-level progress logging."
+    ),
+) -> None:
+    """Build a substitutive LOD hierarchy from a fitted gsplat dataset.
+
+    Each coarser level contains synthesised representative splats that
+    *replace* the previous level (compression factor K per step). The
+    output directory contains one .gsplats.zarr per level (level_0 is the
+    original input) plus manifest.json describing the hierarchy.
+
+    \b
+    Examples:
+        luxar gsplat lod substitutive in.gsplats.zarr out_dir/
+        luxar gsplat lod substitutive in.gsplats.zarr out_dir/ --K 4 --L 3
+        luxar gsplat lod substitutive in.gsplats.zarr out_dir/ \\
+            --method kmeans-lloyd --lloyd-iters 5
+        luxar gsplat lod substitutive in.gsplats.zarr out_dir/ \\
+            --method greedy_lloyd --K 2
+    """
+    try:
+        import json
+        import shutil
+        import time
+
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.lod import make_substitutive_lod
+
+        method_norm = method.strip().replace("-", "_")
+        if method_norm not in _VALID_SUBSTITUTIVE_METHODS:
+            raise typer.BadParameter(
+                f"--method must be one of {sorted(_VALID_SUBSTITUTIVE_METHODS)}, "
+                f"got {method!r}"
+            )
+
+        encoding_mode_obj = _resolve_encoding_mode(encoding_mode)
+        if compress not in (None, "zip", "tar.gz"):
+            raise typer.BadParameter(
+                f"--compress must be 'zip' or 'tar.gz'; got {compress!r}"
+            )
+
+        if output_dir.exists() and not overwrite:
+            raise typer.BadParameter(
+                f"Output {output_dir} exists; pass --overwrite to replace it."
+            )
+
+        with asection(f"LOD substitutive: {input_path.name}"):
+            with asection("Loading dataset"):
+                data = GSplatData.load(input_path, include_stats=True)
+                aprint(f"Loaded {data.n_splats:,} splats ({data.ndim}D)")
+                if data.n_lods > 1:
+                    aprint(
+                        f"Input is multi-LOD ({data.n_lods} LODs); "
+                        "operating on the flattened concatenation."
+                    )
+
+            with asection(
+                f"Reducing ({method_norm}, K={compression_factor}, L={levels})"
+            ):
+                t0 = time.time()
+                hierarchy = make_substitutive_lod(
+                    data,
+                    compression_factor=compression_factor,
+                    levels=levels,
+                    method=method_norm,  # type: ignore[arg-type]
+                    lloyd_iterations=lloyd_iterations,
+                    candidate_bins_k=candidate_bins_k,
+                    device=device,
+                    seed=seed,
+                    verbose=verbose,
+                )
+                aprint(
+                    f"Built {len(hierarchy)}-level hierarchy in "
+                    f"{time.time() - t0:.2f}s"
+                )
+                for level_idx, lev in enumerate(hierarchy):
+                    aprint(f"  level {level_idx}: {lev.n_splats:,} splats")
+
+            with asection("Saving"):
+                if output_dir.exists() and overwrite:
+                    if output_dir.is_dir():
+                        shutil.rmtree(output_dir)
+                    else:
+                        output_dir.unlink()
+                output_dir.mkdir(parents=True, exist_ok=False)
+
+                manifest_levels: list[dict[str, Any]] = []
+                for level_idx, lev in enumerate(hierarchy):
+                    file_name = f"level_{level_idx}.gsplats.zarr"
+                    if compress == "zip":
+                        file_name += ".zip"
+                    elif compress == "tar.gz":
+                        file_name += ".tar.gz"
+                    out_path = output_dir / file_name
+                    lev.save(
+                        out_path,
+                        encoding_mode=encoding_mode_obj,
+                        compress=compress,  # type: ignore[arg-type]
+                    )
+                    manifest_levels.append(
+                        {
+                            "level": level_idx,
+                            "file": file_name,
+                            "n_splats": int(lev.n_splats),
+                        }
+                    )
+
+                manifest = {
+                    "lod_kind": "substitutive",
+                    "compression_factor": int(compression_factor),
+                    "levels": int(levels),
+                    "method": method_norm,
+                    "lloyd_iterations": int(lloyd_iterations),
+                    "candidate_bins_k": int(candidate_bins_k),
+                    "seed": seed,
+                    "input_n_splats": int(data.n_splats),
+                    "input_ndim": int(data.ndim),
+                    "levels_data": manifest_levels,
+                }
+                manifest_path = output_dir / "manifest.json"
+                manifest_path.write_text(json.dumps(manifest, indent=2))
+                aprint(f"Wrote manifest to {manifest_path}")
+
+    except typer.Exit:
+        raise
+    except typer.BadParameter:
+        raise
+    except Exception as e:
+        aprint(f"Error: {e}")
+        import traceback
+
+        traceback.print_exc()
+        raise typer.Exit(1) from e
