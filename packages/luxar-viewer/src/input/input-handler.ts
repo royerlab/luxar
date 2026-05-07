@@ -55,6 +55,8 @@ import { PanelCoordinator } from './handlers/panel-coordinator';
 import { WindowEventHandler } from './handlers/window-event-handler';
 import { AnimationShortcuts } from './handlers/animation-shortcuts';
 import { registerAllKeyBindings } from './handlers/key-bindings';
+import { isTypingInInput, isFocusOnSceneCanvas } from './handlers/focus-utils';
+import { nextControlType } from './handlers/control-mode-cycle';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { updateSceneForDimensions } from '../data';
 import { eventBus } from '../utils/event-bus';
@@ -804,24 +806,9 @@ export class InputHandler {
    */
   private toggleControlMode(): void {
     const currentType = this.sceneManager.controls.getControlType();
-    let newType: 'orbit' | 'fly' | 'ortho';
-
     log.custom(LogEmoji.CONTROLS, Modules.INPUT, `toggleControlMode called: ${currentType} → ?`);
 
-    // Cycle through: orbit -> fly -> ortho -> orbit
-    switch (currentType) {
-      case 'orbit':
-        newType = 'fly';
-        break;
-      case 'fly':
-        newType = 'ortho';
-        break;
-      case 'ortho':
-        newType = 'orbit';
-        break;
-      default:
-        newType = 'orbit';
-    }
+    const newType = nextControlType(currentType);
 
     // Use sceneManager.setControlType for ortho (handles camera swap)
     this.sceneManager.setControlType(newType);
@@ -894,42 +881,17 @@ export class InputHandler {
    * @private
    */
   private shouldHandleSpaceKey(): boolean {
-    const activeElement = document.activeElement;
-    return (
-      activeElement === document.body || activeElement === this.sceneManager.renderer.domElement
-    );
+    return isFocusOnSceneCanvas(document.activeElement, this.sceneManager.renderer.domElement);
   }
 
   /**
-   * Check if user is currently typing in a text input field.
-   *
-   * Checks if focus is in an input, textarea, select, or contenteditable
-   * element. Used to prevent navigation shortcuts from interfering with
-   * text entry. For example, prevents [ ] keys from navigating dimensions
-   * when user is typing in a search box.
-   *
-   * @returns true if user is typing in text field, false otherwise
+   * Check if user is currently typing in a text input field. Thin wrapper
+   * around the pure {@link isTypingInInput} helper so callers in this file
+   * keep their compact `this.isTypingInInput()` shape.
    * @private
    */
   private isTypingInInput(): boolean {
-    const activeElement = document.activeElement;
-    if (!activeElement) return false;
-
-    const tagName = activeElement.tagName.toLowerCase();
-    // Check if it's an input field or contenteditable element
-    // Exclude non-text input types (range sliders, checkboxes, radios) that don't capture typing
-    if (tagName === 'input') {
-      const inputType = (activeElement as HTMLInputElement).type?.toLowerCase();
-      if (inputType === 'range' || inputType === 'checkbox' || inputType === 'radio') {
-        return false;
-      }
-      return true;
-    }
-    return (
-      tagName === 'textarea' ||
-      tagName === 'select' ||
-      activeElement.getAttribute('contenteditable') === 'true'
-    );
+    return isTypingInInput(document.activeElement);
   }
 
   /**
