@@ -38,6 +38,7 @@ import { EventGroup } from '../utils/event-group';
 import { setWasmJsUrl } from '../wasm';
 import { setDataWorkerUrl } from '../workers/worker-pool';
 import { replaceBrowserDataSourceUrl } from '../config/url-params';
+import { classifyBrowserUrl } from './browser-decision';
 
 /**
  * Init-time options for {@link LuxarApp.init}.
@@ -369,15 +370,9 @@ export class LuxarApp {
    * Check if we should show the dataset browser
    */
   private async shouldShowBrowser(src: string): Promise<boolean> {
-    // If no source or empty string, show browser immediately
-    if (!src || src.trim() === '') {
-      return true;
-    }
-
-    // If it's a directory URL (ends with /), show browser
-    if (src.endsWith('/')) {
-      return true;
-    }
+    // Synchronous classification: empty / trailing-slash URLs always
+    // need the browser, no point firing a zarr-metadata probe.
+    if (classifyBrowserUrl(src) === 'must-browse') return true;
 
     // Check if it's a Zarr dataset by looking for zarr metadata files
     // Try both v2 (.zgroup) and v3 (zarr.json) formats
