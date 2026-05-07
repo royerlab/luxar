@@ -475,8 +475,16 @@ export class LuxarApp {
       },
       onClose: () => {
         this.datasetBrowser = undefined;
+        // Clear the close handle in PanelCoordinator so a follow-on
+        // Escape doesn't try to close an already-closed browser.
+        this.inputHandler?.setDatasetBrowser(undefined);
       },
     });
+
+    // Hand a close handle to the InputHandler/PanelCoordinator so
+    // Escape routes through `close()` (which fires onClose above)
+    // instead of yanking the DOM node and stranding our ref.
+    this.inputHandler?.setDatasetBrowser(this.datasetBrowser);
   }
 
   /**

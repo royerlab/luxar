@@ -235,6 +235,17 @@ export class InputHandler {
     this.panelCoordinator.setRecordingPanel(panel);
   }
 
+  /**
+   * Forward a dataset-browser close handle (or `undefined` to clear it)
+   * to PanelCoordinator so the Escape path closes via the panel's own
+   * `close()` method — which fires `onClose` and clears the owner's
+   * `LuxarApp.datasetBrowser` reference. The `O` shortcut needs that
+   * reference cleared in order to reopen the panel.
+   */
+  setDatasetBrowser(browser: { close(): void } | undefined): void {
+    this.panelCoordinator.setDatasetBrowser(browser);
+  }
+
   setOverlayManager(manager: OverlayManager): void {
     this.overlayManager = manager;
   }

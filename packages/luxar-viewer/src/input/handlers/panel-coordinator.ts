@@ -29,6 +29,16 @@ interface PerformanceStatsHandle {
   hide(): void;
 }
 
+/**
+ * Minimal close-only handle for the dataset browser. Avoids importing
+ * the full `DatasetBrowser` type — the coordinator only needs to call
+ * `close()`, which fires the panel's `onClose` callback and clears
+ * `LuxarApp.datasetBrowser` so the `O` shortcut can reopen it.
+ */
+export interface CloseableHandle {
+  close(): void;
+}
+
 /** Optional / always-present panel handles the coordinator manages. */
 export interface PanelRefs {
   /** Always present: the debug console — owned by InputHandler from construction. */
@@ -41,6 +51,14 @@ export interface PanelRefs {
   dimensionSliders?: DimensionSliders;
   /** Optional: recording panel. */
   recordingPanel?: RecordingPanel;
+  /**
+   * Optional: dataset browser, exposed only as a close handle so the
+   * Escape path runs the panel's `close()` method (which fires
+   * `onClose` to clear the owner's ref) instead of just yanking the
+   * DOM element. Without this, Escape leaves `LuxarApp.datasetBrowser`
+   * dangling and the `O` shortcut becomes a silent no-op.
+   */
+  datasetBrowser?: CloseableHandle;
 }
 
 /**
@@ -74,6 +92,15 @@ export class PanelCoordinator {
   }
 
   /**
+   * Set or clear the dataset-browser close handle. Owners populate it
+   * when opening the browser and clear it from the browser's own
+   * `onClose` callback.
+   */
+  setDatasetBrowser(browser: CloseableHandle | undefined): void {
+    this.refs.datasetBrowser = browser;
+  }
+
+  /**
    * Close all open UI panels and overlays in priority order
    * (topmost first):
    *
@@ -99,12 +126,11 @@ export class PanelCoordinator {
     // Close error messages
     notifier.clearError();
 
-    // Close dataset browser (the only panel with no instance handle —
-    // looked up by element id).
-    const datasetBrowser = document.getElementById('luxar-dataset-browser');
-    if (datasetBrowser) {
-      datasetBrowser.remove();
-    }
+    // Close dataset browser via its own close() method so onClose fires
+    // and the owner's reference (LuxarApp.datasetBrowser) is cleared.
+    // A previous direct `getElementById(...).remove()` left the owner
+    // ref dangling, breaking the `O` reopen shortcut.
+    this.refs.datasetBrowser?.close();
 
     if (this.refs.renderingControls?.isVisible()) {
       this.refs.renderingControls.hide();

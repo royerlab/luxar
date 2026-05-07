@@ -138,25 +138,40 @@ describe('PanelCoordinator.closeAll', () => {
     }
   });
 
-  it('removes #luxar-dataset-browser if present', () => {
-    const browser = document.createElement('div');
-    browser.id = 'luxar-dataset-browser';
-    document.body.appendChild(browser);
-    expect(document.getElementById('luxar-dataset-browser')).not.toBeNull();
-
+  it('calls datasetBrowser.close() when one is registered', () => {
+    const close = vi.fn();
     const { console: debugConsole } = makeDebugConsole(false);
     const { stats } = makePerformanceStats(false);
-    new PanelCoordinator({ debugConsole, performanceStats: stats }).closeAll();
+    new PanelCoordinator({
+      debugConsole,
+      performanceStats: stats,
+      datasetBrowser: { close },
+    }).closeAll();
 
-    expect(document.getElementById('luxar-dataset-browser')).toBeNull();
+    expect(close).toHaveBeenCalledTimes(1);
   });
 
-  it('does NOT crash when #luxar-dataset-browser is absent', () => {
+  it('does NOT crash when no datasetBrowser is registered', () => {
     const { console: debugConsole } = makeDebugConsole(false);
     const { stats } = makePerformanceStats(false);
     expect(() =>
       new PanelCoordinator({ debugConsole, performanceStats: stats }).closeAll()
     ).not.toThrow();
+  });
+
+  it('setDatasetBrowser late-binds and clears the close handle', () => {
+    const close = vi.fn();
+    const { console: debugConsole } = makeDebugConsole(false);
+    const { stats } = makePerformanceStats(false);
+    const coord = new PanelCoordinator({ debugConsole, performanceStats: stats });
+
+    coord.setDatasetBrowser({ close });
+    coord.closeAll();
+    expect(close).toHaveBeenCalledTimes(1);
+
+    coord.setDatasetBrowser(undefined);
+    coord.closeAll();
+    expect(close).toHaveBeenCalledTimes(1);
   });
 
   it('hides only optional panels that are currently visible', () => {
