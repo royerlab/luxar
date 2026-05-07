@@ -91,6 +91,12 @@ export interface UrlParams {
   noPrefetch: boolean;
   /** Verbose prefetch logging (`?prefetch-debug`). */
   prefetchDebug: boolean;
+  /**
+   * Auto-open the data-loading monitor in expanded mode on the Cache tab
+   * (`?cache-stats`). Useful for measuring L0/L1/L2 hit rates without
+   * having to find the monitor's keyboard shortcut first.
+   */
+  cacheStats: boolean;
 }
 
 /**
@@ -113,6 +119,7 @@ export function readUrlParams(search?: string): UrlParams {
     clearCache: params.has('clear-cache'),
     noPrefetch: params.has('no-prefetch'),
     prefetchDebug: params.has('prefetch-debug'),
+    cacheStats: params.has('cache-stats'),
   };
 }
 

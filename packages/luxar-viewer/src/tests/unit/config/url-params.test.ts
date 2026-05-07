@@ -18,6 +18,7 @@ describe('readUrlParams', () => {
       clearCache: false,
       noPrefetch: false,
       prefetchDebug: false,
+      cacheStats: false,
     });
   });
 
@@ -73,7 +74,7 @@ describe('readUrlParams', () => {
 
   it('treats valueless flags as boolean true', () => {
     const params = readUrlParams(
-      '?debug&no-cache&cache-debug&clear-cache&no-prefetch&prefetch-debug'
+      '?debug&no-cache&cache-debug&clear-cache&no-prefetch&prefetch-debug&cache-stats'
     );
     expect(params.debug).toBe(true);
     expect(params.noCache).toBe(true);
@@ -81,6 +82,14 @@ describe('readUrlParams', () => {
     expect(params.clearCache).toBe(true);
     expect(params.noPrefetch).toBe(true);
     expect(params.prefetchDebug).toBe(true);
+    expect(params.cacheStats).toBe(true);
+  });
+
+  it('cache-stats is independent of cache-debug (different concerns)', () => {
+    expect(readUrlParams('?cache-stats').cacheStats).toBe(true);
+    expect(readUrlParams('?cache-stats').cacheDebug).toBe(false);
+    expect(readUrlParams('?cache-debug').cacheStats).toBe(false);
+    expect(readUrlParams('?cache-debug').cacheDebug).toBe(true);
   });
 
   it('accepts a leading question mark or omits it', () => {

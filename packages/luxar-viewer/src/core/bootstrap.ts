@@ -172,6 +172,7 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     src: urlParams.src ?? config.defaultZarrPath,
     debug: isDebugMode,
     updateBrowserUrl: true,
+    openCacheStats: urlParams.cacheStats,
     loaderConfig: {
       noCache: urlParams.noCache,
       cacheDebug: urlParams.cacheDebug,

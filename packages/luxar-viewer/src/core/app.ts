@@ -19,6 +19,7 @@ import { sceneDimsManager } from '../scene/scene-dims-manager';
 import { AdaptiveDPRManager } from '../rendering/adaptive-dpr-manager';
 import { ResolutionIndicator } from '../ui/components/resolution-indicator';
 import { PerformanceMonitor } from '../ui/monitors/performance-monitor';
+import { DataMonitorManager } from '../ui/monitors/data-monitor-manager';
 import { DebugConsole } from '../ui/panels/debug-console';
 import { SceneLoaderManager, getSceneLoader } from '../data/scene-loader-manager';
 import { ScaleBar } from '../ui/components/scale-bar';
@@ -87,6 +88,14 @@ export interface LuxarAppOptions {
    * if your bundler can't resolve worker URLs that way.
    */
   workerPath?: string;
+
+  /**
+   * Open the data-loading monitor in expanded mode on the Cache tab as
+   * soon as the scene is wired up. Set by the standalone bootstrap when
+   * `?cache-stats` is in the URL; embedders can pass it explicitly when
+   * profiling cache behaviour.
+   */
+  openCacheStats?: boolean;
 }
 
 export class LuxarApp {
@@ -505,8 +514,28 @@ export class LuxarApp {
     // Apply zarr viewer_config: UI visibility, theme, dimension state, animation
     this.applyViewerConfigState(viewerConfig);
 
+    // ?cache-stats: open the data-loading monitor on the Cache tab. The
+    // monitor was created during sceneManager.loadSceneData() above, so
+    // it's safe to look it up via DataMonitorManager now.
+    if (this.options.openCacheStats) {
+      this.openCacheStatsView();
+    }
+
     // Trigger animation to ensure scene is rendered immediately
     this.animationController.startAnimation();
+  }
+
+  /**
+   * Open the data-loading monitor in expanded mode on the Cache tab.
+   * Best-effort: silently skips when no monitor was created (e.g.
+   * embedded contexts that disable the monitor).
+   */
+  private openCacheStatsView(): void {
+    const monitor = DataMonitorManager.getInstance().getDefaultMonitor();
+    if (!monitor) return;
+    monitor.show();
+    monitor.expand();
+    monitor.setActiveTab('cache');
   }
 
   /**

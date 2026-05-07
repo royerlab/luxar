@@ -82,6 +82,7 @@ const EMPTY_PARAMS: UrlParams = {
   clearCache: false,
   noPrefetch: false,
   prefetchDebug: false,
+  cacheStats: false,
 };
 
 describe('bootstrapStandalone', () => {
