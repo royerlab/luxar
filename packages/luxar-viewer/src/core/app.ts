@@ -2,6 +2,11 @@
 
 import * as THREE from 'three';
 import { SceneManager } from '../scene/scene-manager';
+import {
+  captureSnapshot as captureViewerSnapshot,
+  restoreSnapshot as restoreViewerSnapshot,
+  type ViewerSnapshot,
+} from './viewer-snapshot';
 import { AnimationController } from '../scene/animation-controller';
 import { InputHandler } from '../input/input-handler';
 import { RenderingControls } from '../ui/rendering-controls';
@@ -1088,6 +1093,43 @@ export class LuxarApp {
    * dispose(), the LuxarApp instance is in an uninitialized state — call
    * init() again to re-create resources, or discard the instance.
    */
+  /**
+   * Capture a JSON-serialisable snapshot of the current viewer state.
+   *
+   * Includes camera placement (position, target, up, projection params)
+   * and per-dimension slice positions. Layer-panel state and rendering-
+   * controls settings are not included in v1 — see
+   * `src/core/viewer-snapshot.ts` for the rationale and the schema.
+   *
+   * Use the returned object to share a view, write a regression fixture,
+   * or hand to {@link restoreSnapshot} on another LuxarApp instance.
+   *
+   * @throws if the app has not been initialised yet.
+   */
+  captureSnapshot(): ViewerSnapshot {
+    if (!this.isInitialized) {
+      throw new Error('LuxarApp.captureSnapshot called before init()');
+    }
+    return captureViewerSnapshot(this.sceneManager);
+  }
+
+  /**
+   * Restore viewer state from a snapshot produced by {@link captureSnapshot}.
+   *
+   * Returns which parts of the snapshot were applied. Camera always applies
+   * if the version matches; dims apply only when the snapshot's `ndim`
+   * matches the loaded dataset (otherwise skipped with a warning rather
+   * than throwing — common for cross-dataset link sharing).
+   *
+   * @throws if the app has not been initialised yet.
+   */
+  restoreSnapshot(snapshot: ViewerSnapshot): { cameraApplied: boolean; dimsApplied: boolean } {
+    if (!this.isInitialized) {
+      throw new Error('LuxarApp.restoreSnapshot called before init()');
+    }
+    return restoreViewerSnapshot(this.sceneManager, snapshot);
+  }
+
   dispose(): void {
     // Idempotency: a second dispose() after a successful one is a no-op.
     // Component fields still reference their (already disposed) instances,
