@@ -149,7 +149,12 @@ function reportSpeedup(name: string, r: { speedup: number; tsTime: number; wasmT
 }
 
 describeIfWasm(`WASM perf budget — each hot path must have median speedup ≥ ${MIN_SPEEDUP}×`, () => {
-  it('compute_nd_visibility_points', () => {
+  // Long timeout: under `--coverage` the v8 instrumentation slows the
+  // TS path enough that the 1 M-element work exceeds the default 5 s test
+  // budget. The ratio measurement is meaningless under coverage anyway
+  // (TS is instrumented, WASM binary is not), but bumping the timeout
+  // keeps the suite from going red.
+  it('compute_nd_visibility_points', { timeout: 60_000 }, () => {
     const ndim = 5;
     const positions = generatePositions(SIZE, ndim);
     const radii = generateRadii(SIZE);
@@ -176,7 +181,7 @@ describeIfWasm(`WASM perf budget — each hot path must have median speedup ≥ 
     expect(r.speedup, reportSpeedup('compute_nd_visibility_points', r)).toBeGreaterThanOrEqual(MIN_SPEEDUP);
   });
 
-  it('compute_nd_visibility_lines', () => {
+  it('compute_nd_visibility_lines', { timeout: 60_000 }, () => {
     const ndim = 5;
     const vertices = generatePositions(SIZE + 1, ndim);
     const segments = generateSegments(SIZE);
@@ -214,7 +219,7 @@ describeIfWasm(`WASM perf budget — each hot path must have median speedup ≥ 
     expect(r.speedup, reportSpeedup('compute_nd_visibility_lines', r)).toBeGreaterThanOrEqual(MIN_SPEEDUP);
   });
 
-  it('compute_nd_visibility_gsplats', () => {
+  it('compute_nd_visibility_gsplats', { timeout: 60_000 }, () => {
     const ndim = 4;
     const centers = generatePositions(SIZE, ndim);
     const choleskyFactors = generateCholeskyFactors(SIZE, ndim);
@@ -249,7 +254,7 @@ describeIfWasm(`WASM perf budget — each hot path must have median speedup ≥ 
     expect(r.speedup, reportSpeedup('compute_nd_visibility_gsplats', r)).toBeGreaterThanOrEqual(MIN_SPEEDUP);
   });
 
-  it('calculate_effective_radii', () => {
+  it('calculate_effective_radii', { timeout: 60_000 }, () => {
     const ndim = 6;
     const positions = generatePositions(SIZE, ndim);
     const radii = generateRadii(SIZE);

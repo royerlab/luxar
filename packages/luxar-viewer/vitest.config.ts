@@ -39,6 +39,13 @@ export default defineConfig({
       // measured coverage rose to 63.98 % lines / 66.28 % functions /
       // 53.19 % branches / 63.28 % statements. Floor moves up ~2pp per
       // band with a ~1pp safety margin; long-term target stays 80 %.
+      //
+      // After Phase 8.x reorganisation + 9.2/9.3/9.5 (≈22 new tests)
+      // the measurement is 64.37 % L / 66.36 % F / 53.31 % B / 63.62 % S.
+      // Each metric is only ~1.4 pp above its floor — not yet a full
+      // band, so the floor stays where it is. Holding for the next
+      // batch of unit tests (5.x) to push past 65 / 67 / 54 / 64 before
+      // the next ratchet.
     },
   },
   resolve: {
