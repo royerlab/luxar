@@ -24,7 +24,6 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { DataMonitorManager, cycleDataMonitor } from '../../../ui/monitors/data-monitor-manager';
-import { SceneLoader } from '../../../data/scene-loader';
 import { SceneLoaderManager } from '../../../data/scene-loader-manager';
 import type { LoaderMonitor, MonitorEvent } from '../../../types/data-monitor-types';
 
@@ -118,6 +117,18 @@ describe('Data Monitor Integration', () => {
 
     // Setup DOM
     document.body.innerHTML = '<div id="test-container"></div>';
+
+    // Wire the monitor factory the way core/app.ts does at boot —
+    // SceneLoader's monitor coupling is now factory-injected
+    // (Phase 8.6.e) so without this, SceneLoader instances created
+    // in these tests have a null monitor.
+    SceneLoaderManager.getInstance().setMonitorFactory((monitorId) => {
+      const mgr = DataMonitorManager.getInstance();
+      if (!mgr.hasMonitor(monitorId)) {
+        mgr.createMonitor(monitorId, document.body);
+      }
+      return mgr.getMonitor(monitorId) ?? null;
+    });
   });
 
   afterEach(() => {
@@ -171,34 +182,31 @@ describe('Data Monitor Integration', () => {
   });
 
   describe('SceneLoader integration', () => {
+    // Phase 8.6.e: SceneLoader's monitor coupling moved to a
+    // factory injected via SceneLoaderManager. Tests therefore
+    // construct loaders through the manager (which threads the
+    // factory wired up in this file's beforeEach) rather than via
+    // `new SceneLoader(...)` directly — the latter bypasses the
+    // factory and yields a null monitor.
     it('should create monitor on SceneLoader construction', () => {
       const manager = DataMonitorManager.getInstance();
-
-      // Create scene loader with monitor enabled
-      const sceneLoader = new SceneLoader({ enableMonitor: true }, 'test-scene');
-      void sceneLoader; // Explicitly mark as used for testing
-
-      // Monitor should be created
+      SceneLoaderManager.getInstance().createLoader('test-scene', { enableMonitor: true });
       const monitor = manager.getMonitor('test-scene-monitor');
       expect(monitor).toBeDefined();
     });
 
     it('should not create monitor when disabled in config', () => {
       const manager = DataMonitorManager.getInstance();
-
-      // Create scene loader with monitor disabled
-      const sceneLoader = new SceneLoader({ enableMonitor: false }, 'test-scene');
-      void sceneLoader; // Explicitly mark as used for testing
-
-      // Monitor should not be created
+      SceneLoaderManager.getInstance().createLoader('test-scene', { enableMonitor: false });
+      // Monitor should not be created — the factory is gated on
+      // config.enableMonitor inside SceneLoader.
       const monitor = manager.getMonitor('test-scene-monitor');
       expect(monitor).toBeNull();
     });
 
     it('should connect loaders to monitor', async () => {
       const manager = DataMonitorManager.getInstance();
-      const sceneLoader = new SceneLoader({ enableMonitor: true }, 'test-scene');
-      void sceneLoader; // Explicitly mark as used for testing
+      SceneLoaderManager.getInstance().createLoader('test-scene', { enableMonitor: true });
       const monitor = manager.getMonitor('test-scene-monitor');
 
       expect(monitor).toBeDefined();
@@ -225,8 +233,7 @@ describe('Data Monitor Integration', () => {
 
     it('should disconnect all loaders when loading new scene', () => {
       const manager = DataMonitorManager.getInstance();
-      const sceneLoader = new SceneLoader({ enableMonitor: true }, 'test-scene');
-      void sceneLoader; // Explicitly mark as used for testing
+      SceneLoaderManager.getInstance().createLoader('test-scene', { enableMonitor: true });
       const monitor = manager.getMonitor('test-scene-monitor');
 
       if (!monitor) throw new Error('Monitor should exist');

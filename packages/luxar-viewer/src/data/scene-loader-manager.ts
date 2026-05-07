@@ -11,6 +11,7 @@
 import { SceneLoader } from './scene-loader';
 import { LoaderConfig } from './data-loader-types';
 import { UpdateProfiler } from '../profiling/update-profiler';
+import type { SceneLoaderMonitorFactory } from './scene-loader-monitor-port';
 
 /**
  * Manager for SceneLoader instances.
@@ -28,10 +29,29 @@ export class SceneLoaderManager {
   private readonly profiler: UpdateProfiler;
 
   /**
+   * Optional monitor factory injected by `core/app.ts` so each
+   * `SceneLoader` we create can resolve a UI monitor without the
+   * `data/` layer importing `ui/`. Null means "no UI monitor wired
+   * up" (tests / embedders) and SceneLoader treats every monitor
+   * call as a no-op.
+   */
+  private monitorFactory: SceneLoaderMonitorFactory | null = null;
+
+  /**
    * Private constructor to enforce singleton pattern
    */
   private constructor() {
     this.profiler = new UpdateProfiler();
+  }
+
+  /**
+   * Provide the monitor factory. Called once at app boot from
+   * `core/app.ts` (which holds the `DataMonitorManager` reference).
+   * Subsequent `createLoader` calls forward the factory to each
+   * `SceneLoader` instance.
+   */
+  setMonitorFactory(factory: SceneLoaderMonitorFactory | null): void {
+    this.monitorFactory = factory;
   }
 
   /**
@@ -70,8 +90,10 @@ export class SceneLoaderManager {
       this.destroyLoader(id);
     }
 
-    // Pass the profiler to the loader
-    const loader = new SceneLoader(config, id, this.profiler);
+    // Pass the profiler + monitor factory to the loader. The factory
+    // is the dependency-inversion handle that lets `SceneLoader` reach
+    // the UI monitor without importing `ui/` directly.
+    const loader = new SceneLoader(config, id, this.profiler, this.monitorFactory);
     this.loaders.set(id, loader);
 
     if (setAsDefault || !this.defaultLoaderId) {

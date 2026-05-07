@@ -293,6 +293,19 @@ export class LuxarApp {
         });
       }
 
+      // Inject the monitor factory into SceneLoaderManager so each
+      // SceneLoader can resolve its UI monitor without the data/
+      // layer importing ui/ directly. Closes the last layer-cruiser
+      // exception (Phase 8.6.e).
+      SceneLoaderManager.getInstance().setMonitorFactory((monitorId) => {
+        if (typeof document === 'undefined') return null;
+        const mgr = DataMonitorManager.getInstance();
+        if (!mgr.hasMonitor(monitorId)) {
+          mgr.createMonitor(monitorId, document.body);
+        }
+        return mgr.getMonitor(monitorId) ?? null;
+      });
+
       // Initialize input handler. The DimensionSliders factory is
       // injected here so the input layer never imports the concrete
       // ui/ panel — input → ui is a layer-cruiser violation.

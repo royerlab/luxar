@@ -233,18 +233,15 @@ thread. Conventions:
   earlier plan draft had data before rendering; this corrected order
   matches the actual dependency direction in the codebase.
 
-  Run `pnpm check:layers` to surface violations. **New violations fail
-  the build** (severity `error` on every layer rule). Two pre-existing
-  edges are pinned to `warn` via the `layer-{input,data}-known-exception`
-  rules in `.dependency-cruiser.cjs`:
-
-  - `src/input/input-handler.ts → src/ui/dimension-sliders.ts`
-    (DimensionSliders construction still happens inside InputHandler)
-  - `src/data/scene-loader.ts → src/ui/data-monitor-manager.ts`
-    (granular provider wiring — cache stats, accumulators, scene graph)
-
-  Both will be cleared in follow-ups; the `KNOWN_LAYER_EXCEPTIONS`
-  list in the depcruise config documents the cleanup plan.
+  Run `pnpm check:layers` to surface violations. **All layer rules
+  are at severity `error`** — any new crossing fails the build. The
+  `KNOWN_LAYER_EXCEPTIONS` array in `.dependency-cruiser.cjs` is a
+  temporary downgrade hatch (currently empty); list a path there with
+  a matching warn-only rule if a regression needs to land alongside
+  its fix in a follow-up commit. The two historical edges
+  (input-handler → DimensionSliders, scene-loader → DataMonitor) were
+  resolved via factory injection in Phases 8.6.d and 8.6.e
+  respectively.
 
 ## 11. Types
 

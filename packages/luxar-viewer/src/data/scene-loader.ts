@@ -52,7 +52,10 @@ import {
 } from './data-loader-types';
 import type { LoaderMonitor, SceneGraphNode } from '../types/data-monitor-types';
 import { ZarrSceneAttrs, ZarrNodeAttrs, hasContentsMethod } from '../types/zarr';
-import { DataMonitorManager } from '../ui/monitors/data-monitor-manager';
+import type {
+  SceneLoaderMonitorPort,
+  SceneLoaderMonitorFactory,
+} from './scene-loader-monitor-port';
 import { ArrayRefRegistry } from './utils/array-decoder';
 import { ViewStateManager } from './view-state-manager';
 import { log, Modules, LogEmoji } from '../utils/log';
@@ -151,7 +154,13 @@ export class SceneLoader {
   private viewState: ViewState;
   private config: LoaderConfig;
   private rootGroup: THREE.Group | null = null;
-  private monitorId: string | null = null;
+  /**
+   * Optional monitor port — populated at construction by the factory
+   * passed in via `SceneLoaderManager.setMonitorFactory`. Null when no
+   * UI is wired up (tests, embedders), in which case all monitor calls
+   * become no-ops at the call sites.
+   */
+  private monitor: SceneLoaderMonitorPort | null = null;
   private arrayRefRegistry: ArrayRefRegistry;
 
   // Phase 4: GPU buffer pool for geometry reuse ✅ INTEGRATED
@@ -238,7 +247,12 @@ export class SceneLoader {
     return applyEffectiveAttrsHelper(this._sceneGraph, node);
   }
 
-  constructor(config: LoaderConfig = {}, id?: string, profiler?: UpdateProfiler) {
+  constructor(
+    config: LoaderConfig = {},
+    id?: string,
+    profiler?: UpdateProfiler,
+    monitorFactory?: SceneLoaderMonitorFactory | null
+  ) {
     this.profiler = profiler ?? null;
     this.config = config;
     this.viewState = {
@@ -265,16 +279,13 @@ export class SceneLoader {
       );
     }
 
-    // Use the DataMonitorManager to get or create a monitor
-    if (typeof document !== 'undefined' && config.enableMonitor !== false) {
-      const monitorManager = DataMonitorManager.getInstance();
+    // Resolve the monitor port through the injected factory. The
+    // factory owns the UI-side singleton (DataMonitorManager) — we
+    // only see the SceneLoaderMonitorPort surface so the data → ui
+    // layer rule stays clean.
+    if (typeof document !== 'undefined' && config.enableMonitor !== false && monitorFactory) {
       const monitorId = id ? `${id}-monitor` : 'default';
-
-      // Only create if it doesn't exist
-      if (!monitorManager.hasMonitor(monitorId)) {
-        monitorManager.createMonitor(monitorId, document.body);
-      }
-      this.monitorId = monitorId;
+      this.monitor = monitorFactory(monitorId);
     }
   }
 
@@ -346,12 +357,7 @@ export class SceneLoader {
     log.custom(LogEmoji.SCENE, Modules.SCENE_LOADER, `Loading scene from ${url}`);
 
     // Clear any existing loaders from monitor before loading new scene
-    if (this.monitorId) {
-      const monitor = DataMonitorManager.getInstance().getMonitor(this.monitorId);
-      if (monitor) {
-        monitor.disconnectAllLoaders();
-      }
-    }
+    this.monitor?.disconnectAllLoaders();
 
     // Dispose of any existing loaders
     if (this.loaders.size > 0) {
@@ -506,52 +512,50 @@ export class SceneLoader {
 
     // Force update the monitor UI after all loaders are connected
     // This ensures the UI shows the correct state even if no events have fired yet
-    if (this.monitorId) {
-      const monitor = DataMonitorManager.getInstance().getMonitor(this.monitorId);
-      if (monitor) {
-        // Connect cache stats provider for L1/L2 cache monitoring
-        if (this.cachingStore) {
-          monitor.setCacheStatsProvider(this.cachingStore);
-        }
-
-        // Connect L0 decompressed chunk cache provider for Cache tab
-        if (this.l0Cache) {
-          monitor.setL0CacheProvider({
-            getStats: () => this.l0Cache!.getStats(),
-            clear: () => this.l0Cache!.clear(),
-          });
-        }
-
-        // Connect GPU buffer pool provider for Memory tab
-        if (this._gpuBufferPool) {
-          monitor.setGPUBufferPoolProvider(this._gpuBufferPool);
-        }
-
-        // Connect accumulator providers for Memory tab (aggregate stats across all loaders)
-        monitor.setAccumulatorProvider('points', {
-          getStats: () => getAggregatedPointsAccumulatorStats(this.loaders),
-        });
-        monitor.setAccumulatorProvider('lines', {
-          getStats: () => getAggregatedLinesAccumulatorStats(this.linesLoaders),
-        });
-        monitor.setAccumulatorProvider('gsplats', {
-          getStats: () => getAggregatedGSplatsAccumulatorStats(this.gsplatLoaders),
-        });
-
-        // Connect profiler for Performance tab timing display
-        if (this.profiler) {
-          monitor.setProfiler(this.profiler);
-        }
-
-        // Send scene graph to monitor for display
-        const sceneGraphRoot = this.convertToSceneGraphNode(sceneGraph);
-        monitor.setSceneGraph(sceneGraphRoot);
-
-        // Update visible segments count (initial load)
-        this.updateVisibleCountsInMonitor();
-
-        monitor.forceUpdate();
+    const monitor = this.monitor;
+    if (monitor) {
+      // Connect cache stats provider for L1/L2 cache monitoring
+      if (this.cachingStore) {
+        monitor.setCacheStatsProvider(this.cachingStore);
       }
+
+      // Connect L0 decompressed chunk cache provider for Cache tab
+      if (this.l0Cache) {
+        monitor.setL0CacheProvider({
+          getStats: () => this.l0Cache!.getStats(),
+          clear: () => this.l0Cache!.clear(),
+        });
+      }
+
+      // Connect GPU buffer pool provider for Memory tab
+      if (this._gpuBufferPool) {
+        monitor.setGPUBufferPoolProvider(this._gpuBufferPool);
+      }
+
+      // Connect accumulator providers for Memory tab (aggregate stats across all loaders)
+      monitor.setAccumulatorProvider('points', {
+        getStats: () => getAggregatedPointsAccumulatorStats(this.loaders),
+      });
+      monitor.setAccumulatorProvider('lines', {
+        getStats: () => getAggregatedLinesAccumulatorStats(this.linesLoaders),
+      });
+      monitor.setAccumulatorProvider('gsplats', {
+        getStats: () => getAggregatedGSplatsAccumulatorStats(this.gsplatLoaders),
+      });
+
+      // Connect profiler for Performance tab timing display
+      if (this.profiler) {
+        monitor.setProfiler(this.profiler);
+      }
+
+      // Send scene graph to monitor for display
+      const sceneGraphRoot = this.convertToSceneGraphNode(sceneGraph);
+      monitor.setSceneGraph(sceneGraphRoot);
+
+      // Update visible segments count (initial load)
+      this.updateVisibleCountsInMonitor();
+
+      monitor.forceUpdate();
     }
 
     log.success(Modules.SCENE_LOADER, 'Scene loaded successfully');
@@ -1183,7 +1187,7 @@ export class SceneLoader {
    * This should be called after view updates to report accurate visible counts.
    */
   private updateVisibleCountsInMonitor(): void {
-    if (!this.rootGroup || !this.monitorId) return;
+    if (!this.rootGroup || !this.monitor) return;
 
     let totalVisibleSegments = 0;
     let totalVisibleSplats = 0;
@@ -1199,12 +1203,8 @@ export class SceneLoader {
       }
     });
 
-    // Update the monitor
-    const monitor = DataMonitorManager.getInstance().getMonitor(this.monitorId);
-    if (monitor) {
-      monitor.updateVisibleSegments(totalVisibleSegments);
-      monitor.updateVisibleSplats(totalVisibleSplats);
-    }
+    this.monitor.updateVisibleSegments(totalVisibleSegments);
+    this.monitor.updateVisibleSplats(totalVisibleSplats);
   }
 
   /**
@@ -1831,8 +1831,7 @@ export class SceneLoader {
     path: string,
     loader: DataLoader | LinesDataLoader | GSplatsDataLoader
   ): void {
-    if (!this.monitorId) return;
-    const monitor = DataMonitorManager.getInstance().getMonitor(this.monitorId);
+    const monitor = this.monitor;
     if (!monitor) return;
 
     const candidate = loader as Partial<LoaderMonitor>;
@@ -1929,27 +1928,21 @@ export class SceneLoader {
    * Show the monitor UI
    */
   showMonitor(): void {
-    if (this.monitorId) {
-      DataMonitorManager.getInstance().showMonitor(this.monitorId);
-    }
+    this.monitor?.show();
   }
 
   /**
    * Hide the monitor UI
    */
   hideMonitor(): void {
-    if (this.monitorId) {
-      DataMonitorManager.getInstance().hideMonitor(this.monitorId);
-    }
+    this.monitor?.hide();
   }
 
   /**
    * Toggle the monitor UI
    */
   toggleMonitor(): void {
-    if (this.monitorId) {
-      DataMonitorManager.getInstance().toggleMonitor(this.monitorId);
-    }
+    this.monitor?.toggle();
   }
 
   /**
@@ -2156,8 +2149,9 @@ export class SceneLoader {
     this.rootGroup = null;
     this._sceneGraph = null;
 
-    // Note: We don't dispose the monitor here as it's managed by DataMonitorManager
-    // The monitor can be reused by other SceneLoader instances
-    this.monitorId = null;
+    // Note: we don't dispose the monitor here — its lifecycle is owned
+    // by core/app.ts via DataMonitorManager. Drop the local reference
+    // so a new factory call can replace it on the next createLoader().
+    this.monitor = null;
   }
 }

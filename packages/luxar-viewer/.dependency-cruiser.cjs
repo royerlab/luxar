@@ -22,18 +22,11 @@
  *
  * Run with `pnpm check:layers`. CI also runs this in pre-commit.
  */
-// Files known to contain pre-existing layer violations. Listed by
-// path so the layer rules below can downgrade `severity` for these
-// specific edges to `warn` while everything else hits `error`.
-//
-// Cleared in future passes — at which point the entry is deleted
-// from this list.
-const KNOWN_LAYER_EXCEPTIONS = [
-  // scene-loader pushes granular providers into DataMonitorManager
-  // (cache stats, accumulators, profiler, scene graph). Needs an
-  // event-bus migration of those providers.
-  'src/data/scene-loader.ts',
-];
+// All known pre-existing layer violations have been cleared. The list
+// is kept for the rare case a future regression needs a temporary
+// downgrade while a follow-up commit lands. Add a path here, drop the
+// entry once the underlying coupling is cured.
+const KNOWN_LAYER_EXCEPTIONS = [];
 
 module.exports = {
   forbidden: [
@@ -53,8 +46,9 @@ module.exports = {
     // imports (TS `import type {...}`) so re-exports don't trigger.
     //
     // Severity is `error` — the build fails on any new violation. The
-    // two known exceptions in KNOWN_LAYER_EXCEPTIONS are pinned to
-    // `warn` via the per-rule `pathNot` filter on `from`.
+    // Any path listed in KNOWN_LAYER_EXCEPTIONS is exempt — wire a
+    // corresponding warn-only rule below if you add one. Currently
+    // empty: every layer crossing has been resolved.
     layerRule('types', [
       'config',
       'cache',
@@ -73,29 +67,11 @@ module.exports = {
     layerRule('input', ['ui', 'core']),
     layerRule('ui', ['core']),
 
-    // Per-file warn for the two known exceptions. Same upward
-    // restrictions as the strict rules (input → ui|core; data →
-    // scene|input|ui|core), but at warn severity so the build stays
-    // green while we work the cleanup backlog.
-    {
-      name: 'layer-input-known-exception',
-      severity: 'warn',
-      comment:
-        'Pre-existing input → ui violation — input-handler still ' +
-        'constructs DimensionSliders directly. See KNOWN_LAYER_EXCEPTIONS.',
-      from: { path: '^src/input/input-handler\\.ts$' },
-      to: { path: '^src/(ui|core)/', pathNot: '\\.d\\.ts$' },
-    },
-    {
-      name: 'layer-data-known-exception',
-      severity: 'warn',
-      comment:
-        'Pre-existing data → ui violation — scene-loader pushes ' +
-        'granular providers into DataMonitorManager. See ' +
-        'KNOWN_LAYER_EXCEPTIONS.',
-      from: { path: '^src/data/scene-loader\\.ts$' },
-      to: { path: '^src/(scene|input|ui|core)/', pathNot: '\\.d\\.ts$' },
-    },
+    // Per-file warn rules previously here have been removed —
+    // input-handler → ui (Phase 8.6.d) and scene-loader → ui (Phase
+    // 8.6.e) are now properly dependency-inverted. To re-enable a
+    // pinpoint warn rule for a future regression, list the file in
+    // KNOWN_LAYER_EXCEPTIONS and add a corresponding rule here.
   ],
   options: {
     doNotFollow: { path: 'node_modules' },
@@ -116,25 +92,25 @@ module.exports = {
 
 /**
  * Build a forbidden rule banning imports from `fromLayer` to any of
- * `forbiddenHigherLayers`. Severity defaults to `warn` — preexisting
- * violations stay surfaced without breaking the build, and we ratchet
- * to `error` after each cleanup pass.
+ * `forbiddenHigherLayers`. Severity is `error` — the build fails on
+ * any new violation. Add a path to KNOWN_LAYER_EXCEPTIONS and a
+ * matching warn-only rule above to temporarily downgrade a specific
+ * file while a follow-up commit lands the fix.
  */
 function layerRule(fromLayer, forbiddenHigherLayers) {
+  const exceptions = KNOWN_LAYER_EXCEPTIONS.map((p) => `^${p}$`).join('|');
   return {
     name: `layer-${fromLayer}-no-upward`,
     severity: 'error',
     comment:
       `Modules in src/${fromLayer}/ must not import from higher layers ` +
       `(${forbiddenHigherLayers.join(', ')}). See src/CONVENTIONS.md ` +
-      `for the full layer order. Type-only imports are exempt. ` +
-      `Pre-existing violations are pinned to 'warn' via the ` +
-      `layer-known-exception rule below.`,
+      `for the full layer order. Type-only imports are exempt.`,
     from: {
       path: `^src/${fromLayer}/`,
-      // Don't fire on the two paths still working through the cleanup
-      // backlog. They get caught by the warn-only known-exception rule.
-      pathNot: KNOWN_LAYER_EXCEPTIONS.map((p) => `^${p}$`).join('|'),
+      // Empty when KNOWN_LAYER_EXCEPTIONS is empty — depcruiser treats
+      // an empty regex as "match nothing", which is what we want.
+      ...(exceptions ? { pathNot: exceptions } : {}),
     },
     to: {
       path: `^src/(${forbiddenHigherLayers.join('|')})/`,
