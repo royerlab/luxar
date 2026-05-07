@@ -4,7 +4,12 @@ Fits splats in multiple passes, each targeting the residual (original minus
 current approximation).  Each pass solves a simpler subproblem, and the
 asymmetric loss ensures under-prediction so residuals are clean and positive.
 
-The result is a multi-LOD ``GSplatData`` where each LOD corresponds to one pass.
+The result is a single flattened ``GSplatData`` containing all splats from
+all passes.  To produce a principled LOD ladder for streaming, pass the
+result to :func:`luxar.gsplats.lod.make_additive_lod`; the supplementary
+document ``additive_lod`` shows that fitting passes do *not* yield useful
+LODs, and that a post-fit greedy / self-energy ordering is the right way
+to build them.
 
 Optimised per-pass configuration
 ---------------------------------
@@ -182,8 +187,11 @@ def fit_progressive_gaussian_splats(
     Returns
     -------
     GSplatData
-        Multi-LOD result where each LOD corresponds to one pass.
-        ``result.n_lods`` equals the number of passes completed.
+        Single-LOD result containing all splats from all passes.  The
+        per-pass intermediate LODs are surfaced through ``on_pass_complete``
+        and the ``stats`` dict (``stats['n_passes']``,
+        ``stats['pass_psnrs']``); to build a streamable LOD ladder, hand
+        the result to :func:`luxar.gsplats.lod.make_additive_lod`.
 
     Notes
     -----
@@ -462,6 +470,15 @@ def fit_progressive_gaussian_splats(
         "max_splats_per_pass": max_splats_per_pass,
         "iters_per_pass": iters_per_pass,
         "psnr_patience": psnr_patience,
+        "pass_psnrs": [
+            float(lod.stats.get("cumulative_psnr_db", float("nan")))
+            for lod in accumulated_lods
+        ],
+        "pass_splats": [int(lod.n_splats) for lod in accumulated_lods],
+        # Full per-pass stats (one dict per pass) -- the per-pass LOD
+        # intermediates are not preserved on the flattened return value,
+        # so any caller that wants per-pass detail must read this list.
+        "pass_stats": [dict(lod.stats) for lod in accumulated_lods],
     }
 
     if verbose:
@@ -527,4 +544,8 @@ def fit_progressive_gaussian_splats(
                 f"(removed {n_removed}, {100.0 * n_removed / n_before:.1f}%)"
             )
 
-    return final_result
+    # Collapse per-pass LODs into a single flattened LOD.  The pass-by-pass
+    # accumulation is an internal implementation detail; callers that want
+    # a streaming LOD ladder should run luxar.gsplats.lod.make_additive_lod
+    # on the returned data.
+    return final_result.flattened()
