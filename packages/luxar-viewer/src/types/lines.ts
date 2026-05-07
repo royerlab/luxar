@@ -7,7 +7,7 @@
  * @module types/lines
  */
 
-import type { DimensionMetadata } from './dims';
+import type { ViewState } from '../data/data-loader-types';
 
 // ============================================================================
 // Metadata Types (from zarr .zattrs)
@@ -276,21 +276,12 @@ export interface LinesDataLoader {
 /**
  * View state for lines loading.
  *
- * Extends the points ViewState pattern with lines-specific information.
+ * Identical shape to the points + gsplats ViewState — kept as a named
+ * alias for documentation (a function signature reading
+ * `viewState: LinesViewState` is more self-documenting than the
+ * generic `ViewState`).
  */
-export interface LinesViewState {
-  /** Which dimensions to display (max 3, indices into nD space) */
-  displayDims: readonly number[];
-
-  /** Current position in nD space (one value per dimension) */
-  slicePosition: readonly number[];
-
-  /** Tolerance for slicing in each dimension */
-  tolerance: readonly number[];
-
-  /** Dimension metadata for the dataset */
-  dimensions?: DimensionMetadata[];
-}
+export type LinesViewState = ViewState;
 
 /**
  * User data attached to THREE.Mesh for Lines in scene.

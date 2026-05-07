@@ -6,7 +6,6 @@
  */
 
 import type { DimensionMetadata } from '../types/dims';
-import * as THREE from 'three';
 import { log, Modules } from '../utils/log';
 
 /**
@@ -29,9 +28,6 @@ export interface ViewState {
 
   /** Tolerance for slicing in each dimension (radius in non-displayed dims, 0 for displayed) */
   tolerance: readonly number[];
-
-  /** Optional camera frustum for view-dependent loading */
-  cameraFrustum?: THREE.Frustum;
 
   /**
    * Dimension metadata for the dataset.

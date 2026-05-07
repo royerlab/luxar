@@ -10,7 +10,7 @@
  * @module types/gsplats
  */
 
-import type { DimensionMetadata } from './dims';
+import type { ViewState } from '../data/data-loader-types';
 
 // ============================================================================
 // Metadata Types (from zarr .zattrs)
@@ -239,19 +239,7 @@ export interface GSplatsDataLoader {
  *
  * Extends the points ViewState pattern with gsplats-specific information.
  */
-export interface GSplatsViewState {
-  /** Which dimensions to display (max 3, indices into nD space) */
-  displayDims: readonly number[];
-
-  /** Current position in nD space (one value per dimension) */
-  slicePosition: readonly number[];
-
-  /** Tolerance for slicing in each dimension */
-  tolerance: readonly number[];
-
-  /** Dimension metadata for the dataset */
-  dimensions?: DimensionMetadata[];
-}
+export type GSplatsViewState = ViewState;
 
 /**
  * User data attached to THREE.Mesh for GSplats in scene.

@@ -14,8 +14,7 @@
  */
 
 import * as THREE from 'three';
-import type { DimensionMetadata } from './dims';
-import type { UpdateSession } from '../profiling/update-profiler';
+import type { ViewState, DataLoader } from '../data/data-loader-types';
 
 // ============================================================================
 // Element Array Types (Float16 is points-specific)
@@ -215,44 +214,23 @@ export interface PointsMetadata {
 /**
  * View state for points loading.
  *
- * Mirrors the pattern used by LinesViewState and GSplatsViewState.
- * Note: Uses DimensionMetadata[] for consistency with Lines/GSplats.
+ * Identical shape to the lines + gsplats ViewState — kept as a named
+ * alias for documentation (a function signature reading
+ * `viewState: PointsViewState` is more self-documenting than the
+ * generic `ViewState`).
  */
-export interface PointsViewState {
-  /** Which dimensions to display (max 3, indices into nD space) */
-  displayDims: number[];
-
-  /** Current position in nD space (one value per dimension) */
-  slicePosition: number[];
-
-  /** Tolerance for slicing in each dimension */
-  tolerance: number[];
-
-  /** Dimension metadata for the dataset */
-  dimensions?: DimensionMetadata[];
-}
+export type PointsViewState = ViewState;
 
 // ============================================================================
 // Scene Integration Types
 // ============================================================================
 
 /**
- * Data loader interface for Points nodes.
- *
- * Mirrors the pattern from LinesDataLoader and GSplatsDataLoader.
- * This is a standalone interface (doesn't extend DataLoader) to allow
- * PointsViewState to use DimensionMetadata[] for consistency with Lines/GSplats.
+ * Data loader interface for Points nodes. Identical shape to the
+ * `DataLoader` interface in `data/data-loader-types.ts`; aliased for
+ * naming symmetry with `LinesDataLoader` and `GSplatsDataLoader`.
  */
-export interface PointsDataLoader {
-  /** Load points data for the given view state */
-  loadPoints(viewState: PointsViewState, session?: UpdateSession): Promise<LoadedPointsData>;
-
-  /** Update existing data for a new view state */
-  updateView(viewState: PointsViewState, session?: UpdateSession): Promise<LoadedPointsData>;
-
-  /** Clean up resources */
-  dispose(): void;
-}
+export type PointsDataLoader = DataLoader;
 
 /**
  * User data attached to THREE.Points objects in the scene.
