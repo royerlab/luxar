@@ -38,7 +38,7 @@ import {
   createProgressiveGSplatsLoader as createProgressiveGSplatsLoaderHelper,
   type LoaderFactoryDeps,
 } from './scene-loader/loader-factory';
-import { commitPointsGeometry as commitPointsGeometryHelper } from './scene-loader/geometry-commit-handler';
+import { commitPointsGeometry as commitPointsGeometryHelper } from './scene-loader/commit-points-geometry';
 
 export type { StagedLinesCommit } from './scene-loader/data-processor-lines';
 export type { StagedGSplatsCommit } from './scene-loader/data-processor-gsplats';

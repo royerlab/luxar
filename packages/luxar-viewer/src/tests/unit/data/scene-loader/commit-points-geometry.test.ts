@@ -8,7 +8,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as THREE from 'three';
-import { commitPointsGeometry } from '../../../../data/scene-loader/geometry-commit-handler';
+import { commitPointsGeometry } from '../../../../data/scene-loader/commit-points-geometry';
 import type { LoadedPointsData } from '../../../../data/data-loader-types';
 import type { NodeFactory } from '../../../../rendering/node-factory';
 
