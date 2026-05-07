@@ -18,6 +18,7 @@ import { SimpleDims } from '../types/dims';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { config } from '../config';
 import { simpleDimsToViewState } from './utils/dims-to-view-state';
+import { computeSceneStats } from './utils/scene-stats';
 
 /**
  * Load a complete scene from a Zarr store using the new architecture.
@@ -127,48 +128,24 @@ export function dispose(loaderId?: string): void {
 }
 
 /**
- * Log statistics about the loaded scene.
+ * Log statistics about the loaded scene. The traversal/counting logic is
+ * `data/utils/scene-stats.ts::computeSceneStats`; this function is only
+ * the logging layer.
  */
 function logSceneStats(scene: THREE.Group): void {
-  let totalPoints = 0;
-  let totalPointsObjects = 0;
-  let totalGSplats = 0;
-  let totalGSplatsObjects = 0;
-  let usedSpatialIndex = 0;
-
-  // Check if scene has traverse method (it might be a mock in tests)
-  if (!scene || typeof scene.traverse !== 'function') {
+  const stats = computeSceneStats(scene);
+  if (!stats) {
     log.warning(Modules.LUXAR, 'Scene does not have traverse method, skipping stats');
     return;
   }
 
-  scene.traverse((obj) => {
-    if (obj instanceof THREE.Points) {
-      totalPointsObjects++;
-      const geometry = obj.geometry;
-      const positions = geometry.getAttribute('position');
-      if (positions) {
-        totalPoints += positions.count;
-      }
-      if (obj.userData.attrs?.has_spatial_index) {
-        usedSpatialIndex++;
-      }
-    } else if (obj instanceof THREE.Mesh && obj.userData?.nodeType === 'gsplats') {
-      totalGSplatsObjects++;
-      totalGSplats += obj.userData.visibleSplatCount ?? 0;
-      if (obj.userData.attrs?.has_spatial_index) {
-        usedSpatialIndex++;
-      }
-    }
-  });
-
   log.info(Modules.LUXAR, 'Scene statistics:');
-  log.info(Modules.LUXAR, `  - Points objects: ${totalPointsObjects}`);
-  log.info(Modules.LUXAR, `  - Total points loaded: ${totalPoints.toLocaleString()}`);
-  log.info(Modules.LUXAR, `  - GSplats objects: ${totalGSplatsObjects}`);
-  log.info(Modules.LUXAR, `  - Total gsplats loaded: ${totalGSplats.toLocaleString()}`);
+  log.info(Modules.LUXAR, `  - Points objects: ${stats.pointsObjects}`);
+  log.info(Modules.LUXAR, `  - Total points loaded: ${stats.totalPoints.toLocaleString()}`);
+  log.info(Modules.LUXAR, `  - GSplats objects: ${stats.gsplatsObjects}`);
+  log.info(Modules.LUXAR, `  - Total gsplats loaded: ${stats.totalGSplats.toLocaleString()}`);
   log.info(
     Modules.LUXAR,
-    `  - Using spatial index: ${usedSpatialIndex}/${totalPointsObjects + totalGSplatsObjects}`
+    `  - Using spatial index: ${stats.spatialIndexed}/${stats.pointsObjects + stats.gsplatsObjects}`
   );
 }
