@@ -107,8 +107,12 @@ export function setNotifierBackend(b: NotifierBackend): void {
 
 /**
  * Tear down the registered backend. Useful for tests that want to
- * verify no notifications are posted, or for app teardown.
+ * verify no notifications are posted, or for app teardown. Also
+ * resets the once-only warning flag so a subsequent missing-backend
+ * call emits a fresh warning (otherwise tests that rely on the warn
+ * being observable would only see it on the very first run).
  */
 export function clearNotifierBackend(): void {
   backend = null;
+  warnedMissing = false;
 }
