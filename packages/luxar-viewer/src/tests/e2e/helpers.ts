@@ -234,8 +234,12 @@ export async function waitForDimensionSelected(
 }
 
 /**
- * Wait for spatial index query to complete
- * Detects when query finishes by checking console or state changes
+ * Wait for spatial index query to complete.
+ *
+ * **Silent on timeout** — returns normally even if the condition was
+ * never reached. Use when the query completing fast is a *bonus*, not
+ * a precondition. For tests that genuinely depend on the query
+ * having finished, use {@link waitForSpatialQueryOrThrow} instead.
  */
 export async function waitForSpatialQuery(page: Page, timeout = 8000): Promise<void> {
   const startTime = Date.now();
@@ -257,6 +261,24 @@ export async function waitForSpatialQuery(page: Page, timeout = 8000): Promise<v
   }
 
   // Timeout not an error - query might have completed
+}
+
+/**
+ * Throwing variant of {@link waitForSpatialQuery}. Rejects with a
+ * descriptive error if the query never settles within `timeout`.
+ * Prefer this when the test logic that follows assumes the query has
+ * actually completed (e.g. point-count assertions).
+ */
+export async function waitForSpatialQueryOrThrow(page: Page, timeout = 8000): Promise<void> {
+  await page.waitForFunction(
+    () => {
+      const debug = (window as any).__luxarDebug;
+      const state = debug?.getState?.();
+      return state && !state.isLoading && state.totalPoints >= 0;
+    },
+    null,
+    { timeout }
+  );
 }
 
 /**
@@ -537,6 +559,13 @@ export async function waitForDimensionSystemReady(page: Page, timeout = 10000): 
  * @param page - Playwright page
  * @param timeout - Maximum wait time in ms
  */
+/**
+ * Wait for nD navigation to complete.
+ *
+ * **Silent on timeout** — returns normally even if `isLoading` never
+ * cleared. Use {@link waitForNavigationCompleteOrThrow} for tests
+ * that depend on navigation actually finishing.
+ */
 export async function waitForNavigationComplete(page: Page, timeout = 15000): Promise<void> {
   const startTime = Date.now();
 
@@ -576,6 +605,25 @@ export async function waitForNavigationComplete(page: Page, timeout = 15000): Pr
 }
 
 /**
+ * Throwing variant of {@link waitForNavigationComplete}. Rejects with
+ * a descriptive error if navigation never settles within `timeout`.
+ */
+export async function waitForNavigationCompleteOrThrow(
+  page: Page,
+  timeout = 15000
+): Promise<void> {
+  await page.waitForFunction(
+    () => {
+      const debug = (window as any).__luxarDebug;
+      const state = debug?.getState?.();
+      return state && state.isLoading === false;
+    },
+    null,
+    { timeout }
+  );
+}
+
+/**
  * Wait for render frames to stabilize
  *
  * Useful for visual regression tests that need stable screenshots.
@@ -590,36 +638,58 @@ export async function waitForRenderStable(
   minFrames = 3,
   timeout = 10000
 ): Promise<void> {
-  // First check if frame counter is available
-  const hasFrameCounter = await page.evaluate(() => {
+  // Snapshot the current frame BEFORE the wait. The previous version
+  // checked `frame >= minFrames` against the lifetime counter, so once
+  // the initial paint exceeded `minFrames` (which it does within
+  // milliseconds of viewer startup), the helper would resolve
+  // immediately on every subsequent call — ignoring any post-action
+  // paints. Screenshot tests captured pre-action state.
+  const start = await page.evaluate(() => {
     const debug = (window as any).__luxarDebug;
-    return typeof debug?.renderer?.info?.render?.frame === 'number';
+    return typeof debug?.renderer?.info?.render?.frame === 'number'
+      ? debug.renderer.info.render.frame
+      : null;
   });
 
-  if (hasFrameCounter) {
-    // Use frame counter for precise wait
-    await page.waitForFunction(
-      (minFrames) => {
-        const debug = (window as any).__luxarDebug;
-        return debug?.renderer?.info?.render?.frame >= minFrames;
-      },
-      minFrames, // pass minFrames as argument (this one is correct)
-      { timeout }
-    );
-  } else {
-    // Fallback: wait for data to load + buffer time for rendering
-    await page.waitForFunction(
-      () => {
-        const debug = (window as any).__luxarDebug;
-        const state = debug?.getState?.();
-        return state && !state.isLoading && state.initialized;
-      },
-      null,
-      { timeout }
-    );
-    // Additional buffer for GPU to render frames
-    await page.waitForTimeout(minFrames * 100);
+  if (start !== null) {
+    // Kick the animation loop in case it's idle (auto-paused after ~2s
+    // of inactivity); without this, the frame counter never advances
+    // and we'd always fall through to the time-based fallback.
+    await page.evaluate(() => {
+      const debug = (window as any).__luxarDebug;
+      debug?.renderOnce?.();
+    });
+
+    const target = start + minFrames;
+    try {
+      await page.waitForFunction(
+        (t: number) => {
+          const debug = (window as any).__luxarDebug;
+          const frame = debug?.renderer?.info?.render?.frame;
+          return typeof frame === 'number' && frame >= t;
+        },
+        target,
+        { timeout: Math.min(timeout, 3000) }
+      );
+      return;
+    } catch {
+      // Frame counter didn't advance (loop truly stopped) — fall
+      // through to the state-based wait.
+    }
   }
+
+  // Fallback: wait for data to load + buffer time for rendering.
+  await page.waitForFunction(
+    () => {
+      const debug = (window as any).__luxarDebug;
+      const state = debug?.getState?.();
+      return state && !state.isLoading && state.initialized;
+    },
+    null,
+    { timeout }
+  );
+  // Additional buffer for GPU to render frames
+  await page.waitForTimeout(minFrames * 100);
 }
 
 /**
