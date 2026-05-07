@@ -14,7 +14,7 @@
  * @module ui/helpers
  */
 
-import { config } from '../config';
+import { config } from '../../config';
 
 // UI Configuration constants
 const UI_CONFIG = config.ui;

@@ -42,7 +42,7 @@ import type { RecordingPanel } from '../ui/recording-panel';
 import type { LayersPanel } from '../ui/layers';
 import type { ScaleBar } from '../ui/components/scale-bar';
 import type { ColormapLegend } from '../ui/components/colormap-legend';
-import type { OverlayManager } from '../ui/overlay-manager';
+import type { OverlayManager } from '../ui/helpers/overlay-manager';
 import { notifier } from '../utils/notifier';
 import { captureViewerState } from '../config/viewer-state-capture';
 import { DimensionSliders } from '../ui/dimension-sliders';

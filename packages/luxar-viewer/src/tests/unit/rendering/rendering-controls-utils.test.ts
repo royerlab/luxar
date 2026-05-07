@@ -14,7 +14,7 @@ import {
   getSettingsRequiringRebuild,
   calculatePerformanceImpact,
   getDefaultRenderingSettings,
-} from '../../../ui/rendering-controls-utils';
+} from '../../../ui/rendering-controls/rendering-controls-utils';
 
 describe('rendering-controls-utils', () => {
   describe('validateRenderingSettings', () => {

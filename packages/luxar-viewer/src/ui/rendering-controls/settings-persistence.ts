@@ -16,7 +16,7 @@
 import { config, type RenderingSettings } from '../../config';
 import { log, Modules } from '../../utils/log';
 import { StorageKeys } from '../../utils/storage-keys';
-import { serializeSettings, deserializeSettings } from '../rendering-controls-utils';
+import { serializeSettings, deserializeSettings } from './rendering-controls-utils';
 import { extractRenderingOverrides } from '../../config/viewer-config-utils';
 import type { ZarrViewerConfig } from '../../types/zarr';
 

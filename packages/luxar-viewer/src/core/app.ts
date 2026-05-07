@@ -22,7 +22,7 @@ import { RecordingPanel } from '../ui/recording-panel';
 import { LayersPanel } from '../ui/layers';
 import { ThemeManager } from '../themes/theme-manager';
 import type { ZarrViewerConfig } from '../types/zarr';
-import { OverlayManager } from '../ui/overlay-manager';
+import { OverlayManager } from '../ui/helpers/overlay-manager';
 import * as zarr from 'zarrita';
 import { PickingSystem, type PickResult } from '../rendering/picking/picking-system';
 import { LabelLoader } from '../data/loaders/label-loader';

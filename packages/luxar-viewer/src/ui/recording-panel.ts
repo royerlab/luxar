@@ -26,7 +26,7 @@ import type { AnimationController } from '../scene/animation-controller';
 import type { DimensionAnimationManager } from '../scene/dimension-animation-manager';
 import type { AdaptiveDPRManager } from '../rendering/adaptive-dpr-manager';
 import { LuxarOrbitControls } from '../controls/luxar-orbit-controls';
-import type { OverlayManager } from './overlay-manager';
+import type { OverlayManager } from './helpers/overlay-manager';
 import {
   computeVideoBitrate as computeVideoBitratePure,
   generateFfmpegScript as generateFfmpegScriptPure,

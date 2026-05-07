@@ -10,7 +10,7 @@ import {
   fractionToValue,
   fractionToThumbLeft,
   clampInteger,
-} from './slider-math-utils';
+} from './helpers/slider-math-utils';
 
 /**
  * Configuration interface for initializing dimension sliders.

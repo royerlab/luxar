@@ -33,7 +33,7 @@ import {
 import type { SceneManager } from '../../scene/scene-manager';
 import type { ScaleBar } from '../../ui/components/scale-bar';
 import type { ColormapLegend } from '../../ui/components/colormap-legend';
-import type { OverlayManager } from '../../ui/overlay-manager';
+import type { OverlayManager } from '../../ui/helpers/overlay-manager';
 import type { RecordingPanel } from '../../ui/recording-panel';
 import type { LayersPanel } from '../../ui/layers';
 import type { DebugConsole } from '../../ui/debug-console';

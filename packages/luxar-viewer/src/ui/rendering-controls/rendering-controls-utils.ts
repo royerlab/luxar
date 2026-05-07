@@ -6,14 +6,14 @@
  * validation, serialization, and merging without external dependencies.
  */
 
-import type { RenderingSettings as ConfigRenderingSettings } from '../config/types';
+import type { RenderingSettings as ConfigRenderingSettings } from '../../config/types';
 
 /**
  * Re-export the configuration RenderingSettings to maintain consistency
  */
 export type RenderingSettings = ConfigRenderingSettings;
 
-import { config } from '../config';
+import { config } from '../../config';
 
 /**
  * Get default rendering settings from main config
