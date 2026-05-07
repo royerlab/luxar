@@ -29,19 +29,16 @@ export default defineConfig({
       // dedicated commit each time a phase of new tests crosses the next
       // band. Long-term target: 80% across the board.
       thresholds: {
-        lines: 66,
-        functions: 69,
-        branches: 55,
-        statements: 66,
+        lines: 67,
+        functions: 70,
+        branches: 56,
+        statements: 67,
       },
-      // Phase 5.2 body landed 42 new lines/gsplats spatial-index loader
-      // full-flow tests (initialization, spatial-index queries,
-      // extend_to_all, data loading, monitoring, error handling,
-      // updateView, resource cleanup, data-type handling, plus
-      // gsplats-only prefetchChunks). Measurement is now 66.88 % L /
-      // 69.59 % F / 56.04 % B / 66.30 % S. Floor advances 1pp on each
-      // metric (~1pp safety margin retained); long-term target stays
-      // 80 %.
+      // Phase 5.4q landed 22 new dataset-browser tests on top of the
+      // Phase 5.2 body work, bringing the 464-LOC ui/panels file from
+      // 0 % to broad coverage. Measurement is now 67.85 % L / 70.16 %
+      // F / 56.61 % B / 67.25 % S. Floor advances 1pp on each metric
+      // (~1pp safety margin retained); long-term target stays 80 %.
     },
   },
   resolve: {
