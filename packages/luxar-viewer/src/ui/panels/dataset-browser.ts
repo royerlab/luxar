@@ -7,6 +7,7 @@
 
 import { DirectoryNavigator, type DirectoryEntry } from '../../data';
 import { escapeHtml } from '../../utils/escape-html';
+import { extractBaseUrl, extractPath } from './dataset-url-utils';
 
 export interface DatasetBrowserConfig {
   container: HTMLElement;
@@ -94,46 +95,15 @@ export class DatasetBrowser {
    * Extract base URL from a full URL.
    */
   private extractBaseUrl(url: string): string {
-    if (!url) return this.origin + '/';
-
-    try {
-      const parsed = new URL(url);
-      // If it ends with .zarr, go up one level
-      let pathname = parsed.pathname;
-      if (pathname.endsWith('.zarr') || pathname.endsWith('.zarr/')) {
-        const parts = pathname.split('/').filter(Boolean);
-        parts.pop();
-        pathname = '/' + parts.join('/') + '/';
-      }
-      return parsed.origin + pathname;
-    } catch {
-      return url;
-    }
+    return extractBaseUrl(url, this.origin);
   }
 
   /**
-   * Extract relative path from a full URL.
+   * Extract relative path from a full URL. Thin wrapper around the
+   * shared {@link extractPath} helper.
    */
   private extractPath(url: string): string {
-    if (!url) return '';
-
-    try {
-      const parsed = new URL(url);
-      const pathname = parsed.pathname;
-
-      // Extract just the dataset name if it's a .zarr
-      if (pathname.includes('.zarr')) {
-        const parts = pathname.split('/').filter(Boolean);
-        const zarrIndex = parts.findIndex((p) => p.endsWith('.zarr'));
-        if (zarrIndex >= 0) {
-          return parts.slice(0, zarrIndex + 1).join('/');
-        }
-      }
-
-      return '';
-    } catch {
-      return '';
-    }
+    return extractPath(url);
   }
 
   /**
