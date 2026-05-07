@@ -18,8 +18,8 @@
  * @module data/nd-transform
  */
 
-import { NdTransformMap, NdTransformEntry, isPermutation } from '../types/zarr';
-import type { SceneNode } from './data-loader-types';
+import { NdTransformMap, NdTransformEntry, isPermutation } from '../../types/zarr';
+import type { SceneNode } from '../data-loader-types';
 
 /**
  * Inverse-transform slicePosition and tolerance from world space to local space.

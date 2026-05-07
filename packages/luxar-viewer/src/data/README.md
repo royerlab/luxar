@@ -37,16 +37,18 @@ data/
 ├── gsplats-spatial-index-loader.ts # Loads Gaussian splats with nD visibility
 │                                  #   Inlines its `chunk_bounds` probe; query via `SpatialQueryBuilder`
 │                                  #   with `geometryType: 'gsplats'`.
-├── nd-transform.ts                # nD transform inverse-query for non-displayed dimensions
-│                                  #   Given a world-space query (slicePosition + tolerance) and a
-│                                  #   composed nd_transform, produces the equivalent local-space query.
-│                                  #   Avoids transforming geometry data — all loader internals unchanged.
 ├── gsplats-progressive-loader.ts  # Progressive multi-LOD GSplats loader (Composite pattern)
 ├── data-loader-types.ts           # TypeScript interfaces and types
 ├── view-state-manager.ts          # Centralized ViewState initialization and validation
 ├── loader-registry.ts             # Lifecycle management for geometry loaders (Points, Lines, GSplats)
 ├── index.ts                       # Package exports
 ├── README.md                      # This documentation
+│
+├── transforms/                    # nD transform helpers
+│   └── nd-transform.ts            # Inverse-query for non-displayed dimensions
+│                                  #   Given a world-space query (slicePosition + tolerance) and a
+│                                  #   composed nd_transform, produces the equivalent local-space query.
+│                                  #   Avoids transforming geometry data — all loader internals unchanged.
 │
 ├── utils/                         # Pure data utilities (no I/O, no GPU state)
 │   ├── array-decoder.ts           # Decodes Python luxar.encoding arrays

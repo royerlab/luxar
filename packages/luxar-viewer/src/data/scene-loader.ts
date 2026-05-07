@@ -80,7 +80,7 @@ import type {
 import { processGSplats } from './gsplats-processor';
 import { packCholeskyForShader } from '../rendering/gsplat-geometry';
 import { GPUBufferPool } from '../rendering/gpu-buffer-pool';
-import { invertNdTransformForQuery, computeWorldNdTransform } from './nd-transform';
+import { invertNdTransformForQuery, computeWorldNdTransform } from './transforms/nd-transform';
 import { NodeFactory } from '../rendering/node-factory';
 import { UpdateProfiler, type UpdateSession } from '../profiling/update-profiler';
 import {
