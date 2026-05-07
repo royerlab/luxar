@@ -17,6 +17,7 @@ import { ViewState, LoaderConfig } from './data-loader-types';
 import { SimpleDims } from '../types/dims';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { config } from '../config';
+import { simpleDimsToViewState } from './utils/dims-to-view-state';
 
 /**
  * Load a complete scene from a Zarr store using the new architecture.
@@ -99,29 +100,10 @@ export async function updateSceneForDimensions(
   scene: THREE.Group,
   loaderId?: string
 ): Promise<void> {
-  const viewState: ViewState = {
-    displayDims: [...dims.displayed], // Copy to avoid reference mutation
-    slicePosition: [...dims.currentStep], // Copy to avoid reference mutation
-    tolerance: new Array(dims.ndim).fill(config.dataLoading.spatial.defaultTolerance), // Default tolerance
-    dimensions: dims.metadata,
-  };
-
-  // Update max radius from scene metadata if available
   const maxRadius = scene.userData.maxRadius || config.dataLoading.spatial.defaultMaxRadius;
-
-  // Set tolerance per dimension based on type:
-  // - Displayed dimensions: 0 (they're in the viewing plane, not queried)
-  // - Discrete non-displayed: 0.5 (exact match with float tolerance)
-  // - Spatial/continuous non-displayed: maxRadius (points extend through these)
-  viewState.tolerance = viewState.tolerance.map((_, i) => {
-    if (dims.displayed.includes(i)) {
-      return 0;
-    }
-    const meta = dims.metadata?.[i];
-    if (meta?.discrete && !meta?.spatial) {
-      return 0.5; // Discrete dimensions need near-exact match
-    }
-    return maxRadius;
+  const viewState = simpleDimsToViewState(dims, {
+    maxRadius,
+    defaultTolerance: config.dataLoading.spatial.defaultTolerance,
   });
 
   await updateView(viewState, loaderId);
