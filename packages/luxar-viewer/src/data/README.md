@@ -45,8 +45,9 @@ data/
 │   ├── chunk-index-loader.ts          # Dual-bounds zarr probe + computeVertexRangesFromIndices
 │   └── projection.ts                  # clipSegmentToSlice + lerp + buildInstanceBuffers (TS + WASM) + initLinesWASM
 │
-├── gsplats/                       # GSplats geometry — facade + processor + multi-LOD wrapper (decomposition pending Phase 10.3)
+├── gsplats/                       # GSplats geometry — facade + chunk-index probe + processor + multi-LOD wrapper
 │   ├── gsplats-spatial-index-loader.ts  # Loads Gaussian splats with nD visibility
+│   ├── chunk-index-loader.ts            # `chunk_bounds` zarr probe + array-bounds prefetcher registration
 │   ├── gsplats-progressive-loader.ts    # Composite-pattern multi-LOD facade (loads N LODs sequentially)
 │   └── gsplats-processor.ts             # nD → 3D pure-math companion (centers, Cholesky, attenuation)
 │

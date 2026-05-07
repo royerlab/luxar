@@ -22,13 +22,16 @@ import type {
 } from '../../types/gsplats';
 import type { SceneNode } from '../data-loader-types';
 import { ArrayRefRegistry, type ArrayMetadata } from '../utils/array-decoder';
-import { fetchChunkBoundsArray } from '../loaders/chunk-bounds-loader';
 import {
   RangeLoader,
   SpatialQueryBuilder,
   type ChunkSpatialIndex,
   type LoadRange,
 } from '../loaders';
+import {
+  loadGSplatsChunkIndex,
+  registerGSplatsArrayBounds,
+} from './chunk-index-loader';
 import { getExpectedColorType, loadColorRanges } from '../loaders/color-attribute-utils';
 import { OnceInit } from '../loaders/once-init';
 import {
@@ -95,11 +98,13 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     void profiler;
   }
 
-  /** Register array shape with the prefetcher for upper-bounds checking. */
+  /**
+   * Thin wrapper around the shared `registerGSplatsArrayBounds` helper
+   * so the call sites read more naturally than passing the prefetcher
+   * and node path on every call.
+   */
   private registerBounds(arrayName: string, array: zarr.Array<zarr.DataType, zarr.Readable>): void {
-    if (!this.prefetcher) return;
-    const path = `${this.node.path.startsWith('/') ? this.node.path.slice(1) : this.node.path}/${arrayName}`;
-    this.prefetcher.registerArrayBounds(path, array.shape, array.chunks);
+    registerGSplatsArrayBounds(this.prefetcher, this.node.path, arrayName, array);
   }
 
   /**
@@ -386,45 +391,12 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
   /**
    * Probe the gsplats `chunk_bounds` array.
    *
-   * Returns null if spatial ordering is disabled in metadata, which is
-   * expected for small/non-ordered datasets (graceful fallback to full load).
+   * Implementation lives in `gsplats/chunk-index-loader.ts`. The thin
+   * wrapper here exists for symmetry with the points + lines facades,
+   * which follow the same pattern.
    */
   private async loadChunkBounds(attrs: GSplatsMetadata): Promise<ChunkSpatialIndex | null> {
-    if (attrs.ordering === 'none') {
-      log.info(
-        Modules.GSPLATS_SPATIAL_INDEX_LOADER,
-        `GSplats node has no spatial ordering (ordering=${attrs.ordering})`
-      );
-      return null;
-    }
-
-    const result = await fetchChunkBoundsArray(
-      this.zarrLocation,
-      'chunk_bounds',
-      Modules.GSPLATS_SPATIAL_INDEX_LOADER,
-      'No chunk bounds found - GSplats dataset has no spatial indexing'
-    );
-    if (!result) return null;
-
-    const chunkBounds = result.data;
-
-    // Reconcile expected vs actual chunk count and use the smaller value.
-    let chunkCount = Math.ceil(attrs.n_splats / attrs.chunk_size);
-    const actualChunks = Math.floor(chunkBounds.length / (attrs.ndim * 2));
-    if (chunkCount !== actualChunks) {
-      log.warning(
-        Modules.GSPLATS_SPATIAL_INDEX_LOADER,
-        `GSplats chunk count mismatch: metadata implies ${chunkCount} chunks, ` +
-          `but chunkBounds array has ${actualChunks} chunks — using min`
-      );
-      chunkCount = Math.min(chunkCount, actualChunks);
-    }
-
-    return {
-      chunkBounds,
-      chunkCount,
-      metadata: { ndim: attrs.ndim, chunk_size: attrs.chunk_size },
-    };
+    return loadGSplatsChunkIndex(this.zarrLocation, attrs);
   }
 
   /**
