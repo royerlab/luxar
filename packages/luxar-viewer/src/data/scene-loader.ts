@@ -2176,9 +2176,13 @@ export class SceneLoader {
     this.rootGroup = null;
     this._sceneGraph = null;
 
-    // Note: we don't dispose the monitor here — its lifecycle is owned
-    // by core/app.ts via DataMonitorManager. Drop the local reference
-    // so a new factory call can replace it on the next createLoader().
+    // Tell the monitor to drop its scene-loader-bound closures (cache
+    // stats, L0 cache, GPU buffer pool, accumulators, profiler) before
+    // we release our reference. Without this, the monitor outlives the
+    // loader with closures that capture our nulled-out fields and NPE
+    // on the next stats poll. The monitor's lifecycle itself is owned
+    // by core/app.ts via DataMonitorManager.
+    this.monitor?.disconnectAllLoaders();
     this.monitor = null;
   }
 }

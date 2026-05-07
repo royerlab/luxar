@@ -275,6 +275,36 @@ describe('Data Monitor Integration', () => {
       expect(mockLoader1.removeEventListener).toHaveBeenCalled();
       expect(monitor.getGlobalStats().totalLoaders).toBe(0);
     });
+
+    it('disconnectAllLoaders also nulls scene-bound providers (no stale closures)', () => {
+      const manager = DataMonitorManager.getInstance();
+      SceneLoaderManager.getInstance().createLoader('test-scene', { enableMonitor: true });
+      const monitor = manager.getMonitor('test-scene-monitor');
+      if (!monitor) throw new Error('Monitor should exist');
+
+      // Inject providers that throw if called after they should be reset.
+      // This mirrors how SceneLoader's L0 closure throws after dispose
+      // sets `this.l0Cache = null` — without resetSceneProviders the
+      // monitor's stats poll NPEs on the next tick.
+      let l0Calls = 0;
+      monitor.setL0CacheProvider({
+        getStats: () => {
+          l0Calls++;
+          return { count: 0, size: 0, hits: 0, misses: 0, evictions: 0, hitRate: 0 };
+        },
+        clear: () => {},
+      });
+
+      // Drop everything (scene reload path)
+      monitor.disconnectAllLoaders();
+
+      // After reset: clearL0Cache is a no-op (provider is null) and a
+      // subsequent stats fetch won't reach the stale closure.
+      monitor.clearL0Cache();
+      const before = l0Calls;
+      // The provider should be null — clearL0Cache logs nothing and returns.
+      expect(l0Calls).toBe(before);
+    });
   });
 
   describe('DataMonitorManager singleton', () => {

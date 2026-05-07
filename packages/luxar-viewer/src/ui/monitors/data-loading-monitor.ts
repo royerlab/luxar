@@ -246,6 +246,12 @@ export class DataLoadingMonitor {
     // Reset components
     this.advisor.clear();
 
+    // Drop closures bound to the previous scene's loader. Without this,
+    // a `?no-cache` reload (which never re-installs L1/L2 providers)
+    // leaves us calling `() => this.l0Cache!.getStats()` against a
+    // disposed loader.
+    this.resetSceneProviders();
+
     // Update UI to reflect cleared state if visible
     if (this.uiState.isVisible) {
       this.updateUI();
@@ -320,6 +326,28 @@ export class DataLoadingMonitor {
     if (provider) {
       log.info(Modules.DATA_MONITOR, `${type} accumulator provider connected`);
     }
+  }
+
+  /**
+   * Null every closure-bound provider tied to the active scene's loader
+   * (cache stats, L0 cache, GPU buffer pool, accumulators, profiler).
+   *
+   * Required when a scene reload disposes the previous SceneLoader: each
+   * provider was a closure that captured the now-disposed loader's
+   * fields (`this.l0Cache`, etc.). Calling them after dispose throws —
+   * e.g. the L0 closure `() => this.l0Cache!.getStats()` NPEs once the
+   * previous loader nulled its `l0Cache`. Under `?no-cache` the next
+   * scene never installs replacements either, so without this reset the
+   * stale closures live until tab close.
+   */
+  public resetSceneProviders(): void {
+    this.cacheStatsProvider = null;
+    this.l0CacheProvider = null;
+    this.gpuBufferPoolProvider = null;
+    this.accumulatorProviders = { points: null, lines: null, gsplats: null };
+    this.profiler = null;
+    this.structureDirty = true;
+    log.info(Modules.DATA_MONITOR, 'Scene providers reset');
   }
 
   /**
