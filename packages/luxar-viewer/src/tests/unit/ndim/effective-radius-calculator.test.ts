@@ -8,7 +8,7 @@ import {
   calculateSpatialQueryTolerance,
   shouldApplyEffectiveRadius,
   type EffectiveRadiusConfig,
-} from '../../../data/utils/effective-radius-calculator';
+} from '../../../data/points/effective-radius-calculator';
 import { ViewState } from '../../../data/data-loader-types';
 
 describe('effective-radius-calculator', () => {

@@ -77,7 +77,7 @@ import type {
   GSplatsViewState,
   LoadedGSplatsData,
 } from '../types/gsplats';
-import { processGSplats } from './utils/gsplats-processor';
+import { processGSplats } from './gsplats/gsplats-processor';
 import { packCholeskyForShader } from '../rendering/gsplat-geometry';
 import { GPUBufferPool } from '../rendering/gpu-buffer-pool';
 import { invertNdTransformForQuery, computeWorldNdTransform } from './transforms/nd-transform';

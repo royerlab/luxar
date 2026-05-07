@@ -37,13 +37,15 @@ data/
 │   ├── chunk-index-loader.ts          # `chunk_bounds` zarr probe + registerBounds
 │   ├── loader-metrics.ts              # Latency / event metrics
 │   ├── monitor-events.ts              # LoaderEventEmitter
-│   └── projection.ts                  # nD → 3D projection (worker + main-thread paths)
+│   ├── projection.ts                  # nD → 3D projection (worker + main-thread paths)
+│   └── effective-radius-calculator.ts # Effective-radii math for nD slicing
 │
 ├── lines/                         # Lines geometry — facade (decomposition pending Phase 10.2)
 │   └── lines-spatial-index-loader.ts  # Loads lines with nD clipping + attribute interpolation
 │
-├── gsplats/                       # GSplats geometry — facade (decomposition pending Phase 10.3)
-│   └── gsplats-spatial-index-loader.ts # Loads Gaussian splats with nD visibility
+├── gsplats/                       # GSplats geometry — facade + processor (decomposition pending Phase 10.3)
+│   ├── gsplats-spatial-index-loader.ts # Loads Gaussian splats with nD visibility
+│   └── gsplats-processor.ts           # nD → 3D pure-math companion (centers, Cholesky, attenuation)
 │
 ├── transforms/                    # nD transform helpers
 │   └── nd-transform.ts            # Inverse-query for non-displayed dimensions
@@ -56,8 +58,6 @@ data/
 │   ├── attrs-composer.ts          # Composes per-layer attributes along the scene graph
 │   ├── data-accumulator.ts        # Zero-allocation buffer pooling
 │   ├── directory-navigator.ts     # Multi-strategy server directory browsing
-│   ├── effective-radius-calculator.ts # Effective-radii math for nD slicing (points-specific)
-│   ├── gsplats-processor.ts       # nD → 3D GSplats data processor (centers, Cholesky, attenuation)
 │   ├── scene-graph-builder.ts     # Scene hierarchy builder (extracted from SceneLoader)
 │   ├── stats-aggregator.ts        # Accumulator stats aggregation across loaders
 │   └── tolerance-computer.ts      # Canonical tolerance computer (`computeTolerance`) used by all

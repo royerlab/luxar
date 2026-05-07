@@ -22,7 +22,7 @@ import {
 import {
   calculateSpatialQueryTolerance,
   type EffectiveRadiusConfig,
-} from '../utils/effective-radius-calculator';
+} from './effective-radius-calculator';
 import { computeLoadLatency, recordLoadEvent } from './loader-metrics';
 import { LoaderEventEmitter } from './monitor-events';
 import {

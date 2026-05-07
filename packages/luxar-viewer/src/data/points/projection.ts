@@ -30,7 +30,7 @@ import {
   calculateEffectiveRadii,
   shouldApplyEffectiveRadius,
   type EffectiveRadiusConfig,
-} from '../utils/effective-radius-calculator';
+} from './effective-radius-calculator';
 import type {
   ViewState,
   LoadedPointsData,
