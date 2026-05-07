@@ -19,7 +19,7 @@ import {
   loadPointsChunkIndex,
   registerArrayBounds,
   type PointsNodeAttrsForIndex,
-} from '../../../../data/point-loader/chunk-index-loader';
+} from '../../../../data/points/chunk-index-loader';
 import { log } from '../../../../utils/log';
 import type { ChunkPrefetcher } from '../../../../cache';
 

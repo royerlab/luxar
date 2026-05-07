@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { LoaderEventEmitter } from '../../../../data/point-loader/monitor-events';
+import { LoaderEventEmitter } from '../../../../data/points/monitor-events';
 import type { MonitorEvent } from '../../../../types/data-monitor-types';
 import { log } from '../../../../utils/log';
 

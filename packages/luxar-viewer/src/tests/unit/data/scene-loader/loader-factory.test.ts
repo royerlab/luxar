@@ -20,17 +20,17 @@ const linesCtorArgs: unknown[][] = [];
 const gsplatsCtorArgs: unknown[][] = [];
 const progressiveCtorArgs: unknown[][] = [];
 
-vi.mock('../../../../data/point-spatial-index-loader', () => ({
+vi.mock('../../../../data/points/point-spatial-index-loader', () => ({
   PointSpatialIndexLoader: vi.fn(function (...args: unknown[]) {
     pointsCtorArgs.push(args);
   }),
 }));
-vi.mock('../../../../data/lines-spatial-index-loader', () => ({
+vi.mock('../../../../data/lines/lines-spatial-index-loader', () => ({
   LinesSpatialIndexLoader: vi.fn(function (...args: unknown[]) {
     linesCtorArgs.push(args);
   }),
 }));
-vi.mock('../../../../data/gsplats-spatial-index-loader', () => ({
+vi.mock('../../../../data/gsplats/gsplats-spatial-index-loader', () => ({
   GSplatsSpatialIndexLoader: vi.fn(function (...args: unknown[]) {
     gsplatsCtorArgs.push(args);
   }),

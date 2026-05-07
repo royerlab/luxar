@@ -9,7 +9,7 @@ import {
   lerp,
   lerpVec3,
   distance3D,
-} from '../../../data/lines-spatial-index-loader';
+} from '../../../data/lines/lines-spatial-index-loader';
 import type { LoadedLinesData } from '../../../types/lines';
 
 // Check if WASM files exist for comparison tests

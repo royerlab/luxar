@@ -13,7 +13,7 @@
 
 import * as zarr from 'zarrita';
 import { get, slice } from 'zarrita';
-import { log, Modules, LogEmoji } from '../utils/log';
+import { log, Modules, LogEmoji } from '../../utils/log';
 import type {
   LinesMetadata,
   LoadedLinesData,
@@ -22,29 +22,29 @@ import type {
   LinesViewState,
   ClippedSegment,
   SegmentRange,
-} from '../types/lines';
-import type { SceneNode } from './data-loader-types';
-import { ArrayRefRegistry, type ArrayMetadata } from './utils/array-decoder';
-import { fetchChunkBoundsArray } from './loaders/chunk-bounds-loader';
+} from '../../types/lines';
+import type { SceneNode } from '../data-loader-types';
+import { ArrayRefRegistry, type ArrayMetadata } from '../utils/array-decoder';
+import { fetchChunkBoundsArray } from '../loaders/chunk-bounds-loader';
 import {
   RangeLoader,
   SpatialQueryBuilder,
   mergeRanges,
   type ChunkSpatialIndex,
   type LoadRange,
-} from './loaders';
-import { getExpectedColorType, loadColorRanges } from './loaders/color-attribute-utils';
-import { OnceInit } from './loaders/once-init';
+} from '../loaders';
+import { getExpectedColorType, loadColorRanges } from '../loaders/color-attribute-utils';
+import { OnceInit } from '../loaders/once-init';
 import {
   warnExtendToAllNoDimensions,
   announceExtendToAllOnce,
-} from './loaders/extend-to-all-preflight';
-import { LinesDataAccumulator, type AccumulatorStats } from './utils/data-accumulator';
-import { config as appConfig } from '../config';
-import type { UpdateProfiler, UpdateSession } from '../profiling/update-profiler';
-import { initWasm, getFallback } from '../wasm';
-import type { WasmModule } from '../wasm/types';
-import { DecompressedChunkCache, wrapWithCache, ChunkPrefetcher } from '../cache';
+} from '../loaders/extend-to-all-preflight';
+import { LinesDataAccumulator, type AccumulatorStats } from '../utils/data-accumulator';
+import { config as appConfig } from '../../config';
+import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profiler';
+import { initWasm, getFallback } from '../../wasm';
+import type { WasmModule } from '../../wasm/types';
+import { DecompressedChunkCache, wrapWithCache, ChunkPrefetcher } from '../../cache';
 
 /**
  * Internal index shape: the lines loader carries both vertex and segment

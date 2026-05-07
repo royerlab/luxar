@@ -42,7 +42,7 @@ import { commitPointsGeometry as commitPointsGeometryHelper } from './scene-load
 
 export type { StagedLinesCommit } from './scene-loader/data-processor-lines';
 export type { StagedGSplatsCommit } from './scene-loader/data-processor-gsplats';
-import { buildInstanceBuffers } from './lines-spatial-index-loader';
+import { buildInstanceBuffers } from './lines/lines-spatial-index-loader';
 import {
   DataLoader,
   ViewState,

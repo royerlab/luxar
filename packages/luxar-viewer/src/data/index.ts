@@ -10,7 +10,7 @@ export { loadScene, updateView, updateSceneForDimensions, dispose } from './zarr
 
 // Core components
 export { SceneLoader } from './scene-loader';
-export { PointSpatialIndexLoader } from './point-spatial-index-loader';
+export { PointSpatialIndexLoader } from './points/point-spatial-index-loader';
 export { ViewStateManager, type SceneDimensions } from './view-state-manager';
 
 // State management
@@ -53,14 +53,14 @@ export { ArrayDecoder, ArrayRefRegistry, loadAndDecodeOptionalArray } from './ut
 export type { ArrayMetadata } from './utils/array-decoder';
 
 // Lines data loading
-export { LinesSpatialIndexLoader } from './lines-spatial-index-loader';
+export { LinesSpatialIndexLoader } from './lines/lines-spatial-index-loader';
 export {
   clipSegmentToSlice,
   buildInstanceBuffers,
   lerp,
   lerpVec3,
   distance3D,
-} from './lines-spatial-index-loader';
+} from './lines/lines-spatial-index-loader';
 
 // Scene graph builder (extracted from SceneLoader for modularity)
 export { SceneGraphBuilder } from './utils/scene-graph-builder';

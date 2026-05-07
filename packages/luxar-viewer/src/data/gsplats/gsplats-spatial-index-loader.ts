@@ -12,34 +12,34 @@
 
 import * as zarr from 'zarrita';
 import { get, slice } from 'zarrita';
-import { log, Modules } from '../utils/log';
+import { log, Modules } from '../../utils/log';
 import type {
   GSplatsMetadata,
   LoadedGSplatsData,
   GSplatsDataLoader,
   GSplatsViewState,
   SplatRange,
-} from '../types/gsplats';
-import type { SceneNode } from './data-loader-types';
-import { ArrayRefRegistry, type ArrayMetadata } from './utils/array-decoder';
-import { fetchChunkBoundsArray } from './loaders/chunk-bounds-loader';
+} from '../../types/gsplats';
+import type { SceneNode } from '../data-loader-types';
+import { ArrayRefRegistry, type ArrayMetadata } from '../utils/array-decoder';
+import { fetchChunkBoundsArray } from '../loaders/chunk-bounds-loader';
 import {
   RangeLoader,
   SpatialQueryBuilder,
   type ChunkSpatialIndex,
   type LoadRange,
-} from './loaders';
-import { getExpectedColorType, loadColorRanges } from './loaders/color-attribute-utils';
-import { OnceInit } from './loaders/once-init';
+} from '../loaders';
+import { getExpectedColorType, loadColorRanges } from '../loaders/color-attribute-utils';
+import { OnceInit } from '../loaders/once-init';
 import {
   warnExtendToAllNoDimensions,
   announceExtendToAllOnce,
-} from './loaders/extend-to-all-preflight';
-import { choleskyPackedSize } from '../types/gsplats';
-import { GSplatsDataAccumulator, type AccumulatorStats } from './utils/data-accumulator';
-import { config as appConfig } from '../config';
-import type { UpdateProfiler, UpdateSession } from '../profiling/update-profiler';
-import { DecompressedChunkCache, wrapWithCache, ChunkPrefetcher } from '../cache';
+} from '../loaders/extend-to-all-preflight';
+import { choleskyPackedSize } from '../../types/gsplats';
+import { GSplatsDataAccumulator, type AccumulatorStats } from '../utils/data-accumulator';
+import { config as appConfig } from '../../config';
+import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profiler';
+import { DecompressedChunkCache, wrapWithCache, ChunkPrefetcher } from '../../cache';
 
 /**
  * GSplats data loader using spatial indices for efficient nD queries.

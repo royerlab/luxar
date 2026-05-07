@@ -25,22 +25,25 @@ The Luxar Data package provides the critical data loading infrastructure for vis
 ```
 data/
 ├── zarr-loader.ts                 # Main API entry point for loading scenes
-├── scene-loader.ts                # Orchestrates hierarchical scene loading (points + lines)
+├── scene-loader.ts                # Orchestrates hierarchical scene loading (spans all geometries)
 ├── scene-loader-manager.ts        # Singleton manager for SceneLoader instances
-├── point-spatial-index-loader.ts  # Loads points using chunk-based spatial queries
-│                                  #   Inlines its own `chunk_bounds` zarr probe; delegates the
-│                                  #   AABB scan to `loaders/spatial-query-builder.SpatialQueryBuilder`
-│                                  #   with pre-computed tolerance from `effective-radius-calculator`.
-├── lines-spatial-index-loader.ts  # Loads lines with nD clipping and attribute interpolation
-│                                  #   Inlines the dual-bounds zarr probe (vertex + segment); query
-│                                  #   path uses the segment side via `SpatialQueryBuilder`.
-├── gsplats-spatial-index-loader.ts # Loads Gaussian splats with nD visibility
-│                                  #   Inlines its `chunk_bounds` probe; query via `SpatialQueryBuilder`
-│                                  #   with `geometryType: 'gsplats'`.
 ├── data-loader-types.ts           # TypeScript interfaces and types
 ├── view-state-manager.ts          # Centralized ViewState initialization and validation
 ├── index.ts                       # Package exports
 ├── README.md                      # This documentation
+│
+├── points/                        # Points geometry — facade + decomposition + math
+│   ├── point-spatial-index-loader.ts  # Loads points using chunk-based spatial queries
+│   ├── chunk-index-loader.ts          # `chunk_bounds` zarr probe + registerBounds
+│   ├── loader-metrics.ts              # Latency / event metrics
+│   ├── monitor-events.ts              # LoaderEventEmitter
+│   └── projection.ts                  # nD → 3D projection (worker + main-thread paths)
+│
+├── lines/                         # Lines geometry — facade (decomposition pending Phase 10.2)
+│   └── lines-spatial-index-loader.ts  # Loads lines with nD clipping + attribute interpolation
+│
+├── gsplats/                       # GSplats geometry — facade (decomposition pending Phase 10.3)
+│   └── gsplats-spatial-index-loader.ts # Loads Gaussian splats with nD visibility
 │
 ├── transforms/                    # nD transform helpers
 │   └── nd-transform.ts            # Inverse-query for non-displayed dimensions
@@ -72,7 +75,7 @@ data/
 │   ├── image-label-loader.ts      # Lazy per-element image fetching from zarr
 │   ├── label-loader.ts            # Lazy CSR-style label fetching from zarr
 │   ├── overlay-loader.ts          # Reads overlay configurations from zarr store
-│   ├── gsplats-progressive-loader.ts # Progressive multi-LOD GSplats loader (Composite pattern)
+│   ├── gsplats-progressive-loader.ts # GSplats-specific multi-LOD; will move to gsplats/ in Phase 10.5
 │   └── loader-registry.ts         # Lifecycle management for geometry loaders
 │
 └── (related: ../workers/)         # Web Worker infrastructure

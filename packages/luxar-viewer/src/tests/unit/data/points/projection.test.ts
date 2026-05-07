@@ -18,10 +18,10 @@ import {
   createEmptyPointsData,
   projectPointsTo3D,
   type ProjectionContext,
-} from '../../../../data/point-loader/projection';
+} from '../../../../data/points/projection';
 import type { ViewState, PointRange } from '../../../../data/data-loader-types';
 import type { PointsMetadata } from '../../../../types/points';
-import type { PointsChunkIndex } from '../../../../data/point-loader/chunk-index-loader';
+import type { PointsChunkIndex } from '../../../../data/points/chunk-index-loader';
 
 function makeAttrs(overrides: Partial<PointsMetadata> = {}): PointsMetadata {
   return {

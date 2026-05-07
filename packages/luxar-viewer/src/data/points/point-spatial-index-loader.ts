@@ -8,7 +8,7 @@
 
 import * as zarr from 'zarrita';
 import { get, slice } from 'zarrita';
-import { log, Modules } from '../utils/log';
+import { log, Modules } from '../../utils/log';
 import {
   DataLoader,
   ViewState,
@@ -18,46 +18,46 @@ import {
   SceneNode,
   type ColorArray,
   type ScalarArray,
-} from './data-loader-types';
+} from '../data-loader-types';
 import {
   calculateSpatialQueryTolerance,
   type EffectiveRadiusConfig,
-} from './utils/effective-radius-calculator';
-import { computeLoadLatency, recordLoadEvent } from './point-loader/loader-metrics';
-import { LoaderEventEmitter } from './point-loader/monitor-events';
+} from '../utils/effective-radius-calculator';
+import { computeLoadLatency, recordLoadEvent } from './loader-metrics';
+import { LoaderEventEmitter } from './monitor-events';
 import {
   loadPointsChunkIndex,
   registerArrayBounds,
   type PointsChunkIndex,
   type PointsNodeAttrsForIndex,
-} from './point-loader/chunk-index-loader';
+} from './chunk-index-loader';
 import {
   createEmptyPointsData as createEmptyPointsDataHelper,
   projectPointsTo3D,
   projectPointsTo3DUsingWorker,
   type ProjectionContext,
   type ProjectionTargetBuffers,
-} from './point-loader/projection';
+} from './projection';
 import type {
   MonitorEvent,
   MonitorEventListener,
   LoaderMonitor,
   LoaderMetrics,
   QueryInfo,
-} from '../types/data-monitor-types';
-import { ArrayDecoder, ArrayRefRegistry, type ArrayMetadata } from './utils/array-decoder';
-import { RangeLoader, SpatialQueryBuilder, type BaseViewState, type LoadRange } from './loaders';
-import { OnceInit } from './loaders/once-init';
+} from '../../types/data-monitor-types';
+import { ArrayDecoder, ArrayRefRegistry, type ArrayMetadata } from '../utils/array-decoder';
+import { RangeLoader, SpatialQueryBuilder, type BaseViewState, type LoadRange } from '../loaders';
+import { OnceInit } from '../loaders/once-init';
 import {
   warnExtendToAllNoDimensions,
   announceExtendToAllOnce,
-} from './loaders/extend-to-all-preflight';
-import type { ZarrSceneAttrs } from '../types/zarr';
-import type { PointsMetadata } from '../types/points';
-import { LoadedPointsDataAccumulator, type AccumulatorStats } from './utils/data-accumulator';
-import { config as appConfig } from '../config';
-import type { UpdateProfiler, UpdateSession } from '../profiling/update-profiler';
-import { DecompressedChunkCache, wrapWithCache, ChunkPrefetcher } from '../cache';
+} from '../loaders/extend-to-all-preflight';
+import type { ZarrSceneAttrs } from '../../types/zarr';
+import type { PointsMetadata } from '../../types/points';
+import { LoadedPointsDataAccumulator, type AccumulatorStats } from '../utils/data-accumulator';
+import { config as appConfig } from '../../config';
+import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profiler';
+import { DecompressedChunkCache, wrapWithCache, ChunkPrefetcher } from '../../cache';
 
 type WritableNumericArray = {
   length: number;
