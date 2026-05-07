@@ -46,6 +46,7 @@ import type {
 } from '../../types/data-monitor-types';
 import { ArrayDecoder, ArrayRefRegistry, type ArrayMetadata } from '../utils/array-decoder';
 import { RangeLoader, SpatialQueryBuilder, type BaseViewState, type LoadRange } from '../loaders';
+import { loadColorRanges } from '../loaders/color-attribute-utils';
 import { OnceInit } from '../loaders/once-init';
 import {
   warnExtendToAllNoDimensions,
@@ -487,7 +488,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
         positions = positionsResult;
 
         // Load optional attributes
-        colors = this.arrays.colors ? await this.loadRanges('colors', ranges) : null;
+        colors = this.arrays.colors ? await this.loadColorRanges(ranges) : null;
         radii = this.arrays.radii ? await this.loadRanges('radii', ranges) : null;
         sharpness = this.arrays.sharpness ? await this.loadRanges('sharpness', ranges) : null;
       } finally {
@@ -929,6 +930,38 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
   }
 
   /**
+   * Load color ranges with multi-type support (preserves original_dtype).
+   *
+   * Delegates to the shared color-attribute helper used by the lines and
+   * gsplats facades. Handles direct (uint8/uint16/float32 native), encoded
+   * (quantized / LUT / broadcasted decoded to Float32 then cast back to
+   * `original_dtype`), and array_ref dispatch in one call.
+   *
+   * Kept separate from {@link loadRanges} (used for positions / radii /
+   * sharpness) because:
+   *   - Colors hard-code RGB (3 channels per item) — the shared helper
+   *     does too.
+   *   - Positions / scalars need Float16 preservation that the shared
+   *     helper's Float32-only direct path would silently widen.
+   */
+  private async loadColorRanges(
+    ranges: PointRange[]
+  ): Promise<Float32Array | Uint8Array | Uint16Array | null> {
+    const array = this.arrays.colors;
+    if (!array) return null;
+    const storeToUse = this.zarrStore || this.zarrLocation.store;
+    const totalPoints = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
+
+    if (!this._initialLoadDone) {
+      log.load(Modules.SPATIAL_INDEX_LOADER, `Loading colors for ${ranges.length} ranges`);
+    }
+
+    const output = await loadColorRanges(array, ranges, this.rangeLoader, storeToUse, 'Points');
+    this.recordLoadMetrics('colors', totalPoints, output);
+    return output;
+  }
+
+  /**
    * Load array data for specified point ranges.
    *
    * This method handles multiple encoding strategies:
@@ -939,7 +972,9 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
    * - Generic Encoded: Decode full array, extract ranges
    * - Direct: Load ranges directly
    *
-   * @param arrayName - Name of the array to load (positions, colors, radii, sharpness)
+   * @param arrayName - Name of the array to load (positions, radii, sharpness).
+   *   For colors, use {@link loadColorRanges} which delegates to the shared
+   *   color-attribute helper.
    * @param ranges - Point ranges to load
    * @returns Typed array with loaded data, or null if array doesn't exist
    */

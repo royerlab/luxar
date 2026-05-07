@@ -684,6 +684,63 @@ describe('PointsSpatialIndexLoader', () => {
       expect(result.positions).toBeInstanceOf(Float32Array);
     });
 
+    it('should handle uint16 color data via the shared color helper', async () => {
+      mockArrays.colors.dtype = 'uint16';
+
+      (zarr.get as any).mockImplementation((array: any) => {
+        if (array === mockArrays.colors) {
+          return Promise.resolve({
+            data: new Uint16Array([65535, 0, 0, 0, 65535, 0]), // Red, Green
+          });
+        }
+        return Promise.resolve({
+          data: new Float32Array(array === mockArrays.positions ? 8 : 2),
+        });
+      });
+
+      const viewState: ViewState = {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 5],
+        tolerance: [0, 0, 0, 0.1],
+      };
+
+      const result = await loader.loadPoints(viewState);
+
+      // Direct (unencoded) Uint16 colors must be preserved by the shared helper —
+      // THREE.js normalizes Uint16Array → 0-1 the same way it does Uint8Array.
+      expect(result.colors).toBeInstanceOf(Uint16Array);
+      expect(result.colors![0]).toBe(65535);
+      expect(result.colors![1]).toBe(0);
+    });
+
+    it('should keep direct Float32 (HDR) colors as Float32Array', async () => {
+      mockArrays.colors.dtype = 'float32';
+
+      (zarr.get as any).mockImplementation((array: any) => {
+        if (array === mockArrays.colors) {
+          // HDR colors above 1.0 indicate the values must NOT be normalized.
+          return Promise.resolve({
+            data: new Float32Array([2.5, 0, 0, 0, 1.8, 0]),
+          });
+        }
+        return Promise.resolve({
+          data: new Float32Array(array === mockArrays.positions ? 8 : 2),
+        });
+      });
+
+      const viewState: ViewState = {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 5],
+        tolerance: [0, 0, 0, 0.1],
+      };
+
+      const result = await loader.loadPoints(viewState);
+
+      expect(result.colors).toBeInstanceOf(Float32Array);
+      expect(result.colors![0]).toBeCloseTo(2.5);
+      expect(result.colors![4]).toBeCloseTo(1.8);
+    });
+
     it('should restore original_dtype for encoded arrays', async () => {
       // Mock encoded colors with original_dtype=uint8.
       // Use a known semantic quantized encoding; plain dtype names are direct storage.
