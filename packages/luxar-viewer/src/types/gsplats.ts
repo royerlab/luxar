@@ -11,6 +11,11 @@
  */
 
 import type { ViewState } from '../data/data-loader-types';
+import type {
+  LoaderMetrics,
+  MonitorEventListener,
+  QueryInfo,
+} from './data-monitor-types';
 
 // ============================================================================
 // Metadata Types (from zarr .zattrs)
@@ -232,6 +237,16 @@ export interface GSplatsDataLoader {
    * Always false for non-progressive (single-LOD) loaders.
    */
   readonly hasMoreLODs?: boolean;
+
+  /**
+   * LoaderMonitor surface (optional, for the data-loading-monitor UI).
+   * Mirrors the surface that `points-spatial-index-loader.ts` exposes —
+   * implementations that don't track metrics may omit these methods.
+   */
+  addEventListener?(listener: MonitorEventListener): void;
+  removeEventListener?(listener: MonitorEventListener): void;
+  getMetrics?(): LoaderMetrics;
+  getActiveQueries?(): QueryInfo[];
 }
 
 /**

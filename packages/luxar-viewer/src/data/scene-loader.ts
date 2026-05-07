@@ -50,7 +50,7 @@ import {
   LoaderConfig,
   LoadedPointsData,
 } from './data-loader-types';
-import type { SceneGraphNode } from '../types/data-monitor-types';
+import type { LoaderMonitor, SceneGraphNode } from '../types/data-monitor-types';
 import { ZarrSceneAttrs, ZarrNodeAttrs, hasContentsMethod } from '../types/zarr';
 import { DataMonitorManager } from '../ui/monitors/data-monitor-manager';
 import { ArrayRefRegistry } from './utils/array-decoder';
@@ -1679,7 +1679,9 @@ export class SceneLoader {
   }
 
   private createLinesLoader(node: SceneNode, loc: zarr.Location<zarr.Readable>): LinesDataLoader {
-    return createLinesLoaderHelper(node, loc, this.factoryDeps());
+    const loader = createLinesLoaderHelper(node, loc, this.factoryDeps());
+    this.connectLoaderToMonitor(node.path, loader);
+    return loader;
   }
 
   /**
@@ -1827,7 +1829,9 @@ export class SceneLoader {
     node: SceneNode,
     loc: zarr.Location<zarr.Readable>
   ): GSplatsDataLoader {
-    return createGSplatsLoaderHelper(node, loc, this.factoryDeps());
+    const loader = createGSplatsLoaderHelper(node, loc, this.factoryDeps());
+    this.connectLoaderToMonitor(node.path, loader);
+    return loader;
   }
 
   /**
@@ -1836,17 +1840,19 @@ export class SceneLoader {
    * ancestry here (not in the helper) so the LOD synthetic nodes see
    * ancestor opacity/intensity/etc.
    */
-  private createProgressiveGSplatsLoader(
+  private async createProgressiveGSplatsLoader(
     node: SceneNode,
     _loc: zarr.Location<zarr.Readable>,
     nLods: number
   ): Promise<GSplatsDataLoader> {
-    return createProgressiveGSplatsLoaderHelper(
+    const loader = await createProgressiveGSplatsLoaderHelper(
       node,
       nLods,
       this.applyEffectiveAttrs(node),
       this.factoryDeps()
     );
+    this.connectLoaderToMonitor(node.path, loader);
+    return loader;
   }
 
   /**
@@ -1856,15 +1862,33 @@ export class SceneLoader {
    */
   private createLoader(node: SceneNode, loc: zarr.Location<zarr.Readable>): DataLoader {
     const loader = createPointsLoaderHelper(node, loc, this.factoryDeps());
-
-    if (this.monitorId) {
-      const monitor = DataMonitorManager.getInstance().getMonitor(this.monitorId);
-      if (monitor) {
-        monitor.connectLoader(node.path, loader);
-      }
-    }
-
+    this.connectLoaderToMonitor(node.path, loader);
     return loader;
+  }
+
+  /**
+   * Connect a loader to the data-loading monitor when the monitor is active
+   * and the loader implements the {@link LoaderMonitor} surface (lines and
+   * gsplats expose the surface as optional methods, points always defines
+   * them). Same wiring is used for all three geometry types.
+   */
+  private connectLoaderToMonitor(
+    path: string,
+    loader: DataLoader | LinesDataLoader | GSplatsDataLoader
+  ): void {
+    if (!this.monitorId) return;
+    const monitor = DataMonitorManager.getInstance().getMonitor(this.monitorId);
+    if (!monitor) return;
+
+    const candidate = loader as Partial<LoaderMonitor>;
+    if (
+      typeof candidate.addEventListener === 'function' &&
+      typeof candidate.removeEventListener === 'function' &&
+      typeof candidate.getMetrics === 'function' &&
+      typeof candidate.getActiveQueries === 'function'
+    ) {
+      monitor.connectLoader(path, candidate as LoaderMonitor);
+    }
   }
 
   /**

@@ -23,7 +23,7 @@ export type MonitorEventType =
 /**
  * Loader types in the system
  */
-export type LoaderType = 'point-spatial-index';
+export type LoaderType = 'point-spatial-index' | 'lines-spatial-index' | 'gsplats-spatial-index';
 
 /**
  * Event emitted by data loaders for monitoring

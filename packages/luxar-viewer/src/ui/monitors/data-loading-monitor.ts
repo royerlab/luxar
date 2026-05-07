@@ -1480,7 +1480,13 @@ export class DataLoadingMonitor {
       datasetSize += metrics.datasetSize || 0;
       visiblePoints += metrics.visiblePoints || 0;
 
-      if (metrics.type === 'point-spatial-index') activeSpatial++;
+      if (
+        metrics.type === 'point-spatial-index' ||
+        metrics.type === 'lines-spatial-index' ||
+        metrics.type === 'gsplats-spatial-index'
+      ) {
+        activeSpatial++;
+      }
     }
 
     // Use cached QPS calculation instead of filtering events again

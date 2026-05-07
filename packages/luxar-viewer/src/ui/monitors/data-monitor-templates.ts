@@ -119,19 +119,37 @@ export function renderStatGrid(
 }
 
 /**
+ * Map LoaderType identifier to its short display label / item-unit pair.
+ * Keeps the loader-list rendering geometry-aware: a lines loader shows
+ * "verts", a gsplats loader shows "splats", points shows "pts".
+ */
+function loaderDisplay(type: LoaderMetrics['type']): { label: string; unit: string } {
+  switch (type) {
+    case 'lines-spatial-index':
+      return { label: 'lines', unit: 'verts' };
+    case 'gsplats-spatial-index':
+      return { label: 'gsplats', unit: 'splats' };
+    case 'point-spatial-index':
+    default:
+      return { label: 'points', unit: 'pts' };
+  }
+}
+
+/**
  * Template for loader list item
  */
 export function renderLoaderItem(path: string, metrics: LoaderMetrics): string {
   const statusColorClass = metrics.queries > 0 ? getColorClass('success') : getColorClass('muted');
+  const { label, unit } = loaderDisplay(metrics.type);
 
   return `
     <div class="luxar-loader-item">
       <div class="luxar-loader-item__header">
         <span class="luxar-loader-item__path ${statusColorClass}">${escapeHtml(path)}</span>
-        <span class="luxar-loader-item__status">${escapeHtml(metrics.type)}</span>
+        <span class="luxar-loader-item__status">${escapeHtml(label)}</span>
       </div>
       <div class="luxar-loader-item__metrics">
-        <span>${metrics.visiblePoints.toLocaleString()} pts</span>
+        <span>${metrics.visiblePoints.toLocaleString()} ${escapeHtml(unit)}</span>
         <span>${formatBytes(metrics.memoryUsed)}</span>
       </div>
     </div>

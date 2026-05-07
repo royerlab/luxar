@@ -20,7 +20,7 @@ import type {
   GSplatsViewState,
   SplatRange,
 } from '../../types/gsplats';
-import type { SceneNode } from '../data-loader-types';
+import type { SceneNode, PointRange } from '../data-loader-types';
 import { ArrayRefRegistry, type ArrayMetadata } from '../utils/array-decoder';
 import {
   RangeLoader,
@@ -34,7 +34,15 @@ import {
 } from './chunk-index-loader';
 import { createEmptyGSplatsData } from './gsplats-processor';
 import { getExpectedColorType, loadColorRanges } from '../loaders/color-attribute-utils';
+import { computeLoadLatency, recordLoadEvent } from '../loaders/loader-metrics';
+import { LoaderEventEmitter } from '../loaders/monitor-events';
 import { OnceInit } from '../loaders/once-init';
+import type {
+  LoaderMetrics,
+  MonitorEvent,
+  MonitorEventListener,
+  QueryInfo,
+} from '../../types/data-monitor-types';
 import {
   warnExtendToAllNoDimensions,
   announceExtendToAllOnce,
@@ -73,6 +81,12 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
   // Suppress detail logs after first successful view update
   private _initialLoadDone = false;
 
+  // LoaderMonitor surface — same shape as the points and lines facades.
+  private readonly events = new LoaderEventEmitter();
+  private readonly metrics: LoaderMetrics;
+  private readonly activeQueries = new Map<string, QueryInfo>();
+  private nextQueryId = 0;
+
   private arrays: {
     centers?: zarr.Array<zarr.DataType, zarr.Readable>;
     amplitudes?: zarr.Array<zarr.DataType, zarr.Readable>;
@@ -97,6 +111,23 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     this.prefetcher = prefetcher || null;
     // profiler parameter kept for API compatibility; session is passed directly to methods
     void profiler;
+
+    this.metrics = {
+      type: 'gsplats-spatial-index',
+      path: node.path,
+      queries: 0,
+      loads: 0,
+      evictions: 0,
+      errors: 0,
+      pointsLoaded: 0, // counts splats for gsplats (legacy field name)
+      bytesLoaded: 0,
+      datasetSize: 0,
+      visiblePoints: 0, // counts visible splats for gsplats
+      avgQueryTime: 0,
+      avgLoadTime: 0,
+      memoryUsed: 0,
+      memoryLimit: 0,
+    };
   }
 
   /**
@@ -223,6 +254,26 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     viewState: GSplatsViewState,
     session?: UpdateSession
   ): Promise<LoadedGSplatsData> {
+    const startTime = Date.now();
+    const queryId = `${this.node.path}-${startTime}-${this.nextQueryId++}`;
+
+    try {
+      const result = await this.loadGSplatsInternal(viewState, session, queryId, startTime);
+      this.finishQueryTracking(queryId, startTime, 'complete');
+      return result;
+    } catch (err) {
+      this.metrics.errors += 1;
+      this.finishQueryTracking(queryId, startTime, 'error');
+      throw err;
+    }
+  }
+
+  private async loadGSplatsInternal(
+    viewState: GSplatsViewState,
+    session: UpdateSession | undefined,
+    queryId: string,
+    startTime: number
+  ): Promise<LoadedGSplatsData> {
     await this._onceInit.ensure(() => this.initialize());
 
     if (!this.arrays.centers || !this.arrays.amplitudes || !this.arrays.cholesky_factors) {
@@ -244,13 +295,38 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       splatRanges = await this.queryVisibleSplatRanges(viewState);
     }
 
+    // Count total splats to load and begin query tracking.
+    const totalSplats = splatRanges.reduce((sum, r) => sum + (r.end - r.start), 0);
+    this.metrics.queries += 1;
+    this.metrics.visiblePoints = totalSplats;
+    this.activeQueries.set(queryId, {
+      id: queryId,
+      loader: 'gsplats-spatial-index',
+      path: this.node.path,
+      startTime,
+      status: 'loading',
+      cells: splatRanges.length,
+      points: totalSplats,
+      ranges: splatRanges as unknown as PointRange[],
+    });
+    this.emitEvent({
+      type: 'query',
+      loader: 'gsplats-spatial-index',
+      timestamp: Date.now(),
+      data: {
+        path: this.node.path,
+        ranges: splatRanges as unknown as PointRange[],
+        cells: splatRanges.length,
+        points: totalSplats,
+        queryPosition: viewState.slicePosition,
+        queryTolerance: viewState.tolerance,
+      },
+    });
+
     if (splatRanges.length === 0) {
       log.info(Modules.GSPLATS_SPATIAL_INDEX_LOADER, 'No visible gsplats - returning empty data');
       return createEmptyGSplatsData(attrs);
     }
-
-    // Count total splats to load
-    const totalSplats = splatRanges.reduce((sum, r) => sum + (r.end - r.start), 0);
 
     if (!this._initialLoadDone) {
       log.load(
@@ -487,6 +563,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       'GSplats'
     );
 
+    this.recordLoadMetrics(arrayName, totalSplats, output);
     return output;
   }
 
@@ -505,7 +582,17 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       throw new Error('Colors array not initialized');
     }
     const storeToUse = this.zarrStore || this.zarrLocation.store;
-    return loadColorRanges(array, ranges, this.rangeLoader, storeToUse, 'GSplats', targetBuffer);
+    const totalSplats = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
+    const output = await loadColorRanges(
+      array,
+      ranges,
+      this.rangeLoader,
+      storeToUse,
+      'GSplats',
+      targetBuffer
+    );
+    this.recordLoadMetrics('colors', totalSplats, output);
+    return output;
   }
 
 
@@ -561,6 +648,78 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     return this._accumulator?.getStats() ?? null;
   }
 
+  // ────────────────────────────────────────────────────────────────────
+  // LoaderMonitor surface — same shape as the points and lines facades.
+  // ────────────────────────────────────────────────────────────────────
+
+  addEventListener(listener: MonitorEventListener): void {
+    this.events.add(listener);
+  }
+
+  removeEventListener(listener: MonitorEventListener): void {
+    this.events.remove(listener);
+  }
+
+  getMetrics(): LoaderMetrics {
+    const attrs = this.node.attrs as unknown as GSplatsMetadata;
+    if (typeof attrs.n_splats === 'number') {
+      this.metrics.datasetSize = attrs.n_splats;
+    }
+    return { ...this.metrics };
+  }
+
+  getActiveQueries(): QueryInfo[] {
+    return Array.from(this.activeQueries.values());
+  }
+
+  /**
+   * Update metrics + emit a 'load' event. Mirrors the points / lines facade's
+   * recordLoadMetrics shape.
+   */
+  private recordLoadMetrics(arrayName: string, items: number, output: ArrayBufferView): void {
+    const queryStart = this.activeQueries.values().next().value?.startTime;
+    const loadTime = computeLoadLatency(queryStart);
+    const bytes = output.byteLength;
+
+    recordLoadEvent(this.metrics, items, bytes, loadTime);
+
+    this.emitEvent({
+      type: 'load',
+      loader: 'gsplats-spatial-index',
+      timestamp: Date.now(),
+      data: {
+        path: this.node.path,
+        arrayName,
+        points: items,
+        memory: bytes,
+        latency: loadTime,
+      },
+    });
+  }
+
+  private emitEvent(event: MonitorEvent): void {
+    this.events.emit(event);
+  }
+
+  private finishQueryTracking(
+    queryId: string,
+    startTime: number,
+    status: 'complete' | 'error'
+  ): void {
+    const query = this.activeQueries.get(queryId);
+    if (query) {
+      query.status = status;
+      query.endTime = Date.now();
+      this.activeQueries.delete(queryId);
+    }
+    const queryTime = Date.now() - startTime;
+    if (this.metrics.queries > 0) {
+      this.metrics.avgQueryTime =
+        (this.metrics.avgQueryTime * (this.metrics.queries - 1) + queryTime) /
+        this.metrics.queries;
+    }
+  }
+
   /**
    * Clean up resources
    */
@@ -568,6 +727,8 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     this.chunkIndex = null;
     this.arrays = {};
     this._onceInit.reset();
+    this.events.clear();
+    this.activeQueries.clear();
 
     // Dispose accumulator
     if (this._accumulator) {
