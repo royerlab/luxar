@@ -30,16 +30,15 @@ export default defineConfig({
       // band. Long-term target: 80% across the board.
       thresholds: {
         lines: 71,
-        functions: 73,
+        functions: 74,
         branches: 60,
         statements: 71,
       },
-      // Phase 5.4z + 5.4aa extracted applyViewerConfigState +
-      // computeDebugState helpers from app.ts and tested both. +43 unit
-      // tests; measurement is now 71.60 % L / 73.92 % F / 60.31 % B /
-      // 71.08 % S. Floor advances 1pp on branches + statements; lines
-      // and functions hold one cycle (~0.6pp safety margin). Long-term
-      // target stays 80 %.
+      // Phase 5.4ab extracted debug cache helpers from app.ts (+16
+      // unit tests). Measurement is now 71.77 % L / 74.08 % F /
+      // 60.48 % B / 71.24 % S. Floor advances 1pp on functions; lines
+      // / branches / statements hold (~0.5pp safety margin retained).
+      // Long-term target stays 80 %.
     },
   },
   resolve: {
