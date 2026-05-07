@@ -612,6 +612,28 @@ describe('LuxarApp', () => {
 
       expect(disposeOrder.indexOf('scene')).toBeGreaterThan(disposeOrder.indexOf('animation'));
     });
+
+    it('disposes the SceneLoaderManager and DataMonitorManager singletons', async () => {
+      // Pre-existing static singletons that pre-date ManagerRegistry.
+      // Without explicit disposeInstance() calls, their loaders + cache stores
+      // + eventBus subscriptions survive across LuxarApp re-init.
+      const sceneLoaderModule = await import('../../../data/scene-loader-manager');
+      const dataMonitorModule = await import('../../../ui/monitors/data-monitor-manager');
+
+      const sceneLoaderSpy = vi.spyOn(sceneLoaderModule.SceneLoaderManager, 'disposeInstance');
+      const dataMonitorSpy = vi.spyOn(dataMonitorModule.DataMonitorManager, 'disposeInstance');
+
+      app.dispose();
+
+      expect(sceneLoaderSpy).toHaveBeenCalledTimes(1);
+      expect(dataMonitorSpy).toHaveBeenCalledTimes(1);
+
+      // Order: monitor first (its factory wiring holds loader refs),
+      // then the loader manager drops the actual loaders + cache stores.
+      const monitorCallOrder = dataMonitorSpy.mock.invocationCallOrder[0];
+      const loaderCallOrder = sceneLoaderSpy.mock.invocationCallOrder[0];
+      expect(monitorCallOrder).toBeLessThan(loaderCallOrder);
+    });
   });
 
   describe('focus handling', () => {

@@ -1127,10 +1127,14 @@ export class LuxarApp {
       // via this.events.add()) in one call.
       this.events.dispose();
 
-      // Dispose any singletons that registered themselves with the
-      // ManagerRegistry. Walks them in reverse registration order so
-      // the most-recently-created tears down first. Idempotent on
-      // repeat calls; non-disposed managers fall through silently.
+      // Two-tier singleton teardown: SceneLoaderManager and DataMonitorManager
+      // pre-date ManagerRegistry and use static getInstance/disposeInstance.
+      // Monitor first (its factory wiring holds loader refs); then the loader
+      // manager drops the actual loaders + cache stores. ManagerRegistry then
+      // walks any singletons that self-registered (none today, but the path
+      // stays correct for future registrants).
+      DataMonitorManager.disposeInstance();
+      SceneLoaderManager.disposeInstance();
       getManagerRegistry().disposeAll();
     } catch (error) {
       log.error(Modules.LUXAR, 'Error during dispose:', error);
