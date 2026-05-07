@@ -7,6 +7,7 @@
 
 import { DataLoadingMonitor } from './data-loading-monitor';
 import type { MonitorConfig } from '../types/data-monitor-types';
+import { eventBus, type Unsubscribe } from '../utils/event-bus';
 
 /**
  * Manager for DataLoadingMonitor instances.
@@ -16,11 +17,25 @@ export class DataMonitorManager {
   private static instance: DataMonitorManager | null = null;
   private monitors = new Map<string, DataLoadingMonitor>();
   private defaultMonitorId: string | null = null;
+  private busSubscriptions: Unsubscribe[] = [];
 
   /**
-   * Private constructor to enforce singleton pattern
+   * Private constructor to enforce singleton pattern. Subscribes to
+   * panel-cycle / panel-hide events on the cross-layer event bus so
+   * lower layers (input, scene) can drive the data-monitor without
+   * importing this UI module directly — that's how Phase 8.6 keeps
+   * the layer order clean.
    */
-  private constructor() {}
+  private constructor() {
+    this.busSubscriptions.push(
+      eventBus.on('panel-cycle', ({ panelId }) => {
+        if (panelId === 'data-monitor') this.cycleMonitor();
+      }),
+      eventBus.on('panel-hide', ({ panelId }) => {
+        if (panelId === 'data-monitor') this.hideMonitor();
+      })
+    );
+  }
 
   /**
    * Get the singleton instance of DataMonitorManager
@@ -199,6 +214,10 @@ export class DataMonitorManager {
   static disposeInstance(): void {
     if (DataMonitorManager.instance) {
       DataMonitorManager.instance.destroyAll();
+      for (const unsubscribe of DataMonitorManager.instance.busSubscriptions) {
+        unsubscribe();
+      }
+      DataMonitorManager.instance.busSubscriptions = [];
       DataMonitorManager.instance = null;
     }
   }

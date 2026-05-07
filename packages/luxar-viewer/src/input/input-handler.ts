@@ -57,7 +57,7 @@ import { AnimationShortcuts } from './handlers/animation-shortcuts';
 import { registerAllKeyBindings } from './handlers/key-bindings';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { updateSceneForDimensions } from '../data';
-import { cycleDataMonitor } from '../ui/data-monitor-manager';
+import { eventBus } from '../utils/event-bus';
 
 /**
  * Central coordinator for all user input events and nD navigation.
@@ -551,7 +551,7 @@ export class InputHandler {
    * @private
    */
   private handleDataMonitorCycle(): void {
-    cycleDataMonitor();
+    eventBus.emit('panel-cycle', { panelId: 'data-monitor' });
     log.info(Modules.DATA_MONITOR, 'Data loading monitor cycled');
   }
 

@@ -62,7 +62,19 @@ export interface LuxarEventMap {
    * own visibility flag, so the publisher doesn't need to know the
    * current state.
    */
-  'panel-toggle': { panelId: 'dimension-sliders' | 'debug-console' };
+  'panel-toggle': {
+    panelId: 'dimension-sliders' | 'debug-console' | 'data-monitor';
+  };
+  /**
+   * Cycle the named UI panel through its display states (e.g.,
+   * hidden → mini → expanded → hidden). Distinct from `panel-toggle`
+   * because the data-monitor has more than two visibility states.
+   */
+  'panel-cycle': { panelId: 'data-monitor' };
+  /** Hide the named panel. Used by the panel-coordinator close-all flow. */
+  'panel-hide': {
+    panelId: 'data-monitor' | 'help-overlay';
+  };
 }
 
 /**

@@ -16,7 +16,7 @@
  */
 
 import { notifier } from '../../utils/notifier';
-import { hideDataMonitor } from '../../ui/data-monitor-manager';
+import { eventBus } from '../../utils/event-bus';
 import type { RenderingControls } from '../../ui/rendering-controls';
 import type { RecordingPanel } from '../../ui/recording-panel';
 import type { DimensionSliders } from '../../ui/dimension-sliders';
@@ -110,7 +110,7 @@ export class PanelCoordinator {
       this.refs.renderingControls.hide();
     }
 
-    hideDataMonitor();
+    eventBus.emit('panel-hide', { panelId: 'data-monitor' });
 
     if (this.refs.dimensionSliders?.getIsVisible()) {
       this.refs.dimensionSliders.hide();

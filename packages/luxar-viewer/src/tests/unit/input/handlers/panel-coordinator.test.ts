@@ -34,14 +34,12 @@ vi.mock('../../../../utils/notifier', () => ({
   },
 }));
 
-// Phase 8.6: data-monitor-manager moved from data/ to ui/.
-vi.mock('../../../../ui/data-monitor-manager', () => ({
-  hideDataMonitor: vi.fn(),
-}));
-
 const hideHelpOverlay = notifierMocks.hideHelp;
 const clearError = notifierMocks.clearError;
-import { hideDataMonitor } from '../../../../ui/data-monitor-manager';
+// Phase 8.6.c: panel-coordinator now emits 'panel-hide' on the event
+// bus instead of calling hideDataMonitor directly. Spy on the bus to
+// observe the emit.
+import { eventBus } from '../../../../utils/event-bus';
 import { PanelCoordinator } from '../../../../input/handlers/panel-coordinator';
 import type { RenderingControls } from '../../../../ui/rendering-controls';
 import type { RecordingPanel } from '../../../../ui/recording-panel';
@@ -115,23 +113,29 @@ describe('PanelCoordinator.closeAll', () => {
     document.body.innerHTML = '';
     vi.mocked(hideHelpOverlay).mockClear();
     vi.mocked(clearError).mockClear();
-    vi.mocked(hideDataMonitor).mockClear();
+    // hideDataMonitor moved to panel-hide bus event in Phase 8.6.c
   });
 
   afterEach(() => {
     document.body.innerHTML = '';
   });
 
-  it('always calls hideHelpOverlay, clearError, hideDataMonitor', () => {
+  it('always calls hideHelpOverlay, clearError, and emits panel-hide for data-monitor', () => {
     const { console: debugConsole } = makeDebugConsole(false);
     const { stats } = makePerformanceStats(false);
     const coord = new PanelCoordinator({ debugConsole, performanceStats: stats });
 
-    coord.closeAll();
+    const hideListener = vi.fn();
+    const off = eventBus.on('panel-hide', hideListener);
 
-    expect(hideHelpOverlay).toHaveBeenCalledTimes(1);
-    expect(clearError).toHaveBeenCalledTimes(1);
-    expect(hideDataMonitor).toHaveBeenCalledTimes(1);
+    try {
+      coord.closeAll();
+      expect(hideHelpOverlay).toHaveBeenCalledTimes(1);
+      expect(clearError).toHaveBeenCalledTimes(1);
+      expect(hideListener).toHaveBeenCalledWith({ panelId: 'data-monitor' });
+    } finally {
+      off();
+    }
   });
 
   it('removes #luxar-dataset-browser if present', () => {
@@ -240,7 +244,7 @@ describe('PanelCoordinator.handleEscape', () => {
     document.body.innerHTML = '';
     vi.mocked(hideHelpOverlay).mockClear();
     vi.mocked(clearError).mockClear();
-    vi.mocked(hideDataMonitor).mockClear();
+    // hideDataMonitor moved to panel-hide bus event in Phase 8.6.c
     // Default: not in fullscreen.
     Object.defineProperty(document, 'fullscreenElement', {
       configurable: true,
