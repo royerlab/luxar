@@ -10,7 +10,28 @@
  * @module data/gsplats-processor
  */
 
-import type { LoadedGSplatsData, ProcessedGSplatsData, GSplatsViewState } from '../../types/gsplats';
+import type {
+  GSplatsMetadata,
+  LoadedGSplatsData,
+  ProcessedGSplatsData,
+  GSplatsViewState,
+} from '../../types/gsplats';
+
+/**
+ * Construct the canonical "no visible splats at this slice" payload.
+ * Mirrors `createEmptyPointsData` in `points/projection.ts` and
+ * `createEmptyLinesData` in `lines/projection.ts`.
+ */
+export function createEmptyGSplatsData(attrs: GSplatsMetadata): LoadedGSplatsData {
+  return {
+    positions: new Float32Array(0),
+    amplitudes: new Float32Array(0),
+    choleskyFactors: new Float32Array(0),
+    colors: null,
+    splatCount: 0,
+    ndim: attrs.ndim,
+  };
+}
 
 /**
  * Compute the packed index for a Cholesky element L[row, col].

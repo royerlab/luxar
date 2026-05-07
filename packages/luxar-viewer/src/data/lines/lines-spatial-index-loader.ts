@@ -45,6 +45,7 @@ import {
   registerLinesArrayBounds,
   computeVertexRangesFromIndices,
 } from './chunk-index-loader';
+import { createEmptyLinesData } from './projection';
 
 /**
  * Lines data loader using spatial indices for efficient nD queries.
@@ -264,7 +265,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
 
     if (segmentRanges.length === 0) {
       log.info(Modules.LINES_LOADER, 'No visible segments - returning empty lines data');
-      return this.createEmptyLinesData(attrs);
+      return createEmptyLinesData(attrs);
     }
 
     // Load segment indices
@@ -667,21 +668,6 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     return widths;
   }
 
-  /**
-   * Create empty lines data
-   */
-  private createEmptyLinesData(attrs: LinesMetadata): LoadedLinesData {
-    return {
-      positions: new Float32Array(0),
-      segments: new Uint32Array(0),
-      widths: new Float32Array(0),
-      colors: null,
-      sharpness: null,
-      segmentCount: 0,
-      vertexCount: 0,
-      ndim: attrs.ndim,
-    };
-  }
 
   /**
    * Get accumulator stats for memory monitoring

@@ -22,12 +22,31 @@
 
 import { log, Modules, LogEmoji } from '../../utils/log';
 import type {
+  LinesMetadata,
   LoadedLinesData,
   ProcessedLinesData,
   ClippedSegment,
 } from '../../types/lines';
 import { initWasm, getFallback } from '../../wasm';
 import type { WasmModule } from '../../wasm/types';
+
+/**
+ * Construct the canonical "no visible lines at this slice" payload.
+ * Mirrors `createEmptyPointsData` in `points/projection.ts` and
+ * `createEmptyGSplatsData` in `gsplats/gsplats-processor.ts`.
+ */
+export function createEmptyLinesData(attrs: LinesMetadata): LoadedLinesData {
+  return {
+    positions: new Float32Array(0),
+    segments: new Uint32Array(0),
+    widths: new Float32Array(0),
+    colors: null,
+    sharpness: null,
+    segmentCount: 0,
+    vertexCount: 0,
+    ndim: attrs.ndim,
+  };
+}
 
 // ============================================================================
 // WASM Module Caching for Hot Path Optimization

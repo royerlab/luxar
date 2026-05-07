@@ -32,6 +32,7 @@ import {
   loadGSplatsChunkIndex,
   registerGSplatsArrayBounds,
 } from './chunk-index-loader';
+import { createEmptyGSplatsData } from './gsplats-processor';
 import { getExpectedColorType, loadColorRanges } from '../loaders/color-attribute-utils';
 import { OnceInit } from '../loaders/once-init';
 import {
@@ -245,7 +246,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
 
     if (splatRanges.length === 0) {
       log.info(Modules.GSPLATS_SPATIAL_INDEX_LOADER, 'No visible gsplats - returning empty data');
-      return this.createEmptyGSplatsData(attrs);
+      return createEmptyGSplatsData(attrs);
     }
 
     // Count total splats to load
@@ -507,19 +508,6 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     return loadColorRanges(array, ranges, this.rangeLoader, storeToUse, 'GSplats', targetBuffer);
   }
 
-  /**
-   * Create empty gsplats data
-   */
-  private createEmptyGSplatsData(attrs: GSplatsMetadata): LoadedGSplatsData {
-    return {
-      positions: new Float32Array(0),
-      amplitudes: new Float32Array(0),
-      choleskyFactors: new Float32Array(0),
-      colors: null,
-      splatCount: 0,
-      ndim: attrs.ndim,
-    };
-  }
 
   /**
    * Prefetch chunks for the given view state into the cache without decoding.
