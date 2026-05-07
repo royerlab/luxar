@@ -29,7 +29,7 @@ import { GSplatsProgressiveLoader } from '../gsplats-progressive-loader';
 import type { LoaderConfig, SceneNode } from '../data-loader-types';
 import type { LinesDataLoader } from '../../types/lines';
 import type { GSplatsDataLoader } from '../../types/gsplats';
-import { ArrayRefRegistry } from '../array-decoder';
+import { ArrayRefRegistry } from '../utils/array-decoder';
 import { log, Modules } from '../../utils/log';
 import { UpdateProfiler } from '../../profiling/update-profiler';
 import type { DecompressedChunkCache, MultiLevelCachingStore } from '../../cache';

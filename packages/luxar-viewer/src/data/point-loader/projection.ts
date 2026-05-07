@@ -30,7 +30,7 @@ import {
   calculateEffectiveRadii,
   shouldApplyEffectiveRadius,
   type EffectiveRadiusConfig,
-} from '../effective-radius-calculator';
+} from '../utils/effective-radius-calculator';
 import type {
   ViewState,
   LoadedPointsData,
@@ -39,7 +39,7 @@ import type {
   ColorArray,
   ScalarArray,
 } from '../data-loader-types';
-import { LoadedPointsDataAccumulator } from '../data-accumulator';
+import { LoadedPointsDataAccumulator } from '../utils/data-accumulator';
 import type { PointsMetadata } from '../../types/points';
 import type { PointsChunkIndex } from './chunk-index-loader';
 import { getWorkerPool } from '../../workers/worker-pool';

@@ -12,7 +12,7 @@ import type * as THREE from 'three';
 import type { DimensionMetadata } from '../../types/dims';
 import type { UpdateSession } from '../../profiling/update-profiler';
 import type { SceneNode } from '../data-loader-types';
-import type { ArrayRefRegistry } from '../array-decoder';
+import type { ArrayRefRegistry } from '../utils/array-decoder';
 
 // ============================================================================
 // Common View State

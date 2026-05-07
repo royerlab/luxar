@@ -14,8 +14,8 @@
  */
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import type { ArrayMetadata } from '../../../data/array-decoder';
-import { ArrayRefRegistry } from '../../../data/array-decoder';
+import type { ArrayMetadata } from '../../../data/utils/array-decoder';
+import { ArrayRefRegistry } from '../../../data/utils/array-decoder';
 import {
   RangeLoader,
   getSharedRangeLoader,

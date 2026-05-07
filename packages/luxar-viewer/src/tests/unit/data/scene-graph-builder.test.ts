@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { SceneGraphBuilder, type StoreEntry } from '../../../data/scene-graph-builder';
+import { SceneGraphBuilder, type StoreEntry } from '../../../data/utils/scene-graph-builder';
 import type { SceneNode } from '../../../data/data-loader-types';
 
 // Helper to create mock store

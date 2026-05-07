@@ -53,7 +53,7 @@ import {
 import type { SceneGraphNode } from '../types/data-monitor-types';
 import { ZarrSceneAttrs, ZarrNodeAttrs, hasContentsMethod } from '../types/zarr';
 import { DataMonitorManager } from '../ui/data-monitor-manager';
-import { ArrayRefRegistry } from './array-decoder';
+import { ArrayRefRegistry } from './utils/array-decoder';
 import {
   ViewStateManager,
   type SceneDimensions,
@@ -87,9 +87,9 @@ import {
   getAggregatedPointsAccumulatorStats,
   getAggregatedLinesAccumulatorStats,
   getAggregatedGSplatsAccumulatorStats,
-} from './stats-aggregator';
+} from './utils/stats-aggregator';
 import { LoaderRegistry } from './loader-registry';
-import { computeTolerance } from './tolerance-computer';
+import { computeTolerance } from './utils/tolerance-computer';
 import { loadOverlayConfigs } from './overlay-loader';
 import { notifier } from '../utils/notifier';
 

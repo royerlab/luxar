@@ -14,7 +14,7 @@
  * @module data/scene-loader/effective-attrs
  */
 
-import { getEffectiveAttrs } from '../attrs-composer';
+import { getEffectiveAttrs } from '../utils/attrs-composer';
 import type { SceneNode } from '../data-loader-types';
 
 /**

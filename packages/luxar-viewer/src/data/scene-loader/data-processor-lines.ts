@@ -24,7 +24,7 @@ import * as THREE from 'three';
 import { buildInstanceBuffers } from '../lines-spatial-index-loader';
 import type { LoadedLinesData, ProcessedLinesData } from '../../types/lines';
 import { isLinesUserData } from '../../types/lines';
-import { computeTolerance } from '../tolerance-computer';
+import { computeTolerance } from '../utils/tolerance-computer';
 import type { DimensionMetadata } from '../view-state-manager';
 import { config as appConfig } from '../../config';
 import { log, Modules } from '../../utils/log';

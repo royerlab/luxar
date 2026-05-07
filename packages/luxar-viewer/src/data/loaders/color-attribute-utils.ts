@@ -23,7 +23,7 @@
 
 import * as zarr from 'zarrita';
 import { get, slice } from 'zarrita';
-import { ArrayDecoder, type ArrayMetadata } from '../array-decoder';
+import { ArrayDecoder, type ArrayMetadata } from '../utils/array-decoder';
 import type { RangeLoader, LoadRange } from './range-loader';
 
 /** Minimal shape needed by the helpers — both SplatRange and SegmentRange match. */

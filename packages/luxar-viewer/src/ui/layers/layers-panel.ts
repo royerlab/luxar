@@ -33,7 +33,7 @@ import {
   collectDataDescendants,
   type ComposableAttrs,
   type EffectiveAttrs,
-} from '../../data/attrs-composer';
+} from '../../data/utils/attrs-composer';
 import { clamp } from '../gui/utils/value-formatting';
 
 /** Clamp a gamma value to a safe range for the shader (prevents division by zero and extreme exponents) */

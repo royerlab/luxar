@@ -27,10 +27,10 @@
  */
 
 import * as THREE from 'three';
-import type { LoadedPointsData, PositionArray, ColorArray, ScalarArray } from './data-loader-types';
-import type { LoadedLinesData } from '../types/lines';
-import type { LoadedGSplatsData } from '../types/gsplats';
-import { log, Modules } from '../utils/log';
+import type { LoadedPointsData, PositionArray, ColorArray, ScalarArray } from '../data-loader-types';
+import type { LoadedLinesData } from '../../types/lines';
+import type { LoadedGSplatsData } from '../../types/gsplats';
+import { log, Modules } from '../../utils/log';
 
 /**
  * Generic accumulator interface

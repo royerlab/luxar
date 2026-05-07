@@ -11,7 +11,7 @@
 
 import * as zarr from 'zarrita';
 import { get } from 'zarrita';
-import { log, Modules } from '../utils/log';
+import { log, Modules } from '../../utils/log';
 
 /**
  * Encoding metadata (nested under "encoding" key per Python spec)

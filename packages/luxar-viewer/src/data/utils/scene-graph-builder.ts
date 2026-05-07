@@ -16,9 +16,9 @@
  */
 
 import * as zarr from 'zarrita';
-import { SceneNode } from './data-loader-types';
-import { ZarrNodeAttrs, hasContentsMethod } from '../types/zarr';
-import { log, Modules } from '../utils/log';
+import { SceneNode } from '../data-loader-types';
+import { ZarrNodeAttrs, hasContentsMethod } from '../../types/zarr';
+import { log, Modules } from '../../utils/log';
 
 /**
  * Entry in the store listing.

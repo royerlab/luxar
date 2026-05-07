@@ -18,7 +18,7 @@ import { get, slice } from 'zarrita';
 import { log, Modules } from '../../utils/log';
 import { config as appConfig } from '../../config';
 import { getWorkerPool } from '../../workers/worker-pool';
-import { ArrayDecoder, ArrayRefRegistry, type ArrayMetadata } from '../array-decoder';
+import { ArrayDecoder, ArrayRefRegistry, type ArrayMetadata } from '../utils/array-decoder';
 
 /**
  * Range specification for loading array subsets

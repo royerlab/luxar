@@ -18,7 +18,7 @@
  * API documents; viewer and spec match intentionally.
  */
 
-import type { SceneNode } from './data-loader-types';
+import type { SceneNode } from '../data-loader-types';
 
 export interface ComposableAttrs {
   opacity?: number;

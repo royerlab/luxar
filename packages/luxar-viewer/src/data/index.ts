@@ -45,12 +45,12 @@ export {
 } from './loaders';
 
 // Directory navigation
-export { DirectoryNavigator } from './directory-navigator';
-export type { DirectoryEntry, NavigationResult } from './directory-navigator';
+export { DirectoryNavigator } from './utils/directory-navigator';
+export type { DirectoryEntry, NavigationResult } from './utils/directory-navigator';
 
 // Array decoding (for Python luxar.encoding compatibility)
-export { ArrayDecoder, ArrayRefRegistry, loadAndDecodeOptionalArray } from './array-decoder';
-export type { ArrayMetadata } from './array-decoder';
+export { ArrayDecoder, ArrayRefRegistry, loadAndDecodeOptionalArray } from './utils/array-decoder';
+export type { ArrayMetadata } from './utils/array-decoder';
 
 // Lines data loading
 export { LinesSpatialIndexLoader } from './lines-spatial-index-loader';
@@ -63,14 +63,14 @@ export {
 } from './lines-spatial-index-loader';
 
 // Scene graph builder (extracted from SceneLoader for modularity)
-export { SceneGraphBuilder } from './scene-graph-builder';
-export type { StoreEntry } from './scene-graph-builder';
+export { SceneGraphBuilder } from './utils/scene-graph-builder';
+export type { StoreEntry } from './utils/scene-graph-builder';
 
 // Extracted modules (decomposed from SceneLoader)
 export {
   getAggregatedPointsAccumulatorStats,
   getAggregatedLinesAccumulatorStats,
   getAggregatedGSplatsAccumulatorStats,
-} from './stats-aggregator';
+} from './utils/stats-aggregator';
 export { LoaderRegistry, type FailedLoaderInfo } from './loader-registry';
-export { computeTolerance, type GeometryType, type ToleranceOptions } from './tolerance-computer';
+export { computeTolerance, type GeometryType, type ToleranceOptions } from './utils/tolerance-computer';

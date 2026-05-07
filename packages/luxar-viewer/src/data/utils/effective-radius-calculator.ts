@@ -6,7 +6,7 @@
  * Points only extend through dimensions marked as spatial.
  */
 
-import { ViewState } from './data-loader-types';
+import { ViewState } from '../data-loader-types';
 
 /**
  * Configuration for effective radius calculation.

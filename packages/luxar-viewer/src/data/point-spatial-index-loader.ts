@@ -22,7 +22,7 @@ import {
 import {
   calculateSpatialQueryTolerance,
   type EffectiveRadiusConfig,
-} from './effective-radius-calculator';
+} from './utils/effective-radius-calculator';
 import { computeLoadLatency, recordLoadEvent } from './point-loader/loader-metrics';
 import { LoaderEventEmitter } from './point-loader/monitor-events';
 import {
@@ -45,7 +45,7 @@ import type {
   LoaderMetrics,
   QueryInfo,
 } from '../types/data-monitor-types';
-import { ArrayDecoder, ArrayRefRegistry, type ArrayMetadata } from './array-decoder';
+import { ArrayDecoder, ArrayRefRegistry, type ArrayMetadata } from './utils/array-decoder';
 import { RangeLoader, SpatialQueryBuilder, type BaseViewState, type LoadRange } from './loaders';
 import { OnceInit } from './loaders/once-init';
 import {
@@ -54,7 +54,7 @@ import {
 } from './loaders/extend-to-all-preflight';
 import type { ZarrSceneAttrs } from '../types/zarr';
 import type { PointsMetadata } from '../types/points';
-import { LoadedPointsDataAccumulator, type AccumulatorStats } from './data-accumulator';
+import { LoadedPointsDataAccumulator, type AccumulatorStats } from './utils/data-accumulator';
 import { config as appConfig } from '../config';
 import type { UpdateProfiler, UpdateSession } from '../profiling/update-profiler';
 import { DecompressedChunkCache, wrapWithCache, ChunkPrefetcher } from '../cache';

@@ -24,7 +24,7 @@ import type {
   SegmentRange,
 } from '../types/lines';
 import type { SceneNode } from './data-loader-types';
-import { ArrayRefRegistry, type ArrayMetadata } from './array-decoder';
+import { ArrayRefRegistry, type ArrayMetadata } from './utils/array-decoder';
 import { fetchChunkBoundsArray } from './loaders/chunk-bounds-loader';
 import {
   RangeLoader,
@@ -39,7 +39,7 @@ import {
   warnExtendToAllNoDimensions,
   announceExtendToAllOnce,
 } from './loaders/extend-to-all-preflight';
-import { LinesDataAccumulator, type AccumulatorStats } from './data-accumulator';
+import { LinesDataAccumulator, type AccumulatorStats } from './utils/data-accumulator';
 import { config as appConfig } from '../config';
 import type { UpdateProfiler, UpdateSession } from '../profiling/update-profiler';
 import { initWasm, getFallback } from '../wasm';

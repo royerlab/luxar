@@ -37,34 +37,35 @@ data/
 ├── gsplats-spatial-index-loader.ts # Loads Gaussian splats with nD visibility
 │                                  #   Inlines its `chunk_bounds` probe; query via `SpatialQueryBuilder`
 │                                  #   with `geometryType: 'gsplats'`.
-├── array-decoder.ts               # Decodes Python luxar.encoding arrays
-├── data-monitor-manager.ts        # Singleton manager for monitoring UI instances
-├── directory-navigator.ts         # Multi-strategy server directory browsing
 ├── nd-transform.ts                # nD transform inverse-query for non-displayed dimensions
 │                                  #   Given a world-space query (slicePosition + tolerance) and a
 │                                  #   composed nd_transform, produces the equivalent local-space query.
 │                                  #   Avoids transforming geometry data — all loader internals unchanged.
 ├── gsplats-progressive-loader.ts  # Progressive multi-LOD GSplats loader (Composite pattern)
-├── effective-radius-calculator.ts # Calculates effective radii for nD slicing (points-specific
-│                                  #   tolerance helper, paired with `calculateEffectiveRadii`).
 ├── data-loader-types.ts           # TypeScript interfaces and types
-├── data-accumulator.ts            # Zero-allocation buffer pooling
-├── scene-graph-builder.ts         # Scene hierarchy builder (extracted from SceneLoader)
 ├── view-state-manager.ts          # Centralized ViewState initialization and validation
-├── stats-aggregator.ts            # Accumulator stats aggregation across loaders
 ├── loader-registry.ts             # Lifecycle management for geometry loaders (Points, Lines, GSplats)
-├── tolerance-computer.ts          # Canonical tolerance computer (`computeTolerance`) used by all
-│                                  #   geometry types via `SpatialQueryBuilder` + by SceneLoader
-│                                  #   for lines projection clipping.
 ├── index.ts                       # Package exports
 ├── README.md                      # This documentation
+│
+├── utils/                         # Pure data utilities (no I/O, no GPU state)
+│   ├── array-decoder.ts           # Decodes Python luxar.encoding arrays
+│   ├── attrs-composer.ts          # Composes per-layer attributes along the scene graph
+│   ├── data-accumulator.ts        # Zero-allocation buffer pooling
+│   ├── directory-navigator.ts     # Multi-strategy server directory browsing
+│   ├── effective-radius-calculator.ts # Effective-radii math for nD slicing (points-specific)
+│   ├── scene-graph-builder.ts     # Scene hierarchy builder (extracted from SceneLoader)
+│   ├── stats-aggregator.ts        # Accumulator stats aggregation across loaders
+│   └── tolerance-computer.ts      # Canonical tolerance computer (`computeTolerance`) used by all
+│                                  #   geometry types via `SpatialQueryBuilder` + by SceneLoader
+│                                  #   for lines projection clipping.
 │
 ├── loaders/                       # Unified loader infrastructure (see loaders/README.md)
 │   ├── base-types.ts              # Common types (BaseViewState, LoadRange)
 │   ├── range-loader.ts            # Unified encoding dispatch
 │   ├── spatial-query-builder.ts   # Canonical chunk-bounds query API
 │   │                              #   `SpatialQueryBuilder` accepts either a `geometryType` (delegates
-│   │                              #   tolerance to `tolerance-computer.computeTolerance`) or a
+│   │                              #   tolerance to `utils/tolerance-computer.computeTolerance`) or a
 │   │                              #   pre-computed `tolerance: number[]`.
 │   └── transferable-accumulator.ts # Zero-allocation buffer management
 │

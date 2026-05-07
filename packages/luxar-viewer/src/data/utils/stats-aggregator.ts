@@ -8,12 +8,12 @@
  */
 
 import type { AccumulatorStats } from './data-accumulator';
-import type { DataLoader } from './data-loader-types';
-import type { LinesDataLoader } from '../types/lines';
-import type { GSplatsDataLoader } from '../types/gsplats';
-import type { PointSpatialIndexLoader } from './point-spatial-index-loader';
-import type { LinesSpatialIndexLoader } from './lines-spatial-index-loader';
-import type { GSplatsSpatialIndexLoader } from './gsplats-spatial-index-loader';
+import type { DataLoader } from '../data-loader-types';
+import type { LinesDataLoader } from '../../types/lines';
+import type { GSplatsDataLoader } from '../../types/gsplats';
+import type { PointSpatialIndexLoader } from '../point-spatial-index-loader';
+import type { LinesSpatialIndexLoader } from '../lines-spatial-index-loader';
+import type { GSplatsSpatialIndexLoader } from '../gsplats-spatial-index-loader';
 
 /**
  * Aggregate accumulator stats from a collection of loaders.
