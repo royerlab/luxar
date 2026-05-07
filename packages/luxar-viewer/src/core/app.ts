@@ -42,6 +42,7 @@ import { setDataWorkerUrl } from '../workers/worker-pool';
 import { replaceBrowserDataSourceUrl } from '../config/url-params';
 import { classifyBrowserUrl } from './browser-decision';
 import { applyViewerConfigState as applyViewerConfigStateHelper } from './viewer-config-applier';
+import { computeDebugState } from './debug-state';
 
 /**
  * Init-time options for {@link LuxarApp.init}.
@@ -895,104 +896,18 @@ export class LuxarApp {
       sceneDimsManager: sceneDimsManager,
       app: this,
 
-      // Helper function to get current state snapshot
-      getState: () => {
-        const scene = this.sceneManager.scene;
-
-        type PointCloudInfo = {
-          name: string;
-          pointCount: number;
-          visible: boolean;
-          hasColors: boolean;
-          hasRadii: boolean;
-          hasSharpness: boolean;
-        };
-        type GSplatMeshInfo = {
-          name: string;
-          splatCount: number;
-          visible: boolean;
-        };
-
-        // Count points across all point clouds
-        let totalPoints = 0;
-        const pointClouds: PointCloudInfo[] = [];
-
-        // Count gsplats across all gsplat meshes
-        let totalGSplats = 0;
-        const gsplatMeshes: GSplatMeshInfo[] = [];
-
-        scene.traverse((object) => {
-          if (object instanceof THREE.Points) {
-            const geometry = object.geometry;
-            // Use drawRange.count if set (GPU buffer pool uses drawRange to limit rendering)
-            // Fall back to position.count for geometries without drawRange
-            const drawRangeCount = geometry?.drawRange?.count;
-            const bufferCount = geometry?.attributes?.position?.count || 0;
-            // Infinity means "draw all", so use buffer count in that case
-            const pointCount =
-              drawRangeCount !== undefined && drawRangeCount !== Infinity
-                ? Math.min(drawRangeCount, bufferCount)
-                : bufferCount;
-            totalPoints += pointCount;
-
-            pointClouds.push({
-              name: object.name || 'unnamed',
-              pointCount,
-              visible: object.visible,
-              hasColors: !!geometry?.attributes?.color,
-              hasRadii: !!geometry?.attributes?.radius,
-              hasSharpness: !!geometry?.attributes?.sharpness,
-            });
-          }
-
-          // Count gsplat instances (Mesh with InstancedBufferGeometry and nodeType 'gsplats')
-          if (
-            object instanceof THREE.Mesh &&
-            (object.userData as { nodeType?: string })?.nodeType === 'gsplats' &&
-            object.geometry instanceof THREE.InstancedBufferGeometry
-          ) {
-            const splatCount = (object.geometry as THREE.InstancedBufferGeometry).instanceCount;
-            totalGSplats += splatCount;
-            gsplatMeshes.push({
-              name: object.name || 'unnamed',
-              splatCount,
-              visible: object.visible,
-            });
-          }
-        });
-
-        // Get dimensions from sceneDimsManager
-        const dims = sceneDimsManager.getDims();
-        const dimensionsInfo = dims
-          ? { ndim: dims.ndim, displayed: dims.displayed, currentStep: dims.currentStep }
-          : null;
-
-        return {
-          totalPoints,
-          totalGSplats,
-          totalElements: totalPoints + totalGSplats,
-          pointClouds,
-          gsplatMeshes,
-          dimensions: dimensionsInfo,
-          camera: {
-            position: {
-              x: this.sceneManager.camera.position.x,
-              y: this.sceneManager.camera.position.y,
-              z: this.sceneManager.camera.position.z,
-            },
-            fov: this.sceneManager.currentFov,
-          },
-          // Keep legacy cameraPosition for backward compatibility
-          cameraPosition: {
-            x: this.sceneManager.camera.position.x,
-            y: this.sceneManager.camera.position.y,
-            z: this.sceneManager.camera.position.z,
-          },
-          cameraFov: this.sceneManager.currentFov,
+      // Helper function to get current state snapshot.
+      // Implementation lives in `core/debug-state.ts` so the
+      // scene-walking logic can be unit-tested directly.
+      getState: () =>
+        computeDebugState({
+          scene: this.sceneManager.scene,
+          camera: this.sceneManager.camera,
+          currentFov: this.sceneManager.currentFov,
           isAnimating: this.animationController.isActive,
           initialized: this.isInitialized,
-        };
-      },
+          dims: sceneDimsManager.getDims(),
+        }),
 
       // Helper to trigger a single frame render (for stable screenshots)
       renderOnce: () => {
