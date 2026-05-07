@@ -1,13 +1,15 @@
 /**
- * Listener bookkeeping for the spatial-index loader's monitor surface.
+ * Listener bookkeeping for the spatial-index loader's monitor surface,
+ * shared across the points / lines / gsplats facades.
  *
- * Extracted from `data/points-spatial-index-loader.ts` so the
- * subscribe / unsubscribe / fan-out behavior — including the
- * try/catch shielding that prevents one bad listener from blocking
- * the rest — is unit-tested in isolation, without a zarr store or an
- * active query map.
+ * Originally lived in `data/points/`; hoisted to `data/loaders/` once
+ * lines and gsplats grew the same monitor surface. The subscribe /
+ * unsubscribe / fan-out behavior — including the try/catch shielding
+ * that prevents one bad listener from blocking the rest — is
+ * unit-tested in isolation, without a zarr store or an active query
+ * map.
  *
- * @module data/point-loader/monitor-events
+ * @module data/loaders/monitor-events
  */
 
 import { log, Modules } from '../../utils/log';

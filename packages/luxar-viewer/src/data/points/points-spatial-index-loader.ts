@@ -22,8 +22,8 @@ import {
   calculateSpatialQueryTolerance,
   type EffectiveRadiusConfig,
 } from './effective-radius-calculator';
-import { computeLoadLatency, recordLoadEvent } from './loader-metrics';
-import { LoaderEventEmitter } from './monitor-events';
+import { computeLoadLatency, recordLoadEvent } from '../loaders/loader-metrics';
+import { LoaderEventEmitter } from '../loaders/monitor-events';
 import {
   loadPointsChunkIndex,
   registerArrayBounds,
