@@ -43,6 +43,7 @@ import { replaceBrowserDataSourceUrl } from '../config/url-params';
 import { classifyBrowserUrl } from './browser-decision';
 import { applyViewerConfigState as applyViewerConfigStateHelper } from './viewer-config-applier';
 import { computeDebugState } from './debug-state';
+import { buildDebugCacheHelpers } from './debug-cache-helpers';
 
 /**
  * Init-time options for {@link LuxarApp.init}.
@@ -919,62 +920,13 @@ export class LuxarApp {
         return SceneLoaderManager.getInstance();
       },
 
-      // Cache-specific helpers — thin wrappers over the SceneLoader cache API.
-      cache: {
-        getStats: () => {
-          const loader = SceneLoaderManager.getInstance().getDefaultLoader();
-          if (!loader) return { error: 'No active loader found' };
-          return loader.getCacheStats();
-        },
-
-        listDatasets: async () => {
-          const loader = SceneLoaderManager.getInstance().getDefaultLoader();
-          if (!loader || !loader.hasCachingStore) {
-            return { error: 'No active cache found' };
-          }
-          return loader.listCachedDatasets();
-        },
-
-        clearL0: () => {
-          const loader = SceneLoaderManager.getInstance().getDefaultLoader();
-          if (!loader) {
-            log.warning(Modules.CACHE, 'No L0 cache found');
-            return;
-          }
-          loader.clearL0Cache();
-          log.info(Modules.CACHE, 'L0 cache cleared');
-        },
-
-        clearL1: () => {
-          const loader = SceneLoaderManager.getInstance().getDefaultLoader();
-          if (!loader || !loader.hasCachingStore) {
-            log.warning(Modules.CACHE, 'No active cache found');
-            return;
-          }
-          loader.clearL1Cache();
-          log.info(Modules.CACHE, 'L1 cache cleared');
-        },
-
-        clearL2: async () => {
-          const loader = SceneLoaderManager.getInstance().getDefaultLoader();
-          if (!loader || !loader.hasCachingStore) {
-            log.warning(Modules.CACHE, 'No active cache found');
-            return;
-          }
-          await loader.clearL2Cache();
-          log.info(Modules.CACHE, 'L2 cache cleared');
-        },
-
-        clearAll: async () => {
-          const loader = SceneLoaderManager.getInstance().getDefaultLoader();
-          if (!loader) {
-            log.warning(Modules.CACHE, 'No active loader found');
-            return;
-          }
-          await loader.clearAllCaches();
-          log.info(Modules.CACHE, 'All caches cleared (L0, L1, L2)');
-        },
-      },
+      // Cache-specific helpers — thin wrappers over the SceneLoader cache
+      // API. Implementation lives in `core/debug-cache-helpers.ts` so the
+      // not-found / no-cache / success branches can be unit-tested
+      // directly with a stub loader.
+      cache: buildDebugCacheHelpers(() =>
+        SceneLoaderManager.getInstance().getDefaultLoader()
+      ),
 
       // Test-friendly hook for the error-dialog component. Lets
       // visual-regression specs render the dialog directly without going
