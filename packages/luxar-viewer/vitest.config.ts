@@ -29,16 +29,17 @@ export default defineConfig({
       // dedicated commit each time a phase of new tests crosses the next
       // band. Long-term target: 80% across the board.
       thresholds: {
-        lines: 67,
+        lines: 68,
         functions: 70,
-        branches: 56,
+        branches: 57,
         statements: 67,
       },
-      // Phase 5.4q landed 22 new dataset-browser tests on top of the
-      // Phase 5.2 body work, bringing the 464-LOC ui/panels file from
-      // 0 % to broad coverage. Measurement is now 67.85 % L / 70.16 %
-      // F / 56.61 % B / 67.25 % S. Floor advances 1pp on each metric
-      // (~1pp safety margin retained); long-term target stays 80 %.
+      // Phase 5.4r landed 17 hierarchical-timing-panel tests on top of
+      // Phase 5.4q (dataset-browser) and Phase 5.2 body. Measurement is
+      // now 68.97 % L / 70.84 % F / 58.22 % B / 68.46 % S. Floor
+      // advances 1pp on lines + branches (functions and statements
+      // hold one cycle so the safety margin stays >= ~0.5pp); long-
+      // term target stays 80 %.
     },
   },
   resolve: {
