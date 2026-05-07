@@ -9,6 +9,7 @@ import {
 } from './viewer-snapshot';
 import { AnimationController } from '../scene/animation-controller';
 import { InputHandler } from '../input/input-handler';
+import { DimensionSliders } from '../ui/panels/dimension-sliders';
 import { RenderingControls } from '../ui/rendering-controls';
 import { cleanupUI, clearError, showError, showHelpOverlay } from '../ui/helpers';
 import { config } from '../config';
@@ -292,12 +293,15 @@ export class LuxarApp {
         });
       }
 
-      // Initialize input handler
+      // Initialize input handler. The DimensionSliders factory is
+      // injected here so the input layer never imports the concrete
+      // ui/ panel — input → ui is a layer-cruiser violation.
       this.inputHandler = new InputHandler(
         this.sceneManager,
         this.animationController,
         this.performanceMonitor,
-        this.debugConsole
+        this.debugConsole,
+        (config) => new DimensionSliders(config)
       );
       this.inputHandler.init();
 

@@ -45,7 +45,16 @@ import type { ColormapLegend } from '../ui/components/colormap-legend';
 import type { OverlayManager } from '../ui/helpers/overlay-manager';
 import { notifier } from '../utils/notifier';
 import { captureViewerState } from '../config/viewer-state-capture';
-import { DimensionSliders } from '../ui/panels/dimension-sliders';
+import type { DimensionSliders, SliderConfig } from '../ui/panels/dimension-sliders';
+
+/**
+ * Factory used by `InputHandler.initDimensionSliders()` to construct
+ * the slider panel. Injected from `core/app.ts` so the input layer
+ * never imports the concrete UI class at runtime — it only knows the
+ * shape via `import type`. Closes the input → ui layer-cruiser
+ * exception (see `.dependency-cruiser.cjs`'s `KNOWN_LAYER_EXCEPTIONS`).
+ */
+export type DimensionSlidersFactory = (config: SliderConfig) => DimensionSliders;
 import { sceneDimsManager } from '../scene/scene-dims-manager';
 import type { DebugConsole } from '../ui/panels/debug-console';
 import type { PerformanceMonitor } from '../ui/monitors/performance-monitor';
@@ -147,12 +156,23 @@ export class InputHandler {
    * inputHandler.initDimensionSliders();
    * ```
    */
+  /**
+   * Optional factory injected by `core/app.ts` to construct
+   * `DimensionSliders` lazily once a scene is loaded. When omitted
+   * (e.g. tests, embedders without nD navigation),
+   * `initDimensionSliders()` becomes a no-op rather than reaching into
+   * the ui layer directly.
+   */
+  private dimensionSlidersFactory?: DimensionSlidersFactory;
+
   constructor(
     private sceneManager: SceneManager,
     private animationController: AnimationController,
     private performanceMonitor: PerformanceMonitor,
-    debugConsole: DebugConsole
+    debugConsole: DebugConsole,
+    dimensionSlidersFactory?: DimensionSlidersFactory
   ) {
+    this.dimensionSlidersFactory = dimensionSlidersFactory;
     // DebugConsole is now constructed at the app level (Phase 8.6.c)
     // and passed in here, so InputHandler doesn't need to import the
     // class — keeps the input → ui layer-cruiser rule clean.
@@ -354,11 +374,23 @@ export class InputHandler {
       this.dimensionSliders.dispose();
     }
 
-    // Create new dimension sliders
+    // No factory injected → embed callers that don't want the slider
+    // panel can omit it without changing this method's contract. The
+    // listener wiring + sceneDimsManager init still runs so keyboard
+    // navigation works.
+    if (!this.dimensionSlidersFactory) {
+      log.warning(
+        Modules.INPUT,
+        'No DimensionSliders factory provided; skipping slider construction'
+      );
+      this.panelCoordinator.setDimensionSliders(undefined);
+      return;
+    }
+
     const dimensionNames = sceneDimsManager.getDimensionNames();
     const dimensionUnits = sceneDimsManager.getDimensionUnits();
 
-    this.dimensionSliders = new DimensionSliders({
+    this.dimensionSliders = this.dimensionSlidersFactory({
       container: document.body,
       dims,
       dimensionRanges,

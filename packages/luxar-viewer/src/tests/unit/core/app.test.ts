@@ -211,14 +211,18 @@ describe('LuxarApp', () => {
       mockFetch.mockResolvedValue({ ok: true });
       await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
 
-      // Phase 8.6: InputHandler now also receives the PerformanceMonitor
-      // and DebugConsole instances (both constructed at app level
-      // rather than in AnimationController / InputHandler).
+      // Phase 8.6: InputHandler receives the PerformanceMonitor and
+      // DebugConsole (both constructed at app level rather than in
+      // AnimationController / InputHandler).
+      // Phase 8.6.d: also receives a DimensionSlidersFactory function,
+      // injected so the input layer never imports the concrete UI panel
+      // (closes the input → ui layer-cruiser exception).
       expect(InputHandler).toHaveBeenCalledWith(
         mockSceneManager,
         mockAnimationController,
         expect.any(Object),
-        expect.any(Object)
+        expect.any(Object),
+        expect.any(Function)
       );
       expect(mockInputHandler.init).toHaveBeenCalled();
     });

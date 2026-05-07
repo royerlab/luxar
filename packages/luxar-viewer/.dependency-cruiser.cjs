@@ -26,16 +26,9 @@
 // path so the layer rules below can downgrade `severity` for these
 // specific edges to `warn` while everything else hits `error`.
 //
-// These two crossings need bigger refactors than the Phase 8.6 bus
-// pattern delivered (the bus handles toggle commands and FPS pubs;
-// these are construction ownership and granular provider wiring).
-// Cleared in a future pass — at which point the entry is deleted
+// Cleared in future passes — at which point the entry is deleted
 // from this list.
 const KNOWN_LAYER_EXCEPTIONS = [
-  // input-handler still constructs DimensionSliders directly. Needs
-  // ownership migration to ui/ (similar to the Phase 8.6.b/1 +
-  // 8.6.c PerformanceMonitor / DebugConsole moves).
-  'src/input/input-handler.ts',
   // scene-loader pushes granular providers into DataMonitorManager
   // (cache stats, accumulators, profiler, scene graph). Needs an
   // event-bus migration of those providers.
