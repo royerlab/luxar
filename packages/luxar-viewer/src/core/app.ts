@@ -41,6 +41,7 @@ import { setWasmJsUrl } from '../wasm';
 import { setDataWorkerUrl } from '../workers/worker-pool';
 import { replaceBrowserDataSourceUrl } from '../config/url-params';
 import { classifyBrowserUrl } from './browser-decision';
+import { applyViewerConfigState as applyViewerConfigStateHelper } from './viewer-config-applier';
 
 /**
  * Init-time options for {@link LuxarApp.init}.
@@ -566,39 +567,17 @@ export class LuxarApp {
    * preserve the viewer's built-in defaults.
    */
   private applyViewerConfigState(viewerConfig: ZarrViewerConfig | undefined): void {
-    if (!viewerConfig) return;
-
-    // --- UI panel visibility ---
-    const ui = viewerConfig.ui;
-    if (ui) {
-      if (ui.show_help === true) showHelpOverlay();
-      if (ui.show_rendering_controls === true) this.renderingControls.show();
-      if (ui.show_rendering_controls === false) this.renderingControls.hide();
-      if (ui.show_performance_monitor === true) {
-        this.performanceMonitor.show();
-      }
-      if (ui.show_dimensions === true) {
-        this.inputHandler.showDimensionSliders();
-      }
-      if (ui.show_scale_bar === true && this.scaleBar) this.scaleBar.show();
-      if (ui.show_scale_bar === false && this.scaleBar) this.scaleBar.hide();
-      if (ui.show_layers === true && this.layersPanel) this.layersPanel.show();
-      if (ui.show_layers === false && this.layersPanel) this.layersPanel.hide();
-      if (ui.show_overlays === true && this.overlayManager) this.overlayManager.show();
-      if (ui.show_overlays === false && this.overlayManager) this.overlayManager.hide();
-    }
-
-    // --- Theme ---
-    if (viewerConfig.theme) {
-      ThemeManager.getInstance().setTheme(viewerConfig.theme);
-    }
-
-    // --- Dimension navigation state ---
-    if (viewerConfig.dimensions?.current_step) {
-      for (let i = 0; i < viewerConfig.dimensions.current_step.length; i++) {
-        sceneDimsManager.setDimensionValue(i, viewerConfig.dimensions.current_step[i]);
-      }
-    }
+    applyViewerConfigStateHelper(viewerConfig, {
+      showHelp: showHelpOverlay,
+      renderingControls: this.renderingControls,
+      performanceMonitor: this.performanceMonitor,
+      inputHandler: this.inputHandler,
+      scaleBar: this.scaleBar,
+      layersPanel: this.layersPanel,
+      overlayManager: this.overlayManager,
+      setTheme: (id) => ThemeManager.getInstance().setTheme(id),
+      setDimensionValue: (i, v) => sceneDimsManager.setDimensionValue(i, v),
+    });
   }
 
   /**
