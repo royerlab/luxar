@@ -23,12 +23,10 @@ import type {
 } from '../../types/lines';
 import type { SceneNode } from '../data-loader-types';
 import { ArrayRefRegistry, type ArrayMetadata } from '../utils/array-decoder';
-import { fetchChunkBoundsArray } from '../loaders/chunk-bounds-loader';
 import {
   RangeLoader,
   SpatialQueryBuilder,
   mergeRanges,
-  type ChunkSpatialIndex,
   type LoadRange,
 } from '../loaders';
 import { getExpectedColorType, loadColorRanges } from '../loaders/color-attribute-utils';
@@ -41,52 +39,12 @@ import { LinesDataAccumulator, type AccumulatorStats } from '../utils/data-accum
 import { config as appConfig } from '../../config';
 import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profiler';
 import { DecompressedChunkCache, wrapWithCache, ChunkPrefetcher } from '../../cache';
-
-/**
- * Internal index shape: the lines loader carries both vertex and segment
- * chunk bounds, but the chunk-bounds spatial query only consults the segment
- * side. The vertex side is loaded so the loader can compute byte counts and
- * (in the future) re-enable vertex-driven prefetching, but is not used in
- * the current query path.
- */
-interface LinesDualChunkIndex {
-  segmentIndex: ChunkSpatialIndex;
-  vertexChunkBounds: Float32Array;
-  vertexChunkCount: number;
-}
-
-/**
- * Compute contiguous vertex ranges from a sorted list of vertex indices.
- *
- * Used after loading segment data: each segment references two vertex
- * indices, and we batch the unique sorted indices into runs of consecutive
- * integers so zarr loading touches the minimum number of chunks.
- *
- * This is genuinely lines-specific (operates on per-segment vertex indices,
- * not on chunk bounds) and is therefore not in the canonical
- * `loaders/spatial-query-builder` API.
- */
-function computeVertexRangesFromIndices(sortedIndices: number[]): SegmentRange[] {
-  if (sortedIndices.length === 0) return [];
-
-  const ranges: SegmentRange[] = [];
-  let rangeStart = sortedIndices[0];
-  let rangeEnd = sortedIndices[0] + 1;
-
-  for (let i = 1; i < sortedIndices.length; i++) {
-    const idx = sortedIndices[i];
-    if (idx === rangeEnd) {
-      rangeEnd++;
-    } else {
-      ranges.push({ start: rangeStart, end: rangeEnd });
-      rangeStart = idx;
-      rangeEnd = idx + 1;
-    }
-  }
-  ranges.push({ start: rangeStart, end: rangeEnd });
-
-  return ranges;
-}
+import {
+  type LinesDualChunkIndex,
+  loadLinesDualChunkIndex,
+  registerLinesArrayBounds,
+  computeVertexRangesFromIndices,
+} from './chunk-index-loader';
 
 /**
  * Lines data loader using spatial indices for efficient nD queries.
@@ -144,11 +102,13 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     void profiler;
   }
 
-  /** Register array shape with the prefetcher for upper-bounds checking. */
+  /**
+   * Thin wrapper around the shared `registerLinesArrayBounds` helper so
+   * the call sites read more naturally than passing the prefetcher and
+   * node path on every call.
+   */
   private registerBounds(arrayName: string, array: zarr.Array<zarr.DataType, zarr.Readable>): void {
-    if (!this.prefetcher) return;
-    const path = `${this.node.path.startsWith('/') ? this.node.path.slice(1) : this.node.path}/${arrayName}`;
-    this.prefetcher.registerArrayBounds(path, array.shape, array.chunks);
+    registerLinesArrayBounds(this.prefetcher, this.node.path, arrayName, array);
   }
 
   /**
@@ -559,64 +519,12 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
   /**
    * Probe both `vertex_chunk_bounds` and `segment_chunk_bounds` from zarr.
    *
-   * Returns null when spatial ordering is disabled, expected for small/non-
-   * ordered datasets (graceful fallback to full load).
+   * Implementation lives in `lines/chunk-index-loader.ts`. The thin
+   * wrapper here exists for symmetry with the points facade, which
+   * follows the same pattern.
    */
   private async loadDualChunkBounds(attrs: LinesMetadata): Promise<LinesDualChunkIndex | null> {
-    if (attrs.ordering === 'none' || !attrs.vertex_ordering || !attrs.segment_ordering) {
-      log.info(
-        Modules.LINES_LOADER,
-        `Lines node has no spatial ordering (ordering=${attrs.ordering})`
-      );
-      return null;
-    }
-
-    const vertexResult = await fetchChunkBoundsArray(
-      this.zarrLocation,
-      'vertex_chunk_bounds',
-      Modules.LINES_LOADER,
-      'No chunk bounds found - Lines dataset has no spatial indexing'
-    );
-    if (!vertexResult) return null;
-
-    const segmentResult = await fetchChunkBoundsArray(
-      this.zarrLocation,
-      'segment_chunk_bounds',
-      Modules.LINES_LOADER,
-      'No chunk bounds found - Lines dataset has no spatial indexing'
-    );
-    if (!segmentResult) return null;
-
-    const vertexChunkBounds = vertexResult.data;
-    const segmentChunkBounds = segmentResult.data;
-
-    const vertexChunkCount = Math.ceil(attrs.n_vertices / attrs.vertex_ordering.chunk_size);
-    const segmentChunkCount = Math.ceil(attrs.n_segments / attrs.segment_ordering.chunk_size);
-
-    const expectedVertexSize = vertexChunkCount * attrs.ndim * 2;
-    const expectedSegmentSize = segmentChunkCount * attrs.ndim * 2;
-    if (vertexChunkBounds.length !== expectedVertexSize) {
-      log.warning(
-        Modules.LINES_LOADER,
-        `Vertex bounds size mismatch: got ${vertexChunkBounds.length}, expected ${expectedVertexSize}`
-      );
-    }
-    if (segmentChunkBounds.length !== expectedSegmentSize) {
-      log.warning(
-        Modules.LINES_LOADER,
-        `Segment bounds size mismatch: got ${segmentChunkBounds.length}, expected ${expectedSegmentSize}`
-      );
-    }
-
-    return {
-      segmentIndex: {
-        chunkBounds: segmentChunkBounds,
-        chunkCount: segmentChunkCount,
-        metadata: { ndim: attrs.ndim, chunk_size: attrs.segment_ordering.chunk_size },
-      },
-      vertexChunkBounds,
-      vertexChunkCount,
-    };
+    return loadLinesDualChunkIndex(this.zarrLocation, attrs);
   }
 
   /**

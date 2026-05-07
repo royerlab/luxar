@@ -40,8 +40,9 @@ data/
 │   ├── projection.ts                  # nD → 3D projection (worker + main-thread paths)
 │   └── effective-radius-calculator.ts # Effective-radii math for nD slicing
 │
-├── lines/                         # Lines geometry — facade + projection math (chunk-index split pending Phase 10.2b)
+├── lines/                         # Lines geometry — facade + chunk-index probe + projection math
 │   ├── lines-spatial-index-loader.ts  # Loads lines with nD clipping + attribute interpolation
+│   ├── chunk-index-loader.ts          # Dual-bounds zarr probe + computeVertexRangesFromIndices
 │   └── projection.ts                  # clipSegmentToSlice + lerp + buildInstanceBuffers (TS + WASM) + initLinesWASM
 │
 ├── gsplats/                       # GSplats geometry — facade + processor + multi-LOD wrapper (decomposition pending Phase 10.3)
