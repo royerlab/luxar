@@ -21,7 +21,7 @@ import * as THREE from 'three';
 
 // Mock buildInstanceBuffers so we can sniff which path ran
 const mockBuildInstanceBuffers = vi.fn();
-vi.mock('../../../../data/lines/lines-spatial-index-loader', () => ({
+vi.mock('../../../../data/lines/projection', () => ({
   buildInstanceBuffers: (...args: unknown[]) => mockBuildInstanceBuffers(...args),
 }));
 

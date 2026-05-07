@@ -21,7 +21,7 @@
  */
 
 import * as THREE from 'three';
-import { buildInstanceBuffers } from '../lines/lines-spatial-index-loader';
+import { buildInstanceBuffers } from '../lines/projection';
 import type { LoadedLinesData, ProcessedLinesData } from '../../types/lines';
 import { isLinesUserData } from '../../types/lines';
 import { computeTolerance } from '../utils/tolerance-computer';

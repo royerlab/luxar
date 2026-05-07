@@ -60,7 +60,7 @@ export {
   lerp,
   lerpVec3,
   distance3D,
-} from './lines/lines-spatial-index-loader';
+} from './lines/projection';
 
 // Scene graph builder (extracted from SceneLoader for modularity)
 export { SceneGraphBuilder } from './utils/scene-graph-builder';
