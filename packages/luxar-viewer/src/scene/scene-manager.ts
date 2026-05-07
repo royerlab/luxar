@@ -30,6 +30,7 @@ import {
   BoundingSphere,
   boundingBoxToSphere,
   calculateClippingPlanesFromSphere,
+  projectBoundsToDisplayDims,
   SPHERE_SAFETY_EXPANSION,
   MIN_NEAR_PLANE,
 } from './scene-manager-utils';
@@ -1029,38 +1030,13 @@ export class SceneManager extends THREE.EventDispatcher<{
    * @returns 3D bounding box or null if metadata bounds not available
    */
   private getSceneBoundsFromMetadata(): BoundingBox | null {
-    // Find the root group with position bounds
     const foundBounds = this.findPositionBoundsInScene();
+    if (!foundBounds) return null;
 
-    if (!foundBounds) {
-      return null;
-    }
-
-    // Get display dimensions from scene dimensions manager
     const dims = sceneDimsManager.getDims();
     const displayDims: number[] = dims?.displayed ?? [0, 1, 2];
 
-    // Project nD bounds to 3D using display dimensions
-    const minBounds = foundBounds.min;
-    const maxBounds = foundBounds.max;
-    const min3D = { x: 0, y: 0, z: 0 };
-    const max3D = { x: 0, y: 0, z: 0 };
-
-    // Map display dimensions to X, Y, Z
-    if (displayDims.length > 0 && displayDims[0] < minBounds.length) {
-      min3D.x = minBounds[displayDims[0]];
-      max3D.x = maxBounds[displayDims[0]];
-    }
-    if (displayDims.length > 1 && displayDims[1] < minBounds.length) {
-      min3D.y = minBounds[displayDims[1]];
-      max3D.y = maxBounds[displayDims[1]];
-    }
-    if (displayDims.length > 2 && displayDims[2] < minBounds.length) {
-      min3D.z = minBounds[displayDims[2]];
-      max3D.z = maxBounds[displayDims[2]];
-    }
-
-    return { min: min3D, max: max3D };
+    return projectBoundsToDisplayDims(foundBounds.min, foundBounds.max, displayDims);
   }
 
   /**

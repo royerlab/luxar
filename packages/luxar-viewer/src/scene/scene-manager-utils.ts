@@ -358,3 +358,42 @@ export function transformBoundingBox(box: BoundingBox, matrix: number[]): Boundi
     max: { x: maxX, y: maxY, z: maxZ },
   };
 }
+
+/**
+ * Project nD scene bounds (per-dimension min/max arrays) onto the
+ * three displayed dimensions to produce a 3D BoundingBox.
+ *
+ * Pulled out of `scene-manager.getSceneBoundsFromMetadata` so the
+ * mapping is testable without a populated THREE.Scene. The mapping
+ * rules are:
+ *   - displayDims maps positions [0..2] to the X / Y / Z axes.
+ *   - When fewer than three displayDims are supplied, the unmapped
+ *     axes default to 0 (a degenerate bounding box on that axis).
+ *   - When a displayDim index is out of range for the supplied
+ *     bounds arrays, that axis also stays at 0 — same defensive
+ *     fallback the inline code uses to avoid OOB reads.
+ *
+ * @param minBounds - Per-dimension min values (length = ndim).
+ * @param maxBounds - Per-dimension max values (length = ndim).
+ * @param displayDims - Up to 3 indices into the per-dimension arrays
+ *   identifying which dimensions map to X / Y / Z.
+ */
+export function projectBoundsToDisplayDims(
+  minBounds: readonly number[],
+  maxBounds: readonly number[],
+  displayDims: readonly number[]
+): BoundingBox {
+  const min3D = { x: 0, y: 0, z: 0 };
+  const max3D = { x: 0, y: 0, z: 0 };
+  const axes = ['x', 'y', 'z'] as const;
+
+  for (let i = 0; i < Math.min(3, displayDims.length); i++) {
+    const dim = displayDims[i];
+    if (dim < minBounds.length && dim < maxBounds.length) {
+      min3D[axes[i]] = minBounds[dim];
+      max3D[axes[i]] = maxBounds[dim];
+    }
+  }
+
+  return { min: min3D, max: max3D };
+}
