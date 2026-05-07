@@ -54,7 +54,7 @@ import type { LoaderMonitor, SceneGraphNode } from '../types/data-monitor-types'
 import { ZarrSceneAttrs, ZarrNodeAttrs, hasContentsMethod } from '../types/zarr';
 import { DataMonitorManager } from '../ui/monitors/data-monitor-manager';
 import { ArrayRefRegistry } from './utils/array-decoder';
-import { ViewStateManager, type SceneDimensions } from './view-state-manager';
+import { ViewStateManager } from './view-state-manager';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { config as appConfig } from '../config';
 import { MultiLevelCachingStore, ChunkPrefetcher, DecompressedChunkCache } from '../cache';
@@ -91,58 +91,12 @@ import { loadOverlayConfigs } from './loaders/overlay-loader';
 import { notifier } from '../utils/notifier';
 
 /** Check if an object has any own properties (avoids Object.keys() allocation). */
-function hasOwnProperties(obj: Record<string, unknown>): boolean {
-  for (const k in obj) {
-    if (Object.prototype.hasOwnProperty.call(obj, k)) return true;
-  }
-  return false;
-}
-
-/**
- * Get or compute an extended tolerance array for extend_to_all dimensions.
- * Nodes with the same extendDims share a single cached array.
- */
-function getOrComputeExtendedTolerance(
-  baseTolerance: readonly number[],
-  extendDims: string[],
-  dimensionMetadata: Array<{ name?: string }>,
-  cache: Map<string, number[]>
-): number[] {
-  validateExtendDims(extendDims, dimensionMetadata);
-  const key = extendDims.slice().sort().join(',');
-  let cached = cache.get(key);
-  if (cached) return cached;
-  cached = [...baseTolerance];
-  for (const dimName of extendDims) {
-    const dimIndex = dimensionMetadata.findIndex((d) => d.name === dimName);
-    if (dimIndex >= 0 && dimIndex < cached.length) {
-      cached[dimIndex] = 1e10;
-    }
-  }
-  cache.set(key, cached);
-  return cached;
-}
-
-function validateExtendDims(
-  extendDims: string[],
-  dimensionMetadata: Array<{ name?: string }>
-): void {
-  const validNames = new Set(
-    dimensionMetadata.map((dim) => dim.name).filter((name): name is string => !!name)
-  );
-  const invalid = extendDims.filter((dimName) => !validNames.has(dimName));
-  if (invalid.length > 0) {
-    throw new Error(
-      `Invalid extend_to_all dimension(s): ${invalid.join(', ')}. ` +
-        `Valid dimensions: ${Array.from(validNames).join(', ')}`
-    );
-  }
-}
-
-function isSceneDimensions(value: unknown): value is SceneDimensions {
-  if (!value || typeof value !== 'object') return false;
-  return Array.isArray((value as { dimensions?: unknown }).dimensions);
-}
+import {
+  hasOwnProperties,
+  getOrComputeExtendedTolerance,
+  isSceneDimensions,
+  validateExtendDims,
+} from './scene-loader/extend-tolerance';
 
 // ============================================================================
 // Staged commit types for atomic geometry updates
