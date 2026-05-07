@@ -273,8 +273,11 @@ export interface CacheMetrics {
   l2?: {
     size: number;
     count: number;
+    /** Successful gets (= L2 hits). */
     reads: number;
     writes: number;
+    /** Failed gets (file not present, size mismatch, I/O error). */
+    misses: number;
   };
   /** L0 decompressed chunk cache breakdown (optional, only when L0 cache connected) */
   l0?: {
@@ -407,6 +410,7 @@ export interface CacheStatsProvider {
       count: number;
       reads: number;
       writes: number;
+      misses: number;
     };
     network: {
       bytesTransferred: number;

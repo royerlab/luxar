@@ -39,9 +39,14 @@ export class OPFSStore {
   private baseUrl: string;
   private contentHash: string | null = null;
 
-  // Read/write tracking for monitoring
+  // Read/write tracking for monitoring. `readCount` is the L2 hit
+  // counter — only incremented when get() returns a value. `missCount`
+  // counts get() calls that returned undefined (file not present /
+  // size mismatch / I/O error). Together they let consumers compute
+  // an L2 hit rate without separate plumbing.
   private readCount = 0;
   private writeCount = 0;
+  private missCount = 0;
 
   // Bucket handle cache (256 possible buckets: 00-ff)
   private bucketHandles = new Map<string, FileSystemDirectoryHandle>();
@@ -77,7 +82,10 @@ export class OPFSStore {
    * Get a file from OPFS and update LRU order.
    */
   async get(key: string): Promise<Uint8Array | undefined> {
-    if (!this.opfsRoot) return undefined;
+    if (!this.opfsRoot) {
+      this.missCount++;
+      return undefined;
+    }
 
     try {
       const fileHandle = await this.navigateToFile(key, false);
@@ -89,6 +97,7 @@ export class OPFSStore {
       if (entry && entry.size !== data.byteLength) {
         log.warning(Modules.CACHE, `OPFSStore size mismatch for ${key}, removing corrupted entry`);
         await this.delete(key);
+        this.missCount++;
         return undefined;
       }
 
@@ -98,6 +107,7 @@ export class OPFSStore {
 
       return data;
     } catch {
+      this.missCount++;
       return undefined;
     }
   }
@@ -240,6 +250,7 @@ export class OPFSStore {
     this.contentHash = null;
     this.readCount = 0;
     this.writeCount = 0;
+    this.missCount = 0;
 
     if (this.opfsRoot) {
       try {
@@ -297,12 +308,19 @@ export class OPFSStore {
   /**
    * Get cache statistics.
    */
-  getStats(): { size: number; count: number; reads: number; writes: number } {
+  getStats(): {
+    size: number;
+    count: number;
+    reads: number;
+    writes: number;
+    misses: number;
+  } {
     return {
       size: this.totalSize,
       count: this.index.size,
       reads: this.readCount,
       writes: this.writeCount,
+      misses: this.missCount,
     };
   }
 

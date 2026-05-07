@@ -1561,6 +1561,7 @@ export class DataLoadingMonitor {
         count: stats.l2.count,
         reads: stats.l2.reads,
         writes: stats.l2.writes,
+        misses: stats.l2.misses,
       };
 
       // Network stats

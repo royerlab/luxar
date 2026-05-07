@@ -141,6 +141,26 @@ describe('OPFSStore', () => {
       expect(result).toBeUndefined();
     });
 
+    it('counts hits via reads and misses via getStats().misses', async () => {
+      const data = new Uint8Array([1, 2, 3]);
+      await store.set('hit.key', data);
+
+      // Hits: reads counter goes up, misses unchanged.
+      await store.get('hit.key');
+      await store.get('hit.key');
+      const afterHits = store.getStats();
+      expect(afterHits.reads).toBe(2);
+      expect(afterHits.misses).toBe(0);
+
+      // Misses: misses counter goes up, reads unchanged.
+      await store.get('absent.1');
+      await store.get('absent.2');
+      await store.get('absent.3');
+      const afterMisses = store.getStats();
+      expect(afterMisses.reads).toBe(2);
+      expect(afterMisses.misses).toBe(3);
+    });
+
     it('should update LRU order on get', async () => {
       await store.set('key1', new Uint8Array(10));
       await store.set('key2', new Uint8Array(10));

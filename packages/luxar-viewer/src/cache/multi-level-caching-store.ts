@@ -607,7 +607,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
       misses: number;
       evictions: number;
     };
-    l2: { size: number; count: number; reads: number; writes: number };
+    l2: { size: number; count: number; reads: number; writes: number; misses: number };
     network: { bytesTransferred: number; requestCount: number; bandwidth: number };
   } {
     // Calculate bandwidth using sliding window (last ~10 seconds)
@@ -630,7 +630,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
 
     return {
       l1: this.l1Cache.getStats(),
-      l2: this.l2Store?.getStats() ?? { size: 0, count: 0, reads: 0, writes: 0 },
+      l2: this.l2Store?.getStats() ?? { size: 0, count: 0, reads: 0, writes: 0, misses: 0 },
       network: {
         bytesTransferred: this.networkBytesTransferred,
         requestCount: this.networkRequestCount,

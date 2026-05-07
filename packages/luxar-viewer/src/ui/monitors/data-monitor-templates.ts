@@ -461,24 +461,13 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
   // L0 hit rate calculation (if available)
   const l0Total = cacheMetrics.l0 ? cacheMetrics.l0.hits + cacheMetrics.l0.misses : 0;
   const l0HitRate = l0Total > 0 ? (cacheMetrics.l0!.hits / l0Total) * 100 : 0;
-  const l0HitRateColorClass =
-    l0HitRate > 80
-      ? getColorClass('success')
-      : l0HitRate > 50
-        ? getColorClass('warning')
-        : getColorClass('error');
+  const l0HitRateColorClass = getCacheHitRateColorClass(l0HitRate);
 
   // L1 hit rate calculation
   const l1Total = cacheMetrics.l1!.hits + cacheMetrics.l1!.misses;
   const l1HitRate = l1Total > 0 ? (cacheMetrics.l1!.hits / l1Total) * 100 : 0;
 
-  // Determine hit rate color class
-  const l1HitRateColorClass =
-    l1HitRate > 80
-      ? getColorClass('success')
-      : l1HitRate > 50
-        ? getColorClass('warning')
-        : getColorClass('error');
+  const l1HitRateColorClass = getCacheHitRateColorClass(l1HitRate);
 
   return `
     <div class="luxar-tab-content--cache">
@@ -556,30 +545,43 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
       ])}
 
       <!-- L2 OPFS Cache Section -->
-      ${renderCacheSection(
-        'L2 OPFS CACHE',
-        'Origin Private File System: persistent browser storage for cached data',
-        'clearL2',
-        'Clear L2 persistent cache (data will need to be re-downloaded)',
-        [
-          {
-            label: 'SIZE',
-            value: formatBytes(cacheMetrics.l2!.size),
-            subtitle: `${cacheMetrics.l2!.count} entries`,
-            tooltip:
-              "L2 persistent cache: stored in browser's Origin Private File System, survives page reloads",
-            colorClass: getColorClass('info'),
-            dataField: 'l2-size',
-          },
-          {
-            label: 'I/O',
-            value: `${formatNumber(cacheMetrics.l2!.reads)} reads`,
-            subtitle: `${formatNumber(cacheMetrics.l2!.writes)} writes`,
-            tooltip: 'Disk I/O operations: reads from cache, writes to cache',
-            dataField: 'l2-io',
-          },
-        ]
-      )}
+      ${(() => {
+        const l2Total = cacheMetrics.l2!.reads + cacheMetrics.l2!.misses;
+        const l2HitRate = l2Total > 0 ? (cacheMetrics.l2!.reads / l2Total) * 100 : 0;
+        const l2HitRateColorClass = getCacheHitRateColorClass(l2HitRate);
+        return renderCacheSection(
+          'L2 OPFS CACHE',
+          'Origin Private File System: persistent browser storage for cached data',
+          'clearL2',
+          'Clear L2 persistent cache (data will need to be re-downloaded)',
+          [
+            {
+              label: 'SIZE',
+              value: formatBytes(cacheMetrics.l2!.size),
+              subtitle: `${cacheMetrics.l2!.count} entries`,
+              tooltip:
+                "L2 persistent cache: stored in browser's Origin Private File System, survives page reloads",
+              colorClass: getColorClass('info'),
+              dataField: 'l2-size',
+            },
+            {
+              label: 'HIT RATE',
+              value: l2Total > 0 ? `${l2HitRate.toFixed(1)}%` : '—',
+              subtitle: `${formatNumber(cacheMetrics.l2!.reads)} hits · ${formatNumber(cacheMetrics.l2!.misses)} miss`,
+              tooltip: `L2 hit rate: ${cacheMetrics.l2!.reads.toLocaleString()} hits out of ${l2Total.toLocaleString()} L1 misses that fell through to L2`,
+              colorClass: l2HitRateColorClass,
+              dataField: 'l2-hitrate',
+            },
+            {
+              label: 'I/O',
+              value: `${formatNumber(cacheMetrics.l2!.reads)} reads`,
+              subtitle: `${formatNumber(cacheMetrics.l2!.writes)} writes`,
+              tooltip: 'Disk I/O operations: reads from cache, writes to cache',
+              dataField: 'l2-io',
+            },
+          ]
+        );
+      })()}
 
       <!-- Combined Stats + Clear All -->
       <div class="luxar-cache-total">
@@ -711,6 +713,18 @@ export function calculateReuseRate(allocations: number, reuses: number): number 
 export function getReuseRateColorClass(rate: number): string {
   if (rate >= 80) return getColorClass('success');
   if (rate >= 50) return getColorClass('warning');
+  return getColorClass('error');
+}
+
+/**
+ * Color class for cache hit-rate metrics (L0/L1/L2). Same threshold
+ * shape as `getReuseRateColorClass`, but with `>` semantics so an
+ * 80% hit rate still shows as warning — caches do not spend much
+ * time at exactly 80%, but any drop below the threshold is meaningful.
+ */
+export function getCacheHitRateColorClass(rate: number): string {
+  if (rate > 80) return getColorClass('success');
+  if (rate > 50) return getColorClass('warning');
   return getColorClass('error');
 }
 
