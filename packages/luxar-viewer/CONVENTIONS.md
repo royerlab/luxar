@@ -233,10 +233,18 @@ thread. Conventions:
   earlier plan draft had data before rendering; this corrected order
   matches the actual dependency direction in the codebase.
 
-  Run `pnpm check:layers` to surface violations. Severity is `warn`
-  while we work down the existing list (mostly callers reaching into
-  `ui/helpers.ts` for showToast/showError, which the natural fix is a
-  notification-interface inversion). New code should not add warnings.
+  Run `pnpm check:layers` to surface violations. **New violations fail
+  the build** (severity `error` on every layer rule). Two pre-existing
+  edges are pinned to `warn` via the `layer-{input,data}-known-exception`
+  rules in `.dependency-cruiser.cjs`:
+
+  - `src/input/input-handler.ts → src/ui/dimension-sliders.ts`
+    (DimensionSliders construction still happens inside InputHandler)
+  - `src/data/scene-loader.ts → src/ui/data-monitor-manager.ts`
+    (granular provider wiring — cache stats, accumulators, scene graph)
+
+  Both will be cleared in follow-ups; the `KNOWN_LAYER_EXCEPTIONS`
+  list in the depcruise config documents the cleanup plan.
 
 ## 11. Types
 
