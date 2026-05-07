@@ -189,6 +189,115 @@ function validateDecodeArgs(
 }
 
 /**
+ * Validate that every vertex index referenced by `segments` falls inside
+ * the position buffer, and that any optional per-vertex attributes cover
+ * up through the maximum referenced vertex.
+ *
+ * Lines uniquely have an indirection (segments index into vertex data)
+ * that {@link validateProjectionInputs} can't catch: positions might
+ * have ≥ ndim entries but a malformed segments[i] could still reach
+ * past the end. WASM clip / interpolate primitives index by segments[i]
+ * with no bounds check, so this validation runs before every entry
+ * point that touches segments. Cost is O(numSegments) — small relative
+ * to the WASM call that follows.
+ */
+function validateLineSegmentReferences(
+  fnName: string,
+  segments: Uint32Array,
+  numSegments: number,
+  positions: ArrayLike<number> | Float32Array | Uint16Array,
+  ndim: number,
+  opts: {
+    widths?: ArrayLike<number>;
+    colors?: ArrayLike<number>;
+    sharpness?: ArrayLike<number>;
+  } = {}
+): void {
+  if (!Number.isInteger(numSegments) || numSegments < 0) {
+    throw new Error(`${fnName}: numSegments=${numSegments} must be a non-negative integer`);
+  }
+  if (segments.length < numSegments * 2) {
+    throw new Error(
+      `${fnName}: segments too short (got ${segments.length}, expected ≥ ${numSegments * 2})`
+    );
+  }
+  if (numSegments === 0) return;
+
+  let maxVertex = 0;
+  for (let i = 0; i < numSegments * 2; i++) {
+    const v = segments[i];
+    if (v > maxVertex) maxVertex = v;
+  }
+
+  const minVertices = maxVertex + 1;
+  if (positions.length < minVertices * ndim) {
+    throw new Error(
+      `${fnName}: positions too short for max segment vertex ${maxVertex} ` +
+        `(got ${positions.length}, expected ≥ ${minVertices * ndim})`
+    );
+  }
+  if (opts.widths && opts.widths.length < minVertices) {
+    throw new Error(
+      `${fnName}: widths too short for max segment vertex ${maxVertex} ` +
+        `(got ${opts.widths.length}, expected ≥ ${minVertices})`
+    );
+  }
+  // Per-vertex colors (RGB triplet) — 3 entries per referenced vertex.
+  if (opts.colors && opts.colors.length < minVertices * 3) {
+    throw new Error(
+      `${fnName}: colors too short for max segment vertex ${maxVertex} ` +
+        `(got ${opts.colors.length}, expected ≥ ${minVertices * 3})`
+    );
+  }
+  if (opts.sharpness && opts.sharpness.length < minVertices) {
+    throw new Error(
+      `${fnName}: sharpness too short for max segment vertex ${maxVertex} ` +
+        `(got ${opts.sharpness.length}, expected ≥ ${minVertices})`
+    );
+  }
+}
+
+/**
+ * Validate `querySpatialIndex` inputs at the worker boundary.
+ *
+ * The chunk-query WASM entry point reads `chunkBounds` via
+ * `numChunks × ndim × 2` strided indexing and `slicePosition` /
+ * `tolerance` by `ndim` — short buffers send WASM past the end. This
+ * helper guards every public field of the call.
+ */
+function validateChunkQueryInputs(
+  fnName: string,
+  chunkBounds: ArrayLike<number>,
+  slicePosition: ArrayLike<number>,
+  tolerance: ArrayLike<number>,
+  ndim: number,
+  numChunks: number
+): void {
+  if (!Number.isInteger(ndim) || ndim < 1 || ndim > MAX_WASM_DIMS) {
+    throw new Error(`${fnName}: ndim=${ndim} out of range [1, ${MAX_WASM_DIMS}]`);
+  }
+  if (!Number.isInteger(numChunks) || numChunks < 0) {
+    throw new Error(`${fnName}: numChunks=${numChunks} must be a non-negative integer`);
+  }
+  const expectedBounds = numChunks * ndim * 2;
+  if (chunkBounds.length < expectedBounds) {
+    throw new Error(
+      `${fnName}: chunkBounds too short (got ${chunkBounds.length}, expected ≥ ${expectedBounds})`
+    );
+  }
+  if (slicePosition.length < ndim) {
+    throw new Error(
+      `${fnName}: slicePosition too short (got ${slicePosition.length}, expected ≥ ${ndim})`
+    );
+  }
+  if (tolerance.length < ndim) {
+    throw new Error(
+      `${fnName}: tolerance too short (got ${tolerance.length}, expected ≥ ${ndim})`
+    );
+  }
+}
+
+/**
  * Initialize worker (called once at startup).
  *
  * Loads the WASM module via initWasm(); if that fails catastrophically (including
@@ -232,6 +341,15 @@ async function querySpatialIndex(params: {
   }
 
   const { chunkBounds, slicePosition, tolerance, numChunks, ndim } = params;
+
+  validateChunkQueryInputs(
+    'querySpatialIndex',
+    chunkBounds,
+    slicePosition,
+    tolerance,
+    ndim,
+    numChunks
+  );
 
   // Output buffer for matching chunk indices
   const matchingChunks = new Uint32Array(numChunks); // Max size
@@ -318,31 +436,23 @@ async function computeNDVisibilityLines(params: {
   }
 
   const { vertices, segments, widths, slicePosition, tolerance, ndim, numSegments } = params;
-  // For lines, vertices is laid out as numVertices × ndim, but each segment
-  // references two vertices. We at least require the vertex array to be
-  // long enough for the highest segment index referenced.
   if (!Number.isInteger(ndim) || ndim < 1 || ndim > MAX_WASM_DIMS) {
     throw new Error(`computeNDVisibilityLines: ndim=${ndim} out of range [1, ${MAX_WASM_DIMS}]`);
-  }
-  if (!Number.isInteger(numSegments) || numSegments < 0) {
-    throw new Error(
-      `computeNDVisibilityLines: numSegments=${numSegments} must be a non-negative integer`
-    );
-  }
-  if (segments.length < numSegments * 2) {
-    throw new Error(
-      'computeNDVisibilityLines: segments array too short ' +
-        `(got ${segments.length}, expected ≥ ${numSegments * 2})`
-    );
-  }
-  if (widths.length < numSegments) {
-    throw new Error(
-      `computeNDVisibilityLines: widths too short (got ${widths.length}, expected ≥ ${numSegments})`
-    );
   }
   if (slicePosition.length < ndim || tolerance.length < ndim) {
     throw new Error(`computeNDVisibilityLines: slicePosition/tolerance too short for ndim=${ndim}`);
   }
+  // Validates segments[i] < vertex-count, plus widths length, against the
+  // max referenced vertex (a stronger check than `>= numSegments`, which
+  // earlier code did).
+  validateLineSegmentReferences(
+    'computeNDVisibilityLines',
+    segments,
+    numSegments,
+    vertices,
+    ndim,
+    { widths }
+  );
 
   // Ensure buffer capacity
   if (!visibilityMaskBuffer || visibilityMaskBuffer.length < numSegments) {
@@ -518,6 +628,13 @@ async function projectPointsTo3D(params: {
   if (sharpness && sharpness.length < numPoints) {
     throw new Error(
       `projectPointsTo3D: sharpness too short (got ${sharpness.length}, expected ≥ ${numPoints})`
+    );
+  }
+  // RGB triplet per point — short colors silently produce NaN/0 fill in
+  // the TS-side compaction and corrupt the rendered point colors.
+  if (colors && colors.length < numPoints * 3) {
+    throw new Error(
+      `projectPointsTo3D: colors too short (got ${colors.length}, expected ≥ ${numPoints * 3})`
     );
   }
 
@@ -755,40 +872,36 @@ async function projectLinesTo3D(params: {
     segmentCount,
   } = params;
 
+  // The shared projection validator handles displayDims and the basic
+  // ndim/positions sanity check; we then check segment-vertex bounds
+  // explicitly because positions length depends on max referenced vertex
+  // (not numItems = 1), and finally the per-vertex attribute lengths.
   validateProjectionInputs(
     'projectLinesTo3D',
     positions,
     displayDims,
     slicePosition,
     ndim,
-    // positions array is `numVertices × ndim`, where the highest vertex
-    // index referenced is < positions.length / ndim. We can't tightly
-    // bound `numVertices` here without scanning `segments`, so we fall
-    // back to validating `segments.length` and `widths.length` against
-    // segmentCount; positions.length is sanity-checked as ≥ ndim.
     1,
     ndim
   );
-  if (!Number.isInteger(segmentCount) || segmentCount < 0) {
-    throw new Error(
-      `projectLinesTo3D: segmentCount=${segmentCount} must be a non-negative integer`
-    );
-  }
-  if (segments.length < segmentCount * 2) {
-    throw new Error(
-      `projectLinesTo3D: segments array too short (got ${segments.length}, expected ≥ ${segmentCount * 2})`
-    );
-  }
-  if (widths.length < segmentCount) {
-    throw new Error(
-      `projectLinesTo3D: widths too short (got ${widths.length}, expected ≥ ${segmentCount})`
-    );
-  }
   if (tolerance.length < ndim) {
     throw new Error(
       `projectLinesTo3D: tolerance too short (got ${tolerance.length}, expected ≥ ${ndim})`
     );
   }
+  validateLineSegmentReferences(
+    'projectLinesTo3D',
+    segments,
+    segmentCount,
+    positions,
+    ndim,
+    {
+      widths,
+      colors: colors ?? undefined,
+      sharpness: sharpness ?? undefined,
+    }
+  );
 
   // Convert input arrays to WASM-compatible formats
   const slicePosF32 = new Float32Array(slicePosition);
@@ -1061,6 +1174,13 @@ async function projectGSplatsTo3D(params: {
   if (amplitudes.length < splatCount) {
     throw new Error(
       `projectGSplatsTo3D: amplitudes too short (got ${amplitudes.length}, expected ≥ ${splatCount})`
+    );
+  }
+  // RGB triplet per splat — short colors reach WASM compact_by_mask
+  // unchecked and read past the buffer end.
+  if (colors && colors.length < splatCount * 3) {
+    throw new Error(
+      `projectGSplatsTo3D: colors too short (got ${colors.length}, expected ≥ ${splatCount * 3})`
     );
   }
 

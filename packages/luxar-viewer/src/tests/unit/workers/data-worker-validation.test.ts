@@ -143,7 +143,7 @@ describe('data-worker validation — projection entry points', () => {
         ndim: 3,
         segmentCount: -1,
       })
-    ).rejects.toThrow(/segmentCount=-1 must be a non-negative integer/);
+    ).rejects.toThrow(/numSegments=-1 must be a non-negative integer/);
   });
 
   it('projectLinesTo3D rejects segments array shorter than 2 × segmentCount', async () => {
@@ -161,7 +161,7 @@ describe('data-worker validation — projection entry points', () => {
         ndim: 3,
         segmentCount: 2,
       })
-    ).rejects.toThrow(/segments array too short/);
+    ).rejects.toThrow(/segments too short/);
   });
 
   it('projectGSplatsTo3D rejects choleskyFactors shorter than packed-lower-triangular size', async () => {
@@ -317,5 +317,127 @@ describe('data-worker validation — decode entry points', () => {
         elementsPerPoint: 4,
       })
     ).rejects.toThrow(/value too short/);
+  });
+});
+
+describe('data-worker validation — segment/color/query gaps', () => {
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('projectLinesTo3D rejects segments referencing past the end of positions', async () => {
+    const mod = await loadWorker();
+    // ndim=3, segmentCount=2, segments references vertex index 7 but
+    // positions only has 5 vertices worth of data (5*3=15).
+    await expect(
+      mod.workerAPI.projectLinesTo3D({
+        positions: new Float32Array(15),
+        segments: new Uint32Array([0, 1, 2, 7]),
+        widths: new Float32Array(8),
+        colors: null,
+        sharpness: null,
+        slicePosition: [0, 0, 0],
+        tolerance: [0, 0, 0],
+        displayDims: [0, 1, 2],
+        ndim: 3,
+        segmentCount: 2,
+      })
+    ).rejects.toThrow(/positions too short for max segment vertex 7/);
+  });
+
+  it('projectLinesTo3D rejects colors shorter than 3 × max-vertex-count', async () => {
+    const mod = await loadWorker();
+    await expect(
+      mod.workerAPI.projectLinesTo3D({
+        positions: new Float32Array(30),
+        segments: new Uint32Array([0, 1, 2, 3]),
+        widths: new Float32Array(4),
+        colors: new Float32Array(6), // need 4 vertices × 3 = 12
+        sharpness: null,
+        slicePosition: [0, 0, 0],
+        tolerance: [0, 0, 0],
+        displayDims: [0, 1, 2],
+        ndim: 3,
+        segmentCount: 2,
+      })
+    ).rejects.toThrow(/colors too short for max segment vertex 3/);
+  });
+
+  it('projectPointsTo3D rejects colors shorter than 3 × numPoints', async () => {
+    const mod = await loadWorker();
+    await expect(
+      mod.workerAPI.projectPointsTo3D({
+        positions: new Float32Array(30),
+        colors: new Uint8Array(15), // need 30 (10 points × 3)
+        radii: null,
+        sharpness: null,
+        viewState: { displayDims: [0, 1, 2], slicePosition: [0, 0, 0] },
+        effectiveRadiusConfig: null,
+        ndim: 3,
+        numPoints: 10,
+      })
+    ).rejects.toThrow(/colors too short/);
+  });
+
+  it('projectGSplatsTo3D rejects colors shorter than 3 × splatCount', async () => {
+    const mod = await loadWorker();
+    // 5 splats × 3 dims; cholesky packed lower = 5 × 6 = 30
+    await expect(
+      mod.workerAPI.projectGSplatsTo3D({
+        positions: new Float32Array(15),
+        choleskyFactors: new Float32Array(30),
+        amplitudes: new Float32Array(5),
+        colors: new Float32Array(10), // need 5 × 3 = 15
+        sharpness: null,
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0],
+        ndim: 3,
+        splatCount: 5,
+        discreteDims: [],
+        discreteSteps: {},
+        extendToAllDims: [],
+        truncate: 3.0,
+      })
+    ).rejects.toThrow(/colors too short/);
+  });
+
+  it('querySpatialIndex rejects ndim out of [1, 16]', async () => {
+    const mod = await loadWorker();
+    await expect(
+      mod.workerAPI.querySpatialIndex({
+        chunkBounds: new Float32Array(0),
+        slicePosition: new Float32Array(20),
+        tolerance: new Float32Array(20),
+        numChunks: 0,
+        ndim: 17,
+      })
+    ).rejects.toThrow(/ndim=17 out of range/);
+  });
+
+  it('querySpatialIndex rejects chunkBounds shorter than numChunks × ndim × 2', async () => {
+    const mod = await loadWorker();
+    // 5 chunks × 3 dims × 2 = 30 bounds entries needed
+    await expect(
+      mod.workerAPI.querySpatialIndex({
+        chunkBounds: new Float32Array(20),
+        slicePosition: new Float32Array(3),
+        tolerance: new Float32Array(3),
+        numChunks: 5,
+        ndim: 3,
+      })
+    ).rejects.toThrow(/chunkBounds too short/);
+  });
+
+  it('querySpatialIndex rejects slicePosition shorter than ndim', async () => {
+    const mod = await loadWorker();
+    await expect(
+      mod.workerAPI.querySpatialIndex({
+        chunkBounds: new Float32Array(30),
+        slicePosition: new Float32Array(2), // need 3
+        tolerance: new Float32Array(3),
+        numChunks: 5,
+        ndim: 3,
+      })
+    ).rejects.toThrow(/slicePosition too short/);
   });
 });
