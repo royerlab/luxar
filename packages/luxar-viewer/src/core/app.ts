@@ -44,6 +44,10 @@ import { classifyBrowserUrl } from './browser-decision';
 import { applyViewerConfigState as applyViewerConfigStateHelper } from './viewer-config-applier';
 import { computeDebugState } from './debug-state';
 import { buildDebugCacheHelpers } from './debug-cache-helpers';
+import {
+  getPanelVisibilityStates as getPanelVisibilityStatesHelper,
+  restorePanelVisibilityStates as restorePanelVisibilityStatesHelper,
+} from './panel-visibility';
 
 /**
  * Init-time options for {@link LuxarApp.init}.
@@ -1138,27 +1142,22 @@ export class LuxarApp {
 
   /**
    * Get visibility states of all UI panels for save/restore during recording.
+   * Implementation lives in `core/panel-visibility.ts`.
    */
   private getPanelVisibilityStates(): Map<string, boolean> {
-    const states = new Map<string, boolean>();
-    states.set('renderingControls', this.renderingControls?.isVisible() ?? false);
-    states.set('recordingPanel', this.recordingPanel?.isVisible() ?? false);
-    return states;
+    return getPanelVisibilityStatesHelper({
+      renderingControls: this.renderingControls,
+      recordingPanel: this.recordingPanel,
+    });
   }
 
   /**
    * Restore UI panel visibility from a saved state map.
    */
   private restorePanelVisibilityStates(states: Map<string, boolean>): void {
-    if (states.get('renderingControls')) {
-      this.renderingControls?.show();
-    } else {
-      if (this.renderingControls?.isVisible()) this.renderingControls.hide();
-    }
-    if (states.get('recordingPanel')) {
-      this.recordingPanel?.show();
-    } else {
-      if (this.recordingPanel?.isVisible()) this.recordingPanel.hide();
-    }
+    restorePanelVisibilityStatesHelper(states, {
+      renderingControls: this.renderingControls,
+      recordingPanel: this.recordingPanel,
+    });
   }
 }
