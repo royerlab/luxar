@@ -133,7 +133,7 @@ export const Modules = {
 
   // Data Loading
   SCENE_LOADER: 'SceneLoader',
-  SPATIAL_INDEX_LOADER: 'PointSpatialIndexLoader',
+  SPATIAL_INDEX_LOADER: 'PointsSpatialIndexLoader',
   GSPLATS_SPATIAL_INDEX_LOADER: 'GSplatsSpatialIndexLoader',
   SPATIAL_INDEX: 'PointSpatialIndex',
   DATA_MONITOR: 'DataMonitor',

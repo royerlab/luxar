@@ -89,7 +89,7 @@ function isNotFoundError(error: unknown): boolean {
  * - Projects nD points to 3D display space
  * - Real-time monitoring and performance tracking
  */
-export class PointSpatialIndexLoader implements DataLoader, LoaderMonitor {
+export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
   private chunkIndex: PointsChunkIndex | null = null;
   // Total points count for datasets without chunk-based index (simple fallback)
   private totalPointsNoIndex: number = 0;

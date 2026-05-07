@@ -1,12 +1,12 @@
 /**
- * Comprehensive tests for PointSpatialIndexLoader
+ * Comprehensive tests for PointsSpatialIndexLoader
  *
  * Tests point spatial index-based loading, nD queries, caching,
  * broadcasting, and monitoring integration.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { PointSpatialIndexLoader, type ViewState, type SceneNode } from '../../../data';
+import { PointsSpatialIndexLoader, type ViewState, type SceneNode } from '../../../data';
 import * as zarr from 'zarrita';
 
 // Mock THREE.js using partial mock with importOriginal
@@ -53,8 +53,8 @@ vi.mock('../../../data/loaders/spatial-query-builder', async () => {
 
 import { SpatialQueryBuilder } from '../../../data/loaders/spatial-query-builder';
 
-describe('PointSpatialIndexLoader', () => {
-  let loader: PointSpatialIndexLoader;
+describe('PointsSpatialIndexLoader', () => {
+  let loader: PointsSpatialIndexLoader;
   let mockZarrLocation: any;
   let mockNode: SceneNode;
   let mockArrays: any;
@@ -142,7 +142,7 @@ describe('PointSpatialIndexLoader', () => {
     });
 
     // Create loader instance
-    loader = new PointSpatialIndexLoader(mockZarrLocation, mockNode);
+    loader = new PointsSpatialIndexLoader(mockZarrLocation, mockNode);
   });
 
   afterEach(() => {
@@ -178,7 +178,7 @@ describe('PointSpatialIndexLoader', () => {
 
       // Re-create the loader with the no-ordering node.
       loader.dispose();
-      loader = new PointSpatialIndexLoader(mockZarrLocation, noOrderingNode);
+      loader = new PointsSpatialIndexLoader(mockZarrLocation, noOrderingNode);
 
       (zarr.open as any).mockImplementation((_location: any) => {
         const path = _location.toString();
@@ -215,7 +215,7 @@ describe('PointSpatialIndexLoader', () => {
       });
 
       // Create new loader that will use these mocks
-      const testLoader = new PointSpatialIndexLoader(mockZarrLocation, mockNode);
+      const testLoader = new PointsSpatialIndexLoader(mockZarrLocation, mockNode);
 
       const viewState: ViewState = {
         displayDims: [0, 1, 2],
@@ -253,7 +253,7 @@ describe('PointSpatialIndexLoader', () => {
         ...mockNode,
         attrs: { ...mockNode.attrs, max_radius: 0 },
       };
-      const zeroRadiusLoader = new PointSpatialIndexLoader(mockZarrLocation, nodeWithZeroRadius);
+      const zeroRadiusLoader = new PointsSpatialIndexLoader(mockZarrLocation, nodeWithZeroRadius);
 
       const viewState: ViewState = {
         displayDims: [0, 1, 2],
@@ -546,7 +546,7 @@ describe('PointSpatialIndexLoader', () => {
       // Create a new loader for this test
       (zarr.open as any).mockRejectedValue(new Error('Failed to open array'));
 
-      const errorLoader = new PointSpatialIndexLoader(mockZarrLocation, mockNode);
+      const errorLoader = new PointsSpatialIndexLoader(mockZarrLocation, mockNode);
 
       const viewState: ViewState = {
         displayDims: [0, 1, 2],

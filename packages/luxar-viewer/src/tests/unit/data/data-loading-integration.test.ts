@@ -188,7 +188,7 @@ vi.mock('../../../data/scene-loader-manager', () => {
   };
 });
 
-// NOTE: Previous mocks for PointSpatialIndexLoader ('../data/point-spatial-index-loader'),
+// NOTE: Previous mocks for PointsSpatialIndexLoader ('../data/points-spatial-index-loader'),
 // materialManager ('../rendering/material-manager'), and DataLoadingMonitor
 // ('../ui/data-loading-monitor') were removed because their paths resolved relative
 // to this test file (src/tests/unit/data/) to non-existent modules, making them dead

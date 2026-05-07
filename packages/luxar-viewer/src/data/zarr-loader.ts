@@ -22,7 +22,7 @@ import { config } from '../config';
  * Load a complete scene from a Zarr store using the new architecture.
  *
  * This is the main entry point that replaces the old loadScene function.
- * It uses the new SceneLoader which uses PointSpatialIndexLoader for all points.
+ * It uses the new SceneLoader which uses PointsSpatialIndexLoader for all points.
  *
  * @param src - URL or path to the Zarr store
  * @param config - Optional loader configuration

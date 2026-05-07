@@ -7,7 +7,7 @@
  *   3. Extract specific point ranges from decoded data
  *   4. Verify extracted values are correct
  *
- * This tests the code in point-spatial-index-loader.ts lines 704-717 that
+ * This tests the code in points-spatial-index-loader.ts lines 704-717 that
  * extracts ranges from decoded arrays. A bug was found where LUT-encoded
  * arrays used the wrong elementsPerPoint (1 instead of 3), causing only
  * 1/3 of data to be copied correctly.
@@ -50,7 +50,7 @@ async function loadArrayWithAttrs(
 }
 
 /**
- * Extract ranges from decoded array - mirrors the logic in point-spatial-index-loader.ts
+ * Extract ranges from decoded array - mirrors the logic in points-spatial-index-loader.ts
  *
  * CRITICAL: This is the exact logic that had the LUT bug.
  * The bug was using elementsPerPoint instead of actualElementsPerPoint.
@@ -79,7 +79,7 @@ function extractRangesFromDecoded(
 }
 
 /**
- * Get actualElementsPerPoint - mirrors logic in point-spatial-index-loader.ts lines 632-635
+ * Get actualElementsPerPoint - mirrors logic in points-spatial-index-loader.ts lines 632-635
  */
 function getActualElementsPerPoint(
   array: zarr.Array<zarr.DataType, zarr.Readable>,

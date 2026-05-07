@@ -221,7 +221,7 @@ vi.mock('../../../utils/notifier', () => ({
 }));
 
 // NOTE: Previous mocks for DataLoadingMonitor ('../ui/data-loading-monitor'),
-// PointSpatialIndexLoader ('../data/point-spatial-index-loader'), and
+// PointsSpatialIndexLoader ('../data/points-spatial-index-loader'), and
 // DataMonitorManager ('../data/data-monitor-manager') were removed because
 // their paths were relative to the test file location (src/tests/unit/data/)
 // and resolved to non-existent modules, making them dead code that never
@@ -230,7 +230,7 @@ vi.mock('../../../utils/notifier', () => ({
 //
 // If mocking these becomes necessary in the future, use paths relative to
 // the test file that resolve to the actual source modules, e.g.:
-//   vi.mock('../../../data/point-spatial-index-loader', ...)
+//   vi.mock('../../../data/points-spatial-index-loader', ...)
 //   vi.mock('../../../data/data-monitor-manager', ...)
 
 describe('SceneLoader', () => {

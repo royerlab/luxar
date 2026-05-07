@@ -12,7 +12,7 @@
  * tiny path-prefixing helper so the loader doesn't need to know how
  * the path is normalized.
  *
- * Extracted from `data/point-spatial-index-loader.ts` so each branch
+ * Extracted from `data/points-spatial-index-loader.ts` so each branch
  * (no-ordering short-circuit, shape-mismatch warning, dim-coverage
  * warning, success) can be unit-tested without a real zarr store.
  *

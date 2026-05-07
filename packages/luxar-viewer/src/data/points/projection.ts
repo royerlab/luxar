@@ -2,7 +2,7 @@
  * nD → 3D projection helpers for the points spatial-index loader.
  *
  * Three behaviors live here, extracted from
- * `data/point-spatial-index-loader.ts`:
+ * `data/points-spatial-index-loader.ts`:
  *
  *   - `projectPointsTo3D` — main-thread projection, with optional
  *     accumulator-buffer write-through (zero-allocation when the loader
@@ -15,7 +15,7 @@
  * All three are pure with respect to the loader: the loader-side state
  * (`chunkIndex`, `effectiveRadiusConfig`, `accumulator`, node attrs) is
  * passed in via a small `ProjectionContext` so the helpers can be
- * unit-tested without instantiating a full `PointSpatialIndexLoader`.
+ * unit-tested without instantiating a full `PointsSpatialIndexLoader`.
  *
  * Behavior is identical to the inlined methods — bit-for-bit on the
  * happy path and on every "early return" branch (missing positions,

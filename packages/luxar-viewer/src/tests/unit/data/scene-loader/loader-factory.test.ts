@@ -20,8 +20,8 @@ const linesCtorArgs: unknown[][] = [];
 const gsplatsCtorArgs: unknown[][] = [];
 const progressiveCtorArgs: unknown[][] = [];
 
-vi.mock('../../../../data/points/point-spatial-index-loader', () => ({
-  PointSpatialIndexLoader: vi.fn(function (...args: unknown[]) {
+vi.mock('../../../../data/points/points-spatial-index-loader', () => ({
+  PointsSpatialIndexLoader: vi.fn(function (...args: unknown[]) {
     pointsCtorArgs.push(args);
   }),
 }));
@@ -107,7 +107,7 @@ describe('createPointsLoader', () => {
     expect(loc.path).toBe('group/points');
   });
 
-  it('passes config and registry through to PointSpatialIndexLoader', () => {
+  it('passes config and registry through to PointsSpatialIndexLoader', () => {
     const config = { noCache: true } as const;
     const deps = makeDeps();
     createPointsLoader(makeNode('/p'), {} as never, config, deps);

@@ -1359,7 +1359,7 @@ export class SceneLoader {
       const group = await zarr.open(loc, { kind: 'group' });
       const attrs = group.attrs as ZarrNodeAttrs;
 
-      // We no longer check for spatial index here - PointSpatialIndexLoader handles it
+      // We no longer check for spatial index here - PointsSpatialIndexLoader handles it
       const node: SceneNode = {
         path: entry.path,
         type: attrs?.type || 'group',

@@ -410,7 +410,7 @@ export class RangeLoader {
    * Load array reference (resolve target and recurse).
    *
    * This method should never be reached in practice. All spatial index loaders
-   * (point-spatial-index-loader, lines-spatial-index-loader, gsplats-spatial-index-loader)
+   * (points-spatial-index-loader, lines-spatial-index-loader, gsplats-spatial-index-loader)
    * check for array_ref encoding via `ArrayDecoder.isArrayRef(attrs)` BEFORE calling
    * RangeLoader, and resolve the target array themselves using the zarrStore.
    *
@@ -432,7 +432,7 @@ export class RangeLoader {
     }
 
     // Array refs are resolved by spatial index loaders before reaching RangeLoader.
-    // See isArrayRef checks in point-spatial-index-loader.ts, lines-spatial-index-loader.ts,
+    // See isArrayRef checks in points-spatial-index-loader.ts, lines-spatial-index-loader.ts,
     // and gsplats-spatial-index-loader.ts. If this error is thrown, a new code path is
     // calling RangeLoader.loadRanges() without first resolving the array_ref.
     throw new Error(

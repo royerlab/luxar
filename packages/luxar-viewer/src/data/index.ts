@@ -10,7 +10,7 @@ export { loadScene, updateView, updateSceneForDimensions, dispose } from './zarr
 
 // Core components
 export { SceneLoader } from './scene-loader';
-export { PointSpatialIndexLoader } from './points/point-spatial-index-loader';
+export { PointsSpatialIndexLoader } from './points/points-spatial-index-loader';
 export { ViewStateManager, type SceneDimensions } from './view-state-manager';
 
 // State management

@@ -2,7 +2,7 @@
  * Loader-factory concern extracted from `scene-loader.ts`.
  *
  * Four constructor helpers, one per geometry kind:
- *   - `createPointsLoader` → `PointSpatialIndexLoader`
+ *   - `createPointsLoader` → `PointsSpatialIndexLoader`
  *   - `createLinesLoader` → `LinesSpatialIndexLoader`
  *   - `createGSplatsLoader` → `GSplatsSpatialIndexLoader`
  *   - `createProgressiveGSplatsLoader` → `GSplatsProgressiveLoader`
@@ -21,8 +21,8 @@
  */
 
 import * as zarr from 'zarrita';
-import { PointSpatialIndexLoader } from '../points/point-spatial-index-loader';
-export type { PointSpatialIndexLoader } from '../points/point-spatial-index-loader';
+import { PointsSpatialIndexLoader } from '../points/points-spatial-index-loader';
+export type { PointsSpatialIndexLoader } from '../points/points-spatial-index-loader';
 import { LinesSpatialIndexLoader } from '../lines/lines-spatial-index-loader';
 import { GSplatsSpatialIndexLoader } from '../gsplats/gsplats-spatial-index-loader';
 import { GSplatsProgressiveLoader } from '../gsplats/gsplats-progressive-loader';
@@ -66,10 +66,10 @@ export function createPointsLoader(
   loc: zarr.Location<zarr.Readable>,
   config: LoaderConfig,
   deps: LoaderFactoryDeps
-): PointSpatialIndexLoader {
+): PointsSpatialIndexLoader {
   const nodeLoc = resolveNodeLoc(node, loc, deps.zarrStore);
-  log.query(Modules.SCENE_LOADER, `Using PointSpatialIndexLoader for ${node.path}`);
-  return new PointSpatialIndexLoader(
+  log.query(Modules.SCENE_LOADER, `Using PointsSpatialIndexLoader for ${node.path}`);
+  return new PointsSpatialIndexLoader(
     nodeLoc,
     node,
     config,

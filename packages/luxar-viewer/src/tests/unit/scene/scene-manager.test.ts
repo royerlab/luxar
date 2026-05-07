@@ -294,7 +294,7 @@ vi.mock('../../../data', () => ({
   }),
   // Need to provide other exports from the module
   SceneLoader: vi.fn(),
-  PointSpatialIndexLoader: vi.fn(),
+  PointsSpatialIndexLoader: vi.fn(),
   updateView: vi.fn(),
   updateSceneForDimensions: vi.fn(),
   dispose: vi.fn(),

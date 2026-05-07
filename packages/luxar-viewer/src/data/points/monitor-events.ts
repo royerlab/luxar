@@ -1,7 +1,7 @@
 /**
  * Listener bookkeeping for the spatial-index loader's monitor surface.
  *
- * Extracted from `data/point-spatial-index-loader.ts` so the
+ * Extracted from `data/points-spatial-index-loader.ts` so the
  * subscribe / unsubscribe / fan-out behavior — including the
  * try/catch shielding that prevents one bad listener from blocking
  * the rest — is unit-tested in isolation, without a zarr store or an

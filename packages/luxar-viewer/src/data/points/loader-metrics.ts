@@ -1,7 +1,7 @@
 /**
  * Pure helpers for the spatial-index loader's metric bookkeeping.
  *
- * Extracted from `data/point-spatial-index-loader.ts` so the
+ * Extracted from `data/points-spatial-index-loader.ts` so the
  * moving-average load-time update + the load-counter increments are
  * unit-tested in isolation, without a zarr store or an active query
  * map.

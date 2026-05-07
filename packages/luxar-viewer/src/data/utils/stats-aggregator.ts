@@ -11,7 +11,7 @@ import type { AccumulatorStats } from './data-accumulator';
 import type { DataLoader } from '../data-loader-types';
 import type { LinesDataLoader } from '../../types/lines';
 import type { GSplatsDataLoader } from '../../types/gsplats';
-import type { PointSpatialIndexLoader } from '../points/point-spatial-index-loader';
+import type { PointsSpatialIndexLoader } from '../points/points-spatial-index-loader';
 import type { LinesSpatialIndexLoader } from '../lines/lines-spatial-index-loader';
 import type { GSplatsSpatialIndexLoader } from '../gsplats/gsplats-spatial-index-loader';
 
@@ -53,13 +53,13 @@ function aggregateStats(
 /**
  * Get aggregated accumulator stats for all points loaders.
  *
- * @param loaders - Map of path to DataLoader (PointSpatialIndexLoader instances)
+ * @param loaders - Map of path to DataLoader (PointsSpatialIndexLoader instances)
  * @returns Aggregated AccumulatorStats
  */
 export function getAggregatedPointsAccumulatorStats(
   loaders: ReadonlyMap<string, DataLoader>
 ): AccumulatorStats {
-  return aggregateStats(loaders.values() as Iterable<PointSpatialIndexLoader>);
+  return aggregateStats(loaders.values() as Iterable<PointsSpatialIndexLoader>);
 }
 
 /**
