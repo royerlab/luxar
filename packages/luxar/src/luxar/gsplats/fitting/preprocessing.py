@@ -505,7 +505,7 @@ def _subsample_seeds_spatially_diverse(
         Selected seeds with spatial diversity and high intensity.
         If return_indices=True, returns (seeds, original_indices).
     """
-    from scipy.spatial import cKDTree
+    from luxar.utils.spatial_hash import BatchedSpatialHashGrid
 
     n_available = len(seeds)
     if n_available <= target_count:
@@ -651,8 +651,16 @@ def _subsample_seeds_spatially_diverse(
     if verbose and len(result) == target_count:
         # Calculate spatial distribution metric (average nearest-neighbor distance)
         if len(result) > 1:
-            tree = cKDTree(result)
-            nn_distances, _ = tree.query(result, k=2)  # k=2 to get nearest neighbor
+            # Pick cell_size as a uniform-density estimate of the typical
+            # NN distance (bbox volume / N)^(1/D). Shell expansion handles
+            # outliers; correctness doesn't depend on a tight choice.
+            bbox = result.max(axis=0) - result.min(axis=0)
+            volume = float(np.prod(np.maximum(bbox, 1e-9)))
+            cell_size = max((volume / max(len(result), 1)) ** (1.0 / result.shape[1]), 1.0)
+            grid = BatchedSpatialHashGrid.from_points(
+                result, cell_size=cell_size, device="auto"
+            )
+            nn_distances, _ = grid.query_knn(result, k=2)
             nn_dist_arr = np.asarray(nn_distances)
             avg_spacing = float(np.mean(nn_dist_arr[:, 1]))  # nearest neighbor dist
             aprint(
@@ -800,13 +808,20 @@ def _add_grid_fallback_seeds(
     # Remove grid points too close to existing seeds (if any exist)
     # But be less aggressive about filtering to ensure we get enough
     if len(existing_seeds) > 0:
-        from scipy.spatial import cKDTree
+        from luxar.utils.spatial_hash import BatchedSpatialHashGrid
 
-        tree = cKDTree(existing_seeds)
-        distances, _ = tree.query(grid_coords, k=1)
         # Use smaller min_distance to be more permissive
         min_distance = max(1.0, spacing * 0.3)  # 30% of spacing, min 1 voxel
-        grid_coords = grid_coords[distances > min_distance]
+        # Cell size must accommodate the query radius; pick generously so
+        # the 3^D shell finds the nearest existing seed in one pass.
+        cell_size = max(spacing, min_distance * 2.0)
+        grid = BatchedSpatialHashGrid.from_points(
+            np.asarray(existing_seeds, dtype=np.float32),
+            cell_size=cell_size,
+            device="auto",
+        )
+        distances, _ = grid.query_knn(grid_coords.astype(np.float32), k=1)
+        grid_coords = grid_coords[distances[:, 0] > min_distance]
 
     # Track the final spacing used (for init_L generation)
     final_spacing = float(spacing)
