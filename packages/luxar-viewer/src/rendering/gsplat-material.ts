@@ -31,6 +31,7 @@
 import * as THREE from 'three';
 import { GSPLAT_VERTEX_SHADER, GSPLAT_FRAGMENT_SHADER } from './shaders/gsplat-shaders';
 import type { CameraAwareMaterial } from './camera-aware-material';
+import { computeFocalLength } from './camera-uniforms';
 
 /**
  * Configuration for gsplat material creation
@@ -231,19 +232,9 @@ export class GSplatMaterial extends THREE.ShaderMaterial implements CameraAwareM
     this.uniforms.uResolution.value.copy(resolution);
     this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
 
-    if (isOrtho) {
-      // fov = frustumHeight in world units; direct linear mapping
-      const fy = resolution.y / fov;
-      this.uniforms.uFx.value = fy;
-      this.uniforms.uFy.value = fy;
-    } else {
-      // Compute focal lengths in pixels from FOV
-      // f = height / (2 * tan(fov/2)) for vertical FOV
-      const tanHalfFov = Math.tan(fov / 2);
-      const fy = resolution.y / (2 * tanHalfFov);
-      this.uniforms.uFx.value = fy;
-      this.uniforms.uFy.value = fy;
-    }
+    const fy = computeFocalLength(fov, resolution.y, isOrtho);
+    this.uniforms.uFx.value = fy;
+    this.uniforms.uFy.value = fy;
 
     if (nearCull !== undefined) {
       this.uniforms.uNearCull.value = nearCull;

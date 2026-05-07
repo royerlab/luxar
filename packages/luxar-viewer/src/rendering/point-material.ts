@@ -8,6 +8,7 @@
 import * as THREE from 'three';
 import { POINT_VERTEX_SHADER, POINT_FRAGMENT_SHADER } from './shaders/point-shaders';
 import type { CameraAwareMaterial } from './camera-aware-material';
+import { computePointSizeFactor, computeMaxPointSize } from './camera-uniforms';
 
 /**
  * Configuration for point material creation
@@ -115,20 +116,8 @@ export class PointMaterial extends THREE.ShaderMaterial implements CameraAwareMa
     _nearCull?: number
   ): void {
     this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
-    if (isOrtho) {
-      // fov carries frustumHeight in world units for ortho.
-      // Perspective precomputes 2*res.y / tan(fov/2), then shader divides by distance.
-      // tan(fov/2) = frustumHeight / (2*distance), so the effective factor at the
-      // matching distance is 2*res.y / (frustumHeight/2) = 4*res.y / frustumHeight.
-      // Since ortho has invDistance=1, we bake that full factor here.
-      const halfFrustum = fov * 0.5;
-      this.uniforms.pointSizeFactor.value = (2.0 * resolution.y) / halfFrustum;
-    } else {
-      const tanHalfFov = Math.tan(fov / 2);
-      this.uniforms.pointSizeFactor.value = (2.0 * resolution.y) / tanHalfFov;
-    }
-    // maxPointSize = resolution.y * 0.5 (hardware limit)
-    this.uniforms.maxPointSize.value = resolution.y * 0.5;
+    this.uniforms.pointSizeFactor.value = computePointSizeFactor(fov, resolution.y, isOrtho);
+    this.uniforms.maxPointSize.value = computeMaxPointSize(resolution.y);
   }
 
   /**

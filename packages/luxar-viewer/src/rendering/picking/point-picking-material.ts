@@ -13,6 +13,7 @@
 
 import * as THREE from 'three';
 import type { CameraAwareMaterial } from '../camera-aware-material';
+import { computePointSizeFactor, computeMaxPointSize } from '../camera-uniforms';
 import { materialManager } from '../material-manager';
 
 export interface PointPickingMaterialConfig {
@@ -136,14 +137,8 @@ export class PointPickingMaterial extends THREE.ShaderMaterial implements Camera
     _nearCull?: number
   ): void {
     this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
-    if (isOrtho) {
-      const halfFrustum = fov * 0.5;
-      this.uniforms.pointSizeFactor.value = (2.0 * resolution.y) / halfFrustum;
-    } else {
-      const tanHalfFov = Math.tan(fov / 2);
-      this.uniforms.pointSizeFactor.value = (2.0 * resolution.y) / tanHalfFov;
-    }
-    this.uniforms.maxPointSize.value = resolution.y * 0.5;
+    this.uniforms.pointSizeFactor.value = computePointSizeFactor(fov, resolution.y, isOrtho);
+    this.uniforms.maxPointSize.value = computeMaxPointSize(resolution.y);
   }
 
   dispose(): void {
