@@ -19,7 +19,7 @@ vi.mock('../../../input/input-handler');
 vi.mock('../../../ui/rendering-controls');
 vi.mock('../../../ui/recording-panel');
 vi.mock('../../../ui/components/scale-bar');
-vi.mock('../../../ui/dataset-browser');
+vi.mock('../../../ui/panels/dataset-browser');
 vi.mock('../../../ui/helpers');
 vi.mock('../../../ui/layers');
 vi.mock('../../../scene/scene-dims-manager');
@@ -37,7 +37,7 @@ vi.mock('../../../ui/monitors/performance-monitor', () => ({
     visible: false,
   })),
 }));
-vi.mock('../../../ui/debug-console', () => ({
+vi.mock('../../../ui/panels/debug-console', () => ({
   DebugConsole: vi.fn().mockImplementation(() => ({
     show: vi.fn(),
     hide: vi.fn(),
@@ -83,7 +83,7 @@ import { SceneManager } from '../../../scene/scene-manager';
 import { AnimationController } from '../../../scene/animation-controller';
 import { InputHandler } from '../../../input/input-handler';
 import { RenderingControls } from '../../../ui/rendering-controls';
-import { DatasetBrowser } from '../../../ui/dataset-browser';
+import { DatasetBrowser } from '../../../ui/panels/dataset-browser';
 import { cleanupUI as mockCleanupUI, clearError as mockClearError } from '../../../ui/helpers';
 
 // Import LuxarApp after all mocks are set up

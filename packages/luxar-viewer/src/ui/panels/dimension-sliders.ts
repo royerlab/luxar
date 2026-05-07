@@ -1,16 +1,16 @@
-import { SimpleDims } from '../types/dims';
-import { sceneDimsManager } from '../scene/scene-dims-manager';
-import type { DimensionAnimationManager } from '../scene/dimension-animation-manager';
-import { config } from '../config';
-import { log, Modules } from '../utils/log';
-import { EventGroup } from '../utils/event-group';
+import { SimpleDims } from '../../types/dims';
+import { sceneDimsManager } from '../../scene/scene-dims-manager';
+import type { DimensionAnimationManager } from '../../scene/dimension-animation-manager';
+import { config } from '../../config';
+import { log, Modules } from '../../utils/log';
+import { EventGroup } from '../../utils/event-group';
 import {
   clampWithCyclicWrap,
   valueToFraction,
   fractionToValue,
   fractionToThumbLeft,
   clampInteger,
-} from './helpers/slider-math-utils';
+} from '../helpers/slider-math-utils';
 
 /**
  * Configuration interface for initializing dimension sliders.

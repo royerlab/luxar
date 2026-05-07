@@ -26,24 +26,34 @@ The Luxar UI package provides a comprehensive set of user interface components f
 
 ```
 ui/
-├── dimension-sliders.ts         # nD navigation controls
 ├── rendering-controls.ts        # Visual parameter adjustments (main class)
-├── rendering-controls-utils.ts  # Settings validation, serialization, merging
-├── rendering-controls/          # Modular setup functions
+├── rendering-controls/          # Modular setup functions + utils
 │   ├── types.ts                 # Shared types (SetupContext, SetupResult)
 │   ├── navigation-setup.ts      # Navigation controls (orbit, fly, ortho)
 │   ├── camera-setup.ts          # Camera settings (FOV, clipping)
 │   ├── hdr-setup.ts             # HDR intensity & tone mapping
 │   ├── anti-aliasing-setup.ts   # AA techniques (FXAA, SMAA, MSAA, SSAA)
-│   └── post-processing-setup.ts # Effects (bloom, noise, DoF, etc.)
-├── dataset-browser.ts           # Zarr dataset navigation
-├── performance-monitor.ts       # FPS and performance stats
-├── data-loading-monitor.ts      # Data loading performance monitoring
-├── data-monitor-types.ts        # Type definitions for monitoring
-├── data-monitor-templates.ts    # HTML template functions for monitor
-├── debug-console.ts             # Developer console overlay
-├── helpers.ts                   # Help overlays, loading indicators, toasts
-├── recording-panel.ts           # Screenshot and video capture panel
+│   ├── post-processing-setup.ts # Effects (bloom, noise, DoF, etc.)
+│   └── rendering-controls-utils.ts  # Settings validation, serialization, merging
+├── recording-panel.ts           # Screenshot and video capture panel (paired with recording/)
+├── recording/                   # Decomposed sub-modules of recording-panel
+│
+├── panels/                      # Stand-alone user-facing panels
+│   ├── dataset-browser.ts       # Zarr dataset navigation
+│   ├── debug-console.ts         # Developer console overlay
+│   └── dimension-sliders.ts     # nD navigation controls
+│
+├── monitors/                    # HUD-style live monitors (subscribe to event-bus)
+│   ├── performance-monitor.ts   # FPS and performance stats
+│   ├── data-loading-monitor.ts  # Data loading performance monitoring
+│   ├── data-monitor-templates.ts # HTML template functions for monitor
+│   └── data-monitor-manager.ts  # Manages DataLoadingMonitor instances
+│
+├── helpers/                     # Cross-cutting helpers used by panels/monitors
+│   ├── index.ts                 # showToast, help overlays, loading indicators (was helpers.ts)
+│   ├── slider-math-utils.ts     # Pure math for range/dimension sliders
+│   └── overlay-manager.ts       # Screen-space overlay rendering (text/image/HTML)
+│
 ├── layers/                      # Per-layer control panel (see layers/README.md)
 ├── gui/                         # Custom GUI library (see gui/README.md)
 ├── components/                  # Reusable UI components

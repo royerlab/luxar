@@ -36,7 +36,7 @@ import type { ColormapLegend } from '../../ui/components/colormap-legend';
 import type { OverlayManager } from '../../ui/helpers/overlay-manager';
 import type { RecordingPanel } from '../../ui/recording-panel';
 import type { LayersPanel } from '../../ui/layers';
-import type { DebugConsole } from '../../ui/debug-console';
+import type { DebugConsole } from '../../ui/panels/debug-console';
 
 /**
  * Command implementations the InputHandler still owns. Every binding
