@@ -4,6 +4,18 @@ import { OPFSStore } from './opfs-store';
 import type { ChunkPrefetcher } from './chunk-prefetcher';
 import { log, Modules } from '../utils/log';
 import { config } from '../config';
+import { type Result, ok, err, isErr } from '../utils/result';
+
+/**
+ * Structured failure modes from {@link MultiLevelCachingStore.getResult}.
+ * Distinguishing them lets callers (prefetcher, retry policies, debug
+ * overlays) act on the underlying cause instead of treating every
+ * absence the same way.
+ */
+export type CacheError =
+  | { readonly kind: 'Missing' }
+  | { readonly kind: 'NetworkError'; readonly cause: Error }
+  | { readonly kind: 'Aborted' };
 
 type IterableFileSystemDirectoryHandle = FileSystemDirectoryHandle & {
   entries(): AsyncIterableIterator<[string, FileSystemHandle]>;
@@ -303,11 +315,43 @@ export class MultiLevelCachingStore implements AsyncReadable {
    * @see SPECIFICATIONS.md - Section 3 for complete cache algorithm
    */
   async get(key: string, _options?: unknown): Promise<Uint8Array | undefined> {
+    // zarrita's AsyncReadable contract is `Uint8Array | undefined`; both
+    // Missing and transient NetworkError collapse to undefined here. Internal
+    // callers that need to distinguish the cases use `getResult` directly.
+    const result = await this.getResult(key);
+    if (isErr(result)) {
+      if (result.error.kind === 'NetworkError') {
+        log.warning(
+          Modules.CACHE,
+          `Network error fetching ${key}: ${result.error.cause.message}`
+        );
+      }
+      return undefined;
+    }
+    return result.value;
+  }
+
+  /**
+   * Get a chunk and report the failure mode structurally.
+   *
+   * Same L1 → L2 → L3 cascade as {@link get}, but distinguishes:
+   * - `ok(data)` — present in some tier or fetched successfully.
+   * - `err({ kind: 'Missing' })` — server returned non-2xx (e.g. 404)
+   *   or a non-retryable client error. Caller may treat as "not yet
+   *   stored" without alarm.
+   * - `err({ kind: 'NetworkError', cause })` — transient network/DNS
+   *   error or 5xx after retries exhausted. Caller may back off.
+   * - `err({ kind: 'Aborted' })` — caller-supplied AbortSignal fired.
+   */
+  async getResult(
+    key: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<Result<Uint8Array, CacheError>> {
     // L1: Memory check (fastest, ~1μs)
     const l1Hit = this.l1Cache.get(key);
     if (l1Hit) {
       this.log(`L1 hit: ${key}`, 'info');
-      return l1Hit;
+      return ok(l1Hit);
     }
 
     // L2: OPFS check (~1ms)
@@ -319,43 +363,68 @@ export class MultiLevelCachingStore implements AsyncReadable {
         this.l1Cache.set(key, l2Hit);
         // Trigger prefetch on L2 hit
         this.prefetcher?.onAccess(key);
-        return l2Hit;
+        return ok(l2Hit);
       }
     }
 
     // L3: Remote fetch (~100ms)
+    this.log(`HTTP fetch: ${key}`, 'info');
+    let response: Response | undefined;
     try {
-      this.log(`HTTP fetch: ${key}`, 'info');
-      const response = await this.fetchWithRetry(this.buildUrl(key));
-      if (!response?.ok) return undefined;
+      response = await this.fetchWithRetry(this.buildUrl(key), { signal: options?.signal });
+    } catch (error) {
+      // fetchWithRetry shouldn't throw (it returns undefined on failure), but
+      // future refactors might — surface as NetworkError rather than crash.
+      const cause = error instanceof Error ? error : new Error(String(error));
+      return err({ kind: 'NetworkError', cause });
+    }
 
-      const data = new Uint8Array(await response.arrayBuffer());
+    if (options?.signal?.aborted) {
+      return err({ kind: 'Aborted' });
+    }
+    if (!response) {
+      // fetchWithRetry returned undefined — exhausted retries on transient
+      // failures, or caller signal aborted between retries.
+      if (options?.signal?.aborted) return err({ kind: 'Aborted' });
+      return err({
+        kind: 'NetworkError',
+        cause: new Error(`fetch exhausted retries for ${key}`),
+      });
+    }
+    if (!response.ok) {
+      // Non-2xx: 4xx is "missing" in cache parlance (404 zarr key,
+      // 403 missing permissions). 5xx already retried by fetchWithRetry.
+      return err({ kind: 'Missing' });
+    }
 
-      // Track network I/O
-      this.networkRequestCount++;
-      this.networkBytesTransferred += data.byteLength;
-      this.bandwidthWindow.push({ timestamp: Date.now(), bytes: data.byteLength });
+    const data = new Uint8Array(await response.arrayBuffer());
 
-      // Populate caches (only if caching is enabled via URL params)
-      if (this.enabled) {
-        this.l1Cache.set(key, data);
-        if (this.l2Store) {
-          this.l2Store.set(key, data).catch((e) => {
-            log.warning(Modules.CACHE, `L2 write failed for ${key}: ${e?.message || e}`);
-          });
+    // Track network I/O
+    this.networkRequestCount++;
+    this.networkBytesTransferred += data.byteLength;
+    this.bandwidthWindow.push({ timestamp: Date.now(), bytes: data.byteLength });
+
+    // Populate caches (only if caching is enabled via URL params).
+    // Await the L2 write so a subsequent clearAll/clearL2 can't race the
+    // fire-and-forget set and end up with stale entries in OPFS. Cost is
+    // O(1ms) on L3 fetches — small relative to the ~100ms network call —
+    // and removes a timing hazard rather than papering over it.
+    if (this.enabled) {
+      this.l1Cache.set(key, data);
+      if (this.l2Store) {
+        try {
+          await this.l2Store.set(key, data);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          log.warning(Modules.CACHE, `L2 write failed for ${key}: ${msg}`);
         }
       }
-
-      // Trigger prefetch on L3 fetch
-      this.prefetcher?.onAccess(key);
-
-      return data;
-    } catch (error) {
-      // Log error with message (error objects don't serialize well in console)
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      log.warning(Modules.CACHE, `Network error fetching ${key}: ${errorMsg}`);
-      return undefined;
     }
+
+    // Trigger prefetch on L3 fetch
+    this.prefetcher?.onAccess(key);
+
+    return ok(data);
   }
 
   /**

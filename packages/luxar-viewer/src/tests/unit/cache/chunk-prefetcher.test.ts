@@ -25,9 +25,10 @@ async function waitFor(condition: () => boolean, timeout = 2000): Promise<void> 
   }
 }
 
-// Mock MultiLevelCachingStore for unit tests
+// Mock MultiLevelCachingStore for unit tests. The prefetcher uses
+// `getResult` (Result-typed) on the store; tests inspect calls on it.
 class MockStore {
-  get = vi.fn().mockResolvedValue(new Uint8Array([1, 2, 3]));
+  getResult = vi.fn().mockResolvedValue({ ok: true, value: new Uint8Array([1, 2, 3]) });
   setPrefetcher = vi.fn();
 }
 
@@ -61,8 +62,8 @@ describe('ChunkPrefetcher - Unit Tests', () => {
       });
 
       // Verify adjacent chunks were generated (v2 format)
-      expect(mockStore.get).toHaveBeenCalled();
-      const calls = mockStore.get.mock.calls.map((call: any[]) => call[0]);
+      expect(mockStore.getResult).toHaveBeenCalled();
+      const calls = mockStore.getResult.mock.calls.map((call: any[]) => call[0]);
 
       // Should have ±1 in each dimension (5 neighbors: dim0 can't go negative)
       expect(calls).toContain('points/positions/1.1.2'); // +1 in dim 0
@@ -97,7 +98,7 @@ describe('ChunkPrefetcher - Unit Tests', () => {
         return s.inFlight === 0 && s.queued === 0;
       });
 
-      const calls = mockStore.get.mock.calls.map((call: any[]) => call[0]);
+      const calls = mockStore.getResult.mock.calls.map((call: any[]) => call[0]);
 
       // Should have ±1 in each dimension (v3 format, 5 neighbors total)
       expect(calls.length).toBe(5); // 3 dims * 2 - 1 (can't go negative in dim 0)
@@ -114,7 +115,7 @@ describe('ChunkPrefetcher - Unit Tests', () => {
       prefetcher.onAccess('.zgroup');
 
       // Should not prefetch anything for metadata files
-      expect(mockStore.get).not.toHaveBeenCalled();
+      expect(mockStore.getResult).not.toHaveBeenCalled();
     });
 
     it('should handle 1D chunks', () => {
@@ -123,7 +124,7 @@ describe('ChunkPrefetcher - Unit Tests', () => {
 
       prefetcher.onAccess('data/0');
 
-      const calls = mockStore.get.mock.calls.map((call: any[]) => call[0]);
+      const calls = mockStore.getResult.mock.calls.map((call: any[]) => call[0]);
 
       // Should have only ±1 in single dimension
       expect(calls).toContain('data/1'); // +1
@@ -147,7 +148,7 @@ describe('ChunkPrefetcher - Unit Tests', () => {
         return s.inFlight === 0 && s.queued === 0;
       });
 
-      const calls = mockStore.get.mock.calls.map((call: any[]) => call[0]);
+      const calls = mockStore.getResult.mock.calls.map((call: any[]) => call[0]);
 
       // Should have 2 neighbors per dimension * 4 dimensions = 8 total
       expect(calls).toHaveLength(8);
@@ -166,12 +167,12 @@ describe('ChunkPrefetcher - Unit Tests', () => {
     it('should limit concurrent prefetches to maxConcurrent', async () => {
       // Use a controlled store whose gets never resolve until we say so,
       // so we can inspect the in-flight count deterministically.
-      const resolvers: Array<() => void> = [];
+      const resolvers: Array<(value: { ok: true; value: Uint8Array }) => void> = [];
       const controlledStore = {
-        get: vi.fn().mockImplementation(
+        getResult: vi.fn().mockImplementation(
           () =>
-            new Promise<Uint8Array>((resolve) => {
-              resolvers.push(() => resolve(new Uint8Array([1])));
+            new Promise<{ ok: true; value: Uint8Array }>((resolve) => {
+              resolvers.push((v) => resolve(v));
             })
         ),
         setPrefetcher: vi.fn(),
@@ -189,7 +190,7 @@ describe('ChunkPrefetcher - Unit Tests', () => {
       limitedPrefetcher.onAccess('data/1.1');
 
       // Wait for the queue to be drained into in-flight slots
-      await waitFor(() => controlledStore.get.mock.calls.length >= 2);
+      await waitFor(() => controlledStore.getResult.mock.calls.length >= 2);
 
       const stats = limitedPrefetcher.getStats();
 
@@ -197,7 +198,7 @@ describe('ChunkPrefetcher - Unit Tests', () => {
       expect(stats.inFlight).toBeLessThanOrEqual(2);
 
       // Resolve all to clean up
-      resolvers.forEach((r) => r());
+      resolvers.forEach((r) => r({ ok: true, value: new Uint8Array([1]) }));
     });
 
     it('should process queue when slots free up', async () => {
@@ -219,7 +220,7 @@ describe('ChunkPrefetcher - Unit Tests', () => {
       });
 
       // All should eventually be fetched
-      expect(mockStore.get).toHaveBeenCalledTimes(4);
+      expect(mockStore.getResult).toHaveBeenCalledTimes(4);
     });
   });
 
@@ -237,12 +238,12 @@ describe('ChunkPrefetcher - Unit Tests', () => {
 
     it('should not queue chunks already in flight', async () => {
       // Use controlled promises so gets stay pending until we resolve them
-      const resolvers: Array<() => void> = [];
+      const resolvers: Array<(value: { ok: true; value: Uint8Array }) => void> = [];
       const slowMockStore = {
-        get: vi.fn().mockImplementation(
+        getResult: vi.fn().mockImplementation(
           () =>
-            new Promise<void>((resolve) => {
-              resolvers.push(resolve);
+            new Promise<{ ok: true; value: Uint8Array }>((resolve) => {
+              resolvers.push((v) => resolve(v));
             })
         ),
         setPrefetcher: vi.fn(),
@@ -260,7 +261,7 @@ describe('ChunkPrefetcher - Unit Tests', () => {
       slowPrefetcher.onAccess('data/1.1');
 
       // Wait for requests to start (they will be in-flight, pending)
-      await waitFor(() => slowMockStore.get.mock.calls.length > 0);
+      await waitFor(() => slowMockStore.getResult.mock.calls.length > 0);
 
       // Trigger second access (should deduplicate via the seen-set)
       slowPrefetcher.onAccess('data/1.1');
@@ -270,7 +271,7 @@ describe('ChunkPrefetcher - Unit Tests', () => {
       expect(stats.queued + stats.inFlight).toBeLessThanOrEqual(4);
 
       // Resolve all to clean up
-      resolvers.forEach((r) => r());
+      resolvers.forEach((r) => r({ ok: true, value: new Uint8Array([1]) }));
     });
   });
 
@@ -281,7 +282,7 @@ describe('ChunkPrefetcher - Unit Tests', () => {
       disabledPrefetcher.onAccess('data/0.0');
 
       // Should not prefetch anything when disabled
-      expect(mockStore.get).not.toHaveBeenCalled();
+      expect(mockStore.getResult).not.toHaveBeenCalled();
     });
 
     it('prefetches adjacent chunks when constructed with enabled=true (parity with disabled case)', () => {
@@ -292,7 +293,7 @@ describe('ChunkPrefetcher - Unit Tests', () => {
 
       enabledPrefetcher.onAccess('data/0.0');
 
-      expect(mockStore.get).toHaveBeenCalled();
+      expect(mockStore.getResult).toHaveBeenCalled();
     });
 
     it('should use custom maxConcurrent', async () => {
@@ -321,9 +322,11 @@ describe('ChunkPrefetcher - Unit Tests', () => {
   });
 
   describe('Error Handling', () => {
-    it('should ignore prefetch errors silently', async () => {
+    it('should propagate Missing results without throwing', async () => {
       const errorMockStore = {
-        get: vi.fn().mockRejectedValue(new Error('404 Not Found')),
+        getResult: vi
+          .fn()
+          .mockResolvedValue({ ok: false, error: { kind: 'Missing' } }),
         setPrefetcher: vi.fn(),
       };
 
@@ -346,7 +349,7 @@ describe('ChunkPrefetcher - Unit Tests', () => {
       });
 
       // Should have attempted prefetch
-      expect(errorMockStore.get).toHaveBeenCalled();
+      expect(errorMockStore.getResult).toHaveBeenCalled();
     });
   });
 
@@ -385,7 +388,7 @@ describe('ChunkPrefetcher - Integration Tests', () => {
   it('should integrate with MultiLevelCachingStore via setPrefetcher', () => {
     // Create mock store (don't need real initialization)
     const mockIntegrationStore = {
-      get: vi.fn().mockResolvedValue(new Uint8Array([1, 2, 3])),
+      getResult: vi.fn().mockResolvedValue({ ok: true, value: new Uint8Array([1, 2, 3]) }),
       setPrefetcher: vi.fn(),
       prefetcher: null as any,
     };
@@ -412,7 +415,7 @@ describe('ChunkPrefetcher - Integration Tests', () => {
 
   it('should be triggered by store when onAccess is called', async () => {
     const mockIntegrationStore = {
-      get: vi.fn().mockResolvedValue(new Uint8Array([1, 2, 3])),
+      getResult: vi.fn().mockResolvedValue({ ok: true, value: new Uint8Array([1, 2, 3]) }),
     };
 
     // Create prefetcher with spy-able onAccess
@@ -431,10 +434,10 @@ describe('ChunkPrefetcher - Integration Tests', () => {
     // Verify onAccess was called
     expect(onAccessSpy).toHaveBeenCalledWith('test/0.0');
 
-    // Wait for prefetch to attempt store.get()
-    await waitFor(() => mockIntegrationStore.get.mock.calls.length > 0);
+    // Wait for prefetch to attempt store.getResult()
+    await waitFor(() => mockIntegrationStore.getResult.mock.calls.length > 0);
 
     // Verify prefetcher tried to fetch chunks
-    expect(mockIntegrationStore.get).toHaveBeenCalled();
+    expect(mockIntegrationStore.getResult).toHaveBeenCalled();
   });
 });

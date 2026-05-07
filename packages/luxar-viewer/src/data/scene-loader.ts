@@ -116,6 +116,61 @@ interface StagedPointsCommit {
 }
 
 /**
+ * Classification of a per-node load failure. Lets `loadSceneNodes` decide
+ * whether to skip-quietly (transient network), surface to the user
+ * (corrupted dataset), or re-throw (programmer bug).
+ */
+type LoaderErrorKind = 'Network' | 'Decode' | 'Validation' | 'Unexpected';
+
+/**
+ * Thrown by `loadPoints` / `loadLines` / `loadGSplats` when a node
+ * fails to load for an unexpected reason. The `kind` field tells
+ * `loadSceneNodes` how to handle the failure.
+ *
+ * Note: validation skips (missing attr, ndim mismatch, etc.) still
+ * `return null` from the loader — only genuine errors throw this.
+ */
+class LoaderError extends Error {
+  constructor(
+    readonly kind: LoaderErrorKind,
+    readonly path: string,
+    cause: unknown
+  ) {
+    const causeMsg = cause instanceof Error ? cause.message : String(cause);
+    super(`${kind} loading ${path}: ${causeMsg}`);
+    this.name = 'LoaderError';
+    this.cause = cause;
+  }
+}
+
+/** Heuristic classifier for raw thrown errors. */
+function classifyLoaderError(error: unknown): LoaderErrorKind {
+  if (!(error instanceof Error)) return 'Unexpected';
+  if (error.name === 'AbortError') return 'Network';
+  const msg = error.message.toLowerCase();
+  if (
+    msg.includes('fetch') ||
+    msg.includes('network') ||
+    msg.includes('timeout') ||
+    msg.includes('http ')
+  ) {
+    return 'Network';
+  }
+  if (
+    msg.includes('decode') ||
+    msg.includes('parse') ||
+    msg.includes('invalid') ||
+    msg.includes('corrupt')
+  ) {
+    return 'Decode';
+  }
+  if (msg.includes('validation') || msg.includes('expected') || msg.includes('required')) {
+    return 'Validation';
+  }
+  return 'Unexpected';
+}
+
+/**
  * Main scene loader that handles the complete loading pipeline.
  *
  * Features:
@@ -1339,7 +1394,16 @@ export class SceneLoader {
   }
 
   /**
-   * Load all nodes in the scene graph
+   * Load all nodes in the scene graph. Each leaf node is wrapped in a
+   * per-node try/catch so a single failing node does not abort loading
+   * sibling nodes — the user gets a partial scene plus a per-failure
+   * log entry instead of an empty scene with no actionable signal.
+   *
+   * `LoaderError` thrown from `loadX` is dispatched on `kind`:
+   * - Network → log warning + skip (transient, retry path will handle)
+   * - Decode / Validation → log error + toast (real data problem)
+   * - Unexpected → log error + toast (programmer bug; doesn't re-throw
+   *   because we still want sibling nodes to render)
    */
   private async loadSceneNodes(
     node: SceneNode,
@@ -1347,23 +1411,14 @@ export class SceneLoader {
     parentLoc: zarr.Location<zarr.Readable>
   ): Promise<void> {
     if (node.type === 'points') {
-      // Load points
-      const points = await this.loadPoints(node, parentLoc);
-      if (points) {
-        parentThree.add(points);
-      }
+      const points = await this.loadLeafNode(() => this.loadPoints(node, parentLoc), node.path);
+      if (points) parentThree.add(points);
     } else if (node.type === 'lines') {
-      // Load lines
-      const lines = await this.loadLines(node, parentLoc);
-      if (lines) {
-        parentThree.add(lines);
-      }
+      const lines = await this.loadLeafNode(() => this.loadLines(node, parentLoc), node.path);
+      if (lines) parentThree.add(lines);
     } else if (node.type === 'gsplats') {
-      // Load gsplats
-      const gsplats = await this.loadGSplats(node, parentLoc);
-      if (gsplats) {
-        parentThree.add(gsplats);
-      }
+      const gsplats = await this.loadLeafNode(() => this.loadGSplats(node, parentLoc), node.path);
+      if (gsplats) parentThree.add(gsplats);
     } else if (node.children) {
       // Create group and recurse
       const group = new THREE.Group();
@@ -1381,6 +1436,37 @@ export class SceneLoader {
         const childLoc = parentLoc.resolve(child.path.slice(1));
         await this.loadSceneNodes(child, group, childLoc);
       }
+    }
+  }
+
+  /**
+   * Run a leaf-node loader, dispatching {@link LoaderError} by kind so
+   * one bad node doesn't sink the whole scene. Returns the mesh on
+   * success, `null` on intentional skip (validation early-exit), or
+   * `null` after a logged/toasted error.
+   */
+  private async loadLeafNode<T extends THREE.Object3D>(
+    load: () => Promise<T | null>,
+    path: string
+  ): Promise<T | null> {
+    try {
+      return await load();
+    } catch (error) {
+      if (!(error instanceof LoaderError)) throw error;
+      const causeStack = error.cause instanceof Error ? error.cause.stack : undefined;
+      switch (error.kind) {
+        case 'Network':
+          log.warning(Modules.SCENE_LOADER, `Network error loading ${path}: ${error.message}`);
+          break;
+        case 'Decode':
+        case 'Validation':
+        case 'Unexpected':
+          log.error(Modules.SCENE_LOADER, `Failed to load ${path}: ${error.message}`);
+          if (causeStack) log.error(Modules.SCENE_LOADER, `Stack trace for ${path}`, causeStack);
+          notifier.toast(`Failed to load ${path}: ${error.kind.toLowerCase()} error`, 5000);
+          break;
+      }
+      return null;
     }
   }
 
@@ -1472,19 +1558,7 @@ export class SceneLoader {
 
       return points;
     } catch (error) {
-      // Improved error logging - extract message from error object
-      const errorMessage =
-        error instanceof Error
-          ? error.message
-          : typeof error === 'string'
-            ? error
-            : JSON.stringify(error);
-      log.error(Modules.SCENE_LOADER, `Failed to load ${node.path}: ${errorMessage}`);
-      // Also log stack trace for debugging
-      if (error instanceof Error && error.stack) {
-        log.error(Modules.SCENE_LOADER, `Stack trace for ${node.path}`, error.stack);
-      }
-      return null;
+      throw new LoaderError(classifyLoaderError(error), node.path, error);
     }
   }
 
@@ -1605,17 +1679,7 @@ export class SceneLoader {
 
       return mesh;
     } catch (error) {
-      const errorMessage =
-        error instanceof Error
-          ? error.message
-          : typeof error === 'string'
-            ? error
-            : JSON.stringify(error);
-      log.error(Modules.SCENE_LOADER, `Failed to load lines ${node.path}: ${errorMessage}`);
-      if (error instanceof Error && error.stack) {
-        log.error(Modules.SCENE_LOADER, `Stack trace for ${node.path}`, error.stack);
-      }
-      return null;
+      throw new LoaderError(classifyLoaderError(error), node.path, error);
     }
   }
 
@@ -1765,17 +1829,7 @@ export class SceneLoader {
 
       return mesh;
     } catch (error) {
-      const errorMessage =
-        error instanceof Error
-          ? error.message
-          : typeof error === 'string'
-            ? error
-            : JSON.stringify(error);
-      log.error(Modules.SCENE_LOADER, `Failed to load gsplats ${node.path}: ${errorMessage}`);
-      if (error instanceof Error && error.stack) {
-        log.error(Modules.SCENE_LOADER, `Stack trace for ${node.path}`, error.stack);
-      }
-      return null;
+      throw new LoaderError(classifyLoaderError(error), node.path, error);
     }
   }
 

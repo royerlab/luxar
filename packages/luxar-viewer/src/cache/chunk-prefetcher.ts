@@ -134,11 +134,15 @@ export class ChunkPrefetcher {
 
         this.log(`Prefetching: ${key} (${this.inFlight.size}/${this.maxConcurrent} slots)`);
 
-        // Fire-and-forget with cleanup
+        // Fire-and-forget with cleanup. Use getResult so a transient
+        // network failure surfaces in the prefetch log instead of being
+        // silently indistinguishable from a 404.
         this.store
-          .get(key)
-          .catch(() => {
-            // Ignore errors (404s, network failures)
+          .getResult(key)
+          .then((r) => {
+            if (!r.ok && r.error.kind === 'NetworkError') {
+              this.log(`Prefetch network error: ${key} (${r.error.cause.message})`);
+            }
           })
           .finally(() => {
             this.inFlight.delete(key);

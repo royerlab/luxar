@@ -433,6 +433,47 @@ describe('MultiLevelCachingStore', () => {
     });
   });
 
+  describe('getResult — structured error reporting', () => {
+    it('returns ok(data) on a successful L3 fetch', async () => {
+      const r = await store.getResult('chunk-ok');
+      expect(r.ok).toBe(true);
+      if (r.ok) expect(Array.from(r.value)).toEqual([1, 2, 3, 4, 5]);
+    });
+
+    it('returns err(Missing) on a 404', async () => {
+      // Override fetch to 404 a specific key.
+      const originalFetch = global.fetch;
+      global.fetch = vi.fn(async (url: string) => {
+        if (url.includes('missing-chunk')) {
+          return { ok: false, status: 404, async arrayBuffer() { return new ArrayBuffer(0); } } as Response;
+        }
+        return originalFetch(url, undefined as unknown as RequestInit);
+      }) as unknown as typeof fetch;
+
+      const r = await store.getResult('missing-chunk');
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.error.kind).toBe('Missing');
+
+      global.fetch = originalFetch;
+    });
+
+    it('promotes L1/L2 hits to ok without re-fetching', async () => {
+      // Warm L1 with a fetch
+      await store.getResult('warm-key');
+
+      // Spy fetch to ensure no further call
+      const fetchSpy = vi.fn();
+      const originalFetch = global.fetch;
+      global.fetch = fetchSpy as unknown as typeof fetch;
+
+      const r = await store.getResult('warm-key');
+      expect(r.ok).toBe(true);
+      expect(fetchSpy).not.toHaveBeenCalled();
+
+      global.fetch = originalFetch;
+    });
+  });
+
   describe('Statistics', () => {
     it('should return accurate L1 and L2 stats', async () => {
       await store.get('.zmetadata'); // Metadata
