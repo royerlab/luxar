@@ -135,15 +135,20 @@ export class LineMaterial extends THREE.ShaderMaterial implements CameraAwareMat
       side: THREE.DoubleSide, // Lines visible from both sides
     });
 
-    // Configure custom blending for max mode
-    if (blendingMode === 'max') {
-      this.blendEquation = THREE.MaxEquation; // Max(source, destination)
-      this.blendSrc = THREE.OneFactor;
-      this.blendDst = THREE.OneFactor;
+    // Apply mode-specific blending state via the canonical method —
+    // same path used by live mode updates from the layers panel.
+    this.applyBlendingMode(blendingMode);
+
+    // Honor explicit overrides from config after mode-derived defaults.
+    if (materialConfig.transparent !== undefined) {
+      this.transparent = materialConfig.transparent;
+    }
+    if (materialConfig.depthTest !== undefined) {
+      this.depthTest = materialConfig.depthTest;
     }
 
-    // Store in userData for clone()
-    this.userData.blendingMode = blendingMode;
+    // gamma + scalarRange in userData for clone(); blendingMode and
+    // depthTest are already set by applyBlendingMode.
     this.userData.gamma = gammaValue;
     this.userData.depthTest = materialConfig.depthTest ?? !isAdditive;
     this.userData.scalarRange = materialConfig.scalarRange;
@@ -269,4 +274,50 @@ export class LineMaterial extends THREE.ShaderMaterial implements CameraAwareMat
   // subscribes to the synchronous `dispose` event THREE fires from
   // super.dispose(), so registry cleanup happens automatically without
   // this file needing to import the manager (which would create a cycle).
+
+  /**
+   * Apply a blending mode to this material in-place.
+   *
+   * Lines use `THREE.AdditiveBlending` (SrcAlpha factors) for
+   * additive/luminous because the per-pixel intensity-squaring concern
+   * that GSplats face doesn't apply to thin line segments. Only `max`
+   * mode goes through CustomBlending. After this returns,
+   * `userData.blendingMode` reflects the live mode so subsequent
+   * `clone()` calls preserve it.
+   */
+  applyBlendingMode(mode: 'additive' | 'normal' | 'max' | 'opaque' | 'luminous'): void {
+    const isOpaque = mode === 'opaque';
+    const isAdditive = mode === 'additive';
+    const opacity = (this.uniforms.uOpacity?.value as number | undefined) ?? 1.0;
+
+    if (isOpaque || mode === 'normal') {
+      this.blending = THREE.NormalBlending;
+    } else if (mode === 'additive' || mode === 'luminous') {
+      this.blending = THREE.AdditiveBlending;
+    } else if (mode === 'max') {
+      this.blending = THREE.CustomBlending;
+    } else {
+      this.blending = THREE.NormalBlending;
+    }
+
+    this.transparent = !isOpaque;
+    this.depthWrite = isOpaque || (mode === 'normal' && opacity >= 0.99);
+    this.depthTest = !isAdditive;
+
+    if (mode === 'max') {
+      this.blendEquation = THREE.MaxEquation;
+      this.blendSrc = THREE.OneFactor;
+      this.blendDst = THREE.OneFactor;
+    } else {
+      // Reset CustomBlending state so a switch out of max doesn't strand
+      // MaxEquation. AdditiveBlending and NormalBlending ignore these.
+      this.blendEquation = THREE.AddEquation;
+      this.blendSrc = THREE.SrcAlphaFactor;
+      this.blendDst = THREE.OneMinusSrcAlphaFactor;
+    }
+
+    this.userData.blendingMode = mode;
+    this.userData.depthTest = this.depthTest;
+    this.needsUpdate = true;
+  }
 }

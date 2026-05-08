@@ -438,6 +438,109 @@ describe('GSplatMaterial', () => {
       expect(material.userData.depthTest).toBe(true);
     });
   });
+
+  describe('applyBlendingMode (Phase 14.4)', () => {
+    // The constructor delegates to applyBlendingMode, so initial-state
+    // tests exist above. These cover live transitions — the bug the
+    // method fixes is the layers panel's previous generic
+    // `mat.blending = ...` write that ignored uProjectionMode and
+    // OneFactor / alpha-equation requirements.
+
+    it('switches additive → max: uProjectionMode flips to 1, blendEquation to MaxEquation', () => {
+      const material = new GSplatMaterial({ blendingMode: 'additive' });
+      expect(material.uniforms.uProjectionMode.value).toBe(0);
+
+      material.applyBlendingMode('max');
+
+      expect(material.uniforms.uProjectionMode.value).toBe(1);
+      expect(material.blending).toBe('CustomBlending');
+      expect(material.blendEquation).toBe('MaxEquation');
+      expect(material.blendSrc).toBe('OneFactor');
+      expect(material.blendDst).toBe('OneFactor');
+      expect(material.userData.blendingMode).toBe('max');
+      expect(material.needsUpdate).toBe(true);
+    });
+
+    it('switches max → additive: uProjectionMode resets to 0, alpha gets MaxEquation', () => {
+      // Before this fix, switching from max → additive via the layers
+      // panel left blendEquation stuck at MaxEquation (wrong intensity)
+      // and uProjectionMode stuck at 1 (shader took max-projection
+      // branch but framebuffer blended additively).
+      const material = new GSplatMaterial({ blendingMode: 'max' });
+      expect(material.uniforms.uProjectionMode.value).toBe(1);
+      expect(material.blendEquation).toBe('MaxEquation');
+
+      material.applyBlendingMode('additive');
+
+      expect(material.uniforms.uProjectionMode.value).toBe(0);
+      expect(material.blending).toBe('CustomBlending');
+      expect(material.blendEquation).toBe('AddEquation');
+      expect(material.blendSrc).toBe('OneFactor');
+      expect(material.blendDst).toBe('OneFactor');
+      // Alpha gets its own equation to prevent accumulation overflow.
+      expect(material.blendEquationAlpha).toBe('MaxEquation');
+      expect(material.blendSrcAlpha).toBe('OneFactor');
+      expect(material.blendDstAlpha).toBe('OneFactor');
+      expect(material.userData.blendingMode).toBe('additive');
+    });
+
+    it('switches max → luminous: same factors as additive, but depthTest=true', () => {
+      const material = new GSplatMaterial({ blendingMode: 'max' });
+
+      material.applyBlendingMode('luminous');
+
+      expect(material.blending).toBe('CustomBlending');
+      expect(material.blendEquation).toBe('AddEquation');
+      expect(material.blendSrc).toBe('OneFactor');
+      expect(material.blendDst).toBe('OneFactor');
+      expect(material.uniforms.uProjectionMode.value).toBe(0);
+      // luminous respects depth (vs additive which ignores it).
+      expect(material.depthTest).toBe(true);
+      expect(material.userData.blendingMode).toBe('luminous');
+    });
+
+    it('switches additive → opaque: transparent flips, alpha state resets to defaults', () => {
+      const material = new GSplatMaterial({ blendingMode: 'additive' });
+      // additive sets alpha equation = MaxEquation
+      expect(material.blendEquationAlpha).toBe('MaxEquation');
+
+      material.applyBlendingMode('opaque');
+
+      expect(material.blending).toBe('NormalBlending');
+      expect(material.transparent).toBe(false);
+      expect(material.depthWrite).toBe(true);
+      // Alpha state cleared so it doesn't haunt a future custom-blending switch.
+      expect(material.blendEquationAlpha).toBe(null);
+      expect(material.blendSrcAlpha).toBe(null);
+      expect(material.blendDstAlpha).toBe(null);
+      expect(material.userData.blendingMode).toBe('opaque');
+    });
+
+    it('round-trips additive → max → additive without stranding state', () => {
+      const material = new GSplatMaterial({ blendingMode: 'additive' });
+      material.applyBlendingMode('max');
+      material.applyBlendingMode('additive');
+
+      // Should be identical to a freshly-constructed additive material.
+      expect(material.uniforms.uProjectionMode.value).toBe(0);
+      expect(material.blending).toBe('CustomBlending');
+      expect(material.blendEquation).toBe('AddEquation');
+      expect(material.blendSrc).toBe('OneFactor');
+      expect(material.blendDst).toBe('OneFactor');
+      expect(material.blendEquationAlpha).toBe('MaxEquation');
+    });
+
+    it('clone after applyBlendingMode preserves the live mode', () => {
+      const material = new GSplatMaterial({ blendingMode: 'additive' });
+      material.applyBlendingMode('max');
+
+      const cloned = material.clone();
+
+      expect(cloned.userData.blendingMode).toBe('max');
+      expect(cloned.uniforms.uProjectionMode.value).toBe(1);
+      expect(cloned.blendEquation).toBe('MaxEquation');
+    });
+  });
 });
 
 describe('createGSplatQuadGeometry', () => {

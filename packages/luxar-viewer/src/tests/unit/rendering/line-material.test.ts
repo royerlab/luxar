@@ -290,6 +290,52 @@ describe('LineMaterial', () => {
       expect(material.userData.depthTest).toBe(true);
     });
   });
+
+  describe('applyBlendingMode (Phase 14.4)', () => {
+    // The line-material mock at the top of this file strings out
+    // some THREE constants (`AdditiveBlending`, `NormalBlending`,
+    // `CustomBlending`, `AddEquation`, `OneFactor`) but leaves others
+    // as their real numeric values (`MaxEquation`, `SrcAlphaFactor`,
+    // `OneMinusSrcAlphaFactor`). Use real THREE constants for those.
+    it('switches additive → max: blending becomes CustomBlending + MaxEquation', () => {
+      const material = new LineMaterial({ blendingMode: 'additive' });
+      expect(material.blending).toBe('AdditiveBlending');
+
+      material.applyBlendingMode('max');
+
+      expect(material.blending).toBe('CustomBlending');
+      expect(material.blendEquation).toBe(THREE.MaxEquation);
+      expect(material.blendSrc).toBe('OneFactor');
+      expect(material.blendDst).toBe('OneFactor');
+      expect(material.userData.blendingMode).toBe('max');
+      expect(material.needsUpdate).toBe(true);
+    });
+
+    it('switches max → additive: blending resets, blendEquation back to AddEquation', () => {
+      // Without applyBlendingMode resetting state, blendEquation would
+      // strand at MaxEquation after the user switched modes via the
+      // layers panel.
+      const material = new LineMaterial({ blendingMode: 'max' });
+      expect(material.blendEquation).toBe(THREE.MaxEquation);
+
+      material.applyBlendingMode('additive');
+
+      expect(material.blending).toBe('AdditiveBlending');
+      expect(material.blendEquation).toBe('AddEquation');
+      expect(material.userData.blendingMode).toBe('additive');
+    });
+
+    it('switches additive → luminous: blending unchanged, depthTest flips to true', () => {
+      const material = new LineMaterial({ blendingMode: 'additive' });
+      expect(material.depthTest).toBe(false);
+
+      material.applyBlendingMode('luminous');
+
+      expect(material.blending).toBe('AdditiveBlending');
+      expect(material.depthTest).toBe(true);
+      expect(material.userData.blendingMode).toBe('luminous');
+    });
+  });
 });
 
 describe('createLineQuadGeometry', () => {

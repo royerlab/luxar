@@ -48,6 +48,17 @@ export interface LuxarMaterial extends THREE.Material, CameraAwareMaterial {
   updateOpacity(v: number): void;
   updateColormapTexture?(texture: THREE.DataTexture | null): void;
   updateScalarRange?(min: number, max: number): void;
+  /**
+   * Apply a blending mode to this material in-place (Phase 14.4).
+   *
+   * Optional because PointMaterial doesn't need it — its blending is
+   * mode-agnostic at the material level (no `uProjectionMode`, no
+   * intensity-squaring concern). For materials that DO need it
+   * (GSplatMaterial, LineMaterial), call this instead of writing
+   * `mat.blending`/`mat.blendEquation` directly so type-specific
+   * factors and uniforms stay in sync.
+   */
+  applyBlendingMode?(mode: BlendingMode): void;
 }
 
 function isLuxarMaterial(m: THREE.Material): m is LuxarMaterial {
@@ -697,6 +708,19 @@ export class LayersPanel {
   }
 
   private applyBlendingStateToMaterial(mat: LuxarMaterial, mode: string): void {
+    // Phase 14.4: prefer the material's own `applyBlendingMode` when it
+    // has one. GSplatMaterial in particular needs to update
+    // `uProjectionMode` and use `CustomBlending + OneFactor` for
+    // additive/luminous (NOT THREE.AdditiveBlending — that uses SrcAlpha
+    // which squares the per-pixel intensity). LineMaterial gets the
+    // same routing for consistency. PointMaterial has no
+    // `applyBlendingMode` and falls through to the generic path below;
+    // its blending is mode-agnostic at the material level.
+    if (typeof mat.applyBlendingMode === 'function') {
+      mat.applyBlendingMode(mode as BlendingMode);
+      return;
+    }
+
     const state = getBlendingState(mode);
     mat.blending = state.blending;
     mat.depthTest = state.depthTest;
