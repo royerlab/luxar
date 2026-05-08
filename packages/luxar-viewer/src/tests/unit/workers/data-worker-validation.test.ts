@@ -493,4 +493,109 @@ describe('data-worker validation — segment/color/query gaps', () => {
       })
     ).rejects.toThrow(/slicePosition too short/);
   });
+
+  // Phase 13.8: gaps the reviewer identified that weren't yet covered.
+
+  it('querySpatialIndex rejects tolerance shorter than ndim', async () => {
+    const mod = await loadWorker();
+    await expect(
+      mod.workerAPI.querySpatialIndex({
+        chunkBounds: new Float32Array(30),
+        slicePosition: new Float32Array(3),
+        tolerance: new Float32Array(2), // need 3
+        numChunks: 5,
+        ndim: 3,
+      })
+    ).rejects.toThrow(/tolerance too short/);
+  });
+
+  it('computeNDVisibilityLines rejects segment indices past end of vertices', async () => {
+    const mod = await loadWorker();
+    // ndim=3, 2 segments, segments[3]=8 references vertex 8; vertices
+    // has only 5 vertices (15 floats). The line-segment validator must
+    // catch this before WASM clip_segments_batch.
+    await expect(
+      mod.workerAPI.computeNDVisibilityLines({
+        vertices: new Float32Array(15),
+        segments: new Uint32Array([0, 1, 2, 8]),
+        widths: new Float32Array(9),
+        slicePosition: new Float32Array(3),
+        tolerance: new Float32Array(3),
+        ndim: 3,
+        numSegments: 2,
+      })
+    ).rejects.toThrow(/vertices too short|positions too short for max segment vertex 8/);
+  });
+
+  it('computeNDVisibilityLines rejects widths shorter than max-vertex+1', async () => {
+    const mod = await loadWorker();
+    await expect(
+      mod.workerAPI.computeNDVisibilityLines({
+        vertices: new Float32Array(30),
+        segments: new Uint32Array([0, 1, 2, 3]),
+        widths: new Float32Array(2), // need at least max-vertex+1 = 4
+        slicePosition: new Float32Array(3),
+        tolerance: new Float32Array(3),
+        ndim: 3,
+        numSegments: 2,
+      })
+    ).rejects.toThrow(/widths too short/);
+  });
+
+  it('projectLinesTo3D rejects sharpness shorter than max-vertex+1', async () => {
+    const mod = await loadWorker();
+    await expect(
+      mod.workerAPI.projectLinesTo3D({
+        positions: new Float32Array(30),
+        segments: new Uint32Array([0, 1, 2, 3]),
+        widths: new Float32Array(4),
+        colors: null,
+        sharpness: new Float32Array(2), // need 4
+        slicePosition: [0, 0, 0],
+        tolerance: [0, 0, 0],
+        displayDims: [0, 1, 2],
+        ndim: 3,
+        segmentCount: 2,
+      })
+    ).rejects.toThrow(/sharpness too short/);
+  });
+
+  it('projectPointsTo3D rejects effectiveRadiusConfig.spatialExtendDims shorter than ndim', async () => {
+    const mod = await loadWorker();
+    await expect(
+      mod.workerAPI.projectPointsTo3D({
+        positions: new Float32Array(15), // 5 points × 3
+        colors: null,
+        radii: new Float32Array(5),
+        sharpness: null,
+        viewState: { displayDims: [0, 1, 2], slicePosition: [0, 0, 0], tolerance: [0, 0, 0] },
+        effectiveRadiusConfig: {
+          // ndim=3 below; need at least 3 entries.
+          spatialExtendDims: [false, false],
+          maxRadius: 1.0,
+        },
+        ndim: 3,
+        numPoints: 5,
+      })
+    ).rejects.toThrow(/spatialExtendDims too short/);
+  });
+
+  it('projectPointsTo3D rejects effectiveRadiusConfig.maxRadius non-finite', async () => {
+    const mod = await loadWorker();
+    await expect(
+      mod.workerAPI.projectPointsTo3D({
+        positions: new Float32Array(15),
+        colors: null,
+        radii: new Float32Array(5),
+        sharpness: null,
+        viewState: { displayDims: [0, 1, 2], slicePosition: [0, 0, 0], tolerance: [0, 0, 0] },
+        effectiveRadiusConfig: {
+          spatialExtendDims: [false, false, false],
+          maxRadius: Number.POSITIVE_INFINITY,
+        },
+        ndim: 3,
+        numPoints: 5,
+      })
+    ).rejects.toThrow(/maxRadius=Infinity must be a finite number/);
+  });
 });

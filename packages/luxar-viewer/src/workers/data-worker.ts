@@ -669,6 +669,25 @@ async function projectPointsTo3D(params: {
     );
   }
 
+  // Phase 13.8: validate effective-radius config inputs before they
+  // reach WASM. The Uint8 array built from spatialExtendDims is fed
+  // to calculate_effective_radii, which expects ndim entries. A short
+  // array silently treats trailing dims as non-extended. maxRadius is
+  // not used here directly but flows into per-vertex math elsewhere
+  // and must be finite to avoid NaN propagation.
+  if (effectiveRadiusConfig) {
+    if (effectiveRadiusConfig.spatialExtendDims.length < ndim) {
+      throw new Error(
+        `projectPointsTo3D: effectiveRadiusConfig.spatialExtendDims too short (got ${effectiveRadiusConfig.spatialExtendDims.length}, expected ≥ ${ndim})`
+      );
+    }
+    if (!Number.isFinite(effectiveRadiusConfig.maxRadius)) {
+      throw new Error(
+        `projectPointsTo3D: effectiveRadiusConfig.maxRadius=${effectiveRadiusConfig.maxRadius} must be a finite number`
+      );
+    }
+  }
+
   // Determine if using pre-allocated buffers (TransferableAccumulator pattern)
   const usePreallocated = !!outputBuffers;
 
