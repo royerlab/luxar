@@ -450,6 +450,12 @@ export const config: AppConfig = {
       // projection over millions of items is slow. 0 disables timeout enforcement.
       workerVisibilityTimeoutMs: 30000,
       workerProjectionTimeoutMs: 60000,
+      // Worker pool init timeout: protects against unreachable worker
+      // scripts (404 on the chunk URL, blocked by route, dev-server
+      // misconfig). 10s is generous for any healthy environment;
+      // anything longer suggests a real load problem and we should
+      // fall back to main-thread execution rather than hang on boot.
+      workerInitTimeoutMs: 10000,
       // Material cache eviction: 200 entries × 3 types = 600 cached materials
       // max. Tuning is per-session; users animating sliders can blow this
       // through quickly so eviction keeps memory bounded.

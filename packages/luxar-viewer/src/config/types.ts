@@ -421,6 +421,16 @@ export interface DataLoadingPerformanceConfig {
    * since projection over millions of items takes longer than visibility.
    */
   workerProjectionTimeoutMs: number;
+  /**
+   * Hard timeout for the per-worker `api.initialize()` Comlink call
+   * during pool startup. Without this guard, a blocked / unreachable
+   * worker script (e.g. a dev environment that 404s the worker chunk)
+   * leaves Comlink waiting forever — the worker's `onerror` fires but
+   * pool init runs *before* the worker is in the pool, so the
+   * standard handleWorkerFailure path can't evict it. The guard
+   * rejects the init promise so the caller can fall back gracefully.
+   */
+  workerInitTimeoutMs: number;
 
   // WASM acceleration (Phase 3)
   useWASM: boolean;

@@ -127,7 +127,13 @@ export class WorkerPool {
           const api = wrap<DataWorkerAPI>(worker);
 
           try {
-            await api.initialize();
+            // Race api.initialize() against:
+            //   1. a hard init timeout (worker script blocked / unreachable
+            //      → onerror may fire but Comlink's initialize() never
+            //      settles because the worker never sent a message),
+            //   2. an onerror short-circuit (worker fails *during* its
+            //      boot before any pool entry exists for it).
+            await this.initializeWithGuard(worker, api, index + 1);
             log.info(Modules.WORKER_POOL, `Worker ${index + 1}/${workerCount} ready`);
             return { worker, api, activeQueries: 0 };
           } catch (error) {
@@ -169,13 +175,75 @@ export class WorkerPool {
           worker.terminate();
         }
         this.workers = [];
-        // Reset so callers can retry after transient failures
-        this.initPromise = null;
+        // Note: we deliberately keep `initPromise` (the rejected one) so
+        // subsequent `getWorker()` / `runWithTimeout` calls fail FAST
+        // rather than re-running the 10s init guard for every nD load.
+        // A blocked worker chunk would otherwise stack 10s × N delays
+        // and blow past the page's `waitForLuxarReady` timeout. To opt
+        // back in to a fresh init attempt (e.g. after a transient
+        // network blip), call `reinitialize()`.
         throw e;
       }
     })();
 
     return this.initPromise;
+  }
+
+  /**
+   * Race `api.initialize()` against (1) a hard init timeout and (2) the
+   * worker's own `onerror`/`onmessageerror` events.
+   *
+   * The pool's permanent `attachWorkerErrorHandlers` evicts a failed
+   * worker via `handleWorkerFailure`, but during pool init the worker
+   * isn't in `this.workers` yet — so `handleWorkerFailure` finds
+   * nothing to evict and the dangling Comlink `initialize()` promise
+   * never settles. (Repro: route-block the worker script in a
+   * Playwright test; the page hangs at boot.)
+   *
+   * We attach a short-lived listener that rejects the init promise
+   * when the worker fails before it joins the pool. The init timeout
+   * is the belt-and-suspenders fallback — even if no error event
+   * fires (e.g. a network stall that never resolves), we eventually
+   * reject and let the caller fall back to the main thread.
+   */
+  private initializeWithGuard(
+    worker: Worker,
+    api: Remote<DataWorkerAPI>,
+    workerNumber: number
+  ): Promise<void> {
+    const timeoutMs = config.dataLoading.performance.workerInitTimeoutMs;
+    return new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const settle = (kind: 'ok' | 'err', err?: Error): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        // Restore the permanent runtime handlers; the early ones above
+        // are scoped to the init race only.
+        this.attachWorkerErrorHandlers(worker, workerNumber);
+        if (kind === 'ok') resolve();
+        else reject(err);
+      };
+      const timer = setTimeout(() => {
+        settle('err', new Error(`Worker ${workerNumber} init exceeded ${timeoutMs}ms`));
+      }, timeoutMs);
+      // Override the permanent handlers for the duration of init so an
+      // early failure (script load error, WASM init throw) rejects the
+      // init promise rather than getting swallowed by the can't-find-
+      // worker-in-pool branch of handleWorkerFailure.
+      worker.onerror = (event) => {
+        const message = event instanceof ErrorEvent ? event.message : 'unknown error';
+        settle('err', new Error(`Worker ${workerNumber} runtime error during init: ${message}`));
+        if (typeof event.preventDefault === 'function') event.preventDefault();
+      };
+      worker.onmessageerror = () => {
+        settle('err', new Error(`Worker ${workerNumber} produced an unserializable message during init`));
+      };
+      api.initialize().then(
+        () => settle('ok'),
+        (err) => settle('err', err instanceof Error ? err : new Error(String(err)))
+      );
+    });
   }
 
   /**
@@ -235,6 +303,22 @@ export class WorkerPool {
         Modules.WORKER_POOL,
         `Worker removed from pool (${reason}); ${this.workers.length} worker(s) remaining`
       );
+    }
+  }
+
+  /**
+   * Explicitly reset the pool's cached init promise so the next
+   * {@link getWorker} / {@link runWithTimeout} call re-runs init. Used
+   * to recover from a transient init failure (e.g. the worker chunk
+   * was briefly unreachable) without restarting the entire app.
+   *
+   * Routine "init failed once, fall back" cases should NOT call this —
+   * letting the rejected promise stick keeps subsequent calls fast
+   * (instant reject) instead of stacking 10s init guards.
+   */
+  reinitialize(): void {
+    if (this.workers.length === 0) {
+      this.initPromise = null;
     }
   }
 
