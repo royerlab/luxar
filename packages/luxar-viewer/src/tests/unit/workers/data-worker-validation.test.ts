@@ -598,4 +598,48 @@ describe('data-worker validation — segment/color/query gaps', () => {
       })
     ).rejects.toThrow(/maxRadius=Infinity must be a finite number/);
   });
+
+  it('projectPointsTo3D rejects effectiveRadiusConfig with missing tolerance (Phase 14.7)', async () => {
+    const mod = await loadWorker();
+    await expect(
+      mod.workerAPI.projectPointsTo3D({
+        positions: new Float32Array(15),
+        colors: null,
+        radii: new Float32Array(5),
+        sharpness: null,
+        // tolerance omitted via cast — production callers always provide
+        // it; this test guards the worker boundary against malformed
+        // direct callers and future regressions.
+        viewState: {
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0],
+        } as unknown as { displayDims: number[]; slicePosition: number[]; tolerance: number[] },
+        effectiveRadiusConfig: {
+          spatialExtendDims: [false, false, false],
+          maxRadius: 1.0,
+        },
+        ndim: 3,
+        numPoints: 5,
+      })
+    ).rejects.toThrow(/viewState.tolerance too short/);
+  });
+
+  it('projectPointsTo3D rejects effectiveRadiusConfig with tolerance shorter than ndim (Phase 14.7)', async () => {
+    const mod = await loadWorker();
+    await expect(
+      mod.workerAPI.projectPointsTo3D({
+        positions: new Float32Array(15),
+        colors: null,
+        radii: new Float32Array(5),
+        sharpness: null,
+        viewState: { displayDims: [0, 1, 2], slicePosition: [0, 0, 0], tolerance: [0, 0] },
+        effectiveRadiusConfig: {
+          spatialExtendDims: [false, false, false],
+          maxRadius: 1.0,
+        },
+        ndim: 3,
+        numPoints: 5,
+      })
+    ).rejects.toThrow(/viewState.tolerance too short/);
+  });
 });

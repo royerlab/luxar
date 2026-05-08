@@ -686,6 +686,23 @@ async function projectPointsTo3D(params: {
         `projectPointsTo3D: effectiveRadiusConfig.maxRadius=${effectiveRadiusConfig.maxRadius} must be a finite number`
       );
     }
+    // Phase 14.7: tolerance is read by index per non-displayed dim in
+    // the extend_to_all detection path further down; a malformed worker
+    // payload that omits it or provides a short array would either throw
+    // a generic `Cannot read properties of undefined` or silently treat
+    // missing entries as non-extend, changing effective-radius semantics.
+    // Production callers pass the right shape; this is a worker-boundary
+    // validation belt for direct callers and future regressions.
+    if (
+      !viewState ||
+      !viewState.tolerance ||
+      viewState.tolerance.length < ndim
+    ) {
+      throw new Error(
+        `projectPointsTo3D: viewState.tolerance too short for effective radius ` +
+          `(got ${viewState?.tolerance?.length ?? 0}, expected ≥ ${ndim})`
+      );
+    }
   }
 
   // Determine if using pre-allocated buffers (TransferableAccumulator pattern)
