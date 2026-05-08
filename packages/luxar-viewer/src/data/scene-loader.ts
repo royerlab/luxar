@@ -1511,6 +1511,12 @@ export class SceneLoader {
 
       return points;
     } catch (error) {
+      // Phase 13.6: record the failure so `retryFailedLoader(path)` can
+      // target this node. Pre-fix, initial-load failures left a registered
+      // loader but no failedLoaders entry, so the retry path bailed with
+      // "Path not in failed loaders list". Loader is already in
+      // `registry.loaders` via the earlier registerPointsLoader call.
+      this.registry.recordFailure(node.path, error as Error);
       throw new LoaderError(classifyLoaderError(error), node.path, error);
     }
   }
@@ -1632,6 +1638,8 @@ export class SceneLoader {
 
       return mesh;
     } catch (error) {
+      // Phase 13.6: see loadPoints catch.
+      this.registry.recordFailure(node.path, error as Error);
       throw new LoaderError(classifyLoaderError(error), node.path, error);
     }
   }
@@ -1782,6 +1790,8 @@ export class SceneLoader {
 
       return mesh;
     } catch (error) {
+      // Phase 13.6: see loadPoints catch.
+      this.registry.recordFailure(node.path, error as Error);
       throw new LoaderError(classifyLoaderError(error), node.path, error);
     }
   }
