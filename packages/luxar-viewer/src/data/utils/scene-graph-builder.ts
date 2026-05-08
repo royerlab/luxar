@@ -159,7 +159,11 @@ export class SceneGraphBuilder {
    * @returns Normalized URL with trailing slash
    */
   static normalizeURL(url: string): string {
-    if (url.startsWith('http://') || url.startsWith('https://')) {
+    // Phase 14.10: case-insensitive scheme match. Mixed-case URLs like
+    // `HTTPS://Example.com/data.zarr` were previously treated as
+    // relative paths, prepending window.location.origin. Mirrors the
+    // fix in `data/scene-loader/url-normalization.ts`.
+    if (/^https?:\/\//i.test(url)) {
       return url.endsWith('/') ? url : url + '/';
     }
 

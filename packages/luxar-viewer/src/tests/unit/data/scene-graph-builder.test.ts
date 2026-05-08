@@ -172,6 +172,20 @@ describe('SceneGraphBuilder', () => {
       const result = SceneGraphBuilder.normalizeURL('data/test');
       expect(result.endsWith('/data/test/')).toBe(true);
     });
+
+    it('should treat mixed-case HTTPS:// as absolute (Phase 14.10)', () => {
+      // Pre-fix, lowercase-only `startsWith` checks treated mixed-case
+      // schemes as relative paths and prepended window.location.origin.
+      expect(SceneGraphBuilder.normalizeURL('HTTPS://Example.com/data')).toBe(
+        'HTTPS://Example.com/data/'
+      );
+      expect(SceneGraphBuilder.normalizeURL('Https://example.com/data/')).toBe(
+        'Https://example.com/data/'
+      );
+      expect(SceneGraphBuilder.normalizeURL('HTTP://example.com/data')).toBe(
+        'HTTP://example.com/data/'
+      );
+    });
   });
 
   describe('countNodeTypes', () => {
