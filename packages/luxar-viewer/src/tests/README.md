@@ -68,10 +68,23 @@ test('handles network timeout gracefully', async ({ page }) => {
 });
 ```
 
-12 of 40 specs already call `assertNoConsoleErrors` explicitly —
-those keep working as-is, opting in to the fixture is additive.
-The remaining 28 specs lack any console-error guard today;
-migrating them is a per-spec follow-up.
+28 of 40 specs use the auto fixture (`./fixtures`) and get the
+post-test guard automatically. The remaining 12 specs intentionally
+import directly from `@playwright/test` because they keep their
+own `assertNoConsoleErrors(page, [...])` calls with per-test
+allow-lists. New specs default to `./fixtures` unless they have
+a specific reason not to.
+
+The fixture combines two signal sources before the assertion fires
+(Phase 13.15):
+- Luxar's debug-console interceptor (in-app, formatted, polled via
+  `assertNoConsoleErrors`)
+- Playwright's `page.on('console')` + `page.on('pageerror')`
+  (catches errors before the debug interceptor installs and
+  uncaught exceptions surfaced via the page-level error event)
+
+Both flows filter against `DEFAULT_ALLOWED_CONSOLE_ERRORS`
+(currently just `/WebGL context lost/`).
 
 ---
 
