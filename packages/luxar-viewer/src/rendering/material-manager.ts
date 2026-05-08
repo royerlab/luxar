@@ -60,6 +60,32 @@ export interface GSplatMaterialProperties {
 }
 
 /**
+ * Compute the integer-bucketed cache-key components shared by all three
+ * material caches (Points / Lines / GSplats). All four properties have
+ * the same valid ranges and bucketing rules across material types, so
+ * having one helper avoids drift the next time the rules change.
+ *
+ * Returned ranges (mirrors the inline comments at the previous call sites):
+ *   - opacity: 0–100
+ *   - gamma:   0–1000
+ *   - intensity: 0–10000
+ *   - offset:  0–200 (input -10..10 shifted up to 0..20 then ×10)
+ */
+function getCommonMaterialBuckets(props: {
+  opacity: number;
+  gamma: number;
+  intensity: number;
+  offset: number;
+}): { opacityBucket: number; gammaBucket: number; intensityBucket: number; offsetBucket: number } {
+  return {
+    opacityBucket: Math.round(Math.max(0, Math.min(1, props.opacity)) * 100),
+    gammaBucket: Math.round(Math.max(0, Math.min(10, props.gamma)) * 100),
+    intensityBucket: Math.round(Math.max(0, Math.min(100, props.intensity)) * 100),
+    offsetBucket: Math.round((Math.max(-10, Math.min(10, props.offset)) + 10) * 10),
+  };
+}
+
+/**
  * Manages all materials in the scene with caching and global updates.
  * Supports points, lines, and future material types.
  *
@@ -204,10 +230,8 @@ export class MaterialManager {
     // Create cache key using integer bucketing for predictable caching behavior
     // This prevents floating-point precision issues while still grouping similar values
     // Clamp values to valid ranges to handle edge cases gracefully
-    const opacityBucket = Math.round(Math.max(0, Math.min(1, props.opacity)) * 100); // 0-100 range
-    const gammaBucket = Math.round(Math.max(0, Math.min(10, props.gamma)) * 100); // 0-1000 range
-    const intensityBucket = Math.round(Math.max(0, Math.min(100, props.intensity)) * 100); // 0-10000 range
-    const offsetBucket = Math.round((Math.max(-10, Math.min(10, props.offset)) + 10) * 10); // 0-200 range
+    const { opacityBucket, gammaBucket, intensityBucket, offsetBucket } =
+      getCommonMaterialBuckets(props);
     const radiusBucket = props.radiusScale
       ? Math.round(Math.max(0, props.radiusScale) * 1000)
       : 1000;
@@ -277,10 +301,8 @@ export class MaterialManager {
    */
   getLineMaterial(props: LineMaterialProperties): LineMaterial {
     // Create cache key using integer bucketing for predictable caching behavior
-    const opacityBucket = Math.round(Math.max(0, Math.min(1, props.opacity)) * 100);
-    const gammaBucket = Math.round(Math.max(0, Math.min(10, props.gamma)) * 100); // 0-1000 range
-    const intensityBucket = Math.round(Math.max(0, Math.min(100, props.intensity)) * 100);
-    const offsetBucket = Math.round((Math.max(-10, Math.min(10, props.offset)) + 10) * 10);
+    const { opacityBucket, gammaBucket, intensityBucket, offsetBucket } =
+      getCommonMaterialBuckets(props);
 
     const lineTransparent = props.blendingMode !== 'opaque';
     const key = `line_${props.blendingMode}_o${opacityBucket}_g${gammaBucket}_i${intensityBucket}_f${offsetBucket}_t${lineTransparent ? 1 : 0}`;
@@ -319,10 +341,8 @@ export class MaterialManager {
    */
   getGSplatMaterial(props: GSplatMaterialProperties): GSplatMaterial {
     // Create cache key using integer bucketing for predictable caching behavior
-    const opacityBucket = Math.round(Math.max(0, Math.min(1, props.opacity)) * 100);
-    const gammaBucket = Math.round(Math.max(0, Math.min(10, props.gamma)) * 100); // 0-1000 range
-    const intensityBucket = Math.round(Math.max(0, Math.min(100, props.intensity)) * 100);
-    const offsetBucket = Math.round((Math.max(-10, Math.min(10, props.offset)) + 10) * 10);
+    const { opacityBucket, gammaBucket, intensityBucket, offsetBucket } =
+      getCommonMaterialBuckets(props);
     const truncBucket = Math.round((props.truncationRadius ?? 3.0) * 10);
 
     const gsplatTransparent = props.blendingMode !== 'opaque';

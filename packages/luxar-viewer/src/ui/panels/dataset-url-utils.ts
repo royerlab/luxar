@@ -33,7 +33,7 @@ export function extractBaseUrl(url: string, origin: string): string {
     if (pathname.endsWith('.zarr') || pathname.endsWith('.zarr/')) {
       const parts = pathname.split('/').filter(Boolean);
       parts.pop();
-      pathname = '/' + parts.join('/') + '/';
+      pathname = parts.length > 0 ? '/' + parts.join('/') + '/' : '/';
     }
     return parsed.origin + pathname;
   } catch {

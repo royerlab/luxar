@@ -38,10 +38,10 @@ describe('extractBaseUrl', () => {
     expect(extractBaseUrl('not a url', ORIGIN)).toBe('not a url');
   });
 
-  it('handles a top-level .zarr by returning the origin (with a trailing double slash from the join)', () => {
-    // Edge case: split('/').filter(Boolean).pop() leaves an empty array,
-    // and `'/' + [].join('/') + '/'` = `'//'`. Documented behaviour.
-    expect(extractBaseUrl('http://x.test/foo.zarr', ORIGIN)).toBe('http://x.test//');
+  it('handles a top-level .zarr by returning the bare origin', () => {
+    // Stripping the dataset segment leaves an empty path; the result is
+    // origin + '/' (one slash), not the historical '//' double-slash.
+    expect(extractBaseUrl('http://x.test/foo.zarr', ORIGIN)).toBe('http://x.test/');
   });
 });
 
