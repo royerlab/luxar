@@ -385,57 +385,58 @@ export class InputHandler {
       this.dimensionSliders.dispose();
     }
 
-    // No factory injected → embed callers that don't want the slider
-    // panel can omit it without changing this method's contract. The
-    // listener wiring + sceneDimsManager init still runs so keyboard
-    // navigation works.
-    if (!this.dimensionSlidersFactory) {
+    // Build the slider panel only if a factory is injected (Phase 13.4:
+    // listener wiring + animation manager + initial update are hoisted
+    // out of this branch so embed callers without a slider factory still
+    // get keyboard nD navigation that actually loads data).
+    if (this.dimensionSlidersFactory) {
+      const dimensionNames = sceneDimsManager.getDimensionNames();
+      const dimensionUnits = sceneDimsManager.getDimensionUnits();
+
+      this.dimensionSliders = this.dimensionSlidersFactory({
+        container: document.body,
+        dims,
+        dimensionRanges,
+        dimensionNames,
+        dimensionUnits,
+      });
+      this.panelCoordinator.setDimensionSliders(this.dimensionSliders);
+
+      // Show sliders only if we have non-displayed dimensions
+      this.dimensionSliders.setVisible(sceneDimsManager.hasNonDisplayedDimensions());
+    } else {
       log.warning(
         Modules.INPUT,
         'No DimensionSliders factory provided; skipping slider construction'
       );
       this.panelCoordinator.setDimensionSliders(undefined);
-      return;
     }
 
-    const dimensionNames = sceneDimsManager.getDimensionNames();
-    const dimensionUnits = sceneDimsManager.getDimensionUnits();
-
-    this.dimensionSliders = this.dimensionSlidersFactory({
-      container: document.body,
-      dims,
-      dimensionRanges,
-      dimensionNames,
-      dimensionUnits,
-    });
-    this.panelCoordinator.setDimensionSliders(this.dimensionSliders);
-
-    // Show sliders only if we have non-displayed dimensions
-    this.dimensionSliders.setVisible(sceneDimsManager.hasNonDisplayedDimensions());
-
-    // Initialize animation manager and register keyboard shortcuts
+    // Initialize animation manager and register keyboard shortcuts —
+    // these don't depend on the slider panel existing.
     this.initAnimationManager();
 
-    // Pass animation manager to dimension sliders and recording panel
+    // Cross-link animation manager. Slider link is null-guarded; the
+    // recording-panel link runs unconditionally.
     if (this.animationManager) {
       this.dimensionSliders?.setAnimationManager(this.animationManager);
       this.recordingPanel?.setAnimationManager(this.animationManager);
     }
 
-    // Listen for dimension changes (returns Promise for animation synchronization)
+    // Listen for dimension changes (returns Promise for animation
+    // synchronization). The slider .update() inside the callback is
+    // null-guarded, so this listener works fine without a slider panel.
     sceneDimsManager.addListener(async () => {
-      // Update sliders immediately (sync UI feedback)
       if (this.dimensionSliders) {
         this.dimensionSliders.update();
       }
-      // Trigger animation to render the changes
       this.animationController.startAnimation();
-      // Await data loading - this allows animation to synchronize
       await this.updateAllNDNodes();
     });
 
-    // Trigger initial update now that listener is registered
-    // This ensures data loads at the correct initial slice position
+    // Trigger initial update now that listener is registered — ensures
+    // data loads at the correct initial slice position whether or not
+    // a slider panel exists.
     this.updateAllNDNodes();
     this.animationController.startAnimation();
   }

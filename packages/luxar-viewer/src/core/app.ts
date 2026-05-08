@@ -291,13 +291,23 @@ export class LuxarApp {
       // call NodeFactory.rebuildAfterContextRestore on the loaded
       // scene so the picking system gets fresh registrations against
       // the new context.
+      //
+      // Track the listener via this.events so dispose() removes it
+      // (Phase 13.4). Pre-13.4 the handler was an anonymous arrow
+      // and was never removed — inconsistent with every other
+      // app-level listener and a leak if sceneManager outlives app
+      // teardown.
       if (typeof this.sceneManager.addEventListener === 'function') {
-        this.sceneManager.addEventListener('webgl-context-restored', () => {
+        const onContextRestored = (): void => {
           const sceneLoader = getSceneLoader('default');
           if (sceneLoader && this.sceneManager.scene) {
             sceneLoader.nodeFactory.rebuildAfterContextRestore(this.sceneManager.scene);
           }
-        });
+        };
+        this.sceneManager.addEventListener('webgl-context-restored', onContextRestored);
+        this.events.add(() =>
+          this.sceneManager.removeEventListener('webgl-context-restored', onContextRestored)
+        );
       }
 
       // Inject the monitor factory into SceneLoaderManager so each
