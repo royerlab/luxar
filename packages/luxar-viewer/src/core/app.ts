@@ -38,7 +38,7 @@ import type { LoaderConfig } from '../data/data-loader-types';
 import { consoleInterceptor } from '../utils/console-interceptor';
 import { EventGroup } from '../utils/event-group';
 import { setWasmJsUrl } from '../wasm';
-import { setDataWorkerUrl } from '../workers/worker-pool';
+import { setDataWorkerUrl, disposeWorkerPool } from '../workers/worker-pool';
 import { replaceBrowserDataSourceUrl } from '../config/url-params';
 import { classifyBrowserUrl } from './browser-decision';
 import { applyViewerConfigState as applyViewerConfigStateHelper } from './viewer-config-applier';
@@ -1044,112 +1044,92 @@ export class LuxarApp {
     // teardown throws partway through.
     this.isInitialized = false;
 
-    try {
-      // Stop animation first
-      if (this.animationController) {
-        this.animationController.dispose();
+    // Per-component teardown: a single throwing component must NOT skip
+    // later cleanup (especially singletons + workers + the manager registry).
+    // Each step is wrapped in safeDispose; errors collect and log without
+    // bubbling out of dispose().
+    const errors: Array<{ label: string; error: unknown }> = [];
+    const safeDispose = (label: string, fn: () => void): void => {
+      try {
+        fn();
+      } catch (error) {
+        errors.push({ label, error });
+        log.warning(Modules.LUXAR, `Error disposing ${label}:`, error);
       }
+    };
 
-      // Clean up adaptive DPR manager
-      if (this.adaptiveDPRManager) {
-        this.adaptiveDPRManager.dispose();
-      }
+    // Stop animation first.
+    safeDispose('animationController', () => this.animationController?.dispose());
+    safeDispose('adaptiveDPRManager', () => this.adaptiveDPRManager?.dispose());
+    safeDispose('resolutionIndicator', () => this.resolutionIndicator?.dispose());
+    safeDispose('scaleBar', () => {
+      this.scaleBar?.dispose();
+      this.scaleBar = undefined;
+    });
+    safeDispose('colormapLegend', () => {
+      this.colormapLegend?.dispose();
+      this.colormapLegend = undefined;
+    });
+    // Clear recording-panel back-reference before overlayManager dispose.
+    safeDispose('overlayManager', () => {
+      this.recordingPanel?.setOverlayManager(null);
+      this.overlayManager?.dispose();
+      this.overlayManager = undefined;
+    });
+    safeDispose('recordingPanel', () => {
+      this.recordingPanel?.dispose();
+      this.recordingPanel = undefined;
+    });
+    safeDispose('layersPanel', () => {
+      this.layersPanel?.dispose();
+      this.layersPanel = undefined;
+    });
+    // pickingEvents is reusable: dispose() leaves it empty for next initPicking().
+    safeDispose('pickingEvents', () => this.pickingEvents.dispose());
+    safeDispose('pickingSystem', () => {
+      this.pickingSystem?.dispose();
+      this.pickingSystem = undefined;
+    });
+    safeDispose('labelLoader', () => {
+      this.labelLoader?.dispose();
+      this.labelLoader = undefined;
+    });
+    safeDispose('imageLabelLoader', () => {
+      this.imageLabelLoader?.dispose();
+      this.imageLabelLoader = undefined;
+    });
+    safeDispose('inputHandler', () => this.inputHandler?.dispose());
+    safeDispose('renderingControls', () => this.renderingControls?.dispose());
+    safeDispose('sceneManager', () => this.sceneManager?.dispose());
+    // ThemeManager: disconnects glass-refraction MutationObserver, removes
+    // injected SVG filters, clears CSS custom properties.
+    safeDispose('themeManager', () => ThemeManager.disposeInstance());
+    safeDispose('cleanupUI', () => cleanupUI());
+    // App-level event listeners (focus, visibility, beforeunload,
+    // open-dataset-browser, picking-system subscriptions).
+    safeDispose('events', () => this.events.dispose());
 
-      // Clean up resolution indicator
-      if (this.resolutionIndicator) {
-        this.resolutionIndicator.dispose();
-      }
+    // Three-tier singleton teardown: SceneLoaderManager and DataMonitorManager
+    // pre-date ManagerRegistry and use static getInstance/disposeInstance.
+    // Monitor first (factory wiring holds loader refs); loader manager drops
+    // loaders + cache stores. Worker pool terminates remaining workers next.
+    // ManagerRegistry walks any singletons that self-registered (none today,
+    // but the path stays correct for future registrants).
+    safeDispose('dataMonitorManager', () => DataMonitorManager.disposeInstance());
+    safeDispose('sceneLoaderManager', () => SceneLoaderManager.disposeInstance());
+    safeDispose('workerPool', () => disposeWorkerPool());
+    safeDispose('managerRegistry', () => getManagerRegistry().disposeAll());
 
-      // Clean up scale bar
-      if (this.scaleBar) {
-        this.scaleBar.dispose();
-        this.scaleBar = undefined;
-      }
-
-      // Clean up colormap legend
-      if (this.colormapLegend) {
-        this.colormapLegend.dispose();
-        this.colormapLegend = undefined;
-      }
-
-      // Clean up overlay manager (before recording panel so we can clear the reference)
-      if (this.overlayManager) {
-        this.recordingPanel?.setOverlayManager(null);
-        this.overlayManager.dispose();
-        this.overlayManager = undefined;
-      }
-
-      // Clean up recording panel
-      if (this.recordingPanel) {
-        this.recordingPanel.dispose();
-        this.recordingPanel = undefined;
-      }
-
-      // Clean up layers panel
-      if (this.layersPanel) {
-        this.layersPanel.dispose();
-        this.layersPanel = undefined;
-      }
-
-      // Clean up picking system listeners (DOM mousemove, controls/scene
-      // event subscriptions). pickingEvents is reusable: dispose() leaves it
-      // in an empty state ready for the next initPicking() call.
-      this.pickingEvents.dispose();
-      if (this.pickingSystem) {
-        this.pickingSystem.dispose();
-        this.pickingSystem = undefined;
-      }
-      if (this.labelLoader) {
-        this.labelLoader.dispose();
-        this.labelLoader = undefined;
-      }
-      if (this.imageLabelLoader) {
-        this.imageLabelLoader.dispose();
-        this.imageLabelLoader = undefined;
-      }
-
-      // Clean up input handlers
-      if (this.inputHandler) {
-        this.inputHandler.dispose();
-      }
-
-      // Clean up rendering controls
-      if (this.renderingControls) {
-        this.renderingControls.dispose();
-      }
-
-      // Clean up scene resources
-      if (this.sceneManager) {
-        this.sceneManager.dispose();
-      }
-
-      // Tear down the theme manager (disconnects glass-refraction MutationObserver,
-      // removes injected SVG filters, clears CSS custom properties).
-      ThemeManager.disposeInstance();
-
-      // Clean up UI resources
-      cleanupUI();
-
-      // Tear down all app-level event listeners (focus, visibility, beforeunload,
-      // open-dataset-browser, and any picking-system subscriptions added later
-      // via this.events.add()) in one call.
-      this.events.dispose();
-
-      // Two-tier singleton teardown: SceneLoaderManager and DataMonitorManager
-      // pre-date ManagerRegistry and use static getInstance/disposeInstance.
-      // Monitor first (its factory wiring holds loader refs); then the loader
-      // manager drops the actual loaders + cache stores. ManagerRegistry then
-      // walks any singletons that self-registered (none today, but the path
-      // stays correct for future registrants).
-      DataMonitorManager.disposeInstance();
-      SceneLoaderManager.disposeInstance();
-      getManagerRegistry().disposeAll();
-    } catch (error) {
-      log.error(Modules.LUXAR, 'Error during dispose:', error);
-    } finally {
-      this.isDisposing = false;
-      this.isDisposed = true;
+    if (errors.length > 0) {
+      log.error(
+        Modules.LUXAR,
+        `dispose(): ${errors.length} component(s) threw during teardown`,
+        errors.map((e) => e.label).join(', ')
+      );
     }
+
+    this.isDisposing = false;
+    this.isDisposed = true;
   }
 
   /**

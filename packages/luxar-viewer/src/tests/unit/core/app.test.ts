@@ -634,6 +634,75 @@ describe('LuxarApp', () => {
       const loaderCallOrder = sceneLoaderSpy.mock.invocationCallOrder[0];
       expect(monitorCallOrder).toBeLessThan(loaderCallOrder);
     });
+
+    it('still disposes singletons + workerPool when an early component throws', async () => {
+      // Phase 13.1: Pre-existing dispose() wrapped everything in one
+      // try/catch, so a throw early in the chain (sceneManager etc.)
+      // skipped DataMonitorManager / SceneLoaderManager / disposeWorkerPool
+      // / managerRegistry. The safeDispose helper guarantees later
+      // teardown runs regardless.
+      const sceneLoaderModule = await import('../../../data/scene-loader-manager');
+      const dataMonitorModule = await import('../../../ui/monitors/data-monitor-manager');
+      const workerPoolModule = await import('../../../workers/worker-pool');
+
+      const sceneLoaderSpy = vi.spyOn(sceneLoaderModule.SceneLoaderManager, 'disposeInstance');
+      const dataMonitorSpy = vi.spyOn(dataMonitorModule.DataMonitorManager, 'disposeInstance');
+      const workerPoolSpy = vi.spyOn(workerPoolModule, 'disposeWorkerPool');
+
+      // Force an early disposer to throw — animationController is the
+      // very first call site inside dispose().
+      mockAnimationController.dispose.mockImplementation(() => {
+        throw new Error('animation dispose blew up');
+      });
+
+      expect(() => app.dispose()).not.toThrow();
+
+      // The throw must NOT have aborted later cleanup:
+      expect(dataMonitorSpy).toHaveBeenCalledTimes(1);
+      expect(sceneLoaderSpy).toHaveBeenCalledTimes(1);
+      expect(workerPoolSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('still disposes singletons + workerPool when a middle component throws', async () => {
+      const sceneLoaderModule = await import('../../../data/scene-loader-manager');
+      const dataMonitorModule = await import('../../../ui/monitors/data-monitor-manager');
+      const workerPoolModule = await import('../../../workers/worker-pool');
+
+      const sceneLoaderSpy = vi.spyOn(sceneLoaderModule.SceneLoaderManager, 'disposeInstance');
+      const dataMonitorSpy = vi.spyOn(dataMonitorModule.DataMonitorManager, 'disposeInstance');
+      const workerPoolSpy = vi.spyOn(workerPoolModule, 'disposeWorkerPool');
+
+      // sceneManager sits in the middle of the dispose chain — between
+      // the UI/scene panels and the singleton/worker teardown.
+      mockSceneManager.dispose.mockImplementation(() => {
+        throw new Error('sceneManager dispose blew up');
+      });
+
+      expect(() => app.dispose()).not.toThrow();
+
+      expect(dataMonitorSpy).toHaveBeenCalledTimes(1);
+      expect(sceneLoaderSpy).toHaveBeenCalledTimes(1);
+      expect(workerPoolSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('disposes the worker pool after the scene-loader manager', async () => {
+      // Order matters: SceneLoaderManager drops loaders that may still
+      // post messages to workers; disposing workers BEFORE the loader
+      // manager could race a final message into a terminated worker.
+      const sceneLoaderModule = await import('../../../data/scene-loader-manager');
+      const workerPoolModule = await import('../../../workers/worker-pool');
+
+      const sceneLoaderSpy = vi.spyOn(sceneLoaderModule.SceneLoaderManager, 'disposeInstance');
+      const workerPoolSpy = vi.spyOn(workerPoolModule, 'disposeWorkerPool');
+
+      app.dispose();
+
+      expect(sceneLoaderSpy).toHaveBeenCalledTimes(1);
+      expect(workerPoolSpy).toHaveBeenCalledTimes(1);
+      const loaderOrder = sceneLoaderSpy.mock.invocationCallOrder[0];
+      const workerOrder = workerPoolSpy.mock.invocationCallOrder[0];
+      expect(loaderOrder).toBeLessThan(workerOrder);
+    });
   });
 
   describe('focus handling', () => {
