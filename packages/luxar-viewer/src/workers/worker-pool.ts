@@ -217,16 +217,24 @@ export class WorkerPool {
       const settle = (kind: 'ok' | 'err', err?: Error): void => {
         if (settled) return;
         settled = true;
-        clearTimeout(timer);
+        if (timer !== undefined) clearTimeout(timer);
         // Restore the permanent runtime handlers; the early ones above
         // are scoped to the init race only.
         this.attachWorkerErrorHandlers(worker, workerNumber);
         if (kind === 'ok') resolve();
         else reject(err);
       };
-      const timer = setTimeout(() => {
-        settle('err', new Error(`Worker ${workerNumber} init exceeded ${timeoutMs}ms`));
-      }, timeoutMs);
+      // Mirror withTimeout() semantics: 0/negative/non-finite disables the
+      // guard. `config/validation.ts` documents this convention for all
+      // worker timeouts ("0 disables, but the guard is recommended"); the
+      // pre-fix `setTimeout(..., 0)` instead fired on the next macrotask
+      // and rejected real async inits immediately.
+      const timer: ReturnType<typeof setTimeout> | undefined =
+        timeoutMs > 0 && Number.isFinite(timeoutMs)
+          ? setTimeout(() => {
+              settle('err', new Error(`Worker ${workerNumber} init exceeded ${timeoutMs}ms`));
+            }, timeoutMs)
+          : undefined;
       // Override the permanent handlers for the duration of init so an
       // early failure (script load error, WASM init throw) rejects the
       // init promise rather than getting swallowed by the can't-find-
@@ -511,9 +519,14 @@ export class WorkerPool {
         worker.terminate();
       }
       this.workers = [];
-      this.initPromise = null;
-      this.nextWorkerIndex = 0;
     }
+    // Always reset local state regardless of whether workers were running.
+    // A pool that failed to initialize has no workers to terminate but still
+    // holds a rejected `initPromise`; without this reset, a direct reuse
+    // after failed init would surface the stale rejection from the cache
+    // instead of attempting a fresh `initialize()`.
+    this.initPromise = null;
+    this.nextWorkerIndex = 0;
   }
 }
 
