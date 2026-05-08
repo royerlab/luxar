@@ -84,6 +84,26 @@ describe('WindowEventHandler', () => {
       expect(updateSize).not.toHaveBeenCalled();
       expect(startAnimation).not.toHaveBeenCalled();
     });
+
+    it('registers the wheel listener with passive: false (Phase 14 hygiene)', () => {
+      // The Ctrl/Cmd+wheel FOV handler calls preventDefault(); browsers
+      // can default wheel listeners on root targets to passive, in which
+      // case preventDefault is ignored and the page zooms while the FOV
+      // also changes. Verify the registration includes passive: false.
+      const { sceneManager } = makeSceneManager();
+      const { animationController } = makeAnimationController();
+      const addSpy = vi.spyOn(window, 'addEventListener');
+
+      const handler = new WindowEventHandler(sceneManager, animationController);
+      handler.attach([]);
+
+      const wheelCall = addSpy.mock.calls.find((c) => c[0] === 'wheel');
+      expect(wheelCall).toBeDefined();
+      // Third arg is the options object.
+      expect(wheelCall![2]).toEqual(expect.objectContaining({ passive: false }));
+
+      addSpy.mockRestore();
+    });
   });
 
   describe('window resize', () => {

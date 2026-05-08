@@ -172,6 +172,14 @@ function classifyLoaderError(error: unknown): LoaderErrorKind {
  * - Transform and rendering attribute inheritance
  * - Dimension metadata management
  * - Memory-efficient loading with proper caching
+ *
+ * **Lifecycle: one-shot.** Each `loadScene()` call disposes prior
+ * loaders + caches and nulls the monitor reference. Reusing a single
+ * `SceneLoader` instance across two `loadScene()` calls is unsupported
+ * and will leave the second load with a null monitor reference. Use
+ * `SceneLoaderManager.createLoader()` (the canonical entry point in
+ * `data/zarr-loader.ts`), which constructs a fresh loader per load —
+ * the SceneLoaderManager handles the destroy/recreate dance for you.
  */
 export class SceneLoader {
   private _zarrStore: zarr.Readable | null = null;

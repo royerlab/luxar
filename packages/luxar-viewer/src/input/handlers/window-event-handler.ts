@@ -60,7 +60,13 @@ export class WindowEventHandler {
     const onFullscreenChange = () => this.onFullscreenChange();
 
     window.addEventListener('resize', onResize);
-    window.addEventListener('wheel', onWheel);
+    // Phase 14 hygiene: register the wheel listener with `passive: false`
+    // so the Ctrl/Cmd+wheel FOV handler's `event.preventDefault()` reliably
+    // suppresses page zoom. Browsers can default wheel listeners on root
+    // targets (window/document) to passive in some configurations, in
+    // which case `preventDefault()` is silently ignored and the page
+    // zooms while the FOV also changes.
+    window.addEventListener('wheel', onWheel, { passive: false });
     document.addEventListener('fullscreenchange', onFullscreenChange);
 
     cleanups.push(

@@ -264,7 +264,8 @@ function validateLineSegmentReferences(
  * Lines and GSplats both call WASM color helpers that expect Float32
  * input but accept arbitrary input dtypes from the caller — they
  * historically did the same coercion inline. Pulled out here so the
- * three projection paths share one definition.
+ * Lines and GSplats projection paths share one definition. (Points
+ * has its own color compaction path; it does not call this helper.)
  */
 function coerceColorsToFloat32(colors: Float32Array | Uint8Array | Uint16Array): Float32Array {
   if (colors instanceof Float32Array) return colors;

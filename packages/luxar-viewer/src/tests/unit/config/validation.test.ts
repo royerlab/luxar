@@ -396,6 +396,45 @@ describe('validateConfig', () => {
       expect(result.errors.filter((e) => e.includes('retry attempts'))).toHaveLength(0);
     });
 
+    // Phase 14 hygiene: tighten numeric validation across timeoutMs,
+    // maxConcurrent, retryAttempts. Pre-fix, NaN slipped past `<= 0`
+    // because comparisons with NaN are always false; Infinity slipped
+    // past `<= 0` for the same reason; non-integers slipped past
+    // integer-only knobs (concurrency, retry counts).
+    it('should error when network timeoutMs is NaN', () => {
+      const cfg = cloneConfig();
+      cfg.dataLoading.network.timeoutMs = Number.NaN;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(expect.stringContaining('Invalid network timeout'));
+    });
+
+    it('should error when network timeoutMs is Infinity', () => {
+      const cfg = cloneConfig();
+      cfg.dataLoading.network.timeoutMs = Number.POSITIVE_INFINITY;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(expect.stringContaining('Invalid network timeout'));
+    });
+
+    it('should error when maxConcurrent is non-integer', () => {
+      const cfg = cloneConfig();
+      cfg.dataLoading.network.maxConcurrent = 2.5;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(
+        expect.stringContaining('Invalid max concurrent requests')
+      );
+    });
+
+    it('should error when retryAttempts is non-integer', () => {
+      const cfg = cloneConfig();
+      cfg.dataLoading.network.retryAttempts = 1.5;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(expect.stringContaining('Invalid retry attempts'));
+    });
+
     it('should error when targetHeapUsage is zero', () => {
       const cfg = cloneConfig();
       cfg.dataLoading.memory.targetHeapUsage = 0;

@@ -158,7 +158,8 @@ export function restoreOriginalDtype(
 /**
  * End-to-end load for a colors array, encoded or unencoded, with native-type
  * preservation and original_dtype restoration. Composes the helpers above to
- * reproduce the load-color flow that lines and gsplats both run.
+ * reproduce the load-color flow the geometry loaders run (points, lines,
+ * gsplats — Phase 11.8 migrated points onto this helper).
  *
  * Branches:
  * 1. Direct (unencoded, no array_ref): allocate or reuse a typed buffer of the

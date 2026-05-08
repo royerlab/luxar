@@ -165,9 +165,16 @@ function validateControls(config: AppConfig, errors: string[], _warnings: string
 function validateDataLoading(config: AppConfig, errors: string[], _warnings: string[]): void {
   const { dataLoading } = config;
 
-  // Network validation
-  if (dataLoading.network.timeoutMs <= 0) {
-    errors.push(`Invalid network timeout: ${dataLoading.network.timeoutMs} ms (must be > 0)`);
+  // Network validation. Phase 14 hygiene: tighten to reject NaN
+  // (comparisons with NaN are always false, so `<= 0` accepts it),
+  // Infinity, and non-integers where integer semantics are required.
+  if (
+    !Number.isFinite(dataLoading.network.timeoutMs) ||
+    dataLoading.network.timeoutMs <= 0
+  ) {
+    errors.push(
+      `Invalid network timeout: ${dataLoading.network.timeoutMs} ms (must be a finite positive number)`
+    );
   }
   // Phase 13.12: validationTimeoutMs is the per-request total budget
   // for cache validation in fetchWithRetry; 0 / negative / NaN /
@@ -181,13 +188,21 @@ function validateDataLoading(config: AppConfig, errors: string[], _warnings: str
       `Invalid validation timeout: ${dataLoading.network.validationTimeoutMs} ms (must be a finite positive number)`
     );
   }
-  if (dataLoading.network.maxConcurrent <= 0) {
+  if (
+    !Number.isInteger(dataLoading.network.maxConcurrent) ||
+    dataLoading.network.maxConcurrent <= 0
+  ) {
     errors.push(
-      `Invalid max concurrent requests: ${dataLoading.network.maxConcurrent} (must be > 0)`
+      `Invalid max concurrent requests: ${dataLoading.network.maxConcurrent} (must be a positive integer)`
     );
   }
-  if (dataLoading.network.retryAttempts < 0) {
-    errors.push(`Invalid retry attempts: ${dataLoading.network.retryAttempts} (must be >= 0)`);
+  if (
+    !Number.isInteger(dataLoading.network.retryAttempts) ||
+    dataLoading.network.retryAttempts < 0
+  ) {
+    errors.push(
+      `Invalid retry attempts: ${dataLoading.network.retryAttempts} (must be a non-negative integer)`
+    );
   }
 
   // Memory validation

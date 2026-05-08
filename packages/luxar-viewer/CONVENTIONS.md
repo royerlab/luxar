@@ -112,9 +112,20 @@ Avoid `Result<…>` for "the input is structurally invalid" — that is a
 
 ## 6. Resource lifecycle (ManagerRegistry pattern)
 
+> **Status (Phase 14):** `ManagerRegistry` (`src/core/manager-registry.ts`)
+> is currently **future-facing**. Today's production teardown uses
+> explicit static `disposeInstance()` calls in `LuxarApp.dispose()`
+> for the long-lived singletons (`SceneLoaderManager`,
+> `DataMonitorManager`, `WorkerPool`, `ThemeManager`). The registry
+> remains the documented model for new long-lived objects, and Phase
+> 13.2 made it safe for re-init after `disposeAll()`. New singletons
+> may opt into self-registration or stay in the explicit-disposal
+> model — pick based on whether the singleton has obvious app-wide
+> ownership in `core/app.ts`.
+
 Long-lived objects that hold GPU resources, DOM listeners, workers,
-or timers register themselves with the central
-`ManagerRegistry` (`src/core/manager-registry.ts`):
+or timers can register themselves with the central
+`ManagerRegistry`:
 
 ```typescript
 class FooManager {

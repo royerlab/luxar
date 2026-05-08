@@ -38,10 +38,10 @@ export interface ViewState {
    * Always provide dimensions when using nD datasets with extend_to_all.
    *
    * Same shape as `LinesViewState.dimensions`, `GSplatsViewState.dimensions`,
-   * `PointsViewState.dimensions`, and `BaseViewState.dimensions`. The other
-   * `SimpleDims` fields (.ndim, .displayed, .currentStep) are not consumed
-   * via this field — callers that need them read them off `sceneDimsManager`
-   * instead.
+   * `PointsViewState.dimensions`, and `BaseViewState.dimensions`. Callers
+   * that need richer dimension state (selected dim, animation state, etc.)
+   * read it off `sceneDimsManager` directly rather than reaching for a
+   * different shape on this field.
    */
   dimensions?: DimensionMetadata[];
 }

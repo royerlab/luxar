@@ -760,9 +760,10 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
         .join(', ')}]`
     );
 
-    // Translate ViewState (with `.dimensions: SimpleDims`) to BaseViewState
-    // (with `.dimensions: DimensionMetadata[]`) — `SimpleDims.metadata` is
-    // structurally what the builder needs.
+    // ViewState and BaseViewState now share the same `dimensions:
+    // DimensionMetadata[]` shape (Phase 11.5 unified them). The
+    // assignment is a structural narrowing — only displayDims,
+    // slicePosition, tolerance, and dimensions reach the builder.
     const baseViewState: BaseViewState = {
       displayDims: viewState.displayDims,
       slicePosition: viewState.slicePosition,

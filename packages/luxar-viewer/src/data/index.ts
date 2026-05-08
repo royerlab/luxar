@@ -17,9 +17,9 @@ export { ViewStateManager, type SceneDimensions } from './view-state-manager';
 export { SceneLoaderManager, getSceneLoader } from './scene-loader-manager';
 // Note: DataMonitorManager (and the show/hide/toggle/cycleDataMonitor
 // accessors) lived in this barrel historically but the file moved to
-// ui/data-monitor-manager.ts in Phase 8.6 (it's a UI panel manager,
-// not a data-loading concern). Import from `../ui/data-monitor-manager`
-// directly.
+// ui/monitors/data-monitor-manager.ts in Phase 8.6 (it's a UI panel
+// manager, not a data-loading concern). Import from
+// `../ui/monitors/data-monitor-manager` directly.
 
 // Types
 export type {
