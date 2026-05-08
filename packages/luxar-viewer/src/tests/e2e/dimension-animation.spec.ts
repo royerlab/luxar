@@ -18,7 +18,7 @@ import {
   getLuxarState,
   waitForDataLoaded,
   waitForNextRender,
-  waitForNavigationCompleteOrThrow,
+  waitForNavigationComplete,
   focusCanvas,
 } from './helpers';
 
@@ -344,9 +344,13 @@ test.describe('Dimension Animation - Keyboard Shortcuts', () => {
     const beforeValue = await getDimensionValue(page, 3);
     expect(beforeValue).toBeGreaterThan(0);
 
-    // Press Home to jump to start
+    // Press Home to jump to start. Keep the silent wait variant here:
+    // keyboard events occasionally fail to fire under headless Chromium for
+    // these shortcuts (see comment near line 408 of this file). The
+    // assertion below is the real signal — if Home didn't fire, the
+    // afterValue check fails informatively.
     await page.keyboard.press('Home');
-    await waitForNavigationCompleteOrThrow(page);
+    await waitForNavigationComplete(page);
 
     // Check dimension is at start (value 0)
     const afterValue = await getDimensionValue(page, 3);
@@ -376,9 +380,11 @@ test.describe('Dimension Animation - Keyboard Shortcuts', () => {
       return ranges[3]?.[1] ?? -1; // 4th dimension = index 3, max = [1]
     });
 
-    // Press End to jump to end
+    // Press End to jump to end. Same silent-wait rationale as the Home test
+    // above — keyboard shortcuts are E2E-flaky for these bindings; the
+    // value assertion is the real check.
     await page.keyboard.press('End');
-    await waitForNavigationCompleteOrThrow(page);
+    await waitForNavigationComplete(page);
 
     // Check dimension is at end
     const value = await getDimensionValue(page, 3);

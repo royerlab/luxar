@@ -26,7 +26,7 @@ import {
   waitForLuxarReady,
   getLuxarState,
   waitForNextRender,
-  waitForNavigationCompleteOrThrow,
+  waitForNavigationComplete,
   waitForDataLoaded,
 } from './helpers';
 
@@ -85,9 +85,12 @@ test.describe('Keyboard Input System - Fly Controls', () => {
     const final1 = await getLuxarState(page);
     const normalDistance = Math.abs(final1.camera.position.z - startZ1);
 
-    // Reset position for fair comparison
+    // Reset position for fair comparison.
+    // Silent wait variant: F is a camera recenter, not a data nav, so
+    // `isLoading` never toggles and the throwing variant would time out.
+    // The Shift+W assertion below is the real check.
     await page.keyboard.press('f'); // Recenter
-    await waitForNavigationCompleteOrThrow(page);
+    await waitForNavigationComplete(page);
 
     // Test 2: Shift+W speed
     const initial2 = await getLuxarState(page);
@@ -395,9 +398,11 @@ test.describe('Keyboard Input System - Toggle Shortcuts', () => {
       return { x: q.x, y: q.y, z: q.z, w: q.w };
     });
 
-    // Press F to recenter (this changes where camera LOOKS, not position)
+    // Press F to recenter (this changes where camera LOOKS, not position).
+    // Silent wait variant: F doesn't toggle isLoading; throwing variant
+    // would time out. The quaternion/position check below is the real assertion.
     await page.keyboard.press('f');
-    await waitForNavigationCompleteOrThrow(page);
+    await waitForNavigationComplete(page);
 
     // Get camera's new quaternion
     const finalQ = await page.evaluate(() => {

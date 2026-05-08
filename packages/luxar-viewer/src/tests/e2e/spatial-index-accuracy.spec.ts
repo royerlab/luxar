@@ -17,7 +17,7 @@ import {
   getLuxarState,
   waitForSpatialQueryOrThrow,
   waitForPointsLoaded,
-  waitForNavigationCompleteOrThrow,
+  waitForNavigationComplete,
   waitForNextRender,
 } from './helpers';
 
@@ -73,7 +73,11 @@ test.describe('Spatial Index Query Accuracy', () => {
     await waitForNextRender(page);
     await page.keyboard.press(']');
     await waitForSpatialQueryOrThrow(page);
-    await waitForNavigationCompleteOrThrow(page);
+    // Silent navigation wait — the spatial-query throw above is the real
+    // signal. waitForNavigationCompleteOrThrow watches `state.isLoading`,
+    // which a cached spatial query may never toggle true, causing the
+    // throwing variant to time out for no functional reason.
+    await waitForNavigationComplete(page);
 
     const afterState = await getLuxarState(page);
     expect(afterState.initialized).toBe(true);
@@ -224,7 +228,11 @@ test.describe('Spatial Index Query Accuracy', () => {
     await page.keyboard.press(']');
     await page.keyboard.press(']');
     await waitForSpatialQueryOrThrow(page);
-    await waitForNavigationCompleteOrThrow(page);
+    // Silent navigation wait — the spatial-query throw above is the real
+    // signal. waitForNavigationCompleteOrThrow watches `state.isLoading`,
+    // which a cached spatial query may never toggle true, causing the
+    // throwing variant to time out for no functional reason.
+    await waitForNavigationComplete(page);
 
     const midSliceState = await getLuxarState(page);
     const midSlicePoints = midSliceState.totalPoints;
@@ -265,7 +273,11 @@ test.describe('Spatial Index - Navigation Outside Bounds', () => {
       await page.waitForTimeout(100);
     }
     await waitForSpatialQueryOrThrow(page);
-    await waitForNavigationCompleteOrThrow(page);
+    // Silent navigation wait — the spatial-query throw above is the real
+    // signal. waitForNavigationCompleteOrThrow watches `state.isLoading`,
+    // which a cached spatial query may never toggle true, causing the
+    // throwing variant to time out for no functional reason.
+    await waitForNavigationComplete(page);
 
     const farAwayState = await getLuxarState(page);
 
@@ -328,7 +340,11 @@ test.describe('Spatial Index - Cache Behavior', () => {
     await waitForNextRender(page);
     await page.keyboard.press(']');
     await waitForSpatialQueryOrThrow(page);
-    await waitForNavigationCompleteOrThrow(page);
+    // Silent navigation wait — the spatial-query throw above is the real
+    // signal. waitForNavigationCompleteOrThrow watches `state.isLoading`,
+    // which a cached spatial query may never toggle true, causing the
+    // throwing variant to time out for no functional reason.
+    await waitForNavigationComplete(page);
 
     const midState = await getLuxarState(page);
     expect(midState.totalPoints).toBeGreaterThan(0);
@@ -336,7 +352,11 @@ test.describe('Spatial Index - Cache Behavior', () => {
     // Navigate back - should hit cache or reload
     await page.keyboard.press('[');
     await waitForSpatialQueryOrThrow(page);
-    await waitForNavigationCompleteOrThrow(page);
+    // Silent navigation wait — the spatial-query throw above is the real
+    // signal. waitForNavigationCompleteOrThrow watches `state.isLoading`,
+    // which a cached spatial query may never toggle true, causing the
+    // throwing variant to time out for no functional reason.
+    await waitForNavigationComplete(page);
 
     const returnState = await getLuxarState(page);
     expect(returnState.initialized).toBe(true);
@@ -419,7 +439,11 @@ test.describe('Spatial Index - Error Handling', () => {
     }
 
     await waitForSpatialQueryOrThrow(page);
-    await waitForNavigationCompleteOrThrow(page);
+    // Silent navigation wait — the spatial-query throw above is the real
+    // signal. waitForNavigationCompleteOrThrow watches `state.isLoading`,
+    // which a cached spatial query may never toggle true, causing the
+    // throwing variant to time out for no functional reason.
+    await waitForNavigationComplete(page);
 
     const state = await getLuxarState(page);
     // Must handle gracefully (non-negative, no crash)

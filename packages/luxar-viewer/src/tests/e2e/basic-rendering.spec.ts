@@ -43,6 +43,10 @@ test.describe('Luxar Basic Rendering', () => {
   });
 
   test('should handle missing dataset gracefully', async ({ page }) => {
+    test.info().annotations.push({
+      type: 'allow-console-errors',
+      description: 'Bad-URL recovery path intentionally produces 404/502 responses.',
+    });
     // Navigate with non-existent dataset
     await page.goto('/?src=/data/nonexistent.zarr&debug');
 

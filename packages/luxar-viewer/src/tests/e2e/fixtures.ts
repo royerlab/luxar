@@ -56,6 +56,18 @@ export const DEFAULT_ALLOWED_CONSOLE_ERRORS: RegExp[] = [
   // continues. Real context-loss bugs surface as test-result divergence
   // (black canvas, wrong frame counts) the spec catches separately.
   /WebGL context lost/,
+
+  // Network-level 4xx/5xx surfaced by the browser as
+  // "Failed to load resource: the server responded with a status of N…".
+  // The viewer probes optional resources during normal scene loading
+  // (zarr's .zattrs/.zgroup/zarr.json detection chain, optional overlays,
+  // optional chunk indices, fallback PROPFIND for directory listing).
+  // Each miss is a benign 404/501 that the loader's try/catch handles
+  // and continues from. Real load failures surface as application-level
+  // errors (LoaderError toast, broken renders) which tests assert on
+  // directly. A wholly-wrong dataset path also fails through `expect`s
+  // on point counts or canvas state, not via this allow-list.
+  /Failed to load resource: the server responded with a status of (4\d\d|50[12])/,
 ];
 
 /**
