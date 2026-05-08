@@ -252,6 +252,11 @@ export class DataLoadingMonitor {
     // disposed loader.
     this.resetSceneProviders();
 
+    // Phase 14.9: also drop the previous scene's graph display state.
+    // If the next scene fails before `setSceneGraph()` runs, the monitor
+    // would otherwise show a stale tree alongside cleared loaders.
+    this.resetSceneGraphState();
+
     // Update UI to reflect cleared state if visible
     if (this.uiState.isVisible) {
       this.updateUI();
@@ -348,6 +353,35 @@ export class DataLoadingMonitor {
     this.profiler = null;
     this.structureDirty = true;
     log.info(Modules.DATA_MONITOR, 'Scene providers reset');
+  }
+
+  /**
+   * Reset scene graph display state (Phase 14.9).
+   *
+   * Called from `disconnectAllLoaders()` (scene reload) and `dispose()`
+   * (full teardown). Without this, a reload that fails before
+   * `setSceneGraph()` runs leaves the monitor showing the previous
+   * scene's tree, while loaders/providers have already been cleared —
+   * a "ghost tree" mismatch in the Scene Graph panel.
+   *
+   * Also resets `expandedNodes` so a new scene starts from a freshly
+   * collapsed tree (the root '/' marker preserves the previous default).
+   */
+  private resetSceneGraphState(): void {
+    this.sceneGraphState = {
+      root: null,
+      totalNodes: 0,
+      pointsNodes: 0,
+      linesNodes: 0,
+      gsplatsNodes: 0,
+      totalPoints: 0,
+      totalSegments: 0,
+      visibleSegments: 0,
+      totalSplats: 0,
+      visibleSplats: 0,
+    };
+    this.expandedNodes = new Set<string>(['/']);
+    this.structureDirty = true;
   }
 
   /**
@@ -1937,6 +1971,15 @@ export class DataLoadingMonitor {
       this.resetSceneProviders();
     } catch (error) {
       errors.push(new Error(`Failed to reset scene providers: ${error}`));
+    }
+
+    // Step 2c: Clear scene graph display state (Phase 14.9). A stale
+    // monitor reference reading `getSceneGraph()` after dispose
+    // would otherwise return the previous scene's tree.
+    try {
+      this.resetSceneGraphState();
+    } catch (error) {
+      errors.push(new Error(`Failed to reset scene graph state: ${error}`));
     }
 
     // Step 3: Remove UI panel (important for DOM cleanup)

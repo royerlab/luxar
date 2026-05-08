@@ -601,4 +601,57 @@ describe('Data Monitor Integration', () => {
       expect(monitor.isExpanded()).toBe(false);
     });
   });
+
+  describe('Scene graph state lifecycle (Phase 14.9)', () => {
+    it('disconnectAllLoaders() clears scene graph display state', () => {
+      const manager = DataMonitorManager.getInstance();
+      const monitor = manager.createMonitor('test', document.body);
+
+      // Plant a fake scene graph (mimics post-load state).
+      monitor.setSceneGraph({
+        path: '/',
+        name: 'Scene',
+        type: 'scene',
+        children: [
+          { path: '/Points', name: 'Points', type: 'points', pointCount: 100, children: [] },
+        ],
+      });
+      expect(monitor.getSceneGraph().root).not.toBeNull();
+      expect(monitor.getSceneGraph().pointsNodes).toBe(1);
+
+      // Reload simulation: disconnect loaders should also drop the
+      // tree so the next scene doesn't display a stale shape if it
+      // fails before setSceneGraph() runs.
+      monitor.disconnectAllLoaders();
+
+      const after = monitor.getSceneGraph();
+      expect(after.root).toBeNull();
+      expect(after.pointsNodes).toBe(0);
+      expect(after.totalPoints).toBe(0);
+    });
+
+    it('dispose() clears scene graph display state', () => {
+      const manager = DataMonitorManager.getInstance();
+      const monitor = manager.createMonitor('test', document.body);
+
+      monitor.setSceneGraph({
+        path: '/',
+        name: 'Scene',
+        type: 'scene',
+        children: [
+          { path: '/Lines', name: 'Lines', type: 'lines', segmentCount: 50, children: [] },
+        ],
+      });
+      expect(monitor.getSceneGraph().linesNodes).toBe(1);
+
+      monitor.dispose();
+
+      // A stale debug/external reference reading getSceneGraph() after
+      // dispose should not see the previous scene's tree.
+      const after = monitor.getSceneGraph();
+      expect(after.root).toBeNull();
+      expect(after.linesNodes).toBe(0);
+      expect(after.totalSegments).toBe(0);
+    });
+  });
 });
