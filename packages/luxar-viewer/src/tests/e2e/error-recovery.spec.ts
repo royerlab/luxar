@@ -23,7 +23,11 @@ import {
 // (missing files, corrupted zmetadata, missing positions, network
 // timeouts, etc.). The viewer's correct response logs console errors;
 // asserting their absence would defeat the purpose of these tests.
-test.beforeEach(async (_fixtures, testInfo) => {
+// Playwright requires the first beforeEach arg to be a destructuring
+// pattern (its way of declaring used fixtures). We don't need any
+// fixtures here — only `testInfo` — so the empty pattern is correct.
+// eslint-disable-next-line no-empty-pattern
+test.beforeEach(async ({}, testInfo) => {
   testInfo.annotations.push({
     type: ALLOW_CONSOLE_ERRORS,
     description: 'Error-recovery tests deliberately trigger viewer console.error output.',
