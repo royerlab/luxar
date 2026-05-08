@@ -930,24 +930,41 @@ export async function assertNoConsoleErrors(
  * @param page - Playwright page
  */
 export async function dismissDatasetBrowser(page: Page): Promise<void> {
-  const dismissed = await page.evaluate(() => {
+  const isVisible = await page.evaluate(() => {
     const browser = document.querySelector(
       '.luxar-dataset-browser, .dataset-browser, #luxar-dataset-browser'
     );
-    if (browser && getComputedStyle(browser).display !== 'none') {
-      (browser as HTMLElement).remove();
-      return true;
-    }
-    return false;
+    return browser ? getComputedStyle(browser).display !== 'none' : false;
   });
 
-  if (dismissed) {
-    // Intentional fixed sleep: the modal node is removed synchronously
-    // above, but its dismiss-animation styles + any lingering layout/
-    // scroll-state need a paint cycle before subsequent canvas clicks
-    // see the cleared input target.
-    await page.waitForTimeout(100);
-  }
+  if (!isVisible) return;
+
+  // Press Escape so the browser routes through PanelCoordinator.closeAll() →
+  // datasetBrowser.close(), which keeps LuxarApp.datasetBrowser in sync.
+  // Yanking the DOM node directly bypasses that and reproduces the bug fixed
+  // in Phase 12.7.
+  await page.keyboard.press('Escape');
+
+  await page
+    .waitForFunction(
+      () => {
+        const el = document.querySelector(
+          '.luxar-dataset-browser, .dataset-browser, #luxar-dataset-browser'
+        );
+        return !el || getComputedStyle(el).display === 'none';
+      },
+      { timeout: 2000 }
+    )
+    .catch(() => {
+      // If Escape didn't dismiss (e.g. focus elsewhere), fall back to the
+      // legacy DOM yank to avoid stranding tests on a stuck modal.
+      return page.evaluate(() => {
+        const el = document.querySelector(
+          '.luxar-dataset-browser, .dataset-browser, #luxar-dataset-browser'
+        );
+        if (el) (el as HTMLElement).remove();
+      });
+    });
 }
 
 /**

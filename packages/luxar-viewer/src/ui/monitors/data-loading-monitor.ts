@@ -1544,10 +1544,16 @@ export class DataLoadingMonitor {
       visibleSplats, // Currently visible splats
       totalQueries,
       totalLoads,
-      totalCacheHits: 0, // L0 cache removed
+      // `totalCacheHits` and `globalCacheHitRate` aren't a single derivable
+      // number anymore — each cache tier (L0/L1/L2) has its own hit rate, and
+      // a true "effective demand hit rate" would need per-request final-tier
+      // tracking which doesn't exist yet. Reported as 0 for back-compat with
+      // tests that assert the field's presence; consumers wanting honest data
+      // should read `getCacheMetrics()` per-tier.
+      totalCacheHits: 0,
       totalPointsLoaded: totalPoints, // Alias for compatibility
       totalMemoryUsed: totalMemory, // Alias for compatibility
-      globalCacheHitRate: 0, // L0 cache removed
+      globalCacheHitRate: 0,
       avgQueryTime: totalQueries > 0 ? totalQueryTime / totalQueries : 0,
       queriesPerSecond: qps,
       recommendations: this.advisor.getRecommendations(),
@@ -1637,7 +1643,11 @@ export class DataLoadingMonitor {
     // Calculate rates once and reuse
     this.calculateRates();
 
-    // Calculate hit rate from L1 stats if available
+    // Hit rate from L1 stats only — not a true demand hit rate, just the
+    // L1-tier ratio. Higher tiers (L0 in-memory chunks, L2 OPFS) have their
+    // own counters in l0Stats / l2Stats. The CacheMetrics field is named
+    // `recentHitRate` for back-compat; consumers wanting accurate per-tier
+    // breakdown should read `l0`, `l1`, `l2` directly.
     const totalL1Accesses = l1Stats ? l1Stats.hits + l1Stats.misses : 0;
     const recentHitRate = totalL1Accesses > 0 ? l1Stats!.hits / totalL1Accesses : 0;
 
