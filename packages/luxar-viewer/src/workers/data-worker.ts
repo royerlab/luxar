@@ -258,6 +258,37 @@ function validateLineSegmentReferences(
 }
 
 /**
+ * Coerce a (possibly quantized) color buffer to Float32 for WASM
+ * consumption. F32 inputs pass through; Uint8 / Uint16 are widened.
+ *
+ * Lines and GSplats both call WASM color helpers that expect Float32
+ * input but accept arbitrary input dtypes from the caller — they
+ * historically did the same coercion inline. Pulled out here so the
+ * three projection paths share one definition.
+ */
+function coerceColorsToFloat32(colors: Float32Array | Uint8Array | Uint16Array): Float32Array {
+  if (colors instanceof Float32Array) return colors;
+  const out = new Float32Array(colors.length);
+  for (let i = 0; i < colors.length; i++) {
+    out[i] = colors[i];
+  }
+  return out;
+}
+
+/**
+ * Fill an RGB-triplet color array with white (1.0, 1.0, 1.0) for the
+ * first `count` triplets. Used as the no-color default by Lines and
+ * GSplats projections.
+ */
+function fillColorsWhite(out: Float32Array, count: number): void {
+  for (let i = 0; i < count; i++) {
+    out[i * 3] = 1.0;
+    out[i * 3 + 1] = 1.0;
+    out[i * 3 + 2] = 1.0;
+  }
+}
+
+/**
  * Validate `querySpatialIndex` inputs at the worker boundary.
  *
  * The chunk-query WASM entry point reads `chunkBounds` via
@@ -975,20 +1006,8 @@ async function projectLinesTo3D(params: {
   const endColors = new Float32Array(visibleCount * 3);
 
   if (colors) {
-    // Convert to Float32Array if not already
-    let colorsF32: Float32Array;
-    if (colors instanceof Float32Array) {
-      colorsF32 = colors;
-    } else {
-      // Convert Uint8Array or Uint16Array to Float32Array
-      colorsF32 = new Float32Array(colors.length);
-      for (let i = 0; i < colors.length; i++) {
-        colorsF32[i] = colors[i];
-      }
-    }
-
     wasmModule.interpolate_colors_batch(
-      colorsF32,
+      coerceColorsToFloat32(colors),
       segments,
       visibility,
       t1Params,
@@ -998,15 +1017,8 @@ async function projectLinesTo3D(params: {
       endColors
     );
   } else {
-    // Default to white (1, 1, 1)
-    for (let i = 0; i < visibleCount; i++) {
-      startColors[i * 3] = 1.0;
-      startColors[i * 3 + 1] = 1.0;
-      startColors[i * 3 + 2] = 1.0;
-      endColors[i * 3] = 1.0;
-      endColors[i * 3 + 1] = 1.0;
-      endColors[i * 3 + 2] = 1.0;
-    }
+    fillColorsWhite(startColors, visibleCount);
+    fillColorsWhite(endColors, visibleCount);
   }
 
   // Step 4: Interpolate widths using WASM
@@ -1313,25 +1325,16 @@ async function projectGSplatsTo3D(params: {
   // Step 5: Handle colors
   const outColors = new Float32Array(visibleCount * 3);
   if (colors) {
-    // Convert to Float32Array if needed
-    let colorsF32: Float32Array;
-    if (colors instanceof Float32Array) {
-      colorsF32 = colors;
-    } else {
-      colorsF32 = new Float32Array(colors.length);
-      for (let i = 0; i < colors.length; i++) {
-        colorsF32[i] = colors[i];
-      }
-    }
-    // Compact colors by visibility
-    wasmModule.compact_by_mask(colorsF32, visibility, splatCount, 3, outColors);
+    // Compact colors by visibility (WASM expects Float32 input)
+    wasmModule.compact_by_mask(
+      coerceColorsToFloat32(colors),
+      visibility,
+      splatCount,
+      3,
+      outColors
+    );
   } else {
-    // Default to white
-    for (let i = 0; i < visibleCount; i++) {
-      outColors[i * 3] = 1.0;
-      outColors[i * 3 + 1] = 1.0;
-      outColors[i * 3 + 2] = 1.0;
-    }
+    fillColorsWhite(outColors, visibleCount);
   }
 
   // Build transferable list
