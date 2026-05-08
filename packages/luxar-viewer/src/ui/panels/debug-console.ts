@@ -127,28 +127,30 @@ export class DebugConsole {
   private createPanel(): HTMLElement {
     const panel = document.createElement('div');
     panel.className = 'luxar-debug-console';
+    panel.setAttribute('role', 'region');
+    panel.setAttribute('aria-labelledby', 'luxar-debug-console-title');
     // Note: Resize handles are now child elements (not pseudo-elements)
     // to allow ::before/::after for liquid glass effect
     panel.innerHTML = `
       <div class="luxar-glass-refraction" aria-hidden="true"></div>
-      <div class="luxar-debug-console__resize-handle luxar-debug-console__resize-handle--top"></div>
-      <div class="luxar-debug-console__resize-handle luxar-debug-console__resize-handle--left"></div>
-      <div class="luxar-debug-console__resize-handle luxar-debug-console__resize-handle--corner"></div>
+      <div class="luxar-debug-console__resize-handle luxar-debug-console__resize-handle--top" aria-hidden="true"></div>
+      <div class="luxar-debug-console__resize-handle luxar-debug-console__resize-handle--left" aria-hidden="true"></div>
+      <div class="luxar-debug-console__resize-handle luxar-debug-console__resize-handle--corner" aria-hidden="true"></div>
       <div class="luxar-debug-console__scroll">
         <div class="luxar-debug-console__header">
-          <div class="luxar-debug-console__title">Debug Console</div>
+          <div id="luxar-debug-console-title" class="luxar-debug-console__title">Debug Console</div>
           <div class="luxar-debug-console__controls">
-            <input type="text" class="luxar-debug-console__filter" placeholder="Filter..." />
-            <button class="luxar-debug-console__clear-btn" title="Clear console">Clear</button>
-            <button class="luxar-debug-console__copy-btn" title="Copy all to clipboard">Copy</button>
+            <input type="text" class="luxar-debug-console__filter" placeholder="Filter..." aria-label="Filter messages" />
+            <button type="button" class="luxar-debug-console__clear-btn" title="Clear console" aria-label="Clear console">Clear</button>
+            <button type="button" class="luxar-debug-console__copy-btn" title="Copy all to clipboard" aria-label="Copy all messages to clipboard">Copy</button>
             <label class="luxar-debug-console__autoscroll">
               <input type="checkbox" checked /> Auto-scroll
             </label>
-            <button class="luxar-debug-console__close-btn" title="Close (Ctrl+L)">×</button>
+            <button type="button" class="luxar-debug-console__close-btn" title="Close (Ctrl+L)" aria-label="Close debug console">×</button>
           </div>
         </div>
-        <div class="luxar-debug-console__content"></div>
-        <div class="luxar-debug-console__status">
+        <div class="luxar-debug-console__content" role="log" aria-live="polite" aria-atomic="false"></div>
+        <div class="luxar-debug-console__status" aria-live="polite">
           <span class="luxar-debug-console__message-count">0 messages</span>
           <span class="luxar-debug-console__filter-status"></span>
         </div>
@@ -407,7 +409,14 @@ export class DebugConsole {
         const json = JSON.stringify(arg, null, 2);
         span.textContent = json;
       } catch {
-        span.textContent = arg.toString();
+        // arg.toString() throws on null-prototype objects (and on objects
+        // whose toString deliberately throws). String(arg) handles both
+        // safely; wrap in a second try/catch as belt-and-suspenders.
+        try {
+          span.textContent = String(arg);
+        } catch {
+          span.textContent = '[unprintable]';
+        }
       }
     } else {
       span.textContent = String(arg);

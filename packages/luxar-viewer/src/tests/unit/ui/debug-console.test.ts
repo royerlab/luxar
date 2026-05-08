@@ -164,4 +164,60 @@ describe('DebugConsole - Critical Fixes', () => {
       expect(document.querySelector('.luxar-debug-console')).toBeNull();
     });
   });
+
+  describe('Accessibility', () => {
+    it('panel has region role labelled by the title element', () => {
+      const debugConsole = new DebugConsole();
+      const panel = document.querySelector('.luxar-debug-console') as HTMLElement;
+      expect(panel.getAttribute('role')).toBe('region');
+      expect(panel.getAttribute('aria-labelledby')).toBe('luxar-debug-console-title');
+      const title = document.getElementById('luxar-debug-console-title');
+      expect(title?.textContent).toBe('Debug Console');
+      debugConsole.dispose();
+    });
+
+    it('toolbar controls have aria-labels', () => {
+      const debugConsole = new DebugConsole();
+      const filter = document.querySelector('.luxar-debug-console__filter') as HTMLInputElement;
+      const closeBtn = document.querySelector('.luxar-debug-console__close-btn') as HTMLButtonElement;
+      const clearBtn = document.querySelector('.luxar-debug-console__clear-btn') as HTMLButtonElement;
+      const copyBtn = document.querySelector('.luxar-debug-console__copy-btn') as HTMLButtonElement;
+      expect(filter.getAttribute('aria-label')).toBe('Filter messages');
+      expect(closeBtn.getAttribute('aria-label')).toBe('Close debug console');
+      expect(clearBtn.getAttribute('aria-label')).toBe('Clear console');
+      expect(copyBtn.getAttribute('aria-label')).toBe('Copy all messages to clipboard');
+      debugConsole.dispose();
+    });
+
+    it('content region is a live log; resize handles are aria-hidden', () => {
+      const debugConsole = new DebugConsole();
+      const content = document.querySelector('.luxar-debug-console__content') as HTMLElement;
+      expect(content.getAttribute('role')).toBe('log');
+      expect(content.getAttribute('aria-live')).toBe('polite');
+      const handles = document.querySelectorAll('.luxar-debug-console__resize-handle');
+      expect(handles.length).toBeGreaterThan(0);
+      handles.forEach((h) => expect(h.getAttribute('aria-hidden')).toBe('true'));
+      debugConsole.dispose();
+    });
+
+    it('formats null-prototype objects without throwing', () => {
+      const debugConsole = new DebugConsole();
+      const console_any = debugConsole as unknown as {
+        formatArgAsDOMElement: (arg: unknown) => HTMLElement;
+      };
+
+      // Object.create(null) has no toString — JSON.stringify still works,
+      // but we exercise the catch by passing a stringify-hostile null-proto.
+      const cyclic: Record<string, unknown> = Object.create(null);
+      cyclic.self = cyclic;
+
+      // Must not throw, and must not produce '[object Object]' garbage.
+      const el = console_any.formatArgAsDOMElement(cyclic);
+      expect(el.textContent).toBeTruthy();
+      // Either a sane String() result or our '[unprintable]' fallback.
+      expect(typeof el.textContent).toBe('string');
+
+      debugConsole.dispose();
+    });
+  });
 });

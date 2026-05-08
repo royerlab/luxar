@@ -248,9 +248,14 @@ export class LayersPanel {
     header.appendChild(closeBtn);
     panel.appendChild(header);
 
-    // Layer list (scrollable)
+    // Layer list (scrollable). ARIA listbox semantics so keyboard users can
+    // navigate rows with ArrowUp/ArrowDown and select with Enter/Space.
+    // Multi-select via Ctrl/Cmd/Shift is reflected with aria-multiselectable.
     const list = document.createElement('div');
     list.className = 'luxar-layers-panel__list';
+    list.setAttribute('role', 'listbox');
+    list.setAttribute('aria-label', 'Scene layers');
+    list.setAttribute('aria-multiselectable', 'true');
     this.listEl = list;
     panel.appendChild(list);
 
@@ -295,12 +300,23 @@ export class LayersPanel {
 
   /** Update selection highlights and visibility classes without rebuilding DOM */
   private updateRowHighlights(): void {
+    let hasFocusable = false;
     for (const layer of this.state.getLayers()) {
       const row = this.rowElements.get(layer.path);
       if (!row) continue;
 
       row.classList.toggle('luxar-layer-row--selected', layer.selected);
       row.classList.toggle('luxar-layer-row--hidden', !layer.visible);
+      row.setAttribute('aria-selected', layer.selected ? 'true' : 'false');
+
+      // First selected row is the keyboard tab stop; others get tabIndex -1
+      // (still focusable programmatically for ArrowUp/Down).
+      if (layer.selected && !hasFocusable) {
+        row.tabIndex = 0;
+        hasFocusable = true;
+      } else {
+        row.tabIndex = -1;
+      }
 
       // Update eye button text + ARIA state
       const eyeBtn = row.querySelector('.luxar-layer-row__eye') as HTMLButtonElement | null;
@@ -312,6 +328,13 @@ export class LayersPanel {
         eyeBtn.setAttribute('aria-pressed', layer.visible ? 'true' : 'false');
       }
     }
+
+    // If nothing is selected, make the first row the tab stop so users can
+    // enter the listbox with the keyboard.
+    if (!hasFocusable) {
+      const first = this.rowElements.values().next().value as HTMLElement | undefined;
+      if (first) first.tabIndex = 0;
+    }
   }
 
   private createLayerRow(layer: LayerInfo): HTMLElement {
@@ -319,6 +342,12 @@ export class LayersPanel {
     row.className = 'luxar-layer-row';
     if (layer.selected) row.classList.add('luxar-layer-row--selected');
     if (!layer.visible) row.classList.add('luxar-layer-row--hidden');
+
+    // ARIA option semantics — see listbox setup in buildPanel().
+    row.setAttribute('role', 'option');
+    row.setAttribute('aria-selected', layer.selected ? 'true' : 'false');
+    row.setAttribute('aria-label', `${layer.name} (${layer.type})`);
+    row.tabIndex = -1; // updateRowHighlights() promotes the active one to 0
 
     // Eye toggle — visibility is independent of selection. <button> already
     // has role=button, is focusable, and triggers click on Space/Enter, so we
@@ -367,6 +396,35 @@ export class LayersPanel {
       if (e.ctrlKey || e.metaKey) mode = 'add';
       else if (e.shiftKey) mode = 'range';
       this.state.select(layer.path, mode);
+    });
+
+    // Row keyboard navigation — listbox idiom: ArrowUp/Down moves focus
+    // (and selects on simple navigation), Enter/Space select with the
+    // current modifier.
+    row.addEventListener('keydown', (e) => {
+      const layers = this.state.getLayers();
+      const idx = layers.findIndex((l) => l.path === layer.path);
+      if (idx < 0) return;
+
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        const nextIdx =
+          e.key === 'ArrowDown'
+            ? Math.min(layers.length - 1, idx + 1)
+            : Math.max(0, idx - 1);
+        const next = layers[nextIdx];
+        const nextRow = this.rowElements.get(next.path);
+        if (nextRow) {
+          this.state.select(next.path, 'single');
+          nextRow.focus();
+        }
+      } else if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        let mode: SelectionMode = 'single';
+        if (e.ctrlKey || e.metaKey) mode = 'add';
+        else if (e.shiftKey) mode = 'range';
+        this.state.select(layer.path, mode);
+      }
     });
 
     row.appendChild(eyeBtn);
