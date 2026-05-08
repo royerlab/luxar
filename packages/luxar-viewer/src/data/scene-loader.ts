@@ -22,13 +22,11 @@ import {
 import {
   processLinesData as processLinesDataHelper,
   commitLinesGeometry as commitLinesGeometryHelper,
-  projectLinesTo3DUsingWorker as projectLinesTo3DUsingWorkerHelper,
   type StagedLinesCommit,
 } from './scene-loader/data-processor-lines';
 import {
   processGSplatsData as processGSplatsDataHelper,
   commitGSplatsGeometry as commitGSplatsGeometryHelper,
-  projectGSplatsTo3DUsingWorker as projectGSplatsTo3DUsingWorkerHelper,
   type StagedGSplatsCommit,
 } from './scene-loader/data-processor-gsplats';
 import {
@@ -42,7 +40,6 @@ import { commitPointsGeometry as commitPointsGeometryHelper } from './scene-load
 
 export type { StagedLinesCommit } from './scene-loader/data-processor-lines';
 export type { StagedGSplatsCommit } from './scene-loader/data-processor-gsplats';
-import { buildInstanceBuffers } from './lines/projection';
 import {
   DataLoader,
   ViewState,
@@ -67,7 +64,6 @@ import type {
   LinesDataLoader,
   LinesViewState,
   LoadedLinesData,
-  ProcessedLinesData,
 } from '../types/lines';
 import { isLinesUserData } from '../types/lines';
 import type {
@@ -77,8 +73,6 @@ import type {
   GSplatsViewState,
   LoadedGSplatsData,
 } from '../types/gsplats';
-import { processGSplats } from './gsplats/gsplats-processor';
-import { packCholeskyForShader } from '../rendering/gsplat-geometry';
 import { GPUBufferPool } from '../rendering/gpu-buffer-pool';
 import { invertNdTransformForQuery, computeWorldNdTransform } from './transforms/nd-transform';
 import { NodeFactory } from '../rendering/node-factory';
@@ -89,13 +83,11 @@ import {
   getAggregatedGSplatsAccumulatorStats,
 } from './utils/stats-aggregator';
 import { LoaderRegistry } from './loaders/loader-registry';
-import { computeTolerance } from './utils/tolerance-computer';
 import { loadOverlayConfigs } from './loaders/overlay-loader';
 import { notifier } from '../utils/notifier';
 
 /** Check if an object has any own properties (avoids Object.keys() allocation). */
 import {
-  EXTEND_TO_ALL_TOLERANCE,
   hasOwnProperties,
   getOrComputeExtendedTolerance,
   isSceneDimensions,
@@ -1338,14 +1330,15 @@ export class SceneLoader {
     parentLoc: zarr.Location<zarr.Readable>
   ): Promise<void> {
     if (node.type === 'points') {
-      const points = await this.loadLeafNode(() => this.loadPoints(node, parentLoc), node.path);
-      if (points) parentThree.add(points);
+      // Phase 14.3: loadPoints attaches its own placeholder to parentThree
+      // before fetching data; no caller-side `if (points) add(points)`
+      // needed. The placeholder stays in the scene even on failure so
+      // retry can populate it.
+      await this.loadLeafNode(() => this.loadPoints(node, parentThree, parentLoc), node.path);
     } else if (node.type === 'lines') {
-      const lines = await this.loadLeafNode(() => this.loadLines(node, parentLoc), node.path);
-      if (lines) parentThree.add(lines);
+      await this.loadLeafNode(() => this.loadLines(node, parentThree, parentLoc), node.path);
     } else if (node.type === 'gsplats') {
-      const gsplats = await this.loadLeafNode(() => this.loadGSplats(node, parentLoc), node.path);
-      if (gsplats) parentThree.add(gsplats);
+      await this.loadLeafNode(() => this.loadGSplats(node, parentThree, parentLoc), node.path);
     } else if (node.children) {
       // Create group and recurse
       const group = new THREE.Group();
@@ -1402,6 +1395,7 @@ export class SceneLoader {
    */
   private async loadPoints(
     node: SceneNode,
+    parentThree: THREE.Object3D,
     loc: zarr.Location<zarr.Readable>
   ): Promise<THREE.Points | null> {
     log.custom('📍', Modules.SCENE_LOADER, `Loading points: ${node.path}`);
@@ -1414,6 +1408,17 @@ export class SceneLoader {
     // Store loader for updates (route through the registry's
     // register* methods rather than mutating its internal map).
     this.registry.registerPointsLoader(node.path, loader);
+
+    // Phase 14.3: construct + attach an empty placeholder before fetching
+    // data, so an initial-load failure leaves a recoverable scene state.
+    // commit-points-geometry finds the placeholder by name and populates
+    // it once data arrives (initial fetch or future retry/update); the
+    // 0-points → N-points transition naturally takes the "different size"
+    // branch in commitPointsGeometry. retryFailedLoader() reads the
+    // placeholder's `userData.attrs` to derive the retry view state.
+    const attrs = this.applyEffectiveAttrs(node) as unknown as PointsMetadata;
+    const placeholder = this.nodeFactory.createEmptyPointsNode(node.path, attrs, loader);
+    parentThree.add(placeholder);
 
     try {
       // Load points data
@@ -1455,18 +1460,18 @@ export class SceneLoader {
         );
       }
 
-      const attrs = this.applyEffectiveAttrs(node) as unknown as PointsMetadata;
-      const points = this.nodeFactory.createPointsNode(node.path, attrs, data, loader);
+      // Commit data into the placeholder via the same path future
+      // updateView() / retry calls use. Unifies initial-load and update
+      // through one geometry-commit code path.
+      this.updatePointsGeometry(node.path, data);
 
       log.success(Modules.SCENE_LOADER, `Loaded ${data.pointCount} points for ${node.path}`);
 
-      return points;
+      return placeholder;
     } catch (error) {
-      // Phase 13.6: record the failure so `retryFailedLoader(path)` can
-      // target this node. Pre-fix, initial-load failures left a registered
-      // loader but no failedLoaders entry, so the retry path bailed with
-      // "Path not in failed loaders list". Loader is already in
-      // `registry.loaders` via the earlier registerPointsLoader call.
+      // Phase 13.6 + 14.3: record the failure so `retryFailedLoader(path)`
+      // can target this node. The placeholder stays attached to the scene
+      // (we added it before this try/catch), so retry can populate it.
       this.registry.recordFailure(node.path, error as Error);
       throw new LoaderError(classifyLoaderError(error), node.path, error);
     }
@@ -1477,6 +1482,7 @@ export class SceneLoader {
    */
   private async loadLines(
     node: SceneNode,
+    parentThree: THREE.Object3D,
     loc: zarr.Location<zarr.Readable>
   ): Promise<THREE.Mesh | null> {
     log.custom('📐', Modules.SCENE_LOADER, `Loading lines: ${node.path}`);
@@ -1491,6 +1497,18 @@ export class SceneLoader {
     // Store loader for updates (route through registry).
     this.registry.registerLinesLoader(node.path, loader);
 
+    // Phase 14.3: construct + attach empty placeholder before fetching.
+    // processLinesData / commitLinesGeometry look up the mesh by name
+    // and populate it on success; on failure the placeholder remains
+    // for retry to target. Same path is used by every future update.
+    const placeholder = this.nodeFactory.createEmptyLinesNode(
+      node.path,
+      this.applyEffectiveAttrs(node),
+      attrs,
+      loader
+    );
+    parentThree.add(placeholder);
+
     try {
       // Phase 13.11: route through deriveNodeViewState. Lines path
       // historically did not apply the partial-extend tolerance
@@ -1501,12 +1519,9 @@ export class SceneLoader {
       const derivedLines = this.deriveNodeViewState(node.path, attrs, {
         applyPartialExtendTolerance: false,
       });
-      const linesViewState: {
-        displayDims: readonly number[];
-        slicePosition: readonly number[];
-        tolerance: readonly number[];
-        dimensions?: import('../types/dims').DimensionMetadata[];
-      } = derivedLines.skip ? this.viewState : derivedLines.viewState;
+      const linesViewState: LinesViewState = derivedLines.skip
+        ? this.viewState
+        : derivedLines.viewState;
 
       const data = await loader.loadLines(linesViewState);
 
@@ -1517,70 +1532,21 @@ export class SceneLoader {
         );
       }
 
-      // Build instance buffers with nD clipping
-      let tolerance = computeTolerance(
-        'lines',
-        linesViewState.displayDims,
-        attrs.ndim || 3,
-        linesViewState.dimensions
-      );
-
-      // For extend_to_all dimensions, set tolerance to EXTEND_TO_ALL_TOLERANCE
-      // so segments aren't clipped when navigating through extended dims.
-      // Computed locally because the worker clipping path needs this AT the
-      // same per-frame layer that does main-thread fallback clipping; we
-      // can't inherit from deriveNodeViewState's tolerance directly because
-      // that runs against the post-`computeTolerance` shape.
-      const extendDims: string[] = attrs.extend_to_all || [];
-      if (extendDims.length > 0 && linesViewState.dimensions) {
-        tolerance = [...tolerance];
-        for (const dimName of extendDims) {
-          const dimIndex = linesViewState.dimensions.findIndex(
-            (d: { name?: string }) => d.name === dimName
-          );
-          if (dimIndex >= 0 && dimIndex < tolerance.length) {
-            tolerance[dimIndex] = EXTEND_TO_ALL_TOLERANCE;
-          }
-        }
-      }
-
-      // Build instance buffers (use worker for larger datasets)
-      const useWorkerProjection =
-        appConfig.dataLoading.performance.useWebWorkers && data.segmentCount > 1000;
-
-      let processed: ProcessedLinesData;
-      if (useWorkerProjection) {
-        processed = await projectLinesTo3DUsingWorkerHelper(
-          data,
-          linesViewState,
-          tolerance,
-          this._updateVersion
-        );
-      } else {
-        processed = buildInstanceBuffers(
-          data,
-          linesViewState.slicePosition,
-          tolerance,
-          linesViewState.displayDims
-        );
-      }
-
-      const mesh = this.nodeFactory.createLinesNode(
-        node.path,
-        this.applyEffectiveAttrs(node),
-        attrs,
-        processed,
-        loader
-      );
+      // Project + commit through the same helpers used by every update
+      // and retry. processLinesData reads the placeholder's userData
+      // (extend_to_all etc.) and finds the mesh by name; commit step
+      // writes into the existing geometry.
+      const staged = await this.processLinesData(node.path, data, linesViewState);
+      if (staged) this.commitLinesGeometry(staged);
 
       log.success(
         Modules.SCENE_LOADER,
-        `Loaded ${processed.segmentCount} segments for ${node.path}`
+        `Loaded ${data.segmentCount} segments for ${node.path}`
       );
 
-      return mesh;
+      return placeholder;
     } catch (error) {
-      // Phase 13.6: see loadPoints catch.
+      // Phase 13.6 + 14.3: see loadPoints catch.
       this.registry.recordFailure(node.path, error as Error);
       throw new LoaderError(classifyLoaderError(error), node.path, error);
     }
@@ -1611,6 +1577,7 @@ export class SceneLoader {
    */
   private async loadGSplats(
     node: SceneNode,
+    parentThree: THREE.Object3D,
     loc: zarr.Location<zarr.Readable>
   ): Promise<THREE.Mesh | null> {
     const attrs = node.attrs as unknown as GSplatsMetadata;
@@ -1633,6 +1600,16 @@ export class SceneLoader {
 
     // Store loader for updates (route through registry).
     this.registry.registerGSplatsLoader(node.path, loader);
+
+    // Phase 14.3: empty placeholder + same-flow commit. See loadPoints/
+    // loadLines for the rationale.
+    const placeholder = this.nodeFactory.createEmptyGSplatsNode(
+      node.path,
+      this.applyEffectiveAttrs(node),
+      attrs,
+      loader
+    );
+    parentThree.add(placeholder);
 
     try {
       // Phase 13.11: route through deriveNodeViewState. GSplats path
@@ -1660,57 +1637,20 @@ export class SceneLoader {
         );
       }
 
-      // Process nD data to 3D for rendering
-      // Strategy: use worker for larger nD datasets
-      const useWorkerProjection =
-        appConfig.dataLoading.performance.useWebWorkers && data.splatCount > 1000 && data.ndim > 3;
-
-      // Read truncation radius from zarr metadata for nD attenuation
-      const truncate = (attrs.truncation_radius as number | undefined) ?? 3.0;
-
-      let processed: ReturnType<typeof processGSplats>;
-      if (useWorkerProjection) {
-        processed = await projectGSplatsTo3DUsingWorkerHelper(
-          data,
-          gsplatsViewState,
-          truncate,
-          this._updateVersion
-        );
-      } else {
-        processed = processGSplats(data, gsplatsViewState, truncate);
-      }
-
-      // Pack Cholesky factors for shader
-      const { cholesky01, cholesky23, cholesky45 } = packCholeskyForShader(
-        processed.choleskyFactors3D,
-        processed.splatCount
-      );
-
-      const meshConfig = {
-        centers: processed.centers3D,
-        cholesky01,
-        cholesky23,
-        cholesky45,
-        amplitudes: processed.amplitudes,
-        colors: processed.colors,
-        splatCount: processed.splatCount,
-      };
-      const mesh = this.nodeFactory.createGSplatsNode(
-        node.path,
-        this.applyEffectiveAttrs(node),
-        attrs,
-        meshConfig,
-        loader
-      );
+      // Process + commit through the same helpers used by every update
+      // and retry. Helpers find the placeholder by name and read its
+      // userData for truncate/attrs.
+      const staged = await this.processGSplatsData(node.path, data, gsplatsViewState);
+      if (staged) this.commitGSplatsGeometry(staged);
 
       log.success(
         Modules.SCENE_LOADER,
-        `Loaded ${processed.splatCount.toLocaleString()} gsplats for ${node.path}`
+        `Loaded ${data.splatCount.toLocaleString()} gsplats for ${node.path}`
       );
 
-      return mesh;
+      return placeholder;
     } catch (error) {
-      // Phase 13.6: see loadPoints catch.
+      // Phase 13.6 + 14.3: see loadPoints catch.
       this.registry.recordFailure(node.path, error as Error);
       throw new LoaderError(classifyLoaderError(error), node.path, error);
     }
@@ -1954,6 +1894,27 @@ export class SceneLoader {
         | undefined;
       const attrs = obj?.userData?.attrs as { extend_to_all?: string[] } | undefined;
 
+      // Phase 14.3: defensive guard — only clear `failedLoaders` if the
+      // named object still exists in the scene. The placeholder model
+      // should make commit always succeed when retry runs in normal
+      // conditions, but a scene reload or programmatic node removal
+      // between failure and retry could leave us fetching data that has
+      // nowhere to land. Without this guard, retry would falsely report
+      // success ("data fetched + commit silently no-op'd") and clear the
+      // failure, hiding the broken state from `hasFailures()`.
+      const verifyAndClear = (kind: string): boolean => {
+        if (!this.rootGroup?.getObjectByName(path)) {
+          log.warning(
+            Modules.SCENE_LOADER,
+            `Retry of ${path} fetched data but no scene object exists; not clearing failure`
+          );
+          return false;
+        }
+        this.failedLoaders.delete(path);
+        log.success(Modules.SCENE_LOADER, `Successfully retried ${kind} loader: ${path}`);
+        return true;
+      };
+
       if (pointsLoader) {
         const derived = this.deriveNodeViewState(path, attrs, {
           applyPartialExtendTolerance: true,
@@ -1965,9 +1926,7 @@ export class SceneLoader {
         }
         const points = await pointsLoader.updateView(derived.viewState);
         if (points) this.updatePointsGeometry(path, points);
-        this.failedLoaders.delete(path);
-        log.success(Modules.SCENE_LOADER, `Successfully retried points loader: ${path}`);
-        return true;
+        return verifyAndClear('points');
       } else if (linesLoader) {
         const derived = this.deriveNodeViewState(path, attrs, {
           applyPartialExtendTolerance: false,
@@ -1983,9 +1942,7 @@ export class SceneLoader {
           const staged = await this.processLinesData(path, data, linesViewState);
           if (staged) this.commitLinesGeometry(staged);
         }
-        this.failedLoaders.delete(path);
-        log.success(Modules.SCENE_LOADER, `Successfully retried lines loader: ${path}`);
-        return true;
+        return verifyAndClear('lines');
       } else if (gsplatsLoader) {
         const derived = this.deriveNodeViewState(path, attrs, {
           applyPartialExtendTolerance: true,
@@ -2001,9 +1958,7 @@ export class SceneLoader {
           const staged = await this.processGSplatsData(path, data, gsplatsViewState);
           if (staged) this.commitGSplatsGeometry(staged);
         }
-        this.failedLoaders.delete(path);
-        log.success(Modules.SCENE_LOADER, `Successfully retried gsplats loader: ${path}`);
-        return true;
+        return verifyAndClear('gsplats');
       } else {
         // Loader not found - it may have been disposed
         log.warning(Modules.SCENE_LOADER, `No loader found for path: ${path}`);

@@ -319,6 +319,101 @@ export class NodeFactory {
   }
 
   // ============================================================================
+  // Empty placeholder factories (Phase 14.3)
+  // ============================================================================
+  //
+  // These build a fully-formed THREE node with empty geometry/instance
+  // buffers, ready to be attached to the scene before any data fetch
+  // happens. The scene-loader uses them so an initial-load failure leaves
+  // a placeholder in place: the commit helpers can find it by name and
+  // populate it once data finally arrives, and `retryFailedLoader()` can
+  // read its `userData.attrs` to derive the retry view state.
+  //
+  // Empty data flows through the same `createXNode` factories used by
+  // the success path, so userData, transforms, picking shadow nodes,
+  // and material clone bookkeeping are all set up identically. The
+  // commit helpers naturally take the "different size" branch (0 → N)
+  // when the real data arrives.
+
+  /**
+   * Create a `THREE.Points` placeholder with an empty geometry.
+   *
+   * Constructs a minimal {@link LoadedPointsData} inline rather than
+   * routing through `createEmptyPointsData()` (which needs a full
+   * `ProjectionContext` with `chunkIndex`); the values that distinguish
+   * the two paths (`ndim`, `dtypes`) are overwritten on the first
+   * successful commit.
+   */
+  createEmptyPointsNode(
+    path: string,
+    attrs: PointsMetadata,
+    loader: DataLoader
+  ): THREE.Points {
+    const emptyData: LoadedPointsData = {
+      positions: new Float32Array(0) as LoadedPointsData['positions'],
+      pointCount: 0,
+      ndim: 3,
+      metadata: {
+        totalPoints: attrs.n_points ?? 0,
+        loadedPoints: 0,
+        bounds: new THREE.Box3(),
+        usedSpatialIndex: true,
+        dtypes: {},
+      },
+    };
+    return this.createPointsNode(path, attrs, emptyData, loader);
+  }
+
+  /**
+   * Create a `THREE.Mesh` (instanced lines) placeholder with empty
+   * instance buffers.
+   */
+  createEmptyLinesNode(
+    path: string,
+    nodeAttrs: Record<string, unknown>,
+    attrs: LinesMetadata,
+    loader: LinesDataLoader
+  ): THREE.Mesh {
+    const emptyConfig: InstancedLinesMeshConfig = {
+      startPositions: new Float32Array(0),
+      endPositions: new Float32Array(0),
+      startColors: new Float32Array(0),
+      endColors: new Float32Array(0),
+      startWidths: new Float32Array(0),
+      endWidths: new Float32Array(0),
+      startSharpness: new Float32Array(0),
+      endSharpness: new Float32Array(0),
+      segmentLengths: new Float32Array(0),
+      startClipped: new Uint8Array(0),
+      endClipped: new Uint8Array(0),
+      segmentCount: 0,
+    };
+    return this.createLinesNode(path, nodeAttrs, attrs, emptyConfig, loader);
+  }
+
+  /**
+   * Create a `THREE.Mesh` (instanced gsplats) placeholder with empty
+   * instance buffers.
+   */
+  createEmptyGSplatsNode(
+    path: string,
+    nodeAttrs: Record<string, unknown>,
+    attrs: GSplatsMetadata,
+    loader: GSplatsDataLoader
+  ): THREE.Mesh {
+    const emptyConfig: InstancedGSplatsMeshConfig = {
+      centers: new Float32Array(0),
+      cholesky01: new Float32Array(0),
+      cholesky23: new Float32Array(0),
+      cholesky45: new Float32Array(0),
+      amplitudes: new Float32Array(0),
+      colors: new Float32Array(0),
+      splatCount: 0,
+    };
+    return this.createGSplatsNode(path, nodeAttrs, attrs, emptyConfig, loader);
+  }
+
+  // ============================================================================
   // Validation Helpers (public for testing)
   // ============================================================================
 
