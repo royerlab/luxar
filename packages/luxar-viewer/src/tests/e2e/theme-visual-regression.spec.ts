@@ -47,7 +47,7 @@ async function waitForTheme(page: Page, themeId: string): Promise<void> {
  * cares about: the dialog's appearance per theme.
  */
 for (const theme of THEMES) {
-  test(`error dialog - ${theme} theme`, async ({ page }) => {
+  test(`@visual error dialog - ${theme} theme`, async ({ page }) => {
     // Navigate with debug enabled so __luxarDebug.showError is exposed.
     await page.goto(`/?theme=${theme}&debug`);
 
@@ -91,7 +91,7 @@ for (const theme of THEMES) {
  * Test help overlay in all themes
  */
 for (const theme of THEMES) {
-  test(`help overlay - ${theme} theme`, async ({ page }) => {
+  test(`@visual help overlay - ${theme} theme`, async ({ page }) => {
     const testDataUrl = 'http://localhost:9000/datasets/examples/dimension_sliders_5d_example.zarr';
     await page.goto(`/?src=${testDataUrl}&theme=${theme}&debug`);
     await waitForTheme(page, theme);
@@ -115,7 +115,7 @@ for (const theme of THEMES) {
  * Note: Use 4D dataset to ensure sliders are shown
  */
 for (const theme of THEMES) {
-  test(`dimension sliders - ${theme} theme`, async ({ page }) => {
+  test(`@visual dimension sliders - ${theme} theme`, async ({ page }) => {
     // Use a 5D dataset to ensure dimension sliders appear (use local for speed)
     const testDataUrl = 'http://localhost:9000/datasets/examples/dimension_sliders_5d_example.zarr';
     await page.goto(`/?src=${testDataUrl}&theme=${theme}&debug`);
@@ -161,7 +161,7 @@ for (const theme of THEMES) {
  * Test data loading monitor (mini view) in all themes
  */
 for (const theme of THEMES) {
-  test(`data monitor mini - ${theme} theme`, async ({ page }) => {
+  test(`@visual data monitor mini - ${theme} theme`, async ({ page }) => {
     const testDataUrl = 'http://localhost:9000/datasets/examples/dimension_sliders_5d_example.zarr';
     await page.goto(`/?src=${testDataUrl}&theme=${theme}&debug`);
     await waitForTheme(page, theme);
@@ -197,7 +197,7 @@ for (const theme of THEMES) {
  * Test data loading monitor (expanded view) in all themes
  */
 for (const theme of THEMES) {
-  test(`data monitor expanded - ${theme} theme`, async ({ page }) => {
+  test(`@visual data monitor expanded - ${theme} theme`, async ({ page }) => {
     const testDataUrl = 'http://localhost:9000/datasets/examples/dimension_sliders_5d_example.zarr';
     await page.goto(`/?src=${testDataUrl}&theme=${theme}&debug`);
     await waitForTheme(page, theme);
@@ -235,7 +235,7 @@ for (const theme of THEMES) {
  * Test debug console in all themes
  */
 for (const theme of THEMES) {
-  test(`debug console - ${theme} theme`, async ({ page }) => {
+  test(`@visual debug console - ${theme} theme`, async ({ page }) => {
     const testDataUrl = 'http://localhost:9000/datasets/examples/dimension_sliders_5d_example.zarr';
     await page.goto(`/?src=${testDataUrl}&theme=${theme}&debug`);
     await waitForTheme(page, theme);
@@ -268,7 +268,7 @@ for (const theme of THEMES) {
  * Test dataset browser in all themes
  */
 for (const theme of THEMES) {
-  test(`dataset browser - ${theme} theme`, async ({ page }) => {
+  test(`@visual dataset browser - ${theme} theme`, async ({ page }) => {
     await page.goto(`/?theme=${theme}&debug`);
     await waitForTheme(page, theme);
 

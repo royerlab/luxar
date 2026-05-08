@@ -151,7 +151,7 @@ test.describe('Blending Modes', () => {
     expect(errors.length).toBe(0);
   });
 
-  test('visual regression: scene renders with blending applied', async ({ page }) => {
+  test('@visual visual regression: scene renders with blending applied', async ({ page }) => {
     await page.goto(`/?src=${DATASET}&debug`);
     await waitForLuxarReady(page);
     await waitForPointsLoaded(page, 10);

@@ -214,7 +214,7 @@ test.describe('Post-Processing Pipeline', () => {
     expect(glErrors).toEqual([]);
   });
 
-  test('visual regression: scene with default post-processing', async ({ page }) => {
+  test('@visual visual regression: scene with default post-processing', async ({ page }) => {
     // waitForRenderStable already drives the wait off the renderer frame
     // counter; an additional fixed sleep would be redundant.
     await waitForRenderStable(page, 5);

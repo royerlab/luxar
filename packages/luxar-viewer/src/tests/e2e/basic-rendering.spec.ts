@@ -123,7 +123,7 @@ test.describe('Luxar Basic Rendering', () => {
     expect(dimensions.height).toBeGreaterThan(0);
   });
 
-  test('should take screenshot without crashing', async ({ page }) => {
+  test('@visual should take screenshot without crashing', async ({ page }) => {
     await page.goto('/?debug');
     await waitForLuxarReady(page);
 

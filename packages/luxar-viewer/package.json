@@ -47,7 +47,7 @@
     "test:watch": "vitest --watch",
     "test:with-fixtures": "pnpm test:generate-fixtures && pnpm test",
     "test:e2e": "playwright test",
-    "test:e2e:ci": "playwright test --grep-invert 'toHaveScreenshot' --retries 2",
+    "test:e2e:ci": "playwright test --grep-invert '@visual' --retries 2",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:debug": "playwright test --debug",
     "test:e2e:report": "playwright show-report",

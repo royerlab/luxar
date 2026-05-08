@@ -184,7 +184,7 @@ test.describe('Custom GUI Library', () => {
     expect(guiCount).toBe(0);
   });
 
-  test('should match visual snapshot (dark theme)', async ({ page }) => {
+  test('@visual should match visual snapshot (dark theme)', async ({ page }) => {
     // Ensure dark theme is active
     await page.click('.theme-btn[data-theme="dark"]');
     await waitForNextRender(page);
