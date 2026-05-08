@@ -221,6 +221,32 @@ describe('AnimationController', () => {
       expect(mockRAF).toHaveBeenCalledWith(expect.any(Function));
     });
 
+    // Phase 13.9: when WebGL context is lost, animation loop must
+    // skip postProcessing.render() to avoid issuing draw calls
+    // against a dead context. controls.update() and per-frame
+    // callbacks still run.
+    it('skips postProcessing.render() while context is lost', () => {
+      controller.setContextLostPredicate(() => true);
+      controller.startAnimation();
+
+      expect(mockControls.update).toHaveBeenCalledTimes(1);
+      expect(mockPostProcessing.render).not.toHaveBeenCalled();
+    });
+
+    it('renders normally when context-lost predicate returns false', () => {
+      controller.setContextLostPredicate(() => false);
+      controller.startAnimation();
+
+      expect(mockPostProcessing.render).toHaveBeenCalledTimes(1);
+    });
+
+    it('renders normally when no context-lost predicate is set (default)', () => {
+      // Predicate is null by default — backward-compat for tests/embed
+      // contexts that never lose the context.
+      controller.startAnimation();
+      expect(mockPostProcessing.render).toHaveBeenCalledTimes(1);
+    });
+
     it('should cancel animation frame on stop', () => {
       controller.startAnimation();
       controller.stopAnimation();

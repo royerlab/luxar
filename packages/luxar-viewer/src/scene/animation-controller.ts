@@ -45,6 +45,17 @@ export class AnimationController {
   private adaptiveDPRManager: AdaptiveDPRManager | null = null;
 
   /**
+   * Predicate that returns true while the WebGL context is lost. When
+   * set, the animation loop skips `postProcessing.render()` (and any
+   * GPU-bound work) so we don't issue draw calls against a dead
+   * context — those produce noisy GL errors and waste frame work
+   * during the loss window. The renderer is rebuilt by SceneManager
+   * on `webgl-context-restored`; until then we keep ticking
+   * controls.update() and per-frame callbacks but skip rendering.
+   */
+  private isContextLost: (() => boolean) | null = null;
+
+  /**
    * Create animation controller for rendering loop management.
    *
    * Sets up performance monitoring and prepares animation loop. Does not
@@ -145,6 +156,20 @@ export class AnimationController {
   }
 
   /**
+   * Inject a predicate the loop can poll to detect WebGL context
+   * loss. When the predicate returns true, the animation loop skips
+   * `postProcessing.render()` for that frame; controls and per-frame
+   * callbacks still run so user input stays responsive. SceneManager
+   * wires this to its own `isWebGLContextLost()`.
+   *
+   * Pass `null` to disable the guard (useful in tests / embed contexts
+   * that can't lose the context).
+   */
+  setContextLostPredicate(predicate: (() => boolean) | null): void {
+    this.isContextLost = predicate;
+  }
+
+  /**
    * Main animation loop function - the heart of HDR 3D rendering
    *
    * This function is called ~60 times per second (depending on display refresh rate)
@@ -185,6 +210,17 @@ export class AnimationController {
     // Call all registered per-frame callbacks (e.g., dynamic clipping, dimension animation)
     for (const entry of this.perFrameCallbacks.values()) {
       entry.callback();
+    }
+
+    // Phase 13.9: skip GPU rendering while the WebGL context is lost.
+    // The post-processing render() would otherwise issue draw calls
+    // against a dead context (noisy GL errors, driver-specific
+    // exceptions on some platforms). Controls and per-frame callbacks
+    // already ran above so user input stays responsive while the
+    // browser drives recovery.
+    if (this.isContextLost?.()) {
+      eventBus.emit('frame-end', {});
+      return;
     }
 
     // Render through HDR post-processing pipeline

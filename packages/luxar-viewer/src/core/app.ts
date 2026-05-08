@@ -257,6 +257,13 @@ export class LuxarApp {
         this.sceneManager.controls,
         this.sceneManager.postProcessing
       );
+      // Phase 13.9: skip GPU rendering while the WebGL context is
+      // lost. SceneManager flips this flag in its
+      // webglcontextlost/restored handlers; the loop polls each
+      // frame.
+      this.animationController.setContextLostPredicate(() =>
+        this.sceneManager.isWebGLContextLost()
+      );
       this.performanceMonitor = new PerformanceMonitor();
       this.debugConsole = new DebugConsole();
 
