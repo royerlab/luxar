@@ -170,6 +170,7 @@ export class DatasetBrowser {
     const statusBar = document.createElement('div');
     statusBar.id = 'luxar-dataset-browser-status';
     statusBar.className = 'luxar-dataset-browser__status';
+    statusBar.setAttribute('aria-live', 'polite');
 
     panel.appendChild(header);
     panel.appendChild(welcomeBanner);
@@ -251,8 +252,12 @@ export class DatasetBrowser {
     const breadcrumb = this.panel.querySelector('#luxar-dataset-browser-breadcrumb') as HTMLElement;
     breadcrumb.innerHTML = '';
 
-    // Root link
-    const rootLink = document.createElement('a');
+    // Root link — `<button type="button">` so the breadcrumb is keyboard-
+    // focusable (anchors without href aren't) and Enter/Space activate
+    // natively. CSS class names are unchanged so existing styling/snapshot
+    // tests stay intact.
+    const rootLink = document.createElement('button');
+    rootLink.type = 'button';
     rootLink.className = 'luxar-dataset-browser__breadcrumb-link';
     rootLink.textContent = 'Root';
     rootLink.onclick = () => this.navigate('');
@@ -268,6 +273,7 @@ export class DatasetBrowser {
         const sep = document.createElement('span');
         sep.className = 'luxar-dataset-browser__breadcrumb-separator';
         sep.textContent = '›';
+        sep.setAttribute('aria-hidden', 'true');
         breadcrumb.appendChild(sep);
 
         accumulated += (accumulated ? '/' : '') + part;
@@ -278,10 +284,12 @@ export class DatasetBrowser {
           const current = document.createElement('span');
           current.className = 'luxar-dataset-browser__breadcrumb-current';
           current.textContent = part;
+          current.setAttribute('aria-current', 'location');
           breadcrumb.appendChild(current);
         } else {
-          // Clickable parent
-          const link = document.createElement('a');
+          // Clickable parent — same a11y rationale as the Root button above.
+          const link = document.createElement('button');
+          link.type = 'button';
           link.className = 'luxar-dataset-browser__breadcrumb-link';
           link.textContent = part;
           link.onclick = () => this.navigate(pathToNavigate);
@@ -324,6 +332,21 @@ export class DatasetBrowser {
       const isCurrentDataset = this.currentDataset && entry.name === this.currentDataset;
 
       item.className = `luxar-dataset-browser__file-item ${isCurrentDataset ? 'luxar-dataset-browser__file-item--current' : ''}`;
+
+      // Keyboard accessibility — make rows focusable and ARIA-labeled.
+      // Kept as `<div role="button">` (not `<button>`) to preserve the
+      // existing flex-row layout containing icon + name + badges; using a
+      // real button would force a CSS rewrite. Enter/Space below mirrors
+      // the click handler.
+      item.setAttribute('role', 'button');
+      item.tabIndex = 0;
+      const ariaLabel =
+        entry.type === 'zarr'
+          ? `Open Zarr dataset ${entry.name}`
+          : entry.type === 'directory'
+            ? `Open directory ${entry.name}`
+            : entry.name;
+      item.setAttribute('aria-label', ariaLabel);
 
       // Icon
       const icon = document.createElement('span');
@@ -374,13 +397,20 @@ export class DatasetBrowser {
       }
 
       // Click handler
-      item.onclick = () => {
+      const activate = (): void => {
         if (entry.type === 'zarr') {
           // Pass full URL to preserve directory context
           this.onDatasetSelect(this.navigator.getFullUrl(entry.path));
           this.close();
         } else if (entry.type === 'directory') {
           this.navigate(entry.path);
+        }
+      };
+      item.onclick = activate;
+      item.onkeydown = (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          activate();
         }
       };
 
@@ -398,15 +428,16 @@ export class DatasetBrowser {
 
     content.innerHTML = `
       <div class="luxar-dataset-browser__manual-entry">
-        <p class="luxar-dataset-browser__manual-entry-title">Directory listing not available. Enter dataset path manually:</p>
+        <label for="manual-path" class="luxar-dataset-browser__manual-entry-title">Directory listing not available. Enter dataset path manually:</label>
         <input
           type="text"
           id="manual-path"
           class="luxar-dataset-browser__manual-entry-input"
           placeholder="e.g., datasets/example.zarr"
+          aria-label="Dataset path"
         />
         <div>
-          <button id="manual-load" class="luxar-dataset-browser__manual-entry-btn">Load Dataset</button>
+          <button id="manual-load" type="button" class="luxar-dataset-browser__manual-entry-btn">Load Dataset</button>
         </div>
         <p class="luxar-dataset-browser__manual-entry-tip">
           Tip: Ask your server administrator to enable directory listing or WebDAV

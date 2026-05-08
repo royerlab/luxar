@@ -361,6 +361,122 @@ describe('DatasetBrowser', () => {
     });
   });
 
+  describe('accessibility', () => {
+    it('renders entry rows with role="button", tabIndex=0, and an aria-label', async () => {
+      const entries: DirectoryEntry[] = [
+        { name: 'sample.zarr', path: 'sample.zarr', type: 'zarr' },
+        { name: 'sub', path: 'sub', type: 'directory' },
+      ];
+      navigateMock.mockResolvedValueOnce(defaultNavigateResult({ entries }));
+
+      new DatasetBrowser({ container, onDatasetSelect, onClose });
+      await vi.waitFor(() => {
+        const items = container.querySelectorAll('.luxar-dataset-browser__file-item');
+        expect(items.length).toBe(2);
+      });
+
+      const items = Array.from(
+        container.querySelectorAll<HTMLElement>('.luxar-dataset-browser__file-item')
+      );
+      for (const item of items) {
+        expect(item.getAttribute('role')).toBe('button');
+        expect(item.tabIndex).toBe(0);
+        expect(item.getAttribute('aria-label')).toBeTruthy();
+      }
+      expect(items[0].getAttribute('aria-label')).toContain('Zarr');
+      expect(items[1].getAttribute('aria-label')).toContain('directory');
+    });
+
+    it('activates a zarr entry via Enter key', async () => {
+      const entries: DirectoryEntry[] = [
+        { name: 'sample.zarr', path: 'sample.zarr', type: 'zarr' },
+      ];
+      navigateMock.mockResolvedValueOnce(defaultNavigateResult({ entries }));
+
+      new DatasetBrowser({ container, onDatasetSelect, onClose });
+      await vi.waitFor(() => {
+        expect(container.querySelector('.luxar-dataset-browser__file-item')).not.toBeNull();
+      });
+
+      const item = container.querySelector(
+        '.luxar-dataset-browser__file-item'
+      ) as HTMLElement;
+      item.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+
+      expect(onDatasetSelect).toHaveBeenCalledWith('http://example.com/sample.zarr');
+      expect(onClose).toHaveBeenCalled();
+    });
+
+    it('activates a directory entry via Space key', async () => {
+      const entries: DirectoryEntry[] = [
+        { name: 'sub', path: 'sub', type: 'directory' },
+      ];
+      navigateMock.mockResolvedValueOnce(defaultNavigateResult({ entries }));
+
+      new DatasetBrowser({ container, onDatasetSelect, onClose });
+      await vi.waitFor(() => {
+        expect(container.querySelector('.luxar-dataset-browser__file-item')).not.toBeNull();
+      });
+
+      navigateMock.mockClear();
+      navigateMock.mockResolvedValue(defaultNavigateResult({ currentPath: 'sub' }));
+
+      const item = container.querySelector(
+        '.luxar-dataset-browser__file-item'
+      ) as HTMLElement;
+      item.dispatchEvent(new KeyboardEvent('keydown', { key: ' ' }));
+
+      expect(navigateMock).toHaveBeenCalledWith('sub');
+      expect(onDatasetSelect).not.toHaveBeenCalled();
+    });
+
+    it('breadcrumb segments are <button> (focusable, Enter/Space activatable)', async () => {
+      navigateMock.mockResolvedValueOnce(
+        defaultNavigateResult({ currentPath: 'data/sub', entries: [] })
+      );
+
+      new DatasetBrowser({ container, onDatasetSelect, onClose });
+      await vi.waitFor(() => {
+        const breadcrumb = container.querySelector('#luxar-dataset-browser-breadcrumb');
+        expect(breadcrumb?.querySelectorAll('button').length).toBeGreaterThan(0);
+      });
+
+      // Root + each non-final segment is a <button>; the final segment is a <span>.
+      const buttons = container.querySelectorAll(
+        '#luxar-dataset-browser-breadcrumb button.luxar-dataset-browser__breadcrumb-link'
+      );
+      expect(buttons.length).toBe(2); // "Root" and "data" (final "sub" is current)
+      const current = container.querySelector(
+        '.luxar-dataset-browser__breadcrumb-current'
+      );
+      expect(current?.getAttribute('aria-current')).toBe('location');
+    });
+
+    it('manual-entry input is associated with a <label>', async () => {
+      navigateMock.mockResolvedValueOnce(
+        defaultNavigateResult({ strategy: 'manual', entries: [] })
+      );
+
+      new DatasetBrowser({ container, onDatasetSelect, onClose });
+      await vi.waitFor(() => {
+        expect(container.querySelector('#manual-path')).not.toBeNull();
+      });
+
+      const label = container.querySelector('label[for="manual-path"]');
+      expect(label).not.toBeNull();
+      const input = container.querySelector('#manual-path') as HTMLInputElement;
+      expect(input.getAttribute('aria-label')).toBe('Dataset path');
+    });
+
+    it('status bar has aria-live="polite"', () => {
+      new DatasetBrowser({ container, onDatasetSelect, onClose });
+      const status = container.querySelector(
+        '#luxar-dataset-browser-status'
+      ) as HTMLElement;
+      expect(status.getAttribute('aria-live')).toBe('polite');
+    });
+  });
+
   describe('show / hide / close', () => {
     it('show() makes the panel visible (display=flex)', () => {
       const browser = new DatasetBrowser({ container, onDatasetSelect, onClose });
