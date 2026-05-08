@@ -546,6 +546,40 @@ describe('GSplatsSpatialIndexLoader', () => {
         const metrics = bodyLoader.getMetrics();
         expect(metrics.errors).toBeGreaterThanOrEqual(1);
       });
+
+      // Phase 13.10: Points emits a monitor 'error' event on load
+      // failure; Lines/GSplats previously only incremented metrics.
+      // Event-driven dashboards (timelines/advisors) couldn't see
+      // gsplats failures the way they saw points failures.
+      it('emits a monitor "error" event on load failure', async () => {
+        (zarr.get as unknown as ReturnType<typeof vi.fn>).mockImplementation((array: unknown) => {
+          if (array === chunkBoundsArray) {
+            return Promise.resolve({ data: new Float32Array(20 * 3 * 2) });
+          }
+          return Promise.reject(new Error('Load failed'));
+        });
+
+        const listener = vi.fn();
+        bodyLoader.addEventListener(listener);
+
+        const viewState: ViewState = {
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0],
+          tolerance: [0, 0, 0],
+        };
+        await expect(bodyLoader.loadGSplats(viewState)).rejects.toThrow();
+
+        expect(listener).toHaveBeenCalledWith(
+          expect.objectContaining({
+            type: 'error',
+            loader: 'gsplats-spatial-index',
+            data: expect.objectContaining({
+              path: '/test_gsplats',
+              error: expect.stringContaining('Load failed'),
+            }),
+          })
+        );
+      });
     });
 
     describe('updateView', () => {

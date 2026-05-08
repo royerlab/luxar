@@ -264,6 +264,17 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     } catch (err) {
       this.metrics.errors += 1;
       this.finishQueryTracking(queryId, startTime, 'error');
+      // Phase 13.10: emit a monitor 'error' event for parity with
+      // Points (see lines-spatial-index-loader.ts comment).
+      this.emitEvent({
+        type: 'error',
+        loader: 'gsplats-spatial-index',
+        timestamp: Date.now(),
+        data: {
+          path: this.node.path,
+          error: String(err),
+        },
+      });
       throw err;
     }
   }

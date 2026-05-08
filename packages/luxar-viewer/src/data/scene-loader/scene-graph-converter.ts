@@ -15,6 +15,16 @@ import type { SceneGraphNode } from '../../types/data-monitor-types';
 /** Valid scene-graph-node display types. */
 type GraphNodeType = SceneGraphNode['type'];
 
+/** Whitelist of valid display types — anything else falls back to 'scene'. */
+const VALID_TYPES: ReadonlySet<GraphNodeType> = new Set<GraphNodeType>([
+  'scene',
+  'group',
+  'points',
+  'lines',
+  'gsplats',
+  'mesh',
+]);
+
 /**
  * Pretty-print the node's display name from its path:
  *   - root path "/"  → "Scene"
@@ -26,13 +36,17 @@ function deriveDisplayName(path: string): string {
   return path.split('/').filter(Boolean).pop() || path;
 }
 
-/** Coerce the node's `type` field to a valid `SceneGraphNode['type']`. */
+/**
+ * Coerce the node's `type` field to a valid `SceneGraphNode['type']`.
+ *
+ * Phase 13.10: previously used a bare `as` cast that let unknown types
+ * (e.g. `'volume'` from a future schema) leak into the UI union and
+ * lie to TypeScript. Whitelist explicitly so downstream switch
+ * statements can rely on the union being honest.
+ */
 function deriveDisplayType(rawType: string | undefined): GraphNodeType {
   if (!rawType || rawType === 'scene') return 'scene';
-  // `as` cast: the union is finite and rawType has already been narrowed
-  // to a string by the loader; unknown types fall back to 'scene' above
-  // is the conservative default.
-  return rawType as GraphNodeType;
+  return VALID_TYPES.has(rawType as GraphNodeType) ? (rawType as GraphNodeType) : 'scene';
 }
 
 /**

@@ -283,6 +283,19 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     } catch (err) {
       this.metrics.errors += 1;
       this.finishQueryTracking(queryId, startTime, 'error');
+      // Phase 13.10: emit a monitor 'error' event so event-driven
+      // dashboards/timelines see the failure (Points already does
+      // this; Lines/GSplats were polling-only and diverged from
+      // Points event semantics).
+      this.emitEvent({
+        type: 'error',
+        loader: 'lines-spatial-index',
+        timestamp: Date.now(),
+        data: {
+          path: this.node.path,
+          error: String(err),
+        },
+      });
       throw err;
     }
   }

@@ -465,8 +465,10 @@ export function projectPointsTo3D(
  * worker thread via the global worker pool. Uses `Comlink.transfer()`
  * under the hood for zero-copy `ArrayBuffer` transfer.
  *
- * On any worker failure (`getWorker()` rejection, RPC error, structured
- * clone failure) the call falls back to `projectPointsTo3D` on the main
+ * On any worker failure (`runWithTimeout` rejection — including the
+ * {@link import('../../workers/worker-pool').WorkerTimeoutError} fired
+ * after `workerProjectionTimeoutMs` — RPC error, or structured clone
+ * failure) the call falls back to `projectPointsTo3D` on the main
  * thread with `targetBuffers=null` — no accumulator path on fallback.
  */
 export async function projectPointsTo3DUsingWorker(

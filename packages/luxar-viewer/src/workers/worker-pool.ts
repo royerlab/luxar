@@ -386,6 +386,16 @@ export class WorkerPool {
    * Untracked callers receive workers in rotating order. For load-aware
    * selection (picking the worker with the fewest active queries), use
    * {@link getWorkerWithTracking} instead.
+   *
+   * **Important — no timeout guard.** Direct `await` on the returned
+   * `Remote<DataWorkerAPI>` lets a dead/stuck worker hang the caller
+   * indefinitely (Comlink's onerror handler can't settle an in-flight
+   * promise). Production code MUST go through {@link runWithTimeout}
+   * instead — it routes the call through {@link withTimeout} on a
+   * round-robin-selected worker. This direct `getWorker()` accessor is
+   * intentionally retained for tests and low-level worker-pool
+   * unit tests that need raw access; lint-grep for new production
+   * uses periodically.
    */
   async getWorker(): Promise<Remote<DataWorkerAPI>> {
     return (await this.nextWorkerInstance()).api;

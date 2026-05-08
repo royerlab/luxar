@@ -602,6 +602,39 @@ describe('LinesSpatialIndexLoader', () => {
         const metrics = bodyLoader.getMetrics();
         expect(metrics.errors).toBeGreaterThanOrEqual(1);
       });
+
+      // Phase 13.10: Lines/GSplats now emit a monitor 'error' event
+      // for parity with Points (event-driven dashboards previously
+      // saw points failures but not lines/gsplats failures).
+      it('emits a monitor "error" event on load failure', async () => {
+        (zarr.get as unknown as ReturnType<typeof vi.fn>).mockImplementation((array: unknown) => {
+          if (array === vertexBoundsArray || array === segmentBoundsArray) {
+            return Promise.resolve({ data: new Float32Array(10 * 3 * 2) });
+          }
+          return Promise.reject(new Error('Load failed'));
+        });
+
+        const listener = vi.fn();
+        bodyLoader.addEventListener(listener);
+
+        const viewState: ViewState = {
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0],
+          tolerance: [0, 0, 0],
+        };
+        await expect(bodyLoader.loadLines(viewState)).rejects.toThrow();
+
+        expect(listener).toHaveBeenCalledWith(
+          expect.objectContaining({
+            type: 'error',
+            loader: 'lines-spatial-index',
+            data: expect.objectContaining({
+              path: '/test_lines',
+              error: expect.stringContaining('Load failed'),
+            }),
+          })
+        );
+      });
     });
 
     describe('updateView', () => {
