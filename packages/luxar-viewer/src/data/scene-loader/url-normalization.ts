@@ -16,14 +16,18 @@
 /**
  * Normalize a dataset URL to absolute, slash-terminated form.
  *
- * - Absolute URLs (http://, https://): return as-is, ensuring a trailing slash.
+ * - Absolute URLs (http://, https://, case-insensitive): return as-is,
+ *   ensuring a trailing slash. Phase 13.12: case-insensitive matching
+ *   so a mixed-case `HTTPS://...` (which `normalizeDataSourceUrl`
+ *   already accepts via `URL.protocol`) doesn't get treated as a
+ *   relative path here.
  * - Relative paths: prepend the supplied `windowOrigin`, ensuring a leading
  *   slash on the path and a trailing slash on the result.
  *
  * Pure given an explicit origin.
  */
 export function normalizeURL(url: string, windowOrigin: string): string {
-  if (url.startsWith('http://') || url.startsWith('https://')) {
+  if (/^https?:\/\//i.test(url)) {
     return url.endsWith('/') ? url : url + '/';
   }
   const cleanPath = url.startsWith('/') ? url : '/' + url;

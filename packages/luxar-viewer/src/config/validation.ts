@@ -169,6 +169,18 @@ function validateDataLoading(config: AppConfig, errors: string[], _warnings: str
   if (dataLoading.network.timeoutMs <= 0) {
     errors.push(`Invalid network timeout: ${dataLoading.network.timeoutMs} ms (must be > 0)`);
   }
+  // Phase 13.12: validationTimeoutMs is the per-request total budget
+  // for cache validation in fetchWithRetry; 0 / negative / NaN /
+  // Infinity all produce surprising abort/retry behavior, so reject
+  // up front.
+  if (
+    !Number.isFinite(dataLoading.network.validationTimeoutMs) ||
+    dataLoading.network.validationTimeoutMs <= 0
+  ) {
+    errors.push(
+      `Invalid validation timeout: ${dataLoading.network.validationTimeoutMs} ms (must be a finite positive number)`
+    );
+  }
   if (dataLoading.network.maxConcurrent <= 0) {
     errors.push(
       `Invalid max concurrent requests: ${dataLoading.network.maxConcurrent} (must be > 0)`

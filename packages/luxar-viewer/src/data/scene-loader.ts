@@ -1855,10 +1855,14 @@ export class SceneLoader {
   }
 
   /**
-   * Normalize URL for zarr store access
+   * Normalize URL for zarr store access. Phase 13.12: guard `window`
+   * so this works in non-DOM contexts (tests, embed-in-Worker
+   * scenarios). Absolute URLs ignore the origin entirely; the
+   * fallback only matters for relative paths.
    */
   private normalizeURL(url: string): string {
-    return normalizeURL(url, window.location.origin);
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost';
+    return normalizeURL(url, origin);
   }
 
   /**

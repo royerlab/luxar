@@ -62,6 +62,14 @@ export function normalizeDataSourceUrl(rawSrc: string | null): string | null {
     try {
       const url = new URL(src);
       if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+      // Phase 13.12: return canonical url.href (trailing slash
+      // stripped) so mixed-case schemes like `HTTPS://...` flow
+      // through downstream helpers as `https://...`. Pre-fix the
+      // original `src` was returned verbatim and the scene-loader's
+      // url-normalization helper (which only matched lowercase
+      // prefixes) treated it as a relative path.
+      const canonical = url.href.replace(/\/+$/, '');
+      return canonical.length === 0 ? null : canonical;
     } catch {
       return null;
     }

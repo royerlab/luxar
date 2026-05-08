@@ -309,6 +309,50 @@ describe('validateConfig', () => {
       expect(result.errors).toContainEqual(expect.stringContaining('Invalid network timeout'));
     });
 
+    // Phase 13.12: validationTimeoutMs is the per-request budget for
+    // cache validation in fetchWithRetry. Pre-fix it was unvalidated;
+    // 0 / negative / NaN / Infinity all flowed through and produced
+    // surprising abort/retry behavior.
+    it('should error when validationTimeoutMs is zero', () => {
+      const cfg = cloneConfig();
+      cfg.dataLoading.network.validationTimeoutMs = 0;
+
+      const result = validateConfig(cfg);
+
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(expect.stringContaining('Invalid validation timeout'));
+    });
+
+    it('should error when validationTimeoutMs is negative', () => {
+      const cfg = cloneConfig();
+      cfg.dataLoading.network.validationTimeoutMs = -50;
+
+      const result = validateConfig(cfg);
+
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(expect.stringContaining('Invalid validation timeout'));
+    });
+
+    it('should error when validationTimeoutMs is NaN', () => {
+      const cfg = cloneConfig();
+      cfg.dataLoading.network.validationTimeoutMs = Number.NaN;
+
+      const result = validateConfig(cfg);
+
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(expect.stringContaining('Invalid validation timeout'));
+    });
+
+    it('should error when validationTimeoutMs is Infinity', () => {
+      const cfg = cloneConfig();
+      cfg.dataLoading.network.validationTimeoutMs = Number.POSITIVE_INFINITY;
+
+      const result = validateConfig(cfg);
+
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(expect.stringContaining('Invalid validation timeout'));
+    });
+
     it('should error when maxConcurrent is zero', () => {
       const cfg = cloneConfig();
       cfg.dataLoading.network.maxConcurrent = 0;
