@@ -48,3 +48,32 @@ Reflect.construct = function patchedConstruct<T extends object>(
 
 // Install all mocks
 installAllMocks();
+
+// Silence the jsdom "Not implemented: navigation (except hash changes)"
+// errors emitted whenever production code calls `<a>.click()` to trigger
+// a download (recording-panel screenshot/video/EXR export uses this
+// pattern). The behaviour is correct in real browsers; jsdom can't
+// navigate, so it emits a jsdomError which the default virtualConsole
+// pipes to console.error.
+//
+// Intercept at the virtualConsole `jsdomError` listener level — jsdom's
+// own emit path — so the noise is filtered before the runner ever sees
+// it. Other jsdomError messages (real DOM violations) still propagate.
+{
+  type VirtualConsoleLike = {
+    on(event: 'jsdomError', cb: (e: Error) => void): void;
+    removeAllListeners(event: 'jsdomError'): void;
+  };
+  const win = (typeof window !== 'undefined' ? window : null) as
+    | (Window & { _virtualConsole?: VirtualConsoleLike })
+    | null;
+  const vc = win?._virtualConsole;
+  if (vc) {
+    vc.removeAllListeners('jsdomError');
+    vc.on('jsdomError', (err: Error) => {
+      if (err.message.startsWith('Not implemented: navigation')) return;
+      // Anything else: forward verbatim so real DOM violations aren't lost.
+      console.error(err);
+    });
+  }
+}
