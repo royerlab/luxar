@@ -29,16 +29,17 @@ export function clampGamma(gamma: number): number {
  * testable, and lets the caller decide how to apply it (e.g. set on a
  * material, or compose into a snapshot).
  *
- * `blendEquation` is only meaningful for the 'max' mode (which uses
- * `CustomBlending` with `MaxEquation`); leaving it `undefined` for the
- * other modes signals "leave whatever the material already had".
+ * `blendEquation` is part of the *total* state — every mode reports it
+ * (even non-max modes report `THREE.AddEquation`, the default). That way
+ * switching from 'max' back to 'additive' resets the equation instead of
+ * stranding `MaxEquation` on the material from a previous selection.
  */
 export interface BlendingState {
   blending: THREE.Blending;
   depthTest: boolean;
   depthWrite: boolean;
   transparent: boolean;
-  blendEquation?: THREE.BlendingEquation;
+  blendEquation: THREE.BlendingEquation;
 }
 
 /**
@@ -56,6 +57,7 @@ export function getBlendingState(mode: string): BlendingState {
         depthTest: false,
         depthWrite: false,
         transparent: true,
+        blendEquation: THREE.AddEquation,
       };
     case 'normal':
       return {
@@ -63,6 +65,7 @@ export function getBlendingState(mode: string): BlendingState {
         depthTest: true,
         depthWrite: false,
         transparent: true,
+        blendEquation: THREE.AddEquation,
       };
     case 'max':
       return {
@@ -78,6 +81,7 @@ export function getBlendingState(mode: string): BlendingState {
         depthTest: true,
         depthWrite: true,
         transparent: false,
+        blendEquation: THREE.AddEquation,
       };
     case 'luminous':
       return {
@@ -85,6 +89,7 @@ export function getBlendingState(mode: string): BlendingState {
         depthTest: true,
         depthWrite: false,
         transparent: true,
+        blendEquation: THREE.AddEquation,
       };
     default:
       return {
@@ -92,6 +97,7 @@ export function getBlendingState(mode: string): BlendingState {
         depthTest: true,
         depthWrite: false,
         transparent: true,
+        blendEquation: THREE.AddEquation,
       };
   }
 }

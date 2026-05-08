@@ -39,13 +39,15 @@ describe('clampGamma', () => {
 });
 
 describe('getBlendingState', () => {
-  it('additive: AdditiveBlending, no depth, transparent', () => {
+  it('additive: AdditiveBlending, no depth, transparent, AddEquation', () => {
     const s = getBlendingState('additive');
     expect(s.blending).toBe(THREE.AdditiveBlending);
     expect(s.depthTest).toBe(false);
     expect(s.depthWrite).toBe(false);
     expect(s.transparent).toBe(true);
-    expect(s.blendEquation).toBeUndefined();
+    // BlendingState is now total — non-max modes report AddEquation so
+    // switching from 'max' resets the equation instead of stranding it.
+    expect(s.blendEquation).toBe(THREE.AddEquation);
   });
 
   it('normal: NormalBlending, depth-tested, transparent', () => {
@@ -99,6 +101,25 @@ describe('getBlendingState', () => {
     const modes = ['additive', 'normal', 'max', 'opaque', 'luminous'];
     const opaque = modes.filter((m) => !getBlendingState(m).transparent);
     expect(opaque).toEqual(['opaque']);
+  });
+
+  it('every mode reports a defined blendEquation (total state)', () => {
+    const modes = ['additive', 'normal', 'max', 'opaque', 'luminous', 'unknown'];
+    for (const m of modes) {
+      expect(getBlendingState(m).blendEquation).toBeDefined();
+    }
+  });
+
+  it('max is the only mode with MaxEquation; everything else uses AddEquation', () => {
+    const modes = ['additive', 'normal', 'max', 'opaque', 'luminous'];
+    const equationByMode = Object.fromEntries(
+      modes.map((m) => [m, getBlendingState(m).blendEquation])
+    );
+    expect(equationByMode.max).toBe(THREE.MaxEquation);
+    expect(equationByMode.additive).toBe(THREE.AddEquation);
+    expect(equationByMode.normal).toBe(THREE.AddEquation);
+    expect(equationByMode.opaque).toBe(THREE.AddEquation);
+    expect(equationByMode.luminous).toBe(THREE.AddEquation);
   });
 });
 

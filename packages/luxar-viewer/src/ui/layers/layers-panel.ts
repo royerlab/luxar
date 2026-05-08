@@ -702,9 +702,10 @@ export class LayersPanel {
     mat.depthTest = state.depthTest;
     mat.depthWrite = state.depthWrite;
     mat.transparent = state.transparent;
-    if (state.blendEquation !== undefined) {
-      mat.blendEquation = state.blendEquation;
-    }
+    // BlendingState is total — non-max modes report THREE.AddEquation, so
+    // switching from 'max' back to e.g. 'additive' resets the equation
+    // instead of stranding MaxEquation on the material.
+    mat.blendEquation = state.blendEquation;
     mat.needsUpdate = true;
   }
 
