@@ -1,7 +1,7 @@
 # luxar-viewer.core - Technical Specification
 
-**Version**: 1.1.0
-**Last Updated**: 2025-12-09
+**Version**: 1.2.0
+**Last Updated**: 2026-05-08
 
 ## Purpose
 
@@ -392,7 +392,7 @@ declare global {
       renderingControls?: any;
       getState?: () => any;
       renderOnce?: () => void;
-      getSceneLoader?: () => Promise<any>;
+      getSceneLoader?: () => SceneLoaderManager;
       runtimeReady?: boolean;
       cache?: CacheDebugAPI;
     };
@@ -456,7 +456,7 @@ window.__luxarDebug.consoleInterceptor.getMessages();
   // Helper functions (see sections below)
   getState: () => StateSnapshot,           // Get current state
   renderOnce: () => void,                  // Trigger single frame
-  getSceneLoader: () => Promise<SceneLoaderManager>, // Get loader instance
+  getSceneLoader: () => SceneLoaderManager, // Get loader instance (sync)
 
   // Cache API (see section 6.5)
   cache: CacheDebugAPI,
@@ -560,18 +560,21 @@ setTimeout(() => {
 **Signature**:
 
 ```typescript
-async getSceneLoader(): Promise<SceneLoaderManager>
+getSceneLoader(): SceneLoaderManager
 ```
 
 **Usage**:
 
 ```javascript
-const manager = await window.__luxarDebug.getSceneLoader();
+const manager = window.__luxarDebug.getSceneLoader();
 const loader = manager.getDefaultLoader();
 console.log(loader);
 ```
 
-**Note**: Uses dynamic import to avoid circular dependencies.
+**Note**: Synchronous since Phase 4.5 / extracted into
+`debug-state.ts`. Earlier revisions used a dynamic import to break
+a circular dependency; the dependency was inverted in Phase 8.6 and
+no longer requires async resolution.
 
 ---
 

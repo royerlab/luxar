@@ -33,10 +33,8 @@ data/
 ├── README.md                      # This documentation
 │
 ├── points/                        # Points geometry — facade + decomposition + math
-│   ├── point-spatial-index-loader.ts  # Loads points using chunk-based spatial queries
+│   ├── points-spatial-index-loader.ts # Loads points using chunk-based spatial queries
 │   ├── chunk-index-loader.ts          # `chunk_bounds` zarr probe + registerBounds
-│   ├── loader-metrics.ts              # Latency / event metrics
-│   ├── monitor-events.ts              # LoaderEventEmitter
 │   ├── projection.ts                  # nD → 3D projection (worker + main-thread paths)
 │   └── effective-radius-calculator.ts # Effective-radii math for nD slicing
 │
@@ -79,7 +77,10 @@ data/
 │   ├── image-label-loader.ts      # Lazy per-element image fetching from zarr
 │   ├── label-loader.ts            # Lazy CSR-style label fetching from zarr
 │   ├── overlay-loader.ts          # Reads overlay configurations from zarr store
-│   └── loader-registry.ts         # Lifecycle management for geometry loaders
+│   ├── loader-registry.ts         # Lifecycle management for geometry loaders
+│   ├── loader-metrics.ts          # Shared latency / event metrics (per-geometry)
+│   ├── monitor-events.ts          # Shared LoaderEventEmitter for monitor events
+│   └── color-attribute-utils.ts   # Shared color-range loader (points, lines, gsplats)
 │
 └── (related: ../workers/)         # Web Worker infrastructure
     ├── worker-pool.ts             # Pool manager with load balancing
@@ -168,7 +169,12 @@ The SceneLoader has been refactored into focused, testable modules:
 
 - **Testability**: Each module tested independently (88+ new tests)
 - **Maintainability**: Clear responsibility boundaries
-- **Reduced Complexity**: SceneLoader reduced from ~2000 to ~800 lines
+- **Reduced Complexity**: SceneLoader is currently ~2,100 lines (was an even
+  larger God-Object pre-decomposition) and continues to shrink as
+  per-geometry helpers extract; the long-term target is under 1,500.
+  See `scene-loader/` siblings (data-processor-{lines,gsplats},
+  commit-points-geometry, extend-tolerance, scene-graph-converter,
+  url-normalization) for the extracted concerns.
 
 ---
 
@@ -817,7 +823,15 @@ clearCaches();
 ### Advanced Instance Management
 
 ```typescript
-import { SceneLoaderManager, DataMonitorManager } from 'luxar-viewer/data';
+// Phase 8.6.e separated the data/ and ui/ layers: SceneLoader now
+// receives a SceneLoaderMonitorPort factory at construction (wired in
+// core/app.ts) instead of importing DataMonitorManager directly.
+// Production code resolves the monitor through that port; the example
+// below shows direct registry access for diagnostic/advanced cases.
+import { SceneLoaderManager } from 'luxar-viewer/data';
+// DataMonitorManager lives in ui/ now; only import it from there if you
+// truly need to inspect the monitor singleton (rare).
+import { DataMonitorManager } from 'luxar-viewer/ui/monitors';
 
 // Direct access to manager for advanced use cases
 const loaderManager = SceneLoaderManager.getInstance();
@@ -977,7 +991,7 @@ location /data/ {
 | `getAllLoaders()`                          | Get all active loader instances             |
 | `destroyLoader(id)`                        | Dispose and remove a specific loader        |
 | `destroyAll()`                             | Dispose all loaders and reset manager       |
-| `reset()`                                  | Reset singleton (for testing)               |
+| `disposeInstance()`                        | Dispose the singleton (call from app dispose; preserved for re-init) |
 
 ### Scene Loading (scene-loader.ts)
 
@@ -1061,7 +1075,7 @@ location /data/ {
 | `hideMonitor(id?)`                      | Hide specific or default monitor           |
 | `toggleMonitor(id?)`                    | Toggle specific or default monitor         |
 | `destroyMonitor(id)`                    | Dispose and remove a specific monitor      |
-| `reset()`                               | Reset singleton (for testing)              |
+| `disposeInstance()`                     | Dispose the singleton (called from app dispose) |
 
 ### Directory Navigation (directory-navigator.ts)
 

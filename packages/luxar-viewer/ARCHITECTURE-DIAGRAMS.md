@@ -1,9 +1,20 @@
 # Luxar Viewer - Architecture Diagrams
 
-**Version**: 1.0.0
-**Last Updated**: 2025-12-09
+**Version**: 1.1.0
+**Last Updated**: 2026-05-08
 
 Visual reference for understanding the Luxar viewer architecture, data flow, and key algorithms.
+
+> **Phase 13.17 note**: this document predates the per-geometry data
+> reorganization (Phase 10), the input → ui dependency-inversion via
+> `DimensionSlidersFactory` (Phase 8.6.d), and the data → ui
+> dependency-inversion via `SceneLoaderMonitorPort` (Phase 8.6.e).
+> Diagrams referencing a singular `PointSpatialIndexLoader` or showing
+> `DimensionSliders` as a direct dependency of `input/` are stale.
+> See `src/data/README.md` for the current per-geometry split and
+> `.dependency-cruiser.cjs` for the authoritative layer order
+> (`types → config → cache → rendering → data → scene → input → ui →
+> core`). A full refresh is tracked as a Phase 14 follow-up.
 
 ---
 
