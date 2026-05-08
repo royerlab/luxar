@@ -1,6 +1,6 @@
 /**
- * Shared color-attribute helpers used by the lines and gsplats spatial-index
- * loaders.
+ * Shared color-attribute helpers used by the points, lines, and gsplats
+ * spatial-index loaders.
  *
  * Color arrays carry extra structure compared to position/scalar arrays:
  *
@@ -13,10 +13,10 @@
  *     `original_dtype` attribute that records what shape the GPU expects.
  *     After decoding to Float32 we cast back to that type.
  *
- * These helpers used to be duplicated almost byte-for-byte between
- * `lines-spatial-index-loader.ts` and `gsplats-spatial-index-loader.ts` (only
- * the range parameter type was named differently). Extracting them keeps
- * future fixes — e.g. a new dtype string variant — in one place.
+ * These helpers used to be duplicated almost byte-for-byte between the
+ * three spatial-index loaders (only the range parameter type was named
+ * differently). Phase 11.8 migrated points to share them; the file now
+ * serves all three geometry loaders.
  *
  * @module data/loaders/color-attribute-utils
  */

@@ -1825,7 +1825,12 @@ This section documents all TypeScript source files in the `data/` package with t
 
 **Purpose**: Core types and interfaces for the data loading architecture. Defines clean abstractions for loading nD points data with spatial indexing support and aligned attribute loading.
 
-**Key Exports**: `ViewState`, `LoadedPointsData`, `DataLoader`, `LoaderConfig`, `PointRange`, `SceneNode`, `SpatialQueryResult`, `LoaderStats`, `PositionArray`, `ColorArray`, `ScalarArray`, `validateViewStateForExtendToAll()`
+**Key Exports**: `ViewState`, `LoadedPointsData`, `DataLoader`, `LoaderConfig`, `PointRange`, `SceneNode`, `SpatialQueryResult`, `LoaderStats`, `PositionArray`, `ColorArray`, `ScalarArray`
+
+> Phase 13.18: removed unused `validateViewStateForExtendToAll()`. The
+> dim-name validation now lives in `scene-loader/extend-tolerance.ts:
+> validateExtendDims`, which `deriveNodeViewState` calls before
+> applying any extend_to_all tolerance override.
 
 **Relationships**: Foundational type definitions consumed by all loader implementations and the scene loading pipeline.
 

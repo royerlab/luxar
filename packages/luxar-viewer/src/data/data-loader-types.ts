@@ -6,7 +6,6 @@
  */
 
 import type { DimensionMetadata } from '../types/dims';
-import { log, Modules } from '../utils/log';
 
 /**
  * Represents the current view state for data loading.
@@ -45,31 +44,6 @@ export interface ViewState {
    * instead.
    */
   dimensions?: DimensionMetadata[];
-}
-
-/**
- * Validates that ViewState has dimensions when extend_to_all is used.
- * Logs a warning if dimensions is missing.
- *
- * @param viewState - The view state to validate
- * @param extendToAll - The extend_to_all array from node attributes
- * @param nodePath - Path of the node for logging
- * @returns true if dimensions is present or extend_to_all is empty
- */
-export function validateViewStateForExtendToAll(
-  viewState: ViewState,
-  extendToAll: string[] | undefined,
-  nodePath: string
-): boolean {
-  if (extendToAll && extendToAll.length > 0 && !viewState.dimensions) {
-    log.warning(
-      Modules.SCENE_DIMS,
-      `Node "${nodePath}" has extend_to_all configured but ViewState.dimensions is undefined. ` +
-        'The extend_to_all optimization will be skipped. Provide dimensions in ViewState for this feature to work.'
-    );
-    return false;
-  }
-  return true;
 }
 
 // Re-export the points-specific types (LoadedPointsData, PointRange,

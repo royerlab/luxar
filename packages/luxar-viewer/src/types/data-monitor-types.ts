@@ -6,7 +6,12 @@
  * and loading statistics in real-time.
  */
 
-import type { PointRange } from '../data';
+// Phase 13.18: import PointRange directly from its `types/` source
+// rather than from the `data` barrel. types/ is the foundational
+// layer; reaching upward into `data/` (which re-exports runtime
+// APIs and managers) inverts the dependency direction even though
+// dependency-cruiser allows it for type-only imports.
+import type { PointRange } from './points';
 
 /**
  * Event types emitted by data loaders
