@@ -11,7 +11,7 @@
  * CRITICAL: Spatial indexing is core to performance - must be correct!
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import {
   waitForLuxarReady,
   getLuxarState,

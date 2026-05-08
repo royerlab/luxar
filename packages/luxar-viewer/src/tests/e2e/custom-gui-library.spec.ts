@@ -5,7 +5,7 @@
  * the library and demonstrates all features.
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { waitForNextRender } from './helpers';
 
 // Extend Window type for test-specific properties

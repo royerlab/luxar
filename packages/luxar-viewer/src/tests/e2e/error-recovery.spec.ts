@@ -11,13 +11,24 @@
  * IMPORTANT: Good error recovery improves user experience and debugging
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect, ALLOW_CONSOLE_ERRORS } from './fixtures';
 import {
   waitForLuxarReady,
   getLuxarState,
   waitForSpatialQuery,
   waitForNextRender,
 } from './helpers';
+
+// All tests in this file deliberately exercise broken-dataset paths
+// (missing files, corrupted zmetadata, missing positions, network
+// timeouts, etc.). The viewer's correct response logs console errors;
+// asserting their absence would defeat the purpose of these tests.
+test.beforeEach(({}, testInfo) => {
+  testInfo.annotations.push({
+    type: ALLOW_CONSOLE_ERRORS,
+    description: 'Error-recovery tests deliberately trigger viewer console.error output.',
+  });
+});
 
 test.describe('Error Recovery - Invalid Datasets', () => {
   test('should show error for non-existent dataset', async ({ page }) => {

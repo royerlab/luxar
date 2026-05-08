@@ -21,7 +21,7 @@
  * These are the only fixed sleeps in this file by design.
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import {
   waitForLuxarReady,
   getLuxarState,

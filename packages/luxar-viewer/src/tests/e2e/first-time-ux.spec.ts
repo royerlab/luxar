@@ -9,7 +9,7 @@
  * Validates the UX improvements for better onboarding.
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { waitForNextRender } from './helpers';
 
 test.describe('First-Time User Experience', () => {

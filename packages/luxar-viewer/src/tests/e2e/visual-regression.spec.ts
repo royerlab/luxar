@@ -8,7 +8,7 @@
  * Update baselines with: pnpm test:e2e --update-snapshots
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { waitForLuxarReady, waitForRenderStable, waitForNextRender } from './helpers';
 
 // Dataset paths (served from Python HTTP server on port 9000)

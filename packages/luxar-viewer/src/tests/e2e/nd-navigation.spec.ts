@@ -8,7 +8,7 @@
  * CRITICAL: This is Luxar's core differentiating feature!
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import {
   waitForLuxarReady,
   getLuxarState,

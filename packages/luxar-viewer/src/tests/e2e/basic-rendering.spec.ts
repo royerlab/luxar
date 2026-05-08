@@ -8,7 +8,7 @@
  * - Render basic demo datasets
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { waitForLuxarReady } from './helpers';
 
 test.describe('Luxar Basic Rendering', () => {

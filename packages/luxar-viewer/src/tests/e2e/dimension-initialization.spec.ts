@@ -12,7 +12,7 @@
  * - Displayed dimensions (X, Y, Z) → Start at 0 (camera-controlled)
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import {
   waitForLuxarReady,
   getLuxarState,

@@ -13,7 +13,7 @@
  * To reset baselines: delete performance-baselines.json and run tests
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { waitForLuxarReady, waitForSpatialQuery, waitForNextRender } from './helpers';
 import * as fs from 'fs';
 import * as path from 'path';

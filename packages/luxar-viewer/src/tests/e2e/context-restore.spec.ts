@@ -15,7 +15,7 @@
  * `webglcontextrestored` actually recreate the post-processing pipeline.
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { waitForLuxarReady } from './helpers';
 
 async function loseAndRestoreContext(page: import('@playwright/test').Page): Promise<boolean> {

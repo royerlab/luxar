@@ -13,7 +13,7 @@
  * attribute arrays that cause users to see garbage data with no error message.
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import {
   waitForLuxarReady,
   waitForPointsLoaded,

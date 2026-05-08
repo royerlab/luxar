@@ -10,7 +10,7 @@
  * Run with: pnpm test:e2e or pnpm test:e2e:ui
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import {
   waitForLuxarReady,
   waitForDataLoaded,

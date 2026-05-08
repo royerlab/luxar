@@ -14,7 +14,7 @@
  *   - At world time=3: ~0 points (neither group has data here)
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { waitForLuxarReady, getLuxarState, waitForDataLoaded, waitForNextRender } from './helpers';
 
 // Fixture URL — served by the Python HTTP server (port 9000) from project root

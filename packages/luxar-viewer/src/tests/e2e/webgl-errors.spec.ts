@@ -10,7 +10,7 @@
  * "Vertex buffer is not big enough" errors in production demos.
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { waitForLuxarReady, waitForNextRender } from './helpers';
 
 // Test all example datasets for WebGL errors
