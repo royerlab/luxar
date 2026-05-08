@@ -23,7 +23,7 @@ import {
 // (missing files, corrupted zmetadata, missing positions, network
 // timeouts, etc.). The viewer's correct response logs console errors;
 // asserting their absence would defeat the purpose of these tests.
-test.beforeEach(({}, testInfo) => {
+test.beforeEach(async (_fixtures, testInfo) => {
   testInfo.annotations.push({
     type: ALLOW_CONSOLE_ERRORS,
     description: 'Error-recovery tests deliberately trigger viewer console.error output.',
