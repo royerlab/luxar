@@ -38,6 +38,41 @@ declared in `vitest.config.ts`. A PR can pass `check` while
 violating layers or dropping coverage; that cannot happen with
 `check:ci`.
 
+### E2E console-error fixture (opt-in)
+
+`src/tests/e2e/fixtures.ts` exports a re-extended `test` that
+auto-runs `assertNoConsoleErrors(page)` after each test. Specs that
+opt in switch their import:
+
+```ts
+// before
+import { test, expect } from '@playwright/test';
+
+// after
+import { test, expect } from './fixtures';
+```
+
+For specs that *intentionally* trigger console errors (e.g.
+`error-recovery.spec.ts`, `webgl-errors.spec.ts`), opt out per
+test via the `allow-console-errors` annotation:
+
+```ts
+import { test, ALLOW_CONSOLE_ERRORS } from './fixtures';
+
+test('handles network timeout gracefully', async ({ page }) => {
+  test.info().annotations.push({
+    type: ALLOW_CONSOLE_ERRORS,
+    description: 'Test exercises a deliberately broken URL.',
+  });
+  // ... test body ...
+});
+```
+
+12 of 40 specs already call `assertNoConsoleErrors` explicitly —
+those keep working as-is, opting in to the fixture is additive.
+The remaining 28 specs lack any console-error guard today;
+migrating them is a per-spec follow-up.
+
 ---
 
 ## Test Organization

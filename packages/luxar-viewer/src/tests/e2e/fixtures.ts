@@ -58,3 +58,4 @@ export const test = base.extend({
 });
 
 export { expect } from '@playwright/test';
+export type { Page, Locator, Browser, BrowserContext } from '@playwright/test';
