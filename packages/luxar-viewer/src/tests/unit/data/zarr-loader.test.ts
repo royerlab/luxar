@@ -193,57 +193,24 @@ vi.mock('zarrita', async () => {
   };
 });
 
-// Mock PointsSpatialIndexLoader
-vi.mock('../data/points-spatial-index-loader', () => ({
-  PointsSpatialIndexLoader: vi.fn().mockImplementation(() => ({
-    loadPoints: vi.fn().mockResolvedValue({
-      positions: new Float32Array([1, 2, 3, 4, 5, 6]),
-      colors: new Float32Array([1, 0, 0, 0, 1, 0]),
-      radii: new Float32Array([0.1, 0.2]),
-      metadata: {
-        totalPoints: 2,
-        loadedPoints: 2,
-        bounds: {
-          clone: vi.fn().mockReturnThis(),
-          expandByPoint: vi.fn(),
-        },
-        ndim: 3,
-        usedSpatialIndex: true,
-      },
-    }),
-    updateView: vi.fn().mockResolvedValue({
-      positions: new Float32Array([1, 2, 3]),
-      metadata: {
-        totalPoints: 1,
-        loadedPoints: 1,
-        bounds: {
-          clone: vi.fn().mockReturnThis(),
-          expandByPoint: vi.fn(),
-        },
-        ndim: 3,
-        usedSpatialIndex: true,
-      },
-    }),
-    dispose: vi.fn(),
-  })),
-}));
-
-// Mock material manager
-vi.mock('../rendering/material-manager', () => ({
-  materialManager: {
-    getPointMaterial: vi.fn().mockReturnValue({
-      uniforms: {
-        opacity: { value: 1.0 },
-        gamma: { value: 1.0 },
-        fov: { value: 1.047 },
-        resolution: { value: { x: 1, y: 1 } },
-      },
-      userData: {},
-      updateCameraParams: vi.fn(),
-    }),
-    updateCameraParams: vi.fn(),
-  },
-}));
+// Phase 14.15: previous `vi.mock('../data/points-spatial-index-loader')`
+// and `vi.mock('../rendering/material-manager')` mocks lived here, but
+// vitest's vi.mock matches by import specifier as resolved from the
+// MOCKING file, not from the source-under-test's perspective. From this
+// test (src/tests/unit/data/zarr-loader.test.ts), the strings
+// '../data/...' and '../rendering/...' resolve to non-existent paths
+// inside the test tree (src/tests/unit/...), so the mocks were never
+// applied.
+//
+// scene-loader.test.ts:62-77 already documented removing the same kind
+// of dead mocks. Tests in this file pass without them — zarrita is
+// the only external-IO dependency that genuinely needs mocking, and
+// the rest of the source can run against real modules under jsdom.
+//
+// If a future test in this file needs to intercept either of those
+// modules, use source-relative paths:
+//   vi.mock('../../../data/points/points-spatial-index-loader', ...)
+//   vi.mock('../../../rendering/material-manager', ...)
 
 describe('zarr-loader', () => {
   beforeEach(() => {
