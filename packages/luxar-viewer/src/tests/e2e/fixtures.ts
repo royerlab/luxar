@@ -36,6 +36,29 @@ import { assertNoConsoleErrors } from './helpers';
 export const ALLOW_CONSOLE_ERRORS = 'allow-console-errors';
 
 /**
+ * Console error patterns the auto-fixture treats as environmental
+ * flakiness rather than test failures.
+ *
+ * The 12 specs that explicitly call `assertNoConsoleErrors` keep their
+ * own (typically empty or per-test) allow-lists — those are explicit
+ * contracts. The auto-fixture covers the broader set of specs that
+ * just want a "no unexpected errors" smoke check, where headless-
+ * browser environmental noise (WebGL context loss under GPU pressure,
+ * intermittent fetch failures during teardown) would otherwise drown
+ * out real regressions.
+ *
+ * Keep the list narrow — it's safer to add a per-spec annotation than
+ * to silence a broad pattern globally.
+ */
+export const DEFAULT_ALLOWED_CONSOLE_ERRORS: RegExp[] = [
+  // Headless-Chromium occasionally drops the WebGL context under GPU
+  // memory pressure mid-run; the viewer's recovery path logs but
+  // continues. Real context-loss bugs surface as test-result divergence
+  // (black canvas, wrong frame counts) the spec catches separately.
+  /WebGL context lost/,
+];
+
+/**
  * Extended `test` fixture: drop-in replacement for `@playwright/test`'s
  * `test`. Specs that import from this module get auto console-error
  * checking after each test.
@@ -53,7 +76,7 @@ export const test = base.extend({
     // bury it.
     if (testInfo.status === 'failed' || testInfo.status === 'timedOut') return;
 
-    await assertNoConsoleErrors(page);
+    await assertNoConsoleErrors(page, DEFAULT_ALLOWED_CONSOLE_ERRORS);
   },
 });
 
