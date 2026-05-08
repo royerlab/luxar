@@ -14,7 +14,7 @@ import {
   getLuxarState,
   waitForDataLoaded,
   waitForDimensionNavigation,
-  waitForSpatialQuery,
+  waitForSpatialQueryOrThrow,
   waitForNextRender,
 } from './helpers';
 
@@ -127,7 +127,7 @@ test.describe('nD Navigation - Spatial Index Queries', () => {
     await page.keyboard.press('4');
     await waitForNextRender(page);
     await page.keyboard.press(']');
-    await waitForSpatialQuery(page);
+    await waitForSpatialQueryOrThrow(page);
 
     // Should see spatial index query logs OR successful navigation
     const queryLogs = consoleLogs.filter(
@@ -151,7 +151,7 @@ test.describe('nD Navigation - Spatial Index Queries', () => {
   test('should load different points when slice position changes', async ({ page }) => {
     await page.goto(`/?src=${DATASETS.denseGrid5D}&debug`);
     await waitForLuxarReady(page);
-    await waitForSpatialQuery(page);
+    await waitForSpatialQueryOrThrow(page);
 
     // Snapshot the dimension cursor before navigation. The dense 5D grid
     // has uniform population per slice, so we can't compare totalPoints —
@@ -168,7 +168,7 @@ test.describe('nD Navigation - Spatial Index Queries', () => {
     await page.keyboard.press('4');
     await waitForNextRender(page);
     await page.keyboard.press(']');
-    await waitForSpatialQuery(page);
+    await waitForSpatialQueryOrThrow(page);
 
     const newStep = await page.evaluate(() => {
       const state = (window as any).__luxarDebug?.getState?.();
@@ -228,13 +228,13 @@ test.describe('nD Navigation - Spatial Index Queries', () => {
     await page.keyboard.press('4');
     await waitForNextRender(page);
     await page.keyboard.press(']');
-    await waitForSpatialQuery(page);
+    await waitForSpatialQueryOrThrow(page);
 
     cacheLogs.length = 0; // Clear
 
     // Navigate back (should hit cache)
     await page.keyboard.press('[');
-    await waitForSpatialQuery(page, 5000); // Cache hits are faster
+    await waitForSpatialQueryOrThrow(page, 5000); // Cache hits are faster
 
     // Verify navigation back completed successfully
     const state = await getLuxarState(page);
@@ -258,7 +258,7 @@ test.describe('nD Navigation - Broadcasting', () => {
     // Navigate through a dimension (may be broadcast)
     await page.keyboard.press('4');
     await page.keyboard.press(']');
-    await waitForSpatialQuery(page);
+    await waitForSpatialQueryOrThrow(page);
 
     const newPoints = (await getLuxarState(page)).totalPoints;
 

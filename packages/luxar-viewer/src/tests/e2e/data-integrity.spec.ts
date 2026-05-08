@@ -17,7 +17,7 @@ import { test, expect } from './fixtures';
 import {
   waitForLuxarReady,
   waitForPointsLoaded,
-  waitForSpatialQuery,
+  waitForSpatialQueryOrThrow,
   validateSceneAttributes,
   focusCanvas,
   waitForNextRender,
@@ -141,7 +141,7 @@ test.describe('Data Integrity - Attribute Alignment', () => {
     await page.keyboard.press('4');
     await waitForNextRender(page);
     await page.keyboard.press(']');
-    await waitForSpatialQuery(page);
+    await waitForSpatialQueryOrThrow(page);
 
     // Verify integrity after navigation
     const after = await validateSceneAttributes(page);

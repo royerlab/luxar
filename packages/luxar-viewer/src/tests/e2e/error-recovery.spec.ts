@@ -15,7 +15,7 @@ import { test, expect, ALLOW_CONSOLE_ERRORS } from './fixtures';
 import {
   waitForLuxarReady,
   getLuxarState,
-  waitForSpatialQuery,
+  waitForSpatialQueryOrThrow,
   waitForNextRender,
 } from './helpers';
 
@@ -413,7 +413,7 @@ test.describe('Error Recovery - Memory Limits', () => {
 
     for (let i = 0; i < 5; i++) {
       await page.keyboard.press(']');
-      await waitForSpatialQuery(page);
+      await waitForSpatialQueryOrThrow(page);
     }
 
     // Check memory didn't explode
@@ -438,7 +438,7 @@ test.describe('Error Recovery - Memory Limits', () => {
     await page.keyboard.press('4');
     await waitForNextRender(page);
     await page.keyboard.press(']');
-    await waitForSpatialQuery(page);
+    await waitForSpatialQueryOrThrow(page);
 
     const cacheStats = await page.evaluate(async () => {
       const loader = await (window as any).__luxarDebug.getSceneLoader();

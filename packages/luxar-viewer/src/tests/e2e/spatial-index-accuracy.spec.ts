@@ -15,9 +15,9 @@ import { test, expect } from './fixtures';
 import {
   waitForLuxarReady,
   getLuxarState,
-  waitForSpatialQuery,
+  waitForSpatialQueryOrThrow,
   waitForPointsLoaded,
-  waitForNavigationComplete,
+  waitForNavigationCompleteOrThrow,
   waitForNextRender,
 } from './helpers';
 
@@ -72,8 +72,8 @@ test.describe('Spatial Index Query Accuracy', () => {
     await page.keyboard.press('4');
     await waitForNextRender(page);
     await page.keyboard.press(']');
-    await waitForSpatialQuery(page);
-    await waitForNavigationComplete(page);
+    await waitForSpatialQueryOrThrow(page);
+    await waitForNavigationCompleteOrThrow(page);
 
     const afterState = await getLuxarState(page);
     expect(afterState.initialized).toBe(true);
@@ -107,7 +107,7 @@ test.describe('Spatial Index Query Accuracy', () => {
     await page.keyboard.press('4');
     await waitForNextRender(page);
     await page.keyboard.press(']');
-    await waitForSpatialQuery(page);
+    await waitForSpatialQueryOrThrow(page);
 
     // Look for chunk query logs with pattern: "X chunks -> Y ranges -> Z points"
     const queryResult = queryLogs.find((log) => log.match(/\d+\s+chunks?\s+→\s+\d+\s+ranges?/));
@@ -143,7 +143,7 @@ test.describe('Spatial Index Query Accuracy', () => {
     await page.keyboard.press('4');
     await waitForNextRender(page);
     await page.keyboard.press(']');
-    await waitForSpatialQuery(page);
+    await waitForSpatialQueryOrThrow(page);
 
     // Query the actual radius attribute values from the geometry
     const radiusInfo = await page.evaluate(() => {
@@ -223,8 +223,8 @@ test.describe('Spatial Index Query Accuracy', () => {
     await page.keyboard.press(']');
     await page.keyboard.press(']');
     await page.keyboard.press(']');
-    await waitForSpatialQuery(page);
-    await waitForNavigationComplete(page);
+    await waitForSpatialQueryOrThrow(page);
+    await waitForNavigationCompleteOrThrow(page);
 
     const midSliceState = await getLuxarState(page);
     const midSlicePoints = midSliceState.totalPoints;
@@ -264,8 +264,8 @@ test.describe('Spatial Index - Navigation Outside Bounds', () => {
       // handle in-flight queries being superseded.
       await page.waitForTimeout(100);
     }
-    await waitForSpatialQuery(page);
-    await waitForNavigationComplete(page);
+    await waitForSpatialQueryOrThrow(page);
+    await waitForNavigationCompleteOrThrow(page);
 
     const farAwayState = await getLuxarState(page);
 
@@ -308,7 +308,7 @@ test.describe('Spatial Index - Cache Behavior', () => {
     await page.keyboard.press('4');
     await waitForNextRender(page);
     await page.keyboard.press(']');
-    await waitForSpatialQuery(page);
+    await waitForSpatialQueryOrThrow(page);
 
     // Should see cache logs (misses or loads) OR data loads successfully
     const state = await getLuxarState(page);
@@ -327,16 +327,16 @@ test.describe('Spatial Index - Cache Behavior', () => {
     await page.keyboard.press('4');
     await waitForNextRender(page);
     await page.keyboard.press(']');
-    await waitForSpatialQuery(page);
-    await waitForNavigationComplete(page);
+    await waitForSpatialQueryOrThrow(page);
+    await waitForNavigationCompleteOrThrow(page);
 
     const midState = await getLuxarState(page);
     expect(midState.totalPoints).toBeGreaterThan(0);
 
     // Navigate back - should hit cache or reload
     await page.keyboard.press('[');
-    await waitForSpatialQuery(page);
-    await waitForNavigationComplete(page);
+    await waitForSpatialQueryOrThrow(page);
+    await waitForNavigationCompleteOrThrow(page);
 
     const returnState = await getLuxarState(page);
     expect(returnState.initialized).toBe(true);
@@ -361,7 +361,7 @@ test.describe('Spatial Index - Cache Behavior', () => {
 
     for (let i = 0; i < 3; i++) {
       await page.keyboard.press(']');
-      await waitForSpatialQuery(page);
+      await waitForSpatialQueryOrThrow(page);
     }
 
     // Get cache stats via scene loader
@@ -418,8 +418,8 @@ test.describe('Spatial Index - Error Handling', () => {
       await page.waitForTimeout(200);
     }
 
-    await waitForSpatialQuery(page);
-    await waitForNavigationComplete(page);
+    await waitForSpatialQueryOrThrow(page);
+    await waitForNavigationCompleteOrThrow(page);
 
     const state = await getLuxarState(page);
     // Must handle gracefully (non-negative, no crash)

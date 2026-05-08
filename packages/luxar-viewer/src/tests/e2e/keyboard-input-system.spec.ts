@@ -26,7 +26,7 @@ import {
   waitForLuxarReady,
   getLuxarState,
   waitForNextRender,
-  waitForNavigationComplete,
+  waitForNavigationCompleteOrThrow,
   waitForDataLoaded,
 } from './helpers';
 
@@ -87,7 +87,7 @@ test.describe('Keyboard Input System - Fly Controls', () => {
 
     // Reset position for fair comparison
     await page.keyboard.press('f'); // Recenter
-    await waitForNavigationComplete(page);
+    await waitForNavigationCompleteOrThrow(page);
 
     // Test 2: Shift+W speed
     const initial2 = await getLuxarState(page);
@@ -397,7 +397,7 @@ test.describe('Keyboard Input System - Toggle Shortcuts', () => {
 
     // Press F to recenter (this changes where camera LOOKS, not position)
     await page.keyboard.press('f');
-    await waitForNavigationComplete(page);
+    await waitForNavigationCompleteOrThrow(page);
 
     // Get camera's new quaternion
     const finalQ = await page.evaluate(() => {

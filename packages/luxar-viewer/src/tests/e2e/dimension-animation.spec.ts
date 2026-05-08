@@ -18,7 +18,7 @@ import {
   getLuxarState,
   waitForDataLoaded,
   waitForNextRender,
-  waitForNavigationComplete,
+  waitForNavigationCompleteOrThrow,
   focusCanvas,
 } from './helpers';
 
@@ -346,7 +346,7 @@ test.describe('Dimension Animation - Keyboard Shortcuts', () => {
 
     // Press Home to jump to start
     await page.keyboard.press('Home');
-    await waitForNavigationComplete(page);
+    await waitForNavigationCompleteOrThrow(page);
 
     // Check dimension is at start (value 0)
     const afterValue = await getDimensionValue(page, 3);
@@ -378,7 +378,7 @@ test.describe('Dimension Animation - Keyboard Shortcuts', () => {
 
     // Press End to jump to end
     await page.keyboard.press('End');
-    await waitForNavigationComplete(page);
+    await waitForNavigationCompleteOrThrow(page);
 
     // Check dimension is at end
     const value = await getDimensionValue(page, 3);
