@@ -17,8 +17,14 @@
  * Type-only imports (`import type {...}`) are excluded — they're
  * erased at compile time so they don't create runtime coupling.
  *
- * No-circular and no-orphans rules round out the structural
- * guarantees.
+ * The `no-circular` rule rounds out the structural guarantees and
+ * is now severity `error` (Phase 13.16) — zero cycles existed at
+ * the time of the ratchet, and any future cycle should fail the
+ * build rather than warn-and-be-ignored.
+ *
+ * (No `no-orphans` rule — the project's many type-only files would
+ * dominate the report and require a brittle allowlist; a type-aware
+ * tool like `ts-prune` is a better dead-code seam.)
  *
  * Run with `pnpm check:layers`. CI also runs this in pre-commit.
  */
@@ -32,11 +38,13 @@ module.exports = {
   forbidden: [
     {
       name: 'no-circular',
-      severity: 'warn',
+      severity: 'error',
       comment:
         'Circular dependencies are usually a smell — a leaf module ' +
         'requiring its consumer suggests the data flow is upside-down. ' +
-        'Severity is `warn` while we work down the existing list.',
+        'Phase 13.16: ratcheted from warn to error after a clean ' +
+        '`pnpm check:layers --output-type json` showed zero cycles. ' +
+        'Any new cycle now fails the build.',
       from: {},
       to: { circular: true },
     },
