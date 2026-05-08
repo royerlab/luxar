@@ -667,55 +667,19 @@ export function renderInsightsContent(recommendations: Recommendation[]): string
   `;
 }
 
-/**
- * Memory metrics for GPU buffer pool (per-type)
- */
-export interface GPUPoolTypeStats {
-  allocations: number;
-  reuses: number;
-  evictions: number;
-  activeBuffers: number;
-  pooledBuffers: number;
-}
-
-/**
- * Memory metrics for GPU buffer pool
- */
-export interface GPUPoolStats {
-  allocations: number;
-  reuses: number;
-  evictions: number;
-  capacityGrowths: number;
-  activeBuffers: number;
-  pooledBuffers: number;
-  byType: {
-    points: GPUPoolTypeStats;
-    lines: GPUPoolTypeStats;
-    gsplats: GPUPoolTypeStats;
-  };
-}
-
-/**
- * Memory metrics for data accumulators
- */
-export interface AccumulatorStats {
-  capacity: number;
-  allocations: number;
-  growthEvents: number;
-  memoryMB: number;
-}
-
-/**
- * Combined memory metrics for the Memory tab
- */
-export interface MemoryMetrics {
-  gpuPool: GPUPoolStats | null;
-  accumulators: {
-    points: AccumulatorStats | null;
-    lines: AccumulatorStats | null;
-    gsplats: AccumulatorStats | null;
-  };
-}
+// Phase 14.11: memory-metrics contracts moved to `types/data-monitor-types`
+// so the data layer's SceneLoaderMonitorPort can reference them precisely
+// (was `unknown` before). Re-exported here for back-compat with existing
+// UI template callers — eventually remove these re-exports and have callers
+// import directly from `types/`. The local `import type` is needed because
+// other functions in this file reference these types directly.
+import type {
+  GPUPoolTypeStats,
+  GPUPoolStats,
+  AccumulatorStats,
+  MemoryMetrics,
+} from '../../types/data-monitor-types';
+export type { GPUPoolTypeStats, GPUPoolStats, AccumulatorStats, MemoryMetrics };
 
 /**
  * Helper to calculate reuse rate percentage

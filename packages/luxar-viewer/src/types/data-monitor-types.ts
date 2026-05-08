@@ -432,3 +432,65 @@ export interface CacheStatsProvider {
   /** Check if caching is enabled */
   isEnabled(): boolean;
 }
+
+// ============================================================================
+// Memory metrics contracts (moved from ui/monitors/data-monitor-templates.ts
+// in Phase 14.11)
+// ============================================================================
+//
+// These contracts are *cross-layer* — the data layer's
+// `SceneLoaderMonitorPort` exposes provider methods that produce them, and
+// the UI layer renders them. Living in `types/` (the foundational layer)
+// lets both ends reference precise types instead of `unknown`. Pre-fix,
+// the UI template module was effectively a contracts module, which
+// inverted the dependency direction.
+
+/**
+ * Memory metrics for GPU buffer pool (per-type).
+ */
+export interface GPUPoolTypeStats {
+  allocations: number;
+  reuses: number;
+  evictions: number;
+  activeBuffers: number;
+  pooledBuffers: number;
+}
+
+/**
+ * Memory metrics for GPU buffer pool (aggregated + per-type breakdown).
+ */
+export interface GPUPoolStats {
+  allocations: number;
+  reuses: number;
+  evictions: number;
+  capacityGrowths: number;
+  activeBuffers: number;
+  pooledBuffers: number;
+  byType: {
+    points: GPUPoolTypeStats;
+    lines: GPUPoolTypeStats;
+    gsplats: GPUPoolTypeStats;
+  };
+}
+
+/**
+ * Memory metrics for data accumulators.
+ */
+export interface AccumulatorStats {
+  capacity: number;
+  allocations: number;
+  growthEvents: number;
+  memoryMB: number;
+}
+
+/**
+ * Combined memory metrics for the Memory tab.
+ */
+export interface MemoryMetrics {
+  gpuPool: GPUPoolStats | null;
+  accumulators: {
+    points: AccumulatorStats | null;
+    lines: AccumulatorStats | null;
+    gsplats: AccumulatorStats | null;
+  };
+}

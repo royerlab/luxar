@@ -22,6 +22,8 @@ import type {
   CacheStatsProvider,
   CacheMetrics,
   SceneGraphNode,
+  GPUPoolStats,
+  AccumulatorStats,
 } from '../types/data-monitor-types';
 import type { UpdateProfiler } from '../profiling/update-profiler';
 
@@ -32,23 +34,23 @@ export interface L0CacheProviderPort {
 }
 
 /**
- * Provider injected via `setGPUBufferPoolProvider`. The exact stats
- * shape lives at the ui/ layer (`MemoryMetrics['gpuPool']`); the data/
- * layer just hands the provider through, so `unknown` is the right
- * type here. The structural-typing on the consumer side (the real
- * `DataLoadingMonitor`) tightens it back up.
+ * Provider injected via `setGPUBufferPoolProvider`. Phase 14.11 moved
+ * `GPUPoolStats` to `types/data-monitor-types`, so the data/ layer can
+ * reference the precise type instead of `unknown`. The shape is
+ * cross-layer by nature: the data/ layer pushes the provider, the UI/
+ * layer renders the stats.
  */
 export interface GPUBufferPoolProviderPort {
-  getStats: () => unknown;
+  getStats: () => GPUPoolStats;
 }
 
 /**
- * Per-geometry accumulator provider. Same `unknown` reasoning as
- * GPUBufferPoolProviderPort — the data/ layer pushes provider; only
- * the UI layer knows the stats shape.
+ * Per-geometry accumulator provider. Phase 14.11 moved
+ * `AccumulatorStats` into `types/data-monitor-types` for the same
+ * reason as `GPUPoolStats`: precise types instead of `unknown`.
  */
 export interface AccumulatorProviderPort {
-  getStats: () => unknown;
+  getStats: () => AccumulatorStats | null;
 }
 
 /**
