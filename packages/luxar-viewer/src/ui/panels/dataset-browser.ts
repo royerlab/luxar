@@ -484,9 +484,15 @@ export class DatasetBrowser {
   }
 
   /**
-   * Close and dispose the browser.
+   * Close and dispose the browser. Idempotent: a second call is a no-op,
+   * so app teardown can call close() defensively without checking
+   * whether the user already dismissed the browser.
    */
   close(): void {
+    // Use isConnected as the "is this browser still alive" check —
+    // matches what `LuxarApp.dispose()` sees if the user already
+    // dismissed via Escape/×.
+    if (!this.panel.isConnected) return;
     if (this.onClose) {
       this.onClose();
     }

@@ -1115,6 +1115,18 @@ export class LuxarApp {
       this.imageLabelLoader?.dispose();
       this.imageLabelLoader = undefined;
     });
+    // Phase 14.5: explicitly close any open DatasetBrowser BEFORE
+    // input-handler teardown. The browser is a child panel owned by
+    // LuxarApp; without this step its DOM stays attached and the
+    // PanelCoordinator close handle stays bound until input-handler
+    // disposes its listeners. This matches the same-tier guarantees
+    // the loader/worker singletons just got — embedded re-init scenarios
+    // shouldn't start with a stale browser modal from the prior app.
+    safeDispose('datasetBrowser', () => {
+      this.datasetBrowser?.close();
+      this.datasetBrowser = undefined;
+      this.inputHandler?.setDatasetBrowser(undefined);
+    });
     safeDispose('inputHandler', () => this.inputHandler?.dispose());
     safeDispose('renderingControls', () => this.renderingControls?.dispose());
     safeDispose('sceneManager', () => this.sceneManager?.dispose());

@@ -132,6 +132,7 @@ describe('LuxarApp', () => {
       setScaleBar: vi.fn(),
       setRecordingPanel: vi.fn(),
       setLayersPanel: vi.fn(),
+      setDatasetBrowser: vi.fn(),
       clearDimensionUI: vi.fn(),
       initDimensionSliders: vi.fn(),
       dispose: vi.fn(),
@@ -703,6 +704,35 @@ describe('LuxarApp', () => {
       const loaderOrder = sceneLoaderSpy.mock.invocationCallOrder[0];
       const workerOrder = workerPoolSpy.mock.invocationCallOrder[0];
       expect(loaderOrder).toBeLessThan(workerOrder);
+    });
+
+    it('closes an open DatasetBrowser and clears app + input-handler refs (Phase 14.5)', () => {
+      // Plant a fake browser to exercise the safeDispose('datasetBrowser')
+      // step. Real construction goes through `showDatasetBrowser()` which
+      // opens it lazily when no `?src=` is given; assigning here matches
+      // the post-init state when the user has the browser open.
+      const browserClose = vi.fn();
+      const setDatasetBrowserSpy = vi.spyOn(mockInputHandler, 'setDatasetBrowser');
+      (app as unknown as { datasetBrowser: { close: () => void } }).datasetBrowser = {
+        close: browserClose,
+      };
+
+      app.dispose();
+
+      expect(browserClose).toHaveBeenCalledTimes(1);
+      expect(setDatasetBrowserSpy).toHaveBeenCalledWith(undefined);
+      // Field cleared: a stale browser ref shouldn't persist on a
+      // disposed app instance.
+      expect(
+        (app as unknown as { datasetBrowser: unknown }).datasetBrowser
+      ).toBeUndefined();
+    });
+
+    it('does not throw when DatasetBrowser is not open at dispose time', () => {
+      // Common path: user navigated with `?src=...`, never opened the
+      // browser. `this.datasetBrowser` is undefined; the optional chain
+      // in safeDispose handles it.
+      expect(() => app.dispose()).not.toThrow();
     });
   });
 
