@@ -427,9 +427,19 @@ export class InputContextManager {
   private handleKeyEventInternal(event: KeyboardEvent, type: 'down' | 'up'): boolean {
     // Check if we're in a typing context
     if (this.isTypingContext()) {
-      // Allow Escape to exit typing contexts
+      // Phase 14.8/14.12: Escape from a typing context (e.g. focus
+      // inside the dataset-browser manual-path field, debug-console
+      // filter input) should still close the panel. Pre-fix, this
+      // branch returned `false` ("not consumed"), which left the
+      // Escape binding in NAVIGATION untouched — Escape was a silent
+      // no-op from any text input. Now we explicitly look up the
+      // Escape binding in the current context AND every other context,
+      // and fire the first one we find. We can't go through the normal
+      // dispatch path (it'd re-enter this branch) or `tryLowerContexts`
+      // alone (it skips the current context, where Escape is usually
+      // registered).
       if (event.key === 'Escape') {
-        return false; // Let it pass through to close dialogs
+        return this.dispatchEscapeFromTypingContext(event, type);
       }
       // Block all other keys while typing
       return true;
@@ -517,6 +527,47 @@ export class InputContextManager {
    * @returns true if any lower context handled the event, false otherwise
    * @private
    */
+  /**
+   * Dispatch Escape from a typing context (Phase 14.8/14.12).
+   *
+   * Walks all contexts in priority order (including the current one)
+   * and fires the first matching Escape binding. Mirrors the dispatch
+   * shape of {@link tryLowerContexts} but does not exclude the current
+   * context — Escape is most often registered in NAVIGATION (the
+   * default current context), so excluding the current context like
+   * `tryLowerContexts` does would skip it.
+   */
+  private dispatchEscapeFromTypingContext(
+    event: KeyboardEvent,
+    type: 'down' | 'up'
+  ): boolean {
+    const sortedContexts = Array.from(this.contextConfigs.entries()).sort(
+      (a, b) => (b[1].priority ?? 0) - (a[1].priority ?? 0)
+    );
+
+    for (const [context] of sortedContexts) {
+      const contextBindings = this.bindings.get(context);
+      if (!contextBindings) continue;
+      const bindingKey = this.getBindingKeyFromEvent(event);
+      const binding = contextBindings.get(bindingKey);
+      if (!binding) continue;
+
+      if (type === 'up') {
+        if (binding.keyupHandler) {
+          if (binding.preventDefault) event.preventDefault();
+          binding.keyupHandler(event);
+          return true;
+        }
+        return false;
+      }
+      if (binding.preventDefault) event.preventDefault();
+      binding.handler(event);
+      return true;
+    }
+
+    return false;
+  }
+
   private tryLowerContexts(event: KeyboardEvent, type: 'down' | 'up'): boolean {
     const sortedContexts = sortContextsByPriority(this.contextConfigs, this.currentContext);
 

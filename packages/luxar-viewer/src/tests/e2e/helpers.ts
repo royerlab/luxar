@@ -944,30 +944,26 @@ export async function dismissDatasetBrowser(page: Page): Promise<void> {
 
   // Press Escape so the browser routes through PanelCoordinator.closeAll() →
   // datasetBrowser.close(), which keeps LuxarApp.datasetBrowser in sync.
-  // Yanking the DOM node directly bypasses that and reproduces the bug fixed
-  // in Phase 12.7.
+  // Yanking the DOM node directly bypasses that and reproduces the bug
+  // fixed in Phase 12.7.
+  //
+  // Phase 14.12: the previous DOM-yank fallback was removed. Phase 14.8
+  // exempted Escape from the typing-input guard in `InputHandler.onKeyDown`,
+  // so Escape now reliably reaches PanelCoordinator regardless of focus
+  // location (manual-path field, debug-console filter, or elsewhere).
+  // If a future regression makes Escape fall through, a hard timeout
+  // here is the right signal — silently yanking DOM was hiding the
+  // exact bug it was meant to work around.
   await page.keyboard.press('Escape');
-
-  await page
-    .waitForFunction(
-      () => {
-        const el = document.querySelector(
-          '.luxar-dataset-browser, .dataset-browser, #luxar-dataset-browser'
-        );
-        return !el || getComputedStyle(el).display === 'none';
-      },
-      { timeout: 2000 }
-    )
-    .catch(() => {
-      // If Escape didn't dismiss (e.g. focus elsewhere), fall back to the
-      // legacy DOM yank to avoid stranding tests on a stuck modal.
-      return page.evaluate(() => {
-        const el = document.querySelector(
-          '.luxar-dataset-browser, .dataset-browser, #luxar-dataset-browser'
-        );
-        if (el) (el as HTMLElement).remove();
-      });
-    });
+  await page.waitForFunction(
+    () => {
+      const el = document.querySelector(
+        '.luxar-dataset-browser, .dataset-browser, #luxar-dataset-browser'
+      );
+      return !el || getComputedStyle(el).display === 'none';
+    },
+    { timeout: 2000 }
+  );
 }
 
 /**
