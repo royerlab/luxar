@@ -29,16 +29,19 @@ export default defineConfig({
       // dedicated commit each time a phase of new tests crosses the next
       // band. Long-term target: 80% across the board.
       thresholds: {
-        lines: 71,
+        lines: 72,
         functions: 74,
-        branches: 60,
+        branches: 61,
         statements: 71,
       },
-      // Phase 5.4ab extracted debug cache helpers from app.ts (+16
-      // unit tests). Measurement is now 71.77 % L / 74.08 % F /
-      // 60.48 % B / 71.24 % S. Floor advances 1pp on functions; lines
-      // / branches / statements hold (~0.5pp safety margin retained).
-      // Long-term target stays 80 %.
+      // Phase 12 review-driven hardening (12.1–12.9) added ~70 unit
+      // tests across worker validation, Result<T,E> migration, monitor
+      // reset, panel coordinator dataset-browser handle, and worker-
+      // pool runWithTimeout. Measurement is now 71.59 % S /
+      // 61.07 % B / 74.43 % F / 72.15 % L. Floor advances 1pp on
+      // branches and 1pp on lines; statements + functions hold at
+      // 71 / 74 (~0.5pp safety margin retained on each). Long-term
+      // target stays 80 %.
     },
   },
   resolve: {
