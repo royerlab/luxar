@@ -699,8 +699,7 @@ async function projectPointsTo3D(params: {
       viewState.tolerance.length < ndim
     ) {
       throw new Error(
-        `projectPointsTo3D: viewState.tolerance too short for effective radius ` +
-          `(got ${viewState?.tolerance?.length ?? 0}, expected ≥ ${ndim})`
+        `projectPointsTo3D: viewState.tolerance too short for effective radius (got ${viewState?.tolerance?.length ?? 0}, expected ≥ ${ndim})`
       );
     }
   }

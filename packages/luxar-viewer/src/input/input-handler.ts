@@ -657,8 +657,15 @@ export class InputHandler {
    * No special cases - everything uses the unified binding system.
    */
   private onKeyDown(event: KeyboardEvent): void {
-    // Check if typing in input field (belt-and-suspenders with context manager)
-    if (this.isTypingInInput()) {
+    // Phase 14.8: Escape always reaches the context manager so it can
+    // close panels even when focus is inside a text input — e.g. the
+    // dataset-browser manual-path field, the debug-console filter
+    // input. The context manager has its own typing-context routing
+    // for Escape (`InputContextManager.handleKeyEventInternal` returns
+    // false in typing context, letting Escape pass through to lower-
+    // priority bindings). Without this exception, the typing guard
+    // here intercepts before the context manager ever sees the event.
+    if (this.isTypingInInput() && event.key !== 'Escape') {
       return;
     }
 

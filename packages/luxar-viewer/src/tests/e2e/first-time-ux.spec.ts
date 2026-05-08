@@ -221,6 +221,59 @@ test.describe('First-Time User Experience', () => {
     await expect(browser).toBeVisible({ timeout: 5000 });
   });
 
+  test('Escape closes the dataset browser even when focus is in a text input (Phase 14.8)', async ({
+    page,
+  }) => {
+    test.info().annotations.push({
+      type: 'allow-console-errors',
+      description: 'Opening the dataset browser triggers directory listing that 404s on the static test server.',
+    });
+    // Phase 14.8 regression guard. Pre-fix, `InputHandler.onKeyDown`
+    // returned early when focus was inside a text input — the
+    // dataset-browser's manual-path field, the debug-console filter,
+    // etc. — so Escape never reached the context manager and panels
+    // didn't close. Post-fix, Escape is exempted from the typing
+    // guard.
+    await page.goto(
+      '/?src=http://localhost:9000/datasets/examples/rainbow_sphere_4d_example.zarr&debug'
+    );
+    await page.waitForFunction(() => !!(window as any).__luxarDebug?.app, {
+      timeout: 10000,
+    });
+    await page.click('canvas').catch(() => {});
+
+    // Open the browser via the O shortcut.
+    await page.keyboard.press('o');
+    const browser = page.locator('.luxar-dataset-browser').first();
+    await expect(browser).toBeVisible({ timeout: 5000 });
+
+    // Inject a focused text input inside the browser (mimics the
+    // manual-path field, which only renders when directory listing
+    // fails — too brittle to depend on for an E2E). Focusing it
+    // triggers the same `isTypingInInput()` guard at the top of
+    // `onKeyDown` that previously swallowed Escape.
+    await page.evaluate(() => {
+      const browserEl = document.querySelector('.luxar-dataset-browser');
+      if (!browserEl) throw new Error('browser missing');
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.id = '__phase14_8_test_input';
+      browserEl.appendChild(input);
+      input.focus();
+    });
+
+    // Verify focus actually landed inside the input — `isTypingInInput`
+    // would now return true and pre-fix would short-circuit Escape.
+    const focusOk = await page.evaluate(
+      () => document.activeElement?.id === '__phase14_8_test_input'
+    );
+    expect(focusOk).toBe(true);
+
+    // Escape from focused input should still close the browser.
+    await page.keyboard.press('Escape');
+    await expect(browser).toBeHidden({ timeout: 5000 });
+  });
+
   test('should provide helpful guidance without specific URLs', async ({ page }) => {
     await page.goto('/?debug');
 
