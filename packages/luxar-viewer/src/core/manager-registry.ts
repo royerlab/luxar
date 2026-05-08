@@ -46,12 +46,32 @@ export class ManagerRegistry {
   private readonly order: string[] = [];
 
   /**
-   * Register a manager. If a manager with this name is already
-   * registered, log a warning and keep the original — duplicate
-   * registration is almost always a bug.
+   * Register a manager.
+   *
+   * Three cases:
+   *
+   * 1. **First registration** — the manager is added at the end of
+   *    `order` and stored in `managers`.
+   * 2. **Re-registration after dispose** — the previous instance was
+   *    torn down by `disposeAll()`. The slot is recycled: the old
+   *    name is dropped from `managers`/`order`/`disposed`, then the
+   *    new manager is registered fresh. This makes `LuxarApp` →
+   *    `dispose()` → re-init cycles safe; without it, the second
+   *    init would silently fall through the duplicate-warn branch
+   *    and never lifecycle-manage the new instance.
+   * 3. **Live duplicate** — a second active registration of the
+   *    same name. Almost always a bug; log a warning and keep the
+   *    original (this matches the prior behavior).
    */
   register(name: string, manager: DisposableManager): void {
-    if (this.managers.has(name)) {
+    if (this.disposed.has(name)) {
+      // Replacement after dispose: drop the dead entry and fall
+      // through to fresh-registration below.
+      this.managers.delete(name);
+      const idx = this.order.indexOf(name);
+      if (idx >= 0) this.order.splice(idx, 1);
+      this.disposed.delete(name);
+    } else if (this.managers.has(name)) {
       log.warning(
         Modules.LUXAR,
         `ManagerRegistry: '${name}' is already registered; skipping duplicate`

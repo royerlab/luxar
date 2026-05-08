@@ -130,4 +130,62 @@ describe('ManagerRegistry', () => {
     const b = getManagerRegistry();
     expect(a).not.toBe(b);
   });
+
+  // Phase 13.2: re-init lifecycle. Pre-fix, register() rejected any
+  // name in `managers` Map (no `disposed` check). After disposeAll(),
+  // names stayed in `managers`/`order`, so a fresh app's register()
+  // call was treated as duplicate-warn and the new manager was NEVER
+  // lifecycle-managed. The fix recycles the slot when the slot's
+  // previous occupant has been disposed.
+  describe('re-registration after dispose', () => {
+    it('register() replaces a previously-disposed manager with the same name', () => {
+      const reg = new ManagerRegistry();
+      const a = fake();
+      reg.register('Foo', a);
+      reg.disposeAll();
+
+      const b = fake();
+      reg.register('Foo', b);
+      // The new manager replaces the disposed slot.
+      expect(reg.get('Foo')).toBe(b);
+      expect(reg.has('Foo')).toBe(true);
+    });
+
+    it('the replaced manager IS disposed by a subsequent disposeAll()', () => {
+      const reg = new ManagerRegistry();
+      const a = fake();
+      reg.register('Foo', a);
+      reg.disposeAll();
+      expect(a.dispose).toHaveBeenCalledTimes(1);
+
+      const b = fake();
+      reg.register('Foo', b);
+      reg.disposeAll();
+      // b WAS lifecycle-managed (the bug pre-fix was that it wasn't).
+      expect(b.dispose).toHaveBeenCalledTimes(1);
+      // a was not re-disposed.
+      expect(a.dispose).toHaveBeenCalledTimes(1);
+    });
+
+    it('replacement preserves the warn-on-live-duplicate behavior', () => {
+      const reg = new ManagerRegistry();
+      const a = fake();
+      const b = fake();
+      reg.register('Foo', a);
+      // Live duplicate: NOT yet disposed → keep original, warn.
+      reg.register('Foo', b);
+      expect(reg.get('Foo')).toBe(a);
+    });
+
+    it('replacement removes the name from disposed and the dead order entry', () => {
+      const reg = new ManagerRegistry();
+      reg.register('Foo', fake());
+      reg.disposeAll();
+      const newFoo = fake();
+      reg.register('Foo', newFoo);
+      const status = reg.getStatus();
+      // Single entry, fresh state.
+      expect(status).toEqual([{ name: 'Foo', disposed: false }]);
+    });
+  });
 });
