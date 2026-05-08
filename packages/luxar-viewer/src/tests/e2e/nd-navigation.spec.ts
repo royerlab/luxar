@@ -151,19 +151,42 @@ test.describe('nD Navigation - Spatial Index Queries', () => {
   test('should load different points when slice position changes', async ({ page }) => {
     await page.goto(`/?src=${DATASETS.denseGrid5D}&debug`);
     await waitForLuxarReady(page);
+    await waitForSpatialQuery(page);
 
-    // Navigate to different slice
+    // Snapshot the dimension cursor before navigation. The dense 5D grid
+    // has uniform population per slice, so we can't compare totalPoints —
+    // but the dimension's currentStep MUST advance after pressing `]`.
+    // The previous assertion (`>= 0` on totalPoints) was a tautology
+    // that accepted any non-negative number, including the
+    // "navigation never registered" no-op regression.
+    const initialStep = await page.evaluate(() => {
+      const state = (window as any).__luxarDebug?.getState?.();
+      return state?.dimensions?.currentStep ? [...state.dimensions.currentStep] : null;
+    });
+
+    // Navigate to a different slice on dimension 4
     await page.keyboard.press('4');
     await waitForNextRender(page);
     await page.keyboard.press(']');
     await waitForSpatialQuery(page);
 
-    const newPoints = (await getLuxarState(page)).totalPoints;
+    const newStep = await page.evaluate(() => {
+      const state = (window as any).__luxarDebug?.getState?.();
+      return state?.dimensions?.currentStep ? [...state.dimensions.currentStep] : null;
+    });
 
-    // Point count may change or stay same depending on data
-    // Just verify query completed
-    expect(typeof newPoints).toBe('number');
-    expect(newPoints).toBeGreaterThanOrEqual(0);
+    // Direct contract: pressing `]` must change the dimension cursor.
+    // A regression where the input handler accepted the keystroke but
+    // failed to update viewState (e.g. silent dispatch failure) would
+    // have been green under the old assertion.
+    expect(initialStep).not.toBeNull();
+    expect(newStep).not.toBeNull();
+    expect(newStep).not.toEqual(initialStep);
+
+    // And the point count must remain reportable (sanity).
+    const finalPoints = (await getLuxarState(page)).totalPoints;
+    expect(typeof finalPoints).toBe('number');
+    expect(finalPoints).toBeGreaterThanOrEqual(0);
   });
 
   test('should handle multiple navigation steps', async ({ page }) => {

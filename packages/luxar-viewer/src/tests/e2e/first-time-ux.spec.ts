@@ -170,6 +170,41 @@ test.describe('First-Time User Experience', () => {
     }
   });
 
+  test('Escape closes the dataset browser AND `O` reopens it cleanly', async ({ page }) => {
+    // Phase 12.7 regression guard. Before that fix, the Escape path did
+    // a direct DOM removal that bypassed `DatasetBrowser.close()` and
+    // therefore never fired `onClose`. `LuxarApp.datasetBrowser` stayed
+    // populated, and the `O` shortcut handler bailed out via
+    // `if (!this.datasetBrowser) return` — making `O` a silent no-op
+    // until reload.
+    await page.goto(
+      '/?src=http://localhost:9000/datasets/examples/rainbow_sphere_4d_example.zarr&debug'
+    );
+    await page.waitForFunction(() => !!(window as any).__luxarDebug?.app, {
+      timeout: 10000,
+    });
+    await page.click('canvas').catch(() => {
+      // Canvas may not be focusable yet; press 'O' on document instead.
+    });
+
+    // First: confirm `O` opens it on a fresh page.
+    await page.keyboard.press('o');
+    const browser = page.locator('.luxar-dataset-browser').first();
+    await expect(browser).toBeVisible({ timeout: 5000 });
+
+    // Press Escape — the new path goes through DatasetBrowser.close()
+    // → onClose fires → app.datasetBrowser cleared → input handler ref
+    // cleared.
+    await page.keyboard.press('Escape');
+    await expect(browser).toBeHidden({ timeout: 5000 });
+
+    // Critical assertion: the `O` shortcut must actually re-open the
+    // browser. Pre-fix, this would silently fail because the owner ref
+    // was stale.
+    await page.keyboard.press('o');
+    await expect(browser).toBeVisible({ timeout: 5000 });
+  });
+
   test('should provide helpful guidance without specific URLs', async ({ page }) => {
     await page.goto('/?debug');
 
