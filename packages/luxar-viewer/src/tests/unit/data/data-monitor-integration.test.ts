@@ -305,6 +305,41 @@ describe('Data Monitor Integration', () => {
       // The provider should be null — clearL0Cache logs nothing and returns.
       expect(l0Calls).toBe(before);
     });
+
+    it('dispose() also nulls scene-bound providers and resets UI state (Phase 13.3)', () => {
+      // Pre-13.3 dispose() did NOT call resetSceneProviders() — only
+      // disconnectAllLoaders() did. Direct dispose callers (and any
+      // external/debug references that survive a teardown order
+      // change) could still hold provider closures bound to the
+      // disposed SceneLoader.
+      const manager = DataMonitorManager.getInstance();
+      SceneLoaderManager.getInstance().createLoader('test-scene', { enableMonitor: true });
+      const monitor = manager.getMonitor('test-scene-monitor');
+      if (!monitor) throw new Error('Monitor should exist');
+
+      let l0Calls = 0;
+      monitor.setL0CacheProvider({
+        getStats: () => {
+          l0Calls++;
+          return { count: 0, size: 0, hits: 0, misses: 0, evictions: 0, hitRate: 0 };
+        },
+        clear: () => {},
+      });
+
+      // Force visibility/expanded so we can verify they reset.
+      monitor.show();
+      expect(monitor.isVisible()).toBe(true);
+
+      monitor.dispose();
+
+      // Provider is null — clearL0Cache won't reach the stale closure.
+      const before = l0Calls;
+      monitor.clearL0Cache();
+      expect(l0Calls).toBe(before);
+
+      // UI state is reset.
+      expect(monitor.isVisible()).toBe(false);
+    });
   });
 
   describe('DataMonitorManager singleton', () => {

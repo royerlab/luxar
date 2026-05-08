@@ -1917,6 +1917,18 @@ export class DataLoadingMonitor {
       errors.push(new Error(`Failed to clear loaders map: ${error}`));
     }
 
+    // Step 2b: Drop scene-bound provider closures (Phase 13.3).
+    // disconnectAllLoaders() does this on reload, but a direct
+    // dispose() bypasses that path. The closures reference the
+    // disposed SceneLoader's `cachingStore` / `l0Cache` / etc.;
+    // any stale debug or external poll into the disposed monitor
+    // would otherwise NPE.
+    try {
+      this.resetSceneProviders();
+    } catch (error) {
+      errors.push(new Error(`Failed to reset scene providers: ${error}`));
+    }
+
     // Step 3: Remove UI panel (important for DOM cleanup)
     if (this.panel) {
       // Remove event listeners - non-critical if they fail
@@ -1969,6 +1981,12 @@ export class DataLoadingMonitor {
       this.events = [];
       this.metrics.clear();
       this.queries.clear();
+      // Phase 13.3: also reset UI state so isVisible() / isExpanded
+      // can't report stale truthy values after dispose.
+      this.uiState.isVisible = false;
+      this.uiState.isExpanded = false;
+      this.contentContainer = null;
+      this.expandedNodes.clear();
     } catch (error) {
       errors.push(new Error(`Failed to clear internal state: ${error}`));
     }
