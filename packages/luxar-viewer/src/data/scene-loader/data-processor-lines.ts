@@ -25,6 +25,7 @@ import { buildInstanceBuffers } from '../lines/projection';
 import type { LinesViewState, LoadedLinesData, ProcessedLinesData } from '../../types/lines';
 import { isLinesUserData } from '../../types/lines';
 import { computeTolerance } from '../utils/tolerance-computer';
+import { EXTEND_TO_ALL_TOLERANCE } from './extend-tolerance';
 import { config as appConfig } from '../../config';
 import { log, Modules } from '../../utils/log';
 import { getWorkerPool } from '../../workers/worker-pool';
@@ -154,7 +155,7 @@ export async function processLinesData(
         (d: { name?: string }) => d.name === dimName
       );
       if (dimIndex >= 0 && dimIndex < tolerance.length) {
-        tolerance[dimIndex] = 1e10;
+        tolerance[dimIndex] = EXTEND_TO_ALL_TOLERANCE;
       }
     }
   }
