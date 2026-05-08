@@ -479,16 +479,26 @@ export class MaterialManager {
   /**
    * Rebuild GPU-bound material state after a WebGL context-restore
    * event. The previous shader programs are now invalid (the WebGL
-   * context they were compiled against is gone), so we drop the cache
-   * and the registry. The renderer's next request via
+   * context they were compiled against is gone), so we drop the per-
+   * type allocation caches. The renderer's next request via
    * `getPointMaterial` / `getLineMaterial` / `getGSplatMaterial` will
    * compile fresh shaders against the new context.
    *
-   * Implementation choice: lazy rebuild. Eager re-creation would
-   * require us to remember every (props, key) pair that was ever
-   * cached and to re-create all of them, but most are transient
-   * (hidden layers, off-screen panels) and the renderer will
-   * re-request only the materials it actually needs in the next frame.
+   * Phase 14.6: do NOT clear `registeredMaterials` / `ownedMaterials`.
+   * Those are the camera-uniform update tracker, not allocation caches:
+   * they hold the materials currently attached to visible scene meshes
+   * and need to keep receiving `updateCameraParams()` after restore.
+   * Pre-fix, clearing them stranded existing visible materials —
+   * subsequent resize/ortho/DPR changes wouldn't reach their uniforms,
+   * and layer-cloned materials (registered as "owned" at clone time
+   * via `materialManager.register()` from layers-panel) would silently
+   * miss camera updates.
+   *
+   * Implementation choice: lazy rebuild for ALLOCATION. Eager
+   * re-creation would require us to remember every (props, key) pair
+   * that was ever cached and to re-create all of them, but most are
+   * transient (hidden layers, off-screen panels) and the renderer
+   * will re-request only the materials it actually needs.
    *
    * Mirror of the durable-state pattern in
    * `rendering/post-processing/context-recovery.ts`: this method is
@@ -498,11 +508,13 @@ export class MaterialManager {
    * calling `dispose` on them tends to throw on some drivers.
    */
   rebuildAfterContextRestore(): void {
-    this.registeredMaterials.clear();
-    this.ownedMaterials.clear();
+    // Drop allocation caches only — fresh shaders will be compiled on
+    // demand against the new context.
     this.pointMaterialCache.clear();
     this.lineMaterialCache.clear();
     this.gsplatMaterialCache.clear();
+    // `registeredMaterials` / `ownedMaterials` deliberately preserved
+    // — see comment above.
   }
 
   /**

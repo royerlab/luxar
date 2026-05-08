@@ -9,6 +9,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
+import * as THREE from 'three';
 import {
   MaterialManager,
   __resetMaterialManagerForTests,
@@ -31,16 +32,25 @@ describe('MaterialManager.rebuildAfterContextRestore', () => {
     __resetMaterialManagerForTests();
   });
 
-  it('clears every cache so cacheStats report 0 entries', () => {
+  it('clears the per-type allocation caches but preserves the camera-update registry', () => {
+    // Phase 14.6: rebuildAfterContextRestore drops the per-type
+    // allocation caches (so the next getXMaterial compiles fresh
+    // shaders against the new context) but PRESERVES registeredMaterials
+    // / ownedMaterials so existing visible scene materials keep
+    // receiving updateCameraParams() across the restore.
     const mm = new MaterialManager();
     mm.getPointMaterial(POINT_PROPS);
 
-    expect(mm.getCacheStats().cachedMaterials).toBeGreaterThan(0);
+    const before = mm.getCacheStats();
+    expect(before.cachedMaterials).toBeGreaterThan(0);
+    expect(before.totalRegistered).toBeGreaterThan(0);
+
     mm.rebuildAfterContextRestore();
+
     const after = mm.getCacheStats();
-    expect(after.cachedMaterials).toBe(0);
-    expect(after.totalRegistered).toBe(0);
-    expect(after.ownedMaterials).toBe(0);
+    expect(after.cachedMaterials).toBe(0); // allocation cache dropped
+    // Registry preserved — visible materials still tracked for camera updates.
+    expect(after.totalRegistered).toBe(before.totalRegistered);
   });
 
   it('produces a fresh material on next access (not a stale cached one)', () => {
@@ -85,5 +95,36 @@ describe('MaterialManager.rebuildAfterContextRestore', () => {
     mm.rebuildAfterContextRestore();
     expect(() => mm.dispose()).not.toThrow();
     expect(mm.getCacheStats().cachedMaterials).toBe(0);
+  });
+
+  it('preserved registry materials still receive camera updates after restore (Phase 14.6)', async () => {
+    // Regression for the bug where clearing registeredMaterials in
+    // rebuildAfterContextRestore() stranded existing visible materials —
+    // their updateCameraParams stopped firing after restore.
+    const mm = new MaterialManager();
+    const material = mm.getPointMaterial(POINT_PROPS);
+
+    // Snapshot current camera-uniform state.
+    const updateSpy = (() => {
+      const orig = material.updateCameraParams.bind(material);
+      let count = 0;
+      material.updateCameraParams = ((
+        fov: number,
+        resolution: THREE.Vector2,
+        isOrtho?: boolean,
+        nearCull?: number
+      ) => {
+        count++;
+        orig(fov, resolution, isOrtho, nearCull);
+      }) as typeof material.updateCameraParams;
+      return () => count;
+    })();
+
+    mm.rebuildAfterContextRestore();
+    mm.updateCameraParams(75 * (Math.PI / 180), new THREE.Vector2(1920, 1080), false);
+
+    // The material is still in the registry, so updateCameraParams
+    // reached it. Pre-fix this would be 0.
+    expect(updateSpy()).toBeGreaterThan(0);
   });
 });
