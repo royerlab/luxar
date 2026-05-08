@@ -1469,6 +1469,27 @@ async function decodeLUT(params: {
   if (lutMode !== 'row' && lutMode !== 'scalar') {
     throw new Error(`decodeLUT: lutMode='${lutMode}' must be 'row' or 'scalar'`);
   }
+
+  // Phase 13.5: scan indices for out-of-range values BEFORE handing
+  // off to WASM. Rust functions (decode_lut_scalar_*, decode_lut_row_*)
+  // index `lut[indices[i] as usize]` directly; an out-of-range index
+  // panics or traps inside WASM. JS-side rejection turns malformed
+  // encoded data into a clear error at the worker boundary.
+  if (lutMode === 'row' && lut.length % k !== 0) {
+    throw new Error(
+      `decodeLUT: row-mode lut length ${lut.length} is not divisible by k=${k}`
+    );
+  }
+  const entryCount = lutMode === 'row' ? Math.floor(lut.length / k) : lut.length;
+  for (let i = 0; i < indices.length; i++) {
+    if (indices[i] >= entryCount) {
+      throw new Error(
+        `decodeLUT: indices[${i}]=${indices[i]} out of range for ${entryCount} LUT ` +
+          `entr${entryCount === 1 ? 'y' : 'ies'} (lutMode=${lutMode})`
+      );
+    }
+  }
+
   // Infer dtype from indices type if not explicitly provided
   const dtype = params.dtype ?? (indices instanceof Uint8Array ? 'uint8' : 'uint16');
   const n = indices.length;

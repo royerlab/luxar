@@ -297,6 +297,59 @@ describe('data-worker validation — decode entry points', () => {
     ).rejects.toThrow(/lutMode='cubic' must be 'row' or 'scalar'/);
   });
 
+  // Phase 13.5: out-of-range index validation. Pre-fix, an
+  // index ≥ entry-count would reach Rust/WASM (`lut[indices[i]]`)
+  // and panic. JS-side rejection at the worker boundary is the
+  // intended contract.
+  it('decodeLUT rejects scalar-mode index >= lut.length (Uint8 indices)', async () => {
+    const mod = await loadWorker();
+    await expect(
+      mod.workerAPI.decodeLUT({
+        indices: new Uint8Array([0, 5]), // 5 ≥ lut.length=3
+        lut: [0.1, 0.2, 0.3],
+        k: 1,
+        lutMode: 'scalar',
+      })
+    ).rejects.toThrow(/indices\[1\]=5 out of range for 3 LUT entries/);
+  });
+
+  it('decodeLUT rejects scalar-mode index >= lut.length (Uint16 indices)', async () => {
+    const mod = await loadWorker();
+    await expect(
+      mod.workerAPI.decodeLUT({
+        indices: new Uint16Array([0, 1000]),
+        lut: [0.1, 0.2, 0.3],
+        k: 1,
+        lutMode: 'scalar',
+      })
+    ).rejects.toThrow(/indices\[1\]=1000 out of range/);
+  });
+
+  it('decodeLUT rejects row-mode index >= lut.length / k', async () => {
+    const mod = await loadWorker();
+    // 6 lut values / k=3 = 2 entries. Index 2 is out of range.
+    await expect(
+      mod.workerAPI.decodeLUT({
+        indices: new Uint8Array([0, 1, 2]),
+        lut: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6],
+        k: 3,
+        lutMode: 'row',
+      })
+    ).rejects.toThrow(/indices\[2\]=2 out of range for 2 LUT entries/);
+  });
+
+  it('decodeLUT rejects row-mode lut length not divisible by k', async () => {
+    const mod = await loadWorker();
+    await expect(
+      mod.workerAPI.decodeLUT({
+        indices: new Uint8Array([0]),
+        lut: [0.1, 0.2, 0.3, 0.4], // 4 not divisible by k=3
+        k: 3,
+        lutMode: 'row',
+      })
+    ).rejects.toThrow(/lut length 4 is not divisible by k=3/);
+  });
+
   it('decodeBroadcasted rejects non-positive elementsPerPoint', async () => {
     const mod = await loadWorker();
     await expect(
