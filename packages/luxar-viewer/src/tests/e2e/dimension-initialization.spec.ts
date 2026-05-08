@@ -51,13 +51,14 @@ test.describe('Dimension Initialization - Policy Compliance', () => {
       return;
     }
 
-    // Get dimension state
+    // Get dimension state via the canonical debug.sceneDimsManager path
+    // (exposed directly by app.ts:912-927).
     const state = await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
-      if (!debug?.app?.inputHandler?.sceneDimsManager) {
+      if (!debug?.sceneDimsManager) {
         return null;
       }
-      const dims = debug.app.inputHandler.sceneDimsManager.getDims();
+      const dims = debug.sceneDimsManager.getDims();
       return dims;
     });
 
@@ -95,7 +96,7 @@ test.describe('Dimension Initialization - Policy Compliance', () => {
     // Get slider value and dimension state
     const sliderData = await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
-      const dims = debug?.app?.inputHandler?.sceneDimsManager?.getDims();
+      const dims = debug?.sceneDimsManager?.getDims?.();
 
       // Find first non-displayed dimension slider
       const sliders = Array.from(document.querySelectorAll('[id^="luxar-dim-slider-"]'));
@@ -220,7 +221,7 @@ test.describe('Dimension Initialization - Initial Update Trigger', () => {
     // Get slider state
     const sliderState = await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
-      const dims = debug?.app?.inputHandler?.sceneDimsManager?.getDims();
+      const dims = debug?.sceneDimsManager?.getDims?.();
       return dims?.currentStep || null;
     });
 

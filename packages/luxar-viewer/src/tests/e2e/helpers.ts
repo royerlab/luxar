@@ -222,8 +222,9 @@ export async function waitForDimensionSelected(
     (idx) => {
       const debug = (window as any).__luxarDebug;
       if (!debug?.getState?.()?.initialized) return false;
-      // Try to verify the selected dimension via sceneDimsManager
-      const selected = debug?.app?.inputHandler?.sceneDimsManager?.getSelectedDimension?.();
+      // Verify the selected dimension via the canonical sceneDimsManager
+      // exposed at __luxarDebug.sceneDimsManager (see app.ts:912-927).
+      const selected = debug?.sceneDimsManager?.getSelectedDimension?.();
       if (typeof selected === 'number') return selected === idx;
       // Fallback: if API not available, just wait for initialized state
       return true;
@@ -520,10 +521,10 @@ export async function waitForDimensionSystemReady(page: Page, timeout = 10000): 
     try {
       const hasInitialized = await page.evaluate(() => {
         const debug = (window as any).__luxarDebug;
-        if (!debug?.app?.inputHandler) return null;
+        if (!debug) return null;
 
-        // Check if sceneDimsManager exists and has dims
-        const dims = debug.app.inputHandler.sceneDimsManager?.getDims();
+        // Canonical path per app.ts:912-927.
+        const dims = debug.sceneDimsManager?.getDims?.();
         return dims !== null && dims !== undefined;
       });
 
@@ -540,10 +541,12 @@ export async function waitForDimensionSystemReady(page: Page, timeout = 10000): 
     await page.waitForTimeout(100);
   }
 
-  // Timeout - check final state
+  // Timeout — final probe via the canonical path. Use truthiness, not
+  // `!== null`: a stale path returning `undefined` would have made
+  // `undefined !== null` return `true` and produce a false-pass.
   const finalState = await page.evaluate(() => {
     const debug = (window as any).__luxarDebug;
-    return debug?.app?.inputHandler?.sceneDimsManager?.getDims() !== null;
+    return !!debug?.sceneDimsManager?.getDims?.();
   });
 
   return finalState;
@@ -1018,13 +1021,15 @@ export async function getAnimationManager(page: Page): Promise<any> {
 
 /**
  * Get the scene dims manager from the debug interface.
- * Standardizes access: debug.app.inputHandler.sceneDimsManager.
+ * Canonical access: `debug.sceneDimsManager` (exposed directly by
+ * app.ts:912-927). The legacy `debug.app.inputHandler.sceneDimsManager`
+ * path was removed in Phase 14.2 — the manager isn't a child of
+ * input-handler in the debug surface.
  */
 export async function getSceneDimsManager(page: Page): Promise<any> {
   return await page.evaluate(() => {
     const debug = (window as any).__luxarDebug;
-    const ih = debug?.app?.inputHandler ?? debug?.inputHandler;
-    return ih?.sceneDimsManager ?? debug?.sceneDimsManager ?? null;
+    return debug?.sceneDimsManager ?? null;
   });
 }
 
