@@ -61,6 +61,10 @@ test.describe('First-Time User Experience', () => {
   });
 
   test('should show error dialog or dataset browser when dataset fails', async ({ page }) => {
+    test.info().annotations.push({
+      type: 'allow-console-errors',
+      description: 'Bad-URL recovery path intentionally produces 404s.',
+    });
     // Try to load non-existent dataset via HTTP
     await page.goto('/?src=http://localhost:9000/nonexistent.zarr&debug');
 
@@ -97,6 +101,10 @@ test.describe('First-Time User Experience', () => {
   });
 
   test('should not show hardcoded example URLs in error/browser UI', async ({ page }) => {
+    test.info().annotations.push({
+      type: 'allow-console-errors',
+      description: 'Bad-URL recovery path intentionally produces 404s.',
+    });
     await page.goto('/?src=http://localhost:9000/missing.zarr&debug');
 
     // Wait for either error dialog or dataset browser
@@ -119,6 +127,10 @@ test.describe('First-Time User Experience', () => {
   });
 
   test('should allow dismissing error or browser UI', async ({ page }) => {
+    test.info().annotations.push({
+      type: 'allow-console-errors',
+      description: 'Bad-URL recovery path intentionally produces 404s.',
+    });
     await page.goto('/?src=http://localhost:9000/fail.zarr&debug');
 
     // Wait for UI to appear
@@ -171,6 +183,10 @@ test.describe('First-Time User Experience', () => {
   });
 
   test('Escape closes the dataset browser AND `O` reopens it cleanly', async ({ page }) => {
+    test.info().annotations.push({
+      type: 'allow-console-errors',
+      description: 'Opening the dataset browser triggers directory listing that 404s on the static test server.',
+    });
     // Phase 12.7 regression guard. Before that fix, the Escape path did
     // a direct DOM removal that bypassed `DatasetBrowser.close()` and
     // therefore never fired `onClose`. `LuxarApp.datasetBrowser` stayed
