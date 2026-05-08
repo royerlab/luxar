@@ -345,7 +345,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
    */
   async getResult(
     key: string,
-    options?: { signal?: AbortSignal }
+    options?: { signal?: AbortSignal; suppressPrefetch?: boolean }
   ): Promise<Result<Uint8Array, CacheError>> {
     // L1: Memory check (fastest, ~1μs)
     const l1Hit = this.l1Cache.get(key);
@@ -361,8 +361,14 @@ export class MultiLevelCachingStore implements AsyncReadable {
         this.log(`L2 hit: ${key}`, 'info');
         // Promote to L1
         this.l1Cache.set(key, l2Hit);
-        // Trigger prefetch on L2 hit
-        this.prefetcher?.onAccess(key);
+        // Trigger prefetch on L2 hit (Phase 13.7: skip when this fetch
+        // was itself a prefetch — otherwise prefetch of K+1 calls
+        // getResult(K+1) which calls onAccess(K+1) which enqueues K+2,
+        // walking outward until MAX_SEEN_SIZE and amplifying network/
+        // cache load far beyond the user's original demand).
+        if (!options?.suppressPrefetch) {
+          this.prefetcher?.onAccess(key);
+        }
         return ok(l2Hit);
       }
     }
@@ -421,8 +427,11 @@ export class MultiLevelCachingStore implements AsyncReadable {
       }
     }
 
-    // Trigger prefetch on L3 fetch
-    this.prefetcher?.onAccess(key);
+    // Trigger prefetch on L3 fetch (Phase 13.7: skip when this fetch
+    // was itself a prefetch — see L2 branch above).
+    if (!options?.suppressPrefetch) {
+      this.prefetcher?.onAccess(key);
+    }
 
     return ok(data);
   }

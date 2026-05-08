@@ -913,6 +913,34 @@ describe('MultiLevelCachingStore', () => {
       const result = await store.get('test.chunk');
       expect(result).toBeDefined();
     });
+
+    it('does NOT call prefetcher.onAccess() when suppressPrefetch=true on L3 fetch', async () => {
+      // Phase 13.7: prefetcher.processQueue() passes
+      // { suppressPrefetch: true } so the cascade
+      //   demand → onAccess → prefetch → getResult → onAccess → ...
+      // terminates after the first hop. This test pins the contract.
+      const mockPrefetcher = { onAccess: vi.fn() };
+      store.setPrefetcher(mockPrefetcher as any);
+
+      await store.getResult('cascade.chunk', { suppressPrefetch: true });
+
+      expect(mockPrefetcher.onAccess).not.toHaveBeenCalled();
+    });
+
+    it('does NOT call prefetcher.onAccess() when suppressPrefetch=true on L2 hit', async () => {
+      // Populate L2.
+      await store.get('cascade.l2');
+
+      const mockPrefetcher = { onAccess: vi.fn() };
+      store.setPrefetcher(mockPrefetcher as any);
+
+      // Clear L1 so the next access goes through L2.
+      store.clearL1();
+
+      await store.getResult('cascade.l2', { suppressPrefetch: true });
+
+      expect(mockPrefetcher.onAccess).not.toHaveBeenCalled();
+    });
   });
 
   describe('URL Construction (Triple-Slash Bug Prevention)', () => {

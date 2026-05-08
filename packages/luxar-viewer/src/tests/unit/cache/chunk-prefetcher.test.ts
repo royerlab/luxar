@@ -353,6 +353,92 @@ describe('ChunkPrefetcher - Unit Tests', () => {
     });
   });
 
+  describe('Cascade prevention (Phase 13.7)', () => {
+    // Pre-fix, MultiLevelCachingStore.getResult() unconditionally
+    // called prefetcher.onAccess(key) — including when the request
+    // ITSELF originated from prefetcher.processQueue(). Result: a
+    // demand for K enqueues K-1/K+1; the prefetcher fetches K+1 via
+    // store.getResult(K+1); the store calls onAccess(K+1) and
+    // enqueues K+2; etc. The chain terminates only when MAX_SEEN_SIZE
+    // (10 000) is reached.
+    //
+    // Fix: prefetcher.processQueue() now passes
+    // { suppressPrefetch: true } so getResult() skips the onAccess
+    // callback for prefetch-originated reads.
+    it('processQueue passes suppressPrefetch=true to store.getResult', async () => {
+      // 1D bounds: 10 chunks → demand at chunk 5 enqueues 4 and 6.
+      prefetcher.registerArrayBounds('cascade', [10240], [1024]);
+
+      const cascadeStore = new MockStore();
+      const cascadePrefetcher = new ChunkPrefetcher(cascadeStore as any, {
+        enabled: true,
+        maxConcurrent: 4,
+      });
+      cascadePrefetcher.registerArrayBounds('cascade', [10240], [1024]);
+
+      cascadePrefetcher.onAccess('cascade/5');
+
+      await waitFor(() => {
+        const s = cascadePrefetcher.getStats();
+        return s.inFlight === 0 && s.queued === 0;
+      });
+
+      // The 2 prefetched calls (4 and 6) must arrive with the
+      // suppressPrefetch flag.
+      const prefetchCalls = cascadeStore.getResult.mock.calls.filter(
+        (call: unknown[]) => call[0] === 'cascade/4' || call[0] === 'cascade/6'
+      );
+      expect(prefetchCalls.length).toBe(2);
+      for (const [, options] of prefetchCalls) {
+        expect((options as { suppressPrefetch?: boolean })?.suppressPrefetch).toBe(true);
+      }
+    });
+
+    it('does not fan out beyond immediate neighbors (cascade-simulating store)', async () => {
+      // Simulate the real store's behavior: getResult internally
+      // calls prefetcher.onAccess UNLESS suppressPrefetch is set.
+      // Pre-fix this would walk: 5 → {4, 6} → {3, 5, 7} → {2, 4, 6, 8} ...
+      // Post-fix: 5 → {4, 6}. Done.
+      let cascadePrefetcher: ChunkPrefetcher | undefined;
+      const cascadingStore = {
+        getResult: vi.fn(
+          (
+            key: string,
+            options?: { suppressPrefetch?: boolean }
+          ): Promise<{ ok: boolean; value: Uint8Array }> => {
+            if (!options?.suppressPrefetch) {
+              cascadePrefetcher?.onAccess(key);
+            }
+            return Promise.resolve({ ok: true, value: new Uint8Array([1, 2, 3]) });
+          }
+        ),
+        setPrefetcher: vi.fn(),
+      };
+
+      cascadePrefetcher = new ChunkPrefetcher(cascadingStore as any, {
+        enabled: true,
+        maxConcurrent: 4,
+      });
+      cascadePrefetcher.registerArrayBounds('cascade', [10240], [1024]);
+
+      cascadePrefetcher.onAccess('cascade/5');
+
+      await waitFor(() => {
+        const s = cascadePrefetcher!.getStats();
+        return s.inFlight === 0 && s.queued === 0;
+      });
+
+      const fetchedKeys = cascadingStore.getResult.mock.calls.map(
+        (call: unknown[]) => call[0] as string
+      );
+      // Only the two immediate neighbors should be fetched. No 3, 7,
+      // 2, 8 would mean cascade got blocked at depth 1.
+      expect(new Set(fetchedKeys)).toEqual(new Set(['cascade/4', 'cascade/6']));
+      expect(fetchedKeys).not.toContain('cascade/3');
+      expect(fetchedKeys).not.toContain('cascade/7');
+    });
+  });
+
   describe('Statistics', () => {
     it('should return accurate statistics', async () => {
       const statsPrefetcher = new ChunkPrefetcher(mockStore as any, {
