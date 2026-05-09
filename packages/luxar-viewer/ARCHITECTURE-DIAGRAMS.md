@@ -1,34 +1,14 @@
 # Luxar Viewer - Architecture Diagrams
 
-**Version**: 1.1.0
+**Version**: 2.0.0
 **Last Updated**: 2026-05-08
 
 Visual reference for understanding the Luxar viewer architecture, data flow, and key algorithms.
 
-> **Staleness note (as of Phase 17)**: this document predates several
-> rounds of structural change. Confirmed-stale items below; a full
-> mermaid refresh is still the long-term target.
->
-> - **Per-geometry data reorganization** (Phase 10): there is no longer
->   a singular `PointSpatialIndexLoader`. See
->   `src/data/{points,lines,gsplats}/` for the per-geometry split.
-> - **Input → UI dependency inversion** via `DimensionSlidersFactory`
->   (Phase 8.6.d): `DimensionSliders` is no longer a direct dependency
->   of `input/`.
-> - **Data → UI dependency inversion** via `SceneLoaderMonitorPort`
->   (Phase 8.6.e): the data → ui edge in dep-graphs is gone.
-> - **Singletons not shown**: `WorkerPool`, `SceneLoaderManager`,
->   `DataMonitorManager`, `DatasetBrowser`, `ManagerRegistry`. The
->   first three are wired via `app.ts` factory paths; the fourth is a
->   per-app UI panel; the fifth (Phase 13.x) is future-facing
->   coordination, not yet on the hot path.
-> - **Dispose model** (Phase 14.5 / 15.1): `LuxarApp.dispose()` uses
->   `safeDispose()` per-component and the `WorkerPool` cleans up
->   in-flight workers via `pendingWorkers` + `initGeneration`.
->
-> The authoritative layer order lives in `.dependency-cruiser.cjs`:
-> `types → config → cache → rendering → data → scene → input → ui →
-> core`.
+The authoritative layer order lives in `.dependency-cruiser.cjs`:
+`types → config → cache → rendering → data → scene → input → ui → core`,
+with `utils`, `themes`, `wasm`, `workers`, `profiling`, and `controls`
+as cross-cutting concerns importable from any layer.
 
 ---
 
@@ -47,10 +27,14 @@ Visual reference for understanding the Luxar viewer architecture, data flow, and
 
 ### Overview: Python → Zarr → TypeScript → WebGL
 
+The pipeline is split per geometry type (Points, Lines, GSplats),
+each with its own spatial-index loader. The `SceneLoader`
+orchestrates them and a `WorkerPool` offloads decode + projection.
+
 ```mermaid
 graph TB
     subgraph "Python (luxar.io)"
-        A[Points Data<br/>nD positions, colors, radii]
+        A[Points / Lines / GSplats<br/>nD attributes per geometry]
         B[ArrayEncoder<br/>Broadcasting, LUT, Quantization]
         C[SpatialIndex Builder<br/>Morton/Hilbert ordering]
         D[ZarrWriter<br/>Chunked, compressed]
@@ -58,23 +42,25 @@ graph TB
 
     subgraph "Zarr Archive"
         E[.zgroup<br/>Scene metadata]
-        F[positions/<br/>Encoded chunks]
+        F[geometry-typed arrays<br/>positions/vertices/centers]
         G[chunk_bounds/<br/>Spatial index]
-        H[colors/, radii/<br/>Attribute arrays]
+        H[Attribute arrays<br/>colors/radii/widths/cholesky]
     end
 
-    subgraph "TypeScript Loader (luxar-viewer.data)"
-        I[SceneLoader<br/>Hierarchical loading]
-        J[PointSpatialIndexLoader<br/>Query visible ranges]
-        K[ChunkSpatialIndex<br/>Bounding box queries]
-        L[ArrayDecoder<br/>Decode all formats]
+    subgraph "TypeScript Loader (data/)"
+        I[SceneLoader<br/>Hierarchical, _updateInProgress mutex]
+        J1[PointSpatialIndexLoader]
+        J2[LinesSpatialIndexLoader]
+        J3[GSplatsSpatialIndexLoader]
+        K[ChunkSpatialIndex<br/>nD bbox queries]
+        L[WorkerPool<br/>Decode + project off-thread]
     end
 
-    subgraph "Rendering (luxar-viewer.rendering)"
+    subgraph "Rendering (rendering/)"
         M[THREE.BufferGeometry<br/>GPU buffers]
-        N[PointMaterial<br/>Custom shaders]
-        O[MaterialManager<br/>Caching & updates]
-        P[PostProcessingManager<br/>HDR effects]
+        N[Point/Line/GSplat materials<br/>Camera-aware, HDR]
+        O[MaterialManager<br/>Cache, registration, dispose]
+        P[PostProcessingManager<br/>HDR + EffectComposer]
     end
 
     subgraph "Display"
@@ -85,7 +71,9 @@ graph TB
     A --> B --> C --> D
     D --> E & F & G & H
     E & F & G & H --> I
-    I --> J --> K --> L
+    I --> J1 & J2 & J3
+    J1 & J2 & J3 --> K
+    J1 & J2 & J3 -.via Comlink.-> L
     L --> M --> N
     N --> O --> P --> Q --> R
 
@@ -115,94 +103,100 @@ graph TB
 
 ### Application Architecture
 
+The dependency direction follows the layer order in
+`.dependency-cruiser.cjs` strictly. Where the data-layer needs UI
+behaviour (e.g. monitor events, dimension-slider construction), the
+seam is inverted via a port: `SceneLoaderMonitorPort`,
+`DimensionSlidersFactory`. The data layer knows the port; the UI
+layer registers the implementation via `app.ts`.
+
 ```mermaid
 graph TB
     subgraph "Entry Point"
         Main[main.ts<br/>Console interceptor<br/>Config validation]
     end
 
-    subgraph "Orchestrator"
-        App[LuxarApp<br/>Component coordination<br/>Lifecycle management]
+    subgraph "Orchestrator (core/)"
+        App[LuxarApp<br/>Wiring + dispose<br/>safeDispose per component]
     end
 
-    subgraph "Core Systems"
-        Scene[SceneManager<br/>THREE.js scene<br/>Camera & renderer]
-        Anim[AnimationController<br/>Render loop<br/>Idle detection]
-        Input[InputHandler<br/>Keyboard & mouse<br/>Event routing]
-        RenderUI[RenderingControls<br/>Effect UI<br/>Settings persist]
+    subgraph "ui/"
+        RenderUI[RenderingControls]
+        Recording[RecordingPanel]
+        Layers[LayersPanel]
+        Browser[DatasetBrowser]
+        Monitor[DataLoadingMonitor]
+        DimSliders[DimensionSliders]
     end
 
-    subgraph "Supporting Managers"
-        Controls[ControlsManager<br/>Orbit/Fly/Ortho<br/>Mode switching]
-        PostProc[PostProcessingManager<br/>HDR pipeline<br/>Bloom, DOF, AA]
-        Materials[MaterialManager<br/>Shader caching<br/>Global updates]
-        Dims[SceneDimsManager<br/>nD state<br/>Observer pattern]
+    subgraph "input/ + scene/"
+        Input[InputHandler]
+        Ctx[InputContextManager]
+        Scene[SceneManager]
+        Anim[AnimationController]
+        Picking[PickingSystem]
     end
 
-    subgraph "Data Loading"
-        SceneLoader[SceneLoader<br/>Hierarchical loading]
-        SpatialLoader[PointSpatialIndexLoader<br/>Spatial queries]
-        ArrayDec[ArrayDecoder<br/>Format decoding]
-        Cache[TwoLevelCachingStore<br/>L1 memory + L2 OPFS]
+    subgraph "data/"
+        SceneLoader[SceneLoader<br/>_updateInProgress mutex]
+        Points[points/PointSpatialIndexLoader]
+        Lines[lines/LinesSpatialIndexLoader]
+        GSplats[gsplats/GSplatsSpatialIndexLoader]
+        Pool[workers/WorkerPool<br/>initGeneration + pendingWorkers]
     end
 
-    subgraph "Input Processing"
-        ContextMgr[InputContextManager<br/>Context stack<br/>Priority routing]
-        DimSliders[DimensionSliders<br/>nD navigation UI]
+    subgraph "rendering/ + cache/"
+        PostProc[PostProcessingManager<br/>EffectComposer]
+        Materials[MaterialManager<br/>register/unregister]
+        Cache[MultiLevelCachingStore<br/>L0 → L1 → L2 → network]
     end
 
     Main --> App
-    App --> Scene & Anim & Input & RenderUI
+    App --> RenderUI & Recording & Layers & Browser & Monitor
+    App --> Scene & Anim & Input & Picking
+    App --> SceneLoader
 
-    Scene --> Controls & PostProc & Materials
-    Anim --> PostProc
-    Input --> ContextMgr & DimSliders
+    Scene --> PostProc & Materials
+    Input --> Ctx
+    Input -.factory port.-> DimSliders
 
-    RenderUI --> PostProc & Anim
-
-    Scene --> SceneLoader
-    SceneLoader --> SpatialLoader --> ArrayDec
-    SpatialLoader --> Cache
-
-    Dims -.Observable.-> DimSliders
-    Dims -.Observable.-> SpatialLoader
+    SceneLoader --> Points & Lines & GSplats
+    Points & Lines & GSplats --> Cache
+    Points & Lines & GSplats -.Comlink.-> Pool
+    SceneLoader -.monitor port.-> Monitor
 
     classDef entry fill:#e1f5ff
     classDef orchestrator fill:#ffe1e1
-    classDef core fill:#fff5e1
-    classDef support fill:#e1ffe1
+    classDef ui fill:#ffe1f5
+    classDef in fill:#fff5e1
     classDef data fill:#f5e1ff
-    classDef input fill:#ffe1f5
+    classDef rd fill:#e1ffe1
 
     class Main entry
     class App orchestrator
-    class Scene,Anim,Input,RenderUI core
-    class Controls,PostProc,Materials,Dims support
-    class SceneLoader,SpatialLoader,ArrayDec,Cache data
-    class ContextMgr,DimSliders input
+    class RenderUI,Recording,Layers,Browser,Monitor,DimSliders ui
+    class Input,Ctx,Scene,Anim,Picking in
+    class SceneLoader,Points,Lines,GSplats,Pool data
+    class PostProc,Materials,Cache rd
 ```
 
-### Dependency Levels
+### Layer Order (`.dependency-cruiser.cjs`)
 
-**Level 0** (No dependencies):
-- config, types, utils
+```
+types → config → cache → rendering → data → scene → input → ui → core
+```
 
-**Level 1** (Core services):
-- cache, rendering (materials, post-processing)
+Plus the cross-cutting layers — importable from any layer:
+`utils`, `themes`, `wasm`, `workers`, `profiling`, `controls`.
 
-**Level 2** (Data & controls):
-- data (uses cache, rendering)
-- controls (uses config)
-- scene (uses controls, rendering, data)
+**Inverted seams** (data does not depend on ui):
+- `SceneLoaderMonitorPort` — data emits events through a port the UI
+  registers against.
+- `DimensionSlidersFactory` — `input/` constructs sliders via a
+  factory provided by `ui/`.
 
-**Level 3** (UI & input):
-- input (uses controls, scene)
-- ui (uses rendering, scene, data)
-
-**Level 4** (Integration):
-- core (uses scene, input, ui, data)
-
-**Principle**: Lower levels don't depend on higher levels (no circular dependencies)
+**Principle**: imports flow left-to-right in the layer order; no
+circular dependencies (rule severity `error`).
 
 ---
 
@@ -332,27 +326,34 @@ Point visibility:
 
 ### HDR Post-Processing Flow
 
+Materials registered with `MaterialManager` implement
+`CameraAwareMaterial`. On every camera change the manager fans
+`updateCameraParams(fov, resolution, isOrtho, nearCull)` out to
+every registered material — no scene traversal. Picking materials
+register too and unregister (without disposal) on context-restore
+so a context-loss cycle doesn't leak registrations.
+
 ```mermaid
 graph LR
     subgraph "Scene Rendering"
-        A[3D Geometry<br/>Points, transforms]
-        B[PointMaterial<br/>World-space sizing<br/>HDR colors]
-        C[Vertex Shader<br/>Position calc<br/>Size calc]
-        D[Fragment Shader<br/>Gaussian falloff<br/>Gamma correction]
+        A[3D Geometry<br/>Points, Lines, GSplats]
+        B[Camera-aware Materials<br/>register w/ MaterialManager]
+        C[Vertex Shader<br/>Position + size calc]
+        D[Fragment Shader<br/>Gaussian / per-geometry<br/>HDR-correct output]
     end
 
     subgraph "HDR Buffer"
         E[HalfFloatType<br/>16-bit float<br/>Range: 0-65504]
     end
 
-    subgraph "Post-Processing (pmndrs)"
+    subgraph "Post-Processing (postprocessing)"
         F[Pass A<br/>Compatible effects]
-        G[Pass B?<br/>If incompatibilities]
-        H[Final Pass<br/>Tone mapping<br/>Anti-aliasing]
+        G[Pass B?<br/>If UV-transform present]
+        H[Final Pass<br/>Tone mapping + AA]
     end
 
     subgraph "Display"
-        I[sRGB Canvas<br/>8-bit output<br/>Range: 0-255]
+        I[sRGB Canvas<br/>8-bit output]
     end
 
     A --> B --> C --> D --> E
@@ -406,50 +407,69 @@ Example Scenario:
 
 ## 5. Cache Architecture
 
-### Two-Level Caching System
+### Multi-Level Caching System
+
+The cascade is L0 → L1 → L2 → network. L0 caches **decompressed**
+zarr chunks (avoids repeated Blosc decompression); L1 caches
+**compressed** zarr bytes (zarrita's `AsyncReadable` view); L2 is
+OPFS for cross-session persistence; L3 is the origin fetch.
 
 ```mermaid
 graph TB
     subgraph "Request Flow"
-        A[Zarr Chunk Request<br/>e.g., positions/c/0/1/2]
+        A[zarr getChunk / fetch<br/>e.g., positions/c/0/1/2]
     end
 
-    subgraph "L1: Memory Cache (100MB)"
+    subgraph "L0: Decompressed Chunk Cache"
+        B0{In L0?}
+        D0[Return decoded array<br/>⚡ ~1μs, no decompression]
+    end
+
+    subgraph "L1: Memory Cache (~100MB)"
         B{In L1?}
-        C[SegmentedLRU<br/>Protected metadata<br/>Probationary data]
-        D[Return from L1<br/>⚡ ~1μs]
+        D[Return compressed bytes<br/>~1μs + Blosc decode ~2ms]
     end
 
-    subgraph "L2: OPFS Cache (2GB)"
+    subgraph "L2: OPFS Cache (~2GB)"
         E{In L2?}
-        F[OPFSStore<br/>256 buckets<br/>Base64 filenames]
         G[Promote to L1<br/>🔄 ~1ms]
     end
 
     subgraph "L3: Network (Origin Server)"
-        H[HTTP Fetch<br/>🌐 ~100ms]
-        I[Store in L2<br/>Persist]
-        J[Store in L1<br/>Fast access]
+        H[HTTP Fetch<br/>🌐 ~100ms<br/>retry + AbortSignal aware]
+        I[Store in L2 + L1]
     end
 
     subgraph "Prefetcher (Background)"
-        K[ChunkPrefetcher<br/>Adjacent chunks<br/>±1 in each dim]
+        K[ChunkPrefetcher<br/>Adjacent chunks<br/>±1 in each displayed dim]
     end
 
-    A --> B
-    B -->|Hit| D
+    A --> B0
+    B0 -->|Hit| D0
+    B0 -->|Miss| B
+    B -->|Hit| D --> D0
     B -->|Miss| E
-    E -->|Hit| G --> D
-    E -->|Miss| H --> I --> J --> D
+    E -->|Hit| G --> D --> D0
+    E -->|Miss| H --> I --> D --> D0
 
     G -.Trigger.-> K
     H -.Trigger.-> K
-    K -.Async Fetch.-> H
+    K -.suppressPrefetch=true.-> A
 
-    style D fill:#aaffaa
+    style D0 fill:#aaffaa
+    style D fill:#aaeeaa
     style G fill:#ffffaa
     style H fill:#ffaaaa
 ```
+
+### Stats Surfaces
+
+`MultiLevelCachingStore.getStats()` exposes per-tier counters
+(L1 hits/misses/evictions, L2 reads/writes/misses, network bytes
+and request count). The data-loading monitor's
+`cache-metrics-aggregator` reads from an optional `L0Provider` for
+L0 stats and from `cacheStatsProvider` for L1/L2/network, falling
+back to per-loader metrics when no providers are wired.
 
 ### Cache Key Structure
 
@@ -521,7 +541,14 @@ graph TB
 | **W** | ❌ Blocked | ✅ Forward | ❌ Blocked | Depends on context |
 | **F** | ✅ Toggle center | ✅ Toggle center | ❌ Blocked | Letter 'f' typed |
 | **[** | ✅ Dim nav | ✅ Dim nav | ❌ Blocked | Navigate dimension |
-| **Esc** | ✅ Reset | ✅ Exit fly | ✅ Unfocus | Always handled |
+| **Esc** | ✅ Reset | ✅ Exit fly | ✅ Unfocus + dispatch | Always handled |
+
+**Escape-from-typing**: pressing **Esc** while in TYPING blurs the
+focused element and re-routes the same event through the underlying
+context, so a typing field can be exited without a separate
+keystroke. The chain is `TYPING → UI_INTERACTION → DIMENSION_NAV →
+NAVIGATION` (recursion depth-capped to prevent infinite passthrough
+loops).
 
 ---
 
