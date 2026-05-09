@@ -174,12 +174,13 @@ The SceneLoader has been refactored into focused, testable modules:
 
 - **Testability**: Each module tested independently (88+ new tests)
 - **Maintainability**: Clear responsibility boundaries
-- **Reduced Complexity**: SceneLoader is currently ~2,100 lines (was an even
-  larger God-Object pre-decomposition) and continues to shrink as
-  per-geometry helpers extract; the long-term target is under 1,500.
-  See `scene-loader/` siblings (data-processor-{lines,gsplats},
-  commit-points-geometry, extend-tolerance, scene-graph-converter,
-  url-normalization) for the extracted concerns.
+- **Reduced Complexity**: SceneLoader is ~2,000 lines as of Phase 19
+  and continues to shrink per phase. Long-term target is under
+  1,500. See `scene-loader/` siblings for the extracted concerns:
+  `data-processor-{points,lines,gsplats}`,
+  `commit-points-geometry`, `extend-tolerance`,
+  `scene-graph-converter`, `url-normalization`,
+  `cache-setup` (Phase 17C), `monitor-wiring` (Phase 18 W4).
 
 ---
 

@@ -41,14 +41,11 @@ violating layers or dropping coverage; that cannot happen with
 ### E2E console-error fixture (opt-in)
 
 `src/tests/e2e/fixtures.ts` exports a re-extended `test` that
-auto-runs `assertNoConsoleErrors(page)` after each test. Specs that
-opt in switch their import:
+auto-runs `assertNoConsoleErrors(page)` after each test. As of
+Phase 16D every E2E spec uses this fixture — there are no remaining
+direct `@playwright/test` imports. New specs should follow:
 
 ```ts
-// before
-import { test, expect } from '@playwright/test';
-
-// after
 import { test, expect } from './fixtures';
 ```
 
