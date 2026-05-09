@@ -60,10 +60,11 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --ext .ts,.tsx",
     "check:layers": "depcruise src --config .dependency-cruiser.cjs",
-    "check:knip": "knip --no-progress",
+    "check:knip": "knip --no-progress --no-config-hints",
+    "check:knip:ci": "knip --no-progress --no-config-hints --include files,dependencies",
     "format": "prettier --write src",
     "check": "pnpm run typecheck && pnpm run lint && pnpm test --run",
-    "check:ci": "pnpm run typecheck && pnpm run lint && pnpm run check:layers && pnpm run test:coverage"
+    "check:ci": "pnpm run typecheck && pnpm run lint && pnpm run check:layers && pnpm run check:knip:ci && pnpm run test:coverage"
   },
   "dependencies": {
     "comlink": "^4.4.2",

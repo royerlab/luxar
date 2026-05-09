@@ -25,7 +25,8 @@
     "src/rendering/picking/index.ts",
     "src/rendering/shaders/index.ts",
     "src/themes/index.ts",
-    "src/types/index.ts"
+    "src/types/index.ts",
+    "typedoc.json"
   ],
   "ignoreBinaries": ["hatch"],
   "ignoreDependencies": ["glob"],

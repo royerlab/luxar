@@ -76,12 +76,26 @@ jobs:
         working-directory: .
         run: hatch run python packages/luxar-viewer/tests/fixtures/generate_test_data.py
 
-      - name: Check (typecheck + lint + layers + coverage)
+      - name: Check (typecheck + lint + layers + knip + coverage)
+        # `pnpm run check:ci` runs in this order:
+        #   typecheck → lint → check:layers (dependency-cruiser)
+        #   → check:knip:ci (dead-file + unlisted-dependency gate)
+        #   → test:coverage (vitest with thresholds)
+        # Phase 17D: knip:ci is included with --include files,dependencies
+        # so policy-level "unused exports" findings (test builders, type
+        # guards) don't fail CI; only true dead files and unlisted deps do.
         run: pnpm run check:ci
 
   # E2E tests disabled — requires GPU-capable runners for reliable WebGL rendering.
   # Software rendering on standard ubuntu-latest is too slow and unreliable.
-  # Run locally with: make test-e2e
+  # Run locally with: make test-e2e.
+  #
+  # Re-enable path (Phase 17D scope): one of
+  #   - GitHub Actions GPU-enabled runner (currently invite-only beta).
+  #   - Self-hosted runner with NVIDIA driver + EGL software fallback that
+  #     still satisfies WebGL2.
+  #   - A "smoke-only" subset that tolerates software rendering at low
+  #     timeouts for the 10-15 specs that don't render geometry pixels.
   e2e-tests:
     if: false
     needs: [python-tests, typescript-tests]
