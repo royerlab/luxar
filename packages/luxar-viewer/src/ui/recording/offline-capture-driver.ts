@@ -45,7 +45,7 @@ export interface CaptureContext {
   /** Logger for warnings + errors (panel pre-bound to its module tag). */
   logWarning: (msg: string) => void;
   logError: (msg: string) => void;
-  /** Image quality (0–100) for jpeg/webp; ignored for png. */
+  /** Image quality in [0, 1] for jpeg/webp (matches canvas.toBlob); ignored for png. */
   imageQuality: number;
   /** User-selected video codec. */
   videoCodec: VideoCodecOption;

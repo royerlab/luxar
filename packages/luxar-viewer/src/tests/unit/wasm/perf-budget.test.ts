@@ -25,9 +25,9 @@
  * Cholesky/attenuation occasionally lands at 1.20× under concurrent
  * test-file CPU load. 1.15× still catches real regressions (a
  * SIMD/alloc-in-loop slip would push the ratio toward 1× or below)
- * without flaking. The full 2× stretch target stays enforced by
- * `pnpm bench:wasm` in CI, where the timing harness runs solo and has
- * enough headroom to demand the design number.
+ * without flaking. The 2× stretch target is checked manually via
+ * `pnpm bench:wasm` (local/manual; not currently wired into a CI
+ * workflow). A scheduled perf workflow is a future follow-up.
  */
 import { describe, it, expect, beforeAll } from 'vitest';
 import { existsSync, readFileSync } from 'fs';

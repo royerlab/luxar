@@ -687,10 +687,13 @@ export class RecordingPanel {
     let capturedFrames = 0;
 
     try {
-      // Per-mode driver setup (file picker, encoder construction, …).
-      // A false return means the driver couldn't proceed (e.g. no codec
-      // supports the request, file picker cancelled). Drivers are
-      // expected to have already toasted the user before returning.
+      // Per-mode driver setup (encoder construction, file picker, …).
+      // A false return means the driver couldn't proceed — currently
+      // only VideoModeDriver returns false (no supported codec at the
+      // requested resolution). The ZIP-based image/EXR drivers always
+      // return true; a user-cancelled file picker falls through to
+      // browser-download mode rather than aborting. Drivers that
+      // return false are expected to have already toasted the user.
       const setupOk = await driver.setup(ctx);
       if (!setupOk) {
         return; // finally restores all state

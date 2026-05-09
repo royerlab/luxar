@@ -236,7 +236,7 @@ export function buildInstanceBuffers(
 ): ProcessedLinesData {
   const { positions, segments, widths, colors, sharpness, ndim, segmentCount } = loadedData;
 
-  // DEBUG: Log input data for particle tracks investigation
+  // Diagnostic: log input shape for large-segment-count Lines updates.
   if (segmentCount > 10000 && appConfig.dataLoading.performance.enablePerformanceMonitoring) {
     log.custom(LogEmoji.DEBUG, Modules.LINES_LOADER, 'buildInstanceBuffers input');
     log.custom(LogEmoji.DEBUG, Modules.LINES_LOADER, 'segmentCount', segmentCount);
@@ -309,7 +309,7 @@ export function buildInstanceBuffers(
     const p1 = Array.from(positions.slice(v0 * ndim, (v0 + 1) * ndim));
     const p2 = Array.from(positions.slice(v1 * ndim, (v1 + 1) * ndim));
 
-    // DEBUG: Log first few segments for particle tracks
+    // Diagnostic: log the first few segments to spot-check input shape.
     if (
       segmentCount > 10000 &&
       i < 3 &&
@@ -374,7 +374,7 @@ export function buildInstanceBuffers(
     outIdx++;
   }
 
-  // DEBUG: Log results for particle tracks
+  // Diagnostic: log post-clipping output shape for large-segment-count updates.
   if (segmentCount > 10000 && appConfig.dataLoading.performance.enablePerformanceMonitoring) {
     log.custom(LogEmoji.DEBUG, Modules.LINES_LOADER, 'buildInstanceBuffers output');
     log.custom(

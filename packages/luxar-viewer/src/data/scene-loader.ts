@@ -104,9 +104,13 @@ interface StagedPointsCommit {
 }
 
 /**
- * Classification of a per-node load failure. Lets `loadSceneNodes` decide
- * whether to skip-quietly (transient network), surface to the user
- * (corrupted dataset), or re-throw (programmer bug).
+ * Classification of a per-node load failure. The actual policy in
+ * `loadLeafNode` (around `:1285-1307`) is partial-scene resilience:
+ * every classified kind — including `Unexpected` — is logged, toasted
+ * (severity varies by kind), and the leaf returns `null` so its
+ * siblings can still render. Nothing rethrows from a classified
+ * `LoaderError`. The `kind` field drives the user-visible severity
+ * and message, not control flow.
  */
 type LoaderErrorKind = 'Network' | 'Decode' | 'Validation' | 'Unexpected';
 
