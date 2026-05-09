@@ -461,4 +461,76 @@ describe('SceneLoader.retryFailedLoader — derived.skip fallback (Phase 15.3)',
     expect(callArg.dimensions).toBe(internals.viewState.dimensions);
     expect(internals.registry.failedLoaders.has('/g')).toBe(false);
   });
+
+  // Phase 19F (r5 warning #3): the existing retry tests prove the
+  // call shape and the failedLoaders.delete behavior, but not that
+  // the placeholder is *truly* still around with consistent userData
+  // after retry. These add stronger end-state assertions.
+
+  it('Points retry preserves placeholder userData + nodeType after success', async () => {
+    const internals = loader as unknown as LoaderInternals;
+    const factory = new NodeFactory();
+    const placeholder = factory.createEmptyPointsNode(
+      '/p',
+      { n_points: 0 } as unknown as PointsMetadata,
+      { dispose: vi.fn() } as unknown as DataLoader
+    );
+    placeholder.userData.attrs = { custom: 'preserve-me' };
+    root.add(placeholder);
+
+    const updateView = vi.fn().mockResolvedValue(null);
+    internals.registry.registerPointsLoader(
+      '/p',
+      { updateView, dispose: vi.fn() } as unknown as DataLoader
+    );
+    internals.registry.recordFailure('/p', new Error('initial'));
+
+    const ok = await loader.retryFailedLoader('/p');
+
+    expect(ok).toBe(true);
+    // The placeholder is still in the scene graph at its path.
+    expect(root.getObjectByName('/p')).toBe(placeholder);
+    // Its userData.nodeType is intact (set by createEmptyPointsNode).
+    expect(placeholder.userData.nodeType).toBe('points');
+    // userData.attrs is unchanged — retry doesn't mutate caller-set
+    // metadata when there's no new data to commit.
+    expect(placeholder.userData.attrs).toEqual({ custom: 'preserve-me' });
+    expect(internals.registry.failedLoaders.has('/p')).toBe(false);
+  });
+
+  it('retry returns false and keeps the failure when placeholder was removed (Phase 14.3 contract)', async () => {
+    // The Phase 14.3 verifyAndClear defensive guard: if the named
+    // object is missing from rootGroup, retry must NOT clear the
+    // failedLoaders entry. r5 noted the existing tests don't
+    // exercise this branch directly.
+    const internals = loader as unknown as LoaderInternals;
+    const factory = new NodeFactory();
+    const placeholder = factory.createEmptyPointsNode(
+      '/p',
+      { n_points: 0 } as unknown as PointsMetadata,
+      { dispose: vi.fn() } as unknown as DataLoader
+    );
+    placeholder.userData.attrs = {};
+    root.add(placeholder);
+
+    const updateView = vi.fn().mockResolvedValue(null);
+    internals.registry.registerPointsLoader(
+      '/p',
+      { updateView, dispose: vi.fn() } as unknown as DataLoader
+    );
+    internals.registry.recordFailure('/p', new Error('initial'));
+
+    // Simulate a programmatic node removal between failure and retry.
+    root.remove(placeholder);
+    expect(root.getObjectByName('/p')).toBeUndefined();
+
+    const ok = await loader.retryFailedLoader('/p');
+
+    expect(ok).toBe(false);
+    // The failure stays — verifyAndClear refused to clear.
+    expect(internals.registry.failedLoaders.has('/p')).toBe(true);
+    // updateView WAS called (we don't gate on placeholder existence
+    // before the loader fetch — the guard fires after).
+    expect(updateView).toHaveBeenCalledTimes(1);
+  });
 });
