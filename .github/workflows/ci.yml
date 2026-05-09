@@ -60,12 +60,6 @@ jobs:
 
       - run: pnpm install
 
-      - name: Type check
-        run: pnpm run typecheck
-
-      - name: Lint
-        run: pnpm run lint
-
       # Generate test fixtures (requires Python)
       - uses: actions/setup-python@v5
         with:
@@ -82,8 +76,8 @@ jobs:
         working-directory: .
         run: hatch run python packages/luxar-viewer/tests/fixtures/generate_test_data.py
 
-      - name: Unit tests
-        run: pnpm test --run
+      - name: Check (typecheck + lint + layers + coverage)
+        run: pnpm run check:ci
 
   # E2E tests disabled — requires GPU-capable runners for reliable WebGL rendering.
   # Software rendering on standard ubuntu-latest is too slow and unreliable.
