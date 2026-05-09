@@ -9,11 +9,24 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 // NOTE: This test file mocks 9 internal modules (below). It primarily
 // verifies initialization ordering + cross-wiring; component behavior
-// is covered by per-module tests. Reducing mocks further requires DI
-// in `core/app.ts` (today's constructor takes no factories) so test
-// stubs can substitute for SceneManager / AnimationController /
-// DatasetBrowser etc. without `vi.mock` indirection. Tracked as a
-// follow-up.
+// is covered by per-module tests.
+//
+// Phase 21C audit: the original plan was to add an `AppFactories`
+// interface to `LuxarAppOptions` so tests could inject stubs without
+// `vi.mock` indirection. On close inspection the trade-off doesn't
+// pay: every `new X(...)` site in `app.ts:init()` would gain a
+// `(this.options.factories?.X ?? defaultFactories.X)(...)` indirection,
+// the test stubs would relocate from `vi.mock` to factory functions
+// (same complexity, different shape), and the tests' constructor-call
+// assertions (e.g. `expect(AnimationController).toHaveBeenCalledWith
+// (mockSceneManager.controls, mockSceneManager.postProcessing)`) would
+// need to be rewritten to assert on factory spies. Net: production
+// code reads worse, test code reads ~the same, no new capability.
+//
+// Per the standing "no complexification" rule, the DI refactor is
+// deferred. If a future need (e.g. a non-mocked embedding test) makes
+// `vi.mock` actually painful, factory injection can be added per-
+// component without churning the rest.
 
 // Mock all dependencies before importing LuxarApp
 vi.mock('../../../scene/scene-manager');
