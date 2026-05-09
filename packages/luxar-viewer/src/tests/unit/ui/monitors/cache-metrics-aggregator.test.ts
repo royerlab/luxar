@@ -1,0 +1,319 @@
+/**
+ * Phase 19G (r5 warning #5): direct unit tests for the cache-metrics
+ * aggregator extracted in Phase 18 W3.
+ *
+ * The Phase 18 W3 extract was previously only exercised via the
+ * monitor's integration tests (which themselves are thin). r5 noted
+ * that disabled / no-provider / multi-provider permutations don't
+ * have explicit coverage. These tests pin each branch.
+ */
+
+import { describe, it, expect, vi } from 'vitest';
+import {
+  aggregateCacheMetrics,
+  type CacheRatesSnapshot,
+  type L0Provider,
+} from '../../../../ui/monitors/cache-metrics-aggregator';
+import type {
+  LoaderMonitor,
+  LoaderMetrics,
+  CacheStatsProvider,
+} from '../../../../types/data-monitor-types';
+
+const ZERO_RATES: CacheRatesSnapshot = {
+  queriesPerSec: 0,
+  loadsPerSec: 0,
+  bandwidth: 0,
+};
+
+function makeLoaderMetrics(overrides: Partial<LoaderMetrics> = {}): LoaderMetrics {
+  return {
+    type: 'point-spatial-index',
+    path: '/p',
+    queries: 0,
+    loads: 0,
+    evictions: 0,
+    errors: 0,
+    pointsLoaded: 0,
+    bytesLoaded: 0,
+    datasetSize: 0,
+    visiblePoints: 0,
+    avgQueryTime: 0,
+    avgLoadTime: 0,
+    memoryUsed: 0,
+    memoryLimit: 0,
+    ...overrides,
+  };
+}
+
+function makeLoader(metrics: LoaderMetrics): LoaderMonitor {
+  return {
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    getMetrics: () => metrics,
+    getActiveQueries: () => [],
+  };
+}
+
+function makeFullCacheProvider(opts: { enabled?: boolean } = {}): CacheStatsProvider {
+  return {
+    getStats: () => ({
+      l1: {
+        metadataSize: 100,
+        chunksSize: 200,
+        metadataCount: 5,
+        chunksCount: 10,
+        hits: 80,
+        misses: 20,
+        evictions: 3,
+      },
+      l2: {
+        size: 1000,
+        count: 50,
+        reads: 30,
+        writes: 25,
+        misses: 5,
+      },
+      network: {
+        bytesTransferred: 12345,
+        requestCount: 7,
+        bandwidth: 9999,
+      },
+    }),
+    clearL1: vi.fn(),
+    clearL2: vi.fn(),
+    clearAll: vi.fn(),
+    isEnabled: () => opts.enabled ?? true,
+  };
+}
+
+describe('aggregateCacheMetrics', () => {
+  it('returns zeros when there are no providers and no loaders', () => {
+    const metricsCache = new Map<string, LoaderMetrics>();
+    const result = aggregateCacheMetrics({
+      l0Provider: null,
+      cacheStatsProvider: null,
+      loaders: new Map(),
+      metricsCache,
+      rates: ZERO_RATES,
+    });
+
+    expect(result.totalCacheMemory).toBe(0);
+    expect(result.memoryLimit).toBe(0);
+    expect(result.totalEntries).toBe(0);
+    expect(result.recentHitRate).toBe(0);
+    expect(result.l0).toBeUndefined();
+    expect(result.l1).toBeUndefined();
+    expect(result.l2).toBeUndefined();
+    expect(result.network).toBeUndefined();
+    expect(result.enabled).toBe(true); // default when no provider
+    expect(metricsCache.size).toBe(0);
+  });
+
+  it('with only an L0 provider: totals come from L0 alone', () => {
+    const l0Provider: L0Provider = {
+      getStats: () => ({
+        size: 500,
+        count: 7,
+        hits: 0,
+        misses: 0,
+        evictions: 0,
+        hitRate: 0,
+      }),
+    };
+    const result = aggregateCacheMetrics({
+      l0Provider,
+      cacheStatsProvider: null,
+      loaders: new Map(),
+      metricsCache: new Map(),
+      rates: ZERO_RATES,
+    });
+
+    expect(result.l0?.size).toBe(500);
+    expect(result.l0?.count).toBe(7);
+    expect(result.totalCacheMemory).toBe(500);
+    expect(result.totalEntries).toBe(7);
+    expect(result.l1).toBeUndefined();
+    expect(result.l2).toBeUndefined();
+  });
+
+  it('with full cache provider: totals are L0 + L1 + L2 sizes/counts', () => {
+    const l0Provider: L0Provider = {
+      getStats: () => ({
+        size: 300,
+        count: 3,
+        hits: 0,
+        misses: 0,
+        evictions: 0,
+        hitRate: 0,
+      }),
+    };
+    const cacheStatsProvider = makeFullCacheProvider();
+    const result = aggregateCacheMetrics({
+      l0Provider,
+      cacheStatsProvider,
+      loaders: new Map(),
+      metricsCache: new Map(),
+      rates: ZERO_RATES,
+    });
+
+    // L0 size 300 + L1 (100+200=300) + L2 (1000) = 1600
+    expect(result.totalCacheMemory).toBe(1600);
+    // L0 count 3 + L1 (5+10=15) + L2 (50) = 68
+    expect(result.totalEntries).toBe(68);
+    // Hit-rate from L1 only: 80/(80+20) = 0.8
+    expect(result.recentHitRate).toBeCloseTo(0.8, 5);
+    expect(result.l1?.hits).toBe(80);
+    expect(result.network?.bandwidth).toBe(9999);
+  });
+
+  it('cacheStatsProvider.isEnabled === false propagates to result.enabled', () => {
+    const cacheStatsProvider = makeFullCacheProvider({ enabled: false });
+    const result = aggregateCacheMetrics({
+      l0Provider: null,
+      cacheStatsProvider,
+      loaders: new Map(),
+      metricsCache: new Map(),
+      rates: ZERO_RATES,
+    });
+    expect(result.enabled).toBe(false);
+  });
+
+  it('without cacheStatsProvider: falls back to per-loader metrics for memory and entries', () => {
+    const m1 = makeLoaderMetrics({
+      path: '/p1',
+      memoryUsed: 100,
+      memoryLimit: 1000,
+      evictions: 2,
+      spatialIndex: {
+        gridShape: [],
+        gridOrigin: [],
+        cellSize: [],
+        occupiedCells: 0,
+        totalCells: 0,
+        avgCellsPerQuery: 0,
+        avgPointsPerCell: 0,
+        queryEfficiency: 0,
+        rangesInCache: 5,
+      },
+    });
+    const m2 = makeLoaderMetrics({
+      path: '/p2',
+      memoryUsed: 200,
+      memoryLimit: 2000,
+      evictions: 4,
+    });
+    const loaders = new Map([
+      ['/p1', makeLoader(m1)],
+      ['/p2', makeLoader(m2)],
+    ]);
+    const metricsCache = new Map<string, LoaderMetrics>();
+
+    const result = aggregateCacheMetrics({
+      l0Provider: null,
+      cacheStatsProvider: null,
+      loaders,
+      metricsCache,
+      rates: ZERO_RATES,
+    });
+
+    expect(result.memoryLimit).toBe(3000);
+    expect(result.totalCacheMemory).toBe(300);
+    expect(result.totalEntries).toBe(5); // only m1 has spatialIndex
+    expect(result.evictionsPerMin).toBe(6);
+    // metricsCache mutation: each loader's getMetrics() result was stored.
+    expect(metricsCache.get('/p1')).toBe(m1);
+    expect(metricsCache.get('/p2')).toBe(m2);
+  });
+
+  it('with cacheStatsProvider: loader memoryUsed is NOT double-counted into totalCacheMemory', () => {
+    const m1 = makeLoaderMetrics({ path: '/p1', memoryUsed: 999, memoryLimit: 5000 });
+    const loaders = new Map([['/p1', makeLoader(m1)]]);
+
+    const result = aggregateCacheMetrics({
+      l0Provider: null,
+      cacheStatsProvider: makeFullCacheProvider(),
+      loaders,
+      metricsCache: new Map(),
+      rates: ZERO_RATES,
+    });
+
+    // totalCacheMemory comes from L1+L2 (300 + 1000 = 1300), NOT
+    // from the loader's memoryUsed when cacheStatsProvider is set.
+    expect(result.totalCacheMemory).toBe(1300);
+    // memoryLimit is still aggregated from loaders.
+    expect(result.memoryLimit).toBe(5000);
+  });
+
+  it('rates are passed through unchanged', () => {
+    const rates: CacheRatesSnapshot = {
+      queriesPerSec: 12,
+      loadsPerSec: 7,
+      bandwidth: 4096,
+    };
+    const result = aggregateCacheMetrics({
+      l0Provider: null,
+      cacheStatsProvider: null,
+      loaders: new Map(),
+      metricsCache: new Map(),
+      rates,
+    });
+    expect(result.queriesPerSec).toBe(12);
+    expect(result.loadsPerSec).toBe(7);
+    expect(result.bandwidth).toBe(4096);
+  });
+
+  it('memoryPercent = totalCacheMemory / memoryLimit × 100', () => {
+    const m1 = makeLoaderMetrics({ path: '/p', memoryUsed: 250, memoryLimit: 1000 });
+    const result = aggregateCacheMetrics({
+      l0Provider: null,
+      cacheStatsProvider: null,
+      loaders: new Map([['/p', makeLoader(m1)]]),
+      metricsCache: new Map(),
+      rates: ZERO_RATES,
+    });
+    expect(result.memoryPercent).toBeCloseTo(25.0, 5);
+  });
+
+  it('memoryPercent is 0 when memoryLimit is 0', () => {
+    const result = aggregateCacheMetrics({
+      l0Provider: null,
+      cacheStatsProvider: null,
+      loaders: new Map(),
+      metricsCache: new Map(),
+      rates: ZERO_RATES,
+    });
+    expect(result.memoryPercent).toBe(0);
+  });
+
+  it('zero L1 accesses → recentHitRate is 0 (avoids divide-by-zero)', () => {
+    const cacheStatsProvider: CacheStatsProvider = {
+      getStats: () => ({
+        l1: {
+          metadataSize: 0,
+          chunksSize: 0,
+          metadataCount: 0,
+          chunksCount: 0,
+          hits: 0,
+          misses: 0,
+          evictions: 0,
+        },
+        l2: { size: 0, count: 0, reads: 0, writes: 0, misses: 0 },
+        network: { bytesTransferred: 0, requestCount: 0, bandwidth: 0 },
+      }),
+      clearL1: vi.fn(),
+      clearL2: vi.fn(),
+      clearAll: vi.fn(),
+      isEnabled: () => true,
+    };
+    const result = aggregateCacheMetrics({
+      l0Provider: null,
+      cacheStatsProvider,
+      loaders: new Map(),
+      metricsCache: new Map(),
+      rates: ZERO_RATES,
+    });
+    expect(result.recentHitRate).toBe(0);
+    expect(result.totalAccesses).toBe(0);
+  });
+});
