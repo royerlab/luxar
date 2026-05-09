@@ -49,6 +49,7 @@ import {
   FORMAT_LABEL_TO_VALUE,
   CODEC_LABEL_TO_VALUE,
 } from './recording/gui-builder';
+import { selectVideoCodec } from './recording/video-codec-selection';
 
 export type RecordingMode = 'image' | 'video' | 'turntable';
 
@@ -519,6 +520,22 @@ export class RecordingPanel {
    * This guarantees every frame is perfectly rendered regardless of GPU speed.
    * The output will be smooth 60fps even if capture takes seconds per frame.
    */
+  /**
+   * Phase 21B audit: the full plan called for splitting this into a
+   * machinery layer + per-mode drivers (turntable / exr / video). On
+   * close inspection that's deeper structural surgery than the wins
+   * justify — the per-mode pieces touch many panel fields
+   * (`isRecording`, `isOfflineCaptureActive`, `isEXRSequenceRecording`,
+   * `recordingIndicator`, `offlineOverlayCleanup`, plus `sceneManager`,
+   * `animationController`, `generateFilename`, `generateFfmpegScript`,
+   * `downloadBlob`, `renderFrameToCanvas`, …). Driver functions would
+   * either take the panel as a parameter (defeating encapsulation) or
+   * accept a 12-arg dependencies bag (no cleaner than the inline
+   * version). Same conclusion as 21A.2/A.3 and 21C: defer to avoid
+   * complexification without proportional gain. Surgical Phase 21B
+   * pulls the codec selection block (a ~40 LOC pure-logic island)
+   * into `recording/video-codec-selection.ts`.
+   */
   private async runOfflineCaptureLoop(
     mode: 'exr' | 'webm' | 'mp4' | 'mkv' | 'png' | 'webp' | 'jpeg'
   ): Promise<void> {
@@ -628,46 +645,27 @@ export class RecordingPanel {
     if (isVideoMode) {
       const canvas = this.sceneManager.renderer.domElement;
       const videoBitsPerSecond = this.computeVideoBitrate(canvas.width, canvas.height);
-
-      // Map user codec selection to mediabunny codec names
-      type MBCodec = 'av1' | 'vp9' | 'avc' | 'hevc' | 'vp8';
-      const codecMap: Record<VideoCodecOption, MBCodec> = {
-        h265: 'hevc',
-        vp9: 'vp9',
-        h264: 'avc',
-        vp8: 'vp8',
-      };
       const encOpts = { width: canvas.width, height: canvas.height, bitrate: videoBitsPerSecond };
-      let codec: MBCodec = codecMap[this.options.videoCodec];
 
-      // Check support and fall back
-      // WebM only supports vp9, av1, vp8 — avc/hevc require MP4 container
-      const webmOnly: MBCodec[] = ['vp9', 'av1', 'vp8'];
-      if (mode === 'webm' && !webmOnly.includes(codec)) {
-        // Force codec to a WebM-compatible one before even checking support
-        codec = 'vp9';
+      const selection = await selectVideoCodec({
+        preferredCodec: this.options.videoCodec,
+        containerMode: mode as 'webm' | 'mp4' | 'mkv',
+        encOpts,
+        canEncodeVideo,
+      });
+      if (selection.codec === null) {
+        showToast('No supported video codec at this resolution');
+        overlay.remove();
+        this.restoreRecordingState();
+        return;
       }
-      if (!(await canEncodeVideo(codec, encOpts))) {
-        const allFallbacks: MBCodec[] =
-          codec === 'hevc' ? ['avc', 'vp9', 'av1', 'vp8'] : ['vp9', 'av1', 'vp8', 'avc'];
-        const fallbacks =
-          mode === 'webm' ? allFallbacks.filter((c) => webmOnly.includes(c)) : allFallbacks;
-        let found = false;
-        for (const fb of fallbacks) {
-          if (await canEncodeVideo(fb, encOpts)) {
-            log.warning(Modules.RECORDING, `${codec} not supported, falling back to ${fb}`);
-            codec = fb;
-            found = true;
-            break;
-          }
-        }
-        if (!found) {
-          showToast('No supported video codec at this resolution');
-          overlay.remove();
-          this.restoreRecordingState();
-          return;
-        }
+      if (!selection.isPreferred && selection.fallbackFrom) {
+        log.warning(
+          Modules.RECORDING,
+          `${selection.fallbackFrom} not supported, falling back to ${selection.codec}`
+        );
       }
+      const codec = selection.codec;
 
       const format =
         mode === 'mp4'
