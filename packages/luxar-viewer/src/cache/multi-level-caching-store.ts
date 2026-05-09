@@ -114,11 +114,18 @@ export class MultiLevelCachingStore implements AsyncReadable {
 
   // Phase 21G: per-tier demand-hit counters. Each demand request via
   // getResult() increments exactly one of l1HitCount / l2HitCount /
-  // networkRequestCount. The data-loading monitor uses these to
-  // compute an effective hit-rate that includes L0/L1/L2 instead of
-  // the L1-only ratio surfaced by the inner cache stats.
+  // demandNetworkRequestCount. The data-loading monitor uses these
+  // to compute an effective hit-rate that includes L0/L1/L2 instead
+  // of the L1-only ratio surfaced by the inner cache stats.
+  //
+  // Phase 21G follow-up: prefetch-originated calls (suppressPrefetch:
+  // true) are excluded so the hit-rate reflects user demand only —
+  // a prefetch that hits L2 shouldn't inflate the apparent hit-rate.
+  // `networkRequestCount` (and `networkBytesTransferred`) above remain
+  // unconditional aggregate I/O counters.
   private l1HitCount = 0;
   private l2HitCount = 0;
+  private demandNetworkRequestCount = 0;
 
   // Sliding window bandwidth tracking (last ~10 seconds)
   private bandwidthWindow: { timestamp: number; bytes: number }[] = [];
@@ -355,11 +362,19 @@ export class MultiLevelCachingStore implements AsyncReadable {
     key: string,
     options?: { signal?: AbortSignal; suppressPrefetch?: boolean }
   ): Promise<Result<Uint8Array, CacheError>> {
+    // Phase 21G follow-up: only count user-demand requests in the
+    // demand hit-rate. The prefetcher calls back through getResult
+    // with `suppressPrefetch: true` after observing demand on K to
+    // pre-load adjacent keys K+1, K+2, …; counting those would
+    // distort the hit-rate (a successful prefetch looks the same as
+    // a successful user demand).
+    const isDemand = !options?.suppressPrefetch;
+
     // L1: Memory check (fastest, ~1μs)
     const l1Hit = this.l1Cache.get(key);
     if (l1Hit) {
       this.log(`L1 hit: ${key}`, 'info');
-      this.l1HitCount++;
+      if (isDemand) this.l1HitCount++;
       return ok(l1Hit);
     }
 
@@ -368,7 +383,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
       const l2Hit = await this.l2Store.get(key);
       if (l2Hit) {
         this.log(`L2 hit: ${key}`, 'info');
-        this.l2HitCount++;
+        if (isDemand) this.l2HitCount++;
         // Promote to L1
         this.l1Cache.set(key, l2Hit);
         // Trigger prefetch on L2 hit (Phase 13.7: skip when this fetch
@@ -415,10 +430,13 @@ export class MultiLevelCachingStore implements AsyncReadable {
 
     const data = new Uint8Array(await response.arrayBuffer());
 
-    // Track network I/O
+    // Track network I/O. Aggregate counters track ALL traffic
+    // (prefetch + demand); demand counter excludes prefetch so the
+    // monitor's effective hit-rate reflects user demand only.
     this.networkRequestCount++;
     this.networkBytesTransferred += data.byteLength;
     this.bandwidthWindow.push({ timestamp: Date.now(), bytes: data.byteLength });
+    if (isDemand) this.demandNetworkRequestCount++;
 
     // Populate caches (only if caching is enabled via URL params).
     // Await the L2 write so a subsequent clearAll/clearL2 can't race the
@@ -735,7 +753,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
       demand: {
         l1Hits: this.l1HitCount,
         l2Hits: this.l2HitCount,
-        networkRequests: this.networkRequestCount,
+        networkRequests: this.demandNetworkRequestCount,
       },
     };
   }

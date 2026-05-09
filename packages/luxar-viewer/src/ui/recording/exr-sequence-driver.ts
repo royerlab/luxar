@@ -34,12 +34,14 @@ export class ExrSequenceDriver implements OfflineCaptureDriver {
 
   async captureFrame(
     ctx: CaptureContext,
-    frameIndex: number,
+    _frameIndex: number,
     _progress: CaptureProgress
   ): Promise<void> {
     if (!this.zip) throw new Error('ExrSequenceDriver: captureFrame before setup');
     const exrData = await ctx.sceneManager.postProcessing.captureHDRAsEXR();
-    this.zip.addFrame(exrData, 'exr', frameIndex);
+    // ZIP entry naming uses an internal success-counter inside
+    // ZipSequenceCapture so tolerated frame failures don't create gaps.
+    this.zip.addFrame(exrData, 'exr');
     // EXR mode does not push pixels back through a 2D canvas, so no
     // setPreview update — the panel keeps the previous frame visible.
   }

@@ -525,9 +525,13 @@ export class RecordingPanel {
    * {@link OfflineCaptureDriver}. Each driver runs its own setup,
    * captures one frame at a time, and finalizes (download/save).
    *
-   * The 432-LOC monolith this replaces is preserved frame-for-frame
-   * in behavior — only the structure is split. Visual-regression
-   * smoke + the existing recording-panel tests guard against drift.
+   * Phase 21B follow-up: the entire post-saveRecordingState body is
+   * wrapped in try/finally so that an exception from driver.setup,
+   * driver.captureFrame, driver.finalize, or any DOM/state mutation
+   * cannot leave the panel with a stuck overlay, hidden panels,
+   * scaled renderer, or stale recording flags. The finally block is
+   * idempotent — every removal/restore handles the "wasn't set"
+   * case gracefully.
    */
   private async runOfflineCaptureLoop(
     mode: 'exr' | 'webm' | 'mp4' | 'mkv' | 'png' | 'webp' | 'jpeg'
@@ -559,7 +563,10 @@ export class RecordingPanel {
       return;
     }
 
-    // Pause auto-rotation so it doesn't compound with the turntable
+    // Pause auto-rotation so it doesn't compound with the turntable.
+    // savedAutoRotate is the only field we mutate before the
+    // try/finally; restoreAutoRotate inside the finally restores it
+    // unconditionally.
     this.savedAutoRotate = this.sceneManager.controls.getAutoRotate();
     this.sceneManager.controls.setAutoRotate(false);
 
@@ -671,102 +678,113 @@ export class RecordingPanel {
       },
     };
 
-    // Per-mode driver setup (file picker, encoder construction, …).
-    // A false return means the driver couldn't proceed (e.g. no codec
-    // supports the request, file picker cancelled). Drivers are
-    // expected to have already toasted the user before returning.
-    const setupOk = await driver.setup(ctx);
-    if (!setupOk) {
+    // Identifiers for the per-frame callbacks. Declared up front so
+    // the finally block can remove them unconditionally even if a
+    // throw aborted the loop before they were ever registered (the
+    // animation controller's remove is idempotent for unknown IDs).
+    const captureCallbackId = 'recording-offline-capture';
+    const keepAliveId = 'recording-offline-keepalive';
+    let capturedFrames = 0;
+
+    try {
+      // Per-mode driver setup (file picker, encoder construction, …).
+      // A false return means the driver couldn't proceed (e.g. no codec
+      // supports the request, file picker cancelled). Drivers are
+      // expected to have already toasted the user before returning.
+      const setupOk = await driver.setup(ctx);
+      if (!setupOk) {
+        return; // finally restores all state
+      }
+
+      // Frame-by-frame capture using the live animation loop.
+      //
+      // The animation loop runs: controls.update() → per-frame callbacks → render().
+      // We register a per-frame callback that applies an incremental quaternion rotation
+      // (same math as auto-rotate), then the animation loop renders and we read pixels.
+      //
+      // This guarantees we read pixels from a properly rendered frame — the same
+      // pipeline that produces visible on-screen output.
+      let consecutiveErrors = 0;
+      const MAX_CONSECUTIVE_ERRORS = 3;
+
+      // Keep the animation loop alive during the entire capture session.
+      // This is a separate no-op callback so we can safely add/remove the rotation
+      // callback each frame without risking the animation loop pausing mid-capture.
+      this.animationController.addPerFrameCallback(keepAliveId, () => {}, { continuous: true });
+
+      for (let i = 0; i < totalFrames; i++) {
+        if (!this.isRecording) break;
+        if (driver.shouldAbort?.()) break;
+
+        // Orbit camera by one step and capture in a single animation frame.
+        // The callback applies a quaternion rotation (same as auto-rotate) AFTER
+        // controls.update, BEFORE render, so the frame is rendered at the new angle.
+        //
+        // IMPORTANT: The rotation callback is registered fresh each iteration and
+        // removed immediately after the frame renders. If it stayed registered
+        // (continuous: true), the animation loop would apply extra rotations during
+        // the async capture work between iterations.
+        this.animationController.addPerFrameCallback(captureCallbackId, () => {
+          if (i > 0) controls.applyOrbitRotation(anglePerFrame);
+        });
+
+        // Wait for one full animation frame (callback + render)
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+        // Remove the rotation callback immediately so the animation loop cannot
+        // apply extra rotations while we do async capture work below.
+        this.animationController.removePerFrameCallback(captureCallbackId);
+
+        // The animation loop has rendered with the rotated camera. Hand off
+        // to the per-mode driver to capture the frame.
+        try {
+          await driver.captureFrame(ctx, i, progress);
+          capturedFrames++;
+          consecutiveErrors = 0;
+        } catch (err) {
+          consecutiveErrors++;
+          log.error(Modules.RECORDING, `Frame ${i + 1} capture failed: ${err}`);
+          if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+            log.error(
+              Modules.RECORDING,
+              `${MAX_CONSECUTIVE_ERRORS} consecutive failures — aborting capture. ` +
+                'The browser may not support 10-bit encoding at this resolution.'
+            );
+            showToast('HDR video encoding failed — try EXR sequence instead');
+            break;
+          }
+        }
+
+        if (counterEl) counterEl.textContent = `${i + 1}/${totalFrames}`;
+      }
+
+      // Driver-specific finalize. Wrapped in its own try/catch so a
+      // throw here surfaces a toast but doesn't bypass the outer
+      // finally — the panel state still gets restored.
+      try {
+        await driver.finalize(ctx, capturedFrames, progress);
+      } catch (err) {
+        log.error(Modules.RECORDING, `Offline ${mode} finalize failed: ${err}`);
+        showToast('Recording finalize failed');
+      }
+    } catch (err) {
+      log.error(Modules.RECORDING, `Offline ${mode} capture failed: ${err}`);
+      showToast('Recording failed');
+    } finally {
+      // Idempotent cleanup. removePerFrameCallback tolerates unknown
+      // IDs; cleanupOfflineOverlay short-circuits if already cleaned;
+      // restoreAutoRotate / restoreRecordingState are no-ops if the
+      // saved state is missing. Order matches the pre-21B inline path.
+      this.animationController.removePerFrameCallback(captureCallbackId);
+      this.animationController.removePerFrameCallback(keepAliveId);
+      this.hideRecordingIndicator();
       this.isRecording = false;
       this.isOfflineCaptureActive = false;
-      this.hideRecordingIndicator();
+      this.isEXRSequenceRecording = false;
       cleanupOfflineOverlay();
       this.restoreAutoRotate();
       this.restoreRecordingState();
-      return;
     }
-
-    // Frame-by-frame capture using the live animation loop.
-    //
-    // The animation loop runs: controls.update() → per-frame callbacks → render().
-    // We register a per-frame callback that applies an incremental quaternion rotation
-    // (same math as auto-rotate), then the animation loop renders and we read pixels.
-    //
-    // This guarantees we read pixels from a properly rendered frame — the same
-    // pipeline that produces visible on-screen output.
-    let capturedFrames = 0;
-    let consecutiveErrors = 0;
-    const MAX_CONSECUTIVE_ERRORS = 3;
-    const captureCallbackId = 'recording-offline-capture';
-
-    // Keep the animation loop alive during the entire capture session.
-    // This is a separate no-op callback so we can safely add/remove the rotation
-    // callback each frame without risking the animation loop pausing mid-capture.
-    const keepAliveId = 'recording-offline-keepalive';
-    this.animationController.addPerFrameCallback(keepAliveId, () => {}, { continuous: true });
-
-    for (let i = 0; i < totalFrames; i++) {
-      if (!this.isRecording) break;
-      if (driver.shouldAbort?.()) break;
-
-      // Orbit camera by one step and capture in a single animation frame.
-      // The callback applies a quaternion rotation (same as auto-rotate) AFTER
-      // controls.update, BEFORE render, so the frame is rendered at the new angle.
-      //
-      // IMPORTANT: The rotation callback is registered fresh each iteration and
-      // removed immediately after the frame renders. If it stayed registered
-      // (continuous: true), the animation loop would apply extra rotations during
-      // the async capture work between iterations.
-      this.animationController.addPerFrameCallback(captureCallbackId, () => {
-        if (i > 0) controls.applyOrbitRotation(anglePerFrame);
-      });
-
-      // Wait for one full animation frame (callback + render)
-      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-
-      // Remove the rotation callback immediately so the animation loop cannot
-      // apply extra rotations while we do async capture work below.
-      this.animationController.removePerFrameCallback(captureCallbackId);
-
-      // The animation loop has rendered with the rotated camera. Hand off
-      // to the per-mode driver to capture the frame.
-      try {
-        await driver.captureFrame(ctx, i, progress);
-        capturedFrames++;
-        consecutiveErrors = 0;
-      } catch (err) {
-        consecutiveErrors++;
-        log.error(Modules.RECORDING, `Frame ${i + 1} capture failed: ${err}`);
-        if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-          log.error(
-            Modules.RECORDING,
-            `${MAX_CONSECUTIVE_ERRORS} consecutive failures — aborting capture. ` +
-              'The browser may not support 10-bit encoding at this resolution.'
-          );
-          showToast('HDR video encoding failed — try EXR sequence instead');
-          break;
-        }
-      }
-
-      if (counterEl) counterEl.textContent = `${i + 1}/${totalFrames}`;
-    }
-
-    // Remove capture callbacks
-    this.animationController.removePerFrameCallback(captureCallbackId);
-    this.animationController.removePerFrameCallback(keepAliveId);
-
-    // Finalize panel state before driver finalize, so the toasts/UI
-    // updates the driver triggers see the right flags.
-    this.hideRecordingIndicator();
-    this.isRecording = false;
-    this.isOfflineCaptureActive = false;
-
-    await driver.finalize(ctx, capturedFrames, progress);
-
-    // Remove overlay, restore all saved state
-    cleanupOfflineOverlay();
-    this.restoreAutoRotate();
-    this.restoreRecordingState();
   }
 
   private async startEXRSequenceRecording(): Promise<void> {

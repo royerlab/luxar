@@ -94,8 +94,14 @@ export class VideoModeDriver implements OfflineCaptureDriver {
       timestamp: frameIndex * frameDuration,
       duration: frameDuration,
     });
-    await this.source.add(sample);
-    sample.close();
+    // Phase 21B follow-up: close() must run even if source.add()
+    // rejects, otherwise transient encoder failures (the path the
+    // panel loop tolerates) leak sample resources frame after frame.
+    try {
+      await this.source.add(sample);
+    } finally {
+      sample.close();
+    }
     progress.setPreview(canvas);
   }
 

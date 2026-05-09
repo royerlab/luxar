@@ -58,6 +58,19 @@ export class ZipSequenceCapture {
   private diskFailed = false;
   private writable: FileSystemWritableFileStream | null = null;
   private setupCalled = false;
+  /**
+   * Output frame sequence counter. Increments after each successful
+   * addFrame so output names are contiguous even when source frames
+   * fail. See addFrame docstring for why this matters.
+   */
+  private frameSequenceNumber = 0;
+  /**
+   * Pending disk write promises (File System Access API path). The
+   * ZIP chunk callback fires writes asynchronously; finalize() awaits
+   * them before close() to avoid racing close-with-pending-writes
+   * and to surface write failures the .catch handler trapped.
+   */
+  private pendingWrites: Promise<void>[] = [];
 
   constructor(
     private readonly env: ZipSequenceEnv,
@@ -102,7 +115,11 @@ export class ZipSequenceCapture {
       }
       if (!chunk) return;
       if (this.writable && !this.diskFailed) {
-        this.writable.write(chunk as BlobPart).catch((writeErr) => {
+        // Track each write promise so finalize() can await them all
+        // before close() — otherwise close races outstanding writes
+        // and any rejection arrives after we've already toasted
+        // success.
+        const writeP = this.writable.write(chunk as BlobPart).catch((writeErr) => {
           if (!this.diskFailed) {
             this.diskFailed = true;
             this.logError(
@@ -111,6 +128,7 @@ export class ZipSequenceCapture {
             );
           }
         });
+        this.pendingWrites.push(writeP);
       } else if (!this.diskFailed) {
         this.chunks.push(chunk);
       }
@@ -118,15 +136,23 @@ export class ZipSequenceCapture {
     });
   }
 
-  /** Append a single frame to the ZIP. Frame names are zero-padded to 6 digits. */
-  addFrame(data: Uint8Array, ext: string, frameIndex: number): void {
+  /**
+   * Append a single frame to the ZIP. Frame names are zero-padded to
+   * 6 digits and use a private sequence counter that increments only
+   * on successful adds, so the output sequence is always contiguous
+   * (frame_000000, frame_000001, …) regardless of which source frame
+   * indices the caller skipped or had errors on. The bundled ffmpeg
+   * script in `encode_video.sh` assumes a contiguous sequence.
+   */
+  addFrame(data: Uint8Array, ext: string): void {
     if (!this.streamingZip) {
       throw new Error('ZipSequenceCapture: addFrame() before setup()');
     }
-    const padded = String(frameIndex).padStart(6, '0');
+    const padded = String(this.frameSequenceNumber).padStart(6, '0');
     const entry = new ZipPassThrough(`frame_${padded}.${ext}`);
     this.streamingZip.add(entry);
     entry.push(data, true);
+    this.frameSequenceNumber++;
   }
 
   /** Whether a disk write has failed (caller may choose to abort the loop). */
@@ -140,19 +166,35 @@ export class ZipSequenceCapture {
   }
 
   /**
-   * Finalize the ZIP stream:
+   * Finalize the ZIP stream. Behaviour:
    *   - on disk-failed: end the stream, abort the writable, toast the error.
    *   - on zero captured frames: end the stream, abort the writable, toast.
-   *   - otherwise: append the ffmpeg script, end the stream, close the writable
-   *     OR build an in-memory blob and download it.
+   *   - otherwise: append the ffmpeg script, end the stream, await all
+   *     pending writes, then close the writable OR build an in-memory
+   *     blob and download it.
+   *
+   * Writes are awaited via Promise.allSettled so a late rejection
+   * sets `diskFailed` and we can take the failure-toast path even if
+   * the `.catch` handler hadn't yet flipped the flag at the time
+   * end() returned.
    */
   async finalize(opts: ZipFinalizeOptions): Promise<void> {
     if (!this.streamingZip) {
       throw new Error('ZipSequenceCapture: finalize() before setup()');
     }
 
+    // Helper: await all pending disk writes (if any), tolerating
+    // rejections — the .catch handler on each write already records
+    // the failure into this.diskFailed.
+    const awaitPendingWrites = async (): Promise<void> => {
+      if (this.pendingWrites.length === 0) return;
+      await Promise.allSettled(this.pendingWrites);
+      this.pendingWrites = [];
+    };
+
     if (this.diskFailed) {
       this.streamingZip.end();
+      await awaitPendingWrites();
       if (this.writable) {
         try {
           await this.writable.abort();
@@ -177,6 +219,24 @@ export class ZipSequenceCapture {
       this.streamingZip.add(scriptEntry);
       scriptEntry.push(encoder.encode(opts.ffmpegScript), true);
       this.streamingZip.end();
+      // Await writes triggered by end() before close(). A late
+      // rejection here flips diskFailed and we route to the
+      // disk-failed toast.
+      await awaitPendingWrites();
+      if (this.diskFailed) {
+        if (this.writable) {
+          try {
+            await this.writable.abort();
+          } catch {
+            /* already aborted */
+          }
+        }
+        opts.showToast(
+          'Recording failed mid-finalize: disk write rejected after frames. ' +
+            'Output may be truncated.'
+        );
+        return;
+      }
       if (this.writable) {
         await this.writable.close();
         opts.showToast(
@@ -190,6 +250,7 @@ export class ZipSequenceCapture {
       }
     } else {
       this.streamingZip.end();
+      await awaitPendingWrites();
       if (this.writable) {
         try {
           await this.writable.abort();

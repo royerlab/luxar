@@ -215,12 +215,39 @@ describe('MultiLevelCachingStore', () => {
       expect(store.getStats().demand.networkRequests).toBe(1); // Unchanged
     });
 
-    it('demand.networkRequests stays in sync with network.requestCount', async () => {
+    it('demand.networkRequests matches network.requestCount when there is no prefetch traffic', async () => {
       await store.get('test.chunk');
       await store.get('other.chunk');
 
       const stats = store.getStats();
+      // Without a prefetcher attached, every request is user-demand,
+      // so the demand counter equals the aggregate counter.
       expect(stats.demand.networkRequests).toBe(stats.network.requestCount);
+    });
+
+    it('prefetch-originated calls (suppressPrefetch=true) do NOT increment demand counters', async () => {
+      // Demand call: counts toward both demand AND aggregate.
+      await store.getResult('test.chunk');
+      const afterDemand = store.getStats();
+      expect(afterDemand.demand.networkRequests).toBe(1);
+      expect(afterDemand.network.requestCount).toBe(1);
+
+      // Prefetch call (different key): counts toward aggregate only.
+      await store.getResult('other.chunk', { suppressPrefetch: true });
+      const afterPrefetch = store.getStats();
+      expect(afterPrefetch.demand.networkRequests).toBe(1); // Unchanged
+      expect(afterPrefetch.network.requestCount).toBe(2); // Bumped
+    });
+
+    it('prefetch L1 hits do NOT increment demand.l1Hits', async () => {
+      await store.getResult('test.chunk'); // populates L1
+      const beforeL1 = store.getStats().demand.l1Hits;
+
+      await store.getResult('test.chunk', { suppressPrefetch: true });
+
+      // Demand hit count unchanged; the prefetch-originated read
+      // hit L1 but didn't count toward user-facing hit-rate.
+      expect(store.getStats().demand.l1Hits).toBe(beforeL1);
     });
   });
 

@@ -673,10 +673,17 @@ export class SceneLoader {
     const tasks = Array.from(loaders.entries()).map(async ([path, loader]) => {
       const wrappedFn = async (session: UpdateSession): Promise<TStaged | null> => {
         try {
-          const result = await updateFn(path, loader, session);
-          // Success path: clear any previous failure record.
-          this.failedLoaders.delete(path);
-          return result;
+          // Phase 20B follow-up: the helper does NOT clear failedLoaders
+          // on success — that decision is per-type because the original
+          // semantics differed by return mode:
+          //   * success-with-data and success-no-data → delete
+          //     (loader successfully ran for this view)
+          //   * skip (no work needed for this view) → preserve the
+          //     existing failure record so a future retry can still
+          //     pick it up
+          // Each per-type updateFn calls failedLoaders.delete itself
+          // on the appropriate paths.
+          return await updateFn(path, loader, session);
         } catch (error) {
           const errorInfo = this.failedLoaders.get(path);
           const retryCount = errorInfo ? errorInfo.retryCount + 1 : 0;
@@ -765,6 +772,8 @@ export class SceneLoader {
       // ================================================================
 
       // Points: no post-processing, data goes directly to staged commit.
+      // Note: skip path returns null WITHOUT delete (preserve any existing
+      // failure record); success path deletes regardless of data presence.
       const pointsTask = this.runLoaderUpdates(
         this.loaders,
         'Points',
@@ -784,6 +793,7 @@ export class SceneLoader {
             return null;
           }
           const points = await loader.updateView(derived.viewState, session);
+          this.failedLoaders.delete(path);
           if (!points) return null;
           if (currentVersion <= 1) {
             log.info(
@@ -816,6 +826,7 @@ export class SceneLoader {
           }
           const linesViewState = derived.viewState;
           const data = await loader.updateView(linesViewState, session);
+          this.failedLoaders.delete(path);
           if (!data) return null;
           if (currentVersion <= 1) {
             log.info(
@@ -850,6 +861,7 @@ export class SceneLoader {
           }
           const gsplatsViewState: GSplatsViewState = derived.viewState;
           const data = await loader.updateView(gsplatsViewState, session);
+          this.failedLoaders.delete(path);
           if (!data) return null;
           const staged = await this.processGSplatsData(path, data, gsplatsViewState, session);
           session.setMetadata({ splats: data.splatCount });

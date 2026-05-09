@@ -29,7 +29,7 @@ export class ImageSequenceDriver implements OfflineCaptureDriver {
 
   async captureFrame(
     ctx: CaptureContext,
-    frameIndex: number,
+    _frameIndex: number,
     progress: CaptureProgress
   ): Promise<void> {
     if (!this.zip) throw new Error('ImageSequenceDriver: captureFrame before setup');
@@ -43,7 +43,9 @@ export class ImageSequenceDriver implements OfflineCaptureDriver {
       throw new Error(`canvas.toBlob returned null for ${this.mode}`);
     }
     const buf = new Uint8Array(await blob.arrayBuffer());
-    this.zip.addFrame(buf, this.mode === 'jpeg' ? 'jpg' : this.mode, frameIndex);
+    // ZIP entry naming uses an internal success-counter inside
+    // ZipSequenceCapture so tolerated frame failures don't create gaps.
+    this.zip.addFrame(buf, this.mode === 'jpeg' ? 'jpg' : this.mode);
     progress.setPreview(canvas);
   }
 
