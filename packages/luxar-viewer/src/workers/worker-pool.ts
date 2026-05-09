@@ -75,6 +75,26 @@ export class WorkerPool {
   private initPromise: Promise<void> | null = null;
   private nextWorkerIndex = 0;
 
+  // Phase 15.1: dispose-mid-init defense. `initialize()` spawns
+  // workers via `Array.from(...).map(async ...)` and pushes them to
+  // `this.workers` only on the fulfilled branch of `Promise.allSettled`.
+  // A `dispose()` between `new DataWorker()` and that push would walk
+  // an empty `this.workers` and exit; the still-pending factories
+  // would then resolve and re-populate `this.workers` post-dispose,
+  // leaving live Worker globals the pool no longer references.
+  //
+  // Defense:
+  //   - `initGeneration` is bumped on every dispose. Each `initialize()`
+  //     captures the generation at start; if it has moved on by the
+  //     time a worker's init resolves, the worker is terminated and
+  //     not pushed.
+  //   - `pendingWorkers` holds every Worker that has been constructed
+  //     but not yet either pushed into `this.workers` or terminated.
+  //     `dispose()` terminates everything in this set so the in-flight
+  //     factories find nothing live to push.
+  private initGeneration = 0;
+  private pendingWorkers = new Set<Worker>();
+
   /**
    * Get the configured worker count, capped by hardware concurrency
    *
@@ -105,6 +125,12 @@ export class WorkerPool {
     // Return existing promise if initialization already started or completed
     if (this.initPromise) return this.initPromise;
 
+    // Phase 15.1: capture the generation token for this init attempt.
+    // dispose() bumps the token; factories that resolve after a
+    // concurrent dispose detect the mismatch and self-terminate
+    // instead of polluting `this.workers`.
+    const myGeneration = ++this.initGeneration;
+
     this.initPromise = (async () => {
       try {
         const workerCount = this.getConfiguredWorkerCount();
@@ -117,6 +143,11 @@ export class WorkerPool {
           const worker = dataWorkerUrlOverride
             ? new Worker(dataWorkerUrlOverride, { type: 'module' })
             : new DataWorker();
+
+          // Phase 15.1: track this worker as in-flight so a concurrent
+          // dispose() can terminate it. Removed on success or on the
+          // per-factory catch path.
+          this.pendingWorkers.add(worker);
 
           // Install runtime-error handlers BEFORE the first message — a
           // worker can crash during its own boot sequence (e.g. WASM init
@@ -134,10 +165,20 @@ export class WorkerPool {
             //   2. an onerror short-circuit (worker fails *during* its
             //      boot before any pool entry exists for it).
             await this.initializeWithGuard(worker, api, index + 1);
+            // Phase 15.1: if dispose() ran while we were awaiting init,
+            // the generation has moved on. Self-terminate and reject so
+            // the parent doesn't push us into the post-dispose pool.
+            if (this.initGeneration !== myGeneration) {
+              throw new Error(
+                `Worker ${index + 1} aborted: pool was disposed during init`
+              );
+            }
+            this.pendingWorkers.delete(worker);
             log.info(Modules.WORKER_POOL, `Worker ${index + 1}/${workerCount} ready`);
             return { worker, api, activeQueries: 0 };
           } catch (error) {
             log.error(Modules.WORKER_POOL, `Worker ${index + 1} initialization failed`, error);
+            this.pendingWorkers.delete(worker);
             worker.terminate();
             throw error;
           }
@@ -145,6 +186,16 @@ export class WorkerPool {
 
         // Wait for all workers to initialize
         const results = await Promise.allSettled(workerPromises);
+
+        // Phase 15.1: post-dispose check. If dispose() bumped the
+        // generation while we were awaiting allSettled, every worker
+        // either self-terminated above or was terminated by dispose
+        // walking pendingWorkers. Bail out without throwing; the
+        // initPromise has been nilled by dispose anyway.
+        if (this.initGeneration !== myGeneration) {
+          this.workers = [];
+          return;
+        }
 
         // Collect successful workers
         for (const result of results) {
@@ -175,6 +226,12 @@ export class WorkerPool {
           worker.terminate();
         }
         this.workers = [];
+        // Phase 15.1: terminate anything still pending too, in case
+        // the catch fires while factories are still settling.
+        for (const worker of this.pendingWorkers) {
+          worker.terminate();
+        }
+        this.pendingWorkers.clear();
         // Note: we deliberately keep `initPromise` (the rejected one) so
         // subsequent `getWorker()` / `runWithTimeout` calls fail FAST
         // rather than re-running the 10s init guard for every nD load.
@@ -510,9 +567,33 @@ export class WorkerPool {
   }
 
   /**
-   * Clean up all worker resources
+   * Clean up all worker resources.
+   *
+   * Phase 15.1: also terminates workers that are still pending init
+   * via `pendingWorkers`, and bumps `initGeneration` so any factories
+   * still in flight detect the dispose and self-terminate when they
+   * resolve.
    */
   dispose(): void {
+    // Bump the generation FIRST so any factories that resolve between
+    // here and our pendingWorkers walk see the mismatch and bail.
+    this.initGeneration++;
+
+    if (this.pendingWorkers.size > 0) {
+      log.info(
+        Modules.WORKER_POOL,
+        `Terminating ${this.pendingWorkers.size} pending data worker(s) mid-init`
+      );
+      for (const worker of this.pendingWorkers) {
+        try {
+          worker.terminate();
+        } catch {
+          // Already terminated or browser quirk; ignore.
+        }
+      }
+      this.pendingWorkers.clear();
+    }
+
     if (this.workers.length > 0) {
       log.info(Modules.WORKER_POOL, `Terminating ${this.workers.length} data worker(s)`);
       for (const { worker } of this.workers) {
