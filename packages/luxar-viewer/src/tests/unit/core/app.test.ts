@@ -7,10 +7,13 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
-// NOTE: This test file mocks 10 internal modules (below). This tests
-// initialization order and mock wiring, but not real component behavior.
-// Tracked under Phase 5.5 (reduce internal-module mocking) — covered
-// once the heavy modules become testable post-decomposition.
+// NOTE: This test file mocks 9 internal modules (below). It primarily
+// verifies initialization ordering + cross-wiring; component behavior
+// is covered by per-module tests. Reducing mocks further requires DI
+// in `core/app.ts` (today's constructor takes no factories) so test
+// stubs can substitute for SceneManager / AnimationController /
+// DatasetBrowser etc. without `vi.mock` indirection. Tracked as a
+// follow-up.
 
 // Mock all dependencies before importing LuxarApp
 vi.mock('../../../scene/scene-manager');
@@ -22,7 +25,9 @@ vi.mock('../../../ui/components/scale-bar');
 vi.mock('../../../ui/panels/dataset-browser');
 vi.mock('../../../ui/helpers');
 vi.mock('../../../ui/layers');
-vi.mock('../../../scene/scene-dims-manager');
+// Phase 17A.4: scene-dims-manager unmocked. It's a pure JS singleton
+// (no DOM or WebGL); running it real in app.test improves coverage
+// of the dim-init wiring without affecting jsdom behavior.
 // Phase 8.6 migrated PerformanceMonitor and DebugConsole ownership
 // from AnimationController / InputHandler to LuxarApp. Mock both here
 // so stats.js / DebugConsole's document.createElement calls don't run
