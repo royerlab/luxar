@@ -1,6 +1,5 @@
 /**
- * Phase 21E — separate Vitest config for the WASM-vs-TypeScript
- * perf-budget suite.
+ * Separate Vitest config for the WASM-vs-TypeScript perf-budget suite.
  *
  * The main `vitest.config.ts` excludes
  * `src/tests/unit/wasm/perf-budget.test.ts` because the

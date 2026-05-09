@@ -1,7 +1,7 @@
 /**
  * Pure helpers for rendering-controls settings persistence and defaults.
  *
- * Consolidates three previously inlined responsibilities:
+ * Three responsibilities:
  *  - Building the canonical default `RenderingSettings` (with optional
  *    zarr viewer-config overlay).
  *  - Reading a stored settings string from localStorage and merging it

@@ -1,16 +1,13 @@
 /**
- * Phase 17C: cache initialization helpers extracted from
- * `SceneLoader.loadScene()`.
+ * Cache initialization helpers for `SceneLoader.loadScene()`.
  *
- * The original `loadScene()` was 256 lines, with ~60 of those devoted
- * to wiring the L0/L1/L2 cache stack:
+ * Wires the L0/L1/L2 cache stack:
  *   - L0 (DecompressedChunkCache, in-memory decoded chunks)
  *   - L1 + L2 (MultiLevelCachingStore: in-memory + OPFS)
  *   - ChunkPrefetcher attached to L1/L2
  *   - L0 invalidation on L1/L2 clear
  *
- * Extracting it here doesn't change behavior — the same flags route
- * the same way — but it makes `loadScene()` readable as a high-level
+ * Splitting this out keeps `loadScene()` readable as a high-level
  * "open cache → open zarr → enumerate → build scene" sequence.
  */
 

@@ -261,13 +261,12 @@ and double-disposal hazards. The current implementation lives in
   (animation, input, scheduled callbacks), then dispose UI panels,
   then data systems, then renderer/WebGL, then global listeners and
   singletons (worker pool, monitor manager, scene-loader manager).
-- Phase 14.5: `DatasetBrowser.close()` is called early in dispose
-  so the panel is removed from the DOM and `LuxarApp.datasetBrowser`
-  is cleared even if the user dismisses the app while the panel is
-  still open.
-- Phase 15.1: `disposeWorkerPool()` terminates in-flight workers via
-  the pool's `pendingWorkers` set + `initGeneration` token, so a
-  dispose mid-init does not leak Worker instances.
+- `DatasetBrowser.close()` is called early in dispose so the panel
+  is removed from the DOM and `LuxarApp.datasetBrowser` is cleared
+  even if the user dismisses the app while the panel is still open.
+- `disposeWorkerPool()` terminates in-flight workers via the pool's
+  `pendingWorkers` set + `initGeneration` token, so a dispose mid-init
+  does not leak Worker instances.
 
 ```typescript
 dispose(): void {
@@ -288,7 +287,7 @@ dispose(): void {
   safeDispose('sceneLoaderManager', () => SceneLoaderManager.disposeInstance());
   safeDispose('dataMonitorManager', () => DataMonitorManager.disposeInstance());
 
-  // Worker pool: also covers in-flight workers (Phase 15.1).
+  // Worker pool: also covers in-flight workers.
   safeDispose('workerPool', () => disposeWorkerPool());
 
   // ManagerRegistry is future-facing; today most managers are wired
@@ -599,10 +598,9 @@ const loader = manager.getDefaultLoader();
 console.log(loader);
 ```
 
-**Note**: Synchronous since Phase 4.5 / extracted into
-`debug-state.ts`. Earlier revisions used a dynamic import to break
-a circular dependency; the dependency was inverted in Phase 8.6 and
-no longer requires async resolution.
+**Note**: Synchronous; lives in `debug-state.ts`. The dependency was
+inverted so a dynamic import is no longer needed to break a circular
+dependency.
 
 ---
 

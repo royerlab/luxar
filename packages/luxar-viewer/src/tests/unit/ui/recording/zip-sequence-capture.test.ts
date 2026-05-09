@@ -1,8 +1,8 @@
 /**
- * Unit tests for the ZipSequenceCapture helper extracted in Phase 21B
- * (deep). The previous inline implementation lived inside a 432-LOC
- * runOfflineCaptureLoop and couldn't be exercised without spinning up
- * the whole panel.
+ * Unit tests for the ZipSequenceCapture helper. The helper owns the
+ * streaming-ZIP lifecycle for image and EXR offline-capture drivers
+ * — disk-streaming via showSaveFilePicker, in-memory fallback, and
+ * abort/finalize ordering — and is testable in isolation here.
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -267,7 +267,7 @@ describe('ZipSequenceCapture', () => {
     expect(text).not.toContain('frame_000003.png');
   });
 
-  it('disk writes are awaited before close (Phase 21B follow-up)', async () => {
+  it('disk writes are awaited before close', async () => {
     const writeResolvers: Array<() => void> = [];
     const env = makeWritable();
     env.write.mockImplementation(

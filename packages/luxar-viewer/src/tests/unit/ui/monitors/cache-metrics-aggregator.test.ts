@@ -1,11 +1,9 @@
 /**
- * Phase 19G (r5 warning #5): direct unit tests for the cache-metrics
- * aggregator extracted in Phase 18 W3.
- *
- * The Phase 18 W3 extract was previously only exercised via the
- * monitor's integration tests (which themselves are thin). r5 noted
- * that disabled / no-provider / multi-provider permutations don't
- * have explicit coverage. These tests pin each branch.
+ * Direct unit tests for the cache-metrics aggregator. Each branch
+ * (no providers, L0 only, full provider, disabled provider, demand
+ * counters, telemetry state, rolling rates) is pinned explicitly so
+ * the aggregator's surface stays observable independent of the
+ * monitor's integration tests.
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -108,8 +106,8 @@ describe('aggregateCacheMetrics', () => {
     expect(result.l1).toBeUndefined();
     expect(result.l2).toBeUndefined();
     expect(result.network).toBeUndefined();
-    // r8 §B1: no provider → not-wired (NOT default-enabled, which the
-    // pre-r8 code surfaced and which misled `?no-cache` users).
+    // No provider → not-wired (must NOT default-enabled — that
+    // would mislead `?no-cache` users into thinking caching is on).
     expect(result.enabled).toBe(false);
     expect(result.telemetryState?.kind).toBe('not-wired');
     expect(metricsCache.size).toBe(0);
@@ -185,7 +183,7 @@ describe('aggregateCacheMetrics', () => {
     expect(result.telemetryState?.kind).toBe('disabled-config');
   });
 
-  describe('Phase r8 §B1 — explicit telemetry state', () => {
+  describe('explicit telemetry state', () => {
     it("explicit 'disabled-no-cache' wins over inferred 'not-wired'", () => {
       const result = aggregateCacheMetrics({
         l0Provider: null,
@@ -213,7 +211,7 @@ describe('aggregateCacheMetrics', () => {
     });
   });
 
-  describe('Phase r8 §B2 — rolling rates', () => {
+  describe('rolling rates', () => {
     it('hitsPerSecond / missesPerSecond come from rate-snapshot, not lifetime/60', () => {
       const cacheStatsProvider = makeFullCacheProvider();
       const rates: CacheRatesSnapshot = {
@@ -388,7 +386,7 @@ describe('aggregateCacheMetrics', () => {
     expect(result.totalAccesses).toBe(0);
   });
 
-  describe('Phase 21G — effectiveDemandHitRate', () => {
+  describe('effectiveDemandHitRate', () => {
     function providerWithDemand(demand: {
       l1Hits: number;
       l2Hits: number;

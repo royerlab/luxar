@@ -72,7 +72,7 @@ describe('readUrlParams', () => {
     expect(normalizeDataSourceUrl('/')).toBeNull();
   });
 
-  // Phase 13.12: mixed-case schemes are valid HTTP(S) per RFC 3986
+  // mixed-case schemes are valid HTTP(S) per RFC 3986
   // §3.1, but the scene-loader downstream helpers historically only
   // matched lowercase prefixes. Now normalize-data-source-url
   // canonicalizes via url.href so both halves of the pipeline see

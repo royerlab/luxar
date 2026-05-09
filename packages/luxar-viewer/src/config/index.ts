@@ -428,48 +428,46 @@ export const config: AppConfig = {
         bandwidthCalculationWindow: 1000,
       },
     },
-    // Performance optimization settings (Phase 1-4)
-    // Current integration status: See PERFORMANCE_OPTIMIZATION_COMPLETE.md
+    // Performance optimization settings.
     performance: {
-      // Phase 1: Object Pooling - ENABLED ✅ (DEEP INTEGRATION COMPLETE!)
-      // Multi-type accumulator with in-place projection and filtering
-      // Eliminates ALL allocations in projectTo3D (positions, filtered arrays, return object)
-      // Zero-copy operation: writes directly to accumulator buffers, compacts in-place
-      useAccumulators: true, // ✅ ACTIVATED - Deep integration complete!
+      // Object pooling — multi-type accumulator with in-place projection
+      // and filtering. Eliminates allocations in projectTo3D (positions,
+      // filtered arrays, return object) by writing directly into
+      // accumulator buffers and compacting in place.
+      useAccumulators: true,
       initialAccumulatorCapacity: 8192,
       accumulatorGrowthFactor: 1.5,
 
-      // Phase 2: Web Workers - ENABLED ✅
-      // Phase 3: WASM - ENABLED ✅ (loads automatically when workers enabled)
-      // Workers offload CPU-heavy operations: nD→3D projection, visibility, decoding
-      // Note: AABB spatial queries always run on main thread (faster than roundtrip)
-      // WASM module built (17KB): public/wasm/luxar_wasm_bg.wasm
-      useWebWorkers: true, // ✅ ACTIVATED - Offloads projection/visibility/decoding to workers
+      // Web workers offload CPU-heavy operations: nD→3D projection,
+      // visibility, decoding. AABB spatial queries always run on the
+      // main thread (faster than the roundtrip).
+      useWebWorkers: true,
       workerCount: 0, // 0 = auto (uses navigator.hardwareConcurrency - 1)
-      // Per-call worker timeouts. Visibility is fast (chunk-bounding-box test);
-      // projection over millions of items is slow. 0 disables timeout enforcement.
+      // Per-call worker timeouts. Visibility is fast (chunk-bounding-box
+      // test); projection over millions of items is slow. 0 disables
+      // timeout enforcement.
       workerVisibilityTimeoutMs: 30000,
       workerProjectionTimeoutMs: 60000,
       // Worker pool init timeout: protects against unreachable worker
       // scripts (404 on the chunk URL, blocked by route, dev-server
       // misconfig). 10s is generous for any healthy environment;
-      // anything longer suggests a real load problem and we should
+      // anything longer suggests a real load problem and the app should
       // fall back to main-thread execution rather than hang on boot.
       workerInitTimeoutMs: 10000,
-      // Material cache eviction: 200 entries × 3 types = 600 cached materials
-      // max. Tuning is per-session; users animating sliders can blow this
-      // through quickly so eviction keeps memory bounded.
+      // Material cache eviction: 200 entries × 3 types = 600 cached
+      // materials max. Users animating sliders can blow through this
+      // quickly so eviction keeps memory bounded.
       materialCacheMaxSize: 200,
 
-      // Phase 3: WASM Acceleration - Documentation flag
-      // Actual WASM loading is automatic via initWasm() when workers enabled
-      useWASM: true, // WASM module built and ready
+      // WASM acceleration — module loads automatically via initWasm()
+      // when workers are enabled.
+      useWASM: true,
       wasmModulePath: 'wasm/luxar_wasm_bg.wasm', // Resolved relative to bundle via import.meta.url
 
-      // Phase 4: GPU Buffer Pool - ENABLED ✅
-      // Multi-type support: Float32Array, Uint8Array, Uint16Array (with auto normalization)
-      // Reuses geometries when capacity AND types match (0ms allocation on reuse)
-      // Integrated into scene-loader: updatePointsGeometry/updateLinesGeometry/updateGSplatsGeometry
+      // GPU buffer pool — multi-type support (Float32Array, Uint8Array,
+      // Uint16Array with auto normalization). Reuses geometries when
+      // capacity AND types match (0ms allocation on reuse). Integrated
+      // into the scene-loader geometry-update path.
       useGPUBufferPool: true,
       gpuPoolMaxSize: 20,
       gpuPoolEvictionFrames: 300,

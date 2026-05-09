@@ -54,15 +54,15 @@ export function safeDisposeEffect(
 }
 
 /**
- * Phase 21A: pass-disposal pattern used in 3 places in
- * `post-processing-manager.ts` (rebuild + recreate + teardown). Removes
- * the pass from its composer (if any) and then runs `safeDisposeEffect`
- * with the supplied label. The caller is responsible for clearing its
- * own pass-field reference afterwards.
+ * Pass-disposal helper used by post-processing-manager (rebuild +
+ * recreate + teardown). Removes the pass from its composer (if any)
+ * and then runs `safeDisposeEffect` with the supplied label. The
+ * caller is responsible for clearing its own pass-field reference
+ * afterwards.
  *
  * Generic over the pass type so TypeScript can infer the composer's
- * `removePass` parameter (`Pass` from postprocessing) at the call site
- * rather than requiring a structural-cast helper interface.
+ * `removePass` parameter (`Pass` from postprocessing) at the call
+ * site rather than requiring a structural-cast helper interface.
  */
 export function safeRemoveAndDisposePass<P extends DisposableEffect>(
   composer: { removePass: (pass: P) => void } | null | undefined,

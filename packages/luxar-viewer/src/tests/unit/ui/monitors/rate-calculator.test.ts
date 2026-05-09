@@ -1,9 +1,7 @@
 /**
- * Phase 20A — unit tests for the rate-calculator extract.
- *
- * The Phase 18 W3 cache aggregator opened the door to testing
- * monitor logic without spinning up the full panel; this test
- * exercises the rate-calculation pure function directly.
+ * Unit tests for `calculateRates`. The pure-function shape lets us
+ * drive each branch (cache short-circuit, event-type counts, rolling
+ * windows) without spinning up the full DataLoadingMonitor.
  */
 
 import { describe, it, expect } from 'vitest';

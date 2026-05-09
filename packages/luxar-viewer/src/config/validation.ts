@@ -62,8 +62,9 @@ function validateCamera(config: AppConfig, errors: string[], warnings: string[])
   const { camera } = config;
   const defaults = config.renderingControls.defaults;
 
-  // Phase 20F: harden each numeric check with Number.isFinite() to
-  // reject NaN/Infinity. Bare `<` / `>` against NaN is always false.
+  // Each numeric check uses Number.isFinite() to reject NaN/Infinity.
+  // Bare `<` / `>` against NaN is always false, so naked range
+  // checks would let NaN pass silently.
 
   if (!Number.isFinite(defaults.fov) || defaults.fov < 1 || defaults.fov > 180) {
     errors.push(`Invalid camera FOV: ${defaults.fov} (must be a finite number 1..180)`);
@@ -101,7 +102,7 @@ function validateCamera(config: AppConfig, errors: string[], warnings: string[])
 function validateRendering(config: AppConfig, errors: string[], _warnings: string[]): void {
   const defaults = config.renderingControls.defaults;
 
-  // Phase 20F: NaN/Infinity hardening for the global EOG values.
+  // NaN/Infinity hardening for the global EOG values.
   if (!Number.isFinite(defaults.exposure) || defaults.exposure < -5 || defaults.exposure > 5) {
     errors.push(`Invalid exposure: ${defaults.exposure} (must be a finite number -5..5)`);
   }
@@ -175,8 +176,8 @@ function validateControls(config: AppConfig, errors: string[], _warnings: string
   ];
 
   for (const { name, range } of ranges) {
-    // Phase 20F: NaN check on every range field. Without this,
-    // any of {min, max, default} could be NaN and silently pass.
+    // NaN check on every range field — without this, any of
+    // {min, max, default} could be NaN and silently pass.
     if (
       !Number.isFinite(range.min) ||
       !Number.isFinite(range.max) ||
@@ -204,9 +205,9 @@ function validateControls(config: AppConfig, errors: string[], _warnings: string
 function validateDataLoading(config: AppConfig, errors: string[], _warnings: string[]): void {
   const { dataLoading } = config;
 
-  // Network validation. Phase 14 hygiene: tighten to reject NaN
-  // (comparisons with NaN are always false, so `<= 0` accepts it),
-  // Infinity, and non-integers where integer semantics are required.
+  // Network validation: reject NaN (comparisons with NaN are always
+  // false, so `<= 0` accepts it), Infinity, and non-integers where
+  // integer semantics are required.
   if (
     !Number.isFinite(dataLoading.network.timeoutMs) ||
     dataLoading.network.timeoutMs <= 0
@@ -215,10 +216,9 @@ function validateDataLoading(config: AppConfig, errors: string[], _warnings: str
       `Invalid network timeout: ${dataLoading.network.timeoutMs} ms (must be a finite positive number)`
     );
   }
-  // Phase 13.12: validationTimeoutMs is the per-request total budget
-  // for cache validation in fetchWithRetry; 0 / negative / NaN /
-  // Infinity all produce surprising abort/retry behavior, so reject
-  // up front.
+  // validationTimeoutMs is the per-request total budget for cache
+  // validation in fetchWithRetry; 0 / negative / NaN / Infinity all
+  // produce surprising abort/retry behavior, so reject up front.
   if (
     !Number.isFinite(dataLoading.network.validationTimeoutMs) ||
     dataLoading.network.validationTimeoutMs <= 0
@@ -244,8 +244,8 @@ function validateDataLoading(config: AppConfig, errors: string[], _warnings: str
     );
   }
 
-  // Memory validation. Phase 16B.1: tighten to reject NaN — `NaN <= 0`
-  // is always false, so the prior `<= 0 || > 1` check let NaN through.
+  // Memory validation: reject NaN — `NaN <= 0` is always false, so a
+  // bare `<= 0 || > 1` check would let NaN through.
   const targetHeap = dataLoading.memory.targetHeapUsage;
   if (!Number.isFinite(targetHeap) || targetHeap <= 0 || targetHeap > 1) {
     errors.push(
@@ -257,7 +257,7 @@ function validateDataLoading(config: AppConfig, errors: string[], _warnings: str
     errors.push(`Invalid min cache size: ${minCache} MB (must be a finite positive number)`);
   }
 
-  // Spatial validation. Phase 16B.1: same NaN hardening.
+  // Spatial validation: same NaN hardening.
   if (dataLoading.spatial) {
     const tol = dataLoading.spatial.defaultTolerance;
     if (!Number.isFinite(tol) || tol <= 0) {
@@ -273,9 +273,9 @@ function validateDataLoading(config: AppConfig, errors: string[], _warnings: str
     }
   }
 
-  // Phase 16B.1: cache size validation. Previously unvalidated; NaN /
-  // Infinity / negative values would cascade into the cache layer
-  // sizing logic and surface as cryptic OOMs or zero-budget caches.
+  // Cache size validation: NaN / Infinity / negative values would
+  // cascade into the cache layer sizing logic and surface as cryptic
+  // OOMs or zero-budget caches.
   const cache = config.cache;
   if (cache) {
     const l0 = cache.l0MaxSizeMB;
@@ -325,8 +325,8 @@ function validateDataLoading(config: AppConfig, errors: string[], _warnings: str
 function validateScene(config: AppConfig, errors: string[], _warnings: string[]): void {
   const { scene } = config;
 
-  // Phase 16B.1: tighten — `NaN < 0` is always false, so the prior
-  // range check let NaN through. Also require an integer color value.
+  // `NaN < 0` is always false, so a bare range check would let NaN
+  // through. Also require an integer color value.
   if (
     !Number.isInteger(scene.backgroundColor) ||
     scene.backgroundColor < 0 ||
@@ -355,7 +355,7 @@ function validateScene(config: AppConfig, errors: string[], _warnings: string[])
 function validateInput(config: AppConfig, errors: string[], warnings: string[]): void {
   const { input } = config;
 
-  // Phase 20F: NaN/Infinity hardening.
+  // NaN/Infinity hardening.
   if (!Number.isFinite(input.defaultSensitivity)) {
     errors.push(
       `Invalid input.defaultSensitivity: ${input.defaultSensitivity} (must be a finite number)`

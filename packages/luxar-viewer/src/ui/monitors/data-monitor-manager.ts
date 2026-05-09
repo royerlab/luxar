@@ -23,8 +23,8 @@ export class DataMonitorManager {
    * Private constructor to enforce singleton pattern. Subscribes to
    * panel-cycle / panel-hide events on the cross-layer event bus so
    * lower layers (input, scene) can drive the data-monitor without
-   * importing this UI module directly — that's how Phase 8.6 keeps
-   * the layer order clean.
+   * importing this UI module directly, which keeps the layer order
+   * clean.
    */
   private constructor() {
     this.busSubscriptions.push(

@@ -112,16 +112,15 @@ Avoid `Result<…>` for "the input is structurally invalid" — that is a
 
 ## 6. Resource lifecycle (ManagerRegistry pattern)
 
-> **Status (Phase 14):** `ManagerRegistry` (`src/core/manager-registry.ts`)
-> is currently **future-facing**. Today's production teardown uses
-> explicit static `disposeInstance()` calls in `LuxarApp.dispose()`
-> for the long-lived singletons (`SceneLoaderManager`,
-> `DataMonitorManager`, `WorkerPool`, `ThemeManager`). The registry
-> remains the documented model for new long-lived objects, and Phase
-> 13.2 made it safe for re-init after `disposeAll()`. New singletons
-> may opt into self-registration or stay in the explicit-disposal
-> model — pick based on whether the singleton has obvious app-wide
-> ownership in `core/app.ts`.
+> **Status:** `ManagerRegistry` (`src/core/manager-registry.ts`) is
+> currently **future-facing**. Production teardown uses explicit
+> static `disposeInstance()` calls in `LuxarApp.dispose()` for the
+> long-lived singletons (`SceneLoaderManager`, `DataMonitorManager`,
+> `WorkerPool`, `ThemeManager`). The registry remains the documented
+> model for new long-lived objects and is safe for re-init after
+> `disposeAll()`. New singletons may opt into self-registration or
+> stay in the explicit-disposal model — pick based on whether the
+> singleton has obvious app-wide ownership in `core/app.ts`.
 
 Long-lived objects that hold GPU resources, DOM listeners, workers,
 or timers can register themselves with the central
@@ -225,8 +224,8 @@ thread. Conventions:
   Barrels are reserved for genuine public surfaces (cross-package
   consumers).
 - **No circular imports**. The `tsc --noEmit` build catches structural
-  cycles; the `dependency-cruiser` ratchet (Phase 8.3) catches
-  layer-crossing cycles.
+  cycles; the `dependency-cruiser` rule catches layer-crossing cycles
+  (severity `error`).
 - **Type-only imports** use `import type` — keeps emission lean and
   makes the intent obvious.
 - **Layer order** (see `.dependency-cruiser.cjs`):
@@ -263,7 +262,7 @@ thread. Conventions:
   data. Narrow with type guards.
 - Mark function parameters `readonly` whenever the function does not
   mutate them. The viewer's nD arrays are typed as `readonly number[]`
-  on every entry point — see Phase 3.3 for the rationale.
+  on every entry point.
 - Use `Result<T, E>` (see §8) before reaching for `throw` for
   recoverable failures.
 - Augment third-party types in `src/types/*-augmentation.d.ts` rather

@@ -218,9 +218,9 @@ export class SceneLoader {
   private monitor: SceneLoaderMonitorPort | null = null;
   private arrayRefRegistry: ArrayRefRegistry;
 
-  // Phase 4: GPU buffer pool for geometry reuse ✅ INTEGRATED
-  // Integrated into updatePointsGeometry/updateLinesGeometry/updateGSplatsGeometry
-  // Enabled via config.dataLoading.performance.useGPUBufferPool
+  // GPU buffer pool for geometry reuse, integrated into
+  // updatePointsGeometry/updateLinesGeometry/updateGSplatsGeometry. Enabled
+  // via config.dataLoading.performance.useGPUBufferPool.
   private _gpuBufferPool: GPUBufferPool | null = null;
   public readonly nodeFactory = new NodeFactory();
 
@@ -317,9 +317,8 @@ export class SceneLoader {
     };
     this.arrayRefRegistry = new ArrayRefRegistry();
 
-    // Phase 4: Initialize GPU buffer pool if enabled
-    // Fully integrated into updatePointsGeometry/updateLinesGeometry/updateGSplatsGeometry
-    // Note: Requires Float32Array data; falls back to standard path for Uint8/Uint16
+    // GPU buffer pool requires Float32Array data; the geometry-update path
+    // falls back to the standard route for Uint8/Uint16 attributes.
     if (appConfig.dataLoading.performance.useGPUBufferPool) {
       this._gpuBufferPool = new GPUBufferPool(
         appConfig.dataLoading.performance.gpuPoolMaxSize,
@@ -419,8 +418,6 @@ export class SceneLoader {
       this.dispose();
     }
 
-    // Phase 17C: cache + zarr store setup extracted to
-    // scene-loader/cache-setup.ts for readability. Behavior unchanged.
     const cacheResult = await setupCaches(this.normalizeURL(url), {
       noCache: this.config.noCache,
       cacheDebug: this.config.cacheDebug,
@@ -511,9 +508,8 @@ export class SceneLoader {
       this.rootGroup.userData.zarrBaseUrl = this.normalizeURL(url);
     }
 
-    // Phase 18 W4: post-load monitor-tab provider wiring extracted to
-    // scene-loader/monitor-wiring.ts. Same shape as before; loadScene
-    // now reads as "build → wire monitor → done".
+    // Post-load monitor-tab provider wiring (extracted to
+    // scene-loader/monitor-wiring.ts).
     wireMonitorAfterLoad({
       monitor: this.monitor,
       cachingStore: this.cachingStore,
@@ -595,7 +591,7 @@ export class SceneLoader {
       dimensions: this.viewState.dimensions,
     };
 
-    // Phase 1: full-extend skip check.
+    // Step 1: full-extend skip check.
     if (extendDims.length > 0 && this.viewState.dimensions) {
       const dims = this.viewState.dimensions;
       validateExtendDims(extendDims, dims);
@@ -611,7 +607,7 @@ export class SceneLoader {
         return { skip: 'extend_to_all' };
       }
 
-      // Phase 2: partial-extend tolerance override (Points + GSplats only).
+      // Step 2: partial-extend tolerance override (Points + GSplats only).
       if (opts.applyPartialExtendTolerance) {
         const tolerance = getOrComputeExtendedTolerance(
           this.viewState.tolerance,
@@ -623,7 +619,7 @@ export class SceneLoader {
       }
     }
 
-    // Phase 3: nd_transform inverse for world→local query mapping.
+    // Step 3: nd_transform inverse for world→local query mapping.
     if (this._sceneGraph && derived.dimensions) {
       const worldNdT = computeWorldNdTransform(this._sceneGraph, path);
       if (hasOwnProperties(worldNdT)) {
@@ -643,19 +639,13 @@ export class SceneLoader {
   }
 
   /**
-   * Phase 20B: shared scaffolding for the per-geometry update loops.
-   *
-   * The Points / Lines / GSplats branches in updateView were
-   * structurally identical: try/catch with identical failedLoaders
-   * bookkeeping + retryCount tracking, optional profiler dispatch,
-   * Promise.all over the loader map. This helper lifts that
-   * scaffolding so each branch only writes the type-specific work
-   * (deriveNodeViewState, call loader.updateView, post-process,
-   * setMetadata, return staged).
-   *
-   * The user-facing `loaderType` is interpolated into the profiler
-   * label and the error log, exactly matching the strings the
-   * pre-extraction code produced.
+   * Shared scaffolding for the per-geometry update loops. The
+   * Points / Lines / GSplats branches in updateView differ only in
+   * the type-specific work (deriveNodeViewState, call
+   * loader.updateView, post-process, setMetadata, return staged) —
+   * the surrounding try/catch with failedLoaders bookkeeping +
+   * retryCount tracking, profiler dispatch, and Promise.all are all
+   * identical and live here.
    *
    * @param loaders   The map of (path → loader) for one geometry type.
    * @param loaderType Human-readable type for profiler label + error log.
@@ -677,14 +667,13 @@ export class SceneLoader {
     const tasks = Array.from(loaders.entries()).map(async ([path, loader]) => {
       const wrappedFn = async (session: UpdateSession): Promise<TStaged | null> => {
         try {
-          // Phase 20B follow-up: the helper does NOT clear failedLoaders
-          // on success — that decision is per-type because the original
-          // semantics differed by return mode:
+          // The helper does NOT clear failedLoaders on success
+          // — that decision differs by return mode:
           //   * success-with-data and success-no-data → delete
-          //     (loader successfully ran for this view)
+          //     (loader ran successfully for this view)
           //   * skip (no work needed for this view) → preserve the
-          //     existing failure record so a future retry can still
-          //     pick it up
+          //     existing failure record so a future retry still
+          //     picks it up
           // Each per-type updateFn calls failedLoaders.delete itself
           // on the appropriate paths.
           return await updateFn(path, loader, session);
@@ -767,12 +756,12 @@ export class SceneLoader {
       const extendedToleranceCache = new Map<string, number[]>();
 
       // ================================================================
-      // Phase 1: Load + Process all nodes in parallel (async)
-      // Each callback returns staged commit data WITHOUT mutating geometry.
-      // This ensures all nodes are ready before any geometry changes.
-      // The shared scaffolding (try/catch + failedLoaders bookkeeping +
-      // profiler dispatch) lives in runLoaderUpdates; each branch below
-      // contains only the type-specific work.
+      // Stage 1: Load + Process all nodes in parallel (async)
+      // Each callback returns staged commit data WITHOUT mutating geometry,
+      // so all nodes are ready before any geometry changes. Shared
+      // scaffolding (try/catch + failedLoaders bookkeeping + profiler
+      // dispatch) lives in runLoaderUpdates; each branch below contains
+      // only the type-specific work.
       // ================================================================
 
       // Points: no post-processing, data goes directly to staged commit.
@@ -881,9 +870,9 @@ export class SceneLoader {
       ]);
 
       // ================================================================
-      // Phase 2: Atomic commit — ALL geometry mutations in one sync block
+      // Stage 2: Atomic commit — ALL geometry mutations in one sync block.
       // Since JS is single-threaded, no requestAnimationFrame can fire
-      // during this block. All meshes update in the same rendered frame.
+      // during this block, so all meshes update in the same rendered frame.
       // ================================================================
 
       // Advance GPU buffer pool frame counter once per update cycle
@@ -1024,10 +1013,9 @@ export class SceneLoader {
           if (loader.hasMoreLODs !== true) continue;
 
           try {
-            // Phase 13.11: GSplats refinement runs the same query-state
-            // derivation as main update / retry / initial-load. Pre-fix
-            // it open-coded the same logic with literal 1e10s and
-            // skipped extend_to_all dim-name validation.
+            // GSplats refinement runs the same query-state derivation
+            // as main update / retry / initial-load — open-coding it here
+            // would have to repeat extend_to_all dim-name validation.
             const mesh = this.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
             const nodeAttrs = mesh?.userData?.attrs as GSplatsMetadata | undefined;
             const refinedDerived = this.deriveNodeViewState(path, nodeAttrs, {
@@ -1242,10 +1230,10 @@ export class SceneLoader {
     parentLoc: zarr.Location<zarr.Readable>
   ): Promise<void> {
     if (node.type === 'points') {
-      // Phase 14.3: loadPoints attaches its own placeholder to parentThree
-      // before fetching data; no caller-side `if (points) add(points)`
-      // needed. The placeholder stays in the scene even on failure so
-      // retry can populate it.
+      // loadPoints attaches its own placeholder to parentThree before
+      // fetching data; no caller-side `if (points) add(points)` is needed.
+      // The placeholder stays in the scene even on failure so retry can
+      // populate it.
       await this.loadLeafNode(() => this.loadPoints(node, parentThree, parentLoc), node.path);
     } else if (node.type === 'lines') {
       await this.loadLeafNode(() => this.loadLines(node, parentThree, parentLoc), node.path);
@@ -1321,8 +1309,8 @@ export class SceneLoader {
     // register* methods rather than mutating its internal map).
     this.registry.registerPointsLoader(node.path, loader);
 
-    // Phase 14.3: construct + attach an empty placeholder before fetching
-    // data, so an initial-load failure leaves a recoverable scene state.
+    // Construct + attach an empty placeholder before fetching data, so an
+    // initial-load failure leaves a recoverable scene state.
     // commit-points-geometry finds the placeholder by name and populates
     // it once data arrives (initial fetch or future retry/update); the
     // 0-points → N-points transition naturally takes the "different size"
@@ -1342,13 +1330,13 @@ export class SceneLoader {
       );
       log.info(Modules.SCENE_LOADER, `  tolerance: [${this.viewState.tolerance.join(', ')}]`);
 
-      // Phase 13.11: route initial load through deriveNodeViewState
-      // (same helper as the main update path and retry, so initial /
-      // update / retry can never silently load different query
-      // regions). Note: initial load doesn't apply the full-extend
-      // skip — we still want to construct the THREE node so future
-      // slice changes can populate it. The skip return only happens
-      // on update/retry where there's an existing node to leave alone.
+      // Route initial load through deriveNodeViewState (same helper as
+      // the main update path and retry) so initial / update / retry can
+      // never silently load different query regions. Initial load doesn't
+      // apply the full-extend skip — we still want to construct the THREE
+      // node so future slice changes can populate it; the skip return only
+      // happens on update/retry where there's an existing node to leave
+      // alone.
       const derived = this.deriveNodeViewState(node.path, node.attrs, {
         applyPartialExtendTolerance: true,
       });
@@ -1381,9 +1369,9 @@ export class SceneLoader {
 
       return placeholder;
     } catch (error) {
-      // Phase 13.6 + 14.3: record the failure so `retryFailedLoader(path)`
-      // can target this node. The placeholder stays attached to the scene
-      // (we added it before this try/catch), so retry can populate it.
+      // Record the failure so `retryFailedLoader(path)` can target this
+      // node. The placeholder stays attached to the scene (added before
+      // this try/catch), so retry can populate it.
       this.registry.recordFailure(node.path, error as Error);
       throw new LoaderError(classifyLoaderError(error), node.path, error);
     }
@@ -1409,7 +1397,7 @@ export class SceneLoader {
     // Store loader for updates (route through registry).
     this.registry.registerLinesLoader(node.path, loader);
 
-    // Phase 14.3: construct + attach empty placeholder before fetching.
+    // Construct + attach empty placeholder before fetching.
     // processLinesData / commitLinesGeometry look up the mesh by name
     // and populate it on success; on failure the placeholder remains
     // for retry to target. Same path is used by every future update.
@@ -1422,12 +1410,10 @@ export class SceneLoader {
     parentThree.add(placeholder);
 
     try {
-      // Phase 13.11: route through deriveNodeViewState. Lines path
-      // historically did not apply the partial-extend tolerance
-      // override during the data fetch (only during clipping below),
-      // so applyPartialExtendTolerance=false preserves that behavior.
-      // This call still validates extend_to_all dim names and applies
-      // the inverse nd_transform.
+      // Lines path does not apply the partial-extend tolerance override
+      // during the data fetch (only during clipping below), so
+      // applyPartialExtendTolerance=false. This call still validates
+      // extend_to_all dim names and applies the inverse nd_transform.
       const derivedLines = this.deriveNodeViewState(node.path, attrs, {
         applyPartialExtendTolerance: false,
       });
@@ -1458,7 +1444,7 @@ export class SceneLoader {
 
       return placeholder;
     } catch (error) {
-      // Phase 13.6 + 14.3: see loadPoints catch.
+      // See loadPoints catch — same record-failure-then-throw shape.
       this.registry.recordFailure(node.path, error as Error);
       throw new LoaderError(classifyLoaderError(error), node.path, error);
     }
@@ -1513,8 +1499,8 @@ export class SceneLoader {
     // Store loader for updates (route through registry).
     this.registry.registerGSplatsLoader(node.path, loader);
 
-    // Phase 14.3: empty placeholder + same-flow commit. See loadPoints/
-    // loadLines for the rationale.
+    // Empty placeholder + same-flow commit. See loadPoints/loadLines
+    // for the rationale.
     const placeholder = this.nodeFactory.createEmptyGSplatsNode(
       node.path,
       this.applyEffectiveAttrs(node),
@@ -1524,9 +1510,8 @@ export class SceneLoader {
     parentThree.add(placeholder);
 
     try {
-      // Phase 13.11: route through deriveNodeViewState. GSplats path
-      // matches Points: applyPartialExtendTolerance=true so tolerance
-      // overrides + nd_transform inversion both happen up front.
+      // GSplats path mirrors Points: applyPartialExtendTolerance=true so
+      // tolerance overrides + nd_transform inversion both happen up front.
       const derivedGSplats = this.deriveNodeViewState(node.path, node.attrs, {
         applyPartialExtendTolerance: true,
       });
@@ -1562,7 +1547,7 @@ export class SceneLoader {
 
       return placeholder;
     } catch (error) {
-      // Phase 13.6 + 14.3: see loadPoints catch.
+      // See loadPoints catch.
       this.registry.recordFailure(node.path, error as Error);
       throw new LoaderError(classifyLoaderError(error), node.path, error);
     }
@@ -1700,10 +1685,10 @@ export class SceneLoader {
   }
 
   /**
-   * Normalize URL for zarr store access. Phase 13.12: guard `window`
-   * so this works in non-DOM contexts (tests, embed-in-Worker
-   * scenarios). Absolute URLs ignore the origin entirely; the
-   * fallback only matters for relative paths.
+   * Normalize URL for zarr store access. Guards `window` so this works
+   * in non-DOM contexts (tests, embed-in-Worker scenarios). Absolute URLs
+   * ignore the origin entirely; the fallback only matters for relative
+   * paths.
    */
   private normalizeURL(url: string): string {
     const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost';
@@ -1757,9 +1742,9 @@ export class SceneLoader {
   /**
    * Retry loading a specific failed loader.
    *
-   * This method re-triggers the update for a previously failed loader,
-   * using the current view state. Useful for recovering from transient
-   * network errors or after connectivity is restored.
+   * Re-triggers the update for a failed loader using the current view
+   * state. Useful for recovering from transient network errors or after
+   * connectivity is restored.
    *
    * @param path - The path of the failed loader to retry
    * @returns Promise resolving to true if retry succeeded, false if failed or not found
@@ -1780,17 +1765,13 @@ export class SceneLoader {
       return false;
     }
 
-    // Phase 16A.4 + Phase 19.0.2: serialize against the main update
-    // path. retry calls `loader.updateView(...)` directly, which
-    // would race with updateView()'s own per-loader call for the
-    // same path — concurrent zarr fetches and concurrent commits to
-    // the same THREE object produce inconsistent state.
-    //
-    // Phase 16A.4 only refused if a prior update was active at retry
-    // entry. r5 flagged the missing other half: retry didn't *take*
-    // the lock, so an updateView starting AFTER retry began could
-    // race. Phase 19.0.2 takes the lock and drains any pending state
-    // queued during retry.
+    // Serialize against the main update path. retry calls
+    // `loader.updateView(...)` directly, which would race with
+    // updateView()'s own per-loader call for the same path — concurrent
+    // zarr fetches and concurrent commits to the same THREE object
+    // produce inconsistent state. Both halves are required: refusing
+    // when an update is already active AND taking the lock so an
+    // updateView starting AFTER retry begins can't race.
     if (this._updateInProgress) {
       log.info(
         Modules.SCENE_LOADER,
@@ -1812,7 +1793,7 @@ export class SceneLoader {
    * Internal retry body without the `_updateInProgress` lock dance.
    * Used by both `retryFailedLoader` (which takes the lock once) and
    * `retryAllFailedLoaders` (which takes the lock once and runs
-   * multiple retries inside it). Phase 19.0.2.
+   * multiple retries inside it).
    */
   private async _retryFailedLoaderUnlocked(path: string): Promise<boolean> {
     if (!this.failedLoaders.has(path)) return false;
@@ -1825,10 +1806,10 @@ export class SceneLoader {
     const gsplatsLoader = this.gsplatLoaders.get(path);
 
     try {
-      // Look up the per-node attrs for the same extend_to_all / nd_transform
-      // adjustments the main update path applies. Previously retry passed a
-      // raw view state, which silently rendered an incorrect query region for
-      // transformed or extended nodes.
+      // Look up the per-node attrs so retry applies the same
+      // extend_to_all / nd_transform adjustments as the main update path.
+      // Passing a raw view state here silently renders an incorrect query
+      // region for transformed or extended nodes.
       const obj = this.rootGroup?.getObjectByName(path) as
         | THREE.Object3D
         | THREE.Mesh
@@ -1836,14 +1817,14 @@ export class SceneLoader {
         | undefined;
       const attrs = obj?.userData?.attrs as { extend_to_all?: string[] } | undefined;
 
-      // Phase 14.3: defensive guard — only clear `failedLoaders` if the
-      // named object still exists in the scene. The placeholder model
-      // should make commit always succeed when retry runs in normal
-      // conditions, but a scene reload or programmatic node removal
-      // between failure and retry could leave us fetching data that has
-      // nowhere to land. Without this guard, retry would falsely report
-      // success ("data fetched + commit silently no-op'd") and clear the
-      // failure, hiding the broken state from `hasFailures()`.
+      // Defensive guard — only clear `failedLoaders` if the named object
+      // still exists in the scene. The placeholder model should make
+      // commit always succeed when retry runs in normal conditions, but
+      // a scene reload or programmatic node removal between failure and
+      // retry could leave us fetching data that has nowhere to land.
+      // Without this guard, retry would falsely report success ("data
+      // fetched + commit silently no-op'd") and clear the failure,
+      // hiding the broken state from `hasFailures()`.
       const verifyAndClear = (kind: string): boolean => {
         if (!this.rootGroup?.getObjectByName(path)) {
           log.warning(
@@ -1861,11 +1842,11 @@ export class SceneLoader {
         const derived = this.deriveNodeViewState(path, attrs, {
           applyPartialExtendTolerance: true,
         });
-        // Phase 15.3: mirror loadPoints() initial-load fallback. When
-        // derived.skip is true (extend_to_all fully covers), the
-        // placeholder still needs data committed — skipping the load
-        // and clearing failedLoaders would falsely report success
-        // against an empty placeholder.
+        // Mirror loadPoints() initial-load fallback. When derived.skip
+        // is true (extend_to_all fully covers), the placeholder still
+        // needs data committed — skipping the load and clearing
+        // failedLoaders would falsely report success against an empty
+        // placeholder.
         const pointsViewState = derived.skip ? this.viewState : derived.viewState;
         const points = await pointsLoader.updateView(pointsViewState);
         if (points) this.updatePointsGeometry(path, points);
@@ -1874,7 +1855,7 @@ export class SceneLoader {
         const derived = this.deriveNodeViewState(path, attrs, {
           applyPartialExtendTolerance: false,
         });
-        // Phase 15.3: see Points branch.
+        // See Points branch.
         const linesViewState: LinesViewState = derived.skip ? this.viewState : derived.viewState;
         const data = await linesLoader.updateView(linesViewState);
         if (data) {
@@ -1886,8 +1867,8 @@ export class SceneLoader {
         const derived = this.deriveNodeViewState(path, attrs, {
           applyPartialExtendTolerance: true,
         });
-        // Phase 15.3: mirror loadGSplats() initial-load fallback shape
-        // (explicit object spread to match LinesViewState/GSplatsViewState).
+        // Mirror loadGSplats() initial-load fallback shape (explicit
+        // object spread to match LinesViewState/GSplatsViewState).
         const gsplatsViewState: GSplatsViewState = derived.skip
           ? {
               displayDims: this.viewState.displayDims,
@@ -1926,10 +1907,8 @@ export class SceneLoader {
   }
 
   /**
-   * Retry all failed loaders.
-   *
-   * This method attempts to re-load all loaders that previously failed.
-   * Useful for batch recovery after network connectivity is restored.
+   * Retry all failed loaders. Useful for batch recovery after network
+   * connectivity is restored.
    *
    * @returns Promise resolving to an object with succeeded and failed path arrays
    *
@@ -1948,10 +1927,10 @@ export class SceneLoader {
       return { succeeded: [], failed: [] };
     }
 
-    // Phase 16A.4 + 19.0.2: same serialization as retryFailedLoader.
-    // We take the lock once around the parallel batch and call the
-    // unlocked retry helper for each path so siblings in the same
-    // batch don't trigger the lock-refusal branch.
+    // Same serialization as retryFailedLoader: take the lock once around
+    // the parallel batch and call the unlocked retry helper for each
+    // path, so siblings in the same batch don't trigger the lock-refusal
+    // branch.
     if (this._updateInProgress) {
       log.info(
         Modules.SCENE_LOADER,
@@ -1995,12 +1974,12 @@ export class SceneLoader {
   }
 
   /**
-   * Phase 19.0.2: process any `_pendingViewState` queued during a
-   * retry. The retry path sets `_updateInProgress = true`, which
-   * causes a concurrent `updateView()` call to queue its state
-   * rather than start. After retry releases the lock, this helper
-   * drains that queued state via a fresh `updateView()` call. Fired
-   * asynchronously so the retry's own promise resolves first.
+   * Process any `_pendingViewState` queued during a retry. The retry
+   * path sets `_updateInProgress = true`, which causes a concurrent
+   * `updateView()` call to queue its state rather than start. After
+   * retry releases the lock, this helper drains that queued state via a
+   * fresh `updateView()` call. Fired asynchronously so the retry's own
+   * promise resolves first.
    */
   private _drainPendingViewState(): void {
     if (this._pendingViewState === null) return;

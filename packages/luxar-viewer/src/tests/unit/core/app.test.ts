@@ -11,15 +11,14 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 // verifies initialization ordering + cross-wiring; component behavior
 // is covered by per-module tests.
 //
-// Phase 21C: `LuxarAppOptions.factories` exposes construction
-// overrides for the heavy components (SceneManager, AnimationController,
-// RenderingControls, RecordingPanel, LayersPanel) — see
-// `core/app-factories.ts`. The existing `vi.mock(...)` calls below
-// still work because the default factories call `new X(...)` and
-// vi.mock intercepts the constructor. New tests can opt into factory
-// stubs instead — see `factories smoke test` near the bottom of this
-// file for an example of injecting a SceneManager stub without
-// `vi.mock`.
+// `LuxarAppOptions.factories` (see `core/app-factories.ts`) exposes
+// construction overrides for the heavy components (SceneManager,
+// AnimationController, RenderingControls, RecordingPanel,
+// LayersPanel). The `vi.mock(...)` calls below still work because the
+// default factories call `new X(...)` and vi.mock intercepts the
+// constructor. New tests can opt into factory stubs instead — see
+// the `factory overrides` describe block below for an example of
+// injecting a SceneManager stub without `vi.mock`.
 
 // Mock all dependencies before importing LuxarApp
 vi.mock('../../../scene/scene-manager');
@@ -31,13 +30,12 @@ vi.mock('../../../ui/components/scale-bar');
 vi.mock('../../../ui/panels/dataset-browser');
 vi.mock('../../../ui/helpers');
 vi.mock('../../../ui/layers');
-// Phase 17A.4: scene-dims-manager unmocked. It's a pure JS singleton
-// (no DOM or WebGL); running it real in app.test improves coverage
-// of the dim-init wiring without affecting jsdom behavior.
-// Phase 8.6 migrated PerformanceMonitor and DebugConsole ownership
-// from AnimationController / InputHandler to LuxarApp. Mock both here
-// so stats.js / DebugConsole's document.createElement calls don't run
-// in the stubbed-window env.
+// scene-dims-manager is unmocked: it's a pure JS singleton (no DOM
+// or WebGL), so running it real in app.test improves coverage of the
+// dim-init wiring without affecting jsdom behavior.
+// PerformanceMonitor and DebugConsole are owned by LuxarApp and are
+// mocked here so stats.js / DebugConsole's document.createElement
+// calls don't run in the stubbed-window env.
 vi.mock('../../../ui/monitors/performance-monitor', () => ({
   PerformanceMonitor: vi.fn().mockImplementation(() => ({
     show: vi.fn(),
@@ -224,12 +222,11 @@ describe('LuxarApp', () => {
       mockFetch.mockResolvedValue({ ok: true });
       await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
 
-      // Phase 8.6: InputHandler receives the PerformanceMonitor and
-      // DebugConsole (both constructed at app level rather than in
-      // AnimationController / InputHandler).
-      // Phase 8.6.d: also receives a DimensionSlidersFactory function,
-      // injected so the input layer never imports the concrete UI panel
-      // (closes the input → ui layer-cruiser exception).
+      // InputHandler receives the PerformanceMonitor and DebugConsole
+      // (both constructed at app level rather than in
+      // AnimationController / InputHandler), plus a
+      // DimensionSlidersFactory function so the input layer never
+      // imports the concrete UI panel.
       expect(InputHandler).toHaveBeenCalledWith(
         mockSceneManager,
         mockAnimationController,
@@ -649,7 +646,7 @@ describe('LuxarApp', () => {
     });
 
     it('still disposes singletons + workerPool when an early component throws', async () => {
-      // Phase 13.1: Pre-existing dispose() wrapped everything in one
+      // Pre-existing dispose() wrapped everything in one
       // try/catch, so a throw early in the chain (sceneManager etc.)
       // skipped DataMonitorManager / SceneLoaderManager / disposeWorkerPool
       // / managerRegistry. The safeDispose helper guarantees later
@@ -717,7 +714,7 @@ describe('LuxarApp', () => {
       expect(loaderOrder).toBeLessThan(workerOrder);
     });
 
-    it('closes an open DatasetBrowser and clears app + input-handler refs (Phase 14.5)', () => {
+    it('closes an open DatasetBrowser and clears app + input-handler refs', () => {
       // Plant a fake browser to exercise the safeDispose('datasetBrowser')
       // step. Real construction goes through `showDatasetBrowser()` which
       // opens it lazily when no `?src=` is given; assigning here matches
@@ -948,7 +945,7 @@ describe('LuxarApp', () => {
     });
   });
 
-  describe('Phase 21C — factory overrides', () => {
+  describe('factory overrides', () => {
     it('factories.sceneManager is consulted instead of `new SceneManager()`', async () => {
       mockFetch.mockResolvedValue({ ok: true });
       const factorySpy = vi.fn(() => mockSceneManager);

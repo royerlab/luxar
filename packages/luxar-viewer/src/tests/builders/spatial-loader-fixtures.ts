@@ -4,7 +4,7 @@
  * `lines-spatial-index-loader.test.ts`,
  * `gsplats-spatial-index-loader.test.ts`.
  *
- * Per the cross-geometry symmetry rule (Phase 11): each geometry's
+ * Per the cross-geometry symmetry rule: each geometry's
  * loader has the same `zarr.Location` and `SpatialQueryBuilder` mock
  * boilerplate. The pieces that work cleanly through hoisting live
  * here; the `vi.mock(...)` calls themselves still belong in each test

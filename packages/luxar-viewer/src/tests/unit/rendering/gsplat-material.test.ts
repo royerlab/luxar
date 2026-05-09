@@ -439,7 +439,7 @@ describe('GSplatMaterial', () => {
     });
   });
 
-  describe('applyBlendingMode (Phase 14.4)', () => {
+  describe('applyBlendingMode', () => {
     // The constructor delegates to applyBlendingMode, so initial-state
     // tests exist above. These cover live transitions — the bug the
     // method fixes is the layers panel's previous generic

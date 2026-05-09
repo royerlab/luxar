@@ -193,7 +193,7 @@ vi.mock('zarrita', async () => {
   };
 });
 
-// Phase 14.15: previous `vi.mock('../data/points-spatial-index-loader')`
+// previous `vi.mock('../data/points-spatial-index-loader')`
 // and `vi.mock('../rendering/material-manager')` mocks lived here, but
 // vitest's vi.mock matches by import specifier as resolved from the
 // MOCKING file, not from the source-under-test's perspective. From this

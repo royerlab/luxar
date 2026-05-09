@@ -1,6 +1,5 @@
 /**
- * Phase 18 W4: post-load monitor wiring extracted from
- * `SceneLoader.loadScene()`.
+ * Post-load monitor wiring for `SceneLoader.loadScene()`.
  *
  * After the scene graph is built and per-node loaders are connected,
  * the SceneLoader hands the DataLoadingMonitor references to:
@@ -11,11 +10,8 @@
  *   - the update profiler (Performance tab, if any)
  *   - the scene-graph snapshot for the tree view
  *
- * The block is the same shape as a constructor call: the inputs are
- * the things the SceneLoader has just finished assembling; the
- * outputs are side effects on `monitor`. Extracting it keeps
- * loadScene focused on "what was built" rather than "how monitor
- * tabs are wired."
+ * Splitting this out keeps loadScene focused on "what was built"
+ * rather than "how monitor tabs are wired."
  */
 
 import type { SceneNode } from '../data-loader-types';

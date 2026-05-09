@@ -1,18 +1,12 @@
 /**
- * Phase 21B: per-mode driver interface for the offline-capture loop.
- *
- * The original `runOfflineCaptureLoop` (~432 LOC) mixed shared
- * scaffolding (state save/restore, overlay UI, animation pump,
- * progress display) with three different per-mode capture
- * pipelines (image-sequence ZIP, video container, EXR-sequence
- * ZIP). This interface lifts the per-mode pieces into named
- * driver classes so the loop body can focus on the shared
- * scaffolding.
- *
- * Each driver owns:
+ * Per-mode driver interface for the offline-capture loop. The loop
+ * in `runOfflineCaptureLoop` owns the shared scaffolding (state
+ * save/restore, overlay UI, animation pump, progress display); each
+ * driver owns its mode's pipeline:
  *   - one-time setup (file picker, encoder construction)
  *   - per-frame capture (read pixels, encode, append)
  *   - finalize (close encoder/zip, download, toast)
+ *   - optional abort (release partial resources without delivery)
  *
  * Drivers receive a `CaptureContext` (panel-injected dependencies
  * like sceneManager + helper callbacks) and a `CaptureProgress`
@@ -52,8 +46,8 @@ export interface CaptureContext {
   /** Browser environment for showSaveFilePicker (so tests can stub). */
   env: { showSaveFilePicker?: (opts: unknown) => Promise<FileSystemFileHandle> };
   /**
-   * r8 §A2: AbortSignal for the offline-capture session. Drivers MAY
-   * check `signal.aborted` in long-running setup/finalize work to
+   * AbortSignal for the offline-capture session. Drivers MAY check
+   * `signal.aborted` in long-running setup/finalize work to
    * short-circuit cleanly when the panel is disposed mid-capture or
    * the user cancels. The panel also checks the signal between
    * frames so abort during an `await` propagates within ~1 frame.
@@ -107,8 +101,8 @@ export interface OfflineCaptureDriver {
   shouldAbort?(): boolean;
 
   /**
-   * r8 §A3: optional partial-resource cleanup hook. Called from the
-   * panel's finally block when:
+   * Optional partial-resource cleanup hook. Called from the panel's
+   * finally block when:
    *   - setup completed but capture/finalize threw, OR
    *   - the offline session was aborted (dispose / user cancel).
    * Drivers should release encoder/zip/file resources without

@@ -1,5 +1,5 @@
 /**
- * Phase 21B: EXR sequence driver.
+ * EXR sequence driver.
  *
  * Captures each frame as an OpenEXR file directly from the HDR
  * postprocessing buffer (preserving 16-bit half-float precision)
@@ -70,7 +70,7 @@ export class ExrSequenceDriver implements OfflineCaptureDriver {
     return this.zip?.hasDiskFailed() ?? false;
   }
 
-  /** r8 §A3: tear down a partial ZIP without delivering an artifact. */
+  /** Tear down a partial ZIP without delivering an artifact. */
   async abort(_ctx: CaptureContext, _reason: 'disposed' | 'user-cancel' | 'error'): Promise<void> {
     if (this.zip) {
       await this.zip.abort();

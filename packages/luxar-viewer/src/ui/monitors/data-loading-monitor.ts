@@ -256,9 +256,9 @@ export class DataLoadingMonitor {
     // disposed loader.
     this.resetSceneProviders();
 
-    // Phase 14.9: also drop the previous scene's graph display state.
-    // If the next scene fails before `setSceneGraph()` runs, the monitor
-    // would otherwise show a stale tree alongside cleared loaders.
+    // Also drop the previous scene's graph display state. If the next
+    // scene fails before `setSceneGraph()` runs, the monitor would
+    // otherwise show a stale tree alongside cleared loaders.
     this.resetSceneGraphState();
 
     // Update UI to reflect cleared state if visible
@@ -360,7 +360,7 @@ export class DataLoadingMonitor {
   }
 
   /**
-   * Reset scene graph display state (Phase 14.9).
+   * Reset scene graph display state.
    *
    * Called from `disconnectAllLoaders()` (scene reload) and `dispose()`
    * (full teardown). Without this, a reload that fails before
@@ -1029,8 +1029,8 @@ export class DataLoadingMonitor {
 
   /**
    * Helper: update a single element's textContent by data-field
-   * attribute. Phase 19A delegates to the shared DOM helper module
-   * so per-tab updaters use the same patch contract.
+   * attribute. Delegates to the shared DOM helper module so per-tab
+   * updaters use the same patch contract.
    */
   private patchField(field: string, text: string): boolean {
     return patchField(this.contentContainer, field, text);
@@ -1173,7 +1173,7 @@ export class DataLoadingMonitor {
 
   /**
    * Incrementally update cache tab values without rebuilding DOM.
-   * Phase 19A delegates to `tabs/cache-tab.ts:updateCacheTab`.
+   * Delegates to `tabs/cache-tab.ts:updateCacheTab`.
    */
   private updateCacheTabValues(): boolean {
     return updateCacheTab(this.contentContainer, this.getCacheMetrics());
@@ -1269,8 +1269,7 @@ export class DataLoadingMonitor {
 
   /**
    * Update CSS color classes on an element, replacing any existing
-   * `luxar-color--*` class. Phase 19A delegates to the shared DOM
-   * helper.
+   * `luxar-color--*` class. Delegates to the shared DOM helper.
    */
   private updateColorClass(el: HTMLElement, newColorClass: string): void {
     updateColorClass(el, newColorClass);
@@ -1489,8 +1488,8 @@ export class DataLoadingMonitor {
   }
 
   /**
-   * Get cache metrics aggregated across all loaders. Phase 18 W3:
-   * delegates the multi-source roll-up to
+   * Get cache metrics aggregated across all loaders. Delegates the
+   * multi-source roll-up to
    * `cache-metrics-aggregator.ts:aggregateCacheMetrics`. The
    * aggregator refreshes `this.metrics` snapshots and reads
    * `this.cachedRates` (already updated by `calculateRates()` here).
@@ -1521,7 +1520,7 @@ export class DataLoadingMonitor {
   }
 
   /**
-   * Calculate all rates with caching. Phase 20A delegates to
+   * Calculate all rates with caching. Delegates to
    * `rate-calculator.ts:calculateRates`.
    */
   private calculateRates(): void {
@@ -1711,21 +1710,20 @@ export class DataLoadingMonitor {
       errors.push(new Error(`Failed to clear loaders map: ${error}`));
     }
 
-    // Step 2b: Drop scene-bound provider closures (Phase 13.3).
-    // disconnectAllLoaders() does this on reload, but a direct
-    // dispose() bypasses that path. The closures reference the
-    // disposed SceneLoader's `cachingStore` / `l0Cache` / etc.;
-    // any stale debug or external poll into the disposed monitor
-    // would otherwise NPE.
+    // Step 2b: Drop scene-bound provider closures.
+    // disconnectAllLoaders() does this on reload, but a direct dispose()
+    // bypasses that path. The closures reference the disposed
+    // SceneLoader's `cachingStore` / `l0Cache` / etc.; any stale debug
+    // or external poll into the disposed monitor would otherwise NPE.
     try {
       this.resetSceneProviders();
     } catch (error) {
       errors.push(new Error(`Failed to reset scene providers: ${error}`));
     }
 
-    // Step 2c: Clear scene graph display state (Phase 14.9). A stale
-    // monitor reference reading `getSceneGraph()` after dispose
-    // would otherwise return the previous scene's tree.
+    // Step 2c: Clear scene graph display state. A stale monitor
+    // reference reading `getSceneGraph()` after dispose would otherwise
+    // return the previous scene's tree.
     try {
       this.resetSceneGraphState();
     } catch (error) {
@@ -1784,8 +1782,8 @@ export class DataLoadingMonitor {
       this.events = [];
       this.metrics.clear();
       this.queries.clear();
-      // Phase 13.3: also reset UI state so isVisible() / isExpanded
-      // can't report stale truthy values after dispose.
+      // Reset UI state so isVisible() / isExpanded can't report stale
+      // truthy values after dispose.
       this.uiState.isVisible = false;
       this.uiState.isExpanded = false;
       this.contentContainer = null;

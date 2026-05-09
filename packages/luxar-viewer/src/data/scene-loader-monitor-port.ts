@@ -34,20 +34,20 @@ export interface L0CacheProviderPort {
 }
 
 /**
- * Provider injected via `setGPUBufferPoolProvider`. Phase 14.11 moved
- * `GPUPoolStats` to `types/data-monitor-types`, so the data/ layer can
- * reference the precise type instead of `unknown`. The shape is
- * cross-layer by nature: the data/ layer pushes the provider, the UI/
- * layer renders the stats.
+ * Provider injected via `setGPUBufferPoolProvider`. `GPUPoolStats`
+ * lives in `types/data-monitor-types` so the data/ layer can reference
+ * the precise type instead of `unknown`. The shape is cross-layer by
+ * nature: the data/ layer pushes the provider, the UI/ layer renders
+ * the stats.
  */
 export interface GPUBufferPoolProviderPort {
   getStats: () => GPUPoolStats;
 }
 
 /**
- * Per-geometry accumulator provider. Phase 14.11 moved
- * `AccumulatorStats` into `types/data-monitor-types` for the same
- * reason as `GPUPoolStats`: precise types instead of `unknown`.
+ * Per-geometry accumulator provider. `AccumulatorStats` lives in
+ * `types/data-monitor-types` for the same reason as `GPUPoolStats`:
+ * precise types instead of `unknown`.
  */
 export interface AccumulatorProviderPort {
   getStats: () => AccumulatorStats | null;

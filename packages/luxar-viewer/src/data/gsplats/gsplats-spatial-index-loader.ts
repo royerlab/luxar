@@ -69,7 +69,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
   private rangeLoader: RangeLoader;
   private zarrStore: zarr.Readable | null = null;
 
-  // Data accumulator for object pooling (Phase 1 optimization)
+  // Data accumulator for object pooling.
   private _accumulator: GSplatsDataAccumulator | null = null;
 
   // L0 decompressed chunk cache (optional, avoids Blosc decompression on repeat access)
@@ -264,8 +264,8 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     } catch (err) {
       this.metrics.errors += 1;
       this.finishQueryTracking(queryId, startTime, 'error');
-      // Phase 13.10: emit a monitor 'error' event for parity with
-      // Points (see lines-spatial-index-loader.ts comment).
+      // Emit a monitor 'error' event for parity with Points (see
+      // lines-spatial-index-loader.ts comment).
       this.emitEvent({
         type: 'error',
         loader: 'gsplats-spatial-index',
@@ -293,7 +293,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
 
     const attrs = this.node.attrs as unknown as GSplatsMetadata;
 
-    // Query visible splat ranges (Phase 2: async for worker support)
+    // Query visible splat ranges (async to allow worker offload).
     let splatRanges: SplatRange[];
     if (session) {
       const querySession = session.begin('Spatial Query');
@@ -346,7 +346,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       );
     }
 
-    // Phase 1 DEEP Integration: Load DIRECTLY to accumulator buffers (ZERO allocations!)
+    // Load directly into the accumulator buffers (zero allocations).
     if (this._accumulator && appConfig.dataLoading.performance.useAccumulators) {
       // Ensure capacity FIRST
       this._accumulator.ensureCapacity(totalSplats);

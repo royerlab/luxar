@@ -136,7 +136,7 @@ export class ChunkPrefetcher {
 
         // Fire-and-forget with cleanup. Use getResult so a transient
         // network failure surfaces in the prefetch log instead of being
-        // silently indistinguishable from a 404. Phase 13.7: suppress
+        // silently indistinguishable from a 404. Suppress
         // prefetcher.onAccess() inside getResult — without this flag,
         // a prefetch of K+1 would call onAccess(K+1) and enqueue K+2,
         // K+3, ... cascading until MAX_SEEN_SIZE bounds it.

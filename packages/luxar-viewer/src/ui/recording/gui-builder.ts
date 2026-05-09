@@ -90,13 +90,11 @@ export const CODEC_LABEL_TO_VALUE: Readonly<Record<string, string>> = {
 
 /**
  * Per-control visibility decision returned by
- * {@link computeControlVisibility}. Phase 19B (r5).
+ * {@link computeControlVisibility}.
  *
- * The recording-panel's `updateControlVisibility` method previously
- * mixed the "should X show?" decisions with the lil-gui controller
- * `.show()` / `.hide()` calls. This object captures the pure-logic
- * answers so the panel only has to apply them, and so the rules
- * are testable without lil-gui in the loop.
+ * Captures the pure-logic answers to "should X show?" so the panel only
+ * has to apply them, and so the rules are testable without lil-gui in
+ * the loop.
  */
 export interface ControlVisibilityDecision {
   /** Image-only group (quality, max DPR, transparent BG). */

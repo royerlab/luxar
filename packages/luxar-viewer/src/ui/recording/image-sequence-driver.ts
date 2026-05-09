@@ -1,5 +1,5 @@
 /**
- * Phase 21B: PNG / WebP / JPEG sequence driver.
+ * PNG / WebP / JPEG sequence driver.
  *
  * Reads each frame as a 2D canvas (via the panel-supplied
  * renderFrameToCanvas), encodes via the canvas-native toBlob, and
@@ -73,7 +73,7 @@ export class ImageSequenceDriver implements OfflineCaptureDriver {
     return this.zip?.hasDiskFailed() ?? false;
   }
 
-  /** r8 §A3: tear down a partial ZIP without delivering an artifact. */
+  /** Tear down a partial ZIP without delivering an artifact. */
   async abort(_ctx: CaptureContext, _reason: 'disposed' | 'user-cancel' | 'error'): Promise<void> {
     if (this.zip) {
       await this.zip.abort();

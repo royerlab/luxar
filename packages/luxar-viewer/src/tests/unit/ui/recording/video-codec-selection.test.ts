@@ -1,5 +1,5 @@
 /**
- * Unit tests for the video codec selection extracted in Phase 21B.
+ * Unit tests for the video codec selection helper.
  *
  * The original logic was inline in `recording-panel.ts`'s 432-LOC
  * runOfflineCaptureLoop and untestable in isolation. Now lives in

@@ -297,7 +297,7 @@ describe('data-worker validation — decode entry points', () => {
     ).rejects.toThrow(/lutMode='cubic' must be 'row' or 'scalar'/);
   });
 
-  // Phase 13.5: out-of-range index validation. Pre-fix, an
+  // out-of-range index validation. Pre-fix, an
   // index ≥ entry-count would reach Rust/WASM (`lut[indices[i]]`)
   // and panic. JS-side rejection at the worker boundary is the
   // intended contract.
@@ -494,7 +494,7 @@ describe('data-worker validation — segment/color/query gaps', () => {
     ).rejects.toThrow(/slicePosition too short/);
   });
 
-  // Phase 13.8: gaps the reviewer identified that weren't yet covered.
+  // gaps the reviewer identified that weren't yet covered.
 
   it('querySpatialIndex rejects tolerance shorter than ndim', async () => {
     const mod = await loadWorker();
@@ -599,7 +599,7 @@ describe('data-worker validation — segment/color/query gaps', () => {
     ).rejects.toThrow(/maxRadius=Infinity must be a finite number/);
   });
 
-  it('projectPointsTo3D rejects effectiveRadiusConfig with missing tolerance (Phase 14.7)', async () => {
+  it('projectPointsTo3D rejects effectiveRadiusConfig with missing tolerance', async () => {
     const mod = await loadWorker();
     await expect(
       mod.workerAPI.projectPointsTo3D({
@@ -624,7 +624,7 @@ describe('data-worker validation — segment/color/query gaps', () => {
     ).rejects.toThrow(/viewState.tolerance too short/);
   });
 
-  it('projectPointsTo3D rejects effectiveRadiusConfig with tolerance shorter than ndim (Phase 14.7)', async () => {
+  it('projectPointsTo3D rejects effectiveRadiusConfig with tolerance shorter than ndim', async () => {
     const mod = await loadWorker();
     await expect(
       mod.workerAPI.projectPointsTo3D({

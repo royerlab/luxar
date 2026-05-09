@@ -1,8 +1,7 @@
 /**
- * r8 §F4: direct unit tests for `ui/monitors/tabs/cache-tab.ts`.
- * Coverage was 4.16% lines pre-test; this exercises the structure
- * guard, the L0/L1/L2 patch paths, and the optional-field no-op
- * case under jsdom.
+ * Direct unit tests for `ui/monitors/tabs/cache-tab.ts`. Exercises
+ * the structure guard, L0/L1/L2 patch paths, progress-bar fill, and
+ * the optional-field no-op case under jsdom.
  */
 
 import { describe, it, expect } from 'vitest';

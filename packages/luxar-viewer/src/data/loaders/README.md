@@ -193,9 +193,9 @@ try {
 
 ## Migration Guide
 
-### Phase 1 (COMPLETE): All Loaders Use RangeLoader
+### All Loaders Use RangeLoader
 
-All three spatial index loaders have been migrated to use RangeLoader:
+All three spatial index loaders use RangeLoader:
 
 **Loaders Migrated:**
 
@@ -252,7 +252,7 @@ Lines and GSplats loaders always output Float32Array for colors. While Python's
 `LoadedLinesData.colors` and `LoadedGSplatsData.colors` only allow Float32Array.
 This is a design decision - updating would require type changes across the codebase.
 
-### Phase 2 (COMPLETE): TransferableAccumulator
+### TransferableAccumulator
 
 Enable zero-allocation + CPU offload:
 
@@ -283,7 +283,7 @@ accumulator.adopt(result.outputBuffers);
 - Enables BOTH accumulator pattern AND worker CPU offload
 - Buffers cycle between main thread and worker without copying
 
-### Phase 3 (FUTURE): Unified Base Class
+### (Future) Unified Base Class
 
 All loaders extend base class:
 

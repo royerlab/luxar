@@ -187,12 +187,11 @@ test.describe('First-Time User Experience', () => {
       type: 'allow-console-errors',
       description: 'Opening the dataset browser triggers directory listing that 404s on the static test server.',
     });
-    // Phase 12.7 regression guard. Before that fix, the Escape path did
-    // a direct DOM removal that bypassed `DatasetBrowser.close()` and
-    // therefore never fired `onClose`. `LuxarApp.datasetBrowser` stayed
-    // populated, and the `O` shortcut handler bailed out via
-    // `if (!this.datasetBrowser) return` — making `O` a silent no-op
-    // until reload.
+    // Regression guard: the Escape path must route through
+    // `DatasetBrowser.close()` so `onClose` fires and
+    // `LuxarApp.datasetBrowser` is cleared. Without that, the `O`
+    // shortcut handler bails out via `if (!this.datasetBrowser)
+    // return` and makes `O` a silent no-op until reload.
     await page.goto(
       '/?src=http://localhost:9000/datasets/examples/rainbow_sphere_4d_example.zarr&debug'
     );
@@ -221,18 +220,17 @@ test.describe('First-Time User Experience', () => {
     await expect(browser).toBeVisible({ timeout: 5000 });
   });
 
-  test('Escape closes the dataset browser even when focus is in a text input (Phase 14.8)', async ({
+  test('Escape closes the dataset browser even when focus is in a text input', async ({
     page,
   }) => {
     test.info().annotations.push({
       type: 'allow-console-errors',
       description: 'Opening the dataset browser triggers directory listing that 404s on the static test server.',
     });
-    // Phase 14.8 regression guard. Pre-fix, `InputHandler.onKeyDown`
-    // returned early when focus was inside a text input — the
-    // dataset-browser's manual-path field, the debug-console filter,
-    // etc. — so Escape never reached the context manager and panels
-    // didn't close. Post-fix, Escape is exempted from the typing
+    // Regression guard: Escape must reach the context manager even
+    // when focus is inside a text input (the dataset-browser's
+    // manual-path field, the debug-console filter, etc.) so panels
+    // close. `InputHandler.onKeyDown` exempts Escape from the typing
     // guard.
     await page.goto(
       '/?src=http://localhost:9000/datasets/examples/rainbow_sphere_4d_example.zarr&debug'

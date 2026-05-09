@@ -319,7 +319,7 @@ export class NodeFactory {
   }
 
   // ============================================================================
-  // Empty placeholder factories (Phase 14.3)
+  // Empty placeholder factories
   // ============================================================================
   //
   // These build a fully-formed THREE node with empty geometry/instance

@@ -225,7 +225,7 @@ describe('validateConfig', () => {
       expect(result.warnings).toContainEqual(expect.stringContaining('Unusual bloom.bloomRadius'));
     });
 
-    it('should error when bloomThreshold is negative (r8 §C1: invalid → error)', () => {
+    it('should error when bloomThreshold is negative', () => {
       const cfg = cloneConfig();
       cfg.renderingControls.defaults.bloomThreshold = -0.1;
 
@@ -279,8 +279,9 @@ describe('validateConfig', () => {
       expect(validateConfig(cfg).errors.filter((e) => e.includes('bloomLevels'))).toHaveLength(0);
     });
 
-    // r8 §C1: NaN/Infinity now caught explicitly (was silently accepted
-    // because comparisons with NaN are always false).
+    // NaN/Infinity must be caught explicitly — bare comparisons
+    // with NaN are always false, so a naked `< 0 || > 10` check
+    // would let NaN pass.
     it('NaN bloomStrength is rejected as error', () => {
       const cfg = cloneConfig();
       cfg.renderingControls.defaults.bloomStrength = NaN;
@@ -343,7 +344,7 @@ describe('validateConfig', () => {
       expect(result.errors).toContainEqual(expect.stringContaining('Invalid network timeout'));
     });
 
-    // Phase 13.12: validationTimeoutMs is the per-request budget for
+    // validationTimeoutMs is the per-request budget for
     // cache validation in fetchWithRetry. Pre-fix it was unvalidated;
     // 0 / negative / NaN / Infinity all flowed through and produced
     // surprising abort/retry behavior.
@@ -430,7 +431,7 @@ describe('validateConfig', () => {
       expect(result.errors.filter((e) => e.includes('retry attempts'))).toHaveLength(0);
     });
 
-    // Phase 14 hygiene: tighten numeric validation across timeoutMs,
+    // tighten numeric validation across timeoutMs,
     // maxConcurrent, retryAttempts. Pre-fix, NaN slipped past `<= 0`
     // because comparisons with NaN are always false; Infinity slipped
     // past `<= 0` for the same reason; non-integers slipped past
@@ -693,7 +694,7 @@ describe('validateConfig', () => {
       expect(result.errors.filter((e) => e.includes('fit ratio'))).toHaveLength(0);
     });
 
-    it('Phase 16B.1: rejects NaN backgroundColor', () => {
+    it('rejects NaN backgroundColor', () => {
       const cfg = cloneConfig();
       cfg.scene.backgroundColor = NaN;
       const result = validateConfig(cfg);
@@ -703,7 +704,7 @@ describe('validateConfig', () => {
       );
     });
 
-    it('Phase 16B.1: rejects non-integer backgroundColor', () => {
+    it('rejects non-integer backgroundColor', () => {
       const cfg = cloneConfig();
       cfg.scene.backgroundColor = 1.5;
       const result = validateConfig(cfg);
@@ -713,7 +714,7 @@ describe('validateConfig', () => {
       );
     });
 
-    it('Phase 16B.1: rejects NaN defaultFitRatio', () => {
+    it('rejects NaN defaultFitRatio', () => {
       const cfg = cloneConfig();
       cfg.scene.defaultFitRatio = NaN;
       const result = validateConfig(cfg);
@@ -722,7 +723,7 @@ describe('validateConfig', () => {
     });
   });
 
-  describe('Phase 16B.1 — NaN/Infinity hardening for memory + spatial + cache', () => {
+  describe('NaN/Infinity hardening for memory + spatial + cache', () => {
     it('rejects NaN memory.targetHeapUsage', () => {
       const cfg = cloneConfig();
       cfg.dataLoading.memory.targetHeapUsage = NaN;
@@ -788,7 +789,7 @@ describe('validateConfig', () => {
     });
   });
 
-  describe('Phase 20F — NaN/Infinity hardening for camera + rendering + controls + input', () => {
+  describe('NaN/Infinity hardening for camera + rendering + controls + input', () => {
     it('rejects NaN camera FOV', () => {
       const cfg = cloneConfig();
       cfg.renderingControls.defaults.fov = NaN;

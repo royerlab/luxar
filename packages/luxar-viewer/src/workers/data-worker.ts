@@ -26,11 +26,10 @@ let wasmModule: WasmModule | null = null;
 // Persistent buffers (avoid per-task allocations)
 let visibilityMaskBuffer: Uint8Array | null = null;
 
-// Phase 18 W1+W2: validation helpers + color helpers moved to
-// ./validation and ./color-utils respectively. The worker imports
-// them as bare identifiers (used in projection / decode paths
-// below) and re-exports the color helpers for the existing unit
-// test.
+// Validation + color helpers live in ./validation and ./color-utils.
+// The worker imports them as bare identifiers (used in projection and
+// decode paths below) and re-exports the color helpers for the
+// existing unit test.
 import {
   MAX_WASM_DIMS,
   validateNDArrays,
@@ -383,9 +382,9 @@ async function projectPointsTo3D(params: {
     );
   }
 
-  // Phase 13.8: validate effective-radius config inputs before they
-  // reach WASM. The Uint8 array built from spatialExtendDims is fed
-  // to calculate_effective_radii, which expects ndim entries. A short
+  // Validate effective-radius config inputs before they reach WASM.
+  // The Uint8 array built from spatialExtendDims is fed to
+  // calculate_effective_radii, which expects ndim entries; a short
   // array silently treats trailing dims as non-extended. maxRadius is
   // not used here directly but flows into per-vertex math elsewhere
   // and must be finite to avoid NaN propagation.
@@ -400,13 +399,14 @@ async function projectPointsTo3D(params: {
         `projectPointsTo3D: effectiveRadiusConfig.maxRadius=${effectiveRadiusConfig.maxRadius} must be a finite number`
       );
     }
-    // Phase 14.7: tolerance is read by index per non-displayed dim in
-    // the extend_to_all detection path further down; a malformed worker
-    // payload that omits it or provides a short array would either throw
-    // a generic `Cannot read properties of undefined` or silently treat
-    // missing entries as non-extend, changing effective-radius semantics.
-    // Production callers pass the right shape; this is a worker-boundary
-    // validation belt for direct callers and future regressions.
+    // Tolerance is read by index per non-displayed dim in the
+    // extend_to_all detection path further down; a malformed worker
+    // payload that omits it or provides a short array would either
+    // throw a generic `Cannot read properties of undefined` or
+    // silently treat missing entries as non-extend, changing
+    // effective-radius semantics. Production callers pass the right
+    // shape; this is a worker-boundary validation belt for direct
+    // callers and future regressions.
     if (
       !viewState ||
       !viewState.tolerance ||
@@ -1219,11 +1219,11 @@ async function decodeLUT(params: {
     throw new Error(`decodeLUT: lutMode='${lutMode}' must be 'row' or 'scalar'`);
   }
 
-  // Phase 13.5: scan indices for out-of-range values BEFORE handing
-  // off to WASM. Rust functions (decode_lut_scalar_*, decode_lut_row_*)
-  // index `lut[indices[i] as usize]` directly; an out-of-range index
-  // panics or traps inside WASM. JS-side rejection turns malformed
-  // encoded data into a clear error at the worker boundary.
+  // Scan indices for out-of-range values BEFORE handing off to WASM.
+  // Rust functions (decode_lut_scalar_*, decode_lut_row_*) index
+  // `lut[indices[i] as usize]` directly; an out-of-range index panics
+  // or traps inside WASM. JS-side rejection turns malformed encoded
+  // data into a clear error at the worker boundary.
   if (lutMode === 'row' && lut.length % k !== 0) {
     throw new Error(
       `decodeLUT: row-mode lut length ${lut.length} is not divisible by k=${k}`

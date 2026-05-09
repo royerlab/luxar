@@ -1,14 +1,14 @@
 /**
  * Central lifecycle coordinator for the viewer's singleton managers.
  *
- * Status (as of Phase 17): future-facing infrastructure. Today's
- * production teardown calls each manager's `dispose` directly from
- * `LuxarApp.dispose()` — none of the managers self-register on
- * first instantiation. `ManagerRegistry` exists so a manager that
- * opts in via `register()` participates in a unified LIFO teardown
- * (last-registered → first-disposed); when more managers wire in,
- * we can shift coordination here and drop their explicit `app.ts`
- * call sites. Idempotent — repeated `disposeAll()` calls are safe.
+ * Status: future-facing infrastructure. Production teardown still
+ * calls each manager's `dispose` directly from `LuxarApp.dispose()` —
+ * none of the managers self-register on first instantiation.
+ * `ManagerRegistry` exists so a manager that opts in via `register()`
+ * participates in a unified LIFO teardown (last-registered →
+ * first-disposed); when more managers wire in, coordination can shift
+ * here and the explicit `app.ts` call sites can be dropped.
+ * Idempotent — repeated `disposeAll()` calls are safe.
  *
  * Tests can call `disposeAll()` between cases to start clean. The
  * registry is itself a process-level singleton (lazy, zero-config).

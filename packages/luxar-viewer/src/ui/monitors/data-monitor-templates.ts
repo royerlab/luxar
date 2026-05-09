@@ -674,12 +674,10 @@ export function renderInsightsContent(recommendations: Recommendation[]): string
   `;
 }
 
-// Phase 14.11: memory-metrics contracts moved to `types/data-monitor-types`
-// so the data layer's SceneLoaderMonitorPort can reference them precisely
-// (was `unknown` before). Re-exported here for back-compat with existing
-// UI template callers — eventually remove these re-exports and have callers
-// import directly from `types/`. The local `import type` is needed because
-// other functions in this file reference these types directly.
+// Memory-metrics contracts live in `types/data-monitor-types` so the data
+// layer's SceneLoaderMonitorPort can reference them precisely. Re-exported
+// here for existing UI template callers; the local `import type` is needed
+// because other functions in this file reference these types directly.
 import type {
   GPUPoolTypeStats,
   GPUPoolStats,

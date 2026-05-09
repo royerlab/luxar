@@ -38,8 +38,8 @@ export interface BaseViewState {
   tolerance: readonly number[];
 
   /**
-   * Dimension metadata for the dataset (raw metadata array). Same shape
-   * as `ViewState.dimensions` (Phase 11.5 unified them).
+   * Dimension metadata for the dataset (raw metadata array). Same
+   * shape as `ViewState.dimensions`.
    */
   dimensions?: DimensionMetadata[];
 }

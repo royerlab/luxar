@@ -1,6 +1,5 @@
 /**
- * Worker boundary validation helpers extracted from
- * `workers/data-worker.ts` (Phase 18 W1).
+ * Worker boundary validation helpers.
  *
  * Every WASM-bound entry point in the worker validates its typed-array
  * inputs before passing them across the JS→WASM boundary: the compiled

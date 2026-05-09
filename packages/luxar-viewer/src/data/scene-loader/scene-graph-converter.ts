@@ -39,10 +39,9 @@ function deriveDisplayName(path: string): string {
 /**
  * Coerce the node's `type` field to a valid `SceneGraphNode['type']`.
  *
- * Phase 13.10: previously used a bare `as` cast that let unknown types
- * (e.g. `'volume'` from a future schema) leak into the UI union and
- * lie to TypeScript. Whitelist explicitly so downstream switch
- * statements can rely on the union being honest.
+ * Whitelist explicitly so downstream switch statements can rely on
+ * the union being honest. A bare `as` cast would let unknown types
+ * (e.g. a future schema's `'volume'`) leak in and lie to TypeScript.
  */
 function deriveDisplayType(rawType: string | undefined): GraphNodeType {
   if (!rawType || rawType === 'scene') return 'scene';

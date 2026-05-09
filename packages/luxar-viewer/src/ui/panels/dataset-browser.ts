@@ -12,10 +12,10 @@ import { log, Modules } from '../../utils/log';
 import { showToast } from '../helpers';
 
 /**
- * Wrap an `onDatasetSelect` invocation so a Promise-returning callback
- * (the production path is async — `LuxarApp.loadDataset`) doesn't
- * leak as an unhandled rejection when the browser closes
- * synchronously after firing it (r8 §D2).
+ * Wrap an `onDatasetSelect` invocation so a Promise-returning
+ * callback (the production path is async — `LuxarApp.loadDataset`)
+ * doesn't surface as an unhandled rejection when the browser closes
+ * synchronously after firing it.
  */
 function safeFireSelect(cb: (url: string) => void | Promise<void>, url: string): void {
   try {
@@ -40,7 +40,7 @@ export interface DatasetBrowserConfig {
    * Callback when a dataset is selected. Receives the full URL (not
    * just the path). May be sync or async; the browser awaits/catches
    * the returned Promise so an async load failure is logged + toasted
-   * rather than becoming an unhandled rejection (r8 §D2).
+   * rather than becoming an unhandled rejection.
    */
   onDatasetSelect: (fullUrl: string) => void | Promise<void>;
   onClose?: () => void;
@@ -65,8 +65,8 @@ export class DatasetBrowser {
   private readonly origin: string;
 
   /**
-   * Phase 16A.3: navigation generation token. Incremented on every
-   * `navigate()` call; the navigation discards its result if the
+   * Navigation generation token. Incremented on every `navigate()`
+   * call; the navigation discards its result if the
    * generation has moved by the time the async navigator fetch
    * resolves. Without this, fast user picks (or simply a slow first
    * response while the user clicks something else) could let the
@@ -227,12 +227,11 @@ export class DatasetBrowser {
   /**
    * Navigate to a path and update the UI.
    *
-   * Phase 16A.3: cancellable. Each call bumps `navigationGeneration`;
-   * if the user kicks off a newer navigate while an older one's
-   * `navigator.navigate()` is still in flight, the older call
-   * discards its result on resume instead of overwriting the UI or
-   * (worst case) firing `onDatasetSelect` for a path the user already
-   * left.
+   * Cancellable: each call bumps `navigationGeneration`. If the user
+   * kicks off a newer navigate while an older one's
+   * `navigator.navigate()` is still in flight, the older call discards
+   * its result on resume instead of overwriting the UI or (worst case)
+   * firing `onDatasetSelect` for a path the user already left.
    */
   private async navigate(path: string): Promise<void> {
     const content = this.panel.querySelector('#luxar-dataset-browser-content') as HTMLElement;
@@ -246,9 +245,9 @@ export class DatasetBrowser {
 
     try {
       const result = await this.navigator.navigate(path);
-      // Phase 16A.3: bail if a newer navigate has started while we
-      // were awaiting. The newer call already wrote its loading
-      // indicator and is responsible for the next render.
+      // Bail if a newer navigate has started while we were awaiting.
+      // The newer call already wrote its loading indicator and is
+      // responsible for the next render.
       if (this.navigationGeneration !== myGeneration) return;
 
       // Update breadcrumb
@@ -289,8 +288,8 @@ export class DatasetBrowser {
         this.showManualEntry();
       }
     } catch (error) {
-      // Phase 16A.3: if a newer navigate started, don't paint the
-      // older error over the newer loading indicator.
+      // If a newer navigate started, don't paint the older error over
+      // the newer loading indicator.
       if (this.navigationGeneration !== myGeneration) return;
       content.innerHTML = `
         <div class="luxar-dataset-browser__error">
@@ -550,9 +549,9 @@ export class DatasetBrowser {
     // matches what `LuxarApp.dispose()` sees if the user already
     // dismissed via Escape/×.
     if (!this.panel.isConnected) return;
-    // Phase 16A.3: bump generation so any in-flight `navigate()`
-    // resolving after close discards its result rather than firing
-    // `onDatasetSelect` for a path the user backed out of.
+    // Bump generation so any in-flight `navigate()` resolving after
+    // close discards its result rather than firing `onDatasetSelect`
+    // for a path the user backed out of.
     this.navigationGeneration++;
     if (this.onClose) {
       this.onClose();

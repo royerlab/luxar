@@ -69,7 +69,7 @@ import type { LoadedPointsData, PointRange } from '../types/points';
  * Mirrors `LinesDataLoader` and `GSplatsDataLoader` in
  * `types/{lines,gsplats}.ts`. Aliased as `PointsDataLoader` in
  * `types/points.ts` (using a slightly different `PointsViewState`
- * shape) — collapsing the two is tracked as Phase 11.4.
+ * shape) — collapsing the two is a planned cleanup.
  */
 export interface DataLoader {
   /** Load points data for the given view state */

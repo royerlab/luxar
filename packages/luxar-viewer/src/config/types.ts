@@ -398,15 +398,16 @@ export interface DataLoadingConfig {
 }
 
 /**
- * Performance optimization configuration (Phases 1-4)
+ * Performance optimization configuration: object pooling, web workers,
+ * WASM acceleration, GPU buffer pool.
  */
 export interface DataLoadingPerformanceConfig {
-  // Object pooling (Phase 1)
+  // Object pooling
   useAccumulators: boolean;
   initialAccumulatorCapacity: number;
   accumulatorGrowthFactor: number;
 
-  // Web Workers (Phase 2)
+  // Web Workers
   useWebWorkers: boolean;
   workerCount: number;
   /**
@@ -432,11 +433,11 @@ export interface DataLoadingPerformanceConfig {
    */
   workerInitTimeoutMs: number;
 
-  // WASM acceleration (Phase 3)
+  // WASM acceleration
   useWASM: boolean;
   wasmModulePath: string;
 
-  // GPU buffer pool (Phase 4)
+  // GPU buffer pool
   useGPUBufferPool: boolean;
   gpuPoolMaxSize: number;
   gpuPoolEvictionFrames: number;

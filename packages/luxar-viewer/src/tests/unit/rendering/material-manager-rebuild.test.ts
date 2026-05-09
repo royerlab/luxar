@@ -33,7 +33,7 @@ describe('MaterialManager.rebuildAfterContextRestore', () => {
   });
 
   it('clears the per-type allocation caches but preserves the camera-update registry', () => {
-    // Phase 14.6: rebuildAfterContextRestore drops the per-type
+    // rebuildAfterContextRestore drops the per-type
     // allocation caches (so the next getXMaterial compiles fresh
     // shaders against the new context) but PRESERVES registeredMaterials
     // / ownedMaterials so existing visible scene materials keep
@@ -97,7 +97,7 @@ describe('MaterialManager.rebuildAfterContextRestore', () => {
     expect(mm.getCacheStats().cachedMaterials).toBe(0);
   });
 
-  it('preserved registry materials still receive camera updates after restore (Phase 14.6)', async () => {
+  it('preserved registry materials still receive camera updates after restore', async () => {
     // Regression for the bug where clearing registeredMaterials in
     // rebuildAfterContextRestore() stranded existing visible materials —
     // their updateCameraParams stopped firing after restore.

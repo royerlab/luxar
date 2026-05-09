@@ -1,14 +1,10 @@
 /**
- * Phase 21B: streaming-ZIP helper used by the image and EXR offline-
- * capture drivers.
- *
- * The image-sequence and EXR-sequence modes share the same ZIP
- * lifecycle: optionally pick a disk handle (File System Access API),
- * stream frames in via `ZipPassThrough` entries, append a final
- * `encode_video.sh` script with the chosen ffmpeg invocation, and
- * either close the disk handle or download an in-memory blob. This
- * class encapsulates that lifecycle so the per-mode drivers only
- * decide their entry name and frame data.
+ * Streaming-ZIP helper shared by the image- and EXR-sequence
+ * offline-capture drivers. Owns the ZIP lifecycle: optionally pick
+ * a disk handle (File System Access API), stream frames in via
+ * `ZipPassThrough` entries, append a final `encode_video.sh`
+ * script with the chosen ffmpeg invocation, and either close the
+ * disk handle or download an in-memory blob.
  *
  * The disk-streaming path uses `showSaveFilePicker` (Chrome/Edge);
  * other browsers fall back to in-memory chunks fed to `new Blob([…])`.
@@ -263,7 +259,7 @@ export class ZipSequenceCapture {
   }
 
   /**
-   * r8 §A3: tear down a partial ZIP without delivering an artifact.
+   * Tear down a partial ZIP without delivering an artifact.
    * Called by the panel when the offline session is aborted
    * (disposed / cancelled / capture errored). Idempotent: safe to
    * call after finalize, after abort, or on a never-set-up instance.

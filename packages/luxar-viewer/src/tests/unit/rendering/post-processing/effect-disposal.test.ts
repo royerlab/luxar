@@ -115,7 +115,7 @@ describe('safeDisposeEffects', () => {
   });
 });
 
-describe('safeRemoveAndDisposePass (Phase 21A)', () => {
+describe('safeRemoveAndDisposePass', () => {
   let warnSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {

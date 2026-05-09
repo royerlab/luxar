@@ -547,7 +547,7 @@ describe('GSplatsSpatialIndexLoader', () => {
         expect(metrics.errors).toBeGreaterThanOrEqual(1);
       });
 
-      // Phase 13.10: Points emits a monitor 'error' event on load
+      // Points emits a monitor 'error' event on load
       // failure; Lines/GSplats previously only incremented metrics.
       // Event-driven dashboards (timelines/advisors) couldn't see
       // gsplats failures the way they saw points failures.
@@ -669,7 +669,7 @@ describe('GSplatsSpatialIndexLoader', () => {
     // ────────────────────────────────────────────────────────────────
     // GSplats-only API: prefetchChunks. Points and lines have no
     // multi-LOD pathway, so this block has no parallel in the other
-    // two test files (see Phase 11.11 in the plan: justified asymmetry).
+    // two test files (justified asymmetry).
     // ────────────────────────────────────────────────────────────────
     describe('prefetchChunks (gsplats-only)', () => {
       it('warms the cache with zarr.get on every array × range', async () => {

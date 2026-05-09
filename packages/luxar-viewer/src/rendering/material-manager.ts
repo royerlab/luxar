@@ -20,14 +20,14 @@ import { config } from '../config';
  * - 'normal': Standard alpha blending (semi-transparent). For
  *   **Points** and **Lines** this works as expected — the shader
  *   emits a per-fragment alpha derived from opacity and edge
- *   softness. For **GSplats** (Phase 20E / r5 warning) the shader
- *   currently emits `alpha = 1.0` and modulates RGB by uOpacity
- *   instead, so 'normal' on a GSplat layer behaves like
- *   "opaque dimmed by opacity": the framebuffer behind the splat
- *   is not revealed. Proper alpha-on-GSplats requires premultiplied-
- *   alpha output + a `ONE` / `ONE_MINUS_SRC_ALPHA` blend func, which
- *   is a deeper shader change deferred until needed. Users wanting
- *   semi-transparent splats today should use 'luminous' or 'additive'.
+ *   softness. For **GSplats** the shader emits `alpha = 1.0` and
+ *   modulates RGB by uOpacity instead, so 'normal' on a GSplat layer
+ *   behaves like "opaque dimmed by opacity": the framebuffer behind
+ *   the splat is not revealed. Proper alpha-on-GSplats requires
+ *   premultiplied-alpha output + a `ONE` / `ONE_MINUS_SRC_ALPHA`
+ *   blend func, which is a deeper shader change deferred until
+ *   needed. Users wanting semi-transparent splats today should use
+ *   'luminous' or 'additive'.
  * - 'additive': Classic additive blending, ignores depth (renders on top of everything)
  * - 'max': Maximum of source and destination (brightest wins)
  * - 'opaque': Solid rendering with depth write (closest object wins)
@@ -189,8 +189,8 @@ export class MaterialManager {
    *
    * Wiring cleanup this way (manager → material) instead of having
    * materials call `materialManager.unregister(this)` (material →
-   * manager) breaks the import cycle that previously existed between
-   * material-manager.ts and {point,line,gsplat}-material.ts.
+   * manager) avoids an import cycle between material-manager.ts and
+   * {point,line,gsplat}-material.ts.
    */
   private subscribeToDispose(material: THREE.Material & CameraAwareMaterial): void {
     const onDispose = (): void => {
@@ -494,14 +494,14 @@ export class MaterialManager {
    * `getPointMaterial` / `getLineMaterial` / `getGSplatMaterial` will
    * compile fresh shaders against the new context.
    *
-   * Phase 14.6: do NOT clear `registeredMaterials` / `ownedMaterials`.
-   * Those are the camera-uniform update tracker, not allocation caches:
-   * they hold the materials currently attached to visible scene meshes
-   * and need to keep receiving `updateCameraParams()` after restore.
-   * Pre-fix, clearing them stranded existing visible materials —
-   * subsequent resize/ortho/DPR changes wouldn't reach their uniforms,
-   * and layer-cloned materials (registered as "owned" at clone time
-   * via `materialManager.register()` from layers-panel) would silently
+   * Do NOT clear `registeredMaterials` / `ownedMaterials`. Those are
+   * the camera-uniform update tracker, not allocation caches: they
+   * hold materials currently attached to visible scene meshes and need
+   * to keep receiving `updateCameraParams()` after restore. Clearing
+   * them strands existing visible materials — subsequent resize/ortho/
+   * DPR changes wouldn't reach their uniforms, and layer-cloned
+   * materials (registered as "owned" at clone time via
+   * `materialManager.register()` from layers-panel) would silently
    * miss camera updates.
    *
    * Implementation choice: lazy rebuild for ALLOCATION. Eager

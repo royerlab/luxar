@@ -1,5 +1,5 @@
 /**
- * Phase 21B: WebM / MP4 / MKV video driver.
+ * WebM / MP4 / MKV video driver.
  *
  * Uses mediabunny instead of MediaRecorder.captureStream because
  * WebGL canvases with `preserveDrawingBuffer: false` don't work
@@ -94,9 +94,9 @@ export class VideoModeDriver implements OfflineCaptureDriver {
       timestamp: frameIndex * frameDuration,
       duration: frameDuration,
     });
-    // Phase 21B follow-up: close() must run even if source.add()
-    // rejects, otherwise transient encoder failures (the path the
-    // panel loop tolerates) leak sample resources frame after frame.
+    // close() must run even if source.add() rejects, otherwise
+    // transient encoder failures (the path the panel loop tolerates)
+    // leak sample resources frame after frame.
     try {
       await this.source.add(sample);
     } finally {
@@ -115,9 +115,10 @@ export class VideoModeDriver implements OfflineCaptureDriver {
       return;
     }
     if (capturedFrames === 0) {
-      // r8 §A4: previously returned without calling output.finalize(),
-      // leaking the started encoder. Always finalize to release
-      // resources; just don't download/toast as success.
+      // Always finalize the encoder so it releases resources, even
+      // when there are no frames to deliver. mediabunny has no
+      // separate abort API; finalize is the only path that closes
+      // the started Output. Just don't download/toast as success.
       try {
         await this.output.finalize();
       } catch (err) {
@@ -151,8 +152,8 @@ export class VideoModeDriver implements OfflineCaptureDriver {
   }
 
   /**
-   * r8 §A3: tear down a partial encoder without delivering a video.
-   * Called by the panel when the offline session is aborted. Idempotent.
+   * Tear down a partial encoder without delivering a video. Called
+   * by the panel when the offline session is aborted. Idempotent.
    */
   async abort(_ctx: CaptureContext, _reason: 'disposed' | 'user-cancel' | 'error'): Promise<void> {
     if (!this.output) return;

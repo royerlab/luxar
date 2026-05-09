@@ -1,23 +1,17 @@
 /**
- * Phase 14.3 regression tests for the initial-load placeholder model.
+ * Initial-load placeholder model.
  *
- * Pre-fix scenario:
- *   - `loadPoints/Lines/GSplats` constructed a fully-populated THREE
- *     object only on data-fetch success.
- *   - On initial-load failure, no THREE object existed in the scene.
- *   - `retryFailedLoader()` could fetch data successfully but commit
- *     helpers found no object by name and silently no-oped, then
- *     `failedLoaders.delete(path)` cleared the failure — geometry was
- *     permanently absent while the loader claimed success.
+ * Each `loadX()` builds an empty placeholder via
+ * `NodeFactory.createEmpty{Points,Lines,GSplats}Node`, attaches it to
+ * `parentThree` BEFORE the data fetch, then commits real data on
+ * success or records failure on error. The placeholder remains in the
+ * scene across failures; retry commits into the existing object via
+ * the same path used by all future updates.
  *
- * Post-fix:
- *   - Each `loadX()` builds an empty placeholder via
- *     `NodeFactory.createEmpty{Points,Lines,GSplats}Node`, attaches it
- *     to `parentThree` BEFORE the data fetch, then commits real data
- *     on success or records failure on error.
- *   - The placeholder remains in the scene across failures. Retry
- *     commits into the existing object via the same path used by all
- *     future updates.
+ * Without this model, an initial-load failure leaves no THREE object
+ * in the scene, and a successful retry is silently no-op'd because
+ * the commit helpers can't find the named object — `failedLoaders`
+ * gets cleared while geometry stays permanently absent.
  *   - Defensive: `retryFailedLoader()` only clears `failedLoaders` when
  *     the named object still exists in `rootGroup` after commit. A
  *     scene that lost the placeholder (programmatic removal between
@@ -223,7 +217,7 @@ describe('NodeFactory placeholder factories — common contract', () => {
 });
 
 /**
- * Phase 15.3: retryFailedLoader must mirror initial-load on
+ * retryFailedLoader must mirror initial-load on
  * `derived.skip === 'extend_to_all'` — fall back to `this.viewState`
  * and actually load data, instead of clearing the failure flag with
  * an empty placeholder.
@@ -236,7 +230,7 @@ describe('NodeFactory placeholder factories — common contract', () => {
  * produce `skip: 'extend_to_all'`, so we can assert the fallback
  * path calls `updateView` with the base view state.
  */
-describe('SceneLoader.retryFailedLoader — derived.skip fallback (Phase 15.3)', () => {
+describe('SceneLoader.retryFailedLoader — derived.skip fallback', () => {
   let loader: SceneLoader;
   let root: THREE.Group;
 
@@ -328,7 +322,7 @@ describe('SceneLoader.retryFailedLoader — derived.skip fallback (Phase 15.3)',
     expect(internals.registry.failedLoaders.has('/l')).toBe(false);
   });
 
-  it('refuses when an updateView is in progress (Phase 16A.4)', async () => {
+  it('refuses when an updateView is in progress', async () => {
     const internals = loader as unknown as LoaderInternals & { _updateInProgress: boolean };
     const factory = new NodeFactory();
     const placeholder = factory.createEmptyPointsNode(
@@ -357,10 +351,10 @@ describe('SceneLoader.retryFailedLoader — derived.skip fallback (Phase 15.3)',
     expect(internals.registry.failedLoaders.has('/p')).toBe(true);
   });
 
-  it('updateView called during in-flight retry queues + drains via _pendingViewState (Phase 19.0.2)', async () => {
-    // Reproduces the r5-flagged race:
+  it('updateView called during in-flight retry queues + drains via _pendingViewState', async () => {
+    // Reproduces the lock race:
     //   1. retry starts on a path while _updateInProgress is false.
-    //   2. Phase 19.0.2 sets _updateInProgress=true at retry entry.
+    //   2. retry takes the lock (_updateInProgress=true) at entry.
     //   3. updateView() called during retry → sees lock=true, sets
     //      _pendingViewState and returns immediately.
     //   4. retry releases lock; the drain helper fires the queued
@@ -397,7 +391,7 @@ describe('SceneLoader.retryFailedLoader — derived.skip fallback (Phase 15.3)',
     const retryPromise = loader.retryFailedLoader('/p');
     await Promise.resolve();
     await Promise.resolve();
-    // Phase 19.0.2: lock taken.
+    // Lock taken.
     expect(internals._updateInProgress).toBe(true);
     expect(retryUpdateView).toHaveBeenCalledTimes(1);
 
@@ -462,7 +456,7 @@ describe('SceneLoader.retryFailedLoader — derived.skip fallback (Phase 15.3)',
     expect(internals.registry.failedLoaders.has('/g')).toBe(false);
   });
 
-  // Phase 19F (r5 warning #3): the existing retry tests prove the
+  // the existing retry tests prove the
   // call shape and the failedLoaders.delete behavior, but not that
   // the placeholder is *truly* still around with consistent userData
   // after retry. These add stronger end-state assertions.
@@ -498,11 +492,10 @@ describe('SceneLoader.retryFailedLoader — derived.skip fallback (Phase 15.3)',
     expect(internals.registry.failedLoaders.has('/p')).toBe(false);
   });
 
-  it('retry returns false and keeps the failure when placeholder was removed (Phase 14.3 contract)', async () => {
-    // The Phase 14.3 verifyAndClear defensive guard: if the named
-    // object is missing from rootGroup, retry must NOT clear the
-    // failedLoaders entry. r5 noted the existing tests don't
-    // exercise this branch directly.
+  it('retry returns false and keeps the failure when placeholder was removed', async () => {
+    // The verifyAndClear defensive guard: if the named object is
+    // missing from rootGroup, retry must NOT clear the failedLoaders
+    // entry.
     const internals = loader as unknown as LoaderInternals;
     const factory = new NodeFactory();
     const placeholder = factory.createEmptyPointsNode(

@@ -17,10 +17,9 @@
  * Type-only imports (`import type {...}`) are excluded — they're
  * erased at compile time so they don't create runtime coupling.
  *
- * The `no-circular` rule rounds out the structural guarantees and
- * is now severity `error` (Phase 13.16) — zero cycles existed at
- * the time of the ratchet, and any future cycle should fail the
- * build rather than warn-and-be-ignored.
+ * The `no-circular` rule rounds out the structural guarantees at
+ * severity `error` — any cycle should fail the build rather than
+ * warn-and-be-ignored.
  *
  * (No `no-orphans` rule — the project's many type-only files would
  * dominate the report and require a brittle allowlist; a type-aware
@@ -42,9 +41,7 @@ module.exports = {
       comment:
         'Circular dependencies are usually a smell — a leaf module ' +
         'requiring its consumer suggests the data flow is upside-down. ' +
-        'Phase 13.16: ratcheted from warn to error after a clean ' +
-        '`pnpm check:layers --output-type json` showed zero cycles. ' +
-        'Any new cycle now fails the build.',
+        'Severity is `error`, so any new cycle fails the build.',
       from: {},
       to: { circular: true },
     },
@@ -75,11 +72,10 @@ module.exports = {
     layerRule('input', ['ui', 'core']),
     layerRule('ui', ['core']),
 
-    // Per-file warn rules previously here have been removed —
-    // input-handler → ui (Phase 8.6.d) and scene-loader → ui (Phase
-    // 8.6.e) are now properly dependency-inverted. To re-enable a
-    // pinpoint warn rule for a future regression, list the file in
-    // KNOWN_LAYER_EXCEPTIONS and add a corresponding rule here.
+    // No per-file warn rules: every layer crossing is properly
+    // dependency-inverted. To re-enable a pinpoint warn rule for a
+    // future regression, list the file in KNOWN_LAYER_EXCEPTIONS and
+    // add a corresponding rule here.
   ],
   options: {
     doNotFollow: { path: 'node_modules' },

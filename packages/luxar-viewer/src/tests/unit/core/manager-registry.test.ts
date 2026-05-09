@@ -131,7 +131,7 @@ describe('ManagerRegistry', () => {
     expect(a).not.toBe(b);
   });
 
-  // Phase 13.2: re-init lifecycle. Pre-fix, register() rejected any
+  // re-init lifecycle. Pre-fix, register() rejected any
   // name in `managers` Map (no `disposed` check). After disposeAll(),
   // names stayed in `managers`/`order`, so a fresh app's register()
   // call was treated as duplicate-warn and the new manager was NEVER

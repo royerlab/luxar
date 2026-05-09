@@ -1,5 +1,5 @@
 /**
- * Color helpers extracted from `workers/data-worker.ts` (Phase 18 W2).
+ * Color helpers shared between the main thread and the data worker.
  *
  * Sharing matrix:
  *
@@ -28,9 +28,8 @@
  *
  * The downstream WASM color helpers (`interpolate_colors_batch`,
  * `compact_by_mask`) and the shaders that consume their output
- * interpret values as `[0, 1]`. Phase 15.2 fixed the worker path to
- * match the main-thread normalization; Phase 18 W2 unifies them
- * here so future paths can't drift.
+ * interpret values as `[0, 1]`. Worker and main-thread paths share
+ * this helper so the normalization can't drift between them.
  */
 export function coerceColorsToFloat32(
   colors: Float32Array | Uint8Array | Uint16Array

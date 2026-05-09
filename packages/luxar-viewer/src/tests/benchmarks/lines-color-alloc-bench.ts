@@ -1,29 +1,28 @@
 /**
- * 21H — Lines TS-path color-alloc audit.
+ * Lines TS-path color-alloc audit.
  *
  * Measures the cost of `coerceColorsToFloat32` (upfront alloc + scale)
  * vs an inline per-vertex-pair scaler closure for a representative
  * Lines dataset, ~95% culled (worst case — alloc/scale work that's
- * thrown away).
+ * mostly thrown away).
  *
- * Decision rule (from the Phase 21 plan):
- *   - If alloc cost is < 1ms for a typical lines dataset (~10k
- *     segments), the concern is theoretical → close as won't-fix.
- *   - If meaningful, swap to closure-based approach.
+ * Threshold: 1ms per call. Below that the upfront alloc is a
+ * theoretical concern only; above that the closure approach is
+ * worth the added per-vertex multiplication.
  *
- * Recorded results (Apple Silicon, Node 22, 2026-05-08):
+ * Recorded results (Apple Silicon, Node 22):
  *   |  segments | current (ms) | inline (ms) | delta (ms) |
  *   |-----------|--------------|-------------|------------|
  *   |    10_000 |        0.075 |       0.003 |      0.072 |
  *   |   100_000 |        0.490 |       0.021 |      0.469 |
  *   |   500_000 |        1.914 |       0.071 |      1.843 |
  *
- * Conclusion: for typical Lines workloads (10k-100k segments) the
- * alloc cost is sub-1ms — well below the threshold. It only crosses
- * at 500k+ segments, AND only when input is Uint8/Uint16. Float32
- * inputs (the dominant production HDR pipeline) pass through with
- * zero alloc. r5 warning #10 is closed as won't-fix; revisit if a
- * 500k+ segment Lines workload becomes a real-world target.
+ * For typical Lines workloads (10k-100k segments) the alloc cost is
+ * sub-1ms — well below the threshold. It only crosses at 500k+
+ * segments, AND only when input is Uint8/Uint16. Float32 inputs
+ * (the dominant production HDR pipeline) pass through with zero
+ * alloc. Won't-fix as long as 500k+ segment workloads aren't
+ * routine; revisit when they are.
  *
  * Run with: npx tsx src/tests/benchmarks/lines-color-alloc-bench.ts
  *           npx tsx src/tests/benchmarks/lines-color-alloc-bench.ts 100000
@@ -32,7 +31,7 @@
 // Allow scenario sweep via CLI arg: `... -- 10000` or `... -- 100000`.
 const SEGMENTS = Number(process.argv[2] ?? 10_000);
 const VERTICES = SEGMENTS * 2;
-const VISIBLE_FRACTION = 0.05; // 95% culled — worst case for r5's concern
+const VISIBLE_FRACTION = 0.05; // 95% culled — worst case for the alloc/scale audit
 const ITERATIONS = 50;
 const WARMUP = 5;
 

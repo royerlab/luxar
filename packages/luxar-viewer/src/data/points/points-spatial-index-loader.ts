@@ -107,7 +107,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
   // Range loader for unified encoding dispatch (replaces decoder for range-based loading)
   private rangeLoader: RangeLoader;
 
-  // Data accumulator for object pooling (Phase 1 optimization)
+  // Data accumulator for object pooling.
   private _accumulator: LoadedPointsDataAccumulator | null = null;
 
   // Monitoring
@@ -410,7 +410,8 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
         throw new Error('Loader not properly initialized: positions array not loaded');
       }
 
-      // Query spatial index for visible ranges (Phase 2: async for worker support)
+      // Query spatial index for visible ranges (async to allow worker
+      // offload).
       let ranges: PointRange[];
       if (session) {
         const querySession = session.begin('Spatial Query');
@@ -509,7 +510,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
       this.metrics.avgQueryTime =
         (this.metrics.avgQueryTime * (this.metrics.queries - 1) + queryTime) / this.metrics.queries;
 
-      // Phase 1 Deep Integration: Prepare accumulator buffers if enabled
+      // Prepare accumulator buffers if enabled.
       let targetBuffers: ProjectionTargetBuffers | null = null;
 
       if (this._accumulator && appConfig.dataLoading.performance.useAccumulators) {
@@ -762,10 +763,10 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
         .join(', ')}]`
     );
 
-    // ViewState and BaseViewState now share the same `dimensions:
-    // DimensionMetadata[]` shape (Phase 11.5 unified them). The
-    // assignment is a structural narrowing — only displayDims,
-    // slicePosition, tolerance, and dimensions reach the builder.
+    // ViewState and BaseViewState share the same `dimensions:
+    // DimensionMetadata[]` shape, so the assignment is a structural
+    // narrowing — only displayDims, slicePosition, tolerance, and
+    // dimensions reach the builder.
     const baseViewState: BaseViewState = {
       displayDims: viewState.displayDims,
       slicePosition: viewState.slicePosition,

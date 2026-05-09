@@ -92,11 +92,9 @@ describe('encodeScreenshotBlob', () => {
 });
 
 describe('downloadBlob', () => {
-  // r8 §F5: previously this test installed fake timers AFTER calling
-  // downloadBlob, so the real setTimeout had already scheduled the
-  // revoke before fake timers took over — `revokeSpy` was never
-  // observed. Install fake timers FIRST, then assert revoke is
-  // delayed and fires after 100 ms.
+  // Install fake timers BEFORE calling downloadBlob so the test
+  // observes the scheduled revoke. (Installing them after lets the
+  // real setTimeout schedule first, before fake timers take over.)
   it('appends an anchor, clicks it, and revokes the URL after a 100ms delay', () => {
     vi.useFakeTimers();
     const before = document.body.children.length;

@@ -376,18 +376,15 @@ test.describe('Layers Panel', () => {
     expect(panelHidden).toBe(true);
   });
 
-  test('keyboard listbox: programmatic focus + ArrowDown selects next row, aria-selected updates (Phase 14.13)', async ({
+  test('keyboard listbox: programmatic focus + ArrowDown selects next row, aria-selected updates', async ({
     page,
   }) => {
-    // r8 §I3: name was previously "Tab to listbox", but the test
-    // programmatically focuses the row via .focus() (see comment
-    // below — Tab in headless depends on intermediate focusable
-    // controls). Renamed to match what the test actually does.
-    // Phase 13.21 added listbox/option a11y to the layers panel rows
-    // (role="listbox" + role="option" + aria-selected + tabIndex
-    // management) but landed without E2E keyboard coverage. Unit tests
-    // covered ARIA presence; this verifies the integration works
-    // end-to-end against a real scene + input handler + DOM.
+    // The test programmatically focuses the row via .focus() rather
+    // than driving Tab — Tab in headless depends on every interactive
+    // control between the canvas and the listbox, which is fragile.
+    // This still verifies the listbox keyboard idiom (ArrowDown moves
+    // focus + selection, aria-selected updates) end-to-end against a
+    // real scene + input handler + DOM.
     await openLayersPanel(page);
 
     // The listbox container has role="listbox"; rows are role="option".
@@ -398,8 +395,8 @@ test.describe('Layers Panel', () => {
     const rowCount = await rows.count();
     expect(rowCount).toBeGreaterThan(1); // need ≥ 2 rows for ArrowDown
 
-    // Snapshot which row is selected initially. Phase 13.21 auto-
-    // selects the first layer at panel-init time.
+    // Snapshot which row is selected initially. The panel auto-
+    // selects the first layer at init time.
     const initiallySelected = await rows
       .evaluateAll((els) => els.findIndex((el) => el.getAttribute('aria-selected') === 'true'));
     expect(initiallySelected).toBeGreaterThanOrEqual(0);

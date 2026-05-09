@@ -36,9 +36,8 @@ vi.mock('../../../../utils/notifier', () => ({
 
 const hideHelpOverlay = notifierMocks.hideHelp;
 const clearError = notifierMocks.clearError;
-// Phase 8.6.c: panel-coordinator now emits 'panel-hide' on the event
-// bus instead of calling hideDataMonitor directly. Spy on the bus to
-// observe the emit.
+// panel-coordinator emits 'panel-hide' on the event bus instead of
+// calling hideDataMonitor directly. Spy on the bus to observe the emit.
 import { eventBus } from '../../../../utils/event-bus';
 import { PanelCoordinator } from '../../../../input/handlers/panel-coordinator';
 import type { RenderingControls } from '../../../../ui/rendering-controls';
@@ -113,7 +112,7 @@ describe('PanelCoordinator.closeAll', () => {
     document.body.innerHTML = '';
     vi.mocked(hideHelpOverlay).mockClear();
     vi.mocked(clearError).mockClear();
-    // hideDataMonitor moved to panel-hide bus event in Phase 8.6.c
+    // hideDataMonitor moved to panel-hide bus event
   });
 
   afterEach(() => {
@@ -259,7 +258,7 @@ describe('PanelCoordinator.handleEscape', () => {
     document.body.innerHTML = '';
     vi.mocked(hideHelpOverlay).mockClear();
     vi.mocked(clearError).mockClear();
-    // hideDataMonitor moved to panel-hide bus event in Phase 8.6.c
+    // hideDataMonitor moved to panel-hide bus event
     // Default: not in fullscreen.
     Object.defineProperty(document, 'fullscreenElement', {
       configurable: true,

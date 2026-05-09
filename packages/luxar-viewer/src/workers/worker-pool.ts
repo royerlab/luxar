@@ -75,15 +75,15 @@ export class WorkerPool {
   private initPromise: Promise<void> | null = null;
   private nextWorkerIndex = 0;
 
-  // Phase 15.1: dispose-mid-init defense. `initialize()` spawns
-  // workers via `Array.from(...).map(async ...)` and pushes them to
-  // `this.workers` only on the fulfilled branch of `Promise.allSettled`.
-  // A `dispose()` between `new DataWorker()` and that push would walk
-  // an empty `this.workers` and exit; the still-pending factories
-  // would then resolve and re-populate `this.workers` post-dispose,
-  // leaving live Worker globals the pool no longer references.
+  // Dispose-mid-init defense. `initialize()` spawns workers via
+  // `Array.from(...).map(async ...)` and pushes them to `this.workers`
+  // only on the fulfilled branch of `Promise.allSettled`. A `dispose()`
+  // between `new DataWorker()` and that push would walk an empty
+  // `this.workers` and exit; the still-pending factories would then
+  // resolve and re-populate `this.workers` post-dispose, leaving live
+  // Worker globals the pool no longer references.
   //
-  // Defense:
+  // Two pieces of state guard against that:
   //   - `initGeneration` is bumped on every dispose. Each `initialize()`
   //     captures the generation at start; if it has moved on by the
   //     time a worker's init resolves, the worker is terminated and
@@ -125,13 +125,12 @@ export class WorkerPool {
     // Return existing promise if initialization already started or completed
     if (this.initPromise) return this.initPromise;
 
-    // Phase 19.0.1: capture the generation token AND a per-attempt
-    // workers list. Phase 15.1's `myGeneration` was correct for the
-    // factory-level mismatch check, but the IIFE-level cleanup paths
-    // unconditionally touched `this.workers` — so a stale init that
-    // settled after a fresh init had published its workers would
-    // wipe them. Per-attempt local state means stale completion can
-    // only clean up its OWN workers, never globals.
+    // Capture the generation token AND a per-attempt workers list.
+    // The IIFE-level cleanup paths must only touch attempt-local state,
+    // never globals: otherwise a stale init that settles after a fresh
+    // init has published its workers would wipe them. Per-attempt
+    // local state means stale completion can only clean up its OWN
+    // workers.
     const myGeneration = ++this.initGeneration;
     const attemptWorkers: WorkerInstance[] = [];
 
@@ -148,9 +147,9 @@ export class WorkerPool {
             ? new Worker(dataWorkerUrlOverride, { type: 'module' })
             : new DataWorker();
 
-          // Phase 15.1: track this worker as in-flight so a concurrent
-          // dispose() can terminate it. Removed on success or on the
-          // per-factory catch path.
+          // Track this worker as in-flight so a concurrent dispose()
+          // can terminate it. Removed on success or on the per-factory
+          // catch path.
           this.pendingWorkers.add(worker);
 
           // Install runtime-error handlers BEFORE the first message — a
@@ -169,9 +168,9 @@ export class WorkerPool {
             //   2. an onerror short-circuit (worker fails *during* its
             //      boot before any pool entry exists for it).
             await this.initializeWithGuard(worker, api, index + 1);
-            // Phase 15.1: if dispose() ran while we were awaiting init,
-            // the generation has moved on. Self-terminate and reject so
-            // the parent doesn't push us into the post-dispose pool.
+            // If dispose() ran while we were awaiting init, the
+            // generation has moved on. Self-terminate and reject so the
+            // parent doesn't push us into the post-dispose pool.
             if (this.initGeneration !== myGeneration) {
               throw new Error(
                 `Worker ${index + 1} aborted: pool was disposed during init`
@@ -200,11 +199,11 @@ export class WorkerPool {
           }
         }
 
-        // Phase 19.0.1: stale-generation guard. If dispose() bumped
-        // the generation while we were awaiting allSettled, terminate
-        // ONLY this attempt's workers and return. Do NOT touch
-        // `this.workers` — a fresh generation may have already
-        // published its own workers there.
+        // Stale-generation guard. If dispose() bumped the generation
+        // while we were awaiting allSettled, terminate ONLY this
+        // attempt's workers and return. Do NOT touch `this.workers` —
+        // a fresh generation may have already published its own
+        // workers there.
         if (this.initGeneration !== myGeneration) {
           for (const { worker } of attemptWorkers) {
             try {
@@ -238,9 +237,9 @@ export class WorkerPool {
         this.nextWorkerIndex = 0;
         log.info(Modules.WORKER_POOL, `Worker pool ready with ${this.workers.length} worker(s)`);
       } catch (e) {
-        // Phase 19.0.1: same stale-generation guard for the error
-        // path. If a newer generation has taken over, only clean up
-        // this attempt's workers.
+        // Same stale-generation guard for the error path. If a newer
+        // generation has taken over, only clean up this attempt's
+        // workers.
         if (this.initGeneration !== myGeneration) {
           for (const { worker } of attemptWorkers) {
             try {
@@ -256,8 +255,8 @@ export class WorkerPool {
           worker.terminate();
         }
         this.workers = [];
-        // Phase 15.1: terminate anything still pending too, in case
-        // the catch fires while factories are still settling.
+        // Terminate anything still pending too, in case the catch
+        // fires while factories are still settling.
         for (const worker of this.pendingWorkers) {
           worker.terminate();
         }
@@ -599,10 +598,9 @@ export class WorkerPool {
   /**
    * Clean up all worker resources.
    *
-   * Phase 15.1: also terminates workers that are still pending init
-   * via `pendingWorkers`, and bumps `initGeneration` so any factories
-   * still in flight detect the dispose and self-terminate when they
-   * resolve.
+   * Also terminates workers still pending init (via `pendingWorkers`)
+   * and bumps `initGeneration` so any factories still in flight detect
+   * the dispose and self-terminate when they resolve.
    */
   dispose(): void {
     // Bump the generation FIRST so any factories that resolve between

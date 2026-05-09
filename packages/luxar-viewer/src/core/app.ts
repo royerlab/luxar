@@ -107,12 +107,12 @@ export interface LuxarAppOptions {
   openCacheStats?: boolean;
 
   /**
-   * Phase 21C: optional construction overrides for the heavy
-   * components constructed by `init()`. When omitted (or per-key
-   * undefined), `defaultFactories` is used and the production path
-   * is byte-for-byte equivalent to pre-21C. Embedders + tests inject
-   * factories to substitute alternate scene managers, recording
-   * panels, etc. See `app-factories.ts`.
+   * Optional construction overrides for the heavy components
+   * constructed by `init()`. When omitted (or per-key undefined),
+   * `defaultFactories` is used and the production path simply calls
+   * the matching `new X(...)`. Embedders + tests use this hook to
+   * substitute alternate scene managers, recording panels, etc.
+   * See `app-factories.ts`.
    */
   factories?: AppFactories;
 }
@@ -225,8 +225,9 @@ export class LuxarApp {
       );
     }
 
-    // Reset the idempotency guard so a fresh init followed by dispose works
-    // even if the same instance was previously initialized and disposed.
+    // Reset the idempotency guard so a fresh init followed by dispose
+    // works even if the same instance was already initialized and
+    // disposed.
     this.isDisposed = false;
     this.options = options;
 
@@ -252,8 +253,8 @@ export class LuxarApp {
 
       const sceneSrc = this.options.src ?? config.defaultZarrPath;
 
-      // Phase 21C: resolve construction-factory overrides once. Default
-      // path matches pre-21C inline `new X(...)` calls byte-for-byte.
+      // Resolve construction-factory overrides once. Without
+      // overrides each entry simply calls the matching `new X(...)`.
       const factories = resolveFactories(this.options.factories);
 
       // Initialize scene manager first
@@ -272,10 +273,9 @@ export class LuxarApp {
         this.sceneManager.controls,
         this.sceneManager.postProcessing
       );
-      // Phase 13.9: skip GPU rendering while the WebGL context is
-      // lost. SceneManager flips this flag in its
-      // webglcontextlost/restored handlers; the loop polls each
-      // frame.
+      // Skip GPU rendering while the WebGL context is lost.
+      // SceneManager flips this flag in its webglcontextlost/restored
+      // handlers; the loop polls each frame.
       this.animationController.setContextLostPredicate(() =>
         this.sceneManager.isWebGLContextLost()
       );
@@ -314,11 +314,10 @@ export class LuxarApp {
       // scene so the picking system gets fresh registrations against
       // the new context.
       //
-      // Track the listener via this.events so dispose() removes it
-      // (Phase 13.4). Pre-13.4 the handler was an anonymous arrow
-      // and was never removed — inconsistent with every other
-      // app-level listener and a leak if sceneManager outlives app
-      // teardown.
+      // Track the listener via this.events so dispose() removes it.
+      // An untracked anonymous arrow here would leak if sceneManager
+      // outlives app teardown — inconsistent with every other
+      // app-level listener.
       if (typeof this.sceneManager.addEventListener === 'function') {
         const onContextRestored = (): void => {
           const sceneLoader = getSceneLoader('default');
@@ -333,9 +332,8 @@ export class LuxarApp {
       }
 
       // Inject the monitor factory into SceneLoaderManager so each
-      // SceneLoader can resolve its UI monitor without the data/
-      // layer importing ui/ directly. Closes the last layer-cruiser
-      // exception (Phase 8.6.e).
+      // SceneLoader can resolve its UI monitor without the data/ layer
+      // importing ui/ directly.
       SceneLoaderManager.getInstance().setMonitorFactory((monitorId) => {
         if (typeof document === 'undefined') return null;
         const mgr = DataMonitorManager.getInstance();
@@ -1130,13 +1128,12 @@ export class LuxarApp {
       this.imageLabelLoader?.dispose();
       this.imageLabelLoader = undefined;
     });
-    // Phase 14.5: explicitly close any open DatasetBrowser BEFORE
-    // input-handler teardown. The browser is a child panel owned by
-    // LuxarApp; without this step its DOM stays attached and the
-    // PanelCoordinator close handle stays bound until input-handler
-    // disposes its listeners. This matches the same-tier guarantees
-    // the loader/worker singletons just got — embedded re-init scenarios
-    // shouldn't start with a stale browser modal from the prior app.
+    // Explicitly close any open DatasetBrowser BEFORE input-handler
+    // teardown. The browser is a child panel owned by LuxarApp; without
+    // this step its DOM stays attached and the PanelCoordinator close
+    // handle stays bound until input-handler disposes its listeners.
+    // Embedded re-init scenarios must not start with a stale browser
+    // modal from the prior app.
     safeDispose('datasetBrowser', () => {
       this.datasetBrowser?.close();
       this.datasetBrowser = undefined;

@@ -1,11 +1,9 @@
 /**
- * Phase 19A — incremental Cache-tab updater extracted from
- * `data-loading-monitor.ts:updateCacheTabValues`.
- *
- * The Cache tab paints L0/L1/L2 stats + total cache memory bar +
- * eviction counts using the data-field selector pattern. The
- * renderer (in `data-monitor-templates.ts`) paints the static
- * structure once; this module handles per-tick value patching.
+ * Incremental Cache-tab updater. The Cache tab paints L0/L1/L2 stats
+ * + total cache memory bar + eviction counts using the data-field
+ * selector pattern. The renderer (in `data-monitor-templates.ts`)
+ * paints the static structure once; this module handles per-tick
+ * value patching.
  *
  * Inputs are the container element and the pre-aggregated
  * CacheMetrics (built by `cache-metrics-aggregator.ts`). Returns
@@ -125,8 +123,9 @@ export function updateCacheTab(
   // Total
   patchField(container, 'cache-total', templateFormatBytes(cacheMetrics.totalCacheMemory));
 
-  // Phase 21G: effective demand hit-rate. Field absent in the rendered
-  // template when undefined; `patchField` no-ops when missing.
+  // Effective demand hit-rate. The field is absent in the rendered
+  // template when `effectiveDemandHitRate` is undefined; `patchField`
+  // no-ops when the selector misses.
   if (cacheMetrics.effectiveDemandHitRate !== undefined) {
     patchField(
       container,

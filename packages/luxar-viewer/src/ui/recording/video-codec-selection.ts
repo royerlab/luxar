@@ -1,21 +1,12 @@
 /**
- * Phase 21B: video codec selection + fallback chain extracted from
- * `recording-panel.ts:runOfflineCaptureLoop`.
+ * Video codec selection + fallback chain. Maps the user's preferred
+ * codec, downgrades to a container-compatible alternative, then
+ * walks a fallback list of mediabunny codecs until one supports the
+ * encoder options at the requested resolution.
  *
- * Maps the user's preferred codec, downgrades to a container-
- * compatible alternative, then walks a fallback list of mediabunny
- * codecs until one supports the encoder options at the requested
- * resolution.
- *
- * The logic is async (mediabunny's `canEncodeVideo` is async) but
- * has no dependency on RecordingPanel state — only on the
- * user-selected codec, the container mode, and the canvas size. It
- * extracts cleanly into a free async function and is testable in
- * isolation.
- *
- * Used by `VideoModeDriver` inside the per-mode driver split
- * (`offline-capture-driver.ts`, `image-sequence-driver.ts`,
- * `video-mode-driver.ts`, `exr-sequence-driver.ts`).
+ * Used by `VideoModeDriver`. Pure async function with no panel
+ * state — depends only on the user-selected codec, the container
+ * mode, and the canvas size, so it tests in isolation.
  */
 
 import type { VideoCodecOption } from './types';

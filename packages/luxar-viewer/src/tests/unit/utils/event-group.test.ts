@@ -136,10 +136,10 @@ describe('EventGroup', () => {
   });
 
   it('early-remove splices the cleanup out so size shrinks', () => {
-    // Phase 16A.1: the returned cleanup function previously kept its
-    // entry in `cleanups` (only the `removed` flag prevented double
-    // execution), so a long-lived EventGroup that registered +
-    // early-removed many listeners would leak no-op closures.
+    // The returned cleanup function must splice its entry out of
+    // `cleanups`, not just flip a `removed` flag — otherwise a
+    // long-lived EventGroup that registers + early-removes many
+    // listeners leaks no-op closures.
     const target = new EventTarget();
     const group = new EventGroup();
     const remove1 = group.on(target, 'tick', vi.fn());

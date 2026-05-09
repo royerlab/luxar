@@ -1,9 +1,9 @@
 /**
- * Phase 17B.4: unit tests for the InputHandler class.
+ * Unit tests for the InputHandler class.
  *
- * Pre-Phase 17B.4 coverage on the class itself: ~0% (utilities in
- * input-handler-utils.ts are tested separately in input-handler.test.ts).
- * The constructor wires several heavy components (SceneManager,
+ * Utilities in input-handler-utils.ts are tested separately in
+ * input-handler.test.ts. The constructor wires several heavy
+ * components (SceneManager,
  * AnimationController, PerformanceMonitor, DebugConsole), but only
  * stores them — the lifecycle methods that don't call `init()` can be
  * exercised with structural stubs.
@@ -12,7 +12,7 @@
  *   - Constructor wiring (no-throw, ManagerRegistry-style storage)
  *   - Optional setters (setRenderingControls / setScaleBar / etc.)
  *   - clearDimensionUI is a no-op when no dimension UI exists
- *   - init() idempotency (Phase 16A.2)
+ *   - init() idempotency
  *   - dispose() without init (no listeners to clean up)
  *
  * What we deliberately skip (needs WebGL or extensive DOM choreography):
@@ -161,7 +161,7 @@ describe('InputHandler.clearDimensionUI', () => {
   });
 });
 
-describe('InputHandler.init — idempotency (Phase 16A.2)', () => {
+describe('InputHandler.init — idempotency', () => {
   it('init() returns silently on the second invocation', () => {
     const handler = new InputHandler(
       makeSceneManagerStub(),
@@ -201,14 +201,13 @@ describe('InputHandler.dispose', () => {
     expect(() => handler.dispose()).not.toThrow();
   });
 
-  // r8 §D1: InputHandler used to register an anonymous sceneDimsManager
-  // listener and never explicitly remove it. dispose() now removes the
-  // stored listener so app-dispose doesn't leak it on the singleton.
-  // We can't easily verify the leak in a unit test (initDimensionSliders
-  // bails when initFromScene returns false against the stubbed scene),
-  // but we can at least verify dispose() runs cleanly when no listener
-  // was ever registered (sceneDimsListener field starts undefined).
-  it('dispose() handles the missing-listener case cleanly (r8 §D1)', () => {
+  // dispose() must remove the sceneDimsManager listener so it
+  // doesn't outlive the InputHandler on the singleton. Driving the
+  // listener-attached path requires a fully-populated scene
+  // (initDimensionSliders bails when initFromScene returns false
+  // against the stubbed scene), so this test only verifies the
+  // missing-listener case runs cleanly.
+  it('dispose() handles the missing-listener case cleanly', () => {
     const handler = new InputHandler(
       makeSceneManagerStub(),
       makeAnimationControllerStub(),

@@ -212,8 +212,8 @@ export class AnimationController {
       entry.callback();
     }
 
-    // Phase 13.9: skip GPU rendering while the WebGL context is lost.
-    // The post-processing render() would otherwise issue draw calls
+    // Skip GPU rendering while the WebGL context is lost. The
+    // post-processing render() would otherwise issue draw calls
     // against a dead context (noisy GL errors, driver-specific
     // exceptions on some platforms). Controls and per-frame callbacks
     // already ran above so user input stays responsive while the
@@ -352,9 +352,9 @@ export class AnimationController {
    * Stop animation loop and clean up resources.
    *
    * Stops rendering and cancels timers. The PerformanceMonitor UI
-   * panel that previously lived here was migrated up to LuxarApp
-   * (Phase 8.6) and is disposed there; this controller now only emits
-   * `frame-start` / `frame-end` on the event bus per frame.
+   * panel lives at LuxarApp; this controller emits `frame-start` /
+   * `frame-end` on the event bus per frame, which is what the panel
+   * listens to.
    *
    * After calling dispose(), the animation controller cannot be reused.
    */

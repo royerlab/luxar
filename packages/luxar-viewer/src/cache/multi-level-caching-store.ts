@@ -112,17 +112,14 @@ export class MultiLevelCachingStore implements AsyncReadable {
   private networkBytesTransferred = 0;
   private networkRequestCount = 0;
 
-  // Phase 21G: per-tier demand-hit counters. Each demand request via
+  // Per-tier demand-hit counters. Each user-demand call to
   // getResult() increments exactly one of l1HitCount / l2HitCount /
-  // demandNetworkRequestCount. The data-loading monitor uses these
-  // to compute an effective hit-rate that includes L0/L1/L2 instead
-  // of the L1-only ratio surfaced by the inner cache stats.
-  //
-  // Phase 21G follow-up: prefetch-originated calls (suppressPrefetch:
-  // true) are excluded so the hit-rate reflects user demand only —
-  // a prefetch that hits L2 shouldn't inflate the apparent hit-rate.
-  // `networkRequestCount` (and `networkBytesTransferred`) above remain
-  // unconditional aggregate I/O counters.
+  // demandNetworkRequestCount. Prefetch-originated calls
+  // (suppressPrefetch: true) are excluded so the hit-rate reflects
+  // user demand only — a prefetch that hits L2 must not inflate
+  // the apparent hit-rate. The aggregate `networkRequestCount` and
+  // `networkBytesTransferred` above stay unconditional and count
+  // ALL traffic.
   private l1HitCount = 0;
   private l2HitCount = 0;
   private demandNetworkRequestCount = 0;
@@ -362,12 +359,12 @@ export class MultiLevelCachingStore implements AsyncReadable {
     key: string,
     options?: { signal?: AbortSignal; suppressPrefetch?: boolean }
   ): Promise<Result<Uint8Array, CacheError>> {
-    // Phase 21G follow-up: only count user-demand requests in the
-    // demand hit-rate. The prefetcher calls back through getResult
-    // with `suppressPrefetch: true` after observing demand on K to
-    // pre-load adjacent keys K+1, K+2, …; counting those would
-    // distort the hit-rate (a successful prefetch looks the same as
-    // a successful user demand).
+    // Only count user-demand requests in the demand hit-rate. The
+    // prefetcher calls back through getResult with
+    // `suppressPrefetch: true` after observing demand on key K to
+    // pre-load K+1, K+2, …; counting those would distort the hit-rate
+    // (a successful prefetch would look identical to a successful
+    // user demand).
     const isDemand = !options?.suppressPrefetch;
 
     // L1: Memory check (fastest, ~1μs)
@@ -386,11 +383,11 @@ export class MultiLevelCachingStore implements AsyncReadable {
         if (isDemand) this.l2HitCount++;
         // Promote to L1
         this.l1Cache.set(key, l2Hit);
-        // Trigger prefetch on L2 hit (Phase 13.7: skip when this fetch
-        // was itself a prefetch — otherwise prefetch of K+1 calls
-        // getResult(K+1) which calls onAccess(K+1) which enqueues K+2,
-        // walking outward until MAX_SEEN_SIZE and amplifying network/
-        // cache load far beyond the user's original demand).
+        // Trigger prefetch on L2 hit, skipping when this fetch is itself
+        // a prefetch — otherwise prefetch of K+1 calls getResult(K+1)
+        // which calls onAccess(K+1) which enqueues K+2, walking outward
+        // until MAX_SEEN_SIZE and amplifying network/cache load far
+        // beyond the user's original demand.
         if (!options?.suppressPrefetch) {
           this.prefetcher?.onAccess(key);
         }
@@ -455,8 +452,8 @@ export class MultiLevelCachingStore implements AsyncReadable {
       }
     }
 
-    // Trigger prefetch on L3 fetch (Phase 13.7: skip when this fetch
-    // was itself a prefetch — see L2 branch above).
+    // Trigger prefetch on L3 fetch — skip when this fetch is itself a
+    // prefetch (see L2 branch above for the cascade rationale).
     if (!options?.suppressPrefetch) {
       this.prefetcher?.onAccess(key);
     }
@@ -716,11 +713,12 @@ export class MultiLevelCachingStore implements AsyncReadable {
     l2: { size: number; count: number; reads: number; writes: number; misses: number };
     network: { bytesTransferred: number; requestCount: number; bandwidth: number };
     /**
-     * Phase 21G: per-tier demand-hit counters. Each call to `getResult`
-     * increments exactly one — `l1Hits`, `l2Hits`, or `networkRequests`
-     * (which equals `network.requestCount`). Combined with the L0
-     * provider's stats, this lets the monitor surface an effective
-     * demand hit-rate rather than the L1-only ratio.
+     * Per-tier demand-hit counters (user demand only — prefetch
+     * traffic is excluded). Each user-demand call to `getResult`
+     * increments exactly one of `l1Hits`, `l2Hits`, or
+     * `networkRequests`. Combined with the L0 provider's stats, this
+     * lets the monitor surface an effective demand hit-rate rather
+     * than the L1-only ratio.
      */
     demand: { l1Hits: number; l2Hits: number; networkRequests: number };
   } {

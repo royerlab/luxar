@@ -48,18 +48,18 @@ test.describe('@visual Visual Regression - Basic Rendering', () => {
 });
 
 test.describe('@visual Visual Regression - HDR & Tone Mapping', () => {
-  // Phase 17A.3: baselines committed. Tests skip gracefully when the
-  // exposure API isn't available (see early return below). To
-  // regenerate after intentional changes: `playwright test
-  // visual-regression --update-snapshots --grep '@visual'`.
+  // Tests skip gracefully when the exposure API isn't available (see
+  // early return below). To regenerate snapshots after intentional
+  // changes: `playwright test visual-regression --update-snapshots
+  // --grep '@visual'`.
   test('should render with exposure = 0.0 (neutral)', async ({ page }) => {
     await page.goto(`/?src=${DATASETS.build}&debug`);
     await waitForLuxarReady(page);
 
-    // Phase 17A.3: __luxarDebug exposes the post-processing manager
-    // directly (debug.postProcessing.updateExposure), not via a
-    // wrapping `sceneManager` field — the prior API check at this
-    // path always returned false and the test silently no-op'd.
+    // __luxarDebug exposes the post-processing manager directly
+    // (debug.postProcessing.updateExposure), not via a wrapping
+    // `sceneManager` field — checking the wrong path silently no-ops
+    // the test.
     const hasExposureAPI = await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
       return debug.postProcessing && typeof debug.postProcessing.updateExposure === 'function';
@@ -88,7 +88,7 @@ test.describe('@visual Visual Regression - HDR & Tone Mapping', () => {
     await page.goto(`/?src=${DATASETS.build}&debug`);
     await waitForLuxarReady(page);
 
-    // See exposure-0.0 test for the API path rationale (Phase 17A.3).
+    // See exposure-0.0 test for the API path rationale.
     const hasExposureAPI = await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
       return debug.postProcessing && typeof debug.postProcessing.updateExposure === 'function';

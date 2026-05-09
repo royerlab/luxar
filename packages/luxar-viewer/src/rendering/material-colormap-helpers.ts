@@ -1,11 +1,10 @@
 /**
- * Phase 16C: shared helpers for colormap LUT + scalar-range uniform
- * updates. Point/Line/GSplat materials all bind the same
- * `uColormapTex` / `uScalarMin` / `uScalarScale` uniform contract and
- * the same `USE_COLORMAP` define toggle, so the apply logic was
- * duplicated three times. PointMaterial additionally needs to toggle
- * `vertexColors` (its shader uses the color attribute when colormap
- * is OFF, scalar+LUT when ON); Lines and GSplats don't.
+ * Shared helpers for colormap LUT + scalar-range uniform updates.
+ * Point/Line/GSplat materials all bind the same `uColormapTex` /
+ * `uScalarMin` / `uScalarScale` uniform contract and the same
+ * `USE_COLORMAP` define toggle. PointMaterial additionally needs to
+ * toggle `vertexColors` (its shader uses the color attribute when
+ * colormap is OFF, scalar+LUT when ON); Lines and GSplats don't.
  *
  * These helpers do the uniform/define plumbing and return whether the
  * enabled-state changed so the caller can decide what other side

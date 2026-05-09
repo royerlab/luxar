@@ -17,10 +17,10 @@
  * Normalize a dataset URL to absolute, slash-terminated form.
  *
  * - Absolute URLs (http://, https://, case-insensitive): return as-is,
- *   ensuring a trailing slash. Phase 13.12: case-insensitive matching
- *   so a mixed-case `HTTPS://...` (which `normalizeDataSourceUrl`
- *   already accepts via `URL.protocol`) doesn't get treated as a
- *   relative path here.
+ *   ensuring a trailing slash. The case-insensitive match prevents a
+ *   mixed-case `HTTPS://...` (which `normalizeDataSourceUrl` already
+ *   accepts via `URL.protocol`) from being treated as a relative path
+ *   here.
  * - Relative paths: prepend the supplied `windowOrigin`, ensuring a leading
  *   slash on the path and a trailing slash on the result.
  *

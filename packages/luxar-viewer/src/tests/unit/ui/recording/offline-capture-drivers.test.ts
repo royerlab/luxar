@@ -1,11 +1,11 @@
 /**
- * Tests for the per-mode capture drivers extracted in Phase 21B
- * (deep). These exercise each driver's public protocol (setup,
- * captureFrame, finalize) with stubbed dependencies, so the panel
- * itself doesn't need to be in scope.
+ * Tests for the per-mode capture drivers. Each test exercises a
+ * driver's public protocol (setup, captureFrame, finalize, abort)
+ * with stubbed dependencies, so the recording panel itself doesn't
+ * need to be in scope.
  *
- * Video-driver tests stub `mediabunny` so the suite can run
- * headlessly without WebCodecs.
+ * Video-driver tests stub `mediabunny` so the suite runs headlessly
+ * without WebCodecs.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -131,7 +131,7 @@ describe('ImageSequenceDriver', () => {
     expect(ctx.downloadBlob).not.toHaveBeenCalled();
   });
 
-  it('abort() tears down the partial ZIP without download (r8 §A3)', async () => {
+  it('abort() tears down the partial ZIP without download', async () => {
     const driver = new ImageSequenceDriver('png');
     const ctx = makeCtx();
     await driver.setup(ctx);
@@ -231,7 +231,7 @@ describe('VideoModeDriver', () => {
     expect(start).toHaveBeenCalledTimes(1);
   });
 
-  it('zero-frame finalize still calls output.finalize() to release encoder (r8 §A4)', async () => {
+  it('zero-frame finalize still calls output.finalize() to release encoder', async () => {
     const start = vi.fn().mockResolvedValue(undefined);
     const finalize = vi.fn().mockResolvedValue(undefined);
     const addVideoTrack = vi.fn();
@@ -258,7 +258,7 @@ describe('VideoModeDriver', () => {
     expect(ctx.downloadBlob).not.toHaveBeenCalled();
   });
 
-  it('abort() releases encoder without delivering an artifact (r8 §A3)', async () => {
+  it('abort() releases encoder without delivering an artifact', async () => {
     const start = vi.fn().mockResolvedValue(undefined);
     const finalize = vi.fn().mockResolvedValue(undefined);
     const addVideoTrack = vi.fn();

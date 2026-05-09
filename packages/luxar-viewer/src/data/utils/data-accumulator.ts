@@ -1,29 +1,20 @@
 /**
- * Data Accumulators - Multi-type object pooling for Points, Lines, and GSplats
+ * Data Accumulators — multi-type object pooling for Points, Lines, and
+ * GSplats.
  *
- * Implements persistent TypedArray buffers that grow by 1.5x when needed,
- * eliminating per-frame allocations and reducing GC pressure.
+ * Implements persistent TypedArray buffers that grow by 1.5x when
+ * needed, eliminating per-frame allocations and reducing GC pressure.
+ * Supports Float32Array, Uint8Array, and Uint16Array natively for
+ * memory efficiency consistent with the multi-type GPU buffer pool.
  *
- * Supports Float32Array, Uint8Array, and Uint16Array natively (no conversion!)
- * for optimal memory efficiency consistent with multi-type GPU buffer pool.
+ * All three loaders use deep integration for the LOADING path:
+ *   - write directly to accumulator buffers during data loading,
+ *   - return zero-copy subarrays from `accumulator.getData()`,
+ *   - achieve zero-allocation operation in the loading hot path.
  *
- * Based on Performance Optimization Specification v3.6.0
- *
- * ✅ IMPLEMENTATION STATUS (Phase 1 - ALL LOADING PHASES COMPLETE):
- * - Infrastructure: COMPLETE ✅
- * - Multi-type support: COMPLETE ✅ (Float32/Uint8/Uint16)
- * - Unit tests: COMPLETE ✅ (26 tests, >95% coverage)
- * - Deep integration (Points): COMPLETE ✅ (zero-allocation loading)
- * - Deep integration (Lines): COMPLETE ✅ (zero-allocation loading, bug fixed 2025-12-27)
- * - Deep integration (GSplats): COMPLETE ✅ (zero-allocation loading)
- *
- * All three loaders now use deep integration for LOADING phase:
- * - Write directly to accumulator buffers during data loading
- * - Return zero-copy subarrays from accumulator.getData()
- * - Achieve complete zero-allocation operation in loading hot path
- *
- * Processing phases (buildInstanceBuffers, processGSplats) analyzed and determined
- * to be optimal with current two-pass algorithms - accumulator NOT recommended.
+ * Processing helpers (buildInstanceBuffers, processGSplats) are kept on
+ * their two-pass algorithms — accumulator integration there did not
+ * pay off in benchmarks.
  */
 
 import * as THREE from 'three';

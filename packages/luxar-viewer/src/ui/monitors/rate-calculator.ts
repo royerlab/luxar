@@ -1,13 +1,10 @@
 /**
- * Phase 20A — rate calculation extracted from
- * `data-loading-monitor.ts:calculateRates`.
- *
- * The Monitor walks its event ring buffer once per `calculateRates`
- * call to compute per-second rolling rates: queries, loads, hits,
- * misses, plus a bandwidth measure over a tighter window. The
- * computation is pure (events + window sizes → rates); only the
- * cache-and-timeout dance is monitor-internal. Pulling the body
- * out lets us unit-test the rate math directly.
+ * Rate calculation for the data-loading monitor. The Monitor walks its
+ * event ring buffer once per `calculateRates` call to compute per-second
+ * rolling rates (queries, loads, hits, misses) plus a bandwidth measure
+ * over a tighter window. The computation is pure (events + window sizes
+ * → rates); the cache-and-timeout dance stays monitor-internal so this
+ * module can be unit-tested directly.
  */
 
 import type { MonitorEvent } from '../../types/data-monitor-types';
@@ -88,8 +85,9 @@ export function calculateRates(params: CalculateRatesParams): void {
   rates.loadsPerSec = loads / windowSeconds;
   rates.hitsPerSec = hits / windowSeconds;
   rates.missesPerSec = misses / windowSeconds;
-  // r8 §B2: bandwidth is bytes/sec, normalised by the bandwidth
-  // window (was: raw bytes-in-window — only correct for windowMs=1000).
+  // bandwidth is bytes/sec, normalised by the bandwidth window so the
+  // value is comparable across configurations (the window is not
+  // always 1000 ms).
   const bandwidthSeconds = bandwidthWindowMs / 1000;
   rates.bandwidth = bandwidthSeconds > 0 ? bandwidth / bandwidthSeconds : bandwidth;
   rates.lastCalculated = now;

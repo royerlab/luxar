@@ -603,7 +603,7 @@ describe('LinesSpatialIndexLoader', () => {
         expect(metrics.errors).toBeGreaterThanOrEqual(1);
       });
 
-      // Phase 13.10: Lines/GSplats now emit a monitor 'error' event
+      // Lines/GSplats now emit a monitor 'error' event
       // for parity with Points (event-driven dashboards previously
       // saw points failures but not lines/gsplats failures).
       it('emits a monitor "error" event on load failure', async () => {

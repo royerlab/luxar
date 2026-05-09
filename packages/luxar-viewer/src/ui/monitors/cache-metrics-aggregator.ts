@@ -1,20 +1,15 @@
 /**
- * Phase 18 W3: cache metrics aggregation extracted from
- * `DataLoadingMonitor.getCacheMetrics()`.
- *
- * The aggregation pulls L0/L1/L2/network stats from the optional
- * provider ports, walks the loader map to refresh per-loader
- * metric snapshots and accumulate memory limits + evictions, and
- * returns a single CacheMetrics object for the Cache tab to
- * render. It's panel-agnostic — no DOM or tab-state dependencies —
- * so lifting it out lets the Monitor's main file focus on event
+ * Cache metrics aggregation. Pulls L0/L1/L2/network stats from the
+ * optional provider ports, walks the loader map to refresh
+ * per-loader metric snapshots and accumulate memory limits +
+ * evictions, and returns a single `CacheMetrics` object for the
+ * Cache tab to render. Panel-agnostic — no DOM or tab-state
+ * dependencies — so the Monitor's main file can focus on event
  * dispatch + DOM patching rather than this multi-source roll-up.
  *
- * Two side effects are part of the contract:
+ * Side effects that callers depend on:
  *   1. `metricsCache.set(path, ...)` is called for every loader so
  *      the monitor's "last seen metrics" snapshot stays fresh.
- *      (The original method did this inline; preserving it here
- *      keeps the loader-loop path unchanged.)
  *   2. `rates` is read but not mutated. Callers should call
  *      `calculateRates()` themselves before invoking this helper.
  */
@@ -27,11 +22,9 @@ import type {
 } from '../../types/data-monitor-types';
 
 /**
- * Subset of `cachedRates` this aggregator reads. r8 §B2: extended
- * with `hitsPerSec` / `missesPerSec` so the aggregator can surface
- * rolling per-second rates instead of lifetime-divided-by-60. The
- * `bandwidth` field here is bytes/sec (already normalised in
- * rate-calculator.ts).
+ * Subset of `cachedRates` this aggregator reads. The aggregator
+ * surfaces these as rolling per-second rates rather than computing
+ * its own — `bandwidth` is already bytes/sec from rate-calculator.ts.
  */
 export interface CacheRatesSnapshot {
   queriesPerSec: number;
@@ -48,15 +41,15 @@ export interface L0Provider {
 }
 
 /**
- * r8 §B1: explicit telemetry state passed in by the caller, replacing
- * the previous default-to-enabled-when-no-provider behaviour. A
- * `?no-cache` run produces no provider and the old code reported
- * `enabled: true` (misleading). The four kinds:
- *   - `enabled`   : caching is on AND providers are wired.
+ * Explicit telemetry state — distinguishes the three "not-enabled"
+ * variants from each other. A `?no-cache` run produces no provider,
+ * so without an explicit state the cache tab would default to
+ * `enabled` and mislead the user.
+ *   - `enabled`           : caching is on AND providers are wired.
  *   - `disabled-no-cache` : caching turned off via `?no-cache`.
  *   - `disabled-config`   : turned off via app config.
- *   - `not-wired` : caching is on but providers haven't been wired
- *                   yet (e.g. mid-scene-transition).
+ *   - `not-wired`         : caching is on but providers haven't been
+ *                           wired yet (e.g. mid-scene-transition).
  */
 export type CacheTelemetryState =
   | { kind: 'enabled' }
@@ -82,8 +75,8 @@ export interface AggregateCacheMetricsParams {
    */
   rates: CacheRatesSnapshot;
   /**
-   * r8 §B1: explicit cache telemetry state. When omitted, defaults to
-   * `not-wired` (more honest than the previous default of "enabled").
+   * Explicit cache telemetry state. When omitted, defaults to
+   * `not-wired` (the most honest fallback when no provider exists).
    */
   telemetryState?: CacheTelemetryState;
 }
@@ -110,9 +103,10 @@ export function aggregateCacheMetrics(params: AggregateCacheMetricsParams): Cach
     | { l1Hits: number; l2Hits: number; networkRequests: number }
     | undefined;
 
-  // r8 §B1: derive telemetry state. Caller-supplied wins; otherwise
-  // infer from provider presence (was: default-to-enabled, which
-  // misled `?no-cache` users into thinking caching was on).
+  // Derive telemetry state. Caller-supplied wins; otherwise infer
+  // from provider presence. Default-on-no-provider is `not-wired`,
+  // not `enabled` — `?no-cache` runs have no provider and must not
+  // surface as enabled.
   let telemetryState: CacheTelemetryState;
   if (params.telemetryState) {
     telemetryState = params.telemetryState;
@@ -156,8 +150,8 @@ export function aggregateCacheMetrics(params: AggregateCacheMetricsParams): Cach
       bandwidth: stats.network.bandwidth,
     };
 
-    // Phase 21G: per-tier demand counters (optional; older providers
-    // may not report them).
+    // Per-tier demand counters (optional — providers without the
+    // demand-counter feature simply omit the field).
     if (stats.demand) {
       demand = stats.demand;
     }
@@ -198,12 +192,12 @@ export function aggregateCacheMetrics(params: AggregateCacheMetricsParams): Cach
   const totalL1Accesses = l1Stats ? l1Stats.hits + l1Stats.misses : 0;
   const recentHitRate = totalL1Accesses > 0 ? l1Stats!.hits / totalL1Accesses : 0;
 
-  // Phase 21G: effective demand hit rate across L0/L1/L2/network. L0
-  // hits come from the L0Provider (decompressed-chunk cache);
-  // L1/L2/network from the cache store's per-tier demand counters.
-  // We only compute this when we have at least one usable signal;
-  // otherwise leave `effectiveDemandHitRate` undefined so the UI can
-  // distinguish "not wired up" from "0% hit rate."
+  // Effective demand hit rate across L0/L1/L2/network. L0 hits come
+  // from the L0Provider (decompressed-chunk cache); L1/L2/network
+  // from the cache store's per-tier demand counters. We only compute
+  // this when we have at least one usable signal; otherwise leave
+  // `effectiveDemandHitRate` undefined so the UI can distinguish
+  // "not wired up" from "0% hit rate."
   let effectiveDemandHitRate: number | undefined;
   const l0Hits = l0Stats?.hits ?? 0;
   if (demand) {
@@ -226,18 +220,16 @@ export function aggregateCacheMetrics(params: AggregateCacheMetricsParams): Cach
     totalAccesses: totalL1Accesses,
     recentHitRate,
     effectiveDemandHitRate,
-    // r8 §B2: this field is `evictions` accumulated across loaders
-    // — historically named `evictionsPerMin`, but never divided by
-    // time. Renamed to `evictionsTotal` going forward; the misleading
-    // alias is kept temporarily for back-compat with any external
-    // dashboard that reads it directly.
+    // `evictions` accumulated across loaders. The `evictionsPerMin`
+    // alias is preserved so external dashboards reading it don't
+    // break; new code should read `evictionsTotal` (the value is the
+    // same — `evictionsPerMin` was misnamed and never divided by time).
     evictionsTotal: evictions,
     evictionsPerMin: evictions,
     avgEntrySize: totalEntries > 0 ? totalCacheMemory / totalEntries : 0,
     reuseRatio: 0,
-    // r8 §B2: use the rolling per-second rates from rate-calculator
-    // (was: lifetime/60 — an apparent rate that drifted as the cache
-    // accumulated history).
+    // Rolling per-second rates from rate-calculator. Don't recompute
+    // here as `lifetime/60` — that ratio drifts as history accumulates.
     hitsPerSecond: rates.hitsPerSec,
     missesPerSecond: rates.missesPerSec,
     avgAccessTime: 0,

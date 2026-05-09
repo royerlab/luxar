@@ -471,11 +471,10 @@ import { AnimationController } from './scene/animation-controller';
 import { PerformanceMonitor } from './ui/monitors/performance-monitor';
 import { DebugConsole } from './ui/panels/debug-console';
 
-// Create input handler. Phase 8.6 moved PerformanceMonitor and
-// DebugConsole ownership from this class up to LuxarApp; both are
-// passed in. The optional dimensionSlidersFactory keeps the
-// `input/` layer free of `ui/` imports — pass `(c) => new
-// DimensionSliders(c)` if dimension navigation is needed.
+// Create input handler. PerformanceMonitor and DebugConsole are owned
+// by LuxarApp and passed in here. The optional dimensionSlidersFactory
+// keeps the `input/` layer free of `ui/` imports — pass
+// `(c) => new DimensionSliders(c)` if dimension navigation is needed.
 const inputHandler = new InputHandler(
   sceneManager,
   animationController,

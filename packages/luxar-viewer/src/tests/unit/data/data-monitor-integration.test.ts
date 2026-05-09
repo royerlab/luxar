@@ -119,9 +119,9 @@ describe('Data Monitor Integration', () => {
     document.body.innerHTML = '<div id="test-container"></div>';
 
     // Wire the monitor factory the way core/app.ts does at boot —
-    // SceneLoader's monitor coupling is now factory-injected
-    // (Phase 8.6.e) so without this, SceneLoader instances created
-    // in these tests have a null monitor.
+    // SceneLoader's monitor coupling is factory-injected, so without
+    // this, SceneLoader instances created in these tests have a null
+    // monitor.
     SceneLoaderManager.getInstance().setMonitorFactory((monitorId) => {
       const mgr = DataMonitorManager.getInstance();
       if (!mgr.hasMonitor(monitorId)) {
@@ -182,12 +182,11 @@ describe('Data Monitor Integration', () => {
   });
 
   describe('SceneLoader integration', () => {
-    // Phase 8.6.e: SceneLoader's monitor coupling moved to a
-    // factory injected via SceneLoaderManager. Tests therefore
-    // construct loaders through the manager (which threads the
-    // factory wired up in this file's beforeEach) rather than via
-    // `new SceneLoader(...)` directly — the latter bypasses the
-    // factory and yields a null monitor.
+    // SceneLoader's monitor coupling is a factory injected via
+    // SceneLoaderManager. Tests construct loaders through the manager
+    // (which threads the factory wired up in this file's beforeEach)
+    // rather than via `new SceneLoader(...)` directly — the latter
+    // bypasses the factory and yields a null monitor.
     it('should create monitor on SceneLoader construction', () => {
       const manager = DataMonitorManager.getInstance();
       SceneLoaderManager.getInstance().createLoader('test-scene', { enableMonitor: true });
@@ -306,7 +305,7 @@ describe('Data Monitor Integration', () => {
       expect(l0Calls).toBe(before);
     });
 
-    it('dispose() also nulls scene-bound providers and resets UI state (Phase 13.3)', () => {
+    it('dispose() also nulls scene-bound providers and resets UI state', () => {
       // Pre-13.3 dispose() did NOT call resetSceneProviders() — only
       // disconnectAllLoaders() did. Direct dispose callers (and any
       // external/debug references that survive a teardown order
@@ -602,7 +601,7 @@ describe('Data Monitor Integration', () => {
     });
   });
 
-  describe('Scene graph state lifecycle (Phase 14.9)', () => {
+  describe('Scene graph state lifecycle', () => {
     it('disconnectAllLoaders() clears scene graph display state', () => {
       const manager = DataMonitorManager.getInstance();
       const monitor = manager.createMonitor('test', document.body);

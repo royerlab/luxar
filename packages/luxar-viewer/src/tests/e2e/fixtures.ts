@@ -39,8 +39,8 @@ export const ALLOW_CONSOLE_ERRORS = 'allow-console-errors';
  * Console error patterns the auto-fixture treats as environmental
  * flakiness rather than test failures.
  *
- * As of Phase 16D every E2E spec uses this fixture. Specs that also
- * make their own explicit `assertNoConsoleErrors(page)` call keep
+ * Every E2E spec uses this fixture. Specs that also make their own
+ * explicit `assertNoConsoleErrors(page)` call keep
  * that explicit contract (it runs strictly with no allow-list and
  * fails first if anything unexpected appears); the auto-fixture
  * covers cases where the spec author forgot to add the explicit
@@ -69,11 +69,11 @@ export const DEFAULT_ALLOWED_CONSOLE_ERRORS: RegExp[] = [
   // directly. A wholly-wrong dataset path also fails through `expect`s
   // on point counts or canvas state, not via this allow-list.
   //
-  // r8 §H4: this 4xx/5xx pattern is broad and can mask unrelated
+  // The 4xx/5xx pattern is broad and can mask unrelated
   // missing-asset regressions (a missing JS bundle would also match).
-  // Set `LUXAR_E2E_STRICT_CONSOLE=1` to disable the broad pattern and
-  // keep only the specific WebGL-context-loss allow-list — useful when
-  // hardening a smoke run that asserts no missing assets.
+  // Set `LUXAR_E2E_STRICT_CONSOLE=1` to disable it and keep only the
+  // WebGL-context-loss allow — useful when hardening a smoke run
+  // that asserts no missing assets.
   ...(process.env.LUXAR_E2E_STRICT_CONSOLE
     ? []
     : [/Failed to load resource: the server responded with a status of (4\d\d|50[12])/]),
@@ -84,16 +84,13 @@ export const DEFAULT_ALLOWED_CONSOLE_ERRORS: RegExp[] = [
  * `test`. Specs that import from this module get auto console-error
  * checking after each test.
  *
- * Phase 13.15: the fixture now ALSO subscribes to Playwright's own
- * `console` and `pageerror` page events. Pre-13.15 the post-test
- * assertion only read `window.__luxarDebug.consoleInterceptor` —
- * which is populated only after the viewer's debug interceptor is
- * installed. Errors fired before that (loading the wrong asset,
- * pre-init ReferenceErrors) and uncaught exceptions surfaced via
- * `pageerror` were missed entirely.
- *
- * Both signal sources are merged and filtered against the same
- * allow-list before the assertion fires.
+ * The fixture subscribes to Playwright's own `console` and
+ * `pageerror` page events in addition to reading the viewer's debug
+ * interceptor. Both signal sources are merged and filtered against
+ * the same allow-list before the assertion fires; errors fired
+ * before the viewer's debug interceptor installs (loading the wrong
+ * asset, pre-init ReferenceErrors) and uncaught exceptions surfaced
+ * via `pageerror` are still caught.
  */
 export const test = base.extend({
   page: async ({ page }, use, testInfo) => {

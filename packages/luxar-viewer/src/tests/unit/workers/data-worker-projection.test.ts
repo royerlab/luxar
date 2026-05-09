@@ -1,10 +1,10 @@
 /**
- * Phase 19D — happy-path tests for the worker projection entry
- * points. The validation tests in `data-worker-validation.test.ts`
- * verify that bad inputs are rejected at the JS boundary; these
- * tests verify that good inputs flow through the JS-side glue
- * (WASM stubs are deterministic — the WASM math itself is tested
- * by the Rust unit suite).
+ * Happy-path tests for the worker projection entry points. The
+ * validation tests in `data-worker-validation.test.ts` cover bad
+ * inputs being rejected at the JS boundary; these tests cover good
+ * inputs flowing through the JS-side glue. The WASM math itself is
+ * tested by the Rust unit suite, so the WASM stubs here just need
+ * to be observable.
  *
  * The shared `loadWorker()` helper mocks every WASM function with
  * vi.fn so the worker's `wasmModule!.X(...)` calls are observable.
@@ -285,7 +285,7 @@ describe('projectGSplatsTo3D — happy paths', () => {
   });
 });
 
-describe('Color normalization at WASM boundary (r8 §F3)', () => {
+describe('Color normalization at WASM boundary', () => {
   beforeEach(() => {
     vi.unstubAllGlobals();
   });

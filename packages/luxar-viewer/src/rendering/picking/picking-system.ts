@@ -190,16 +190,16 @@ export class PickingSystem {
    * is responsible for re-registering every scene node afterward,
    * which produces fresh pick materials against the new context.
    *
-   * Phase 19E (r5 warning #1): the pick materials are registered with
-   * `materialManager.register(...)` at construction (see
-   * `node-factory.ts`). Without unregistering them here, repeated
-   * context-restore cycles accumulate stale references in the
-   * materialManager registry — camera-uniform updates would target
-   * dead materials and the `getStats().totalRegistered` count grows
-   * unboundedly. We unregister WITHOUT disposing (calls
+   * Pick materials are registered with `materialManager.register(...)`
+   * at construction (see `node-factory.ts`). Without unregistering
+   * them here, repeated context-restore cycles accumulate stale
+   * references in the materialManager registry — camera-uniform
+   * updates would target dead materials and the
+   * `getStats().totalRegistered` count grows unboundedly. We
+   * unregister WITHOUT disposing (calls
    * `materialManager.unregister(material)` not `dispose(material)`),
-   * matching the pre-existing "no-dispose during context loss"
-   * contract for visible materials.
+   * matching the "no-dispose during context loss" contract for
+   * visible materials.
    *
    * Distinct from `unregisterNode(id)` which intentionally disposes
    * the pick material when removing a single live node.

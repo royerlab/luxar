@@ -1,9 +1,9 @@
 /**
- * Phase 17B.1: unit tests for OverlayManager.
+ * Unit tests for OverlayManager.
  *
- * Pre-Phase 17B.1 coverage: 1.73%. The class is heavily DOM-bound but
- * jsdom handles the createElement/appendChild paths fine; only the
- * sceneDimsManager listener wiring needs coordination across tests.
+ * The class is heavily DOM-bound but jsdom handles the
+ * createElement/appendChild paths fine; only the sceneDimsManager
+ * listener wiring needs coordination across tests.
  *
  * Tests focus on the externally-observable contract:
  * - Exported constants are well-formed

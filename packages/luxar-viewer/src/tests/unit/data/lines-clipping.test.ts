@@ -478,10 +478,11 @@ describe('buildInstanceBuffers', () => {
     expect(result.startPositions.length).toBe(0);
   });
 
-  it('Phase 16B.2: normalizes Uint8 colors to [0, 1] before lerp', () => {
-    // Pre-fix: Uint8 values [0, 255] flowed straight into the lerp and
-    // ended up in startColors/endColors as floats in [0, 255], which
-    // the shader interprets as vastly oversaturated colors.
+  it('normalizes Uint8 colors to [0, 1] before lerp', () => {
+    // Without normalization, Uint8 values [0, 255] flow straight into
+    // the lerp and end up in startColors/endColors as floats in
+    // [0, 255], which the shader interprets as vastly oversaturated
+    // colors.
     const loadedData: LoadedLinesData = {
       positions: new Float32Array([0, 0, 0, 10, 10, 10]),
       segments: new Uint32Array([0, 1]),
@@ -500,7 +501,7 @@ describe('buildInstanceBuffers', () => {
     expect(Array.from(result.endColors.slice(0, 3))).toEqual([0, 1, 0]);
   });
 
-  it('Phase 16B.2: normalizes Uint16 colors to [0, 1] before lerp', () => {
+  it('normalizes Uint16 colors to [0, 1] before lerp', () => {
     const loadedData: LoadedLinesData = {
       positions: new Float32Array([0, 0, 0, 10, 10, 10]),
       segments: new Uint32Array([0, 1]),
@@ -520,7 +521,7 @@ describe('buildInstanceBuffers', () => {
     expect(result.endColors[1]).toBeCloseTo(1, 5);
   });
 
-  it('Phase 16B.2: Float32 colors pass through unchanged (no double-scaling)', () => {
+  it('Float32 colors pass through unchanged (no double-scaling)', () => {
     // Use values exactly representable in Float32 to allow strict equality.
     const loadedData: LoadedLinesData = {
       positions: new Float32Array([0, 0, 0, 10, 10, 10]),

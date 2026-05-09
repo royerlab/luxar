@@ -61,10 +61,10 @@ export function commitPointsGeometry(
   if (!rootGroup) return;
 
   const points = rootGroup.getObjectByName(path) as THREE.Points;
-  // Phase 14.3: parity with lines/gsplats commit helpers — verify the
-  // named object actually IS a Points node, not e.g. a stray Group with
-  // the same name. Guards against future bugs where a placeholder of
-  // the wrong type is attached at this path.
+  // Parity with lines/gsplats commit helpers — verify the named
+  // object actually IS a Points node (not e.g. a stray Group with the
+  // same name). Guards against bugs where a placeholder of the wrong
+  // type is attached at this path.
   if (!points || !isPointsUserData(points.userData)) return;
 
   if (data.pointCount === 0) {
@@ -74,7 +74,7 @@ export function commitPointsGeometry(
     );
   }
 
-  // Phase 14.3: type guard already passed in the early-return above.
+  // Type guard already passed in the early-return above.
   points.userData.visiblePointCount = data.pointCount;
 
   const bufferSession = session?.begin('Update Buffers');

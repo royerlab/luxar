@@ -147,7 +147,7 @@ export function projectPointsTo3D(
 
   let numPoints = totalPoints;
 
-  // Phase 1 Deep Integration: Use target buffers if provided (ZERO allocations!)
+  // Use target buffers if provided (zero allocations).
   const { displayDims } = viewState;
 
   // Use target buffer or allocate new (zero-allocation when targetBuffers provided)
@@ -271,8 +271,8 @@ export function projectPointsTo3D(
       );
 
       if (targetBuffers) {
-        // Phase 1 Deep Integration: IN-PLACE compaction (ZERO allocations!)
-        // Compact valid points to beginning of target buffers
+        // In-place compaction into the target buffers (zero
+        // allocations). Compact valid points to the buffer start.
         let writeIdx = 0;
         for (let i = 0; i < validIndices.length; i++) {
           const readIdx = validIndices[i];
@@ -425,7 +425,8 @@ export function projectPointsTo3D(
     }
   }
 
-  // Phase 1 Deep Integration: Return from accumulator when using target buffers
+  // Return from accumulator when using target buffers (zero
+  // allocations).
   if (targetBuffers && ctx.accumulator) {
     // Data is already in accumulator buffers (written directly during processing)
     // Just update metadata and return (ZERO allocations!)

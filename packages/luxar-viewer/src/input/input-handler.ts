@@ -79,13 +79,12 @@ export class InputHandler {
   /** Cleanup functions for all registered event listeners */
   private eventListeners: (() => void)[] = [];
 
-  // Phase 16A.2: idempotency guard. `init()` is one-shot — calling it
-  // twice would double-bind keydown/keyup, controls start/change, and
-  // canvas mousedown/touchstart listeners (each is a fresh bound
-  // function, so removeEventListener can't dedupe). Today only
-  // `app.ts` calls init() and only once, but the guard prevents a
-  // future caller (HMR re-init, context-restoration path, test
-  // re-setup) from silently doubling input event volume.
+  // Idempotency guard. `init()` is one-shot — calling it twice would
+  // double-bind keydown/keyup, controls start/change, and canvas
+  // mousedown/touchstart listeners (each is a fresh bound function, so
+  // removeEventListener can't dedupe). The guard prevents an HMR
+  // re-init / context-restore / test re-setup from silently doubling
+  // input event volume.
   private _initialized = false;
 
   /** Optional reference to advanced rendering controls */
@@ -116,10 +115,10 @@ export class InputHandler {
   private animationManager?: DimensionAnimationManager;
 
   /**
-   * sceneDimsManager listener. Stored so dispose/clear can remove it
-   * — without this, app dispose without a subsequent dataset switch
-   * leaves a singleton listener retaining a disposed InputHandler
-   * (r8 §D1).
+   * sceneDimsManager listener. Stored so dispose / clearDimensionUI
+   * can remove it — without this, app dispose (without a subsequent
+   * dataset switch) leaves the listener attached to the singleton
+   * and retains a disposed InputHandler.
    */
   private sceneDimsListener?: () => Promise<void>;
 
@@ -190,9 +189,9 @@ export class InputHandler {
     dimensionSlidersFactory?: DimensionSlidersFactory
   ) {
     this.dimensionSlidersFactory = dimensionSlidersFactory;
-    // DebugConsole is now constructed at the app level (Phase 8.6.c)
-    // and passed in here, so InputHandler doesn't need to import the
-    // class — keeps the input → ui layer-cruiser rule clean.
+    // DebugConsole is constructed at the app level and passed in here,
+    // so InputHandler doesn't need to import the class — keeps the
+    // input → ui layer-cruiser rule clean.
     this.debugConsole = debugConsole;
 
     // Initialize input context manager
@@ -341,7 +340,7 @@ export class InputHandler {
     }
 
     // Remove the listener before resetting so a stale closure can't
-    // observe a half-reset state (r8 §D1).
+    // observe a half-reset state.
     if (this.sceneDimsListener) {
       sceneDimsManager.removeListener(this.sceneDimsListener);
       this.sceneDimsListener = undefined;
@@ -414,10 +413,10 @@ export class InputHandler {
       this.dimensionSliders.dispose();
     }
 
-    // Build the slider panel only if a factory is injected (Phase 13.4:
-    // listener wiring + animation manager + initial update are hoisted
-    // out of this branch so embed callers without a slider factory still
-    // get keyboard nD navigation that actually loads data).
+    // Build the slider panel only if a factory is injected. Listener
+    // wiring + animation manager + initial update are hoisted out of
+    // this branch so embed callers without a slider factory still get
+    // keyboard nD navigation that actually loads data.
     if (this.dimensionSlidersFactory) {
       const dimensionNames = sceneDimsManager.getDimensionNames();
       const dimensionUnits = sceneDimsManager.getDimensionUnits();
@@ -454,9 +453,10 @@ export class InputHandler {
 
     // Listen for dimension changes (returns Promise for animation
     // synchronization). The slider .update() inside the callback is
-    // null-guarded, so this listener works fine without a slider panel.
-    // Stored on the instance so clearDimensionUI / dispose can remove
-    // it (r8 §D1: previously anonymous → never explicitly removed).
+    // null-guarded, so this listener works fine without a slider
+    // panel. Stored on the instance so clearDimensionUI / dispose
+    // can remove it cleanly. Replace any prior listener instead of
+    // stacking when initDimensionSliders runs more than once.
     if (this.sceneDimsListener) {
       sceneDimsManager.removeListener(this.sceneDimsListener);
     }
@@ -692,15 +692,13 @@ export class InputHandler {
    * No special cases - everything uses the unified binding system.
    */
   private onKeyDown(event: KeyboardEvent): void {
-    // Phase 14.8: Escape always reaches the context manager so it can
-    // close panels even when focus is inside a text input — e.g. the
-    // dataset-browser manual-path field, the debug-console filter
-    // input. Phase 14.7 promoted the typing-context Escape path to
-    // dispatch through NAVIGATION bindings (see
-    // InputContextManager.dispatchEscapeFromTypingContext) instead of
-    // returning false to lower priorities, so this exception is what
-    // routes Escape into the panel-close flow when focus is inside an
-    // input.
+    // Escape always reaches the context manager so it can close panels
+    // even when focus is inside a text input — e.g. the dataset-browser
+    // manual-path field, the debug-console filter input. The typing-
+    // context Escape path dispatches through NAVIGATION bindings (see
+    // InputContextManager.dispatchEscapeFromTypingContext); this
+    // exception is what routes Escape into the panel-close flow when
+    // focus is inside an input.
     if (this.isTypingInInput() && event.key !== 'Escape') {
       return;
     }
@@ -1104,10 +1102,10 @@ export class InputHandler {
       this.animationManager = undefined;
     }
 
-    // Remove sceneDimsManager listener (r8 §D1). dataset-switch path
-    // already does this via clearDimensionUI; app-dispose without a
-    // subsequent switch would otherwise leak a singleton listener
-    // retaining the disposed InputHandler.
+    // Remove the sceneDimsManager listener. The dataset-switch path
+    // also does this via clearDimensionUI, but app-dispose without
+    // a subsequent switch would otherwise leak the listener on the
+    // singleton, retaining this disposed InputHandler.
     if (this.sceneDimsListener) {
       sceneDimsManager.removeListener(this.sceneDimsListener);
       this.sceneDimsListener = undefined;

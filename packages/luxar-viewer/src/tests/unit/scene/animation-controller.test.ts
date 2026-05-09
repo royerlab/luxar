@@ -221,7 +221,7 @@ describe('AnimationController', () => {
       expect(mockRAF).toHaveBeenCalledWith(expect.any(Function));
     });
 
-    // Phase 13.9: when WebGL context is lost, animation loop must
+    // when WebGL context is lost, animation loop must
     // skip postProcessing.render() to avoid issuing draw calls
     // against a dead context. controls.update() and per-frame
     // callbacks still run.

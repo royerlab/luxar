@@ -105,7 +105,7 @@ describe('CODEC_LABEL_TO_VALUE', () => {
   });
 });
 
-describe('computeControlVisibility (Phase 19B)', () => {
+describe('computeControlVisibility', () => {
   it('image mode + png: shows image group, hides quality + transparent (lossless)', () => {
     const d = computeControlVisibility('image', { outputFormat: 'png', syncToSlider: false });
     expect(d.showImageGroup).toBe(true);

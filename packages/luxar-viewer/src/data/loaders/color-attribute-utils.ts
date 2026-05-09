@@ -13,10 +13,8 @@
  *     `original_dtype` attribute that records what shape the GPU expects.
  *     After decoding to Float32 we cast back to that type.
  *
- * These helpers used to be duplicated almost byte-for-byte between the
- * three spatial-index loaders (only the range parameter type was named
- * differently). Phase 11.8 migrated points to share them; the file now
- * serves all three geometry loaders.
+ * Shared by all three spatial-index loaders so the encode/decode
+ * logic doesn't drift between Points, Lines, and GSplats.
  *
  * @module data/loaders/color-attribute-utils
  */
@@ -159,7 +157,7 @@ export function restoreOriginalDtype(
  * End-to-end load for a colors array, encoded or unencoded, with native-type
  * preservation and original_dtype restoration. Composes the helpers above to
  * reproduce the load-color flow the geometry loaders run (points, lines,
- * gsplats — Phase 11.8 migrated points onto this helper).
+ * gsplats).
  *
  * Branches:
  * 1. Direct (unencoded, no array_ref): allocate or reuse a typed buffer of the

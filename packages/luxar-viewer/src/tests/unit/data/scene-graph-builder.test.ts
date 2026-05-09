@@ -173,7 +173,7 @@ describe('SceneGraphBuilder', () => {
       expect(result.endsWith('/data/test/')).toBe(true);
     });
 
-    it('should treat mixed-case HTTPS:// as absolute (Phase 14.10)', () => {
+    it('should treat mixed-case HTTPS:// as absolute', () => {
       // Pre-fix, lowercase-only `startsWith` checks treated mixed-case
       // schemes as relative paths and prepended window.location.origin.
       expect(SceneGraphBuilder.normalizeURL('HTTPS://Example.com/data')).toBe(

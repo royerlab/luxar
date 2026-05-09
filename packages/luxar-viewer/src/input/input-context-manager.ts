@@ -427,17 +427,13 @@ export class InputContextManager {
   private handleKeyEventInternal(event: KeyboardEvent, type: 'down' | 'up'): boolean {
     // Check if we're in a typing context
     if (this.isTypingContext()) {
-      // Phase 14.8/14.12: Escape from a typing context (e.g. focus
-      // inside the dataset-browser manual-path field, debug-console
-      // filter input) should still close the panel. Pre-fix, this
-      // branch returned `false` ("not consumed"), which left the
-      // Escape binding in NAVIGATION untouched — Escape was a silent
-      // no-op from any text input. Now we explicitly look up the
-      // Escape binding in the current context AND every other context,
-      // and fire the first one we find. We can't go through the normal
-      // dispatch path (it'd re-enter this branch) or `tryLowerContexts`
-      // alone (it skips the current context, where Escape is usually
-      // registered).
+      // Escape from a typing context (e.g. focus inside the
+      // dataset-browser manual-path field, debug-console filter input)
+      // must still close the panel. Look up the Escape binding in the
+      // current context AND every other context, firing the first
+      // match. Going through the normal dispatch path would re-enter
+      // this branch, and `tryLowerContexts` alone would skip the
+      // current context where Escape is usually registered.
       if (event.key === 'Escape') {
         return this.dispatchEscapeFromTypingContext(event, type);
       }
@@ -528,7 +524,7 @@ export class InputContextManager {
    * @private
    */
   /**
-   * Dispatch Escape from a typing context (Phase 14.8/14.12).
+   * Dispatch Escape from a typing context.
    *
    * Walks all contexts in priority order (including the current one)
    * and fires the first matching Escape binding. Mirrors the dispatch

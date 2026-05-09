@@ -353,7 +353,7 @@ describe('ChunkPrefetcher - Unit Tests', () => {
     });
   });
 
-  describe('Cascade prevention (Phase 13.7)', () => {
+  describe('Cascade prevention', () => {
     // Pre-fix, MultiLevelCachingStore.getResult() unconditionally
     // called prefetcher.onAccess(key) — including when the request
     // ITSELF originated from prefetcher.processQueue(). Result: a

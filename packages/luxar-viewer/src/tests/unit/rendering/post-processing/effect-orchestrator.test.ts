@@ -139,7 +139,7 @@ describe('partitionEffectsIntoPasses', () => {
   });
 });
 
-describe('buildOrderedEffects (Phase 21A.2)', () => {
+describe('buildOrderedEffects', () => {
   it('empty slots produce an empty list', () => {
     const ordered = buildOrderedEffects<string>({ smaaEnabled: false, fxaaEnabled: false });
     expect(ordered).toEqual([]);

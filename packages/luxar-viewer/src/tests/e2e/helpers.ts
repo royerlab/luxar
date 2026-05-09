@@ -942,18 +942,16 @@ export async function dismissDatasetBrowser(page: Page): Promise<void> {
 
   if (!isVisible) return;
 
-  // Press Escape so the browser routes through PanelCoordinator.closeAll() →
-  // datasetBrowser.close(), which keeps LuxarApp.datasetBrowser in sync.
-  // Yanking the DOM node directly bypasses that and reproduces the bug
-  // fixed in Phase 12.7.
+  // Press Escape so the browser routes through PanelCoordinator.closeAll()
+  // → datasetBrowser.close(), which keeps LuxarApp.datasetBrowser in sync.
+  // Yanking the DOM node directly bypasses that and hides the exact
+  // bug a regression check would catch.
   //
-  // Phase 14.12: the previous DOM-yank fallback was removed. Phase 14.8
-  // exempted Escape from the typing-input guard in `InputHandler.onKeyDown`,
-  // so Escape now reliably reaches PanelCoordinator regardless of focus
-  // location (manual-path field, debug-console filter, or elsewhere).
-  // If a future regression makes Escape fall through, a hard timeout
-  // here is the right signal — silently yanking DOM was hiding the
-  // exact bug it was meant to work around.
+  // Escape is exempted from the typing-input guard in
+  // `InputHandler.onKeyDown`, so it reliably reaches PanelCoordinator
+  // regardless of focus location (manual-path field, debug-console
+  // filter, etc.). If a future regression makes Escape fall through,
+  // a hard timeout here is the right signal.
   await page.keyboard.press('Escape');
   await page.waitForFunction(
     () => {
@@ -1018,9 +1016,8 @@ export async function getAnimationManager(page: Page): Promise<any> {
 /**
  * Get the scene dims manager from the debug interface.
  * Canonical access: `debug.sceneDimsManager` (exposed directly by
- * app.ts:912-927). The legacy `debug.app.inputHandler.sceneDimsManager`
- * path was removed in Phase 14.2 — the manager isn't a child of
- * input-handler in the debug surface.
+ * `app.ts`). The manager is not a child of input-handler in the
+ * debug surface.
  */
 export async function getSceneDimsManager(page: Page): Promise<any> {
   return await page.evaluate(() => {

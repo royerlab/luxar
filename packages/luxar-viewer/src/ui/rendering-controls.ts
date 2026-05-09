@@ -537,8 +537,8 @@ export class RenderingControls {
   applyZarrDefaults(): void {
     if (!this.zarrViewerConfig) return;
 
-    // Phase r8 §C2: route zarr overrides through validateRenderingSettings
-    // so a corrupted viewer_config can't inject NaN/Infinity/out-of-range
+    // Route zarr overrides through validateRenderingSettings so a
+    // corrupted viewer_config can't inject NaN/Infinity/out-of-range
     // values into runtime rendering state. Validation clamps to defaults.
     const zarrOverrides = extractRenderingOverrides(this.zarrViewerConfig);
     const validated = validateRenderingSettings({ ...this.settings, ...zarrOverrides });
@@ -723,10 +723,11 @@ export class RenderingControls {
       return;
     }
 
-    // Update settings properties IN PLACE to maintain GUI controller bindings
-    // (replacing the entire settings object would break the GUI bindings).
-    // Phase r8 §C2: validate the merged base+loaded settings so corrupted
-    // localStorage can't inject NaN/Infinity into runtime rendering state.
+    // Update settings properties IN PLACE to maintain GUI controller
+    // bindings (replacing the entire settings object would break the
+    // GUI bindings). Validate the merged base+loaded settings so
+    // corrupted localStorage can't inject NaN/Infinity into runtime
+    // rendering state.
     const validated = validateRenderingSettings({ ...buildBaseDefaults(), ...loaded });
     Object.assign(this.settings, validated);
 

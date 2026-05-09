@@ -1,5 +1,5 @@
 /**
- * Phase 15.1 regression tests for the WorkerPool dispose-mid-init
+ * the WorkerPool dispose-mid-init
  * race.
  *
  * Pre-fix: `WorkerPool.initialize()` spawned workers via
@@ -83,7 +83,7 @@ async function loadWorkerPool(
   return { ...module, log, workers };
 }
 
-describe('WorkerPool.dispose — mid-init race (Phase 15.1)', () => {
+describe('WorkerPool.dispose — mid-init race', () => {
   beforeEach(() => {
     vi.unstubAllGlobals();
     vi.stubGlobal('navigator', { hardwareConcurrency: 16 });
@@ -183,7 +183,7 @@ describe('WorkerPool.dispose — mid-init race (Phase 15.1)', () => {
     expect(workers.every((w) => w.terminate.mock.calls.length === 1)).toBe(true);
   });
 
-  it('init1 → dispose → init2 successful → init1 settles late: pool.workers belongs to init2 (Phase 19.0.1)', async () => {
+  it('init1 → dispose → init2 successful → init1 settles late: pool.workers belongs to init2', async () => {
     // Per-call init impl: first N calls (init1's workers) park forever
     // until released; subsequent calls (init2's workers) resolve immediately.
     const init1Releases: Array<() => void> = [];
@@ -226,8 +226,8 @@ describe('WorkerPool.dispose — mid-init race (Phase 15.1)', () => {
     expect(workers[3].terminate.mock.calls.length).toBe(0);
 
     // ── Step 4: release init1's deferred promises so init1 settles
-    // late. Per the Phase 19.0.1 fix, init1's IIFE must NOT touch
-    // `this.workers` (which now holds init2's workers).
+    // late. Init1's IIFE must NOT touch `this.workers` (which now
+    // holds init2's workers).
     init1Releases.forEach((r) => r());
     await initP1;
 

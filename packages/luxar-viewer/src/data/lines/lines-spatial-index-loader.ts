@@ -72,7 +72,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
   private rangeLoader: RangeLoader;
   private zarrStore: zarr.Readable | null = null;
 
-  // Data accumulator for object pooling (Phase 1 optimization)
+  // Data accumulator for object pooling.
   private _accumulator: LinesDataAccumulator | null = null;
 
   // L0 decompressed chunk cache (optional, avoids Blosc decompression on repeat access)
@@ -283,10 +283,8 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     } catch (err) {
       this.metrics.errors += 1;
       this.finishQueryTracking(queryId, startTime, 'error');
-      // Phase 13.10: emit a monitor 'error' event so event-driven
-      // dashboards/timelines see the failure (Points already does
-      // this; Lines/GSplats were polling-only and diverged from
-      // Points event semantics).
+      // Emit a monitor 'error' event so event-driven dashboards /
+      // timelines see the failure. Mirrors the Points loader semantics.
       this.emitEvent({
         type: 'error',
         loader: 'lines-spatial-index',
@@ -314,7 +312,8 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
 
     const attrs = this.node.attrs as unknown as LinesMetadata;
 
-    // Phase 1: Query segment chunks and load segments (Phase 2: async for worker support)
+    // Stage 1: Query segment chunks and load segments (async to allow
+    // worker offload).
     let segmentRanges: SegmentRange[];
     if (session) {
       const querySession = session.begin('Spatial Query');
@@ -381,7 +380,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       uniqueVertexIndices.add(segmentData[i]);
     }
 
-    // Phase 2: Load required vertices
+    // Stage 2: Load required vertices
     const sortedIndices = Array.from(uniqueVertexIndices).sort((a, b) => a - b);
     const vertexRanges = computeVertexRangesFromIndices(sortedIndices);
     const mergedVertexRanges = mergeRanges(vertexRanges);
@@ -420,9 +419,10 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       }
     }
 
-    // Phase 1 DEEP Integration: Load directly to accumulator if enabled (ZERO allocations!)
-    // BUG FIXED: Segment capacity was estimated incorrectly (1.5:1 ratio instead of ~1:1 for particle tracks)
-    // Now passing actual segment count to ensureCapacity() to avoid buffer truncation.
+    // Load directly to the accumulator when enabled (zero allocations).
+    // ensureCapacity is called with the ACTUAL segment count — relying
+    // on a ratio estimate truncates the buffer for line geometries with
+    // a near-1:1 segment-to-vertex ratio.
     const useAccumulator = this._accumulator && appConfig.dataLoading.performance.useAccumulators;
 
     if (useAccumulator && this._accumulator) {

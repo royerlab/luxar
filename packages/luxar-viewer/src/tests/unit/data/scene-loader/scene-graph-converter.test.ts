@@ -56,7 +56,7 @@ describe('convertToSceneGraphNode — type coercion', () => {
     expect(convertToSceneGraphNode(makeNode({ type: '' as 'group' })).type).toBe('scene');
   });
 
-  // Phase 13.10: previously a bare `as` cast let unknown runtime
+  // previously a bare `as` cast let unknown runtime
   // types through into the `SceneGraphNode['type']` union and lied
   // to TypeScript about it. Whitelist guarantees the union is honest.
   it('falls back to "scene" for an unknown non-empty type', () => {

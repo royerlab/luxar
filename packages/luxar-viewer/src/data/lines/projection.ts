@@ -452,7 +452,7 @@ export function buildInstanceBuffersWASM(
   const toleranceF32 = new Float32Array(tolerance);
   const displayDimsU32 = new Uint32Array(displayDims);
 
-  // Phase 1: Batch clip all segments
+  // Step 1: Batch-clip all segments
   const visibility = new Uint8Array(segmentCount);
   const t1Params = new Float32Array(segmentCount);
   const t2Params = new Float32Array(segmentCount);
@@ -488,7 +488,7 @@ export function buildInstanceBuffersWASM(
     };
   }
 
-  // Phase 2: Allocate output buffers for visible segments
+  // Step 2: Allocate output buffers for visible segments
   const startPositions = new Float32Array(visibleCount * 3);
   const endPositions = new Float32Array(visibleCount * 3);
   const startColors = new Float32Array(visibleCount * 3);
@@ -501,7 +501,7 @@ export function buildInstanceBuffersWASM(
   const startClipped = new Uint8Array(visibleCount);
   const endClipped = new Uint8Array(visibleCount);
 
-  // Phase 3: Interpolate clipped positions to 3D
+  // Step 3: Interpolate clipped positions to 3D
   wasm.interpolate_clipped_positions(
     positions,
     segments,
@@ -515,8 +515,8 @@ export function buildInstanceBuffersWASM(
     endPositions
   );
 
-  // Phase 4: Interpolate colors. Phase 18 W2: shared
-  // coerceColorsToFloat32 handles dtype + normalization in one step.
+  // Interpolate colors. The shared coerceColorsToFloat32 helper
+  // handles dtype + normalization in one step.
   if (colors) {
     wasm.interpolate_colors_batch(
       coerceColorsToFloat32(colors),
@@ -534,7 +534,7 @@ export function buildInstanceBuffersWASM(
     endColors.fill(1.0);
   }
 
-  // Phase 5: Interpolate widths
+  // Step 4: Interpolate widths
   wasm.interpolate_scalars_batch(
     widths,
     segments,
@@ -546,7 +546,7 @@ export function buildInstanceBuffersWASM(
     endWidths
   );
 
-  // Phase 6: Interpolate sharpness
+  // Step 5: Interpolate sharpness
   if (sharpness) {
     wasm.interpolate_scalars_batch(
       sharpness,
@@ -564,10 +564,10 @@ export function buildInstanceBuffersWASM(
     endSharpness.fill(1.0);
   }
 
-  // Phase 7: Calculate segment lengths
+  // Step 6: Calculate segment lengths
   wasm.calculate_segment_lengths(startPositions, endPositions, visibleCount, segmentLengths);
 
-  // Phase 8: Mark clipped endpoints
+  // Step 7: Mark clipped endpoints
   wasm.mark_clipped_endpoints(
     visibility,
     t1Params,

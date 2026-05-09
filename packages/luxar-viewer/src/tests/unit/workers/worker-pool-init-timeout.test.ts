@@ -3,7 +3,7 @@
  * guard that races api.initialize() against a hard timeout, worker.onerror,
  * and worker.onmessageerror.
  *
- * Phase 14.1 regression coverage: `workerInitTimeoutMs: 0` is documented in
+ * coverage: `workerInitTimeoutMs: 0` is documented in
  * `config/validation.ts` as "disables the guard". Pre-fix, the pool called
  * `setTimeout(..., 0)` unconditionally, which fired on the next macrotask
  * and rejected real async inits immediately. The fix mirrors the

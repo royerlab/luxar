@@ -158,11 +158,11 @@ The SceneLoader has been refactored into focused, testable modules:
 - Material creation and colormap application
 - Transform application and validation
 - Picking system integration (shadow pick-node creation)
-- **Empty-placeholder factories** (`createEmpty{Points,Lines,GSplats}Node`,
-  Phase 14.3) — every loader attaches a placeholder before the first
-  fetch so a transient load failure leaves a findable, retryable node
-  in the scene rather than a hole. The same node is later populated
-  in place by `commit*Geometry` helpers.
+- **Empty-placeholder factories**
+  (`createEmpty{Points,Lines,GSplats}Node`) — every loader attaches a
+  placeholder before the first fetch so a transient load failure leaves
+  a findable, retryable node in the scene rather than a hole. The same
+  node is later populated in place by `commit*Geometry` helpers.
 
 **Data Accumulators** (`data-accumulator.ts`):
 
@@ -174,13 +174,12 @@ The SceneLoader has been refactored into focused, testable modules:
 
 - **Testability**: Each module tested independently (88+ new tests)
 - **Maintainability**: Clear responsibility boundaries
-- **Reduced Complexity**: SceneLoader is ~2,000 lines as of Phase 19
-  and continues to shrink per phase. Long-term target is under
-  1,500. See `scene-loader/` siblings for the extracted concerns:
-  `data-processor-{points,lines,gsplats}`,
-  `commit-points-geometry`, `extend-tolerance`,
-  `scene-graph-converter`, `url-normalization`,
-  `cache-setup` (Phase 17C), `monitor-wiring` (Phase 18 W4).
+- **Reduced Complexity**: SceneLoader is ~2,000 lines and continues to
+  shrink as concerns extract out. Long-term target is under 1,500. See
+  `scene-loader/` siblings for the extracted modules:
+  `data-processor-{points,lines,gsplats}`, `commit-points-geometry`,
+  `extend-tolerance`, `scene-graph-converter`, `url-normalization`,
+  `cache-setup`, `monitor-wiring`.
 
 ---
 
@@ -829,8 +828,8 @@ clearCaches();
 ### Advanced Instance Management
 
 ```typescript
-// Phase 8.6.e separated the data/ and ui/ layers: SceneLoader now
-// receives a SceneLoaderMonitorPort factory at construction (wired in
+// The data/ and ui/ layers are kept separate: SceneLoader receives a
+// SceneLoaderMonitorPort factory at construction (wired in
 // core/app.ts) instead of importing DataMonitorManager directly.
 // Production code resolves the monitor through that port; the example
 // below shows direct registry access for diagnostic/advanced cases.

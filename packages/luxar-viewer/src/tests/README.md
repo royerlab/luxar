@@ -41,9 +41,9 @@ violating layers or dropping coverage; that cannot happen with
 ### E2E console-error fixture (opt-in)
 
 `src/tests/e2e/fixtures.ts` exports a re-extended `test` that
-auto-runs `assertNoConsoleErrors(page)` after each test. As of
-Phase 16D every E2E spec uses this fixture — there are no remaining
-direct `@playwright/test` imports. New specs should follow:
+auto-runs `assertNoConsoleErrors(page)` after each test. Every E2E
+spec uses this fixture — there are no direct `@playwright/test`
+imports. New specs should follow:
 
 ```ts
 import { test, expect } from './fixtures';
@@ -72,8 +72,7 @@ own `assertNoConsoleErrors(page, [...])` calls with per-test
 allow-lists. New specs default to `./fixtures` unless they have
 a specific reason not to.
 
-The fixture combines two signal sources before the assertion fires
-(Phase 13.15):
+The fixture combines two signal sources before the assertion fires:
 - Luxar's debug-console interceptor (in-app, formatted, polled via
   `assertNoConsoleErrors`)
 - Playwright's `page.on('console')` + `page.on('pageerror')`

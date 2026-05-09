@@ -6,11 +6,11 @@
  * and loading statistics in real-time.
  */
 
-// Phase 13.18: import PointRange directly from its `types/` source
-// rather than from the `data` barrel. types/ is the foundational
-// layer; reaching upward into `data/` (which re-exports runtime
-// APIs and managers) inverts the dependency direction even though
-// dependency-cruiser allows it for type-only imports.
+// Import PointRange directly from its `types/` source rather than from
+// the `data` barrel. types/ is the foundational layer; reaching upward
+// into `data/` (which re-exports runtime APIs and managers) inverts the
+// dependency direction even though dependency-cruiser allows it for
+// type-only imports.
 import type { PointRange } from './points';
 
 /**
@@ -93,15 +93,16 @@ export interface LoaderMetrics {
   memoryLimit: number;
   // Spatial index specific metrics
   spatialIndex?: PointSpatialIndexMetrics;
-  // Performance optimization metrics (NEW - Phase 1-4)
+  // Performance optimization metrics
   optimization?: OptimizationMetrics;
 }
 
 /**
- * Performance optimization metrics (Phases 1-4)
+ * Performance optimization metrics — accumulator pooling, worker
+ * offload, WASM acceleration, and GPU buffer pool.
  */
 export interface OptimizationMetrics {
-  // Phase 1: Accumulator stats
+  // Accumulator stats
   accumulator?: {
     enabled: boolean;
     capacity: number;
@@ -109,18 +110,18 @@ export interface OptimizationMetrics {
     growthEvents: number;
     memoryMB: number;
   };
-  // Phase 2: Worker stats
+  // Worker stats
   worker?: {
     enabled: boolean;
     queriesOffloaded: number;
     fallbackCount: number;
   };
-  // Phase 3: WASM stats
+  // WASM stats
   wasm?: {
     loaded: boolean;
     queriesAccelerated: number;
   };
-  // Phase 4: GPU Buffer Pool stats
+  // GPU Buffer Pool stats
   gpuPool?: {
     enabled: boolean;
     allocations: number;
@@ -262,19 +263,15 @@ export interface CacheMetrics {
    */
   recentHitRate: number;
   /**
-   * Phase 21G: effective demand hit-rate across all cache tiers.
+   * Effective demand hit-rate across all cache tiers:
    * `(l0Hits + l1Hits + l2Hits) / (l0Hits + l1Hits + l2Hits + networkRequests)`.
-   * Undefined when neither L0 provider nor `demand` counters are wired.
+   * Undefined when neither L0 provider nor `demand` counters are wired
+   * (lets the UI distinguish "not wired up" from "0% hit rate").
    */
   effectiveDemandHitRate?: number;
-  /**
-   * r8 §B2: total evictions accumulated across loaders. Historically
-   * named `evictionsPerMin` but never divided by time.
-   * `evictionsPerMin` is kept as a misleading alias for back-compat;
-   * new code should read `evictionsTotal`.
-   */
+  /** Total evictions accumulated across loaders. */
   evictionsTotal: number;
-  /** @deprecated Use `evictionsTotal` — value is identical, name is misleading. */
+  /** @deprecated Use `evictionsTotal` — same value, less misleading name. */
   evictionsPerMin: number;
   avgEntrySize: number;
   reuseRatio: number;
@@ -312,16 +309,17 @@ export interface CacheMetrics {
     hitRate: number;
   };
   /**
-   * Whether caching is enabled. Derived from `telemetryState.kind ===
-   * 'enabled'` for back-compat — new code should read telemetryState
-   * directly to distinguish 'disabled-no-cache' / 'disabled-config'
-   * / 'not-wired' (r8 §B1).
+   * Whether caching is enabled. Derived from
+   * `telemetryState.kind === 'enabled'`. New code should read
+   * `telemetryState` directly to distinguish the three not-enabled
+   * variants from each other.
    */
   enabled?: boolean;
   /**
-   * r8 §B1: explicit cache telemetry state, distinguishing the three
-   * disabled variants from 'not-wired' (provider absent during scene
-   * transition or before cache setup completes).
+   * Explicit cache telemetry state. Distinguishes "disabled-no-cache"
+   * (URL flag), "disabled-config" (app config / isEnabled false),
+   * and "not-wired" (provider absent during scene transition or
+   * before cache setup completes) from each other.
    */
   telemetryState?:
     | { kind: 'enabled' }
@@ -456,10 +454,10 @@ export interface CacheStatsProvider {
       bandwidth: number;
     };
     /**
-     * Phase 21G: per-tier demand-hit counters from the multi-level
-     * caching store. Each demand request increments exactly one
-     * (l1Hits / l2Hits / networkRequests). Optional so older
-     * implementations of this port still typecheck.
+     * Per-tier demand-hit counters from the multi-level caching
+     * store. Each demand request increments exactly one of l1Hits /
+     * l2Hits / networkRequests. Optional so providers that don't
+     * report it still typecheck.
      */
     demand?: {
       l1Hits: number;
@@ -478,16 +476,14 @@ export interface CacheStatsProvider {
 }
 
 // ============================================================================
-// Memory metrics contracts (moved from ui/monitors/data-monitor-templates.ts
-// in Phase 14.11)
+// Memory metrics contracts
 // ============================================================================
 //
 // These contracts are *cross-layer* — the data layer's
-// `SceneLoaderMonitorPort` exposes provider methods that produce them, and
-// the UI layer renders them. Living in `types/` (the foundational layer)
-// lets both ends reference precise types instead of `unknown`. Pre-fix,
-// the UI template module was effectively a contracts module, which
-// inverted the dependency direction.
+// `SceneLoaderMonitorPort` exposes provider methods that produce them,
+// and the UI layer renders them. Keeping them in `types/` (the
+// foundational layer) lets both ends reference precise types instead of
+// `unknown` without making the UI template module a contracts module.
 
 /**
  * Memory metrics for GPU buffer pool (per-type).

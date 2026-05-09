@@ -100,8 +100,8 @@ export class SliderSyncCoordinator {
       onComplete();
     };
     // The animation manager's typings expect a specific event-name
-    // string union; the recording panel previously relied on the same
-    // `as any` cast, so we keep that here for behavior identity.
+    // string union; we cast through `never` here to register the
+    // synthetic 'complete' event the recording flow listens for.
     animationManager.addEventListener('complete', this.completeHandler as never);
 
     this.playTimeout = setTimeout(() => {

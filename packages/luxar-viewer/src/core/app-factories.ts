@@ -1,19 +1,15 @@
 /**
- * Phase 21C: optional factory overrides for the heavy components
- * constructed by `LuxarApp.init()`.
+ * Optional factory overrides for the heavy components constructed
+ * by `LuxarApp.init()`. Each factory is keyed by the field name on
+ * `LuxarApp` and returns a fresh instance with the same arguments
+ * the inline `new X(...)` site uses. Default factories just call
+ * the constructor.
  *
- * Each factory is keyed by the field name on `LuxarApp` and returns
- * a fresh instance with the same arguments the inline `new X(...)`
- * site used to pass. The default factories simply call the
- * constructor; the production path is byte-for-byte equivalent to
- * the pre-21C inline code.
- *
- * The seam exists for embedders + tests:
- *   - Embedders can substitute alternate scene managers, custom
- *     recording panels, etc., without subclassing LuxarApp.
- *   - Tests can inject pre-built stubs in place of `vi.mock(...)` for
- *     these specific components, making mock setup explicit data
- *     instead of module-level magic.
+ * The seam exists for:
+ *   - Embedders that need to substitute alternate scene managers,
+ *     custom recording panels, etc. without subclassing LuxarApp.
+ *   - Tests that prefer injecting pre-built stubs over `vi.mock(...)`
+ *     for the heaviest components.
  *
  * Only the heavy, frequently-mocked components are exposed here.
  * Smaller helpers (PerformanceMonitor, DebugConsole, ScaleBar, …)
@@ -57,8 +53,8 @@ export interface AppFactories {
 }
 
 /**
- * Default factories. Each entry is byte-for-byte equivalent to the
- * pre-21C inline `new X(...)` call.
+ * Default factories — each entry simply calls `new X(...)` with the
+ * same arguments the inline construction would use.
  */
 export const defaultFactories: Required<AppFactories> = {
   sceneManager: () => new SceneManager(),

@@ -523,7 +523,7 @@ describe('DatasetBrowser', () => {
     });
   });
 
-  describe('navigation cancellation (Phase 16A.3)', () => {
+  describe('navigation cancellation', () => {
     type DeferredNavigate = {
       promise: Promise<unknown>;
       resolve: (v: unknown) => void;
@@ -662,7 +662,7 @@ describe('DatasetBrowser', () => {
     });
   });
 
-  describe('Phase r8 §D2 — async onDatasetSelect rejection handling', () => {
+  describe('async onDatasetSelect rejection handling', () => {
     it('async rejection from onDatasetSelect is caught and toasted, not unhandled', async () => {
       const unhandledRejections: unknown[] = [];
       const onUnhandled = (e: PromiseRejectionEvent): void => {

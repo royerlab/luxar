@@ -49,7 +49,7 @@ export interface LuxarMaterial extends THREE.Material, CameraAwareMaterial {
   updateColormapTexture?(texture: THREE.DataTexture | null): void;
   updateScalarRange?(min: number, max: number): void;
   /**
-   * Apply a blending mode to this material in-place (Phase 14.4).
+   * Apply a blending mode to this material in-place.
    *
    * Optional because PointMaterial doesn't need it — its blending is
    * mode-agnostic at the material level (no `uProjectionMode`, no
@@ -251,7 +251,7 @@ export class LayersPanel {
     const closeBtn = document.createElement('button');
     closeBtn.className = 'luxar-layers-panel__close';
     closeBtn.textContent = '\u00d7';
-    // r8 \u00a7I1: advertise Escape (not L). The L-binding early-returns
+    // Advertise Escape rather than L: the L key-binding early-returns
     // when focus is inside the panel, so it doesn't actually close
     // from keyboard while the panel has focus. Escape is handled by
     // the global key dispatcher and works regardless of focus.
@@ -360,16 +360,16 @@ export class LayersPanel {
 
     // ARIA option semantics — see listbox setup in buildPanel().
     //
-    // r8 §I2 noted listbox+option ideally shouldn't contain nested
-    // interactive elements (the eye toggle is a real <button>). The
-    // arrow-key navigation + Enter/Space selection on rows is the
-    // listbox idiom that screen readers expect. The eye button is
+    // Note: a listbox option ideally shouldn't contain nested
+    // interactive elements, but the eye toggle is a real <button>.
+    // The arrow-key navigation + Enter/Space selection on rows is
+    // the listbox idiom screen readers expect. The eye button is
     // reachable via Tab as a separate focusable element. A move to
     // role=tree+treeitem (which permits nested controls) would be
-    // cleaner but breaks the row-selection pattern users rely on.
-    // Tracked as a future follow-up; current escape valve is the
-    // explicit aria-label on the eye button so AT users hear "Hide
-    // layer: <name>" distinctly from "Layer <name> (<type>)".
+    // cleaner but breaks the row-selection pattern. The escape
+    // valve is the explicit aria-label on the eye button so AT
+    // users hear "Hide layer: <name>" distinctly from "Layer
+    // <name> (<type>)".
     row.setAttribute('role', 'option');
     row.setAttribute('aria-selected', layer.selected ? 'true' : 'false');
     row.setAttribute('aria-label', `${layer.name} (${layer.type})`);
@@ -723,14 +723,14 @@ export class LayersPanel {
   }
 
   private applyBlendingStateToMaterial(mat: LuxarMaterial, mode: string): void {
-    // Phase 14.4: prefer the material's own `applyBlendingMode` when it
-    // has one. GSplatMaterial in particular needs to update
-    // `uProjectionMode` and use `CustomBlending + OneFactor` for
-    // additive/luminous (NOT THREE.AdditiveBlending — that uses SrcAlpha
-    // which squares the per-pixel intensity). LineMaterial gets the
-    // same routing for consistency. PointMaterial has no
-    // `applyBlendingMode` and falls through to the generic path below;
-    // its blending is mode-agnostic at the material level.
+    // Prefer the material's own `applyBlendingMode` when it has one.
+    // GSplatMaterial in particular needs to update `uProjectionMode` and
+    // use `CustomBlending + OneFactor` for additive/luminous (NOT
+    // THREE.AdditiveBlending — that uses SrcAlpha which squares the
+    // per-pixel intensity). LineMaterial gets the same routing for
+    // consistency. PointMaterial has no `applyBlendingMode` and falls
+    // through to the generic path below; its blending is mode-agnostic
+    // at the material level.
     if (typeof mat.applyBlendingMode === 'function') {
       mat.applyBlendingMode(mode as BlendingMode);
       return;

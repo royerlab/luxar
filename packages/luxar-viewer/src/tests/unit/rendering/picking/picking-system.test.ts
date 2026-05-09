@@ -1,8 +1,8 @@
 /**
- * Phase 17B.3: unit tests for PickingSystem.
+ * Unit tests for PickingSystem.
  *
- * Pre-Phase 17B.3 coverage: 3.15%. The class wraps a WebGLRenderTarget
- * and depends on THREE.WebGLRenderer for the actual readRenderTargetPixels
+ * The class wraps a WebGLRenderTarget and depends on
+ * THREE.WebGLRenderer for the actual readRenderTargetPixels
  * / getDrawingBufferSize / domElement.getBoundingClientRect calls. Under
  * jsdom we can:
  *   - stub the renderer with the bare-minimum methods used outside
@@ -171,7 +171,7 @@ describe('PickingSystem — context-restore registration drop', () => {
     expect(dispose).not.toHaveBeenCalled();
   });
 
-  it('clearRegistrationsForRebuild unregisters CameraAwareMaterial from materialManager (Phase 19E)', async () => {
+  it('clearRegistrationsForRebuild unregisters CameraAwareMaterial from materialManager', async () => {
     // Pre-fix: pick materials registered with materialManager via
     // node-factory's `materialManager.register(pickMaterial)`. After
     // context-restore, clearRegistrationsForRebuild dropped the
@@ -205,7 +205,7 @@ describe('PickingSystem — context-restore registration drop', () => {
 
     system.clearRegistrationsForRebuild();
 
-    // Phase 19E: pick material is now unregistered from
+    // pick material is now unregistered from
     // materialManager — count returns to baseline.
     expect(materialManager.getCacheStats().totalRegistered).toBe(before);
     // Material's own dispose() was NOT called — the shader is

@@ -864,8 +864,7 @@ interface ViewState {
 }
 ```
 
-**Boundary note (r8 §G1)**: there are two related shapes — keep them
-distinct:
+**Boundary note**: there are two related shapes — keep them distinct:
 
 - **Navigation state** (`SimpleDims`, in `scene/scene-dims-manager.ts`)
   — the high-level UI state owned by `SceneDimsManager`. Has
@@ -1107,17 +1106,17 @@ function queryLinesForView(
 
 ### 7.6 Lines Loading Protocol
 
-**Two-Phase Loading**:
+**Two-Stage Loading**:
 
-Unlike Points where we load point chunks directly, Lines require a two-phase approach:
+Unlike Points where we load point chunks directly, Lines require a two-stage approach:
 
 ```
-Phase 1: Load Segments
+Stage 1: Load Segments
 ├── Query segment_chunk_bounds for visible chunks
 ├── Load segment chunks from segments/ array
 └── Collect unique vertex indices from loaded segments
 
-Phase 2: Load Vertices
+Stage 2: Load Vertices
 ├── Determine which vertex chunks contain required vertices
 ├── Load vertex chunks (positions, widths, colors, sharpness)
 └── Build index remapping for rendering
@@ -1135,7 +1134,7 @@ async function loadLinesForView(
 ): Promise<LoadedLinesData> {
   const { segmentRanges } = queryLinesForView(linesIndex, slicePosition, tolerance);
 
-  // Phase 1: Load visible segments
+  // Stage 1: Load visible segments
   const segments = await loadSegmentRanges(store, segmentRanges);
 
   // Collect unique vertex indices
@@ -1151,7 +1150,7 @@ async function loadLinesForView(
   const sortedVertices = Array.from(uniqueVertexIndices).sort((a, b) => a - b);
   const vertexRanges = computeVertexRangesFromIndices(sortedVertices);
 
-  // Phase 2: Load vertex data
+  // Stage 2: Load vertex data
   const vertices = await loadVertexRanges(store, vertexRanges, attrs.ndim);
   const widths = await loadWidthRanges(store, vertexRanges);
   const colors = attrs.has_colors ? await loadColorRanges(store, vertexRanges) : null;
@@ -1843,8 +1842,7 @@ This section documents all TypeScript source files in the `data/` package with t
 
 **Key Exports**: `ViewState`, `LoadedPointsData`, `DataLoader`, `LoaderConfig`, `PointRange`, `SceneNode`, `SpatialQueryResult`, `LoaderStats`, `PositionArray`, `ColorArray`, `ScalarArray`
 
-> Phase 13.18: removed unused `validateViewStateForExtendToAll()`. The
-> dim-name validation now lives in `scene-loader/extend-tolerance.ts:
+> Dim-name validation lives in `scene-loader/extend-tolerance.ts:
 > validateExtendDims`, which `deriveNodeViewState` calls before
 > applying any extend_to_all tolerance override.
 

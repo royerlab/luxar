@@ -192,7 +192,7 @@ describe('MultiLevelCachingStore', () => {
     });
   });
 
-  describe('Phase 21G — per-tier demand counters', () => {
+  describe('per-tier demand counters', () => {
     it('first fetch increments networkRequests; nothing in l1Hits/l2Hits', async () => {
       const before = store.getStats().demand;
       expect(before).toEqual({ l1Hits: 0, l2Hits: 0, networkRequests: 0 });
@@ -974,7 +974,7 @@ describe('MultiLevelCachingStore', () => {
     });
 
     it('does NOT call prefetcher.onAccess() when suppressPrefetch=true on L3 fetch', async () => {
-      // Phase 13.7: prefetcher.processQueue() passes
+      // prefetcher.processQueue() passes
       // { suppressPrefetch: true } so the cascade
       //   demand → onAccess → prefetch → getResult → onAccess → ...
       // terminates after the first hop. This test pins the contract.

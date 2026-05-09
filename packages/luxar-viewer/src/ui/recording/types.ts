@@ -1,11 +1,8 @@
 /**
- * Phase r8 §A5: shared recording types extracted from
- * `recording-panel.ts` so the per-mode drivers and helpers don't
- * need to import types from their parent orchestrator (which
- * inverts the intended dependency direction).
- *
- * `recording-panel.ts` re-exports each of these for back-compat
- * with existing external consumers.
+ * Shared recording types. Lives here (not in `recording-panel.ts`)
+ * so per-mode drivers and helpers don't import from their parent
+ * orchestrator. `recording-panel.ts` re-exports each of these for
+ * external consumers that import from the panel.
  */
 
 import type { VideoQuality } from './media-utilities';

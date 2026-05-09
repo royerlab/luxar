@@ -1,8 +1,8 @@
 /**
- * Phase 17B.2: unit tests for LayersPanel.
+ * Unit tests for LayersPanel.
  *
- * Pre-Phase 17B.2 coverage: 0.25%. The panel is heavily DOM- and
- * THREE-bound, so tests focus on the public lifecycle surface that
+ * The panel is heavily DOM- and THREE-bound, so tests focus on the
+ * public lifecycle surface that
  * runs cleanly under jsdom without WebGL:
  *
  * - Construction leaves the panel hidden and DOM-empty

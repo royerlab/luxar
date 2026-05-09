@@ -46,9 +46,8 @@ import { ImageSequenceDriver } from './recording/image-sequence-driver';
 import { ExrSequenceDriver } from './recording/exr-sequence-driver';
 import { VideoModeDriver } from './recording/video-mode-driver';
 
-// Phase r8 §A5: shared recording types live in `recording/types.ts`
-// so per-mode drivers don't need to import from the parent panel.
-// Re-exported here for back-compat with existing consumers.
+// Shared recording types live in `recording/types.ts`. Re-exported
+// here for external consumers that import from the panel directly.
 export type {
   RecordingMode,
   VideoResolution,
@@ -118,13 +117,15 @@ export class RecordingPanel {
   private durationTimer: ReturnType<typeof setTimeout> | null = null;
   private keepAliveCallbackId = 'recording-keepalive';
   private turntableCallbackId = 'recording-turntable';
-  // r8 §A1: offline-capture callback IDs as fields (was: locals
-  // inside runOfflineCaptureLoop). dispose() can now remove them
-  // unconditionally even if the loop is parked on an await.
+  // Offline-capture callback IDs are class-level constants so
+  // dispose() can remove them unconditionally even if the loop is
+  // parked on an `await` and hasn't reached its finally yet.
   private static readonly OFFLINE_CAPTURE_CALLBACK_ID = 'recording-offline-capture';
   private static readonly OFFLINE_KEEPALIVE_CALLBACK_ID = 'recording-offline-keepalive';
-  // r8 §A2: AbortController for the offline-capture session. Set on
-  // entry to runOfflineCaptureLoop; abort() on dispose or cancel.
+  // AbortController for the offline-capture session. Set on entry
+  // to runOfflineCaptureLoop; aborted by dispose() or the cancel
+  // button. Drivers + the loop body check signal.aborted between
+  // awaits so dispose-during-capture skips finalize cleanly.
   private offlineSessionAbort: AbortController | null = null;
   private sliderSync = new SliderSyncCoordinator();
   private savedAutoRotate: boolean = false;
@@ -257,18 +258,18 @@ export class RecordingPanel {
       this.durationTimer = null;
     }
 
-    // r8 §A2: abort the offline-capture session so any in-flight
-    // driver.captureFrame / driver.finalize sees signal.aborted on
-    // its next await checkpoint and short-circuits cleanly.
+    // Abort any in-flight offline-capture session so the loop's
+    // next await checkpoint sees signal.aborted and short-circuits
+    // before downloading/toasting on a disposed panel.
     this.offlineSessionAbort?.abort('disposed');
 
     this.offlineOverlayCleanup?.();
     this.hideRecordingIndicator();
     this.animationController.removePerFrameCallback(this.keepAliveCallbackId);
     this.animationController.removePerFrameCallback(this.turntableCallbackId);
-    // r8 §A1: also remove the offline-capture callbacks. The normal
-    // loop path removes them in finally; this covers dispose-while-
-    // awaiting where the loop hasn't reached its finally yet.
+    // Remove offline-capture callbacks. The normal loop path also
+    // removes them in finally; this covers the dispose-while-awaiting
+    // case where the loop hasn't reached its finally yet.
     this.animationController.removePerFrameCallback(
       RecordingPanel.OFFLINE_CAPTURE_CALLBACK_ID
     );
@@ -527,13 +528,12 @@ export class RecordingPanel {
    * {@link OfflineCaptureDriver}. Each driver runs its own setup,
    * captures one frame at a time, and finalizes (download/save).
    *
-   * Phase 21B follow-up: the entire post-saveRecordingState body is
-   * wrapped in try/finally so that an exception from driver.setup,
-   * driver.captureFrame, driver.finalize, or any DOM/state mutation
-   * cannot leave the panel with a stuck overlay, hidden panels,
-   * scaled renderer, or stale recording flags. The finally block is
-   * idempotent — every removal/restore handles the "wasn't set"
-   * case gracefully.
+   * The entire post-saveRecordingState body is wrapped in
+   * try/finally so an exception from driver.setup, driver.captureFrame,
+   * driver.finalize, or any DOM/state mutation cannot leave the panel
+   * with a stuck overlay, hidden panels, scaled renderer, or stale
+   * recording flags. The finally block is idempotent — every
+   * removal/restore handles the "wasn't set" case gracefully.
    */
   private async runOfflineCaptureLoop(
     mode: 'exr' | 'webm' | 'mp4' | 'mkv' | 'png' | 'webp' | 'jpeg'
@@ -593,8 +593,8 @@ export class RecordingPanel {
             })
           : new VideoModeDriver(mode);
 
-    // r8 §A2: AbortController for this offline session. Set on the
-    // panel so dispose() can abort any in-flight await.
+    // AbortController for this offline session. Stored on the
+    // panel so dispose() can reach in and abort any in-flight await.
     const sessionAbort = new AbortController();
     this.offlineSessionAbort = sessionAbort;
 
@@ -607,10 +607,11 @@ export class RecordingPanel {
     this.recordingStartTime = Date.now();
     this.showRecordingIndicator();
 
-    // r8 §A6: offline overlay with proper modal-dialog ARIA semantics
-    // and explicit Escape handling that aborts the session (was: a
-    // capturing keydown listener that just stopPropagation, blocking
-    // Escape from doing anything inside the overlay).
+    // Offline overlay built as a real modal dialog: dialog/aria-modal
+    // semantics + cancel-button focus + explicit Escape handling that
+    // aborts the session. The keydown listener stops propagation for
+    // non-Escape keys so navigation/dimension shortcuts don't fire
+    // mid-capture.
     const overlay = document.createElement('div');
     overlay.className = 'luxar-recording-overlay';
     overlay.setAttribute('role', 'dialog');
@@ -715,8 +716,8 @@ export class RecordingPanel {
       },
     };
 
-    // r8 §A1: callback IDs are class-static so dispose() can remove
-    // them unconditionally even if the loop is parked on an await.
+    // Use the class-static IDs so dispose() can remove these
+    // callbacks even if this loop is parked on an await.
     const captureCallbackId = RecordingPanel.OFFLINE_CAPTURE_CALLBACK_ID;
     const keepAliveId = RecordingPanel.OFFLINE_KEEPALIVE_CALLBACK_ID;
     let capturedFrames = 0;
@@ -756,7 +757,7 @@ export class RecordingPanel {
 
       for (let i = 0; i < totalFrames; i++) {
         if (!this.isRecording) break;
-        if (sessionAbort.signal.aborted) break; // r8 §A2
+        if (sessionAbort.signal.aborted) break;
         if (driver.shouldAbort?.()) break;
 
         // Orbit camera by one step and capture in a single animation frame.
@@ -778,9 +779,9 @@ export class RecordingPanel {
         // apply extra rotations while we do async capture work below.
         this.animationController.removePerFrameCallback(captureCallbackId);
 
-        // r8 §A2: re-check the signal after the await. A dispose
-        // during the rAF wait should NOT proceed to captureFrame,
-        // which can download/toast and observe disposed renderer state.
+        // Re-check the abort signal after the rAF wait. A dispose
+        // during the wait must NOT proceed to captureFrame, which
+        // could download/toast or observe disposed renderer state.
         if (sessionAbort.signal.aborted) break;
 
         // The animation loop has rendered with the rotated camera. Hand off
@@ -806,10 +807,11 @@ export class RecordingPanel {
         if (counterEl) counterEl.textContent = `${i + 1}/${totalFrames}`;
       }
 
-      // r8 §A2/§A3: if the session was aborted, skip finalize (don't
-      // download a partial artifact) and route to driver.abort instead.
+      // If the session was aborted, skip finalize so we don't
+      // download a partial artifact. The finally block will route
+      // to driver.abort instead.
       if (sessionAbort.signal.aborted) {
-        return; // finally calls driver.abort
+        return;
       }
 
       // Driver-specific finalize. Wrapped in its own try/catch so a
@@ -826,9 +828,10 @@ export class RecordingPanel {
       log.error(Modules.RECORDING, `Offline ${mode} capture failed: ${err}`);
       showToast('Recording failed');
     } finally {
-      // r8 §A3: if setup completed but finalize wasn't attempted (or
-      // threw before the panel could deliver an artifact), give the
-      // driver a chance to release partial encoder/zip resources.
+      // If setup completed but finalize wasn't attempted (aborted
+      // session, captureFrame threw past the tolerance limit, or
+      // finalize itself threw), give the driver a chance to release
+      // partial encoder/zip resources without delivering an artifact.
       if (setupCompleted && !finalizeAttempted) {
         try {
           const reason = sessionAbort.signal.aborted
@@ -847,7 +850,7 @@ export class RecordingPanel {
       // Idempotent cleanup. removePerFrameCallback tolerates unknown
       // IDs; cleanupOfflineOverlay short-circuits if already cleaned;
       // restoreAutoRotate / restoreRecordingState are no-ops if the
-      // saved state is missing. Order matches the pre-21B inline path.
+      // saved state is missing.
       this.animationController.removePerFrameCallback(captureCallbackId);
       this.animationController.removePerFrameCallback(keepAliveId);
       this.hideRecordingIndicator();
@@ -1241,11 +1244,11 @@ export class RecordingPanel {
   }
 
   /**
-   * Show/hide controls based on current mode + format. Phase 19B
-   * (r5): the per-control decision logic moves to
-   * `recording/gui-builder.ts:computeControlVisibility` (pure
-   * function); this method only applies the decisions to its
-   * named lil-gui controllers and dropdown <option> elements.
+   * Show/hide controls based on current mode + format. The per-control
+   * decision logic lives in
+   * `recording/gui-builder.ts:computeControlVisibility` (pure function);
+   * this method only applies the decisions to its named lil-gui
+   * controllers and dropdown <option> elements.
    */
   private updateControlVisibility(): void {
     const decision = computeControlVisibility(this.mode, this.options);

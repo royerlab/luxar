@@ -85,7 +85,7 @@ describe('WindowEventHandler', () => {
       expect(startAnimation).not.toHaveBeenCalled();
     });
 
-    it('registers the wheel listener with passive: false (Phase 14 hygiene)', () => {
+    it('registers the wheel listener with passive: false', () => {
       // The Ctrl/Cmd+wheel FOV handler calls preventDefault(); browsers
       // can default wheel listeners on root targets to passive, in which
       // case preventDefault is ignored and the page zooms while the FOV

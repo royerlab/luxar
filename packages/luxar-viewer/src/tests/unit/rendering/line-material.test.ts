@@ -291,7 +291,7 @@ describe('LineMaterial', () => {
     });
   });
 
-  describe('applyBlendingMode (Phase 14.4)', () => {
+  describe('applyBlendingMode', () => {
     // The line-material mock at the top of this file strings out
     // some THREE constants (`AdditiveBlending`, `NormalBlending`,
     // `CustomBlending`, `AddEquation`, `OneFactor`) but leaves others
