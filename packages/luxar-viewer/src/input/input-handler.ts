@@ -79,6 +79,15 @@ export class InputHandler {
   /** Cleanup functions for all registered event listeners */
   private eventListeners: (() => void)[] = [];
 
+  // Phase 16A.2: idempotency guard. `init()` is one-shot — calling it
+  // twice would double-bind keydown/keyup, controls start/change, and
+  // canvas mousedown/touchstart listeners (each is a fresh bound
+  // function, so removeEventListener can't dedupe). Today only
+  // `app.ts` calls init() and only once, but the guard prevents a
+  // future caller (HMR re-init, context-restoration path, test
+  // re-setup) from silently doubling input event volume.
+  private _initialized = false;
+
   /** Optional reference to advanced rendering controls */
   private renderingControls?: RenderingControls;
 
@@ -280,6 +289,11 @@ export class InputHandler {
    * ```
    */
   init(): void {
+    if (this._initialized) {
+      log.warning(Modules.INPUT, 'InputHandler.init() called twice; ignoring re-entry');
+      return;
+    }
+    this._initialized = true;
     this.setupWindowEvents();
     this.setupControlEvents();
     this.setupUserInteractionEvents();
