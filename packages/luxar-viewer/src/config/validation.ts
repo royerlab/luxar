@@ -62,28 +62,35 @@ function validateCamera(config: AppConfig, errors: string[], warnings: string[])
   const { camera } = config;
   const defaults = config.renderingControls.defaults;
 
-  // FOV validation (lives in renderingControls.defaults)
-  if (defaults.fov < 1 || defaults.fov > 180) {
-    errors.push(`Invalid camera FOV: ${defaults.fov} (must be between 1 and 180)`);
+  // Phase 20F: harden each numeric check with Number.isFinite() to
+  // reject NaN/Infinity. Bare `<` / `>` against NaN is always false.
+
+  if (!Number.isFinite(defaults.fov) || defaults.fov < 1 || defaults.fov > 180) {
+    errors.push(`Invalid camera FOV: ${defaults.fov} (must be a finite number 1..180)`);
   }
 
-  // Near/far plane validation (lives in renderingControls.defaults)
-  if (defaults.near <= 0) {
-    errors.push(`Invalid camera near plane: ${defaults.near} (must be > 0)`);
+  if (!Number.isFinite(defaults.near) || defaults.near <= 0) {
+    errors.push(`Invalid camera near plane: ${defaults.near} (must be a finite positive number)`);
   }
-  if (defaults.far <= defaults.near) {
+  if (!Number.isFinite(defaults.far) || defaults.far <= defaults.near) {
     errors.push(
-      `Invalid camera far plane: ${defaults.far} (must be > near plane ${defaults.near})`
+      `Invalid camera far plane: ${defaults.far} (must be a finite number > near plane ${defaults.near})`
     );
   }
 
-  // FOV min/max validation
-  if (camera.fovMin >= camera.fovMax) {
+  if (
+    !Number.isFinite(camera.fovMin) ||
+    !Number.isFinite(camera.fovMax) ||
+    camera.fovMin >= camera.fovMax
+  ) {
     errors.push(`Invalid FOV limits: min ${camera.fovMin} >= max ${camera.fovMax}`);
   }
 
-  // FOV sensitivity
-  if (camera.fovSensitivity <= 0 || camera.fovSensitivity > 1) {
+  if (
+    !Number.isFinite(camera.fovSensitivity) ||
+    camera.fovSensitivity <= 0 ||
+    camera.fovSensitivity > 1
+  ) {
     warnings.push(`Unusual FOV sensitivity: ${camera.fovSensitivity} (typical range 0.01-0.2)`);
   }
 }
@@ -94,15 +101,23 @@ function validateCamera(config: AppConfig, errors: string[], warnings: string[])
 function validateRendering(config: AppConfig, errors: string[], _warnings: string[]): void {
   const defaults = config.renderingControls.defaults;
 
-  // Global EOG validation (lives in renderingControls.defaults)
-  if (defaults.exposure < -5 || defaults.exposure > 5) {
-    errors.push(`Invalid exposure: ${defaults.exposure} (must be -5 to 5)`);
+  // Phase 20F: NaN/Infinity hardening for the global EOG values.
+  if (!Number.isFinite(defaults.exposure) || defaults.exposure < -5 || defaults.exposure > 5) {
+    errors.push(`Invalid exposure: ${defaults.exposure} (must be a finite number -5..5)`);
   }
-  if (defaults.globalOffset < -1 || defaults.globalOffset > 1) {
-    errors.push(`Invalid globalOffset: ${defaults.globalOffset} (must be -1 to 1)`);
+  if (
+    !Number.isFinite(defaults.globalOffset) ||
+    defaults.globalOffset < -1 ||
+    defaults.globalOffset > 1
+  ) {
+    errors.push(`Invalid globalOffset: ${defaults.globalOffset} (must be a finite number -1..1)`);
   }
-  if (defaults.globalGamma < 0.1 || defaults.globalGamma > 10) {
-    errors.push(`Invalid globalGamma: ${defaults.globalGamma} (must be 0.1 to 10)`);
+  if (
+    !Number.isFinite(defaults.globalGamma) ||
+    defaults.globalGamma < 0.1 ||
+    defaults.globalGamma > 10
+  ) {
+    errors.push(`Invalid globalGamma: ${defaults.globalGamma} (must be a finite number 0.1..10)`);
   }
 }
 
@@ -148,6 +163,18 @@ function validateControls(config: AppConfig, errors: string[], _warnings: string
   ];
 
   for (const { name, range } of ranges) {
+    // Phase 20F: NaN check on every range field. Without this,
+    // any of {min, max, default} could be NaN and silently pass.
+    if (
+      !Number.isFinite(range.min) ||
+      !Number.isFinite(range.max) ||
+      !Number.isFinite(range.default)
+    ) {
+      errors.push(
+        `Invalid controls.${name}: non-finite values (min=${range.min}, max=${range.max}, default=${range.default})`
+      );
+      continue;
+    }
     if (range.min >= range.max) {
       errors.push(`Invalid controls.${name}: min (${range.min}) >= max (${range.max})`);
     }
@@ -313,8 +340,16 @@ function validateScene(config: AppConfig, errors: string[], _warnings: string[])
 /**
  * Validate input configuration
  */
-function validateInput(config: AppConfig, _errors: string[], warnings: string[]): void {
+function validateInput(config: AppConfig, errors: string[], warnings: string[]): void {
   const { input } = config;
+
+  // Phase 20F: NaN/Infinity hardening.
+  if (!Number.isFinite(input.defaultSensitivity)) {
+    errors.push(
+      `Invalid input.defaultSensitivity: ${input.defaultSensitivity} (must be a finite number)`
+    );
+    return;
+  }
 
   // Sensitivity validation
   if (input.defaultSensitivity <= 0 || input.defaultSensitivity > 1) {

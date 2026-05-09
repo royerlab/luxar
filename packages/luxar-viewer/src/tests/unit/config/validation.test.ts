@@ -754,6 +754,68 @@ describe('validateConfig', () => {
     });
   });
 
+  describe('Phase 20F — NaN/Infinity hardening for camera + rendering + controls + input', () => {
+    it('rejects NaN camera FOV', () => {
+      const cfg = cloneConfig();
+      cfg.renderingControls.defaults.fov = NaN;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(expect.stringContaining('Invalid camera FOV'));
+    });
+
+    it('rejects Infinity camera near plane', () => {
+      const cfg = cloneConfig();
+      cfg.renderingControls.defaults.near = Infinity;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(expect.stringContaining('Invalid camera near plane'));
+    });
+
+    it('rejects NaN camera fovMin', () => {
+      const cfg = cloneConfig();
+      cfg.camera.fovMin = NaN;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(expect.stringContaining('Invalid FOV limits'));
+    });
+
+    it('rejects NaN exposure (rendering)', () => {
+      const cfg = cloneConfig();
+      cfg.renderingControls.defaults.exposure = NaN;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(expect.stringContaining('Invalid exposure'));
+    });
+
+    it('rejects NaN globalOffset', () => {
+      const cfg = cloneConfig();
+      cfg.renderingControls.defaults.globalOffset = NaN;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(expect.stringContaining('Invalid globalOffset'));
+    });
+
+    it('rejects NaN in a controls range field (fly.movement.speed.default)', () => {
+      const cfg = cloneConfig();
+      cfg.controls.fly.movement.speed.default = NaN;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(
+        expect.stringContaining('non-finite values')
+      );
+    });
+
+    it('rejects NaN input.defaultSensitivity', () => {
+      const cfg = cloneConfig();
+      cfg.input.defaultSensitivity = NaN;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(
+        expect.stringContaining('Invalid input.defaultSensitivity')
+      );
+    });
+  });
+
   describe('input validation', () => {
     it('should warn when sensitivity is zero', () => {
       const cfg = cloneConfig();
