@@ -1258,10 +1258,18 @@ export class PostProcessingManager {
     // transparent to the user. Same shape used by rebuildAfterContextRestore.
     const state = this.captureDurableState();
 
-    // Dispose effect passes before disposing composer.
-    safeDisposeEffect(this.effectPass, 'effectPass during recreation');
+    // r8 §E1: detach passes from composer first, then dispose them.
+    // The previous code disposed passes while still attached, then
+    // called composer.dispose(). Tolerated today, but ownership
+    // semantics duplicated and a future non-idempotent pass disposal
+    // could throw mid-recreation.
+    safeRemoveAndDisposePass(this.composer, this.effectPass, 'effectPass during recreation');
     this.effectPass = undefined;
-    safeDisposeEffect(this.secondaryPass, 'secondaryPass during recreation');
+    safeRemoveAndDisposePass(
+      this.composer,
+      this.secondaryPass,
+      'secondaryPass during recreation'
+    );
     this.secondaryPass = undefined;
 
     this.composer.dispose();
@@ -1674,9 +1682,11 @@ export class PostProcessingManager {
    * Used by both `dispose()` and `rebuildAfterContextRestore()`.
    */
   private disposeTransientResources(): void {
-    safeDisposeEffect(this.effectPass, 'effectPass during cleanup');
+    // r8 §E1: detach from composer first, then dispose. Same rationale
+    // as recreateComposer above.
+    safeRemoveAndDisposePass(this.composer, this.effectPass, 'effectPass during cleanup');
     this.effectPass = undefined;
-    safeDisposeEffect(this.secondaryPass, 'secondaryPass during cleanup');
+    safeRemoveAndDisposePass(this.composer, this.secondaryPass, 'secondaryPass during cleanup');
     this.secondaryPass = undefined;
 
     // Dispose individual effect objects. EffectPass disposal alone is not a
