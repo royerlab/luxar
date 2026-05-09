@@ -376,9 +376,13 @@ test.describe('Layers Panel', () => {
     expect(panelHidden).toBe(true);
   });
 
-  test('keyboard listbox: Tab to listbox, ArrowDown selects next row, aria-selected updates (Phase 14.13)', async ({
+  test('keyboard listbox: programmatic focus + ArrowDown selects next row, aria-selected updates (Phase 14.13)', async ({
     page,
   }) => {
+    // r8 §I3: name was previously "Tab to listbox", but the test
+    // programmatically focuses the row via .focus() (see comment
+    // below — Tab in headless depends on intermediate focusable
+    // controls). Renamed to match what the test actually does.
     // Phase 13.21 added listbox/option a11y to the layers panel rows
     // (role="listbox" + role="option" + aria-selected + tabIndex
     // management) but landed without E2E keyboard coverage. Unit tests

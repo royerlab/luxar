@@ -251,9 +251,13 @@ export class LayersPanel {
     const closeBtn = document.createElement('button');
     closeBtn.className = 'luxar-layers-panel__close';
     closeBtn.textContent = '\u00d7';
-    closeBtn.title = 'Close (L)';
+    // r8 \u00a7I1: advertise Escape (not L). The L-binding early-returns
+    // when focus is inside the panel, so it doesn't actually close
+    // from keyboard while the panel has focus. Escape is handled by
+    // the global key dispatcher and works regardless of focus.
+    closeBtn.title = 'Close (Esc)';
     closeBtn.setAttribute('aria-label', 'Close layers panel');
-    closeBtn.setAttribute('aria-keyshortcuts', 'l');
+    closeBtn.setAttribute('aria-keyshortcuts', 'escape');
     closeBtn.addEventListener('click', () => this.hide());
     header.appendChild(title);
     header.appendChild(closeBtn);
@@ -355,6 +359,17 @@ export class LayersPanel {
     if (!layer.visible) row.classList.add('luxar-layer-row--hidden');
 
     // ARIA option semantics — see listbox setup in buildPanel().
+    //
+    // r8 §I2 noted listbox+option ideally shouldn't contain nested
+    // interactive elements (the eye toggle is a real <button>). The
+    // arrow-key navigation + Enter/Space selection on rows is the
+    // listbox idiom that screen readers expect. The eye button is
+    // reachable via Tab as a separate focusable element. A move to
+    // role=tree+treeitem (which permits nested controls) would be
+    // cleaner but breaks the row-selection pattern users rely on.
+    // Tracked as a future follow-up; current escape valve is the
+    // explicit aria-label on the eye button so AT users hear "Hide
+    // layer: <name>" distinctly from "Layer <name> (<type>)".
     row.setAttribute('role', 'option');
     row.setAttribute('aria-selected', layer.selected ? 'true' : 'false');
     row.setAttribute('aria-label', `${layer.name} (${layer.type})`);
