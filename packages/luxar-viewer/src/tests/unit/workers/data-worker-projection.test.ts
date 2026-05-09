@@ -284,3 +284,79 @@ describe('projectGSplatsTo3D — happy paths', () => {
     expect(wasm.compute_gsplats_attenuation).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('Color normalization at WASM boundary (r8 §F3)', () => {
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('Lines: Uint8Array colors are normalized to Float32 [0,1] before interpolate_colors_batch', async () => {
+    const { mod, wasm } = await loadWorker();
+    // Override clip_segments_batch to report 1 visible segment so the
+    // interpolate_colors_batch call site fires (early-exit guards
+    // skip it when visibleCount === 0).
+    wasm.clip_segments_batch.mockImplementation(() => 1);
+    const ndim = 3;
+    const numVertices = 2;
+    const positions = new Float32Array(numVertices * ndim);
+    const segments = new Uint32Array([0, 1]);
+    const widths = new Float32Array([1.0, 1.0]);
+    // 6 RGB bytes for 2 vertices.
+    const colorsU8 = new Uint8Array([0, 128, 255, 64, 200, 32]);
+
+    await mod.workerAPI.projectLinesTo3D({
+      positions,
+      segments,
+      widths,
+      colors: colorsU8,
+      sharpness: null,
+      slicePosition: [0, 0, 0],
+      tolerance: [10, 10, 10],
+      displayDims: [0, 1, 2],
+      ndim,
+      segmentCount: 1,
+    });
+
+    // The first arg to interpolate_colors_batch must be a Float32Array
+    // with values in [0, 1] (Uint8 / 255). Spot-check the conversion.
+    expect(wasm.interpolate_colors_batch).toHaveBeenCalled();
+    const firstArg = (wasm.interpolate_colors_batch.mock.calls[0] as unknown[])[0];
+    expect(firstArg).toBeInstanceOf(Float32Array);
+    const arr = firstArg as Float32Array;
+    expect(arr[0]).toBeCloseTo(0, 5);
+    expect(arr[1]).toBeCloseTo(128 / 255, 5);
+    expect(arr[2]).toBeCloseTo(1, 5);
+    expect(arr[3]).toBeCloseTo(64 / 255, 5);
+    expect(arr[5]).toBeCloseTo(32 / 255, 5);
+  });
+
+  it('Lines: Uint16Array colors are normalized by 1/65535 before WASM', async () => {
+    const { mod, wasm } = await loadWorker();
+    wasm.clip_segments_batch.mockImplementation(() => 1);
+    const ndim = 3;
+    const positions = new Float32Array(2 * ndim);
+    const segments = new Uint32Array([0, 1]);
+    const widths = new Float32Array([1.0, 1.0]);
+    const colorsU16 = new Uint16Array([0, 32768, 65535, 0, 0, 0]);
+
+    await mod.workerAPI.projectLinesTo3D({
+      positions,
+      segments,
+      widths,
+      colors: colorsU16,
+      sharpness: null,
+      slicePosition: [0, 0, 0],
+      tolerance: [10, 10, 10],
+      displayDims: [0, 1, 2],
+      ndim,
+      segmentCount: 1,
+    });
+
+    const firstArg = (wasm.interpolate_colors_batch.mock.calls[0] as unknown[])[0];
+    expect(firstArg).toBeInstanceOf(Float32Array);
+    const arr = firstArg as Float32Array;
+    expect(arr[0]).toBeCloseTo(0, 5);
+    expect(arr[1]).toBeCloseTo(32768 / 65535, 5);
+    expect(arr[2]).toBeCloseTo(1, 5);
+  });
+});

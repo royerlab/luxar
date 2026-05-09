@@ -92,23 +92,34 @@ describe('encodeScreenshotBlob', () => {
 });
 
 describe('downloadBlob', () => {
-  it('appends an anchor, clicks it, and revokes the URL after delay', () => {
+  // r8 §F5: previously this test installed fake timers AFTER calling
+  // downloadBlob, so the real setTimeout had already scheduled the
+  // revoke before fake timers took over — `revokeSpy` was never
+  // observed. Install fake timers FIRST, then assert revoke is
+  // delayed and fires after 100 ms.
+  it('appends an anchor, clicks it, and revokes the URL after a 100ms delay', () => {
+    vi.useFakeTimers();
     const before = document.body.children.length;
     const createSpy = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:fake');
-    const revokeSpy = vi.spyOn(URL, 'revokeObjectURL');
+    const revokeSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
 
-    downloadBlob(new Blob(['x']), 'test.png');
+    try {
+      downloadBlob(new Blob(['x']), 'test.png');
 
-    expect(createSpy).toHaveBeenCalledTimes(1);
-    expect(document.body.children.length).toBeGreaterThanOrEqual(before);
-    // URL revoke is delayed by 100ms — verify it scheduled at least once.
-    vi.useFakeTimers();
-    // Drain any pending timers so revoke fires.
-    vi.advanceTimersByTime(150);
-    vi.useRealTimers();
-    // We cannot assert on exact revoke calls due to timer/async interaction,
-    // but createObjectURL was called and a download anchor was appended.
-    expect(revokeSpy).toBeDefined();
+      expect(createSpy).toHaveBeenCalledTimes(1);
+      expect(document.body.children.length).toBeGreaterThanOrEqual(before);
+      // Revoke must be scheduled but NOT fired immediately.
+      expect(revokeSpy).not.toHaveBeenCalled();
+
+      // Advance just past the 100 ms revoke delay.
+      vi.advanceTimersByTime(150);
+      expect(revokeSpy).toHaveBeenCalledTimes(1);
+      expect(revokeSpy).toHaveBeenCalledWith('blob:fake');
+    } finally {
+      vi.useRealTimers();
+      createSpy.mockRestore();
+      revokeSpy.mockRestore();
+    }
   });
 });
 
