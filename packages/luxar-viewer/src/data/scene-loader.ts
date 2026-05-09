@@ -9,6 +9,7 @@ import * as zarr from 'zarrita';
 import * as THREE from 'three';
 import { normalizeURL } from './scene-loader/url-normalization';
 import { setupCaches } from './scene-loader/cache-setup';
+import { wireMonitorAfterLoad } from './scene-loader/monitor-wiring';
 import { applyEffectiveAttrs as applyEffectiveAttrsHelper } from './scene-loader/effective-attrs';
 import {
   getCacheStats as getCacheStatsHelper,
@@ -47,7 +48,7 @@ import {
   LoaderConfig,
   LoadedPointsData,
 } from './data-loader-types';
-import type { LoaderMonitor, SceneGraphNode } from '../types/data-monitor-types';
+import type { LoaderMonitor } from '../types/data-monitor-types';
 import { ZarrSceneAttrs, ZarrNodeAttrs, hasContentsMethod } from '../types/zarr';
 import type {
   SceneLoaderMonitorPort,
@@ -77,11 +78,6 @@ import { GPUBufferPool } from '../rendering/gpu-buffer-pool';
 import { invertNdTransformForQuery, computeWorldNdTransform } from './transforms/nd-transform';
 import { NodeFactory } from '../rendering/node-factory';
 import { UpdateProfiler, type UpdateSession } from '../profiling/update-profiler';
-import {
-  getAggregatedPointsAccumulatorStats,
-  getAggregatedLinesAccumulatorStats,
-  getAggregatedGSplatsAccumulatorStats,
-} from './utils/stats-aggregator';
 import { LoaderRegistry } from './loaders/loader-registry';
 import { loadOverlayConfigs } from './loaders/overlay-loader';
 import { notifier } from '../utils/notifier';
@@ -93,7 +89,6 @@ import {
   isSceneDimensions,
   validateExtendDims,
 } from './scene-loader/extend-tolerance';
-import { convertToSceneGraphNode } from './scene-loader/scene-graph-converter';
 
 // ============================================================================
 // Staged commit types for atomic geometry updates
@@ -512,53 +507,21 @@ export class SceneLoader {
       this.rootGroup.userData.zarrBaseUrl = this.normalizeURL(url);
     }
 
-    // Force update the monitor UI after all loaders are connected
-    // This ensures the UI shows the correct state even if no events have fired yet
-    const monitor = this.monitor;
-    if (monitor) {
-      // Connect cache stats provider for L1/L2 cache monitoring
-      if (this.cachingStore) {
-        monitor.setCacheStatsProvider(this.cachingStore);
-      }
-
-      // Connect L0 decompressed chunk cache provider for Cache tab
-      if (this.l0Cache) {
-        monitor.setL0CacheProvider({
-          getStats: () => this.l0Cache!.getStats(),
-          clear: () => this.l0Cache!.clear(),
-        });
-      }
-
-      // Connect GPU buffer pool provider for Memory tab
-      if (this._gpuBufferPool) {
-        monitor.setGPUBufferPoolProvider(this._gpuBufferPool);
-      }
-
-      // Connect accumulator providers for Memory tab (aggregate stats across all loaders)
-      monitor.setAccumulatorProvider('points', {
-        getStats: () => getAggregatedPointsAccumulatorStats(this.loaders),
-      });
-      monitor.setAccumulatorProvider('lines', {
-        getStats: () => getAggregatedLinesAccumulatorStats(this.linesLoaders),
-      });
-      monitor.setAccumulatorProvider('gsplats', {
-        getStats: () => getAggregatedGSplatsAccumulatorStats(this.gsplatLoaders),
-      });
-
-      // Connect profiler for Performance tab timing display
-      if (this.profiler) {
-        monitor.setProfiler(this.profiler);
-      }
-
-      // Send scene graph to monitor for display
-      const sceneGraphRoot = this.convertToSceneGraphNode(sceneGraph);
-      monitor.setSceneGraph(sceneGraphRoot);
-
-      // Update visible segments count (initial load)
-      this.updateVisibleCountsInMonitor();
-
-      monitor.forceUpdate();
-    }
+    // Phase 18 W4: post-load monitor-tab provider wiring extracted to
+    // scene-loader/monitor-wiring.ts. Same shape as before; loadScene
+    // now reads as "build → wire monitor → done".
+    wireMonitorAfterLoad({
+      monitor: this.monitor,
+      cachingStore: this.cachingStore,
+      l0Cache: this.l0Cache,
+      gpuBufferPool: this._gpuBufferPool,
+      profiler: this.profiler,
+      loaders: this.loaders,
+      linesLoaders: this.linesLoaders,
+      gsplatLoaders: this.gsplatLoaders,
+      sceneGraph,
+      updateVisibleCounts: () => this.updateVisibleCountsInMonitor(),
+    });
 
     log.success(Modules.SCENE_LOADER, 'Scene loaded successfully');
 
@@ -1721,13 +1684,6 @@ export class SceneLoader {
 
     // Initialize ViewState using ViewStateManager
     this.viewState = ViewStateManager.initializeFromDimensions(sceneDims);
-  }
-
-  /**
-   * Convert internal SceneNode to SceneGraphNode for monitor display
-   */
-  private convertToSceneGraphNode(node: SceneNode): SceneGraphNode {
-    return convertToSceneGraphNode(node);
   }
 
   /**
