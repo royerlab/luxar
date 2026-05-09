@@ -87,3 +87,121 @@ export const CODEC_LABEL_TO_VALUE: Readonly<Record<string, string>> = {
   'H.264': 'h264',
   VP8: 'vp8',
 };
+
+/**
+ * Per-control visibility decision returned by
+ * {@link computeControlVisibility}. Phase 19B (r5).
+ *
+ * The recording-panel's `updateControlVisibility` method previously
+ * mixed the "should X show?" decisions with the lil-gui controller
+ * `.show()` / `.hide()` calls. This object captures the pure-logic
+ * answers so the panel only has to apply them, and so the rules
+ * are testable without lil-gui in the loop.
+ */
+export interface ControlVisibilityDecision {
+  /** Image-only group (quality, max DPR, transparent BG). */
+  showImageGroup: boolean;
+  /** Video / turntable shared group (resolution, duration, codec, …). */
+  showVideoGroup: boolean;
+  /** Turntable-only group (rotation speed, axis, …). */
+  showTurntableGroup: boolean;
+
+  /** Image quality slider — hidden for png / exr (lossless). */
+  showImageQuality: boolean;
+  /** Transparent-BG checkbox — hidden for exr (always has alpha). */
+  showImageTransparent: boolean;
+
+  /** Video codec dropdown — only video container formats. */
+  showVideoCodec: boolean;
+  /** Video quality slider — hidden for image-sequence formats. */
+  showVideoQuality: boolean;
+  /** Video duration limit — hidden for turntable (computed from speed). */
+  showVideoDuration: boolean;
+  /** Sync-to-slider toggle — hidden for turntable. */
+  showSyncToggle: boolean;
+  /** Sync-dimension dropdown — hidden when sync-toggle is off or for turntable. */
+  showSyncDimension: boolean;
+
+  /** Format dropdown options that should be visible for the current mode. */
+  validFormats: readonly OutputFormat[];
+
+  /**
+   * If the current `outputFormat` is invalid for the new mode, this
+   * holds the auto-corrected default. `null` if no correction
+   * needed.
+   */
+  correctedFormat: OutputFormat | null;
+
+  /**
+   * For video container formats only: codec values that should be
+   * visible in the codec dropdown. Video mode (MediaRecorder) limits
+   * to the MediaRecorder-supported codecs; turntable uses mediabunny
+   * which supports all. `null` for non-video formats.
+   */
+  visibleVideoCodecs: readonly string[] | null;
+}
+
+/**
+ * Compute the per-control visibility decision for the recording
+ * panel given the current mode + options. Pure function of its
+ * inputs (no DOM, no controller access).
+ */
+export function computeControlVisibility(
+  mode: RecordingMode,
+  options: { outputFormat: OutputFormat; syncToSlider: boolean }
+): ControlVisibilityDecision {
+  const isImage = mode === 'image';
+  const isVideo = mode === 'video';
+  const isTurntable = mode === 'turntable';
+
+  const validFormats = getValidFormatsForMode(mode);
+  const correctedFormat = validFormats.includes(options.outputFormat)
+    ? null
+    : getDefaultFormatForMode(mode);
+  const fmt = correctedFormat ?? options.outputFormat;
+
+  const isVideoFormat = isVideoContainerFormat(fmt);
+  const isImgSeq = isImageSequenceFormat(fmt);
+
+  // Image quality slider visible only in image mode and only for
+  // lossy formats (jpeg / webp). Hidden for png / exr.
+  const showImageQuality = isImage && fmt !== 'png' && fmt !== 'exr';
+  // Transparent-BG hidden for exr (always has alpha).
+  const showImageTransparent = isImage && fmt !== 'exr';
+
+  const showVideoGroup = isVideo || isTurntable;
+  const showVideoCodec = showVideoGroup && isVideoFormat;
+  // Video quality irrelevant for image-sequence formats.
+  const showVideoQuality = showVideoGroup && !isImgSeq;
+  // Turntable computes duration from speed; sync-toggle is irrelevant.
+  const showVideoDuration = isVideo;
+  const showSyncToggle = isVideo;
+  const showSyncDimension = isVideo && options.syncToSlider;
+
+  let visibleVideoCodecs: readonly string[] | null = null;
+  if (showVideoCodec) {
+    if (isVideo) {
+      visibleVideoCodecs = getMediaRecorderCodecs();
+    } else {
+      // Turntable: mediabunny supports all codecs; pass through the
+      // full label-to-value map's value set.
+      visibleVideoCodecs = Object.values(CODEC_LABEL_TO_VALUE);
+    }
+  }
+
+  return {
+    showImageGroup: isImage,
+    showVideoGroup,
+    showTurntableGroup: isTurntable,
+    showImageQuality,
+    showImageTransparent,
+    showVideoCodec,
+    showVideoQuality,
+    showVideoDuration,
+    showSyncToggle,
+    showSyncDimension,
+    validFormats,
+    correctedFormat,
+    visibleVideoCodecs,
+  };
+}

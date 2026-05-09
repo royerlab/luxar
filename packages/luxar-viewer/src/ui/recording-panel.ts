@@ -45,11 +45,7 @@ import {
   SliderSyncCoordinator,
 } from './recording/animation-sync';
 import {
-  getValidFormatsForMode,
-  getDefaultFormatForMode,
-  isImageSequenceFormat,
-  isVideoContainerFormat,
-  getMediaRecorderCodecs,
+  computeControlVisibility,
   FORMAT_LABEL_TO_VALUE,
   CODEC_LABEL_TO_VALUE,
 } from './recording/gui-builder';
@@ -1331,103 +1327,73 @@ export class RecordingPanel {
     return getNavigableDimensionOptionsHelper();
   }
 
-  /** Show/hide controls based on current mode */
+  /**
+   * Show/hide controls based on current mode + format. Phase 19B
+   * (r5): the per-control decision logic moves to
+   * `recording/gui-builder.ts:computeControlVisibility` (pure
+   * function); this method only applies the decisions to its
+   * named lil-gui controllers and dropdown <option> elements.
+   */
   private updateControlVisibility(): void {
-    const isImage = this.mode === 'image';
-    const isVideo = this.mode === 'video';
-    const isTurntable = this.mode === 'turntable';
+    const decision = computeControlVisibility(this.mode, this.options);
 
-    const validFormats = getValidFormatsForMode(this.mode);
-
-    // Show/hide <option> elements in the format dropdown.
-    // Note: our GUI uses the display label as option.value (e.g., "PNG" not "png"),
-    // and maps labels→values internally. We match by label→value mapping.
+    // Filter format-dropdown options by mode. Our GUI uses display
+    // labels as option.value (e.g., "PNG" not "png"); map labels →
+    // internal values to compare.
     const selectEl = this.formatController?.domElement.querySelector(
       'select'
     ) as HTMLSelectElement | null;
     if (selectEl?.options) {
       for (const opt of Array.from(selectEl.options)) {
         const val = FORMAT_LABEL_TO_VALUE[opt.value] || opt.value;
-        opt.hidden = !validFormats.includes(val as OutputFormat);
+        opt.hidden = !decision.validFormats.includes(val as OutputFormat);
       }
     }
 
-    // Auto-correct if current format is invalid for this mode
-    if (!validFormats.includes(this.options.outputFormat)) {
-      this.options.outputFormat = getDefaultFormatForMode(this.mode);
+    // Auto-correct format if invalid for this mode.
+    if (decision.correctedFormat) {
+      this.options.outputFormat = decision.correctedFormat;
       this.formatController?.updateDisplay();
     }
-    const fmt = this.options.outputFormat;
 
-    // Format selector is always visible
     this.formatController?.show();
 
-    // Image-only controls (quality, max DPR, transparent BG)
+    // Image group (quality, max DPR, transparent BG).
     for (const ctrl of this.imageControllers) {
-      isImage ? ctrl.show() : ctrl.hide();
+      decision.showImageGroup ? ctrl.show() : ctrl.hide();
     }
-    if (isImage) {
-      // Hide quality slider for lossless/HDR formats
-      // (mp4/webm cannot occur in Image mode — auto-correction above prevents it)
-      if (fmt === 'png' || fmt === 'exr') {
-        this.qualityController?.hide();
-      }
-      // Hide transparent BG for HDR format (EXR always has alpha)
-      if (fmt === 'exr') {
-        this.transparentController?.hide();
-      }
+    if (decision.showImageGroup) {
+      if (!decision.showImageQuality) this.qualityController?.hide();
+      if (!decision.showImageTransparent) this.transparentController?.hide();
     }
 
+    // Video / turntable shared group.
     for (const ctrl of this.videoControllers) {
-      isVideo || isTurntable ? ctrl.show() : ctrl.hide();
+      decision.showVideoGroup ? ctrl.show() : ctrl.hide();
     }
-    // Codec dropdown: only show for video formats (MP4/WebM/MKV)
-    const isVideoFormat = isVideoContainerFormat(fmt);
-    if (!isVideoFormat) {
-      this.videoCodecController?.hide();
-    }
-    // Filter codec options by mode: MediaRecorder (Video) only supports VP9/VP8.
-    // Turntable (mediabunny) supports all codecs.
-    if (isVideo && isVideoFormat) {
-      const mediaRecorderCodecs = getMediaRecorderCodecs();
+    if (!decision.showVideoCodec) this.videoCodecController?.hide();
+    if (!decision.showVideoQuality) this.videoQualityController?.hide();
+    if (!decision.showVideoDuration) this.videoDurationController?.hide();
+    if (!decision.showSyncToggle) this.syncToggleController?.hide();
+    if (!decision.showSyncDimension) this.syncDimensionController?.hide();
+
+    // Filter codec dropdown options when visible.
+    if (decision.visibleVideoCodecs) {
+      const visible = decision.visibleVideoCodecs;
       const codecSelect = this.videoCodecController?.domElement.querySelector(
         'select'
       ) as HTMLSelectElement | null;
       if (codecSelect?.options) {
         for (const opt of Array.from(codecSelect.options)) {
           const val = CODEC_LABEL_TO_VALUE[opt.value] || opt.value;
-          opt.hidden = !mediaRecorderCodecs.includes(val);
+          opt.hidden = !visible.includes(val);
         }
       }
-    } else if (isTurntable && isVideoFormat) {
-      // Turntable: show all codec options (mediabunny supports all)
-      const codecSelect = this.videoCodecController?.domElement.querySelector(
-        'select'
-      ) as HTMLSelectElement | null;
-      if (codecSelect?.options) {
-        for (const opt of Array.from(codecSelect.options)) {
-          opt.hidden = false;
-        }
-      }
-    }
-    // Video quality: hide only for image sequence formats where bitrate is irrelevant.
-    // Both MediaRecorder (Video mode) and mediabunny (Turntable video) use computeVideoBitrate().
-    if ((isVideo || isTurntable) && isImageSequenceFormat(fmt)) {
-      this.videoQualityController?.hide();
-    }
-    // Turntable: hide duration limit and sync (turntable has its own computed duration from speed)
-    if (isTurntable) {
-      this.videoDurationController?.hide();
-      this.syncToggleController?.hide();
-      this.syncDimensionController?.hide();
-    }
-    // Hide sync dimension dropdown unless sync is enabled
-    if (isVideo && !this.options.syncToSlider) {
-      this.syncDimensionController?.hide();
     }
 
+    // Turntable group.
     for (const ctrl of this.turntableControllers) {
-      isTurntable ? ctrl.show() : ctrl.hide();
+      decision.showTurntableGroup ? ctrl.show() : ctrl.hide();
     }
   }
 

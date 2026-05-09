@@ -14,6 +14,7 @@ import {
   isImageSequenceFormat,
   isVideoContainerFormat,
   getMediaRecorderCodecs,
+  computeControlVisibility,
   FORMAT_LABEL_TO_VALUE,
   CODEC_LABEL_TO_VALUE,
 } from '../../../../ui/recording/gui-builder';
@@ -101,5 +102,83 @@ describe('CODEC_LABEL_TO_VALUE', () => {
     expect(CODEC_LABEL_TO_VALUE.VP9).toBe('vp9');
     expect(CODEC_LABEL_TO_VALUE['H.264']).toBe('h264');
     expect(CODEC_LABEL_TO_VALUE.VP8).toBe('vp8');
+  });
+});
+
+describe('computeControlVisibility (Phase 19B)', () => {
+  it('image mode + png: shows image group, hides quality + transparent (lossless)', () => {
+    const d = computeControlVisibility('image', { outputFormat: 'png', syncToSlider: false });
+    expect(d.showImageGroup).toBe(true);
+    expect(d.showVideoGroup).toBe(false);
+    expect(d.showTurntableGroup).toBe(false);
+    expect(d.showImageQuality).toBe(false); // png is lossless
+    expect(d.showImageTransparent).toBe(true); // png has alpha
+    expect(d.correctedFormat).toBeNull();
+  });
+
+  it('image mode + jpeg: quality slider visible, transparent hidden when format is exr-equivalent', () => {
+    const d = computeControlVisibility('image', { outputFormat: 'jpeg', syncToSlider: false });
+    expect(d.showImageQuality).toBe(true);
+    expect(d.showImageTransparent).toBe(true);
+  });
+
+  it('image mode + exr: quality hidden (lossless), transparent hidden (always alpha)', () => {
+    const d = computeControlVisibility('image', { outputFormat: 'exr', syncToSlider: false });
+    expect(d.showImageQuality).toBe(false);
+    expect(d.showImageTransparent).toBe(false);
+  });
+
+  it('image mode + invalid mp4: auto-corrects to webp', () => {
+    const d = computeControlVisibility('image', { outputFormat: 'mp4', syncToSlider: false });
+    expect(d.correctedFormat).toBe('webp');
+  });
+
+  it('video mode + webm: shows video group + codec dropdown filtered to MediaRecorder codecs', () => {
+    const d = computeControlVisibility('video', { outputFormat: 'webm', syncToSlider: false });
+    expect(d.showVideoGroup).toBe(true);
+    expect(d.showImageGroup).toBe(false);
+    expect(d.showVideoCodec).toBe(true);
+    expect(d.visibleVideoCodecs).toEqual(['vp9', 'vp8']);
+    expect(d.showVideoDuration).toBe(true);
+    expect(d.showSyncToggle).toBe(true);
+    expect(d.showSyncDimension).toBe(false); // sync is off
+  });
+
+  it('video mode + syncToSlider: shows sync dimension dropdown', () => {
+    const d = computeControlVisibility('video', { outputFormat: 'webm', syncToSlider: true });
+    expect(d.showSyncDimension).toBe(true);
+  });
+
+  it('turntable mode + mp4: shows video + turntable groups, all codecs visible', () => {
+    const d = computeControlVisibility('turntable', { outputFormat: 'mp4', syncToSlider: false });
+    expect(d.showVideoGroup).toBe(true);
+    expect(d.showTurntableGroup).toBe(true);
+    expect(d.showVideoCodec).toBe(true);
+    // Turntable uses mediabunny; all codecs visible.
+    expect(d.visibleVideoCodecs).toEqual(['h265', 'vp9', 'h264', 'vp8']);
+    // Turntable computes duration from speed; sync irrelevant.
+    expect(d.showVideoDuration).toBe(false);
+    expect(d.showSyncToggle).toBe(false);
+    expect(d.showSyncDimension).toBe(false);
+  });
+
+  it('turntable mode + png (image sequence): video quality hidden, codec hidden', () => {
+    const d = computeControlVisibility('turntable', { outputFormat: 'png', syncToSlider: false });
+    expect(d.showVideoQuality).toBe(false);
+    expect(d.showVideoCodec).toBe(false);
+    expect(d.visibleVideoCodecs).toBeNull();
+  });
+
+  it('valid formats per mode match getValidFormatsForMode', () => {
+    expect(
+      computeControlVisibility('image', { outputFormat: 'png', syncToSlider: false }).validFormats
+    ).toEqual(getValidFormatsForMode('image'));
+    expect(
+      computeControlVisibility('video', { outputFormat: 'webm', syncToSlider: false }).validFormats
+    ).toEqual(getValidFormatsForMode('video'));
+    expect(
+      computeControlVisibility('turntable', { outputFormat: 'mp4', syncToSlider: false })
+        .validFormats
+    ).toEqual(getValidFormatsForMode('turntable'));
   });
 });
