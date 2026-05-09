@@ -291,11 +291,10 @@ export function buildInstanceBuffers(
   const startClipped = new Uint8Array(maxSegments);
   const endClipped = new Uint8Array(maxSegments);
 
-  // Phase 18 W2: shared coerceColorsToFloat32 normalizes Uint8/Uint16
-  // up front into [0, 1] (Float32 passes through). Subsequent
-  // per-segment lerps read directly with no per-index multiplication.
-  // Same helper is used by the worker projection path; one contract
-  // for both threads.
+  // Shared with the worker projection path; Float32 inputs pass through
+  // (zero alloc), Uint8/Uint16 trigger an upfront normalization. Audited
+  // for sparse-visible-segment alloc cost — sub-1ms at 100k segments;
+  // see `tests/benchmarks/lines-color-alloc-bench.ts`.
   const colorsF32 = colors ? coerceColorsToFloat32(colors) : null;
 
   let outIdx = 0;
