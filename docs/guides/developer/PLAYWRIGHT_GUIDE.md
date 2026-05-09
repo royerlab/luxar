@@ -222,9 +222,14 @@ pnpm agent:debug
 
 ### E2E Test Scripts
 
+> **CI status**: GitHub Actions E2E job is currently disabled
+> (`.github/workflows/ci.yml` `e2e-tests: if: false`). The disabled
+> job calls `pnpm test:e2e:smoke` if re-enabled. Local-only.
+
 | Script | Purpose | When to Use |
 |--------|---------|-------------|
-| `pnpm test:e2e` | Run all tests | CI, pre-commit |
+| `pnpm test:e2e` | Run all tests | Local manual testing |
+| `pnpm test:e2e:smoke` | Non-GPU smoke subset | Local CI mirror; basis for the disabled workflow |
 | `pnpm test:e2e:ui` | Interactive test runner | Writing new tests |
 | `pnpm test:e2e:debug` | Debug mode | Debugging failing tests |
 | `pnpm test:e2e:report` | View last test report | After test run |
@@ -251,7 +256,11 @@ pnpm agent:debug
 ### Basic Test Structure
 
 ```typescript
-import { test, expect } from '@playwright/test';
+// Import from `./fixtures` (NOT @playwright/test directly) so the
+// shared console-error / pageerror auto-check runs after each test.
+// Specs that need to allow specific noisy messages annotate at the
+// test level — see `fixtures.ts:DEFAULT_ALLOWED_CONSOLE_ERRORS`.
+import { test, expect } from './fixtures';
 import {
   waitForLuxarReady,
   getLuxarState,
@@ -260,8 +269,11 @@ import {
 } from './helpers';
 
 test('should load demo dataset', async ({ page }) => {
-  // Navigate with debug mode
-  await page.goto('/?src=/data/demo.zarr&debug');
+  // Use `?src=` with a full dataset path served by the dev server
+  // (typical: http://localhost:9000/datasets/examples/...). The
+  // older `/data/...` path used in some examples is not the
+  // production convention.
+  await page.goto('/?src=http://localhost:9000/datasets/examples/demo.zarr&debug');
 
   // Wait for Luxar to initialize
   await waitForLuxarReady(page);

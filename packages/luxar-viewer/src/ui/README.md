@@ -37,6 +37,18 @@ ui/
 │   └── rendering-controls-utils.ts  # Settings validation, serialization, merging
 ├── recording-panel.ts           # Screenshot and video capture panel (paired with recording/)
 ├── recording/                   # Decomposed sub-modules of recording-panel
+│   ├── types.ts                 # Shared recording types (RecordingMode, OutputFormat, …)
+│   ├── animation-sync.ts        # Slider sync coordinator
+│   ├── gui-builder.ts           # Recording panel GUI construction + visibility rules
+│   ├── media-utilities.ts       # Codec helpers, video bitrate, filename generation
+│   ├── overlay-compositor.ts    # Overlay composition for screenshots
+│   ├── screenshot-exporter.ts   # canvas.toBlob + downloadBlob + URL revoke
+│   ├── video-codec-selection.ts # mediabunny codec selection + fallback chain
+│   ├── offline-capture-driver.ts# Per-mode driver protocol (CaptureContext, abort)
+│   ├── image-sequence-driver.ts # PNG/WebP/JPEG → streaming ZIP
+│   ├── exr-sequence-driver.ts   # EXR → streaming ZIP
+│   ├── video-mode-driver.ts     # WebM/MP4/MKV via mediabunny
+│   └── zip-sequence-capture.ts  # Streaming ZIP helper shared by image + EXR drivers
 │
 ├── panels/                      # Stand-alone user-facing panels
 │   ├── dataset-browser.ts       # Zarr dataset navigation
@@ -47,7 +59,12 @@ ui/
 │   ├── performance-monitor.ts   # FPS and performance stats
 │   ├── data-loading-monitor.ts  # Data loading performance monitoring
 │   ├── data-monitor-templates.ts # HTML template functions for monitor
-│   └── data-monitor-manager.ts  # Manages DataLoadingMonitor instances
+│   ├── data-monitor-manager.ts  # Manages DataLoadingMonitor instances
+│   ├── cache-metrics-aggregator.ts # Combines L0/L1/L2/network telemetry
+│   ├── rate-calculator.ts       # Rolling per-second rate computation
+│   └── tabs/                    # Per-tab incremental DOM patchers
+│       ├── cache-tab.ts         # Cache tab patcher
+│       └── dom-helpers.ts       # patchField / updateColorClass helpers
 │
 ├── helpers/                     # Cross-cutting helpers used by panels/monitors
 │   ├── index.ts                 # showToast, help overlays, loading indicators (was helpers.ts)

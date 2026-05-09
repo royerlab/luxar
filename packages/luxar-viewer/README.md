@@ -18,7 +18,7 @@ A GPU-accelerated WebGL renderer for arbitrarily large n-dimensional scientific 
 - **⌨️ Keyboard Controls**: Intuitive keyboard navigation for dimension selection and stepping
 - **⚙️ Advanced Anti-Aliasing**: Multiple AA techniques (FXAA, SMAA, MSAA, SSAA) with known compatibility notes
 - **🧩 Unified Configuration**: Centralized config system in `src/config/` with TypeScript types
-- **📸 Recording Panel**: Screenshot (PNG/WebP/JPEG) and video capture (WebM) with turntable mode
+- **📸 Recording Panel**: Screenshots (PNG/WebP/JPEG/EXR), image-sequence ZIPs, EXR-sequence ZIPs, and video capture (WebM/MP4/MKV via mediabunny) with turntable mode
 - **📏 Scale Bar**: Physical scale bar overlay using dimension unit metadata
 - **🔄 nD Transforms**: Inverse-query transforms for non-displayed dimensions (affine and categorical)
 - **🎯 Material Caching**: Optimized material management with intelligent caching strategy
@@ -494,7 +494,15 @@ pnpm test:watch      # Run tests in watch mode
 pnpm test:with-fixtures  # Generate test fixtures, then run tests
 
 # E2E Testing (Playwright)
+# Prerequisite: examples + fixtures must exist. Run once locally:
+#   make run-examples
+#   pnpm test:generate-fixtures
+# Or use `make test-e2e` from the repo root which orchestrates this.
+# E2E is currently disabled in GitHub CI (browser/GPU reliability);
+# `pnpm test:e2e:smoke` is the subset the workflow re-enable would
+# run (also useful locally for quick verification).
 pnpm test:e2e        # Run all E2E tests
+pnpm test:e2e:smoke  # Run the non-GPU smoke subset
 pnpm test:e2e:ui     # Run E2E tests with interactive UI
 pnpm test:e2e:debug  # Run E2E tests in debug mode
 pnpm test:e2e:report # Show E2E test report

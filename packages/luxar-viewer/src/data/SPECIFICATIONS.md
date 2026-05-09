@@ -860,21 +860,33 @@ interface ViewState {
   displayDims: number[]; // Indices of displayed dimensions [0-2]
   slicePosition: number[]; // Current position in nD space
   tolerance: number[]; // Search radius per dimension
-  dimensions?: SimpleDims; // REQUIRED for extend_to_all feature
-}
-
-interface SimpleDims {
-  metadata: DimensionMetadata[]; // Full dimension info with names
-  ndim: number; // Total dimensionality
-  displayed: number[]; // Displayed dimension indices
-  currentStep: number[]; // Current slice position
+  dimensions?: DimensionMetadata[]; // REQUIRED for extend_to_all feature
 }
 ```
 
-**CRITICAL**: The `dimensions` field is required for the `extend_to_all` feature to work.
-If `dimensions` is undefined, nodes with `extend_to_all` will fall back to normal spatial
-queries and may not be visible at all slice positions. Ensure `dimensions` is initialized
-from scene metadata BEFORE loading any data nodes.
+**Boundary note (r8 §G1)**: there are two related shapes — keep them
+distinct:
+
+- **Navigation state** (`SimpleDims`, in `scene/scene-dims-manager.ts`)
+  — the high-level UI state owned by `SceneDimsManager`. Has
+  `metadata`, `ndim`, `displayed`, `currentStep`. Used by sliders,
+  the keyboard navigation handlers, and animation controllers.
+- **Per-loader view state** (`ViewState`, in
+  `data/data-loader-types.ts`) — the per-load query the data layer
+  consumes. `dimensions` here is `DimensionMetadata[]`, NOT
+  `SimpleDims`. Loader paths read names + units from this metadata
+  to resolve `extend_to_all` and `nd_transform`.
+
+`simpleDimsToViewState()` (in `data/view-state-utils.ts`) is the
+conversion boundary: navigation state → per-loader state. New code
+that takes a navigation `SimpleDims` and needs a `ViewState` should
+go through that helper, not assemble the fields by hand.
+
+**CRITICAL**: The `dimensions` field is required for the `extend_to_all`
+feature to work. If `dimensions` is undefined, nodes with `extend_to_all`
+will fall back to normal spatial queries and may not be visible at all
+slice positions. Ensure `dimensions` is initialized from scene metadata
+BEFORE loading any data nodes.
 
 ### 6.3 PointRange
 
@@ -1604,18 +1616,20 @@ The worker pool provides:
 - **Singleton Pattern**: Single global pool instance
 - **Least-Busy Selection**: Routes queries to worker with fewest active tasks
 - **Lazy Initialization**: Workers created on first use
-- **Query Tracking**: Accurate load balancing via `getWorkerWithTracking()`
+- **Per-call Timeout + Tracking**: `runWithTimeout()` enforces a
+  per-call deadline, tracks active queries for load balancing, and
+  releases the worker back to the pool in finally.
 - **Error Handling**: Graceful fallback to main thread on failure
 
 ```typescript
-// Worker acquisition with tracking
-const { worker, done } = await getWorkerPool().getWorkerWithTracking();
-try {
-  const result = await worker.querySpatialIndex(params);
-  return result;
-} finally {
-  done(); // Release worker back to pool
-}
+// Recommended: runWithTimeout owns acquire + tracking + timeout +
+// release in one call. This is the production pattern; raw
+// getWorker() / getWorkerWithTracking() bypass the timeout guard
+// and require manual done() bookkeeping.
+const result = await getWorkerPool().runWithTimeout(
+  (worker) => worker.querySpatialIndex(params),
+  { timeoutMs: 5_000 }
+);
 ```
 
 ### 8.5 Fallback Behavior
@@ -1628,9 +1642,11 @@ if (!appConfig.dataLoading.performance.useWebWorkers) {
   return mainThreadQuerySpatialIndex(params);
 }
 
-// Worker path
-const worker = await getWorkerPool().getWorker();
-return worker.querySpatialIndex(params);
+// Worker path — same runWithTimeout helper as above.
+return await getWorkerPool().runWithTimeout(
+  (worker) => worker.querySpatialIndex(params),
+  { timeoutMs: 5_000 }
+);
 ```
 
 ### 8.6 Performance Characteristics

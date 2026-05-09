@@ -26,8 +26,11 @@ test('my test', async ({ page }) => {
 
 #### 2. Console Interceptor History
 ```typescript
+// The current API exposes buffered getters rather than a `.messages`
+// field. Use `getMessages()` (or the per-level helpers); the raw
+// internal buffer was renamed to discourage direct access.
 const messages = await page.evaluate(() => {
-  return window.__luxarDebug.consoleInterceptor.messages;
+  return window.__luxarDebug?.consoleInterceptor?.getMessages?.() ?? [];
 });
 ```
 
@@ -177,9 +180,16 @@ pnpm agent:debug:visible  # Watch the browser
 
 ### Template:
 ```typescript
-import { test, expect } from '@playwright/test';
+// Import from `./fixtures` (NOT @playwright/test directly) so the
+// shared console-error / pageerror checks run automatically after
+// each test. Specs that need to allow specific console messages
+// can annotate at the test level.
+import { test, expect } from './fixtures';
 import { waitForLuxarReady, getLuxarState, waitForSpatialQuery } from './helpers';
 
+// Use `?src=` URL params (NOT `/data/...`) — that's the production
+// convention. Datasets live under `/datasets/examples/...` on the
+// dev server and are referenced via the src query parameter.
 const DATASET = 'http://localhost:9000/datasets/examples/my_dataset.zarr';
 
 test.describe('My Feature Tests', () => {
