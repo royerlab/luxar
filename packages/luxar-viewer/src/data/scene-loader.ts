@@ -1785,14 +1785,17 @@ export class SceneLoader {
       return false;
     }
 
-    // Phase 16A.4: serialize against the main update path. retry calls
-    // `loader.updateView(...)` directly, which would race with the
-    // main updateView()'s own per-loader call for the same path —
-    // concurrent zarr fetches and concurrent commits to the same THREE
-    // object can produce inconsistent state. Refuse here; the caller
-    // (UI retry button, debug-console) can re-invoke after the slider
-    // / animation update settles. retryAllFailedLoaders() applies the
-    // same guard at its entry point.
+    // Phase 16A.4 + Phase 19.0.2: serialize against the main update
+    // path. retry calls `loader.updateView(...)` directly, which
+    // would race with updateView()'s own per-loader call for the
+    // same path — concurrent zarr fetches and concurrent commits to
+    // the same THREE object produce inconsistent state.
+    //
+    // Phase 16A.4 only refused if a prior update was active at retry
+    // entry. r5 flagged the missing other half: retry didn't *take*
+    // the lock, so an updateView starting AFTER retry began could
+    // race. Phase 19.0.2 takes the lock and drains any pending state
+    // queued during retry.
     if (this._updateInProgress) {
       log.info(
         Modules.SCENE_LOADER,
@@ -1800,6 +1803,24 @@ export class SceneLoader {
       );
       return false;
     }
+
+    this._updateInProgress = true;
+    try {
+      return await this._retryFailedLoaderUnlocked(path);
+    } finally {
+      this._updateInProgress = false;
+      this._drainPendingViewState();
+    }
+  }
+
+  /**
+   * Internal retry body without the `_updateInProgress` lock dance.
+   * Used by both `retryFailedLoader` (which takes the lock once) and
+   * `retryAllFailedLoaders` (which takes the lock once and runs
+   * multiple retries inside it). Phase 19.0.2.
+   */
+  private async _retryFailedLoaderUnlocked(path: string): Promise<boolean> {
+    if (!this.failedLoaders.has(path)) return false;
 
     log.info(Modules.SCENE_LOADER, `Retrying failed loader: ${path}`);
 
@@ -1932,10 +1953,10 @@ export class SceneLoader {
       return { succeeded: [], failed: [] };
     }
 
-    // Phase 16A.4: same serialization guard as retryFailedLoader().
-    // Without this, the parallel `Promise.all(... retryFailedLoader)`
-    // below would each see `_updateInProgress` and refuse, but the
-    // earlier check is clearer in the call graph.
+    // Phase 16A.4 + 19.0.2: same serialization as retryFailedLoader.
+    // We take the lock once around the parallel batch and call the
+    // unlocked retry helper for each path so siblings in the same
+    // batch don't trigger the lock-refusal branch.
     if (this._updateInProgress) {
       log.info(
         Modules.SCENE_LOADER,
@@ -1946,31 +1967,58 @@ export class SceneLoader {
 
     log.info(Modules.SCENE_LOADER, `Retrying ${failedPaths.length} failed loader(s)`);
 
-    const succeeded: string[] = [];
-    const failed: string[] = [];
+    this._updateInProgress = true;
+    try {
+      const succeeded: string[] = [];
+      const failed: string[] = [];
 
-    // Retry all in parallel for efficiency
-    const results = await Promise.all(
-      failedPaths.map(async (path) => {
-        const success = await this.retryFailedLoader(path);
-        return { path, success };
-      })
-    );
+      const results = await Promise.all(
+        failedPaths.map(async (path) => {
+          const success = await this._retryFailedLoaderUnlocked(path);
+          return { path, success };
+        })
+      );
 
-    for (const { path, success } of results) {
-      if (success) {
-        succeeded.push(path);
-      } else {
-        failed.push(path);
+      for (const { path, success } of results) {
+        if (success) {
+          succeeded.push(path);
+        } else {
+          failed.push(path);
+        }
       }
+
+      log.info(
+        Modules.SCENE_LOADER,
+        `Retry complete: ${succeeded.length} succeeded, ${failed.length} still failing`
+      );
+
+      return { succeeded, failed };
+    } finally {
+      this._updateInProgress = false;
+      this._drainPendingViewState();
     }
+  }
 
-    log.info(
-      Modules.SCENE_LOADER,
-      `Retry complete: ${succeeded.length} succeeded, ${failed.length} still failing`
-    );
-
-    return { succeeded, failed };
+  /**
+   * Phase 19.0.2: process any `_pendingViewState` queued during a
+   * retry. The retry path sets `_updateInProgress = true`, which
+   * causes a concurrent `updateView()` call to queue its state
+   * rather than start. After retry releases the lock, this helper
+   * drains that queued state via a fresh `updateView()` call. Fired
+   * asynchronously so the retry's own promise resolves first.
+   */
+  private _drainPendingViewState(): void {
+    if (this._pendingViewState === null) return;
+    const pendingState = this._pendingViewState;
+    this._pendingViewState = null;
+    Promise.resolve().then(() => {
+      this.updateView(pendingState).catch((err) => {
+        log.warning(
+          Modules.SCENE_LOADER,
+          `Drained updateView after retry failed: ${(err as Error).message}`
+        );
+      });
+    });
   }
 
   /**
