@@ -5,16 +5,30 @@
 
 Visual reference for understanding the Luxar viewer architecture, data flow, and key algorithms.
 
-> **Phase 13.17 note**: this document predates the per-geometry data
-> reorganization (Phase 10), the input → ui dependency-inversion via
-> `DimensionSlidersFactory` (Phase 8.6.d), and the data → ui
-> dependency-inversion via `SceneLoaderMonitorPort` (Phase 8.6.e).
-> Diagrams referencing a singular `PointSpatialIndexLoader` or showing
-> `DimensionSliders` as a direct dependency of `input/` are stale.
-> See `src/data/README.md` for the current per-geometry split and
-> `.dependency-cruiser.cjs` for the authoritative layer order
-> (`types → config → cache → rendering → data → scene → input → ui →
-> core`). A full refresh is tracked as a Phase 14 follow-up.
+> **Staleness note (as of Phase 17)**: this document predates several
+> rounds of structural change. Confirmed-stale items below; a full
+> mermaid refresh is still the long-term target.
+>
+> - **Per-geometry data reorganization** (Phase 10): there is no longer
+>   a singular `PointSpatialIndexLoader`. See
+>   `src/data/{points,lines,gsplats}/` for the per-geometry split.
+> - **Input → UI dependency inversion** via `DimensionSlidersFactory`
+>   (Phase 8.6.d): `DimensionSliders` is no longer a direct dependency
+>   of `input/`.
+> - **Data → UI dependency inversion** via `SceneLoaderMonitorPort`
+>   (Phase 8.6.e): the data → ui edge in dep-graphs is gone.
+> - **Singletons not shown**: `WorkerPool`, `SceneLoaderManager`,
+>   `DataMonitorManager`, `DatasetBrowser`, `ManagerRegistry`. The
+>   first three are wired via `app.ts` factory paths; the fourth is a
+>   per-app UI panel; the fifth (Phase 13.x) is future-facing
+>   coordination, not yet on the hot path.
+> - **Dispose model** (Phase 14.5 / 15.1): `LuxarApp.dispose()` uses
+>   `safeDispose()` per-component and the `WorkerPool` cleans up
+>   in-flight workers via `pendingWorkers` + `initGeneration`.
+>
+> The authoritative layer order lives in `.dependency-cruiser.cjs`:
+> `types → config → cache → rendering → data → scene → input → ui →
+> core`.
 
 ---
 

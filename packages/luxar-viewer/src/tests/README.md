@@ -84,7 +84,8 @@ The fixture combines two signal sources before the assertion fires
   uncaught exceptions surfaced via the page-level error event)
 
 Both flows filter against `DEFAULT_ALLOWED_CONSOLE_ERRORS`
-(currently just `/WebGL context lost/`).
+(`/WebGL context lost/` plus the loader's optional-resource probe
+404/501s — see `src/tests/e2e/fixtures.ts` for the canonical list).
 
 ---
 

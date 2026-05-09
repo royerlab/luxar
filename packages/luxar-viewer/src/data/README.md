@@ -158,6 +158,11 @@ The SceneLoader has been refactored into focused, testable modules:
 - Material creation and colormap application
 - Transform application and validation
 - Picking system integration (shadow pick-node creation)
+- **Empty-placeholder factories** (`createEmpty{Points,Lines,GSplats}Node`,
+  Phase 14.3) — every loader attaches a placeholder before the first
+  fetch so a transient load failure leaves a findable, retryable node
+  in the scene rather than a hole. The same node is later populated
+  in place by `commit*Geometry` helpers.
 
 **Data Accumulators** (`data-accumulator.ts`):
 

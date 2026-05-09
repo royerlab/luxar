@@ -1,20 +1,14 @@
 /**
  * Central lifecycle coordinator for the viewer's singleton managers.
  *
- * The viewer has six+ singletons: SceneLoaderManager,
- * DataMonitorManager, ThemeManager, sceneDimsManager, materialManager,
- * consoleInterceptor, the WorkerPool, etc. Each owns its own
- * `getInstance()` / `disposeInstance()` plumbing, but disposal order
- * is currently order-by-luck — `LuxarApp.dispose()` calls each
- * manager's `dispose` individually, and the order is whatever the
- * code happens to write.
- *
- * `ManagerRegistry` makes the order explicit. Each manager registers
- * itself on first instantiation; `disposeAll()` walks them in the
- * reverse of registration order (LIFO), which mirrors typical
- * teardown semantics: the last thing constructed is the first
- * thing torn down. Idempotent — repeated `disposeAll()` calls are
- * safe.
+ * Status (as of Phase 17): future-facing infrastructure. Today's
+ * production teardown calls each manager's `dispose` directly from
+ * `LuxarApp.dispose()` — none of the managers self-register on
+ * first instantiation. `ManagerRegistry` exists so a manager that
+ * opts in via `register()` participates in a unified LIFO teardown
+ * (last-registered → first-disposed); when more managers wire in,
+ * we can shift coordination here and drop their explicit `app.ts`
+ * call sites. Idempotent — repeated `disposeAll()` calls are safe.
  *
  * Tests can call `disposeAll()` between cases to start clean. The
  * registry is itself a process-level singleton (lazy, zero-config).

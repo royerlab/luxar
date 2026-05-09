@@ -248,31 +248,59 @@ function showError(message: string): void {
 
 ### 5.1 Dispose Sequence
 
-**Purpose**: Properly dispose all resources to prevent memory leaks.
+**Purpose**: Properly dispose all resources to prevent memory leaks
+and double-disposal hazards. The current implementation lives in
+`LuxarApp.dispose()` (`src/core/app.ts`).
 
-**Order** (reverse of initialization):
+**Conventions**:
+
+- Each component is torn down through a `safeDispose(name, fn)`
+  helper that catches exceptions per-step; one failing dispose can't
+  abort the rest of the teardown.
+- Order is roughly reverse of construction: stop new work first
+  (animation, input, scheduled callbacks), then dispose UI panels,
+  then data systems, then renderer/WebGL, then global listeners and
+  singletons (worker pool, monitor manager, scene-loader manager).
+- Phase 14.5: `DatasetBrowser.close()` is called early in dispose
+  so the panel is removed from the DOM and `LuxarApp.datasetBrowser`
+  is cleared even if the user dismisses the app while the panel is
+  still open.
+- Phase 15.1: `disposeWorkerPool()` terminates in-flight workers via
+  the pool's `pendingWorkers` set + `initGeneration` token, so a
+  dispose mid-init does not leak Worker instances.
 
 ```typescript
-function dispose(): void {
-  // 1. Stop animation (prevents new work)
-  this.animationController?.dispose();
+dispose(): void {
+  // Stop new work first.
+  safeDispose('animation', () => this.animationController?.dispose());
+  safeDispose('input', () => this.inputHandler?.dispose());
 
-  // 2. Remove input listeners
-  this.inputHandler?.dispose();
+  // Panels with their own DOM teardown.
+  safeDispose('datasetBrowser', () => {
+    this.datasetBrowser?.close();
+    this.datasetBrowser = undefined;
+    this.inputHandler?.setDatasetBrowser(undefined);
+  });
+  safeDispose('renderingControls', () => this.renderingControls?.dispose());
+  // ... other panels ...
 
-  // 3. Dispose UI components
-  this.renderingControls?.dispose();
-  this.datasetBrowser?.dispose();
+  // Data + monitor singletons (each owns its own getInstance/disposeInstance).
+  safeDispose('sceneLoaderManager', () => SceneLoaderManager.disposeInstance());
+  safeDispose('dataMonitorManager', () => DataMonitorManager.disposeInstance());
 
-  // 4. Dispose data loaders
-  dispose(); // From data/zarr-loader
+  // Worker pool: also covers in-flight workers (Phase 15.1).
+  safeDispose('workerPool', () => disposeWorkerPool());
 
-  // 5. Dispose scene (WebGL resources)
-  this.sceneManager?.dispose();
+  // ManagerRegistry is future-facing; today most managers are wired
+  // explicitly above. See `core/manager-registry.ts` header.
+  safeDispose('managerRegistry', () => getManagerRegistry().disposeAll());
 
-  // 6. Remove global listeners
-  window.removeEventListener('beforeunload', this.boundDispose);
-  window.removeEventListener('resize', this.handleResize);
+  // Renderer and globals last.
+  safeDispose('sceneManager', () => this.sceneManager?.dispose());
+  safeDispose('globalListeners', () => {
+    window.removeEventListener('beforeunload', this.boundDispose);
+    // ... other window-level listeners owned by LuxarApp ...
+  });
 }
 ```
 
