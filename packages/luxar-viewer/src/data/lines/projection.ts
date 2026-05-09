@@ -289,6 +289,21 @@ export function buildInstanceBuffers(
   const startClipped = new Uint8Array(maxSegments);
   const endClipped = new Uint8Array(maxSegments);
 
+  // Phase 16B.2: normalize quantized colors to [0, 1] up front. The
+  // shader (and the later WASM-batch branch in this file) expect
+  // floats in [0, 1]; reading raw Uint8 values via .slice() and
+  // writing them into a Float32 lerp would produce values in
+  // [0, 255] / [0, 65535]. Companion fix to Phase 15.2 in
+  // workers/data-worker.ts (coerceColorsToFloat32). Float32 inputs
+  // pass through unchanged.
+  const colorNorm = colors
+    ? colors instanceof Uint8Array
+      ? 1 / 255
+      : colors instanceof Uint16Array
+        ? 1 / 65535
+        : 1
+    : 1;
+
   let outIdx = 0;
   let firstClippedReason = null;
 
@@ -323,9 +338,22 @@ export function buildInstanceBuffers(
     startPositions.set(clipped.p1, outIdx * 3);
     endPositions.set(clipped.p2, outIdx * 3);
 
-    // Interpolate and write colors
-    const c0 = colors ? Array.from(colors.slice(v0 * 3, (v0 + 1) * 3)) : [1, 1, 1];
-    const c1 = colors ? Array.from(colors.slice(v1 * 3, (v1 + 1) * 3)) : [1, 1, 1];
+    // Interpolate and write colors. Phase 16B.2: apply colorNorm so
+    // Uint8 / Uint16 inputs land in [0, 1] before the lerp.
+    const c0 = colors
+      ? [
+          colors[v0 * 3] * colorNorm,
+          colors[v0 * 3 + 1] * colorNorm,
+          colors[v0 * 3 + 2] * colorNorm,
+        ]
+      : [1, 1, 1];
+    const c1 = colors
+      ? [
+          colors[v1 * 3] * colorNorm,
+          colors[v1 * 3 + 1] * colorNorm,
+          colors[v1 * 3 + 2] * colorNorm,
+        ]
+      : [1, 1, 1];
     const startC = lerpVec3(c0, c1, clipped.t1);
     const endC = lerpVec3(c0, c1, clipped.t2);
     startColors.set(startC, outIdx * 3);
