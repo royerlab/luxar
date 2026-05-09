@@ -225,66 +225,100 @@ describe('validateConfig', () => {
       expect(result.warnings).toContainEqual(expect.stringContaining('Unusual bloom.bloomRadius'));
     });
 
-    it('should warn when bloomThreshold is negative', () => {
+    it('should error when bloomThreshold is negative (r8 §C1: invalid → error)', () => {
       const cfg = cloneConfig();
       cfg.renderingControls.defaults.bloomThreshold = -0.1;
 
       const result = validateConfig(cfg);
 
-      expect(result.warnings).toContainEqual(
-        expect.stringContaining('Invalid bloom.bloomThreshold')
-      );
+      expect(result.errors).toContainEqual(expect.stringContaining('Invalid bloom.bloomThreshold'));
     });
 
-    it('should warn when bloomThreshold exceeds 1', () => {
+    it('should error when bloomThreshold exceeds 1', () => {
       const cfg = cloneConfig();
       cfg.renderingControls.defaults.bloomThreshold = 1.5;
 
       const result = validateConfig(cfg);
 
-      expect(result.warnings).toContainEqual(
-        expect.stringContaining('Invalid bloom.bloomThreshold')
-      );
+      expect(result.errors).toContainEqual(expect.stringContaining('Invalid bloom.bloomThreshold'));
     });
 
     it('should accept bloomThreshold at boundary values (0 and 1)', () => {
       const cfg = cloneConfig();
       cfg.renderingControls.defaults.bloomThreshold = 0;
-      expect(validateConfig(cfg).warnings.filter((w) => w.includes('bloomThreshold'))).toHaveLength(
-        0
-      );
+      expect(validateConfig(cfg).errors.filter((e) => e.includes('bloomThreshold'))).toHaveLength(0);
 
       cfg.renderingControls.defaults.bloomThreshold = 1;
-      expect(validateConfig(cfg).warnings.filter((w) => w.includes('bloomThreshold'))).toHaveLength(
-        0
-      );
+      expect(validateConfig(cfg).errors.filter((e) => e.includes('bloomThreshold'))).toHaveLength(0);
     });
 
-    it('should warn when bloomLevels is less than 1', () => {
+    it('should error when bloomLevels is less than 1', () => {
       const cfg = cloneConfig();
       cfg.renderingControls.defaults.bloomLevels = 0;
 
       const result = validateConfig(cfg);
 
-      expect(result.warnings).toContainEqual(expect.stringContaining('Invalid bloom.bloomLevels'));
+      expect(result.errors).toContainEqual(expect.stringContaining('Invalid bloom.bloomLevels'));
     });
 
-    it('should warn when bloomLevels exceeds 12', () => {
+    it('should error when bloomLevels exceeds 12', () => {
       const cfg = cloneConfig();
       cfg.renderingControls.defaults.bloomLevels = 13;
 
       const result = validateConfig(cfg);
 
-      expect(result.warnings).toContainEqual(expect.stringContaining('Invalid bloom.bloomLevels'));
+      expect(result.errors).toContainEqual(expect.stringContaining('Invalid bloom.bloomLevels'));
     });
 
     it('should accept bloomLevels at boundary values (1 and 12)', () => {
       const cfg = cloneConfig();
       cfg.renderingControls.defaults.bloomLevels = 1;
-      expect(validateConfig(cfg).warnings.filter((w) => w.includes('bloomLevels'))).toHaveLength(0);
+      expect(validateConfig(cfg).errors.filter((e) => e.includes('bloomLevels'))).toHaveLength(0);
 
       cfg.renderingControls.defaults.bloomLevels = 12;
-      expect(validateConfig(cfg).warnings.filter((w) => w.includes('bloomLevels'))).toHaveLength(0);
+      expect(validateConfig(cfg).errors.filter((e) => e.includes('bloomLevels'))).toHaveLength(0);
+    });
+
+    // r8 §C1: NaN/Infinity now caught explicitly (was silently accepted
+    // because comparisons with NaN are always false).
+    it('NaN bloomStrength is rejected as error', () => {
+      const cfg = cloneConfig();
+      cfg.renderingControls.defaults.bloomStrength = NaN;
+      expect(validateConfig(cfg).errors).toContainEqual(
+        expect.stringContaining('Invalid bloom.bloomStrength')
+      );
+    });
+
+    it('Infinity bloomRadius is rejected as error', () => {
+      const cfg = cloneConfig();
+      cfg.renderingControls.defaults.bloomRadius = Infinity;
+      expect(validateConfig(cfg).errors).toContainEqual(
+        expect.stringContaining('Invalid bloom.bloomRadius')
+      );
+    });
+
+    it('NaN bloomThreshold is rejected as error', () => {
+      const cfg = cloneConfig();
+      cfg.renderingControls.defaults.bloomThreshold = NaN;
+      expect(validateConfig(cfg).errors).toContainEqual(
+        expect.stringContaining('Invalid bloom.bloomThreshold')
+      );
+    });
+
+    it('fractional bloomLevels is rejected as error (must be integer)', () => {
+      const cfg = cloneConfig();
+      cfg.renderingControls.defaults.bloomLevels = 5.5;
+      expect(validateConfig(cfg).errors).toContainEqual(
+        expect.stringContaining('Invalid bloom.bloomLevels')
+      );
+    });
+
+    it('NaN bloomLevels is rejected as error', () => {
+      const cfg = cloneConfig();
+      cfg.renderingControls.defaults.bloomLevels = NaN;
+      expect(validateConfig(cfg).errors).toContainEqual(
+        expect.stringContaining('Invalid bloom.bloomLevels')
+      );
     });
   });
 

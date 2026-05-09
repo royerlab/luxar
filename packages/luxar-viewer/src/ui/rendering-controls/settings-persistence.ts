@@ -16,7 +16,11 @@
 import { config, type RenderingSettings } from '../../config';
 import { log, Modules } from '../../utils/log';
 import { StorageKeys } from '../../utils/storage-keys';
-import { serializeSettings, deserializeSettings } from './rendering-controls-utils';
+import {
+  serializeSettings,
+  deserializeSettings,
+  validateRenderingSettings,
+} from './rendering-controls-utils';
 import { extractRenderingOverrides } from '../../config/viewer-config-utils';
 import type { ZarrViewerConfig } from '../../types/zarr';
 
@@ -44,6 +48,11 @@ export function buildBaseDefaults(): FullySpecifiedRenderingSettings {
 /**
  * Build the "reset" defaults: base defaults overlaid with zarr viewer-config
  * overrides if available. Used by resetToDefaults.
+ *
+ * The zarr overrides are routed through `validateRenderingSettings`
+ * to clamp non-finite or out-of-range values (corrupted or malicious
+ * viewer_config can otherwise inject NaN/Infinity into runtime
+ * rendering state).
  */
 export function buildResetDefaults(
   zarrViewerConfig?: ZarrViewerConfig
@@ -51,7 +60,8 @@ export function buildResetDefaults(
   const defaults = buildBaseDefaults();
   if (zarrViewerConfig) {
     const zarrOverrides = extractRenderingOverrides(zarrViewerConfig);
-    Object.assign(defaults, zarrOverrides);
+    const merged = { ...defaults, ...zarrOverrides };
+    return validateRenderingSettings(merged) as FullySpecifiedRenderingSettings;
   }
   return defaults;
 }
