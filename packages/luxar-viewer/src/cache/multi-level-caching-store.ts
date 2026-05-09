@@ -112,6 +112,14 @@ export class MultiLevelCachingStore implements AsyncReadable {
   private networkBytesTransferred = 0;
   private networkRequestCount = 0;
 
+  // Phase 21G: per-tier demand-hit counters. Each demand request via
+  // getResult() increments exactly one of l1HitCount / l2HitCount /
+  // networkRequestCount. The data-loading monitor uses these to
+  // compute an effective hit-rate that includes L0/L1/L2 instead of
+  // the L1-only ratio surfaced by the inner cache stats.
+  private l1HitCount = 0;
+  private l2HitCount = 0;
+
   // Sliding window bandwidth tracking (last ~10 seconds)
   private bandwidthWindow: { timestamp: number; bytes: number }[] = [];
   private static readonly BANDWIDTH_WINDOW_MS = 10_000;
@@ -351,6 +359,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
     const l1Hit = this.l1Cache.get(key);
     if (l1Hit) {
       this.log(`L1 hit: ${key}`, 'info');
+      this.l1HitCount++;
       return ok(l1Hit);
     }
 
@@ -359,6 +368,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
       const l2Hit = await this.l2Store.get(key);
       if (l2Hit) {
         this.log(`L2 hit: ${key}`, 'info');
+        this.l2HitCount++;
         // Promote to L1
         this.l1Cache.set(key, l2Hit);
         // Trigger prefetch on L2 hit (Phase 13.7: skip when this fetch
@@ -687,6 +697,14 @@ export class MultiLevelCachingStore implements AsyncReadable {
     };
     l2: { size: number; count: number; reads: number; writes: number; misses: number };
     network: { bytesTransferred: number; requestCount: number; bandwidth: number };
+    /**
+     * Phase 21G: per-tier demand-hit counters. Each call to `getResult`
+     * increments exactly one — `l1Hits`, `l2Hits`, or `networkRequests`
+     * (which equals `network.requestCount`). Combined with the L0
+     * provider's stats, this lets the monitor surface an effective
+     * demand hit-rate rather than the L1-only ratio.
+     */
+    demand: { l1Hits: number; l2Hits: number; networkRequests: number };
   } {
     // Calculate bandwidth using sliding window (last ~10 seconds)
     const now = Date.now();
@@ -713,6 +731,11 @@ export class MultiLevelCachingStore implements AsyncReadable {
         bytesTransferred: this.networkBytesTransferred,
         requestCount: this.networkRequestCount,
         bandwidth,
+      },
+      demand: {
+        l1Hits: this.l1HitCount,
+        l2Hits: this.l2HitCount,
+        networkRequests: this.networkRequestCount,
       },
     };
   }

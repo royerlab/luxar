@@ -256,7 +256,17 @@ export interface CacheMetrics {
   memoryPercent: number;
   totalEntries: number;
   totalAccesses: number;
+  /**
+   * L1-only hit rate (legacy). Computed as `l1.hits / (l1.hits + l1.misses)`.
+   * Kept for back-compat with existing dashboards.
+   */
   recentHitRate: number;
+  /**
+   * Phase 21G: effective demand hit-rate across all cache tiers.
+   * `(l0Hits + l1Hits + l2Hits) / (l0Hits + l1Hits + l2Hits + networkRequests)`.
+   * Undefined when neither L0 provider nor `demand` counters are wired.
+   */
+  effectiveDemandHitRate?: number;
   evictionsPerMin: number;
   avgEntrySize: number;
   reuseRatio: number;
@@ -421,6 +431,17 @@ export interface CacheStatsProvider {
       bytesTransferred: number;
       requestCount: number;
       bandwidth: number;
+    };
+    /**
+     * Phase 21G: per-tier demand-hit counters from the multi-level
+     * caching store. Each demand request increments exactly one
+     * (l1Hits / l2Hits / networkRequests). Optional so older
+     * implementations of this port still typecheck.
+     */
+    demand?: {
+      l1Hits: number;
+      l2Hits: number;
+      networkRequests: number;
     };
   };
   /** Clear L1 memory cache */

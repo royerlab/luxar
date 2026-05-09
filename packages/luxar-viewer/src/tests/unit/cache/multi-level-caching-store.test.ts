@@ -192,6 +192,38 @@ describe('MultiLevelCachingStore', () => {
     });
   });
 
+  describe('Phase 21G — per-tier demand counters', () => {
+    it('first fetch increments networkRequests; nothing in l1Hits/l2Hits', async () => {
+      const before = store.getStats().demand;
+      expect(before).toEqual({ l1Hits: 0, l2Hits: 0, networkRequests: 0 });
+
+      await store.get('test.chunk');
+
+      const after = store.getStats().demand;
+      expect(after.networkRequests).toBe(1);
+      expect(after.l1Hits).toBe(0);
+      expect(after.l2Hits).toBe(0);
+    });
+
+    it('second fetch increments l1Hits (L1 served the request)', async () => {
+      await store.get('test.chunk'); // Network → l1+l2 populated.
+      const beforeL1 = store.getStats().demand.l1Hits;
+
+      await store.get('test.chunk');
+
+      expect(store.getStats().demand.l1Hits).toBe(beforeL1 + 1);
+      expect(store.getStats().demand.networkRequests).toBe(1); // Unchanged
+    });
+
+    it('demand.networkRequests stays in sync with network.requestCount', async () => {
+      await store.get('test.chunk');
+      await store.get('other.chunk');
+
+      const stats = store.getStats();
+      expect(stats.demand.networkRequests).toBe(stats.network.requestCount);
+    });
+  });
+
   describe('Content Hash Validation', () => {
     it('should validate cache on init', async () => {
       // This happens automatically in init()

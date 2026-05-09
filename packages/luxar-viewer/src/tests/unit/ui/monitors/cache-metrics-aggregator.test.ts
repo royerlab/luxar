@@ -316,4 +316,143 @@ describe('aggregateCacheMetrics', () => {
     expect(result.recentHitRate).toBe(0);
     expect(result.totalAccesses).toBe(0);
   });
+
+  describe('Phase 21G — effectiveDemandHitRate', () => {
+    function providerWithDemand(demand: {
+      l1Hits: number;
+      l2Hits: number;
+      networkRequests: number;
+    }): CacheStatsProvider {
+      return {
+        getStats: () => ({
+          l1: {
+            metadataSize: 0,
+            chunksSize: 0,
+            metadataCount: 0,
+            chunksCount: 0,
+            hits: demand.l1Hits,
+            misses: 0,
+            evictions: 0,
+          },
+          l2: {
+            size: 0,
+            count: 0,
+            reads: demand.l2Hits,
+            writes: 0,
+            misses: 0,
+          },
+          network: {
+            bytesTransferred: 0,
+            requestCount: demand.networkRequests,
+            bandwidth: 0,
+          },
+          demand,
+        }),
+        clearL1: vi.fn(),
+        clearL2: vi.fn(),
+        clearAll: vi.fn(),
+        isEnabled: () => true,
+      };
+    }
+
+    it('undefined when nothing is wired up', () => {
+      const result = aggregateCacheMetrics({
+        l0Provider: null,
+        cacheStatsProvider: null,
+        loaders: new Map(),
+        metricsCache: new Map(),
+        rates: ZERO_RATES,
+      });
+      expect(result.effectiveDemandHitRate).toBeUndefined();
+    });
+
+    it('with demand counters but zero traffic: 0 (not undefined)', () => {
+      const result = aggregateCacheMetrics({
+        l0Provider: null,
+        cacheStatsProvider: providerWithDemand({
+          l1Hits: 0,
+          l2Hits: 0,
+          networkRequests: 0,
+        }),
+        loaders: new Map(),
+        metricsCache: new Map(),
+        rates: ZERO_RATES,
+      });
+      expect(result.effectiveDemandHitRate).toBe(0);
+    });
+
+    it('demand 90 L1 hits + 10 network = 0.9 hit rate', () => {
+      const result = aggregateCacheMetrics({
+        l0Provider: null,
+        cacheStatsProvider: providerWithDemand({
+          l1Hits: 90,
+          l2Hits: 0,
+          networkRequests: 10,
+        }),
+        loaders: new Map(),
+        metricsCache: new Map(),
+        rates: ZERO_RATES,
+      });
+      expect(result.effectiveDemandHitRate).toBeCloseTo(0.9, 5);
+    });
+
+    it('demand counts L0 hits when L0 provider is present', () => {
+      const l0Provider: L0Provider = {
+        getStats: () => ({
+          size: 0,
+          count: 0,
+          hits: 50,
+          misses: 0,
+          evictions: 0,
+          hitRate: 1,
+        }),
+      };
+      const result = aggregateCacheMetrics({
+        l0Provider,
+        cacheStatsProvider: providerWithDemand({
+          l1Hits: 30,
+          l2Hits: 10,
+          networkRequests: 10,
+        }),
+        loaders: new Map(),
+        metricsCache: new Map(),
+        rates: ZERO_RATES,
+      });
+      // (50 + 30 + 10) / (50 + 30 + 10 + 10) = 90/100
+      expect(result.effectiveDemandHitRate).toBeCloseTo(0.9, 5);
+    });
+
+    it('falls back to L0.hitRate when only L0 is wired (no demand counters)', () => {
+      const l0Provider: L0Provider = {
+        getStats: () => ({
+          size: 0,
+          count: 0,
+          hits: 0,
+          misses: 0,
+          evictions: 0,
+          hitRate: 0.42,
+        }),
+      };
+      const result = aggregateCacheMetrics({
+        l0Provider,
+        cacheStatsProvider: null,
+        loaders: new Map(),
+        metricsCache: new Map(),
+        rates: ZERO_RATES,
+      });
+      expect(result.effectiveDemandHitRate).toBe(0.42);
+    });
+
+    it('older provider without demand field: effectiveDemandHitRate undefined', () => {
+      // Use the existing makeFullCacheProvider which DOES NOT include `demand`.
+      const result = aggregateCacheMetrics({
+        l0Provider: null,
+        cacheStatsProvider: makeFullCacheProvider(),
+        loaders: new Map(),
+        metricsCache: new Map(),
+        rates: ZERO_RATES,
+      });
+      expect(result.effectiveDemandHitRate).toBeUndefined();
+    });
+  });
 });

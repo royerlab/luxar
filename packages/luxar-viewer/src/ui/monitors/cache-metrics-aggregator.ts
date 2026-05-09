@@ -76,6 +76,9 @@ export function aggregateCacheMetrics(params: AggregateCacheMetricsParams): Cach
   let l1Stats: CacheMetrics['l1'] | undefined;
   let l2Stats: CacheMetrics['l2'] | undefined;
   let networkStats: CacheMetrics['network'] | undefined;
+  let demand:
+    | { l1Hits: number; l2Hits: number; networkRequests: number }
+    | undefined;
   let cacheEnabled = true;
 
   // L0 from in-memory decompressed-chunk cache provider.
@@ -109,6 +112,12 @@ export function aggregateCacheMetrics(params: AggregateCacheMetricsParams): Cach
       requestCount: stats.network.requestCount,
       bandwidth: stats.network.bandwidth,
     };
+
+    // Phase 21G: per-tier demand counters (optional; older providers
+    // may not report them).
+    if (stats.demand) {
+      demand = stats.demand;
+    }
 
     totalCacheMemory = (l0Stats?.size ?? 0) + l1Stats.size + l2Stats.size;
     totalEntries = (l0Stats?.count ?? 0) + l1Stats.count + l2Stats.count;
@@ -146,6 +155,26 @@ export function aggregateCacheMetrics(params: AggregateCacheMetricsParams): Cach
   const totalL1Accesses = l1Stats ? l1Stats.hits + l1Stats.misses : 0;
   const recentHitRate = totalL1Accesses > 0 ? l1Stats!.hits / totalL1Accesses : 0;
 
+  // Phase 21G: effective demand hit rate across L0/L1/L2/network. L0
+  // hits come from the L0Provider (decompressed-chunk cache);
+  // L1/L2/network from the cache store's per-tier demand counters.
+  // We only compute this when we have at least one usable signal;
+  // otherwise leave `effectiveDemandHitRate` undefined so the UI can
+  // distinguish "not wired up" from "0% hit rate."
+  let effectiveDemandHitRate: number | undefined;
+  const l0Hits = l0Stats?.hits ?? 0;
+  if (demand) {
+    const total = l0Hits + demand.l1Hits + demand.l2Hits + demand.networkRequests;
+    if (total > 0) {
+      effectiveDemandHitRate = (l0Hits + demand.l1Hits + demand.l2Hits) / total;
+    } else {
+      effectiveDemandHitRate = 0;
+    }
+  } else if (l0Stats) {
+    // Fallback: only L0 wired. Use the L0 provider's own hitRate.
+    effectiveDemandHitRate = l0Stats.hitRate;
+  }
+
   return {
     totalCacheMemory,
     memoryLimit,
@@ -153,6 +182,7 @@ export function aggregateCacheMetrics(params: AggregateCacheMetricsParams): Cach
     totalEntries,
     totalAccesses: totalL1Accesses,
     recentHitRate,
+    effectiveDemandHitRate,
     evictionsPerMin: evictions,
     avgEntrySize: totalEntries > 0 ? totalCacheMemory / totalEntries : 0,
     reuseRatio: 0,

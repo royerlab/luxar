@@ -125,6 +125,16 @@ export function updateCacheTab(
   // Total
   patchField(container, 'cache-total', templateFormatBytes(cacheMetrics.totalCacheMemory));
 
+  // Phase 21G: effective demand hit-rate. Field absent in the rendered
+  // template when undefined; `patchField` no-ops when missing.
+  if (cacheMetrics.effectiveDemandHitRate !== undefined) {
+    patchField(
+      container,
+      'cache-effective-hitrate',
+      `EFFECTIVE HIT RATE: ${(cacheMetrics.effectiveDemandHitRate * 100).toFixed(1)}%`
+    );
+  }
+
   // Total progress bar
   const barFill = container.querySelector(
     '.luxar-cache-total .luxar-progress-bar__fill'
