@@ -345,10 +345,13 @@ export const GSPLAT_FRAGMENT_SHADER = /* glsl */ `
         // so apply opacity to RGB directly. This gives correct LINEAR sum projection
         // without the intensity-squaring bug that AdditiveBlending (SrcAlpha) would cause.
         //
-        // NOTE: For 'normal' blending mode, this shader outputs alpha=1.0, which means
-        // the background won't show through (effectively opaque). This is a known
-        // limitation - proper transparent normal blending for gsplats would require
-        // premultiplied alpha with ONE, ONE_MINUS_SRC_ALPHA blend func.
+        // NOTE (Phase 20E / r5): For 'normal' blending mode, this shader outputs
+        // alpha=1.0, which means the framebuffer behind the splat won't show
+        // through — 'normal' on a GSplat layer behaves as "opaque dimmed by
+        // uOpacity," not as semi-transparent compositing. See material-manager.ts
+        // BlendingMode docs. Proper transparent normal blending for gsplats
+        // requires premultiplied alpha with ONE / ONE_MINUS_SRC_ALPHA blend func
+        // (a deeper shader change deferred until a user actually needs it).
         vec3 finalColor = gammaColor * intensity * uOpacity;
         fragColor = vec4(finalColor, 1.0);
     }

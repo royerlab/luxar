@@ -17,7 +17,17 @@ import { config } from '../config';
 /**
  * Supported blending modes for materials.
  *
- * - 'normal': Standard alpha blending (semi-transparent)
+ * - 'normal': Standard alpha blending (semi-transparent). For
+ *   **Points** and **Lines** this works as expected — the shader
+ *   emits a per-fragment alpha derived from opacity and edge
+ *   softness. For **GSplats** (Phase 20E / r5 warning) the shader
+ *   currently emits `alpha = 1.0` and modulates RGB by uOpacity
+ *   instead, so 'normal' on a GSplat layer behaves like
+ *   "opaque dimmed by opacity": the framebuffer behind the splat
+ *   is not revealed. Proper alpha-on-GSplats requires premultiplied-
+ *   alpha output + a `ONE` / `ONE_MINUS_SRC_ALPHA` blend func, which
+ *   is a deeper shader change deferred until needed. Users wanting
+ *   semi-transparent splats today should use 'luminous' or 'additive'.
  * - 'additive': Classic additive blending, ignores depth (renders on top of everything)
  * - 'max': Maximum of source and destination (brightest wins)
  * - 'opaque': Solid rendering with depth write (closest object wins)
