@@ -25,9 +25,10 @@
  *     success.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as THREE from 'three';
 import { NodeFactory } from '../../../rendering/node-factory';
+import { SceneLoader } from '../../../data/scene-loader';
 import type { PointsMetadata } from '../../../types/points';
 import type { LinesMetadata } from '../../../types/lines';
 import type { GSplatsMetadata } from '../../../types/gsplats';
@@ -218,5 +219,153 @@ describe('NodeFactory placeholder factories — common contract', () => {
 
     // Placeholder still findable.
     expect(root.getObjectByName('/persistent')).toBe(placeholder);
+  });
+});
+
+/**
+ * Phase 15.3: retryFailedLoader must mirror initial-load on
+ * `derived.skip === 'extend_to_all'` — fall back to `this.viewState`
+ * and actually load data, instead of clearing the failure flag with
+ * an empty placeholder.
+ *
+ * Pre-fix scenario: the retry path returned `true` and deleted the
+ * entry from `failedLoaders` without calling `updateView`, leaving the
+ * placeholder in its post-failure empty state while reporting success.
+ *
+ * The tests below spy on `deriveNodeViewState` to deterministically
+ * produce `skip: 'extend_to_all'`, so we can assert the fallback
+ * path calls `updateView` with the base view state.
+ */
+describe('SceneLoader.retryFailedLoader — derived.skip fallback (Phase 15.3)', () => {
+  let loader: SceneLoader;
+  let root: THREE.Group;
+
+  // Type alias to access private members in tests without sprinkling
+  // `as any` everywhere.
+  type LoaderInternals = {
+    rootGroup: THREE.Group | null;
+    viewState: { displayDims: number[]; slicePosition: number[]; tolerance: number[]; dimensions?: unknown };
+    deriveNodeViewState: (
+      path: string,
+      attrs: unknown,
+      opts: { applyPartialExtendTolerance: boolean }
+    ) => { skip: 'extend_to_all' } | { skip: false; viewState: unknown };
+    registry: {
+      registerPointsLoader: (path: string, loader: unknown) => void;
+      registerLinesLoader: (path: string, loader: unknown) => void;
+      registerGSplatsLoader: (path: string, loader: unknown) => void;
+      recordFailure: (path: string, error: Error) => void;
+      failedLoaders: Map<string, unknown>;
+    };
+  };
+
+  beforeEach(() => {
+    loader = new SceneLoader();
+    root = new THREE.Group();
+    const internals = loader as unknown as LoaderInternals;
+    internals.rootGroup = root;
+    internals.viewState = {
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0, 0],
+      tolerance: [0.5, 0.5, 0.5, 0.5],
+      dimensions: [
+        { name: 'x' },
+        { name: 'y' },
+        { name: 'z' },
+        { name: 't' },
+      ],
+    };
+  });
+
+  it('Points retry on derived.skip falls back to this.viewState and populates placeholder', async () => {
+    const internals = loader as unknown as LoaderInternals;
+    const factory = new NodeFactory();
+    const placeholder = factory.createEmptyPointsNode(
+      '/p',
+      { n_points: 0, extend_to_all: ['t'] } as unknown as PointsMetadata,
+      { dispose: vi.fn() } as unknown as DataLoader
+    );
+    placeholder.userData.attrs = { extend_to_all: ['t'] };
+    root.add(placeholder);
+
+    const updateView = vi.fn().mockResolvedValue(null);
+    internals.registry.registerPointsLoader('/p', { updateView, dispose: vi.fn() } as unknown as DataLoader);
+    internals.registry.recordFailure('/p', new Error('initial network failure'));
+
+    vi.spyOn(internals, 'deriveNodeViewState').mockReturnValue({ skip: 'extend_to_all' });
+
+    const ok = await loader.retryFailedLoader('/p');
+
+    expect(ok).toBe(true);
+    expect(updateView).toHaveBeenCalledTimes(1);
+    expect(updateView).toHaveBeenCalledWith(internals.viewState);
+    expect(internals.registry.failedLoaders.has('/p')).toBe(false);
+  });
+
+  it('Lines retry on derived.skip falls back to this.viewState and populates placeholder', async () => {
+    const internals = loader as unknown as LoaderInternals;
+    const factory = new NodeFactory();
+    const placeholder = factory.createEmptyLinesNode(
+      '/l',
+      {} as Record<string, unknown>,
+      { n_segments: 0, extend_to_all: ['t'] } as unknown as LinesMetadata,
+      { dispose: vi.fn() } as unknown as LinesDataLoader
+    );
+    placeholder.userData.attrs = { extend_to_all: ['t'] };
+    root.add(placeholder);
+
+    const updateView = vi.fn().mockResolvedValue(null);
+    internals.registry.registerLinesLoader('/l', { updateView, dispose: vi.fn() } as unknown as LinesDataLoader);
+    internals.registry.recordFailure('/l', new Error('initial decode failure'));
+
+    vi.spyOn(internals, 'deriveNodeViewState').mockReturnValue({ skip: 'extend_to_all' });
+
+    const ok = await loader.retryFailedLoader('/l');
+
+    expect(ok).toBe(true);
+    expect(updateView).toHaveBeenCalledTimes(1);
+    expect(updateView).toHaveBeenCalledWith(internals.viewState);
+    expect(internals.registry.failedLoaders.has('/l')).toBe(false);
+  });
+
+  it('GSplats retry on derived.skip falls back to a viewState built from this.viewState', async () => {
+    const internals = loader as unknown as LoaderInternals;
+    const factory = new NodeFactory();
+    const placeholder = factory.createEmptyGSplatsNode(
+      '/g',
+      {} as Record<string, unknown>,
+      { n_splats: 0, extend_to_all: ['t'] } as unknown as GSplatsMetadata,
+      { dispose: vi.fn() } as unknown as GSplatsDataLoader
+    );
+    placeholder.userData.attrs = { extend_to_all: ['t'] };
+    root.add(placeholder);
+
+    const updateView = vi.fn().mockResolvedValue(null);
+    internals.registry.registerGSplatsLoader(
+      '/g',
+      { updateView, dispose: vi.fn() } as unknown as GSplatsDataLoader
+    );
+    internals.registry.recordFailure('/g', new Error('initial validation failure'));
+
+    vi.spyOn(internals, 'deriveNodeViewState').mockReturnValue({ skip: 'extend_to_all' });
+
+    const ok = await loader.retryFailedLoader('/g');
+
+    expect(ok).toBe(true);
+    expect(updateView).toHaveBeenCalledTimes(1);
+    // GSplats fallback constructs a fresh object from this.viewState
+    // (mirrors loadGSplats() initial-load shape) — assert the key
+    // fields rather than reference equality.
+    const callArg = updateView.mock.calls[0][0] as {
+      displayDims: number[];
+      slicePosition: number[];
+      tolerance: number[];
+      dimensions?: unknown;
+    };
+    expect(callArg.displayDims).toBe(internals.viewState.displayDims);
+    expect(callArg.slicePosition).toBe(internals.viewState.slicePosition);
+    expect(callArg.tolerance).toBe(internals.viewState.tolerance);
+    expect(callArg.dimensions).toBe(internals.viewState.dimensions);
+    expect(internals.registry.failedLoaders.has('/g')).toBe(false);
   });
 });

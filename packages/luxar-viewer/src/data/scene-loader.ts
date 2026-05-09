@@ -1927,24 +1927,21 @@ export class SceneLoader {
         const derived = this.deriveNodeViewState(path, attrs, {
           applyPartialExtendTolerance: true,
         });
-        if (derived.skip) {
-          this.failedLoaders.delete(path);
-          log.info(Modules.SCENE_LOADER, `Retry skipped ${path} (extend_to_all fully covers)`);
-          return true;
-        }
-        const points = await pointsLoader.updateView(derived.viewState);
+        // Phase 15.3: mirror loadPoints() initial-load fallback. When
+        // derived.skip is true (extend_to_all fully covers), the
+        // placeholder still needs data committed — skipping the load
+        // and clearing failedLoaders would falsely report success
+        // against an empty placeholder.
+        const pointsViewState = derived.skip ? this.viewState : derived.viewState;
+        const points = await pointsLoader.updateView(pointsViewState);
         if (points) this.updatePointsGeometry(path, points);
         return verifyAndClear('points');
       } else if (linesLoader) {
         const derived = this.deriveNodeViewState(path, attrs, {
           applyPartialExtendTolerance: false,
         });
-        if (derived.skip) {
-          this.failedLoaders.delete(path);
-          log.info(Modules.SCENE_LOADER, `Retry skipped ${path} (extend_to_all fully covers)`);
-          return true;
-        }
-        const linesViewState = derived.viewState;
+        // Phase 15.3: see Points branch.
+        const linesViewState: LinesViewState = derived.skip ? this.viewState : derived.viewState;
         const data = await linesLoader.updateView(linesViewState);
         if (data) {
           const staged = await this.processLinesData(path, data, linesViewState);
@@ -1955,12 +1952,16 @@ export class SceneLoader {
         const derived = this.deriveNodeViewState(path, attrs, {
           applyPartialExtendTolerance: true,
         });
-        if (derived.skip) {
-          this.failedLoaders.delete(path);
-          log.info(Modules.SCENE_LOADER, `Retry skipped ${path} (extend_to_all fully covers)`);
-          return true;
-        }
-        const gsplatsViewState: GSplatsViewState = derived.viewState;
+        // Phase 15.3: mirror loadGSplats() initial-load fallback shape
+        // (explicit object spread to match LinesViewState/GSplatsViewState).
+        const gsplatsViewState: GSplatsViewState = derived.skip
+          ? {
+              displayDims: this.viewState.displayDims,
+              slicePosition: this.viewState.slicePosition,
+              tolerance: this.viewState.tolerance,
+              dimensions: this.viewState.dimensions,
+            }
+          : derived.viewState;
         const data = await gsplatsLoader.updateView(gsplatsViewState);
         if (data) {
           const staged = await this.processGSplatsData(path, data, gsplatsViewState);
