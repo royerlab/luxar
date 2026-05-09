@@ -24,6 +24,8 @@ import type {
 
 // Performance timeline removed - now using hierarchical timing panel
 import { aggregateCacheMetrics } from './cache-metrics-aggregator';
+import { updateCacheTab } from './tabs/cache-tab';
+import { patchField, updateColorClass } from './tabs/dom-helpers';
 import { LoadingAdvisor } from '../components/loading-advisor';
 import { EventQueue } from '../components/event-queue';
 import { PollingLoop } from '../components/polling-loop';
@@ -1025,14 +1027,12 @@ export class DataLoadingMonitor {
   // ─── Per-tab incremental value update functions ───────────────────────
 
   /**
-   * Helper: update a single element's textContent by data-field attribute.
-   * Returns false if the element was not found.
+   * Helper: update a single element's textContent by data-field
+   * attribute. Phase 19A delegates to the shared DOM helper module
+   * so per-tab updaters use the same patch contract.
    */
   private patchField(field: string, text: string): boolean {
-    const el = this.contentContainer?.querySelector(`[data-field="${field}"]`);
-    if (!el) return false;
-    el.textContent = text;
-    return true;
+    return patchField(this.contentContainer, field, text);
   }
 
   /**
@@ -1172,114 +1172,10 @@ export class DataLoadingMonitor {
 
   /**
    * Incrementally update cache tab values without rebuilding DOM.
+   * Phase 19A delegates to `tabs/cache-tab.ts:updateCacheTab`.
    */
   private updateCacheTabValues(): boolean {
-    if (!this.contentContainer) return false;
-
-    const cacheMetrics = this.getCacheMetrics();
-
-    // Structure validation: check for cache total (always present in L1/L2 view)
-    if (!this.contentContainer.querySelector('[data-field="cache-total"]')) return false;
-
-    // L0 stats
-    if (cacheMetrics.l0) {
-      const l0Total = cacheMetrics.l0.hits + cacheMetrics.l0.misses;
-      const l0HitRate = l0Total > 0 ? (cacheMetrics.l0.hits / l0Total) * 100 : 0;
-
-      this.patchField('l0-size', templateFormatBytes(cacheMetrics.l0.size));
-      this.patchField('l0-size-sub', `${cacheMetrics.l0.count} chunks`);
-      this.patchField('l0-hitrate', `${l0HitRate.toFixed(1)}%`);
-      this.patchField(
-        'l0-hitrate-sub',
-        `${templateFormatNumber(cacheMetrics.l0.hits)} hits · ${templateFormatNumber(cacheMetrics.l0.misses)} miss`
-      );
-      this.patchField('l0-evictions', templateFormatNumber(cacheMetrics.l0.evictions));
-
-      // Update hit rate color class
-      const l0HitrateEl = this.contentContainer.querySelector('[data-field="l0-hitrate"]');
-      if (l0HitrateEl) {
-        const colorClass =
-          l0HitRate > 80
-            ? getColorClass('success')
-            : l0HitRate > 50
-              ? getColorClass('warning')
-              : getColorClass('error');
-        this.updateColorClass(l0HitrateEl as HTMLElement, colorClass);
-      }
-
-      // Update eviction color class (warning when >0, dimmed when 0)
-      const l0EvictEl = this.contentContainer.querySelector('[data-field="l0-evictions"]');
-      if (l0EvictEl) {
-        this.updateColorClass(
-          l0EvictEl as HTMLElement,
-          cacheMetrics.l0.evictions > 0 ? getColorClass('warning') : getColorClass('dimmed')
-        );
-      }
-    }
-
-    // L1 stats
-    if (cacheMetrics.l1) {
-      const l1Total = cacheMetrics.l1.hits + cacheMetrics.l1.misses;
-      const l1HitRate = l1Total > 0 ? (cacheMetrics.l1.hits / l1Total) * 100 : 0;
-
-      this.patchField('l1-size', templateFormatBytes(cacheMetrics.l1.size));
-      this.patchField('l1-size-sub', `${cacheMetrics.l1.count} entries`);
-      this.patchField('l1-hitrate', `${l1HitRate.toFixed(1)}%`);
-      this.patchField(
-        'l1-hitrate-sub',
-        `${templateFormatNumber(cacheMetrics.l1.hits)} hits · ${templateFormatNumber(cacheMetrics.l1.misses)} miss`
-      );
-      this.patchField('l1-evictions', templateFormatNumber(cacheMetrics.l1.evictions));
-
-      // Update hit rate color class
-      const l1HitrateEl = this.contentContainer.querySelector('[data-field="l1-hitrate"]');
-      if (l1HitrateEl) {
-        const colorClass =
-          l1HitRate > 80
-            ? getColorClass('success')
-            : l1HitRate > 50
-              ? getColorClass('warning')
-              : getColorClass('error');
-        this.updateColorClass(l1HitrateEl as HTMLElement, colorClass);
-      }
-
-      // Update eviction color class
-      const l1EvictEl = this.contentContainer.querySelector('[data-field="l1-evictions"]');
-      if (l1EvictEl) {
-        this.updateColorClass(
-          l1EvictEl as HTMLElement,
-          cacheMetrics.l1.evictions > 0 ? getColorClass('warning') : getColorClass('dimmed')
-        );
-      }
-    }
-
-    // L2 stats
-    if (cacheMetrics.l2) {
-      this.patchField('l2-size', templateFormatBytes(cacheMetrics.l2.size));
-      this.patchField('l2-size-sub', `${cacheMetrics.l2.count} entries`);
-      this.patchField('l2-io', `${templateFormatNumber(cacheMetrics.l2.reads)} reads`);
-      this.patchField('l2-io-sub', `${templateFormatNumber(cacheMetrics.l2.writes)} writes`);
-    }
-
-    // Total
-    this.patchField('cache-total', templateFormatBytes(cacheMetrics.totalCacheMemory));
-
-    // Update progress bar
-    const barFill = this.contentContainer.querySelector(
-      '.luxar-cache-total .luxar-progress-bar__fill'
-    ) as HTMLElement | null;
-    if (barFill) {
-      barFill.style.width = `${Math.min(100, cacheMetrics.memoryPercent)}%`;
-      this.updateColorClass(barFill, getCacheMemoryColorClass(cacheMetrics.memoryPercent));
-    }
-    const barLabel = this.contentContainer.querySelector(
-      '.luxar-cache-total .luxar-progress-bar__label'
-    );
-    if (barLabel) {
-      barLabel.textContent = `${cacheMetrics.memoryPercent.toFixed(0)}% of ${templateFormatBytes(cacheMetrics.memoryLimit)} limit`;
-    }
-
-    return true;
+    return updateCacheTab(this.contentContainer, this.getCacheMetrics());
   }
 
   /**
@@ -1371,16 +1267,12 @@ export class DataLoadingMonitor {
   }
 
   /**
-   * Update CSS color classes on an element, replacing any existing luxar-color--* class.
-   * Pass empty string to clear all color classes without adding a new one.
+   * Update CSS color classes on an element, replacing any existing
+   * `luxar-color--*` class. Phase 19A delegates to the shared DOM
+   * helper.
    */
   private updateColorClass(el: HTMLElement, newColorClass: string): void {
-    // Remove existing color classes
-    const classes = el.className.split(' ').filter((c) => c && !c.startsWith('luxar-color--'));
-    if (newColorClass) {
-      classes.push(newColorClass);
-    }
-    el.className = classes.join(' ');
+    updateColorClass(el, newColorClass);
   }
 
   /**
