@@ -23,6 +23,7 @@ import type {
 } from '../../types/data-monitor-types';
 
 // Performance timeline removed - now using hierarchical timing panel
+import { aggregateCacheMetrics } from './cache-metrics-aggregator';
 import { LoadingAdvisor } from '../components/loading-advisor';
 import { EventQueue } from '../components/event-queue';
 import { PollingLoop } from '../components/polling-loop';
@@ -1595,119 +1596,21 @@ export class DataLoadingMonitor {
   }
 
   /**
-   * Get cache metrics aggregated across all loaders.
-   * When a CacheStatsProvider is connected, uses actual L1/L2 cache stats.
+   * Get cache metrics aggregated across all loaders. Phase 18 W3:
+   * delegates the multi-source roll-up to
+   * `cache-metrics-aggregator.ts:aggregateCacheMetrics`. The
+   * aggregator refreshes `this.metrics` snapshots and reads
+   * `this.cachedRates` (already updated by `calculateRates()` here).
    */
   private getCacheMetrics(): CacheMetrics {
-    let totalCacheMemory = 0;
-    let memoryLimit = 0;
-    let totalEntries = 0;
-    let evictions = 0;
-
-    // Get L0/L1/L2/network breakdown from cache stats providers if available
-    let l0Stats: CacheMetrics['l0'] | undefined;
-    let l1Stats: CacheMetrics['l1'] | undefined;
-    let l2Stats: CacheMetrics['l2'] | undefined;
-    let networkStats: CacheMetrics['network'] | undefined;
-    let cacheEnabled = true;
-
-    // Get L0 stats from L0 cache provider
-    if (this.l0CacheProvider) {
-      l0Stats = this.l0CacheProvider.getStats();
-    }
-
-    if (this.cacheStatsProvider) {
-      const stats = this.cacheStatsProvider.getStats();
-      cacheEnabled = this.cacheStatsProvider.isEnabled();
-
-      // L1 stats
-      l1Stats = {
-        size: stats.l1.metadataSize + stats.l1.chunksSize,
-        count: stats.l1.metadataCount + stats.l1.chunksCount,
-        hits: stats.l1.hits,
-        misses: stats.l1.misses,
-        evictions: stats.l1.evictions,
-      };
-
-      // L2 stats
-      l2Stats = {
-        size: stats.l2.size,
-        count: stats.l2.count,
-        reads: stats.l2.reads,
-        writes: stats.l2.writes,
-        misses: stats.l2.misses,
-      };
-
-      // Network stats
-      networkStats = {
-        bytesTransferred: stats.network.bytesTransferred,
-        requestCount: stats.network.requestCount,
-        bandwidth: stats.network.bandwidth,
-      };
-
-      // Update totals from cache stats (L0 + L1 + L2)
-      totalCacheMemory = (l0Stats?.size ?? 0) + l1Stats.size + l2Stats.size;
-      totalEntries = (l0Stats?.count ?? 0) + l1Stats.count + l2Stats.count;
-    } else if (l0Stats) {
-      // Only L0 available
-      totalCacheMemory = l0Stats.size;
-      totalEntries = l0Stats.count;
-    }
-
-    // Also aggregate from loaders for memory limit and evictions
-    for (const [path, loader] of this.loaders) {
-      // Get fresh metrics from the loader
-      const metrics = loader.getMetrics();
-      this.metrics.set(path, metrics);
-
-      memoryLimit += metrics.memoryLimit;
-      evictions += metrics.evictions;
-
-      // If no cache stats provider, fall back to loader metrics
-      if (!this.cacheStatsProvider) {
-        totalCacheMemory += metrics.memoryUsed;
-        if (metrics.spatialIndex && metrics.spatialIndex.rangesInCache !== undefined) {
-          totalEntries += metrics.spatialIndex.rangesInCache;
-        }
-      }
-    }
-
-    const memoryPercent = memoryLimit > 0 ? (totalCacheMemory / memoryLimit) * 100 : 0;
-
-    // Calculate rates once and reuse
     this.calculateRates();
-
-    // Hit rate from L1 stats only — not a true demand hit rate, just the
-    // L1-tier ratio. Higher tiers (L0 in-memory chunks, L2 OPFS) have their
-    // own counters in l0Stats / l2Stats. The CacheMetrics field is named
-    // `recentHitRate` for back-compat; consumers wanting accurate per-tier
-    // breakdown should read `l0`, `l1`, `l2` directly.
-    const totalL1Accesses = l1Stats ? l1Stats.hits + l1Stats.misses : 0;
-    const recentHitRate = totalL1Accesses > 0 ? l1Stats!.hits / totalL1Accesses : 0;
-
-    return {
-      totalCacheMemory,
-      memoryLimit,
-      memoryPercent,
-      totalEntries,
-      totalAccesses: totalL1Accesses,
-      recentHitRate,
-      evictionsPerMin: evictions,
-      avgEntrySize: totalEntries > 0 ? totalCacheMemory / totalEntries : 0,
-      reuseRatio: 0,
-      hitsPerSecond: l1Stats ? l1Stats.hits / 60 : 0, // Simplified rate
-      missesPerSecond: l1Stats ? l1Stats.misses / 60 : 0, // Simplified rate
-      avgAccessTime: 0,
-      queriesPerSec: this.cachedRates.queriesPerSec,
-      loadsPerSec: this.cachedRates.loadsPerSec,
-      bandwidth: this.cachedRates.bandwidth,
-      // L0/L1/L2/Network breakdown
-      l0: l0Stats,
-      l1: l1Stats,
-      l2: l2Stats,
-      network: networkStats,
-      enabled: cacheEnabled,
-    };
+    return aggregateCacheMetrics({
+      l0Provider: this.l0CacheProvider,
+      cacheStatsProvider: this.cacheStatsProvider,
+      loaders: this.loaders,
+      metricsCache: this.metrics,
+      rates: this.cachedRates,
+    });
   }
 
   /**
