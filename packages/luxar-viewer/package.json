@@ -44,6 +44,7 @@
     "test": "vitest",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest --coverage",
+    "test:perf": "vitest --run --config vitest.perf.config.ts",
     "test:watch": "vitest --watch",
     "test:with-fixtures": "pnpm test:generate-fixtures && pnpm test",
     "test:e2e": "playwright test",

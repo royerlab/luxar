@@ -11,6 +11,11 @@ export default defineConfig({
       '**/node_modules/**',
       '**/dist/**',
       '**/*.spec.ts', // Exclude E2E tests (Playwright)
+      // Phase 21E: WASM-vs-TS perf-budget tests are timing-sensitive
+      // and occasionally flake on shared CI runners. They run via
+      // `pnpm test:perf` (separate suite) — recommended as a
+      // scheduled / nightly job rather than gating every PR.
+      'src/tests/unit/wasm/perf-budget.test.ts',
     ],
     coverage: {
       provider: 'v8',
