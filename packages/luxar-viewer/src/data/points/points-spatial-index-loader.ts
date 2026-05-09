@@ -359,8 +359,11 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
       }
     }
 
-    // Initialize data accumulator for object pooling (Phase 1 optimization)
-    // NOTE: Infrastructure-only for Phase 1. Full hot path integration deferred to Phase 2.
+    // Initialize data accumulator for object pooling. The hot path
+    // (loadPoints below) reuses this accumulator's buffers across
+    // updates when `useAccumulators` is true — see the
+    // `if (this._accumulator && appConfig.dataLoading.performance.useAccumulators)`
+    // branch later in this file.
     if (appConfig.dataLoading.performance.useAccumulators) {
       const totalPoints = this.chunkIndex?.metadata.total_points || this.totalPointsNoIndex || 0;
       const ndim = this.chunkIndex?.metadata.ndim || this.arrays.positions?.shape[1] || 3;
@@ -376,8 +379,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
         log.info(
           Modules.DATA_ACCUMULATOR,
           `Initialized LoadedPointsDataAccumulator for ${this.node.path}: ` +
-            `capacity=${stats.capacity}, ndim=${ndim}, totalPoints=${totalPoints} ` +
-            '(infrastructure-only, hot path integration in Phase 2)'
+            `capacity=${stats.capacity}, ndim=${ndim}, totalPoints=${totalPoints}`
         );
       }
     }

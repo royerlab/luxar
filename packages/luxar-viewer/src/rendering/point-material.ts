@@ -9,6 +9,10 @@ import * as THREE from 'three';
 import { POINT_VERTEX_SHADER, POINT_FRAGMENT_SHADER } from './shaders/point-shaders';
 import type { CameraAwareMaterial } from './camera-aware-material';
 import { computePointSizeFactor, computeMaxPointSize } from './camera-uniforms';
+import {
+  applyColormapTextureToMaterial,
+  applyScalarRangeToMaterial,
+} from './material-colormap-helpers';
 
 /**
  * Configuration for point material creation
@@ -171,22 +175,7 @@ export class PointMaterial extends THREE.ShaderMaterial implements CameraAwareMa
    * Update the colormap texture and enable/disable colormap mode.
    */
   updateColormapTexture(texture: THREE.DataTexture | null): void {
-    const wasEnabled = 'USE_COLORMAP' in this.defines;
-    const nowEnabled = !!texture;
-
-    if (nowEnabled) {
-      this.defines.USE_COLORMAP = '';
-      if (!this.uniforms.uColormapTex) {
-        this.uniforms.uColormapTex = { value: texture };
-        this.uniforms.uScalarMin = { value: 0.0 };
-        this.uniforms.uScalarScale = { value: 1.0 };
-      } else {
-        this.uniforms.uColormapTex.value = texture;
-      }
-    } else {
-      delete this.defines.USE_COLORMAP;
-    }
-
+    const { wasEnabled, nowEnabled } = applyColormapTextureToMaterial(this, texture);
     if (wasEnabled !== nowEnabled) {
       // vertexColors controls whether THREE.js injects `in vec3 color` into the shader.
       // Must be disabled for colormap mode (uses scalar + LUT instead of color attribute).
@@ -199,13 +188,7 @@ export class PointMaterial extends THREE.ShaderMaterial implements CameraAwareMa
    * Set the scalar data range for colormap normalization.
    */
   updateScalarRange(min: number, max: number): void {
-    if (this.uniforms.uScalarMin) {
-      this.uniforms.uScalarMin.value = min;
-    }
-    if (this.uniforms.uScalarScale) {
-      this.uniforms.uScalarScale.value = 1.0 / Math.max(1e-10, max - min);
-    }
-    this.userData.scalarRange = [min, max];
+    applyScalarRangeToMaterial(this, min, max);
   }
 
   /**

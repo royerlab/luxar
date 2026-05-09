@@ -674,11 +674,12 @@ export class InputHandler {
     // Phase 14.8: Escape always reaches the context manager so it can
     // close panels even when focus is inside a text input — e.g. the
     // dataset-browser manual-path field, the debug-console filter
-    // input. The context manager has its own typing-context routing
-    // for Escape (`InputContextManager.handleKeyEventInternal` returns
-    // false in typing context, letting Escape pass through to lower-
-    // priority bindings). Without this exception, the typing guard
-    // here intercepts before the context manager ever sees the event.
+    // input. Phase 14.7 promoted the typing-context Escape path to
+    // dispatch through NAVIGATION bindings (see
+    // InputContextManager.dispatchEscapeFromTypingContext) instead of
+    // returning false to lower priorities, so this exception is what
+    // routes Escape into the panel-close flow when focus is inside an
+    // input.
     if (this.isTypingInInput() && event.key !== 'Escape') {
       return;
     }

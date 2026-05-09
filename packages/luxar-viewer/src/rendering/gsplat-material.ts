@@ -32,6 +32,10 @@ import * as THREE from 'three';
 import { GSPLAT_VERTEX_SHADER, GSPLAT_FRAGMENT_SHADER } from './shaders/gsplat-shaders';
 import type { CameraAwareMaterial } from './camera-aware-material';
 import { computeFocalLength } from './camera-uniforms';
+import {
+  applyColormapTextureToMaterial,
+  applyScalarRangeToMaterial,
+} from './material-colormap-helpers';
 
 /**
  * Configuration for gsplat material creation
@@ -296,22 +300,7 @@ export class GSplatMaterial extends THREE.ShaderMaterial implements CameraAwareM
    * @param texture - Colormap LUT texture (256x1 RGB), or null to disable
    */
   updateColormapTexture(texture: THREE.DataTexture | null): void {
-    const wasEnabled = 'USE_COLORMAP' in this.defines;
-    const nowEnabled = !!texture;
-
-    if (nowEnabled) {
-      this.defines.USE_COLORMAP = '';
-      if (!this.uniforms.uColormapTex) {
-        this.uniforms.uColormapTex = { value: texture };
-        this.uniforms.uScalarMin = { value: 0.0 };
-        this.uniforms.uScalarScale = { value: 1.0 };
-      } else {
-        this.uniforms.uColormapTex.value = texture;
-      }
-    } else {
-      delete this.defines.USE_COLORMAP;
-    }
-
+    const { wasEnabled, nowEnabled } = applyColormapTextureToMaterial(this, texture);
     if (wasEnabled !== nowEnabled) {
       this.needsUpdate = true; // Triggers shader recompilation
     }
@@ -324,13 +313,7 @@ export class GSplatMaterial extends THREE.ShaderMaterial implements CameraAwareM
    * @param max - Maximum scalar value (maps to LUT index 255)
    */
   updateScalarRange(min: number, max: number): void {
-    if (this.uniforms.uScalarMin) {
-      this.uniforms.uScalarMin.value = min;
-    }
-    if (this.uniforms.uScalarScale) {
-      this.uniforms.uScalarScale.value = 1.0 / Math.max(1e-10, max - min);
-    }
-    this.userData.scalarRange = [min, max];
+    applyScalarRangeToMaterial(this, min, max);
   }
 
   /**

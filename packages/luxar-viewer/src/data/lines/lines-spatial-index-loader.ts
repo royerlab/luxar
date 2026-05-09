@@ -236,8 +236,9 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       log.info(Modules.LINES_LOADER, 'No sharpnesses array found (using default sharpness)');
     }
 
-    // Initialize data accumulator for object pooling (Phase 1 optimization)
-    // NOTE: Infrastructure-only for Phase 1. Full hot path integration deferred to Phase 2.
+    // Initialize data accumulator for object pooling. The hot path
+    // (loadLines below) reuses this accumulator's segment + vertex
+    // buffers across updates when `useAccumulators` is true.
     if (appConfig.dataLoading.performance.useAccumulators) {
       const totalSegments = attrs.n_segments || 0;
       const totalVertices = attrs.n_vertices || 0;
@@ -260,8 +261,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
         log.info(
           Modules.DATA_ACCUMULATOR,
           `Initialized LinesDataAccumulator for ${this.node.path}: ` +
-            `segmentCap=${stats.capacity}, vertexCap=${initialVertexCap}, ndim=${ndim} ` +
-            '(infrastructure-only, hot path integration in Phase 2)'
+            `segmentCap=${stats.capacity}, vertexCap=${initialVertexCap}, ndim=${ndim}`
         );
       }
     }

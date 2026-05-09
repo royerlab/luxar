@@ -17,6 +17,10 @@
 import * as THREE from 'three';
 import { LINE_VERTEX_SHADER, LINE_FRAGMENT_SHADER } from './shaders/line-shaders';
 import type { CameraAwareMaterial } from './camera-aware-material';
+import {
+  applyColormapTextureToMaterial,
+  applyScalarRangeToMaterial,
+} from './material-colormap-helpers';
 
 /**
  * Configuration for line material creation
@@ -206,22 +210,7 @@ export class LineMaterial extends THREE.ShaderMaterial implements CameraAwareMat
    * Update the colormap texture and enable/disable colormap mode.
    */
   updateColormapTexture(texture: THREE.DataTexture | null): void {
-    const wasEnabled = 'USE_COLORMAP' in this.defines;
-    const nowEnabled = !!texture;
-
-    if (nowEnabled) {
-      this.defines.USE_COLORMAP = '';
-      if (!this.uniforms.uColormapTex) {
-        this.uniforms.uColormapTex = { value: texture };
-        this.uniforms.uScalarMin = { value: 0.0 };
-        this.uniforms.uScalarScale = { value: 1.0 };
-      } else {
-        this.uniforms.uColormapTex.value = texture;
-      }
-    } else {
-      delete this.defines.USE_COLORMAP;
-    }
-
+    const { wasEnabled, nowEnabled } = applyColormapTextureToMaterial(this, texture);
     if (wasEnabled !== nowEnabled) {
       this.needsUpdate = true;
     }
@@ -231,13 +220,7 @@ export class LineMaterial extends THREE.ShaderMaterial implements CameraAwareMat
    * Set the scalar data range for colormap normalization.
    */
   updateScalarRange(min: number, max: number): void {
-    if (this.uniforms.uScalarMin) {
-      this.uniforms.uScalarMin.value = min;
-    }
-    if (this.uniforms.uScalarScale) {
-      this.uniforms.uScalarScale.value = 1.0 / Math.max(1e-10, max - min);
-    }
-    this.userData.scalarRange = [min, max];
+    applyScalarRangeToMaterial(this, min, max);
   }
 
   /**

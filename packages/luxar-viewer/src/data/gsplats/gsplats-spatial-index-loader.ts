@@ -219,8 +219,9 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       log.info(Modules.GSPLATS_SPATIAL_INDEX_LOADER, 'No colors array found (using default white)');
     }
 
-    // Initialize data accumulator for object pooling (Phase 1 optimization)
-    // NOTE: Infrastructure-only for Phase 1. Full hot path integration deferred to Phase 2.
+    // Initialize data accumulator for object pooling. The hot path
+    // (loadGSplats below) reuses this accumulator's buffers across
+    // updates when `useAccumulators` is true.
     if (appConfig.dataLoading.performance.useAccumulators) {
       const totalSplats = attrs.n_splats || 0;
       const ndim = attrs.ndim || this.arrays.centers?.shape[1] || 3;
@@ -238,8 +239,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
         log.info(
           Modules.DATA_ACCUMULATOR,
           `Initialized GSplatsDataAccumulator for ${this.node.path}: ` +
-            `capacity=${stats.capacity}, ndim=${ndim}, totalSplats=${totalSplats} ` +
-            '(infrastructure-only, hot path integration in Phase 2)'
+            `capacity=${stats.capacity}, ndim=${ndim}, totalSplats=${totalSplats}`
         );
       }
     }
