@@ -328,6 +328,35 @@ describe('SceneLoader.retryFailedLoader — derived.skip fallback (Phase 15.3)',
     expect(internals.registry.failedLoaders.has('/l')).toBe(false);
   });
 
+  it('refuses when an updateView is in progress (Phase 16A.4)', async () => {
+    const internals = loader as unknown as LoaderInternals & { _updateInProgress: boolean };
+    const factory = new NodeFactory();
+    const placeholder = factory.createEmptyPointsNode(
+      '/p',
+      { n_points: 0 } as unknown as PointsMetadata,
+      { dispose: vi.fn() } as unknown as DataLoader
+    );
+    placeholder.userData.attrs = {};
+    root.add(placeholder);
+
+    const updateView = vi.fn().mockResolvedValue(null);
+    internals.registry.registerPointsLoader(
+      '/p',
+      { updateView, dispose: vi.fn() } as unknown as DataLoader
+    );
+    internals.registry.recordFailure('/p', new Error('initial'));
+
+    // Simulate "another update is in progress" by flipping the lock.
+    internals._updateInProgress = true;
+
+    const ok = await loader.retryFailedLoader('/p');
+
+    expect(ok).toBe(false);
+    expect(updateView).not.toHaveBeenCalled();
+    // failedLoaders should NOT be cleared — retry was deferred, not failed.
+    expect(internals.registry.failedLoaders.has('/p')).toBe(true);
+  });
+
   it('GSplats retry on derived.skip falls back to a viewState built from this.viewState', async () => {
     const internals = loader as unknown as LoaderInternals;
     const factory = new NodeFactory();

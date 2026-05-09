@@ -1883,6 +1883,22 @@ export class SceneLoader {
       return false;
     }
 
+    // Phase 16A.4: serialize against the main update path. retry calls
+    // `loader.updateView(...)` directly, which would race with the
+    // main updateView()'s own per-loader call for the same path —
+    // concurrent zarr fetches and concurrent commits to the same THREE
+    // object can produce inconsistent state. Refuse here; the caller
+    // (UI retry button, debug-console) can re-invoke after the slider
+    // / animation update settles. retryAllFailedLoaders() applies the
+    // same guard at its entry point.
+    if (this._updateInProgress) {
+      log.info(
+        Modules.SCENE_LOADER,
+        `Retry of ${path} deferred — main update in progress; try again after the update settles`
+      );
+      return false;
+    }
+
     log.info(Modules.SCENE_LOADER, `Retrying failed loader: ${path}`);
 
     // Determine which loader type this path belongs to
@@ -2012,6 +2028,18 @@ export class SceneLoader {
     if (failedPaths.length === 0) {
       log.info(Modules.SCENE_LOADER, 'No failed loaders to retry');
       return { succeeded: [], failed: [] };
+    }
+
+    // Phase 16A.4: same serialization guard as retryFailedLoader().
+    // Without this, the parallel `Promise.all(... retryFailedLoader)`
+    // below would each see `_updateInProgress` and refuse, but the
+    // earlier check is clearer in the call graph.
+    if (this._updateInProgress) {
+      log.info(
+        Modules.SCENE_LOADER,
+        'Retry-all deferred — main update in progress; try again after the update settles'
+      );
+      return { succeeded: [], failed: failedPaths };
     }
 
     log.info(Modules.SCENE_LOADER, `Retrying ${failedPaths.length} failed loader(s)`);
