@@ -205,25 +205,51 @@ function validateDataLoading(config: AppConfig, errors: string[], _warnings: str
     );
   }
 
-  // Memory validation
-  if (dataLoading.memory.targetHeapUsage <= 0 || dataLoading.memory.targetHeapUsage > 1) {
-    errors.push(`Invalid target heap usage: ${dataLoading.memory.targetHeapUsage} (must be 0-1)`);
+  // Memory validation. Phase 16B.1: tighten to reject NaN — `NaN <= 0`
+  // is always false, so the prior `<= 0 || > 1` check let NaN through.
+  const targetHeap = dataLoading.memory.targetHeapUsage;
+  if (!Number.isFinite(targetHeap) || targetHeap <= 0 || targetHeap > 1) {
+    errors.push(
+      `Invalid target heap usage: ${targetHeap} (must be a finite number in (0, 1])`
+    );
   }
-  if (dataLoading.memory.minCacheMB <= 0) {
-    errors.push(`Invalid min cache size: ${dataLoading.memory.minCacheMB} MB (must be > 0)`);
+  const minCache = dataLoading.memory.minCacheMB;
+  if (!Number.isFinite(minCache) || minCache <= 0) {
+    errors.push(`Invalid min cache size: ${minCache} MB (must be a finite positive number)`);
   }
 
-  // Spatial validation (new)
+  // Spatial validation. Phase 16B.1: same NaN hardening.
   if (dataLoading.spatial) {
-    if (dataLoading.spatial.defaultTolerance <= 0) {
+    const tol = dataLoading.spatial.defaultTolerance;
+    if (!Number.isFinite(tol) || tol <= 0) {
       errors.push(
-        `Invalid spatial default tolerance: ${dataLoading.spatial.defaultTolerance} (must be > 0)`
+        `Invalid spatial default tolerance: ${tol} (must be a finite positive number)`
       );
     }
-    if (dataLoading.spatial.defaultMaxRadius <= 0) {
+    const maxR = dataLoading.spatial.defaultMaxRadius;
+    if (!Number.isFinite(maxR) || maxR <= 0) {
       errors.push(
-        `Invalid spatial default max radius: ${dataLoading.spatial.defaultMaxRadius} (must be > 0)`
+        `Invalid spatial default max radius: ${maxR} (must be a finite positive number)`
       );
+    }
+  }
+
+  // Phase 16B.1: cache size validation. Previously unvalidated; NaN /
+  // Infinity / negative values would cascade into the cache layer
+  // sizing logic and surface as cryptic OOMs or zero-budget caches.
+  const cache = config.cache;
+  if (cache) {
+    const l0 = cache.l0MaxSizeMB;
+    if (!Number.isFinite(l0) || l0 <= 0) {
+      errors.push(`Invalid cache.l0MaxSizeMB: ${l0} (must be a finite positive number)`);
+    }
+    const l1 = cache.l1MaxSizeMB;
+    if (!Number.isFinite(l1) || l1 <= 0) {
+      errors.push(`Invalid cache.l1MaxSizeMB: ${l1} (must be a finite positive number)`);
+    }
+    const l2 = cache.l2MaxSizeMB;
+    if (!Number.isFinite(l2) || l2 <= 0) {
+      errors.push(`Invalid cache.l2MaxSizeMB: ${l2} (must be a finite positive number)`);
     }
   }
 
@@ -260,16 +286,27 @@ function validateDataLoading(config: AppConfig, errors: string[], _warnings: str
 function validateScene(config: AppConfig, errors: string[], _warnings: string[]): void {
   const { scene } = config;
 
-  // Background color validation
-  if (scene.backgroundColor < 0 || scene.backgroundColor > 0xffffff) {
+  // Phase 16B.1: tighten — `NaN < 0` is always false, so the prior
+  // range check let NaN through. Also require an integer color value.
+  if (
+    !Number.isInteger(scene.backgroundColor) ||
+    scene.backgroundColor < 0 ||
+    scene.backgroundColor > 0xffffff
+  ) {
     errors.push(
-      `Invalid scene background color: ${scene.backgroundColor} (must be valid hex color)`
+      `Invalid scene background color: ${scene.backgroundColor} (must be an integer 0..0xffffff)`
     );
   }
 
-  // Fit ratio validation
-  if (scene.defaultFitRatio <= 0 || scene.defaultFitRatio > 1) {
-    errors.push(`Invalid scene fit ratio: ${scene.defaultFitRatio} (must be between 0 and 1)`);
+  // Fit ratio validation. Same NaN hardening.
+  if (
+    !Number.isFinite(scene.defaultFitRatio) ||
+    scene.defaultFitRatio <= 0 ||
+    scene.defaultFitRatio > 1
+  ) {
+    errors.push(
+      `Invalid scene fit ratio: ${scene.defaultFitRatio} (must be a finite number in (0, 1])`
+    );
   }
 }
 

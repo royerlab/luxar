@@ -658,6 +658,100 @@ describe('validateConfig', () => {
 
       expect(result.errors.filter((e) => e.includes('fit ratio'))).toHaveLength(0);
     });
+
+    it('Phase 16B.1: rejects NaN backgroundColor', () => {
+      const cfg = cloneConfig();
+      cfg.scene.backgroundColor = NaN;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(
+        expect.stringContaining('Invalid scene background color')
+      );
+    });
+
+    it('Phase 16B.1: rejects non-integer backgroundColor', () => {
+      const cfg = cloneConfig();
+      cfg.scene.backgroundColor = 1.5;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(
+        expect.stringContaining('Invalid scene background color')
+      );
+    });
+
+    it('Phase 16B.1: rejects NaN defaultFitRatio', () => {
+      const cfg = cloneConfig();
+      cfg.scene.defaultFitRatio = NaN;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(expect.stringContaining('Invalid scene fit ratio'));
+    });
+  });
+
+  describe('Phase 16B.1 — NaN/Infinity hardening for memory + spatial + cache', () => {
+    it('rejects NaN memory.targetHeapUsage', () => {
+      const cfg = cloneConfig();
+      cfg.dataLoading.memory.targetHeapUsage = NaN;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(expect.stringContaining('target heap usage'));
+    });
+
+    it('rejects Infinity memory.targetHeapUsage', () => {
+      const cfg = cloneConfig();
+      cfg.dataLoading.memory.targetHeapUsage = Infinity;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(expect.stringContaining('target heap usage'));
+    });
+
+    it('rejects NaN memory.minCacheMB', () => {
+      const cfg = cloneConfig();
+      cfg.dataLoading.memory.minCacheMB = NaN;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(expect.stringContaining('min cache size'));
+    });
+
+    it('rejects NaN spatial.defaultTolerance', () => {
+      const cfg = cloneConfig();
+      if (cfg.dataLoading.spatial) cfg.dataLoading.spatial.defaultTolerance = NaN;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(expect.stringContaining('spatial default tolerance'));
+    });
+
+    it('rejects NaN spatial.defaultMaxRadius', () => {
+      const cfg = cloneConfig();
+      if (cfg.dataLoading.spatial) cfg.dataLoading.spatial.defaultMaxRadius = NaN;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(expect.stringContaining('spatial default max radius'));
+    });
+
+    it('rejects negative cache.l0MaxSizeMB', () => {
+      const cfg = cloneConfig();
+      cfg.cache.l0MaxSizeMB = -1;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(expect.stringContaining('cache.l0MaxSizeMB'));
+    });
+
+    it('rejects NaN cache.l1MaxSizeMB', () => {
+      const cfg = cloneConfig();
+      cfg.cache.l1MaxSizeMB = NaN;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(expect.stringContaining('cache.l1MaxSizeMB'));
+    });
+
+    it('rejects Infinity cache.l2MaxSizeMB', () => {
+      const cfg = cloneConfig();
+      cfg.cache.l2MaxSizeMB = Infinity;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(expect.stringContaining('cache.l2MaxSizeMB'));
+    });
   });
 
   describe('input validation', () => {
