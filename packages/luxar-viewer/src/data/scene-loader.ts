@@ -639,6 +639,69 @@ export class SceneLoader {
   }
 
   /**
+   * Phase 20B: shared scaffolding for the per-geometry update loops.
+   *
+   * The Points / Lines / GSplats branches in updateView were
+   * structurally identical: try/catch with identical failedLoaders
+   * bookkeeping + retryCount tracking, optional profiler dispatch,
+   * Promise.all over the loader map. This helper lifts that
+   * scaffolding so each branch only writes the type-specific work
+   * (deriveNodeViewState, call loader.updateView, post-process,
+   * setMetadata, return staged).
+   *
+   * The user-facing `loaderType` is interpolated into the profiler
+   * label and the error log, exactly matching the strings the
+   * pre-extraction code produced.
+   *
+   * @param loaders   The map of (path → loader) for one geometry type.
+   * @param loaderType Human-readable type for profiler label + error log.
+   * @param updateFn  Per-loader work; returns staged commit data or
+   *                  null when there's nothing to commit.
+   */
+  private async runLoaderUpdates<TLoader, TStaged>(
+    loaders: Map<string, TLoader>,
+    loaderType: 'Points' | 'Lines' | 'GSplats',
+    updateFn: (path: string, loader: TLoader, session: UpdateSession) => Promise<TStaged | null>
+  ): Promise<(TStaged | null)[]> {
+    const noopSession: UpdateSession = {
+      begin: () => noopSession,
+      end: () => {},
+      setMetadata: () => {},
+      markSkipped: () => {},
+    };
+
+    const tasks = Array.from(loaders.entries()).map(async ([path, loader]) => {
+      const wrappedFn = async (session: UpdateSession): Promise<TStaged | null> => {
+        try {
+          const result = await updateFn(path, loader, session);
+          // Success path: clear any previous failure record.
+          this.failedLoaders.delete(path);
+          return result;
+        } catch (error) {
+          const errorInfo = this.failedLoaders.get(path);
+          const retryCount = errorInfo ? errorInfo.retryCount + 1 : 0;
+          this.failedLoaders.set(path, {
+            error: error as Error,
+            timestamp: Date.now(),
+            retryCount,
+          });
+          const lcType = loaderType === 'Points' ? '' : `${loaderType.toLowerCase()} `;
+          log.error(
+            Modules.SCENE_LOADER,
+            `Failed to update ${lcType}${path} (attempt ${retryCount + 1}): ${(error as Error).message}`
+          );
+          return null;
+        }
+      };
+      if (this.profiler) {
+        return this.profiler.timeTopLevel(`${loaderType} (${path})`, wrappedFn);
+      }
+      return wrappedFn(noopSession);
+    });
+    return Promise.all(tasks);
+  }
+
+  /**
    * Update all points and lines for a new view state.
    *
    * Uses serialized execution to prevent race conditions: only one update runs at a time.
@@ -692,197 +755,113 @@ export class SceneLoader {
       // dimensions share a single tolerance array instead of each copying their own.
       const extendedToleranceCache = new Map<string, number[]>();
 
-      // Noop session for when no profiler is available
-      const noopSession: UpdateSession = {
-        begin: () => noopSession,
-        end: () => {},
-        setMetadata: () => {},
-        markSkipped: () => {},
-      };
-
       // ================================================================
       // Phase 1: Load + Process all nodes in parallel (async)
       // Each callback returns staged commit data WITHOUT mutating geometry.
       // This ensures all nodes are ready before any geometry changes.
+      // The shared scaffolding (try/catch + failedLoaders bookkeeping +
+      // profiler dispatch) lives in runLoaderUpdates; each branch below
+      // contains only the type-specific work.
       // ================================================================
 
-      // Load points data (no processing needed — data is used directly)
-      const pointsLoaders = Array.from(this.loaders.entries()).map(async ([path, loader]) => {
-        const updateFn = async (session: UpdateSession): Promise<StagedPointsCommit | null> => {
-          try {
-            const pointsObj = this.rootGroup?.getObjectByName(path) as THREE.Points | undefined;
-            const attrs = pointsObj?.userData?.attrs as { extend_to_all?: string[] } | undefined;
-
-            const derived = this.deriveNodeViewState(path, attrs, {
-              applyPartialExtendTolerance: true,
-              extendedToleranceCache,
-            });
-            if (derived.skip) {
-              log.info(
-                Modules.SCENE_LOADER,
-                `Skipping update for ${path} - all non-displayed dims are extended`
-              );
-              session.markSkipped(derived.skip);
-              return null;
-            }
-            const pointsViewState = derived.viewState;
-
-            const points = await loader.updateView(pointsViewState, session);
-            if (points) {
-              if (currentVersion <= 1) {
-                log.info(
-                  Modules.SCENE_LOADER,
-                  `[GEOM] v${currentVersion} points ${path}: ${points.pointCount} visible`
-                );
-              }
-              session.setMetadata({ points: points.metadata.loadedPoints });
-              this.failedLoaders.delete(path);
-              return { path, data: points };
-            }
-            this.failedLoaders.delete(path);
-            return null;
-          } catch (error) {
-            const errorInfo = this.failedLoaders.get(path);
-            const retryCount = errorInfo ? errorInfo.retryCount + 1 : 0;
-            this.failedLoaders.set(path, {
-              error: error as Error,
-              timestamp: Date.now(),
-              retryCount,
-            });
-            log.error(
+      // Points: no post-processing, data goes directly to staged commit.
+      const pointsTask = this.runLoaderUpdates(
+        this.loaders,
+        'Points',
+        async (path, loader, session) => {
+          const pointsObj = this.rootGroup?.getObjectByName(path) as THREE.Points | undefined;
+          const attrs = pointsObj?.userData?.attrs as { extend_to_all?: string[] } | undefined;
+          const derived = this.deriveNodeViewState(path, attrs, {
+            applyPartialExtendTolerance: true,
+            extendedToleranceCache,
+          });
+          if (derived.skip) {
+            log.info(
               Modules.SCENE_LOADER,
-              `Failed to update ${path} (attempt ${retryCount + 1}): ${(error as Error).message}`
+              `Skipping update for ${path} - all non-displayed dims are extended`
             );
+            session.markSkipped(derived.skip);
             return null;
           }
-        };
-
-        if (this.profiler) {
-          return this.profiler.timeTopLevel(`Points (${path})`, updateFn);
-        } else {
-          return updateFn(noopSession);
-        }
-      });
-
-      // Load + process lines data (includes async worker projection)
-      const linesLoaders = Array.from(this.linesLoaders.entries()).map(async ([path, loader]) => {
-        const updateFn = async (session: UpdateSession): Promise<StagedLinesCommit | null> => {
-          try {
-            const mesh = this.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
-            const attrs = mesh?.userData?.attrs as { extend_to_all?: string[] } | undefined;
-
-            const derived = this.deriveNodeViewState(path, attrs, {
-              applyPartialExtendTolerance: false,
-            });
-            if (derived.skip) {
-              log.info(
-                Modules.SCENE_LOADER,
-                `Skipping update for ${path} - all non-displayed dims are extended`
-              );
-              session.markSkipped(derived.skip);
-              return null;
-            }
-            const linesViewState = derived.viewState;
-
-            const data = await loader.updateView(linesViewState, session);
-            if (data) {
-              if (currentVersion <= 1) {
-                log.info(
-                  Modules.SCENE_LOADER,
-                  `[GEOM] v${currentVersion} lines ${path}: ${data.segmentCount} loaded`
-                );
-              }
-              const staged = await this.processLinesData(path, data, linesViewState, session);
-              session.setMetadata({ segments: data.segments ? data.segments.length / 2 : 0 });
-              this.failedLoaders.delete(path);
-              return staged;
-            }
-            this.failedLoaders.delete(path);
-            return null;
-          } catch (error) {
-            const errorInfo = this.failedLoaders.get(path);
-            const retryCount = errorInfo ? errorInfo.retryCount + 1 : 0;
-            this.failedLoaders.set(path, {
-              error: error as Error,
-              timestamp: Date.now(),
-              retryCount,
-            });
-            log.error(
+          const points = await loader.updateView(derived.viewState, session);
+          if (!points) return null;
+          if (currentVersion <= 1) {
+            log.info(
               Modules.SCENE_LOADER,
-              `Failed to update lines ${path} (attempt ${retryCount + 1}): ${(error as Error).message}`
+              `[GEOM] v${currentVersion} points ${path}: ${points.pointCount} visible`
             );
+          }
+          session.setMetadata({ points: points.metadata.loadedPoints });
+          return { path, data: points } as StagedPointsCommit;
+        }
+      );
+
+      // Lines: includes async worker projection.
+      const linesTask = this.runLoaderUpdates(
+        this.linesLoaders,
+        'Lines',
+        async (path, loader, session) => {
+          const mesh = this.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
+          const attrs = mesh?.userData?.attrs as { extend_to_all?: string[] } | undefined;
+          const derived = this.deriveNodeViewState(path, attrs, {
+            applyPartialExtendTolerance: false,
+          });
+          if (derived.skip) {
+            log.info(
+              Modules.SCENE_LOADER,
+              `Skipping update for ${path} - all non-displayed dims are extended`
+            );
+            session.markSkipped(derived.skip);
             return null;
           }
-        };
-
-        if (this.profiler) {
-          return this.profiler.timeTopLevel(`Lines (${path})`, updateFn);
-        } else {
-          return updateFn(noopSession);
-        }
-      });
-
-      // Load + process gsplats data (includes async worker projection + Cholesky packing)
-      const gsplatsLoaders = Array.from(this.gsplatLoaders.entries()).map(
-        async ([path, loader]) => {
-          const updateFn = async (session: UpdateSession): Promise<StagedGSplatsCommit | null> => {
-            try {
-              const mesh = this.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
-              const attrs = mesh?.userData?.attrs as GSplatsMetadata | undefined;
-
-              const derived = this.deriveNodeViewState(path, attrs, {
-                applyPartialExtendTolerance: true,
-                extendedToleranceCache,
-              });
-              if (derived.skip) {
-                log.info(
-                  Modules.SCENE_LOADER,
-                  `Skipping gsplats update for ${path} - all non-displayed dims are extended`
-                );
-                session.markSkipped(derived.skip);
-                return null;
-              }
-              const gsplatsViewState: GSplatsViewState = derived.viewState;
-
-
-              const data = await loader.updateView(gsplatsViewState, session);
-              if (data) {
-                const staged = await this.processGSplatsData(path, data, gsplatsViewState, session);
-                session.setMetadata({ splats: data.splatCount });
-                this.failedLoaders.delete(path);
-                return staged;
-              }
-              this.failedLoaders.delete(path);
-              return null;
-            } catch (error) {
-              const errorInfo = this.failedLoaders.get(path);
-              const retryCount = errorInfo ? errorInfo.retryCount + 1 : 0;
-              this.failedLoaders.set(path, {
-                error: error as Error,
-                timestamp: Date.now(),
-                retryCount,
-              });
-              log.error(
-                Modules.SCENE_LOADER,
-                `Failed to update gsplats ${path} (attempt ${retryCount + 1}): ${(error as Error).message}`
-              );
-              return null;
-            }
-          };
-
-          if (this.profiler) {
-            return this.profiler.timeTopLevel(`GSplats (${path})`, updateFn);
-          } else {
-            return updateFn(noopSession);
+          const linesViewState = derived.viewState;
+          const data = await loader.updateView(linesViewState, session);
+          if (!data) return null;
+          if (currentVersion <= 1) {
+            log.info(
+              Modules.SCENE_LOADER,
+              `[GEOM] v${currentVersion} lines ${path}: ${data.segmentCount} loaded`
+            );
           }
+          const staged = await this.processLinesData(path, data, linesViewState, session);
+          session.setMetadata({ segments: data.segments ? data.segments.length / 2 : 0 });
+          return staged;
+        }
+      );
+
+      // GSplats: includes async worker projection + Cholesky packing.
+      const gsplatsTask = this.runLoaderUpdates(
+        this.gsplatLoaders,
+        'GSplats',
+        async (path, loader, session) => {
+          const mesh = this.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
+          const attrs = mesh?.userData?.attrs as GSplatsMetadata | undefined;
+          const derived = this.deriveNodeViewState(path, attrs, {
+            applyPartialExtendTolerance: true,
+            extendedToleranceCache,
+          });
+          if (derived.skip) {
+            log.info(
+              Modules.SCENE_LOADER,
+              `Skipping gsplats update for ${path} - all non-displayed dims are extended`
+            );
+            session.markSkipped(derived.skip);
+            return null;
+          }
+          const gsplatsViewState: GSplatsViewState = derived.viewState;
+          const data = await loader.updateView(gsplatsViewState, session);
+          if (!data) return null;
+          const staged = await this.processGSplatsData(path, data, gsplatsViewState, session);
+          session.setMetadata({ splats: data.splatCount });
+          return staged;
         }
       );
 
       // Wait for ALL loaders to complete (load + process)
       const [pointsStaged, linesStaged, gsplatsStaged] = await Promise.all([
-        Promise.all(pointsLoaders),
-        Promise.all(linesLoaders),
-        Promise.all(gsplatsLoaders),
+        pointsTask,
+        linesTask,
+        gsplatsTask,
       ]);
 
       // ================================================================
