@@ -257,47 +257,14 @@ function validateLineSegmentReferences(
   }
 }
 
-/**
- * Coerce a (possibly quantized) color buffer to Float32 in [0, 1] for
- * WASM consumption. F32 inputs are assumed pre-normalized and pass
- * through unchanged; Uint8 inputs are scaled by 1/255; Uint16 inputs
- * are scaled by 1/65535.
- *
- * Lines and GSplats both call WASM color helpers
- * (`interpolate_colors_batch`, `compact_by_mask`) whose downstream
- * shaders interpret values as `[0, 1]`. The reference main-thread
- * paths in `data/gsplats/gsplats-processor.ts` (processGSplats3DOnly)
- * and `data/lines/projection.ts` (buildInstanceBuffers) apply the
- * same `1/255` / `1/65535` factors before calling the WASM helpers;
- * this function keeps the worker path at parity. (Points has its own
- * color compaction path; it does not call this helper.)
- *
- * Exported for direct unit testing — not part of the public worker API.
- */
-export function coerceColorsToFloat32(
-  colors: Float32Array | Uint8Array | Uint16Array
-): Float32Array {
-  if (colors instanceof Float32Array) return colors;
-  const norm = colors instanceof Uint8Array ? 1 / 255 : 1 / 65535;
-  const out = new Float32Array(colors.length);
-  for (let i = 0; i < colors.length; i++) {
-    out[i] = colors[i] * norm;
-  }
-  return out;
-}
-
-/**
- * Fill an RGB-triplet color array with white (1.0, 1.0, 1.0) for the
- * first `count` triplets. Used as the no-color default by Lines and
- * GSplats projections.
- */
-function fillColorsWhite(out: Float32Array, count: number): void {
-  for (let i = 0; i < count; i++) {
-    out[i * 3] = 1.0;
-    out[i * 3 + 1] = 1.0;
-    out[i * 3 + 2] = 1.0;
-  }
-}
+// Phase 18 W2: color helpers moved to ./color-utils so the
+// main-thread color paths (lines/projection.ts:buildInstanceBuffers,
+// gsplats-processor.ts:processGSplats3DOnly) can share the same
+// normalization contract instead of inlining 1/255 / 1/65535 math.
+// Re-exported here for back-compat with the existing unit test
+// (`src/tests/unit/workers/coerce-colors.test.ts`).
+import { coerceColorsToFloat32, fillColorsWhite } from './color-utils';
+export { coerceColorsToFloat32, fillColorsWhite };
 
 /**
  * Validate `querySpatialIndex` inputs at the worker boundary.

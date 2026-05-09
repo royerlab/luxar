@@ -20,6 +20,7 @@
  * @module data/lines/projection
  */
 
+import { coerceColorsToFloat32 } from '../../workers/color-utils';
 import { log, Modules, LogEmoji } from '../../utils/log';
 import type {
   LinesMetadata,
@@ -289,20 +290,12 @@ export function buildInstanceBuffers(
   const startClipped = new Uint8Array(maxSegments);
   const endClipped = new Uint8Array(maxSegments);
 
-  // Phase 16B.2: normalize quantized colors to [0, 1] up front. The
-  // shader (and the later WASM-batch branch in this file) expect
-  // floats in [0, 1]; reading raw Uint8 values via .slice() and
-  // writing them into a Float32 lerp would produce values in
-  // [0, 255] / [0, 65535]. Companion fix to Phase 15.2 in
-  // workers/data-worker.ts (coerceColorsToFloat32). Float32 inputs
-  // pass through unchanged.
-  const colorNorm = colors
-    ? colors instanceof Uint8Array
-      ? 1 / 255
-      : colors instanceof Uint16Array
-        ? 1 / 65535
-        : 1
-    : 1;
+  // Phase 18 W2: shared coerceColorsToFloat32 normalizes Uint8/Uint16
+  // up front into [0, 1] (Float32 passes through). Subsequent
+  // per-segment lerps read directly with no per-index multiplication.
+  // Same helper is used by the worker projection path; one contract
+  // for both threads.
+  const colorsF32 = colors ? coerceColorsToFloat32(colors) : null;
 
   let outIdx = 0;
   let firstClippedReason = null;
@@ -338,21 +331,13 @@ export function buildInstanceBuffers(
     startPositions.set(clipped.p1, outIdx * 3);
     endPositions.set(clipped.p2, outIdx * 3);
 
-    // Interpolate and write colors. Phase 16B.2: apply colorNorm so
-    // Uint8 / Uint16 inputs land in [0, 1] before the lerp.
-    const c0 = colors
-      ? [
-          colors[v0 * 3] * colorNorm,
-          colors[v0 * 3 + 1] * colorNorm,
-          colors[v0 * 3 + 2] * colorNorm,
-        ]
+    // Interpolate and write colors. colorsF32 is already normalized
+    // to [0, 1] by coerceColorsToFloat32 above.
+    const c0 = colorsF32
+      ? [colorsF32[v0 * 3], colorsF32[v0 * 3 + 1], colorsF32[v0 * 3 + 2]]
       : [1, 1, 1];
-    const c1 = colors
-      ? [
-          colors[v1 * 3] * colorNorm,
-          colors[v1 * 3 + 1] * colorNorm,
-          colors[v1 * 3 + 2] * colorNorm,
-        ]
+    const c1 = colorsF32
+      ? [colorsF32[v1 * 3], colorsF32[v1 * 3 + 1], colorsF32[v1 * 3 + 2]]
       : [1, 1, 1];
     const startC = lerpVec3(c0, c1, clipped.t1);
     const endC = lerpVec3(c0, c1, clipped.t2);
@@ -522,22 +507,11 @@ export function buildInstanceBuffersWASM(
     endPositions
   );
 
-  // Phase 4: Interpolate colors
+  // Phase 4: Interpolate colors. Phase 18 W2: shared
+  // coerceColorsToFloat32 handles dtype + normalization in one step.
   if (colors) {
-    // WASM expects Float32Array, convert and normalize if needed
-    let colorsF32: Float32Array;
-    if (colors instanceof Float32Array) {
-      colorsF32 = colors;
-    } else {
-      // Normalize Uint8 (0-255) or Uint16 (0-65535) to Float32 (0-1)
-      colorsF32 = new Float32Array(colors.length);
-      const normFactor = colors instanceof Uint8Array ? 1 / 255 : 1 / 65535;
-      for (let i = 0; i < colors.length; i++) {
-        colorsF32[i] = colors[i] * normFactor;
-      }
-    }
     wasm.interpolate_colors_batch(
-      colorsF32,
+      coerceColorsToFloat32(colors),
       segments,
       visibility,
       t1Params,
