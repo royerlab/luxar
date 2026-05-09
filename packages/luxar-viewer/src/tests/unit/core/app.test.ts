@@ -11,22 +11,15 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 // verifies initialization ordering + cross-wiring; component behavior
 // is covered by per-module tests.
 //
-// Phase 21C audit: the original plan was to add an `AppFactories`
-// interface to `LuxarAppOptions` so tests could inject stubs without
-// `vi.mock` indirection. On close inspection the trade-off doesn't
-// pay: every `new X(...)` site in `app.ts:init()` would gain a
-// `(this.options.factories?.X ?? defaultFactories.X)(...)` indirection,
-// the test stubs would relocate from `vi.mock` to factory functions
-// (same complexity, different shape), and the tests' constructor-call
-// assertions (e.g. `expect(AnimationController).toHaveBeenCalledWith
-// (mockSceneManager.controls, mockSceneManager.postProcessing)`) would
-// need to be rewritten to assert on factory spies. Net: production
-// code reads worse, test code reads ~the same, no new capability.
-//
-// Per the standing "no complexification" rule, the DI refactor is
-// deferred. If a future need (e.g. a non-mocked embedding test) makes
-// `vi.mock` actually painful, factory injection can be added per-
-// component without churning the rest.
+// Phase 21C: `LuxarAppOptions.factories` exposes construction
+// overrides for the heavy components (SceneManager, AnimationController,
+// RenderingControls, RecordingPanel, LayersPanel) — see
+// `core/app-factories.ts`. The existing `vi.mock(...)` calls below
+// still work because the default factories call `new X(...)` and
+// vi.mock intercepts the constructor. New tests can opt into factory
+// stubs instead — see `factories smoke test` near the bottom of this
+// file for an example of injecting a SceneManager stub without
+// `vi.mock`.
 
 // Mock all dependencies before importing LuxarApp
 vi.mock('../../../scene/scene-manager');
@@ -952,6 +945,65 @@ describe('LuxarApp', () => {
       expect(initOrder.indexOf('AnimationController')).toBeLessThan(startAnimationIndex);
       expect(initOrder.indexOf('InputHandler')).toBeLessThan(startAnimationIndex);
       expect(initOrder.indexOf('RenderingControls')).toBeLessThan(startAnimationIndex);
+    });
+  });
+
+  describe('Phase 21C — factory overrides', () => {
+    it('factories.sceneManager is consulted instead of `new SceneManager()`', async () => {
+      mockFetch.mockResolvedValue({ ok: true });
+      const factorySpy = vi.fn(() => mockSceneManager);
+      await app.init({
+        canvas: mockCanvas,
+        src: 'http://example.com/data.zarr',
+        factories: { sceneManager: factorySpy },
+      });
+      expect(factorySpy).toHaveBeenCalledTimes(1);
+      // Default SceneManager() should NOT have been called this time.
+      expect(SceneManager).not.toHaveBeenCalled();
+    });
+
+    it('factories.animationController receives the live SceneManager controls/postProcessing', async () => {
+      mockFetch.mockResolvedValue({ ok: true });
+      const factorySpy = vi.fn(() => mockAnimationController);
+      await app.init({
+        canvas: mockCanvas,
+        src: 'http://example.com/data.zarr',
+        factories: { animationController: factorySpy },
+      });
+      expect(factorySpy).toHaveBeenCalledTimes(1);
+      expect(factorySpy).toHaveBeenCalledWith(
+        mockSceneManager.controls,
+        mockSceneManager.postProcessing
+      );
+    });
+
+    it('omitted factories fall back to defaults (vi.mock-intercepted constructors)', async () => {
+      mockFetch.mockResolvedValue({ ok: true });
+      // No `factories` field on options — defaults flow through.
+      await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
+      // The mocked constructors still ran via the default factory path.
+      expect(SceneManager).toHaveBeenCalled();
+      expect(AnimationController).toHaveBeenCalled();
+    });
+
+    it('per-key overrides compose: provide one factory, defaults handle the rest', async () => {
+      mockFetch.mockResolvedValue({ ok: true });
+      const recordingFactory = vi.fn(() => ({
+        setPanelStateCallbacks: vi.fn(),
+        setAdaptiveDPRManager: vi.fn(),
+        setOverlayManager: vi.fn(),
+        dispose: vi.fn(),
+      }));
+      await app.init({
+        canvas: mockCanvas,
+        src: 'http://example.com/data.zarr',
+        factories: { recordingPanel: recordingFactory as never },
+      });
+      expect(recordingFactory).toHaveBeenCalledTimes(1);
+      // Other components went through their default factories (which
+      // vi.mock intercepts):
+      expect(SceneManager).toHaveBeenCalled();
+      expect(AnimationController).toHaveBeenCalled();
     });
   });
 });

@@ -27,6 +27,7 @@ import { ScaleBar } from '../ui/components/scale-bar';
 import { ColormapLegend } from '../ui/components/colormap-legend';
 import { RecordingPanel } from '../ui/recording-panel';
 import { LayersPanel } from '../ui/layers';
+import { type AppFactories, resolveFactories } from './app-factories';
 import { ThemeManager } from '../themes/theme-manager';
 import type { ZarrViewerConfig } from '../types/zarr';
 import { OverlayManager } from '../ui/helpers/overlay-manager';
@@ -104,6 +105,16 @@ export interface LuxarAppOptions {
    * profiling cache behaviour.
    */
   openCacheStats?: boolean;
+
+  /**
+   * Phase 21C: optional construction overrides for the heavy
+   * components constructed by `init()`. When omitted (or per-key
+   * undefined), `defaultFactories` is used and the production path
+   * is byte-for-byte equivalent to pre-21C. Embedders + tests inject
+   * factories to substitute alternate scene managers, recording
+   * panels, etc. See `app-factories.ts`.
+   */
+  factories?: AppFactories;
 }
 
 export class LuxarApp {
@@ -241,8 +252,12 @@ export class LuxarApp {
 
       const sceneSrc = this.options.src ?? config.defaultZarrPath;
 
+      // Phase 21C: resolve construction-factory overrides once. Default
+      // path matches pre-21C inline `new X(...)` calls byte-for-byte.
+      const factories = resolveFactories(this.options.factories);
+
       // Initialize scene manager first
-      this.sceneManager = new SceneManager();
+      this.sceneManager = factories.sceneManager();
       await this.sceneManager.init({
         canvas: this.options.canvas,
         debug: this.options.debug,
@@ -253,7 +268,7 @@ export class LuxarApp {
       // the controller) and subscribes to the bus events the
       // controller emits each frame. Owning it at the app level keeps
       // the lower scene/ layer free of UI imports.
-      this.animationController = new AnimationController(
+      this.animationController = factories.animationController(
         this.sceneManager.controls,
         this.sceneManager.postProcessing
       );
@@ -343,7 +358,7 @@ export class LuxarApp {
       this.inputHandler.init();
 
       // Initialize rendering controls
-      this.renderingControls = new RenderingControls(
+      this.renderingControls = factories.renderingControls(
         this.sceneManager.postProcessing,
         this.sceneManager
       );
@@ -358,7 +373,7 @@ export class LuxarApp {
       this.inputHandler.setRenderingControls(this.renderingControls);
 
       // Initialize recording panel (screenshot/video capture)
-      this.recordingPanel = new RecordingPanel(this.sceneManager, this.animationController);
+      this.recordingPanel = factories.recordingPanel(this.sceneManager, this.animationController);
       this.recordingPanel.setPanelStateCallbacks(
         () => this.getPanelVisibilityStates(),
         (states) => this.restorePanelVisibilityStates(states)
@@ -367,7 +382,7 @@ export class LuxarApp {
       this.inputHandler.setRecordingPanel(this.recordingPanel);
 
       // Initialize layers panel (per-node controls)
-      this.layersPanel = new LayersPanel(document.body, this.animationController);
+      this.layersPanel = factories.layersPanel(document.body, this.animationController);
       this.inputHandler.setLayersPanel(this.layersPanel);
 
       // Start animation loop first to ensure background is rendered
