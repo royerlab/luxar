@@ -64,6 +64,7 @@ function makeCtx(overrides: Partial<CaptureContext> = {}): CaptureContext {
     imageQuality: 92,
     videoCodec: 'h264',
     env: {},
+    signal: new AbortController().signal,
     ...overrides,
   };
 }
@@ -127,6 +128,20 @@ describe('ImageSequenceDriver', () => {
     await driver.setup(ctx);
     await driver.finalize(ctx, 0, makeProgress());
     expect(ctx.showToast).toHaveBeenCalledWith('No frames captured');
+    expect(ctx.downloadBlob).not.toHaveBeenCalled();
+  });
+
+  it('abort() tears down the partial ZIP without download (r8 §A3)', async () => {
+    const driver = new ImageSequenceDriver('png');
+    const ctx = makeCtx();
+    await driver.setup(ctx);
+    await driver.captureFrame(ctx, 0, makeProgress());
+
+    await driver.abort?.(ctx, 'user-cancel');
+
+    expect(ctx.downloadBlob).not.toHaveBeenCalled();
+    // After abort, finalize should be a no-op (zip ref cleared).
+    await driver.finalize(ctx, 1, makeProgress());
     expect(ctx.downloadBlob).not.toHaveBeenCalled();
   });
 });
@@ -214,5 +229,58 @@ describe('VideoModeDriver', () => {
     expect(await driver.setup(ctx)).toBe(true);
     expect(addVideoTrack).toHaveBeenCalledTimes(1);
     expect(start).toHaveBeenCalledTimes(1);
+  });
+
+  it('zero-frame finalize still calls output.finalize() to release encoder (r8 §A4)', async () => {
+    const start = vi.fn().mockResolvedValue(undefined);
+    const finalize = vi.fn().mockResolvedValue(undefined);
+    const addVideoTrack = vi.fn();
+    const Output = vi.fn().mockImplementation(() => ({ start, addVideoTrack, finalize }));
+    vi.doMock('mediabunny', () => ({
+      canEncodeVideo: vi.fn().mockResolvedValue(true),
+      Output,
+      WebMOutputFormat: vi.fn(),
+      Mp4OutputFormat: vi.fn(),
+      MkvOutputFormat: vi.fn(),
+      BufferTarget: vi.fn(() => ({ buffer: new ArrayBuffer(0) })),
+      VideoSampleSource: vi.fn(() => ({ add: vi.fn() })),
+      VideoSample: vi.fn(),
+    }));
+    const { VideoModeDriver } = await import('../../../../ui/recording/video-mode-driver');
+    const driver = new VideoModeDriver('webm');
+    const ctx = makeCtx({ videoCodec: 'vp9' });
+    await driver.setup(ctx);
+
+    await driver.finalize(ctx, 0, makeProgress());
+
+    expect(finalize).toHaveBeenCalledTimes(1);
+    expect(ctx.showToast).toHaveBeenCalledWith('No frames captured');
+    expect(ctx.downloadBlob).not.toHaveBeenCalled();
+  });
+
+  it('abort() releases encoder without delivering an artifact (r8 §A3)', async () => {
+    const start = vi.fn().mockResolvedValue(undefined);
+    const finalize = vi.fn().mockResolvedValue(undefined);
+    const addVideoTrack = vi.fn();
+    const Output = vi.fn().mockImplementation(() => ({ start, addVideoTrack, finalize }));
+    vi.doMock('mediabunny', () => ({
+      canEncodeVideo: vi.fn().mockResolvedValue(true),
+      Output,
+      WebMOutputFormat: vi.fn(),
+      Mp4OutputFormat: vi.fn(),
+      MkvOutputFormat: vi.fn(),
+      BufferTarget: vi.fn(() => ({ buffer: new ArrayBuffer(8) })),
+      VideoSampleSource: vi.fn(() => ({ add: vi.fn() })),
+      VideoSample: vi.fn(),
+    }));
+    const { VideoModeDriver } = await import('../../../../ui/recording/video-mode-driver');
+    const driver = new VideoModeDriver('webm');
+    const ctx = makeCtx({ videoCodec: 'vp9' });
+    await driver.setup(ctx);
+
+    await driver.abort?.(ctx, 'user-cancel');
+
+    expect(finalize).toHaveBeenCalledTimes(1);
+    expect(ctx.downloadBlob).not.toHaveBeenCalled();
   });
 });

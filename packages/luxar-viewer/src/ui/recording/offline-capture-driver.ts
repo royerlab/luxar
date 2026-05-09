@@ -51,6 +51,14 @@ export interface CaptureContext {
   videoCodec: VideoCodecOption;
   /** Browser environment for showSaveFilePicker (so tests can stub). */
   env: { showSaveFilePicker?: (opts: unknown) => Promise<FileSystemFileHandle> };
+  /**
+   * r8 §A2: AbortSignal for the offline-capture session. Drivers MAY
+   * check `signal.aborted` in long-running setup/finalize work to
+   * short-circuit cleanly when the panel is disposed mid-capture or
+   * the user cancels. The panel also checks the signal between
+   * frames so abort during an `await` propagates within ~1 frame.
+   */
+  signal: AbortSignal;
 }
 
 export interface CaptureProgress {
@@ -97,4 +105,15 @@ export interface OfflineCaptureDriver {
    * pointless). Polled each iteration.
    */
   shouldAbort?(): boolean;
+
+  /**
+   * r8 §A3: optional partial-resource cleanup hook. Called from the
+   * panel's finally block when:
+   *   - setup completed but capture/finalize threw, OR
+   *   - the offline session was aborted (dispose / user cancel).
+   * Drivers should release encoder/zip/file resources without
+   * downloading or toasting "saved". Distinct from `finalize`,
+   * which is the success path that delivers the artifact.
+   */
+  abort?(ctx: CaptureContext, reason: 'disposed' | 'user-cancel' | 'error'): Promise<void>;
 }

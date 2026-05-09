@@ -118,6 +118,14 @@ export class RecordingPanel {
   private durationTimer: ReturnType<typeof setTimeout> | null = null;
   private keepAliveCallbackId = 'recording-keepalive';
   private turntableCallbackId = 'recording-turntable';
+  // r8 §A1: offline-capture callback IDs as fields (was: locals
+  // inside runOfflineCaptureLoop). dispose() can now remove them
+  // unconditionally even if the loop is parked on an await.
+  private static readonly OFFLINE_CAPTURE_CALLBACK_ID = 'recording-offline-capture';
+  private static readonly OFFLINE_KEEPALIVE_CALLBACK_ID = 'recording-offline-keepalive';
+  // r8 §A2: AbortController for the offline-capture session. Set on
+  // entry to runOfflineCaptureLoop; abort() on dispose or cancel.
+  private offlineSessionAbort: AbortController | null = null;
   private sliderSync = new SliderSyncCoordinator();
   private savedAutoRotate: boolean = false;
 
@@ -249,10 +257,24 @@ export class RecordingPanel {
       this.durationTimer = null;
     }
 
+    // r8 §A2: abort the offline-capture session so any in-flight
+    // driver.captureFrame / driver.finalize sees signal.aborted on
+    // its next await checkpoint and short-circuits cleanly.
+    this.offlineSessionAbort?.abort('disposed');
+
     this.offlineOverlayCleanup?.();
     this.hideRecordingIndicator();
     this.animationController.removePerFrameCallback(this.keepAliveCallbackId);
     this.animationController.removePerFrameCallback(this.turntableCallbackId);
+    // r8 §A1: also remove the offline-capture callbacks. The normal
+    // loop path removes them in finally; this covers dispose-while-
+    // awaiting where the loop hasn't reached its finally yet.
+    this.animationController.removePerFrameCallback(
+      RecordingPanel.OFFLINE_CAPTURE_CALLBACK_ID
+    );
+    this.animationController.removePerFrameCallback(
+      RecordingPanel.OFFLINE_KEEPALIVE_CALLBACK_ID
+    );
     this.cleanupSyncListener();
     this.restoreAutoRotate();
     this.restoreRecordingState();
@@ -571,6 +593,11 @@ export class RecordingPanel {
             })
           : new VideoModeDriver(mode);
 
+    // r8 §A2: AbortController for this offline session. Set on the
+    // panel so dispose() can abort any in-flight await.
+    const sessionAbort = new AbortController();
+    this.offlineSessionAbort = sessionAbort;
+
     // Set recording state
     if (mode === 'exr') {
       this.isEXRSequenceRecording = true;
@@ -580,17 +607,22 @@ export class RecordingPanel {
     this.recordingStartTime = Date.now();
     this.showRecordingIndicator();
 
-    // Block user interaction during offline capture with a modal overlay.
-    // Camera manipulation or resize during frame-by-frame capture would corrupt the sequence.
-    // Includes a live preview canvas so the user can see each frame as it's captured.
+    // r8 §A6: offline overlay with proper modal-dialog ARIA semantics
+    // and explicit Escape handling that aborts the session (was: a
+    // capturing keydown listener that just stopPropagation, blocking
+    // Escape from doing anything inside the overlay).
     const overlay = document.createElement('div');
     overlay.className = 'luxar-recording-overlay';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-labelledby', 'luxar-recording-overlay-label');
+    overlay.setAttribute('aria-describedby', 'luxar-recording-overlay-counter');
     overlay.innerHTML = `
       <div class="luxar-recording-overlay__content">
         <canvas class="luxar-recording-overlay__preview"></canvas>
         <div class="luxar-recording-overlay__progress">
-          <span class="luxar-recording-overlay__label">Capturing frames...</span>
-          <span class="luxar-recording-overlay__counter">0/${totalFrames}</span>
+          <span id="luxar-recording-overlay-label" class="luxar-recording-overlay__label">Capturing frames...</span>
+          <span id="luxar-recording-overlay-counter" class="luxar-recording-overlay__counter">0/${totalFrames}</span>
         </div>
         <button class="luxar-recording-overlay__cancel">Cancel</button>
       </div>
@@ -599,22 +631,43 @@ export class RecordingPanel {
       '.luxar-recording-overlay__preview'
     ) as HTMLCanvasElement;
     const previewCtx = previewCanvas.getContext('2d');
-    const cancelButton = overlay.querySelector('.luxar-recording-overlay__cancel');
+    const cancelButton = overlay.querySelector(
+      '.luxar-recording-overlay__cancel'
+    ) as HTMLButtonElement | null;
+    // Remember the previously-focused element so we can restore focus
+    // when the overlay closes (modal dialog convention).
+    const previouslyFocused = document.activeElement as HTMLElement | null;
     const handleCancel = (): void => {
       this.isRecording = false;
+      sessionAbort.abort('user-cancel');
     };
-    const stopOverlayKeydown = (e: KeyboardEvent): void => e.stopPropagation();
+    const handleOverlayKeydown = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        handleCancel();
+        return;
+      }
+      // Other keys still get blocked from reaching the canvas/global
+      // shortcuts so typing doesn't inadvertently fire dimensions
+      // navigation etc. mid-capture.
+      e.stopPropagation();
+    };
     cancelButton?.addEventListener('click', handleCancel);
-    // Block all pointer/keyboard events from reaching the canvas
-    overlay.addEventListener('keydown', stopOverlayKeydown, true);
+    overlay.addEventListener('keydown', handleOverlayKeydown, true);
 
     let overlayCleaned = false;
     const cleanupOfflineOverlay = (): void => {
       if (overlayCleaned) return;
       overlayCleaned = true;
       cancelButton?.removeEventListener('click', handleCancel);
-      overlay.removeEventListener('keydown', stopOverlayKeydown, true);
+      overlay.removeEventListener('keydown', handleOverlayKeydown, true);
       overlay.remove();
+      // Restore focus to whatever was focused before we hijacked the
+      // page (modal-dialog convention).
+      if (previouslyFocused && typeof previouslyFocused.focus === 'function') {
+        previouslyFocused.focus();
+      }
       if (this.offlineOverlayCleanup === cleanupOfflineOverlay) {
         this.offlineOverlayCleanup = null;
       }
@@ -622,6 +675,9 @@ export class RecordingPanel {
     this.offlineOverlayCleanup = cleanupOfflineOverlay;
 
     document.body.appendChild(overlay);
+    // Focus the cancel button so Escape / Enter route through the
+    // overlay's keydown handler rather than wherever focus was before.
+    cancelButton?.focus();
 
     const counterEl = overlay.querySelector('.luxar-recording-overlay__counter');
     const labelEl = overlay.querySelector('.luxar-recording-overlay__label');
@@ -642,6 +698,7 @@ export class RecordingPanel {
       imageQuality: this.options.imageQuality,
       videoCodec: this.options.videoCodec,
       env: window as unknown as CaptureContext['env'],
+      signal: sessionAbort.signal,
     };
 
     const progress = {
@@ -658,13 +715,13 @@ export class RecordingPanel {
       },
     };
 
-    // Identifiers for the per-frame callbacks. Declared up front so
-    // the finally block can remove them unconditionally even if a
-    // throw aborted the loop before they were ever registered (the
-    // animation controller's remove is idempotent for unknown IDs).
-    const captureCallbackId = 'recording-offline-capture';
-    const keepAliveId = 'recording-offline-keepalive';
+    // r8 §A1: callback IDs are class-static so dispose() can remove
+    // them unconditionally even if the loop is parked on an await.
+    const captureCallbackId = RecordingPanel.OFFLINE_CAPTURE_CALLBACK_ID;
+    const keepAliveId = RecordingPanel.OFFLINE_KEEPALIVE_CALLBACK_ID;
     let capturedFrames = 0;
+    let setupCompleted = false;
+    let finalizeAttempted = false;
 
     try {
       // Per-mode driver setup (encoder construction, file picker, …).
@@ -678,6 +735,8 @@ export class RecordingPanel {
       if (!setupOk) {
         return; // finally restores all state
       }
+      setupCompleted = true;
+      if (sessionAbort.signal.aborted) return; // disposed during setup
 
       // Frame-by-frame capture using the live animation loop.
       //
@@ -697,6 +756,7 @@ export class RecordingPanel {
 
       for (let i = 0; i < totalFrames; i++) {
         if (!this.isRecording) break;
+        if (sessionAbort.signal.aborted) break; // r8 §A2
         if (driver.shouldAbort?.()) break;
 
         // Orbit camera by one step and capture in a single animation frame.
@@ -717,6 +777,11 @@ export class RecordingPanel {
         // Remove the rotation callback immediately so the animation loop cannot
         // apply extra rotations while we do async capture work below.
         this.animationController.removePerFrameCallback(captureCallbackId);
+
+        // r8 §A2: re-check the signal after the await. A dispose
+        // during the rAF wait should NOT proceed to captureFrame,
+        // which can download/toast and observe disposed renderer state.
+        if (sessionAbort.signal.aborted) break;
 
         // The animation loop has rendered with the rotated camera. Hand off
         // to the per-mode driver to capture the frame.
@@ -741,9 +806,16 @@ export class RecordingPanel {
         if (counterEl) counterEl.textContent = `${i + 1}/${totalFrames}`;
       }
 
+      // r8 §A2/§A3: if the session was aborted, skip finalize (don't
+      // download a partial artifact) and route to driver.abort instead.
+      if (sessionAbort.signal.aborted) {
+        return; // finally calls driver.abort
+      }
+
       // Driver-specific finalize. Wrapped in its own try/catch so a
       // throw here surfaces a toast but doesn't bypass the outer
       // finally — the panel state still gets restored.
+      finalizeAttempted = true;
       try {
         await driver.finalize(ctx, capturedFrames, progress);
       } catch (err) {
@@ -754,6 +826,24 @@ export class RecordingPanel {
       log.error(Modules.RECORDING, `Offline ${mode} capture failed: ${err}`);
       showToast('Recording failed');
     } finally {
+      // r8 §A3: if setup completed but finalize wasn't attempted (or
+      // threw before the panel could deliver an artifact), give the
+      // driver a chance to release partial encoder/zip resources.
+      if (setupCompleted && !finalizeAttempted) {
+        try {
+          const reason = sessionAbort.signal.aborted
+            ? sessionAbort.signal.reason === 'user-cancel'
+              ? 'user-cancel'
+              : 'disposed'
+            : 'error';
+          await driver.abort?.(ctx, reason as 'disposed' | 'user-cancel' | 'error');
+        } catch (abortErr) {
+          log.warning(
+            Modules.RECORDING,
+            `Driver abort during cleanup failed: ${abortErr}`
+          );
+        }
+      }
       // Idempotent cleanup. removePerFrameCallback tolerates unknown
       // IDs; cleanupOfflineOverlay short-circuits if already cleaned;
       // restoreAutoRotate / restoreRecordingState are no-ops if the
@@ -767,6 +857,11 @@ export class RecordingPanel {
       cleanupOfflineOverlay();
       this.restoreAutoRotate();
       this.restoreRecordingState();
+      // Clear the session-abort field iff it's still pointing to ours
+      // (a re-entrant call would have already set up a new one).
+      if (this.offlineSessionAbort === sessionAbort) {
+        this.offlineSessionAbort = null;
+      }
     }
   }
 

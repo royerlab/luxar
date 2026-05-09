@@ -72,4 +72,12 @@ export class ImageSequenceDriver implements OfflineCaptureDriver {
   shouldAbort(): boolean {
     return this.zip?.hasDiskFailed() ?? false;
   }
+
+  /** r8 §A3: tear down a partial ZIP without delivering an artifact. */
+  async abort(_ctx: CaptureContext, _reason: 'disposed' | 'user-cancel' | 'error'): Promise<void> {
+    if (this.zip) {
+      await this.zip.abort();
+      this.zip = null;
+    }
+  }
 }

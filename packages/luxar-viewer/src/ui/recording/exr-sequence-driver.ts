@@ -69,4 +69,16 @@ export class ExrSequenceDriver implements OfflineCaptureDriver {
   shouldAbort(): boolean {
     return this.zip?.hasDiskFailed() ?? false;
   }
+
+  /** r8 §A3: tear down a partial ZIP without delivering an artifact. */
+  async abort(_ctx: CaptureContext, _reason: 'disposed' | 'user-cancel' | 'error'): Promise<void> {
+    if (this.zip) {
+      await this.zip.abort();
+      this.zip = null;
+    }
+    // Also flip the EXR flag back so a subsequent recording session
+    // doesn't observe stale state. This mirrors what finalize would
+    // do on the success path.
+    this.onFinalize?.();
+  }
 }

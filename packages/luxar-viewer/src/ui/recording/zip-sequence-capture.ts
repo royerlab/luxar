@@ -261,4 +261,33 @@ export class ZipSequenceCapture {
       opts.showToast('No frames captured');
     }
   }
+
+  /**
+   * r8 §A3: tear down a partial ZIP without delivering an artifact.
+   * Called by the panel when the offline session is aborted
+   * (disposed / cancelled / capture errored). Idempotent: safe to
+   * call after finalize, after abort, or on a never-set-up instance.
+   */
+  async abort(): Promise<void> {
+    if (!this.streamingZip) return;
+    try {
+      this.streamingZip.end();
+    } catch {
+      /* fflate may throw if already ended */
+    }
+    if (this.pendingWrites.length > 0) {
+      await Promise.allSettled(this.pendingWrites);
+      this.pendingWrites = [];
+    }
+    if (this.writable) {
+      try {
+        await this.writable.abort();
+      } catch {
+        /* already aborted/closed */
+      }
+      this.writable = null;
+    }
+    // Drop in-memory chunks so a follow-up gc pass can release them.
+    this.chunks = [];
+  }
 }

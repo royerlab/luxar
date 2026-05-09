@@ -115,6 +115,17 @@ export class VideoModeDriver implements OfflineCaptureDriver {
       return;
     }
     if (capturedFrames === 0) {
+      // r8 §A4: previously returned without calling output.finalize(),
+      // leaking the started encoder. Always finalize to release
+      // resources; just don't download/toast as success.
+      try {
+        await this.output.finalize();
+      } catch (err) {
+        ctx.logError(`Video finalize-after-zero-frames failed: ${err}`);
+      }
+      this.output = null;
+      this.target = null;
+      this.source = null;
       ctx.showToast('No frames captured');
       return;
     }
@@ -132,6 +143,29 @@ export class VideoModeDriver implements OfflineCaptureDriver {
     } catch (err) {
       ctx.logError(`Video finalization failed: ${err}`);
       ctx.showToast('Video encoding failed');
+    } finally {
+      this.output = null;
+      this.target = null;
+      this.source = null;
     }
+  }
+
+  /**
+   * r8 §A3: tear down a partial encoder without delivering a video.
+   * Called by the panel when the offline session is aborted. Idempotent.
+   */
+  async abort(_ctx: CaptureContext, _reason: 'disposed' | 'user-cancel' | 'error'): Promise<void> {
+    if (!this.output) return;
+    try {
+      // mediabunny's Output has no public abort API; finalize() is
+      // the only way to release the encoder. Discard the resulting
+      // buffer.
+      await this.output.finalize();
+    } catch {
+      /* swallow — partial encoder may not finalize cleanly */
+    }
+    this.output = null;
+    this.target = null;
+    this.source = null;
   }
 }
