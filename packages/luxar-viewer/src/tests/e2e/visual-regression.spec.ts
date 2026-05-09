@@ -48,20 +48,21 @@ test.describe('@visual Visual Regression - Basic Rendering', () => {
 });
 
 test.describe('@visual Visual Regression - HDR & Tone Mapping', () => {
-  // Phase 13.13: baseline PNGs not yet committed. The test runs only
-  // when the exposure API is available; first execution will fail
-  // because exposure-0.0.png doesn't exist. Marked fixme so CI runs
-  // green; generate baselines via `playwright test
-  // visual-regression --update-snapshots --grep '@visual'` and
-  // commit `exposure-*.png` to drop the fixme.
-  test.fixme('should render with exposure = 0.0 (neutral)', async ({ page }) => {
+  // Phase 17A.3: baselines committed. Tests skip gracefully when the
+  // exposure API isn't available (see early return below). To
+  // regenerate after intentional changes: `playwright test
+  // visual-regression --update-snapshots --grep '@visual'`.
+  test('should render with exposure = 0.0 (neutral)', async ({ page }) => {
     await page.goto(`/?src=${DATASETS.build}&debug`);
     await waitForLuxarReady(page);
 
-    // Check if exposure API is available, skip if not
+    // Phase 17A.3: __luxarDebug exposes the post-processing manager
+    // directly (debug.postProcessing.updateExposure), not via a
+    // wrapping `sceneManager` field — the prior API check at this
+    // path always returned false and the test silently no-op'd.
     const hasExposureAPI = await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
-      return debug.sceneManager && typeof debug.sceneManager.updateExposure === 'function';
+      return debug.postProcessing && typeof debug.postProcessing.updateExposure === 'function';
     });
 
     if (!hasExposureAPI) {
@@ -71,7 +72,7 @@ test.describe('@visual Visual Regression - HDR & Tone Mapping', () => {
 
     // Set exposure to 0.0 (neutral)
     await page.evaluate(() => {
-      (window as any).__luxarDebug.sceneManager.updateExposure(0.0);
+      (window as any).__luxarDebug.postProcessing.updateExposure(0.0);
       (window as any).__luxarDebug.renderOnce();
     });
 
@@ -83,15 +84,14 @@ test.describe('@visual Visual Regression - HDR & Tone Mapping', () => {
     });
   });
 
-  // Phase 13.13: see exposure-0.0 fixme comment above.
-  test.fixme('should render with exposure = 3.32 (10x brighter)', async ({ page }) => {
+  test('should render with exposure = 3.32 (10x brighter)', async ({ page }) => {
     await page.goto(`/?src=${DATASETS.build}&debug`);
     await waitForLuxarReady(page);
 
-    // Check if exposure API is available, skip if not
+    // See exposure-0.0 test for the API path rationale (Phase 17A.3).
     const hasExposureAPI = await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
-      return debug.sceneManager && typeof debug.sceneManager.updateExposure === 'function';
+      return debug.postProcessing && typeof debug.postProcessing.updateExposure === 'function';
     });
 
     if (!hasExposureAPI) {
@@ -101,7 +101,7 @@ test.describe('@visual Visual Regression - HDR & Tone Mapping', () => {
 
     // Set exposure to ~3.32 stops (equivalent to 10x brighter)
     await page.evaluate(() => {
-      (window as any).__luxarDebug.sceneManager.updateExposure(3.32);
+      (window as any).__luxarDebug.postProcessing.updateExposure(3.32);
       (window as any).__luxarDebug.renderOnce();
     });
 
