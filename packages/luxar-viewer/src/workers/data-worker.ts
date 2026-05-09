@@ -258,20 +258,30 @@ function validateLineSegmentReferences(
 }
 
 /**
- * Coerce a (possibly quantized) color buffer to Float32 for WASM
- * consumption. F32 inputs pass through; Uint8 / Uint16 are widened.
+ * Coerce a (possibly quantized) color buffer to Float32 in [0, 1] for
+ * WASM consumption. F32 inputs are assumed pre-normalized and pass
+ * through unchanged; Uint8 inputs are scaled by 1/255; Uint16 inputs
+ * are scaled by 1/65535.
  *
- * Lines and GSplats both call WASM color helpers that expect Float32
- * input but accept arbitrary input dtypes from the caller — they
- * historically did the same coercion inline. Pulled out here so the
- * Lines and GSplats projection paths share one definition. (Points
- * has its own color compaction path; it does not call this helper.)
+ * Lines and GSplats both call WASM color helpers
+ * (`interpolate_colors_batch`, `compact_by_mask`) whose downstream
+ * shaders interpret values as `[0, 1]`. The reference main-thread
+ * paths in `data/gsplats/gsplats-processor.ts` (processGSplats3DOnly)
+ * and `data/lines/projection.ts` (buildInstanceBuffers) apply the
+ * same `1/255` / `1/65535` factors before calling the WASM helpers;
+ * this function keeps the worker path at parity. (Points has its own
+ * color compaction path; it does not call this helper.)
+ *
+ * Exported for direct unit testing — not part of the public worker API.
  */
-function coerceColorsToFloat32(colors: Float32Array | Uint8Array | Uint16Array): Float32Array {
+export function coerceColorsToFloat32(
+  colors: Float32Array | Uint8Array | Uint16Array
+): Float32Array {
   if (colors instanceof Float32Array) return colors;
+  const norm = colors instanceof Uint8Array ? 1 / 255 : 1 / 65535;
   const out = new Float32Array(colors.length);
   for (let i = 0; i < colors.length; i++) {
-    out[i] = colors[i];
+    out[i] = colors[i] * norm;
   }
   return out;
 }
