@@ -20,6 +20,7 @@
 import * as THREE from 'three';
 import type { PostProcessingManager } from '../post-processing/post-processing-manager';
 import { isCameraAwareMaterial } from '../camera-aware-material';
+import { materialManager } from '../material-manager';
 import {
   getCameraFovRadians,
   isOrthographicCamera,
@@ -189,10 +190,34 @@ export class PickingSystem {
    * is responsible for re-registering every scene node afterward,
    * which produces fresh pick materials against the new context.
    *
+   * Phase 19E (r5 warning #1): the pick materials are registered with
+   * `materialManager.register(...)` at construction (see
+   * `node-factory.ts`). Without unregistering them here, repeated
+   * context-restore cycles accumulate stale references in the
+   * materialManager registry — camera-uniform updates would target
+   * dead materials and the `getStats().totalRegistered` count grows
+   * unboundedly. We unregister WITHOUT disposing (calls
+   * `materialManager.unregister(material)` not `dispose(material)`),
+   * matching the pre-existing "no-dispose during context loss"
+   * contract for visible materials.
+   *
    * Distinct from `unregisterNode(id)` which intentionally disposes
    * the pick material when removing a single live node.
    */
   clearRegistrationsForRebuild(): void {
+    for (const entry of this.nodeMap.values()) {
+      const material = (entry.pick as THREE.Mesh).material;
+      const list = Array.isArray(material) ? material : [material];
+      for (const m of list) {
+        // Pick materials are constructed in NodeFactory and ALWAYS
+        // implement CameraAwareMaterial (Point/Line/GSplatPickingMaterial
+        // each declare `implements CameraAwareMaterial`), so the cast
+        // is safe. `isCameraAwareMaterial(m)` is the runtime guard.
+        if (m && isCameraAwareMaterial(m)) {
+          materialManager.unregister(m);
+        }
+      }
+    }
     this.nodeMap.clear();
     while (this.pickScene.children.length > 0) {
       this.pickScene.remove(this.pickScene.children[0]);

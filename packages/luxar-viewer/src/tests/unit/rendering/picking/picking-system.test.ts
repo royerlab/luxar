@@ -170,6 +170,49 @@ describe('PickingSystem — context-restore registration drop', () => {
     // on some drivers.
     expect(dispose).not.toHaveBeenCalled();
   });
+
+  it('clearRegistrationsForRebuild unregisters CameraAwareMaterial from materialManager (Phase 19E)', async () => {
+    // Pre-fix: pick materials registered with materialManager via
+    // node-factory's `materialManager.register(pickMaterial)`. After
+    // context-restore, clearRegistrationsForRebuild dropped the
+    // node map but left the registry entries. Repeated cycles
+    // accumulated stale references; camera-uniform updates would
+    // target dead materials and `getCacheStats().totalRegistered`
+    // would grow unboundedly.
+    const { materialManager } = await import(
+      '../../../../rendering/material-manager'
+    );
+
+    // Use a real THREE.Material so EventDispatcher is wired (the
+    // materialManager subscribes to the 'dispose' event), then graft
+    // `updateCameraParams` onto it so isCameraAwareMaterial returns
+    // true.
+    const baseMaterial = new THREE.MeshBasicMaterial();
+    (baseMaterial as unknown as { updateCameraParams: () => void }).updateCameraParams = vi.fn();
+    const disposeSpy = vi.spyOn(baseMaterial, 'dispose');
+    const pickMaterial = baseMaterial as unknown as THREE.Material;
+
+    // Match what node-factory does: register the pick material with
+    // materialManager at construction.
+    const before = materialManager.getCacheStats().totalRegistered;
+    materialManager.register(
+      pickMaterial as unknown as Parameters<typeof materialManager.register>[0]
+    );
+    expect(materialManager.getCacheStats().totalRegistered).toBe(before + 1);
+
+    const pickMesh = new THREE.Mesh(new THREE.BufferGeometry(), pickMaterial);
+    system.registerNode(new THREE.Object3D(), pickMesh, system.allocatePickId());
+
+    system.clearRegistrationsForRebuild();
+
+    // Phase 19E: pick material is now unregistered from
+    // materialManager — count returns to baseline.
+    expect(materialManager.getCacheStats().totalRegistered).toBe(before);
+    // Material's own dispose() was NOT called — the shader is
+    // already invalid in a context-restore scenario.
+    expect(disposeSpy).not.toHaveBeenCalled();
+    disposeSpy.mockRestore();
+  });
 });
 
 describe('PickingSystem — camera + suppression', () => {
