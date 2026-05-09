@@ -21,6 +21,7 @@
  */
 
 import { coerceColorsToFloat32 } from '../../workers/color-utils';
+import { config as appConfig } from '../../config';
 import { log, Modules, LogEmoji } from '../../utils/log';
 import type {
   LinesMetadata,
@@ -236,7 +237,7 @@ export function buildInstanceBuffers(
   const { positions, segments, widths, colors, sharpness, ndim, segmentCount } = loadedData;
 
   // DEBUG: Log input data for particle tracks investigation
-  if (segmentCount > 10000) {
+  if (segmentCount > 10000 && appConfig.dataLoading.performance.enablePerformanceMonitoring) {
     log.custom(LogEmoji.DEBUG, Modules.LINES_LOADER, 'buildInstanceBuffers input');
     log.custom(LogEmoji.DEBUG, Modules.LINES_LOADER, 'segmentCount', segmentCount);
     log.custom(
@@ -310,7 +311,11 @@ export function buildInstanceBuffers(
     const p2 = Array.from(positions.slice(v1 * ndim, (v1 + 1) * ndim));
 
     // DEBUG: Log first few segments for particle tracks
-    if (segmentCount > 10000 && i < 3) {
+    if (
+      segmentCount > 10000 &&
+      i < 3 &&
+      appConfig.dataLoading.performance.enablePerformanceMonitoring
+    ) {
       log.custom(
         LogEmoji.DEBUG,
         Modules.LINES_LOADER,
@@ -321,7 +326,11 @@ export function buildInstanceBuffers(
     // Clip to slice
     const clipped = clipSegmentToSlice(p1, p2, slicePosition, tolerance, displayDims);
     if (!clipped.visible) {
-      if (segmentCount > 10000 && !firstClippedReason) {
+      if (
+        segmentCount > 10000 &&
+        !firstClippedReason &&
+        appConfig.dataLoading.performance.enablePerformanceMonitoring
+      ) {
         firstClippedReason = `Segment ${i} clipped: p1=[${p1}], p2=[${p2}]`;
       }
       continue;
@@ -367,7 +376,7 @@ export function buildInstanceBuffers(
   }
 
   // DEBUG: Log results for particle tracks
-  if (segmentCount > 10000) {
+  if (segmentCount > 10000 && appConfig.dataLoading.performance.enablePerformanceMonitoring) {
     log.custom(LogEmoji.DEBUG, Modules.LINES_LOADER, 'buildInstanceBuffers output');
     log.custom(
       LogEmoji.DEBUG,
