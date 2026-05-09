@@ -4,23 +4,12 @@
 // HDR export: EXR screenshots, EXR frame sequences (ZIP), 10-bit HDR video (WebCodecs)
 
 import * as THREE from 'three';
-import { Zip, ZipPassThrough } from 'fflate';
 import GUI, { type Controller } from './gui';
 import { config } from '../config';
 import { log, Modules } from '../utils/log';
 import { showToast } from './helpers';
 // HDR video encoder kept for future use when browser 10-bit support matures
 // import { isHDRVideoSupported, HDRVideoEncoder } from '../utils/hdr-video-encoder';
-import {
-  Output,
-  WebMOutputFormat,
-  Mp4OutputFormat,
-  MkvOutputFormat,
-  BufferTarget,
-  VideoSampleSource,
-  VideoSample,
-  canEncodeVideo,
-} from 'mediabunny';
 import type { SceneManager } from '../scene/scene-manager';
 import type { AnimationController } from '../scene/animation-controller';
 import type { DimensionAnimationManager } from '../scene/dimension-animation-manager';
@@ -49,7 +38,13 @@ import {
   FORMAT_LABEL_TO_VALUE,
   CODEC_LABEL_TO_VALUE,
 } from './recording/gui-builder';
-import { selectVideoCodec } from './recording/video-codec-selection';
+import type {
+  CaptureContext,
+  OfflineCaptureDriver,
+} from './recording/offline-capture-driver';
+import { ImageSequenceDriver } from './recording/image-sequence-driver';
+import { ExrSequenceDriver } from './recording/exr-sequence-driver';
+import { VideoModeDriver } from './recording/video-mode-driver';
 
 export type RecordingMode = 'image' | 'video' | 'turntable';
 
@@ -521,20 +516,18 @@ export class RecordingPanel {
    * The output will be smooth 60fps even if capture takes seconds per frame.
    */
   /**
-   * Phase 21B audit: the full plan called for splitting this into a
-   * machinery layer + per-mode drivers (turntable / exr / video). On
-   * close inspection that's deeper structural surgery than the wins
-   * justify — the per-mode pieces touch many panel fields
-   * (`isRecording`, `isOfflineCaptureActive`, `isEXRSequenceRecording`,
-   * `recordingIndicator`, `offlineOverlayCleanup`, plus `sceneManager`,
-   * `animationController`, `generateFilename`, `generateFfmpegScript`,
-   * `downloadBlob`, `renderFrameToCanvas`, …). Driver functions would
-   * either take the panel as a parameter (defeating encapsulation) or
-   * accept a 12-arg dependencies bag (no cleaner than the inline
-   * version). Same conclusion as 21A.2/A.3 and 21C: defer to avoid
-   * complexification without proportional gain. Surgical Phase 21B
-   * pulls the codec selection block (a ~40 LOC pure-logic island)
-   * into `recording/video-codec-selection.ts`.
+   * Run a deterministic offline capture loop for image / video / EXR.
+   *
+   * The loop owns shared scaffolding (state save/restore, modal
+   * overlay, animation pump, progress display, error tolerance);
+   * per-mode capture (PNG/WebP/JPEG sequence, video container, EXR
+   * sequence) is delegated to a driver implementing
+   * {@link OfflineCaptureDriver}. Each driver runs its own setup,
+   * captures one frame at a time, and finalizes (download/save).
+   *
+   * The 432-LOC monolith this replaces is preserved frame-for-frame
+   * in behavior — only the structure is split. Visual-regression
+   * smoke + the existing recording-panel tests guard against drift.
    */
   private async runOfflineCaptureLoop(
     mode: 'exr' | 'webm' | 'mp4' | 'mkv' | 'png' | 'webp' | 'jpeg'
@@ -578,6 +571,18 @@ export class RecordingPanel {
       Modules.RECORDING,
       `Starting offline ${mode} capture: ${totalFrames} frames, ${fps} FPS, ${durationSeconds.toFixed(1)}s`
     );
+
+    // Build the per-mode driver. EXR mode flips the panel's
+    // isEXRSequenceRecording flag in finalize via a callback so the
+    // driver doesn't need to know about that field.
+    const driver: OfflineCaptureDriver =
+      mode === 'png' || mode === 'webp' || mode === 'jpeg'
+        ? new ImageSequenceDriver(mode)
+        : mode === 'exr'
+          ? new ExrSequenceDriver(() => {
+              this.isEXRSequenceRecording = false;
+            })
+          : new VideoModeDriver(mode);
 
     // Set recording state
     if (mode === 'exr') {
@@ -634,61 +639,51 @@ export class RecordingPanel {
     const counterEl = overlay.querySelector('.luxar-recording-overlay__counter');
     const labelEl = overlay.querySelector('.luxar-recording-overlay__label');
 
-    // For WebM/MP4: set up mediabunny encoder (NOT captureStream — WebGL canvases
-    // with preserveDrawingBuffer:false don't work reliably with captureStream)
-    let videoOutput: Output | null = null;
-    let videoTarget: BufferTarget | null = null;
-    let videoSource: VideoSampleSource | null = null;
-    const isVideoMode = mode === 'webm' || mode === 'mp4' || mode === 'mkv';
-    let videoExt = 'webm';
-    let videoMime = 'video/webm';
-    if (isVideoMode) {
-      const canvas = this.sceneManager.renderer.domElement;
-      const videoBitsPerSecond = this.computeVideoBitrate(canvas.width, canvas.height);
-      const encOpts = { width: canvas.width, height: canvas.height, bitrate: videoBitsPerSecond };
+    // Build the dependency context the driver needs. Methods are
+    // pre-bound so the driver doesn't need a panel reference.
+    const ctx: CaptureContext = {
+      sceneManager: this.sceneManager,
+      fps,
+      renderFrameToCanvas: () => this.renderFrameToCanvas(),
+      generateFilename: (ext) => this.generateFilename(ext),
+      generateFfmpegScript: (rate, frames, ext) => this.generateFfmpegScript(rate, frames, ext),
+      downloadBlob: (blob, filename) => this.downloadBlob(blob, filename),
+      computeVideoBitrate: (w, h) => this.computeVideoBitrate(w, h),
+      showToast,
+      logWarning: (msg) => log.warning(Modules.RECORDING, msg),
+      logError: (msg) => log.error(Modules.RECORDING, msg),
+      imageQuality: this.options.imageQuality,
+      videoCodec: this.options.videoCodec,
+      env: window as unknown as CaptureContext['env'],
+    };
 
-      const selection = await selectVideoCodec({
-        preferredCodec: this.options.videoCodec,
-        containerMode: mode as 'webm' | 'mp4' | 'mkv',
-        encOpts,
-        canEncodeVideo,
-      });
-      if (selection.codec === null) {
-        showToast('No supported video codec at this resolution');
-        overlay.remove();
-        this.restoreRecordingState();
-        return;
-      }
-      if (!selection.isPreferred && selection.fallbackFrom) {
-        log.warning(
-          Modules.RECORDING,
-          `${selection.fallbackFrom} not supported, falling back to ${selection.codec}`
-        );
-      }
-      const codec = selection.codec;
+    const progress = {
+      setLabel: (text: string): void => {
+        if (labelEl) labelEl.textContent = text;
+      },
+      setPreview: (canvas: HTMLCanvasElement): void => {
+        if (!previewCtx) return;
+        if (previewCanvas.width !== canvas.width || previewCanvas.height !== canvas.height) {
+          previewCanvas.width = canvas.width;
+          previewCanvas.height = canvas.height;
+        }
+        previewCtx.drawImage(canvas, 0, 0);
+      },
+    };
 
-      const format =
-        mode === 'mp4'
-          ? new Mp4OutputFormat()
-          : mode === 'mkv'
-            ? new MkvOutputFormat()
-            : new WebMOutputFormat();
-      videoExt = mode;
-      videoMime = mode === 'mp4' ? 'video/mp4' : mode === 'mkv' ? 'video/x-matroska' : 'video/webm';
-      videoTarget = new BufferTarget();
-      videoSource = new VideoSampleSource({
-        codec,
-        bitrate: videoBitsPerSecond,
-        latencyMode: 'quality',
-      });
-      videoOutput = new Output({ format, target: videoTarget });
-      videoOutput.addVideoTrack(videoSource, { frameRate: fps });
-      await videoOutput.start();
-      log.info(
-        Modules.RECORDING,
-        `Offline ${videoExt.toUpperCase()} encoder started (${codec.toUpperCase()}, ` +
-          `${canvas.width}x${canvas.height}, ${Math.round(videoBitsPerSecond / 1_000_000)}Mbps)`
-      );
+    // Per-mode driver setup (file picker, encoder construction, …).
+    // A false return means the driver couldn't proceed (e.g. no codec
+    // supports the request, file picker cancelled). Drivers are
+    // expected to have already toasted the user before returning.
+    const setupOk = await driver.setup(ctx);
+    if (!setupOk) {
+      this.isRecording = false;
+      this.isOfflineCaptureActive = false;
+      this.hideRecordingIndicator();
+      cleanupOfflineOverlay();
+      this.restoreAutoRotate();
+      this.restoreRecordingState();
+      return;
     }
 
     // Frame-by-frame capture using the live animation loop.
@@ -699,69 +694,10 @@ export class RecordingPanel {
     //
     // This guarantees we read pixels from a properly rendered frame — the same
     // pipeline that produces visible on-screen output.
-    let captureCanvas: HTMLCanvasElement | null = null;
     let capturedFrames = 0;
     let consecutiveErrors = 0;
     const MAX_CONSECUTIVE_ERRORS = 3;
     const captureCallbackId = 'recording-offline-capture';
-
-    // Streaming ZIP for image/EXR sequences: frames are written incrementally.
-    // When the File System Access API is available (Chrome/Edge), ZIP chunks are
-    // flushed directly to disk via showSaveFilePicker, keeping memory usage O(1).
-    // Otherwise chunks are collected and passed to `new Blob(chunks)` which avoids
-    // a single contiguous allocation (the old approach's OOM trigger).
-    const isImageMode = mode === 'png' || mode === 'webp' || mode === 'jpeg';
-    const isZipMode = isImageMode || mode === 'exr';
-    const zipChunks: Uint8Array[] = [];
-    let zipTotalBytes = 0;
-    let zipDiskFailed = false;
-    let zipWritable: FileSystemWritableFileStream | null = null;
-    let streamingZip: InstanceType<typeof Zip> | null = null;
-    if (isZipMode) {
-      // Try to get a file handle for true disk-streaming (user gesture context
-      // from the confirmation dialog click propagates here).
-      try {
-        const w = window as unknown as {
-          showSaveFilePicker?: (opts: unknown) => Promise<FileSystemFileHandle>;
-        };
-        if (typeof w.showSaveFilePicker === 'function') {
-          const handle = await w.showSaveFilePicker({
-            suggestedName: this.generateFilename('zip'),
-            types: [{ description: 'ZIP archive', accept: { 'application/zip': ['.zip'] } }],
-          });
-          zipWritable = await handle.createWritable();
-        }
-      } catch {
-        // User cancelled or API unavailable — fall back to in-memory Blob
-        zipWritable = null;
-      }
-      streamingZip = new Zip((err, chunk, _final) => {
-        if (err) {
-          if (!zipDiskFailed) {
-            zipDiskFailed = true;
-            log.error(Modules.RECORDING, `ZIP stream error: ${err}`);
-          }
-          return;
-        }
-        if (chunk) {
-          if (zipWritable && !zipDiskFailed) {
-            zipWritable.write(chunk as BlobPart).catch((writeErr) => {
-              if (!zipDiskFailed) {
-                zipDiskFailed = true;
-                log.error(
-                  Modules.RECORDING,
-                  `Disk write failed: ${writeErr}. ` +
-                    'Free browser storage or use video format instead of image sequence.'
-                );
-              }
-            });
-          } else if (!zipDiskFailed) {
-            zipChunks.push(chunk);
-          }
-          zipTotalBytes += chunk.length;
-        }
-      });
-    }
 
     // Keep the animation loop alive during the entire capture session.
     // This is a separate no-op callback so we can safely add/remove the rotation
@@ -769,16 +705,9 @@ export class RecordingPanel {
     const keepAliveId = 'recording-offline-keepalive';
     this.animationController.addPerFrameCallback(keepAliveId, () => {}, { continuous: true });
 
-    /** Add a single frame to the streaming ZIP archive. */
-    const addZipFrame = (data: Uint8Array, ext: string): void => {
-      const padded = String(capturedFrames).padStart(6, '0');
-      const entry = new ZipPassThrough(`frame_${padded}.${ext}`);
-      streamingZip!.add(entry);
-      entry.push(data, true);
-    };
-
     for (let i = 0; i < totalFrames; i++) {
-      if (!this.isRecording || zipDiskFailed) break;
+      if (!this.isRecording) break;
+      if (driver.shouldAbort?.()) break;
 
       // Orbit camera by one step and capture in a single animation frame.
       // The callback applies a quaternion rotation (same as auto-rotate) AFTER
@@ -787,7 +716,7 @@ export class RecordingPanel {
       // IMPORTANT: The rotation callback is registered fresh each iteration and
       // removed immediately after the frame renders. If it stayed registered
       // (continuous: true), the animation loop would apply extra rotations during
-      // the async capture work (toBlob, arrayBuffer, etc.) between iterations.
+      // the async capture work between iterations.
       this.animationController.addPerFrameCallback(captureCallbackId, () => {
         if (i > 0) controls.applyOrbitRotation(anglePerFrame);
       });
@@ -799,33 +728,10 @@ export class RecordingPanel {
       // apply extra rotations while we do async capture work below.
       this.animationController.removePerFrameCallback(captureCallbackId);
 
-      // The animation loop has rendered with the rotated camera.
-      // Now capture the pixels from the default framebuffer.
+      // The animation loop has rendered with the rotated camera. Hand off
+      // to the per-mode driver to capture the frame.
       try {
-        if (isImageMode && streamingZip) {
-          captureCanvas = this.renderFrameToCanvas();
-          const mimeType = mode === 'jpeg' ? 'image/jpeg' : `image/${mode}`;
-          const quality = mode === 'png' ? undefined : this.options.imageQuality;
-          const blob = await new Promise<Blob | null>((resolve) =>
-            captureCanvas!.toBlob(resolve, mimeType, quality)
-          );
-          if (blob) {
-            const buf = new Uint8Array(await blob.arrayBuffer());
-            addZipFrame(buf, mode === 'jpeg' ? 'jpg' : mode);
-          }
-        } else if (isVideoMode && videoSource) {
-          captureCanvas = this.renderFrameToCanvas();
-          const frameDuration = 1 / fps;
-          const sample = new VideoSample(captureCanvas, {
-            timestamp: i * frameDuration,
-            duration: frameDuration,
-          });
-          await videoSource.add(sample);
-          sample.close();
-        } else if (mode === 'exr' && streamingZip) {
-          const exrData = await this.sceneManager.postProcessing.captureHDRAsEXR();
-          addZipFrame(exrData, 'exr');
-        }
+        await driver.captureFrame(ctx, i, progress);
         capturedFrames++;
         consecutiveErrors = 0;
       } catch (err) {
@@ -842,107 +748,20 @@ export class RecordingPanel {
         }
       }
 
-      // Update progress overlay + live preview
       if (counterEl) counterEl.textContent = `${i + 1}/${totalFrames}`;
-      if (captureCanvas && previewCtx) {
-        if (i === 0) {
-          previewCanvas.width = captureCanvas.width;
-          previewCanvas.height = captureCanvas.height;
-        }
-        previewCtx.drawImage(captureCanvas, 0, 0);
-      }
     }
 
     // Remove capture callbacks
     this.animationController.removePerFrameCallback(captureCallbackId);
     this.animationController.removePerFrameCallback(keepAliveId);
 
-    // Finalize
+    // Finalize panel state before driver finalize, so the toasts/UI
+    // updates the driver triggers see the right flags.
     this.hideRecordingIndicator();
     this.isRecording = false;
     this.isOfflineCaptureActive = false;
 
-    /** Finalize a streamed ZIP: add ffmpeg script, close stream, save or download. */
-    const finalizeZipSequence = async (ext: string, label: string): Promise<void> => {
-      if (zipDiskFailed) {
-        // Disk write failed — abort the partial file and inform the user
-        streamingZip!.end();
-        if (zipWritable) {
-          try {
-            await zipWritable.abort();
-          } catch {
-            /* already closed/aborted */
-          }
-        }
-        showToast(
-          'Recording failed: disk storage quota exceeded. ' +
-            'Free browser storage, reduce duration/resolution, or use video format.'
-        );
-        return;
-      }
-      if (capturedFrames > 0) {
-        if (labelEl) labelEl.textContent = 'Packaging ZIP...';
-        await new Promise((r) => requestAnimationFrame(r));
-        const encoder = new TextEncoder();
-        const scriptEntry = new ZipPassThrough('encode_video.sh');
-        streamingZip!.add(scriptEntry);
-        scriptEntry.push(encoder.encode(this.generateFfmpegScript(fps, capturedFrames, ext)), true);
-        streamingZip!.end();
-        if (zipWritable) {
-          await zipWritable.close();
-          showToast(
-            `${label} sequence saved to disk (${capturedFrames} frames, ` +
-              `${(zipTotalBytes / (1024 * 1024)).toFixed(1)} MB)`
-          );
-        } else {
-          const blob = new Blob(zipChunks as BlobPart[], { type: 'application/zip' });
-          this.downloadBlob(blob, this.generateFilename('zip'));
-          showToast(`${label} sequence saved (${capturedFrames} frames)`);
-        }
-      } else {
-        streamingZip!.end();
-        if (zipWritable) {
-          try {
-            await zipWritable.abort();
-          } catch {
-            /* already closed/aborted */
-          }
-        }
-        showToast('No frames captured');
-      }
-    };
-
-    if (isImageMode && streamingZip) {
-      await finalizeZipSequence(mode === 'jpeg' ? 'jpg' : mode, mode.toUpperCase());
-    } else if (isVideoMode) {
-      if (videoOutput && capturedFrames > 0) {
-        if (labelEl) labelEl.textContent = 'Finalizing video...';
-        if (counterEl) counterEl.textContent = '';
-        try {
-          await videoOutput.finalize();
-          const buffer = videoTarget?.buffer;
-          if (buffer) {
-            const blob = new Blob([buffer], { type: videoMime });
-            log.info(
-              Modules.RECORDING,
-              `Offline ${videoExt.toUpperCase()} capture: ${capturedFrames} frames, ${(blob.size / (1024 * 1024)).toFixed(1)} MB`
-            );
-            this.downloadBlob(blob, this.generateFilename(videoExt));
-            showToast(`Video saved (${capturedFrames} frames)`);
-          } else {
-            showToast('Video encoding produced no output');
-          }
-        } catch (err) {
-          log.error(Modules.RECORDING, `Video finalization failed: ${err}`);
-          showToast('Video encoding failed');
-        }
-      } else {
-        showToast('No frames captured');
-      }
-    } else if (mode === 'exr' && streamingZip) {
-      this.isEXRSequenceRecording = false;
-      await finalizeZipSequence('exr', 'EXR');
-    }
+    await driver.finalize(ctx, capturedFrames, progress);
 
     // Remove overlay, restore all saved state
     cleanupOfflineOverlay();
