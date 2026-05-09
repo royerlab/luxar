@@ -18,7 +18,7 @@
  * `video-mode-driver.ts`, `exr-sequence-driver.ts`).
  */
 
-import type { VideoCodecOption } from '../recording-panel';
+import type { VideoCodecOption } from './types';
 
 /** mediabunny codec names. Keep in sync with mediabunny's `Codec` literal. */
 export type MediabunnyCodec = 'av1' | 'vp9' | 'avc' | 'hevc' | 'vp8';

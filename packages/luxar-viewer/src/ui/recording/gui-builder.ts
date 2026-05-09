@@ -13,7 +13,7 @@
  * @module ui/recording/gui-builder
  */
 
-import type { RecordingMode, OutputFormat } from '../recording-panel';
+import type { RecordingMode, OutputFormat } from './types';
 
 /**
  * The format options shown in the dropdown for each recording mode.

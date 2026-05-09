@@ -46,47 +46,27 @@ import { ImageSequenceDriver } from './recording/image-sequence-driver';
 import { ExrSequenceDriver } from './recording/exr-sequence-driver';
 import { VideoModeDriver } from './recording/video-mode-driver';
 
-export type RecordingMode = 'image' | 'video' | 'turntable';
-
-// Video quality presets — defined in media-utilities; re-exported here for
-// existing consumers that import VideoQuality from this module.
-import type { VideoQuality } from './recording/media-utilities';
-export type { VideoQuality };
-
-/** Video resolution presets — 0 means native canvas size */
-export type VideoResolution = 0 | 1080 | 1440 | 2160;
-
-/** Output format — what file type you get */
-export type OutputFormat = 'png' | 'webp' | 'jpeg' | 'exr' | 'mp4' | 'webm' | 'mkv';
-
-/** Video codec for MP4/WebM encoding (ordered by modernity) */
-export type VideoCodecOption = 'h265' | 'vp9' | 'h264' | 'vp8';
-
-/** Recording options for image and video capture */
-export interface RecordingOptions {
-  // Image options
-  outputFormat: OutputFormat;
-  imageQuality: number;
-  maxDPR: boolean;
-  transparentBackground: boolean;
-  // Video options
-  videoDurationLimit: number; // 0 = unlimited, else seconds
-  videoFPS: number;
-  videoCodec: VideoCodecOption;
-  videoQuality: VideoQuality;
-  videoResolution: VideoResolution; // target height in pixels, 0 = native
-  syncToSlider: boolean;
-  syncDimensionIndex: number; // -1 = none
-  // Turntable options
-  turntableSpeed: number; // degrees per second
-  frameByFrame: boolean; // offline frame-by-frame capture (smooth but slow)
-  // General
-  showPanels: boolean;
-  includeOverlays: boolean;
-}
-
-/** Panel visibility state snapshot for hide/restore */
-export type PanelStates = Map<string, boolean>;
+// Phase r8 §A5: shared recording types live in `recording/types.ts`
+// so per-mode drivers don't need to import from the parent panel.
+// Re-exported here for back-compat with existing consumers.
+export type {
+  RecordingMode,
+  VideoResolution,
+  OutputFormat,
+  VideoCodecOption,
+  VideoQuality,
+  PanelStates,
+  RecordingOptions,
+} from './recording/types';
+import type {
+  RecordingMode,
+  VideoResolution,
+  OutputFormat,
+  VideoCodecOption,
+  VideoQuality,
+  PanelStates,
+  RecordingOptions,
+} from './recording/types';
 
 /**
  * Recording panel for capturing screenshots and recording video.
