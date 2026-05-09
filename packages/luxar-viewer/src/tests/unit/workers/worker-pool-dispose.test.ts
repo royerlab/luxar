@@ -182,4 +182,65 @@ describe('WorkerPool.dispose — mid-init race (Phase 15.1)', () => {
     expect(pool.getWorkerCount()).toBe(0);
     expect(workers.every((w) => w.terminate.mock.calls.length === 1)).toBe(true);
   });
+
+  it('init1 → dispose → init2 successful → init1 settles late: pool.workers belongs to init2 (Phase 19.0.1)', async () => {
+    // Per-call init impl: first N calls (init1's workers) park forever
+    // until released; subsequent calls (init2's workers) resolve immediately.
+    const init1Releases: Array<() => void> = [];
+    let callCount = 0;
+    const initImpl = (): Promise<void> => {
+      const myCallIndex = callCount++;
+      if (myCallIndex < 2) {
+        // init1's two workers — defer.
+        return new Promise<void>((resolve) => {
+          init1Releases.push(resolve);
+        });
+      }
+      // init2's workers — resolve immediately.
+      return Promise.resolve();
+    };
+
+    const { WorkerPool, workers } = await loadWorkerPool(2, initImpl);
+    const pool = new WorkerPool();
+
+    // ── Step 1: start init1 (workers 0, 1).
+    const initP1 = pool.initialize();
+    await Promise.resolve();
+    expect(workers.length).toBe(2);
+
+    // ── Step 2: dispose (bumps generation, terminates pending,
+    // nils initPromise).
+    pool.dispose();
+    expect(workers[0].terminate.mock.calls.length).toBeGreaterThanOrEqual(1);
+    expect(workers[1].terminate.mock.calls.length).toBeGreaterThanOrEqual(1);
+
+    // ── Step 3: start init2 (workers 2, 3) and await — it should
+    // succeed because the deferred initImpl resolves immediately for
+    // worker indices >= 2.
+    const initP2 = pool.initialize();
+    await initP2;
+    expect(pool.getWorkerCount()).toBe(2);
+    expect(workers.length).toBe(4); // 2 from init1 + 2 from init2
+    // init2's workers haven't been terminated.
+    expect(workers[2].terminate.mock.calls.length).toBe(0);
+    expect(workers[3].terminate.mock.calls.length).toBe(0);
+
+    // ── Step 4: release init1's deferred promises so init1 settles
+    // late. Per the Phase 19.0.1 fix, init1's IIFE must NOT touch
+    // `this.workers` (which now holds init2's workers).
+    init1Releases.forEach((r) => r());
+    await initP1;
+
+    // ── Assertions: pool still has init2's two workers; init1's
+    // late-arriving stale workers are terminated (and stay
+    // terminated); pool.workers reference identity is preserved.
+    expect(pool.getWorkerCount()).toBe(2);
+    // init1's workers terminated (by dispose + by per-factory catch
+    // when generation-mismatch fires; idempotent).
+    expect(workers[0].terminate.mock.calls.length).toBeGreaterThanOrEqual(1);
+    expect(workers[1].terminate.mock.calls.length).toBeGreaterThanOrEqual(1);
+    // init2's workers UNTOUCHED.
+    expect(workers[2].terminate.mock.calls.length).toBe(0);
+    expect(workers[3].terminate.mock.calls.length).toBe(0);
+  });
 });

@@ -125,11 +125,15 @@ export class WorkerPool {
     // Return existing promise if initialization already started or completed
     if (this.initPromise) return this.initPromise;
 
-    // Phase 15.1: capture the generation token for this init attempt.
-    // dispose() bumps the token; factories that resolve after a
-    // concurrent dispose detect the mismatch and self-terminate
-    // instead of polluting `this.workers`.
+    // Phase 19.0.1: capture the generation token AND a per-attempt
+    // workers list. Phase 15.1's `myGeneration` was correct for the
+    // factory-level mismatch check, but the IIFE-level cleanup paths
+    // unconditionally touched `this.workers` — so a stale init that
+    // settled after a fresh init had published its workers would
+    // wipe them. Per-attempt local state means stale completion can
+    // only clean up its OWN workers, never globals.
     const myGeneration = ++this.initGeneration;
+    const attemptWorkers: WorkerInstance[] = [];
 
     this.initPromise = (async () => {
       try {
@@ -187,21 +191,34 @@ export class WorkerPool {
         // Wait for all workers to initialize
         const results = await Promise.allSettled(workerPromises);
 
-        // Phase 15.1: post-dispose check. If dispose() bumped the
-        // generation while we were awaiting allSettled, every worker
-        // either self-terminated above or was terminated by dispose
-        // walking pendingWorkers. Bail out without throwing; the
-        // initPromise has been nilled by dispose anyway.
+        // Collect successful workers into the attempt-local list
+        // first, so stale-generation cleanup doesn't reach for any
+        // newer attempt's published workers.
+        for (const result of results) {
+          if (result.status === 'fulfilled') {
+            attemptWorkers.push(result.value);
+          }
+        }
+
+        // Phase 19.0.1: stale-generation guard. If dispose() bumped
+        // the generation while we were awaiting allSettled, terminate
+        // ONLY this attempt's workers and return. Do NOT touch
+        // `this.workers` — a fresh generation may have already
+        // published its own workers there.
         if (this.initGeneration !== myGeneration) {
-          this.workers = [];
+          for (const { worker } of attemptWorkers) {
+            try {
+              worker.terminate();
+            } catch {
+              // Already terminated by dispose's pendingWorkers walk.
+            }
+          }
           return;
         }
 
-        // Collect successful workers
-        for (const result of results) {
-          if (result.status === 'fulfilled') {
-            this.workers.push(result.value);
-          }
+        // Generation still current — publish.
+        for (const entry of attemptWorkers) {
+          this.workers.push(entry);
         }
 
         if (this.workers.length === 0) {
@@ -221,7 +238,20 @@ export class WorkerPool {
         this.nextWorkerIndex = 0;
         log.info(Modules.WORKER_POOL, `Worker pool ready with ${this.workers.length} worker(s)`);
       } catch (e) {
-        // Clean up any workers that were partially pushed during this attempt
+        // Phase 19.0.1: same stale-generation guard for the error
+        // path. If a newer generation has taken over, only clean up
+        // this attempt's workers.
+        if (this.initGeneration !== myGeneration) {
+          for (const { worker } of attemptWorkers) {
+            try {
+              worker.terminate();
+            } catch {
+              // Already terminated.
+            }
+          }
+          throw e;
+        }
+        // Generation current — full cleanup of this generation's state.
         for (const { worker } of this.workers) {
           worker.terminate();
         }
