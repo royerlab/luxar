@@ -23,6 +23,8 @@ import type {
 const ZERO_RATES: CacheRatesSnapshot = {
   queriesPerSec: 0,
   loadsPerSec: 0,
+  hitsPerSec: 0,
+  missesPerSec: 0,
   bandwidth: 0,
 };
 
@@ -106,7 +108,10 @@ describe('aggregateCacheMetrics', () => {
     expect(result.l1).toBeUndefined();
     expect(result.l2).toBeUndefined();
     expect(result.network).toBeUndefined();
-    expect(result.enabled).toBe(true); // default when no provider
+    // r8 §B1: no provider → not-wired (NOT default-enabled, which the
+    // pre-r8 code surfaced and which misled `?no-cache` users).
+    expect(result.enabled).toBe(false);
+    expect(result.telemetryState?.kind).toBe('not-wired');
     expect(metricsCache.size).toBe(0);
   });
 
@@ -177,6 +182,70 @@ describe('aggregateCacheMetrics', () => {
       rates: ZERO_RATES,
     });
     expect(result.enabled).toBe(false);
+    expect(result.telemetryState?.kind).toBe('disabled-config');
+  });
+
+  describe('Phase r8 §B1 — explicit telemetry state', () => {
+    it("explicit 'disabled-no-cache' wins over inferred 'not-wired'", () => {
+      const result = aggregateCacheMetrics({
+        l0Provider: null,
+        cacheStatsProvider: null,
+        loaders: new Map(),
+        metricsCache: new Map(),
+        rates: ZERO_RATES,
+        telemetryState: { kind: 'disabled-no-cache' },
+      });
+      expect(result.enabled).toBe(false);
+      expect(result.telemetryState?.kind).toBe('disabled-no-cache');
+    });
+
+    it("explicit 'enabled' wins over inferred 'not-wired'", () => {
+      const result = aggregateCacheMetrics({
+        l0Provider: null,
+        cacheStatsProvider: null,
+        loaders: new Map(),
+        metricsCache: new Map(),
+        rates: ZERO_RATES,
+        telemetryState: { kind: 'enabled' },
+      });
+      expect(result.enabled).toBe(true);
+      expect(result.telemetryState?.kind).toBe('enabled');
+    });
+  });
+
+  describe('Phase r8 §B2 — rolling rates', () => {
+    it('hitsPerSecond / missesPerSecond come from rate-snapshot, not lifetime/60', () => {
+      const cacheStatsProvider = makeFullCacheProvider();
+      const rates: CacheRatesSnapshot = {
+        queriesPerSec: 0,
+        loadsPerSec: 0,
+        hitsPerSec: 5.5,
+        missesPerSec: 1.5,
+        bandwidth: 0,
+      };
+      const result = aggregateCacheMetrics({
+        l0Provider: null,
+        cacheStatsProvider,
+        loaders: new Map(),
+        metricsCache: new Map(),
+        rates,
+      });
+      expect(result.hitsPerSecond).toBe(5.5);
+      expect(result.missesPerSecond).toBe(1.5);
+    });
+
+    it('evictionsTotal field is the unmodified accumulator (was misleadingly named evictionsPerMin)', () => {
+      const m = makeLoaderMetrics({ evictions: 7 });
+      const result = aggregateCacheMetrics({
+        l0Provider: null,
+        cacheStatsProvider: null,
+        loaders: new Map([['/p', { getMetrics: () => m } as never]]),
+        metricsCache: new Map(),
+        rates: ZERO_RATES,
+      });
+      expect(result.evictionsTotal).toBe(7);
+      expect(result.evictionsPerMin).toBe(7); // back-compat alias
+    });
   });
 
   it('without cacheStatsProvider: falls back to per-loader metrics for memory and entries', () => {
@@ -249,6 +318,8 @@ describe('aggregateCacheMetrics', () => {
     const rates: CacheRatesSnapshot = {
       queriesPerSec: 12,
       loadsPerSec: 7,
+      hitsPerSec: 3,
+      missesPerSec: 1,
       bandwidth: 4096,
     };
     const result = aggregateCacheMetrics({

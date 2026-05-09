@@ -26,10 +26,18 @@ import type {
   CacheStatsProvider,
 } from '../../types/data-monitor-types';
 
-/** Subset of `cachedRates` this aggregator reads. */
+/**
+ * Subset of `cachedRates` this aggregator reads. r8 §B2: extended
+ * with `hitsPerSec` / `missesPerSec` so the aggregator can surface
+ * rolling per-second rates instead of lifetime-divided-by-60. The
+ * `bandwidth` field here is bytes/sec (already normalised in
+ * rate-calculator.ts).
+ */
 export interface CacheRatesSnapshot {
   queriesPerSec: number;
   loadsPerSec: number;
+  hitsPerSec: number;
+  missesPerSec: number;
   bandwidth: number;
 }
 
@@ -38,6 +46,23 @@ export interface L0Provider {
   getStats: () => CacheMetrics['l0'];
   clear?: () => void;
 }
+
+/**
+ * r8 §B1: explicit telemetry state passed in by the caller, replacing
+ * the previous default-to-enabled-when-no-provider behaviour. A
+ * `?no-cache` run produces no provider and the old code reported
+ * `enabled: true` (misleading). The four kinds:
+ *   - `enabled`   : caching is on AND providers are wired.
+ *   - `disabled-no-cache` : caching turned off via `?no-cache`.
+ *   - `disabled-config`   : turned off via app config.
+ *   - `not-wired` : caching is on but providers haven't been wired
+ *                   yet (e.g. mid-scene-transition).
+ */
+export type CacheTelemetryState =
+  | { kind: 'enabled' }
+  | { kind: 'disabled-no-cache' }
+  | { kind: 'disabled-config' }
+  | { kind: 'not-wired' };
 
 export interface AggregateCacheMetricsParams {
   l0Provider: L0Provider | null;
@@ -56,6 +81,11 @@ export interface AggregateCacheMetricsParams {
    * monitor's mutable rates field.
    */
   rates: CacheRatesSnapshot;
+  /**
+   * r8 §B1: explicit cache telemetry state. When omitted, defaults to
+   * `not-wired` (more honest than the previous default of "enabled").
+   */
+  telemetryState?: CacheTelemetryState;
 }
 
 /**
@@ -79,7 +109,21 @@ export function aggregateCacheMetrics(params: AggregateCacheMetricsParams): Cach
   let demand:
     | { l1Hits: number; l2Hits: number; networkRequests: number }
     | undefined;
-  let cacheEnabled = true;
+
+  // r8 §B1: derive telemetry state. Caller-supplied wins; otherwise
+  // infer from provider presence (was: default-to-enabled, which
+  // misled `?no-cache` users into thinking caching was on).
+  let telemetryState: CacheTelemetryState;
+  if (params.telemetryState) {
+    telemetryState = params.telemetryState;
+  } else if (cacheStatsProvider) {
+    telemetryState = cacheStatsProvider.isEnabled()
+      ? { kind: 'enabled' }
+      : { kind: 'disabled-config' };
+  } else {
+    telemetryState = { kind: 'not-wired' };
+  }
+  const cacheEnabled = telemetryState.kind === 'enabled';
 
   // L0 from in-memory decompressed-chunk cache provider.
   if (l0Provider) {
@@ -89,7 +133,6 @@ export function aggregateCacheMetrics(params: AggregateCacheMetricsParams): Cach
   // L1/L2/network from the multi-level caching store.
   if (cacheStatsProvider) {
     const stats = cacheStatsProvider.getStats();
-    cacheEnabled = cacheStatsProvider.isEnabled();
 
     l1Stats = {
       size: stats.l1.metadataSize + stats.l1.chunksSize,
@@ -183,11 +226,20 @@ export function aggregateCacheMetrics(params: AggregateCacheMetricsParams): Cach
     totalAccesses: totalL1Accesses,
     recentHitRate,
     effectiveDemandHitRate,
+    // r8 §B2: this field is `evictions` accumulated across loaders
+    // — historically named `evictionsPerMin`, but never divided by
+    // time. Renamed to `evictionsTotal` going forward; the misleading
+    // alias is kept temporarily for back-compat with any external
+    // dashboard that reads it directly.
+    evictionsTotal: evictions,
     evictionsPerMin: evictions,
     avgEntrySize: totalEntries > 0 ? totalCacheMemory / totalEntries : 0,
     reuseRatio: 0,
-    hitsPerSecond: l1Stats ? l1Stats.hits / 60 : 0,
-    missesPerSecond: l1Stats ? l1Stats.misses / 60 : 0,
+    // r8 §B2: use the rolling per-second rates from rate-calculator
+    // (was: lifetime/60 — an apparent rate that drifted as the cache
+    // accumulated history).
+    hitsPerSecond: rates.hitsPerSec,
+    missesPerSecond: rates.missesPerSec,
     avgAccessTime: 0,
     queriesPerSec: rates.queriesPerSec,
     loadsPerSec: rates.loadsPerSec,
@@ -197,5 +249,6 @@ export function aggregateCacheMetrics(params: AggregateCacheMetricsParams): Cach
     l2: l2Stats,
     network: networkStats,
     enabled: cacheEnabled,
+    telemetryState,
   };
 }

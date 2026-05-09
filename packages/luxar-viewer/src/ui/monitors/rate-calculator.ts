@@ -88,6 +88,9 @@ export function calculateRates(params: CalculateRatesParams): void {
   rates.loadsPerSec = loads / windowSeconds;
   rates.hitsPerSec = hits / windowSeconds;
   rates.missesPerSec = misses / windowSeconds;
-  rates.bandwidth = bandwidth;
+  // r8 §B2: bandwidth is bytes/sec, normalised by the bandwidth
+  // window (was: raw bytes-in-window — only correct for windowMs=1000).
+  const bandwidthSeconds = bandwidthWindowMs / 1000;
+  rates.bandwidth = bandwidthSeconds > 0 ? bandwidth / bandwidthSeconds : bandwidth;
   rates.lastCalculated = now;
 }

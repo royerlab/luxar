@@ -267,6 +267,14 @@ export interface CacheMetrics {
    * Undefined when neither L0 provider nor `demand` counters are wired.
    */
   effectiveDemandHitRate?: number;
+  /**
+   * r8 §B2: total evictions accumulated across loaders. Historically
+   * named `evictionsPerMin` but never divided by time.
+   * `evictionsPerMin` is kept as a misleading alias for back-compat;
+   * new code should read `evictionsTotal`.
+   */
+  evictionsTotal: number;
+  /** @deprecated Use `evictionsTotal` — value is identical, name is misleading. */
   evictionsPerMin: number;
   avgEntrySize: number;
   reuseRatio: number;
@@ -303,8 +311,23 @@ export interface CacheMetrics {
     evictions: number;
     hitRate: number;
   };
-  /** Whether caching is enabled */
+  /**
+   * Whether caching is enabled. Derived from `telemetryState.kind ===
+   * 'enabled'` for back-compat — new code should read telemetryState
+   * directly to distinguish 'disabled-no-cache' / 'disabled-config'
+   * / 'not-wired' (r8 §B1).
+   */
   enabled?: boolean;
+  /**
+   * r8 §B1: explicit cache telemetry state, distinguishing the three
+   * disabled variants from 'not-wired' (provider absent during scene
+   * transition or before cache setup completes).
+   */
+  telemetryState?:
+    | { kind: 'enabled' }
+    | { kind: 'disabled-no-cache' }
+    | { kind: 'disabled-config' }
+    | { kind: 'not-wired' };
   /** Network I/O stats (optional, only when CacheStatsProvider connected) */
   network?: {
     bytesTransferred: number;
