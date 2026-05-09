@@ -134,17 +134,11 @@ jobs:
       - name: Generate example datasets
         run: make run-examples
 
-      - name: Run E2E tests (CI smoke subset)
-        run: |
-          cd packages/luxar-viewer && npx playwright test \
-            basic-rendering.spec.ts \
-            viewer-initialization.spec.ts \
-            data-integrity.spec.ts \
-            url-parameters.spec.ts \
-            controls-interaction.spec.ts \
-            layers-panel.spec.ts \
-            dataset-switching.spec.ts \
-            --retries 2 --timeout 120000
+      # r8 §H2: use the package-level smoke script as the source of truth
+      # so a workflow re-enable doesn't drift from the local
+      # `pnpm test:e2e:smoke` definition (was: hand-coded subset).
+      - name: Run E2E smoke (CI subset)
+        run: cd packages/luxar-viewer && pnpm test:e2e:smoke
         timeout-minutes: 45
         env:
           CI: true

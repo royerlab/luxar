@@ -68,7 +68,15 @@ export const DEFAULT_ALLOWED_CONSOLE_ERRORS: RegExp[] = [
   // errors (LoaderError toast, broken renders) which tests assert on
   // directly. A wholly-wrong dataset path also fails through `expect`s
   // on point counts or canvas state, not via this allow-list.
-  /Failed to load resource: the server responded with a status of (4\d\d|50[12])/,
+  //
+  // r8 §H4: this 4xx/5xx pattern is broad and can mask unrelated
+  // missing-asset regressions (a missing JS bundle would also match).
+  // Set `LUXAR_E2E_STRICT_CONSOLE=1` to disable the broad pattern and
+  // keep only the specific WebGL-context-loss allow-list — useful when
+  // hardening a smoke run that asserts no missing assets.
+  ...(process.env.LUXAR_E2E_STRICT_CONSOLE
+    ? []
+    : [/Failed to load resource: the server responded with a status of (4\d\d|50[12])/]),
 ];
 
 /**
