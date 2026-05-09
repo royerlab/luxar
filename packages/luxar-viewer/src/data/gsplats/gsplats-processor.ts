@@ -303,7 +303,9 @@ export function processGSplatsTo3D(
   const amplitudes = new Float32Array(visibleCount);
   const colors = new Float32Array(visibleCount * 3);
 
-  // Color normalization factor (computed once, not per-splat)
+  // Color normalization factor (computed once, not per-splat).
+  // Inlined intentionally — see workers/color-utils.ts header for
+  // why GSplats main-thread doesn't share `coerceColorsToFloat32`.
   const normFactor = loaded.colors
     ? loaded.colors instanceof Uint8Array
       ? 1 / 255

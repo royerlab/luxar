@@ -1,12 +1,20 @@
 /**
  * Color helpers extracted from `workers/data-worker.ts` (Phase 18 W2).
  *
- * Both functions live here so the main-thread color paths (Lines and
- * GSplats) and the worker thread share one normalization contract
- * instead of inlining the same `1/255` / `1/65535` math in two
- * places — see `data/lines/projection.ts:buildInstanceBuffers` and
- * `data/gsplats/gsplats-processor.ts:processGSplats3DOnly` for the
- * main-thread call sites.
+ * Sharing matrix:
+ *
+ * - **Lines** uses this helper on **both** threads — the main-thread
+ *   `data/lines/projection.ts:buildInstanceBuffers` and both WASM
+ *   call paths import `coerceColorsToFloat32` from here.
+ * - **GSplats** uses this helper on the **worker thread only**
+ *   (`workers/data-worker.ts:projectGSplatsTo3D`). The main-thread
+ *   path `data/gsplats/gsplats-processor.ts:processGSplats3DOnly`
+ *   intentionally inlines the same `1/255` / `1/65535` math: it
+ *   already has a pre-allocated output Float32Array and writes
+ *   directly with no extra allocation. Per-frame splat counts are
+ *   high enough that the extra alloc would be measurable; readability
+ *   wins from sharing a 5-line helper aren't worth it. See commit
+ *   `c93a9c20` for the trade-off rationale.
  *
  * Workers are a cross-cutting layer per `.dependency-cruiser.cjs`,
  * so importing from this file is fine from any layer.
