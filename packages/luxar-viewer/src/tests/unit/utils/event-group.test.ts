@@ -134,4 +134,22 @@ describe('EventGroup', () => {
     target.dispatchEvent(new Event('tick'));
     expect(handler).toHaveBeenCalledTimes(1);
   });
+
+  it('early-remove splices the cleanup out so size shrinks', () => {
+    // Phase 16A.1: the returned cleanup function previously kept its
+    // entry in `cleanups` (only the `removed` flag prevented double
+    // execution), so a long-lived EventGroup that registered +
+    // early-removed many listeners would leak no-op closures.
+    const target = new EventTarget();
+    const group = new EventGroup();
+    const remove1 = group.on(target, 'tick', vi.fn());
+    group.on(target, 'tick', vi.fn());
+    group.on(target, 'tick', vi.fn());
+
+    expect(group.size).toBe(3);
+
+    remove1();
+
+    expect(group.size).toBe(2);
+  });
 });

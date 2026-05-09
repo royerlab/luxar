@@ -96,6 +96,12 @@ export class EventGroup {
       } else {
         target.removeEventListener(type, listener, options);
       }
+      // Splice out of `cleanups` so a long-lived EventGroup that
+      // repeatedly registers + early-removes listeners doesn't
+      // accumulate no-op closures (each holds references to target,
+      // type, listener, options).
+      const idx = this.cleanups.indexOf(cleanup);
+      if (idx >= 0) this.cleanups.splice(idx, 1);
     };
     this.cleanups.push(cleanup);
     return cleanup;
