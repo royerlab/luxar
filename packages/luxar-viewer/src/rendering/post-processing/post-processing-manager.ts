@@ -36,7 +36,7 @@ import {
   isBloomEffectTyped,
   isDepthOfFieldEffectTyped,
 } from './postprocessing-types';
-import { safeDisposeEffect } from './effect-disposal';
+import { safeDisposeEffect, safeRemoveAndDisposePass } from './effect-disposal';
 import { computeEffectiveRenderSize } from './render-target-sizing';
 import {
   halfFloatToFloat32,
@@ -388,25 +388,11 @@ export class PostProcessingManager {
     if (this.deferRebuild) {
       return;
     }
-    // Remove old effect passes if they exist with proper disposal
-    if (this.effectPass) {
-      this.composer.removePass(this.effectPass);
-      try {
-        this.effectPass.dispose(); // Explicit disposal to free GPU resources
-      } catch (error) {
-        log.warning(Modules.POST_PROCESSING, `Error disposing effectPass: ${error}`);
-      }
-      this.effectPass = undefined;
-    }
-    if (this.secondaryPass) {
-      this.composer.removePass(this.secondaryPass);
-      try {
-        this.secondaryPass.dispose(); // Explicit disposal to free GPU resources
-      } catch (error) {
-        log.warning(Modules.POST_PROCESSING, `Error disposing secondaryPass: ${error}`);
-      }
-      this.secondaryPass = undefined;
-    }
+    // Remove old effect passes (if present) and dispose their GPU resources.
+    safeRemoveAndDisposePass(this.composer, this.effectPass, 'effectPass');
+    this.effectPass = undefined;
+    safeRemoveAndDisposePass(this.composer, this.secondaryPass, 'secondaryPass');
+    this.secondaryPass = undefined;
 
     // Define effects in correct visual order. The orchestrator only reads
     // the `effect.constructor.name` and `effect.fragmentShader` slots — any
@@ -472,15 +458,8 @@ export class PostProcessingManager {
         this.composer.addPass(this.effectPass);
       } catch (error) {
         log.error(Modules.POST_PROCESSING, `Failed to create Pass A: ${error}`);
-        // Clean up partial state and rethrow
-        if (this.effectPass) {
-          try {
-            this.effectPass.dispose();
-          } catch {
-            /* Ignore disposal errors during cleanup */
-          }
-          this.effectPass = undefined;
-        }
+        safeDisposeEffect(this.effectPass, 'Pass A construction failure');
+        this.effectPass = undefined;
         throw error;
       }
     }
@@ -492,15 +471,8 @@ export class PostProcessingManager {
         this.composer.addPass(this.secondaryPass);
       } catch (error) {
         log.error(Modules.POST_PROCESSING, `Failed to create Pass B: ${error}`);
-        // Clean up partial state and rethrow
-        if (this.secondaryPass) {
-          try {
-            this.secondaryPass.dispose();
-          } catch {
-            /* Ignore disposal errors during cleanup */
-          }
-          this.secondaryPass = undefined;
-        }
+        safeDisposeEffect(this.secondaryPass, 'Pass B construction failure');
+        this.secondaryPass = undefined;
         throw error;
       }
     }
@@ -1305,30 +1277,11 @@ export class PostProcessingManager {
     // transparent to the user. Same shape used by rebuildAfterContextRestore.
     const state = this.captureDurableState();
 
-    // Dispose effect passes before disposing composer
-    if (this.effectPass) {
-      try {
-        this.effectPass.dispose();
-      } catch (error) {
-        log.warning(
-          Modules.POST_PROCESSING,
-          `Error disposing effectPass during recreation: ${error}`
-        );
-      }
-      this.effectPass = undefined;
-    }
-
-    if (this.secondaryPass) {
-      try {
-        this.secondaryPass.dispose();
-      } catch (error) {
-        log.warning(
-          Modules.POST_PROCESSING,
-          `Error disposing secondaryPass during recreation: ${error}`
-        );
-      }
-      this.secondaryPass = undefined;
-    }
+    // Dispose effect passes before disposing composer.
+    safeDisposeEffect(this.effectPass, 'effectPass during recreation');
+    this.effectPass = undefined;
+    safeDisposeEffect(this.secondaryPass, 'secondaryPass during recreation');
+    this.secondaryPass = undefined;
 
     this.composer.dispose();
 
@@ -1740,26 +1693,10 @@ export class PostProcessingManager {
    * Used by both `dispose()` and `rebuildAfterContextRestore()`.
    */
   private disposeTransientResources(): void {
-    if (this.effectPass) {
-      try {
-        this.effectPass.dispose();
-      } catch (error) {
-        log.warning(Modules.POST_PROCESSING, `Error disposing effectPass during cleanup: ${error}`);
-      }
-      this.effectPass = undefined;
-    }
-
-    if (this.secondaryPass) {
-      try {
-        this.secondaryPass.dispose();
-      } catch (error) {
-        log.warning(
-          Modules.POST_PROCESSING,
-          `Error disposing secondaryPass during cleanup: ${error}`
-        );
-      }
-      this.secondaryPass = undefined;
-    }
+    safeDisposeEffect(this.effectPass, 'effectPass during cleanup');
+    this.effectPass = undefined;
+    safeDisposeEffect(this.secondaryPass, 'secondaryPass during cleanup');
+    this.secondaryPass = undefined;
 
     // Dispose individual effect objects. EffectPass disposal alone is not a
     // complete ownership guarantee for all pmndrs/postprocessing effects.

@@ -6,6 +6,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   safeDisposeEffect,
   safeDisposeEffects,
+  safeRemoveAndDisposePass,
 } from '../../../../rendering/post-processing/effect-disposal';
 
 describe('safeDisposeEffect', () => {
@@ -111,5 +112,63 @@ describe('safeDisposeEffects', () => {
     ]);
     expect(count).toBe(1);
     expect(a.dispose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('safeRemoveAndDisposePass (Phase 21A)', () => {
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  });
+  afterEach(() => {
+    warnSpy.mockRestore();
+  });
+
+  it('no-op when pass is null/undefined; composer untouched', () => {
+    const composer = { removePass: vi.fn() };
+    expect(safeRemoveAndDisposePass(composer, null, 'p')).toBe(true);
+    expect(safeRemoveAndDisposePass(composer, undefined, 'p')).toBe(true);
+    expect(composer.removePass).not.toHaveBeenCalled();
+  });
+
+  it('removes pass from composer then calls dispose()', () => {
+    const dispose = vi.fn();
+    const pass = { dispose };
+    const composer = { removePass: vi.fn() };
+    expect(safeRemoveAndDisposePass(composer, pass, 'effectPass')).toBe(true);
+    expect(composer.removePass).toHaveBeenCalledWith(pass);
+    expect(dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('with no composer, only dispose() is invoked', () => {
+    const dispose = vi.fn();
+    expect(safeRemoveAndDisposePass(null, { dispose }, 'p')).toBe(true);
+    expect(dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('logs a warning if composer.removePass throws but still disposes', () => {
+    const dispose = vi.fn();
+    const pass = { dispose };
+    const composer = {
+      removePass: vi.fn(() => {
+        throw new Error('remove-fail');
+      }),
+    };
+    expect(safeRemoveAndDisposePass(composer, pass, 'effectPass')).toBe(true);
+    expect(dispose).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenCalled();
+    const [msg] = warnSpy.mock.calls[0] as string[];
+    expect(msg).toContain('effectPass');
+  });
+
+  it('returns false when dispose throws (after removePass succeeds)', () => {
+    const dispose = vi.fn(() => {
+      throw new Error('dispose-fail');
+    });
+    const pass = { dispose };
+    const composer = { removePass: vi.fn() };
+    expect(safeRemoveAndDisposePass(composer, pass, 'effectPass')).toBe(false);
+    expect(composer.removePass).toHaveBeenCalledTimes(1);
   });
 });
