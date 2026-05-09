@@ -115,6 +115,14 @@ export class InputHandler {
   /** Animation manager for dimension playback */
   private animationManager?: DimensionAnimationManager;
 
+  /**
+   * sceneDimsManager listener. Stored so dispose/clear can remove it
+   * — without this, app dispose without a subsequent dataset switch
+   * leaves a singleton listener retaining a disposed InputHandler
+   * (r8 §D1).
+   */
+  private sceneDimsListener?: () => Promise<void>;
+
   /** Debug console for capturing browser console output */
   private debugConsole: DebugConsole;
 
@@ -332,6 +340,13 @@ export class InputHandler {
       this.animationManager = undefined;
     }
 
+    // Remove the listener before resetting so a stale closure can't
+    // observe a half-reset state (r8 §D1).
+    if (this.sceneDimsListener) {
+      sceneDimsManager.removeListener(this.sceneDimsListener);
+      this.sceneDimsListener = undefined;
+    }
+
     // Reset the scene dimension manager
     sceneDimsManager.reset();
 
@@ -440,13 +455,19 @@ export class InputHandler {
     // Listen for dimension changes (returns Promise for animation
     // synchronization). The slider .update() inside the callback is
     // null-guarded, so this listener works fine without a slider panel.
-    sceneDimsManager.addListener(async () => {
+    // Stored on the instance so clearDimensionUI / dispose can remove
+    // it (r8 §D1: previously anonymous → never explicitly removed).
+    if (this.sceneDimsListener) {
+      sceneDimsManager.removeListener(this.sceneDimsListener);
+    }
+    this.sceneDimsListener = async (): Promise<void> => {
       if (this.dimensionSliders) {
         this.dimensionSliders.update();
       }
       this.animationController.startAnimation();
       await this.updateAllNDNodes();
-    });
+    };
+    sceneDimsManager.addListener(this.sceneDimsListener);
 
     // Trigger initial update now that listener is registered — ensures
     // data loads at the correct initial slice position whether or not
@@ -1081,6 +1102,15 @@ export class InputHandler {
     if (this.animationManager) {
       this.animationManager.dispose();
       this.animationManager = undefined;
+    }
+
+    // Remove sceneDimsManager listener (r8 §D1). dataset-switch path
+    // already does this via clearDimensionUI; app-dispose without a
+    // subsequent switch would otherwise leak a singleton listener
+    // retaining the disposed InputHandler.
+    if (this.sceneDimsListener) {
+      sceneDimsManager.removeListener(this.sceneDimsListener);
+      this.sceneDimsListener = undefined;
     }
 
     // Dispose debug console

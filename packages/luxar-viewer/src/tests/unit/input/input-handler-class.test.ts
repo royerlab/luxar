@@ -200,4 +200,21 @@ describe('InputHandler.dispose', () => {
     handler.init();
     expect(() => handler.dispose()).not.toThrow();
   });
+
+  // r8 §D1: InputHandler used to register an anonymous sceneDimsManager
+  // listener and never explicitly remove it. dispose() now removes the
+  // stored listener so app-dispose doesn't leak it on the singleton.
+  // We can't easily verify the leak in a unit test (initDimensionSliders
+  // bails when initFromScene returns false against the stubbed scene),
+  // but we can at least verify dispose() runs cleanly when no listener
+  // was ever registered (sceneDimsListener field starts undefined).
+  it('dispose() handles the missing-listener case cleanly (r8 §D1)', () => {
+    const handler = new InputHandler(
+      makeSceneManagerStub(),
+      makeAnimationControllerStub(),
+      makePerformanceMonitorStub(),
+      makeDebugConsoleStub()
+    );
+    expect(() => handler.dispose()).not.toThrow();
+  });
 });

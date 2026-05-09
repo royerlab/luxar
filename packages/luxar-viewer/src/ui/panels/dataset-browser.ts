@@ -8,11 +8,41 @@
 import { DirectoryNavigator, type DirectoryEntry } from '../../data';
 import { escapeHtml } from '../../utils/escape-html';
 import { extractBaseUrl, extractPath } from './dataset-url-utils';
+import { log, Modules } from '../../utils/log';
+import { showToast } from '../helpers';
+
+/**
+ * Wrap an `onDatasetSelect` invocation so a Promise-returning callback
+ * (the production path is async — `LuxarApp.loadDataset`) doesn't
+ * leak as an unhandled rejection when the browser closes
+ * synchronously after firing it (r8 §D2).
+ */
+function safeFireSelect(cb: (url: string) => void | Promise<void>, url: string): void {
+  try {
+    const result = cb(url);
+    if (result && typeof (result as Promise<void>).then === 'function') {
+      (result as Promise<void>).catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        log.warning(Modules.UI, `Dataset load failed: ${msg}`);
+        showToast(`Failed to load dataset: ${msg}`);
+      });
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log.warning(Modules.UI, `Dataset selection threw: ${msg}`);
+    showToast(`Failed to load dataset: ${msg}`);
+  }
+}
 
 export interface DatasetBrowserConfig {
   container: HTMLElement;
-  /** Callback when a dataset is selected. Receives the full URL (not just the path). */
-  onDatasetSelect: (fullUrl: string) => void;
+  /**
+   * Callback when a dataset is selected. Receives the full URL (not
+   * just the path). May be sync or async; the browser awaits/catches
+   * the returned Promise so an async load failure is logged + toasted
+   * rather than becoming an unhandled rejection (r8 §D2).
+   */
+  onDatasetSelect: (fullUrl: string) => void | Promise<void>;
   onClose?: () => void;
   /** Currently loaded dataset URL, used to determine the initial directory. */
   currentSrc?: string;
@@ -27,7 +57,7 @@ export class DatasetBrowser {
   private container: HTMLElement;
   private panel: HTMLElement;
   private navigator: DirectoryNavigator;
-  private onDatasetSelect: (fullUrl: string) => void;
+  private onDatasetSelect: (fullUrl: string) => void | Promise<void>;
   private onClose?: () => void;
   private currentDataset?: string;
 
@@ -233,7 +263,7 @@ export class DatasetBrowser {
         result.currentPath.includes('.zarr')
       ) {
         // Pass full URL to preserve directory context
-        this.onDatasetSelect(this.navigator.getFullUrl(result.currentPath));
+        safeFireSelect(this.onDatasetSelect, this.navigator.getFullUrl(result.currentPath));
         this.close();
         return;
       }
@@ -427,7 +457,7 @@ export class DatasetBrowser {
       const activate = (): void => {
         if (entry.type === 'zarr') {
           // Pass full URL to preserve directory context
-          this.onDatasetSelect(this.navigator.getFullUrl(entry.path));
+          safeFireSelect(this.onDatasetSelect, this.navigator.getFullUrl(entry.path));
           this.close();
         } else if (entry.type === 'directory') {
           this.navigate(entry.path);
@@ -481,7 +511,7 @@ export class DatasetBrowser {
         // If it's already a full URL, use it directly; otherwise use navigator's base URL
         const isFullUrl = path.startsWith('http://') || path.startsWith('https://');
         const fullUrl = isFullUrl ? path : this.navigator.getFullUrl(path);
-        this.onDatasetSelect(fullUrl);
+        safeFireSelect(this.onDatasetSelect, fullUrl);
         this.close();
       }
     };
