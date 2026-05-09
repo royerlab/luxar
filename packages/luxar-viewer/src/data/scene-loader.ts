@@ -6,9 +6,9 @@
  */
 
 import * as zarr from 'zarrita';
-import type { Readable } from '@zarrita/storage';
 import * as THREE from 'three';
 import { normalizeURL } from './scene-loader/url-normalization';
+import { setupCaches } from './scene-loader/cache-setup';
 import { applyEffectiveAttrs as applyEffectiveAttrsHelper } from './scene-loader/effective-attrs';
 import {
   getCacheStats as getCacheStatsHelper,
@@ -57,7 +57,7 @@ import { ArrayRefRegistry } from './utils/array-decoder';
 import { ViewStateManager } from './view-state-manager';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { config as appConfig } from '../config';
-import { MultiLevelCachingStore, ChunkPrefetcher, DecompressedChunkCache } from '../cache';
+import { MultiLevelCachingStore, DecompressedChunkCache } from '../cache';
 import type { PointsMetadata } from '../types/points';
 import type {
   LinesMetadata,
@@ -420,74 +420,20 @@ export class SceneLoader {
       this.dispose();
     }
 
-    // Cache flags (`?no-cache`, `?cache-debug`, `?clear-cache`, `?no-prefetch`,
-    // `?prefetch-debug`) are routed via LoaderConfig from main.ts; SceneLoader
-    // does not consult window.location directly.
-    const noCache = this.config.noCache ?? false;
-    const cacheDebug = this.config.cacheDebug ?? false;
-    const clearCache = this.config.clearCache ?? false;
-    const noPrefetch = this.config.noPrefetch ?? false;
-    const prefetchDebug = this.config.prefetchDebug ?? false;
-
-    if (appConfig.cache.l0Enabled && !noCache) {
-      this.l0Cache = new DecompressedChunkCache({
-        maxSize: appConfig.cache.l0MaxSizeMB * 1024 * 1024,
-        debug: cacheDebug || appConfig.cache.debug,
-      });
-
-      // Clear L0 if ?clear-cache is set (matches L1/L2 behavior)
-      if (clearCache) {
-        this.l0Cache.clear();
-        log.info(Modules.SCENE_LOADER, 'L0 cache cleared via ?clear-cache URL parameter');
-      }
-
-      log.info(
-        Modules.SCENE_LOADER,
-        `L0 decompressed chunk cache enabled (max size: ${appConfig.cache.l0MaxSizeMB}MB)`
-      );
-    } else {
-      this.l0Cache = null;
-      if (noCache) {
-        log.info(Modules.SCENE_LOADER, 'L0 cache disabled via ?no-cache URL parameter');
-      }
-    }
-
-    // Open zarr store with caching
-    let rawStore: Readable;
-    if (appConfig.cache.enabled && !noCache) {
-      const cachingStore = new MultiLevelCachingStore(this.normalizeURL(url), {
-        l1MaxSize: appConfig.cache.l1MaxSizeMB * 1024 * 1024,
-        l2MaxSize: appConfig.cache.l2MaxSizeMB * 1024 * 1024,
-        debug: cacheDebug || appConfig.cache.debug,
-        noCache,
-        clearCache,
-      });
-      await cachingStore.init();
-
-      // Attach prefetcher to enable transparent adjacent chunk prefetching
-      const prefetcher = new ChunkPrefetcher(cachingStore, {
-        maxConcurrent: 4,
-        enabled: !noPrefetch,
-        debug: prefetchDebug,
-      });
-      cachingStore.setPrefetcher(prefetcher);
-
-      // Register L0 invalidation: when L1/L2 are cleared (e.g., content hash change),
-      // also clear the L0 decompressed chunk cache to prevent stale data.
-      if (this.l0Cache) {
-        const l0 = this.l0Cache;
-        cachingStore.onInvalidate(() => {
-          l0.clear();
-          log.info(Modules.SCENE_LOADER, 'L0 cache cleared due to L1/L2 invalidation');
-        });
-      }
-
-      rawStore = cachingStore;
-      this.cachingStore = cachingStore;
-    } else {
-      rawStore = new zarr.FetchStore(this.normalizeURL(url));
-    }
-    this._zarrStore = (await zarr.tryWithConsolidated(rawStore)) as zarr.Readable;
+    // Phase 17C: cache + zarr store setup extracted to
+    // scene-loader/cache-setup.ts for readability. Behavior unchanged.
+    const cacheResult = await setupCaches(this.normalizeURL(url), {
+      noCache: this.config.noCache,
+      cacheDebug: this.config.cacheDebug,
+      clearCache: this.config.clearCache,
+      noPrefetch: this.config.noPrefetch,
+      prefetchDebug: this.config.prefetchDebug,
+    });
+    this.l0Cache = cacheResult.l0Cache;
+    this.cachingStore = cacheResult.cachingStore;
+    this._zarrStore = (await zarr.tryWithConsolidated(
+      cacheResult.rawStore
+    )) as zarr.Readable;
 
     // Create root THREE.js group
     this.rootGroup = new THREE.Group();

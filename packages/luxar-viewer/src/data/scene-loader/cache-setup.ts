@@ -1,0 +1,120 @@
+/**
+ * Phase 17C: cache initialization helpers extracted from
+ * `SceneLoader.loadScene()`.
+ *
+ * The original `loadScene()` was 256 lines, with ~60 of those devoted
+ * to wiring the L0/L1/L2 cache stack:
+ *   - L0 (DecompressedChunkCache, in-memory decoded chunks)
+ *   - L1 + L2 (MultiLevelCachingStore: in-memory + OPFS)
+ *   - ChunkPrefetcher attached to L1/L2
+ *   - L0 invalidation on L1/L2 clear
+ *
+ * Extracting it here doesn't change behavior — the same flags route
+ * the same way — but it makes `loadScene()` readable as a high-level
+ * "open cache → open zarr → enumerate → build scene" sequence.
+ */
+
+import * as zarr from 'zarrita';
+import {
+  MultiLevelCachingStore,
+  ChunkPrefetcher,
+  DecompressedChunkCache,
+} from '../../cache';
+import { config as appConfig } from '../../config';
+import { log, Modules } from '../../utils/log';
+
+/** Subset of LoaderConfig the cache setup needs. Mirrors the fields
+ *  the original inline code consulted. */
+export interface CacheSetupFlags {
+  noCache?: boolean;
+  cacheDebug?: boolean;
+  clearCache?: boolean;
+  noPrefetch?: boolean;
+  prefetchDebug?: boolean;
+}
+
+/** Result of cache setup: the three layers and a ready-to-open store. */
+export interface CacheSetupResult {
+  l0Cache: DecompressedChunkCache | null;
+  cachingStore: MultiLevelCachingStore | null;
+  rawStore: zarr.Readable;
+}
+
+/**
+ * Build the L0/L1/L2 cache stack and return the raw store the caller
+ * should pass to `zarr.tryWithConsolidated()`.
+ *
+ * Behavior matches the previous inline block in `SceneLoader.loadScene()`:
+ *   - L0 is enabled iff `appConfig.cache.l0Enabled && !flags.noCache`.
+ *   - L1/L2 are enabled iff `appConfig.cache.enabled && !flags.noCache`.
+ *   - When L1/L2 + L0 are both active, L0 is registered as an
+ *     invalidation listener so a content-hash bump clears all three.
+ *   - When caching is fully disabled, falls back to a vanilla
+ *     `zarr.FetchStore`.
+ */
+export async function setupCaches(
+  url: string,
+  flags: CacheSetupFlags
+): Promise<CacheSetupResult> {
+  const noCache = flags.noCache ?? false;
+  const cacheDebug = flags.cacheDebug ?? false;
+  const clearCache = flags.clearCache ?? false;
+  const noPrefetch = flags.noPrefetch ?? false;
+  const prefetchDebug = flags.prefetchDebug ?? false;
+
+  let l0Cache: DecompressedChunkCache | null = null;
+
+  if (appConfig.cache.l0Enabled && !noCache) {
+    l0Cache = new DecompressedChunkCache({
+      maxSize: appConfig.cache.l0MaxSizeMB * 1024 * 1024,
+      debug: cacheDebug || appConfig.cache.debug,
+    });
+
+    if (clearCache) {
+      l0Cache.clear();
+      log.info(Modules.SCENE_LOADER, 'L0 cache cleared via ?clear-cache URL parameter');
+    }
+
+    log.info(
+      Modules.SCENE_LOADER,
+      `L0 decompressed chunk cache enabled (max size: ${appConfig.cache.l0MaxSizeMB}MB)`
+    );
+  } else if (noCache) {
+    log.info(Modules.SCENE_LOADER, 'L0 cache disabled via ?no-cache URL parameter');
+  }
+
+  let rawStore: zarr.Readable;
+  let cachingStore: MultiLevelCachingStore | null = null;
+
+  if (appConfig.cache.enabled && !noCache) {
+    cachingStore = new MultiLevelCachingStore(url, {
+      l1MaxSize: appConfig.cache.l1MaxSizeMB * 1024 * 1024,
+      l2MaxSize: appConfig.cache.l2MaxSizeMB * 1024 * 1024,
+      debug: cacheDebug || appConfig.cache.debug,
+      noCache,
+      clearCache,
+    });
+    await cachingStore.init();
+
+    const prefetcher = new ChunkPrefetcher(cachingStore, {
+      maxConcurrent: 4,
+      enabled: !noPrefetch,
+      debug: prefetchDebug,
+    });
+    cachingStore.setPrefetcher(prefetcher);
+
+    if (l0Cache) {
+      const l0 = l0Cache;
+      cachingStore.onInvalidate(() => {
+        l0.clear();
+        log.info(Modules.SCENE_LOADER, 'L0 cache cleared due to L1/L2 invalidation');
+      });
+    }
+
+    rawStore = cachingStore;
+  } else {
+    rawStore = new zarr.FetchStore(url);
+  }
+
+  return { l0Cache, cachingStore, rawStore };
+}
