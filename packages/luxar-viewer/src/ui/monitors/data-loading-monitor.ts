@@ -24,6 +24,7 @@ import type {
 
 // Performance timeline removed - now using hierarchical timing panel
 import { aggregateCacheMetrics } from './cache-metrics-aggregator';
+import { calculateRates } from './rate-calculator';
 import { updateCacheTab } from './tabs/cache-tab';
 import { patchField, updateColorClass } from './tabs/dom-helpers';
 import { LoadingAdvisor } from '../components/loading-advisor';
@@ -1520,64 +1521,18 @@ export class DataLoadingMonitor {
   }
 
   /**
-   * Calculate all rates with caching
+   * Calculate all rates with caching. Phase 20A delegates to
+   * `rate-calculator.ts:calculateRates`.
    */
   private calculateRates(): void {
-    const now = Date.now();
-
-    // Use cached values if recent enough
-    if (now - this.cachedRates.lastCalculated < this.ratesCacheTimeout) {
-      return;
-    }
-
-    // Single pass through events to calculate all rates
-    let queries5s = 0;
-    let loads5s = 0;
-    let hits5s = 0;
-    let misses5s = 0;
-    let bandwidth1s = 0;
-
-    const cutoff5s = now - MonitorLimits.rateCalculationWindow;
-    const cutoff1s = now - MonitorLimits.bandwidthCalculationWindow;
-
-    // Iterate backwards for early exit optimization
-    for (let i = this.events.length - 1; i >= 0; i--) {
-      const event = this.events[i];
-
-      // Early exit if event is too old
-      if (event.timestamp < cutoff5s) {
-        break;
-      }
-
-      // Count events in 5s window
-      switch (event.type) {
-        case 'query':
-          queries5s++;
-          break;
-        case 'load':
-          loads5s++;
-          // Also count bandwidth for 1s window
-          if (event.timestamp > cutoff1s) {
-            bandwidth1s += event.data.memory || 0;
-          }
-          break;
-        case 'cache-hit':
-          hits5s++;
-          break;
-        case 'cache-miss':
-          misses5s++;
-          break;
-      }
-    }
-
-    // Update cached values (convert window to seconds)
-    const windowSeconds = MonitorLimits.rateCalculationWindow / 1000;
-    this.cachedRates.queriesPerSec = queries5s / windowSeconds;
-    this.cachedRates.loadsPerSec = loads5s / windowSeconds;
-    this.cachedRates.hitsPerSec = hits5s / windowSeconds;
-    this.cachedRates.missesPerSec = misses5s / windowSeconds;
-    this.cachedRates.bandwidth = bandwidth1s;
-    this.cachedRates.lastCalculated = now;
+    calculateRates({
+      now: Date.now(),
+      events: this.events,
+      rateWindowMs: MonitorLimits.rateCalculationWindow,
+      bandwidthWindowMs: MonitorLimits.bandwidthCalculationWindow,
+      cacheTimeoutMs: this.ratesCacheTimeout,
+      rates: this.cachedRates,
+    });
   }
 
   private renderCompactLoaderList(): string {
