@@ -40,9 +40,7 @@ utils/
 ├── escape-html.ts          # HTML entity escaping for safe rendering
 ├── hdr-color-conversion.ts # Linear sRGB to BT.2020 PQ I420P10 conversion
 ├── hdr-detection.ts        # HDR display capability detection
-├── hdr-video-encoder.ts    # HDR 10-bit video encoder (WebCodecs/mediabunny)
-├── log.ts                  # Structured logging utility
-└── memory-detector.ts      # System memory detection for cache management
+└── log.ts                  # Structured logging utility
 ```
 
 Each module is focused on a specific domain with minimal dependencies, promoting reusability and maintainability.
@@ -83,15 +81,6 @@ Comprehensive system for detecting and configuring HDR display capabilities:
 - `logHDRCapabilities()` - Detailed capability reporting
 - `isHDRDisplay()` - Simple boolean HDR check
 - `getOptimalRenderTargetType()` - Get optimal THREE.TextureDataType for display
-
-### hdr-video-encoder.ts - HDR Video Encoding
-
-Streaming 10-bit HDR video encoder using mediabunny (WebCodecs-based):
-
-**Core Classes/Functions**:
-
-- `HDRVideoEncoder` - Streaming encoder: create, addFrame(), finalize()
-- `isHDRVideoSupported()` - Detect AV1/VP9 10-bit encoding support
 
 ### hdr-color-conversion.ts - HDR Color Conversion
 
@@ -207,14 +196,6 @@ export function configureHDRRenderer(
 ```
 
 **Note**: Despite the legacy name, this function only logs HDR capabilities. It does NOT configure the renderer. All actual HDR configuration (outputColorSpace, toneMapping) is handled by `PostProcessingManager` to avoid conflicts with the pmndrs/postprocessing library.
-
-## Memory Detection
-
-Memory detection utilities help optimize cache sizing based on available system resources. See `memory-detector.ts` for implementation details.
-
-**Key Function**: `detectMemory()` - Returns estimated available memory for cache allocation using a three-tier fallback strategy (Chrome performance.memory API, navigator.deviceMemory, platform-based default).
-
-**Key Class**: `MemoryMonitor` - Monitors memory pressure over time and adjusts cache recommendations.
 
 ## Usage Examples
 
