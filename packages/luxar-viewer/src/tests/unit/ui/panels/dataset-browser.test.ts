@@ -522,4 +522,143 @@ describe('DatasetBrowser', () => {
       expect(container.querySelector('#luxar-dataset-browser')).toBeNull();
     });
   });
+
+  describe('navigation cancellation (Phase 16A.3)', () => {
+    type DeferredNavigate = {
+      promise: Promise<unknown>;
+      resolve: (v: unknown) => void;
+      reject: (e: unknown) => void;
+    };
+    const makeDeferred = (): DeferredNavigate => {
+      let resolve: DeferredNavigate['resolve'] = () => {};
+      let reject: DeferredNavigate['reject'] = () => {};
+      const promise = new Promise<unknown>((res, rej) => {
+        resolve = res;
+        reject = rej;
+      });
+      return { promise, resolve, reject };
+    };
+
+    // Helper: call the private `navigate` method via cast. Lets these
+    // tests exercise the cancellation path without depending on any
+    // particular DOM-trigger surface.
+    type BrowserInternals = { navigate: (path: string) => Promise<void> };
+
+    it('a stale navigate result is discarded when a newer navigate is in flight', async () => {
+      // Initial constructor navigate resolves immediately so the
+      // panel reaches steady state. Then start two more — slow then
+      // fast — and confirm the fast one wins.
+      navigateMock.mockResolvedValueOnce(defaultNavigateResult());
+
+      const browser = new DatasetBrowser({ container, onDatasetSelect, onClose });
+      await vi.waitFor(() => {
+        expect(container.querySelector('.luxar-dataset-browser__empty')).not.toBeNull();
+      });
+
+      const slow = makeDeferred();
+      const fast = makeDeferred();
+      navigateMock.mockReturnValueOnce(slow.promise).mockReturnValueOnce(fast.promise);
+
+      const internals = browser as unknown as BrowserInternals;
+      void internals.navigate('slow_path');
+      void internals.navigate('fast_path');
+
+      // Resolve fast first — its render should be visible.
+      fast.resolve(
+        defaultNavigateResult({
+          entries: [{ name: 'fast.zarr', path: 'fast.zarr', type: 'zarr' }],
+        })
+      );
+      await vi.waitFor(() => {
+        const items = container.querySelectorAll('.luxar-dataset-browser__file-item');
+        expect(items.length).toBe(1);
+      });
+      const namesAfterFast = Array.from(
+        container.querySelectorAll('.luxar-dataset-browser__file-name')
+      ).map((el) => el.textContent);
+      expect(namesAfterFast).toEqual(['fast.zarr']);
+
+      // Now resolve the stale slow navigate — its result must NOT
+      // overwrite the UI.
+      slow.resolve(
+        defaultNavigateResult({
+          entries: [{ name: 'slow.zarr', path: 'slow.zarr', type: 'zarr' }],
+        })
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+      const namesAfterSlow = Array.from(
+        container.querySelectorAll('.luxar-dataset-browser__file-name')
+      ).map((el) => el.textContent);
+      expect(namesAfterSlow).toEqual(['fast.zarr']);
+    });
+
+    it('a stale navigate that resolves to a zarr path does NOT fire onDatasetSelect', async () => {
+      navigateMock.mockResolvedValueOnce(defaultNavigateResult());
+
+      const browser = new DatasetBrowser({ container, onDatasetSelect, onClose });
+      await vi.waitFor(() => {
+        expect(container.querySelector('.luxar-dataset-browser__empty')).not.toBeNull();
+      });
+
+      const slow = makeDeferred();
+      const fast = makeDeferred();
+      navigateMock.mockReturnValueOnce(slow.promise).mockReturnValueOnce(fast.promise);
+
+      const internals = browser as unknown as BrowserInternals;
+      void internals.navigate('slow_path');
+      void internals.navigate('fast_path');
+
+      // Fast (newer) navigate finishes as a normal directory.
+      fast.resolve(defaultNavigateResult({ entries: [] }));
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // Slow (stale) navigate now resolves to a zarr — must NOT fire
+      // onDatasetSelect, otherwise the user would be navigated to a
+      // path they already left.
+      slow.resolve(
+        defaultNavigateResult({
+          isZarr: true,
+          currentPath: 'slow.zarr',
+          entries: [],
+        })
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(onDatasetSelect).not.toHaveBeenCalled();
+    });
+
+    it('close() cancels an in-flight navigate so onDatasetSelect cannot fire post-close', async () => {
+      navigateMock.mockResolvedValueOnce(defaultNavigateResult());
+
+      const browser = new DatasetBrowser({ container, onDatasetSelect, onClose });
+      await vi.waitFor(() => {
+        expect(container.querySelector('.luxar-dataset-browser__empty')).not.toBeNull();
+      });
+
+      const slow = makeDeferred();
+      navigateMock.mockReturnValueOnce(slow.promise);
+
+      const internals = browser as unknown as BrowserInternals;
+      void internals.navigate('late_path');
+
+      // User dismisses the panel before the navigate completes.
+      browser.close();
+      expect(container.querySelector('#luxar-dataset-browser')).toBeNull();
+
+      // The slow navigate now resolves to a zarr — must NOT fire
+      // onDatasetSelect since the panel is gone.
+      slow.resolve(
+        defaultNavigateResult({
+          isZarr: true,
+          currentPath: 'late.zarr',
+          entries: [],
+        })
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(onDatasetSelect).not.toHaveBeenCalled();
+    });
+  });
 });

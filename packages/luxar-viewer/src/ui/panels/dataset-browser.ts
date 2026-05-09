@@ -34,6 +34,18 @@ export class DatasetBrowser {
   /** Origin used for relative path resolution; captured at construction. */
   private readonly origin: string;
 
+  /**
+   * Phase 16A.3: navigation generation token. Incremented on every
+   * `navigate()` call; the navigation discards its result if the
+   * generation has moved by the time the async navigator fetch
+   * resolves. Without this, fast user picks (or simply a slow first
+   * response while the user clicks something else) could let the
+   * stale result render entries — or worse, fire `onDatasetSelect`
+   * for a directory the user already left when the stale response
+   * arrives at a `.zarr` path.
+   */
+  private navigationGeneration = 0;
+
   constructor(config: DatasetBrowserConfig) {
     this.container = config.container;
     this.onDatasetSelect = config.onDatasetSelect;
@@ -184,10 +196,19 @@ export class DatasetBrowser {
 
   /**
    * Navigate to a path and update the UI.
+   *
+   * Phase 16A.3: cancellable. Each call bumps `navigationGeneration`;
+   * if the user kicks off a newer navigate while an older one's
+   * `navigator.navigate()` is still in flight, the older call
+   * discards its result on resume instead of overwriting the UI or
+   * (worst case) firing `onDatasetSelect` for a path the user already
+   * left.
    */
   private async navigate(path: string): Promise<void> {
     const content = this.panel.querySelector('#luxar-dataset-browser-content') as HTMLElement;
     const statusBar = this.panel.querySelector('#luxar-dataset-browser-status') as HTMLElement;
+
+    const myGeneration = ++this.navigationGeneration;
 
     // Show loading state
     content.innerHTML = '<div class="luxar-dataset-browser__loading">Loading...</div>';
@@ -195,7 +216,10 @@ export class DatasetBrowser {
 
     try {
       const result = await this.navigator.navigate(path);
-      // Store result for future use if needed
+      // Phase 16A.3: bail if a newer navigate has started while we
+      // were awaiting. The newer call already wrote its loading
+      // indicator and is responsible for the next render.
+      if (this.navigationGeneration !== myGeneration) return;
 
       // Update breadcrumb
       this.updateBreadcrumb(result.currentPath);
@@ -235,6 +259,9 @@ export class DatasetBrowser {
         this.showManualEntry();
       }
     } catch (error) {
+      // Phase 16A.3: if a newer navigate started, don't paint the
+      // older error over the newer loading indicator.
+      if (this.navigationGeneration !== myGeneration) return;
       content.innerHTML = `
         <div class="luxar-dataset-browser__error">
           <p>Failed to load directory</p>
@@ -493,6 +520,10 @@ export class DatasetBrowser {
     // matches what `LuxarApp.dispose()` sees if the user already
     // dismissed via Escape/×.
     if (!this.panel.isConnected) return;
+    // Phase 16A.3: bump generation so any in-flight `navigate()`
+    // resolving after close discards its result rather than firing
+    // `onDatasetSelect` for a path the user backed out of.
+    this.navigationGeneration++;
     if (this.onClose) {
       this.onClose();
     }
