@@ -7,7 +7,7 @@
  * Dataset: sharpness_showcase_example.zarr (8+ point cloud nodes with layer=True)
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import {
   waitForLuxarReady,
   waitForPointsLoaded,

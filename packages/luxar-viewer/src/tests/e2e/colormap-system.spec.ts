@@ -8,7 +8,7 @@
  * - Min/max range labels reflect data range
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import {
   waitForLuxarReady,
   waitForPointsLoaded,

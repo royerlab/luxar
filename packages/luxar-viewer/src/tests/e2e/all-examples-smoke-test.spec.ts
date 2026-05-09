@@ -13,7 +13,7 @@
  * Purpose: Allow Claude Code to detect issues BEFORE user does by running E2E tests.
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import {
   waitForLuxarReady,
   getLuxarState,

@@ -12,7 +12,7 @@
  * Unit tests mock OPFS, but only Playwright tests use real browser storage APIs.
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import {
   waitForLuxarReady,
   getLuxarState,

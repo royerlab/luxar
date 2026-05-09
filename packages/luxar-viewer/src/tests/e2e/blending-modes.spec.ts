@@ -7,7 +7,7 @@
  * - Different modes produce visually different results
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import {
   waitForLuxarReady,
   waitForPointsLoaded,

@@ -10,7 +10,7 @@
  * Dataset: build_example_structured.zarr (3D, reliable point count)
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import {
   waitForLuxarReady,
   waitForPointsLoaded,

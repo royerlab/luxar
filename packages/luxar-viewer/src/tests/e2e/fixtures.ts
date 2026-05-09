@@ -39,13 +39,14 @@ export const ALLOW_CONSOLE_ERRORS = 'allow-console-errors';
  * Console error patterns the auto-fixture treats as environmental
  * flakiness rather than test failures.
  *
- * The 12 specs that explicitly call `assertNoConsoleErrors` keep their
- * own (typically empty or per-test) allow-lists — those are explicit
- * contracts. The auto-fixture covers the broader set of specs that
- * just want a "no unexpected errors" smoke check, where headless-
- * browser environmental noise (WebGL context loss under GPU pressure,
- * intermittent fetch failures during teardown) would otherwise drown
- * out real regressions.
+ * As of Phase 16D every E2E spec uses this fixture. Specs that also
+ * make their own explicit `assertNoConsoleErrors(page)` call keep
+ * that explicit contract (it runs strictly with no allow-list and
+ * fails first if anything unexpected appears); the auto-fixture
+ * covers cases where the spec author forgot to add the explicit
+ * call. Headless-browser environmental noise (WebGL context loss
+ * under GPU pressure, intermittent fetch failures during teardown)
+ * is filtered here so it doesn't drown out real regressions.
  *
  * Keep the list narrow — it's safer to add a per-spec annotation than
  * to silence a broad pattern globally.

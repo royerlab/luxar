@@ -12,7 +12,7 @@
  * Dataset: scene_dimensions_example.zarr (has physical units: um)
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import {
   waitForLuxarReady,
   waitForPointsLoaded,
