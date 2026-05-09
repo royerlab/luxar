@@ -11,18 +11,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ImageSequenceDriver } from '../../../../ui/recording/image-sequence-driver';
 import { ExrSequenceDriver } from '../../../../ui/recording/exr-sequence-driver';
-import type {
-  CaptureContext,
-  CaptureProgress,
-} from '../../../../ui/recording/offline-capture-driver';
+import type { CaptureContext } from '../../../../ui/recording/offline-capture-driver';
 
-function makeProgress(): CaptureProgress & {
-  setLabel: ReturnType<typeof vi.fn>;
-  setPreview: ReturnType<typeof vi.fn>;
+function makeProgress(): {
+  setLabel: ReturnType<typeof vi.fn> & ((text: string) => void);
+  setPreview: ReturnType<typeof vi.fn> & ((canvas: HTMLCanvasElement) => void);
 } {
   return {
-    setLabel: vi.fn(),
-    setPreview: vi.fn(),
+    setLabel: vi.fn() as ReturnType<typeof vi.fn> & ((text: string) => void),
+    setPreview: vi.fn() as ReturnType<typeof vi.fn> & ((canvas: HTMLCanvasElement) => void),
   };
 }
 

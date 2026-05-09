@@ -45,6 +45,75 @@ export interface OrderedEffect<T> {
 }
 
 /**
+ * Optional effect references plus the AA-mode flags. Each effect
+ * field is added to the ordered list only when defined; `smaaEnabled`
+ * / `fxaaEnabled` gate the (mutually exclusive) anti-aliasing entry.
+ *
+ * Generic over the effect type so this stays decoupled from the
+ * pmndrs `Effect` class — tests use string markers.
+ */
+export interface EffectSlots<T> {
+  bloom?: T;
+  dof?: T;
+  ao?: T;
+  chromaticLensDistortion?: T;
+  detectorNoise?: T;
+  toneMapping?: T;
+  vignette?: T;
+  smaa?: T;
+  fxaa?: T;
+  /** Whether SMAA should be added. Wins over FXAA when both are true. */
+  smaaEnabled: boolean;
+  /** Whether FXAA should be added (only honored when smaaEnabled is false). */
+  fxaaEnabled: boolean;
+}
+
+/**
+ * Build the canonical ordered list of active effects from a slot
+ * record. The order is the project-defined visual order (HDR effects
+ * before tone mapping → LDR effects after → AA last). Only-defined
+ * slots contribute; AA selection is gated on the `*Enabled` flags
+ * with SMAA winning over FXAA when both flags are true.
+ *
+ * Pure: no side effects, no logging, no scene access. The caller
+ * passes the result to {@link partitionEffectsIntoPasses} to split
+ * into Pass A / Pass B for the EffectComposer.
+ */
+export function buildOrderedEffects<T>(slots: EffectSlots<T>): OrderedEffect<T>[] {
+  const ordered: OrderedEffect<T>[] = [];
+
+  // HDR effects (before tone mapping)
+  if (slots.bloom) ordered.push({ effect: slots.bloom, name: 'Bloom' });
+  if (slots.dof) ordered.push({ effect: slots.dof, name: 'DOF' });
+  if (slots.ao) ordered.push({ effect: slots.ao, name: 'AO' });
+
+  // Chromatic Lens Distortion: wavelength-dependent radial distortion.
+  if (slots.chromaticLensDistortion) {
+    ordered.push({ effect: slots.chromaticLensDistortion, name: 'ChromaticLensDistortion' });
+  }
+
+  // Detector noise: after lens distortion / chromatic aberration, before tone mapping.
+  if (slots.detectorNoise) {
+    ordered.push({ effect: slots.detectorNoise, name: 'DetectorNoise' });
+  }
+
+  // Tone mapping (HDR → LDR conversion).
+  if (slots.toneMapping) ordered.push({ effect: slots.toneMapping, name: 'ToneMapping' });
+
+  // LDR effects (after tone mapping). pmndrs v7 requires vignette after tone mapping.
+  if (slots.vignette) ordered.push({ effect: slots.vignette, name: 'Vignette' });
+
+  // Anti-aliasing always last; SMAA wins over FXAA when both flags are true.
+  if (slots.smaaEnabled && slots.smaa) {
+    ordered.push({ effect: slots.smaa, name: 'SMAA' });
+  } else if (slots.fxaaEnabled && slots.fxaa) {
+    ordered.push({ effect: slots.fxaa, name: 'FXAA' });
+  }
+
+  return ordered;
+}
+
+/**
  * Result of {@link partitionEffectsIntoPasses}. `passA*` is always the
  * primary pass; `passB*` is non-empty only when an incompatibility
  * forced a split.

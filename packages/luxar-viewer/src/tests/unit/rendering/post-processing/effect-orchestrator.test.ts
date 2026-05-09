@@ -4,6 +4,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+  buildOrderedEffects,
   isConvolutionEffectName,
   isUVTransformEffectName,
   partitionEffectsIntoPasses,
@@ -134,6 +135,102 @@ describe('partitionEffectsIntoPasses', () => {
       'Bloom',
       'ChromaticLensDistortion',
     ]);
+    expect(partition.splitAt).toBe('ChromaticLensDistortion');
+  });
+});
+
+describe('buildOrderedEffects (Phase 21A.2)', () => {
+  it('empty slots produce an empty list', () => {
+    const ordered = buildOrderedEffects<string>({ smaaEnabled: false, fxaaEnabled: false });
+    expect(ordered).toEqual([]);
+  });
+
+  it('only-defined slots contribute, in canonical visual order', () => {
+    const ordered = buildOrderedEffects<string>({
+      bloom: 'b',
+      toneMapping: 'tm',
+      smaaEnabled: false,
+      fxaaEnabled: false,
+    });
+    expect(ordered.map((e) => e.name)).toEqual(['Bloom', 'ToneMapping']);
+  });
+
+  it('full pipeline yields the canonical order', () => {
+    const ordered = buildOrderedEffects<string>({
+      bloom: 'b',
+      dof: 'd',
+      ao: 'ao',
+      chromaticLensDistortion: 'cld',
+      detectorNoise: 'dn',
+      toneMapping: 'tm',
+      vignette: 'v',
+      smaa: 's',
+      fxaa: 'f',
+      smaaEnabled: true,
+      fxaaEnabled: true,
+    });
+    expect(ordered.map((e) => e.name)).toEqual([
+      'Bloom',
+      'DOF',
+      'AO',
+      'ChromaticLensDistortion',
+      'DetectorNoise',
+      'ToneMapping',
+      'Vignette',
+      'SMAA', // SMAA wins over FXAA when both flags are true
+    ]);
+  });
+
+  it('AA selection: SMAA wins over FXAA when both enabled', () => {
+    const ordered = buildOrderedEffects<string>({
+      smaa: 's',
+      fxaa: 'f',
+      smaaEnabled: true,
+      fxaaEnabled: true,
+    });
+    expect(ordered.map((e) => e.name)).toEqual(['SMAA']);
+  });
+
+  it('AA selection: FXAA used when smaaEnabled=false', () => {
+    const ordered = buildOrderedEffects<string>({
+      smaa: 's',
+      fxaa: 'f',
+      smaaEnabled: false,
+      fxaaEnabled: true,
+    });
+    expect(ordered.map((e) => e.name)).toEqual(['FXAA']);
+  });
+
+  it('AA selection: skipped when both flags are false', () => {
+    const ordered = buildOrderedEffects<string>({
+      smaa: 's',
+      fxaa: 'f',
+      smaaEnabled: false,
+      fxaaEnabled: false,
+    });
+    expect(ordered).toEqual([]);
+  });
+
+  it('AA selection: smaaEnabled=true but smaa undefined falls through to FXAA', () => {
+    const ordered = buildOrderedEffects<string>({
+      fxaa: 'f',
+      smaaEnabled: true,
+      fxaaEnabled: true,
+    });
+    expect(ordered.map((e) => e.name)).toEqual(['FXAA']);
+  });
+
+  it('output passes through partitionEffectsIntoPasses correctly', () => {
+    const ordered = buildOrderedEffects<string>({
+      bloom: 'bloom-marker',
+      chromaticLensDistortion: 'cld-marker',
+      smaaEnabled: false,
+      fxaaEnabled: false,
+    });
+    const partition = partitionEffectsIntoPasses(ordered);
+    // Bloom is convolution, ChromaticLensDistortion is UV-transform → split.
+    expect(partition.passANames).toEqual(['Bloom']);
+    expect(partition.passBNames).toEqual(['ChromaticLensDistortion']);
     expect(partition.splitAt).toBe('ChromaticLensDistortion');
   });
 });

@@ -59,7 +59,7 @@ import {
   captureToneMappingState,
   captureVignetteState,
 } from './context-recovery';
-import { type OrderedEffect, partitionEffectsIntoPasses } from './effect-orchestrator';
+import { buildOrderedEffects, partitionEffectsIntoPasses } from './effect-orchestrator';
 import { toneMappingModeName } from './tone-mapping-mode-names';
 import {
   applyToneMapping,
@@ -394,49 +394,30 @@ export class PostProcessingManager {
     safeRemoveAndDisposePass(this.composer, this.secondaryPass, 'secondaryPass');
     this.secondaryPass = undefined;
 
-    // Define effects in correct visual order. The orchestrator only reads
-    // the `effect.constructor.name` and `effect.fragmentShader` slots — any
-    // pmndrs Effect subclass works.
-    const orderedEffects: OrderedEffect<Effect>[] = [];
+    // Build the canonical ordered list of active effects from the
+    // current effect references + AA flags. The helper is pure; the
+    // partitioner below splits the result into Pass A / Pass B.
+    const orderedEffects = buildOrderedEffects<Effect>({
+      bloom: this.bloomEffect,
+      dof: this.dofEffect,
+      ao: this.aoEffect,
+      chromaticLensDistortion: this.chromaticLensDistortionEffect,
+      detectorNoise: this.detectorNoiseEffect,
+      toneMapping: this.toneMappingEffect,
+      vignette: this.vignetteEffect,
+      smaa: this.smaaEffect,
+      fxaa: this.fxaaEffect,
+      smaaEnabled: this.smaaEnabled,
+      fxaaEnabled: this.fxaaEnabled,
+    });
 
-    // Build ordered list of active effects - CORRECT ORDER per user requirements
-    // HDR effects (before tone mapping)
-    if (this.bloomEffect) orderedEffects.push({ effect: this.bloomEffect, name: 'Bloom' });
-    if (this.dofEffect) orderedEffects.push({ effect: this.dofEffect, name: 'DOF' });
-    if (this.aoEffect) orderedEffects.push({ effect: this.aoEffect, name: 'AO' });
-
-    // Chromatic Lens Distortion: Combined effect with wavelength-dependent distortion
-    // Physically accurate chromatic aberration that follows lens geometry
-    if (this.chromaticLensDistortionEffect) {
-      orderedEffects.push({
-        effect: this.chromaticLensDistortionEffect,
-        name: 'ChromaticLensDistortion',
-      });
-    }
-
-    // Detector noise comes AFTER lens distortion and chromatic aberration but before tone mapping
-    if (this.detectorNoiseEffect)
-      orderedEffects.push({ effect: this.detectorNoiseEffect, name: 'DetectorNoise' });
-
-    // Tone mapping (HDR → LDR conversion)
-    if (this.toneMappingEffect) {
-      orderedEffects.push({ effect: this.toneMappingEffect, name: 'ToneMapping' });
-    }
-
-    // LDR effects (after tone mapping) - pmndrs v7 requires vignette after tone mapping
+    // Vignette logging (preserved from the inline version).
     if (this.vignetteEffect) {
-      orderedEffects.push({ effect: this.vignetteEffect, name: 'Vignette' });
       log.info(
         Modules.POST_PROCESSING,
         `Vignette added to effects (after tone mapping) - darkness=${this.vignetteEffect.darkness}, offset=${this.vignetteEffect.offset}`
       );
     }
-
-    // Anti-aliasing always last
-    if (this.smaaEnabled && this.smaaEffect)
-      orderedEffects.push({ effect: this.smaaEffect, name: 'SMAA' });
-    else if (this.fxaaEnabled && this.fxaaEffect)
-      orderedEffects.push({ effect: this.fxaaEffect, name: 'FXAA' });
 
     // Partition into Pass A / Pass B based on pmndrs effect-compatibility rules.
     const partition = partitionEffectsIntoPasses(orderedEffects);

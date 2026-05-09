@@ -56,7 +56,10 @@ describe('ZipSequenceCapture', () => {
 
   it('with showSaveFilePicker available, writes to disk handle and closes on finalize', async () => {
     const env = makeWritable();
-    const z = new ZipSequenceCapture({ showSaveFilePicker: env.picker }, vi.fn());
+    const z = new ZipSequenceCapture(
+      { showSaveFilePicker: env.picker as unknown as (opts: unknown) => Promise<FileSystemFileHandle> },
+      vi.fn()
+    );
     await z.setup({ suggestedName: 'cap.zip' });
     z.addFrame(new Uint8Array([0xff, 0xee]), 'png', 0);
 
@@ -83,7 +86,10 @@ describe('ZipSequenceCapture', () => {
 
   it('user-cancelled file picker falls back to in-memory mode', async () => {
     const picker = vi.fn().mockRejectedValue(new DOMException('User aborted', 'AbortError'));
-    const z = new ZipSequenceCapture({ showSaveFilePicker: picker }, vi.fn());
+    const z = new ZipSequenceCapture(
+      { showSaveFilePicker: picker as unknown as (opts: unknown) => Promise<FileSystemFileHandle> },
+      vi.fn()
+    );
     await z.setup({ suggestedName: 'cap.zip' });
     z.addFrame(new Uint8Array([1]), 'png', 0);
 
@@ -106,7 +112,10 @@ describe('ZipSequenceCapture', () => {
 
   it('zero captured frames toasts "No frames captured" and aborts disk handle', async () => {
     const env = makeWritable();
-    const z = new ZipSequenceCapture({ showSaveFilePicker: env.picker }, vi.fn());
+    const z = new ZipSequenceCapture(
+      { showSaveFilePicker: env.picker as unknown as (opts: unknown) => Promise<FileSystemFileHandle> },
+      vi.fn()
+    );
     await z.setup({ suggestedName: 'cap.zip' });
 
     const showToast = vi.fn();
@@ -135,7 +144,10 @@ describe('ZipSequenceCapture', () => {
     const picker = vi.fn().mockResolvedValue(handle);
 
     const logError = vi.fn();
-    const z = new ZipSequenceCapture({ showSaveFilePicker: picker }, logError);
+    const z = new ZipSequenceCapture(
+      { showSaveFilePicker: picker as unknown as (opts: unknown) => Promise<FileSystemFileHandle> },
+      logError
+    );
     await z.setup({ suggestedName: 'cap.zip' });
     z.addFrame(new Uint8Array([1, 2, 3]), 'png', 0);
 
