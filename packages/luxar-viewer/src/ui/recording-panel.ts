@@ -285,6 +285,16 @@ export class RecordingPanel {
   // ========== Screenshot Capture ==========
 
   async captureScreenshot(): Promise<void> {
+    // Refuse during active recording. captureScreenshot() and the
+    // recording paths share `savedRecordingState` — without this guard,
+    // a screenshot during recording would clobber the active session's
+    // saved DPR/resize/renderer snapshot and the recording's eventual
+    // restoreRecordingState() would no-op, leaving DPR disabled and
+    // resize locked after recording ends.
+    if (this.isRecording || this.isOfflineCaptureActive) {
+      showToast('Stop recording before taking a screenshot');
+      return;
+    }
     if (this.isCaptureInProgress) return;
     this.isCaptureInProgress = true;
 

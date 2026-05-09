@@ -329,38 +329,71 @@ describe('RecordingPanel', () => {
   });
 
   describe('screenshot during recording', () => {
-    it('should not clobber saved panel states when screenshotting during recording', async () => {
+    it('refuses screenshot while real-time recording is active and preserves savedRecordingState', async () => {
       const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
         cb(0);
         return 0;
       });
 
-      const originalStates = new Map([['renderingControls', true]]);
-      const getStates = vi.fn().mockReturnValue(originalStates);
-      const restoreStates = vi.fn();
-      panel.setPanelStateCallbacks(getStates, restoreStates);
-
-      // Simulate active recording
+      // Simulate an active real-time recording with a populated saved state.
+      const recordingSavedState = {
+        dprEnabled: true,
+        dpr: 1,
+        rendererSize: null,
+        resizeLocked: false,
+      };
       (panel as any).isRecording = true;
+      (panel as any).savedRecordingState = recordingSavedState;
 
-      // Take screenshot during recording
-      await panel.captureScreenshot();
+      const saveStateSpy = vi.spyOn(panel as any, 'saveRecordingState');
+      const restoreStateSpy = vi.spyOn(panel as any, 'restoreRecordingState');
 
-      // savedPanelStates should be preserved (not nulled) because recording is active
-      expect((panel as any).savedPanelStates).toEqual(originalStates);
+      vi.mocked(showToast).mockClear();
+      try {
+        await panel.captureScreenshot();
 
-      // restoreAllPanels should NOT have restored (recording still active)
-      // Only the hideAllPanels call to hide other panels should have happened
-      const restoreCalls = restoreStates.mock.calls;
-      // All restore calls should be "hide" calls (all false), no "restore" calls
-      for (const call of restoreCalls) {
-        const states = call[0] as Map<string, boolean>;
-        for (const [, visible] of states) {
-          expect(visible).toBe(false);
-        }
+        // Expect the user-visible refusal toast and that the recording's
+        // saved state was not overwritten or cleared.
+        expect(showToast).toHaveBeenCalledWith(
+          'Stop recording before taking a screenshot'
+        );
+        expect((panel as any).savedRecordingState).toBe(recordingSavedState);
+        expect(saveStateSpy).not.toHaveBeenCalled();
+        expect(restoreStateSpy).not.toHaveBeenCalled();
+      } finally {
+        // Clear the stub state so afterEach's panel.dispose() doesn't try
+        // to restore against the mock sceneManager.
+        (panel as any).isRecording = false;
+        (panel as any).savedRecordingState = null;
+        rafSpy.mockRestore();
       }
+    });
 
-      rafSpy.mockRestore();
+    it('refuses screenshot while offline capture is active', async () => {
+      const recordingSavedState = {
+        dprEnabled: false,
+        dpr: 2,
+        rendererSize: { width: 1920, height: 1080 },
+        resizeLocked: true,
+      };
+      (panel as any).isOfflineCaptureActive = true;
+      (panel as any).savedRecordingState = recordingSavedState;
+
+      const saveStateSpy = vi.spyOn(panel as any, 'saveRecordingState');
+
+      vi.mocked(showToast).mockClear();
+      try {
+        await panel.captureScreenshot();
+
+        expect(showToast).toHaveBeenCalledWith(
+          'Stop recording before taking a screenshot'
+        );
+        expect((panel as any).savedRecordingState).toBe(recordingSavedState);
+        expect(saveStateSpy).not.toHaveBeenCalled();
+      } finally {
+        (panel as any).isOfflineCaptureActive = false;
+        (panel as any).savedRecordingState = null;
+      }
     });
   });
 
