@@ -314,7 +314,7 @@ export function buildInstanceBuffers(
   // Shared with the worker projection path; Float32 inputs pass through
   // (zero alloc), Uint8/Uint16 trigger an upfront normalization. Audited
   // for sparse-visible-segment alloc cost — sub-1ms at 100k segments;
-  // see `tests/benchmarks/lines-color-alloc-bench.ts`.
+  // (Historical benchmark file removed in J.1 of viewer-code-review-rerun.)
   const colorsF32 = colors ? coerceColorsToFloat32(colors) : null;
 
   let outIdx = 0;
