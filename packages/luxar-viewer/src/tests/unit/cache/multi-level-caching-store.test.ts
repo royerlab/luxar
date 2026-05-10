@@ -717,6 +717,76 @@ describe('MultiLevelCachingStore', () => {
     );
 
     it(
+      'two stores sharing a datasetId: disposing the first cancels its queue entry, the second can still validate',
+      { timeout: 15_000 },
+      async () => {
+        // Two stores using the same URL share the same datasetId
+        // (SHA-256(url)). The first to start init populates the
+        // static validationQueues entry; the second waits on it.
+        // When the first is disposed mid-validation, its queue entry
+        // is aborted and removed — so the second can install its own
+        // entry and complete cleanly.
+        const url = 'https://example.com/shared-dataset.zarr';
+
+        // First fetch hangs forever to keep store-1's validation
+        // in flight; second fetch resolves so store-2 can finish.
+        let firstAttempt = true;
+        global.fetch = vi.fn((_url: string, init?: RequestInit) => {
+          if (firstAttempt) {
+            firstAttempt = false;
+            return new Promise<Response>((_resolve, reject) => {
+              init?.signal?.addEventListener(
+                'abort',
+                () => reject(new DOMException('Aborted', 'AbortError')),
+                { once: true }
+              );
+            });
+          }
+          // Subsequent fetches return a real response so store-2 can
+          // finish init (this includes both the .zattrs probe and
+          // chunk fetches).
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            async arrayBuffer() {
+              return new Uint8Array([1, 2, 3]).buffer;
+            },
+            async text() {
+              return '{}';
+            },
+            headers: new Headers(),
+          } as unknown as Response);
+        }) as unknown as typeof fetch;
+
+        const store1 = new MultiLevelCachingStore(url, {
+          l1MaxSize: 20 * 1024 * 1024,
+          l2MaxSize: 4096,
+        });
+        const init1 = store1.init();
+        // Let init1 enter validateCache → fetchWithRetry.
+        await new Promise((r) => setTimeout(r, 50));
+
+        // Dispose store1 mid-validation — its queue entry should be
+        // aborted, allowing init2 (which would otherwise wait on
+        // store1's queue) to install its own entry.
+        await store1.dispose();
+        await init1;
+
+        // Now create + init a second store on the same URL. The
+        // hanging fetch is gone (firstAttempt already consumed),
+        // so this should succeed without timing out.
+        const store2 = new MultiLevelCachingStore(url, {
+          l1MaxSize: 20 * 1024 * 1024,
+          l2MaxSize: 4096,
+        });
+        await store2.init();
+
+        // Cleanup.
+        await store2.dispose();
+      }
+    );
+
+    it(
       'VC-2: cache-validation HEAD probe uses a shorter timeout than data fetches',
       { timeout: 15_000 },
       async () => {
