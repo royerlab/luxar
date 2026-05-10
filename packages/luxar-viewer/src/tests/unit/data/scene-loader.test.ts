@@ -305,6 +305,20 @@ describe('SceneLoader', () => {
       expect((sceneLoader as any)._zarrStore).toBeNull();
       expect((sceneLoader as any).rootGroup).toBeNull();
     });
+
+    it('SceneLoader.dispose returns a Promise that resolves cleanly (async signature)', async () => {
+      // Locks in commit 2.1's signature change. loadScene's call site
+      // (commit 2.3) now uses `await this.dispose()` — we cannot directly
+      // observe the await ordering in this test fixture (loadScene's
+      // dispose path is gated on loaders.size > 0 and the jsdom mocks
+      // don't populate spatial-index loaders), but a Promise return type
+      // is the contract that lets that await work in production.
+      await sceneLoader.loadScene('http://localhost:8000/test.zarr');
+      const result = sceneLoader.dispose();
+      expect(result).toBeInstanceOf(Promise);
+      await result;
+      expect((sceneLoader as any)._zarrStore).toBeNull();
+    });
   });
 
   describe('monitor integration', () => {

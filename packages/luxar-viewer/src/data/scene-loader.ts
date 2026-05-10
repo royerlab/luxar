@@ -413,9 +413,13 @@ export class SceneLoader {
     // Clear any existing loaders from monitor before loading new scene
     this.monitor?.disconnectAllLoaders();
 
-    // Dispose of any existing loaders
+    // Dispose of any existing loaders. Awaited so the previous caching
+    // store fully drains (prefetcher tear-down, OPFS metadata flush,
+    // validation cancellation) before we construct the next one — without
+    // this, rapid dataset switches let an old store's writes land after
+    // the new store starts initialising.
     if (this.loaders.size > 0) {
-      this.dispose();
+      await this.dispose();
     }
 
     const cacheResult = await setupCaches(this.normalizeURL(url), {
