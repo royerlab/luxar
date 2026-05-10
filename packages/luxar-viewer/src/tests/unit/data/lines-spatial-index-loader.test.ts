@@ -657,6 +657,21 @@ describe('LinesSpatialIndexLoader', () => {
       });
     });
 
+    describe('prefetchChunks (commit 8.2)', () => {
+      it('warms the cache via zarr.get on every available array × range', async () => {
+        const viewState: ViewState = {
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0],
+          tolerance: [0, 0, 0],
+        };
+        await bodyLoader.loadLines(viewState);
+        const callsBefore = (zarr.get as any).mock.calls.length;
+        await bodyLoader.prefetchChunks(viewState);
+        const callsAfter = (zarr.get as any).mock.calls.length;
+        expect(callsAfter).toBeGreaterThan(callsBefore);
+      });
+    });
+
     describe('resource cleanup', () => {
       it('should dispose resources properly', async () => {
         const viewState: ViewState = {

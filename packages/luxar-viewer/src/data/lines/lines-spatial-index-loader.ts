@@ -609,6 +609,54 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
   }
 
   /**
+   * Warm the cache for the given viewState without producing geometry.
+   *
+   * Mirrors the gsplats / points `prefetchChunks(viewState)` so a
+   * dimension-animation hook can prefetch the next slice while the
+   * current frame renders. Lines need both the segment-level bounds
+   * (segments + widths + colors + sharpness keyed on segment range)
+   * and the vertex-level bounds (vertices keyed on the
+   * segment→vertex projection); this implementation keeps it simple
+   * by warming each available array over the queried segment ranges
+   * — the segment→vertex remap happens at demand time and the L0/L1
+   * cache absorbs the extra reads.
+   */
+  async prefetchChunks(viewState: LinesViewState): Promise<void> {
+    await this._onceInit.ensure(() => this.initialize());
+
+    if (!this.arrays.segments) return;
+
+    let ranges: SegmentRange[];
+    try {
+      ranges = await this.queryVisibleSegmentRanges(viewState);
+    } catch {
+      return;
+    }
+    if (ranges.length === 0) return;
+
+    const arrays = [
+      this.arrays.vertices,
+      this.arrays.segments,
+      this.arrays.widths,
+      this.arrays.colors,
+      this.arrays.sharpness,
+    ].filter((a): a is zarr.Array<zarr.DataType, zarr.Readable> => a != null);
+
+    const fetches: Promise<unknown>[] = [];
+    for (const array of arrays) {
+      const shape = array.shape;
+      for (const range of ranges) {
+        const sliceSpec: zarr.Slice[] =
+          shape.length === 2
+            ? [slice(range.start, range.end), slice(null)]
+            : [slice(range.start, range.end)];
+        fetches.push(get(array, sliceSpec));
+      }
+    }
+    await Promise.all(fetches);
+  }
+
+  /**
    * Probe both `vertex_chunk_bounds` and `segment_chunk_bounds` from zarr.
    *
    * Implementation lives in `lines/chunk-index-loader.ts`. The thin
