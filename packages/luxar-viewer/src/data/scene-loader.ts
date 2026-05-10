@@ -59,6 +59,7 @@ import { ViewStateManager } from './view-state-manager';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { config as appConfig } from '../config';
 import { MultiLevelCachingStore, DecompressedChunkCache } from '../cache';
+import { disposeCustomColormapTextures } from '../rendering/colormap-textures';
 import type { PointsMetadata } from '../types/points';
 import type {
   LinesMetadata,
@@ -95,7 +96,7 @@ import {
 // ============================================================================
 // During dimension animation, all nodes must update in the same render frame
 // to prevent flickering. These types hold processed data between the async
-// load+process phase and the synchronous commit phase.
+// load/process stage and the synchronous commit stage.
 
 /** Staged points data ready for GPU commit */
 interface StagedPointsCommit {
@@ -249,10 +250,7 @@ export class SceneLoader {
   // unavailable (e.g. when `noCache` is set in LoaderConfig).
   // ============================================================
 
-  /**
-   * Snapshot of all cache levels (L0, L1, L2) in the form historically
-   * exposed by `__luxarDebug.cache.getStats()`.
-   */
+  /** Snapshot of all cache levels (L0, L1, L2) for debug and embed tooling. */
   getCacheStats(): CacheStatsSnapshot {
     return getCacheStatsHelper(this.l0Cache, this.cachingStore);
   }
@@ -323,11 +321,14 @@ export class SceneLoader {
       this._gpuBufferPool = new GPUBufferPool(
         appConfig.dataLoading.performance.gpuPoolMaxSize,
         appConfig.dataLoading.performance.gpuPoolEvictionFrames,
-        appConfig.dataLoading.performance.gpuPoolEvictBatchSize
+        appConfig.dataLoading.performance.gpuPoolEvictBatchSize,
+        appConfig.dataLoading.performance.gpuPoolMaxBytes
       );
+      const mb = (appConfig.dataLoading.performance.gpuPoolMaxBytes / 1024 / 1024).toFixed(0);
       log.info(
         Modules.GPU_BUFFER_POOL,
         `GPU buffer pool enabled (max size: ${appConfig.dataLoading.performance.gpuPoolMaxSize}, ` +
+          `byte budget: ${mb} MB, ` +
           `eviction: ${appConfig.dataLoading.performance.gpuPoolEvictionFrames} frames, ` +
           `batch cap: ${appConfig.dataLoading.performance.gpuPoolEvictBatchSize})`
       );
@@ -572,8 +573,8 @@ export class SceneLoader {
    * @param opts.applyPartialExtendTolerance
    *              When `true`, partial `extend_to_all` coverage triggers
    *              a tolerance override via `getOrComputeExtendedTolerance`.
-   *              Points/GSplats: true. Lines: false (lines path didn't
-   *              historically apply this; preserve current behavior).
+   *              Points/GSplats: true. Lines: false because line bounds
+   *              already encode their non-displayed spatial extent.
    * @param opts.extendedToleranceCache
    *              Optional cross-node cache for the partial-extend
    *              tolerance array. Main update path passes one cache per
@@ -1112,7 +1113,7 @@ export class SceneLoader {
 
   /**
    * Commit lines geometry to GPU buffers (synchronous).
-   * Called as part of the atomic commit phase — no async operations allowed.
+   * Called as part of the atomic commit stage — no async operations allowed.
    */
   private commitLinesGeometry(staged: StagedLinesCommit): void {
     commitLinesGeometryHelper(staged, this.rootGroup, this._gpuBufferPool);
@@ -1142,7 +1143,7 @@ export class SceneLoader {
 
   /**
    * Commit gsplats geometry to GPU buffers (synchronous).
-   * Called as part of the atomic commit phase — no async operations allowed.
+   * Called as part of the atomic commit stage — no async operations allowed.
    */
   private commitGSplatsGeometry(staged: StagedGSplatsCommit): void {
     commitGSplatsGeometryHelper(staged, this.rootGroup, this._gpuBufferPool);
@@ -1194,6 +1195,43 @@ export class SceneLoader {
         hasSpatialIndex: false, // Will be determined by the loader
         children: [],
       };
+
+      // when a node's metadata declares colormap='custom', load its
+      // colormap_lut zarr array (if present) and attach the bytes to the
+      // node's attrs so NodeFactory can pass them into
+      // getColormapTexture('custom', lut). Without this step the viewer
+      // falls back to the viridis built-in (handled by getColormapTexture).
+      if (attrs && (attrs as ZarrNodeAttrs).colormap === 'custom') {
+        try {
+          const lutArr = await zarr.open(loc.resolve('colormap_lut'), { kind: 'array' });
+          const lutResult = await zarr.get(lutArr);
+          const data = lutResult.data;
+          // Promote whatever typed-array we got into a tightly-typed Uint8Array.
+          // The Python writer stores LUTs as uint8 of shape [256,3] or [256,4].
+          let bytes: Uint8Array;
+          if (data instanceof Uint8Array) {
+            bytes = data;
+          } else if (data instanceof Int8Array || data instanceof Uint8ClampedArray) {
+            bytes = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+          } else {
+            // Float / int16 etc. — unexpected for a LUT but recover by copying bytes view.
+            bytes = new Uint8Array((data as ArrayBufferView).buffer);
+          }
+          (node.attrs as ZarrNodeAttrs).customLutBytes = bytes;
+          log.info(
+            Modules.SCENE_LOADER,
+            `${entry.path}: loaded custom colormap LUT (${bytes.length} bytes)`
+          );
+        } catch (e: unknown) {
+          // colormap_lut may not exist if a node declared colormap='custom'
+          // by mistake. getColormapTexture will fall back to viridis with a
+          // warning. We don't fail the scene load.
+          log.warning(
+            Modules.SCENE_LOADER,
+            `${entry.path}: colormap='custom' but failed to load colormap_lut zarr array — falling back to viridis. ${e instanceof Error ? e.message : ''}`
+          );
+        }
+      }
 
       // Log if extend_to_all is present
       if (attrs?.extend_to_all) {
@@ -2017,6 +2055,20 @@ export class SceneLoader {
     // Dispose all geometry loaders via registry
     this.registry.disposeAll();
 
+    // dispose GPU buffer pool. Without this, the pool retains
+    // active+pooled InstancedBufferGeometry references after a dataset
+    // switch — at million-element scale this can leak hundreds of MB
+    // of GPU memory until the page is refreshed. The pool's internal
+    // dispose() is idempotent.
+    if (this._gpuBufferPool) {
+      try {
+        this._gpuBufferPool.dispose();
+      } catch (error) {
+        log.warning(Modules.SCENE_LOADER, 'GPU buffer pool disposal failed', error);
+      }
+      this._gpuBufferPool = null;
+    }
+
     // Dispose caching store (flushes L2 metadata, clears L1).
     // Awaited so a dataset switch sees the previous L2 fully drained
     // before the next caching store is constructed.
@@ -2044,6 +2096,17 @@ export class SceneLoader {
     this._zarrStore = null;
     this.rootGroup = null;
     this._sceneGraph = null;
+
+    // Dispose dataset-scoped custom colormap LUTs. The custom-LUT cache
+    // is keyed by content hash and shared across all scenes, but entries
+    // from an unloaded dataset have no value and would accumulate in a
+    // long-lived app that swaps many unique LUTs. Built-ins survive
+    // because they're shared with all scenes and cheap to keep.
+    try {
+      disposeCustomColormapTextures();
+    } catch (error) {
+      log.warning(Modules.SCENE_LOADER, 'Custom colormap disposal failed', error);
+    }
 
     // Tell the monitor to drop its scene-loader-bound closures (cache
     // stats, L0 cache, GPU buffer pool, accumulators, profiler) before
