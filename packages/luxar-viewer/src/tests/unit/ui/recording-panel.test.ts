@@ -487,6 +487,31 @@ describe('RecordingPanel', () => {
       expect(() => (panel as any).cleanupCaptureStream()).not.toThrow();
       expect((panel as any).captureStream).toBeNull();
     });
+
+    it('startVideoRecording catch path restores state when canvas.captureStream throws', async () => {
+      // Force the confirmation dialog to resolve true so the setup
+      // body runs.
+      vi.spyOn(panel as any, 'showConfirmationDialog').mockResolvedValue(true);
+      // Make canvas.captureStream() throw.
+      const canvas = mockSceneManager.renderer.domElement;
+      (canvas as any).captureStream = vi.fn(() => {
+        throw new Error('captureStream not supported');
+      });
+
+      const restoreStateSpy = vi.spyOn(panel as any, 'restoreRecordingState');
+      const cleanupStreamSpy = vi.spyOn(panel as any, 'cleanupCaptureStream');
+
+      vi.mocked(showToast).mockClear();
+      await expect(panel.startVideoRecording()).rejects.toThrow('captureStream not supported');
+
+      // State must be restored, capture-stream cleanup called,
+      // recording flag cleared, and a user-visible toast surfaced.
+      expect(restoreStateSpy).toHaveBeenCalled();
+      expect(cleanupStreamSpy).toHaveBeenCalled();
+      expect((panel as any).isRecording).toBe(false);
+      expect((panel as any).mediaRecorder).toBeNull();
+      expect(showToast).toHaveBeenCalledWith('Video recording failed to start');
+    });
   });
 
   describe('dispose', () => {

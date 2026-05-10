@@ -127,10 +127,12 @@ export class RecordingPanel {
   // parked on an `await` and hasn't reached its finally yet.
   private static readonly OFFLINE_CAPTURE_CALLBACK_ID = 'recording-offline-capture';
   private static readonly OFFLINE_KEEPALIVE_CALLBACK_ID = 'recording-offline-keepalive';
-  // AbortController for the offline-capture session. Set on entry
-  // to runOfflineCaptureLoop; aborted by dispose() or the cancel
-  // button. Drivers + the loop body check signal.aborted between
-  // awaits so dispose-during-capture skips finalize cleanly.
+  // AbortController for the offline-capture session. Set immediately
+  // after the confirmation check in runOfflineCaptureLoop, BEFORE any
+  // state mutation, so dispose() during the early state-save / rAF
+  // window can abort the in-flight session. Aborted by dispose() or
+  // the cancel button. Drivers + the loop body check signal.aborted
+  // between awaits so dispose-during-capture skips finalize cleanly.
   private offlineSessionAbort: AbortController | null = null;
   private sliderSync = new SliderSyncCoordinator();
   private savedAutoRotate: boolean = false;
@@ -404,96 +406,124 @@ export class RecordingPanel {
     const confirmed = await this.showConfirmationDialog();
     if (!confirmed || this.disposed) return;
 
-    this.hideAllPanels();
+    // Wrap the entire setup phase. Without this, a throw from
+    // canvas.captureStream(), `new MediaRecorder(...)`, or
+    // mediaRecorder.start() would leave panels hidden, DPR disabled,
+    // resize locked, the keepalive callback registered, and no onstop
+    // to unwind any of it.
+    try {
+      this.hideAllPanels();
 
-    // Disable adaptive DPR during recording — resolution changes mid-capture cause
-    // frozen frames, aspect ratio glitches, and partial rotations
-    this.saveRecordingState({
-      disableDPR: true,
-      lockResize: true,
-      scaleResolution:
-        this.options.videoResolution > 0 ? { targetH: this.options.videoResolution } : undefined,
-    });
-    if (this.options.videoResolution > 0) {
-      await new Promise((r) => requestAnimationFrame(r));
-      if (this.disposed) return;
-    }
-
-    const canvas = this.sceneManager.renderer.domElement;
-    const videoBitsPerSecond = this.computeVideoBitrate(canvas.width, canvas.height);
-
-    log.info(
-      Modules.RECORDING,
-      `Starting video recording (${mimeType}, ${this.options.videoFPS} FPS, ` +
-        `${Math.round(videoBitsPerSecond / 1_000_000)}Mbps, ${canvas.width}x${canvas.height}, ` +
-        `mode: ${this.mode})`
-    );
-
-    this.animationController.startAnimation();
-    this.animationController.addPerFrameCallback(this.keepAliveCallbackId, () => {}, {
-      continuous: true,
-    });
-
-    this.captureStream = canvas.captureStream(this.options.videoFPS);
-    this.mediaRecorder = new MediaRecorder(this.captureStream, { mimeType, videoBitsPerSecond });
-    this.recordedChunks = [];
-
-    this.mediaRecorder.ondataavailable = (event) => {
-      if (event.data && event.data.size > 0) {
-        this.recordedChunks.push(event.data);
+      // Disable adaptive DPR during recording — resolution changes mid-capture cause
+      // frozen frames, aspect ratio glitches, and partial rotations
+      this.saveRecordingState({
+        disableDPR: true,
+        lockResize: true,
+        scaleResolution:
+          this.options.videoResolution > 0 ? { targetH: this.options.videoResolution } : undefined,
+      });
+      if (this.options.videoResolution > 0) {
+        await new Promise((r) => requestAnimationFrame(r));
+        if (this.disposed) {
+          this.restoreRecordingState();
+          return;
+        }
       }
-    };
 
-    this.mediaRecorder.onstop = () => {
-      if (this.disposed) {
+      const canvas = this.sceneManager.renderer.domElement;
+      const videoBitsPerSecond = this.computeVideoBitrate(canvas.width, canvas.height);
+
+      log.info(
+        Modules.RECORDING,
+        `Starting video recording (${mimeType}, ${this.options.videoFPS} FPS, ` +
+          `${Math.round(videoBitsPerSecond / 1_000_000)}Mbps, ${canvas.width}x${canvas.height}, ` +
+          `mode: ${this.mode})`
+      );
+
+      this.animationController.startAnimation();
+      this.animationController.addPerFrameCallback(this.keepAliveCallbackId, () => {}, {
+        continuous: true,
+      });
+
+      this.captureStream = canvas.captureStream(this.options.videoFPS);
+      this.mediaRecorder = new MediaRecorder(this.captureStream, { mimeType, videoBitsPerSecond });
+      this.recordedChunks = [];
+
+      this.mediaRecorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+          this.recordedChunks.push(event.data);
+        }
+      };
+
+      this.mediaRecorder.onstop = () => {
+        if (this.disposed) {
+          this.recordedChunks = [];
+          this.isRecording = false;
+          this.hideRecordingIndicator();
+          this.cleanupCaptureStream();
+          return;
+        }
+
+        const blob = new Blob(this.recordedChunks, { type: mimeType });
+        const totalElapsed = ((Date.now() - this.recordingStartTime) / 1000).toFixed(1);
+        log.info(
+          Modules.RECORDING,
+          `Recording finalized: ${this.recordedChunks.length} chunks, ` +
+            `${(blob.size / (1024 * 1024)).toFixed(1)} MB, ${totalElapsed}s elapsed`
+        );
+        this.downloadBlob(blob, this.generateFilename('webm'));
         this.recordedChunks = [];
         this.isRecording = false;
         this.hideRecordingIndicator();
+
+        this.animationController.removePerFrameCallback(this.keepAliveCallbackId);
+        this.animationController.removePerFrameCallback(this.turntableCallbackId);
+        this.cleanupSyncListener();
+        this.restoreAutoRotate();
+        this.restoreRecordingState();
         this.cleanupCaptureStream();
-        return;
+        showToast('Video saved');
+      };
+
+      this.mediaRecorder.start(100);
+      this.isRecording = true;
+      this.recordingStartTime = Date.now();
+      this.showRecordingIndicator();
+
+      // Duration limit
+      if (this.options.videoDurationLimit > 0) {
+        this.durationTimer = setTimeout(() => {
+          this.stopVideoRecording();
+        }, this.options.videoDurationLimit * 1000);
       }
 
-      const blob = new Blob(this.recordedChunks, { type: mimeType });
-      const totalElapsed = ((Date.now() - this.recordingStartTime) / 1000).toFixed(1);
-      log.info(
-        Modules.RECORDING,
-        `Recording finalized: ${this.recordedChunks.length} chunks, ` +
-          `${(blob.size / (1024 * 1024)).toFixed(1)} MB, ${totalElapsed}s elapsed`
-      );
-      this.downloadBlob(blob, this.generateFilename('webm'));
-      this.recordedChunks = [];
-      this.isRecording = false;
-      this.hideRecordingIndicator();
+      // Start slider sync if enabled
+      if (this.mode === 'video' && this.options.syncToSlider && this.animationManager) {
+        this.startSliderSync();
+      }
 
+      // Start turntable rotation if in turntable mode
+      if (this.mode === 'turntable') {
+        this.startTurntableRotation();
+      }
+    } catch (err) {
+      log.error(Modules.RECORDING, `Real-time recording setup failed: ${err}`);
+      // Symmetric undo of every state mutation up to this point.
+      // mediaRecorder may or may not have been constructed; clearing
+      // the field is defensive. captureStream cleanup also runs even
+      // if it was never assigned (helper handles null).
+      this.cleanupCaptureStream();
+      this.mediaRecorder = null;
+      this.recordedChunks = [];
       this.animationController.removePerFrameCallback(this.keepAliveCallbackId);
       this.animationController.removePerFrameCallback(this.turntableCallbackId);
       this.cleanupSyncListener();
       this.restoreAutoRotate();
       this.restoreRecordingState();
-      this.cleanupCaptureStream();
-      showToast('Video saved');
-    };
-
-    this.mediaRecorder.start(100);
-    this.isRecording = true;
-    this.recordingStartTime = Date.now();
-    this.showRecordingIndicator();
-
-    // Duration limit
-    if (this.options.videoDurationLimit > 0) {
-      this.durationTimer = setTimeout(() => {
-        this.stopVideoRecording();
-      }, this.options.videoDurationLimit * 1000);
-    }
-
-    // Start slider sync if enabled
-    if (this.mode === 'video' && this.options.syncToSlider && this.animationManager) {
-      this.startSliderSync();
-    }
-
-    // Start turntable rotation if in turntable mode
-    if (this.mode === 'turntable') {
-      this.startTurntableRotation();
+      this.isRecording = false;
+      this.hideRecordingIndicator();
+      showToast('Video recording failed to start');
+      throw err;
     }
   }
 
@@ -561,6 +591,25 @@ export class RecordingPanel {
     const confirmed = await this.showConfirmationDialog();
     if (!confirmed || this.disposed) return;
 
+    // Establish session ownership BEFORE any state mutation. dispose()
+    // reads `offlineSessionAbort` to abort an in-flight session; if we
+    // assign it later (after hideAllPanels / saveRecordingState / the
+    // first rAF), a dispose during that early window leaves the
+    // abort controller null and the function continues to bring up
+    // overlay/recording flags on a disposed panel.
+    const sessionAbort = new AbortController();
+    this.offlineSessionAbort = sessionAbort;
+
+    // Helper: bail out, releasing session ownership and restoring any
+    // state that may have been saved. Called from the early-abort
+    // checkpoints below.
+    const bailEarly = (): void => {
+      this.restoreRecordingState();
+      if (this.offlineSessionAbort === sessionAbort) {
+        this.offlineSessionAbort = null;
+      }
+    };
+
     this.hideAllPanels();
 
     // Save state, disable DPR, lock resize, and scale resolution.
@@ -573,6 +622,14 @@ export class RecordingPanel {
     });
     await new Promise((r) => requestAnimationFrame(r));
 
+    // Re-check after the rAF wait. dispose() during this await fires
+    // sessionAbort, which we observe here so the function does not
+    // proceed to overlay creation / driver setup on a disposed panel.
+    if (this.disposed || sessionAbort.signal.aborted) {
+      bailEarly();
+      return;
+    }
+
     // Compute turntable parameters
     const fps = this.options.videoFPS;
     const durationSeconds = 360 / this.options.turntableSpeed;
@@ -581,7 +638,7 @@ export class RecordingPanel {
     const controls = this.sceneManager.controls.getControls();
     if (!(controls instanceof LuxarOrbitControls)) {
       log.warning(Modules.RECORDING, 'Turntable requires orbit controls');
-      this.restoreRecordingState();
+      bailEarly();
       return;
     }
 
@@ -612,11 +669,6 @@ export class RecordingPanel {
               this.isEXRSequenceRecording = false;
             })
           : new VideoModeDriver(mode);
-
-    // AbortController for this offline session. Stored on the
-    // panel so dispose() can reach in and abort any in-flight await.
-    const sessionAbort = new AbortController();
-    this.offlineSessionAbort = sessionAbort;
 
     // Set recording state
     if (mode === 'exr') {
