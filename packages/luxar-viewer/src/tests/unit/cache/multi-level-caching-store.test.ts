@@ -531,6 +531,50 @@ describe('MultiLevelCachingStore', () => {
 
       global.fetch = originalFetch;
     });
+
+    it('forwards options.signal into fetchWithRetry; aborts surface as a non-ok result', async () => {
+      // Without signal forwarding the fetch would hang forever and
+      // dispose() during cache load would leak the request.
+      // fetchWithRetry composes options.signal with a per-attempt
+      // timeout signal via mergeAbortSignals, so the fetch's signal
+      // is NOT reference-equal to ac.signal. We assert that the fetch
+      // saw a signal, that signal becomes aborted once the caller
+      // aborts, and the result is not ok.
+      const originalFetch = global.fetch;
+      const observedSignals: AbortSignal[] = [];
+      global.fetch = vi.fn((_url: string, init?: RequestInit) => {
+        if (init?.signal) observedSignals.push(init.signal);
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            reject(new DOMException('Aborted', 'AbortError'));
+          });
+        });
+      }) as unknown as typeof fetch;
+
+      const ac = new AbortController();
+      const promise = store.getResult('slow-chunk', { signal: ac.signal });
+
+      // Yield once so fetch actually runs and registers the abort listener.
+      await new Promise((r) => setTimeout(r, 0));
+      expect(observedSignals.length).toBeGreaterThan(0);
+
+      ac.abort();
+      // Yield so the composed signal propagates the abort.
+      await new Promise((r) => setTimeout(r, 0));
+      expect(observedSignals[0].aborted).toBe(true);
+
+      const result = await promise;
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        // fetchWithRetry surfaces aborts as either Aborted or, after
+        // exhausting retries, NetworkError. Either is acceptable for
+        // the abort contract; what matters is that the fetch saw the
+        // abort and the result is NOT ok.
+        expect(['Aborted', 'NetworkError']).toContain(result.error.kind);
+      }
+
+      global.fetch = originalFetch;
+    });
   });
 
   describe('Statistics', () => {
