@@ -13,6 +13,27 @@
 import type * as zarr from 'zarrita';
 import { DecompressedChunkCache, type DecompressedChunk } from './decompressed-chunk-cache';
 
+/**
+ * Clone an ArrayBufferView by allocating a fresh underlying buffer.
+ * Handles both TypedArray (Float32Array, Uint8Array, Uint16Array,
+ * BigInt64Array, etc.) and DataView. The previous implementation cast
+ * to a generic `{ slice(): ArrayBufferView }` shape — TypedArrays do
+ * have `.slice()` but DataView does not, and the cast hid that gap.
+ *
+ * Exported only for unit testing; not part of the public package
+ * surface.
+ *
+ * @internal
+ */
+export function cloneArrayBufferView(view: ArrayBufferView): ArrayBufferView {
+  if (view instanceof DataView) {
+    const buffer = view.buffer.slice(view.byteOffset, view.byteOffset + view.byteLength);
+    return new DataView(buffer);
+  }
+  // All TypedArray subtypes implement slice() returning their own subtype.
+  return (view as ArrayBufferView & { slice(): ArrayBufferView }).slice();
+}
+
 /** Symbol to mark proxied arrays (for detection) */
 const CACHE_MARKER = Symbol('luxar.l0cache');
 
@@ -134,12 +155,14 @@ export function wrapWithCache<D extends zarr.DataType>(
               // Cache the decompressed result. Clone the data to
               // prevent callers from mutating the cached copy
               // (ArrayBufferViews are references to underlying
-              // ArrayBuffers). Every TypedArray (and DataView) has
-              // `.slice()` returning the same view subtype; the union
-              // type lacks a common slice in the public d.ts, so we
-              // cast to the shared shape here.
-              const clonedData = (chunk.data as ArrayBufferView & { slice(): ArrayBufferView })
-                .slice() as ArrayBufferView;
+              // ArrayBuffers). cloneArrayBufferView branches on
+              // TypedArray vs DataView — the union type's public d.ts
+              // doesn't expose a common slice() so a single cast hid
+              // the DataView gap. zarrita's TypedArray<D> union
+              // includes object-dtype as unknown[], which is not an
+              // ArrayBufferView; cast through ArrayBufferView since
+              // numeric chunks (the only kind we cache) always are.
+              const clonedData = cloneArrayBufferView(chunk.data as unknown as ArrayBufferView);
               const cacheEntry: DecompressedChunk = {
                 data: clonedData,
                 shape: chunk.shape.slice(),

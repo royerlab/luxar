@@ -7,7 +7,12 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { DecompressedChunkCache } from '../../../cache/decompressed-chunk-cache';
-import { wrapWithCache, isCachedArray, unwrapCachedArray } from '../../../cache/cached-zarr-array';
+import {
+  wrapWithCache,
+  isCachedArray,
+  unwrapCachedArray,
+  cloneArrayBufferView,
+} from '../../../cache/cached-zarr-array';
 
 // Mock zarr types for testing
 type MockChunk = {
@@ -193,6 +198,48 @@ describe('cached-zarr-array', () => {
       const stats = cache.getStats();
       expect(stats.misses).toBe(2);
       expect(stats.count).toBe(2);
+    });
+  });
+
+  describe('cloneArrayBufferView (commit 5.3)', () => {
+    it('clones a Float32Array into a fresh buffer', () => {
+      const src = new Float32Array([1.5, 2.5, 3.5]);
+      const cloned = cloneArrayBufferView(src) as Float32Array;
+      expect(cloned).toBeInstanceOf(Float32Array);
+      expect(Array.from(cloned)).toEqual([1.5, 2.5, 3.5]);
+      // Mutating the clone must not affect the source.
+      cloned[0] = 99;
+      expect(src[0]).toBe(1.5);
+    });
+
+    it('clones a Uint8Array into a fresh buffer', () => {
+      const src = new Uint8Array([10, 20, 30]);
+      const cloned = cloneArrayBufferView(src) as Uint8Array;
+      expect(cloned).toBeInstanceOf(Uint8Array);
+      expect(Array.from(cloned)).toEqual([10, 20, 30]);
+      cloned[0] = 200;
+      expect(src[0]).toBe(10);
+    });
+
+    it('clones a Uint16Array into a fresh buffer', () => {
+      const src = new Uint16Array([1000, 2000]);
+      const cloned = cloneArrayBufferView(src) as Uint16Array;
+      expect(cloned).toBeInstanceOf(Uint16Array);
+      expect(Array.from(cloned)).toEqual([1000, 2000]);
+      cloned[1] = 60_000;
+      expect(src[1]).toBe(2000);
+    });
+
+    it('clones a DataView into a fresh buffer', () => {
+      const buffer = new ArrayBuffer(8);
+      const src = new DataView(buffer);
+      src.setUint32(0, 0xdeadbeef, true);
+      const cloned = cloneArrayBufferView(src) as DataView;
+      expect(cloned).toBeInstanceOf(DataView);
+      expect(cloned.getUint32(0, true)).toBe(0xdeadbeef);
+      // Mutating the clone must not affect the source.
+      cloned.setUint32(0, 0x00000000, true);
+      expect(src.getUint32(0, true)).toBe(0xdeadbeef);
     });
   });
 
