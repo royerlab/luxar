@@ -8,9 +8,6 @@ export interface ChunkPrefetcherOptions {
   /** Enable/disable prefetching (default: true) */
   enabled?: boolean;
 
-  /** Use Fetch Priority API hint (default: true) */
-  useFetchPriority?: boolean;
-
   /** Enable debug logging (default: false) */
   debug?: boolean;
 }

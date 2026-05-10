@@ -315,7 +315,6 @@ Intelligent prefetcher for proactive adjacent chunk loading.
 new ChunkPrefetcher(store: MultiLevelCachingStore, options?: {
   maxConcurrent?: number;       // Max concurrent prefetches (default: 4)
   enabled?: boolean;            // Enable/disable (default: true)
-  useFetchPriority?: boolean;   // Use Fetch Priority API (default: true, not yet implemented)
   debug?: boolean;              // Enable debug logging (default: false)
   urlParams?: URLSearchParams;  // For testing (optional)
 })
