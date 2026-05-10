@@ -468,6 +468,62 @@ describe('ChunkPrefetcher - Unit Tests', () => {
       expect(stats2.inFlight).toBe(0);
     });
   });
+
+  describe('Dispose lifecycle', () => {
+    it('queued chunks are not fetched after dispose()', async () => {
+      // Build a store whose getResult never resolves so the queue stays
+      // populated until dispose() runs. After dispose, no further
+      // getResult calls should be initiated.
+      const blocking = new MockStore();
+      let resolve: (v: { ok: true; value: Uint8Array }) => void = () => {};
+      blocking.getResult = vi.fn(
+        () =>
+          new Promise((r) => {
+            resolve = r;
+          })
+      ) as unknown as typeof blocking.getResult;
+
+      const localPrefetcher = new ChunkPrefetcher(blocking as any, {
+        enabled: true,
+        maxConcurrent: 1,
+      });
+      localPrefetcher.registerArrayBounds(
+        'data',
+        [10240, 10240],
+        [1024, 1024]
+      );
+      localPrefetcher.onAccess('data/1.1');
+      // Yield once so processQueue dispatches the first fetch.
+      await new Promise((r) => setTimeout(r, 0));
+      const callsBeforeDispose = (blocking.getResult as unknown as { mock: { calls: unknown[] } }).mock
+        .calls.length;
+      expect(callsBeforeDispose).toBeGreaterThanOrEqual(1);
+
+      localPrefetcher.dispose();
+      // Resolve the in-flight promise so its `.finally()` runs after dispose.
+      resolve({ ok: true, value: new Uint8Array([1, 2, 3]) });
+      // Yield through microtasks to let .finally() complete.
+      await new Promise((r) => setTimeout(r, 10));
+
+      const callsAfterDispose = (blocking.getResult as unknown as { mock: { calls: unknown[] } }).mock
+        .calls.length;
+      // The .finally() must NOT re-enter processQueue and dispatch the
+      // remaining queued chunks.
+      expect(callsAfterDispose).toBe(callsBeforeDispose);
+      expect(localPrefetcher.getStats().enabled).toBe(false);
+    });
+
+    it('onAccess after dispose() is a no-op', () => {
+      prefetcher.dispose();
+      const callsBefore = (mockStore.getResult as unknown as { mock: { calls: unknown[] } }).mock
+        .calls.length;
+      prefetcher.onAccess('points/positions/1.1.1');
+      const callsAfter = (mockStore.getResult as unknown as { mock: { calls: unknown[] } }).mock
+        .calls.length;
+      expect(callsAfter).toBe(callsBefore);
+      expect(prefetcher.getStats().queued).toBe(0);
+    });
+  });
 });
 
 describe('ChunkPrefetcher - Integration Tests', () => {

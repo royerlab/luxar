@@ -1133,15 +1133,17 @@ describe('MultiLevelCachingStore', () => {
       expect(mockPrefetcher.onAccess).not.toHaveBeenCalled();
     });
 
-    it('should clear prefetcher reference on dispose', async () => {
+    it('should dispose prefetcher and clear reference on dispose', async () => {
       const mockPrefetcher = {
         onAccess: vi.fn(),
+        dispose: vi.fn(),
       };
 
       store.setPrefetcher(mockPrefetcher as any);
       expect((store as any).prefetcher).toBe(mockPrefetcher);
 
       await store.dispose();
+      expect(mockPrefetcher.dispose).toHaveBeenCalledTimes(1);
       expect((store as any).prefetcher).toBeNull();
     });
 

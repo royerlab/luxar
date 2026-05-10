@@ -830,7 +830,10 @@ export class MultiLevelCachingStore implements AsyncReadable {
     this.disposed = true;
     this.dataAbort.abort();
 
-    // Clear prefetcher reference (in-flight requests will complete harmlessly)
+    // Tear down the prefetcher: clears queues/seen/parsed/bounds and
+    // sets its own isDisposed flag so the in-flight `.finally()` path
+    // cannot re-enter processQueue with new fetches.
+    this.prefetcher?.dispose();
     this.prefetcher = null;
 
     // Cancel any in-flight or queued validation belonging to this instance.

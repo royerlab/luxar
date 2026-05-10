@@ -40,6 +40,10 @@ export class ChunkPrefetcher {
   private inFlight = new Set<string>();
   private queue = new Set<string>();
   private processing = false;
+  // Lifecycle: set by dispose(). Distinct from `enabled` (a feature toggle)
+  // so we can short-circuit the in-flight `.finally()` continuation
+  // without claiming the feature itself is disabled.
+  private isDisposed = false;
 
   // Tracks all keys whose neighbors have already been enqueued, preventing
   // cascading prefetch amplification: without this, prefetched chunks trigger
@@ -120,12 +124,17 @@ export class ChunkPrefetcher {
    * Race-condition safe via processing flag and queueMicrotask re-trigger.
    */
   private async processQueue(): Promise<void> {
+    // Disposed-prefetcher short-circuit: bail before any further fetch
+    // dispatch so a dispose() during in-flight processing cannot enqueue
+    // additional store.getResult calls.
+    if (this.isDisposed) return;
     // Prevent concurrent processing
     if (this.processing) return;
     this.processing = true;
 
     try {
       while (this.queue.size > 0 && this.inFlight.size < this.maxConcurrent) {
+        if (this.isDisposed) break;
         const key = this.queue.values().next().value;
         if (!key) break; // Safety check (should never happen due to while condition)
 
@@ -149,8 +158,12 @@ export class ChunkPrefetcher {
           })
           .finally(() => {
             this.inFlight.delete(key);
-            // Trigger queue processing when slot frees up
-            if (this.queue.size > 0) {
+            // Trigger queue processing when slot frees up — but only if
+            // the prefetcher is still alive. Without this guard, a fetch
+            // that started before dispose() can keep re-entering
+            // processQueue and dispatching additional fetches against
+            // the (now-disposed) store.
+            if (!this.isDisposed && this.queue.size > 0) {
               queueMicrotask(() => this.processQueue());
             }
           });
@@ -284,6 +297,7 @@ export class ChunkPrefetcher {
    * Dispose the prefetcher, clearing all internal state and stopping processing.
    */
   dispose(): void {
+    this.isDisposed = true;
     this.enabled = false;
     this.seen.clear();
     this.parsedCache.clear();
