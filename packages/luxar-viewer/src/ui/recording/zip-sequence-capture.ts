@@ -37,6 +37,13 @@ export interface ZipFinalizeOptions {
   downloadBlob: (blob: Blob, filename: string) => void;
   /** Optional UI hook called before the (potentially slow) finalize step. */
   onPackagingStart?: () => void;
+  /**
+   * Optional abort signal. If aborted mid-finalize, finalize() routes
+   * to internal abort cleanup (end stream, abort writable, drop chunks)
+   * and does NOT call showToast / downloadBlob — the panel is
+   * responsible for cancel UX.
+   */
+  signal?: AbortSignal;
 }
 
 /**
@@ -188,6 +195,14 @@ export class ZipSequenceCapture {
       this.pendingWrites = [];
     };
 
+    // If the session was aborted before finalize started, route to
+    // internal abort cleanup. Skip toast/download — the panel owns
+    // cancel UX.
+    if (opts.signal?.aborted) {
+      await this.abort();
+      return;
+    }
+
     if (this.diskFailed) {
       this.streamingZip.end();
       await awaitPendingWrites();
@@ -210,6 +225,12 @@ export class ZipSequenceCapture {
       // Yield once so any UI label change paints before the (potentially
       // slow) script-encoding + stream-end.
       await new Promise((r) => requestAnimationFrame(r));
+      // Abort check after the rAF wait — dispose/cancel during the
+      // packaging frame must NOT proceed to commit.
+      if (opts.signal?.aborted) {
+        await this.abort();
+        return;
+      }
       const encoder = new TextEncoder();
       const scriptEntry = new ZipPassThrough('encode_video.sh');
       this.streamingZip.add(scriptEntry);
@@ -219,6 +240,20 @@ export class ZipSequenceCapture {
       // rejection here flips diskFailed and we route to the
       // disk-failed toast.
       await awaitPendingWrites();
+      // Final abort check before the commit point. Past this line we
+      // commit to disk or download, so the artifact would otherwise
+      // land after cancel/dispose.
+      if (opts.signal?.aborted) {
+        if (this.writable) {
+          try {
+            await this.writable.abort();
+          } catch {
+            /* already aborted */
+          }
+        }
+        this.chunks = [];
+        return;
+      }
       if (this.diskFailed) {
         if (this.writable) {
           try {

@@ -303,6 +303,78 @@ describe('ZipSequenceCapture', () => {
     expect(env.close).toHaveBeenCalledTimes(1);
   });
 
+  it('abort signal before finalize routes to internal abort cleanup, no toast/download', async () => {
+    const env = makeWritable();
+    const showToast = vi.fn();
+    const downloadBlob = vi.fn();
+    const z = new ZipSequenceCapture(
+      { showSaveFilePicker: env.picker as unknown as (opts: unknown) => Promise<FileSystemFileHandle> },
+      vi.fn()
+    );
+    await z.setup({ suggestedName: 'cap.zip' });
+    z.addFrame(new Uint8Array([1, 2, 3]), 'png');
+
+    const ac = new AbortController();
+    ac.abort('user-cancel');
+
+    await z.finalize({
+      capturedFrames: 1,
+      frameExt: 'png',
+      label: 'PNG',
+      totalBytes: z.getTotalBytes(),
+      ffmpegScript: '',
+      fallbackDownloadName: 'cap.zip',
+      showToast,
+      downloadBlob,
+      signal: ac.signal,
+    });
+
+    // Aborted: writable is aborted (not closed), no toast, no download.
+    expect(env.abort).toHaveBeenCalled();
+    expect(env.close).not.toHaveBeenCalled();
+    expect(showToast).not.toHaveBeenCalled();
+    expect(downloadBlob).not.toHaveBeenCalled();
+  });
+
+  it('abort signal during finalize packaging skips commit', async () => {
+    // The signal flips between the rAF wait and the close/download
+    // commit. finalize() should detect the abort at its mid-finalize
+    // checkpoint and route to abort cleanup.
+    const env = makeWritable();
+    const showToast = vi.fn();
+    const downloadBlob = vi.fn();
+    const z = new ZipSequenceCapture(
+      { showSaveFilePicker: env.picker as unknown as (opts: unknown) => Promise<FileSystemFileHandle> },
+      vi.fn()
+    );
+    await z.setup({ suggestedName: 'cap.zip' });
+    z.addFrame(new Uint8Array([1, 2, 3]), 'png');
+
+    const ac = new AbortController();
+    const finalizeP = z.finalize({
+      capturedFrames: 1,
+      frameExt: 'png',
+      label: 'PNG',
+      totalBytes: z.getTotalBytes(),
+      ffmpegScript: 'ffmpeg ...',
+      fallbackDownloadName: 'cap.zip',
+      showToast,
+      downloadBlob,
+      signal: ac.signal,
+    });
+
+    // Yield once so finalize advances past the early-abort branch and
+    // reaches the rAF wait, then trip the signal.
+    await new Promise((r) => setTimeout(r, 0));
+    ac.abort('disposed');
+
+    await finalizeP;
+
+    expect(env.close).not.toHaveBeenCalled();
+    expect(showToast).not.toHaveBeenCalled();
+    expect(downloadBlob).not.toHaveBeenCalled();
+  });
+
   it('late write rejection is observed via diskFailed and toasts truncation warning', async () => {
     // Collect every (resolve, reject) pair so we can fail one and let
     // the others succeed. The write-callback path in fflate fires a

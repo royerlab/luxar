@@ -63,6 +63,7 @@ export class ExrSequenceDriver implements OfflineCaptureDriver {
       showToast: ctx.showToast,
       downloadBlob: ctx.downloadBlob,
       onPackagingStart: () => progress.setLabel('Packaging ZIP...'),
+      signal: ctx.signal,
     });
   }
 

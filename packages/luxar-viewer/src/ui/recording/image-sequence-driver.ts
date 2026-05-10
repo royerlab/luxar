@@ -66,6 +66,7 @@ export class ImageSequenceDriver implements OfflineCaptureDriver {
       showToast: ctx.showToast,
       downloadBlob: ctx.downloadBlob,
       onPackagingStart: () => progress.setLabel('Packaging ZIP...'),
+      signal: ctx.signal,
     });
   }
 

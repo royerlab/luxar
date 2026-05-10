@@ -133,6 +133,12 @@ export class VideoModeDriver implements OfflineCaptureDriver {
     progress.setLabel('Finalizing video...');
     try {
       await this.output.finalize();
+      // Abort check at the commit point. The encoder is already
+      // flushed; this just prevents the artifact handoff if the
+      // session was cancelled/disposed while we were finalizing.
+      if (ctx.signal.aborted) {
+        return;
+      }
       const buffer = this.target?.buffer;
       if (!buffer) {
         ctx.showToast('Video encoding produced no output');
