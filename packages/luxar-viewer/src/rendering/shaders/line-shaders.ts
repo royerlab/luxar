@@ -168,6 +168,26 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
       // can't paint the entire screen. Default uMaxLinePixelWidth is
       // resolution.y * 0.5 (set by JS).
       float maxPW = max(uMaxLinePixelWidth, minPixelWidth + 1.0);
+      // E.1: degenerate (extremely close to camera AND extreme pixel
+      // width) segments expand into a half-viewport quad that the GPU
+      // still rasterizes pixel-by-pixel. The pixel-width clamp + fade
+      // keeps the visible footprint bounded but doesn't avoid the
+      // shading cost — discard the segment entirely when both endpoints
+      // are within the near cull margin AND rawPixelWidth blows past
+      // the clamp by 2× (a clear pathological case, not a normal
+      // close-up).
+      if (
+        startDepth < nearCull * 2.0 &&
+        endDepth < nearCull * 2.0 &&
+        rawPixelWidth > maxPW * 2.0
+      ) {
+        gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+        vColor = vec3(0.0);
+        vPerpNorm = 0.0;
+        vPixelWidth = 0.0;
+        vWidthFade = 0.0;
+        return;
+      }
       float clampedPixelWidth = clamp(rawPixelWidth, minPixelWidth, maxPW);
       // Fade intensity in proportion to the clamp so the giant quad
       // doesn't overcontribute. fade=1 when not clamped, →0 as the
