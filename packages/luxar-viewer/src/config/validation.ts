@@ -285,6 +285,14 @@ function validateDataLoading(config: AppConfig, errors: string[], _warnings: str
     const l1 = cache.l1MaxSizeMB;
     if (!Number.isFinite(l1) || l1 <= 0) {
       errors.push(`Invalid cache.l1MaxSizeMB: ${l1} (must be a finite positive number)`);
+    } else if (l1 < 10) {
+      // SegmentedLRUCache reserves a 10MB metadata floor; below that
+      // the chunks segment becomes zero bytes and every chunk write
+      // is silently rejected. Reject the config rather than ship a
+      // cache that secretly stores nothing.
+      errors.push(
+        `Invalid cache.l1MaxSizeMB: ${l1} (must be ≥ 10 — SegmentedLRUCache's metadata floor)`
+      );
     }
     const l2 = cache.l2MaxSizeMB;
     if (!Number.isFinite(l2) || l2 <= 0) {

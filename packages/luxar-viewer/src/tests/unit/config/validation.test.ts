@@ -787,6 +787,16 @@ describe('validateConfig', () => {
       expect(result.valid).toBe(false);
       expect(result.errors).toContainEqual(expect.stringContaining('cache.l2MaxSizeMB'));
     });
+
+    it('rejects cache.l1MaxSizeMB < 10 (commit 7.5: below SegmentedLRUCache metadata floor)', () => {
+      const cfg = cloneConfig();
+      cfg.cache.l1MaxSizeMB = 5;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(
+        expect.stringMatching(/cache\.l1MaxSizeMB.*must be ≥ 10/)
+      );
+    });
   });
 
   describe('NaN/Infinity hardening for camera + rendering + controls + input', () => {

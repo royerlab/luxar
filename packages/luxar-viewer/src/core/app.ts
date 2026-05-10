@@ -988,6 +988,10 @@ export class LuxarApp {
     log.info(Modules.LUXAR, '  __luxarDebug.camera - Access camera');
     log.info(Modules.LUXAR, '  __luxarDebug.app - Access LuxarApp instance');
     log.info(Modules.LUXAR, '  __luxarDebug.cache.getStats() - Get cache statistics (L0, L1, L2)');
+    log.info(
+      Modules.LUXAR,
+      '  __luxarDebug.cache.listDatasets() - List all cached datasets (URL, hash, size)'
+    );
     log.info(Modules.LUXAR, '  __luxarDebug.cache.clearL0() - Clear L0 decompressed chunk cache');
     log.info(Modules.LUXAR, '  __luxarDebug.cache.clearL1() - Clear L1 memory cache');
     log.info(Modules.LUXAR, '  __luxarDebug.cache.clearL2() - Clear L2 OPFS cache');
