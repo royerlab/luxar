@@ -222,3 +222,153 @@ describe('projectPointsTo3D', () => {
     expect(result.metadata.totalPoints).toBe(2);
   });
 });
+
+describe('projectPointsTo3D — fallback path (no accumulator, no targetBuffers)', () => {
+  // The accumulator path is the supported hot path used in production.
+  // The fallback path runs when targetBuffers is null/undefined — used
+  // for tests, the no-accumulator opt-out, and the worker-error rescue
+  // route in projectPointsTo3DUsingWorker.
+
+  it('allocates a fresh Float32Array for positions3D (length = numPoints * 3)', () => {
+    const positions = new Float32Array([1, 2, 3, 4, 5, 6]); // 2 points × 3 dims
+    const result = projectPointsTo3D(
+      positions,
+      null,
+      null,
+      null,
+      makeViewState(),
+      [{ start: 0, end: 2 }] as PointRange[],
+      makeCtx()
+    );
+    expect(result.positions).toBeInstanceOf(Float32Array);
+    expect(result.positions.length).toBe(6);
+    // Fresh allocation: not the same buffer reference as the input.
+    expect(result.positions).not.toBe(positions);
+  });
+
+  it('passes Float32 colors through to the result (same reference)', () => {
+    const colors = new Float32Array([1.0, 0.0, 0.0, 0.5, 0.5, 0.5]);
+    const result = projectPointsTo3D(
+      new Float32Array([0, 0, 0, 1, 1, 1]),
+      colors,
+      null,
+      null,
+      makeViewState(),
+      [{ start: 0, end: 2 }] as PointRange[],
+      makeCtx()
+    );
+    expect(result.colors).toBeInstanceOf(Float32Array);
+    expect(result.colors).toBe(colors);
+  });
+
+  it('passes Uint8 colors through to the result (same reference, dtype preserved)', () => {
+    const colors = new Uint8Array([255, 0, 0, 0, 128, 255]);
+    const result = projectPointsTo3D(
+      new Float32Array([0, 0, 0, 1, 1, 1]),
+      colors,
+      null,
+      null,
+      makeViewState(),
+      [{ start: 0, end: 2 }] as PointRange[],
+      makeCtx()
+    );
+    expect(result.colors).toBeInstanceOf(Uint8Array);
+    expect(result.colors).toBe(colors);
+  });
+
+  it('passes Uint16 colors through to the result (HDR dtype preserved)', () => {
+    const colors = new Uint16Array([65535, 0, 0, 0, 32768, 65535]);
+    const result = projectPointsTo3D(
+      new Float32Array([0, 0, 0, 1, 1, 1]),
+      colors,
+      null,
+      null,
+      makeViewState(),
+      [{ start: 0, end: 2 }] as PointRange[],
+      makeCtx()
+    );
+    expect(result.colors).toBeInstanceOf(Uint16Array);
+    expect(result.colors).toBe(colors);
+  });
+
+  it('passes Float32 radii through (same reference) when no effectiveRadiusConfig', () => {
+    const radii = new Float32Array([0.5, 1.0]);
+    const result = projectPointsTo3D(
+      new Float32Array([0, 0, 0, 1, 1, 1]),
+      null,
+      radii,
+      null,
+      makeViewState(),
+      [{ start: 0, end: 2 }] as PointRange[],
+      makeCtx()
+    );
+    expect(result.radii).toBeInstanceOf(Float32Array);
+    expect(result.radii).toBe(radii);
+  });
+
+  it('passes sharpness through to the result (same reference)', () => {
+    const sharpness = new Uint8Array([200, 100]);
+    const result = projectPointsTo3D(
+      new Float32Array([0, 0, 0, 1, 1, 1]),
+      null,
+      null,
+      sharpness,
+      makeViewState(),
+      [{ start: 0, end: 2 }] as PointRange[],
+      makeCtx()
+    );
+    expect(result.sharpness).toBe(sharpness);
+  });
+
+  it('metadata.dtypes mirrors the nodeAttrs dtype declarations', () => {
+    const result = projectPointsTo3D(
+      new Float32Array([0, 0, 0]),
+      null,
+      null,
+      null,
+      makeViewState(),
+      [{ start: 0, end: 1 }] as PointRange[],
+      makeCtx({
+        nodeAttrs: makeAttrs({
+          position_dtype: 'float32',
+          color_dtype: 'uint16',
+          radius_dtype: 'float32',
+          sharpness_dtype: 'uint8',
+        }),
+      })
+    );
+    expect(result.metadata.dtypes).toEqual({
+      positions: 'float32',
+      colors: 'uint16',
+      radii: 'float32',
+      sharpness: 'uint8',
+    });
+  });
+
+  it('metadata.usedEffectiveRadius is false when effectiveRadiusConfig is null', () => {
+    const result = projectPointsTo3D(
+      new Float32Array([0, 0, 0]),
+      null,
+      new Float32Array([1.0]),
+      null,
+      makeViewState(),
+      [{ start: 0, end: 1 }] as PointRange[],
+      makeCtx({ effectiveRadiusConfig: null })
+    );
+    expect(result.metadata.usedEffectiveRadius).toBe(false);
+  });
+
+  it('loadedPoints reflects post-projection count (matches range total when no filtering)', () => {
+    const result = projectPointsTo3D(
+      new Float32Array([0, 0, 0, 1, 1, 1, 2, 2, 2]),
+      null,
+      null,
+      null,
+      makeViewState(),
+      [{ start: 0, end: 3 }] as PointRange[],
+      makeCtx()
+    );
+    expect(result.metadata.loadedPoints).toBe(3);
+    expect(result.pointCount).toBe(3);
+  });
+});

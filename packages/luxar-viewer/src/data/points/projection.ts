@@ -109,6 +109,19 @@ export function createEmptyPointsData(
 /**
  * Project nD points to 3D display space on the main thread.
  *
+ * Two execution paths share this entry point:
+ *
+ *  - **Accumulator path** (`targetBuffers` provided): the supported
+ *    hot path. Writes through preallocated accumulator buffers for
+ *    zero-allocation operation. Production code always takes this
+ *    path via `LoadedPointsDataAccumulator`.
+ *  - **Fallback path** (`targetBuffers` null/undefined): allocates
+ *    fresh arrays. Used by tests, the explicit no-accumulator opt-out,
+ *    and the worker-error rescue route in
+ *    `projectPointsTo3DUsingWorker`. Color/sharpness inputs pass
+ *    through by reference; positions3D and (when filtering applies)
+ *    radii are freshly allocated.
+ *
  * @param targetBuffers - Optional accumulator buffers for zero-allocation
  *                        operation. When provided, writes directly
  *                        through; when null/undefined, allocates new
