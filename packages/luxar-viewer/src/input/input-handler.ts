@@ -268,6 +268,11 @@ export class InputHandler {
 
   setLayersPanel(panel: LayersPanel): void {
     this.layersPanel = panel;
+    // Forward to PanelCoordinator so Escape (the shortcut the panel's
+    // close button advertises via aria-keyshortcuts) actually closes
+    // the panel. Without this, Escape only flows through key-bindings
+    // for the `L` shortcut and never reaches LayersPanel.hide().
+    this.panelCoordinator.setLayersPanel(panel);
   }
 
   /**

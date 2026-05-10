@@ -158,6 +158,53 @@ describe('PanelCoordinator.closeAll', () => {
     ).not.toThrow();
   });
 
+  it('hides the layers panel when one is registered AND visible', () => {
+    const layersHide = vi.fn();
+    const layersIsVisible = vi.fn(() => true);
+    const { console: debugConsole } = makeDebugConsole(false);
+    const { stats } = makePerformanceStats(false);
+    new PanelCoordinator({
+      debugConsole,
+      performanceStats: stats,
+      layersPanel: { isVisible: layersIsVisible, hide: layersHide },
+    }).closeAll();
+
+    expect(layersIsVisible).toHaveBeenCalled();
+    expect(layersHide).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT call layersPanel.hide() when the panel is hidden', () => {
+    const layersHide = vi.fn();
+    const layersIsVisible = vi.fn(() => false);
+    const { console: debugConsole } = makeDebugConsole(false);
+    const { stats } = makePerformanceStats(false);
+    new PanelCoordinator({
+      debugConsole,
+      performanceStats: stats,
+      layersPanel: { isVisible: layersIsVisible, hide: layersHide },
+    }).closeAll();
+
+    expect(layersIsVisible).toHaveBeenCalled();
+    expect(layersHide).not.toHaveBeenCalled();
+  });
+
+  it('setLayersPanel late-binds the visibility handle', () => {
+    const layersHide = vi.fn();
+    const layersIsVisible = vi.fn(() => true);
+    const { console: debugConsole } = makeDebugConsole(false);
+    const { stats } = makePerformanceStats(false);
+    const coord = new PanelCoordinator({ debugConsole, performanceStats: stats });
+
+    coord.setLayersPanel({ isVisible: layersIsVisible, hide: layersHide });
+    coord.closeAll();
+    expect(layersHide).toHaveBeenCalledTimes(1);
+
+    coord.setLayersPanel(undefined);
+    layersHide.mockClear();
+    coord.closeAll();
+    expect(layersHide).not.toHaveBeenCalled();
+  });
+
   it('setDatasetBrowser late-binds and clears the close handle', () => {
     const close = vi.fn();
     const { console: debugConsole } = makeDebugConsole(false);

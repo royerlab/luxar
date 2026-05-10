@@ -39,6 +39,16 @@ export interface CloseableHandle {
   close(): void;
 }
 
+/**
+ * Minimal show/hide handle for the layers panel. The coordinator only
+ * needs visibility-check + hide; full LayersPanel imports stay out of
+ * input/.
+ */
+export interface VisiblyHideableHandle {
+  isVisible(): boolean;
+  hide(): void;
+}
+
 /** Optional / always-present panel handles the coordinator manages. */
 export interface PanelRefs {
   /** Always present: the debug console — owned by InputHandler from construction. */
@@ -59,6 +69,13 @@ export interface PanelRefs {
    * dangling and the `O` shortcut becomes a silent no-op.
    */
   datasetBrowser?: CloseableHandle;
+  /**
+   * Optional: layers panel. Wired so the close button's advertised
+   * `aria-keyshortcuts="escape"` actually closes the panel —
+   * previously Escape only routed through this coordinator and the
+   * panel was never registered, making the shortcut a lie.
+   */
+  layersPanel?: VisiblyHideableHandle;
 }
 
 /**
@@ -98,6 +115,11 @@ export class PanelCoordinator {
    */
   setDatasetBrowser(browser: CloseableHandle | undefined): void {
     this.refs.datasetBrowser = browser;
+  }
+
+  /** Set or clear the layers-panel show/hide handle. */
+  setLayersPanel(panel: VisiblyHideableHandle | undefined): void {
+    this.refs.layersPanel = panel;
   }
 
   /**
@@ -148,6 +170,10 @@ export class PanelCoordinator {
 
     if (this.refs.recordingPanel?.isVisible()) {
       this.refs.recordingPanel.hide();
+    }
+
+    if (this.refs.layersPanel?.isVisible()) {
+      this.refs.layersPanel.hide();
     }
 
     if (this.refs.performanceStats.visible) {
