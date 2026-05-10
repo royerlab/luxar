@@ -2055,6 +2055,15 @@ export class SceneLoader {
    * deterministic teardown should await this method or use
    * `SceneLoaderManager.destroyLoaderAsync` (added in a follow-up
    * commit).
+   *
+   * B.7 — worker pool policy: Web Workers used for projection/decoding
+   * live in a MODULE-LEVEL singleton (`workers/worker-pool.ts:
+   * getWorkerPool`), not per-SceneLoader. Dataset switches deliberately
+   * do NOT terminate workers — the pool is bounded, and tearing it down
+   * per switch would force a fresh worker spin-up on the next load
+   * (10s of ms of WASM re-init on each cycle). Workers are terminated
+   * only at app shutdown via `disposeWorkerPool()` in `core/app.ts`,
+   * which is the right scope for that lifecycle.
    */
   async dispose(): Promise<void> {
     // Dispose all geometry loaders via registry
