@@ -521,6 +521,7 @@ export const config: AppConfig = {
     l0MaxSizeMB: 200, // 200MB for decompressed chunks (5x larger than compressed, but instant access)
     l1MaxSizeMB: 100,
     l2MaxSizeMB: 2048,
+    opfsOperationTimeoutMs: 10_000,
     debug: false,
   },
 

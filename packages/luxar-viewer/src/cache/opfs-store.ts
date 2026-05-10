@@ -1,6 +1,29 @@
 import type { OPFSMetadata } from './types';
 import { OPFS_ENCODING_VERSION } from './types';
 import { log, Modules } from '../utils/log';
+import { config } from '../config';
+
+/**
+ * Race a promise against a timeout. Throws Error('OPFS timeout') if
+ * the timeout fires first. Used to bound individual OPFS I/O calls so
+ * a hung browser handle cannot stall the cache indefinitely.
+ */
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`OPFS timeout: ${label} exceeded ${timeoutMs}ms`)),
+          timeoutMs
+        );
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 type IterableFileSystemDirectoryHandle = FileSystemDirectoryHandle & {
   keys(): AsyncIterableIterator<string>;
@@ -122,10 +145,17 @@ export class OPFSStore {
       return undefined;
     }
 
+    const timeoutMs = config.cache.opfsOperationTimeoutMs;
     try {
-      const fileHandle = await this.navigateToFile(key, false);
-      const file = await fileHandle.getFile();
-      const data = new Uint8Array(await file.arrayBuffer());
+      const data = await withTimeout(
+        (async () => {
+          const fileHandle = await this.navigateToFile(key, false);
+          const file = await fileHandle.getFile();
+          return new Uint8Array(await file.arrayBuffer());
+        })(),
+        timeoutMs,
+        `get(${key})`
+      );
 
       // Verify size matches metadata
       const entry = this.index.get(key);
@@ -141,7 +171,14 @@ export class OPFSStore {
       this.readCount++;
 
       return data;
-    } catch {
+    } catch (error) {
+      // Timeouts and any other I/O failures degrade to a cache miss;
+      // production code never observes a throw here (zarrita's
+      // AsyncReadable.get must not throw).
+      const msg = error instanceof Error ? error.message : String(error);
+      if (msg.startsWith('OPFS timeout')) {
+        log.warning(Modules.CACHE, msg);
+      }
       this.missCount++;
       return undefined;
     }
@@ -213,21 +250,30 @@ export class OPFSStore {
       return;
     }
 
-    // Write to OPFS (with one retry on stale bucket handle)
+    // Write to OPFS (with one retry on stale bucket handle). The
+    // entire navigate→createWritable→write→close chain is wrapped in
+    // withTimeout so a hung handle cannot stall the cache.
+    const timeoutMs = config.cache.opfsOperationTimeoutMs;
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        const fileHandle = await this.navigateToFile(key, true);
-        const writable = await fileHandle.createWritable();
-        // Slice the view's portion, NOT data.buffer directly. If the Uint8Array is
-        // a view on a larger ArrayBuffer (e.g., from a sub-slice), data.buffer would
-        // write the entire underlying buffer, corrupting the stored data. slice()
-        // copies only the relevant bytes. Cast is safe: network data is never SharedArrayBuffer.
-        const bytes = data.buffer.slice(
-          data.byteOffset,
-          data.byteOffset + data.byteLength
-        ) as ArrayBuffer;
-        await writable.write(bytes);
-        await writable.close();
+        await withTimeout(
+          (async () => {
+            const fileHandle = await this.navigateToFile(key, true);
+            const writable = await fileHandle.createWritable();
+            // Slice the view's portion, NOT data.buffer directly. If the Uint8Array is
+            // a view on a larger ArrayBuffer (e.g., from a sub-slice), data.buffer would
+            // write the entire underlying buffer, corrupting the stored data. slice()
+            // copies only the relevant bytes. Cast is safe: network data is never SharedArrayBuffer.
+            const bytes = data.buffer.slice(
+              data.byteOffset,
+              data.byteOffset + data.byteLength
+            ) as ArrayBuffer;
+            await writable.write(bytes);
+            await writable.close();
+          })(),
+          timeoutMs,
+          `set(${key})`
+        );
 
         // Stale-write check: if clear()/dispose() ran while we were
         // writing, the post-write index update must be skipped. Best-

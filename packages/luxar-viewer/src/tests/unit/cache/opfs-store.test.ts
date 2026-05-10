@@ -629,6 +629,71 @@ describe('OPFSStore', () => {
       expect(data).toEqual(new Uint8Array([9, 8, 7]));
     });
 
+    it('hung OPFS read times out and degrades to miss (commit 4.4)', async () => {
+      // Stub navigator.storage so getFile() for chunk paths returns a
+      // never-resolving promise; metadata reads still throw "not found"
+      // so init's loadMetadata starts fresh. The withTimeout wrapper
+      // must abort the read and surface as undefined / missCount++.
+      const hangDir: any = {
+        async getFileHandle(name: string) {
+          if (name === '_cache_meta.json') {
+            // Treat as cold cache so init() doesn't hang reading metadata.
+            throw new Error('not found');
+          }
+          return {
+            async getFile() {
+              return new Promise(() => {}); // hangs forever
+            },
+            async createWritable() {
+              return { async write() {}, async close() {} };
+            },
+          };
+        },
+        async getDirectoryHandle() {
+          return hangDir;
+        },
+        async removeEntry() {},
+      };
+      vi.stubGlobal('navigator', {
+        storage: {
+          async getDirectory() {
+            return {
+              async getDirectoryHandle() {
+                return hangDir;
+              },
+              async removeEntry() {},
+            };
+          },
+          async estimate() {
+            return { quota: 10e9, usage: 1e9 };
+          },
+        },
+      });
+
+      const { config: realConfig } = await import('../../../config');
+      const originalTimeout = realConfig.cache.opfsOperationTimeoutMs;
+      realConfig.cache.opfsOperationTimeoutMs = 50;
+
+      try {
+        const hung = new OPFSStore('hung-id', 'https://example.com', 1024);
+        await hung.init();
+        // Pre-populate the index so get() reaches the read path (a
+        // missing index entry is a fast-path miss without hitting OPFS).
+        (hung as any).index.set('hung-key', { size: 10, order: 1 });
+
+        const start = Date.now();
+        const result = await hung.get('hung-key');
+        const elapsed = Date.now() - start;
+        expect(result).toBeUndefined();
+        // Allow generous slack for jsdom timer skew but well below the
+        // 5s Vitest default.
+        expect(elapsed).toBeLessThan(2000);
+        expect(hung.getStats().misses).toBeGreaterThanOrEqual(1);
+      } finally {
+        realConfig.cache.opfsOperationTimeoutMs = originalTimeout;
+      }
+    });
+
     it('encoding-version mismatch invalidates the directory cleanly (commit 4.2)', async () => {
       // Persist a metadata file claiming version 1 (legacy btoa); the
       // store on the next init() must treat it as a cold cache and not

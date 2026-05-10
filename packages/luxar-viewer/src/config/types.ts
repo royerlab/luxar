@@ -606,6 +606,13 @@ export interface CacheConfig {
   l1MaxSizeMB: number;
   /** L2 OPFS cache size in MB (default: 2048) */
   l2MaxSizeMB: number;
+  /**
+   * Per-operation timeout for OPFS file I/O (read/write/delete) in ms.
+   * A hung browser OPFS handle would otherwise stall cache operations
+   * indefinitely; this bound degrades them to a cache miss / write skip.
+   * Default: 10_000 ms.
+   */
+  opfsOperationTimeoutMs: number;
   /** Enable cache debug logging (default: false) */
   debug: boolean;
 }
