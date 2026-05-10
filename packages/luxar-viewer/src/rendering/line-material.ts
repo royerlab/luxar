@@ -48,6 +48,8 @@ export interface LineMaterialConfig {
 
 /**
  * Line material uniforms interface
+ *
+ * @internal — preserved for future use; no current consumer.
  */
 export interface LineMaterialUniforms {
   /** Field of view in radians */

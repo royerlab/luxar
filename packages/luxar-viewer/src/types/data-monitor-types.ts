@@ -355,6 +355,8 @@ export interface CacheMetrics {
 
 /**
  * Performance timeline data point
+ *
+ * @internal — preserved for future use; no current consumer.
  */
 export interface TimelinePoint {
   timestamp: number;
@@ -369,6 +371,8 @@ export interface TimelinePoint {
 
 /**
  * Spatial grid cell state for visualization
+ *
+ * @internal — preserved for future use; no current consumer.
  */
 export interface GridCellState {
   x: number;

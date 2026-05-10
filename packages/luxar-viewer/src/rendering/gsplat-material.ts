@@ -67,6 +67,8 @@ export interface GSplatMaterialConfig {
 
 /**
  * GSplat material uniforms interface
+ *
+ * @internal — preserved for future use; no current consumer.
  */
 export interface GSplatMaterialUniforms {
   /** Viewport resolution [width, height] */

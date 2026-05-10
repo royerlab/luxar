@@ -223,24 +223,12 @@ export class DataMonitorManager {
   }
 }
 
-// Export convenient accessor functions
-export function getDataMonitor(id?: string): DataLoadingMonitor | null {
-  const manager = DataMonitorManager.getInstance();
-  return id ? manager.getMonitor(id) : manager.getDefaultMonitor();
-}
-
-export function showDataMonitor(id?: string): void {
-  DataMonitorManager.getInstance().showMonitor(id);
-}
-
-export function hideDataMonitor(id?: string): void {
-  DataMonitorManager.getInstance().hideMonitor(id);
-}
-
-export function toggleDataMonitor(id?: string): void {
-  DataMonitorManager.getInstance().toggleMonitor(id);
-}
-
+// Export convenient accessor functions.
+// Note: getDataMonitor / showDataMonitor / hideDataMonitor /
+// toggleDataMonitor were removed — production code calls the
+// event-bus ('panel-cycle' / 'panel-hide') instead. cycleDataMonitor
+// is kept because data-monitor-integration tests import it
+// directly to drive the cycle behavior.
 export function cycleDataMonitor(id?: string): void {
   DataMonitorManager.getInstance().cycleMonitor(id);
 }

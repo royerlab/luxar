@@ -177,6 +177,8 @@ export interface SceneNode {
 
 /**
  * Result of a spatial index query
+ *
+ * @internal — preserved for future use; no current consumer.
  */
 export interface SpatialQueryResult {
   /** Point ranges that match the query */
@@ -191,6 +193,8 @@ export interface SpatialQueryResult {
 
 /**
  * Loader statistics for monitoring
+ *
+ * @internal — preserved for future use; no current consumer.
  */
 export interface LoaderStats {
   /** Time taken to load (ms) */

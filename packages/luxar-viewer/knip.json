@@ -26,9 +26,14 @@
     "src/rendering/shaders/index.ts",
     "src/themes/index.ts",
     "src/types/index.ts",
-    "typedoc.json"
+    "typedoc.json",
+    "src/tests/builders/**",
+    "src/tests/mocks/**",
+    "src/tests/e2e/helpers.ts",
+    "src/tests/test-config.ts"
   ],
   "ignoreBinaries": ["hatch"],
   "ignoreDependencies": ["glob"],
-  "ignoreExportsUsedInFile": true
+  "ignoreExportsUsedInFile": true,
+  "tags": ["-internal"]
 }

@@ -25,6 +25,9 @@ export interface CacheStats {
 /**
  * Extended statistics for the full two-level cache system.
  * Used by CacheStatsProvider for DataLoadingMonitor integration.
+ *
+ * @internal — not consumed externally; preserved for future
+ * provider implementations.
  */
 export interface ExtendedCacheStats {
   /** L1 memory cache statistics */

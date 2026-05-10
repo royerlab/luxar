@@ -16,6 +16,8 @@ export type ControlType = 'orbit' | 'fly' | 'ortho';
 
 /**
  * Complete control state for both orbit and fly modes
+ *
+ * @internal — preserved for future state-snapshot work; not consumed today.
  */
 export interface ControlState {
   type: ControlType;
@@ -51,6 +53,8 @@ export interface FlyState {
 
 /**
  * Type-safe references to GUI controllers
+ *
+ * @internal — preserved for future controller-snapshot work.
  */
 export interface GuiControllers {
   navigation: RenderingControllers;
@@ -136,6 +140,8 @@ export function isFlyControls(control: ControlInstance | null): control is Luxar
 
 /**
  * Control configuration with validation ranges
+ *
+ * @internal — preserved for future config-validation work.
  */
 export interface ControlConfig {
   fly: FlyConfig;

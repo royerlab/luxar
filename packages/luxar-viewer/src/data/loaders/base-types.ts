@@ -71,6 +71,8 @@ export interface LoadRange {
  * - Morton/Hilbert ordering for locality
  * - Bounding boxes per chunk
  * - Query by nD slice position + tolerance
+ *
+ * @internal — preserved for future use; no current consumer.
  */
 export interface BaseChunkSpatialIndex {
   /** Chunk bounding boxes (num_chunks * ndim * 2), flattened row-major */
@@ -92,6 +94,8 @@ export interface BaseChunkSpatialIndex {
 
 /**
  * Common loader configuration options.
+ *
+ * @internal — preserved for future use; no current consumer.
  */
 export interface LoaderOptions {
   /** Worker threshold - minimum elements to offload to worker */
@@ -103,6 +107,8 @@ export interface LoaderOptions {
 
 /**
  * Dependencies injected into loaders.
+ *
+ * @internal — preserved for future use; no current consumer.
  */
 export interface LoaderDependencies {
   /** Zarr location for reading arrays */
@@ -141,6 +147,8 @@ export interface BaseLoader {
  * Data loader interface with load method.
  * TViewState: The view state type (PointsViewState, LinesViewState, GSplatsViewState)
  * TLoadedData: The loaded data type (LoadedPointsData, LoadedLinesData, LoadedGSplatsData)
+ *
+ * @internal — preserved for future use; no current consumer.
  */
 export interface SpatialDataLoader<
   TViewState extends BaseViewState,
@@ -174,6 +182,8 @@ export interface SpatialDataLoader<
  * Accumulators provide zero-allocation data loading by reusing buffers.
  * With TransferableAccumulator pattern, buffers can be transferred to/from workers
  * for combined zero-allocation + CPU offload benefits.
+ *
+ * @internal — preserved for future use; no current consumer.
  */
 export interface AccumulatorBuffers {
   /** Whether buffers are currently detached (transferred to worker) */
@@ -203,6 +213,8 @@ export interface AccumulatorStats {
 
 /**
  * Common metadata structure for loaded data.
+ *
+ * @internal — preserved for future use; no current consumer.
  */
 export interface LoadedDataMetadata {
   /** Total items in the full dataset */

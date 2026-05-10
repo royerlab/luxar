@@ -195,6 +195,7 @@ export function isBloomEffectTyped(effect: unknown): effect is BloomEffectTyped 
   }
 }
 
+/** @internal — type-narrowing helper kept for future post-processing branches. */
 export function isToneMappingEffectTyped(effect: unknown): effect is ToneMappingEffectTyped {
   return typeof effect === 'object' && effect !== null && 'mode' in effect;
 }
@@ -203,6 +204,7 @@ export function isDepthOfFieldEffectTyped(effect: unknown): effect is DepthOfFie
   return typeof effect === 'object' && effect !== null && 'bokehScale' in effect;
 }
 
+/** @internal — type-narrowing helper kept for future post-processing branches. */
 export function isVignetteEffectTyped(effect: unknown): effect is VignetteEffectTyped {
   return (
     typeof effect === 'object' && effect !== null && 'darkness' in effect && 'offset' in effect

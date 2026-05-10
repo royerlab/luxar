@@ -1054,6 +1054,8 @@ export class ArrayDecoder {
  * @param decoder - ArrayDecoder instance
  * @param expectedElements - Expected total elements
  * @returns Decoded array or null if not present
+ *
+ * @internal — used by loader internals; not part of the public API.
  */
 export async function loadAndDecodeOptionalArray(
   location: zarr.Location<zarr.Readable>,

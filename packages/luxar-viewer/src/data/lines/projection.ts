@@ -600,6 +600,8 @@ export function buildInstanceBuffersWASM(
 /**
  * Initialize WASM module for hot path optimization.
  * Call this early in application startup to ensure WASM is ready when needed.
+ *
+ * @internal — invoked at viewer startup; not part of the public API.
  */
 export async function initLinesWASM(): Promise<void> {
   await getWasmModule();

@@ -218,6 +218,9 @@ export interface PointsMetadata {
  * alias for documentation (a function signature reading
  * `viewState: PointsViewState` is more self-documenting than the
  * generic `ViewState`).
+ *
+ * @internal — re-exported via types/index.ts for type-only consumers;
+ * no runtime caller depends on this alias.
  */
 export type PointsViewState = ViewState;
 

@@ -15,10 +15,11 @@ export { ViewStateManager, type SceneDimensions } from './view-state-manager';
 
 // State management
 export { SceneLoaderManager, getSceneLoader } from './scene-loader-manager';
-// Note: DataMonitorManager (and the show/hide/toggle/cycleDataMonitor
-// accessors) lives in `../ui/monitors/data-monitor-manager` — it's a
-// UI panel manager, not a data-loading concern. Import from there
-// directly.
+// Note: DataMonitorManager (and the cycleDataMonitor accessor) lives
+// in `../ui/monitors/data-monitor-manager` — it's a UI panel
+// manager, not a data-loading concern. Import from there directly.
+// The show/hide/toggle accessors were removed; production code uses
+// the 'panel-cycle' / 'panel-hide' event bus instead.
 
 // Types
 export type {
