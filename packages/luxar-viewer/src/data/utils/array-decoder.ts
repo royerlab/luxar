@@ -157,14 +157,19 @@ export class ArrayDecoder {
     // ENCODING PRIORITY ORDER (CRITICAL - must match spec):
     // 1. Broadcasting → 2. Array Reference → 3. LUT → 4. Dtype
 
-    // PRIORITY 1: Check for broadcasting FIRST (highest priority per spec)
-    // Broadcasting detection: name="broadcasted" AND (shape[0]==1 OR scalar input)
-    // IMPORTANT: Only handle broadcasting when expectedElements is provided AND broadcasting
-    // is actually needed. Otherwise, fall through to dtype/quantization handlers below.
-    if (enc?.name === 'broadcasted' && expectedElements !== undefined) {
-      if (expectedElements === 0) {
+    // PRIORITY 1: Check for broadcasting FIRST (highest priority per spec).
+    // Python stores the logical broadcast count in encoding.n_elements; callers
+    // can optionally override it with expectedElements, but metadata alone must
+    // be sufficient for full-array decoding and Python parity.
+    if (enc?.name === 'broadcasted') {
+      const broadcastElements = expectedElements ?? enc.n_elements;
+      if (broadcastElements === undefined) {
+        throw new Error('[ArrayDecoder] broadcasted encoding requires encoding.n_elements');
+      }
+      if (broadcastElements === 0) {
         return new Float32Array(0);
       }
+
       // Load the single value
       const rawData = await get(zarrArray);
       const rawArray = rawData.data;
@@ -173,20 +178,16 @@ export class ArrayDecoder {
           ? rawArray
           : new Float32Array(rawArray as ArrayBuffer | number[]);
 
-      // Broadcast if needed (data.length < expectedElements means we need to replicate)
-      if (expectedElements > data.length) {
-        const shape = zarrArray.shape;
-        const k = shape.length > 1 ? shape[1] : 1;
-        const result = this.decodeBroadcasted(data, expectedElements, k, expectedElements);
+      const shape = zarrArray.shape;
+      const k = shape.length > 1 ? shape[1] : 1;
+      const result = this.decodeBroadcasted(data, broadcastElements, k, broadcastElements);
 
-        // Register for potential array ref usage
-        if (enc?.hash) {
-          this.refRegistry.register(enc.hash, result);
-        }
-
-        return result;
+      // Register for potential array ref usage
+      if (enc?.hash) {
+        this.refRegistry.register(enc.hash, result);
       }
-      // If no broadcasting needed, fall through to other handlers (quantization, etc.)
+
+      return result;
     }
 
     // PRIORITY 2: Check for array reference (second priority per spec)
@@ -200,6 +201,14 @@ export class ArrayDecoder {
         );
       }
       return this.decodeArrayRef(enc.target!, enc.hash, expectedElements, zarrRootLoc);
+    }
+
+    // Zarrita cannot materialize empty arrays with `get()` in Node. Direct
+    // empty arrays are valid Python encoder output, so return the decoded empty
+    // buffer before touching chunk indexing. Array refs are handled above even
+    // though their physical zarr shape is also empty.
+    if (zarrArray.shape.some((dim) => dim === 0)) {
+      return new Float32Array(0);
     }
 
     // Load raw data from zarr (needed for LUT, quantization, dtype)

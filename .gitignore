@@ -161,6 +161,7 @@ yarn-debug.log*
 yarn-error.log*
 *.zarr
 *.zarr/
+packages/luxar-viewer/tests/fixtures/roundtrip_expectations.json
 autoresearch-progressive-results.tsv
 
 # Claude Code lock files

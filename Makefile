@@ -480,11 +480,11 @@ test-all:  ## Run all tests (Python, Rust/WASM, and TypeScript with fresh fixtur
 	fi; \
 	if command -v cargo >/dev/null 2>&1; then \
 		echo "Running Rust unit tests..."; \
-		cd packages/luxar-viewer && pnpm test:wasm; \
+		(cd packages/luxar-viewer && pnpm test:wasm) || exit $$?; \
 		echo ""; \
 		if command -v wasm-pack >/dev/null 2>&1; then \
 			echo "Building WASM module for TypeScript comparison tests..."; \
-			cd packages/luxar-viewer && pnpm build:wasm; \
+			(cd packages/luxar-viewer && pnpm build:wasm) || exit $$?; \
 		else \
 			echo "⚠️  wasm-pack not found - WASM comparison tests will be skipped"; \
 			echo "   Run 'make install-rust' to enable full WASM testing"; \

@@ -63,7 +63,7 @@
     "test:wasm": "cd src/wasm/rust && cargo test",
     "bench:wasm": "npx tsx src/tests/benchmarks/wasm-benchmark.ts",
     "preview": "vite preview",
-    "test:generate-fixtures": "cd ../.. && hatch run python packages/luxar-viewer/tests/fixtures/generate_test_data.py",
+    "test:generate-fixtures": "cd ../.. && hatch run python packages/luxar-viewer/tests/fixtures/generate_test_data.py && hatch run python packages/luxar-viewer/tests/fixtures/generate_expectations.py",
     "test": "vitest",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest --coverage",
