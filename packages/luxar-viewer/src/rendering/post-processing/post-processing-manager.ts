@@ -1561,18 +1561,27 @@ export class PostProcessingManager {
     );
     texture.needsUpdate = true;
 
-    const exporter = new EXRExporter();
-    // Note: EXRExporter.parse() is synchronous in practice but typed as Promise
-    const exrData = await exporter.parse(texture, { type: exrType, compression: ZIP_COMPRESSION });
+    // try/finally ensures texture.dispose() runs even if EXRExporter
+    // rejects/throws — offline EXR sequence capture tolerates per-frame
+    // failures, so without this a repeating encode failure would leak
+    // a DataTexture every frame.
+    try {
+      const exporter = new EXRExporter();
+      // Note: EXRExporter.parse() is synchronous in practice but typed as Promise
+      const exrData = await exporter.parse(texture, {
+        type: exrType,
+        compression: ZIP_COMPRESSION,
+      });
 
-    texture.dispose();
+      log.info(
+        Modules.POST_PROCESSING,
+        formatHDRExrLogLine(width, height, exrType === THREE.HalfFloatType, exrData.byteLength)
+      );
 
-    log.info(
-      Modules.POST_PROCESSING,
-      formatHDRExrLogLine(width, height, exrType === THREE.HalfFloatType, exrData.byteLength)
-    );
-
-    return exrData;
+      return exrData;
+    } finally {
+      texture.dispose();
+    }
   }
 
   /**

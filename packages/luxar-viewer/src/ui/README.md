@@ -312,7 +312,8 @@ class DatasetBrowser {
 
 interface DatasetBrowserConfig {
   container: HTMLElement;
-  onDatasetSelect: (fullUrl: string) => void;
+  /** May return a Promise; rejections are caught + toasted. */
+  onDatasetSelect: (fullUrl: string) => void | Promise<void>;
   onClose?: () => void;
 }
 ```
@@ -507,8 +508,10 @@ Screenshot and video capture panel with multiple export options.
 
 **Features:**
 
-- Screenshot export (PNG, WebP, JPEG) with configurable resolution
-- Video recording (WebM) with turntable rotation mode
+- Screenshot export (PNG, WebP, JPEG, EXR) with configurable resolution
+- Video recording (WebM, MP4, MKV) with turntable rotation mode
+- Image-sequence ZIPs (PNG, WebP, JPEG) for offline turntable capture
+- EXR-sequence ZIPs preserving HDR precision for compositing
 - Transparent background support for compositing
 - Dimension slider synchronization during recording
 - Resolution multiplier for high-DPI exports

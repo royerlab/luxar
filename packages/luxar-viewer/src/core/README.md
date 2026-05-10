@@ -71,7 +71,13 @@ class LuxarApp {
     this.animationController = new AnimationController(/*...*/);
 
     // 3. Input System Integration
-    this.inputHandler = new InputHandler(this.sceneManager, this.animationController);
+    this.inputHandler = new InputHandler(
+  this.sceneManager,
+  this.animationController,
+  this.performanceMonitor,
+  this.debugConsole,
+  /* optional */ (parent) => new DimensionSliders(parent)
+);
     this.inputHandler.init();
 
     // 4. UI Controls Configuration
@@ -154,7 +160,13 @@ The app establishes bidirectional communication between input and rendering syst
 
 ```typescript
 // Input handler needs scene access for dimension navigation
-this.inputHandler = new InputHandler(this.sceneManager, this.animationController);
+this.inputHandler = new InputHandler(
+  this.sceneManager,
+  this.animationController,
+  this.performanceMonitor,
+  this.debugConsole,
+  /* optional */ (parent) => new DimensionSliders(parent)
+);
 
 // Rendering controls need input system for keyboard shortcuts
 this.inputHandler.setRenderingControls(this.renderingControls);
@@ -532,7 +544,13 @@ private setupDisposeOnUnload(): void {
 
 ```typescript
 // ✅ Good: Explicit dependency injection
-this.inputHandler = new InputHandler(this.sceneManager, this.animationController);
+this.inputHandler = new InputHandler(
+  this.sceneManager,
+  this.animationController,
+  this.performanceMonitor,
+  this.debugConsole,
+  /* optional */ (parent) => new DimensionSliders(parent)
+);
 
 // ✅ Good: Post-initialization linking
 this.renderingControls.setAnimationController(this.animationController);

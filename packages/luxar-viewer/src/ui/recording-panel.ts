@@ -552,10 +552,12 @@ export class RecordingPanel {
     this.mediaRecorder?.stop();
   }
 
-  // ========== EXR Sequence Recording ==========
+  // ========== Offline Capture (image / video / EXR sequences) ==========
 
   /**
-   * Run a deterministic offline capture loop for HDR recording (EXR or HDR video).
+   * Run a deterministic offline capture loop for image, video, or EXR
+   * output. The mode parameter selects the per-mode driver
+   * (ImageSequenceDriver, VideoModeDriver, or ExrSequenceDriver).
    *
    * Unlike real-time MediaRecorder capture, this loop is fully decoupled from the
    * browser's animation frame rate. Each frame is:
@@ -857,9 +859,16 @@ export class RecordingPanel {
         if (sessionAbort.signal.aborted) break;
 
         // The animation loop has rendered with the rotated camera. Hand off
-        // to the per-mode driver to capture the frame.
+        // to the per-mode driver to capture the frame. Pass the OUTPUT
+        // frame index (capturedFrames so far), not the source loop
+        // index `i`. With tolerated frame failures, source `i` skips
+        // ahead while the output sequence stays contiguous —
+        // VideoModeDriver uses this for VideoSample.timestamp so the
+        // encoded video has gap-free timing; image/EXR drivers ignore
+        // it because ZipSequenceCapture maintains its own success
+        // counter for filenames.
         try {
-          await driver.captureFrame(ctx, i, progress);
+          await driver.captureFrame(ctx, capturedFrames, progress);
           capturedFrames++;
           consecutiveErrors = 0;
         } catch (err) {
@@ -1711,7 +1720,12 @@ export class RecordingPanel {
     return getSupportedMimeTypePure();
   }
 
-  /** Generate a shell script with ffmpeg commands to encode the EXR sequence */
+  /**
+   * Generate the ffmpeg shell script bundled with image-sequence and
+   * EXR-sequence ZIPs. The `ext` parameter is the per-frame extension
+   * (`png` / `jpg` / `webp` / `exr`); ZipSequenceCapture passes the
+   * matching value when packaging.
+   */
   private generateFfmpegScript(fps: number, frameCount: number, ext = 'exr'): string {
     return generateFfmpegScriptPure(fps, frameCount, ext);
   }

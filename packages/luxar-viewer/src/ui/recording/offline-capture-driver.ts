@@ -75,6 +75,14 @@ export interface OfflineCaptureDriver {
    * animation loop has rendered the rotated camera. May throw on
    * encoder errors — the loop tolerates up to MAX_CONSECUTIVE_ERRORS
    * before aborting.
+   *
+   * `frameIndex` is the OUTPUT sequence index (number of successful
+   * captures so far), not the source loop index. With tolerated
+   * frame failures the source loop's index advances while the output
+   * index stays contiguous — drivers that use this index for
+   * timestamps (VideoModeDriver) get gap-free output timing.
+   * Drivers that name files use ZipSequenceCapture's own success
+   * counter and can ignore this parameter.
    */
   captureFrame(
     ctx: CaptureContext,
