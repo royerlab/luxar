@@ -432,6 +432,51 @@ describe('OPFSStore', () => {
       expect(estimateCall).toBeGreaterThanOrEqual(1);
     });
 
+    it('write I/O failures increment writeFailures stat', async () => {
+      // Make navigateToFile succeed for retry path (not "could not be
+      // found") but createWritable() throw so the catch branch runs and
+      // increments writeFailures.
+      const failingDir: any = {
+        ...mockFS.mockDirHandle,
+        async getFileHandle() {
+          return {
+            async getFile() {
+              return { async arrayBuffer() { return new ArrayBuffer(0); } };
+            },
+            async createWritable() {
+              throw new Error('ENOSPC: simulated I/O failure');
+            },
+          };
+        },
+        async getDirectoryHandle() {
+          return failingDir;
+        },
+        async removeEntry() {},
+      };
+      vi.stubGlobal('navigator', {
+        storage: {
+          async getDirectory() {
+            return {
+              async getDirectoryHandle() {
+                return failingDir;
+              },
+              async removeEntry() {},
+            };
+          },
+          async estimate() {
+            return { quota: 10e9, usage: 1e9 };
+          },
+        },
+      });
+
+      const failStore = new OPFSStore('fail-id', 'https://example.com', 1000);
+      await failStore.init();
+      await failStore.set('boom', new Uint8Array(50));
+      const stats = failStore.getStats();
+      expect(stats.writeFailures).toBeGreaterThanOrEqual(1);
+      expect(stats.count).toBe(0);
+    });
+
     it('quota-skipped writes increment quotaWriteSkipped and do not write data', async () => {
       // checkQuota returns false → doSet skips the write.
       vi.stubGlobal('navigator', {
