@@ -42,6 +42,16 @@ import { coerceColorsToFloat32, fillColorsWhite } from './color-utils';
 export { coerceColorsToFloat32, fillColorsWhite };
 
 /**
+ * Single source of truth for the "task called before initialize()"
+ * error. Each task entry point inlines the `if (!wasmModule) throw`
+ * check so TypeScript narrowing persists for the rest of the
+ * function body — `asserts` clauses don't apply to module-scoped
+ * `let` variables, so an extracted guard helper would lose narrowing.
+ */
+const NOT_INITIALIZED_MSG =
+  '[DataWorker] Not initialized - call initialize() first';
+
+/**
  * Initialize worker (called once at startup).
  *
  * Loads the WASM module via initWasm(); if that fails catastrophically (including
@@ -80,9 +90,7 @@ async function querySpatialIndex(params: {
   numChunks: number;
   ndim: number;
 }): Promise<Uint32Array> {
-  if (!wasmModule) {
-    throw new Error('[DataWorker] Not initialized - call initialize() first');
-  }
+  if (!wasmModule) throw new Error(NOT_INITIALIZED_MSG);
 
   const { chunkBounds, slicePosition, tolerance, numChunks, ndim } = params;
 
@@ -125,9 +133,7 @@ async function computeNDVisibilityPoints(params: {
   ndim: number;
   numPoints: number;
 }): Promise<{ visibilityMask: Uint8Array; visibleCount: number }> {
-  if (!wasmModule) {
-    throw new Error('[DataWorker] Not initialized - call initialize() first');
-  }
+  if (!wasmModule) throw new Error(NOT_INITIALIZED_MSG);
 
   const { positions, radii, slicePosition, tolerance, ndim, numPoints } = params;
   validateNDArrays(
@@ -175,9 +181,7 @@ async function computeNDVisibilityLines(params: {
   ndim: number;
   numSegments: number;
 }): Promise<{ visibilityMask: Uint8Array; visibleCount: number }> {
-  if (!wasmModule) {
-    throw new Error('[DataWorker] Not initialized - call initialize() first');
-  }
+  if (!wasmModule) throw new Error(NOT_INITIALIZED_MSG);
 
   const { vertices, segments, widths, slicePosition, tolerance, ndim, numSegments } = params;
   if (!Number.isInteger(ndim) || ndim < 1 || ndim > MAX_WASM_DIMS) {
@@ -232,9 +236,7 @@ async function computeNDVisibilityGSplats(params: {
   ndim: number;
   numSplats: number;
 }): Promise<{ visibilityMask: Uint8Array; visibleCount: number }> {
-  if (!wasmModule) {
-    throw new Error('[DataWorker] Not initialized - call initialize() first');
-  }
+  if (!wasmModule) throw new Error(NOT_INITIALIZED_MSG);
 
   const { centers, choleskyFactors, slicePosition, tolerance, ndim, numSplats } = params;
   validateNDArrays(
@@ -635,9 +637,7 @@ async function projectLinesTo3D(params: {
   endClipped: Uint8Array;
   visibleSegmentCount: number;
 }> {
-  if (!wasmModule) {
-    throw new Error('[DataWorker] Not initialized - call initialize() first');
-  }
+  if (!wasmModule) throw new Error(NOT_INITIALIZED_MSG);
 
   const {
     positions,
@@ -901,9 +901,7 @@ async function projectGSplatsTo3D(params: {
   sharpness: Float32Array;
   visibleCount: number;
 }> {
-  if (!wasmModule) {
-    throw new Error('[DataWorker] Not initialized - call initialize() first');
-  }
+  if (!wasmModule) throw new Error(NOT_INITIALIZED_MSG);
 
   const {
     positions,
@@ -1126,9 +1124,7 @@ async function decodeQuantized(params: {
   bounds: [number, number];
   dtype: 'uint8' | 'uint16';
 }): Promise<Float32Array> {
-  if (!wasmModule) {
-    throw new Error('[DataWorker] Not initialized - call initialize() first');
-  }
+  if (!wasmModule) throw new Error(NOT_INITIALIZED_MSG);
 
   const { data, bounds, dtype } = params;
   validateDecodeArgs('decodeQuantized', data, {
@@ -1162,9 +1158,7 @@ async function decodeLogScalar(params: {
   maxLog: number;
   dtype: 'uint8' | 'uint16';
 }): Promise<Float32Array> {
-  if (!wasmModule) {
-    throw new Error('[DataWorker] Not initialized - call initialize() first');
-  }
+  if (!wasmModule) throw new Error(NOT_INITIALIZED_MSG);
 
   const { data, maxLog, dtype } = params;
   validateDecodeArgs('decodeLogScalar', data, {
@@ -1200,9 +1194,7 @@ async function decodeLUT(params: {
   lutMode: 'row' | 'scalar';
   dtype?: 'uint8' | 'uint16'; // Optional - inferred from indices type if not provided
 }): Promise<Float32Array> {
-  if (!wasmModule) {
-    throw new Error('[DataWorker] Not initialized - call initialize() first');
-  }
+  if (!wasmModule) throw new Error(NOT_INITIALIZED_MSG);
 
   const { indices, lut, k, lutMode } = params;
   validateDecodeArgs('decodeLUT', indices, {
@@ -1283,9 +1275,7 @@ async function decodeBroadcasted(params: {
   numPoints: number;
   elementsPerPoint: number;
 }): Promise<Float32Array> {
-  if (!wasmModule) {
-    throw new Error('[DataWorker] Not initialized - call initialize() first');
-  }
+  if (!wasmModule) throw new Error(NOT_INITIALIZED_MSG);
 
   const { value, numPoints, elementsPerPoint } = params;
   if (!Number.isInteger(numPoints) || numPoints < 0) {
