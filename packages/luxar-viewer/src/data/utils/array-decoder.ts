@@ -164,7 +164,12 @@ export class ArrayDecoder {
     if (enc?.name === 'broadcasted') {
       const broadcastElements = expectedElements ?? enc.n_elements;
       if (broadcastElements === undefined) {
-        throw new Error('[ArrayDecoder] broadcasted encoding requires encoding.n_elements');
+        // G.1: include zarr path + encoding shape so the diagnostic
+        // points the user at the exact array with broken metadata.
+        const path = (zarrArray as { path?: string }).path ?? '<unknown>';
+        throw new Error(
+          `[ArrayDecoder] broadcasted encoding requires encoding.n_elements (zarr path: ${path}, encoding: ${JSON.stringify(enc)})`
+        );
       }
       if (broadcastElements === 0) {
         return new Float32Array(0);
