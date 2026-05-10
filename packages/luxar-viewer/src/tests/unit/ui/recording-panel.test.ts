@@ -733,6 +733,54 @@ describe('RecordingPanel', () => {
       await promise;
       expect(document.querySelector('.luxar-recording-confirm')).toBeNull();
     });
+
+    it('sets modal-dialog ARIA attributes', async () => {
+      const promise = (panel as any).showConfirmationDialog();
+
+      const overlay = document.querySelector('.luxar-recording-confirm') as HTMLElement;
+      expect(overlay.getAttribute('role')).toBe('dialog');
+      expect(overlay.getAttribute('aria-modal')).toBe('true');
+      expect(overlay.getAttribute('aria-labelledby')).toBe('luxar-recording-confirm-title');
+      expect(overlay.getAttribute('aria-describedby')).toBe(
+        'luxar-recording-confirm-message'
+      );
+      expect(overlay.querySelector('#luxar-recording-confirm-title')).toBeTruthy();
+      expect(overlay.querySelector('#luxar-recording-confirm-message')).toBeTruthy();
+
+      // Resolve the promise to clean up.
+      (overlay.querySelector('[data-action="cancel"]') as HTMLElement)?.click();
+      await promise;
+    });
+
+    it('focuses the primary Start button on open', async () => {
+      const promise = (panel as any).showConfirmationDialog();
+      const startBtn = document.querySelector(
+        '.luxar-recording-confirm__btn--primary'
+      ) as HTMLElement;
+      expect(document.activeElement).toBe(startBtn);
+
+      (document.querySelector('[data-action="cancel"]') as HTMLElement)?.click();
+      await promise;
+    });
+
+    it('restores focus to the previously-focused element on close', async () => {
+      // Pre-focus a sentinel element.
+      const sentinel = document.createElement('button');
+      sentinel.id = 'before-dialog';
+      document.body.appendChild(sentinel);
+      sentinel.focus();
+      expect(document.activeElement).toBe(sentinel);
+
+      const promise = (panel as any).showConfirmationDialog();
+      // Dialog steals focus.
+      expect(document.activeElement).not.toBe(sentinel);
+
+      (document.querySelector('[data-action="cancel"]') as HTMLElement)?.click();
+      await promise;
+
+      expect(document.activeElement).toBe(sentinel);
+      sentinel.remove();
+    });
   });
 
   describe('turntable rotation', () => {

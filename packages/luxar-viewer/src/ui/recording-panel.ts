@@ -723,6 +723,31 @@ export class RecordingPanel {
         handleCancel();
         return;
       }
+      // Focus trap: keep Tab inside the overlay so focus can't
+      // escape to the canvas mid-capture and route Escape through
+      // the global input handler instead of this overlay's cancel
+      // path.
+      if (e.key === 'Tab') {
+        const focusable = Array.from(
+          overlay.querySelectorAll<HTMLElement>(
+            'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+          )
+        ).filter((el) => !el.hasAttribute('disabled'));
+        if (focusable.length > 0) {
+          const first = focusable[0];
+          const last = focusable[focusable.length - 1];
+          const active = document.activeElement as HTMLElement | null;
+          if (e.shiftKey && active === first) {
+            e.preventDefault();
+            last.focus();
+          } else if (!e.shiftKey && active === last) {
+            e.preventDefault();
+            first.focus();
+          }
+        }
+        e.stopPropagation();
+        return;
+      }
       // Other keys still get blocked from reaching the canvas/global
       // shortcuts so typing doesn't inadvertently fire dimensions
       // navigation etc. mid-capture.
@@ -1442,6 +1467,13 @@ export class RecordingPanel {
     return new Promise((resolve) => {
       const overlay = document.createElement('div');
       overlay.className = 'luxar-recording-confirm';
+      // Modal dialog ARIA semantics — match the offline overlay so
+      // screen readers announce the dialog, and Tab is trapped inside
+      // it. Without these, the dialog is just a styled <div>.
+      overlay.setAttribute('role', 'dialog');
+      overlay.setAttribute('aria-modal', 'true');
+      overlay.setAttribute('aria-labelledby', 'luxar-recording-confirm-title');
+      overlay.setAttribute('aria-describedby', 'luxar-recording-confirm-message');
 
       const fmt = this.options.outputFormat;
       let details = `Recording will capture at ${this.options.videoFPS} FPS.`;
@@ -1467,8 +1499,8 @@ export class RecordingPanel {
 
       overlay.innerHTML = `
         <div class="luxar-recording-confirm__dialog">
-          <div class="luxar-recording-confirm__title">Start ${this.mode === 'turntable' ? 'Turntable' : 'Video'} Recording</div>
-          <p class="luxar-recording-confirm__message">
+          <div id="luxar-recording-confirm-title" class="luxar-recording-confirm__title">Start ${this.mode === 'turntable' ? 'Turntable' : 'Video'} Recording</div>
+          <p id="luxar-recording-confirm-message" class="luxar-recording-confirm__message">
             ${details}<br>
             Press <span class="luxar-recording-confirm__keybinding">Escape</span> to stop recording.
           </p>
@@ -1479,20 +1511,53 @@ export class RecordingPanel {
         </div>
       `;
 
+      // Capture the previously-focused element so we can restore
+      // focus when the dialog closes (modal dialog convention).
+      const previouslyFocused = document.activeElement as HTMLElement | null;
+
       let settled = false;
       const finish = (result: boolean): void => {
         if (settled) return;
         settled = true;
         cleanup();
+        // Restore focus to where it was before the dialog opened so
+        // keyboard users don't lose their place.
+        previouslyFocused?.focus?.();
         resolve(result);
       };
+
+      const focusableSelector =
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+      const getFocusable = (): HTMLElement[] =>
+        Array.from(overlay.querySelectorAll<HTMLElement>(focusableSelector)).filter(
+          (el) => !el.hasAttribute('disabled')
+        );
 
       const trapKeyboard = (e: KeyboardEvent) => {
         e.stopPropagation();
         if (e.key === 'Escape') {
           finish(false);
-        } else if (e.key === 'Enter') {
+          return;
+        }
+        if (e.key === 'Enter') {
           finish(true);
+          return;
+        }
+        // Focus trap: cycle Tab inside the dialog so focus can't
+        // escape to the canvas / external UI.
+        if (e.key === 'Tab') {
+          const focusable = getFocusable();
+          if (focusable.length === 0) return;
+          const first = focusable[0];
+          const last = focusable[focusable.length - 1];
+          const active = document.activeElement as HTMLElement | null;
+          if (e.shiftKey && active === first) {
+            e.preventDefault();
+            last.focus();
+          } else if (!e.shiftKey && active === last) {
+            e.preventDefault();
+            first.focus();
+          }
         }
       };
 
@@ -1520,8 +1585,18 @@ export class RecordingPanel {
       overlay.addEventListener('keydown', trapKeyboard, true);
       overlay.addEventListener('click', handleClick);
       document.body.appendChild(overlay);
-      overlay.tabIndex = -1;
-      overlay.focus();
+      // Focus the primary action so Enter confirms by default.
+      // Falls back to the overlay itself if the button isn't found
+      // (e.g. innerHTML was overridden by tests).
+      const primaryBtn = overlay.querySelector<HTMLButtonElement>(
+        '.luxar-recording-confirm__btn--primary'
+      );
+      if (primaryBtn) {
+        primaryBtn.focus();
+      } else {
+        overlay.tabIndex = -1;
+        overlay.focus();
+      }
     });
   }
 
