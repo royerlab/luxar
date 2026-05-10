@@ -526,18 +526,41 @@ export class WorkerPool {
     kind: TimeoutKind,
     fn: (api: Remote<DataWorkerAPI>) => Promise<T>
   ): Promise<T> {
-    const wi = await this.nextWorkerInstance();
-    return this.withTimeout(op, fn(wi.api), this.pickTimeoutMs(kind), wi.worker);
+    // Route through getWorkerWithTracking so a stalled worker (one
+    // whose activeQueries has grown past the others) stops being
+    // selected. The previous round-robin via nextWorkerInstance had
+    // no load awareness, so a slow worker received every Nth call
+    // until each call timed out individually — head-of-line blocking.
+    const tracked = await this.getWorkerWithTracking();
+    tracked.markQueryStart();
+    try {
+      return await this.withTimeout(
+        op,
+        fn(tracked.api),
+        this.pickTimeoutMs(kind),
+        tracked.worker
+      );
+    } finally {
+      tracked.markQueryEnd();
+    }
   }
 
   /**
-   * Get a worker with query tracking for load balancing
+   * Get a worker with query tracking for load balancing.
    *
-   * Returns the worker API and callbacks to mark query start/end.
-   * This enables accurate load balancing across workers.
+   * Returns the worker `api`, the underlying `worker` (for
+   * eviction-on-timeout), and callbacks to mark query start/end so
+   * the active-queries counter reflects in-flight load.
+   *
+   * Used by {@link runWithTimeout} to route hot-path calls to the
+   * least-loaded worker. A stalled worker stops being selected once
+   * its activeQueries grows past the others — without this, the
+   * round-robin fallback would queue new calls on the stalled worker
+   * until it timed out individually.
    */
   async getWorkerWithTracking(): Promise<{
     api: Remote<DataWorkerAPI>;
+    worker: Worker;
     markQueryStart: () => void;
     markQueryEnd: () => void;
   }> {
@@ -562,6 +585,7 @@ export class WorkerPool {
 
     return {
       api: workerInstance.api,
+      worker: workerInstance.worker,
       markQueryStart: () => {
         workerInstance.activeQueries++;
       },
