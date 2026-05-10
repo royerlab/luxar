@@ -196,6 +196,59 @@ describe('cached-zarr-array', () => {
     });
   });
 
+  describe('Decode coalescing (commit 5.2)', () => {
+    it('two concurrent same-key getChunk calls invoke underlying decode once', async () => {
+      let resolveDecode: (chunk: MockChunk) => void = () => {};
+      const decodeFn = vi.fn(
+        () =>
+          new Promise<MockChunk>((resolve) => {
+            resolveDecode = resolve;
+          })
+      );
+      const slow = createMockZarrArray(decodeFn as any);
+      const wrapped = wrapWithCache(slow, cache, '/points/positions');
+
+      const p1 = wrapped.getChunk([0]);
+      const p2 = wrapped.getChunk([0]);
+      // Yield once so both callers reach the pending-chunk check.
+      await new Promise((r) => setTimeout(r, 0));
+      // Underlying getChunk has been called at most once at this point.
+      expect(decodeFn.mock.calls.length).toBe(1);
+
+      resolveDecode({
+        data: new Float32Array([1, 2, 3]),
+        shape: [3],
+        stride: [1],
+      });
+      const [r1, r2] = await Promise.all([p1, p2]);
+      // Both callers see the same data; underlying decode ran exactly once.
+      expect(r1.data).toBe(r2.data);
+      expect(decodeFn.mock.calls.length).toBe(1);
+    });
+
+    it('errors clear the pending entry; subsequent call retries', async () => {
+      let firstAttempt = true;
+      const failingThenOk = createMockZarrArray(async () => {
+        if (firstAttempt) {
+          firstAttempt = false;
+          throw new Error('transient decode error');
+        }
+        return {
+          data: new Float32Array([9, 9, 9]),
+          shape: [3],
+          stride: [1],
+        };
+      });
+      const wrapped = wrapWithCache(failingThenOk, cache, '/points/values');
+
+      await expect(wrapped.getChunk([0])).rejects.toThrow('transient decode error');
+      // Subsequent call must NOT see the rejected pending entry — it
+      // should re-call target.getChunk and succeed.
+      const result = await wrapped.getChunk([0]);
+      expect(Array.from(result.data)).toEqual([9, 9, 9]);
+    });
+  });
+
   describe('Error Handling', () => {
     it('should propagate errors from original getChunk', async () => {
       const error = new Error('Network error');
