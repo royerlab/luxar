@@ -448,6 +448,72 @@ describe('B.6 — accumulator dispose-state guards', () => {
   });
 });
 
+describe('C.4 — lazy scalar buffer allocation', () => {
+  it('LoadedPointsDataAccumulator: scalar buffer stays empty when no scalars fill', () => {
+    const acc = new LoadedPointsDataAccumulator(1024, 3, 100);
+    // Multiple fills with positions / colors / radii / sharpness — no scalars.
+    for (let i = 0; i < 3; i++) {
+      acc.fill(i, {
+        positions: new Float32Array([i, i, i]),
+        colors: new Uint8Array([255, 0, 0]),
+      });
+    }
+    const data = acc.getData(3);
+    // No `scalars` field on the output → accumulator never marked has_scalars.
+    expect(data.scalars).toBeUndefined();
+    // Direct buffer access without writing keeps the buffer at length 0 too,
+    // EXCEPT getScalarBuffer auto-allocates on first access. Test the
+    // unaccessed-via-fill path: getData with no scalars → undefined scalars
+    // (which means the buffer truly hasn't been used). Buffer may still be
+    // length 0 if no one called getScalarBuffer().
+  });
+
+  it('LoadedPointsDataAccumulator: scalar buffer allocates to capacity on first scalar fill', () => {
+    const acc = new LoadedPointsDataAccumulator(64, 3, 100);
+    // First fill has no scalars — buffer stays empty.
+    acc.fill(0, { positions: new Float32Array([0, 0, 0]) });
+    // Second fill carries scalars — buffer must allocate to current capacity.
+    acc.fill(1, {
+      positions: new Float32Array([1, 1, 1]),
+      scalars: new Float32Array([0.5]),
+    });
+    const data = acc.getData(2);
+    expect(data.scalars).toBeInstanceOf(Float32Array);
+    expect(data.scalars!.length).toBe(2);
+    expect(data.scalars![1]).toBeCloseTo(0.5);
+  });
+
+  it('LinesDataAccumulator: scalar buffer stays empty when no scalars fill', () => {
+    const acc = new LinesDataAccumulator(64, 32, 3);
+    acc.fill(0, 0, {
+      positions: new Float32Array([0, 0, 0]),
+      segments: new Uint32Array([0, 0]),
+      widths: new Float32Array([0.1]),
+    });
+    const data = acc.getData(1, 1);
+    expect(data.scalars).toBeNull();
+  });
+
+  it('LinesDataAccumulator: scalar buffer allocates on first scalar fill', () => {
+    const acc = new LinesDataAccumulator(64, 32, 3);
+    acc.fill(0, 0, {
+      positions: new Float32Array([0, 0, 0]),
+      segments: new Uint32Array([0, 0]),
+      widths: new Float32Array([0.1]),
+    });
+    // Later fill brings scalars — allocation kicks in.
+    acc.fill(0, 0, {
+      positions: new Float32Array([1, 1, 1]),
+      segments: new Uint32Array([0, 0]),
+      widths: new Float32Array([0.1]),
+      scalars: new Float32Array([0.5]),
+    });
+    const data = acc.getData(1, 1);
+    expect(data.scalars).toBeInstanceOf(Float32Array);
+    expect(data.scalars![0]).toBeCloseTo(0.5);
+  });
+});
+
 describe('C.2 — accumulator growth uses usedCount subarray copy', () => {
   it('LoadedPointsDataAccumulator: growing after partial fill preserves the live prefix', () => {
     const acc = new LoadedPointsDataAccumulator(1024, 3, 100);

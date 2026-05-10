@@ -615,8 +615,19 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
     return this.sharpnessBuffer;
   }
 
-  /** direct accessor for the scalar buffer (used by loaders writing through). */
+  /**
+   * Direct accessor for the scalar buffer (used by loaders writing through).
+   *
+   * C.4: the accumulator starts with a zero-length scalar buffer to
+   * avoid reserving 4 B/point on the common no-scalars path. The first
+   * `getScalarBuffer()` call allocates to current capacity so the
+   * spatial-index loader's direct-write path (`loadVertexRanges` →
+   * `scalarBuffer`) writes into a real buffer.
+   */
   getScalarBuffer(): Float32Array | Uint8Array {
+    if (this.scalarBuffer.length === 0 && this.capacity > 0 && !this._disposed) {
+      this.scalarBuffer = new Float32Array(this.capacity);
+    }
     return this.scalarBuffer;
   }
 
@@ -1051,8 +1062,16 @@ export class LinesDataAccumulator implements DataAccumulator<
     return this.sharpnessBuffer;
   }
 
-  /** direct accessor for the per-vertex scalar buffer. */
+  /**
+   * Direct accessor for the per-vertex scalar buffer.
+   *
+   * C.4: lazy-allocated on first access. Non-scalar line datasets keep
+   * `scalarBuffer.length === 0` indefinitely, saving 4 B/vertex.
+   */
   getScalarBuffer(): Float32Array | Uint8Array {
+    if (this.scalarBuffer.length === 0 && this.vertexCapacity > 0 && !this._disposed) {
+      this.scalarBuffer = new Float32Array(this.vertexCapacity);
+    }
     return this.scalarBuffer;
   }
 
