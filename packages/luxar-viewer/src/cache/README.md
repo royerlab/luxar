@@ -76,6 +76,112 @@ Example:
 http://localhost:5173/?src=http://example.com/data.zarr&cache-debug&prefetch-debug
 ```
 
+## Cache invariants and lifecycle
+
+These contracts span every tier and are enforced by the unit tests in
+`tests/unit/cache/invalidation-chain.test.ts` and friends:
+
+### Lifecycle
+
+- **`MultiLevelCachingStore.dispose()`** is async. It sets a `disposed`
+  flag (synchronously short-circuiting `getResult`), aborts the
+  store-level `dataAbort` controller (cancelling in-flight prefetch /
+  demand fetches), tears down the prefetcher, and awaits L2 dispose.
+- **`SceneLoader.dispose()`** is async and awaited by `loadScene` before
+  the next caching store is constructed. Sync callers (the
+  `beforeunload` path, `SceneLoaderManager.destroyLoader`) keep
+  working — the returned promise just unwinds in the background.
+- **`SceneLoaderManager.destroyLoaderAsync` / `destroyAllAsync`** are
+  awaitable variants for callers that need deterministic teardown
+  (dataset switches, tests).
+
+### Invalidation
+
+- `clearAll()` invokes every registered `onInvalidate` callback so L0
+  (wired through `cache-setup.ts`) is cleared alongside L1 and L2.
+- `clearL1()` and `clearL2()` are single-tier ops — they do NOT fire
+  invalidation callbacks. L0 stays populated.
+- Content-hash mismatch in `doValidateCache` defensively clears L1
+  alongside L2, then fans out via `onInvalidate` to L0.
+
+### OPFS mutation ordering
+
+- **Generation token**: every `clear()` bumps a counter. A `set()` in
+  flight when `clear()` runs detects the mismatch on completion and
+  skips its index update (best-effort delete the just-written file).
+- **Pending writes drain**: `clear()` awaits in-flight `pendingWrites`
+  via `Promise.allSettled` before resetting state.
+- **Disposed flag**: post-`dispose()` `set/get/touch` are no-ops.
+- **In-flight metadata save tracking**: `dispose()` awaits
+  `metadataSaveInFlight` before the final flush.
+
+### L0 read-only chunk contract
+
+Cached zarr chunks are returned by reference on the L0 hit path.
+Loaders MUST treat chunk data as immutable input and copy into
+accumulator/output buffers before mutating. See the dedicated section
+under "L0 Decompressed Chunk Cache" below.
+
+## Cache health and validation modes
+
+`MultiLevelCachingStore.getStats()` returns a `health` field with:
+
+- `validationMode: 'content-hash' | 'ttl' | 'none'`
+  - `content-hash`: Luxar dataset with `content_hash` attr — strongest
+    invalidation guarantee.
+  - `ttl`: External dataset; cache is invalidated after
+    `cache.externalDatasetTtlMs` elapses.
+  - `none`: External dataset, no TTL configured — cache may be stale
+    indefinitely until manually cleared. The cache tab surfaces this
+    as an `unvalidated-external-dataset` badge.
+- `lastValidatedAt: number | null`: wall-clock millis at last
+  successful validation.
+- `unvalidatedExternalDataset: boolean`: convenience flag.
+
+`OPFSStore.getStats()` exposes health counters:
+
+- `oversizedWriteSkipped`: entry larger than `maxSize` was rejected.
+- `quotaWriteSkipped`: browser reported insufficient quota.
+- `evictions`: own-LRU evictions to make room for incoming writes.
+- `writeFailures`: I/O exceptions during `set()`.
+- `corruptedEntries`: get() detected a size mismatch and removed the
+  bad entry.
+- `metadataParseFailures`: `_cache_meta.json` could not be parsed.
+- `orphanedFilesRemoved`: files reclaimed by `cleanupOrphans()` (run
+  on metadata parse failure).
+
+## Privacy / local persistence
+
+The L2 OPFS layer **persists dataset bytes locally in the browser** for
+this origin. Cleared by:
+
+- `__luxarDebug.cache.clearL2()` from the JS console
+- The cache tab's **Clear L2** button (with confirmation)
+- The user's browser data-clearing UI (origin-wide)
+- `?clear-cache` URL param at the next page load
+- A content-hash mismatch (Luxar datasets) or TTL expiry (external
+  datasets)
+
+OPFS storage is sandboxed per origin. Cross-origin pages cannot read
+this cache. Private/incognito browser windows typically expose a
+reduced-quota OPFS that wipes on tab close — the cache degrades to L1
++ network with no persistence.
+
+## OPFS availability and quota
+
+OPFS is available in modern Chrome/Edge/Safari/Firefox. Older browsers
+fall back to L1-only (no L2 persistence). The cache tab surfaces:
+
+- `cache-enabled`: caching is operational.
+- `no-cache`: `?no-cache` URL flag set.
+- `disabled-config`: app config disabled the cache.
+- `quota-constrained`: at least one write was skipped due to quota.
+- `cache-errors-detected`: writeFailures / corruptedEntries /
+  metadataParseFailures > 0.
+- `unvalidated-external-dataset`: external dataset, no TTL configured.
+- `provider-missing`: telemetry says enabled but no provider wired
+  (scene transition mid-flight or wiring bug).
+
 ## L0 Decompressed Chunk Cache
 
 The L0 cache is the **fastest cache layer**, storing already-decoded TypedArrays (Float32Array, Uint8Array, etc.) to eliminate Blosc decompression overhead.
