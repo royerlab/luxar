@@ -1546,6 +1546,24 @@ export class PostProcessingManager {
   captureHDRPixels(
     mode: 'visible-ldr' | 'hdr-effects-pre-tone' | 'raw-scene-hdr' = 'hdr-effects-pre-tone'
   ): { pixels: Float32Array; width: number; height: number } {
+    // G.2: runtime validate the mode. TypeScript catches most invalid
+    // callers, but cross-language consumers (Python API, debug stub
+    // forwarders, runtime-typed JS) can sneak through with a stale
+    // string. Warn + fall back to the documented default instead of
+    // silently treating it as 'raw-scene-hdr' (the only branch that
+    // doesn't match the other two explicit string compares).
+    const allowed: ReadonlySet<string> = new Set([
+      'visible-ldr',
+      'hdr-effects-pre-tone',
+      'raw-scene-hdr',
+    ]);
+    if (!allowed.has(mode)) {
+      log.warning(
+        Modules.POST_PROCESSING,
+        `captureHDRPixels: unknown mode '${mode}', falling back to 'hdr-effects-pre-tone'.`
+      );
+      mode = 'hdr-effects-pre-tone';
+    }
     // Save and disable effects per capture mode.
     const effectStates = new Map<object, boolean>();
     const ldrEffects =
