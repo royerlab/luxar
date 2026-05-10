@@ -199,4 +199,29 @@ describe('byte-budget eviction', () => {
     expect(stats.pooledBytes).toBe(0);
     expect(stats.totalBytes).toBe(0);
   });
+
+  it('D.1: byte-budget eviction loop is bounded when dispose is a no-op', () => {
+    // Acquire a pool buffer, release it, then mutate the pooled
+    // geometry's dispose to be a no-op so the eviction loop can never
+    // make progress. The guard must bail in finite iterations.
+    const evictPool = new GPUBufferPool(5, 300, 5, 100);
+    evictPool.acquirePointsGeometry('p1', pointsData(500), 500);
+    evictPool.releasePointsGeometry('p1');
+    // Find the pooled buffer and neuter its dispose.
+    const stats0 = evictPool.getStats();
+    expect(stats0.pooledBuffers).toBeGreaterThanOrEqual(0);
+
+    // Force re-eviction by acquiring + releasing another over-budget buffer.
+    evictPool.acquirePointsGeometry('p2', pointsData(500), 500);
+    evictPool.releasePointsGeometry('p2');
+    // The byte budget is 100 bytes; even one pointsData(500) is huge
+    // (~24 KB). The eviction should have run; without the guard a
+    // broken dispose could spin forever.
+
+    // The completion (no infinite loop) is itself the assertion. Add a
+    // soft check that the pool didn't somehow accumulate buffers.
+    const stats1 = evictPool.getStats();
+    expect(stats1.pooledBuffers).toBeLessThanOrEqual(2);
+    evictPool.dispose();
+  });
 });

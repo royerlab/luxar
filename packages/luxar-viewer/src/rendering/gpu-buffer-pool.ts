@@ -1314,7 +1314,25 @@ export class GPUBufferPool {
    */
   private _evictUntilUnderByteBudget(): number {
     let disposed = 0;
+    // D.1: bound the eviction loop. `_findLargestPooledBuffer` returning
+    // null already covers the empty-pool exit, but a regression where
+    // `geometry.dispose()` no-ops (e.g. mocked test, broken backend,
+    // shared geometry reference) could keep the same buffer "live" at
+    // its old byte count and loop forever. Cap iterations at
+    // `maxPoolSize * 3` (well above the legitimate steady state) and
+    // log the bail so the next eviction sweep keeps trying.
+    const maxIterations = Math.max(this.maxPoolSize * 3, 16);
+    let iterations = 0;
     while (this._getPooledBytes() > this.maxPoolBytes) {
+      if (++iterations > maxIterations) {
+        log.warning(
+          Modules.GPU_BUFFER_POOL,
+          `Byte-budget eviction bailed after ${iterations} iterations ` +
+            `(disposed ${disposed}). Pool bytes ${this._getPooledBytes()} ` +
+            `still over budget ${this.maxPoolBytes}.`
+        );
+        break;
+      }
       const largest = this._findLargestPooledBuffer();
       if (!largest) break;
       const { pool, bucket, index, buffer } = largest;
