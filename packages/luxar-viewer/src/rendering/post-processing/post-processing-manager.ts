@@ -477,6 +477,14 @@ export class PostProcessingManager {
         log.error(Modules.POST_PROCESSING, `Failed to create Pass B: ${error}`);
         safeDisposeEffect(this.secondaryPass, 'Pass B construction failure');
         this.secondaryPass = undefined;
+        // B.4: Pass A was already added to the composer; tear it down too
+        // so the partial pipeline doesn't run forever in a half-built
+        // state. This is the only place where partial state survives the
+        // per-pass try/catch.
+        if (this.effectPass) {
+          safeRemoveAndDisposePass(this.composer, this.effectPass, 'effectPass (rollback)');
+          this.effectPass = undefined;
+        }
         throw error;
       }
     }
