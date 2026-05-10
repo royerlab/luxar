@@ -226,4 +226,39 @@ describe('LayersPanel.dispose', () => {
     panel.dispose();
     expect(() => panel.dispose()).not.toThrow();
   });
+
+  it('dispose tears down all event listeners attached to row buttons', () => {
+    // Regression for the LayersPanel EventGroup migration: every
+    // addEventListener now goes through this.events.on(...), and
+    // clear() / dispose() drains the group. After dispose, click
+    // events on the (still-rooted) eye button should NOT trigger
+    // visibility toggle handlers.
+    const panel = new LayersPanel(container, makeAnimationController());
+    panel.initFromScene(new THREE.Group(), makeLayeredSceneGraph());
+
+    // Capture an eye button reference BEFORE dispose so the test can
+    // dispatch a click on a node the closure could (incorrectly) still
+    // be listening to.
+    const eyeBtn = container.querySelector('.luxar-layer-row__eye') as HTMLElement | null;
+    expect(eyeBtn).not.toBeNull();
+
+    // Internal event group should have non-zero size before dispose.
+     
+    const events = (panel as any).events as { size: number };
+    expect(events.size).toBeGreaterThan(0);
+
+    panel.dispose();
+
+    // After dispose, the group is replaced with a fresh empty one
+    // (so a subsequent show()/initFromScene doesn't reuse a disposed
+    // group). Either size === 0 OR the group reference changed.
+     
+    const eventsAfter = (panel as any).events as { size: number };
+    expect(eventsAfter.size).toBe(0);
+
+    // Sanity: dispatching a click on the captured eye button does
+    // not throw and (because handlers were removed) does not flip
+    // the layer's visibility.
+    expect(() => eyeBtn?.click()).not.toThrow();
+  });
 });

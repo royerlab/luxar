@@ -22,6 +22,7 @@ import { LabeledSlider } from './labeled-slider';
 import { config } from '../../config';
 import { materialManager } from '../../rendering/material-manager';
 import { log, Modules } from '../../utils/log';
+import { EventGroup } from '../../utils/event-group';
 import { showToast } from '../helpers';
 import type { AnimationController } from '../../scene/animation-controller';
 import { getColormapTexture } from '../../rendering/colormap-textures';
@@ -91,6 +92,15 @@ export class LayersPanel {
   private blendSelect: HTMLSelectElement | null = null;
   private colormapSelect: HTMLSelectElement | null = null;
   private visible = false;
+  /**
+   * Tracks every event listener attached during buildPanel/renderList
+   * so clear()/dispose() can tear them all down with a single call.
+   * Without this, listeners attached to detached DOM nodes hold
+   * closures referencing the panel until the GC reclaims the
+   * subtree — fragile, hard to test, and inconsistent with the rest
+   * of the viewer's listener-tracking pattern.
+   */
+  private events = new EventGroup();
 
   // Row elements keyed by layer path for targeted DOM updates
   private rowElements = new Map<string, HTMLElement>();
@@ -211,6 +221,11 @@ export class LayersPanel {
       this.unsubscribeState();
       this.unsubscribeState = null;
     }
+    // Tear down every listener attached during buildPanel/renderList.
+    // Re-instantiate so a subsequent show() / initFromScene() starts
+    // with a fresh group rather than a disposed one.
+    this.events.dispose();
+    this.events = new EventGroup();
     this.sceneGraph = null;
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
@@ -258,7 +273,7 @@ export class LayersPanel {
     closeBtn.title = 'Close (Esc)';
     closeBtn.setAttribute('aria-label', 'Close layers panel');
     closeBtn.setAttribute('aria-keyshortcuts', 'escape');
-    closeBtn.addEventListener('click', () => this.hide());
+    this.events.on(closeBtn, 'click', () => this.hide());
     header.appendChild(title);
     header.appendChild(closeBtn);
     panel.appendChild(header);
@@ -386,7 +401,7 @@ export class LayersPanel {
     eyeBtn.title = tooltip;
     eyeBtn.setAttribute('aria-label', `${tooltip}: ${layer.name}`);
     eyeBtn.setAttribute('aria-pressed', layer.visible ? 'true' : 'false');
-    eyeBtn.addEventListener('click', (e) => {
+    this.events.on(eyeBtn, 'click', (e) => {
       e.stopPropagation(); // Don't trigger row selection
 
       // Capture the new visibility BEFORE mutating state
@@ -417,7 +432,7 @@ export class LayersPanel {
     badge.textContent = typeMap[layer.type] || layer.type;
 
     // Row click — selection
-    row.addEventListener('click', (e) => {
+    this.events.on(row, 'click', (e) => {
       let mode: SelectionMode = 'single';
       if (e.ctrlKey || e.metaKey) mode = 'add';
       else if (e.shiftKey) mode = 'range';
@@ -427,7 +442,7 @@ export class LayersPanel {
     // Row keyboard navigation — listbox idiom: ArrowUp/Down moves focus
     // (and selects on simple navigation), Enter/Space select with the
     // current modifier.
-    row.addEventListener('keydown', (e) => {
+    this.events.on(row, 'keydown', (e) => {
       const layers = this.state.getLayers();
       const idx = layers.findIndex((l) => l.path === layer.path);
       if (idx < 0) return;
@@ -553,7 +568,7 @@ export class LayersPanel {
       opt.textContent = mode;
       this.blendSelect.appendChild(opt);
     }
-    this.blendSelect.addEventListener('change', () => {
+    this.events.on(this.blendSelect, 'change', () => {
       this.controlsInteracting = true;
       const mode = this.blendSelect!.value as BlendingMode;
       this.state.applyToSelected((l) => {
@@ -596,7 +611,7 @@ export class LayersPanel {
       this.colormapSelect.appendChild(optgroup);
     }
 
-    this.colormapSelect.addEventListener('change', () => {
+    this.events.on(this.colormapSelect, 'change', () => {
       this.controlsInteracting = true;
       const cmName = this.colormapSelect!.value || undefined;
       this.state.applyToSelected((l) => {
