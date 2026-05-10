@@ -128,6 +128,14 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
    * silently operate on the empty-buffer state.
    */
   private _disposed = false;
+  /**
+   * C.2: highest point index touched by any `fill()` call. Lets
+   * `ensureCapacity()` copy only the live prefix into the new buffers
+   * instead of the full capacity — when growing 1024 → 1536 after
+   * filling 800 points, the position copy goes from 12288 floats down
+   * to 2400 floats, a 5× reduction on the hot loading path.
+   */
+  private usedCount = 0;
 
   // Current capacity (number of points)
   private capacity: number;
@@ -204,56 +212,65 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
       `Growing LoadedPointsDataAccumulator: ${this.capacity} → ${newCapacity} points`
     );
 
+    // C.2: copy only the live prefix (usedCount * stride). When the
+    // accumulator is fresh or sparsely filled this is dramatically
+    // cheaper than copying the full old buffer; for full accumulators
+    // it's identical work since usedCount === capacity.
+    const liveCount = Math.min(this.usedCount, this.capacity);
+    const livePos = liveCount * 3;
+    const liveColor = liveCount * 3;
+    const liveScalar = liveCount;
+
     // Allocate new buffers with SAME types as current (type-preserving growth)
     const newPositions = new Float32Array(newCapacity * 3);
-    newPositions.set(this.positionBuffer);
+    newPositions.set(this.positionBuffer.subarray(0, livePos));
     this.positionBuffer = newPositions;
 
     // Color: Type-preserving
     if (this.colorBuffer instanceof Uint8Array) {
       const newColors = new Uint8Array(newCapacity * 3);
-      newColors.set(this.colorBuffer);
+      newColors.set(this.colorBuffer.subarray(0, liveColor));
       this.colorBuffer = newColors;
     } else if (this.colorBuffer instanceof Uint16Array) {
       const newColors = new Uint16Array(newCapacity * 3);
-      newColors.set(this.colorBuffer);
+      newColors.set(this.colorBuffer.subarray(0, liveColor));
       this.colorBuffer = newColors;
     } else {
       const newColors = new Float32Array(newCapacity * 3);
-      newColors.set(this.colorBuffer);
+      newColors.set(this.colorBuffer.subarray(0, liveColor));
       this.colorBuffer = newColors;
     }
 
     // Radius: Type-preserving
     if (this.radiiBuffer instanceof Uint8Array) {
       const newRadii = new Uint8Array(newCapacity);
-      newRadii.set(this.radiiBuffer);
+      newRadii.set(this.radiiBuffer.subarray(0, liveCount));
       this.radiiBuffer = newRadii;
     } else {
       const newRadii = new Float32Array(newCapacity);
-      newRadii.set(this.radiiBuffer);
+      newRadii.set(this.radiiBuffer.subarray(0, liveCount));
       this.radiiBuffer = newRadii;
     }
 
     // Sharpness: Type-preserving
     if (this.sharpnessBuffer instanceof Uint8Array) {
       const newSharpness = new Uint8Array(newCapacity);
-      newSharpness.set(this.sharpnessBuffer);
+      newSharpness.set(this.sharpnessBuffer.subarray(0, liveCount));
       this.sharpnessBuffer = newSharpness;
     } else {
       const newSharpness = new Float32Array(newCapacity);
-      newSharpness.set(this.sharpnessBuffer);
+      newSharpness.set(this.sharpnessBuffer.subarray(0, liveCount));
       this.sharpnessBuffer = newSharpness;
     }
 
     // Scalar — type-preserving growth.
     if (this.scalarBuffer instanceof Uint8Array) {
       const newScalars = new Uint8Array(newCapacity);
-      newScalars.set(this.scalarBuffer);
+      newScalars.set(this.scalarBuffer.subarray(0, liveScalar));
       this.scalarBuffer = newScalars;
     } else {
       const newScalars = new Float32Array(newCapacity);
-      newScalars.set(this.scalarBuffer);
+      newScalars.set(this.scalarBuffer.subarray(0, liveScalar));
       this.scalarBuffer = newScalars;
     }
 
@@ -433,6 +450,16 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
     // Initialize types on first fill
     this.initializeTypes(data);
 
+    // C.2: track the highest filled index for cheap ensureCapacity copies.
+    const filledCount = data.positions
+      ? data.positions.length / 3
+      : data.colors
+        ? data.colors.length / 3
+        : data.radii?.length ?? data.sharpness?.length ?? data.scalars?.length ?? 0;
+    if (filledCount > 0) {
+      this.usedCount = Math.max(this.usedCount, offset + filledCount);
+    }
+
     // Fill buffers with native types (no conversion!)
     if (data.positions) {
       (this.positionBuffer as Float32Array).set(data.positions as Float32Array, offset * 3);
@@ -568,6 +595,7 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
     this.sharpnessBuffer = new Float32Array(0);
     this.scalarBuffer = new Float32Array(0);
     this.capacity = 0;
+    this.usedCount = 0;
     this.types = null;
     this.hasColors = false;
     this.hasRadii = false;
@@ -635,6 +663,13 @@ export class LinesDataAccumulator implements DataAccumulator<
   private hasScalars = false;
   /** B.6: flips to true on dispose(); fill/ensureCapacity then throw. */
   private _disposed = false;
+  /**
+   * C.2: highest vertex / segment indices touched by any `fill()` call.
+   * Lets `ensureCapacity()` copy only the live prefix into the new
+   * buffers instead of the full capacity.
+   */
+  private usedVertexCount = 0;
+  private usedSegmentCount = 0;
 
   private vertexCapacity: number;
   private segmentCapacity: number;
@@ -750,13 +785,18 @@ export class LinesDataAccumulator implements DataAccumulator<
         `Growing LinesDataAccumulator: ${this.vertexCapacity} → ${newVertexCap} vertices`
       );
 
+      // C.2: copy only the live prefix.
+      const liveVerts = Math.min(this.usedVertexCount, this.vertexCapacity);
+      const liveVertexFloats = liveVerts * this.ndim;
+      const liveColorFloats = liveVerts * 3;
+
       const newVertexBuf = new Float32Array(newVertexCap * this.ndim);
       const newWidthBuf = new Float32Array(newVertexCap); // PER-VERTEX!
       const newSharpnessBuf = new Float32Array(newVertexCap);
 
-      newVertexBuf.set(this.vertexBuffer);
-      newWidthBuf.set(this.widthBuffer); // widths grow with vertices
-      newSharpnessBuf.set(this.sharpnessBuffer);
+      newVertexBuf.set(this.vertexBuffer.subarray(0, liveVertexFloats));
+      newWidthBuf.set(this.widthBuffer.subarray(0, liveVerts)); // widths grow with vertices
+      newSharpnessBuf.set(this.sharpnessBuffer.subarray(0, liveVerts));
 
       this.vertexBuffer = newVertexBuf;
       this.widthBuffer = newWidthBuf;
@@ -765,26 +805,26 @@ export class LinesDataAccumulator implements DataAccumulator<
       // A.2: scalar buffer grows preserving dtype (Uint8 stays Uint8).
       if (this.scalarBuffer instanceof Uint8Array) {
         const newScalarBuf = new Uint8Array(newVertexCap);
-        newScalarBuf.set(this.scalarBuffer);
+        newScalarBuf.set(this.scalarBuffer.subarray(0, liveVerts));
         this.scalarBuffer = newScalarBuf;
       } else {
         const newScalarBuf = new Float32Array(newVertexCap);
-        newScalarBuf.set(this.scalarBuffer);
+        newScalarBuf.set(this.scalarBuffer.subarray(0, liveVerts));
         this.scalarBuffer = newScalarBuf;
       }
 
       // Color: Type-preserving growth (like Points accumulator)
       if (this.colorBuffer instanceof Uint8Array) {
         const newColorBuf = new Uint8Array(newVertexCap * 3);
-        newColorBuf.set(this.colorBuffer);
+        newColorBuf.set(this.colorBuffer.subarray(0, liveColorFloats));
         this.colorBuffer = newColorBuf;
       } else if (this.colorBuffer instanceof Uint16Array) {
         const newColorBuf = new Uint16Array(newVertexCap * 3);
-        newColorBuf.set(this.colorBuffer);
+        newColorBuf.set(this.colorBuffer.subarray(0, liveColorFloats));
         this.colorBuffer = newColorBuf;
       } else {
         const newColorBuf = new Float32Array(newVertexCap * 3);
-        newColorBuf.set(this.colorBuffer);
+        newColorBuf.set(this.colorBuffer.subarray(0, liveColorFloats));
         this.colorBuffer = newColorBuf;
       }
 
@@ -799,8 +839,10 @@ export class LinesDataAccumulator implements DataAccumulator<
         newSegmentCap = Math.ceil(newSegmentCap * 1.5);
       }
 
+      // C.2: copy only the live prefix of segment-index pairs.
+      const liveSegments = Math.min(this.usedSegmentCount, this.segmentCapacity);
       const newSegmentBuf = new Uint32Array(newSegmentCap * 2);
-      newSegmentBuf.set(this.segmentBuffer);
+      newSegmentBuf.set(this.segmentBuffer.subarray(0, liveSegments * 2));
 
       this.segmentBuffer = newSegmentBuf;
       this.segmentCapacity = newSegmentCap;
@@ -849,6 +891,18 @@ export class LinesDataAccumulator implements DataAccumulator<
     // Initialize types on first fill with colors or scalars
     if (data.colors || data.scalars) {
       this.initializeTypes(data);
+    }
+
+    // C.2: track live prefixes for cheap ensureCapacity copies.
+    if (data.positions) {
+      const filledVerts = data.positions.length / this.ndim;
+      this.usedVertexCount = Math.max(this.usedVertexCount, vertexOffset + filledVerts);
+    } else if (data.widths) {
+      this.usedVertexCount = Math.max(this.usedVertexCount, vertexOffset + data.widths.length);
+    }
+    if (data.segments) {
+      const filledSegs = data.segments.length / 2;
+      this.usedSegmentCount = Math.max(this.usedSegmentCount, segmentOffset + filledSegs);
     }
 
     if (data.positions) {
@@ -951,6 +1005,8 @@ export class LinesDataAccumulator implements DataAccumulator<
     this.scalarBuffer = new Float32Array(0);
     this.vertexCapacity = 0;
     this.segmentCapacity = 0;
+    this.usedVertexCount = 0;
+    this.usedSegmentCount = 0;
     this.types = null;
     this.hasColors = false;
     this.hasSharpness = false;
@@ -996,6 +1052,8 @@ export class GSplatsDataAccumulator implements DataAccumulator<
   private hasColors = false;
   /** B.6: flips to true on dispose(); fill/ensureCapacity then throw. */
   private _disposed = false;
+  /** C.2: highest splat index touched by any `fill()` call. */
+  private usedCount = 0;
 
   private capacity: number;
   private ndim: number;
@@ -1073,13 +1131,19 @@ export class GSplatsDataAccumulator implements DataAccumulator<
       `Growing GSplatsDataAccumulator: ${this.capacity} → ${newCapacity} splats`
     );
 
+    // C.2: copy only the live prefix.
+    const live = Math.min(this.usedCount, this.capacity);
+    const liveCenterFloats = live * this.ndim;
+    const liveColorFloats = live * 3;
+    const liveCholeskyFloats = live * this.choleskySize;
+
     const newCenters = new Float32Array(newCapacity * this.ndim);
     const newAmplitudes = new Float32Array(newCapacity);
     const newCholesky = new Float32Array(newCapacity * this.choleskySize);
 
-    newCenters.set(this.centerBuffer);
-    newAmplitudes.set(this.amplitudeBuffer);
-    newCholesky.set(this.choleskyBuffer);
+    newCenters.set(this.centerBuffer.subarray(0, liveCenterFloats));
+    newAmplitudes.set(this.amplitudeBuffer.subarray(0, live));
+    newCholesky.set(this.choleskyBuffer.subarray(0, liveCholeskyFloats));
 
     this.centerBuffer = newCenters;
     this.amplitudeBuffer = newAmplitudes;
@@ -1088,15 +1152,15 @@ export class GSplatsDataAccumulator implements DataAccumulator<
     // Color: Type-preserving growth (like Points accumulator)
     if (this.colorBuffer instanceof Uint8Array) {
       const newColors = new Uint8Array(newCapacity * 3);
-      newColors.set(this.colorBuffer);
+      newColors.set(this.colorBuffer.subarray(0, liveColorFloats));
       this.colorBuffer = newColors;
     } else if (this.colorBuffer instanceof Uint16Array) {
       const newColors = new Uint16Array(newCapacity * 3);
-      newColors.set(this.colorBuffer);
+      newColors.set(this.colorBuffer.subarray(0, liveColorFloats));
       this.colorBuffer = newColors;
     } else {
       const newColors = new Float32Array(newCapacity * 3);
-      newColors.set(this.colorBuffer);
+      newColors.set(this.colorBuffer.subarray(0, liveColorFloats));
       this.colorBuffer = newColors;
     }
 
@@ -1132,6 +1196,14 @@ export class GSplatsDataAccumulator implements DataAccumulator<
     // Initialize types on first fill with colors
     if (data.colors) {
       this.initializeTypes(data);
+    }
+
+    // C.2: track live prefix for cheap ensureCapacity copies.
+    const filledCount = data.positions
+      ? data.positions.length / this.ndim
+      : data.amplitudes?.length ?? 0;
+    if (filledCount > 0) {
+      this.usedCount = Math.max(this.usedCount, offset + filledCount);
     }
 
     if (data.positions) {
@@ -1200,6 +1272,7 @@ export class GSplatsDataAccumulator implements DataAccumulator<
     this.choleskyBuffer = new Float32Array(0);
     this.colorBuffer = new Float32Array(0);
     this.capacity = 0;
+    this.usedCount = 0;
     this.types = null;
     this.hasColors = false;
     this._disposed = true;

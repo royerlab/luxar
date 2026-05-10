@@ -447,3 +447,58 @@ describe('B.6 — accumulator dispose-state guards', () => {
     expect(acc.getScalarBuffer().length).toBe(0);
   });
 });
+
+describe('C.2 — accumulator growth uses usedCount subarray copy', () => {
+  it('LoadedPointsDataAccumulator: growing after partial fill preserves the live prefix', () => {
+    const acc = new LoadedPointsDataAccumulator(1024, 3, 100);
+    // Fill 800 positions: 800 points × 3 floats = 2400 elements.
+    const positions = new Float32Array(800 * 3);
+    for (let i = 0; i < 800 * 3; i++) positions[i] = i + 1;
+    acc.fill(0, { positions });
+    // Force growth to 1500 (rounds up via 1.5× to 1536).
+    const grew = acc.ensureCapacity(1500);
+    expect(grew).toBe(true);
+    // The 800 filled positions must survive the growth.
+    const buf = acc.getPositionBuffer();
+    expect(buf.length).toBeGreaterThanOrEqual(1500 * 3);
+    expect(buf[0]).toBe(1);
+    expect(buf[800 * 3 - 1]).toBe(800 * 3);
+  });
+
+  it('LinesDataAccumulator: vertex and segment usedCounts both track', () => {
+    const acc = new LinesDataAccumulator(1024, 512, 3);
+    // Fill 100 vertices and 50 segments
+    const positions = new Float32Array(100 * 3);
+    const segments = new Uint32Array(50 * 2);
+    const widths = new Float32Array(100);
+    for (let i = 0; i < 100 * 3; i++) positions[i] = i + 1;
+    for (let i = 0; i < 50 * 2; i++) segments[i] = i;
+    acc.fill(0, 0, { positions, segments, widths });
+    const grew = acc.ensureCapacity(1500, 600);
+    expect(grew).toBe(true);
+    // Filled vertex positions must survive.
+    expect(acc.getVertexBuffer()[0]).toBe(1);
+    expect(acc.getVertexBuffer()[100 * 3 - 1]).toBe(100 * 3);
+    // Filled segment indices must survive.
+    expect(acc.getSegmentBuffer()[0]).toBe(0);
+    expect(acc.getSegmentBuffer()[50 * 2 - 1]).toBe(50 * 2 - 1);
+  });
+
+  it('GSplatsDataAccumulator: growing after partial fill preserves the live prefix', () => {
+    const acc = new GSplatsDataAccumulator(1024, 3);
+    const positions = new Float32Array(300 * 3);
+    const amplitudes = new Float32Array(300);
+    const choleskyFactors = new Float32Array(300 * 6); // 3D → 6 cholesky elements
+    for (let i = 0; i < 300; i++) {
+      positions[i * 3] = i;
+      amplitudes[i] = i + 0.5;
+    }
+    acc.fill(0, { positions, amplitudes, choleskyFactors });
+    const grew = acc.ensureCapacity(1500);
+    expect(grew).toBe(true);
+    const out = acc.getData(300);
+    expect(out.positions[0]).toBe(0);
+    expect(out.positions[(300 - 1) * 3]).toBe(299);
+    expect(out.amplitudes[299]).toBeCloseTo(299.5);
+  });
+});
