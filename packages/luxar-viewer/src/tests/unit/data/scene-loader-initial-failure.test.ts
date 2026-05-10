@@ -492,6 +492,171 @@ describe('SceneLoader.retryFailedLoader — derived.skip fallback', () => {
     expect(internals.registry.failedLoaders.has('/p')).toBe(false);
   });
 
+  // Stronger end-state assertions for the success path: when
+  // updateView returns non-empty data, retry must thread that data
+  // through the loader's geometry-commit step. Spy on the private
+  // updateXxxGeometry methods so we don't have to construct fully
+  // valid GPU-ready data shapes — the commit helpers themselves are
+  // tested separately under tests/unit/data/scene-loader/.
+
+  it('Points retry threads non-empty data to updatePointsGeometry on success', async () => {
+    const internals = loader as unknown as LoaderInternals & {
+      updatePointsGeometry: (path: string, data: unknown) => void;
+    };
+    const factory = new NodeFactory();
+    const placeholder = factory.createEmptyPointsNode(
+      '/p',
+      { n_points: 0 } as unknown as PointsMetadata,
+      { dispose: vi.fn() } as unknown as DataLoader
+    );
+    placeholder.userData.attrs = {};
+    root.add(placeholder);
+
+    // Minimal non-empty data shape — full validity is the commit
+    // helper's concern, tested separately.
+    const fakeData = {
+      positions: new Float32Array([0, 0, 0, 1, 1, 1, 2, 2, 2]),
+      pointCount: 3,
+      ndim: 3,
+      metadata: {
+        totalPoints: 3,
+        loadedPoints: 3,
+        bounds: new THREE.Box3(),
+        usedSpatialIndex: false,
+      },
+    };
+
+    const updateView = vi.fn().mockResolvedValue(fakeData);
+    internals.registry.registerPointsLoader(
+      '/p',
+      { updateView, dispose: vi.fn() } as unknown as DataLoader
+    );
+    internals.registry.recordFailure('/p', new Error('initial'));
+
+    const commitSpy = vi
+      .spyOn(internals, 'updatePointsGeometry')
+      .mockImplementation(() => {
+        // Mirror the helper's observable side effect: bump
+        // visiblePointCount so the assertion below sees real change.
+        placeholder.userData.visiblePointCount = fakeData.pointCount;
+      });
+
+    const ok = await loader.retryFailedLoader('/p');
+
+    expect(ok).toBe(true);
+    expect(commitSpy).toHaveBeenCalledTimes(1);
+    expect(commitSpy).toHaveBeenCalledWith('/p', fakeData);
+    expect(placeholder.userData.visiblePointCount).toBe(3);
+    expect(internals.registry.failedLoaders.has('/p')).toBe(false);
+  });
+
+  it('Lines retry threads non-empty data to commitLinesGeometry on success', async () => {
+    const internals = loader as unknown as LoaderInternals & {
+      processLinesData: (path: string, data: unknown, viewState: unknown) => Promise<unknown>;
+      commitLinesGeometry: (staged: unknown) => void;
+    };
+    const factory = new NodeFactory();
+    const placeholder = factory.createEmptyLinesNode(
+      '/l',
+      {} as Record<string, unknown>,
+      { n_segments: 0 } as unknown as LinesMetadata,
+      { dispose: vi.fn() } as unknown as LinesDataLoader
+    );
+    placeholder.userData.attrs = {};
+    root.add(placeholder);
+
+    const fakeData = {
+      vertices: new Float32Array([0, 0, 0, 1, 1, 1]),
+      segments: new Uint32Array([0, 1]),
+      widths: new Float32Array([1, 1]),
+      colors: null,
+      sharpness: null,
+      vertexCount: 2,
+      segmentCount: 1,
+      ndim: 3,
+    };
+    const stagedSentinel = { path: '/l', kind: 'lines' };
+
+    const updateView = vi.fn().mockResolvedValue(fakeData);
+    internals.registry.registerLinesLoader(
+      '/l',
+      { updateView, dispose: vi.fn() } as unknown as LinesDataLoader
+    );
+    internals.registry.recordFailure('/l', new Error('initial'));
+
+    const processSpy = vi
+      .spyOn(internals, 'processLinesData')
+      .mockResolvedValue(stagedSentinel);
+    const commitSpy = vi
+      .spyOn(internals, 'commitLinesGeometry')
+      .mockImplementation(() => {
+        placeholder.userData.visibleSegmentCount = fakeData.segmentCount;
+      });
+
+    const ok = await loader.retryFailedLoader('/l');
+
+    expect(ok).toBe(true);
+    expect(processSpy).toHaveBeenCalledTimes(1);
+    expect(processSpy.mock.calls[0][0]).toBe('/l');
+    expect(processSpy.mock.calls[0][1]).toBe(fakeData);
+    expect(commitSpy).toHaveBeenCalledTimes(1);
+    expect(commitSpy).toHaveBeenCalledWith(stagedSentinel);
+    expect(placeholder.userData.visibleSegmentCount).toBe(1);
+    expect(internals.registry.failedLoaders.has('/l')).toBe(false);
+  });
+
+  it('GSplats retry threads non-empty data to commitGSplatsGeometry on success', async () => {
+    const internals = loader as unknown as LoaderInternals & {
+      processGSplatsData: (path: string, data: unknown, viewState: unknown) => Promise<unknown>;
+      commitGSplatsGeometry: (staged: unknown) => void;
+    };
+    const factory = new NodeFactory();
+    const placeholder = factory.createEmptyGSplatsNode(
+      '/g',
+      {} as Record<string, unknown>,
+      { n_splats: 0 } as unknown as GSplatsMetadata,
+      { dispose: vi.fn() } as unknown as GSplatsDataLoader
+    );
+    placeholder.userData.attrs = {};
+    root.add(placeholder);
+
+    const fakeData = {
+      centers: new Float32Array([0, 0, 0]),
+      amplitudes: new Float32Array([1]),
+      cholesky_factors: new Float32Array([1, 0, 1, 0, 0, 1]),
+      colors: null,
+      splatCount: 1,
+      ndim: 3,
+    };
+    const stagedSentinel = { path: '/g', kind: 'gsplats' };
+
+    const updateView = vi.fn().mockResolvedValue(fakeData);
+    internals.registry.registerGSplatsLoader(
+      '/g',
+      { updateView, dispose: vi.fn() } as unknown as GSplatsDataLoader
+    );
+    internals.registry.recordFailure('/g', new Error('initial'));
+
+    const processSpy = vi
+      .spyOn(internals, 'processGSplatsData')
+      .mockResolvedValue(stagedSentinel);
+    const commitSpy = vi
+      .spyOn(internals, 'commitGSplatsGeometry')
+      .mockImplementation(() => {
+        placeholder.userData.visibleSplatCount = fakeData.splatCount;
+      });
+
+    const ok = await loader.retryFailedLoader('/g');
+
+    expect(ok).toBe(true);
+    expect(processSpy).toHaveBeenCalledTimes(1);
+    expect(processSpy.mock.calls[0][1]).toBe(fakeData);
+    expect(commitSpy).toHaveBeenCalledTimes(1);
+    expect(commitSpy).toHaveBeenCalledWith(stagedSentinel);
+    expect(placeholder.userData.visibleSplatCount).toBe(1);
+    expect(internals.registry.failedLoaders.has('/g')).toBe(false);
+  });
+
   it('retry returns false and keeps the failure when placeholder was removed', async () => {
     // The verifyAndClear defensive guard: if the named object is
     // missing from rootGroup, retry must NOT clear the failedLoaders
