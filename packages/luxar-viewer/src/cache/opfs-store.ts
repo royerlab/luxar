@@ -48,6 +48,21 @@ export class OPFSStore {
   private writeCount = 0;
   private missCount = 0;
 
+  // Health counters surfaced via getStats().
+  // `oversizedWriteSkipped`: doSet() rejected an entry larger than
+  //   maxSize so it could not have been written without violating the
+  //   cache size invariant.
+  // `quotaWriteSkipped`: navigator.storage.estimate() reported
+  //   insufficient quota even after own-LRU eviction.
+  // `evictions`: number of own-LRU entries evicted to make room for
+  //   incoming writes.
+  // `writeFailures`: doSet() catch branch — file I/O threw after
+  //   retries.
+  private oversizedWriteSkipped = 0;
+  private quotaWriteSkipped = 0;
+  private evictions = 0;
+  private writeFailures = 0;
+
   // Bucket handle cache (256 possible buckets: 00-ff)
   private bucketHandles = new Map<string, FileSystemDirectoryHandle>();
 
@@ -154,21 +169,35 @@ export class OPFSStore {
 
     const size = data.byteLength;
 
-    // Check quota before writing
-    if (!(await this.checkQuota(size))) {
-      log.warning(Modules.CACHE, 'OPFSStore insufficient storage quota, skipping write');
+    // Reject oversized entries up front. A single item larger than
+    // maxSize would otherwise evict every existing entry and still
+    // leave totalSize > maxSize after insertion, breaking the cache
+    // size invariant. Mirror of LRUCache.set()'s oversized guard.
+    if (size > this.maxSize) {
+      this.oversizedWriteSkipped++;
       return;
     }
 
-    // LRU eviction until we have space — O(1) per eviction via Map insertion order
+    // LRU eviction until we have space — O(1) per eviction via Map
+    // insertion order. Run BEFORE the quota check so the browser sees
+    // the freed space when we ask navigator.storage.estimate().
     while (this.totalSize + size > this.maxSize && this.index.size > 0) {
       const lruKey = this.index.keys().next().value;
       if (lruKey !== undefined) {
         // Note: delete() already decrements totalSize, don't double-decrement
         await this.delete(lruKey);
+        this.evictions++;
       } else {
         break;
       }
+    }
+
+    // Check quota only after own-LRU eviction. Otherwise a write that
+    // would have fit after evicting old L2 entries gets skipped.
+    if (!(await this.checkQuota(size))) {
+      this.quotaWriteSkipped++;
+      log.warning(Modules.CACHE, 'OPFSStore insufficient storage quota, skipping write');
+      return;
     }
 
     // Write to OPFS (with one retry on stale bucket handle)
@@ -232,6 +261,7 @@ export class OPFSStore {
           this.invalidateBucketHandle(bucket);
           continue;
         }
+        this.writeFailures++;
         log.warning(Modules.CACHE, `OPFSStore failed to write ${key}: ${errorMsg}`);
       }
     }
@@ -294,6 +324,10 @@ export class OPFSStore {
     this.readCount = 0;
     this.writeCount = 0;
     this.missCount = 0;
+    this.oversizedWriteSkipped = 0;
+    this.quotaWriteSkipped = 0;
+    this.evictions = 0;
+    this.writeFailures = 0;
 
     if (this.opfsRoot) {
       try {
@@ -357,6 +391,10 @@ export class OPFSStore {
     reads: number;
     writes: number;
     misses: number;
+    oversizedWriteSkipped: number;
+    quotaWriteSkipped: number;
+    evictions: number;
+    writeFailures: number;
   } {
     return {
       size: this.totalSize,
@@ -364,6 +402,10 @@ export class OPFSStore {
       reads: this.readCount,
       writes: this.writeCount,
       misses: this.missCount,
+      oversizedWriteSkipped: this.oversizedWriteSkipped,
+      quotaWriteSkipped: this.quotaWriteSkipped,
+      evictions: this.evictions,
+      writeFailures: this.writeFailures,
     };
   }
 
