@@ -523,6 +523,56 @@ describe('ChunkPrefetcher - Unit Tests', () => {
       expect(callsAfter).toBe(callsBefore);
       expect(prefetcher.getStats().queued).toBe(0);
     });
+
+    it(
+      'in-flight prefetch.finally does not re-enter processQueue after dispose',
+      { timeout: 5_000 },
+      async () => {
+        // Simulates the production race: prefetcher dispatches N fetches,
+        // dispose() runs while fetches are in flight, fetches resolve, the
+        // .finally() handlers must NOT dispatch any further fetches against
+        // the disposed store. Locks in the isDisposed guard at the
+        // continuation site, not just the entry-point.
+        const slow = new MockStore();
+        const resolvers: Array<(v: { ok: true; value: Uint8Array }) => void> = [];
+        slow.getResult = vi.fn(
+          () =>
+            new Promise((r) => {
+              resolvers.push(r);
+            })
+        ) as unknown as typeof slow.getResult;
+
+        const local = new ChunkPrefetcher(slow as any, {
+          enabled: true,
+          maxConcurrent: 4,
+        });
+        local.registerArrayBounds('data', [10240, 10240], [1024, 1024]);
+
+        // Trigger four neighbors → all four go in-flight at maxConcurrent=4.
+        local.onAccess('data/1.1');
+        // Yield so processQueue dispatches.
+        await new Promise((r) => setTimeout(r, 0));
+        const callsAtDispatch = (slow.getResult as unknown as { mock: { calls: unknown[] } }).mock
+          .calls.length;
+        expect(callsAtDispatch).toBe(4);
+
+        local.dispose();
+
+        // Resolve all four promises so their .finally() handlers run.
+        for (const resolve of resolvers) {
+          resolve({ ok: true, value: new Uint8Array([1]) });
+        }
+        // Yield through several microtask turns to let any (incorrect) recursion fire.
+        for (let i = 0; i < 5; i++) {
+          await new Promise((r) => setTimeout(r, 0));
+        }
+
+        const callsAfterFinally = (slow.getResult as unknown as { mock: { calls: unknown[] } })
+          .mock.calls.length;
+        // The .finally() must not re-enter processQueue and add new dispatches.
+        expect(callsAfterFinally).toBe(callsAtDispatch);
+      }
+    );
   });
 });
 
