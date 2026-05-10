@@ -803,4 +803,47 @@ describe('MaterialManager', () => {
       expect(material.uniforms.radiusScale.value).toBeCloseTo(0.00001);
     });
   });
+
+  // =========================================================================
+  // B.1 — detachFromGlobalUpdates: clone-vs-pool safety
+  // =========================================================================
+
+  describe('B.1 detachFromGlobalUpdates', () => {
+    const props: PointMaterialProperties = {
+      blendingMode: 'additive',
+      opacity: 1.0,
+      gamma: 1.0,
+      intensity: 1.0,
+      offset: 0.0,
+    };
+
+    it('leaves the pooled material in the LRU cache (reusable on next get)', () => {
+      const pooled = manager.getPointMaterial(props);
+      manager.detachFromGlobalUpdates(pooled);
+      const reused = manager.getPointMaterial(props);
+      expect(reused).toBe(pooled);
+    });
+
+    it('after manager dispose(), detached pooled material is NOT disposed', () => {
+      const pooled = manager.getPointMaterial(props);
+      const pooledDispose = vi.spyOn(pooled, 'dispose');
+      // Simulate the NodeFactory clone-site pattern: detach pooled then
+      // register a clone. The clone takes pooled's global-update slot.
+      const cloneLike = {
+        ...pooled,
+        dispose: vi.fn(),
+        updateCameraParams: vi.fn(),
+      } as unknown as PointMaterial;
+      manager.detachFromGlobalUpdates(pooled);
+      manager.register(cloneLike);
+
+      manager.dispose();
+
+      // Pooled was removed from the global-update set BEFORE dispose, so
+      // its `.dispose()` is not called by manager.dispose(). The clone
+      // takes the hit instead.
+      expect(pooledDispose).not.toHaveBeenCalled();
+      expect(cloneLike.dispose).toHaveBeenCalled();
+    });
+  });
 });

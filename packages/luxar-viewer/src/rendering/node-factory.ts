@@ -14,6 +14,7 @@
 import * as THREE from 'three';
 import { materialManager, type BlendingMode } from './material-manager';
 import { getColormapTexture } from './colormap-textures';
+import { supportsScalarColormap } from './material-colormap-helpers';
 import {
   createInstancedLinesMesh,
   type InstancedLinesMeshConfig,
@@ -142,7 +143,7 @@ export class NodeFactory {
 
     const radiusScale = geometry.userData.radiusScale ?? 1.0;
     const sharpnessScale = geometry.userData.sharpnessScale ?? 1.0;
-    const material = this.createPointsMaterial(attrs, radiusScale, sharpnessScale);
+    const material = this.createPointsMaterial(attrs, radiusScale, sharpnessScale, geometry, path);
 
     const points = new THREE.Points(geometry, material);
     points.name = path;
@@ -199,17 +200,34 @@ export class NodeFactory {
       blendingMode: (attrs.blending_mode as string | undefined as BlendingMode) ?? 'additive',
     });
 
-    // Apply colormap if specified AND scalar data exists
+    // Apply colormap if specified and scalar data exists. When the
+    // line's metadata declares `colormap='custom'`, the scene loader
+    // has already attached the LUT bytes as `nodeAttrs.customLutBytes`.
     const lnColormapName = nodeAttrs.colormap as string | undefined;
     const lnHasScalars = !!nodeAttrs.has_scalars;
+    const linesScalarsReady =
+      'startScalars' in processed && 'endScalars' in processed;
     if (lnColormapName && lnHasScalars) {
-      const lnColormapTex = getColormapTexture(lnColormapName);
-      if (lnColormapTex) {
-        material = material.clone() as typeof material;
-        materialManager.register(material);
-        material.updateColormapTexture(lnColormapTex);
-        const lnScalarRange = (nodeAttrs.scalar_data_range as [number, number]) ?? [0, 1];
-        material.updateScalarRange(lnScalarRange[0], lnScalarRange[1]);
+      if (!linesScalarsReady) {
+        log.warning(
+          Modules.SCENE_LOADER,
+          `[${path}] Line scalar colormap requested but scalar attributes are not bound. Colormap suppressed.`
+        );
+      } else {
+        const lnLutBytes = nodeAttrs.customLutBytes as Uint8Array | undefined;
+        const lnColormapTex = getColormapTexture(lnColormapName, lnLutBytes);
+        if (lnColormapTex) {
+          // B.1: detach the pooled original from global updates BEFORE
+          // cloning, so disposeAll doesn't dispose the cache entry that
+          // still serves other callers. The clone takes the global-
+          // update slot; the pooled material stays in lineMaterialCache.
+          materialManager.detachFromGlobalUpdates(material);
+          material = material.clone() as typeof material;
+          materialManager.register(material);
+          material.updateColormapTexture(lnColormapTex);
+          const lnScalarRange = (nodeAttrs.scalar_data_range as [number, number]) ?? [0, 1];
+          material.updateScalarRange(lnScalarRange[0], lnScalarRange[1]);
+        }
       }
     }
 
@@ -267,12 +285,21 @@ export class NodeFactory {
       truncationRadius: (attrs.truncation_radius as number | undefined) ?? 3.0,
     });
 
-    // Apply colormap if specified
+    // Apply colormap if specified.
+    //
+    // when colormap='custom', use the bytes stashed by the scene
+    // loader (`nodeAttrs.customLutBytes`). `getColormapTexture` falls
+    // back to the viridis built-in if the bytes are missing/invalid,
+    // so the GSplat-only "not yet implemented" warning is gone.
     const gsColormapName = nodeAttrs.colormap as string | undefined;
     let gsplatMaterialCloned = false;
     if (gsColormapName) {
-      const gsColormapTex = getColormapTexture(gsColormapName);
+      const gsLutBytes = nodeAttrs.customLutBytes as Uint8Array | undefined;
+      const gsColormapTex = getColormapTexture(gsColormapName, gsLutBytes);
       if (gsColormapTex) {
+        // B.1: detach pooled material from global updates before cloning.
+        // See lines/points clone sites for the rationale.
+        materialManager.detachFromGlobalUpdates(material);
         material = material.clone() as GSplatMaterial;
         materialManager.register(material);
         gsplatMaterialCloned = true;
@@ -280,11 +307,6 @@ export class NodeFactory {
         const ampRange = nodeAttrs.amplitude_data_range as [number, number] | undefined;
         const gsScalarRange = ampRange ?? [0, 1];
         material.updateScalarRange(gsScalarRange[0], gsScalarRange[1]);
-      } else if (gsColormapName === 'custom') {
-        log.warning(
-          Modules.SCENE_LOADER,
-          `Custom colormap LUT loading not yet implemented for ${path}`
-        );
       }
     }
 
@@ -664,6 +686,29 @@ export class NodeFactory {
       sharpnessScale = 1.0;
     }
 
+    // Bind per-point `scalar` attribute when present so the shader's
+    // USE_COLORMAP path can sample the LUT. Without this attribute,
+    // `createPointsMaterial` suppresses colormap activation.
+    if (data.scalars) {
+      const scalarsTyped = data.scalars;
+      if (
+        typeof globalThis.Float16Array !== 'undefined' &&
+        scalarsTyped instanceof globalThis.Float16Array
+      ) {
+        const float32Scalars = new Float32Array(scalarsTyped);
+        geometry.setAttribute('scalar', new THREE.BufferAttribute(float32Scalars, 1));
+      } else if (scalarsTyped instanceof Uint8Array) {
+        // Normalize Uint8 scalars to [0,1]; user metadata's
+        // `scalar_data_range` already maps that to original units.
+        geometry.setAttribute('scalar', new THREE.BufferAttribute(scalarsTyped, 1, true));
+      } else {
+        geometry.setAttribute(
+          'scalar',
+          new THREE.BufferAttribute(scalarsTyped as Float32Array, 1, false)
+        );
+      }
+    }
+
     // Compute bounding box
     geometry.boundingBox = data.metadata.bounds.clone();
 
@@ -687,7 +732,9 @@ export class NodeFactory {
   createPointsMaterial(
     attrs: Partial<PointsMetadata>,
     radiusScale: number = 1.0,
-    sharpnessScale: number = 1.0
+    sharpnessScale: number = 1.0,
+    geometry?: THREE.BufferGeometry,
+    path?: string
   ): THREE.ShaderMaterial {
     let material = materialManager.getPointMaterial({
       opacity: attrs.opacity ?? 1.0,
@@ -702,13 +749,31 @@ export class NodeFactory {
     const ptColormapName = attrs.colormap;
     const ptHasScalars = !!attrs.has_scalars;
     if (ptColormapName && ptHasScalars) {
-      const ptColormapTex = getColormapTexture(ptColormapName);
-      if (ptColormapTex) {
-        material = material.clone() as typeof material;
-        materialManager.register(material);
-        material.updateColormapTexture(ptColormapTex);
-        const ptScalarRange = attrs.scalar_data_range ?? [0, 1];
-        material.updateScalarRange(ptScalarRange[0], ptScalarRange[1]);
+      // Point shader's USE_COLORMAP path requires a `scalar` attribute.
+      // When `geometry` is provided (placeholder/init path), check the
+      // actual binding; when it's absent (e.g. tests calling
+      // createPointsMaterial directly), skip the guard and trust the
+      // caller.
+      const guardOK = !geometry || supportsScalarColormap('points', geometry);
+      if (!guardOK) {
+        log.warning(
+          Modules.SCENE_LOADER,
+          `[${path ?? '<points>'}] Scalar colormap requested but 'scalar' attribute is not bound on geometry. Colormap suppressed; rendering with vertex colors.`
+        );
+      } else {
+        // pass customLutBytes when colormap='custom'.
+        const ptLutBytes = (attrs as { customLutBytes?: Uint8Array }).customLutBytes;
+        const ptColormapTex = getColormapTexture(ptColormapName, ptLutBytes);
+        if (ptColormapTex) {
+          // B.1: detach pooled material from global updates before cloning.
+          // See lines clone site for the full rationale.
+          materialManager.detachFromGlobalUpdates(material);
+          material = material.clone() as typeof material;
+          materialManager.register(material);
+          material.updateColormapTexture(ptColormapTex);
+          const ptScalarRange = attrs.scalar_data_range ?? [0, 1];
+          material.updateScalarRange(ptScalarRange[0], ptScalarRange[1]);
+        }
       }
     }
 

@@ -75,7 +75,7 @@ export interface GSplatMaterialProperties {
  * the same valid ranges and bucketing rules across material types, so
  * having one helper avoids drift the next time the rules change.
  *
- * Returned ranges (mirrors the inline comments at the previous call sites):
+ * Returned ranges:
  *   - opacity: 0–100
  *   - gamma:   0–1000
  *   - intensity: 0–10000
@@ -259,31 +259,25 @@ export class MaterialManager {
       return material;
     }
 
-    // Determine material properties based on mode
-    const isAdditive = props.blendingMode === 'additive';
-
-    // Create new PointMaterial instance
+    // Create new PointMaterial instance with neutral blending defaults;
+    // the canonical state for `props.blendingMode` is then applied via
+    // `applyBlendingMode()` so creation-time and runtime transitions
+    // share one code path. Without this, the LayersPanel runtime path
+    // would diverge from creation (notably max mode, which needs
+    // OneFactor/OneFactor blend factors AND the
+    // LUXAR_MAX_RGB_CONTRIBUTION shader define).
     material = new PointMaterial({
       opacity: props.opacity,
       gamma: props.gamma,
       intensity: props.intensity,
       offset: props.offset,
-      blending: this.getThreeBlending(props.blendingMode),
-      // Opaque: write depth. All others: no depth write
-      depthWrite: isOpaque || (props.blendingMode === 'normal' && props.opacity >= 0.99),
-      // Additive ignores depth entirely (renders on top of everything)
-      depthTest: !isAdditive,
+      // Pass `transparent` and a neutral default; applyBlendingMode
+      // will overwrite blending/depth fields immediately below.
       transparent: !isOpaque,
       radiusScale: props.radiusScale,
       sharpnessScale: props.sharpnessScale,
     });
-
-    // Configure custom blending for max mode
-    if (props.blendingMode === 'max') {
-      material.blendEquation = THREE.MaxEquation; // Max(source, destination)
-      material.blendSrc = THREE.OneFactor;
-      material.blendDst = THREE.OneFactor;
-    }
+    material.applyBlendingMode(props.blendingMode);
 
     // Register for global updates
     this.registeredMaterials.add(material);
@@ -389,28 +383,6 @@ export class MaterialManager {
   }
 
   /**
-   * Convert our blending mode to Three.js blending constant
-   */
-  private getThreeBlending(mode: BlendingMode): THREE.Blending {
-    switch (mode) {
-      case 'opaque':
-        return THREE.NormalBlending; // Solid rendering
-      case 'normal':
-        return THREE.NormalBlending; // Semi-transparent alpha blending
-      case 'additive':
-      case 'luminous':
-        // Both use AdditiveBlending (SrcAlpha, One) - same visual output
-        // Difference is only in depthTest (additive=false, luminous=true)
-        return THREE.AdditiveBlending;
-      case 'max':
-        return THREE.CustomBlending; // Max blending uses CustomBlending with MaxEquation
-      default:
-        log.warning(Modules.RENDERER, `Unknown blending mode: ${mode}, using normal`);
-        return THREE.NormalBlending;
-    }
-  }
-
-  /**
    * Check if a blending mode is opaque (solid rendering)
    */
   private isOpaqueMode(mode: BlendingMode): boolean {
@@ -468,6 +440,21 @@ export class MaterialManager {
    */
   unregister(material: THREE.Material & CameraAwareMaterial): void {
     this.removeFromRegistries(material);
+  }
+
+  /**
+   * Detach a pooled material from the global camera-update set without
+   * evicting it from the LRU material cache. Used at clone sites in
+   * `NodeFactory`: the per-node clone takes over the role of "this
+   * geometry's material" while the pooled original stays in the cache
+   * for the next caller. Without this, cloning + registering the clone
+   * leaves the pooled material in `registeredMaterials`, so `disposeAll`
+   * disposes the pooled material and the next cache hit returns a
+   * disposed material.
+   */
+  detachFromGlobalUpdates(material: THREE.Material & CameraAwareMaterial): void {
+    this.registeredMaterials.delete(material);
+    this.ownedMaterials.delete(material);
   }
 
   /**
