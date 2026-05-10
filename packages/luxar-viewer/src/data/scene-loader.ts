@@ -723,12 +723,24 @@ export class SceneLoader {
   async updateView(viewState: Partial<ViewState>): Promise<void> {
     // SERIALIZATION: If an update is already in progress, queue this one and return
     if (this._updateInProgress) {
-      // Store the latest pending state (supersedes any previous pending state)
+      // Store the latest pending state (supersedes any previous pending state).
+      // G.3: log the supersede when a previous pending was already queued so
+      // rapid slider drags surface as "v5 superseded v4, in flight v3"
+      // rather than three identical "Update queued" lines.
+      const supersededPrevious = this._pendingViewState !== null;
       this._pendingViewState = viewState;
-      log.info(
-        Modules.SCENE_LOADER,
-        `Update queued (v${this._updateVersion + 1}) - another update in progress`
-      );
+      const newVersion = this._updateVersion + 1;
+      if (supersededPrevious) {
+        log.info(
+          Modules.SCENE_LOADER,
+          `Update queued (v${newVersion}) - supersedes previous pending; in-flight v${this._updateVersion}`
+        );
+      } else {
+        log.info(
+          Modules.SCENE_LOADER,
+          `Update queued (v${newVersion}) - in-flight v${this._updateVersion}`
+        );
+      }
       return;
     }
 
