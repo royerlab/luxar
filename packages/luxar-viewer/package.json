@@ -90,7 +90,8 @@
     "check:knip:ci": "knip --no-progress --no-config-hints --include files,dependencies",
     "format": "prettier --write src",
     "check": "pnpm run typecheck && pnpm run lint && pnpm test --run",
-    "check:ci": "pnpm run typecheck && pnpm run lint && pnpm run check:layers && pnpm run check:knip:ci && pnpm run test:coverage"
+    "check:ci": "pnpm run typecheck && pnpm run lint && pnpm run check:layers && pnpm run check:knip:ci && pnpm run test:coverage",
+    "ci:release": "pnpm run build:lib && pnpm run build:lib:check"
   },
   "dependencies": {
     "comlink": "^4.4.2",
