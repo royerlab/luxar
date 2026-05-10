@@ -524,4 +524,124 @@ describe('aggregateCacheMetrics', () => {
       expect(result.effectiveDemandHitRate).toBeUndefined();
     });
   });
+
+  describe('status badges (commits 7.2 + 7.4)', () => {
+    function makeProviderWithHealth(overrides: {
+      quotaWriteSkipped?: number;
+      writeFailures?: number;
+      corruptedEntries?: number;
+      metadataParseFailures?: number;
+      validationMode?: 'content-hash' | 'ttl' | 'none';
+      unvalidatedExternalDataset?: boolean;
+      enabled?: boolean;
+    }) {
+      return {
+        getStats: () => ({
+          l1: {
+            metadataSize: 0,
+            chunksSize: 0,
+            metadataCount: 0,
+            chunksCount: 0,
+            hits: 0,
+            misses: 0,
+            evictions: 0,
+          },
+          l2: {
+            size: 0,
+            count: 0,
+            reads: 0,
+            writes: 0,
+            misses: 0,
+            quotaWriteSkipped: overrides.quotaWriteSkipped ?? 0,
+            writeFailures: overrides.writeFailures ?? 0,
+            corruptedEntries: overrides.corruptedEntries ?? 0,
+            metadataParseFailures: overrides.metadataParseFailures ?? 0,
+          },
+          network: { bytesTransferred: 0, requestCount: 0, bandwidth: 0 },
+          health: {
+            validationMode: overrides.validationMode ?? 'content-hash',
+            lastValidatedAt: null,
+            unvalidatedExternalDataset: overrides.unvalidatedExternalDataset ?? false,
+          },
+        }),
+        clearL1: () => {},
+        clearL2: async () => {},
+        clearAll: async () => {},
+        isEnabled: () => overrides.enabled ?? true,
+      };
+    }
+
+    it("status includes 'cache-enabled' when telemetry is enabled", () => {
+      const result = aggregateCacheMetrics({
+        l0Provider: null,
+        cacheStatsProvider: makeProviderWithHealth({}),
+        loaders: new Map(),
+        metricsCache: new Map(),
+        rates: ZERO_RATES,
+      });
+      expect(result.status).toContain('cache-enabled');
+    });
+
+    it("status includes 'no-cache' when explicit telemetry says disabled-no-cache", () => {
+      const result = aggregateCacheMetrics({
+        l0Provider: null,
+        cacheStatsProvider: null,
+        loaders: new Map(),
+        metricsCache: new Map(),
+        rates: ZERO_RATES,
+        telemetryState: { kind: 'disabled-no-cache' },
+      });
+      expect(result.status).toContain('no-cache');
+    });
+
+    it("status includes 'quota-constrained' when L2.quotaWriteSkipped > 0", () => {
+      const result = aggregateCacheMetrics({
+        l0Provider: null,
+        cacheStatsProvider: makeProviderWithHealth({ quotaWriteSkipped: 3 }),
+        loaders: new Map(),
+        metricsCache: new Map(),
+        rates: ZERO_RATES,
+      });
+      expect(result.status).toContain('quota-constrained');
+    });
+
+    it("status includes 'cache-errors-detected' when any L2 error counter > 0", () => {
+      const result = aggregateCacheMetrics({
+        l0Provider: null,
+        cacheStatsProvider: makeProviderWithHealth({ writeFailures: 1 }),
+        loaders: new Map(),
+        metricsCache: new Map(),
+        rates: ZERO_RATES,
+      });
+      expect(result.status).toContain('cache-errors-detected');
+    });
+
+    it("status includes 'unvalidated-external-dataset' when health flag is set", () => {
+      const result = aggregateCacheMetrics({
+        l0Provider: null,
+        cacheStatsProvider: makeProviderWithHealth({
+          validationMode: 'none',
+          unvalidatedExternalDataset: true,
+        }),
+        loaders: new Map(),
+        metricsCache: new Map(),
+        rates: ZERO_RATES,
+      });
+      expect(result.status).toContain('unvalidated-external-dataset');
+      expect(result.health?.validationMode).toBe('none');
+    });
+
+    it("status includes 'provider-missing' when telemetry says enabled but no provider exists", () => {
+      const result = aggregateCacheMetrics({
+        l0Provider: null,
+        cacheStatsProvider: null,
+        loaders: new Map(),
+        metricsCache: new Map(),
+        rates: ZERO_RATES,
+        telemetryState: { kind: 'enabled' },
+      });
+      expect(result.status).toContain('cache-enabled');
+      expect(result.status).toContain('provider-missing');
+    });
+  });
 });

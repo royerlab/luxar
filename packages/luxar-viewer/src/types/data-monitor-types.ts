@@ -351,7 +351,40 @@ export interface CacheMetrics {
     requestCount: number;
     bandwidth: number;
   };
+  /**
+   * Status badges for the cache tab. Derived in the aggregator from
+   * telemetry state + provider presence + cache health. UI renders
+   * each as a small chip; consumers reading metrics programmatically
+   * (e.g. debug snapshots, E2E tests) can also assert on them.
+   */
+  status?: CacheStatusBadge[];
+  /**
+   * Cache health snapshot mirroring MultiLevelCachingStore.getStats().health.
+   * Optional because legacy providers may not surface it.
+   */
+  health?: {
+    validationMode?: 'content-hash' | 'ttl' | 'none';
+    lastValidatedAt?: number | null;
+    unvalidatedExternalDataset?: boolean;
+  };
 }
+
+/**
+ * UI status badges surfaced in the cache tab. Derived in
+ * `aggregateCacheMetrics`. Each badge corresponds to a different
+ * "operational state" the user might need to know about — not all are
+ * mutually exclusive (e.g. cache-enabled + unvalidated-external can
+ * coexist, surfaced as two badges).
+ */
+export type CacheStatusBadge =
+  | 'cache-enabled'
+  | 'no-cache'
+  | 'disabled-config'
+  | 'opfs-unavailable'
+  | 'quota-constrained'
+  | 'unvalidated-external-dataset'
+  | 'cache-errors-detected'
+  | 'provider-missing';
 
 /**
  * Performance timeline data point
@@ -470,6 +503,17 @@ export interface CacheStatsProvider {
       reads: number;
       writes: number;
       misses: number;
+      /**
+       * OPFS health counters added in Phase 3/6. Optional for back-compat
+       * with provider stubs that predate them.
+       */
+      oversizedWriteSkipped?: number;
+      quotaWriteSkipped?: number;
+      evictions?: number;
+      writeFailures?: number;
+      corruptedEntries?: number;
+      metadataParseFailures?: number;
+      orphanedFilesRemoved?: number;
     };
     network: {
       bytesTransferred: number;
@@ -486,6 +530,12 @@ export interface CacheStatsProvider {
       l1Hits: number;
       l2Hits: number;
       networkRequests: number;
+    };
+    /** Cache validation health (Phase 6.4). Optional for back-compat. */
+    health?: {
+      validationMode: 'content-hash' | 'ttl' | 'none';
+      lastValidatedAt: number | null;
+      unvalidatedExternalDataset: boolean;
     };
   };
   /** Clear L1 memory cache */

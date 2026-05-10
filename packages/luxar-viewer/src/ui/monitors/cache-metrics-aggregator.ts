@@ -19,6 +19,7 @@ import type {
   LoaderMetrics,
   CacheMetrics,
   CacheStatsProvider,
+  CacheStatusBadge,
   CacheTelemetryState,
 } from '../../types/data-monitor-types';
 
@@ -89,6 +90,14 @@ export function aggregateCacheMetrics(params: AggregateCacheMetricsParams): Cach
   let demand:
     | { l1Hits: number; l2Hits: number; networkRequests: number }
     | undefined;
+  let health: CacheMetrics['health'] | undefined;
+  // Counters that drive the cache-errors-detected and quota-constrained
+  // badges below. Sourced from the L2 stats payload but not surfaced on
+  // CacheMetrics.l2 itself (which stays a stable consumer-facing shape).
+  let l2QuotaSkipped = 0;
+  let l2WriteFailures = 0;
+  let l2Corrupted = 0;
+  let l2MetadataParseFailures = 0;
 
   // Derive telemetry state. Caller-supplied wins; otherwise infer
   // from provider presence. Default-on-no-provider is `not-wired`,
@@ -131,6 +140,13 @@ export function aggregateCacheMetrics(params: AggregateCacheMetricsParams): Cach
       misses: stats.l2.misses,
     };
 
+    // Pull badge-relevant L2 health counters (optional — older
+    // providers omit them).
+    l2QuotaSkipped = stats.l2.quotaWriteSkipped ?? 0;
+    l2WriteFailures = stats.l2.writeFailures ?? 0;
+    l2Corrupted = stats.l2.corruptedEntries ?? 0;
+    l2MetadataParseFailures = stats.l2.metadataParseFailures ?? 0;
+
     networkStats = {
       bytesTransferred: stats.network.bytesTransferred,
       requestCount: stats.network.requestCount,
@@ -141,6 +157,16 @@ export function aggregateCacheMetrics(params: AggregateCacheMetricsParams): Cach
     // demand-counter feature simply omit the field).
     if (stats.demand) {
       demand = stats.demand;
+    }
+
+    // Cache validation health (Phase 6.4). Drives the
+    // unvalidated-external-dataset badge.
+    if (stats.health) {
+      health = {
+        validationMode: stats.health.validationMode,
+        lastValidatedAt: stats.health.lastValidatedAt,
+        unvalidatedExternalDataset: stats.health.unvalidatedExternalDataset,
+      };
     }
 
     totalCacheMemory = (l0Stats?.size ?? 0) + l1Stats.size + l2Stats.size;
@@ -199,6 +225,45 @@ export function aggregateCacheMetrics(params: AggregateCacheMetricsParams): Cach
     effectiveDemandHitRate = l0Stats.hitRate;
   }
 
+  // Cache-status badges. Phase 7 surfaces these in the UI; consumers
+  // reading metrics programmatically (debug snapshots, E2E tests) can
+  // also assert on them.
+  const status: CacheStatusBadge[] = [];
+  switch (telemetryState.kind) {
+    case 'enabled':
+      status.push('cache-enabled');
+      break;
+    case 'disabled-no-cache':
+      status.push('no-cache');
+      break;
+    case 'disabled-config':
+      status.push('disabled-config');
+      break;
+    case 'not-wired':
+      // Provider-health diagnostic (Phase 7.4): when telemetry says
+      // enabled-but-not-wired, surface as provider-missing so the cache
+      // tab can show a warning. Plain 'not-wired' (no provider yet
+      // because scene transition is mid-flight) is a different signal —
+      // we don't add a badge for it here.
+      break;
+  }
+  // Provider-health: telemetry classifier said enabled but providers
+  // are absent → contradiction; flag as provider-missing.
+  if (
+    telemetryState.kind === 'enabled' &&
+    !cacheStatsProvider &&
+    !l0Provider
+  ) {
+    status.push('provider-missing');
+  }
+  if (l2QuotaSkipped > 0) status.push('quota-constrained');
+  if (l2WriteFailures > 0 || l2Corrupted > 0 || l2MetadataParseFailures > 0) {
+    status.push('cache-errors-detected');
+  }
+  if (health?.unvalidatedExternalDataset) {
+    status.push('unvalidated-external-dataset');
+  }
+
   return {
     totalCacheMemory,
     memoryLimit,
@@ -229,5 +294,7 @@ export function aggregateCacheMetrics(params: AggregateCacheMetricsParams): Cach
     network: networkStats,
     enabled: cacheEnabled,
     telemetryState,
+    status,
+    health,
   };
 }
