@@ -58,6 +58,13 @@ export class OPFSStore {
   // Serialize concurrent writes to the same key to prevent race conditions
   private pendingWrites = new Map<string, Promise<void>>();
 
+  // Generation token: every clear() bumps this. doSet() captures the
+  // generation when it begins and discards its index/metadata mutation
+  // if the generation has advanced — preventing a slow write that
+  // started before clear() from repopulating the post-clear index.
+  // Plain bookkeeping for stale-write detection; not a public API.
+  private generation = 0;
+
   constructor(datasetId: string, baseUrl: string, maxSize: number) {
     this.datasetId = datasetId;
     this.baseUrl = baseUrl;
@@ -139,6 +146,12 @@ export class OPFSStore {
   private async doSet(key: string, data: Uint8Array): Promise<void> {
     if (!this.opfsRoot) return;
 
+    // Capture the generation at entry. If clear() (or dispose()) bumps
+    // the generation while the write is pending, the post-write index
+    // mutation must be skipped — otherwise a slow set() that began
+    // before clear() will repopulate the just-cleared cache.
+    const startGeneration = this.generation;
+
     const size = data.byteLength;
 
     // Check quota before writing
@@ -173,6 +186,24 @@ export class OPFSStore {
         ) as ArrayBuffer;
         await writable.write(bytes);
         await writable.close();
+
+        // Stale-write check: if clear()/dispose() ran while we were
+        // writing, the post-write index update must be skipped. Best-
+        // effort delete the file we just wrote so the directory matches
+        // the (now-empty) index.
+        if (this.generation !== startGeneration) {
+          try {
+            const bucket = this.getBucket(key);
+            const bucketHandle = await this.getBucketHandle(bucket, false);
+            if (bucketHandle) {
+              await bucketHandle.removeEntry(this.keyToFileName(key));
+            }
+          } catch {
+            // Best-effort; orphaned file is harmless and will be reclaimed
+            // by the next clear() / orphan cleanup pass.
+          }
+          return;
+        }
 
         // Update index — delete+re-insert to move to end (MRU position)
         const existingEntry = this.index.get(key);
@@ -241,6 +272,18 @@ export class OPFSStore {
    * (e.g., quick-succession page refreshes with fire-and-forget L2 writes).
    */
   async clear(): Promise<void> {
+    // Bump generation FIRST so any in-flight doSet() that completes
+    // after this point sees the mismatch and skips its index update.
+    this.generation++;
+
+    // Drain pending same-key writes. Each set() pushes a promise into
+    // pendingWrites; awaiting them lets in-flight writes finish their
+    // file I/O — they will detect the generation mismatch and skip
+    // mutating the index.
+    if (this.pendingWrites.size > 0) {
+      await Promise.allSettled([...this.pendingWrites.values()]);
+    }
+
     // Clear all in-memory state first — ensures no stale handles are used
     // even if the filesystem operations below fail
     this.index = new Map();

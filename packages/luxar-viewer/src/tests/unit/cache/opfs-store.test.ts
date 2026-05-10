@@ -252,6 +252,87 @@ describe('OPFSStore', () => {
       expect(stats.count).toBe(0);
       expect(store.getContentHash()).toBeNull();
     });
+
+    it('slow set + concurrent clear leaves index empty after both settle', async () => {
+      // Wrap navigator.storage to gate the writable.write() so we can
+      // hold a single set() in flight while clear() runs. The slow set
+      // must NOT repopulate the index after the clear completes.
+      let releaseWrite: () => void = () => {};
+      const writeBlocker = new Promise<void>((resolve) => {
+        releaseWrite = resolve;
+      });
+      const baseDir = mockFS.mockDirHandle;
+      const slowDir: any = {
+        ...baseDir,
+        async getFileHandle(name: string, opts?: { create?: boolean }) {
+          const inner = await baseDir.getFileHandle(name, opts);
+          return {
+            ...inner,
+            async createWritable() {
+              const w = await inner.createWritable();
+              return {
+                ...w,
+                async write(data: ArrayBuffer | string) {
+                  await writeBlocker;
+                  return w.write(data);
+                },
+              };
+            },
+          };
+        },
+      };
+      vi.stubGlobal('navigator', {
+        storage: {
+          async getDirectory() {
+            return {
+              async getDirectoryHandle() {
+                return slowDir;
+              },
+              async removeEntry() {
+                mockFS.files.clear();
+                mockFS.metaFiles.clear();
+              },
+            };
+          },
+          async estimate() {
+            return { quota: 10e9, usage: 1e9 };
+          },
+        },
+      });
+
+      const slowStore = new OPFSStore('slow-id', 'https://example.com', 100 * 1024 * 1024);
+      await slowStore.init();
+
+      // Kick off a slow set; do not await yet — its write() is blocked.
+      const setPromise = slowStore.set('hung-key', new Uint8Array(500));
+
+      // Yield once so the set actually enters doSet and reaches the blocked write.
+      await new Promise((r) => setTimeout(r, 0));
+
+      // Now clear: bumps the generation and drains pending writes. We
+      // unblock the write *during* clear so the in-flight set finishes
+      // its file I/O while clear is awaiting Promise.allSettled.
+      const clearPromise = slowStore.clear();
+      releaseWrite();
+      await Promise.all([setPromise, clearPromise]);
+
+      // The slow set must have detected the generation bump and
+      // skipped its index update.
+      const stats = slowStore.getStats();
+      expect(stats.count).toBe(0);
+      expect(stats.size).toBe(0);
+    });
+
+    it('concurrent clear() calls are idempotent', async () => {
+      await store.set('key1', new Uint8Array(1000));
+      await store.set('key2', new Uint8Array(2000));
+
+      await Promise.all([store.clear(), store.clear()]);
+
+      const stats = store.getStats();
+      expect(stats.size).toBe(0);
+      expect(stats.count).toBe(0);
+    });
   });
 
   describe('LRU Eviction', () => {
