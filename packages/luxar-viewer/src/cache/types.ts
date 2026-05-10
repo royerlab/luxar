@@ -62,4 +62,14 @@ export interface OPFSMetadata {
   orderCounter: number;
   /** Content hash of root .zattrs for cache invalidation */
   contentHash: string | null;
+  /**
+   * Filename-encoding version. Bumped when keyToFileName() output
+   * changes so a loadMetadata() with a stale version invalidates the
+   * directory rather than reading old-format files. Absent (undefined)
+   * means version 1 (legacy `btoa(key)` Latin-1 only).
+   */
+  encodingVersion?: number;
 }
+
+/** Current OPFS filename-encoding version. Bumped only when keyToFileName changes. */
+export const OPFS_ENCODING_VERSION = 2;

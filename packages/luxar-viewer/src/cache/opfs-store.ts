@@ -1,4 +1,5 @@
 import type { OPFSMetadata } from './types';
+import { OPFS_ENCODING_VERSION } from './types';
 import { log, Modules } from '../utils/log';
 
 type IterableFileSystemDirectoryHandle = FileSystemDirectoryHandle & {
@@ -559,13 +560,28 @@ export class OPFSStore {
   }
 
   /**
-   * Convert cache key to OPFS-safe filename using base64 encoding.
+   * Convert cache key to OPFS-safe filename via UTF-8 → base64url.
+   *
+   * The previous implementation used `btoa(key)` which only handles
+   * Latin-1 (any code point above 0xFF throws). zarr keys can include
+   * non-ASCII group/array names, so we encode to UTF-8 bytes first then
+   * base64url to keep the filename filesystem-safe without manual
+   * `+`/`/`/`=` substitution.
+   *
+   * Bumping {@link OPFS_ENCODING_VERSION} invalidates any directory
+   * persisted with a different output (handled in loadMetadata).
+   *
    * Example: "points/positions/0.0.0" → "cG9pbnRzL3Bvc2l0aW9ucy8wLjAuMA"
    */
   private keyToFileName(key: string): string {
-    const base64 = btoa(key);
-    // Replace base64 special chars with filesystem-safe alternatives
-    return base64.replace(/\//g, '_').replace(/=/g, '-').replace(/\+/g, '.');
+    const bytes = new TextEncoder().encode(key);
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    const base64 = btoa(binary);
+    // base64url: replace + with -, / with _, drop = padding (filesystem-safe).
+    return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
   }
 
   /**
@@ -610,6 +626,23 @@ export class OPFSStore {
       const file = await metaHandle.getFile();
       const meta: OPFSMetadata = JSON.parse(await file.text());
 
+      // Encoding-version mismatch ⇒ stale directory: previous cache
+      // entries used a different keyToFileName encoding and won't be
+      // findable. Treat as cold cache (no migration today; the cache
+      // is best-effort and rebuilds itself in seconds).
+      const persistedVersion = meta.encodingVersion ?? 1;
+      if (persistedVersion !== OPFS_ENCODING_VERSION) {
+        log.info(
+          Modules.CACHE,
+          `OPFSStore encoding version ${persistedVersion} != ${OPFS_ENCODING_VERSION}, starting fresh`
+        );
+        this.index = new Map();
+        this.totalSize = 0;
+        this.orderCounter = 0;
+        this.contentHash = null;
+        return;
+      }
+
       // Reconstruct Map sorted by ascending order so Map insertion order = LRU order
       const entries = (meta.entries || []).slice();
       entries.sort((a, b) => a[1].order - b[1].order);
@@ -640,6 +673,7 @@ export class OPFSStore {
         totalSize: this.totalSize,
         orderCounter: this.orderCounter,
         contentHash: this.contentHash,
+        encodingVersion: OPFS_ENCODING_VERSION,
       };
       await writable.write(JSON.stringify(metadata));
       await writable.close();

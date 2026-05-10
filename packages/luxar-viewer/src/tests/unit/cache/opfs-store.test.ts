@@ -105,7 +105,9 @@ describe('OPFSStore', () => {
     });
 
     it('should load existing metadata on init', async () => {
-      // Pre-populate metadata
+      // Pre-populate metadata. encodingVersion must match the current
+      // OPFS_ENCODING_VERSION; otherwise the directory is intentionally
+      // invalidated (see "encoding-version mismatch" test below).
       mockFS.metaFiles.set(
         '_cache_meta.json',
         JSON.stringify({
@@ -114,6 +116,7 @@ describe('OPFSStore', () => {
           totalSize: 1000,
           orderCounter: 2,
           contentHash: 'abc123',
+          encodingVersion: 2,
         })
       );
 
@@ -602,6 +605,51 @@ describe('OPFSStore', () => {
       await store.dispose();
       // A second dispose() must not throw and must not double-bump generation.
       await expect(store.dispose()).resolves.toBeUndefined();
+    });
+
+    it('unicode keys roundtrip through set/get/delete (commit 4.2)', async () => {
+      // Pre-commit-4.2 keyToFileName used btoa(key) which throws on any
+      // code point above 0xFF. Now we encode UTF-8 → base64url so keys
+      // with arbitrary unicode work end-to-end.
+      const unicodeKey = 'group/データ/0.0';
+      await store.set(unicodeKey, new Uint8Array([1, 2, 3]));
+      const data = await store.get(unicodeKey);
+      expect(data).toEqual(new Uint8Array([1, 2, 3]));
+      await store.delete(unicodeKey);
+      const after = await store.get(unicodeKey);
+      expect(after).toBeUndefined();
+    });
+
+    it('keys with /, =, + are filesystem-safe (commit 4.2)', async () => {
+      // base64url avoids those characters entirely, so even keys with
+      // them in their UTF-8 encoding survive.
+      const key = 'a/b/=+++';
+      await store.set(key, new Uint8Array([9, 8, 7]));
+      const data = await store.get(key);
+      expect(data).toEqual(new Uint8Array([9, 8, 7]));
+    });
+
+    it('encoding-version mismatch invalidates the directory cleanly (commit 4.2)', async () => {
+      // Persist a metadata file claiming version 1 (legacy btoa); the
+      // store on the next init() must treat it as a cold cache and not
+      // restore the old entries.
+      const stale = JSON.stringify({
+        baseUrl: 'https://example.com/data.zarr',
+        entries: [['legacy-key', { size: 100, order: 0 }]],
+        totalSize: 100,
+        orderCounter: 1,
+        contentHash: 'old-hash',
+        encodingVersion: 1,
+      });
+      mockFS.metaFiles.set('_cache_meta.json', stale);
+
+      const fresh = new OPFSStore('fresh-id', 'https://example.com/data.zarr', 1024 * 1024);
+      await fresh.init();
+
+      const stats = fresh.getStats();
+      expect(stats.count).toBe(0);
+      expect(stats.size).toBe(0);
+      expect(fresh.getContentHash()).toBeNull();
     });
   });
 
