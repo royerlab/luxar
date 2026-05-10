@@ -51,6 +51,19 @@ export interface ExtendedCacheStats {
  * Metadata structure persisted to OPFS for L2 cache management.
  * Stored in _cache_meta.json within each dataset's OPFS directory.
  */
+/**
+ * How the cached dataset is validated against the remote source.
+ *
+ * - `content-hash`: dataset has Luxar's `content_hash` attr; mismatch
+ *   triggers a full clear. Strongest guarantee.
+ * - `ttl`: external dataset without `content_hash`; we trust the
+ *   cache for `cache.externalDatasetTtlMs` and revalidate after.
+ * - `none`: external dataset, no TTL configured — cache may be stale
+ *   indefinitely until manually cleared. Surfaced in the UI as a
+ *   warning badge so the user knows what they're getting.
+ */
+export type CacheValidationMode = 'content-hash' | 'ttl' | 'none';
+
 export interface OPFSMetadata {
   /** Original dataset URL (for listDatasets() debugging) */
   baseUrl: string;
@@ -69,6 +82,14 @@ export interface OPFSMetadata {
    * means version 1 (legacy `btoa(key)` Latin-1 only).
    */
   encodingVersion?: number;
+  /**
+   * Validation mode used at last init. Persisted so a session that
+   * loaded with TTL semantics can re-evaluate the TTL window on the
+   * next visit; persisted alongside `lastValidatedAt`.
+   */
+  validationMode?: CacheValidationMode;
+  /** Wall-clock millis at last successful validation. */
+  lastValidatedAt?: number;
 }
 
 /** Current OPFS filename-encoding version. Bumped only when keyToFileName changes. */

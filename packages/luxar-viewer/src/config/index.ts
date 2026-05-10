@@ -522,6 +522,7 @@ export const config: AppConfig = {
     l1MaxSizeMB: 100,
     l2MaxSizeMB: 2048,
     opfsOperationTimeoutMs: 10_000,
+    externalDatasetTtlMs: null,
     debug: false,
   },
 

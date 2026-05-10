@@ -613,6 +613,13 @@ export interface CacheConfig {
    * Default: 10_000 ms.
    */
   opfsOperationTimeoutMs: number;
+  /**
+   * TTL in ms for external datasets that lack Luxar's `content_hash`.
+   * When set, a cached external dataset older than this is invalidated
+   * on next init. `null` (default) means no TTL — the cache may be
+   * stale indefinitely until manually cleared.
+   */
+  externalDatasetTtlMs: number | null;
   /** Enable cache debug logging (default: false) */
   debug: boolean;
 }

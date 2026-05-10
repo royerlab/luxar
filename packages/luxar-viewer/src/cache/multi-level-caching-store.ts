@@ -592,16 +592,29 @@ export class MultiLevelCachingStore implements AsyncReadable {
       // Fetch current content_hash directly from server (bypass cache)
       const remoteHash = await this.getRemoteContentHash(signal);
 
-      // No hash → skip validation (external dataset handling)
-      if (!remoteHash) {
-        this.log('No content_hash, skipping validation');
+      if (signal.aborted) {
+        this.log('Validation aborted (caller disposed)');
         return;
       }
 
-      // If dispose() aborted between the fetch and the L2 write, bail out
-      // before touching the (possibly already-disposed) l2Store.
-      if (signal.aborted) {
-        this.log('Validation aborted (caller disposed)');
+      if (!remoteHash) {
+        // External dataset path: no `content_hash` attr available.
+        // Apply optional TTL — if the cache is older than
+        // `cache.externalDatasetTtlMs` we invalidate to avoid serving
+        // stale data indefinitely. Tracked as `validationMode: ttl`
+        // (or `none` when no TTL is configured).
+        const ttlMs = config.cache.externalDatasetTtlMs;
+        const state = this.l2Store?.getValidationState();
+        if (ttlMs != null && state?.lastValidatedAt != null) {
+          const age = Date.now() - state.lastValidatedAt;
+          if (age > ttlMs) {
+            this.log(`External dataset TTL expired (${age}ms > ${ttlMs}ms), clearing cache`);
+            this.clearL1();
+            await this.clearL2();
+            this.invalidationCallbacks.forEach((cb) => cb());
+          }
+        }
+        this.l2Store?.setValidationMode(ttlMs != null ? 'ttl' : 'none');
         return;
       }
 
@@ -623,6 +636,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
       }
 
       this.l2Store?.setContentHash(remoteHash);
+      this.l2Store?.setValidationMode('content-hash');
     } catch {
       // Offline or error - use cached data
       this.log('Cannot validate (offline?), using cached data');

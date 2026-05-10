@@ -1,4 +1,4 @@
-import type { OPFSMetadata } from './types';
+import type { OPFSMetadata, CacheValidationMode } from './types';
 import { OPFS_ENCODING_VERSION } from './types';
 import { log, Modules } from '../utils/log';
 import { config } from '../config';
@@ -62,6 +62,11 @@ export class OPFSStore {
   private datasetId: string;
   private baseUrl: string;
   private contentHash: string | null = null;
+  // External-dataset validation mode + last-validated timestamp.
+  // Persisted to OPFSMetadata so the next session can apply a TTL
+  // window across page loads.
+  private validationMode: CacheValidationMode = 'none';
+  private lastValidatedAt: number | null = null;
 
   // Read/write tracking for monitoring. `readCount` is the L2 hit
   // counter — only incremented when get() returns a value. `missCount`
@@ -390,6 +395,8 @@ export class OPFSStore {
     this.totalSize = 0;
     this.orderCounter = 0;
     this.contentHash = null;
+    this.validationMode = 'none';
+    this.lastValidatedAt = null;
     this.readCount = 0;
     this.writeCount = 0;
     this.missCount = 0;
@@ -520,6 +527,25 @@ export class OPFSStore {
    */
   getContentHash(): string | null {
     return this.contentHash;
+  }
+
+  /**
+   * Record the validation mode used for this dataset. Persisted to
+   * `_cache_meta.json` so a follow-up session can re-evaluate (e.g.
+   * a TTL window).
+   */
+  setValidationMode(mode: CacheValidationMode): void {
+    this.validationMode = mode;
+    this.lastValidatedAt = Date.now();
+    this.scheduleMetadataSave();
+  }
+
+  /**
+   * Read the current validation mode and last-validated timestamp.
+   * Returned together so callers can apply a TTL check atomically.
+   */
+  getValidationState(): { mode: CacheValidationMode; lastValidatedAt: number | null } {
+    return { mode: this.validationMode, lastValidatedAt: this.lastValidatedAt };
   }
 
   /**
@@ -715,6 +741,8 @@ export class OPFSStore {
       this.totalSize = meta.totalSize || 0;
       this.orderCounter = meta.orderCounter || 0;
       this.contentHash = meta.contentHash || null;
+      this.validationMode = meta.validationMode ?? 'none';
+      this.lastValidatedAt = meta.lastValidatedAt ?? null;
     } catch (error) {
       // Two cases reach here:
       //  - getFileHandle threw "not found" → no metadata yet, cold start
@@ -791,6 +819,8 @@ export class OPFSStore {
         orderCounter: this.orderCounter,
         contentHash: this.contentHash,
         encodingVersion: OPFS_ENCODING_VERSION,
+        validationMode: this.validationMode,
+        lastValidatedAt: this.lastValidatedAt ?? undefined,
       };
       await writable.write(JSON.stringify(metadata));
       await writable.close();

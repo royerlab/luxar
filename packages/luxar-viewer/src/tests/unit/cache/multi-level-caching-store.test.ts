@@ -307,6 +307,105 @@ describe('MultiLevelCachingStore', () => {
       expect(stats.l2.size).toBeLessThanOrEqual(0);
     });
 
+    it('external dataset without content_hash records validationMode=none by default (commit 6.3)', async () => {
+      await store.init();
+      const setValidationModeSpy = vi.fn();
+      (store as any).l2Store = {
+        async clear() {},
+        getContentHash: () => null,
+        setContentHash: vi.fn(),
+        setValidationMode: setValidationModeSpy,
+        getValidationState: () => ({ mode: 'none', lastValidatedAt: null }),
+        async dispose() {},
+      };
+
+      // Stub fetch so getRemoteContentHash returns null (no content_hash attr).
+      global.fetch = vi.fn(async () => ({
+        ok: true,
+        async arrayBuffer() {
+          return new TextEncoder().encode(JSON.stringify({})).buffer;
+        },
+      })) as unknown as typeof fetch;
+
+      const ac = new AbortController();
+      await (store as any).doValidateCache(ac.signal);
+
+      expect(setValidationModeSpy).toHaveBeenCalledWith('none');
+    });
+
+    it('external dataset records validationMode=ttl when TTL is configured (commit 6.3)', async () => {
+      const realConfig = (await import('../../../config')).config;
+      const original = realConfig.cache.externalDatasetTtlMs;
+      realConfig.cache.externalDatasetTtlMs = 60_000; // 1 minute
+      try {
+        await store.init();
+        const setValidationModeSpy = vi.fn();
+        const clearSpy = vi.fn();
+        (store as any).l2Store = {
+          clear: clearSpy,
+          getContentHash: () => null,
+          setContentHash: vi.fn(),
+          setValidationMode: setValidationModeSpy,
+          // Within TTL window: no clear should fire.
+          getValidationState: () => ({ mode: 'ttl', lastValidatedAt: Date.now() - 1000 }),
+          async dispose() {},
+        };
+
+        global.fetch = vi.fn(async () => ({
+          ok: true,
+          async arrayBuffer() {
+            return new TextEncoder().encode(JSON.stringify({})).buffer;
+          },
+        })) as unknown as typeof fetch;
+
+        const ac = new AbortController();
+        await (store as any).doValidateCache(ac.signal);
+
+        expect(setValidationModeSpy).toHaveBeenCalledWith('ttl');
+        expect(clearSpy).not.toHaveBeenCalled();
+      } finally {
+        realConfig.cache.externalDatasetTtlMs = original;
+      }
+    });
+
+    it('external dataset TTL expiry clears the cache (commit 6.3)', async () => {
+      const realConfig = (await import('../../../config')).config;
+      const original = realConfig.cache.externalDatasetTtlMs;
+      realConfig.cache.externalDatasetTtlMs = 1_000; // 1 second TTL
+      try {
+        await store.init();
+        const clearSpy = vi.fn();
+        (store as any).l2Store = {
+          clear: clearSpy,
+          getContentHash: () => null,
+          setContentHash: vi.fn(),
+          setValidationMode: vi.fn(),
+          // Validated 5 minutes ago — well past TTL.
+          getValidationState: () => ({
+            mode: 'ttl',
+            lastValidatedAt: Date.now() - 5 * 60 * 1000,
+          }),
+          async dispose() {},
+        };
+        const clearL1Spy = vi.spyOn(store, 'clearL1');
+
+        global.fetch = vi.fn(async () => ({
+          ok: true,
+          async arrayBuffer() {
+            return new TextEncoder().encode(JSON.stringify({})).buffer;
+          },
+        })) as unknown as typeof fetch;
+
+        const ac = new AbortController();
+        await (store as any).doValidateCache(ac.signal);
+
+        expect(clearL1Spy).toHaveBeenCalled();
+        expect(clearSpy).toHaveBeenCalled();
+      } finally {
+        realConfig.cache.externalDatasetTtlMs = original;
+      }
+    });
+
     it('content-hash mismatch defensively clears L1 (commit 4.1)', async () => {
       // doValidateCache is private but unit-testable via reflection.
       // Stubbing l2Store and bypassing the init()-creates-new-l2Store
