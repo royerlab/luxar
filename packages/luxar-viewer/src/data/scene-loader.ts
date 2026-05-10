@@ -1997,17 +1997,31 @@ export class SceneLoader {
   }
 
   /**
-   * Dispose of all resources
+   * Dispose of all resources.
+   *
+   * Async because the caching store dispose path drains the prefetcher,
+   * cancels in-flight validation, and flushes OPFS metadata — work that
+   * a dataset switch should wait for before constructing the next
+   * loader. Existing sync callers (the `beforeunload` path,
+   * `SceneLoaderManager.destroyLoader/destroyAll`) still work; the
+   * returned promise just unwinds in the background. Callers that need
+   * deterministic teardown should await this method or use
+   * `SceneLoaderManager.destroyLoaderAsync` (added in a follow-up
+   * commit).
    */
-  dispose(): void {
+  async dispose(): Promise<void> {
     // Dispose all geometry loaders via registry
     this.registry.disposeAll();
 
-    // Dispose caching store (flushes L2 metadata, clears L1)
+    // Dispose caching store (flushes L2 metadata, clears L1).
+    // Awaited so a dataset switch sees the previous L2 fully drained
+    // before the next caching store is constructed.
     if (this.cachingStore) {
-      this.cachingStore.dispose().catch((error) => {
+      try {
+        await this.cachingStore.dispose();
+      } catch (error) {
         log.warning(Modules.SCENE_LOADER, 'Caching store disposal failed', error);
-      });
+      }
       this.cachingStore = null;
     }
 

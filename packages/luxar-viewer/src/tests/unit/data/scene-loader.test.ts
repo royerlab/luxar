@@ -298,7 +298,7 @@ describe('SceneLoader', () => {
     it('should dispose all resources properly', async () => {
       await sceneLoader.loadScene('http://localhost:8000/test.zarr');
 
-      sceneLoader.dispose();
+      await sceneLoader.dispose();
 
       // Verify cleanup
       expect((sceneLoader as any).loaders.size).toBe(0);
