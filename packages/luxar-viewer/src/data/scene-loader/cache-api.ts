@@ -29,26 +29,53 @@ import type { MultiLevelCachingStore, DecompressedChunkCache } from '../../cache
  * Snapshot of all three cache levels in the form historically exposed
  * by `__luxarDebug.cache.getStats()`. Levels that are absent return
  * `null` for that field; the caller can render them as "disabled".
+ *
+ * `network`, `demand`, `prefetch`, and `health` are extensions added in
+ * Phase 7 — they're optional on the type so existing callers keying off
+ * `{l0, l1, l2}` keep working without changes.
  */
 export interface CacheStatsSnapshot {
   l0: ReturnType<DecompressedChunkCache['getStats']> | null;
   l1: ReturnType<MultiLevelCachingStore['getStats']>['l1'] | null;
   l2: ReturnType<MultiLevelCachingStore['getStats']>['l2'] | null;
+  network?: ReturnType<MultiLevelCachingStore['getStats']>['network'] | null;
+  demand?: ReturnType<MultiLevelCachingStore['getStats']>['demand'] | null;
+  prefetch?: { queued: number; inFlight: number; enabled: boolean } | null;
+  health?: ReturnType<MultiLevelCachingStore['getStats']>['health'] | null;
 }
 
 /**
- * Build the `{ l0, l1, l2 }` snapshot for the debug interface and the
- * data-monitor "Cache" tab.
+ * Build the cache snapshot for the debug interface and the data-monitor
+ * "Cache" tab. Includes per-tier stats plus the Phase 7 additions
+ * (network, demand, prefetch, health) so a single `getStats()` call
+ * answers every diagnostic question without a follow-up roundtrip.
  */
 export function getCacheStats(
   l0Cache: DecompressedChunkCache | null,
   cachingStore: MultiLevelCachingStore | null
 ): CacheStatsSnapshot {
-  const l1l2 = cachingStore?.getStats();
+  const stats = cachingStore?.getStats();
+  // Defensive: cache-api is sometimes called with a stub cachingStore
+  // in tests that doesn't implement getPrefetcher. Treat missing method
+  // as "no prefetcher attached".
+  const prefetcher =
+    cachingStore && typeof cachingStore.getPrefetcher === 'function'
+      ? cachingStore.getPrefetcher()
+      : null;
   return {
     l0: l0Cache?.getStats() ?? null,
-    l1: l1l2?.l1 ?? null,
-    l2: l1l2?.l2 ?? null,
+    l1: stats?.l1 ?? null,
+    l2: stats?.l2 ?? null,
+    network: stats?.network ?? null,
+    demand: stats?.demand ?? null,
+    prefetch: prefetcher
+      ? {
+          queued: prefetcher.getStats().queued,
+          inFlight: prefetcher.getStats().inFlight,
+          enabled: prefetcher.getStats().enabled,
+        }
+      : null,
+    health: stats?.health ?? null,
   };
 }
 

@@ -52,26 +52,55 @@ function makeStoreStub() {
 
 describe('getCacheStats', () => {
   it('returns nulls when both caches are absent', () => {
-    expect(getCacheStats(null, null)).toEqual({ l0: null, l1: null, l2: null });
+    expect(getCacheStats(null, null)).toMatchObject({ l0: null, l1: null, l2: null });
   });
 
   it('reports L0 only when only the L0 cache is set', () => {
     const { stub, stats } = makeL0Stub();
-    expect(getCacheStats(stub, null)).toEqual({ l0: stats, l1: null, l2: null });
+    expect(getCacheStats(stub, null)).toMatchObject({ l0: stats, l1: null, l2: null });
   });
 
   it('reports L1 + L2 only when only the caching store is set', () => {
     const { stub, l1Stats, l2Stats } = makeStoreStub();
-    expect(getCacheStats(null, stub)).toEqual({ l0: null, l1: l1Stats, l2: l2Stats });
+    expect(getCacheStats(null, stub)).toMatchObject({ l0: null, l1: l1Stats, l2: l2Stats });
   });
 
   it('reports all three levels when all are present', () => {
     const l0 = makeL0Stub();
     const store = makeStoreStub();
-    expect(getCacheStats(l0.stub, store.stub)).toEqual({
+    expect(getCacheStats(l0.stub, store.stub)).toMatchObject({
       l0: l0.stats,
       l1: store.l1Stats,
       l2: store.l2Stats,
+    });
+  });
+
+  it('extends the snapshot with network/demand/prefetch/health fields (commit 7.1)', () => {
+    // Stub a caching store that exposes everything the snapshot
+    // surfaces — including the prefetcher and the new health field.
+    const stubGetStats = vi.fn(() => ({
+      l1: { metadataSize: 0, chunksSize: 0, metadataCount: 0, chunksCount: 0, hits: 0, misses: 0, evictions: 0 },
+      l2: { size: 0, count: 0, reads: 0, writes: 0, misses: 0 },
+      network: { bytesTransferred: 1234, requestCount: 5, bandwidth: 100 },
+      demand: { l1Hits: 1, l2Hits: 2, networkRequests: 3 },
+      health: { validationMode: 'content-hash' as const, lastValidatedAt: 99, unvalidatedExternalDataset: false },
+    }));
+    const stubPrefetcher = {
+      getStats: () => ({ queued: 4, inFlight: 1, enabled: true }),
+    };
+    const stub = {
+      getStats: stubGetStats,
+      getPrefetcher: () => stubPrefetcher,
+    } as unknown as MultiLevelCachingStore;
+
+    const snapshot = getCacheStats(null, stub);
+    expect(snapshot.network).toEqual({ bytesTransferred: 1234, requestCount: 5, bandwidth: 100 });
+    expect(snapshot.demand).toEqual({ l1Hits: 1, l2Hits: 2, networkRequests: 3 });
+    expect(snapshot.prefetch).toEqual({ queued: 4, inFlight: 1, enabled: true });
+    expect(snapshot.health).toEqual({
+      validationMode: 'content-hash',
+      lastValidatedAt: 99,
+      unvalidatedExternalDataset: false,
     });
   });
 });

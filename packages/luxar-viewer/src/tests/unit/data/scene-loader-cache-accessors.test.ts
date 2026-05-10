@@ -19,7 +19,10 @@ describe('SceneLoader cache accessors', () => {
     });
 
     it('returns null for every cache level in getCacheStats()', () => {
-      expect(loader.getCacheStats()).toEqual({ l0: null, l1: null, l2: null });
+      const stats = loader.getCacheStats();
+      expect(stats.l0).toBeNull();
+      expect(stats.l1).toBeNull();
+      expect(stats.l2).toBeNull();
     });
 
     it('returns an empty array from listCachedDatasets()', async () => {
