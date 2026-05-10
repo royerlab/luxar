@@ -681,6 +681,52 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
   }
 
   /**
+   * Warm the cache for the given viewState without producing geometry.
+   *
+   * Mirrors `GSplatsSpatialIndexLoader.prefetchChunks` so the dimension
+   * animation controller can fire `prefetchChunks(nextSlice)` while the
+   * current frame renders, hiding network latency. The returned typed
+   * arrays are discarded — only the L0 + L1 + L2 caches and the prefetch
+   * queue's `seen`/parsed-cache get populated as a side-effect.
+   */
+  async prefetchChunks(viewState: ViewState): Promise<void> {
+    await this._onceInit.ensure(() => this.initialize());
+
+    if (!this.arrays.positions) return;
+
+    let ranges: PointRange[];
+    try {
+      ranges = await this.queryVisiblePointRanges(viewState);
+    } catch {
+      // Spatial query failed (e.g. malformed viewState during animation
+      // edge case). Skip the prefetch silently — production loadPoints
+      // will surface the error on the next demand frame.
+      return;
+    }
+    if (ranges.length === 0) return;
+
+    const arrays = [
+      this.arrays.positions,
+      this.arrays.colors,
+      this.arrays.radii,
+      this.arrays.sharpness,
+    ].filter((a): a is zarr.Array<zarr.DataType, zarr.Readable> => a != null);
+
+    const fetches: Promise<unknown>[] = [];
+    for (const array of arrays) {
+      const shape = array.shape;
+      for (const range of ranges) {
+        const sliceSpec: zarr.Slice[] =
+          shape.length === 2
+            ? [slice(range.start, range.end), slice(null)]
+            : [slice(range.start, range.end)];
+        fetches.push(get(array, sliceSpec));
+      }
+    }
+    await Promise.all(fetches);
+  }
+
+  /**
    * Query spatial index for visible point ranges.
    *
    * Tolerance is computed by the points-specific
