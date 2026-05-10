@@ -378,3 +378,72 @@ describe('GSplatsDataAccumulator', () => {
     expect(stats.capacity).toBe(0);
   });
 });
+
+describe('B.6 — accumulator dispose-state guards', () => {
+  it('LoadedPointsDataAccumulator: isDisposed() flips on dispose()', () => {
+    const acc = new LoadedPointsDataAccumulator(64, 3, 100);
+    expect(acc.isDisposed()).toBe(false);
+    acc.dispose();
+    expect(acc.isDisposed()).toBe(true);
+  });
+
+  it('LoadedPointsDataAccumulator: fill() throws after dispose()', () => {
+    const acc = new LoadedPointsDataAccumulator(64, 3, 100);
+    acc.dispose();
+    expect(() =>
+      acc.fill(0, { positions: new Float32Array([0, 0, 0]) })
+    ).toThrow(/called after dispose/);
+  });
+
+  it('LoadedPointsDataAccumulator: ensureCapacity() throws after dispose()', () => {
+    const acc = new LoadedPointsDataAccumulator(64, 3, 100);
+    acc.dispose();
+    expect(() => acc.ensureCapacity(128)).toThrow(/called after dispose/);
+  });
+
+  it('LinesDataAccumulator: isDisposed() flips on dispose()', () => {
+    const acc = new LinesDataAccumulator(64, 32, 3);
+    expect(acc.isDisposed()).toBe(false);
+    acc.dispose();
+    expect(acc.isDisposed()).toBe(true);
+  });
+
+  it('LinesDataAccumulator: fill() throws after dispose()', () => {
+    const acc = new LinesDataAccumulator(64, 32, 3);
+    acc.dispose();
+    expect(() =>
+      acc.fill(0, 0, {
+        positions: new Float32Array([0, 0, 0]),
+        segments: new Uint32Array([0, 0]),
+        widths: new Float32Array([0.1]),
+      })
+    ).toThrow(/called after dispose/);
+  });
+
+  it('GSplatsDataAccumulator: isDisposed() flips on dispose() and fill() throws', () => {
+    const acc = new GSplatsDataAccumulator(64, 3);
+    expect(acc.isDisposed()).toBe(false);
+    acc.dispose();
+    expect(acc.isDisposed()).toBe(true);
+    expect(() =>
+      acc.fill(0, {
+        positions: new Float32Array([0, 0, 0]),
+        amplitudes: new Float32Array([1]),
+        choleskyFactors: new Float32Array([1, 0, 1, 0, 0, 1]),
+        colors: new Float32Array([1, 0, 0]),
+      })
+    ).toThrow(/called after dispose/);
+  });
+
+  it('read-only getters still return empty buffers post-dispose (no throw)', () => {
+    // Read getters are non-throwing so legacy "did we wipe?" checks
+    // keep working. Only mutating calls (fill/ensureCapacity) throw.
+    const acc = new LoadedPointsDataAccumulator(64, 3, 100);
+    acc.dispose();
+    expect(acc.getPositionBuffer().length).toBe(0);
+    expect(acc.getColorBuffer().length).toBe(0);
+    expect(acc.getRadiiBuffer().length).toBe(0);
+    expect(acc.getSharpnessBuffer().length).toBe(0);
+    expect(acc.getScalarBuffer().length).toBe(0);
+  });
+});

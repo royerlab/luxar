@@ -122,6 +122,12 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
   private hasSharpness = false;
   /** tracks whether scalars were ever filled this session. */
   private hasScalars = false;
+  /**
+   * B.6: flips to true on `dispose()`. Getters/fill/getData throw a
+   * descriptive error if called after disposal so caller bugs don't
+   * silently operate on the empty-buffer state.
+   */
+  private _disposed = false;
 
   // Current capacity (number of points)
   private capacity: number;
@@ -184,6 +190,7 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
    * ```
    */
   ensureCapacity(needed: number): boolean {
+    this.assertNotDisposed('ensureCapacity');
     if (needed <= this.capacity) return false;
 
     // Calculate new capacity with 1.5x growth factor
@@ -422,6 +429,7 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
    * ```
    */
   fill(offset: number, data: Partial<LoadedPointsData>): void {
+    this.assertNotDisposed('fill');
     // Initialize types on first fill
     this.initializeTypes(data);
 
@@ -510,6 +518,24 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
     return this.types !== null;
   }
 
+  /** B.6: introspection — true if dispose() has been called. */
+  isDisposed(): boolean {
+    return this._disposed;
+  }
+
+  /**
+   * B.6: throws if a mutating call lands on a disposed accumulator.
+   * Read-only getters return the (empty) buffers so existing post-
+   * dispose "did we wipe?" assertions keep working without raising.
+   */
+  private assertNotDisposed(method: string): void {
+    if (this._disposed) {
+      throw new Error(
+        `LoadedPointsDataAccumulator.${method}() called after dispose() — accumulator is no longer usable.`
+      );
+    }
+  }
+
   getPositionBuffer(): Float32Array {
     return this.positionBuffer;
   }
@@ -532,6 +558,10 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
   }
 
   dispose(): void {
+    // B.6: zero-length sentinels keep the field types non-nullable
+    // (avoiding ?-checks at every internal read), and the small backing
+    // ArrayBuffers are GC-eligible once the accumulator itself drops.
+    // The `_disposed` flag is the real signal — getters/fill throw.
     this.positionBuffer = new Float32Array(0);
     this.colorBuffer = new Float32Array(0);
     this.radiiBuffer = new Float32Array(0);
@@ -543,6 +573,7 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
     this.hasRadii = false;
     this.hasSharpness = false;
     this.hasScalars = false;
+    this._disposed = true;
   }
 }
 
@@ -602,6 +633,8 @@ export class LinesDataAccumulator implements DataAccumulator<
   private hasSharpness = false;
   /** tracks whether scalars were ever filled this session. */
   private hasScalars = false;
+  /** B.6: flips to true on dispose(); fill/ensureCapacity then throw. */
+  private _disposed = false;
 
   private vertexCapacity: number;
   private segmentCapacity: number;
@@ -609,6 +642,19 @@ export class LinesDataAccumulator implements DataAccumulator<
 
   private allocations = 0;
   private totalGrowths = 0;
+
+  private assertNotDisposed(method: string): void {
+    if (this._disposed) {
+      throw new Error(
+        `LinesDataAccumulator.${method}() called after dispose() — accumulator is no longer usable.`
+      );
+    }
+  }
+
+  /** B.6: introspection — true if dispose() has been called. */
+  isDisposed(): boolean {
+    return this._disposed;
+  }
 
   constructor(initialVertexCapacity = 1024, initialSegmentCapacity = 512, ndim = 3) {
     this.vertexCapacity = initialVertexCapacity;
@@ -685,6 +731,7 @@ export class LinesDataAccumulator implements DataAccumulator<
    * Always pass actual segment count when known to avoid silent buffer truncation!
    */
   ensureCapacity(vertexCount: number, segmentCount?: number): boolean {
+    this.assertNotDisposed('ensureCapacity');
     const neededVertices = vertexCount;
     // Use actual segment count if provided, otherwise estimate (may be too small!)
     const neededSegments = segmentCount ?? Math.ceil(vertexCount / 1.5);
@@ -798,6 +845,7 @@ export class LinesDataAccumulator implements DataAccumulator<
    * NOTE: widths uses vertexOffset (per-vertex), NOT segmentOffset!
    */
   fill(segmentOffset: number, vertexOffset: number, data: Partial<LoadedLinesData>): void {
+    this.assertNotDisposed('fill');
     // Initialize types on first fill with colors or scalars
     if (data.colors || data.scalars) {
       this.initializeTypes(data);
@@ -907,6 +955,7 @@ export class LinesDataAccumulator implements DataAccumulator<
     this.hasColors = false;
     this.hasSharpness = false;
     this.hasScalars = false;
+    this._disposed = true;
   }
 }
 
@@ -945,6 +994,8 @@ export class GSplatsDataAccumulator implements DataAccumulator<
 
   // Track whether data has colors
   private hasColors = false;
+  /** B.6: flips to true on dispose(); fill/ensureCapacity then throw. */
+  private _disposed = false;
 
   private capacity: number;
   private ndim: number;
@@ -952,6 +1003,19 @@ export class GSplatsDataAccumulator implements DataAccumulator<
 
   private allocations = 0;
   private totalGrowths = 0;
+
+  private assertNotDisposed(method: string): void {
+    if (this._disposed) {
+      throw new Error(
+        `LoadedGSplatsDataAccumulator.${method}() called after dispose() — accumulator is no longer usable.`
+      );
+    }
+  }
+
+  /** B.6: introspection — true if dispose() has been called. */
+  isDisposed(): boolean {
+    return this._disposed;
+  }
 
   constructor(initialCapacity = 1024, ndim = 3) {
     this.capacity = initialCapacity;
@@ -996,6 +1060,7 @@ export class GSplatsDataAccumulator implements DataAccumulator<
   }
 
   ensureCapacity(needed: number): boolean {
+    this.assertNotDisposed('ensureCapacity');
     if (needed <= this.capacity) return false;
 
     let newCapacity = this.capacity;
@@ -1063,6 +1128,7 @@ export class GSplatsDataAccumulator implements DataAccumulator<
    * Subsequent fills must use matching types. Preserves native types (no conversion).
    */
   fill(offset: number, data: Partial<LoadedGSplatsData>): void {
+    this.assertNotDisposed('fill');
     // Initialize types on first fill with colors
     if (data.colors) {
       this.initializeTypes(data);
@@ -1136,5 +1202,6 @@ export class GSplatsDataAccumulator implements DataAccumulator<
     this.capacity = 0;
     this.types = null;
     this.hasColors = false;
+    this._disposed = true;
   }
 }
