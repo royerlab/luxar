@@ -6,6 +6,88 @@ All notable changes to Luxar are documented in this file.
 
 ### May 2026
 
+#### Changed — Viewer code-review rerun hardening pass (2026-05-10)
+
+Multi-phase hardening of the scalar-colormap + GPU pool + blending-state
+feature work, addressing every actionable finding from a six-agent code
+review rerun. Phases A–J in `delme/viewer-code-review-rerun/ACTION_PLAN.md`.
+
+**Type-safety (Phase A):**
+- `PointsAttributeTypes.scalar` is now optional (`undefined` when absent)
+  instead of a `'none'` sentinel; Float16Array gets a first-class dtype tag.
+- `LoadedLinesData.scalars` aligned with `ScalarArray` (Float32/Float16/
+  Uint8). Lines accumulator preserves Uint8 dtype natively.
+- Fail-closed scalar length validation in `projectPointsTo3D` and
+  `buildInstanceBuffers` — mismatch logs a warning + suppresses colormap.
+- `growLinesGeometry` preserves optional `aStartScalar`/`aEndScalar`
+  attributes on resize.
+
+**Lifecycle (Phase B):**
+- Material clone-vs-pool registration bug: pooled materials are
+  detached from global updates before NodeFactory clone sites; clones
+  take the global slot, pooled stays in the LRU cache.
+- Custom colormap LUT cache: bounded LRU (16 entries), disposed
+  per scene unload via `disposeCustomColormapTextures()`. Built-ins
+  survive scene switches.
+- Post-processing in-place effect swaps (AO/SMAA/Bloom-levels) now
+  dispose the OLD effect AFTER `rebuildEffectPass`, eliminating the
+  use-after-free window.
+- `rebuildEffectPass` rolls back Pass A if Pass B construction fails.
+- Data accumulators expose `isDisposed()`; `fill`/`ensureCapacity`
+  throw with a descriptive error post-dispose.
+
+**Performance (Phases C–D):**
+- Lines worker scalar fallback now emits a one-shot warning so users
+  notice the main-thread cliff.
+- Accumulator growth copies only the live prefix
+  (`usedCount * stride`) instead of full capacity.
+- Worker-projection fallback routes through the accumulator's
+  pre-sized buffers when present.
+- Scalar buffers in Points + Lines accumulators are lazily allocated
+  on first scalar fill or first `getScalarBuffer()` call.
+- GPU byte-budget eviction is single-pass sort + walk (replaces the
+  per-iteration O(N²) re-scan). Pure helper `selectBuffersToEvict`
+  exposed for tests. Loop bounded by `maxPoolSize * 3` iterations.
+- `estimateGeometryBytes` cached on `geometry.userData.cachedByteSize`;
+  invalidated on grow.
+
+**Shaders (Phase E):**
+- Line shader: pathological near-camera wide-quad segments now early-
+  discard instead of rasterizing a half-viewport quad at reduced
+  intensity.
+- Shared GLSL sanitize helpers (`isInvalidFloat`, `sanitizePositive`,
+  `sanitizeNonNegative`) extracted to `glsl-lib.ts` and injected into
+  the Points/Lines/GSplats vertex shaders.
+- Documented `LUXAR_MAX_RGB_CONTRIBUTION` and `USE_COLORMAP` defines
+  in the line shader header.
+
+**API surface (Phase F):**
+- Public exports for `getCompleteBlendingState`,
+  `applyBlendingStateToMaterial`, `supportsScalarColormap`,
+  `applyColormapTextureToMaterial`, `applyScalarRangeToMaterial`,
+  `BlendingMode`, `CompleteBlendingState`.
+- Predicates (`isAdditiveMode`, `isOpaqueMode`, `isMaxMode`, etc.)
+  centralize the mode discriminators across materials.
+- `syncPointMaterialWithGeometry` moved to `rendering/material-sync-helpers.ts`.
+
+**Diagnostics (Phase G):**
+- Array decoder broadcast-encoding error includes zarr path + encoding shape.
+- `captureHDRPixels` validates the mode at runtime, falls back with a warning.
+- `updateView` log differentiates supersede vs first-queue.
+- Custom LUT cache validates content fingerprint on hit (defends
+  against DJB2 collisions).
+
+**Tests + Docs (Phases H–I):**
+- New `blending-state.test.ts` with predicate + canonical-state tests
+  including max-mode round-trip lock-in.
+- Accumulator dispose/usedCount tests, scalar buffer lazy-alloc tests,
+  Float16 detection tests, Lines Uint8 roundtrip test.
+- Byte-budget eviction tests for the pure selector + pool integration.
+- `LUXAR_ZARR_FORMAT.md` documents `has_scalars`, `scalar_data_range`,
+  `colormap`, and the `colormap_lut` sibling array.
+- `rendering/SPECIFICATIONS.md` documents the byte-cache + bounded
+  eviction policy.
+
 #### Changed — Viewer shader/material follow-through (2026-05-10)
 
 Completes the remaining shader/material work in this branch, excluding

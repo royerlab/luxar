@@ -1805,6 +1805,21 @@ The pool applies both count-based and byte-budget constraints:
 6. Limit each eviction pass by gpuPoolEvictBatchSize to avoid frame spikes.
 ```
 
+**Byte-budget eviction (D.2)**: implemented as a single-pass collect +
+largest-first sort + walk. The pure-function selector
+(`selectBuffersToEvict(refs, maxBytes, total?)`) is exported from
+`gpu-buffer-pool.ts` so the eviction policy can be unit-tested
+independent of side effects. The eviction loop is bounded by
+`max(maxPoolSize * 3, 16)` iterations as a defensive cap against
+pathological non-disposing buffer refs (D.1) — if hit, a warning
+is logged and the next eviction sweep retries from a fresh state.
+
+**Byte-size caching (D.3)**: `estimateGeometryBytes` caches its result
+on `geometry.userData.cachedByteSize` so repeated `getStats()` polls
+don't re-iterate every attribute. The three `growXGeometry` paths
+call `invalidateCachedByteSize(geometry)` once before resizing any
+attribute to invalidate the cache.
+
 `getStats()` reports active/pooled counts plus activeBytes, pooledBytes, totalBytes, largestPooledBytes, and evictions. These stats are surfaced through `__luxarDebug.getState().gpuPool` when the pool is enabled.
 
 ### 9.4 Invariants
