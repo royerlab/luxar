@@ -5,6 +5,7 @@ import type { ChunkPrefetcher } from './chunk-prefetcher';
 import { log, Modules } from '../utils/log';
 import { config } from '../config';
 import { type Result, ok, err, isErr } from '../utils/result';
+import type { CacheValidationMode } from './types';
 
 /**
  * Structured failure modes from {@link MultiLevelCachingStore.getResult}.
@@ -823,7 +824,20 @@ export class MultiLevelCachingStore implements AsyncReadable {
       misses: number;
       evictions: number;
     };
-    l2: { size: number; count: number; reads: number; writes: number; misses: number };
+    l2: {
+      size: number;
+      count: number;
+      reads: number;
+      writes: number;
+      misses: number;
+      oversizedWriteSkipped?: number;
+      quotaWriteSkipped?: number;
+      evictions?: number;
+      writeFailures?: number;
+      corruptedEntries?: number;
+      metadataParseFailures?: number;
+      orphanedFilesRemoved?: number;
+    };
     network: { bytesTransferred: number; requestCount: number; bandwidth: number };
     /**
      * Per-tier demand-hit counters (user demand only — prefetch
@@ -834,6 +848,22 @@ export class MultiLevelCachingStore implements AsyncReadable {
      * than the L1-only ratio.
      */
     demand: { l1Hits: number; l2Hits: number; networkRequests: number };
+    /**
+     * Cache health snapshot. Surfaced by the data monitor as status
+     * badges (Phase 7); also useful for debug diagnostics.
+     */
+    health: {
+      /** Validation mode the dataset is using (or 'none' if external + no TTL). */
+      validationMode: CacheValidationMode;
+      /** Wall-clock millis at last successful validation, or null. */
+      lastValidatedAt: number | null;
+      /**
+       * `true` when the dataset has no `content_hash` AND no TTL is
+       * configured — surfaced as a UI warning since the cache may be
+       * stale indefinitely.
+       */
+      unvalidatedExternalDataset: boolean;
+    };
   } {
     // Calculate bandwidth using sliding window (last ~10 seconds)
     const now = Date.now();
@@ -853,9 +883,20 @@ export class MultiLevelCachingStore implements AsyncReadable {
       bandwidth = windowBytes / windowSpan;
     }
 
+    const validationState = this.l2Store?.getValidationState() ?? {
+      mode: 'none' as const,
+      lastValidatedAt: null,
+    };
+
     return {
       l1: this.l1Cache.getStats(),
-      l2: this.l2Store?.getStats() ?? { size: 0, count: 0, reads: 0, writes: 0, misses: 0 },
+      l2: this.l2Store?.getStats() ?? {
+        size: 0,
+        count: 0,
+        reads: 0,
+        writes: 0,
+        misses: 0,
+      },
       network: {
         bytesTransferred: this.networkBytesTransferred,
         requestCount: this.networkRequestCount,
@@ -865,6 +906,11 @@ export class MultiLevelCachingStore implements AsyncReadable {
         l1Hits: this.l1HitCount,
         l2Hits: this.l2HitCount,
         networkRequests: this.demandNetworkRequestCount,
+      },
+      health: {
+        validationMode: validationState.mode,
+        lastValidatedAt: validationState.lastValidatedAt,
+        unvalidatedExternalDataset: validationState.mode === 'none',
       },
     };
   }

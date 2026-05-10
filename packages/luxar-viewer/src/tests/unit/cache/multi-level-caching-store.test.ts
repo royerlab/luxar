@@ -791,6 +791,39 @@ describe('MultiLevelCachingStore', () => {
     });
   });
 
+  describe('getStats health field (commit 6.4)', () => {
+    it('exposes validationMode + lastValidatedAt + unvalidatedExternalDataset', async () => {
+      const stats = store.getStats();
+      expect(stats.health).toBeDefined();
+      expect(['content-hash', 'ttl', 'none']).toContain(stats.health.validationMode);
+      expect(stats.health.lastValidatedAt === null || typeof stats.health.lastValidatedAt === 'number').toBe(true);
+      expect(typeof stats.health.unvalidatedExternalDataset).toBe('boolean');
+    });
+
+    it('marks external dataset as unvalidated when mode === none', async () => {
+      // Force the l2Store stub to advertise mode='none'.
+      (store as any).l2Store = {
+        getStats: () => ({
+          size: 0,
+          count: 0,
+          reads: 0,
+          writes: 0,
+          misses: 0,
+          oversizedWriteSkipped: 0,
+          quotaWriteSkipped: 0,
+          evictions: 0,
+          writeFailures: 0,
+          corruptedEntries: 0,
+          metadataParseFailures: 0,
+          orphanedFilesRemoved: 0,
+        }),
+        getValidationState: () => ({ mode: 'none', lastValidatedAt: null }),
+      };
+      const stats = store.getStats();
+      expect(stats.health.unvalidatedExternalDataset).toBe(true);
+    });
+  });
+
   describe('Statistics', () => {
     it('should return accurate L1 and L2 stats', async () => {
       await store.get('.zmetadata'); // Metadata
