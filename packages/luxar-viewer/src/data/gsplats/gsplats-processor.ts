@@ -7,6 +7,21 @@
  * 2. Extract 3D Cholesky submatrix from nD Cholesky
  * 3. Attenuate amplitude based on distance to hyperplane in hidden dimensions
  *
+ * nD slicing model:
+ *   - displayDims order is preserved (matches Points/Lines).
+ *   - Hidden-dim attenuation uses shifted-Gaussian Mahalanobis.
+ *   - **Marginal covariance + hidden attenuation, not conditional Gaussian.**
+ *     For correlated nD splats (nonzero `Σ_DH` cross-blocks), exact
+ *     slicing requires conditional mean
+ *     `μ_D|H = μ_D + Σ_DH Σ_HH⁻¹ (h0 - μ_H)` and conditional cov
+ *     `Σ_D|H = Σ_DD - Σ_DH Σ_HH⁻¹ Σ_HD`. The current path uses
+ *     marginal `Σ_DD` and shifts only by the attenuation factor.
+ *     Conditional slicing needs a symmetric-SPD block solver plus
+ *     matching WASM/worker paths and visual baselines for correlated
+ *     fixtures. The marginal path remains correct for diagonal
+ *     hidden-display covariance, which is the typical case for
+ *     time-stamped or channel-stamped splats.
+ *
  * @module data/gsplats-processor
  */
 
@@ -183,8 +198,12 @@ export function processGSplatsTo3D(
     }
   }
 
-  // Sort dimensions for consistent submatrix extraction
-  const sortedDisplayDims = [...displayDims].sort((a, b) => a - b);
+  // preserve requested displayDims order so axis-permuted views
+  // (e.g. displayDims=[2,0,1] → output XYZ = source ZXY) match the
+  // Points/Lines convention. Hidden dims are still sorted internally
+  // for numerical stability of the marginal-Cholesky reconstruction
+  // (computeMarginalCholesky requires keepDims sorted ascending).
+  const orderedDisplayDims = [...displayDims];
   const sortedHiddenDims = [...hiddenDims].sort((a, b) => a - b);
 
   // Separate hidden dims into discrete (binary visibility) and continuous (Gaussian attenuation).
@@ -320,17 +339,20 @@ export function processGSplatsTo3D(
     const srcCenterOffset = srcIdx * ndim;
     const srcCholeskyOffset = srcIdx * fullPackedSize;
 
-    // Extract 3D center using SORTED display dimensions (must match Cholesky order)
+    // extract 3D center using REQUESTED display-dim order so
+    // displayDims=[2,0,1] yields output XYZ = source ZXY (matching the
+    // Points/Lines convention). Marginal-Cholesky uses the same order
+    // — `computeMarginalCholesky` works with any `keepDims` sequence.
     const dstCenterOffset = outIdx * 3;
-    for (let d = 0; d < 3 && d < sortedDisplayDims.length; d++) {
-      centers3D[dstCenterOffset + d] = loaded.positions[srcCenterOffset + sortedDisplayDims[d]];
+    for (let d = 0; d < 3 && d < orderedDisplayDims.length; d++) {
+      centers3D[dstCenterOffset + d] = loaded.positions[srcCenterOffset + orderedDisplayDims[d]];
     }
 
-    // Compute marginal Cholesky for display dimensions (3D)
+    // Compute marginal Cholesky for display dimensions in requested order.
     computeMarginalCholesky(
       loaded.choleskyFactors,
       srcCholeskyOffset,
-      sortedDisplayDims,
+      orderedDisplayDims,
       choleskyFactors3D,
       outIdx * display3DPackedSize
     );

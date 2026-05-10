@@ -50,12 +50,19 @@ describe('getBlendingState', () => {
     expect(s.blendEquation).toBe(THREE.AddEquation);
   });
 
-  it('normal: NormalBlending, depth-tested, transparent', () => {
-    const s = getBlendingState('normal');
-    expect(s.blending).toBe(THREE.NormalBlending);
-    expect(s.depthTest).toBe(true);
-    expect(s.depthWrite).toBe(false);
-    expect(s.transparent).toBe(true);
+  it('normal: NormalBlending, depth-tested, transparent (depthWrite is opacity-aware)', () => {
+    // a fully-opaque (opacity ≥ 0.99) normal layer writes depth so
+    // additive layers behind it are correctly occluded. Lower opacities
+    // disable depthWrite to allow correct alpha compositing.
+    const sOpaque = getBlendingState('normal', 1.0);
+    expect(sOpaque.blending).toBe(THREE.NormalBlending);
+    expect(sOpaque.depthTest).toBe(true);
+    expect(sOpaque.depthWrite).toBe(true);
+    expect(sOpaque.transparent).toBe(true);
+
+    const sTransparent = getBlendingState('normal', 0.5);
+    expect(sTransparent.depthWrite).toBe(false);
+    expect(sTransparent.transparent).toBe(true);
   });
 
   it('max: CustomBlending with MaxEquation', () => {
@@ -84,17 +91,23 @@ describe('getBlendingState', () => {
   });
 
   it('falls back to a normal-blending equivalent for unknown modes', () => {
+    // unknown mode coerces to 'normal' with default opacity 1.0,
+    // which writes depth (see normal-mode test above).
     const s = getBlendingState('not-a-real-mode');
     expect(s.blending).toBe(THREE.NormalBlending);
     expect(s.depthTest).toBe(true);
-    expect(s.depthWrite).toBe(false);
+    expect(s.depthWrite).toBe(true); // opacity defaults to 1.0
     expect(s.transparent).toBe(true);
   });
 
-  it('opaque is the only mode with depthWrite=true', () => {
+  it('opaque + fully-opaque normal write depth; transparent normal/additive/max/luminous do not', () => {
     const modes = ['additive', 'normal', 'max', 'opaque', 'luminous'];
-    const writers = modes.filter((m) => getBlendingState(m).depthWrite);
-    expect(writers).toEqual(['opaque']);
+    // Default opacity 1.0 → both opaque and normal write depth.
+    const writersOpaque = modes.filter((m) => getBlendingState(m, 1.0).depthWrite);
+    expect(writersOpaque.sort()).toEqual(['normal', 'opaque']);
+    // At lower opacity only opaque keeps depthWrite (it ignores opacity).
+    const writersTrans = modes.filter((m) => getBlendingState(m, 0.5).depthWrite);
+    expect(writersTrans).toEqual(['opaque']);
   });
 
   it('opaque is the only mode with transparent=false', () => {

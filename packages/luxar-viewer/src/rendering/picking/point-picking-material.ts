@@ -141,6 +141,19 @@ export class PointPickingMaterial extends THREE.ShaderMaterial implements Camera
     this.uniforms.maxPointSize.value = computeMaxPointSize(resolution.y);
   }
 
+  /**
+   * keep pick footprint in lock-step with the visible footprint by
+   * mirroring radius/sharpness scale updates. Called from the commit
+   * helpers when geometry dtype scaling changes (e.g. placeholder →
+   * normalized Uint8 commit).
+   */
+  updateRadiusScale(scale: number): void {
+    this.uniforms.radiusScale.value = scale;
+  }
+  updateSharpnessScale(scale: number): void {
+    this.uniforms.sharpnessScale.value = scale;
+  }
+
   dispose(): void {
     materialManager.unregister(this);
     super.dispose();

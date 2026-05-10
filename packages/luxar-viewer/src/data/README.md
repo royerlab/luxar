@@ -177,9 +177,10 @@ The SceneLoader has been refactored into focused, testable modules:
 - **Reduced Complexity**: SceneLoader is ~2,000 lines and continues to
   shrink as concerns extract out. Long-term target is under 1,500. See
   `scene-loader/` siblings for the extracted modules:
-  `data-processor-{points,lines,gsplats}`, `commit-points-geometry`,
-  `extend-tolerance`, `scene-graph-converter`, `url-normalization`,
-  `cache-setup`, `monitor-wiring`.
+  `data-processor-lines`, `data-processor-gsplats`,
+  `commit-points-geometry`, `effective-attrs`, `extend-tolerance`,
+  `loader-factory`, `scene-graph-converter`, `url-normalization`,
+  `cache-api`, `cache-setup`, and `monitor-wiring`.
 
 ---
 

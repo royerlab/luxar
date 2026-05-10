@@ -132,7 +132,22 @@ export const POINT_FRAGMENT_SHADER = /* glsl */ `
       // Calculate alpha (intensity) for additive blending
       mediump float alpha = falloff * opacity;
 
+      // max-mode RGB premultiplication.
+      //
+      // In max blending the framebuffer uses CustomBlending +
+      // MaxEquation + OneFactor/OneFactor. With that state, source RGB
+      // is NOT multiplied by alpha at composite time, so a soft point
+      // with alpha=0.1 still contributes its full bright RGB → max
+      // captures a flat colored disk instead of the intended soft
+      // contribution. The fix is to premultiply RGB in the shader so
+      // the framebuffer max sees contribution-weighted colour. The
+      // LUXAR_MAX_RGB_CONTRIBUTION define is set by
+      // PointMaterial.applyBlendingMode('max').
+      #ifdef LUXAR_MAX_RGB_CONTRIBUTION
+      fragColor = vec4(finalColor * alpha, alpha);
+      #else
       // Output final color with alpha for AdditiveBlending (SrcAlpha, One)
       fragColor = vec4(finalColor, alpha);
+      #endif
     }
   `;

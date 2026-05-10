@@ -1,16 +1,15 @@
 /**
  * Range Extraction Tests for Encoded Arrays
  *
- * CRITICAL: These tests verify the full data path that was previously untested:
+ * These tests verify the full encoded-array range extraction path:
  *   1. Load encoded zarr array
  *   2. Decode array (ArrayDecoder)
  *   3. Extract specific point ranges from decoded data
  *   4. Verify extracted values are correct
  *
- * This tests the code in points-spatial-index-loader.ts lines 704-717 that
- * extracts ranges from decoded arrays. A bug was found where LUT-encoded
- * arrays used the wrong elementsPerPoint (1 instead of 3), causing only
- * 1/3 of data to be copied correctly.
+ * This exercises the points loader path that extracts ranges from decoded
+ * arrays, including LUT arrays where `elementsPerPoint` must match the
+ * decoded attribute width.
  *
  * Test datasets from: packages/luxar-viewer/tests/fixtures/generate_test_data.py
  */

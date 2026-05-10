@@ -320,8 +320,8 @@ interface PointsOutputBuffers {
  * 4. Returns compacted arrays ready for GPU
  *
  * TransferableAccumulator pattern:
- * - If `outputBuffers` provided, writes directly to those buffers (zero-allocation)
- * - If not, allocates new arrays (legacy behavior)
+ * - If `outputBuffers` is provided, writes directly to those buffers (zero-allocation)
+ * - If not, allocates new arrays for the response
  * - Returns `outputBuffers` for transfer back to main thread
  */
 async function projectPointsTo3D(params: {
@@ -408,7 +408,7 @@ async function projectPointsTo3D(params: {
     // silently treat missing entries as non-extend, changing
     // effective-radius semantics. Production callers pass the right
     // shape; this is a worker-boundary validation belt for direct
-    // callers and future regressions.
+    // callers and malformed payloads.
     if (
       !viewState ||
       !viewState.tolerance ||
@@ -951,8 +951,10 @@ async function projectGSplatsTo3D(params: {
     }
   }
 
-  // Sort dimensions for consistent submatrix extraction
-  const sortedDisplayDims = [...displayDims].sort((a, b) => a - b);
+  // preserve requested displayDims order (matches main-thread
+  // processor + Points/Lines convention). Hidden dims are still sorted
+  // for the WASM Mahalanobis path which expects ascending indices.
+  const orderedDisplayDims = [...displayDims];
   const sortedHiddenDims = [...hiddenDims].sort((a, b) => a - b);
 
   // Separate hidden dims into discrete (binary visibility) and continuous (Gaussian attenuation).
@@ -967,7 +969,7 @@ async function projectGSplatsTo3D(params: {
   // Convert to WASM-compatible arrays
   const slicePosF32 = new Float32Array(slicePosition);
   const continuousHiddenDimsU32 = new Uint32Array(continuousHiddenDims);
-  const displayDimsU32 = new Uint32Array(sortedDisplayDims);
+  const displayDimsU32 = new Uint32Array(orderedDisplayDims);
 
   // Minimum amplitude threshold
   const minAmplitude = 1e-6;

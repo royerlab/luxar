@@ -16,9 +16,8 @@ import { DecompressedChunkCache, type DecompressedChunk } from './decompressed-c
 /**
  * Clone an ArrayBufferView by allocating a fresh underlying buffer.
  * Handles both TypedArray (Float32Array, Uint8Array, Uint16Array,
- * BigInt64Array, etc.) and DataView. The previous implementation cast
- * to a generic `{ slice(): ArrayBufferView }` shape — TypedArrays do
- * have `.slice()` but DataView does not, and the cast hid that gap.
+ * BigInt64Array, etc.) and DataView. TypedArrays expose `.slice()`;
+ * DataView needs an explicit buffer slice to preserve byte offsets.
  *
  * Exported only for unit testing; not part of the public package
  * surface.

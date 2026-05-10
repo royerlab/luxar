@@ -653,11 +653,9 @@ export class OPFSStore {
   /**
    * Convert cache key to OPFS-safe filename via UTF-8 → base64url.
    *
-   * The previous implementation used `btoa(key)` which only handles
-   * Latin-1 (any code point above 0xFF throws). zarr keys can include
-   * non-ASCII group/array names, so we encode to UTF-8 bytes first then
-   * base64url to keep the filename filesystem-safe without manual
-   * `+`/`/`/`=` substitution.
+   * zarr keys can include non-ASCII group/array names, so the key is
+   * encoded to UTF-8 bytes before base64url conversion. The resulting
+   * filename is filesystem-safe without manual `+`/`/`/`=` substitution.
    *
    * Bumping {@link OPFS_ENCODING_VERSION} invalidates any directory
    * persisted with a different output (handled in loadMetadata).

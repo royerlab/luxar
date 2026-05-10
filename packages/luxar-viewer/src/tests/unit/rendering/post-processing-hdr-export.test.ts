@@ -244,3 +244,122 @@ describe('PostProcessingManager.captureHDRAsEXR', () => {
     expect(mockFxaaEffect.enabled).toBe(true);
   });
 });
+
+/**
+ * HDR capture mode tests — verify that the per-mode effect-disable
+ * lists match the spec (visible-ldr / hdr-effects-pre-tone / raw-scene-hdr).
+ *
+ * The strategy is to install spy `enabled` property descriptors so we can
+ * record the value at the moment `composer.render()` is called, which is
+ * what determines whether each effect contributed to the captured pixels.
+ */
+describe('PostProcessingManager.captureHDRPixels modes', () => {
+  // Recreate fresh mocks per test scenario.
+  function buildScenario() {
+    const composer = createMockComposer();
+    const renderer = createMockRenderer();
+
+    const effects = {
+      toneMapping: { enabled: true, _name: 'toneMapping' } as { enabled: boolean; _name: string },
+      vignette: { enabled: true, _name: 'vignette' } as { enabled: boolean; _name: string },
+      smaa: { enabled: true, _name: 'smaa' } as { enabled: boolean; _name: string },
+      fxaa: { enabled: true, _name: 'fxaa' } as { enabled: boolean; _name: string },
+      detectorNoise: { enabled: true, _name: 'detectorNoise' } as { enabled: boolean; _name: string },
+      chromatic: { enabled: true, _name: 'chromatic' } as { enabled: boolean; _name: string },
+      bloom: { enabled: true, _name: 'bloom' } as { enabled: boolean; _name: string },
+      dof: { enabled: true, _name: 'dof' } as { enabled: boolean; _name: string },
+      ao: { enabled: true, _name: 'ao' } as { enabled: boolean; _name: string },
+    };
+
+    // Snapshot effect.enabled values at composer.render time.
+    const enabledAtRender: Record<string, boolean> = {};
+    composer.render = vi.fn(() => {
+      for (const [name, eff] of Object.entries(effects)) {
+        enabledAtRender[name] = eff.enabled;
+      }
+    });
+
+    return { composer, renderer, effects, enabledAtRender };
+  }
+
+  async function captureWithMode(
+    scenario: ReturnType<typeof buildScenario>,
+    mode?: 'visible-ldr' | 'hdr-effects-pre-tone' | 'raw-scene-hdr'
+  ) {
+    const { PostProcessingManager } =
+      await import('../../../rendering/post-processing/post-processing-manager');
+    const manager = Object.create(PostProcessingManager.prototype);
+    manager.composer = scenario.composer;
+    manager.renderer = scenario.renderer;
+    manager.toneMappingEffect = scenario.effects.toneMapping;
+    manager.vignetteEffect = scenario.effects.vignette;
+    manager.smaaEffect = scenario.effects.smaa;
+    manager.fxaaEffect = scenario.effects.fxaa;
+    manager.detectorNoiseEffect = scenario.effects.detectorNoise;
+    manager.chromaticLensDistortionEffect = scenario.effects.chromatic;
+    manager.bloomEffect = scenario.effects.bloom;
+    manager.dofEffect = scenario.effects.dof;
+    manager.aoEffect = scenario.effects.ao;
+    return manager.captureHDRPixels(mode);
+  }
+
+  it("default mode = 'hdr-effects-pre-tone' disables LDR effects but keeps bloom/DOF/AO", async () => {
+    const s = buildScenario();
+    await captureWithMode(s);
+    expect(s.enabledAtRender.toneMapping).toBe(false);
+    expect(s.enabledAtRender.vignette).toBe(false);
+    expect(s.enabledAtRender.smaa).toBe(false);
+    expect(s.enabledAtRender.fxaa).toBe(false);
+    expect(s.enabledAtRender.detectorNoise).toBe(false);
+    expect(s.enabledAtRender.chromatic).toBe(false);
+    // HDR-space effects KEPT
+    expect(s.enabledAtRender.bloom).toBe(true);
+    expect(s.enabledAtRender.dof).toBe(true);
+    expect(s.enabledAtRender.ao).toBe(true);
+  });
+
+  it("'visible-ldr' mode keeps EVERY effect enabled", async () => {
+    const s = buildScenario();
+    await captureWithMode(s, 'visible-ldr');
+    for (const name of Object.keys(s.effects)) {
+      expect(s.enabledAtRender[name]).toBe(true);
+    }
+  });
+
+  it("'raw-scene-hdr' mode disables EVERY effect (including bloom/DOF/AO)", async () => {
+    const s = buildScenario();
+    await captureWithMode(s, 'raw-scene-hdr');
+    expect(s.enabledAtRender.toneMapping).toBe(false);
+    expect(s.enabledAtRender.vignette).toBe(false);
+    expect(s.enabledAtRender.smaa).toBe(false);
+    expect(s.enabledAtRender.fxaa).toBe(false);
+    expect(s.enabledAtRender.detectorNoise).toBe(false);
+    expect(s.enabledAtRender.chromatic).toBe(false);
+    // HDR-space effects ALSO disabled.
+    expect(s.enabledAtRender.bloom).toBe(false);
+    expect(s.enabledAtRender.dof).toBe(false);
+    expect(s.enabledAtRender.ao).toBe(false);
+  });
+
+  it('all modes restore effect enabled state after capture', async () => {
+    for (const mode of ['visible-ldr', 'hdr-effects-pre-tone', 'raw-scene-hdr'] as const) {
+      const s = buildScenario();
+      await captureWithMode(s, mode);
+      for (const eff of Object.values(s.effects)) {
+        expect(eff.enabled).toBe(true);
+      }
+    }
+  });
+
+  it("restoration works under 'raw-scene-hdr' even if render throws", async () => {
+    const s = buildScenario();
+    s.composer.render = vi.fn(() => {
+      throw new Error('render failed');
+    });
+    await expect(captureWithMode(s, 'raw-scene-hdr')).rejects.toThrow('render failed');
+    // Every effect — LDR + HDR — must be re-enabled.
+    for (const eff of Object.values(s.effects)) {
+      expect(eff.enabled).toBe(true);
+    }
+  });
+});

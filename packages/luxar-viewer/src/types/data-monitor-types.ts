@@ -281,8 +281,8 @@ export interface CacheMetrics {
   totalEntries: number;
   totalAccesses: number;
   /**
-   * L1-only hit rate (legacy). Computed as `l1.hits / (l1.hits + l1.misses)`.
-   * Kept for back-compat with existing dashboards.
+   * L1-only hit rate. Computed as `l1.hits / (l1.hits + l1.misses)`.
+   * Kept for dashboard compatibility.
    */
   recentHitRate: number;
   /**
@@ -360,7 +360,7 @@ export interface CacheMetrics {
   status?: CacheStatusBadge[];
   /**
    * Cache health snapshot mirroring MultiLevelCachingStore.getStats().health.
-   * Optional because legacy providers may not surface it.
+   * Optional because some providers may not surface it.
    */
   health?: {
     validationMode?: 'content-hash' | 'ttl' | 'none';
@@ -389,7 +389,7 @@ export type CacheStatusBadge =
 /**
  * Performance timeline data point
  *
- * @internal — preserved for future use; no current consumer.
+ * @internal — reserved extension shape; no current consumer.
  */
 export interface TimelinePoint {
   timestamp: number;
@@ -405,7 +405,7 @@ export interface TimelinePoint {
 /**
  * Spatial grid cell state for visualization
  *
- * @internal — preserved for future use; no current consumer.
+ * @internal — reserved extension shape; no current consumer.
  */
 export interface GridCellState {
   x: number;
@@ -504,8 +504,7 @@ export interface CacheStatsProvider {
       writes: number;
       misses: number;
       /**
-       * OPFS health counters added in Phase 3/6. Optional for back-compat
-       * with provider stubs that predate them.
+       * Optional OPFS health counters; provider stubs may omit them.
        */
       oversizedWriteSkipped?: number;
       quotaWriteSkipped?: number;
@@ -531,7 +530,7 @@ export interface CacheStatsProvider {
       l2Hits: number;
       networkRequests: number;
     };
-    /** Cache validation health (Phase 6.4). Optional for back-compat. */
+    /** Optional cache validation health. */
     health?: {
       validationMode: 'content-hash' | 'ttl' | 'none';
       lastValidatedAt: number | null;

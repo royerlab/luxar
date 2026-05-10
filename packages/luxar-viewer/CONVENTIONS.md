@@ -11,7 +11,7 @@ documented reason not to.
 2. [Class and function naming](#2-class-and-function-naming)
 3. [CSS class names (BEM)](#3-css-class-names-bem)
 4. [Logging](#4-logging)
-5. [Error tiers](#5-error-tiers)
+5. [Error handling](#5-error-handling)
 6. [Resource lifecycle (ManagerRegistry pattern)](#6-resource-lifecycle-managerregistry-pattern)
 7. [Event listeners](#7-event-listeners)
 8. [Result&lt;T, E&gt; for fallible operations](#8-resultt-e-for-fallible-operations)
@@ -97,9 +97,9 @@ sites. Tests, benchmarks, screenshot drivers, and mocks may use
 Output format is fixed: `[emoji] [Module] message`. Custom emojis go
 through `log.custom(emoji, module, message)`.
 
-## 5. Error tiers
+## 5. Error handling
 
-| Tier         | Use when                                                | Example                                                |
+| Mechanism    | Use when                                                | Example                                                |
 | ------------ | ------------------------------------------------------- | ------------------------------------------------------ |
 | `throw`      | Unrecoverable invariant violation at JS boundary       | `validateNDArrays` rejecting a malformed buffer        |
 | `Result<T,E>`| Recoverable with a typed error code                    | Cache miss vs network error vs corrupt vs aborted      |
@@ -239,19 +239,14 @@ thread. Conventions:
 
   Note: `rendering` sits *below* `data` because rendering primitives
   (materials, geometries, GPU buffer pools) are foundational
-  building blocks that the data layer assembles into meshes. The
-  earlier plan draft had data before rendering; this corrected order
-  matches the actual dependency direction in the codebase.
+  building blocks that the data layer assembles into meshes. This
+  order matches the actual dependency direction in the codebase.
 
   Run `pnpm check:layers` to surface violations. **All layer rules
   are at severity `error`** — any new crossing fails the build. The
-  `KNOWN_LAYER_EXCEPTIONS` array in `.dependency-cruiser.cjs` is a
-  temporary downgrade hatch (currently empty); list a path there with
-  a matching warn-only rule if a regression needs to land alongside
-  its fix in a follow-up commit. The two historical edges
-  (input-handler → DimensionSliders, scene-loader → DataMonitor) were
-  resolved via factory injection in Phases 8.6.d and 8.6.e
-  respectively.
+  `KNOWN_LAYER_EXCEPTIONS` array in `.dependency-cruiser.cjs` should
+  stay empty unless a reviewed exception includes an owner, a narrow
+  scope, and a removal condition.
 
 ## 11. Types
 

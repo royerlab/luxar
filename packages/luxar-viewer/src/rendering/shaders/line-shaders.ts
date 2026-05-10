@@ -3,6 +3,24 @@
  *
  * Used by both LineMaterial (main rendering) and LinePickingMaterial (GPU picking).
  * Contains screen-space expansion, cap factor calculation, and colormap support.
+ *
+ * Shader contracts:
+ *   - Cap factor is evaluated in the fragment shader. The vertex shader
+ *     passes `vT`, `vSegmentLength`, `vWidthAtT`, `vClippedStart`, and
+ *     `vClippedEnd`; the fragment evaluates the documented "0.5 at
+ *     endpoints, 1.0 in body" profile per fragment.
+ *   - Near-plane / behind-camera safety rejects segments where both
+ *     endpoints are behind/near the camera (clipPos.w → 0/negative
+ *     produces invalid NDC and a full-screen quad). When `uNearCull` is
+ *     set, segments closer than that view-space depth are degenerated.
+ *   - Max pixel width clamp. `pixelWidth` is clamped to
+ *     `uMaxLinePixelWidth` (default `resY * 0.5`); when the clamp
+ *     engages, intensity fades proportionally so a single very-near
+ *     segment doesn't paint the screen.
+ *   - Width and sharpness sanitised against negative/NaN/Inf.
+ *   - LUXAR_MAX_RGB_CONTRIBUTION fragment branch premultiplies RGB
+ *     by intensity*opacity in `max` mode so MaxEquation+OneFactor
+ *     captures contribution-weighted colour, not flat full-bright.
  */
 export const LINE_VERTEX_SHADER = /* glsl */ `
     precision highp float;
@@ -31,6 +49,8 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
     uniform float uFOV;
     uniform vec2 uResolution;
     uniform int uIsOrtho;  // 0 = perspective, 1 = orthographic
+    uniform float uNearCull;          // near-plane safety distance (view-space, +z toward camera)
+    uniform float uMaxLinePixelWidth; // clamp for screen-space width
 
     // Colormap uniforms (only active when USE_COLORMAP is defined)
     #ifdef USE_COLORMAP
@@ -42,13 +62,22 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
     // Varyings to fragment shader (smooth interpolation needed)
     out vec3 vColor;
     out float vSharpness;
-    out float vPerpNorm;  // Signed: -1 at bottom edge, +1 at top edge
-    out float vCapFactor; // 0.5 at true endpoints, 1.0 in body
-    out float vPixelWidth; // Line width in pixels (for anti-aliasing)
+    out float vPerpNorm;     // Signed: -1 at bottom edge, +1 at top edge
+    out float vT;            // interpolated 0..1 along segment for fragment-side cap math
+    out float vSegmentLength; // world-space segment length (per-segment, but flat over quad)
+    out float vWidthAtT;      // interpolated world-space width (or half-width)
+    out float vPixelWidth;   // Raw line width in pixels (for anti-aliasing)
+    out float vWidthFade;    // in [0..1], fades intensity when pixel-width clamped
+    flat out float vClippedStart; // flat: same value across all 4 quad vertices
+    flat out float vClippedEnd;
 
     void main() {
       // Position along segment: 0 = start, 1 = end
       float t = aQuadCorner.x > 0.0 ? 1.0 : 0.0;
+      vT = t;
+      vSegmentLength = aSegmentLength;
+      vClippedStart = aStartClipped;
+      vClippedEnd = aEndClipped;
 
       // Interpolate attributes along segment
       vec3 worldPos = mix(aStartPos, aEndPos, t);
@@ -59,21 +88,55 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
       #else
       vColor = mix(aStartColor, aEndColor, t);
       #endif
-      float width = mix(aStartWidth, aEndWidth, t);
-      vSharpness = mix(aStartSharpness, aEndSharpness, t);
+
+      // sanitise width/sharpness against negative/NaN/Inf so a
+      // malformed input can't poison gl_Position via pow() or screen-
+      // space expansion.
+      float startW = (isnan(aStartWidth) || isinf(aStartWidth) || aStartWidth < 0.0) ? 0.0 : aStartWidth;
+      float endW = (isnan(aEndWidth) || isinf(aEndWidth) || aEndWidth < 0.0) ? 0.0 : aEndWidth;
+      float startS = (isnan(aStartSharpness) || isinf(aStartSharpness) || aStartSharpness <= 0.0) ? 2.0 : aStartSharpness;
+      float endS = (isnan(aEndSharpness) || isinf(aEndSharpness) || aEndSharpness <= 0.0) ? 2.0 : aEndSharpness;
+
+      float width = mix(startW, endW, t);
+      vSharpness = mix(startS, endS, t);
+      vWidthAtT = width;
 
       // Project to clip space (pre-multiply modelViewMatrix once per endpoint)
       vec4 mvStart = modelViewMatrix * vec4(aStartPos, 1.0);
       vec4 mvEnd = modelViewMatrix * vec4(aEndPos, 1.0);
       vec4 mvPos = mix(mvStart, mvEnd, t);
+
+      // near-plane / behind-camera safety. Three.js view space has
+      // -z pointing into the scene, so a positive viewDepth means the
+      // point is in front of the camera. Reject segments where BOTH
+      // endpoints fail the near-cull (degenerate the quad to clip).
+      // When only ONE endpoint is behind, we keep the full quad: the
+      // shader will produce extreme NDC for that endpoint, but the
+      // pixel-width clamp and vWidthFade keep the visible footprint
+      // bounded. Matches the GSplat near-fade pattern.
+      float nearCull = max(uNearCull, 1e-4);
+      float startDepth = -mvStart.z;
+      float endDepth = -mvEnd.z;
+      bool bothBehind = (startDepth < nearCull) && (endDepth < nearCull);
+      if (bothBehind) {
+        gl_Position = vec4(2.0, 2.0, 2.0, 1.0); // off-screen (NDC > 1) → no fragments
+        vColor = vec3(0.0);
+        vPerpNorm = 0.0;
+        vPixelWidth = 0.0;
+        vWidthFade = 0.0;
+        return;
+      }
+
       vec4 clipStart = projectionMatrix * mvStart;
       vec4 clipEnd = projectionMatrix * mvEnd;
       vec4 clipPos = projectionMatrix * mvPos;
 
       // Convert clip-space endpoints to pixel coordinates for correct aspect ratio handling
-      // NDC to pixels: ndc * resolution / 2 (NDC range -1 to +1, pixels range 0 to resolution)
-      vec2 ndcStart = clipStart.xy / clipStart.w;
-      vec2 ndcEnd = clipEnd.xy / clipEnd.w;
+      // Guard against tiny clipStart.w / clipEnd.w (near-plane crossing) so 1/w doesn't blow up
+      float wStart = max(clipStart.w, 1e-4);
+      float wEnd = max(clipEnd.w, 1e-4);
+      vec2 ndcStart = clipStart.xy / wStart;
+      vec2 ndcEnd = clipEnd.xy / wEnd;
       vec2 pixelStart = (ndcStart * 0.5 + 0.5) * uResolution;
       vec2 pixelEnd = (ndcEnd * 0.5 + 0.5) * uResolution;
 
@@ -93,7 +156,7 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
         // Factor of 2 matches the perspective formula (which has implicit 2x from 1/tanHalfFov)
         rawPixelWidth = width * 2.0 * uResolution.y / uFOV;
       } else {
-        float dist = length(mvPos.xyz);
+        float dist = max(length(mvPos.xyz), nearCull); // clamp dist to avoid 1/near-zero blow-up
         float tanHalfFov = tan(uFOV * 0.5);
         rawPixelWidth = width * uResolution.y / (dist * tanHalfFov);
       }
@@ -101,7 +164,15 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
       // Enforce minimum pixel width to prevent sub-pixel rendering artifacts
       // Lines thinner than ~1.5 pixels cause severe aliasing due to rasterization gaps
       float minPixelWidth = 1.5;
-      float pixelWidth = max(rawPixelWidth, minPixelWidth);
+      // clamp to a maximum pixel width so a near-camera segment
+      // can't paint the entire screen. Default uMaxLinePixelWidth is
+      // resolution.y * 0.5 (set by JS).
+      float maxPW = max(uMaxLinePixelWidth, minPixelWidth + 1.0);
+      float clampedPixelWidth = clamp(rawPixelWidth, minPixelWidth, maxPW);
+      // Fade intensity in proportion to the clamp so the giant quad
+      // doesn't overcontribute. fade=1 when not clamped, →0 as the
+      // raw width grows past the clamp by a factor.
+      vWidthFade = (rawPixelWidth <= maxPW) ? 1.0 : (maxPW / max(rawPixelWidth, 1e-4));
 
       // Pass raw pixel width to fragment shader for intensity scaling
       // This allows thin lines to render at minimum width but with reduced intensity
@@ -113,26 +184,9 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
 
       // Expand quad by perpendicular offset in pixel space, then convert to clip space
       // pixelOffset is in pixels, convert to NDC then to clip space
-      vec2 pixelOffset = perpendicular * aQuadCorner.y * pixelWidth;
+      vec2 pixelOffset = perpendicular * aQuadCorner.y * clampedPixelWidth;
       vec2 ndcOffset = pixelOffset / uResolution * 2.0;
       clipPos.xy += ndcOffset * clipPos.w;
-
-      // Cap factor calculation with clipping awareness
-      // Normal cap factor: 0.5 at true endpoints, 1.0 in body
-      // Clipped endpoints: force 1.0 (the "real" endpoint is outside the slice)
-      float distFromStart = t * aSegmentLength;
-      float distFromEnd = (1.0 - t) * aSegmentLength;
-
-      // Base cap factor from distance to nearest endpoint
-      float distToNearest = min(distFromStart, distFromEnd);
-      float baseCap = (distToNearest >= width) ? 1.0 : 0.5 + 0.5 * (distToNearest / width);
-
-      // Override if the nearest endpoint was clipped
-      float nearestIsStart = step(distFromEnd, distFromStart);  // 1 if closer to start
-      float nearestClipped = mix(aEndClipped, aStartClipped, nearestIsStart);
-
-      // If nearest endpoint was clipped, use full intensity (1.0)
-      vCapFactor = mix(baseCap, 1.0, nearestClipped);
 
       gl_Position = clipPos;
     }
@@ -141,9 +195,10 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
 /**
  * Fragment shader for standard line rendering.
  *
- * Computes parabolic falloff from semicircle kernel convolution,
- * with cap factor for correct joint intensity.
- * The picking system uses a different fragment shader (see picking/line-picking-material.ts).
+ * Computes parabolic falloff from semicircle kernel convolution plus
+ * fragment-side cap factor so the segment body reaches the documented
+ * full intensity. The picking system uses a different fragment shader
+ * (see picking/line-picking-material.ts).
  */
 export const LINE_FRAGMENT_SHADER = /* glsl */ `
     precision highp float;
@@ -155,9 +210,14 @@ export const LINE_FRAGMENT_SHADER = /* glsl */ `
 
     in vec3 vColor;
     in float vSharpness;
-    in float vPerpNorm;  // Interpolated: 0 at centerline, ±1 at edges
-    in float vCapFactor; // 0.5 at endpoints, 1.0 in body
-    in float vPixelWidth; // Raw line width in pixels (before minimum clamping)
+    in float vPerpNorm;     // Interpolated: 0 at centerline, ±1 at edges
+    in float vT;            // interpolated 0..1 along segment
+    in float vSegmentLength; // world-space segment length
+    in float vWidthAtT;     // interpolated world-space width
+    in float vPixelWidth;   // Raw line width in pixels (before minimum clamping)
+    in float vWidthFade;    // max-pixel-width clamp fade
+    flat in float vClippedStart;
+    flat in float vClippedEnd;
 
     out vec4 fragColor;
 
@@ -171,7 +231,7 @@ export const LINE_FRAGMENT_SHADER = /* glsl */ `
       // Parabolic falloff from semicircle kernel convolution
       // Base: (1 - p²) where p = distance from centerline
       // With per-vertex sharpness: (1 - p²)^sharpness
-      float perpFalloff = pow(1.0 - p * p, vSharpness);
+      float perpFalloff = pow(max(1.0 - p * p, 0.0), max(vSharpness, 0.0001));
 
       // Anti-aliasing: smooth falloff at edges
       // The AA region is ~1 pixel wide in the rendered quad
@@ -186,8 +246,29 @@ export const LINE_FRAGMENT_SHADER = /* glsl */ `
       // This preserves the visual "weight" of thin lines
       float widthScale = min(vPixelWidth / minPixelWidth, 1.0);
 
+      // cap factor in fragment. With the 4-vertex quad, vertex-side
+      // computation produced 0.5 everywhere. Compute it here so the
+      // segment body reaches the documented 1.0.
+      // - distance to nearest endpoint along the segment (world units)
+      // - if that endpoint was clipped, use full intensity (1.0)
+      float distFromStart = vT * vSegmentLength;
+      float distFromEnd = (1.0 - vT) * vSegmentLength;
+      float distToNearest = min(distFromStart, distFromEnd);
+      float capRamp = vWidthAtT > 1e-4
+        ? clamp(distToNearest / vWidthAtT, 0.0, 1.0)
+        : 1.0;
+      float baseCap = 0.5 + 0.5 * capRamp;
+
+      // Override if the nearest endpoint was clipped (the "real"
+      // endpoint is outside the slice — full intensity is correct).
+      // step(distFromStart, distFromEnd) is 1 when distFromEnd >= distFromStart,
+      // i.e. the START is the nearest endpoint.
+      float nearestIsStart = step(distFromStart, distFromEnd);
+      float nearestClipped = mix(vClippedEnd, vClippedStart, nearestIsStart);
+      float capFactor = mix(baseCap, 1.0, nearestClipped);
+
       // Apply cap factor for correct joint intensity
-      float intensity = vCapFactor * perpFalloff * edgeAA * widthScale;
+      float intensity = capFactor * perpFalloff * edgeAA * widthScale * vWidthFade;
 
       // Per-node GOG (Gain-Offset-Gamma) color adjustment
       vec3 adjusted = vColor * uIntensity + uOffset;
@@ -198,8 +279,19 @@ export const LINE_FRAGMENT_SHADER = /* glsl */ `
 
       vec3 gammaColor = pow(adjusted, vec3(uInvGamma));
 
-      // Output color with alpha for AdditiveBlending (SrcAlpha, One)
+      // max-mode RGB premultiplication. With CustomBlending +
+      // MaxEquation + OneFactor/OneFactor the source RGB isn't
+      // multiplied by alpha at composite time, so a soft line in max
+      // mode would render as a flat full-bright quad. Premultiply by
+      // intensity*opacity here so the framebuffer max captures
+      // contribution-weighted colour. Other modes keep alpha-weighted
+      // output.
+      #ifdef LUXAR_MAX_RGB_CONTRIBUTION
+      float a = intensity * uOpacity;
+      fragColor = vec4(gammaColor * a, a);
+      #else
       vec3 finalColor = gammaColor;
       fragColor = vec4(finalColor, intensity * uOpacity);
+      #endif
     }
   `;

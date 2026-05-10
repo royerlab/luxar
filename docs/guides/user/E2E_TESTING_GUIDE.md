@@ -26,11 +26,11 @@ test('my test', async ({ page }) => {
 
 #### 2. Console Interceptor History
 ```typescript
-// The current API exposes buffered getters rather than a `.messages`
-// field. Use `getMessages()` (or the per-level helpers); the raw
-// internal buffer was renamed to discourage direct access.
+// The current API exposes a buffered getter. Call
+// `getBufferedMessages()` to obtain the chronological list of
+// intercepted log/warn/error/info messages.
 const messages = await page.evaluate(() => {
-  return window.__luxarDebug?.consoleInterceptor?.getMessages?.() ?? [];
+  return window.__luxarDebug?.consoleInterceptor?.getBufferedMessages?.() ?? [];
 });
 ```
 
@@ -55,7 +55,7 @@ need `window.__luxarDebug`:
 
 Best practices:
 
-- Use `?src=<dataset>&debug`, not the old `?data=` parameter.
+- Use `?src=<dataset>&debug`, not `?data=`.
 - Do **not** put a trailing slash on the data-source URL. Zarr paths are formed
   by appending metadata and chunk paths; a trailing slash can produce malformed
   requests on stricter servers and can split cache keys for the same dataset.

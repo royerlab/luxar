@@ -125,7 +125,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       loads: 0,
       evictions: 0,
       errors: 0,
-      pointsLoaded: 0, // counts vertices for lines (legacy field name)
+      pointsLoaded: 0, // Shared loader metric; counts vertices for lines.
       bytesLoaded: 0,
       datasetSize: 0,
       visiblePoints: 0, // counts visible vertices for lines
@@ -238,8 +238,8 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       log.info(Modules.LINES_LOADER, 'No sharpnesses array found (using default sharpness)');
     }
 
-    // open optional `scalars` zarr array when the node declares
-    // has_scalars=true. Mirrors the Points loader pattern (D4 step 1).
+    // Open optional `scalars` zarr array when the node declares
+    // has_scalars=true. Mirrors the Points loader pattern.
     const linesAttrs = this.node.attrs as { has_scalars?: boolean };
     if (linesAttrs?.has_scalars) {
       try {
@@ -525,14 +525,13 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
           await this.loadVertexRanges('sharpness', mergedVertexRanges, 1, sharpnessBuffer);
         }
 
-        // load per-vertex scalars directly into the accumulator buffer.
-        //
-        // A.2: the accumulator may hold a Uint8Array scalar buffer once the
-        // first fill() observed Uint8 input, but the spatial-index path
-        // hits this branch BEFORE any fill() and so always sees the
+        // Load per-vertex scalars directly into the accumulator buffer.
+        // The accumulator may hold a Uint8Array scalar buffer once the
+        // first fill() observes Uint8 input, but the spatial-index path
+        // hits this branch before any fill() and therefore sees the
         // constructor's default Float32Array. The `loadVertexRanges` API
         // is Float32-only by design; routing Uint8 zarr scalars through it
-        // would require a typed-buffer variant and is out of scope here.
+        // would require a typed-buffer variant.
         if (scalarBuffer) {
           await this.loadVertexRanges(
             'scalars',

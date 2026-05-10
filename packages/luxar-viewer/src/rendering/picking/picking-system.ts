@@ -148,6 +148,13 @@ export class PickingSystem {
     pickNode.matrixAutoUpdate = false;
     pickNode.matrixWorldAutoUpdate = false;
 
+    // forward link main → pick so commit helpers (e.g.
+    // `syncPointMaterialWithGeometry`) can reach the picking material
+    // without a reverse map lookup. Keeps lifecycle simple — when the
+    // main node disposes, picking-system.unregisterNode also clears
+    // this via the nodeMap removal.
+    mainNode.userData.pickNode = pickNode;
+
     this.nodeMap.set(pickId, { main: mainNode, pick: pickNode });
   }
 

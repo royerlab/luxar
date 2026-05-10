@@ -14,6 +14,11 @@ import * as THREE from 'three';
 import { computeUniforms, type LayerInfo } from './layer-state';
 import type { ComposableAttrs } from '../../data/utils/attrs-composer';
 import { clamp } from '../gui/utils/value-formatting';
+import {
+  getCompleteBlendingState,
+  type CompleteBlendingState,
+} from '../../rendering/blending-state';
+import type { BlendingMode } from '../../rendering/material-manager';
 
 /** Clamp gamma to a sensible UI range. Centralised to match material defaults. */
 export function clampGamma(gamma: number): number {
@@ -40,6 +45,9 @@ export interface BlendingState {
   depthWrite: boolean;
   transparent: boolean;
   blendEquation: THREE.BlendingEquation;
+  /** blend factors needed for max-mode parity with creation-time state. */
+  blendSrc?: THREE.BlendingSrcFactor;
+  blendDst?: THREE.BlendingDstFactor;
 }
 
 /**
@@ -48,58 +56,28 @@ export interface BlendingState {
  * Falls back to `'normal'`-equivalent state for unknown modes so a
  * malformed zarr attribute can't crash the panel (the existing
  * implementation simply ignored unknown modes — same effect).
+ *
+ * this delegates to `getCompleteBlendingState` so the LayersPanel
+ * generic fallback path agrees with material-side `applyBlendingMode`
+ * implementations on `blendSrc`/`blendDst`. Without this, switching a
+ * material to `max` via the UI used to leave `blendSrc`/`blendDst`
+ * stale at SrcAlpha/OneMinusSrcAlpha — different from the creation-
+ * time max state (`OneFactor`/`OneFactor`).
  */
-export function getBlendingState(mode: string): BlendingState {
-  switch (mode) {
-    case 'additive':
-      return {
-        blending: THREE.AdditiveBlending,
-        depthTest: false,
-        depthWrite: false,
-        transparent: true,
-        blendEquation: THREE.AddEquation,
-      };
-    case 'normal':
-      return {
-        blending: THREE.NormalBlending,
-        depthTest: true,
-        depthWrite: false,
-        transparent: true,
-        blendEquation: THREE.AddEquation,
-      };
-    case 'max':
-      return {
-        blending: THREE.CustomBlending,
-        blendEquation: THREE.MaxEquation,
-        depthTest: true,
-        depthWrite: false,
-        transparent: true,
-      };
-    case 'opaque':
-      return {
-        blending: THREE.NormalBlending,
-        depthTest: true,
-        depthWrite: true,
-        transparent: false,
-        blendEquation: THREE.AddEquation,
-      };
-    case 'luminous':
-      return {
-        blending: THREE.AdditiveBlending,
-        depthTest: true,
-        depthWrite: false,
-        transparent: true,
-        blendEquation: THREE.AddEquation,
-      };
-    default:
-      return {
-        blending: THREE.NormalBlending,
-        depthTest: true,
-        depthWrite: false,
-        transparent: true,
-        blendEquation: THREE.AddEquation,
-      };
-  }
+export function getBlendingState(mode: string, opacity: number = 1.0): BlendingState {
+  // Coerce unknown modes to 'normal' (same fallback as before).
+  const known = ['additive', 'normal', 'max', 'opaque', 'luminous'];
+  const safeMode = (known.includes(mode) ? mode : 'normal') as BlendingMode;
+  const complete: CompleteBlendingState = getCompleteBlendingState(safeMode, opacity);
+  return {
+    blending: complete.blending,
+    blendEquation: complete.blendEquation,
+    blendSrc: complete.blendSrc,
+    blendDst: complete.blendDst,
+    depthTest: complete.depthTest,
+    depthWrite: complete.depthWrite,
+    transparent: complete.transparent,
+  };
 }
 
 /**

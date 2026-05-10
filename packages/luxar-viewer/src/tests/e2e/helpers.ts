@@ -542,8 +542,7 @@ export async function waitForDimensionSystemReady(page: Page, timeout = 10000): 
   }
 
   // Timeout — final probe via the canonical path. Use truthiness, not
-  // `!== null`: a stale path returning `undefined` would have made
-  // `undefined !== null` return `true` and produce a false-pass.
+  // `!== null`, so `undefined` cannot produce a false pass.
   const finalState = await page.evaluate(() => {
     const debug = (window as any).__luxarDebug;
     return !!debug?.sceneDimsManager?.getDims?.();
@@ -950,8 +949,8 @@ export async function dismissDatasetBrowser(page: Page): Promise<void> {
   // Escape is exempted from the typing-input guard in
   // `InputHandler.onKeyDown`, so it reliably reaches PanelCoordinator
   // regardless of focus location (manual-path field, debug-console
-  // filter, etc.). If a future regression makes Escape fall through,
-  // a hard timeout here is the right signal.
+  // filter, etc.). If Escape stops reaching the coordinator, the hard
+  // timeout here is the right signal.
   await page.keyboard.press('Escape');
   await page.waitForFunction(
     () => {
@@ -1219,4 +1218,67 @@ export async function validateSceneAttributes(page: Page): Promise<
 
     return results;
   });
+}
+
+/**
+ * Assert no shader compile / link / attribute / uniform errors are
+ * present in the buffered console messages. WebGL surfaces shader
+ * issues asynchronously (the browser logs to console), so this is the
+ * canonical way to detect them after a render.
+ *
+ * The patterns match strings emitted by Chromium's WebGL implementation
+ * for compile/link failures and missing-attribute warnings, plus
+ * Luxar's internal `[❌] [Shader]`/`[Material]` log emoji.
+ */
+export async function assertNoShaderErrors(page: Page): Promise<void> {
+  const messages = await getConsoleMessages(page);
+  const all = [...messages.errors, ...messages.warnings, ...messages.all];
+  const shaderErrPattern =
+    /shader|GLSL|attribute.*not\s*found|uniform.*not\s*found|fragment\s*shader|vertex\s*shader|program\s*link|invalid_operation/i;
+  const offending = all.filter((m) => shaderErrPattern.test(m));
+  if (offending.length > 0) {
+    throw new Error(
+      `shader/GLSL errors detected in browser console (${offending.length} message(s)):\n` +
+        offending.slice(0, 8).join('\n')
+    );
+  }
+}
+
+/**
+ * Read a single pixel from a canvas selector at fractional
+ * coordinates `(fx, fy)` in `[0,1]`. Returns the RGBA byte values.
+ *
+ * Useful for "non-black" or "specific color" assertions on rendered
+ * output without needing a full screenshot diff. Reads from the visible
+ * 2D drawing buffer, so SSAA-upscaled framebuffers are downsampled
+ * automatically.
+ */
+export async function samplePixelAt(
+  page: Page,
+  selector: string,
+  fx: number,
+  fy: number
+): Promise<{ r: number; g: number; b: number; a: number }> {
+  return await page.evaluate(
+    ({ sel, x, y }) => {
+      const canvas = document.querySelector(sel) as HTMLCanvasElement | null;
+      if (!canvas) throw new Error(`samplePixelAt: no canvas at ${sel}`);
+      const bbox = canvas.getBoundingClientRect();
+      const px = Math.max(0, Math.min(canvas.width - 1, Math.round(x * canvas.width)));
+      const py = Math.max(0, Math.min(canvas.height - 1, Math.round(y * canvas.height)));
+      void bbox;
+      // Use a 2D offscreen canvas to drawImage and read pixels — this works
+      // regardless of preserveDrawingBuffer because we're reading from a
+      // copied bitmap, not the live framebuffer.
+      const off = document.createElement('canvas');
+      off.width = canvas.width;
+      off.height = canvas.height;
+      const ctx = off.getContext('2d');
+      if (!ctx) throw new Error('samplePixelAt: 2D context unavailable');
+      ctx.drawImage(canvas, 0, 0);
+      const data = ctx.getImageData(px, py, 1, 1).data;
+      return { r: data[0], g: data[1], b: data[2], a: data[3] };
+    },
+    { sel: selector, x: fx, y: fy }
+  );
 }

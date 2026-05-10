@@ -1,14 +1,13 @@
 /**
  * dependency-cruiser config — enforces the package layering documented
- * in `src/CONVENTIONS.md`:
+ * in `CONVENTIONS.md`:
  *
  *   types → config → cache → rendering → data → scene → input → ui → core
  *
- * (Note: `rendering` sits BELOW `data` because rendering primitives —
+ * (Note: `rendering` sits below `data` because rendering primitives —
  * materials, geometries, GPU buffer pools — are foundational
  * lower-level building blocks that the data layer assembles into
- * meshes. The original plan had data before rendering; this order
- * matches the actual dependency direction in the codebase.)
+ * meshes.)
  *
  * Each layer may only import from layers to its left (plus `utils`,
  * `themes`, `wasm`, `workers`, `profiling`, `controls`, which are
@@ -27,10 +26,8 @@
  *
  * Run with `pnpm check:layers`. CI also runs this in pre-commit.
  */
-// All known pre-existing layer violations have been cleared. The list
-// is kept for the rare case a future regression needs a temporary
-// downgrade while a follow-up commit lands. Add a path here, drop the
-// entry once the underlying coupling is cured.
+// Keep this list empty unless a reviewed layer exception needs a clear
+// owner and removal condition.
 const KNOWN_LAYER_EXCEPTIONS = [];
 
 module.exports = {
@@ -50,10 +47,9 @@ module.exports = {
     // src/{higher_layer}/". dependencyTypes filter excludes type-only
     // imports (TS `import type {...}`) so re-exports don't trigger.
     //
-    // Severity is `error` — the build fails on any new violation. The
-    // Any path listed in KNOWN_LAYER_EXCEPTIONS is exempt — wire a
-    // corresponding warn-only rule below if you add one. Currently
-    // empty: every layer crossing has been resolved.
+    // Severity is `error` — the build fails on any new violation.
+    // Paths listed in KNOWN_LAYER_EXCEPTIONS are exempt; add a
+    // matching warn-only rule below for each reviewed exception.
     layerRule('types', [
       'config',
       'cache',
@@ -72,10 +68,8 @@ module.exports = {
     layerRule('input', ['ui', 'core']),
     layerRule('ui', ['core']),
 
-    // No per-file warn rules: every layer crossing is properly
-    // dependency-inverted. To re-enable a pinpoint warn rule for a
-    // future regression, list the file in KNOWN_LAYER_EXCEPTIONS and
-    // add a corresponding rule here.
+    // No per-file warn rules are active. If KNOWN_LAYER_EXCEPTIONS
+    // gains an entry, add the corresponding warn-only rule here.
   ],
   options: {
     doNotFollow: { path: 'node_modules' },
@@ -97,9 +91,8 @@ module.exports = {
 /**
  * Build a forbidden rule banning imports from `fromLayer` to any of
  * `forbiddenHigherLayers`. Severity is `error` — the build fails on
- * any new violation. Add a path to KNOWN_LAYER_EXCEPTIONS and a
- * matching warn-only rule above to temporarily downgrade a specific
- * file while a follow-up commit lands the fix.
+ * any new violation. Paths in KNOWN_LAYER_EXCEPTIONS are skipped by
+ * this rule and should have a matching warn-only rule above.
  */
 function layerRule(fromLayer, forbiddenHigherLayers) {
   const exceptions = KNOWN_LAYER_EXCEPTIONS.map((p) => `^${p}$`).join('|');

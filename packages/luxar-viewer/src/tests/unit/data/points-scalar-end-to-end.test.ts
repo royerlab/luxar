@@ -1,5 +1,5 @@
 /**
- * D4: Points scalar plumbing end-to-end tests.
+ * Points scalar plumbing end-to-end tests.
  *
  * Covers every layer that scalars now traverse:
  *  - LoadedPointsDataAccumulator: scalar buffer init/grow/fill/getData.
@@ -53,7 +53,7 @@ function ctx(attrs: PointsMetadata = pointsAttrs()): ProjectionContext {
   };
 }
 
-describe('D4 — accumulator scalar buffer', () => {
+describe('accumulator scalar buffer', () => {
   it('initializes scalar type on first fill (Float32 path)', () => {
     const acc = new LoadedPointsDataAccumulator(64, 3, 100);
     acc.fill(0, {
@@ -111,7 +111,7 @@ describe('D4 — accumulator scalar buffer', () => {
   });
 });
 
-describe('D4 — projectPointsTo3D scalar pass-through', () => {
+describe('projectPointsTo3D scalar pass-through', () => {
   it('passes scalars through unchanged when no filtering', () => {
     const positions = new Float32Array([0, 0, 0, 1, 0, 0, 2, 0, 0]);
     const scalars = new Float32Array([0.1, 0.5, 0.9]);
@@ -205,7 +205,7 @@ describe('D4 — projectPointsTo3D scalar pass-through', () => {
   });
 });
 
-describe('D4 — GPUBufferPool scalar attribute', () => {
+describe('GPUBufferPool scalar attribute', () => {
   it('detectAttributeTypes omits scalar field when data.scalars is undefined', () => {
     const pool = new GPUBufferPool(20, 300, 5, 0);
     const data: LoadedPointsData = {
@@ -389,7 +389,7 @@ describe('D4 — GPUBufferPool scalar attribute', () => {
   });
 });
 
-describe('D4 — end-to-end: NodeFactory + LayersPanel guard', () => {
+describe('end-to-end: NodeFactory + LayersPanel guard', () => {
   it('createPointsGeometry binds scalar attribute when data.scalars supplied', () => {
     const factory = new NodeFactory();
     const data: LoadedPointsData = {
@@ -409,7 +409,7 @@ describe('D4 — end-to-end: NodeFactory + LayersPanel guard', () => {
     expect(supportsScalarColormap('points', g)).toBe(true);
   });
 
-  it('without data.scalars, supportsScalarColormap returns false (C1 guard remains)', () => {
+  it('without data.scalars, supportsScalarColormap returns false', () => {
     const factory = new NodeFactory();
     const data: LoadedPointsData = {
       positions: new Float32Array([0, 0, 0]),

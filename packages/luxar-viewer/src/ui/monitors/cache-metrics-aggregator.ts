@@ -159,8 +159,7 @@ export function aggregateCacheMetrics(params: AggregateCacheMetricsParams): Cach
       demand = stats.demand;
     }
 
-    // Cache validation health (Phase 6.4). Drives the
-    // unvalidated-external-dataset badge.
+    // Cache validation health drives the unvalidated-external-dataset badge.
     if (stats.health) {
       health = {
         validationMode: stats.health.validationMode,
@@ -225,9 +224,8 @@ export function aggregateCacheMetrics(params: AggregateCacheMetricsParams): Cach
     effectiveDemandHitRate = l0Stats.hitRate;
   }
 
-  // Cache-status badges. Phase 7 surfaces these in the UI; consumers
-  // reading metrics programmatically (debug snapshots, E2E tests) can
-  // also assert on them.
+  // Cache-status badges are surfaced in the UI and in programmatic
+  // metrics for debug snapshots and E2E assertions.
   const status: CacheStatusBadge[] = [];
   switch (telemetryState.kind) {
     case 'enabled':
@@ -240,11 +238,10 @@ export function aggregateCacheMetrics(params: AggregateCacheMetricsParams): Cach
       status.push('disabled-config');
       break;
     case 'not-wired':
-      // Provider-health diagnostic (Phase 7.4): when telemetry says
-      // enabled-but-not-wired, surface as provider-missing so the cache
-      // tab can show a warning. Plain 'not-wired' (no provider yet
-      // because scene transition is mid-flight) is a different signal —
-      // we don't add a badge for it here.
+      // Plain 'not-wired' means no provider is attached yet, usually
+      // because a scene transition is mid-flight. Do not add a badge
+      // here; the contradiction check below handles enabled-but-missing
+      // providers.
       break;
   }
   // Provider-health: telemetry classifier said enabled but providers

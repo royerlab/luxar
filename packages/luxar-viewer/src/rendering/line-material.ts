@@ -49,7 +49,7 @@ export interface LineMaterialConfig {
 /**
  * Line material uniforms interface
  *
- * @internal — preserved for future use; no current consumer.
+ * @internal — reserved extension shape; no current consumer.
  */
 export interface LineMaterialUniforms {
   /** Field of view in radians */
@@ -105,6 +105,9 @@ export class LineMaterial extends THREE.ShaderMaterial implements CameraAwareMat
         uInvGamma: { value: 1.0 / gammaValue }, // Pre-computed inverse for performance
         uIntensity: { value: materialConfig.intensity ?? 1.0 },
         uOffset: { value: materialConfig.offset ?? 0.0 },
+        // near-plane safety + max-pixel-width clamp uniforms.
+        uNearCull: { value: 0.05 },
+        uMaxLinePixelWidth: { value: 540 }, // ≈ resolution.y * 0.5 default; updated in updateCameraParams
         // Colormap uniforms (only when USE_COLORMAP define is set)
         ...(materialConfig.colormapTexture
           ? {
@@ -170,11 +173,18 @@ export class LineMaterial extends THREE.ShaderMaterial implements CameraAwareMat
     fov: number,
     resolution: THREE.Vector2,
     isOrtho: boolean = false,
-    _nearCull?: number
+    nearCull?: number
   ): void {
     this.uniforms.uFOV.value = fov; // FOV in radians (perspective) or frustumHeight (ortho)
     this.uniforms.uResolution.value.copy(resolution);
     this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
+    // Apply the near-plane safety distance when provided.
+    if (nearCull !== undefined && nearCull > 0) {
+      this.uniforms.uNearCull.value = nearCull;
+    }
+    // clamp screen-space line width to half the viewport height so a
+    // near-camera segment can't paint the entire screen.
+    this.uniforms.uMaxLinePixelWidth.value = Math.max(2, resolution.y * 0.5);
   }
 
   /**
@@ -250,6 +260,11 @@ export class LineMaterial extends THREE.ShaderMaterial implements CameraAwareMat
 
     cloned.uniforms.uFOV.value = this.uniforms.uFOV.value;
     cloned.uniforms.uResolution.value.copy(this.uniforms.uResolution.value);
+    // Preserve orthographic state and the near-plane / max-pixel-width
+    // clamp uniforms.
+    cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
+    cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
+    cloned.uniforms.uMaxLinePixelWidth.value = this.uniforms.uMaxLinePixelWidth.value;
     cloned.uniforms.uInvGamma.value = this.uniforms.uInvGamma.value;
 
     return cloned as this;
@@ -271,9 +286,20 @@ export class LineMaterial extends THREE.ShaderMaterial implements CameraAwareMat
    * `clone()` calls preserve it.
    */
   applyBlendingMode(mode: 'additive' | 'normal' | 'max' | 'opaque' | 'luminous'): void {
+    const previousMode = this.userData.blendingMode as
+      | 'additive'
+      | 'normal'
+      | 'max'
+      | 'opaque'
+      | 'luminous'
+      | undefined;
     const isOpaque = mode === 'opaque';
     const isAdditive = mode === 'additive';
     const opacity = (this.uniforms.uOpacity?.value as number | undefined) ?? 1.0;
+
+    // Defensive: THREE may leave defines undefined when none were
+    // passed at construction.
+    if (!this.defines) this.defines = {};
 
     if (isOpaque || mode === 'normal') {
       this.blending = THREE.NormalBlending;
@@ -289,6 +315,20 @@ export class LineMaterial extends THREE.ShaderMaterial implements CameraAwareMat
     this.depthWrite = isOpaque || (mode === 'normal' && opacity >= 0.99);
     this.depthTest = !isAdditive;
 
+    // gate fragment LUXAR_MAX_RGB_CONTRIBUTION on max mode so the
+    // shader premultiplies RGB by intensity*opacity (necessary for
+    // OneFactor blend factors to capture contribution-weighted max).
+    const wantsContrib = mode === 'max';
+    const hasContrib = 'LUXAR_MAX_RGB_CONTRIBUTION' in this.defines;
+    let definesChanged = false;
+    if (wantsContrib && !hasContrib) {
+      this.defines.LUXAR_MAX_RGB_CONTRIBUTION = '';
+      definesChanged = true;
+    } else if (!wantsContrib && hasContrib) {
+      delete this.defines.LUXAR_MAX_RGB_CONTRIBUTION;
+      definesChanged = true;
+    }
+
     if (mode === 'max') {
       this.blendEquation = THREE.MaxEquation;
       this.blendSrc = THREE.OneFactor;
@@ -303,6 +343,11 @@ export class LineMaterial extends THREE.ShaderMaterial implements CameraAwareMat
 
     this.userData.blendingMode = mode;
     this.userData.depthTest = this.depthTest;
-    this.needsUpdate = true;
+
+    // Only mark needsUpdate when something changed that the GPU side
+    // actually cares about.
+    if (definesChanged || previousMode !== mode) {
+      this.needsUpdate = true;
+    }
   }
 }

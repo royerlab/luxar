@@ -522,6 +522,9 @@ window.__luxarDebug.controls.setOrbitMode();
 ```typescript
 getState(): {
   totalPoints: number;
+  totalGSplats: number;
+  totalLines: number;
+  totalElements: number;
   pointClouds: Array<{
     name: string;
     pointCount: number;
@@ -530,11 +533,35 @@ getState(): {
     hasRadii: boolean;
     hasSharpness: boolean;
   }>;
+  gsplatMeshes: Array<{
+    name: string;
+    splatCount: number;
+    visible: boolean;
+  }>;
+  lineMeshes: Array<{
+    name: string;
+    segmentCount: number;
+    visible: boolean;
+    hasColormap: boolean;
+  }>;
+  gpuPool?: {
+    activeBuffers: number;
+    pooledBuffers: number;
+    activeBytes: number;
+    pooledBytes: number;
+    totalBytes: number;
+    largestPooledBytes: number;
+    evictions: number;
+  };
   dimensions: {
     ndim: number;
     displayed: number[];
     currentStep: number[];
   } | null;
+  camera: {
+    position: { x: number; y: number; z: number };
+    fov: number;
+  };
   cameraPosition: { x: number; y: number; z: number };
   cameraFov: number;
   isAnimating: boolean;
@@ -546,17 +573,18 @@ getState(): {
 
 ```javascript
 const state = window.__luxarDebug.getState();
-console.log(`Loaded ${state.totalPoints} points`);
-console.log(`Camera FOV: ${state.cameraFov}`);
+console.log(`Loaded ${state.totalElements} renderable elements`);
+console.log(`Camera FOV: ${state.camera.fov}`);
 console.log(`Dimensions: ${state.dimensions?.ndim}D`);
 ```
 
 **Implementation Details**:
 
-- Traverses scene to count points across all `THREE.Points` objects
-- Inspects geometry attributes for metadata
+- Traverses scene to count Points, Lines, and GSplats render objects
+- Inspects geometry/material attributes for per-mesh debug metadata
 - Queries `sceneDimsManager` for dimensional state
-- Returns camera position and FOV
+- Returns nested camera state plus flat compatibility fields
+- Includes GPU buffer pool byte stats when a provider is wired in
 
 #### renderOnce()
 
@@ -606,7 +634,7 @@ dependency.
 
 ### 6.5 Cache Debug API
 
-**Purpose**: Inspect and manipulate two-tier cache (L1 memory + L2 OPFS).
+**Purpose**: Inspect and manipulate cache levels (L0 decompressed chunks, L1 memory, and L2 OPFS).
 
 **Location**: `app.ts` lines 362-423
 

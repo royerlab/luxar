@@ -9,7 +9,7 @@
  *
  * GSplats-specific quirks (justified asymmetries, all documented inline):
  *   - Single chunk-bounds (`chunk_bounds`, no segment/vertex split).
- *   - One-phase loading (no segments → vertices remap step).
+ *   - Direct per-splat loading (no segments → vertices remap step).
  *   - Public method is `loadGSplats(viewState, session?)` instead of
  *     `loadPoints(...)`.
  *   - Per-splat data: centers (ndim), amplitudes (1), cholesky_factors
@@ -378,7 +378,7 @@ describe('GSplatsSpatialIndexLoader', () => {
       });
     });
 
-    describe('data loading (single-phase)', () => {
+    describe('data loading (direct per-splat path)', () => {
       it('should produce arrays sized to the loaded splat count', async () => {
         mockExecute.mockResolvedValueOnce([{ start: 0, end: 4 }]);
 
@@ -548,7 +548,8 @@ describe('GSplatsSpatialIndexLoader', () => {
       });
 
       // Points emits a monitor 'error' event on load
-      // failure; Lines/GSplats previously only incremented metrics.
+      // failure; errors should be surfaced through the same observable
+      // path as Points.
       // Event-driven dashboards (timelines/advisors) couldn't see
       // gsplats failures the way they saw points failures.
       it('emits a monitor "error" event on load failure', async () => {

@@ -1,18 +1,12 @@
 /**
  * Cache Hardening E2E Tests
  *
- * Browser-side regression coverage for the Phase 1-8 cache hardening
- * pass. Each test maps to a numbered plan item:
- *
- *   9.2 — rapid dataset switch + lifecycle (no leaked state across loads)
- *   9.3 — node-type cache parity (points + lines both surface health)
- *   9.4 — browser-storage health (status badges via debug snapshot)
- *   9.5 — UI cache-monitor coverage (network + demand + prefetch + health
- *         visible through __luxarDebug.cache.getStats())
+ * Browser-side coverage for cache health diagnostics, dataset-switch
+ * lifecycle, and cache-monitor UI fields.
  *
  * Existing cache-system.spec.ts and dataset-switching.spec.ts cover
- * the L0/L1/L2 fundamentals; this file complements them with the
- * Phase-7 health/badge surface.
+ * the L0/L1/L2 fundamentals; this file complements them with health,
+ * demand, network, and prefetch diagnostics.
  */
 
 import { test, expect } from './fixtures';
@@ -22,7 +16,7 @@ const EXAMPLES_BASE = 'http://localhost:9000/datasets/examples';
 const POINTS_DATASET = `${EXAMPLES_BASE}/radius_basic_example.zarr`;
 const LINES_DATASET = `${EXAMPLES_BASE}/lines_basic_example.zarr`;
 
-test.describe('Cache hardening — debug snapshot extensions (9.5)', () => {
+test.describe('Cache hardening — debug snapshot diagnostics', () => {
   test('getStats() exposes network, demand, prefetch, and health fields', async ({ page }) => {
     await page.goto(`/?src=${POINTS_DATASET}&debug`);
     await waitForLuxarReady(page);
@@ -32,7 +26,7 @@ test.describe('Cache hardening — debug snapshot extensions (9.5)', () => {
       return await debug.cache.getStats();
     });
 
-    // Phase 7 additions: snapshot must surface every diagnostic in one call.
+    // Snapshot must surface every cache diagnostic in one call.
     expect(stats).toBeDefined();
     expect(stats.network).toBeDefined();
     expect(stats.network.bytesTransferred).toBeGreaterThanOrEqual(0);
@@ -52,7 +46,7 @@ test.describe('Cache hardening — debug snapshot extensions (9.5)', () => {
     await assertNoConsoleErrors(page);
   });
 
-  test('Luxar dataset records validationMode === content-hash (9.4)', async ({ page }) => {
+  test('Luxar dataset records validationMode === content-hash', async ({ page }) => {
     // Luxar examples carry a content_hash attr — validation should
     // resolve to content-hash mode and the unvalidated badge should
     // NOT fire.
@@ -69,7 +63,7 @@ test.describe('Cache hardening — debug snapshot extensions (9.5)', () => {
     expect(health.unvalidatedExternalDataset).toBe(false);
   });
 
-  test('OPFS health counters are present on L2 stats (3.2 + 6.2)', async ({ page }) => {
+  test('OPFS health counters are present on L2 stats', async ({ page }) => {
     await page.goto(`/?src=${POINTS_DATASET}&debug`);
     await waitForLuxarReady(page);
 
@@ -80,8 +74,8 @@ test.describe('Cache hardening — debug snapshot extensions (9.5)', () => {
     });
 
     expect(l2).toBeDefined();
-    // Counters added in Phase 3 / 6 are optional on the type but
-    // populated by the real OPFSStore — clean session ⇒ all zero.
+    // Counters are optional on the type but populated by the real
+    // OPFSStore — clean session ⇒ all zero.
     expect(l2.oversizedWriteSkipped ?? 0).toBeGreaterThanOrEqual(0);
     expect(l2.quotaWriteSkipped ?? 0).toBeGreaterThanOrEqual(0);
     expect(l2.evictions ?? 0).toBeGreaterThanOrEqual(0);
@@ -91,7 +85,7 @@ test.describe('Cache hardening — debug snapshot extensions (9.5)', () => {
   });
 });
 
-test.describe('Cache hardening — dataset switch lifecycle (9.2)', () => {
+test.describe('Cache hardening — dataset switch lifecycle', () => {
   test('dataset switch produces a fresh caching store with healthy stats', async ({ page }) => {
     // Load points → load lines → load points again. Each load must
     // produce non-leaking, well-formed cache stats. Catches:
@@ -140,7 +134,7 @@ test.describe('Cache hardening — dataset switch lifecycle (9.2)', () => {
   });
 });
 
-test.describe('Cache hardening — node-type parity (9.3)', () => {
+test.describe('Cache hardening — node-type parity', () => {
   test('points dataset surfaces complete cache stats', async ({ page }) => {
     await page.goto(`/?src=${POINTS_DATASET}&debug`);
     await waitForLuxarReady(page);

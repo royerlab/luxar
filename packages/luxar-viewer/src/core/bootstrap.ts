@@ -1,13 +1,12 @@
 /**
  * Bootstrap helpers for the standalone Luxar viewer entry point.
  *
- * `main.ts` used to inline a long sequence of pre-init steps (theme
- * initialization, console-interceptor patching, blosc codec warming,
- * config validation, URL parameter parsing, canvas resolution, debug
- * interface attachment). This module extracts that sequence into one
- * function so:
+ * Centralizes the standalone pre-init sequence: theme initialization,
+ * console-interceptor patching, blosc codec warming, config validation,
+ * URL parameter parsing, canvas resolution, and debug interface
+ * attachment. This keeps:
  *
- * - `main.ts` becomes ~10 lines and is easy to read at a glance.
+ * - `main.ts` small and easy to read at a glance.
  * - Embedded callers that want the same "full standalone" behavior can
  *   call this function directly (most won't — they construct LuxarApp
  *   themselves and skip the standalone-only steps like codec warming
@@ -40,8 +39,8 @@ import { registry as codecRegistry } from 'zarrita';
 /**
  * Options for {@link bootstrapStandalone}.
  *
- * The standalone-app entry point (`main.ts`) passes nothing beyond `canvas`
- * — every flag defaults to true to preserve historical behavior.
+ * The standalone-app entry point (`main.ts`) passes nothing beyond `canvas`,
+ * so every flag defaults to the standalone viewer behavior.
  *
  * Embedded callers typically construct LuxarApp directly and skip this
  * function entirely. If they DO call it, they usually want
@@ -94,8 +93,8 @@ export interface BootstrapOptions {
  * 6. Construct LuxarApp, attach the debug surface (if `?debug`), and call
  *    `init()` — surfacing errors via `showError()` if init throws.
  *
- * Always preserves the standalone-app's pre-existing semantics. Tests live
- * in `tests/unit/core/bootstrap.test.ts` and cover each opt-in flag, the
+ * Preserves the standalone-app semantics. Tests live in
+ * `tests/unit/core/bootstrap.test.ts` and cover each opt-in flag, the
  * theme/URL/localStorage-driven debug-mode resolution, and the error path.
  */
 export async function bootstrapStandalone(opts: BootstrapOptions): Promise<LuxarApp> {

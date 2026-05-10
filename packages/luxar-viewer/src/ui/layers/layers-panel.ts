@@ -26,6 +26,7 @@ import { EventGroup } from '../../utils/event-group';
 import { showToast } from '../helpers';
 import type { AnimationController } from '../../scene/animation-controller';
 import { getColormapTexture } from '../../rendering/colormap-textures';
+import { supportsScalarColormap } from '../../rendering/material-colormap-helpers';
 import { COLORMAP_CATEGORIES } from '../../rendering/colormap-data';
 import {
   composeAttrs,
@@ -738,28 +739,33 @@ export class LayersPanel {
   }
 
   private applyBlendingStateToMaterial(mat: LuxarMaterial, mode: string): void {
-    // Prefer the material's own `applyBlendingMode` when it has one.
-    // GSplatMaterial in particular needs to update `uProjectionMode` and
-    // use `CustomBlending + OneFactor` for additive/luminous (NOT
-    // THREE.AdditiveBlending — that uses SrcAlpha which squares the
-    // per-pixel intensity). LineMaterial gets the same routing for
-    // consistency. PointMaterial has no `applyBlendingMode` and falls
-    // through to the generic path below; its blending is mode-agnostic
-    // at the material level.
+    // All Luxar materials (Points, Lines, GSplats) now implement
+    // `applyBlendingMode`. That single source of truth handles type-
+    // specific concerns (GSplat `uProjectionMode`, Point
+    // `LUXAR_MAX_RGB_CONTRIBUTION` define, max-mode `OneFactor` blend
+    // factors) and is used by both creation (in MaterialManager) and
+    // runtime UI transitions. The generic fallback below remains for
+    // defensiveness against external/future materials that lack the
+    // method, and now applies the *complete* state (including
+    // blend factors) so it matches the canonical mapping.
     if (typeof mat.applyBlendingMode === 'function') {
       mat.applyBlendingMode(mode as BlendingMode);
       return;
     }
 
-    const state = getBlendingState(mode);
+    const opacityUniform = (mat as unknown as {
+      uniforms?: { opacity?: { value?: number }; uOpacity?: { value?: number } };
+    }).uniforms;
+    const liveOpacity =
+      opacityUniform?.opacity?.value ?? opacityUniform?.uOpacity?.value ?? 1.0;
+    const state = getBlendingState(mode, liveOpacity);
     mat.blending = state.blending;
     mat.depthTest = state.depthTest;
     mat.depthWrite = state.depthWrite;
     mat.transparent = state.transparent;
-    // BlendingState is total — non-max modes report THREE.AddEquation, so
-    // switching from 'max' back to e.g. 'additive' resets the equation
-    // instead of stranding MaxEquation on the material.
     mat.blendEquation = state.blendEquation;
+    if (state.blendSrc !== undefined) mat.blendSrc = state.blendSrc;
+    if (state.blendDst !== undefined) mat.blendDst = state.blendDst;
     mat.needsUpdate = true;
   }
 
@@ -828,6 +834,18 @@ export class LayersPanel {
       const mat = this.getLeafMaterial(obj);
       if (!mat || !mat.updateColormapTexture) continue;
       if (layer.colormap && tex) {
+        // C1 fail-closed guard: enabling USE_COLORMAP requires the right
+        // scalar attribute on geometry (`scalar` for points,
+        // `aStartScalar`/`aEndScalar` for lines, `aAmplitude` for gsplats).
+        const nodeType = leaf.type as 'points' | 'lines' | 'gsplats';
+        const geometry = (obj as THREE.Points | THREE.Mesh).geometry as THREE.BufferGeometry;
+        if (!supportsScalarColormap(nodeType, geometry)) {
+          log.warning(
+            Modules.UI,
+            `[LayersPanel][${leaf.path}] Scalar colormap suppressed: required attribute(s) not bound on geometry (pending C4 implementation).`
+          );
+          continue;
+        }
         mat.updateColormapTexture(tex);
         if (layer.scalarDataRange && mat.updateScalarRange) {
           mat.updateScalarRange(layer.scalarDataRange[0], layer.scalarDataRange[1]);
@@ -835,7 +853,13 @@ export class LayersPanel {
       } else {
         mat.updateColormapTexture(null);
       }
-      mat.needsUpdate = true;
+      // do NOT mark `mat.needsUpdate = true` here. Material methods
+      // (`updateColormapTexture`, `applyColormapTextureToMaterial`)
+      // already toggle `needsUpdate` when defines change. Setting it
+      // unconditionally for every per-leaf colormap apply caused
+      // shader recompilation on every UI tick during group-layer
+      // scalar-range drags, even when the colormap define hadn't
+      // toggled.
     }
     this.requestRender();
   }

@@ -294,6 +294,27 @@ export interface ZarrNodeAttrs {
   /** Physical units */
   units?: string;
 
+  /**
+   * Colormap name. Built-in (e.g. 'viridis', 'magma') OR 'custom' — the
+   * latter pairs with a `colormap_lut` zarr array sibling.
+   */
+  colormap?: string;
+
+  /** Whether per-element scalar values are present for colormap lookup. */
+  has_scalars?: boolean;
+
+  /** `[min, max]` range used to normalise scalars before LUT lookup. */
+  scalar_data_range?: [number, number];
+
+  /**
+   * bytes loaded from the node's `colormap_lut` zarr array when
+   * `colormap === 'custom'`. Populated by `SceneLoader.buildSceneGraph`
+   * and consumed by `NodeFactory` via
+   * `getColormapTexture('custom', customLutBytes)`. Not authored at the
+   * zarr level — purely a runtime hand-off.
+   */
+  customLutBytes?: Uint8Array;
+
   /** Any additional attributes */
   [key: string]: unknown;
 }

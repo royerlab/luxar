@@ -18,6 +18,11 @@ import * as THREE from 'three';
  * USE_COLORMAP define + uColormapTex uniform contract. Returns the
  * before/after enabled state so the caller can apply material-
  * specific side effects on a transition.
+ *
+ * On disable (texture=null), the helper also clears `uColormapTex.value`
+ * and resets `uScalarMin`/`uScalarScale` so a later `clone()` can use
+ * `defines.USE_COLORMAP` (or absence of texture value) as the source of
+ * truth without resurrecting stale colormap state.
  */
 export function applyColormapTextureToMaterial(
   material: THREE.ShaderMaterial,
@@ -37,6 +42,18 @@ export function applyColormapTextureToMaterial(
     }
   } else {
     delete material.defines.USE_COLORMAP;
+    // Clear uniforms so clone() doesn't resurrect the colormap from the
+    // texture-uniform's value. defines.USE_COLORMAP is the source of truth.
+    if (material.uniforms.uColormapTex) {
+      material.uniforms.uColormapTex.value = null;
+    }
+    if (material.uniforms.uScalarMin) {
+      material.uniforms.uScalarMin.value = 0.0;
+    }
+    if (material.uniforms.uScalarScale) {
+      material.uniforms.uScalarScale.value = 1.0;
+    }
+    delete material.userData.scalarRange;
   }
 
   return { wasEnabled, nowEnabled };
@@ -62,4 +79,33 @@ export function applyScalarRangeToMaterial(
     material.uniforms.uScalarScale.value = 1.0 / Math.max(1e-10, max - min);
   }
   material.userData.scalarRange = [min, max];
+}
+
+/**
+ * Whether scalar-colormap support for a node type is end-to-end wired
+ * (loader → projection → geometry → shader attribute → material define).
+ *
+ * - GSplats use the always-present `aAmplitude` attribute as the scalar
+ *   source, so colormap mode is supported unconditionally.
+ * - Points need a `scalar` attribute on the geometry; this returns
+ *   `false` whenever `geometry` lacks `scalar`.
+ * - Lines need both `aStartScalar` and `aEndScalar` instanced attributes.
+ *
+ * Use this to fail-closed: if `false`, the caller should NOT enable
+ * `USE_COLORMAP` and should log a warning so the user understands why
+ * a metadata-authored colormap did not take effect.
+ */
+export function supportsScalarColormap(
+  nodeType: 'points' | 'lines' | 'gsplats',
+  geometry?: THREE.BufferGeometry
+): boolean {
+  if (nodeType === 'gsplats') return true;
+  if (nodeType === 'points') {
+    return geometry ? geometry.hasAttribute('scalar') : false;
+  }
+  if (nodeType === 'lines') {
+    if (!geometry) return false;
+    return geometry.hasAttribute('aStartScalar') && geometry.hasAttribute('aEndScalar');
+  }
+  return false;
 }

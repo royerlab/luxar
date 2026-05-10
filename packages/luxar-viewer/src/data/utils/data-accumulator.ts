@@ -174,7 +174,10 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
     this.colorBuffer = new Float32Array(initialCapacity * 3);
     this.radiiBuffer = new Float32Array(initialCapacity);
     this.sharpnessBuffer = new Float32Array(initialCapacity);
-    this.scalarBuffer = new Float32Array(initialCapacity);
+    // C.4: scalars are an optional attribute on most datasets. Start
+    // with an empty sentinel buffer so a non-scalar load doesn't reserve
+    // `initialCapacity * 4 B` up front. `fill()` allocates on first use.
+    this.scalarBuffer = new Float32Array(0);
 
     this.allocations++;
   }
@@ -263,15 +266,20 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
       this.sharpnessBuffer = newSharpness;
     }
 
-    // Scalar — type-preserving growth.
-    if (this.scalarBuffer instanceof Uint8Array) {
-      const newScalars = new Uint8Array(newCapacity);
-      newScalars.set(this.scalarBuffer.subarray(0, liveScalar));
-      this.scalarBuffer = newScalars;
-    } else {
-      const newScalars = new Float32Array(newCapacity);
-      newScalars.set(this.scalarBuffer.subarray(0, liveScalar));
-      this.scalarBuffer = newScalars;
+    // Scalar — type-preserving growth. C.4: skip growth when the
+    // accumulator never saw scalars (buffer stayed at sentinel size 0);
+    // initializeTypes will allocate at the new capacity on first
+    // scalar fill.
+    if (this.scalarBuffer.length > 0) {
+      if (this.scalarBuffer instanceof Uint8Array) {
+        const newScalars = new Uint8Array(newCapacity);
+        newScalars.set(this.scalarBuffer.subarray(0, liveScalar));
+        this.scalarBuffer = newScalars;
+      } else {
+        const newScalars = new Float32Array(newCapacity);
+        newScalars.set(this.scalarBuffer.subarray(0, liveScalar));
+        this.scalarBuffer = newScalars;
+      }
     }
 
     this.capacity = newCapacity;
@@ -368,6 +376,29 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
    * Detect and initialize buffer types on first fill
    */
   private initializeTypes(data: Partial<LoadedPointsData>): void {
+    // C.4: even after the initial color/radius/sharpness types have
+    // been pinned by a prior fill, a later fill might be the first to
+    // carry scalars — in which case we lazily allocate the scalar
+    // buffer here without disturbing the other type pins.
+    if (this.types && this.types.scalar === undefined && data.scalars) {
+      let scalarType: 'Float32Array' | 'Float16Array' | 'Uint8Array';
+      if (data.scalars instanceof Uint8Array) {
+        scalarType = 'Uint8Array';
+      } else if (
+        typeof globalThis.Float16Array !== 'undefined' &&
+        data.scalars instanceof globalThis.Float16Array
+      ) {
+        scalarType = 'Float16Array';
+      } else {
+        scalarType = 'Float32Array';
+      }
+      this.types.scalar = scalarType;
+      this.scalarBuffer =
+        scalarType === 'Uint8Array'
+          ? new Uint8Array(this.capacity)
+          : new Float32Array(this.capacity);
+      return;
+    }
     if (this.types) return; // Already initialized
 
     const types: PointsAccumulatorTypes = {
@@ -411,8 +442,13 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
       this.sharpnessBuffer = new Uint8Array(this.capacity);
     }
 
+    // C.4: lazily allocate the scalar buffer on first sight of scalars
+    // (sized to current capacity). When `types.scalar` is undefined the
+    // buffer stays at length 0.
     if (types.scalar === 'Uint8Array') {
       this.scalarBuffer = new Uint8Array(this.capacity);
+    } else if (types.scalar) {
+      this.scalarBuffer = new Float32Array(this.capacity);
     }
   }
 
@@ -704,7 +740,11 @@ export class LinesDataAccumulator implements DataAccumulator<
     this.widthBuffer = new Float32Array(initialVertexCapacity); // PER-VERTEX!
     this.colorBuffer = new Float32Array(initialVertexCapacity * 3); // RGB
     this.sharpnessBuffer = new Float32Array(initialVertexCapacity);
-    this.scalarBuffer = new Float32Array(initialVertexCapacity);
+    // C.4: scalars are an optional per-vertex attribute. Start with an
+    // empty sentinel buffer so non-scalar line datasets don't reserve
+    // `initialVertexCapacity * 4 B` up front. `initializeTypes` allocates
+    // it on first scalar fill.
+    this.scalarBuffer = new Float32Array(0);
 
     this.allocations++;
   }
@@ -713,6 +753,28 @@ export class LinesDataAccumulator implements DataAccumulator<
    * Initialize types from first data fill (like Points accumulator)
    */
   private initializeTypes(data: Partial<LoadedLinesData>): void {
+    // C.4: a later fill might be the first to carry scalars; allocate
+    // the scalar buffer at the current vertex capacity without re-pinning
+    // the color/width/sharpness types.
+    if (this.types && this.types.scalar === undefined && data.scalars) {
+      let scalarType: 'Float32Array' | 'Float16Array' | 'Uint8Array';
+      if (data.scalars instanceof Uint8Array) {
+        scalarType = 'Uint8Array';
+      } else if (
+        typeof globalThis.Float16Array !== 'undefined' &&
+        data.scalars instanceof globalThis.Float16Array
+      ) {
+        scalarType = 'Float16Array';
+      } else {
+        scalarType = 'Float32Array';
+      }
+      this.types.scalar = scalarType;
+      this.scalarBuffer =
+        scalarType === 'Uint8Array'
+          ? new Uint8Array(this.vertexCapacity)
+          : new Float32Array(this.vertexCapacity);
+      return;
+    }
     if (this.types) return; // Already initialized
 
     const types: LinesAccumulatorTypes = {
@@ -748,10 +810,13 @@ export class LinesDataAccumulator implements DataAccumulator<
       this.colorBuffer = new Uint16Array(this.vertexCapacity * 3);
     }
 
-    // A.2: recreate scalar buffer with native dtype when Uint8 input.
-    // Float16 stays in the default Float32 buffer (widened via .set()).
+    // C.4 / A.2: lazily allocate scalar buffer when first scalar fill is
+    // observed. Sized to current vertex capacity. Skipped when there
+    // are no scalars (`types.scalar === undefined`).
     if (types.scalar === 'Uint8Array') {
       this.scalarBuffer = new Uint8Array(this.vertexCapacity);
+    } else if (types.scalar) {
+      this.scalarBuffer = new Float32Array(this.vertexCapacity);
     }
   }
 
@@ -802,15 +867,19 @@ export class LinesDataAccumulator implements DataAccumulator<
       this.widthBuffer = newWidthBuf;
       this.sharpnessBuffer = newSharpnessBuf;
 
-      // A.2: scalar buffer grows preserving dtype (Uint8 stays Uint8).
-      if (this.scalarBuffer instanceof Uint8Array) {
-        const newScalarBuf = new Uint8Array(newVertexCap);
-        newScalarBuf.set(this.scalarBuffer.subarray(0, liveVerts));
-        this.scalarBuffer = newScalarBuf;
-      } else {
-        const newScalarBuf = new Float32Array(newVertexCap);
-        newScalarBuf.set(this.scalarBuffer.subarray(0, liveVerts));
-        this.scalarBuffer = newScalarBuf;
+      // A.2 / C.4: scalar buffer grows only when allocated; the
+      // sentinel-empty (length 0) buffer stays empty until the first
+      // scalar fill, at which point initializeTypes sizes it.
+      if (this.scalarBuffer.length > 0) {
+        if (this.scalarBuffer instanceof Uint8Array) {
+          const newScalarBuf = new Uint8Array(newVertexCap);
+          newScalarBuf.set(this.scalarBuffer.subarray(0, liveVerts));
+          this.scalarBuffer = newScalarBuf;
+        } else {
+          const newScalarBuf = new Float32Array(newVertexCap);
+          newScalarBuf.set(this.scalarBuffer.subarray(0, liveVerts));
+          this.scalarBuffer = newScalarBuf;
+        }
       }
 
       // Color: Type-preserving growth (like Points accumulator)

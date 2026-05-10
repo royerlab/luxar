@@ -47,10 +47,9 @@ export interface ViewState {
 }
 
 // Re-export the points-specific types (LoadedPointsData, PointRange,
-// PositionArray, ColorArray, ScalarArray) from `types/points.ts` —
-// kept here for back-compat with consumers using the historical
-// `from '../data/data-loader-types'` import path. New code should
-// import from `types/points` directly.
+// PositionArray, ColorArray, ScalarArray) from `types/points.ts` for
+// consumers that import through `data/data-loader-types`. New code
+// should import from `types/points` directly.
 export type {
   LoadedPointsData,
   PointRange,
@@ -69,7 +68,7 @@ import type { LoadedPointsData, PointRange } from '../types/points';
  * Mirrors `LinesDataLoader` and `GSplatsDataLoader` in
  * `types/{lines,gsplats}.ts`. Aliased as `PointsDataLoader` in
  * `types/points.ts` (using a slightly different `PointsViewState`
- * shape) — collapsing the two is a planned cleanup.
+ * shape).
  */
 export interface DataLoader {
   /** Load points data for the given view state */
@@ -178,7 +177,7 @@ export interface SceneNode {
 /**
  * Result of a spatial index query
  *
- * @internal — preserved for future use; no current consumer.
+ * @internal — reserved extension shape; no current consumer.
  */
 export interface SpatialQueryResult {
   /** Point ranges that match the query */
@@ -194,7 +193,7 @@ export interface SpatialQueryResult {
 /**
  * Loader statistics for monitoring
  *
- * @internal — preserved for future use; no current consumer.
+ * @internal — reserved extension shape; no current consumer.
  */
 export interface LoaderStats {
   /** Time taken to load (ms) */

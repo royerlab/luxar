@@ -1,6 +1,6 @@
 # Unified Loader Architecture
 
-**Status**: PHASE 1 & 2 COMPLETE - All loaders migrated to RangeLoader + TransferableAccumulator
+**Status**: All geometry loaders use RangeLoader + TransferableAccumulator.
 
 ## Overview
 
@@ -8,12 +8,12 @@ This module provides the foundation for the unified spatial index loader archite
 
 ### Problem Solved
 
-Before unification, each loader (Points, Lines, GSplats) had:
+The shared loader components keep Points, Lines, and GSplats aligned on:
 
-- Duplicated encoding dispatch logic (~600 lines total)
-- Duplicated spatial query logic (~300 lines total)
-- Inconsistent tolerance calculation
-- Inconsistent worker dispatch patterns
+- Encoding dispatch logic
+- Spatial query construction
+- Tolerance calculation
+- Worker dispatch patterns
 
 ### Solution
 

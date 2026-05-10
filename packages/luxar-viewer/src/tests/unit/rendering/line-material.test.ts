@@ -116,18 +116,23 @@ describe('LineMaterial', () => {
       expect(material.vertexShader).toContain('out vec3 vColor');
       expect(material.vertexShader).toContain('out float vSharpness');
       expect(material.vertexShader).toContain('out float vPerpNorm');
-      expect(material.vertexShader).toContain('out float vCapFactor');
+      // cap math moved to fragment shader; vertex passes vT/vSegmentLength
+      // /vWidthAtT/vClippedStart/vClippedEnd instead.
+      expect(material.vertexShader).toContain('out float vT');
+      expect(material.vertexShader).toContain('out float vSegmentLength');
+      expect(material.vertexShader).toContain('out float vWidthAtT');
       expect(material.vertexShader).toContain('out float vPixelWidth');
 
       // Check for screen-space expansion with aspect ratio handling
       expect(material.vertexShader).toContain('perpendicular');
-      expect(material.vertexShader).toContain('pixelWidth');
+      // pixel width is now `clampedPixelWidth`/`rawPixelWidth`/`vPixelWidth`
+      // because the vertex shader applies a max-pixel-width clamp.
+      expect(material.vertexShader).toContain('clampedPixelWidth');
       expect(material.vertexShader).toContain('pixelStart');
       expect(material.vertexShader).toContain('pixelEnd');
       expect(material.vertexShader).toContain('minPixelWidth');
 
-      // Check for cap factor calculation
-      expect(material.vertexShader).toContain('baseCap');
+      // Vertex shader passes segment metadata for fragment-side cap math.
       expect(material.vertexShader).toContain('aSegmentLength');
     });
 
@@ -146,8 +151,10 @@ describe('LineMaterial', () => {
       expect(material.fragmentShader).toContain('1.0 - p * p');
       expect(material.fragmentShader).toContain('vSharpness');
 
-      // Check for cap factor application
-      expect(material.fragmentShader).toContain('vCapFactor');
+      // cap factor is computed in fragment from vT/vSegmentLength/etc.
+      expect(material.fragmentShader).toContain('capFactor');
+      expect(material.fragmentShader).toContain('distToNearest');
+      expect(material.fragmentShader).toContain('vT');
 
       // Check for anti-aliasing and intensity scaling
       expect(material.fragmentShader).toContain('vPixelWidth');
@@ -219,20 +226,22 @@ describe('LineMaterial', () => {
   });
 
   describe('shader correctness', () => {
-    it('should use semicircle kernel model for joints', () => {
+    it('should use semicircle kernel model for joints (cap math now in fragment)', () => {
       const material = new LineMaterial();
 
-      // Cap factor at endpoints should be 0.5 for seamless joints
-      expect(material.vertexShader).toContain('0.5 + 0.5');
-      expect(material.vertexShader).toContain('distToNearest');
+      // cap factor at endpoints should be 0.5 for seamless joints.
+      // Now computed in the fragment shader from interpolated vT.
+      expect(material.fragmentShader).toContain('0.5 + 0.5');
+      expect(material.fragmentShader).toContain('distToNearest');
     });
 
-    it('should handle clipped endpoints correctly', () => {
+    it('should handle clipped endpoints correctly (in fragment)', () => {
       const material = new LineMaterial();
 
-      // Clipped endpoints should use full intensity (1.0)
-      expect(material.vertexShader).toContain('nearestClipped');
-      expect(material.vertexShader).toContain('mix(baseCap, 1.0, nearestClipped)');
+      // clipped endpoints should use full intensity (1.0). Cap-clipping
+      // logic now lives in the fragment shader.
+      expect(material.fragmentShader).toContain('nearestClipped');
+      expect(material.fragmentShader).toContain('mix(baseCap, 1.0, nearestClipped)');
     });
 
     it('should use world-space to pixel conversion', () => {
@@ -403,7 +412,7 @@ describe('createInstancedLinesMesh', () => {
     expect(geometry.getAttribute('aEndClipped')).toBeDefined();
   });
 
-  it('should compute bounding box and sphere', () => {
+  it('should compute bounding box and sphere (width-expanded)', () => {
     const config = {
       startPositions: new Float32Array([0, 0, 0]),
       endPositions: new Float32Array([10, 10, 10]),
@@ -426,8 +435,33 @@ describe('createInstancedLinesMesh', () => {
     expect(geometry.boundingBox).toBeDefined();
     expect(geometry.boundingSphere).toBeDefined();
 
-    // Bounding box should encompass both endpoints
-    expect(geometry.boundingBox!.min.x).toBe(0);
-    expect(geometry.boundingBox!.max.x).toBe(10);
+    // bounds are expanded by maxWidth so thick lines near the
+    // frustum edge are not prematurely culled. Endpoints are at 0 and
+    // 10; with width=0.1 the box extends to [-0.1, 10.1].
+    expect(geometry.boundingBox!.min.x).toBeCloseTo(-0.1, 4);
+    expect(geometry.boundingBox!.max.x).toBeCloseTo(10.1, 4);
+  });
+
+  it('width-only-zero lines have endpoint-only bounds (no expansion)', () => {
+    const config = {
+      startPositions: new Float32Array([0, 0, 0]),
+      endPositions: new Float32Array([10, 0, 0]),
+      startColors: new Float32Array([1, 0, 0]),
+      endColors: new Float32Array([1, 0, 0]),
+      startWidths: new Float32Array([0]),
+      endWidths: new Float32Array([0]),
+      startSharpness: new Float32Array([1.0]),
+      endSharpness: new Float32Array([1.0]),
+      segmentLengths: new Float32Array([10]),
+      startClipped: new Uint8Array([0]),
+      endClipped: new Uint8Array([0]),
+      segmentCount: 1,
+    };
+
+    const material = new LineMaterial();
+    const mesh = createInstancedLinesMesh(config, material);
+    const geometry = mesh.geometry;
+    expect(geometry.boundingBox!.min.x).toBeCloseTo(0);
+    expect(geometry.boundingBox!.max.x).toBeCloseTo(10);
   });
 });

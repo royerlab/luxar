@@ -207,15 +207,13 @@ test.describe('First-Time User Experience', () => {
     const browser = page.locator('.luxar-dataset-browser').first();
     await expect(browser).toBeVisible({ timeout: 5000 });
 
-    // Press Escape — the new path goes through DatasetBrowser.close()
-    // → onClose fires → app.datasetBrowser cleared → input handler ref
-    // cleared.
+    // Press Escape — DatasetBrowser.close() fires onClose, clears
+    // app.datasetBrowser, and clears the input-handler ref.
     await page.keyboard.press('Escape');
     await expect(browser).toBeHidden({ timeout: 5000 });
 
     // Critical assertion: the `O` shortcut must actually re-open the
-    // browser. Pre-fix, this would silently fail because the owner ref
-    // was stale.
+    // browser after Escape closes it.
     await page.keyboard.press('o');
     await expect(browser).toBeVisible({ timeout: 5000 });
   });
@@ -249,21 +247,21 @@ test.describe('First-Time User Experience', () => {
     // manual-path field, which only renders when directory listing
     // fails — too brittle to depend on for an E2E). Focusing it
     // triggers the same `isTypingInInput()` guard at the top of
-    // `onKeyDown` that previously swallowed Escape.
+    // `onKeyDown`; Escape must still close the browser.
     await page.evaluate(() => {
       const browserEl = document.querySelector('.luxar-dataset-browser');
       if (!browserEl) throw new Error('browser missing');
       const input = document.createElement('input');
       input.type = 'text';
-      input.id = '__phase14_8_test_input';
+      input.id = '__escape_test_input';
       browserEl.appendChild(input);
       input.focus();
     });
 
     // Verify focus actually landed inside the input — `isTypingInInput`
-    // would now return true and pre-fix would short-circuit Escape.
+    // should return true from this state.
     const focusOk = await page.evaluate(
-      () => document.activeElement?.id === '__phase14_8_test_input'
+      () => document.activeElement?.id === '__escape_test_input'
     );
     expect(focusOk).toBe(true);
 

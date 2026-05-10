@@ -110,7 +110,7 @@ describe('createPointsLoader', () => {
   it('passes registry and store through to PointsSpatialIndexLoader', () => {
     const deps = makeDeps();
     createPointsLoader(makeNode('/p'), {} as never, deps);
-    // Constructor signature (post-Phase-11.7):
+    // Constructor signature:
     //   (loc, node, registry, store, profiler?, l0?, prefetcher?)
     expect(pointsCtorArgs[0][2]).toBe(deps.arrayRefRegistry);
     expect(pointsCtorArgs[0][3]).toBe(deps.zarrStore);

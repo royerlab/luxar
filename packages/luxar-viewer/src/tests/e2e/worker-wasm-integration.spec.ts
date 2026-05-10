@@ -211,10 +211,8 @@ test.describe('WASM Integration E2E', () => {
     await page.keyboard.press(']'); // Navigate forward
     await waitForNextRender(page);
 
-    // Core assertion: queries completed and app is stable after navigation.
-    // Previously this asserted `totalPoints >= 0` which is a tautology
-    // (any non-NaN number passes); it would have green-lit a regression
-    // where the spatial query silently returned an empty buffer.
+    // Core assertion: queries completed, returned visible data, and the
+    // app is stable after navigation.
     const state = await page.evaluate(() => {
       return (window as any).__luxarDebug?.getState?.();
     });

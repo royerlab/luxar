@@ -13,6 +13,12 @@ import {
   applyColormapTextureToMaterial,
   applyScalarRangeToMaterial,
 } from './material-colormap-helpers';
+import {
+  getCompleteBlendingState,
+  applyBlendingStateToMaterial,
+  type CompleteBlendingState,
+} from './blending-state';
+import type { BlendingMode } from './material-manager';
 
 /**
  * Configuration for point material creation
@@ -181,6 +187,60 @@ export class PointMaterial extends THREE.ShaderMaterial implements CameraAwareMa
       // Must be disabled for colormap mode (uses scalar + LUT instead of color attribute).
       this.vertexColors = !nowEnabled;
       this.needsUpdate = true; // Triggers shader recompilation
+    }
+  }
+
+  /**
+   * Apply a Luxar blending mode to this material in-place.
+   *
+   * Single source of truth for both creation-time wiring (called by
+   * `MaterialManager.getPointMaterial`) and runtime UI transitions
+   * (called by `LayersPanel.applyBlendingStateToMaterial`). Without
+   * this method, the LayersPanel generic path forgot to set
+   * `blendSrc`/`blendDst`, so a runtime switch additive→max stranded
+   * SrcAlpha factors and produced inconsistent visuals.
+   *
+   * Sets the `LUXAR_MAX_RGB_CONTRIBUTION` shader define for `max` mode
+   * so the fragment shader premultiplies RGB by falloff/opacity. This
+   * is required because MaxEquation+OneFactor doesn't multiply by
+   * alpha at composite time. Toggling this define triggers a shader
+   * recompilation; that's intentional and only happens on actual mode
+   * transitions (idempotent — see `userData.blendingMode` early exit).
+   */
+  applyBlendingMode(mode: BlendingMode): void {
+    const opacity = (this.uniforms.opacity?.value as number | undefined) ?? 1.0;
+    const state: CompleteBlendingState = getCompleteBlendingState(mode, opacity);
+
+    // Defensive: THREE may leave `defines` undefined when none were
+    // passed at construction. We rely on it as our source of truth for
+    // the LUXAR_MAX_RGB_CONTRIBUTION shader define.
+    if (!this.defines) {
+      this.defines = {};
+    }
+
+    // Idempotent fast path: no need to re-apply identical state.
+    const previousMode = this.userData.blendingMode as BlendingMode | undefined;
+    const wantsContrib = state.shaderOutputMode === 'rgb-contribution';
+    const hasContrib = 'LUXAR_MAX_RGB_CONTRIBUTION' in this.defines;
+    const stateChanged = applyBlendingStateToMaterial(this, state);
+    let definesChanged = false;
+    if (wantsContrib && !hasContrib) {
+      this.defines.LUXAR_MAX_RGB_CONTRIBUTION = '';
+      definesChanged = true;
+    } else if (!wantsContrib && hasContrib) {
+      delete this.defines.LUXAR_MAX_RGB_CONTRIBUTION;
+      definesChanged = true;
+    }
+    this.userData.blendingMode = mode;
+    this.userData.depthTest = state.depthTest;
+
+    if (definesChanged) {
+      // Defines changed → shader must recompile.
+      this.needsUpdate = true;
+    } else if (previousMode !== mode && stateChanged) {
+      // Mode changed but no shader recompile required.
+      // Mark needsUpdate to refresh blend state on the GPU.
+      this.needsUpdate = true;
     }
   }
 

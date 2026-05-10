@@ -3,10 +3,10 @@
  *
  * **TEST SCOPE**: thin-facade tests — verify that `loadScene` /
  * `updateView` / `updateSceneForDimensions` / `dispose` delegate to
- * `SceneLoaderManager` correctly. The dim → view-state conversion that
- * `updateSceneForDimensions` historically inlined is now exercised by
- * `dims-to-view-state.test.ts` directly; the integration tests here only
- * verify the facade calls into the manager with the converted shape.
+ * `SceneLoaderManager` correctly. The dim → view-state conversion is
+ * exercised by `dims-to-view-state.test.ts` directly; the integration
+ * tests here only verify the facade calls into the manager with the
+ * converted shape.
  *
  * **Mocks**: `SceneLoaderManager` only — the real manager creates a real
  * SceneLoader which depends on zarr I/O and WebGL. THREE is *not* mocked:

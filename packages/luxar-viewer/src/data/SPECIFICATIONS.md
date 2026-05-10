@@ -366,7 +366,7 @@ function dequantize(data, bounds, dtype):
 **Format**:
 
 - `.zattrs` contains `array_ref: "hash_value"`
-- Array points to previously loaded array in registry
+- Array points to an already loaded array in the registry
 
 **Algorithm**:
 
@@ -812,13 +812,9 @@ The data loading system integrates with the two-level caching architecture provi
 - Spatial index queries benefit from cached chunk metadata
 - No manual cache management needed at data layer
 
-**For Complete Details**: See `../cache/SPECIFICATIONS.md` (v1.2.1) for full cache architecture specification
+**For Complete Details**: See `../cache/SPECIFICATIONS.md` for the full cache architecture specification.
 
-**Integration Point**: SceneLoader creates MultiLevelCachingStore when loading scenes (see scene-loader.ts:89-112)
-
-### 5.1 Legacy Note
-
-**Previous Implementation**: This section previously documented a `RangeCache` class that has been removed in favor of the dedicated cache package. The cache system is now much more sophisticated with two-level storage, content-hash validation, and intelligent prefetching.
+**Integration Point**: SceneLoader creates MultiLevelCachingStore when loading scenes.
 
 ---
 
@@ -848,8 +844,6 @@ interface ChunkSpatialIndex {
   chunkBounds: Float32Array;
 }
 ```
-
-**Note**: The old grid-based `PointSpatialIndex` (v1.0.0) is deprecated and removed.
 
 ### 6.2 ViewState
 
@@ -1746,7 +1740,7 @@ This section documents all TypeScript source files in the `data/` package with t
 
 #### `lines-spatial-index-loader.ts`
 
-**Purpose**: Lines data loader using dual spatial indices. Implements two-phase loading: (1) query segment chunks for visible segments, (2) derive required vertex chunks from segment indices and load vertices. Also handles nD slicing with endpoint clipping.
+**Purpose**: Lines data loader using dual spatial indices. It first queries segment chunks for visible segments, then derives the vertex chunks needed by those segments. Also handles nD slicing with endpoint clipping.
 
 **Key Exports**: `LinesSpatialIndexLoader`, `buildInstanceBuffers()`, `clipSegmentToSlice()`, `lerp()`, `lerpVec3()`, `distance3D()`
 
@@ -1754,7 +1748,7 @@ This section documents all TypeScript source files in the `data/` package with t
 
 #### `gsplats-spatial-index-loader.ts`
 
-**Purpose**: GSplats data loader using spatial indices for efficient nD gsplats loading. Unlike Lines, GSplats do not need two-phase loading since all data is per-splat. Handles all array encoding types (broadcasted, quantized, LUT, etc.).
+**Purpose**: GSplats data loader using spatial indices for efficient nD gsplats loading. GSplats load directly by splat because all render attributes are per-splat. Handles all array encoding types (broadcasted, quantized, LUT, etc.).
 
 **Key Exports**: `GSplatsSpatialIndexLoader`
 
@@ -1798,13 +1792,13 @@ This section documents all TypeScript source files in the `data/` package with t
 
 **Relationships**: Used by `PointSpatialIndexLoader` for nD point visibility filtering.
 
-#### `node-factory.ts`
+#### `rendering/node-factory.ts`
 
-**Purpose**: Creates THREE.js scene nodes (Points, Lines, GSplats) from loaded data. Handles geometry creation with proper dtype handling (Float32, Uint8, Float16), material creation with colormap support, transform application and validation, and picking system integration (creates parallel pick-scene shadow nodes).
+**Purpose**: Creates THREE.js scene nodes (Points, Lines, GSplats) from loaded data. Handles geometry creation with proper dtype handling (Float32, Uint8, Float16), material creation with scalar-colormap support, transform application and validation, and picking system integration (creates parallel pick-scene shadow nodes).
 
 **Key Exports**: `NodeFactory`
 
-**Relationships**: Owned by `SceneLoader`. Integrates with `PickingSystem` from `rendering/picking/`, `materialManager` from `rendering/`, and picking material classes (`PointPickingMaterial`, `LinePickingMaterial`, `GSplatPickingMaterial`).
+**Relationships**: Instantiated by `SceneLoader` from the rendering package. Integrates with `PickingSystem` from `rendering/picking/`, `materialManager` from `rendering/`, and picking material classes (`PointPickingMaterial`, `LinePickingMaterial`, `GSplatPickingMaterial`).
 
 ### 9.5 State Management
 
@@ -1828,7 +1822,7 @@ This section documents all TypeScript source files in the `data/` package with t
 
 #### `data-accumulator.ts`
 
-**Purpose**: Multi-type object pooling for Points, Lines, and GSplats. Implements persistent TypedArray buffers that grow by 1.5x when needed, eliminating per-frame allocations and reducing GC pressure. Supports Float32Array, Uint8Array, and Uint16Array natively. All three loaders use deep integration for the loading phase (write directly to accumulator buffers, return zero-copy subarrays).
+**Purpose**: Multi-type object pooling for Points, Lines, and GSplats. Implements persistent TypedArray buffers that grow by 1.5x when needed, eliminating per-frame allocations and reducing GC pressure. Supports Float32Array, Uint8Array, and Uint16Array natively. All three loaders write directly to accumulator buffers and return zero-copy subarrays.
 
 **Key Exports**: `DataAccumulator<T>` (generic interface), `LoadedPointsDataAccumulator`, `LinesDataAccumulator`, `GSplatsDataAccumulator`, `AccumulatorStats`
 
@@ -1928,8 +1922,7 @@ This section documents all TypeScript source files in the `data/` package with t
 - **v1.2.3** (2025-12-10): Lines encoding optimization
   - **ADDED**: Section 7.11 - Optimized Encoding Handling for Lines
   - **FIXED**: `loadVertexRanges()` now loads only needed ranges for encoded arrays
-    - Previously decoded ENTIRE array then extracted ranges (2.2M values)
-    - Now decodes ONLY needed ranges (32K values for 250-frame animation)
+    - Decodes only the needed ranges (32K values for 250-frame animation instead of 2.2M values)
     - ~70x performance improvement for animated line datasets
   - Supports all encoding modes: broadcasted, quantized, LUT, array_ref, direct
   - Mirrors optimization already in `PointSpatialIndexLoader.loadRanges()`
@@ -1956,7 +1949,7 @@ This section documents all TypeScript source files in the `data/` package with t
   - **ADDED**: Section 7 - Lines Spatial Index System
   - Documented dual spatial indexing (vertices + segments)
   - Documented (2×D)-dimensional segment ordering
-  - Documented two-phase loading protocol (segments → vertices)
+  - Documented segment-first loading protocol (segments → vertices)
   - Added `LinesChunkSpatialIndex` data structure with full ordering metadata
   - Added `LoadedLinesData` data structure
   - Added vertex range computation algorithm

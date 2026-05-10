@@ -6,6 +6,79 @@ All notable changes to Luxar are documented in this file.
 
 ### May 2026
 
+#### Changed — Viewer shader/material follow-through (2026-05-10)
+
+Completes the remaining shader/material work in this branch, excluding
+conditional Gaussian slicing for correlated nD splats.
+
+- **Custom Python-authored colormaps now display.** When a node's
+  metadata declares `colormap='custom'`, the scene loader opens its
+  `colormap_lut` zarr array, validates byte length (768 RGB or 1024
+  RGBA), and passes the bytes through `getColormapTexture('custom', lut)`
+  for Points / Lines / GSplats. Invalid LUTs log a warning and fall
+  back to viridis. Custom-LUT cache is disposed on `SceneManager.dispose()`.
+- **GPU buffer pool byte-budget eviction.** New `gpuPoolMaxBytes` config
+  (default 512 MB). Pooled buffers are evicted (largest-first) once
+  total pooled bytes exceed the budget — independent of the count cap.
+  `getStats()` now reports activeBytes / pooledBytes / totalBytes /
+  largestPooledBytes, surfaced via `__luxarDebug.getState().gpuPool`.
+- **EXR export modes.** `captureHDRPixels(mode)` and `captureHDRAsEXR({mode})`
+  accept `'visible-ldr' | 'hdr-effects-pre-tone' | 'raw-scene-hdr'`.
+  `'raw-scene-hdr'` disables every post-processing effect (incl. bloom/
+  DOF/AO). `'hdr-effects-pre-tone'` keeps HDR-space effects but disables
+  LDR display effects.
+  `'visible-ldr'` keeps everything.
+- **Points scalar colormaps end-to-end.** Loader (`loadPoints`) opens
+  the `scalars` zarr array when `has_scalars=true`, populates
+  `LoadedPointsData.scalars` through every load path; projection
+  carries scalars through compaction; accumulator gains a scalar
+  buffer (`getScalarBuffer()`); GPU pool detects scalar dtype
+  (`'none' | 'Float32Array' | 'Uint8Array'`) and lazily binds the
+  `scalar` attribute. The fail-closed guard naturally passes for any
+  properly authored scalar dataset.
+- **Lines scalar colormaps end-to-end.** Same pattern as Points.
+  Loader opens `scalars`; `buildInstanceBuffers` interpolates scalars
+  at clipped endpoints exactly like colors/widths/sharpness; WASM
+  fallback path mirrors the TS path; GPU pool lazily allocates
+  `aStartScalar`/`aEndScalar` instanced attributes; `updateInstancedLinesMesh`
+  threads them through the shared `attrSpecs` path.
+  Worker projection falls back to main-thread when scalars are
+  present (worker payload doesn't carry scalars yet — separate change).
+- **Browser-real shader compile + visual smoke tests.** New E2E specs:
+  `shader-material-compile.spec.ts` (every material variant compiles +
+  produces non-black pixels in a real browser),
+  `line-rendering-visual.spec.ts` (cap factor and near-plane safety via
+  sampled-pixel assertions), and `gsplat-rendering-visual.spec.ts` (ray
+  integral and displayDims order). New helpers `assertNoShaderErrors(page)` and
+  `samplePixelAt(page, sel, fx, fy)` in `tests/e2e/helpers.ts`. Visual
+  screenshot baselines are deferred (need committed PNGs per
+  platform); sampled-pixel assertions are platform-independent.
+
+#### Changed — Viewer shader/material remediation (2026-05-10)
+
+User-visible behavior changes in the Luxar viewer:
+
+- **Point/Line scalar colormaps fail-closed when scalar attributes aren't bound.** Previously, metadata-authored `colormap`+`has_scalars` would activate `USE_COLORMAP` even though the geometry had no `scalar`/`aStartScalar`/`aEndScalar` attribute. Now the viewer logs a warning and falls back to vertex-color rendering.
+- **Positions-only Points render visibly.** The GPU buffer pool now fills white/0.5/2.0 defaults for absent color/radius/sharpness arrays instead of leaving zeros (which the fragment shader discards as zero-contribution).
+- **Point material parity for max blending.** `PointMaterial.applyBlendingMode` is the new single source of truth; runtime UI mode changes now produce the same `OneFactor/OneFactor` blend factors as creation-time max. The fragment shader gains a `LUXAR_MAX_RGB_CONTRIBUTION` define so `max` mode premultiplies RGB by intensity*opacity.
+- **Normal-mode depth writes.** Fully-opaque (opacity ≥ 0.99) `normal` layers now write depth so additive layers behind them are correctly occluded.
+- **Line body intensity reaches 1.0 as documented.** Cap factor moved from vertex to fragment shader.
+- **Line near-plane safety.** Lines whose endpoints cross or sit very close to the camera no longer produce screen-filling artifacts.
+- **Line bounds include rendered footprint** so thick lines aren't culled prematurely.
+- **Line max blending RGB contribution** (same `LUXAR_MAX_RGB_CONTRIBUTION` define as Points).
+- **GSplat `displayDims` order is preserved** to match Points/Lines. Previously dims were silently sorted.
+- **GSplat sum-projection ray integral uses precision** (`1/sqrt(rᵀΣ⁻¹r)`), not covariance variance (`sqrt(rᵀΣr)`). Fixes physically incorrect brightness for rotated anisotropic splats viewed off-eigenaxis.
+- **Conditional Gaussian slicing for correlated nD splats remains marginal+attenuation** (documented inline). Conditional `μ_D|H` / `Σ_D|H` math is scheduled as a follow-up.
+- **Disabling a colormap clears uniform state**; clones of disabled materials no longer resurrect the disabled texture.
+- **`LineMaterial.clone` copies `uIsOrtho`**.
+- **GPU buffer pool is disposed** in `SceneLoader.dispose()`. Dataset switches no longer leak `InstancedBufferGeometry` references.
+- **No-op blending changes don't recompile shaders.**
+- **AO Quality control is no longer a no-op when AO is already enabled.**
+- **Effective AA reporting via `getEffectiveAA(smaa, fxaa)`.**
+- **Lines counted in `__luxarDebug.getState()`** (`totalLines` + `lineMeshes`).
+
+Documentation: `E2E_TESTING_GUIDE.md` now references `getBufferedMessages()` (was stale `getMessages()`); `HDR_GUIDE.md` reads tone-mapping/exposure from `renderingControls.settings` rather than the nonexistent `state.rendering`.
+
 #### Changed — GSplats default device on macOS
 
 - `GaussianSplatModel` (and the gsplat fitting API) now auto-selects MPS on macOS when no explicit device is provided and `use_metal=True` (the default). Pre-rewrite, MPS was never auto-selected. Pass `use_metal=False` to keep CPU as the default on Macs that prefer it.

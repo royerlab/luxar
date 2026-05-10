@@ -1,8 +1,7 @@
 /**
  * Camera-framing helpers extracted from `scene/scene-manager.ts`.
  *
- * Shared between two callers that previously duplicated ~80 LOC of
- * FOV-aware fit math:
+ * Shared FOV-aware fit math for two camera-framing callers:
  *
  *   - `SceneManager.centerCameraOnScene()` — F-key recenter, computes
  *     bounds from loaded geometry.

@@ -54,6 +54,28 @@ export interface LoadedPointsData {
   /** Point sharpness values (size: numPoints, optional) */
   sharpness?: ScalarArray;
 
+  /**
+   * Per-point scalar values for colormap lookup (size: numPoints, optional).
+   *
+   * when present, the geometry binds a `scalar` attribute and the
+   * Point shader's USE_COLORMAP path samples the LUT at
+   * `(scalar - uScalarMin) * uScalarScale`. Without scalars, colormap
+   * mode falls back to vertex colours. The dtype matches the source
+   * zarr array (Float32 / Float16 / Uint8); the shader reads `radius`-
+   * style normalised attributes when the dtype is integer.
+   */
+  scalars?: ScalarArray;
+
+  /**
+   * Per-point original (node-global) element IDs (size: numPoints, optional).
+   *
+   * when picking labels are enabled, this carries the node-global
+   * element index that label/image-label loaders expect. Without this,
+   * `gl_VertexID` is used — but that's a visible-buffer-local index
+   * after spatial range loading or nD compaction, not a global index.
+   */
+  elementIds?: Uint32Array;
+
   /** Number of points loaded (top-level for consistency with Lines/GSplats) */
   pointCount: number;
 
@@ -83,6 +105,7 @@ export interface LoadedPointsData {
       colors?: string;
       radii?: string;
       sharpness?: string;
+      scalars?: string;
     };
   };
 }
@@ -193,6 +216,13 @@ export interface PointsMetadata {
    * at all time values).
    */
   extend_to_all?: string[];
+
+  /**
+   * bytes loaded from the node's `colormap_lut` zarr array when
+   * `colormap === 'custom'`. Populated at scene-graph build time;
+   * runtime-only field, not authored at the zarr level.
+   */
+  customLutBytes?: Uint8Array;
 
   /** Position array dtype (for proper conversion) */
   position_dtype?: string;

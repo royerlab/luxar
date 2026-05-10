@@ -68,7 +68,7 @@ export interface GSplatMaterialConfig {
 /**
  * GSplat material uniforms interface
  *
- * @internal — preserved for future use; no current consumer.
+ * @internal — reserved extension shape; no current consumer.
  */
 export interface GSplatMaterialUniforms {
   /** Viewport resolution [width, height] */
@@ -400,6 +400,13 @@ export class GSplatMaterial extends THREE.ShaderMaterial implements CameraAwareM
    * the live mode so subsequent `clone()` calls preserve it.
    */
   applyBlendingMode(mode: 'additive' | 'normal' | 'max' | 'opaque' | 'luminous'): void {
+    const previousMode = this.userData.blendingMode as
+      | 'additive'
+      | 'normal'
+      | 'max'
+      | 'opaque'
+      | 'luminous'
+      | undefined;
     const isOpaque = mode === 'opaque';
     const isAdditive = mode === 'additive';
     const opacity = (this.uniforms.uOpacity?.value as number | undefined) ?? 1.0;
@@ -458,6 +465,11 @@ export class GSplatMaterial extends THREE.ShaderMaterial implements CameraAwareM
 
     this.userData.blendingMode = mode;
     this.userData.depthTest = this.depthTest;
-    this.needsUpdate = true;
+    // only mark needsUpdate when mode actually changed. The
+    // GSplat shader doesn't toggle defines on mode switches, but
+    // changes to blending state need to flush to the renderer once.
+    if (previousMode !== mode) {
+      this.needsUpdate = true;
+    }
   }
 }

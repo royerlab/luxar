@@ -849,8 +849,8 @@ export class MultiLevelCachingStore implements AsyncReadable {
      */
     demand: { l1Hits: number; l2Hits: number; networkRequests: number };
     /**
-     * Cache health snapshot. Surfaced by the data monitor as status
-     * badges (Phase 7); also useful for debug diagnostics.
+     * Cache health snapshot. Surfaced by the data monitor status badges
+     * and debug diagnostics.
      */
     health: {
       /** Validation mode the dataset is using (or 'none' if external + no TTL). */

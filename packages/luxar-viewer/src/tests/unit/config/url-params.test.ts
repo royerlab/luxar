@@ -72,11 +72,9 @@ describe('readUrlParams', () => {
     expect(normalizeDataSourceUrl('/')).toBeNull();
   });
 
-  // mixed-case schemes are valid HTTP(S) per RFC 3986
-  // §3.1, but the scene-loader downstream helpers historically only
-  // matched lowercase prefixes. Now normalize-data-source-url
-  // canonicalizes via url.href so both halves of the pipeline see
-  // the same form.
+  // Mixed-case schemes are valid HTTP(S) per RFC 3986 §3.1.
+  // normalize-data-source-url canonicalizes via url.href so every
+  // downstream helper sees the same lowercase scheme form.
   it('canonicalizes mixed-case HTTP(S) schemes via URL.href', () => {
     expect(normalizeDataSourceUrl('HTTPS://Example.com/data.zarr')).toBe(
       'https://example.com/data.zarr'

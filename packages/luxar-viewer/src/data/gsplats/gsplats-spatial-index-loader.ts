@@ -5,7 +5,7 @@
  * 1. Query chunk bounds to find chunks intersecting the view
  * 2. Load splat data for those chunks
  *
- * Unlike lines, gsplats don't need two-phase loading - all data is per-splat.
+ * Unlike lines, gsplats load directly because all data is per-splat.
  *
  * @module data/gsplats-spatial-index-loader
  */
@@ -119,7 +119,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       loads: 0,
       evictions: 0,
       errors: 0,
-      pointsLoaded: 0, // counts splats for gsplats (legacy field name)
+      pointsLoaded: 0, // Shared loader metric; counts splats for gsplats.
       bytesLoaded: 0,
       datasetSize: 0,
       visiblePoints: 0, // counts visible splats for gsplats

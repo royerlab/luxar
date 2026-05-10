@@ -5,8 +5,7 @@
  *
  * Extracted from `zarr-loader.ts::updateSceneForDimensions` so it can be
  * tested without standing up the SceneLoaderManager / SceneLoader / zarr
- * stack. The rules below match what `updateSceneForDimensions` enforced
- * historically; only the call shape changed.
+ * stack. The rules below define the navigation-facing ViewState contract.
  *
  * Per-dimension tolerance rules:
  * - Displayed dimensions: `0` (the slice is in the viewing plane, so no
@@ -30,9 +29,8 @@ export interface DimsToViewStateOptions {
   maxRadius: number;
   /**
    * Initial filler for the tolerance array before the per-dim rules below
-   * are applied. Historically the configured `defaultTolerance`. The value
-   * is overwritten for every dim, so it only matters if a future code
-   * path skips the per-dim mapping.
+   * are applied. The value is overwritten for every dim and only matters
+   * if a caller supplies an incomplete dimension snapshot.
    */
   defaultTolerance: number;
 }

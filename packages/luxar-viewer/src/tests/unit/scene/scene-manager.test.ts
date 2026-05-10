@@ -488,6 +488,17 @@ describe('SceneManager', () => {
       expect(() => sceneManager.dispose()).not.toThrow();
     });
 
+    it('dispose() clears the colormap texture cache', async () => {
+      const { getColormapTexture } = await import('../../../rendering/colormap-textures');
+      // Touch the cache so there's something to dispose.
+      const beforeTex = getColormapTexture('viridis');
+      sceneManager.dispose();
+      // After dispose, next access returns a fresh instance (cache was cleared).
+      const afterTex = getColormapTexture('viridis');
+      expect(afterTex).toBeDefined();
+      expect(afterTex).not.toBe(beforeTex);
+    });
+
     it('should mark geometry attributes and materials dirty on context restore', async () => {
       const geometry = new THREE.BufferGeometry();
       const position = new THREE.BufferAttribute(new Float32Array([0, 0, 0]), 3);

@@ -114,6 +114,21 @@ export function buildOrderedEffects<T>(slots: EffectSlots<T>): OrderedEffect<T>[
 }
 
 /**
+ * report the effective AA pass that the orchestrator will install,
+ * given the FXAA + SMAA enable flags. Lets the rendering-controls UI
+ * show users which AA actually runs (SMAA wins over FXAA), instead of
+ * showing both as independently enabled.
+ */
+export function getEffectiveAA(
+  smaaEnabled: boolean,
+  fxaaEnabled: boolean
+): 'smaa' | 'fxaa' | 'none' {
+  if (smaaEnabled) return 'smaa';
+  if (fxaaEnabled) return 'fxaa';
+  return 'none';
+}
+
+/**
  * Result of {@link partitionEffectsIntoPasses}. `passA*` is always the
  * primary pass; `passB*` is non-empty only when an incompatibility
  * forced a split.

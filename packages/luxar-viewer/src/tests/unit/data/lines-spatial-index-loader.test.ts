@@ -8,9 +8,8 @@
  * `tests/builders/spatial-loader-fixtures.ts`.
  *
  * Lines-specific quirks (justified asymmetries, all documented inline):
- *   - Two-phase loading (segments → vertices) means the data-loading
- *     describe block tests the segment + vertex round-trip, not the
- *     points-style single-phase `data projection`.
+ *   - Segment-first loading means the data-loading describe block tests
+ *     the segment + vertex round-trip, not direct point-style projection.
  *   - Dual chunk-bounds (`vertex_chunk_bounds` + `segment_chunk_bounds`)
  *     means the chunk-bounds zarr.open + zarr.get mock has to
  *     differentiate between the two.
@@ -424,11 +423,11 @@ describe('LinesSpatialIndexLoader', () => {
       });
     });
 
-    describe('data loading (two-phase)', () => {
-      // Lines-specific: Points and gsplats run a single-phase nD → 3D
-      // projection inside the loader. Lines instead does
-      // segment indices → unique vertex indices → vertex round-trip,
-      // then global → local index remapping. This block tests that flow.
+    describe('data loading (segment-first path)', () => {
+      // Lines-specific: Points and gsplats project nD → 3D directly
+      // inside the loader. Lines instead does segment indices → unique
+      // vertex indices → vertex round-trip, then global → local index
+      // remapping. This block tests that flow.
       it('should remap segment indices to local vertex space', async () => {
         // Single range [0, 5) → 5 segments referencing vertices 0..5
         mockExecute.mockResolvedValueOnce([{ start: 0, end: 5 }]);
@@ -603,9 +602,8 @@ describe('LinesSpatialIndexLoader', () => {
         expect(metrics.errors).toBeGreaterThanOrEqual(1);
       });
 
-      // Lines/GSplats now emit a monitor 'error' event
-      // for parity with Points (event-driven dashboards previously
-      // saw points failures but not lines/gsplats failures).
+      // Lines/GSplats emit a monitor 'error' event for parity with
+      // Points so event-driven dashboards observe all geometry failures.
       it('emits a monitor "error" event on load failure', async () => {
         (zarr.get as unknown as ReturnType<typeof vi.fn>).mockImplementation((array: unknown) => {
           if (array === vertexBoundsArray || array === segmentBoundsArray) {

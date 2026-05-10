@@ -1,22 +1,19 @@
 /**
  * GSplats data-processor concern extracted from `scene-loader.ts`.
  *
- * Three pure-ish functions matching the inline `processGSplatsData`,
- * `commitGSplatsGeometry`, and `projectGSplatsTo3DUsingWorker` methods
- * on the SceneLoader class. They take the SceneLoader's per-call inputs
- * (rootGroup, gpuBufferPool, updateVersion) as parameters instead of
- * reading them off `this`.
+ * Three pure-ish functions for GSplat projection and GPU commit. They
+ * take the SceneLoader's per-call inputs (rootGroup, gpuBufferPool,
+ * updateVersion) as parameters instead of reading them off `this`.
  *
- * Behavior is identical to the inline original:
- *   - same worker / main-thread split (worker iff
- *     `useWebWorkers && splatCount > 1000 && ndim > 3`),
- *   - same truncate-uniform read from the mesh material,
- *   - same Cholesky packing call after projection,
- *   - same worker arg derivation (discreteDims / discreteSteps /
- *     extendToAllDims) computed from `viewState.dimensions`,
- *   - same fallback to `processGSplats` on worker failure,
- *   - same first-update logging gate (`updateVersion <= 1`),
- *   - same GPU-buffer-pool vs `updateInstancedGSplatsMesh` commit branch.
+ * Behavior summary:
+ *   - worker projection is used when `useWebWorkers && splatCount > 1000 && ndim > 3`,
+ *   - truncation radius is read from the mesh material,
+ *   - Cholesky factors are packed after projection,
+ *   - worker args derive discreteDims / discreteSteps / extendToAllDims from `viewState.dimensions`,
+ *   - worker failures fall back to `processGSplats`,
+ *   - first-update info logs are gated by `updateVersion <= 1`,
+ *   - commits use the GPU buffer pool when enabled, otherwise
+ *     `updateInstancedGSplatsMesh`.
  *
  * @module data/scene-loader/data-processor-gsplats
  */
@@ -41,7 +38,7 @@ import type { GPUBufferPool } from '../../rendering/gpu-buffer-pool';
 /** Default truncation radius if the mesh material doesn't expose one. */
 const DEFAULT_TRUNCATE = 3.0;
 
-/** Staged data carried between the async process phase and the GPU commit. */
+/** Staged data carried between async processing and the GPU commit. */
 export interface StagedGSplatsCommit {
   path: string;
   processed: ReturnType<typeof processGSplats>;
@@ -231,7 +228,7 @@ export async function processGSplatsData(
  * `updateInstancedGSplatsMesh`. Updates `visibleSplatCount` on the
  * mesh's user-data and logs an info line on a zero-splat frame.
  *
- * Must run synchronously inside the atomic commit phase.
+ * Must run synchronously inside the atomic commit stage.
  */
 export function commitGSplatsGeometry(
   staged: StagedGSplatsCommit,

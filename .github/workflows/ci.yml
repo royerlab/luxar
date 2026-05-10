@@ -81,9 +81,9 @@ jobs:
         #   typecheck → lint → check:layers (dependency-cruiser)
         #   → check:knip:ci (dead-file + unlisted-dependency gate)
         #   → test:coverage (vitest with thresholds)
-        # Phase 17D: knip:ci is included with --include files,dependencies
-        # so policy-level "unused exports" findings (test builders, type
-        # guards) don't fail CI; only true dead files and unlisted deps do.
+        # knip:ci runs with --include files,dependencies so policy-level
+        # "unused exports" findings (test builders, type guards) don't fail
+        # CI; only true dead files and unlisted deps do.
         run: pnpm run check:ci
 
   release-readiness:
@@ -126,7 +126,7 @@ jobs:
         #   - dist/lib/luxar-viewer.js (the publishable barrel)
         #   - at least one wasm asset (vite emits to dist/lib/assets/)
         #   - at least one worker asset (data-worker / projection-worker)
-        # Each grep is the gate; failure means a packaging regression.
+        # Each grep is a packaging assertion for the publishable tarball.
         run: |
           jq -r '.[0].files[].path' /tmp/pack.json > /tmp/pack-files.txt
           echo "--- Tarball contents ---"
@@ -142,7 +142,7 @@ jobs:
   # Software rendering on standard ubuntu-latest is too slow and unreliable.
   # Run locally with: make test-e2e.
   #
-  # Re-enable path (Phase 17D scope): one of
+  # Re-enable path: one of
   #   - GitHub Actions GPU-enabled runner (currently invite-only beta).
   #   - Self-hosted runner with NVIDIA driver + EGL software fallback that
   #     still satisfies WebGL2.
@@ -186,9 +186,9 @@ jobs:
       - name: Generate example datasets
         run: make run-examples
 
-      # r8 §H2: use the package-level smoke script as the source of truth
-      # so a workflow re-enable doesn't drift from the local
-      # `pnpm test:e2e:smoke` definition (was: hand-coded subset).
+      # Use the package-level smoke script as the source of truth so a
+      # workflow re-enable stays aligned with the local
+      # `pnpm test:e2e:smoke` definition.
       - name: Run E2E smoke (CI subset)
         run: cd packages/luxar-viewer && pnpm test:e2e:smoke
         timeout-minutes: 45

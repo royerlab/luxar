@@ -71,9 +71,8 @@ export interface PanelRefs {
   datasetBrowser?: CloseableHandle;
   /**
    * Optional: layers panel. Wired so the close button's advertised
-   * `aria-keyshortcuts="escape"` actually closes the panel —
-   * previously Escape only routed through this coordinator and the
-   * panel was never registered, making the shortcut a lie.
+   * `aria-keyshortcuts="escape"` closes the panel through the same
+   * coordinator path as other panels.
    */
   layersPanel?: VisiblyHideableHandle;
 }
@@ -149,9 +148,8 @@ export class PanelCoordinator {
     notifier.clearError();
 
     // Close dataset browser via its own close() method so onClose fires
-    // and the owner's reference (LuxarApp.datasetBrowser) is cleared.
-    // A previous direct `getElementById(...).remove()` left the owner
-    // ref dangling, breaking the `O` reopen shortcut.
+    // and the owner's reference (LuxarApp.datasetBrowser) is cleared;
+    // otherwise the `O` reopen shortcut can see a dangling ref.
     this.refs.datasetBrowser?.close();
 
     if (this.refs.renderingControls?.isVisible()) {

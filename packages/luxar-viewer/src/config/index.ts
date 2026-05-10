@@ -143,8 +143,8 @@ export const config: AppConfig = {
       size: 24, // Loading spinner size in pixels
       borderWidth: 3, // Spinner border width
     },
-    // NOTE: ui.styles section has been removed - all styling now uses CSS variables
-    // and classes in src/styles/ (see theming system in src/themes/)
+    // Styling is provided by CSS variables and classes in src/styles/
+    // (see the theming system in src/themes/).
 
     // Debug console configuration (migrated from debug-console.ts)
     debugConsole: {
@@ -244,12 +244,12 @@ export const config: AppConfig = {
       smaaSearchSteps: 8, // SMAA search steps for pattern detection (4-32)
       ssaaEnabled: false, // SSAA disabled by default (highest quality, heavy performance cost)
       ssaaMultiplier: 2.0, // SSAA resolution multiplier (1.5x, 2x, 4x)
-      // New post-processing effects
+      // Post-processing effects
       toneMapping: 'Neutral' as const, // Tone mapping method (Neutral preserves hue fidelity for scientific data)
       dofEnabled: false, // Depth of field disabled by default
       dofFocus: 10, // DOF focus distance
       dofStrength: 0.5, // DOF blur strength (0-1)
-      // New pmndrs effects
+      // pmndrs effect defaults
       aoEnabled: false, // Ambient occlusion disabled by default
       aoQuality: 'medium' as const, // AO quality level
       vignetteEnabled: false, // Vignette disabled by default
@@ -260,7 +260,7 @@ export const config: AppConfig = {
       detectorNoiseReadoutSigma: 0.002, // Temporal readout noise sigma (0-0.1)
       detectorNoisePhotonGain: 0.002, // Photon gain for shot noise visibility (0.0001-0.1)
       detectorNoiseFpnSigma: 0.001, // Fixed pattern noise sigma (0-0.05)
-      // Chromatic lens distortion effect settings (replaces old separate lens distortion + chromatic aberration)
+      // Chromatic lens distortion effect settings
       chromaticLensDistortionEnabled: false, // Chromatic lens distortion disabled by default
       chromaticLensDistortionX: 0, // Radial distortion coefficient X (50mm Normal: no distortion)
       chromaticLensDistortionY: 0, // Radial distortion coefficient Y (50mm Normal: no distortion)
@@ -472,6 +472,13 @@ export const config: AppConfig = {
       gpuPoolMaxSize: 20,
       gpuPoolEvictionFrames: 300,
       gpuPoolEvictBatchSize: 5,
+      // byte-budget eviction. Pooled buffers above this many bytes
+      // are evicted (largest-first) regardless of count budget. Without
+      // this, a 10M-element Lines buffer (~760 MB at 1.5× overallocation)
+      // counts the same as a 1K-point buffer (~32 KB) in
+      // `gpuPoolMaxSize`, so a single dataset switch can briefly hold
+      // gigabytes. `0` disables byte-budget (count-only).
+      gpuPoolMaxBytes: 512_000_000, // 512 MB
 
       // Debugging
       enablePerformanceMonitoring: false,

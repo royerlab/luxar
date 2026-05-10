@@ -191,7 +191,7 @@ describe('buildInstanceBuffers scalar interpolation', () => {
     expect(out.endScalars).toBeUndefined();
   });
 
-  it('A.3: suppresses scalars when length mismatches vertex count', () => {
+  it('suppresses scalars when length mismatches vertex count', () => {
     // 2 vertices, but only 1 scalar — mismatched.
     const data = loadedLines({
       positions: new Float32Array([0, 0, 0, 1, 0, 0]),
@@ -210,7 +210,7 @@ describe('buildInstanceBuffers scalar interpolation', () => {
     expect(out.endScalars).toBeUndefined();
   });
 
-  it('A.2: roundtrips Uint8 scalars through accumulator + projection', () => {
+  it('roundtrips Uint8 scalars through accumulator + projection', () => {
     const acc = new LinesDataAccumulator(64, 32, 3);
     acc.fill(0, 0, {
       positions: new Float32Array([0, 0, 0, 1, 0, 0]),
@@ -293,7 +293,7 @@ describe('GPU pool updateLinesGeometry scalar attribute', () => {
     expect((startAttr.array as Float32Array)[1]).toBeCloseTo(0.9);
   });
 
-  it('A.4: growLinesGeometry preserves scalar attribute contents on resize', () => {
+  it('growLinesGeometry preserves scalar attribute contents on resize', () => {
     const pool = new GPUBufferPool(20, 300, 5, 0);
     // Acquire a small capacity, write scalars, then grow.
     const g = pool.acquireLinesGeometry('l-grow', 2);
@@ -415,7 +415,7 @@ describe('end-to-end scalar binding for Lines', () => {
     expect(supportsScalarColormap('lines', mesh.geometry)).toBe(true);
   });
 
-  it('without scalars, supportsScalarColormap returns false (C1 guard remains)', () => {
+  it('without scalars, supportsScalarColormap returns false', () => {
     const data = loadedLines({
       positions: new Float32Array([0, 0, 0, 1, 0, 0]),
       segments: new Uint32Array([0, 1]),

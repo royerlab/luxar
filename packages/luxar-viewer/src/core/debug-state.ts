@@ -35,21 +35,50 @@ export interface GSplatMeshInfo {
   visible: boolean;
 }
 
+/** Per-mesh line-instance info reported by getState(). */
+export interface LineMeshInfo {
+  name: string;
+  segmentCount: number;
+  visible: boolean;
+  hasColormap: boolean;
+}
+
+/**
+ * Minimal byte-stats shape surfaced from the GPU buffer pool. Mirrors
+ * a subset of `PoolStats` so the debug UI doesn't need to import the
+ * full type from the rendering module.
+ */
+export interface GPUPoolDebugStats {
+  activeBuffers: number;
+  pooledBuffers: number;
+  activeBytes: number;
+  pooledBytes: number;
+  totalBytes: number;
+  largestPooledBytes: number;
+  evictions: number;
+}
+
 /** Result shape returned by `computeDebugState()`. */
 export interface DebugState {
   totalPoints: number;
   totalGSplats: number;
+  /** Total visible line segments across all line meshes. */
+  totalLines: number;
   totalElements: number;
   pointClouds: PointCloudInfo[];
   gsplatMeshes: GSplatMeshInfo[];
+  /** Per-mesh line summary. */
+  lineMeshes: LineMeshInfo[];
+  /** GPU buffer pool byte stats (undefined when the pool is disabled). */
+  gpuPool?: GPUPoolDebugStats;
   dimensions: { ndim: number; displayed: number[]; currentStep: number[] } | null;
   camera: {
     position: { x: number; y: number; z: number };
     fov: number;
   };
-  /** Legacy flat camera position kept for backward compatibility. */
+  /** Flat camera position kept for debug-state compatibility. */
   cameraPosition: { x: number; y: number; z: number };
-  /** Legacy flat fov kept for backward compatibility. */
+  /** Flat camera field-of-view kept for debug-state compatibility. */
   cameraFov: number;
   isAnimating: boolean;
   initialized: boolean;
@@ -63,6 +92,8 @@ export interface DebugStateContext {
   isAnimating: boolean;
   initialized: boolean;
   dims: SimpleDims | null;
+  /** Optional pool-stats provider so the debug state can surface byte usage. */
+  gpuPoolStats?: () => GPUPoolDebugStats | undefined;
 }
 
 /**
@@ -80,8 +111,10 @@ export interface DebugStateContext {
 export function computeDebugState(ctx: DebugStateContext): DebugState {
   let totalPoints = 0;
   let totalGSplats = 0;
+  let totalLines = 0;
   const pointClouds: PointCloudInfo[] = [];
   const gsplatMeshes: GSplatMeshInfo[] = [];
+  const lineMeshes: LineMeshInfo[] = [];
 
   ctx.scene.traverse((object) => {
     if (object instanceof THREE.Points) {
@@ -117,6 +150,25 @@ export function computeDebugState(ctx: DebugStateContext): DebugState {
         visible: object.visible,
       });
     }
+
+    // Count Lines meshes (instanced quads with nodeType='lines').
+    if (
+      object instanceof THREE.Mesh &&
+      (object.userData as { nodeType?: string })?.nodeType === 'lines' &&
+      object.geometry instanceof THREE.InstancedBufferGeometry
+    ) {
+      const segmentCount = (object.geometry as THREE.InstancedBufferGeometry).instanceCount;
+      totalLines += segmentCount;
+      const mat = object.material as THREE.ShaderMaterial | THREE.ShaderMaterial[] | undefined;
+      const firstMat = Array.isArray(mat) ? mat[0] : mat;
+      const hasColormap = !!firstMat?.defines?.USE_COLORMAP;
+      lineMeshes.push({
+        name: object.name || 'unnamed',
+        segmentCount,
+        visible: object.visible,
+        hasColormap,
+      });
+    }
   });
 
   const dimensionsInfo = ctx.dims
@@ -133,12 +185,19 @@ export function computeDebugState(ctx: DebugStateContext): DebugState {
     z: ctx.camera.position.z,
   };
 
+  // Surface GPU pool byte stats when a provider is wired in.
+  const gpuPool = ctx.gpuPoolStats ? ctx.gpuPoolStats() : undefined;
+
   return {
     totalPoints,
     totalGSplats,
-    totalElements: totalPoints + totalGSplats,
+    totalLines,
+    // Include lines in the cumulative element count.
+    totalElements: totalPoints + totalGSplats + totalLines,
     pointClouds,
     gsplatMeshes,
+    lineMeshes,
+    gpuPool,
     dimensions: dimensionsInfo,
     camera: {
       position: cameraPosition,

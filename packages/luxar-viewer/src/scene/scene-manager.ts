@@ -17,6 +17,7 @@ import { extractCameraOverrides } from '../config/viewer-config-utils';
 import type { ZarrViewerConfig } from '../types/zarr';
 import { PostProcessingManager } from '../rendering/post-processing/post-processing-manager';
 import { materialManager } from '../rendering/material-manager';
+import { disposeColormapTextures } from '../rendering/colormap-textures';
 import {
   detectHDRCapabilities,
   configureHDRRenderer,
@@ -260,7 +261,7 @@ export class SceneManager extends THREE.EventDispatcher<{
     // Shared attributes (antialias, powerPreference, etc.) come from webgl.context;
     // renderer-specific settings (precision, shadowMap, etc.) come from webgl.renderer.
     this.renderer = new THREE.WebGLRenderer({
-      canvas: this.canvasElement, // Use our pre-existing canvas element
+      canvas: this.canvasElement, // Use the scene manager's canvas element
       context: gl || undefined, // Use our HDR context if available
       // Shared attributes from context config
       alpha: config.webgl.context.alpha,
@@ -1125,6 +1126,14 @@ export class SceneManager extends THREE.EventDispatcher<{
     // Dispose material manager - cleans up all cached materials
     materialManager.dispose();
 
+    // dispose shared colormap textures (built-in cache + custom-LUT
+    // cache) AFTER materials are released — material disposal doesn't
+    // touch shared LUT textures because they live in module-scope
+    // caches. Without this call, repeated app-construction cycles leak
+    // a 256×1 RGBA DataTexture per built-in colormap plus one per unique
+    // custom LUT.
+    disposeColormapTextures();
+
     // Dispose renderer - cleans up WebGL context and associated GPU resources
     // This frees vertex buffers, textures, and shader programs
     this.renderer.dispose();
@@ -1229,7 +1238,7 @@ export class SceneManager extends THREE.EventDispatcher<{
     ortho.lookAt(focusTarget);
     ortho.updateMatrixWorld();
 
-    // Old camera not disposed — THREE.js cameras hold no GPU resources
+    // Prior camera is not disposed — THREE.js cameras hold no GPU resources.
     this.camera = ortho;
     this.lastOrthoZoom = ortho.zoom;
     this.postProcessing.setCamera(ortho);
@@ -1258,7 +1267,7 @@ export class SceneManager extends THREE.EventDispatcher<{
     persp.up.copy(this.camera.up);
     persp.updateMatrixWorld();
 
-    // Old camera not disposed — THREE.js cameras hold no GPU resources
+    // Prior camera is not disposed — THREE.js cameras hold no GPU resources.
     this.camera = persp;
     this.postProcessing.setCamera(persp);
   }

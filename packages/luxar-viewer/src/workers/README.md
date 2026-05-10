@@ -1,6 +1,6 @@
 # luxar-viewer/src/workers
 
-Multi-threaded worker pool for offloading CPU-intensive spatial queries, nD visibility computations, and array decoding from the main thread.
+Multi-threaded worker pool for offloading CPU-intensive spatial queries, nD visibility computations, projection, clipping, and array decoding from the main thread. See `SPECIFICATIONS.md` for worker-pool invariants and validation rules.
 
 ## Architecture
 

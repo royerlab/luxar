@@ -12,8 +12,8 @@
  * SceneLoader exposes (`getCacheStats`, `listCachedDatasets`,
  * `clearL0Cache`, `clearL1Cache`, `clearL2Cache`, `clearAllCaches`).
  * Pulling them out of the SceneLoader class lets the cache surface be
- * tested in isolation and gives a single home for any future cache-API
- * additions (eviction tuning, hit-rate telemetry, etc.).
+ * tested in isolation and gives a single home for cache-API additions
+ * (eviction tuning, hit-rate telemetry, etc.).
  *
  * Each helper gracefully no-ops when the corresponding cache layer is
  * `null` — matching the behavior the SceneLoader had inline, where
@@ -26,13 +26,12 @@
 import type { MultiLevelCachingStore, DecompressedChunkCache } from '../../cache';
 
 /**
- * Snapshot of all three cache levels in the form historically exposed
- * by `__luxarDebug.cache.getStats()`. Levels that are absent return
+ * Snapshot of all three cache levels exposed by
+ * `__luxarDebug.cache.getStats()`. Levels that are absent return
  * `null` for that field; the caller can render them as "disabled".
  *
- * `network`, `demand`, `prefetch`, and `health` are extensions added in
- * Phase 7 — they're optional on the type so existing callers keying off
- * `{l0, l1, l2}` keep working without changes.
+ * `network`, `demand`, `prefetch`, and `health` are optional so
+ * callers keying off `{l0, l1, l2}` keep working without changes.
  */
 export interface CacheStatsSnapshot {
   l0: ReturnType<DecompressedChunkCache['getStats']> | null;
@@ -46,8 +45,8 @@ export interface CacheStatsSnapshot {
 
 /**
  * Build the cache snapshot for the debug interface and the data-monitor
- * "Cache" tab. Includes per-tier stats plus the Phase 7 additions
- * (network, demand, prefetch, health) so a single `getStats()` call
+ * "Cache" tab. Includes per-tier stats plus network, demand,
+ * prefetch, and health diagnostics so a single `getStats()` call
  * answers every diagnostic question without a follow-up roundtrip.
  */
 export function getCacheStats(

@@ -3,7 +3,7 @@
  *
  * This module manages all materials in the scene, providing caching,
  * global uniform updates, and support for multiple material types.
- * Supports point materials and line materials.
+ * Supports point, line, and GSplat materials.
  */
 
 import * as THREE from 'three';
@@ -152,7 +152,7 @@ export class MaterialManager {
    * LRU entry (first key in insertion order), dispose the material,
    * and remove it from the registered-materials set so global camera
    * updates stop targeting it. `materialCacheMaxSize: 0` disables
-   * eviction (legacy unbounded behavior).
+   * eviction and allows unbounded cache growth.
    */
   private lruSet<T extends THREE.Material & CameraAwareMaterial>(
     cache: Map<string, T>,

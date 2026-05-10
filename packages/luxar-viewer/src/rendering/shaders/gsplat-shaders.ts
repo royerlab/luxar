@@ -185,10 +185,42 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
         // (normalize, sqrt, exp) when in max mode. Warps are typically coherent on this uniform.
         float sigmaRay = 1.0;  // Default for max mode (no ray integration)
         if (uProjectionMode == 0) {
-            // Sum projection: compute ray integration boost
+            // Sum projection: compute ray-integral standard deviation.
+            //
+            // The line-integral of an anisotropic Gaussian along ray
+            // direction r has 1D std-dev sigma_line = 1 / sqrt(rᵀ Σ⁻¹ r),
+            // not sqrt(rᵀ Σ r). The two only agree when r is aligned with
+            // a covariance eigenvector or Σ is isotropic.
+            //
+            // Implementation: compute Σ_cam⁻¹ via the closed-form 3×3
+            // inverse and clamp to a minimum determinant. The shader is
+            // already paying for a covariance matrix-vector product, so
+            // a one-off explicit inverse is a small constant factor.
             vec3 rayDir = (uIsOrtho == 1) ? vec3(0.0, 0.0, -1.0) : normalize(centerCam);
-            float sigmaRaySq = dot(rayDir, Sigma_cam * rayDir);
-            sigmaRay = sqrt(max(sigmaRaySq, 1e-8));
+            // Cofactor expansion for 3x3 inverse. Σ_cam is symmetric SPD,
+            // so the inverse is symmetric SPD too.
+            float a = Sigma_cam[0][0];
+            float b = Sigma_cam[0][1];
+            float c = Sigma_cam[0][2];
+            float d = Sigma_cam[1][1];
+            float e = Sigma_cam[1][2];
+            float f = Sigma_cam[2][2];
+            // det(Σ) for 3x3 symmetric — clamped against numerical singularity.
+            float detSigma = a * (d * f - e * e) - b * (b * f - c * e) + c * (b * e - c * d);
+            float invDet = 1.0 / max(detSigma, 1e-12);
+            // Cofactors of the inverse (symmetric).
+            float i00 = (d * f - e * e) * invDet;
+            float i11 = (a * f - c * c) * invDet;
+            float i22 = (a * d - b * b) * invDet;
+            float i01 = -(b * f - c * e) * invDet;
+            float i02 = (b * e - c * d) * invDet;
+            float i12 = -(a * e - b * c) * invDet;
+            // r' = Σ⁻¹ r ; precision quadratic = rᵀ Σ⁻¹ r
+            float prx = i00 * rayDir.x + i01 * rayDir.y + i02 * rayDir.z;
+            float pry = i01 * rayDir.x + i11 * rayDir.y + i12 * rayDir.z;
+            float prz = i02 * rayDir.x + i12 * rayDir.y + i22 * rayDir.z;
+            float quad = max(rayDir.x * prx + rayDir.y * pry + rayDir.z * prz, 1e-8);
+            sigmaRay = inversesqrt(quad);
             // Shifted Gaussian ray integral: sqrt(2π)·erf(T/√2) - 2·T·exp(-0.5·T²)
             // Precomputed in TypeScript as uRayIntegralFactor (≈2.433 for T=3)
             float rayIntegrationBoost = sigmaRay * uRayIntegralFactor;  // voxelSpacing = 1.0

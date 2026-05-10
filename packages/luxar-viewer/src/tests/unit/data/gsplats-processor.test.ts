@@ -288,7 +288,7 @@ describe('processGSplats', () => {
       ndim: 3,
     };
 
-    // Non-standard order: [2, 0, 1]
+    // Non-standard order: [2, 0, 1] — output XYZ = source [dim2, dim0, dim1]
     const viewState: GSplatsViewState = {
       displayDims: [2, 0, 1],
       slicePosition: [0, 0, 0],
@@ -298,11 +298,11 @@ describe('processGSplats', () => {
     const result = processGSplats(loaded, viewState);
 
     expect(result.splatCount).toBe(1);
-    // Centers are extracted in SORTED dimension order (for consistency with Cholesky)
-    // sortedDisplayDims = [0, 1, 2], so output = [dim0, dim1, dim2] = [10, 20, 30]
-    expect(result.centers3D[0]).toBe(10);
-    expect(result.centers3D[1]).toBe(20);
-    expect(result.centers3D[2]).toBe(30);
+    // requested displayDims order is preserved (matches Points/Lines).
+    // displayDims=[2,0,1] → output[0,1,2] = source[2,0,1] = [30, 10, 20].
+    expect(result.centers3D[0]).toBe(30);
+    expect(result.centers3D[1]).toBe(10);
+    expect(result.centers3D[2]).toBe(20);
   });
 
   it('should use general path for higher-dimensional data', () => {

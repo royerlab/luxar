@@ -7,7 +7,7 @@
  * reproduce the same flattened float32 values byte-for-byte.
  *
  * This is intentionally non-browser and non-WebGL so it can run in the fast
- * Vitest phase while still exercising real Python-written zarr stores.
+ * Vitest suite while still exercising real Python-written zarr stores.
  */
 
 import { describe, it, expect } from 'vitest';

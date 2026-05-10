@@ -102,6 +102,8 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
     colors?: zarr.Array<zarr.DataType, zarr.Readable>;
     radii?: zarr.Array<zarr.DataType, zarr.Readable>;
     sharpness?: zarr.Array<zarr.DataType, zarr.Readable>;
+    /** optional scalars array for colormap lookup. */
+    scalars?: zarr.Array<zarr.DataType, zarr.Readable>;
   } = {};
 
   // Range loader for unified encoding dispatch (replaces decoder for range-based loading)
@@ -359,6 +361,28 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
       }
     }
 
+    // open optional `scalars` array (per-point values for colormap lookup).
+    // Gated on `attrs.has_scalars` so we don't 404-spam when it's not authored.
+    if (this.attrs?.has_scalars) {
+      try {
+        let scalarsArray = await zarr.open(this.zarrLocation.resolve('scalars'), {
+          kind: 'array',
+        });
+        this.registerBounds('scalars', scalarsArray);
+        if (this.l0Cache) {
+          scalarsArray = wrapWithCache(scalarsArray, this.l0Cache, `${this.node.path}/scalars`);
+        }
+        this.arrays.scalars = scalarsArray;
+      } catch (e: unknown) {
+        if (!isNotFoundError(e)) {
+          log.info(
+            Modules.SPATIAL_INDEX_LOADER,
+            'has_scalars=true but no scalars array found; colormap mode disabled.'
+          );
+        }
+      }
+    }
+
     // Initialize data accumulator for object pooling. The hot path
     // (loadPoints below) reuses this accumulator's buffers across
     // updates when `useAccumulators` is true — see the
@@ -475,6 +499,8 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
       let colors: ArrayType | null = null;
       let radii: ArrayType | null = null;
       let sharpness: ArrayType | null = null;
+      // optional per-point scalars for colormap lookup.
+      let scalars: ArrayType | null = null;
 
       const loadSession = session?.begin('Load Arrays');
       try {
@@ -496,6 +522,8 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
         colors = this.arrays.colors ? await this.loadColorRanges(ranges) : null;
         radii = this.arrays.radii ? await this.loadRanges('radii', ranges) : null;
         sharpness = this.arrays.sharpness ? await this.loadRanges('sharpness', ranges) : null;
+        // scalars zarr opened in initialize() when has_scalars=true.
+        scalars = this.arrays.scalars ? await this.loadRanges('scalars', ranges) : null;
       } finally {
         loadSession?.end();
       }
@@ -534,6 +562,10 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
             sharpness: sharpness
               ? (sharpness.subarray(0, Math.min(1, sharpness.length)) as ScalarArray)
               : undefined,
+            // type-detect scalar buffer on first fill (Float32 vs Uint8).
+            scalars: scalars
+              ? (scalars.subarray(0, Math.min(1, scalars.length)) as ScalarArray)
+              : undefined,
           });
         }
 
@@ -543,6 +575,10 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
           colors: this._accumulator.getColorBuffer() as ColorArray,
           radii: this._accumulator.getRadiiBuffer() as ScalarArray,
           sharpness: this._accumulator.getSharpnessBuffer() as ScalarArray,
+          // scalar target — only populated when the source has scalars
+          // (the projection helper checks both `scalars` and
+          // `targetBuffers.scalars` before compacting).
+          scalars: scalars ? (this._accumulator.getScalarBuffer() as ScalarArray) : undefined,
         };
 
         // Copy source colors/sharpness to accumulator buffers (needed for filtering later)
@@ -569,6 +605,19 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
             (targetBuffers.sharpness as Float32Array).set(sharpness as Float32Array);
           }
         }
+
+        // copy source scalars into accumulator buffer so projection's
+        // filter pass has them available for in-place compaction.
+        if (scalars && targetBuffers.scalars) {
+          if (scalars instanceof Uint8Array && targetBuffers.scalars instanceof Uint8Array) {
+            (targetBuffers.scalars as Uint8Array).set(scalars);
+          } else if (
+            scalars instanceof Float32Array &&
+            targetBuffers.scalars instanceof Float32Array
+          ) {
+            (targetBuffers.scalars as Float32Array).set(scalars as Float32Array);
+          }
+        }
       }
 
       // Project to 3D display space
@@ -586,14 +635,32 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
         const projectSession = session.begin('Project to 3D');
         try {
           if (useWorkerProjection) {
-            result = await this.projectTo3DUsingWorker(
-              positions,
-              colors,
-              radii,
-              sharpness,
-              viewState,
-              ranges
-            );
+            // worker projection currently does not carry scalars
+            // through the worker boundary. Fall back to the main thread
+            // when the dataset has scalars so the colormap path stays
+            // wired end-to-end. (Worker scalar support is a separate
+            // optimisation, not blocking colormap correctness.)
+            if (scalars) {
+              result = this.projectTo3D(
+                positions,
+                colors,
+                radii,
+                sharpness,
+                viewState,
+                ranges,
+                targetBuffers,
+                scalars
+              );
+            } else {
+              result = await this.projectTo3DUsingWorker(
+                positions,
+                colors,
+                radii,
+                sharpness,
+                viewState,
+                ranges
+              );
+            }
           } else {
             result = this.projectTo3D(
               positions,
@@ -602,7 +669,8 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
               sharpness,
               viewState,
               ranges,
-              targetBuffers
+              targetBuffers,
+              scalars
             );
           }
         } finally {
@@ -610,14 +678,27 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
         }
       } else {
         if (useWorkerProjection) {
-          result = await this.projectTo3DUsingWorker(
-            positions,
-            colors,
-            radii,
-            sharpness,
-            viewState,
-            ranges
-          );
+          if (scalars) {
+            result = this.projectTo3D(
+              positions,
+              colors,
+              radii,
+              sharpness,
+              viewState,
+              ranges,
+              targetBuffers,
+              scalars
+            );
+          } else {
+            result = await this.projectTo3DUsingWorker(
+              positions,
+              colors,
+              radii,
+              sharpness,
+              viewState,
+              ranges
+            );
+          }
         } else {
           result = this.projectTo3D(
             positions,
@@ -626,7 +707,8 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
             sharpness,
             viewState,
             ranges,
-            targetBuffers
+            targetBuffers,
+            scalars
           );
         }
       }
@@ -770,19 +852,11 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
     const maxRadius = this.node.attrs.max_radius ?? appConfig.dataLoading.spatial.defaultMaxRadius;
     const fullDim = this.chunkIndex.metadata.ndim;
 
-    // Build query tolerance. EffectiveRadiusConfig-aware path knows about
-    // discrete dims and the `>= 1e9` extend-to-all sentinel; without it we use
-    // a uniform fallback (infinite for displayed, explicit/maxRadius otherwise).
-    //
-    // Status (audited 2026-05-06): the original `TODO(spatial-index-consolidation-v2)`
-    // pointed at `computeTolerance('points', …)`. That helper now exists in
-    // `data/tolerance-computer.ts` and is used by `SpatialQueryBuilder`, but
-    // the merge here is blocked by the EffectiveRadiusConfig-aware path
-    // below: `calculateSpatialQueryTolerance` knows about discrete-dim
-    // half-step thresholds and the rendering-side `calculateEffectiveRadii`,
-    // which `computeTolerance` does not. Unifying requires migrating both
-    // sides simultaneously — tracked under follow-up "spatial-index
-    // tolerance unification".
+    // Build query tolerance. The EffectiveRadiusConfig-aware path knows
+    // about discrete dims, the `>= 1e9` extend-to-all sentinel, and the
+    // rendering-side `calculateEffectiveRadii` behavior. Without that
+    // config we use a uniform fallback: infinite for displayed dims and
+    // explicit/maxRadius tolerance otherwise.
     let queryTolerance: number[];
     if (this._effectiveRadiusConfig) {
       queryTolerance = calculateSpatialQueryTolerance(
@@ -1216,7 +1290,8 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
     sharpness: Float32Array | Uint8Array | Uint16Array | Float16Array | null,
     viewState: ViewState,
     ranges: PointRange[],
-    targetBuffers?: ProjectionTargetBuffers | null
+    targetBuffers?: ProjectionTargetBuffers | null,
+    scalars?: Float32Array | Uint8Array | Uint16Array | Float16Array | null
   ): LoadedPointsData {
     return projectPointsTo3D(
       positions,
@@ -1226,7 +1301,8 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
       viewState,
       ranges,
       this.buildProjectionContext(),
-      targetBuffers
+      targetBuffers,
+      scalars ?? null
     );
   }
 
@@ -1300,7 +1376,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
         avgCellsPerQuery: avgChunksPerQuery,
         avgPointsPerCell: totalChunks > 0 ? this.metrics.pointsLoaded / totalChunks : 0,
         queryEfficiency: avgChunksPerQuery / Math.max(totalChunks, 1),
-        rangesInCache: 0, // L0 RangeCache removed
+        rangesInCache: 0, // Range-based per-loader cache is not used.
       };
 
       // Set dataset size from chunk index metadata

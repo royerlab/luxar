@@ -190,9 +190,8 @@ export interface InputConfig {
   };
 }
 
-// NOTE: UIColors, UITypography, UISpacing, UIEffects, and UIStyles interfaces
-// have been removed. All styling now uses CSS variables and classes in
-// src/styles/ (see theming system in src/themes/)
+// Styling uses CSS variables and classes in src/styles/ (see the
+// theming system in src/themes/).
 
 /**
  * Debug console configuration
@@ -293,7 +292,7 @@ export interface UIConfig {
     size: number;
     borderWidth: number;
   };
-  // NOTE: styles property removed - all styling now uses CSS variables
+  // Styling lives in CSS variables/classes rather than config objects.
   debugConsole: DebugConsoleConfig;
   components: UIComponentsConfig;
   scaleBar: {
@@ -451,6 +450,13 @@ export interface DataLoadingPerformanceConfig {
    * still stays bounded.
    */
   gpuPoolEvictBatchSize: number;
+  /**
+   * byte-budget for the GPU buffer pool. When `pooledBytes` exceeds
+   * this value, `evictUnused()` disposes pooled buffers (largest first)
+   * until under budget — independent of the count cap. `0` disables
+   * the byte-budget pass (count-only behavior). Default ~512 MB.
+   */
+  gpuPoolMaxBytes: number;
 
   /**
    * Maximum number of cached materials per type (point, line, gsplat).
@@ -497,7 +503,7 @@ export interface RenderingSettings {
   dofEnabled: boolean;
   dofFocus: number;
   dofStrength: number;
-  // New pmndrs effects
+  // pmndrs effect controls
   aoEnabled: boolean;
   aoQuality: 'low' | 'medium' | 'high' | 'ultra';
   vignetteEnabled: boolean;
@@ -508,7 +514,7 @@ export interface RenderingSettings {
   detectorNoiseReadoutSigma: number;
   detectorNoisePhotonGain: number;
   detectorNoiseFpnSigma: number;
-  // Chromatic lens distortion effect (replaces old separate lens distortion + chromatic aberration)
+  // Chromatic lens distortion effect
   chromaticLensDistortionEnabled: boolean;
   chromaticLensDistortionX: number;
   chromaticLensDistortionY: number;
@@ -541,7 +547,7 @@ export interface RenderingControlsConfig {
   defaults: RenderingSettings;
 }
 
-// Note: RenderingConfig removed - all rendering settings moved to RenderingSettings for centralization
+// Rendering settings are centralized in RenderingSettings.
 
 /**
  * WebGL context attributes
