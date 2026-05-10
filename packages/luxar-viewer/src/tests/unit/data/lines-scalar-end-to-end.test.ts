@@ -293,6 +293,45 @@ describe('GPU pool updateLinesGeometry scalar attribute', () => {
     expect((startAttr.array as Float32Array)[1]).toBeCloseTo(0.9);
   });
 
+  it('A.4: growLinesGeometry preserves scalar attribute contents on resize', () => {
+    const pool = new GPUBufferPool(20, 300, 5, 0);
+    // Acquire a small capacity, write scalars, then grow.
+    const g = pool.acquireLinesGeometry('l-grow', 2);
+    const small: ProcessedLinesData = {
+      startPositions: new Float32Array(6),
+      endPositions: new Float32Array(6),
+      startColors: new Float32Array(6),
+      endColors: new Float32Array(6),
+      startWidths: new Float32Array(2),
+      endWidths: new Float32Array(2),
+      startSharpness: new Float32Array(2),
+      endSharpness: new Float32Array(2),
+      segmentLengths: new Float32Array(2),
+      startClipped: new Uint8Array(2),
+      endClipped: new Uint8Array(2),
+      startScalars: new Float32Array([0.25, 0.75]),
+      endScalars: new Float32Array([0.5, 1.0]),
+      segmentCount: 2,
+    };
+    pool.updateLinesGeometry(g, small, 2);
+    const startBefore = g.getAttribute('aStartScalar') as THREE.BufferAttribute;
+    const endBefore = g.getAttribute('aEndScalar') as THREE.BufferAttribute;
+    const startCapacityBefore = (startBefore.array as Float32Array).length;
+    const endCapacityBefore = (endBefore.array as Float32Array).length;
+
+    // Force growth by acquiring with a much larger count for the same nodeId.
+    pool.acquireLinesGeometry('l-grow', 200);
+    const startAfter = g.getAttribute('aStartScalar') as THREE.BufferAttribute;
+    const endAfter = g.getAttribute('aEndScalar') as THREE.BufferAttribute;
+    expect((startAfter.array as Float32Array).length).toBeGreaterThan(startCapacityBefore);
+    expect((endAfter.array as Float32Array).length).toBeGreaterThan(endCapacityBefore);
+    // Preserved contents at indices [0, 1].
+    expect((startAfter.array as Float32Array)[0]).toBeCloseTo(0.25);
+    expect((startAfter.array as Float32Array)[1]).toBeCloseTo(0.75);
+    expect((endAfter.array as Float32Array)[0]).toBeCloseTo(0.5);
+    expect((endAfter.array as Float32Array)[1]).toBeCloseTo(1.0);
+  });
+
   it('reuses scalar attributes on subsequent commits', () => {
     const pool = new GPUBufferPool(20, 300, 5, 0);
     const g = pool.acquireLinesGeometry('l3', 1);

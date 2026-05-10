@@ -54,7 +54,7 @@ export interface PointsAttributeTypes {
   radius: 'Float32Array' | 'Uint8Array';
   sharpness: 'Float32Array' | 'Uint8Array';
   /**
-   * D4: scalar attribute dtype. Omitted (undefined) when the dataset
+   * scalar attribute dtype. Omitted (undefined) when the dataset
    * has no scalars — `===` comparison handles undefined === undefined,
    * so `attributeTypesMatch` works without a sentinel.
    */
@@ -80,7 +80,7 @@ export interface TypePoolStats {
   evictions: number;
   activeBuffers: number;
   pooledBuffers: number;
-  /** D2: per-type byte totals (sum of attribute byteLengths). */
+  /** per-type byte totals (sum of attribute byteLengths). */
   activeBytes: number;
   pooledBytes: number;
 }
@@ -96,7 +96,7 @@ export interface PoolStats {
   capacityGrowths: number;
   activeBuffers: number;
   pooledBuffers: number;
-  /** D2: cumulative byte counters across all types. */
+  /** cumulative byte counters across all types. */
   activeBytes: number;
   pooledBytes: number;
   totalBytes: number;
@@ -110,7 +110,7 @@ export interface PoolStats {
 }
 
 /**
- * D2: estimate the GPU-resident byte footprint of a geometry by
+ * estimate the GPU-resident byte footprint of a geometry by
  * summing the underlying typed-array byte lengths of every attribute
  * (and the index, if present). Mirrors what THREE.js will actually
  * upload — it slightly overstates because we count the full backing
@@ -166,7 +166,7 @@ export class GPUBufferPool {
    */
   private evictBatchSize: number;
   /**
-   * D2: pooled-byte budget. When `pooledBytes` exceeds this value,
+   * pooled-byte budget. When `pooledBytes` exceeds this value,
    * `evictUnused()` evicts pooled buffers (largest first) until under
    * budget — independent of the count-based cap above. `0` disables
    * the byte budget, restoring count-only behavior.
@@ -368,7 +368,7 @@ export class GPUBufferPool {
       radius: data.radii instanceof Uint8Array ? 'Uint8Array' : 'Float32Array',
       sharpness: data.sharpness instanceof Uint8Array ? 'Uint8Array' : 'Float32Array',
     };
-    // D4: scalar dtype — omitted when the dataset has no scalars (the
+    // scalar dtype — omitted when the dataset has no scalars (the
     // common case). When present, we honor the source dtype so Uint8
     // normalised LUT lookups work alongside Float32/Float16 raw values.
     if (data.scalars) {
@@ -432,7 +432,7 @@ export class GPUBufferPool {
       geometry.setAttribute('sharpness', new THREE.Float32BufferAttribute(capacity, 1));
     }
 
-    // D4: scalar attribute — only created when scalars are present.
+    // scalar attribute — only created when scalars are present.
     // The shader reads `scalar` only under USE_COLORMAP, so omitting the
     // attribute when types.scalar is undefined avoids carrying a 4 B/point
     // empty buffer for every non-colormap dataset.
@@ -535,7 +535,7 @@ export class GPUBufferPool {
       geometry.setAttribute('sharpness', newSharp);
     }
 
-    // D4: Scalar — type-preserving growth, only when present.
+    // Scalar — type-preserving growth, only when present.
     if (types.scalar) {
       const oldScalar = geometry.getAttribute('scalar') as THREE.BufferAttribute | undefined;
       if (types.scalar === 'Uint8Array') {
@@ -587,7 +587,7 @@ export class GPUBufferPool {
 
     // Update colors (type-matched: Uint8Array, Uint16Array, or Float32Array).
     //
-    // C1: fill with white defaults when `data.colors` is absent. Without
+    // fill with white defaults when `data.colors` is absent. Without
     // this, the buffer's initial zeros render as black points (the shader
     // discards near-zero adjusted color, so positions-only Points become
     // invisible). When the type is Float32 (the default when `data.colors`
@@ -617,7 +617,7 @@ export class GPUBufferPool {
 
     // Update radii (type-matched: Uint8Array or Float32Array).
     //
-    // C1: fill default 0.5 when `data.radii` is absent (matches
+    // fill default 0.5 when `data.radii` is absent (matches
     // NodeFactory.createPointsGeometry). When the type is Uint8
     // (normalized via radiusScale = max_radius), 0.5 maps to byte 128;
     // when Float32, write 0.5 directly.
@@ -639,7 +639,7 @@ export class GPUBufferPool {
 
     // Update sharpness (type-matched: Uint8Array or Float32Array).
     //
-    // C1: fill default 2.0 when `data.sharpness` is absent. Float32 path
+    // fill default 2.0 when `data.sharpness` is absent. Float32 path
     // writes 2.0 directly; Uint8 path uses 64 (≈2.0/8 * 255 — assumes
     // typical max_sharpness ~31 means scaled value falls in usable range).
     const sharpAttr = geometry.getAttribute('sharpness') as THREE.BufferAttribute;
@@ -658,7 +658,7 @@ export class GPUBufferPool {
     }
     sharpAttr.needsUpdate = true;
 
-    // D4: scalar attribute. The geometry only carries `scalar` when
+    // scalar attribute. The geometry only carries `scalar` when
     // detectAttributeTypes saw scalars at acquire time. When the data
     // dropped scalars on a later commit (rare — types would mismatch
     // and the pool would re-allocate), nothing to do here.
@@ -671,7 +671,7 @@ export class GPUBufferPool {
           typeof globalThis.Float16Array !== 'undefined' &&
           data.scalars instanceof globalThis.Float16Array
         ) {
-          // D4: widen Float16 → Float32 elementwise since TypedArray.set
+          // widen Float16 → Float32 elementwise since TypedArray.set
           // doesn't accept Float16Array as a source for Float32 attribute
           // storage in current JS engines.
           const src = data.scalars as Float16Array;
@@ -820,6 +820,11 @@ export class GPUBufferPool {
 
   /**
    * Grow Lines geometry to new capacity.
+   *
+   * Also grows optional `aStartScalar` / `aEndScalar` instanced
+   * attributes when present. Line geometries allocate scalar attributes
+   * lazily on first scalar upload, so resizing must carry them forward
+   * alongside the always-present per-segment attributes.
    */
   private growLinesGeometry(geometry: THREE.InstancedBufferGeometry, neededCount: number): void {
     const newCapacity = Math.ceil(neededCount * 1.5);
@@ -845,6 +850,18 @@ export class GPUBufferPool {
         new Float32Array(newCapacity * size),
         size
       );
+      (newAttr.array as Float32Array).set(oldAttr.array as Float32Array);
+      newAttr.setUsage(THREE.DynamicDrawUsage);
+      geometry.setAttribute(name, newAttr);
+    }
+
+    // Scalar attributes are optional (allocated lazily on first scalar
+    // commit). When they exist, grow them to match the rest of the
+    // per-segment attributes.
+    for (const name of ['aStartScalar', 'aEndScalar']) {
+      const oldAttr = geometry.getAttribute(name) as THREE.InstancedBufferAttribute | undefined;
+      if (!oldAttr) continue;
+      const newAttr = new THREE.InstancedBufferAttribute(new Float32Array(newCapacity), 1);
       (newAttr.array as Float32Array).set(oldAttr.array as Float32Array);
       newAttr.setUsage(THREE.DynamicDrawUsage);
       geometry.setAttribute(name, newAttr);
@@ -879,11 +896,9 @@ export class GPUBufferPool {
       attr.needsUpdate = true;
     }
 
-    // D5: lazily allocate aStartScalar/aEndScalar when the source has
-    // scalars. Pre-D5 the lines pool never carried scalar attributes,
-    // which made pool reuse incompatible with a colormap-enabled
-    // dataset. We grow attributes on first commit and update in place
-    // afterward (capacity tracked from aStartPos which is always there).
+    // Lazily allocate aStartScalar/aEndScalar when the source has
+    // scalars. Grow attributes on first commit and update in place
+    // afterward (capacity tracked from aStartPos, which is always there).
     if (data.startScalars && data.endScalars) {
       const startPosAttr = geometry.getAttribute('aStartPos') as THREE.InstancedBufferAttribute;
       const capacity = (startPosAttr.array as Float32Array).length / 3;
@@ -935,7 +950,7 @@ export class GPUBufferPool {
     // Without this, frustum culling uses stale bounds from previous frame/time slice
     // This causes geometry to disappear when zooming close (small frustum excludes stale box)
     // Performance: O(n) in segment count, but only runs when geometry updates (not every frame)
-    // C3: also track max width to expand bounds by rendered footprint
+    // also track max width to expand bounds by rendered footprint
     // (mirrors `computeLineBounds` in line-geometry.ts).
     const box = new THREE.Box3();
     const v = new THREE.Vector3();
@@ -1274,7 +1289,7 @@ export class GPUBufferPool {
     this.typeStats.lines.evictions += linesEvicted;
     this.typeStats.gsplats.evictions += gsplatsEvicted;
 
-    // D2: byte-budget pass. Independent of the count-based budget above.
+    // byte-budget pass. Independent of the count-based budget above.
     // Disposes pooled buffers (largest-first) until `pooledBytes` is
     // under `maxPoolBytes`. Without this, a single 760 MB Lines buffer
     // would sit in the pool indefinitely so long as the buffer count
@@ -1293,7 +1308,7 @@ export class GPUBufferPool {
   }
 
   /**
-   * D2: dispose pooled buffers (largest-first across all type pools)
+   * dispose pooled buffers (largest-first across all type pools)
    * until `getPooledBytes()` is under `maxPoolBytes`. Returns the
    * number disposed. Does NOT touch active buffers.
    */
@@ -1316,7 +1331,7 @@ export class GPUBufferPool {
   }
 
   /**
-   * D2: total bytes across all pooled (not active) buffers. Recomputed
+   * total bytes across all pooled (not active) buffers. Recomputed
    * on each call — pool sizes are small (≤ `maxPoolSize` ≈ 20), so
    * this is trivially cheap.
    */
@@ -1335,7 +1350,7 @@ export class GPUBufferPool {
   }
 
   /**
-   * D2: locate the largest pooled buffer across all type pools, with
+   * locate the largest pooled buffer across all type pools, with
    * its containing pool / bucket / array index so the caller can
    * splice it out. Returns null when every pool is empty.
    */
@@ -1388,7 +1403,7 @@ export class GPUBufferPool {
       0
     );
 
-    // Calculate per-type active buffers AND byte totals (D2)
+    // Calculate per-type active buffers and byte totals.
     let pointsActive = 0;
     let linesActive = 0;
     let gsplatsActive = 0;
@@ -1409,7 +1424,7 @@ export class GPUBufferPool {
       }
     }
 
-    // D2: per-type pooled bytes + largest pooled buffer.
+    // per-type pooled bytes + largest pooled buffer.
     let pointsPooledBytes = 0;
     let linesPooledBytes = 0;
     let gsplatsPooledBytes = 0;
