@@ -27,6 +27,28 @@
 import * as THREE from 'three';
 import type { BlendingMode } from './material-manager';
 
+/**
+ * F.2: discriminator predicates over `BlendingMode`. Centralising the
+ * `mode === 'foo'` literal comparisons here keeps the modes string-typed
+ * (zero runtime cost) while making intent explicit at call sites and
+ * giving us one place to change if the mode enum ever gets reshaped.
+ */
+export function isAdditiveMode(mode: BlendingMode): boolean {
+  return mode === 'additive';
+}
+export function isOpaqueMode(mode: BlendingMode): boolean {
+  return mode === 'opaque';
+}
+export function isMaxMode(mode: BlendingMode): boolean {
+  return mode === 'max';
+}
+export function isLuminousMode(mode: BlendingMode): boolean {
+  return mode === 'luminous';
+}
+export function isNormalMode(mode: BlendingMode): boolean {
+  return mode === 'normal';
+}
+
 export interface CompleteBlendingState {
   blending: THREE.Blending;
   blendEquation: THREE.BlendingEquation;

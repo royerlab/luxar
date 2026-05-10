@@ -36,6 +36,13 @@ import {
   applyColormapTextureToMaterial,
   applyScalarRangeToMaterial,
 } from './material-colormap-helpers';
+import {
+  isAdditiveMode,
+  isLuminousMode,
+  isMaxMode,
+  isNormalMode,
+  isOpaqueMode,
+} from './blending-state';
 
 /**
  * Configuration for gsplat material creation
@@ -407,31 +414,33 @@ export class GSplatMaterial extends THREE.ShaderMaterial implements CameraAwareM
       | 'opaque'
       | 'luminous'
       | undefined;
-    const isOpaque = mode === 'opaque';
-    const isAdditive = mode === 'additive';
+    // F.2: predicate-driven mode dispatch.
+    const isOpaque = isOpaqueMode(mode);
+    const isAdditive = isAdditiveMode(mode);
+    const isMax = isMaxMode(mode);
     const opacity = (this.uniforms.uOpacity?.value as number | undefined) ?? 1.0;
 
     // Pick base blending. Additive-style modes go through CustomBlending
     // so the alpha factors below take effect.
-    if (isOpaque || mode === 'normal') {
+    if (isOpaque || isNormalMode(mode)) {
       this.blending = THREE.NormalBlending;
     } else {
       this.blending = THREE.CustomBlending;
     }
 
     this.transparent = !isOpaque;
-    this.depthWrite = isOpaque || (mode === 'normal' && opacity >= 0.99);
+    this.depthWrite = isOpaque || (isNormalMode(mode) && opacity >= 0.99);
     // Additive ignores depth (renders on top); luminous respects it.
     this.depthTest = !isAdditive;
 
     // Projection mode uniform: 0=sum (additive/luminous/normal/opaque),
     // 1=max. The shader has separate sum vs max branches.
     if (this.uniforms.uProjectionMode) {
-      this.uniforms.uProjectionMode.value = mode === 'max' ? 1 : 0;
+      this.uniforms.uProjectionMode.value = isMax ? 1 : 0;
     }
 
     // Mode-specific blend factors.
-    if (mode === 'additive' || mode === 'luminous') {
+    if (isAdditive || isLuminousMode(mode)) {
       // Linear sum projection — OneFactor avoids the SrcAlpha squaring.
       this.blendEquation = THREE.AddEquation;
       this.blendSrc = THREE.OneFactor;
@@ -441,7 +450,7 @@ export class GSplatMaterial extends THREE.ShaderMaterial implements CameraAwareM
       this.blendEquationAlpha = THREE.MaxEquation;
       this.blendSrcAlpha = THREE.OneFactor;
       this.blendDstAlpha = THREE.OneFactor;
-    } else if (mode === 'max') {
+    } else if (isMax) {
       this.blendEquation = THREE.MaxEquation;
       this.blendSrc = THREE.OneFactor;
       this.blendDst = THREE.OneFactor;

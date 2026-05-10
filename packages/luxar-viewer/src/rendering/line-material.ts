@@ -21,6 +21,13 @@ import {
   applyColormapTextureToMaterial,
   applyScalarRangeToMaterial,
 } from './material-colormap-helpers';
+import {
+  isAdditiveMode,
+  isLuminousMode,
+  isMaxMode,
+  isNormalMode,
+  isOpaqueMode,
+} from './blending-state';
 
 /**
  * Configuration for line material creation
@@ -293,32 +300,34 @@ export class LineMaterial extends THREE.ShaderMaterial implements CameraAwareMat
       | 'opaque'
       | 'luminous'
       | undefined;
-    const isOpaque = mode === 'opaque';
-    const isAdditive = mode === 'additive';
+    // F.2: predicates over BlendingMode replace inline string comparisons.
+    const isOpaque = isOpaqueMode(mode);
+    const isAdditive = isAdditiveMode(mode);
+    const isMax = isMaxMode(mode);
     const opacity = (this.uniforms.uOpacity?.value as number | undefined) ?? 1.0;
 
     // Defensive: THREE may leave defines undefined when none were
     // passed at construction.
     if (!this.defines) this.defines = {};
 
-    if (isOpaque || mode === 'normal') {
+    if (isOpaque || isNormalMode(mode)) {
       this.blending = THREE.NormalBlending;
-    } else if (mode === 'additive' || mode === 'luminous') {
+    } else if (isAdditive || isLuminousMode(mode)) {
       this.blending = THREE.AdditiveBlending;
-    } else if (mode === 'max') {
+    } else if (isMax) {
       this.blending = THREE.CustomBlending;
     } else {
       this.blending = THREE.NormalBlending;
     }
 
     this.transparent = !isOpaque;
-    this.depthWrite = isOpaque || (mode === 'normal' && opacity >= 0.99);
+    this.depthWrite = isOpaque || (isNormalMode(mode) && opacity >= 0.99);
     this.depthTest = !isAdditive;
 
     // gate fragment LUXAR_MAX_RGB_CONTRIBUTION on max mode so the
     // shader premultiplies RGB by intensity*opacity (necessary for
     // OneFactor blend factors to capture contribution-weighted max).
-    const wantsContrib = mode === 'max';
+    const wantsContrib = isMax;
     const hasContrib = 'LUXAR_MAX_RGB_CONTRIBUTION' in this.defines;
     let definesChanged = false;
     if (wantsContrib && !hasContrib) {
@@ -329,7 +338,7 @@ export class LineMaterial extends THREE.ShaderMaterial implements CameraAwareMat
       definesChanged = true;
     }
 
-    if (mode === 'max') {
+    if (isMax) {
       this.blendEquation = THREE.MaxEquation;
       this.blendSrc = THREE.OneFactor;
       this.blendDst = THREE.OneFactor;
