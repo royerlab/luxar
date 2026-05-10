@@ -4,8 +4,12 @@
  * Used by both PointMaterial (main rendering) and PointPickingMaterial (GPU picking).
  * Contains world-space sizing, sharpness compensation, nD slicing, and projection logic.
  */
+import { GLSL_SANITIZE_FUNCTIONS } from './glsl-lib';
+
 export const POINT_VERTEX_SHADER = /* glsl */ `
     precision highp float;
+
+    ${GLSL_SANITIZE_FUNCTIONS}
 
     in float radius;
     in float sharpness;
@@ -38,10 +42,7 @@ export const POINT_VERTEX_SHADER = /* glsl */ `
 
       // Apply sharpness scale for dtype normalization and use 2.0 as default.
       // Guard NaN/Inf from malformed data so pow() below cannot poison gl_PointSize.
-      float normalizedSharpness = sharpness * sharpnessScale;
-      if (isnan(normalizedSharpness) || isinf(normalizedSharpness) || normalizedSharpness <= 0.0) {
-        normalizedSharpness = 2.0;
-      }
+      float normalizedSharpness = sanitizePositive(sharpness * sharpnessScale, 2.0);
       vSharpness = normalizedSharpness;
 
       // Transform vertex position from world space to view space
@@ -49,10 +50,7 @@ export const POINT_VERTEX_SHADER = /* glsl */ `
       gl_Position = projectionMatrix * mvPosition;
 
       // Apply radius scale for dtype normalization (e.g., uint8 needs 1/255 scale)
-      float normalizedRadius = radius * radiusScale;
-      if (isnan(normalizedRadius) || isinf(normalizedRadius) || normalizedRadius < 0.0) {
-        normalizedRadius = 0.0;
-      }
+      float normalizedRadius = sanitizeNonNegative(radius * radiusScale, 0.0);
       vRadius = normalizedRadius; // Pass to fragment shader
 
       // OPTIMIZED world-space point sizing:
@@ -66,10 +64,8 @@ export const POINT_VERTEX_SHADER = /* glsl */ `
       // r_vis = 1 - 0.01^(1/s)
       // We need to scale the point size by 1/r_vis to maintain consistent visible size
       // Exact formula: compensation = 1 / (1 - 0.01^(1/s)), guarded against s=0
-      float sharpnessCompensation = 1.0 / (1.0 - pow(0.01, 1.0 / max(vSharpness, 0.01)));
-      if (isnan(sharpnessCompensation) || isinf(sharpnessCompensation)) {
-        sharpnessCompensation = 1.0;
-      }
+      float sharpnessCompensationRaw = 1.0 / (1.0 - pow(0.01, 1.0 / max(vSharpness, 0.01)));
+      float sharpnessCompensation = isInvalidFloat(sharpnessCompensationRaw) ? 1.0 : sharpnessCompensationRaw;
       float pointSize = basePointSize * sharpnessCompensation;
 
       // Clamp to hardware limits, with minimum of 1.0 to avoid undefined behavior

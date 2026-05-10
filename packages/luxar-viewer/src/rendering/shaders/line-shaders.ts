@@ -22,8 +22,12 @@
  *     by intensity*opacity in `max` mode so MaxEquation+OneFactor
  *     captures contribution-weighted colour, not flat full-bright.
  */
+import { GLSL_SANITIZE_FUNCTIONS } from './glsl-lib';
+
 export const LINE_VERTEX_SHADER = /* glsl */ `
     precision highp float;
+
+    ${GLSL_SANITIZE_FUNCTIONS}
 
     // Static geometry attribute (per quad vertex)
     in vec2 aQuadCorner;  // (-1,-1), (1,-1), (-1,1), (1,1)
@@ -91,11 +95,11 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
 
       // sanitise width/sharpness against negative/NaN/Inf so a
       // malformed input can't poison gl_Position via pow() or screen-
-      // space expansion.
-      float startW = (isnan(aStartWidth) || isinf(aStartWidth) || aStartWidth < 0.0) ? 0.0 : aStartWidth;
-      float endW = (isnan(aEndWidth) || isinf(aEndWidth) || aEndWidth < 0.0) ? 0.0 : aEndWidth;
-      float startS = (isnan(aStartSharpness) || isinf(aStartSharpness) || aStartSharpness <= 0.0) ? 2.0 : aStartSharpness;
-      float endS = (isnan(aEndSharpness) || isinf(aEndSharpness) || aEndSharpness <= 0.0) ? 2.0 : aEndSharpness;
+      // space expansion. Sanitize helpers from glsl-lib.
+      float startW = sanitizeNonNegative(aStartWidth, 0.0);
+      float endW = sanitizeNonNegative(aEndWidth, 0.0);
+      float startS = sanitizePositive(aStartSharpness, 2.0);
+      float endS = sanitizePositive(aEndSharpness, 2.0);
 
       float width = mix(startW, endW, t);
       vSharpness = mix(startS, endS, t);

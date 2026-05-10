@@ -5,8 +5,12 @@
  * Contains 3D-to-2D covariance projection, perspective Jacobian, amplitude calculation,
  * oriented quad expansion, near-plane fade, and screen-coverage safety.
  */
+import { GLSL_SANITIZE_FUNCTIONS } from './glsl-lib';
+
 export const GSPLAT_VERTEX_SHADER = /* glsl */ `
     precision highp float;
+
+    ${GLSL_SANITIZE_FUNCTIONS}
 
     // Quad corner attribute (static geometry)
     in vec2 aQuadCorner;  // (-1,-1), (1,-1), (-1,1), (1,1)
@@ -58,8 +62,10 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
         );
     }
 
+    // E.2: invalidFloat is now an alias for the shared isInvalidFloat
+    // helper in glsl-lib (kept for diff minimality at call sites).
     bool invalidFloat(float v) {
-        return isnan(v) || isinf(v);
+        return isInvalidFloat(v);
     }
 
     bool invalidCov2D(mat2 S) {
