@@ -80,6 +80,18 @@ export class OPFSStore {
   // Plain bookkeeping for stale-write detection; not a public API.
   private generation = 0;
 
+  // Lifecycle: set by dispose(). Synchronous early-return on
+  // get/set/touch so a disposed store cannot mutate state. Distinct
+  // from the no-OPFS path (`!this.opfsRoot`) — disposed means the
+  // owner explicitly tore the store down, OPFS-unavailable means the
+  // browser never gave us a directory.
+  private disposed = false;
+
+  // Tracks the in-flight metadata save fired by scheduleMetadataSave's
+  // setTimeout. dispose() awaits this so a save that started just
+  // before dispose() finishes before the final flush.
+  private metadataSaveInFlight: Promise<void> | null = null;
+
   constructor(datasetId: string, baseUrl: string, maxSize: number) {
     this.datasetId = datasetId;
     this.baseUrl = baseUrl;
@@ -104,7 +116,7 @@ export class OPFSStore {
    * Get a file from OPFS and update LRU order.
    */
   async get(key: string): Promise<Uint8Array | undefined> {
-    if (!this.opfsRoot) {
+    if (this.disposed || !this.opfsRoot) {
       this.missCount++;
       return undefined;
     }
@@ -138,7 +150,7 @@ export class OPFSStore {
    * Write a file to OPFS with LRU eviction.
    */
   async set(key: string, data: Uint8Array): Promise<void> {
-    if (!this.opfsRoot) return;
+    if (this.disposed || !this.opfsRoot) return;
 
     // Await any pending write for this key to prevent race conditions
     const pending = this.pendingWrites.get(key);
@@ -413,6 +425,7 @@ export class OPFSStore {
    * Update LRU order for a key.
    */
   touch(key: string): void {
+    if (this.disposed) return;
     const entry = this.index.get(key);
     if (entry) {
       // Delete+re-insert to move to end (MRU position) — O(1) with Map
@@ -458,14 +471,42 @@ export class OPFSStore {
   }
 
   /**
-   * Flush pending metadata writes and clear in-memory state.
+   * Tear down the store. Flushes pending metadata writes, awaits any
+   * in-flight saves, drains pending same-key writes, then marks the
+   * store disposed so subsequent set/get/touch are no-ops.
+   *
+   * Order matters:
+   * 1. Bump generation FIRST so any in-flight doSet that resolves
+   *    afterwards detects the mismatch and skips its index update.
+   * 2. Cancel the debounced timer (if pending) and run a final
+   *    saveMetadata so the on-disk index reflects what's in memory.
+   * 3. Await the in-flight saveMetadata triggered by the timer (if any).
+   * 4. Drain pendingWrites so file I/O for in-flight set() calls
+   *    finishes before we declare the store disposed.
+   * 5. Set disposed = true.
    */
   async dispose(): Promise<void> {
+    if (this.disposed) return;
+    this.generation++;
+
     if (this.metadataSaveTimeout) {
       clearTimeout(this.metadataSaveTimeout);
       this.metadataSaveTimeout = null;
       await this.saveMetadata();
     }
+    if (this.metadataSaveInFlight) {
+      try {
+        await this.metadataSaveInFlight;
+      } catch {
+        // Already-logged inside scheduleMetadataSave's catch.
+      }
+    }
+
+    if (this.pendingWrites.size > 0) {
+      await Promise.allSettled([...this.pendingWrites.values()]);
+    }
+
+    this.disposed = true;
   }
 
   // ========== Private Methods ==========
@@ -546,12 +587,17 @@ export class OPFSStore {
       clearTimeout(this.metadataSaveTimeout);
     }
     this.metadataSaveTimeout = setTimeout(() => {
-      this.saveMetadata()
+      // Track the in-flight save so dispose() can await it before the
+      // final flush. Without this, dispose racing the timer-fired save
+      // produces interleaved writes to _cache_meta.json.
+      this.metadataSaveInFlight = this.saveMetadata()
         .catch((error) => {
+          this.writeFailures++;
           log.warning(Modules.CACHE, 'OPFSStore metadata save failed', error);
         })
         .finally(() => {
           this.metadataSaveTimeout = null;
+          this.metadataSaveInFlight = null;
         });
     }, OPFSStore.METADATA_SAVE_DELAY);
   }

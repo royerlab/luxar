@@ -524,6 +524,40 @@ describe('OPFSStore', () => {
         expect(meta.totalSize).toBe(1000);
       }
     });
+
+    it('dispose during pending metadata save awaits the in-flight save', async () => {
+      // Trigger scheduleMetadataSave by mutating state, then await dispose.
+      // The in-flight save tracker means dispose must wait for the save
+      // to complete before returning.
+      await store.set('key1', new Uint8Array(100));
+      // Wait > METADATA_SAVE_DELAY to start the save.
+      await new Promise((r) => setTimeout(r, 1100));
+      await store.dispose();
+      // Metadata is now persisted.
+      expect(mockFS.metaFiles.get('_cache_meta.json')).toBeDefined();
+    });
+
+    it('set/get/touch after dispose are no-ops', async () => {
+      await store.set('keep', new Uint8Array(50));
+      await store.dispose();
+
+      // Should not throw, should not mutate state.
+      await store.set('post', new Uint8Array(50));
+      const retrieved = await store.get('keep');
+      expect(retrieved).toBeUndefined();
+
+      const stats = store.getStats();
+      // The pre-dispose set is still tracked in stats (from before
+      // disposal). The post-dispose set adds nothing.
+      expect(stats.count).toBe(1);
+    });
+
+    it('dispose() is idempotent', async () => {
+      await store.set('keep', new Uint8Array(50));
+      await store.dispose();
+      // A second dispose() must not throw and must not double-bump generation.
+      await expect(store.dispose()).resolves.toBeUndefined();
+    });
   });
 
   describe('Edge Cases', () => {
