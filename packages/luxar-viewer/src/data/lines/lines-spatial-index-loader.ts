@@ -1,7 +1,7 @@
 /**
  * Lines spatial index-based data loader for efficient nD lines loading.
  *
- * This loader implements two-phase loading:
+ * This loader uses segment-first loading:
  * 1. Query segment chunks and load visible segments
  * 2. Derive required vertex chunks from segment indices and load vertices
  *
@@ -59,7 +59,7 @@ import { createEmptyLinesData } from './projection';
  * Lines data loader using spatial indices for efficient nD queries.
  *
  * Key features:
- * - Two-phase loading: segments → vertices
+ * - Segment-first loading: segments → vertices
  * - Index remapping from global to local indices
  * - nD endpoint clipping for partial segment visibility
  * - Per-vertex attribute interpolation for clipped segments
@@ -96,6 +96,8 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     widths?: zarr.Array<zarr.DataType, zarr.Readable>;
     colors?: zarr.Array<zarr.DataType, zarr.Readable>;
     sharpness?: zarr.Array<zarr.DataType, zarr.Readable>;
+    /** optional per-vertex scalars for colormap lookup. */
+    scalars?: zarr.Array<zarr.DataType, zarr.Readable>;
   } = {};
 
   constructor(
@@ -234,6 +236,27 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       this.arrays.sharpness = sharpnessArray;
     } catch {
       log.info(Modules.LINES_LOADER, 'No sharpnesses array found (using default sharpness)');
+    }
+
+    // open optional `scalars` zarr array when the node declares
+    // has_scalars=true. Mirrors the Points loader pattern (D4 step 1).
+    const linesAttrs = this.node.attrs as { has_scalars?: boolean };
+    if (linesAttrs?.has_scalars) {
+      try {
+        let scalarsArray = await zarr.open(this.zarrLocation.resolve('scalars'), {
+          kind: 'array',
+        });
+        this.registerBounds('scalars', scalarsArray);
+        if (this.l0Cache) {
+          scalarsArray = wrapWithCache(scalarsArray, this.l0Cache, `${this.node.path}/scalars`);
+        }
+        this.arrays.scalars = scalarsArray;
+      } catch (e: unknown) {
+        log.info(
+          Modules.LINES_LOADER,
+          `has_scalars=true but failed to open scalars array — colormap mode disabled. ${e instanceof Error ? e.message : ''}`
+        );
+      }
     }
 
     // Initialize data accumulator for object pooling. The hot path
@@ -471,6 +494,8 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       const widthBuffer = this._accumulator.getWidthBuffer();
       const colorBuffer = this.arrays.colors ? this._accumulator.getColorBuffer() : null;
       const sharpnessBuffer = this.arrays.sharpness ? this._accumulator.getSharpnessBuffer() : null;
+      // per-vertex scalar buffer when available.
+      const scalarBuffer = this.arrays.scalars ? this._accumulator.getScalarBuffer() : null;
 
       // Profile vertex loading (accumulator path)
       const loadVertSession = session?.begin('Load Vertices');
@@ -498,6 +523,25 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
 
         if (sharpnessBuffer) {
           await this.loadVertexRanges('sharpness', mergedVertexRanges, 1, sharpnessBuffer);
+        }
+
+        // load per-vertex scalars directly into the accumulator buffer.
+        //
+        // A.2: the accumulator may hold a Uint8Array scalar buffer once the
+        // first fill() observed Uint8 input, but the spatial-index path
+        // hits this branch BEFORE any fill() and so always sees the
+        // constructor's default Float32Array. The `loadVertexRanges` API
+        // is Float32-only by design; routing Uint8 zarr scalars through it
+        // would require a typed-buffer variant and is out of scope here.
+        if (scalarBuffer) {
+          await this.loadVertexRanges(
+            'scalars',
+            mergedVertexRanges,
+            1,
+            scalarBuffer as Float32Array
+          );
+          // Flip the hasScalars flag — direct buffer writes bypass fill().
+          this._accumulator.markScalarsLoaded();
         }
       } finally {
         loadVertSession?.end();
@@ -532,6 +576,8 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     let widths: Float32Array;
     let colors: Float32Array | Uint8Array | Uint16Array | null = null;
     let sharpness: Float32Array | null = null;
+    // optional per-vertex scalars for colormap lookup.
+    let scalars: Float32Array | null = null;
 
     if (session) {
       const loadVertSession = session.begin('Load Vertices');
@@ -545,6 +591,9 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
         sharpness = this.arrays.sharpness
           ? await this.loadVertexRanges('sharpness', mergedVertexRanges, 1)
           : null;
+        scalars = this.arrays.scalars
+          ? await this.loadVertexRanges('scalars', mergedVertexRanges, 1)
+          : null;
       } finally {
         loadVertSession.end();
       }
@@ -557,6 +606,9 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       colors = this.arrays.colors ? await this.loadColorRanges(mergedVertexRanges) : null;
       sharpness = this.arrays.sharpness
         ? await this.loadVertexRanges('sharpness', mergedVertexRanges, 1)
+        : null;
+      scalars = this.arrays.scalars
+        ? await this.loadVertexRanges('scalars', mergedVertexRanges, 1)
         : null;
     }
 
@@ -586,6 +638,8 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       widths,
       colors,
       sharpness,
+      // scalars now flow through the loader fallback path.
+      scalars,
       segmentCount: Math.floor(segmentData.length / 2),
       vertexCount: vertexIndexMap.size,
       ndim: attrs.ndim,

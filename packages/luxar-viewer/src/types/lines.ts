@@ -8,6 +8,7 @@
  */
 
 import type { ViewState } from '../data/data-loader-types';
+import type { ScalarArray } from './points';
 import type {
   LoaderMetrics,
   MonitorEventListener,
@@ -85,6 +86,28 @@ export interface LinesMetadata {
 
   /** Whether sharpness array is present */
   has_sharpness: boolean;
+
+  /**
+   * Whether per-vertex scalar values for colormap lookup exist.
+   *
+   * gates whether the loader opens the `scalars` zarr array and
+   * whether `NodeFactory.createLinesNode` enables `USE_COLORMAP`.
+   */
+  has_scalars?: boolean;
+
+  /**
+   * Named colormap or 'custom' (paired with `colormap_lut` zarr array).
+   * viewer reads this to choose the LUT texture; when set without
+   * `has_scalars`, the colormap path is suppressed (fail-closed).
+   */
+  colormap?: string;
+
+  /**
+   * `[min, max]` for normalising scalars before LUT lookup.
+   * passed to `material.updateScalarRange` so a value of `min`
+   * samples LUT index 0 and `max` samples 255.
+   */
+  scalar_data_range?: [number, number];
 
   /** Whether spatial index exists (redundant with ordering !== 'none', but explicit) */
   has_spatial_index?: boolean;
@@ -171,6 +194,21 @@ export interface LoadedLinesData {
   /** Vertex sharpness (N,) null if not present */
   sharpness: Float32Array | null;
 
+  /**
+   * Per-vertex scalar values for colormap lookup (N,), null if not present.
+   *
+   * when present, projection produces `startScalars`/`endScalars`
+   * arrays in `ProcessedLinesData` that get bound as
+   * `aStartScalar`/`aEndScalar` instanced attributes. Required for the
+   * line shader's `USE_COLORMAP` path to be active.
+   *
+   * A.2: dtype aligned with `ScalarArray` (Float32/Float16/Uint8) so
+   * Uint8 loaders can keep native dtype through the accumulator and
+   * pay a single widening at projection time rather than 4× memory up
+   * front.
+   */
+  scalars: ScalarArray | null;
+
   /** Number of segments loaded */
   segmentCount: number;
 
@@ -222,6 +260,21 @@ export interface ProcessedLinesData {
 
   /** Whether end endpoint was clipped (M,), 1=clipped, 0=original */
   endClipped: Uint8Array;
+
+  /**
+   * Start-vertex scalar values (M,), interpolated if clipped, optional.
+   *
+   * present when the source `LoadedLinesData.scalars` is non-null.
+   * Bound as `aStartScalar` instanced attribute and used by the line
+   * vertex shader under `USE_COLORMAP`.
+   */
+  startScalars?: Float32Array;
+
+  /**
+   * End-vertex scalar values (M,), interpolated if clipped, optional.
+   * Bound as `aEndScalar`.
+   */
+  endScalars?: Float32Array;
 
   /** Number of visible segments after clipping */
   segmentCount: number;

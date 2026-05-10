@@ -12,8 +12,8 @@
  * - `buildInstanceBuffers` — TS path: clip + interpolate + build the
  *   GPU instance buffers from a `LoadedLinesData` blob.
  * - `buildInstanceBuffersWASM` — WASM-accelerated equivalent that
- *   batches each phase (clip / interpolate / lengths) through the
- *   compiled module.
+ *   batches clipping, interpolation, and length calculations through
+ *   the compiled module.
  * - `initLinesWASM` — eager warm-up of the WASM module so the first
  *   `buildInstanceBuffersWASM` call doesn't pay the load cost.
  *
@@ -44,6 +44,7 @@ export function createEmptyLinesData(attrs: LinesMetadata): LoadedLinesData {
     widths: new Float32Array(0),
     colors: null,
     sharpness: null,
+    scalars: null, // C4
     segmentCount: 0,
     vertexCount: 0,
     ndim: attrs.ndim,
@@ -234,7 +235,8 @@ export function buildInstanceBuffers(
   tolerance: readonly number[],
   displayDims: readonly number[]
 ): ProcessedLinesData {
-  const { positions, segments, widths, colors, sharpness, ndim, segmentCount } = loadedData;
+  const { positions, segments, widths, colors, sharpness, scalars, ndim, segmentCount } =
+    loadedData;
 
   // Diagnostic: log input shape for large-segment-count Lines updates.
   if (segmentCount > 10000 && appConfig.dataLoading.performance.enablePerformanceMonitoring) {
@@ -290,6 +292,10 @@ export function buildInstanceBuffers(
   const segmentLengths = new Float32Array(maxSegments);
   const startClipped = new Uint8Array(maxSegments);
   const endClipped = new Uint8Array(maxSegments);
+  // per-segment scalar pairs (only allocated when source scalars
+  // are present, so the no-colormap path pays no extra memory cost).
+  const startScalars = scalars ? new Float32Array(maxSegments) : null;
+  const endScalars = scalars ? new Float32Array(maxSegments) : null;
 
   // Shared with the worker projection path; Float32 inputs pass through
   // (zero alloc), Uint8/Uint16 trigger an upfront normalization. Audited
@@ -364,6 +370,16 @@ export function buildInstanceBuffers(
     startSharpness[outIdx] = lerp(s0, s1, clipped.t1);
     endSharpness[outIdx] = lerp(s0, s1, clipped.t2);
 
+    // interpolate per-vertex scalar at the clipped endpoints so
+    // the colormap LUT lookup uses the correct value at the slice
+    // boundary (matching the colors / widths / sharpness pattern).
+    if (scalars && startScalars && endScalars) {
+      const sc0 = scalars[v0];
+      const sc1 = scalars[v1];
+      startScalars[outIdx] = lerp(sc0, sc1, clipped.t1);
+      endScalars[outIdx] = lerp(sc0, sc1, clipped.t2);
+    }
+
     // Calculate 3D segment length
     segmentLengths[outIdx] = distance3D(clipped.p1, clipped.p2);
 
@@ -415,6 +431,16 @@ export function buildInstanceBuffers(
     segmentLengths: segmentLengths.slice(0, outIdx),
     startClipped: startClipped.slice(0, outIdx),
     endClipped: endClipped.slice(0, outIdx),
+    // include scalar pairs only when the source had scalars.
+    // Output omits these fields when no scalars are present so the
+    // C1/D5 fail-closed guard in NodeFactory.createLinesNode passes
+    // unconditionally for non-colormap datasets.
+    ...(startScalars && endScalars
+      ? {
+          startScalars: startScalars.slice(0, outIdx),
+          endScalars: endScalars.slice(0, outIdx),
+        }
+      : {}),
     segmentCount: outIdx,
   };
 }
@@ -442,7 +468,8 @@ export function buildInstanceBuffersWASM(
   tolerance: number[],
   displayDims: number[]
 ): ProcessedLinesData {
-  const { positions, segments, widths, colors, sharpness, ndim, segmentCount } = loadedData;
+  const { positions, segments, widths, colors, sharpness, scalars, ndim, segmentCount } =
+    loadedData;
 
   // Get WASM module (uses cached instance or fallback)
   const wasm = getWasmModuleSync();
@@ -564,6 +591,38 @@ export function buildInstanceBuffersWASM(
     endSharpness.fill(1.0);
   }
 
+  // interpolate per-vertex scalars when present. Reuses the same
+  // batch helper as widths/sharpness — the WASM op is type-agnostic
+  // and treats each per-vertex value identically.
+  //
+  // A.2: source scalars may be Uint8 / Float16 / Float32. The WASM
+  // signature requires Float32, so widen up front for non-Float32
+  // sources. Float32 inputs pass through (zero alloc).
+  let startScalars: Float32Array | null = null;
+  let endScalars: Float32Array | null = null;
+  if (scalars) {
+    startScalars = new Float32Array(visibleCount);
+    endScalars = new Float32Array(visibleCount);
+    const scalarsF32 =
+      scalars instanceof Float32Array
+        ? scalars
+        : (() => {
+            const out = new Float32Array(scalars.length);
+            for (let i = 0; i < scalars.length; i++) out[i] = scalars[i];
+            return out;
+          })();
+    wasm.interpolate_scalars_batch(
+      scalarsF32,
+      segments,
+      visibility,
+      t1Params,
+      t2Params,
+      segmentCount,
+      startScalars,
+      endScalars
+    );
+  }
+
   // Step 6: Calculate segment lengths
   wasm.calculate_segment_lengths(startPositions, endPositions, visibleCount, segmentLengths);
 
@@ -589,6 +648,8 @@ export function buildInstanceBuffersWASM(
     segmentLengths,
     startClipped,
     endClipped,
+    // include scalar pairs only when source had scalars.
+    ...(startScalars && endScalars ? { startScalars, endScalars } : {}),
     segmentCount: visibleCount,
   };
 }
