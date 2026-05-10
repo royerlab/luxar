@@ -144,6 +144,31 @@ isCachedArray(cached); // true
 unwrapCachedArray(cached);
 ```
 
+### Read-only chunk contract
+
+Cached zarr chunks are **read-only** to every loader downstream of `wrapWithCache`.
+
+The L0 cache stores the same `ArrayBufferView` it returns to subsequent
+hit-path callers — no defensive clone on hit. Mutating that view in
+place would corrupt the cached entry for the next caller. Loaders MUST
+treat chunk data as immutable input and copy into accumulator buffers,
+output `BufferAttribute` allocations, or fresh `TypedArray`s before
+mutating.
+
+In practice, viewer loaders never call `getChunk()` directly; they go
+through `zarr.get()` which combines multiple chunks into a fresh result
+buffer. Mutation concerns therefore only apply to lower-level code that
+might wire `getChunk()` results into a render path. If you find a
+loader that does mutate `chunk.data`, either copy first or — if the
+mutation is unavoidable — switch the wrapped array to skip caching for
+that path.
+
+The miss-path clone in `wrapWithCache` (via `cloneArrayBufferView`)
+gives the *first caller* a private buffer they can technically mutate
+without poisoning the cache, but this should not be relied upon: the
+contract is "read-only on every path" so future cache changes (e.g.
+removing the miss-path clone for a perf win) don't break loaders.
+
 ## Intelligent Prefetching
 
 The cache includes an **intelligent prefetching system** that proactively loads adjacent chunks to hide network latency.
