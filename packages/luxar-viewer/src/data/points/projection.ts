@@ -673,12 +673,36 @@ export async function projectPointsTo3DUsingWorker(
       },
     };
   } catch (error) {
-    // Fallback to main thread on worker failure
+    // C.3: fallback to main thread on worker failure. When the loader
+    // owns an accumulator, route the projection through its buffers so
+    // we don't allocate a fresh Float32Array per worker timeout — the
+    // accumulator is already sized for `totalPoints` (the loader called
+    // `ensureCapacity` before kicking off the worker call).
     log.warning(
       Modules.SPATIAL_INDEX_LOADER,
       'Worker projection failed, falling back to main thread:',
       error
     );
+    if (ctx.accumulator && ctx.accumulator.hasTypes()) {
+      // Ensure the accumulator is sized for the fallback (idempotent).
+      ctx.accumulator.ensureCapacity(totalPoints);
+      const targetBuffers: ProjectionTargetBuffers = {
+        positions3D: ctx.accumulator.getPositionBuffer(),
+        colors: ctx.accumulator.getColorBuffer() as ColorArray,
+        radii: ctx.accumulator.getRadiiBuffer() as ScalarArray,
+        sharpness: ctx.accumulator.getSharpnessBuffer() as ScalarArray,
+      };
+      return projectPointsTo3D(
+        positions,
+        colors,
+        radii,
+        sharpness,
+        viewState,
+        ranges,
+        ctx,
+        targetBuffers
+      );
+    }
     return projectPointsTo3D(positions, colors, radii, sharpness, viewState, ranges, ctx, null);
   }
 }
