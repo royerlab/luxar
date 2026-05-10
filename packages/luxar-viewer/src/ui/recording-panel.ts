@@ -732,7 +732,7 @@ export class RecordingPanel {
     const keepAliveId = RecordingPanel.OFFLINE_KEEPALIVE_CALLBACK_ID;
     let capturedFrames = 0;
     let setupCompleted = false;
-    let finalizeAttempted = false;
+    let finalizeSucceeded = false;
 
     try {
       // Per-mode driver setup (encoder construction, file picker, …).
@@ -826,10 +826,12 @@ export class RecordingPanel {
 
       // Driver-specific finalize. Wrapped in its own try/catch so a
       // throw here surfaces a toast but doesn't bypass the outer
-      // finally — the panel state still gets restored.
-      finalizeAttempted = true;
+      // finally — the panel state still gets restored, and the
+      // finally-block driver.abort() runs because finalizeSucceeded
+      // remains false.
       try {
         await driver.finalize(ctx, capturedFrames, progress);
+        finalizeSucceeded = true;
       } catch (err) {
         log.error(Modules.RECORDING, `Offline ${mode} finalize failed: ${err}`);
         showToast('Recording finalize failed');
@@ -838,11 +840,11 @@ export class RecordingPanel {
       log.error(Modules.RECORDING, `Offline ${mode} capture failed: ${err}`);
       showToast('Recording failed');
     } finally {
-      // If setup completed but finalize wasn't attempted (aborted
+      // If setup completed and finalize did not succeed (aborted
       // session, captureFrame threw past the tolerance limit, or
       // finalize itself threw), give the driver a chance to release
       // partial encoder/zip resources without delivering an artifact.
-      if (setupCompleted && !finalizeAttempted) {
+      if (setupCompleted && !finalizeSucceeded) {
         try {
           const reason = sessionAbort.signal.aborted
             ? sessionAbort.signal.reason === 'user-cancel'
