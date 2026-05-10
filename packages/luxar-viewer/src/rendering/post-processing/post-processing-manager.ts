@@ -97,6 +97,27 @@ import {
 } from './visual-effects-handler';
 
 /**
+ * AO quality preset → SSAOEffect (samples, radius). Pulled out as a
+ * module-level helper so both `setAOEnabled(true, q)` and
+ * `setAOQuality(q)` share a single source of truth.
+ */
+function aoQualitySettings(quality: 'low' | 'medium' | 'high' | 'ultra'): {
+  samples: number;
+  radius: number;
+} {
+  switch (quality) {
+    case 'low':
+      return { samples: 4, radius: 0.1 };
+    case 'medium':
+      return { samples: 8, radius: 0.2 };
+    case 'high':
+      return { samples: 16, radius: 0.3 };
+    case 'ultra':
+      return { samples: 32, radius: 0.4 };
+  }
+}
+
+/**
  * Manages HDR post-processing effects using pmndrs/postprocessing library.
  *
  * Coordinates the complete post-processing pipeline:
@@ -142,6 +163,8 @@ export class PostProcessingManager {
   private smaaEffect?: SMAAEffect;
   private fxaaEffect?: FXAAEffect;
   private aoEffect?: SSAOEffect;
+  /** tracks current AO quality for in-place updates and debug state. */
+  private _aoQuality: 'low' | 'medium' | 'high' | 'ultra' = 'medium';
   private vignetteEffect?: RobustVignetteEffect;
   private detectorNoiseEffect?: DetectorNoiseEffect;
   private chromaticLensDistortionEffect?: ChromaticLensDistortionEffect;
@@ -610,13 +633,15 @@ export class PostProcessingManager {
   updateSMAASettings(preset?: 'LOW' | 'MEDIUM' | 'HIGH' | 'ULTRA'): void {
     if (!this.smaaEffect || !preset) return;
 
-    safeDisposeEffect(this.smaaEffect, 'SMAA (preset change)');
+    // B.3: dispose AFTER rebuild — same rationale as setAOQuality.
+    const oldEffect = this.smaaEffect;
     this.smaaEffect = new SMAAEffect({ preset: mapSMAAPreset(preset) });
 
     if (this.smaaEnabled) {
       this.rebuildEffectPass();
     }
 
+    safeDisposeEffect(oldEffect, 'SMAA (preset change)');
     log.update(Modules.POST_PROCESSING, `SMAA quality set to: ${preset}`);
   }
 
@@ -992,28 +1017,18 @@ export class PostProcessingManager {
    * Sets ambient occlusion effect (SSAO)
    */
   setAOEnabled(enabled: boolean, quality?: 'low' | 'medium' | 'high' | 'ultra'): void {
+    if (enabled && this.aoEffect) {
+      // AO already enabled — apply quality change in place. Without
+      // this branch the UI Quality control was a no-op once AO was on
+      // (samples/radius would not change until AO was toggled off and
+      // back on).
+      if (quality !== undefined) {
+        this.setAOQuality(quality);
+      }
+      return;
+    }
     if (enabled && !this.aoEffect && this.camera instanceof THREE.PerspectiveCamera) {
-      // Configure quality settings
-      const qualityMap = {
-        low: {
-          samples: 4,
-          radius: 0.1,
-        },
-        medium: {
-          samples: 8,
-          radius: 0.2,
-        },
-        high: {
-          samples: 16,
-          radius: 0.3,
-        },
-        ultra: {
-          samples: 32,
-          radius: 0.4,
-        },
-      };
-
-      const settings = qualityMap[quality ?? 'medium'];
+      const settings = aoQualitySettings(quality ?? 'medium');
 
       this.aoEffect = new SSAOEffect(this.camera, undefined, {
         samples: settings.samples,
@@ -1022,6 +1037,7 @@ export class PostProcessingManager {
         luminanceInfluence: 0.7,
         color: new THREE.Color(0x000000),
       });
+      this._aoQuality = quality ?? 'medium';
 
       this.rebuildEffectPass();
       log.info(Modules.POST_PROCESSING, `Ambient occlusion enabled: quality=${quality}`);
@@ -1031,6 +1047,44 @@ export class PostProcessingManager {
       this.rebuildEffectPass();
       log.info(Modules.POST_PROCESSING, 'Ambient occlusion disabled');
     }
+  }
+
+  /**
+   * update AO quality in place when AO is already enabled.
+   *
+   * pmndrs/postprocessing's `SSAOEffect` exposes `samples` and `radius`
+   * on its uniforms map, but they're read at construction time. The
+   * safest approach is dispose-and-recreate; that's a one-frame cost
+   * that's invisible to the user and keeps the rest of the pipeline
+   * untouched. No-op when AO is not enabled.
+   */
+  setAOQuality(quality: 'low' | 'medium' | 'high' | 'ultra'): void {
+    if (!this.aoEffect || !(this.camera instanceof THREE.PerspectiveCamera)) return;
+    if (this._aoQuality === quality) return;
+    // B.3: dispose AFTER rebuild. Disposing first leaves a window where
+    // `this.aoEffect` is freed but `EffectPass` still references it; if
+    // a render runs (or an exception bubbles before recreate completes)
+    // the post-processing pipeline would dereference the disposed
+    // effect. Stash the old, build the new + rebuild the pass, then
+    // dispose the old.
+    const oldEffect = this.aoEffect;
+    const settings = aoQualitySettings(quality);
+    this.aoEffect = new SSAOEffect(this.camera, undefined, {
+      samples: settings.samples,
+      radius: settings.radius,
+      intensity: 1.0,
+      luminanceInfluence: 0.7,
+      color: new THREE.Color(0x000000),
+    });
+    this._aoQuality = quality;
+    this.rebuildEffectPass();
+    safeDisposeEffect(oldEffect, 'AmbientOcclusion (quality change)');
+    log.info(Modules.POST_PROCESSING, `AO quality updated to ${quality}`);
+  }
+
+  /** read-only accessor for current AO quality (used by debug state and controls UI). */
+  getAOQuality(): 'low' | 'medium' | 'high' | 'ultra' | undefined {
+    return this.aoEffect ? this._aoQuality : undefined;
   }
 
   /**
@@ -1068,7 +1122,7 @@ export class PostProcessingManager {
       bloom: !!this.bloomEffect,
       detectorNoise: !!this.detectorNoiseEffect,
       dof: !!this.dofEffect,
-      chromaticAberration: false, // Old effect removed - now part of ChromaticLensDistortion
+      chromaticAberration: false, // Covered by ChromaticLensDistortion
       fxaa: this.fxaaEnabled,
       smaa: this.smaaEnabled,
       msaa: this.msaaEnabled,
@@ -1081,7 +1135,7 @@ export class PostProcessingManager {
         : 'Off',
       vignette: !!this.vignetteEffect,
       ao: !!this.aoEffect,
-      lensDistortion: false, // Old effect removed - now part of ChromaticLensDistortion
+      lensDistortion: false, // Covered by ChromaticLensDistortion
       chromaticLensDistortion: !!this.chromaticLensDistortionEffect,
     };
   }
@@ -1396,7 +1450,8 @@ export class PostProcessingManager {
       }
     );
 
-    safeDisposeEffect(this.bloomEffect, 'Bloom (levels change)');
+    // B.3: dispose AFTER rebuild — same rationale as setAOQuality.
+    const oldEffect = this.bloomEffect;
     this.bloomEffect = new BloomEffect(
       buildBloomConstructorOptions(settings, levels)
     ) as BloomEffectTyped;
@@ -1407,6 +1462,7 @@ export class PostProcessingManager {
 
     this.rebuildEffectPass();
 
+    safeDisposeEffect(oldEffect, 'Bloom (levels change)');
     log.info(Modules.POST_PROCESSING, `Bloom mipmap levels set to ${levels}`);
   }
 
@@ -1466,22 +1522,47 @@ export class PostProcessingManager {
    * Returns the linear float RGBA pixels from the HDR pipeline. This is the
    * building block for both EXR export and HDR video encoding.
    *
+   * `mode` controls which effects are disabled during capture:
+   *   - `'visible-ldr'`: keep every effect enabled (the user's full
+   *     post-processed pipeline). The pixels are still HDR/linear at
+   *     framebuffer level — tone mapping has been baked into them.
+   *   - `'hdr-effects-pre-tone'` (default):
+   *     disable tone mapping, vignette, AA, detector noise, and chromatic
+   *     lens distortion. Bloom / DOF / AO are KEPT (they're HDR-space).
+   *   - `'raw-scene-hdr'`: disable EVERY post-processing effect including
+   *     bloom / DOF / AO. The pixels are pure scene-material output.
+   *
+   * @param mode - Which effects to disable during capture (default `'hdr-effects-pre-tone'`).
    * @returns Object with Float32Array pixels and dimensions
    */
-  captureHDRPixels(): { pixels: Float32Array; width: number; height: number } {
-    // Save and disable LDR effects (everything after the scene render that
-    // modifies the image in ways not meaningful for raw HDR export)
+  captureHDRPixels(
+    mode: 'visible-ldr' | 'hdr-effects-pre-tone' | 'raw-scene-hdr' = 'hdr-effects-pre-tone'
+  ): { pixels: Float32Array; width: number; height: number } {
+    // Save and disable effects per capture mode.
     const effectStates = new Map<object, boolean>();
-    const ldrEffects = [
-      this.toneMappingEffect,
-      this.vignetteEffect,
-      this.smaaEffect,
-      this.fxaaEffect,
-      this.detectorNoiseEffect,
-      this.chromaticLensDistortionEffect,
-    ].filter(Boolean) as object[];
+    const ldrEffects =
+      mode === 'visible-ldr'
+        ? []
+        : ([
+            this.toneMappingEffect,
+            this.vignetteEffect,
+            this.smaaEffect,
+            this.fxaaEffect,
+            this.detectorNoiseEffect,
+            this.chromaticLensDistortionEffect,
+          ].filter(Boolean) as object[]);
 
-    for (const effect of ldrEffects) {
+    // raw-scene-hdr also disables HDR-space effects (bloom/DOF/AO).
+    const hdrEffects =
+      mode === 'raw-scene-hdr'
+        ? ([
+            this.bloomEffect,
+            this.dofEffect,
+            this.aoEffect,
+          ].filter(Boolean) as object[])
+        : [];
+
+    for (const effect of [...ldrEffects, ...hdrEffects]) {
       const e = effect as { enabled: boolean };
       effectStates.set(effect, e.enabled !== false);
       e.enabled = false;
@@ -1525,7 +1606,8 @@ export class PostProcessingManager {
       this.composer.passes.forEach((p, i) => {
         p.renderToScreen = savedPassStates[i];
       });
-      for (const effect of ldrEffects) {
+      // restore both LDR + HDR effects (raw-scene-hdr disables both).
+      for (const effect of [...ldrEffects, ...hdrEffects]) {
         const e = effect as { enabled: boolean };
         e.enabled = effectStates.get(effect) ?? true;
       }
@@ -1535,17 +1617,24 @@ export class PostProcessingManager {
   }
 
   /**
-   * Capture the current scene as HDR EXR binary data (pre-tone-mapping).
+   * Capture the current scene as HDR EXR binary data.
    *
    * Uses captureHDRPixels() for the render/readback, then encodes as EXR.
    *
+   * `options.mode` selects which effects are included in the capture
+   * — see `captureHDRPixels` for the per-mode disable lists.
+   *
    * @param options - Export options
    * @param options.type - Texture type: THREE.HalfFloatType (default, smaller) or THREE.FloatType (full precision)
+   * @param options.mode - HDR capture mode (default `'hdr-effects-pre-tone'`).
    * @returns EXR file as Uint8Array binary data
    */
-  async captureHDRAsEXR(options?: { type?: THREE.TextureDataType }): Promise<Uint8Array> {
+  async captureHDRAsEXR(options?: {
+    type?: THREE.TextureDataType;
+    mode?: 'visible-ldr' | 'hdr-effects-pre-tone' | 'raw-scene-hdr';
+  }): Promise<Uint8Array> {
     const exrType: THREE.TextureDataType = options?.type ?? THREE.HalfFloatType;
-    const { pixels, width, height } = this.captureHDRPixels();
+    const { pixels, width, height } = this.captureHDRPixels(options?.mode);
 
     // Create DataTexture and export as EXR. Half-float encoding gives a
     // ~2× smaller file with negligible quality loss for typical scenes.
@@ -1758,19 +1847,19 @@ export class PostProcessingManager {
   }
 
   /**
-   * Re-apply a previously captured durable state to the freshly recreated
-   * effect instances. `initializeTransientResources()` produced default-
+   * Re-apply captured durable state to freshly recreated effect
+   * instances. `initializeTransientResources()` produces default-
    * configured bloom/toneMapping/smaa/fxaa instances; this method restores
-   * the user's settings on those, plus toggles on optional effects (DOF,
+   * the user's settings on those, plus toggles optional effects (DOF,
    * vignette, AO, chromatic lens distortion, detector noise) so the
-   * pipeline matches the pre-rebuild configuration.
+   * pipeline matches the configuration before the rebuild.
    *
    * Caller invokes `rebuildEffectPass()` afterwards.
    */
   private applyDurableState(state: PostProcessingDurableState): void {
-    // Bloom: always present after init; only re-apply settings if it was
-    // previously configured. If the user had bloom disabled before rebuild,
-    // dispose the freshly-created default instance.
+    // Bloom: always present after init; only re-apply settings when the
+    // captured state includes bloom. If the user had bloom disabled before
+    // rebuild, dispose the freshly-created default instance.
     if (state.bloom && this.bloomEffect && isBloomEffectTyped(this.bloomEffect)) {
       applyBloomState(
         this.bloomEffect as unknown as Parameters<typeof applyBloomState>[0],
