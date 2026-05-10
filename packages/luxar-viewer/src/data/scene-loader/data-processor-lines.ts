@@ -1,21 +1,20 @@
 /**
  * Lines data-processor concern extracted from `scene-loader.ts`.
  *
- * Three pure-ish functions matching the inline `processLinesData`,
- * `commitLinesGeometry`, and `projectLinesTo3DUsingWorker` methods on
- * the SceneLoader class. They take the SceneLoader's per-call inputs as
- * parameters (rootGroup, gpuBufferPool, updateVersion) instead of
- * reading them off `this`, so the lines pipeline becomes testable in
- * isolation and the SceneLoader facade can shrink.
+ * Three pure-ish functions for line projection and GPU commit. They
+ * take the SceneLoader's per-call inputs as parameters (rootGroup,
+ * gpuBufferPool, updateVersion) instead of reading them off `this`, so
+ * the lines pipeline is testable in isolation and the SceneLoader
+ * facade stays small.
  *
- * Behavior is identical to the inline original:
- *   - same tolerance computation (delegates to `tolerance-computer`),
- *   - same `extend_to_all` infinity flip per-dimension,
- *   - same worker / main-thread projection split (worker iff
- *     `useWebWorkers && segmentCount > 1000`),
- *   - same fallback to `buildInstanceBuffers` on worker failure,
- *   - same first-update logging gate (`updateVersion <= 1`),
- *   - same GPU-buffer-pool vs `updateInstancedLinesMesh` commit branch.
+ * Behavior summary:
+ *   - tolerance computation delegates to `tolerance-computer`,
+ *   - `extend_to_all` flips covered dimensions to infinite tolerance,
+ *   - worker projection is used when `useWebWorkers && segmentCount > 1000`,
+ *   - worker failures fall back to `buildInstanceBuffers`,
+ *   - first-update info logs are gated by `updateVersion <= 1`,
+ *   - commits use the GPU buffer pool when enabled, otherwise
+ *     `updateInstancedLinesMesh`.
  *
  * @module data/scene-loader/data-processor-lines
  */
@@ -28,12 +27,19 @@ import { computeTolerance } from '../utils/tolerance-computer';
 import { EXTEND_TO_ALL_TOLERANCE } from './extend-tolerance';
 import { config as appConfig } from '../../config';
 import { log, Modules } from '../../utils/log';
+
+/**
+ * C.1: track whether the lines-scalar-worker-fallback warning has been
+ * emitted this session so we surface the cliff once per process,
+ * not per frame. Reset on hot-module-reload by reload, not in tests.
+ */
+let _linesScalarWorkerFallbackWarned = false;
 import { getWorkerPool } from '../../workers/worker-pool';
 import type { UpdateSession } from '../../profiling/update-profiler';
 import type { GPUBufferPool } from '../../rendering/gpu-buffer-pool';
 import { updateInstancedLinesMesh } from '../../rendering/line-geometry';
 
-/** Staged data carried between the async process phase and the GPU commit. */
+/** Staged data carried between async processing and the GPU commit. */
 export interface StagedLinesCommit {
   path: string;
   processed: ProcessedLinesData;
@@ -45,8 +51,8 @@ export interface StagedLinesCommit {
  * failure with a warning log — the user-visible behavior is identical
  * either way; only timing differs.
  *
- * `updateVersion` gates the first-update info logs (kept identical to
- * the inline original to avoid changing log volume on long sessions).
+ * `updateVersion` gates the first-update info logs to avoid noisy long
+ * sessions.
  */
 export async function projectLinesTo3DUsingWorker(
   data: LoadedLinesData,
@@ -54,6 +60,34 @@ export async function projectLinesTo3DUsingWorker(
   tolerance: readonly number[],
   updateVersion: number
 ): Promise<ProcessedLinesData> {
+  // When the dataset has per-vertex scalars, use the main-thread
+  // buildInstanceBuffers path. The worker payload does not carry
+  // scalar arrays, and the main-thread path preserves colormap
+  // correctness end-to-end.
+  //
+  // C.1: TODO(viewer-code-review-rerun) — extend the worker schema to
+  // carry per-vertex scalar buffers so colormap-enabled line datasets
+  // don't pay the main-thread cost. For now, emit a one-shot warning
+  // so users see the performance cliff exists. Reset semantics: the
+  // module-scoped flag stays set for the lifetime of the JS context.
+  if (data.scalars) {
+    if (!_linesScalarWorkerFallbackWarned) {
+      _linesScalarWorkerFallbackWarned = true;
+      log.warning(
+        Modules.SCENE_LOADER,
+        'Lines with scalar colormap fall back to main-thread projection ' +
+          '(worker schema does not yet carry per-vertex scalars). Large line ' +
+          'datasets may stutter on view updates until the worker path is extended.'
+      );
+    }
+    return buildInstanceBuffers(
+      data,
+      viewState.slicePosition,
+      tolerance,
+      viewState.displayDims
+    );
+  }
+
   try {
     if (updateVersion <= 1) {
       log.info(
@@ -160,8 +194,8 @@ export async function processLinesData(
     }
   }
 
-  // Worker iff datasets are large enough to amortize the postMessage
-  // cost; threshold matches the historical inline value.
+  // Use the worker only when the dataset is large enough to amortize
+  // the postMessage cost.
   const useWorkerProjection =
     appConfig.dataLoading.performance.useWebWorkers && data.segmentCount > 1000;
 
@@ -206,7 +240,7 @@ export async function processLinesData(
  * mesh's user-data and logs an info line on a zero-segment frame
  * (slice with no visible content).
  *
- * Must run synchronously inside the atomic commit phase — no async
+ * Must run synchronously inside the atomic commit stage — no async
  * operations allowed.
  */
 export function commitLinesGeometry(
