@@ -218,6 +218,14 @@ export class ArrayDecoder {
     // Convert raw zarr data to Float32Array safely.
     // If rawArray is a typed array view, new Float32Array(view) does element-wise conversion.
     // If rawArray is a raw ArrayBuffer, we must NOT reinterpret bytes — create a typed view first.
+    const bigIntArrayToFloat32 = (values: BigInt64Array | BigUint64Array): Float32Array => {
+      const result = new Float32Array(values.length);
+      for (let i = 0; i < values.length; i++) {
+        result[i] = Number(values[i]);
+      }
+      return result;
+    };
+
     const data = (() => {
       if (rawArray instanceof Float32Array) return rawArray;
       if (rawArray instanceof Uint8Array) return new Float32Array(rawArray);
@@ -227,6 +235,10 @@ export class ArrayDecoder {
       if (rawArray instanceof Int16Array) return new Float32Array(rawArray);
       if (rawArray instanceof Int32Array) return new Float32Array(rawArray);
       if (rawArray instanceof Float64Array) return new Float32Array(rawArray);
+      if (typeof BigUint64Array !== 'undefined' && rawArray instanceof BigUint64Array)
+        return bigIntArrayToFloat32(rawArray);
+      if (typeof BigInt64Array !== 'undefined' && rawArray instanceof BigInt64Array)
+        return bigIntArrayToFloat32(rawArray);
       if (rawArray instanceof ArrayBuffer) {
         // Raw ArrayBuffer — interpret bytes based on zarr dtype, then convert to Float32
         const dtype = String(zarrArray.dtype);
@@ -239,12 +251,16 @@ export class ArrayDecoder {
           return new Float32Array(new Uint16Array(rawArray));
         if (dtype.includes('u4') || dtype === 'uint32')
           return new Float32Array(new Uint32Array(rawArray));
+        if (dtype.includes('u8') || dtype === 'uint64')
+          return bigIntArrayToFloat32(new BigUint64Array(rawArray));
         if (dtype.includes('i1') || dtype === 'int8')
           return new Float32Array(new Int8Array(rawArray));
         if (dtype.includes('i2') || dtype === 'int16')
           return new Float32Array(new Int16Array(rawArray));
         if (dtype.includes('i4') || dtype === 'int32')
           return new Float32Array(new Int32Array(rawArray));
+        if (dtype.includes('i8') || dtype === 'int64')
+          return bigIntArrayToFloat32(new BigInt64Array(rawArray));
         // Fallback: assume float32 layout (preserves existing behavior)
         log.warning(
           Modules.ZARR_LOADER,
