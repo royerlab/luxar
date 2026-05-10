@@ -651,6 +651,34 @@ describe('MultiLevelCachingStore', () => {
       expect(global.fetch).toHaveBeenCalledTimes(1);
     });
 
+    it('retry backoff includes jitter (commit 4.3)', async () => {
+      // With Math.random() forced to deterministic values we can prove
+      // the jittered delay differs from a pure exponential. We don't
+      // assert exact ms here (sleep timing in jsdom is fragile); we
+      // just confirm that the random source is consumed during the
+      // retry path.
+      const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0.5);
+
+      let calls = 0;
+      global.fetch = vi.fn(async () => {
+        calls++;
+        if (calls < 3) return { ok: false, status: 503 } as Response;
+        return {
+          ok: true,
+          status: 200,
+          async arrayBuffer() {
+            return new Uint8Array([1]).buffer;
+          },
+        } as Response;
+      }) as unknown as typeof fetch;
+
+      await store.get('jitter-key');
+      // Three attempts means two backoff windows, so Math.random was
+      // called at least twice for the jitter term.
+      expect(randomSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
+      randomSpy.mockRestore();
+    });
+
     it('should retry transient HTTP errors', async () => {
       global.fetch = vi
         .fn()

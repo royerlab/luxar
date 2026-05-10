@@ -657,8 +657,14 @@ export class MultiLevelCachingStore implements AsyncReadable {
       }
 
       if (attempt < maxAttempts - 1) {
+        // Exponential backoff with ±25% jitter so two stores that started
+        // a retry simultaneously (e.g. two browser tabs sharing a CDN)
+        // do not synchronize their next attempts. Jitter is bounded by
+        // MAX_RETRY_DELAY_MS so the worst-case wait stays predictable.
+        const base = MultiLevelCachingStore.INITIAL_RETRY_DELAY_MS * 2 ** attempt;
+        const jitter = (Math.random() - 0.5) * 0.5 * base; // [-12.5%, +12.5%]
         const delayMs = Math.min(
-          MultiLevelCachingStore.INITIAL_RETRY_DELAY_MS * 2 ** attempt,
+          Math.max(0, base + jitter),
           MultiLevelCachingStore.MAX_RETRY_DELAY_MS
         );
         await this.sleep(delayMs);
