@@ -90,9 +90,17 @@ export class ChunkPrefetcher {
         if (count++ >= evictCount) break;
         this.seen.delete(k);
       }
-      // Trim parsed cache alongside seen eviction
+      // Trim parsed cache alongside seen eviction. Half-trim (FIFO,
+      // matches Map insertion order) instead of clear() so a single
+      // navigation burst doesn't evict every parsed key — the regex
+      // parse cost recurs for whichever keys come back hot.
       if (this.parsedCache.size > ChunkPrefetcher.MAX_SEEN_SIZE * 2) {
-        this.parsedCache.clear();
+        const trimCount = Math.floor(this.parsedCache.size / 2);
+        let trimmed = 0;
+        for (const k of this.parsedCache.keys()) {
+          if (trimmed++ >= trimCount) break;
+          this.parsedCache.delete(k);
+        }
       }
     }
 
