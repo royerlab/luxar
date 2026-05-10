@@ -235,8 +235,22 @@ export function buildInstanceBuffers(
   tolerance: readonly number[],
   displayDims: readonly number[]
 ): ProcessedLinesData {
-  const { positions, segments, widths, colors, sharpness, scalars, ndim, segmentCount } =
-    loadedData;
+  const { positions, segments, widths, colors, sharpness, ndim, segmentCount } = loadedData;
+  // A.3: validate per-vertex scalar length matches vertex count. Mismatch
+  // suppresses the scalar branch (fail-closed) — line geometry renders
+  // without colormap rather than carrying mismatched per-vertex values
+  // through the WASM batch interpolator (which would silently read OOB).
+  const vertexCount = ndim > 0 ? Math.floor(positions.length / ndim) : 0;
+  let scalars: typeof loadedData.scalars = loadedData.scalars;
+  if (scalars && scalars.length !== vertexCount) {
+    log.warning(
+      Modules.LINES_LOADER,
+      `Scalar length mismatch: ${scalars.length} scalars for ${vertexCount} vertices ` +
+        '(expected one scalar per vertex). Suppressing scalar projection — ' +
+        'colormap mode will be off until the source data is fixed.'
+    );
+    scalars = null;
+  }
 
   // Diagnostic: log input shape for large-segment-count Lines updates.
   if (segmentCount > 10000 && appConfig.dataLoading.performance.enablePerformanceMonitoring) {
@@ -431,10 +445,9 @@ export function buildInstanceBuffers(
     segmentLengths: segmentLengths.slice(0, outIdx),
     startClipped: startClipped.slice(0, outIdx),
     endClipped: endClipped.slice(0, outIdx),
-    // include scalar pairs only when the source had scalars.
-    // Output omits these fields when no scalars are present so the
-    // C1/D5 fail-closed guard in NodeFactory.createLinesNode passes
-    // unconditionally for non-colormap datasets.
+    // Include scalar pairs only when the source had scalars. Output
+    // omits these fields when no scalars are present so the fail-closed
+    // colormap guard passes unconditionally for non-colormap datasets.
     ...(startScalars && endScalars
       ? {
           startScalars: startScalars.slice(0, outIdx),
@@ -468,8 +481,20 @@ export function buildInstanceBuffersWASM(
   tolerance: number[],
   displayDims: number[]
 ): ProcessedLinesData {
-  const { positions, segments, widths, colors, sharpness, scalars, ndim, segmentCount } =
-    loadedData;
+  const { positions, segments, widths, colors, sharpness, ndim, segmentCount } = loadedData;
+  // A.3: same fail-closed scalar length validation as the synchronous
+  // path. Mismatch suppresses scalar projection; WASM path otherwise
+  // would read OOB inside interpolate_scalars_batch.
+  const vertexCount = ndim > 0 ? Math.floor(positions.length / ndim) : 0;
+  let scalars: typeof loadedData.scalars = loadedData.scalars;
+  if (scalars && scalars.length !== vertexCount) {
+    log.warning(
+      Modules.LINES_LOADER,
+      `Scalar length mismatch (WASM path): ${scalars.length} scalars for ${vertexCount} vertices. ` +
+        'Suppressing scalar projection.'
+    );
+    scalars = null;
+  }
 
   // Get WASM module (uses cached instance or fallback)
   const wasm = getWasmModuleSync();

@@ -372,3 +372,39 @@ describe('projectPointsTo3D — fallback path (no accumulator, no targetBuffers)
     expect(result.pointCount).toBe(3);
   });
 });
+
+describe('A.3 — scalar length validation', () => {
+  it('suppresses scalars when scalars.length !== point count', () => {
+    const result = projectPointsTo3D(
+      new Float32Array([0, 0, 0, 1, 1, 1, 2, 2, 2]),
+      null,
+      null,
+      null,
+      makeViewState(),
+      [{ start: 0, end: 3 }] as PointRange[],
+      makeCtx(),
+      null,
+      // 2 scalars for 3 points — mismatch should drop the scalar field.
+      new Float32Array([0.1, 0.9])
+    );
+    expect(result.scalars).toBeUndefined();
+  });
+
+  it('keeps scalars when length matches point count', () => {
+    const result = projectPointsTo3D(
+      new Float32Array([0, 0, 0, 1, 1, 1, 2, 2, 2]),
+      null,
+      null,
+      null,
+      makeViewState(),
+      [{ start: 0, end: 3 }] as PointRange[],
+      makeCtx(),
+      null,
+      new Float32Array([0.1, 0.5, 0.9])
+    );
+    expect(result.scalars).toBeDefined();
+    expect(result.scalars!.length).toBe(3);
+    expect(result.scalars![0]).toBeCloseTo(0.1);
+    expect(result.scalars![2]).toBeCloseTo(0.9);
+  });
+});

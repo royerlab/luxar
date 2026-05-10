@@ -50,6 +50,9 @@ export interface ProjectionTargetBuffers {
   colors: ColorArray;
   radii: ScalarArray;
   sharpness: ScalarArray;
+  /** optional scalar target — present when the accumulator's
+   *  hasScalars flag is true so the projection can write through. */
+  scalars?: ScalarArray;
 }
 
 /**
@@ -70,12 +73,14 @@ function dtypesFromAttrs(nodeAttrs: PointsMetadata): {
   colors: string | undefined;
   radii: string | undefined;
   sharpness: string | undefined;
+  scalars: string | undefined;
 } {
   return {
     positions: nodeAttrs.position_dtype as string | undefined,
     colors: nodeAttrs.color_dtype as string | undefined,
     radii: nodeAttrs.radius_dtype as string | undefined,
     sharpness: nodeAttrs.sharpness_dtype as string | undefined,
+    scalars: (nodeAttrs as { scalar_dtype?: string }).scalar_dtype,
   };
 }
 
@@ -135,7 +140,9 @@ export function projectPointsTo3D(
   viewState: ViewState,
   ranges: PointRange[],
   ctx: ProjectionContext,
-  targetBuffers?: ProjectionTargetBuffers | null
+  targetBuffers?: ProjectionTargetBuffers | null,
+  /** optional per-point scalars for colormap lookup. */
+  scalars?: Float32Array | Uint8Array | Uint16Array | Float16Array | null
 ): LoadedPointsData {
   const totalPoints = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
 
@@ -156,6 +163,20 @@ export function projectPointsTo3D(
       `Position data size mismatch: ${positions.length} elements for ${totalPoints} points ` +
         `doesn't divide evenly (calculated ndim=${ndim}). This may indicate encoding metadata issues.`
     );
+  }
+
+  // A.3: validate scalar length matches point count. Mismatch suppresses
+  // the scalar branch (fail-closed) — geometry renders without colormap
+  // rather than carrying truncated/over-large scalar arrays into the GPU
+  // pool and producing garbage LUT lookups.
+  if (scalars && scalars.length !== totalPoints) {
+    log.warning(
+      Modules.SPATIAL_INDEX_LOADER,
+      `Scalar length mismatch: ${scalars.length} scalars for ${totalPoints} points ` +
+        '(expected one scalar per point). Suppressing scalar projection — ' +
+        'colormap mode will be off until the source data is fixed.'
+    );
+    scalars = null;
   }
 
   let numPoints = totalPoints;
@@ -350,6 +371,24 @@ export function projectPointsTo3D(
                 )[readIdx];
               }
             }
+
+            // compact scalars (type-preserving) — symmetric with the
+            // colors / sharpness paths above. The accumulator owns the
+            // target buffer; we just shuffle indices in place.
+            if (scalars && targetBuffers.scalars) {
+              if (scalars instanceof Uint8Array && targetBuffers.scalars instanceof Uint8Array) {
+                (targetBuffers.scalars as Uint8Array)[writeIdx] = (
+                  targetBuffers.scalars as Uint8Array
+                )[readIdx];
+              } else if (
+                scalars instanceof Float32Array &&
+                targetBuffers.scalars instanceof Float32Array
+              ) {
+                (targetBuffers.scalars as Float32Array)[writeIdx] = (
+                  targetBuffers.scalars as Float32Array
+                )[readIdx];
+              }
+            }
           }
 
           writeIdx++;
@@ -386,6 +425,18 @@ export function projectPointsTo3D(
           }
         }
 
+        // filter scalars if present (no-accumulator fallback path).
+        let filteredScalars: Float32Array | Uint8Array | Uint16Array | undefined;
+        if (scalars) {
+          if (scalars instanceof Float32Array) {
+            filteredScalars = new Float32Array(filteredCount);
+          } else if (scalars instanceof Uint8Array) {
+            filteredScalars = new Uint8Array(filteredCount);
+          } else if (scalars instanceof Uint16Array) {
+            filteredScalars = new Uint16Array(filteredCount);
+          }
+        }
+
         // Copy only valid points
         for (let i = 0; i < filteredCount; i++) {
           const srcIdx = validIndices[i];
@@ -409,6 +460,11 @@ export function projectPointsTo3D(
           if (sharpness && filteredSharpness) {
             filteredSharpness[i] = sharpness[srcIdx];
           }
+
+          // copy scalar if present
+          if (scalars && filteredScalars) {
+            filteredScalars[i] = scalars[srcIdx];
+          }
         }
 
         // Replace arrays with filtered versions
@@ -416,6 +472,7 @@ export function projectPointsTo3D(
         finalRadii = filteredRadii;
         colors = filteredColors || colors;
         sharpness = filteredSharpness || sharpness;
+        scalars = filteredScalars || scalars;
 
         // Update point count
         numPoints = filteredCount;
@@ -458,6 +515,9 @@ export function projectPointsTo3D(
     colors: colors as ColorArray | undefined,
     radii: finalRadii as ScalarArray | undefined,
     sharpness: sharpness as ScalarArray | undefined,
+    // pass scalars through. They are already type-compacted above
+    // (or unchanged when no filtering occurred).
+    scalars: (scalars as ScalarArray | null | undefined) ?? undefined,
     pointCount: numPoints,
     ndim,
     metadata: {

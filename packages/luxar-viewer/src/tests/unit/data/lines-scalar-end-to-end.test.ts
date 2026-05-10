@@ -82,7 +82,7 @@ function meshConfig(
   return base;
 }
 
-describe('D5 — LinesDataAccumulator scalar buffer', () => {
+describe('LinesDataAccumulator scalar buffer', () => {
   it('flips hasScalars on markScalarsLoaded()', () => {
     const acc = new LinesDataAccumulator(64, 32, 3);
     acc.fill(0, 0, {
@@ -153,7 +153,7 @@ describe('D5 — LinesDataAccumulator scalar buffer', () => {
   });
 });
 
-describe('D5 — buildInstanceBuffers scalar interpolation', () => {
+describe('buildInstanceBuffers scalar interpolation', () => {
   it('passes scalars through unclipped segments unchanged', () => {
     const data = loadedLines({
       positions: new Float32Array([0, 0, 0, 1, 0, 0]),
@@ -191,6 +191,25 @@ describe('D5 — buildInstanceBuffers scalar interpolation', () => {
     expect(out.endScalars).toBeUndefined();
   });
 
+  it('A.3: suppresses scalars when length mismatches vertex count', () => {
+    // 2 vertices, but only 1 scalar — mismatched.
+    const data = loadedLines({
+      positions: new Float32Array([0, 0, 0, 1, 0, 0]),
+      segments: new Uint32Array([0, 1]),
+      widths: new Float32Array([0.1, 0.1]),
+      scalars: new Float32Array([0.5]) as Float32Array,
+    });
+    const out = buildInstanceBuffers(
+      data,
+      [0, 0, 0, 0],
+      [Infinity, Infinity, Infinity, Infinity],
+      [0, 1, 2]
+    );
+    // Output should omit scalars because the validation fired.
+    expect(out.startScalars).toBeUndefined();
+    expect(out.endScalars).toBeUndefined();
+  });
+
   it('A.2: roundtrips Uint8 scalars through accumulator + projection', () => {
     const acc = new LinesDataAccumulator(64, 32, 3);
     acc.fill(0, 0, {
@@ -224,7 +243,7 @@ describe('D5 — buildInstanceBuffers scalar interpolation', () => {
   });
 });
 
-describe('D5 — GPU pool updateLinesGeometry scalar attribute', () => {
+describe('GPU pool updateLinesGeometry scalar attribute', () => {
   it('does NOT create scalar attributes when data has no scalars', () => {
     const pool = new GPUBufferPool(20, 300, 5, 0);
     const g = pool.acquireLinesGeometry('l1', 4);
@@ -303,7 +322,7 @@ describe('D5 — GPU pool updateLinesGeometry scalar attribute', () => {
   });
 });
 
-describe('D5 — line-geometry mesh creation/update', () => {
+describe('line-geometry mesh creation/update', () => {
   it('createInstancedLinesMesh + updateInstancedLinesMesh keep aStartScalar in sync', () => {
     const initial: InstancedLinesMeshConfig = {
       startPositions: new Float32Array([0, 0, 0]),
@@ -339,7 +358,7 @@ describe('D5 — line-geometry mesh creation/update', () => {
   });
 });
 
-describe('D5 — end-to-end scalar binding for Lines', () => {
+describe('end-to-end scalar binding for Lines', () => {
   it('processed → mesh → supportsScalarColormap returns true', () => {
     const data = loadedLines({
       positions: new Float32Array([0, 0, 0, 1, 0, 0]),
