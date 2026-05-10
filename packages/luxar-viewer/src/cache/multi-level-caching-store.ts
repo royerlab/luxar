@@ -116,6 +116,19 @@ export class MultiLevelCachingStore implements AsyncReadable {
   // fetch this store kicked off, not only the validation request.
   private readonly dataAbort = new AbortController();
 
+  // Same-key in-flight coalescing: concurrent getResult callers for the
+  // same key share a single L2/network fetch. Each caller still does
+  // its own L1 check (synchronous; the L1 fast path stays direct) and
+  // tracks its own demand counter — only the underlying network
+  // request and L1/L2 writes are deduplicated. Cleared on settle.
+  private pendingGets = new Map<
+    string,
+    Promise<{
+      result: Result<Uint8Array, CacheError>;
+      source: 'l2' | 'network' | 'missing';
+    }>
+  >();
+
   // Invalidation callbacks (e.g., L0 DecompressedChunkCache clearing on L1/L2 invalidation)
   private invalidationCallbacks: (() => void)[] = [];
 
@@ -385,7 +398,8 @@ export class MultiLevelCachingStore implements AsyncReadable {
     // user demand).
     const isDemand = !options?.suppressPrefetch;
 
-    // L1: Memory check (fastest, ~1μs)
+    // L1: Memory check (fastest, ~1μs). Stays direct (no coalescing
+    // needed — synchronous, no I/O cost to share).
     const l1Hit = this.l1Cache.get(key);
     if (l1Hit) {
       this.log(`L1 hit: ${key}`, 'info');
@@ -393,77 +407,132 @@ export class MultiLevelCachingStore implements AsyncReadable {
       return ok(l1Hit);
     }
 
+    // Per-caller abort: a caller-supplied signal that fired between
+    // the L1 miss and the coalesced wait surfaces as Aborted to that
+    // caller without affecting any shared chain.
+    if (options?.signal?.aborted) return err({ kind: 'Aborted' });
+
+    // Coalesce same-key L2/network cascade. The first concurrent
+    // caller creates the chain; subsequent callers await it. Bytes,
+    // L1, and L2 are populated exactly once.
+    //
+    // Bypass coalescing when the caller provides its own signal: the
+    // shared chain only respects dataAbort (so its lifetime can outlive
+    // any single caller), but a caller passing a signal expects that
+    // aborting it actually cancels the underlying fetch resource.
+    // Falling back to a non-coalesced fetchKeyChain preserves the
+    // per-caller abort contract for those (rare) callers.
+    let inflight: Promise<{
+      result: Result<Uint8Array, CacheError>;
+      source: 'l2' | 'network' | 'missing';
+    }>;
+    if (options?.signal !== undefined) {
+      inflight = this.fetchKeyChain(key, options.signal);
+    } else {
+      const cached = this.pendingGets.get(key);
+      if (cached) {
+        inflight = cached;
+      } else {
+        const fresh = this.fetchKeyChain(key).finally(() => {
+          this.pendingGets.delete(key);
+        });
+        this.pendingGets.set(key, fresh);
+        inflight = fresh;
+      }
+    }
+
+    let outcome: { result: Result<Uint8Array, CacheError>; source: 'l2' | 'network' | 'missing' };
+    try {
+      outcome = await inflight;
+    } catch (error) {
+      const cause = error instanceof Error ? error : new Error(String(error));
+      return err({ kind: 'NetworkError', cause });
+    }
+
+    // Per-caller demand counters: which tier "served" this caller.
+    // All callers waiting on a shared network fetch count as demand
+    // network requests; the underlying network counter (incremented
+    // inside fetchKeyChain) only bumped once per actual fetch.
+    if (isDemand) {
+      if (outcome.source === 'l2') this.l2HitCount++;
+      else if (outcome.source === 'network') this.demandNetworkRequestCount++;
+    }
+
+    // Per-caller prefetch trigger. Coalesced waiters all schedule
+    // their own onAccess fan-out (prefetcher dedupes neighbors via
+    // its own seen-set so this is idempotent).
+    if (!options?.suppressPrefetch && outcome.result.ok) {
+      this.prefetcher?.onAccess(key);
+    }
+
+    return outcome.result;
+  }
+
+  /**
+   * Run the L2 → network cascade for a single key. Called at most once
+   * per key per concurrent-getter wave by getResult's pendingGets
+   * coalescer. Increments aggregate network counters once; per-caller
+   * demand counters are incremented in getResult after this resolves.
+   */
+  private async fetchKeyChain(
+    key: string,
+    callerSignal?: AbortSignal
+  ): Promise<{ result: Result<Uint8Array, CacheError>; source: 'l2' | 'network' | 'missing' }> {
     // L2: OPFS check (~1ms)
     if (this.enabled && this.l2Store) {
       const l2Hit = await this.l2Store.get(key);
       if (l2Hit) {
         this.log(`L2 hit: ${key}`, 'info');
-        if (isDemand) this.l2HitCount++;
         // Promote to L1
         this.l1Cache.set(key, l2Hit);
-        // Trigger prefetch on L2 hit, skipping when this fetch is itself
-        // a prefetch — otherwise prefetch of K+1 calls getResult(K+1)
-        // which calls onAccess(K+1) which enqueues K+2, walking outward
-        // until MAX_SEEN_SIZE and amplifying network/cache load far
-        // beyond the user's original demand.
-        if (!options?.suppressPrefetch) {
-          this.prefetcher?.onAccess(key);
-        }
-        return ok(l2Hit);
+        return { result: ok(l2Hit), source: 'l2' };
       }
     }
 
     // L3: Remote fetch (~100ms)
     this.log(`HTTP fetch: ${key}`, 'info');
-    // Compose the store-level dispose signal with any caller signal so
-    // dataset disposal aborts in-flight prefetch/demand fetches without
-    // each call site having to plumb its own controller.
-    const fetchSignal = mergeAbortSignals(this.dataAbort.signal, options?.signal);
+    // Compose the store-level dispose signal so dataset disposal
+    // aborts in-flight prefetch/demand fetches without each call site
+    // plumbing its own controller. When the caller passed its own
+    // signal (and bypassed coalescing in getResult), forward that too
+    // so per-caller cancellation actually aborts the resource.
+    const fetchSignal = mergeAbortSignals(this.dataAbort.signal, callerSignal);
     let response: Response | undefined;
     try {
       response = await this.fetchWithRetry(this.buildUrl(key), { signal: fetchSignal });
     } catch (error) {
-      // fetchWithRetry shouldn't throw (it returns undefined on failure), but
-      // future refactors might — surface as NetworkError rather than crash.
       const cause = error instanceof Error ? error : new Error(String(error));
-      return err({ kind: 'NetworkError', cause });
+      return { result: err({ kind: 'NetworkError', cause }), source: 'network' };
     }
 
-    if (this.disposed || this.dataAbort.signal.aborted || options?.signal?.aborted) {
-      return err({ kind: 'Aborted' });
+    if (this.disposed || this.dataAbort.signal.aborted) {
+      return { result: err({ kind: 'Aborted' }), source: 'network' };
     }
     if (!response) {
-      // fetchWithRetry returned undefined — exhausted retries on transient
-      // failures, or caller/store signal aborted between retries.
-      if (this.disposed || this.dataAbort.signal.aborted || options?.signal?.aborted) {
-        return err({ kind: 'Aborted' });
+      if (this.disposed || this.dataAbort.signal.aborted) {
+        return { result: err({ kind: 'Aborted' }), source: 'network' };
       }
-      return err({
-        kind: 'NetworkError',
-        cause: new Error(`fetch exhausted retries for ${key}`),
-      });
+      return {
+        result: err({
+          kind: 'NetworkError',
+          cause: new Error(`fetch exhausted retries for ${key}`),
+        }),
+        source: 'network',
+      };
     }
     if (!response.ok) {
-      // Non-2xx: 4xx is "missing" in cache parlance (404 zarr key,
-      // 403 missing permissions). 5xx already retried by fetchWithRetry.
-      return err({ kind: 'Missing' });
+      return { result: err({ kind: 'Missing' }), source: 'missing' };
     }
 
     const data = new Uint8Array(await response.arrayBuffer());
 
-    // Track network I/O. Aggregate counters track ALL traffic
-    // (prefetch + demand); demand counter excludes prefetch so the
-    // monitor's effective hit-rate reflects user demand only.
+    // Aggregate network counters (one per actual fetch — pendingGets
+    // ensures this body runs at most once per key per concurrent wave).
     this.networkRequestCount++;
     this.networkBytesTransferred += data.byteLength;
     this.bandwidthWindow.push({ timestamp: Date.now(), bytes: data.byteLength });
-    if (isDemand) this.demandNetworkRequestCount++;
 
-    // Populate caches (only if caching is enabled via URL params).
-    // Await the L2 write so a subsequent clearAll/clearL2 can't race the
-    // fire-and-forget set and end up with stale entries in OPFS. Cost is
-    // O(1ms) on L3 fetches — small relative to the ~100ms network call —
-    // and removes a timing hazard rather than papering over it.
+    // Populate caches once.
     if (this.enabled) {
       this.l1Cache.set(key, data);
       if (this.l2Store) {
@@ -476,13 +545,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
       }
     }
 
-    // Trigger prefetch on L3 fetch — skip when this fetch is itself a
-    // prefetch (see L2 branch above for the cascade rationale).
-    if (!options?.suppressPrefetch) {
-      this.prefetcher?.onAccess(key);
-    }
-
-    return ok(data);
+    return { result: ok(data), source: 'network' };
   }
 
   /**

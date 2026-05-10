@@ -573,13 +573,13 @@ describe('MultiLevelCachingStore', () => {
     });
 
     it('forwards options.signal into fetchWithRetry; aborts surface as a non-ok result', async () => {
-      // Without signal forwarding the fetch would hang forever and
-      // dispose() during cache load would leak the request.
-      // fetchWithRetry composes options.signal with a per-attempt
-      // timeout signal via mergeAbortSignals, so the fetch's signal
-      // is NOT reference-equal to ac.signal. We assert that the fetch
-      // saw a signal, that signal becomes aborted once the caller
-      // aborts, and the result is not ok.
+      // Per-caller signal: caller passing options.signal bypasses the
+      // coalescing path so its abort actually cancels the underlying
+      // fetch resource (single-caller resource cleanup contract).
+      // fetchWithRetry composes the merged signal with a per-attempt
+      // timeout, so the fetch's signal is NOT reference-equal to
+      // ac.signal; we assert the fetch saw a signal, that signal
+      // becomes aborted, and the result is not ok.
       const originalFetch = global.fetch;
       const observedSignals: AbortSignal[] = [];
       global.fetch = vi.fn((_url: string, init?: RequestInit) => {
@@ -599,21 +599,96 @@ describe('MultiLevelCachingStore', () => {
       expect(observedSignals.length).toBeGreaterThan(0);
 
       ac.abort();
-      // Yield so the composed signal propagates the abort.
       await new Promise((r) => setTimeout(r, 0));
       expect(observedSignals[0].aborted).toBe(true);
 
       const result = await promise;
       expect(result.ok).toBe(false);
       if (!result.ok) {
-        // fetchWithRetry surfaces aborts as either Aborted or, after
-        // exhausting retries, NetworkError. Either is acceptable for
-        // the abort contract; what matters is that the fetch saw the
-        // abort and the result is NOT ok.
         expect(['Aborted', 'NetworkError']).toContain(result.error.kind);
       }
 
       global.fetch = originalFetch;
+    });
+  });
+
+  describe('In-flight coalescing (commit 5.1)', () => {
+    it('10 concurrent same-key misses produce 1 network fetch', async () => {
+      let fetchCount = 0;
+      let releaseFetch: () => void = () => {};
+      global.fetch = vi.fn(() => {
+        fetchCount++;
+        return new Promise<Response>((resolve) => {
+          releaseFetch = () =>
+            resolve({
+              ok: true,
+              status: 200,
+              async arrayBuffer() {
+                return new Uint8Array([1, 2, 3]).buffer;
+              },
+            } as Response);
+        });
+      }) as unknown as typeof fetch;
+
+      // Kick off 10 concurrent same-key requests (no per-caller signal,
+      // so all coalesce through pendingGets).
+      const promises = Array.from({ length: 10 }, () => store.getResult('shared-chunk'));
+      // Yield once so all callers reach the pendingGets entry.
+      await new Promise((r) => setTimeout(r, 0));
+      releaseFetch();
+      const results = await Promise.all(promises);
+
+      // Exactly one underlying network fetch.
+      expect(fetchCount).toBe(1);
+      // All 10 callers see the same data.
+      for (const r of results) {
+        expect(r.ok).toBe(true);
+        if (r.ok) expect(Array.from(r.value)).toEqual([1, 2, 3]);
+      }
+    });
+
+    it('per-caller signal bypasses coalescing (independent fetches)', async () => {
+      let fetchCount = 0;
+      global.fetch = vi.fn(() => {
+        fetchCount++;
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          async arrayBuffer() {
+            return new Uint8Array([7]).buffer;
+          },
+        } as Response);
+      }) as unknown as typeof fetch;
+
+      const ac1 = new AbortController();
+      const ac2 = new AbortController();
+      // Two callers both passing signals: each gets its own fetch.
+      const [r1, r2] = await Promise.all([
+        store.getResult('signal-key', { signal: ac1.signal }),
+        store.getResult('signal-key', { signal: ac2.signal }),
+      ]);
+      // Two independent fetches because the signal-bearing path bypasses pendingGets.
+      expect(fetchCount).toBe(2);
+      expect(r1.ok && r2.ok).toBe(true);
+    });
+
+    it('pendingGets is cleaned on settle (subsequent calls re-fetch if L1/L2 missed)', async () => {
+      let fetchCount = 0;
+      global.fetch = vi.fn(() => {
+        fetchCount++;
+        return Promise.resolve({
+          ok: false,
+          status: 404,
+        } as Response);
+      }) as unknown as typeof fetch;
+
+      // First call: 404 → not cached. pendingGets entry must clear in finally.
+      const r1 = await store.getResult('not-found-key');
+      expect(r1.ok).toBe(false);
+      // Second call: pendingGets entry is gone, so a new fetch is issued.
+      const r2 = await store.getResult('not-found-key');
+      expect(r2.ok).toBe(false);
+      expect(fetchCount).toBe(2);
     });
   });
 
