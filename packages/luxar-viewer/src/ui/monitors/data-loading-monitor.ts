@@ -33,6 +33,7 @@ import { EventQueue } from '../components/event-queue';
 import { PollingLoop } from '../components/polling-loop';
 import { log, Modules } from '../../utils/log';
 import { config } from '../../config';
+import { notifier } from '../../utils/notifier';
 
 // Only extract timings and limits from config (these are data values, not styles)
 const MonitorTimings = config.dataLoading.monitor.timings;
@@ -438,20 +439,37 @@ export class DataLoadingMonitor {
   }
 
   /**
-   * Clear L2 OPFS cache.
+   * Clear L2 OPFS cache. Asks for confirmation first since the L2
+   * persistent cache requires a network re-fetch to repopulate. The
+   * confirm dialog can be skipped by passing `{ skipConfirm: true }`
+   * — used by tests and by the debug API where the caller has already
+   * confirmed intent.
    */
-  public async clearL2Cache(): Promise<void> {
-    if (this.cacheStatsProvider) {
-      await this.cacheStatsProvider.clearL2();
-      log.info(Modules.DATA_MONITOR, 'L2 cache cleared');
-      this.updateUI();
+  public async clearL2Cache(opts?: { skipConfirm?: boolean }): Promise<void> {
+    if (!this.cacheStatsProvider) return;
+    if (!opts?.skipConfirm && !this.confirmDestructiveCacheAction('Clear L2 (persistent) cache?')) {
+      return;
     }
+    const sizeBefore = this.cacheStatsProvider.getStats().l2.size;
+    await this.cacheStatsProvider.clearL2();
+    log.info(Modules.DATA_MONITOR, 'L2 cache cleared');
+    if (sizeBefore > 0) {
+      const mb = (sizeBefore / 1024 / 1024).toFixed(1);
+      notifier.toast(`L2 cache cleared (${mb} MB freed)`);
+    } else {
+      notifier.toast('L2 cache cleared');
+    }
+    this.updateUI();
   }
 
   /**
-   * Clear all caches (L0 + L1 + L2).
+   * Clear all caches (L0 + L1 + L2). Confirmation dialog can be
+   * skipped via `{ skipConfirm: true }`.
    */
-  public async clearAllCaches(): Promise<void> {
+  public async clearAllCaches(opts?: { skipConfirm?: boolean }): Promise<void> {
+    if (!opts?.skipConfirm && !this.confirmDestructiveCacheAction('Clear ALL caches (L0 + L1 + L2)?')) {
+      return;
+    }
     // Clear L0 first (synchronous)
     if (this.l0CacheProvider) {
       this.l0CacheProvider.clear();
@@ -461,7 +479,19 @@ export class DataLoadingMonitor {
       await this.cacheStatsProvider.clearAll();
     }
     log.info(Modules.DATA_MONITOR, 'All caches cleared (L0 + L1 + L2)');
+    notifier.toast('All caches cleared');
     this.updateUI();
+  }
+
+  /**
+   * Show a confirmation dialog for destructive cache actions. Falls
+   * back to `true` if `window.confirm` is unavailable (jsdom test env).
+   */
+  private confirmDestructiveCacheAction(message: string): boolean {
+    if (typeof window === 'undefined' || typeof window.confirm !== 'function') {
+      return true;
+    }
+    return window.confirm(message);
   }
 
   /**
