@@ -524,6 +524,80 @@ describe('ChunkPrefetcher - Unit Tests', () => {
       expect(prefetcher.getStats().queued).toBe(0);
     });
 
+    it('priority queue: high-priority entries dispatch before remaining normal-priority ones (commit 8.3)', async () => {
+      // Block dispatch to inspect ordering. With maxConcurrent=1 the
+      // first normal entry occupies the slot; remaining entries sit
+      // in their tier queues until the slot frees. When it does,
+      // processQueue must drain highQueue before normalQueue.
+      const blocking = new MockStore();
+      const dispatched: string[] = [];
+      const resolvers: Array<() => void> = [];
+      blocking.getResult = vi.fn((key: string) => {
+        dispatched.push(key);
+        return new Promise((resolve) => {
+          resolvers.push(() =>
+            resolve({ ok: true as const, value: new Uint8Array([1]) })
+          );
+        });
+      }) as unknown as typeof blocking.getResult;
+
+      const local = new ChunkPrefetcher(blocking as any, {
+        enabled: true,
+        maxConcurrent: 1,
+      });
+      // Enqueue normal first so it occupies the only dispatch slot.
+      local.enqueueWithPriority(['n1', 'n2', 'n3'], 'normal');
+      // Yield so the first normal entry actually dispatches.
+      await new Promise((r) => setTimeout(r, 0));
+      expect(dispatched).toEqual(['n1']);
+
+      // Now add high-priority entries while n2/n3 still sit in normalQueue.
+      local.enqueueWithPriority(['h1', 'h2'], 'high');
+      // n1 still in flight; n2/n3 in normalQueue; h1/h2 in highQueue.
+      const stats = local.getStats();
+      expect(stats.queuedHigh).toBe(2);
+      expect(stats.queuedNormal).toBe(2);
+
+      // Release each fetch in order; verify high entries dispatch
+      // before the remaining normal ones.
+      resolvers[0]();
+      await new Promise((r) => setTimeout(r, 0));
+      expect(dispatched[1]).toBe('h1');
+      resolvers[1]();
+      await new Promise((r) => setTimeout(r, 0));
+      expect(dispatched[2]).toBe('h2');
+      resolvers[2]();
+      await new Promise((r) => setTimeout(r, 0));
+      // After the highs drain, remaining normals get their turn.
+      expect(dispatched.slice(3).sort()).toEqual(['n2'].sort());
+
+      // Drain remaining.
+      while (resolvers.length > dispatched.length) {
+        // No-op; we just want all the dispatched ones to settle.
+        break;
+      }
+      for (const r of resolvers) r();
+
+      local.dispose();
+    });
+
+    it('priority queue: normal-then-high re-enqueue promotes the entry (commit 8.3)', async () => {
+      const blocking = new MockStore();
+      blocking.getResult = vi.fn(() => new Promise(() => {})) as unknown as typeof blocking.getResult;
+      const local = new ChunkPrefetcher(blocking as any, {
+        enabled: true,
+        maxConcurrent: 0, // Block dispatch entirely so we can read tier state.
+      });
+      local.enqueueWithPriority(['k'], 'normal');
+      expect(local.getStats().queuedNormal).toBe(1);
+      expect(local.getStats().queuedHigh).toBe(0);
+      // Promote.
+      local.enqueueWithPriority(['k'], 'high');
+      expect(local.getStats().queuedHigh).toBe(1);
+      expect(local.getStats().queuedNormal).toBe(0);
+      local.dispose();
+    });
+
     it(
       'in-flight prefetch.finally does not re-enter processQueue after dispose',
       { timeout: 5_000 },
