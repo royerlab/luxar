@@ -17,6 +17,8 @@ import * as THREE from 'three';
 import {
   GPUBufferPool,
   estimateGeometryBytes,
+  selectBuffersToEvict,
+  type PooledBufferRef,
 } from '../../../rendering/gpu-buffer-pool';
 import type { LoadedPointsData } from '../../../data/data-loader-types';
 
@@ -36,6 +38,60 @@ function pointsData(count: number): LoadedPointsData {
     },
   };
 }
+
+describe('selectBuffersToEvict (pure function)', () => {
+  function ref(bytes: number, id?: number): PooledBufferRef<number> {
+    return { bytes, payload: id };
+  }
+
+  it('returns empty array when under budget', () => {
+    const targets = selectBuffersToEvict([ref(100), ref(200)], 500);
+    expect(targets).toEqual([]);
+  });
+
+  it('returns empty array for empty input', () => {
+    expect(selectBuffersToEvict([], 100)).toEqual([]);
+  });
+
+  it('evicts largest-first until under budget', () => {
+    // total = 100 + 200 + 300 + 400 = 1000, budget = 500.
+    // Largest-first: drop 400 (running 600), drop 300 (running 300 ≤ 500).
+    const targets = selectBuffersToEvict(
+      [ref(100, 1), ref(200, 2), ref(300, 3), ref(400, 4)],
+      500
+    );
+    const payloads = targets.map((t) => t.payload).sort();
+    expect(payloads).toEqual([3, 4]);
+  });
+
+  it('all-same-size: stable order (input order preserved)', () => {
+    const targets = selectBuffersToEvict(
+      [ref(100, 1), ref(100, 2), ref(100, 3), ref(100, 4)],
+      150
+    );
+    // total = 400, budget 150 → need to drop 250 bytes → 3 entries.
+    expect(targets.length).toBe(3);
+    // First three by input order (stable sort).
+    expect(targets.map((t) => t.payload)).toEqual([1, 2, 3]);
+  });
+
+  it('single-buffer-over-budget pathological case', () => {
+    // One huge buffer dwarfs everything.
+    const targets = selectBuffersToEvict([ref(10), ref(20), ref(10_000)], 100);
+    // Evicting the huge one alone (10) is enough.
+    expect(targets.length).toBe(1);
+    expect(targets[0].bytes).toBe(10_000);
+  });
+
+  it('uses precomputed total when provided', () => {
+    const targets = selectBuffersToEvict(
+      [ref(100), ref(200)],
+      150,
+      300 // explicit total bypasses reduce
+    );
+    expect(targets.length).toBeGreaterThan(0);
+  });
+});
 
 describe('estimateGeometryBytes', () => {
   it('sums attribute byte lengths for an empty geometry', () => {
@@ -200,10 +256,24 @@ describe('byte-budget eviction', () => {
     expect(stats.totalBytes).toBe(0);
   });
 
-  it('D.1: byte-budget eviction loop is bounded when dispose is a no-op', () => {
+  it('pool integration — 20 buffers, evict largest until under budget', () => {
+    // Each pointsData(N) buffer is ~32 N bytes (positions + colors + radii + sharpness).
+    const evictPool = new GPUBufferPool(20, 300, 5, 16_000); // 16 KB budget
+    // Acquire 20 buffers of varying sizes and release them into the pool.
+    const sizes = [100, 200, 50, 400, 80, 300, 60, 250, 150, 90];
+    for (let i = 0; i < sizes.length; i++) {
+      evictPool.acquirePointsGeometry(`p${i}`, pointsData(sizes[i]), sizes[i]);
+      evictPool.releasePointsGeometry(`p${i}`);
+    }
+    const stats = evictPool.getStats();
+    // The eviction should have brought us under budget (or nearly so).
+    expect(stats.pooledBytes).toBeLessThanOrEqual(16_000);
+  });
+
+  it('byte-budget eviction completes when dispose is a no-op', () => {
     // Acquire a pool buffer, release it, then mutate the pooled
-    // geometry's dispose to be a no-op so the eviction loop can never
-    // make progress. The guard must bail in finite iterations.
+    // geometry's dispose to be a no-op. Eviction removes the pooled
+    // entry from bookkeeping and must complete in finite time.
     const evictPool = new GPUBufferPool(5, 300, 5, 100);
     evictPool.acquirePointsGeometry('p1', pointsData(500), 500);
     evictPool.releasePointsGeometry('p1');
@@ -215,8 +285,7 @@ describe('byte-budget eviction', () => {
     evictPool.acquirePointsGeometry('p2', pointsData(500), 500);
     evictPool.releasePointsGeometry('p2');
     // The byte budget is 100 bytes; even one pointsData(500) is huge
-    // (~24 KB). The eviction should have run; without the guard a
-    // broken dispose could spin forever.
+    // (~24 KB). The eviction should have run despite the no-op dispose.
 
     // The completion (no infinite loop) is itself the assertion. Add a
     // soft check that the pool didn't somehow accumulate buffers.

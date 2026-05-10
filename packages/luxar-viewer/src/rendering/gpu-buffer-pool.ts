@@ -110,6 +110,46 @@ export interface PoolStats {
 }
 
 /**
+ * Pure selector for byte-budget eviction.
+ *
+ * Given an array of pooled-buffer refs and a target budget, returns
+ * the subset that should be evicted to bring total bytes ≤ maxBytes.
+ * Strategy: sort largest-first and walk until the running total drops
+ * under budget. Exported for unit testing — keeps the policy isolated
+ * from the side-effecting eviction logic in the pool.
+ */
+export interface PooledBufferRef<T = unknown> {
+  bytes: number;
+  // Caller-provided opaque payload used to splice the buffer out of
+  // its containing pool after the selection returns.
+  payload?: T;
+}
+
+export function selectBuffersToEvict<R extends PooledBufferRef>(
+  refs: R[],
+  maxBytes: number,
+  precomputedTotal?: number
+): R[] {
+  const total =
+    precomputedTotal !== undefined
+      ? precomputedTotal
+      : refs.reduce((sum, r) => sum + r.bytes, 0);
+  if (total <= maxBytes) return [];
+  // Stable largest-first ordering. JS sort is stable in modern engines
+  // (V8, JSC, SpiderMonkey since 2019) so equal-size buffers retain
+  // their input order — important for deterministic test output.
+  const sorted = refs.slice().sort((a, b) => b.bytes - a.bytes);
+  const targets: R[] = [];
+  let running = total;
+  for (const ref of sorted) {
+    if (running <= maxBytes) break;
+    targets.push(ref);
+    running -= ref.bytes;
+  }
+  return targets;
+}
+
+/**
  * estimate the GPU-resident byte footprint of a geometry by
  * summing the underlying typed-array byte lengths of every attribute
  * (and the index, if present). Mirrors what THREE.js will actually
@@ -1313,94 +1353,87 @@ export class GPUBufferPool {
    * number disposed. Does NOT touch active buffers.
    */
   private _evictUntilUnderByteBudget(): number {
-    let disposed = 0;
-    // D.1: bound the eviction loop. `_findLargestPooledBuffer` returning
-    // null already covers the empty-pool exit, but a regression where
-    // `geometry.dispose()` no-ops (e.g. mocked test, broken backend,
-    // shared geometry reference) could keep the same buffer "live" at
-    // its old byte count and loop forever. Cap iterations at
-    // `maxPoolSize * 3` (well above the legitimate steady state) and
-    // log the bail so the next eviction sweep keeps trying.
-    const maxIterations = Math.max(this.maxPoolSize * 3, 16);
-    let iterations = 0;
-    while (this._getPooledBytes() > this.maxPoolBytes) {
-      if (++iterations > maxIterations) {
-        log.warning(
-          Modules.GPU_BUFFER_POOL,
-          `Byte-budget eviction bailed after ${iterations} iterations ` +
-            `(disposed ${disposed}). Pool bytes ${this._getPooledBytes()} ` +
-            `still over budget ${this.maxPoolBytes}.`
-        );
-        break;
-      }
-      const largest = this._findLargestPooledBuffer();
-      if (!largest) break;
-      const { pool, bucket, index, buffer } = largest;
-      buffer.geometry.dispose();
-      const arr = pool.get(bucket);
-      if (arr) {
-        arr.splice(index, 1);
-        if (arr.length === 0) pool.delete(bucket);
-      }
-      this.typeStats[buffer.type].evictions++;
-      disposed++;
-    }
-    return disposed;
-  }
-
-  /**
-   * total bytes across all pooled (not active) buffers. Recomputed
-   * on each call — pool sizes are small (≤ `maxPoolSize` ≈ 20), so
-   * this is trivially cheap.
-   */
-  private _getPooledBytes(): number {
-    let total = 0;
-    for (const arr of this.pointBuffers.values()) {
-      for (const b of arr) total += estimateGeometryBytes(b.geometry);
-    }
-    for (const arr of this.lineBuffers.values()) {
-      for (const b of arr) total += estimateGeometryBytes(b.geometry);
-    }
-    for (const arr of this.gsplatBuffers.values()) {
-      for (const b of arr) total += estimateGeometryBytes(b.geometry);
-    }
-    return total;
-  }
-
-  /**
-   * locate the largest pooled buffer across all type pools, with
-   * its containing pool / bucket / array index so the caller can
-   * splice it out. Returns null when every pool is empty.
-   */
-  private _findLargestPooledBuffer(): {
-    pool: Map<number, PooledBuffer[]>;
-    bucket: number;
-    index: number;
-    buffer: PooledBuffer;
-    bytes: number;
-  } | null {
-    let best: {
+    // Single-pass collect + sort, then walk. We collect every pooled
+    // buffer with its byte size once, sort largest-first, and walk until
+    // under budget. Disposal happens in place and we splice from the
+    // original pool maps after the walk.
+    type Ref = {
       pool: Map<number, PooledBuffer[]>;
       bucket: number;
       index: number;
       buffer: PooledBuffer;
       bytes: number;
-    } | null = null;
-    const consider = (pool: Map<number, PooledBuffer[]>) => {
+    };
+    const refs: Ref[] = [];
+    const collect = (pool: Map<number, PooledBuffer[]>): void => {
       for (const [bucket, arr] of pool.entries()) {
         for (let i = 0; i < arr.length; i++) {
           const buffer = arr[i];
-          const bytes = estimateGeometryBytes(buffer.geometry);
-          if (!best || bytes > best.bytes) {
-            best = { pool, bucket, index: i, buffer, bytes };
-          }
+          refs.push({
+            pool,
+            bucket,
+            index: i,
+            buffer,
+            bytes: estimateGeometryBytes(buffer.geometry),
+          });
         }
       }
     };
-    consider(this.pointBuffers);
-    consider(this.lineBuffers);
-    consider(this.gsplatBuffers);
-    return best;
+    collect(this.pointBuffers);
+    collect(this.lineBuffers);
+    collect(this.gsplatBuffers);
+
+    const totalBytes = refs.reduce((sum, r) => sum + r.bytes, 0);
+    if (totalBytes <= this.maxPoolBytes) return 0;
+
+    const targets = selectBuffersToEvict(refs, this.maxPoolBytes, totalBytes);
+
+    // Bound the eviction count even though selectBuffersToEvict is
+    // finite — defensive guard against malformed ref shapes that don't
+    // reduce bytes when disposed.
+    const maxIterations = Math.max(this.maxPoolSize * 3, 16);
+    const evictCount = Math.min(targets.length, maxIterations);
+    if (targets.length > maxIterations) {
+      log.warning(
+        Modules.GPU_BUFFER_POOL,
+        `Byte-budget eviction capped at ${maxIterations} of ${targets.length} ` +
+          'selected buffers. Pool may still be over budget after this pass.'
+      );
+    }
+
+    // Splice from the lowest-index entries first WITHIN each (pool,bucket)
+    // so later splices don't invalidate earlier indices. We sort the
+    // evictions by descending index within their bucket arrays.
+    const evicted = targets.slice(0, evictCount);
+    // Group by (pool, bucket) then sort descending by index.
+    const grouped = new Map<Map<number, PooledBuffer[]>, Map<number, Ref[]>>();
+    for (const ref of evicted) {
+      let byBucket = grouped.get(ref.pool);
+      if (!byBucket) {
+        byBucket = new Map();
+        grouped.set(ref.pool, byBucket);
+      }
+      let bucketRefs = byBucket.get(ref.bucket);
+      if (!bucketRefs) {
+        bucketRefs = [];
+        byBucket.set(ref.bucket, bucketRefs);
+      }
+      bucketRefs.push(ref);
+    }
+    for (const [pool, byBucket] of grouped) {
+      for (const [bucket, bucketRefs] of byBucket) {
+        bucketRefs.sort((a, b) => b.index - a.index);
+        const arr = pool.get(bucket);
+        if (!arr) continue;
+        for (const ref of bucketRefs) {
+          ref.buffer.geometry.dispose();
+          arr.splice(ref.index, 1);
+          this.typeStats[ref.buffer.type].evictions++;
+        }
+        if (arr.length === 0) pool.delete(bucket);
+      }
+    }
+    return evicted.length;
   }
 
   /**
