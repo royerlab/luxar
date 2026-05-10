@@ -83,6 +83,13 @@ export interface PointsAccumulatorTypes {
   color: 'Float32Array' | 'Uint8Array' | 'Uint16Array';
   radius: 'Float32Array' | 'Uint8Array';
   sharpness: 'Float32Array' | 'Uint8Array';
+  /**
+   * D4: per-point scalar values for colormap lookup. Optional —
+   * unset when the first fill carried no `scalars` (most datasets).
+   * Float16Array is tracked separately so the accumulator can keep
+   * native dtype until it's widened at the GPU upload site.
+   */
+  scalar?: 'Float32Array' | 'Float16Array' | 'Uint8Array';
 }
 
 /**
@@ -103,6 +110,8 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
   private colorBuffer: Float32Array | Uint8Array | Uint16Array;
   private radiiBuffer: Float32Array | Uint8Array;
   private sharpnessBuffer: Float32Array | Uint8Array;
+  /** D4: per-point scalar buffer for colormap lookup. */
+  private scalarBuffer: Float32Array | Uint8Array;
 
   // Type tracking
   private types: PointsAccumulatorTypes | null = null;
@@ -111,6 +120,8 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
   private hasColors = false;
   private hasRadii = false;
   private hasSharpness = false;
+  /** D4: tracks whether scalars were ever filled this session. */
+  private hasScalars = false;
 
   // Current capacity (number of points)
   private capacity: number;
@@ -149,6 +160,7 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
     this.colorBuffer = new Float32Array(initialCapacity * 3);
     this.radiiBuffer = new Float32Array(initialCapacity);
     this.sharpnessBuffer = new Float32Array(initialCapacity);
+    this.scalarBuffer = new Float32Array(initialCapacity);
 
     this.allocations++;
   }
@@ -227,6 +239,17 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
       this.sharpnessBuffer = newSharpness;
     }
 
+    // D4: Scalar — type-preserving growth.
+    if (this.scalarBuffer instanceof Uint8Array) {
+      const newScalars = new Uint8Array(newCapacity);
+      newScalars.set(this.scalarBuffer);
+      this.scalarBuffer = newScalars;
+    } else {
+      const newScalars = new Float32Array(newCapacity);
+      newScalars.set(this.scalarBuffer);
+      this.scalarBuffer = newScalars;
+    }
+
     this.capacity = newCapacity;
     this.allocations++;
     this.totalGrowths++;
@@ -290,6 +313,10 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
       sharpness: this.hasSharpness
         ? (this.sharpnessBuffer.subarray(0, count) as ScalarArray)
         : undefined,
+      // D4: scalars optional — populated when the source data carried them.
+      scalars: this.hasScalars
+        ? (this.scalarBuffer.subarray(0, count) as ScalarArray)
+        : undefined,
       pointCount: count,
       ndim: this.ndim,
       metadata: {
@@ -307,6 +334,7 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
                 : 'float32',
           radii: this.types?.radius === 'Uint8Array' ? 'uint8' : 'float32',
           sharpness: this.types?.sharpness === 'Uint8Array' ? 'uint8' : 'float32',
+          scalars: this.types?.scalar === 'Uint8Array' ? 'uint8' : 'float32',
         },
       },
     };
@@ -329,6 +357,18 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
       radius: data.radii instanceof Uint8Array ? 'Uint8Array' : 'Float32Array',
       sharpness: data.sharpness instanceof Uint8Array ? 'Uint8Array' : 'Float32Array',
     };
+    if (data.scalars) {
+      if (data.scalars instanceof Uint8Array) {
+        types.scalar = 'Uint8Array';
+      } else if (
+        typeof globalThis.Float16Array !== 'undefined' &&
+        data.scalars instanceof globalThis.Float16Array
+      ) {
+        types.scalar = 'Float16Array';
+      } else {
+        types.scalar = 'Float32Array';
+      }
+    }
 
     this.types = types;
 
@@ -345,6 +385,10 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
 
     if (types.sharpness === 'Uint8Array') {
       this.sharpnessBuffer = new Uint8Array(this.capacity);
+    }
+
+    if (types.scalar === 'Uint8Array') {
+      this.scalarBuffer = new Uint8Array(this.capacity);
     }
   }
 
@@ -411,6 +455,15 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
         (this.sharpnessBuffer as Float32Array).set(data.sharpness as Float32Array, offset);
       }
     }
+    // D4: scalars copied with native type (no conversion).
+    if (data.scalars) {
+      this.hasScalars = true;
+      if (data.scalars instanceof Uint8Array) {
+        (this.scalarBuffer as Uint8Array).set(data.scalars, offset);
+      } else {
+        (this.scalarBuffer as Float32Array).set(data.scalars as Float32Array, offset);
+      }
+    }
   }
 
   /**
@@ -473,16 +526,23 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
     return this.sharpnessBuffer;
   }
 
+  /** D4: direct accessor for the scalar buffer (used by loaders writing through). */
+  getScalarBuffer(): Float32Array | Uint8Array {
+    return this.scalarBuffer;
+  }
+
   dispose(): void {
     this.positionBuffer = new Float32Array(0);
     this.colorBuffer = new Float32Array(0);
     this.radiiBuffer = new Float32Array(0);
     this.sharpnessBuffer = new Float32Array(0);
+    this.scalarBuffer = new Float32Array(0);
     this.capacity = 0;
     this.types = null;
     this.hasColors = false;
     this.hasRadii = false;
     this.hasSharpness = false;
+    this.hasScalars = false;
   }
 }
 
@@ -518,6 +578,8 @@ export class LinesDataAccumulator implements DataAccumulator<
   private widthBuffer: Float32Array; // PER-VERTEX widths (N,) - NOT per-segment!
   private colorBuffer: Float32Array | Uint8Array | Uint16Array; // RGB per-vertex (multi-type!)
   private sharpnessBuffer: Float32Array; // per-vertex (always allocated)
+  /** D5: per-vertex scalar buffer for colormap lookup (always allocated). */
+  private scalarBuffer: Float32Array;
 
   // Type tracking (like Points accumulator)
   private types: LinesAccumulatorTypes | null = null;
@@ -525,6 +587,8 @@ export class LinesDataAccumulator implements DataAccumulator<
   // Track whether data actually has colors/sharpness
   private hasColors = false;
   private hasSharpness = false;
+  /** D5: tracks whether scalars were ever filled this session. */
+  private hasScalars = false;
 
   private vertexCapacity: number;
   private segmentCapacity: number;
@@ -546,6 +610,7 @@ export class LinesDataAccumulator implements DataAccumulator<
     this.widthBuffer = new Float32Array(initialVertexCapacity); // PER-VERTEX!
     this.colorBuffer = new Float32Array(initialVertexCapacity * 3); // RGB
     this.sharpnessBuffer = new Float32Array(initialVertexCapacity);
+    this.scalarBuffer = new Float32Array(initialVertexCapacity);
 
     this.allocations++;
   }
@@ -610,14 +675,17 @@ export class LinesDataAccumulator implements DataAccumulator<
       const newVertexBuf = new Float32Array(newVertexCap * this.ndim);
       const newWidthBuf = new Float32Array(newVertexCap); // PER-VERTEX!
       const newSharpnessBuf = new Float32Array(newVertexCap);
+      const newScalarBuf = new Float32Array(newVertexCap); // D5
 
       newVertexBuf.set(this.vertexBuffer);
       newWidthBuf.set(this.widthBuffer); // widths grow with vertices
       newSharpnessBuf.set(this.sharpnessBuffer);
+      newScalarBuf.set(this.scalarBuffer);
 
       this.vertexBuffer = newVertexBuf;
       this.widthBuffer = newWidthBuf;
       this.sharpnessBuffer = newSharpnessBuf;
+      this.scalarBuffer = newScalarBuf;
 
       // Color: Type-preserving growth (like Points accumulator)
       if (this.colorBuffer instanceof Uint8Array) {
@@ -674,6 +742,8 @@ export class LinesDataAccumulator implements DataAccumulator<
       widths: this.widthBuffer.subarray(0, vertexCount), // PER-VERTEX! Not segmentCount!
       colors: this.hasColors ? this.colorBuffer.subarray(0, vertexCount * 3) : null,
       sharpness: this.hasSharpness ? this.sharpnessBuffer.subarray(0, vertexCount) : null,
+      // D5: per-vertex scalars now flow through the accumulator path.
+      scalars: this.hasScalars ? this.scalarBuffer.subarray(0, vertexCount) : null,
       segmentCount,
       vertexCount,
       ndim: this.ndim,
@@ -719,6 +789,13 @@ export class LinesDataAccumulator implements DataAccumulator<
       this.hasSharpness = true;
       this.sharpnessBuffer.set(data.sharpness, vertexOffset);
     }
+    // D5: copy scalars into per-vertex buffer (Float32 only — Lines
+    // scalars are stored as Float32 in the zarr writer; if a future
+    // Uint8 path appears it can mirror the Points accumulator pattern).
+    if (data.scalars) {
+      this.hasScalars = true;
+      this.scalarBuffer.set(data.scalars as Float32Array, vertexOffset);
+    }
   }
 
   getStats(): AccumulatorStats {
@@ -756,17 +833,33 @@ export class LinesDataAccumulator implements DataAccumulator<
     return this.sharpnessBuffer;
   }
 
+  /** D5: direct accessor for the per-vertex scalar buffer. */
+  getScalarBuffer(): Float32Array {
+    return this.scalarBuffer;
+  }
+
+  /**
+   * D5: mark scalars as present. Used by loaders that write directly
+   * into `scalarBuffer` via `getScalarBuffer()` (zero-copy path) and
+   * therefore need to flip `hasScalars` without going through `fill()`.
+   */
+  markScalarsLoaded(): void {
+    this.hasScalars = true;
+  }
+
   dispose(): void {
     this.vertexBuffer = new Float32Array(0);
     this.segmentBuffer = new Uint32Array(0);
     this.widthBuffer = new Float32Array(0);
     this.colorBuffer = new Float32Array(0);
     this.sharpnessBuffer = new Float32Array(0);
+    this.scalarBuffer = new Float32Array(0);
     this.vertexCapacity = 0;
     this.segmentCapacity = 0;
     this.types = null;
     this.hasColors = false;
     this.hasSharpness = false;
+    this.hasScalars = false;
   }
 }
 

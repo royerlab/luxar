@@ -38,6 +38,37 @@ export interface RangeLoaderConfig {
   logModule?: string;
 }
 
+type RangeNumericArray =
+  | Float32Array
+  | Float64Array
+  | Uint8Array
+  | Uint16Array
+  | Uint32Array
+  | Int8Array
+  | Int16Array
+  | Int32Array
+  | BigUint64Array
+  | BigInt64Array;
+
+function numericArrayToFloat32(data: RangeNumericArray): Float32Array {
+  if (data instanceof Float32Array) return data;
+  if (typeof BigUint64Array !== 'undefined' && data instanceof BigUint64Array) {
+    const result = new Float32Array(data.length);
+    for (let i = 0; i < data.length; i++) result[i] = Number(data[i]);
+    return result;
+  }
+  if (typeof BigInt64Array !== 'undefined' && data instanceof BigInt64Array) {
+    const result = new Float32Array(data.length);
+    for (let i = 0; i < data.length; i++) result[i] = Number(data[i]);
+    return result;
+  }
+  return new Float32Array(data as ArrayLike<number>);
+}
+
+function firstAxisRangeSlice(shape: readonly number[], range: LoadRange): zarr.Slice[] {
+  return [slice(range.start, range.end), ...shape.slice(1).map(() => slice(null))];
+}
+
 /**
  * Result of encoding detection
  */
@@ -179,7 +210,10 @@ export class RangeLoader {
       // The target's per-item element count is whatever the target array
       // says — the caller's hint applies only to the unresolved direct case.
       const targetShape = targetArray.shape;
-      const targetElementsPerItem = targetShape.length === 2 ? targetShape[1] : 1;
+      const targetElementsPerItem =
+        targetShape.length > 1
+          ? targetShape.slice(1).reduce((product, value) => product * value, 1)
+          : 1;
 
       return this.loadRanges(
         targetArray as zarr.Array<zarr.DataType, zarr.FetchStore>,
@@ -224,15 +258,12 @@ export class RangeLoader {
 
     if (useWorkers && totalElements > this.config.workerThreshold) {
       try {
-        const decoded = await getWorkerPool().runWithTimeout(
-          'decodeBroadcasted',
-          'decode',
-          (api) =>
-            api.decodeBroadcasted({
-              value: valueAsFloat32,
-              numPoints: totalElements,
-              elementsPerPoint: elementsPerItem,
-            })
+        const decoded = await getWorkerPool().runWithTimeout('decodeBroadcasted', 'decode', (api) =>
+          api.decodeBroadcasted({
+            value: valueAsFloat32,
+            numPoints: totalElements,
+            elementsPerPoint: elementsPerItem,
+          })
         );
         output.set(decoded);
         return;
@@ -286,10 +317,7 @@ export class RangeLoader {
     const shape = array.shape;
 
     for (const range of ranges) {
-      const sliceSpec: zarr.Slice[] =
-        shape.length === 2
-          ? [slice(range.start, range.end), slice(null)]
-          : [slice(range.start, range.end)];
+      const sliceSpec = firstAxisRangeSlice(shape, range);
 
       // Main thread fetches (cached via MultiLevelCachingStore)
       const chunkData = await get(array, sliceSpec);
@@ -300,26 +328,20 @@ export class RangeLoader {
       if (shouldUseWorkers) {
         try {
           if (quantMetadata.isLogSpace) {
-            dequantized = await getWorkerPool().runWithTimeout(
-              'decodeLogScalar',
-              'decode',
-              (api) =>
-                api.decodeLogScalar({
-                  data: quantizedData,
-                  maxLog: quantMetadata.bounds[1],
-                  dtype: quantMetadata.dtype, // Already normalized by getQuantizationMetadata
-                })
+            dequantized = await getWorkerPool().runWithTimeout('decodeLogScalar', 'decode', (api) =>
+              api.decodeLogScalar({
+                data: quantizedData,
+                maxLog: quantMetadata.bounds[1],
+                dtype: quantMetadata.dtype, // Already normalized by getQuantizationMetadata
+              })
             );
           } else {
-            dequantized = await getWorkerPool().runWithTimeout(
-              'decodeQuantized',
-              'decode',
-              (api) =>
-                api.decodeQuantized({
-                  data: quantizedData,
-                  bounds: quantMetadata.bounds,
-                  dtype: quantMetadata.dtype, // Already normalized by getQuantizationMetadata
-                })
+            dequantized = await getWorkerPool().runWithTimeout('decodeQuantized', 'decode', (api) =>
+              api.decodeQuantized({
+                data: quantizedData,
+                bounds: quantMetadata.bounds,
+                dtype: quantMetadata.dtype, // Already normalized by getQuantizationMetadata
+              })
             );
           }
         } catch (error) {
@@ -379,10 +401,7 @@ export class RangeLoader {
       // Handle both 1D and 2D LUT-encoded arrays:
       // - 1D: row mode with one index per row (e.g., colors [N])
       // - 2D: scalar mode with one index per element (e.g., cholesky_factors [N, K])
-      const sliceSpec: zarr.Slice[] =
-        shape.length === 2
-          ? [slice(range.start, range.end), slice(null)]
-          : [slice(range.start, range.end)];
+      const sliceSpec = firstAxisRangeSlice(shape, range);
 
       // Main thread fetches indices
       const chunkData = await get(array, sliceSpec);
@@ -475,22 +494,14 @@ export class RangeLoader {
     const shape = array.shape;
 
     for (const range of ranges) {
-      const sliceSpec: zarr.Slice[] =
-        shape.length === 2
-          ? [slice(range.start, range.end), slice(null)]
-          : [slice(range.start, range.end)];
+      const sliceSpec = firstAxisRangeSlice(shape, range);
 
       const chunkData = await get(array, sliceSpec);
       const data = chunkData.data;
 
-      // Convert to Float32Array if needed (with value conversion, not buffer reinterpretation)
-      let float32Data: Float32Array;
-      if (data instanceof Float32Array) {
-        float32Data = data;
-      } else {
-        // Convert from other types (uint8, uint16, etc.) to float32 with proper value conversion
-        float32Data = new Float32Array(data as ArrayLike<number>);
-      }
+      // Convert from typed storage (uint8/uint16/uint32/uint64/etc.) to
+      // float32 with value conversion, not buffer reinterpretation.
+      const float32Data = numericArrayToFloat32(data as RangeNumericArray);
 
       output.set(float32Data, destOffset);
       destOffset += float32Data.length;
