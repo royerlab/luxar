@@ -307,6 +307,46 @@ describe('MultiLevelCachingStore', () => {
       expect(stats.l2.size).toBeLessThanOrEqual(0);
     });
 
+    it('content-hash mismatch defensively clears L1 (commit 4.1)', async () => {
+      // doValidateCache is private but unit-testable via reflection.
+      // Stubbing l2Store and bypassing the init()-creates-new-l2Store
+      // path lets us prove that the mismatch branch invokes clearL1.
+      await store.init();
+      const clearL1Spy = vi.spyOn(store, 'clearL1');
+
+      // Stub the l2Store the doValidateCache will read.
+      const setContentHashSpy = vi.fn();
+      (store as any).l2Store = {
+        async clear() {},
+        getContentHash: () => 'old-hash',
+        setContentHash: setContentHashSpy,
+        async dispose() {},
+      };
+
+      // Stub fetch so getRemoteContentHash returns 'new-hash' for the
+      // .zattrs probe.
+      global.fetch = vi.fn(async (url: string) => {
+        if (url.includes('.zattrs')) {
+          return {
+            ok: true,
+            async arrayBuffer() {
+              return new TextEncoder().encode(JSON.stringify({ content_hash: 'new-hash' })).buffer;
+            },
+          } as Response;
+        }
+        return { ok: true, async arrayBuffer() { return new ArrayBuffer(0); } } as Response;
+      }) as any;
+
+      // Drive the private doValidateCache directly — bypasses the
+      // l2Store reconstruction inside init() that would otherwise wipe
+      // our stub.
+      const ac = new AbortController();
+      await (store as any).doValidateCache(ac.signal);
+
+      expect(clearL1Spy).toHaveBeenCalled();
+      expect(setContentHashSpy).toHaveBeenCalledWith('new-hash');
+    });
+
     it('should bypass cache when validating content_hash (critical fix)', async () => {
       // This test verifies the fix for the cache validation bug where
       // validation was reading .zattrs from cache, comparing cached hash

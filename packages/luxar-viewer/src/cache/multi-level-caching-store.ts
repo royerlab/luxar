@@ -549,6 +549,12 @@ export class MultiLevelCachingStore implements AsyncReadable {
         this.log('Dataset content changed, clearing cache');
         this.log(`Old: ${cachedHash.slice(0, 16)}...`);
         this.log(`New: ${remoteHash.slice(0, 16)}...`);
+        // Defensive: clear L1 alongside L2 even though init() builds a
+        // fresh L1 before validation runs. Cheap, makes the invariant
+        // ("hash mismatch ⇒ every tier dropped") explicit, and protects
+        // future call paths that might revalidate against a populated
+        // L1 (e.g. content-hash refresh during a long session).
+        this.clearL1();
         await this.clearL2();
         this.invalidationCallbacks.forEach((cb) => cb());
       }
