@@ -317,7 +317,12 @@ export class SceneLoader {
 
     // GPU buffer pool requires Float32Array data; the geometry-update path
     // falls back to the standard route for Uint8/Uint16 attributes.
-    if (appConfig.dataLoading.performance.useGPUBufferPool) {
+    //
+    // B.5: defensively guard against double-init. The current call path
+    // is sequential (constructor only), so this branch runs once today —
+    // but matching the OnceInit pattern used elsewhere prevents a future
+    // re-init refactor from silently leaking the previous pool.
+    if (appConfig.dataLoading.performance.useGPUBufferPool && !this._gpuBufferPool) {
       this._gpuBufferPool = new GPUBufferPool(
         appConfig.dataLoading.performance.gpuPoolMaxSize,
         appConfig.dataLoading.performance.gpuPoolEvictionFrames,
