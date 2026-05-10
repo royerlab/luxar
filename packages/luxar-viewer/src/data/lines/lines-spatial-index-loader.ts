@@ -307,7 +307,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     await this._onceInit.ensure(() => this.initialize());
 
     if (!this.arrays.vertices || !this.arrays.segments) {
-      throw new Error('Lines loader not properly initialized');
+      throw new Error('[LinesLoader] Loader not properly initialized');
     }
 
     const attrs = this.node.attrs as unknown as LinesMetadata;
@@ -665,7 +665,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
    */
   private async loadSegmentRanges(ranges: SegmentRange[]): Promise<Uint32Array> {
     if (!this.arrays.segments) {
-      throw new Error('Segments array not initialized');
+      throw new Error('[LinesLoader] Segments array not initialized');
     }
 
     // Calculate total segments to load
@@ -746,7 +746,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
   ): Promise<Float32Array | Uint8Array | Uint16Array> {
     const array = this.arrays.colors;
     if (!array) {
-      throw new Error('Colors array not initialized');
+      throw new Error('[LinesLoader] Colors array not initialized');
     }
     const storeToUse = this.zarrStore || this.zarrLocation.store;
     const totalVertices = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);

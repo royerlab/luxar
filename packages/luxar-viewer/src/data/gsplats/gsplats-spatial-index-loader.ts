@@ -288,7 +288,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     await this._onceInit.ensure(() => this.initialize());
 
     if (!this.arrays.centers || !this.arrays.amplitudes || !this.arrays.cholesky_factors) {
-      throw new Error('GSplats loader not properly initialized');
+      throw new Error('[GSplatsLoader] Loader not properly initialized');
     }
 
     const attrs = this.node.attrs as unknown as GSplatsMetadata;
@@ -590,7 +590,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
   ): Promise<Float32Array | Uint8Array | Uint16Array> {
     const array = this.arrays.colors;
     if (!array) {
-      throw new Error('Colors array not initialized');
+      throw new Error('[GSplatsLoader] Colors array not initialized');
     }
     const storeToUse = this.zarrStore || this.zarrLocation.store;
     const totalSplats = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);

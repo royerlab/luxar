@@ -41,7 +41,9 @@ export class ViewStateManager {
   static initializeFromDimensions(sceneDims: SceneDimensions): ViewState {
     // Validate input - cannot initialize with empty dimensions
     if (!sceneDims.dimensions || sceneDims.dimensions.length === 0) {
-      throw new Error('Cannot initialize ViewState: dimensions array is empty or undefined');
+      throw new Error(
+        '[ViewState] Cannot initialize: dimensions array is empty or undefined'
+      );
     }
 
     const metadata = this.extractMetadata(sceneDims);

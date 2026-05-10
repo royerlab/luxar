@@ -440,7 +440,7 @@ export class ArrayDecoder {
       log.info(Modules.ZARR_LOADER, `  LUT size: ${flatLUT.length} unique scalar values`);
 
       if (flatLUT.length === 0) {
-        throw new Error('LUT (scalar) is empty');
+        throw new Error('[ArrayDecoder] LUT (scalar) is empty');
       }
 
       const result = new Float32Array(n);

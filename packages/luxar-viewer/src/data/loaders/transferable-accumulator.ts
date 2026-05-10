@@ -365,7 +365,7 @@ export class TransferableAccumulator<TBuffers extends TransferableBuffers> {
     }
 
     if (!this.buffers) {
-      throw new Error('Buffers not allocated');
+      throw new Error('[Accumulator] Buffers not allocated');
     }
 
     if (this.buffers[name]) {

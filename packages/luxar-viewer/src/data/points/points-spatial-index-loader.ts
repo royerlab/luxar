@@ -407,7 +407,9 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
       }
 
       if (!this.arrays.positions) {
-        throw new Error('Loader not properly initialized: positions array not loaded');
+        throw new Error(
+          '[PointsLoader] Loader not properly initialized: positions array not loaded'
+        );
       }
 
       // Query spatial index for visible ranges (async to allow worker
@@ -486,7 +488,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
         // Load positions (required)
         const positionsResult = await this.loadRanges('positions', ranges);
         if (!positionsResult) {
-          throw new Error('Failed to load positions array');
+          throw new Error('[PointsLoader] Failed to load positions array');
         }
         positions = positionsResult;
 

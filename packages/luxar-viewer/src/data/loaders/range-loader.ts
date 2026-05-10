@@ -267,7 +267,7 @@ export class RangeLoader {
     const zarrDtype = String(array.dtype);
     const quantMetadata = ArrayDecoder.getQuantizationMetadata(attrs, zarrDtype);
     if (!quantMetadata) {
-      throw new Error('Quantization metadata missing');
+      throw new Error('[RangeLoader] Quantization metadata missing');
     }
 
     const totalPoints = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
@@ -352,7 +352,7 @@ export class RangeLoader {
   ): Promise<number> {
     const lutMetadata = ArrayDecoder.getLUTMetadata(attrs);
     if (!lutMetadata) {
-      throw new Error('LUT metadata missing');
+      throw new Error('[RangeLoader] LUT metadata missing');
     }
 
     const totalPoints = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);

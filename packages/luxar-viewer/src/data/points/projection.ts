@@ -140,7 +140,7 @@ export function projectPointsTo3D(
   const totalPoints = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
 
   if (!positions) {
-    throw new Error('Positions data is required for points');
+    throw new Error('[PointsProjection] Positions data is required for points');
   }
 
   // CRITICAL: Calculate ndim from actual positions array, not chunk index metadata.
@@ -497,7 +497,7 @@ export async function projectPointsTo3DUsingWorker(
   const totalPoints = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
 
   if (!positions) {
-    throw new Error('Positions data is required for points');
+    throw new Error('[PointsProjection] Positions data is required for points');
   }
 
   // Calculate ndim from actual positions array
