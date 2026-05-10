@@ -694,6 +694,34 @@ describe('OPFSStore', () => {
       }
     });
 
+    it('size-mismatch read deletes file and increments corruptedEntries (commit 6.2)', async () => {
+      // Pre-populate index claiming size=100 but file actually has 5 bytes.
+      await store.set('mismatch-key', new Uint8Array([1, 2, 3]));
+      // Inject a mismatch by mutating the stored data.
+      const fileNames = Array.from(mockFS.files.keys());
+      const corruptName = fileNames.find((n) => n !== '_cache_meta.json');
+      expect(corruptName).toBeDefined();
+      mockFS.files.set(corruptName!, new Uint8Array(50)); // wrong size
+
+      const result = await store.get('mismatch-key');
+      expect(result).toBeUndefined();
+      const stats = store.getStats();
+      expect(stats.corruptedEntries).toBeGreaterThanOrEqual(1);
+    });
+
+    it('corrupt _cache_meta.json increments metadataParseFailures and starts fresh (commit 6.2)', async () => {
+      // Persist invalid JSON so loadMetadata's catch branch runs the
+      // parse-failure path.
+      mockFS.metaFiles.set('_cache_meta.json', 'not-valid-json{{{');
+
+      const fresh = new OPFSStore('parse-fail-id', 'https://example.com', 1024 * 1024);
+      await fresh.init();
+
+      const stats = fresh.getStats();
+      expect(stats.metadataParseFailures).toBeGreaterThanOrEqual(1);
+      expect(stats.count).toBe(0);
+    });
+
     it('encoding-version mismatch invalidates the directory cleanly (commit 4.2)', async () => {
       // Persist a metadata file claiming version 1 (legacy btoa); the
       // store on the next init() must treat it as a cold cache and not

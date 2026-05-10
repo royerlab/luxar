@@ -82,10 +82,19 @@ export class OPFSStore {
   //   incoming writes.
   // `writeFailures`: doSet() catch branch — file I/O threw after
   //   retries.
+  // `corruptedEntries`: get() detected a size mismatch between index
+  //   and on-disk data and removed the bad file.
+  // `metadataParseFailures`: loadMetadata() could not JSON-parse
+  //   `_cache_meta.json` — recovery starts the cache fresh.
+  // `orphanedFilesRemoved`: cleanupOrphans() reclaimed files that
+  //   existed on disk but had no matching index entry.
   private oversizedWriteSkipped = 0;
   private quotaWriteSkipped = 0;
   private evictions = 0;
   private writeFailures = 0;
+  private corruptedEntries = 0;
+  private metadataParseFailures = 0;
+  private orphanedFilesRemoved = 0;
 
   // Bucket handle cache (256 possible buckets: 00-ff)
   private bucketHandles = new Map<string, FileSystemDirectoryHandle>();
@@ -161,6 +170,7 @@ export class OPFSStore {
       const entry = this.index.get(key);
       if (entry && entry.size !== data.byteLength) {
         log.warning(Modules.CACHE, `OPFSStore size mismatch for ${key}, removing corrupted entry`);
+        this.corruptedEntries++;
         await this.delete(key);
         this.missCount++;
         return undefined;
@@ -387,6 +397,9 @@ export class OPFSStore {
     this.quotaWriteSkipped = 0;
     this.evictions = 0;
     this.writeFailures = 0;
+    this.corruptedEntries = 0;
+    this.metadataParseFailures = 0;
+    this.orphanedFilesRemoved = 0;
 
     if (this.opfsRoot) {
       try {
@@ -454,6 +467,9 @@ export class OPFSStore {
     quotaWriteSkipped: number;
     evictions: number;
     writeFailures: number;
+    corruptedEntries: number;
+    metadataParseFailures: number;
+    orphanedFilesRemoved: number;
   } {
     return {
       size: this.totalSize,
@@ -465,6 +481,9 @@ export class OPFSStore {
       quotaWriteSkipped: this.quotaWriteSkipped,
       evictions: this.evictions,
       writeFailures: this.writeFailures,
+      corruptedEntries: this.corruptedEntries,
+      metadataParseFailures: this.metadataParseFailures,
+      orphanedFilesRemoved: this.orphanedFilesRemoved,
     };
   }
 
@@ -696,12 +715,64 @@ export class OPFSStore {
       this.totalSize = meta.totalSize || 0;
       this.orderCounter = meta.orderCounter || 0;
       this.contentHash = meta.contentHash || null;
-    } catch {
-      // No metadata yet, start fresh
+    } catch (error) {
+      // Two cases reach here:
+      //  - getFileHandle threw "not found" → no metadata yet, cold start
+      //  - JSON.parse threw → metadata file is corrupt; treat as cold
+      //    start, count the failure, and run a best-effort orphan
+      //    cleanup so files left over from the corrupt run don't take
+      //    up quota indefinitely.
+      const wasParseFailure =
+        error instanceof SyntaxError ||
+        (error instanceof Error && /JSON|parse|Unexpected/i.test(error.message));
       this.index = new Map();
       this.totalSize = 0;
       this.orderCounter = 0;
       this.contentHash = null;
+      if (wasParseFailure) {
+        this.metadataParseFailures++;
+        log.warning(
+          Modules.CACHE,
+          'OPFSStore metadata corrupt, starting fresh and reclaiming orphans'
+        );
+        await this.cleanupOrphans().catch(() => {
+          // Best-effort; ignore reclaim failures.
+        });
+      }
+    }
+  }
+
+  /**
+   * Reclaim OPFS files that exist on disk but have no entry in
+   * `this.index`. Called from loadMetadata() when metadata parse
+   * failed; safe to skip otherwise (the cache rebuilds itself in
+   * seconds and orphans are bounded by quota anyway).
+   */
+  private async cleanupOrphans(): Promise<void> {
+    if (!this.opfsRoot) return;
+    const expected = new Set<string>();
+    for (const key of this.index.keys()) {
+      expected.add(this.keyToFileName(key));
+    }
+    const root = this.opfsRoot as IterableFileSystemDirectoryHandle;
+    for await (const bucketName of root.keys()) {
+      // Only iterate hex-buckets (00-ff); skip _cache_meta.json itself.
+      if (!/^[0-9a-f]{2}$/.test(bucketName)) continue;
+      try {
+        const bucketHandle = await this.opfsRoot.getDirectoryHandle(bucketName);
+        const iterableBucket = bucketHandle as IterableFileSystemDirectoryHandle;
+        for await (const fileName of iterableBucket.keys()) {
+          if (expected.has(fileName)) continue;
+          try {
+            await bucketHandle.removeEntry(fileName);
+            this.orphanedFilesRemoved++;
+          } catch {
+            // Skip file we can't remove; surface in stats but don't bail.
+          }
+        }
+      } catch {
+        // Bucket may have disappeared mid-scan; ignore.
+      }
     }
   }
 
