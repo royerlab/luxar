@@ -28,8 +28,13 @@
 
 import * as THREE from 'three';
 import { log, Modules } from '../utils/log';
+import { estimateGeometryBytes, invalidateCachedByteSize } from '../utils/geometry-utils';
 import type { LoadedPointsData } from '../data/data-loader-types';
 import type { ProcessedLinesData } from '../types/lines';
+
+// D.4: re-export so existing consumers that import these from
+// `rendering/gpu-buffer-pool` keep working.
+export { estimateGeometryBytes, invalidateCachedByteSize };
 
 /**
  * Packed GSplats data ready for GPU upload (from gsplats-processor.ts)
@@ -149,53 +154,6 @@ export function selectBuffersToEvict<R extends PooledBufferRef>(
   return targets;
 }
 
-/**
- * estimate the GPU-resident byte footprint of a geometry by
- * summing the underlying typed-array byte lengths of every attribute
- * (and the index, if present). Mirrors what THREE.js will actually
- * upload — it slightly overstates because we count the full backing
- * array even if `count < array.length / itemSize`, but that's the
- * footprint that matters for pool memory pressure.
- *
- * D.3: result cached on `geometry.userData.cachedByteSize` so repeated
- * `getStats()` polls don't re-iterate attribute byteLengths. Grow
- * paths invalidate the cache via `invalidateCachedByteSize()`.
- */
-export function estimateGeometryBytes(geometry: THREE.BufferGeometry): number {
-  const userData = geometry.userData as { cachedByteSize?: number };
-  if (typeof userData.cachedByteSize === 'number') {
-    return userData.cachedByteSize;
-  }
-  let total = 0;
-  for (const name in geometry.attributes) {
-    const attr = geometry.attributes[name] as THREE.BufferAttribute;
-    const arr = attr.array as ArrayBufferView | undefined;
-    if (arr && typeof arr.byteLength === 'number') {
-      total += arr.byteLength;
-    }
-  }
-  // InstancedBufferGeometry indices are shared with the base geometry
-  // (a single quad), so they're a fixed overhead — small, but include
-  // them for correctness.
-  if (geometry.index) {
-    const idxArr = geometry.index.array as ArrayBufferView | undefined;
-    if (idxArr && typeof idxArr.byteLength === 'number') {
-      total += idxArr.byteLength;
-    }
-  }
-  userData.cachedByteSize = total;
-  return total;
-}
-
-/**
- * D.3: invalidate the cached byte estimate on a geometry. Call after
- * resizing/replacing any attribute or index so the next
- * `estimateGeometryBytes` call recomputes.
- */
-export function invalidateCachedByteSize(geometry: THREE.BufferGeometry): void {
-  const userData = geometry.userData as { cachedByteSize?: number };
-  delete userData.cachedByteSize;
-}
 
 /**
  * GPU buffer pool for reusing THREE.BufferGeometry objects.
