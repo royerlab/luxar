@@ -135,33 +135,104 @@ export class SceneLoaderManager {
   }
 
   /**
-   * Destroy a specific loader
+   * Destroy a specific loader (best-effort, non-awaiting).
+   *
+   * Synchronously removes the loader from the manager (so subsequent
+   * `getLoaderCount()` / `hasLoader()` calls reflect the change) and
+   * fires the async dispose without awaiting. Suits the `beforeunload`
+   * path and other call sites that cannot meaningfully await teardown.
+   * Callers that need deterministic teardown (e.g. dataset switches)
+   * must use {@link destroyLoaderAsync}.
    *
    * @param id - The loader ID to destroy
    */
   destroyLoader(id: string): void {
-    const loader = this.loaders.get(id);
+    const loader = this.detachLoader(id);
     if (loader) {
-      loader.dispose();
-      this.loaders.delete(id);
-
-      // Update default if needed
-      if (this.defaultLoaderId === id) {
-        this.defaultLoaderId =
-          this.loaders.size > 0 ? (this.loaders.keys().next().value ?? null) : null;
-      }
+      void loader.dispose().catch((error) => {
+        // Already-logged inside SceneLoader.dispose; this catch keeps
+        // an unhandled rejection from leaking out of the fire-and-forget
+        // path.
+        void error;
+      });
     }
   }
 
   /**
-   * Destroy all loaders and reset the manager
+   * Destroy a specific loader and await its disposal.
+   *
+   * Awaits {@link SceneLoader.dispose} so caching-store teardown,
+   * prefetcher teardown, and OPFS metadata flush all complete before
+   * this method resolves. Use during dataset switches when the next
+   * loader's init must see fully-drained state.
+   */
+  async destroyLoaderAsync(id: string): Promise<void> {
+    const loader = this.detachLoader(id);
+    if (!loader) return;
+    try {
+      await loader.dispose();
+    } catch (error) {
+      // Already-logged inside SceneLoader.dispose. Swallow here so the
+      // caller can still proceed with the next dataset switch.
+      void error;
+    }
+  }
+
+  /**
+   * Destroy all loaders and reset the manager (best-effort, non-awaiting).
+   *
+   * Mirror of {@link destroyLoader}: removes loaders synchronously and
+   * fires async disposes without awaiting. Use {@link destroyAllAsync}
+   * where deterministic teardown matters.
    */
   destroyAll(): void {
-    for (const loader of this.loaders.values()) {
-      loader.dispose();
-    }
+    const loaders = Array.from(this.loaders.values());
     this.loaders.clear();
     this.defaultLoaderId = null;
+    for (const loader of loaders) {
+      void loader.dispose().catch((error) => {
+        void error;
+      });
+    }
+  }
+
+  /**
+   * Destroy all loaders concurrently and await every disposal.
+   *
+   * `Promise.all`s every loader's `dispose()` so the caller can wait for
+   * every prefetcher, caching store, and L0 cache to drain before
+   * proceeding. Always clears the loaders map and default-loader id,
+   * even if individual disposals reject.
+   */
+  async destroyAllAsync(): Promise<void> {
+    const loaders = Array.from(this.loaders.values());
+    this.loaders.clear();
+    this.defaultLoaderId = null;
+    await Promise.all(
+      loaders.map((loader) =>
+        loader.dispose().catch(() => {
+          // Already-logged inside SceneLoader.dispose; swallow here so a
+          // single bad loader cannot prevent the others from completing.
+        })
+      )
+    );
+  }
+
+  /**
+   * Synchronously remove a loader from the manager and update the
+   * default-loader id. Returns the loader instance for the caller to
+   * dispose (sync or async). Centralizes the bookkeeping so the
+   * fire-and-forget and awaitable variants stay in sync.
+   */
+  private detachLoader(id: string): SceneLoader | null {
+    const loader = this.loaders.get(id);
+    if (!loader) return null;
+    this.loaders.delete(id);
+    if (this.defaultLoaderId === id) {
+      this.defaultLoaderId =
+        this.loaders.size > 0 ? (this.loaders.keys().next().value ?? null) : null;
+    }
+    return loader;
   }
 
   /**
