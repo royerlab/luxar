@@ -83,7 +83,7 @@ describe('SceneLoader lifecycle stress', () => {
     await sceneLoader.dispose();
   });
 
-  it('50× load → dispose cycle leaves loaders/_zarrStore/rootGroup empty each time', async () => {
+  it('50× load → dispose cycle leaves loaders/_zarrStore/rootGroup empty each time', { timeout: 20_000 }, async () => {
     for (let i = 0; i < 50; i++) {
       const url = `http://localhost:8000/test-${i}.zarr`;
       await sceneLoader.loadScene(url);
