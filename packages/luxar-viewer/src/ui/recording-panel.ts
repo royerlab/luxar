@@ -110,6 +110,11 @@ export class RecordingPanel {
   // Video recording state
   private isRecording: boolean = false;
   private mediaRecorder: MediaRecorder | null = null;
+  // canvas.captureStream() returns a MediaStream whose tracks live
+  // until explicitly stopped. mediaRecorder.stop() does NOT stop the
+  // underlying tracks, so we track the stream here and stop its
+  // tracks in every onstop branch to release browser media resources.
+  private captureStream: MediaStream | null = null;
   private recordedChunks: Blob[] = [];
   private recordingIndicator: HTMLElement | null = null;
   private recordingTimeInterval: ReturnType<typeof setInterval> | null = null;
@@ -279,6 +284,9 @@ export class RecordingPanel {
     this.cleanupSyncListener();
     this.restoreAutoRotate();
     this.restoreRecordingState();
+    // Defensive: stop any captureStream tracks even if mediaRecorder.onstop
+    // didn't fire (browser quirks, mid-init dispose).
+    this.cleanupCaptureStream();
     this.gui.destroy();
   }
 
@@ -426,8 +434,8 @@ export class RecordingPanel {
       continuous: true,
     });
 
-    const stream = canvas.captureStream(this.options.videoFPS);
-    this.mediaRecorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond });
+    this.captureStream = canvas.captureStream(this.options.videoFPS);
+    this.mediaRecorder = new MediaRecorder(this.captureStream, { mimeType, videoBitsPerSecond });
     this.recordedChunks = [];
 
     this.mediaRecorder.ondataavailable = (event) => {
@@ -441,6 +449,7 @@ export class RecordingPanel {
         this.recordedChunks = [];
         this.isRecording = false;
         this.hideRecordingIndicator();
+        this.cleanupCaptureStream();
         return;
       }
 
@@ -461,6 +470,7 @@ export class RecordingPanel {
       this.cleanupSyncListener();
       this.restoreAutoRotate();
       this.restoreRecordingState();
+      this.cleanupCaptureStream();
       showToast('Video saved');
     };
 
@@ -904,6 +914,17 @@ export class RecordingPanel {
 
   private cleanupSyncListener(): void {
     this.sliderSync.cleanup(this.animationManager);
+  }
+
+  /**
+   * Stop every track on the captureStream and drop the reference.
+   * `mediaRecorder.stop()` does NOT stop the underlying tracks, so
+   * without this call canvas-capture media tracks accumulate across
+   * repeated recordings.
+   */
+  private cleanupCaptureStream(): void {
+    this.captureStream?.getTracks().forEach((track) => track.stop());
+    this.captureStream = null;
   }
 
   /** Restore auto-rotation to its pre-turntable state. */

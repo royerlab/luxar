@@ -462,6 +462,31 @@ describe('RecordingPanel', () => {
 
       expect(clearTimeoutSpy).toHaveBeenCalled();
     });
+
+    it('stops every captureStream track on the disposed onstop branch', () => {
+      const trackA = { stop: vi.fn() };
+      const trackB = { stop: vi.fn() };
+      const fakeStream = {
+        getTracks: vi.fn().mockReturnValue([trackA, trackB]),
+      };
+      (panel as any).captureStream = fakeStream;
+      (panel as any).disposed = true;
+      (panel as any).mediaRecorder = mockMediaRecorder;
+
+      // Drive the disposed branch of cleanupCaptureStream directly.
+      (panel as any).cleanupCaptureStream();
+
+      expect(fakeStream.getTracks).toHaveBeenCalledTimes(1);
+      expect(trackA.stop).toHaveBeenCalledTimes(1);
+      expect(trackB.stop).toHaveBeenCalledTimes(1);
+      expect((panel as any).captureStream).toBeNull();
+    });
+
+    it('cleanupCaptureStream is idempotent when no stream is active', () => {
+      (panel as any).captureStream = null;
+      expect(() => (panel as any).cleanupCaptureStream()).not.toThrow();
+      expect((panel as any).captureStream).toBeNull();
+    });
   });
 
   describe('dispose', () => {
