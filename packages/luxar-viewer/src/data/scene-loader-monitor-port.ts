@@ -21,6 +21,7 @@ import type {
   LoaderMonitor,
   CacheStatsProvider,
   CacheMetrics,
+  CacheTelemetryState,
   SceneGraphNode,
   GPUPoolStats,
   AccumulatorStats,
@@ -72,6 +73,13 @@ export interface SceneLoaderMonitorPort {
     provider: AccumulatorProviderPort | null
   ): void;
   setProfiler(profiler: UpdateProfiler | null): void;
+  /**
+   * Push the cache telemetry state resolved by `cache-setup.ts` so the
+   * UI shows the right disabled-reason. Without this, the aggregator
+   * falls back to "not-wired" whenever a `CacheStatsProvider` isn't
+   * registered, which conflates `?no-cache` with mid-scene transitions.
+   */
+  setCacheTelemetryState(state: CacheTelemetryState): void;
 
   // Scene metadata + per-frame counters
   setSceneGraph(root: SceneGraphNode): void;

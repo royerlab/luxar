@@ -16,7 +16,10 @@
 
 import type { SceneNode } from '../data-loader-types';
 import type { DataLoader } from '../data-loader-types';
-import type { SceneGraphNode } from '../../types/data-monitor-types';
+import type {
+  SceneGraphNode,
+  CacheTelemetryState,
+} from '../../types/data-monitor-types';
 import type { SceneLoaderMonitorPort } from '../scene-loader-monitor-port';
 import type { LinesDataLoader } from '../../types/lines';
 import type { GSplatsDataLoader } from '../../types/gsplats';
@@ -37,6 +40,12 @@ export interface WireMonitorAfterLoadParams {
   cachingStore: MultiLevelCachingStore | null;
   /** L0 decompressed-chunk cache, when L0 is enabled. */
   l0Cache: DecompressedChunkCache | null;
+  /**
+   * Resolved cache telemetry state from `setupCaches()`. Pushed to
+   * the monitor before provider wiring so the UI sees the right
+   * disabled-reason during the brief pre-provider window.
+   */
+  cacheTelemetryState: CacheTelemetryState;
   /** GPU buffer pool for points/lines/gsplats geometry. */
   gpuBufferPool: GPUBufferPool | null;
   /** Update profiler (Performance tab), when SceneLoaderManager wired one in. */
@@ -66,6 +75,7 @@ export function wireMonitorAfterLoad(params: WireMonitorAfterLoadParams): void {
     monitor,
     cachingStore,
     l0Cache,
+    cacheTelemetryState,
     gpuBufferPool,
     profiler,
     loaders,
@@ -76,6 +86,11 @@ export function wireMonitorAfterLoad(params: WireMonitorAfterLoadParams): void {
   } = params;
 
   if (!monitor) return;
+
+  // Push the explicit telemetry state BEFORE provider wiring so the
+  // UI's brief pre-provider window reflects the policy decision (e.g.
+  // `?no-cache` shows as "disabled-no-cache", not "not-wired").
+  monitor.setCacheTelemetryState(cacheTelemetryState);
 
   // Cache tab — L1/L2 (LRU + OPFS) and L0 (decompressed chunks).
   if (cachingStore) {

@@ -514,6 +514,7 @@ export class SceneLoader {
       monitor: this.monitor,
       cachingStore: this.cachingStore,
       l0Cache: this.l0Cache,
+      cacheTelemetryState: cacheResult.telemetryState,
       gpuBufferPool: this._gpuBufferPool,
       profiler: this.profiler,
       loaders: this.loaders,

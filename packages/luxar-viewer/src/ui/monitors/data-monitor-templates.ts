@@ -431,16 +431,37 @@ function renderCacheSection(
  * Template for cache tab content with L0/L1/L2 breakdown
  */
 export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetrics): string {
-  // Check if caching is disabled
-  if (cacheMetrics.enabled === false) {
+  // Switch on the explicit telemetry state so each not-enabled
+  // variant gets a faithful message. Fall back to the legacy
+  // `enabled` boolean only when telemetryState is absent.
+  const stateKind =
+    cacheMetrics.telemetryState?.kind ??
+    (cacheMetrics.enabled === false ? 'not-wired' : 'enabled');
+
+  if (stateKind !== 'enabled') {
+    let message: string;
+    let hint: string;
+    switch (stateKind) {
+      case 'disabled-no-cache':
+        message = 'Caching disabled by ?no-cache';
+        hint = 'Remove ?no-cache from URL to enable';
+        break;
+      case 'disabled-config':
+        message = 'Caching disabled by configuration';
+        hint = 'Enable cache.enabled or cache.l0Enabled in app config';
+        break;
+      case 'not-wired':
+      default:
+        message = 'Cache statistics not connected';
+        hint = 'Loading scene...';
+        break;
+    }
     return `
       <div class="luxar-tab-content--cache">
         <div class="luxar-cache-disabled">
           <div class="luxar-cache-disabled__icon">🚫</div>
-          <div class="luxar-cache-disabled__message">Caching is disabled</div>
-          <div class="luxar-cache-disabled__hint">
-            Remove ?no-cache from URL to enable
-          </div>
+          <div class="luxar-cache-disabled__message">${message}</div>
+          <div class="luxar-cache-disabled__hint">${hint}</div>
         </div>
       </div>
     `;

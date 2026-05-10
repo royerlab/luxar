@@ -19,7 +19,11 @@ import type {
   LoaderMetrics,
   CacheMetrics,
   CacheStatsProvider,
+  CacheTelemetryState,
 } from '../../types/data-monitor-types';
+
+// Re-export so existing imports keep working.
+export type { CacheTelemetryState };
 
 /**
  * Subset of `cachedRates` this aggregator reads. The aggregator
@@ -39,23 +43,6 @@ export interface L0Provider {
   getStats: () => CacheMetrics['l0'];
   clear?: () => void;
 }
-
-/**
- * Explicit telemetry state — distinguishes the three "not-enabled"
- * variants from each other. A `?no-cache` run produces no provider,
- * so without an explicit state the cache tab would default to
- * `enabled` and mislead the user.
- *   - `enabled`           : caching is on AND providers are wired.
- *   - `disabled-no-cache` : caching turned off via `?no-cache`.
- *   - `disabled-config`   : turned off via app config.
- *   - `not-wired`         : caching is on but providers haven't been
- *                           wired yet (e.g. mid-scene-transition).
- */
-export type CacheTelemetryState =
-  | { kind: 'enabled' }
-  | { kind: 'disabled-no-cache' }
-  | { kind: 'disabled-config' }
-  | { kind: 'not-wired' };
 
 export interface AggregateCacheMetricsParams {
   l0Provider: L0Provider | null;

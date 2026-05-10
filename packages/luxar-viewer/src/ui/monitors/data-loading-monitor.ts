@@ -18,6 +18,7 @@ import type {
   LoaderType,
   CacheMetrics,
   CacheStatsProvider,
+  CacheTelemetryState,
   SceneGraphNode,
   SceneGraphState,
 } from '../../types/data-monitor-types';
@@ -128,6 +129,12 @@ export class DataLoadingMonitor {
 
   // L0 decompressed chunk cache provider
   private l0CacheProvider: { getStats: () => CacheMetrics['l0']; clear: () => void } | null = null;
+
+  // Explicit cache telemetry state (set by SceneLoader.cache-setup).
+  // Pre-wiring this defaults to undefined so the aggregator falls back
+  // to provider-presence inference; once setCacheTelemetryState() is
+  // called, the explicit state wins.
+  private cacheTelemetryState: CacheTelemetryState | undefined;
 
   // GPU buffer pool reference for dynamic stats retrieval
   private gpuBufferPoolProvider: { getStats: () => MemoryMetrics['gpuPool'] } | null = null;
@@ -281,6 +288,21 @@ export class DataLoadingMonitor {
   }
 
   /**
+   * Push the cache telemetry state resolved by `cache-setup.ts`.
+   * Called once per scene load so the UI shows the right
+   * disabled-reason (`?no-cache` URL flag vs app-config disable vs
+   * pre-wiring transition). Without this, the aggregator falls back
+   * to provider-presence inference and misrepresents `?no-cache` runs
+   * as `not-wired`.
+   */
+  public setCacheTelemetryState(state: CacheTelemetryState): void {
+    this.cacheTelemetryState = state;
+    log.info(Modules.DATA_MONITOR, `Cache telemetry state: ${state.kind}`);
+    // Cache tab structure may change between disabled/enabled states.
+    this.structureDirty = true;
+  }
+
+  /**
    * Set the L0 decompressed chunk cache provider for L0 cache monitoring.
    * This enables the monitor to display L0 cache statistics in the Cache tab.
    */
@@ -355,6 +377,11 @@ export class DataLoadingMonitor {
     this.gpuBufferPoolProvider = null;
     this.accumulatorProviders = { points: null, lines: null, gsplats: null };
     this.profiler = null;
+    // Reset to undefined (not 'not-wired') so the next scene's
+    // setCacheTelemetryState call lands cleanly. If the next setup
+    // doesn't call the setter, the aggregator falls back to
+    // provider-presence inference.
+    this.cacheTelemetryState = undefined;
     this.structureDirty = true;
     log.info(Modules.DATA_MONITOR, 'Scene providers reset');
   }
@@ -1502,6 +1529,7 @@ export class DataLoadingMonitor {
       loaders: this.loaders,
       metricsCache: this.metrics,
       rates: this.cachedRates,
+      telemetryState: this.cacheTelemetryState,
     });
   }
 

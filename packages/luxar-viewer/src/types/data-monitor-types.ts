@@ -249,6 +249,29 @@ export interface MonitorUIState {
 }
 
 /**
+ * Explicit cache telemetry state — distinguishes the three
+ * "not-enabled" variants from each other so the UI can render an
+ * accurate disabled-reason. A `?no-cache` URL run produces no
+ * provider, so without this state the cache tab would default to
+ * `enabled` and mislead the user.
+ *
+ *   - `enabled`           : caching is on AND providers are wired.
+ *   - `disabled-no-cache` : caching turned off via `?no-cache`.
+ *   - `disabled-config`   : turned off via app config.
+ *   - `not-wired`         : caching is on but providers haven't been
+ *                           wired yet (e.g. mid-scene-transition).
+ *
+ * Lives in `types/` so the data layer (cache-setup.ts) and the UI
+ * layer (cache-metrics-aggregator.ts) can both reference it without
+ * crossing the layer boundary.
+ */
+export type CacheTelemetryState =
+  | { kind: 'enabled' }
+  | { kind: 'disabled-no-cache' }
+  | { kind: 'disabled-config' }
+  | { kind: 'not-wired' };
+
+/**
  * Cache metrics for detailed analytics
  */
 export interface CacheMetrics {
@@ -321,11 +344,7 @@ export interface CacheMetrics {
    * and "not-wired" (provider absent during scene transition or
    * before cache setup completes) from each other.
    */
-  telemetryState?:
-    | { kind: 'enabled' }
-    | { kind: 'disabled-no-cache' }
-    | { kind: 'disabled-config' }
-    | { kind: 'not-wired' };
+  telemetryState?: CacheTelemetryState;
   /** Network I/O stats (optional, only when CacheStatsProvider connected) */
   network?: {
     bytesTransferred: number;

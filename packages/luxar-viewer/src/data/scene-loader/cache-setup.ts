@@ -19,6 +19,7 @@ import {
 } from '../../cache';
 import { config as appConfig } from '../../config';
 import { log, Modules } from '../../utils/log';
+import type { CacheTelemetryState } from '../../types/data-monitor-types';
 
 /** Subset of LoaderConfig the cache setup needs. Mirrors the fields
  *  the original inline code consulted. */
@@ -35,6 +36,16 @@ export interface CacheSetupResult {
   l0Cache: DecompressedChunkCache | null;
   cachingStore: MultiLevelCachingStore | null;
   rawStore: zarr.Readable;
+  /**
+   * Resolved cache telemetry state for the UI monitor. Reflects the
+   * actual policy decision the cache stack made:
+   *   - `disabled-no-cache`: URL `?no-cache` flag.
+   *   - `disabled-config` : `appConfig.cache.enabled === false`.
+   *   - `enabled`         : at least one tier (L0 or L1/L2) is active.
+   * Pushed to the monitor via `setCacheTelemetryState()` in
+   * `wireMonitorAfterLoad`.
+   */
+  telemetryState: CacheTelemetryState;
 }
 
 /**
@@ -113,5 +124,18 @@ export async function setupCaches(
     rawStore = new zarr.FetchStore(url);
   }
 
-  return { l0Cache, cachingStore, rawStore };
+  // Resolve the telemetry state. URL flag wins (most user-visible);
+  // app-config disable comes next; otherwise enabled if any tier is
+  // active. (L0-only counts as `enabled` — the cache tab keys off the
+  // top-level state and renders L0 stats independently.)
+  let telemetryState: CacheTelemetryState;
+  if (noCache) {
+    telemetryState = { kind: 'disabled-no-cache' };
+  } else if (!appConfig.cache.enabled && !appConfig.cache.l0Enabled) {
+    telemetryState = { kind: 'disabled-config' };
+  } else {
+    telemetryState = { kind: 'enabled' };
+  }
+
+  return { l0Cache, cachingStore, rawStore, telemetryState };
 }
