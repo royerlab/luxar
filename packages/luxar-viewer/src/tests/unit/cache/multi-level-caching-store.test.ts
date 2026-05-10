@@ -786,6 +786,70 @@ describe('MultiLevelCachingStore', () => {
       }
     );
 
+    it('disposed-store getResult returns Aborted synchronously without touching tiers', async () => {
+      // After dispose, callers must not be able to populate L1/L2 or
+      // trigger network. The early-return guards both the Map-poke
+      // and the prefetcher.onAccess fan-out.
+      const fetchSpy = vi.fn(async () => ({
+        ok: true,
+        async arrayBuffer() {
+          return new Uint8Array([1, 2, 3]).buffer;
+        },
+      })) as unknown as typeof fetch;
+      global.fetch = fetchSpy;
+
+      const target = new MultiLevelCachingStore('https://example.com/t.zarr', {
+        l1MaxSize: 20 * 1024 * 1024,
+        l2MaxSize: 4096,
+      });
+      await target.init();
+      await target.dispose();
+      (fetchSpy as unknown as { mockClear: () => void }).mockClear();
+
+      const result = await target.getResult('chunk');
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.kind).toBe('Aborted');
+      // No L1 mutation, no fetch initiation.
+      expect(target.getStats().l1.chunksCount).toBe(0);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it('in-flight data fetch unwinds with Aborted when store is disposed mid-flight', async () => {
+      // The store-level dataAbort is merged into fetchWithRetry's signal
+      // via mergeAbortSignals. Disposing the store mid-fetch must
+      // propagate to the underlying fetch and surface as a non-ok result.
+      let observedSignal: AbortSignal | undefined;
+      global.fetch = vi.fn((_url: string, init?: RequestInit) => {
+        const signal = init?.signal as AbortSignal | undefined;
+        observedSignal = signal;
+        return new Promise<Response>((_resolve, reject) => {
+          if (signal?.aborted) {
+            reject(new DOMException('Aborted', 'AbortError'));
+            return;
+          }
+          signal?.addEventListener(
+            'abort',
+            () => reject(new DOMException('Aborted', 'AbortError')),
+            { once: true }
+          );
+        });
+      }) as unknown as typeof fetch;
+
+      const promise = store.getResult('hung-chunk');
+      // Yield once so getResult enters fetchWithRetry and registers the abort listener.
+      await new Promise((r) => setTimeout(r, 0));
+      expect(observedSignal).toBeDefined();
+
+      await store.dispose();
+
+      const result = await promise;
+      expect(observedSignal?.aborted).toBe(true);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(['Aborted', 'NetworkError']).toContain(result.error.kind);
+      }
+    });
+
     it(
       'VC-2: cache-validation HEAD probe uses a shorter timeout than data fetches',
       { timeout: 15_000 },

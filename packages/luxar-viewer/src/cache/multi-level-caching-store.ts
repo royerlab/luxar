@@ -105,6 +105,17 @@ export class MultiLevelCachingStore implements AsyncReadable {
   // Captured during init() so dispose() can find this instance's queue entry.
   private datasetId?: string;
 
+  // Lifecycle: set by dispose(). Synchronously short-circuits getResult and
+  // gets propagated to fetchWithRetry via dataAbort below so any in-flight
+  // network/prefetch fetch unwinds rather than continuing to write into a
+  // disposed L2 store.
+  private disposed = false;
+
+  // Aborted by dispose(). Merged with each caller's optional signal in
+  // getResult so a dataset switch cancels every in-flight data/prefetch
+  // fetch this store kicked off, not only the validation request.
+  private readonly dataAbort = new AbortController();
+
   // Invalidation callbacks (e.g., L0 DecompressedChunkCache clearing on L1/L2 invalidation)
   private invalidationCallbacks: (() => void)[] = [];
 
@@ -359,6 +370,13 @@ export class MultiLevelCachingStore implements AsyncReadable {
     key: string,
     options?: { signal?: AbortSignal; suppressPrefetch?: boolean }
   ): Promise<Result<Uint8Array, CacheError>> {
+    // Disposed-store fast path: bail before touching any tier. Avoids
+    // late writes against a torn-down L2 and lets a dataset switch
+    // unwind in-flight prefetch.onAccess cascades cleanly.
+    if (this.disposed || this.dataAbort.signal.aborted) {
+      return err({ kind: 'Aborted' });
+    }
+
     // Only count user-demand requests in the demand hit-rate. The
     // prefetcher calls back through getResult with
     // `suppressPrefetch: true` after observing demand on key K to
@@ -397,9 +415,13 @@ export class MultiLevelCachingStore implements AsyncReadable {
 
     // L3: Remote fetch (~100ms)
     this.log(`HTTP fetch: ${key}`, 'info');
+    // Compose the store-level dispose signal with any caller signal so
+    // dataset disposal aborts in-flight prefetch/demand fetches without
+    // each call site having to plumb its own controller.
+    const fetchSignal = mergeAbortSignals(this.dataAbort.signal, options?.signal);
     let response: Response | undefined;
     try {
-      response = await this.fetchWithRetry(this.buildUrl(key), { signal: options?.signal });
+      response = await this.fetchWithRetry(this.buildUrl(key), { signal: fetchSignal });
     } catch (error) {
       // fetchWithRetry shouldn't throw (it returns undefined on failure), but
       // future refactors might — surface as NetworkError rather than crash.
@@ -407,13 +429,15 @@ export class MultiLevelCachingStore implements AsyncReadable {
       return err({ kind: 'NetworkError', cause });
     }
 
-    if (options?.signal?.aborted) {
+    if (this.disposed || this.dataAbort.signal.aborted || options?.signal?.aborted) {
       return err({ kind: 'Aborted' });
     }
     if (!response) {
       // fetchWithRetry returned undefined — exhausted retries on transient
-      // failures, or caller signal aborted between retries.
-      if (options?.signal?.aborted) return err({ kind: 'Aborted' });
+      // failures, or caller/store signal aborted between retries.
+      if (this.disposed || this.dataAbort.signal.aborted || options?.signal?.aborted) {
+        return err({ kind: 'Aborted' });
+      }
       return err({
         kind: 'NetworkError',
         cause: new Error(`fetch exhausted retries for ${key}`),
@@ -799,6 +823,13 @@ export class MultiLevelCachingStore implements AsyncReadable {
    * could run `setContentHash()` against a disposed l2Store.
    */
   async dispose(): Promise<void> {
+    // Mark disposed first so concurrent getResult calls bail synchronously
+    // and any racing fetch-error path returns Aborted. Aborting dataAbort
+    // unwinds in-flight prefetch/demand fetches that were composed with
+    // it via mergeAbortSignals in getResult.
+    this.disposed = true;
+    this.dataAbort.abort();
+
     // Clear prefetcher reference (in-flight requests will complete harmlessly)
     this.prefetcher = null;
 
