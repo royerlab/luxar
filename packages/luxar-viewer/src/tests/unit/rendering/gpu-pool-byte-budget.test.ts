@@ -18,6 +18,7 @@ import {
   GPUBufferPool,
   estimateGeometryBytes,
   selectBuffersToEvict,
+  invalidateCachedByteSize,
   type PooledBufferRef,
 } from '../../../rendering/gpu-buffer-pool';
 import type { LoadedPointsData } from '../../../data/data-loader-types';
@@ -118,6 +119,31 @@ describe('estimateGeometryBytes', () => {
     g.setAttribute('position', new THREE.Float32BufferAttribute(30, 3));
     g.setIndex(new THREE.BufferAttribute(new Uint16Array([0, 1, 2]), 1)); // 6 B
     expect(estimateGeometryBytes(g)).toBe(120 + 6);
+  });
+
+  it('D.3: caches the result on userData.cachedByteSize', () => {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(30, 3));
+    const first = estimateGeometryBytes(g);
+    expect((g.userData as { cachedByteSize?: number }).cachedByteSize).toBe(first);
+
+    // Mutate the underlying attribute — without invalidation, the cached
+    // value is returned unchanged. This is the contract: the caller (the
+    // grow paths) is responsible for calling invalidateCachedByteSize.
+    g.setAttribute('color', new THREE.Float32BufferAttribute(60, 3)); // +240 B
+    const cached = estimateGeometryBytes(g);
+    expect(cached).toBe(first); // unchanged thanks to the cache
+
+    invalidateCachedByteSize(g);
+    const recomputed = estimateGeometryBytes(g);
+    expect(recomputed).toBe(120 + 240);
+  });
+
+  it('D.3: invalidateCachedByteSize is a no-op when the cache is missing', () => {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(30, 3));
+    invalidateCachedByteSize(g); // no cache yet — should not throw
+    expect(estimateGeometryBytes(g)).toBe(120);
   });
 });
 

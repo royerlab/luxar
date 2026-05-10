@@ -156,8 +156,16 @@ export function selectBuffersToEvict<R extends PooledBufferRef>(
  * upload — it slightly overstates because we count the full backing
  * array even if `count < array.length / itemSize`, but that's the
  * footprint that matters for pool memory pressure.
+ *
+ * D.3: result cached on `geometry.userData.cachedByteSize` so repeated
+ * `getStats()` polls don't re-iterate attribute byteLengths. Grow
+ * paths invalidate the cache via `invalidateCachedByteSize()`.
  */
 export function estimateGeometryBytes(geometry: THREE.BufferGeometry): number {
+  const userData = geometry.userData as { cachedByteSize?: number };
+  if (typeof userData.cachedByteSize === 'number') {
+    return userData.cachedByteSize;
+  }
   let total = 0;
   for (const name in geometry.attributes) {
     const attr = geometry.attributes[name] as THREE.BufferAttribute;
@@ -175,7 +183,18 @@ export function estimateGeometryBytes(geometry: THREE.BufferGeometry): number {
       total += idxArr.byteLength;
     }
   }
+  userData.cachedByteSize = total;
   return total;
+}
+
+/**
+ * D.3: invalidate the cached byte estimate on a geometry. Call after
+ * resizing/replacing any attribute or index so the next
+ * `estimateGeometryBytes` call recomputes.
+ */
+export function invalidateCachedByteSize(geometry: THREE.BufferGeometry): void {
+  const userData = geometry.userData as { cachedByteSize?: number };
+  delete userData.cachedByteSize;
 }
 
 /**
@@ -509,6 +528,11 @@ export class GPUBufferPool {
     types: PointsAttributeTypes
   ): void {
     const newCapacity = Math.ceil(neededCount * 1.5);
+
+    // D.3: any attribute we're about to replace invalidates the cached
+    // byte estimate. Clear it once up front rather than after each
+    // attribute swap.
+    invalidateCachedByteSize(geometry);
 
     // Position: Always Float32Array
     const oldPos = geometry.getAttribute('position') as THREE.BufferAttribute;
@@ -869,6 +893,9 @@ export class GPUBufferPool {
   private growLinesGeometry(geometry: THREE.InstancedBufferGeometry, neededCount: number): void {
     const newCapacity = Math.ceil(neededCount * 1.5);
 
+    // D.3: invalidate cached byte estimate before re-allocating any attribute.
+    invalidateCachedByteSize(geometry);
+
     const attrNames = [
       'aStartPos',
       'aEndPos',
@@ -1133,6 +1160,9 @@ export class GPUBufferPool {
    */
   private growGSplatsGeometry(geometry: THREE.InstancedBufferGeometry, neededCount: number): void {
     const newCapacity = Math.ceil(neededCount * 1.5);
+
+    // D.3: invalidate cached byte estimate before re-allocating any attribute.
+    invalidateCachedByteSize(geometry);
 
     const attrNames = [
       'aCenter',
