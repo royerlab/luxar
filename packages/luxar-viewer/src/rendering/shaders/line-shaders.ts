@@ -18,9 +18,20 @@
  *     engages, intensity fades proportionally so a single very-near
  *     segment doesn't paint the screen.
  *   - Width and sharpness sanitised against negative/NaN/Inf.
- *   - LUXAR_MAX_RGB_CONTRIBUTION fragment branch premultiplies RGB
- *     by intensity*opacity in `max` mode so MaxEquation+OneFactor
- *     captures contribution-weighted colour, not flat full-bright.
+ *
+ * Shader defines:
+ *   - `USE_COLORMAP` — enables the per-vertex scalar attribute +
+ *     colormap LUT path. Set in `LineMaterial` when the geometry
+ *     binds `aStartScalar`/`aEndScalar`.
+ *   - `LUXAR_MAX_RGB_CONTRIBUTION` — fragment-side define that
+ *     premultiplies `rgb *= alpha` before output so the
+ *     `MaxEquation` + `OneFactor`/`OneFactor` blend captures
+ *     contribution-weighted colour (a bright-but-thin fragment loses
+ *     against a dim-but-thick fragment), not flat full-bright. Set by
+ *     `LineMaterial.applyBlendingMode('max')` and cleared when
+ *     switching back. Without this define, max-mode line rendering
+ *     looks "stranded" — every visible fragment paints at full
+ *     intensity regardless of opacity, intensity, or fade.
  */
 import { GLSL_SANITIZE_FUNCTIONS } from './glsl-lib';
 
