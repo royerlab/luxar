@@ -3,6 +3,29 @@
   "version": "2025.8.3",
   "description": "GPU-accelerated WebGL renderer for nD scientific datasets",
   "license": "BSD-3-Clause",
+  "author": "Loic A. Royer and Luxar Contributors",
+  "homepage": "https://github.com/royerlab/luxar/tree/main/packages/luxar-viewer",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/royerlab/luxar.git",
+    "directory": "packages/luxar-viewer"
+  },
+  "bugs": {
+    "url": "https://github.com/royerlab/luxar/issues"
+  },
+  "keywords": [
+    "webgl",
+    "zarr",
+    "scientific-visualization",
+    "3d-rendering",
+    "ndarray",
+    "gaussian-splats",
+    "microscopy",
+    "image-viewer",
+    "hdr",
+    "three",
+    "visualization"
+  ],
   "type": "module",
   "engines": {
     "node": ">=20.19.0",
