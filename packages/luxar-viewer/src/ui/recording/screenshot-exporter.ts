@@ -110,17 +110,33 @@ export function encodeScreenshotBlob(
  * Trigger the standard browser "download a blob" flow: create an
  * invisible `<a>` element with an object URL, click it, then revoke
  * the URL after a short delay so the download has time to start.
+ *
+ * Wrapped in try/catch around the synchronous DOM steps so a throw
+ * from appendChild / click / removeChild doesn't leak the object
+ * URL. The delayed revoke covers the normal browser download path
+ * (the URL must outlive the `click()` call by enough time for the
+ * browser to start the download); the catch path revokes immediately
+ * because no download was kicked off.
  */
 export function downloadBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.style.display = 'none';
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  setTimeout(() => {
-    a.remove();
+  try {
+    const a = document.createElement('a');
+    a.style.display = 'none';
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      try {
+        a.remove();
+      } catch {
+        /* node already detached */
+      }
+      URL.revokeObjectURL(url);
+    }, 100);
+  } catch (err) {
     URL.revokeObjectURL(url);
-  }, 100);
+    throw err;
+  }
 }

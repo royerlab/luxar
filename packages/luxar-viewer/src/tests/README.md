@@ -65,12 +65,10 @@ test('handles network timeout gracefully', async ({ page }) => {
 });
 ```
 
-28 of 40 specs use the auto fixture (`./fixtures`) and get the
-post-test guard automatically. The remaining 12 specs intentionally
-import directly from `@playwright/test` because they keep their
-own `assertNoConsoleErrors(page, [...])` calls with per-test
-allow-lists. New specs default to `./fixtures` unless they have
-a specific reason not to.
+All E2E specs import from `./fixtures` and get the post-test
+guard automatically. New specs default to `./fixtures`; only switch
+to direct `@playwright/test` if the spec has a specific reason to
+manage its own per-test console-error allow-list (none currently do).
 
 The fixture combines two signal sources before the assertion fires:
 - Luxar's debug-console interceptor (in-app, formatted, polled via

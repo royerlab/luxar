@@ -119,6 +119,29 @@ describe('downloadBlob', () => {
       revokeSpy.mockRestore();
     }
   });
+
+  it('revokes the URL synchronously and rethrows when appendChild throws', () => {
+    // A synchronous DOM exception (e.g. document.body removed mid-call,
+    // some test environments) must not leak the object URL.
+    const createSpy = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:throws');
+    const revokeSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    const appendSpy = vi
+      .spyOn(document.body, 'appendChild')
+      .mockImplementation(() => {
+        throw new Error('detached document');
+      });
+
+    try {
+      expect(() => downloadBlob(new Blob(['x']), 'test.png')).toThrow('detached document');
+      // Catch path revokes immediately — no setTimeout queued.
+      expect(revokeSpy).toHaveBeenCalledTimes(1);
+      expect(revokeSpy).toHaveBeenCalledWith('blob:throws');
+    } finally {
+      createSpy.mockRestore();
+      revokeSpy.mockRestore();
+      appendSpy.mockRestore();
+    }
+  });
 });
 
 describe('renderFrameToCanvas', () => {

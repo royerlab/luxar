@@ -506,7 +506,7 @@ When to run E2E:
 - Before PR/merge (always run full suite)
 
 ### Test Fixture Auto-Generation
-Unit tests (`pnpm test`) auto-generate missing zarr fixtures via `globalSetup` in `vitest.config.ts`. The expected fixture list in `src/tests/global-setup.ts` must stay in sync with `tests/fixtures/generate_test_data.py` — when adding a new fixture to the Python script, add its name to the `EXPECTED_FIXTURES` array too.
+Unit tests (`pnpm test`) auto-generate missing zarr fixtures via `globalSetup` in `vitest.config.ts`. The fixture list is parsed directly from `tests/fixtures/generate_test_data.py` (the single source of truth) — adding a new fixture to the Python script is sufficient; no separate manifest needs updating.
 
 ---
 
