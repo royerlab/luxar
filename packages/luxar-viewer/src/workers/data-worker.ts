@@ -629,9 +629,15 @@ async function projectLinesTo3D(params: {
    * unallocated.
    */
   scalars: Float32Array | Float16Array | Uint8Array | null;
-  slicePosition: readonly number[];
-  tolerance: readonly number[];
-  displayDims: readonly number[];
+  /**
+   * View state for projection. Same `ProjectionViewState` shape every
+   * `project*To3D` worker function accepts — keeps the worker API
+   * uniform across node types. `tolerance` is required for parity
+   * even though Lines doesn't consult it directly (chunk bounds
+   * handle the visibility test); the field is validated for length
+   * to catch malformed payloads at the boundary.
+   */
+  viewState: ProjectionViewState;
   ndim: number;
   segmentCount: number;
 }): Promise<{
@@ -661,12 +667,11 @@ async function projectLinesTo3D(params: {
     colors,
     sharpness,
     scalars,
-    slicePosition,
-    tolerance,
-    displayDims,
+    viewState,
     ndim,
     segmentCount,
   } = params;
+  const { displayDims, slicePosition, tolerance } = viewState;
 
   // The shared projection validator handles displayDims and the basic
   // ndim/positions sanity check; we then check segment-vertex bounds
@@ -929,8 +934,14 @@ async function projectGSplatsTo3D(params: {
   amplitudes: Float32Array;
   colors: Float32Array | Uint8Array | Uint16Array | null;
   sharpness: Float32Array | null;
-  displayDims: readonly number[];
-  slicePosition: readonly number[];
+  /**
+   * View state for projection. Same `ProjectionViewState` shape every
+   * `project*To3D` worker function accepts. GSplats consumes
+   * `displayDims` + `slicePosition`; `tolerance` is required for API
+   * parity but isn't consulted by the WASM kernel (per-axis hidden-
+   * dim attenuation is computed from cholesky factors instead).
+   */
+  viewState: ProjectionViewState;
   ndim: number;
   splatCount: number;
   /** Indices of hidden dimensions that are discrete (binary visibility) */
@@ -956,11 +967,11 @@ async function projectGSplatsTo3D(params: {
     choleskyFactors,
     amplitudes,
     colors,
-    displayDims,
-    slicePosition,
+    viewState,
     ndim,
     splatCount,
   } = params;
+  const { displayDims, slicePosition } = viewState;
 
   validateProjectionInputs(
     'projectGSplatsTo3D',

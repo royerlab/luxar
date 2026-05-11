@@ -137,9 +137,11 @@ describe('data-worker validation — projection entry points', () => {
         widths: new Float32Array(0),
         colors: null,
         sharpness: null,
-        slicePosition: [0, 0, 0],
-        tolerance: [0, 0, 0],
-        displayDims: [0, 1, 2],
+        viewState: {
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0],
+          tolerance: [0, 0, 0],
+        },
         ndim: 3,
         segmentCount: -1,
       })
@@ -155,9 +157,11 @@ describe('data-worker validation — projection entry points', () => {
         widths: new Float32Array(2),
         colors: null,
         sharpness: null,
-        slicePosition: [0, 0, 0],
-        tolerance: [0, 0, 0],
-        displayDims: [0, 1, 2],
+        viewState: {
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0],
+          tolerance: [0, 0, 0],
+        },
         ndim: 3,
         segmentCount: 2,
       })
@@ -174,8 +178,11 @@ describe('data-worker validation — projection entry points', () => {
         amplitudes: new Float32Array(5),
         colors: null,
         sharpness: null,
-        displayDims: [0, 1, 2],
-        slicePosition: [0, 0, 0],
+        viewState: {
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0],
+          tolerance: [0, 0, 0],
+        },
         ndim: 3,
         splatCount: 5,
       })
@@ -191,8 +198,11 @@ describe('data-worker validation — projection entry points', () => {
         amplitudes: new Float32Array(2), // need 5
         colors: null,
         sharpness: null,
-        displayDims: [0, 1, 2],
-        slicePosition: [0, 0, 0],
+        viewState: {
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0],
+          tolerance: [0, 0, 0],
+        },
         ndim: 3,
         splatCount: 5,
       })
@@ -389,9 +399,11 @@ describe('data-worker validation — segment/color/query gaps', () => {
         widths: new Float32Array(8),
         colors: null,
         sharpness: null,
-        slicePosition: [0, 0, 0],
-        tolerance: [0, 0, 0],
-        displayDims: [0, 1, 2],
+        viewState: {
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0],
+          tolerance: [0, 0, 0],
+        },
         ndim: 3,
         segmentCount: 2,
       })
@@ -407,9 +419,11 @@ describe('data-worker validation — segment/color/query gaps', () => {
         widths: new Float32Array(4),
         colors: new Float32Array(6), // need 4 vertices × 3 = 12
         sharpness: null,
-        slicePosition: [0, 0, 0],
-        tolerance: [0, 0, 0],
-        displayDims: [0, 1, 2],
+        viewState: {
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0],
+          tolerance: [0, 0, 0],
+        },
         ndim: 3,
         segmentCount: 2,
       })
@@ -442,8 +456,11 @@ describe('data-worker validation — segment/color/query gaps', () => {
         amplitudes: new Float32Array(5),
         colors: new Float32Array(10), // need 5 × 3 = 15
         sharpness: null,
-        displayDims: [0, 1, 2],
-        slicePosition: [0, 0, 0],
+        viewState: {
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0],
+          tolerance: [0, 0, 0],
+        },
         ndim: 3,
         splatCount: 5,
         discreteDims: [],
@@ -551,9 +568,11 @@ describe('data-worker validation — segment/color/query gaps', () => {
         widths: new Float32Array(4),
         colors: null,
         sharpness: new Float32Array(2), // need 4
-        slicePosition: [0, 0, 0],
-        tolerance: [0, 0, 0],
-        displayDims: [0, 1, 2],
+        viewState: {
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0],
+          tolerance: [0, 0, 0],
+        },
         ndim: 3,
         segmentCount: 2,
       })

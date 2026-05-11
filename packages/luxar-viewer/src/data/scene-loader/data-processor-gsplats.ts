@@ -107,8 +107,16 @@ export async function projectGSplatsTo3DUsingWorker(
           amplitudes: data.amplitudes,
           colors: data.colors,
           sharpness: null,
-          displayDims: viewState.displayDims,
-          slicePosition: viewState.slicePosition,
+          viewState: {
+            displayDims: viewState.displayDims,
+            slicePosition: viewState.slicePosition,
+            // GSplats doesn't consume tolerance in the worker —
+            // hidden-dim attenuation is computed from cholesky
+            // factors. The field is required for the uniform
+            // `ProjectionViewState` shape; pass the loader's
+            // tolerance through for parity.
+            tolerance: viewState.tolerance,
+          },
           ndim: data.ndim,
           splatCount: data.splatCount,
           discreteDims,

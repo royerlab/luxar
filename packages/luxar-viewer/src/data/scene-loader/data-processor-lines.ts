@@ -85,9 +85,11 @@ export async function projectLinesTo3DUsingWorker(
           // boundary uses `... | null` so Comlink doesn't strip the
           // field. Map `undefined → null` at the dispatch site.
           scalars: data.scalars ?? null,
-          slicePosition: viewState.slicePosition,
-          tolerance,
-          displayDims: viewState.displayDims,
+          viewState: {
+            displayDims: viewState.displayDims,
+            slicePosition: viewState.slicePosition,
+            tolerance,
+          },
           ndim: data.ndim,
           segmentCount: data.segmentCount,
         })
