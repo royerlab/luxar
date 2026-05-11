@@ -102,7 +102,7 @@ vi.mock('three', () => ({
   AgXToneMapping: 5,
   NeutralToneMapping: 6,
   CustomToneMapping: 7,
-  PCFSoftShadowMap: 2,
+  PCFShadowMap: 1,
   // Blending modes
   NormalBlending: 'NormalBlending',
   AdditiveBlending: 'AdditiveBlending',

@@ -1340,44 +1340,37 @@ export const Raycaster = vi.fn().mockImplementation(() => ({
   intersectObjects: vi.fn(() => []),
 }));
 
-export const Clock = vi.fn().mockImplementation(() => ({
-  autoStart: true,
-  startTime: 0,
-  oldTime: 0,
-  elapsedTime: 0,
-  running: false,
+export const Timer = vi.fn().mockImplementation(() => ({
+  _previousTime: 0,
+  _delta: 0,
+  _elapsed: 0,
+  _timescale: 1,
 
-  start: vi.fn(function (this: any) {
-    this.startTime = performance.now();
-    this.oldTime = this.startTime;
-    this.elapsedTime = 0;
-    this.running = true;
+  connect: vi.fn(),
+  dispose: vi.fn(),
+  reset: vi.fn(function (this: any) {
+    this._delta = 0;
+    this._elapsed = 0;
   }),
-  stop: vi.fn(function (this: any) {
-    this.getElapsedTime();
-    this.running = false;
-    this.autoStart = false;
-  }),
-  getElapsedTime: vi.fn(function (this: any) {
-    this.getDelta();
-    return this.elapsedTime;
+  update: vi.fn(function (this: any) {
+    const now = performance.now();
+    this._delta = this._previousTime === 0 ? 0 : (now - this._previousTime) / 1000;
+    this._previousTime = now;
+    this._elapsed += this._delta;
+    return this;
   }),
   getDelta: vi.fn(function (this: any) {
-    let diff = 0;
-
-    if (this.autoStart && !this.running) {
-      this.start();
-      return 0;
-    }
-
-    if (this.running) {
-      const newTime = performance.now();
-      diff = (newTime - this.oldTime) / 1000;
-      this.oldTime = newTime;
-      this.elapsedTime += diff;
-    }
-
-    return diff;
+    return this._delta;
+  }),
+  getElapsed: vi.fn(function (this: any) {
+    return this._elapsed;
+  }),
+  getTimescale: vi.fn(function (this: any) {
+    return this._timescale;
+  }),
+  setTimescale: vi.fn(function (this: any, value: number) {
+    this._timescale = value;
+    return this;
   }),
 }));
 
@@ -1515,7 +1508,7 @@ export default {
   // Utilities
   Frustum,
   Raycaster,
-  Clock,
+  Timer,
 
   // Constants
   NoBlending,

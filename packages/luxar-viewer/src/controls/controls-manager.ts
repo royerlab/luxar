@@ -103,7 +103,7 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   private savedCameraUp = new THREE.Vector3(0, 1, 0);
 
   // Delta time tracking for fly controls
-  private clock = new THREE.Clock();
+  private clock = new THREE.Timer();
 
   /**
    * Create controls manager for camera interaction.
@@ -117,6 +117,12 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
 
     this.camera = camera;
     this.domElement = domElement;
+
+    // Page-visibility integration: pauses the timer when the tab is hidden.
+    // Clock did this implicitly; Timer requires opt-in (three r174+).
+    if (typeof document !== 'undefined') {
+      this.clock.connect(document);
+    }
 
     // Initialize with orbit controls by default
     this.setControlType('orbit');
@@ -224,7 +230,7 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
     // Target is set in restoreCameraState() after creation
     this.currentControls = controls;
     this.attachControlEventForwarders(controls);
-    this.clock.getDelta();
+    this.clock.update(); // Reset baseline; next getDelta() reads from now.
   }
 
   private createFlyControls(): void {
@@ -241,7 +247,7 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
 
     this.currentControls = controls;
     this.attachControlEventForwarders(controls);
-    this.clock.start();
+    this.clock.update(); // Reset baseline; next getDelta() reads from now.
   }
 
   private createOrthoControls(): void {
@@ -274,7 +280,7 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
     // Target is set in restoreCameraState() after creation
     this.currentControls = controls;
     this.attachControlEventForwarders(controls);
-    this.clock.getDelta();
+    this.clock.update(); // Reset baseline; next getDelta() reads from now.
   }
 
   // ---------------------------------------------------------------------------
@@ -350,6 +356,7 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   public update(): void {
     if (!this.currentControls) return;
 
+    this.clock.update();
     const delta = this.clock.getDelta();
     if (this.currentControls instanceof LuxarOrbitControls) {
       this.currentControls.update(delta);
@@ -602,6 +609,6 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
 
   public dispose(): void {
     this.disposeCurrentControls();
-    this.clock.stop();
+    this.clock.dispose(); // Disconnects from document visibility events.
   }
 }

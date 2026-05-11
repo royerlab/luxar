@@ -514,7 +514,7 @@ export const config: AppConfig = {
       precision: 'highp' as const, // High precision for better quality
       shadowMap: {
         enabled: false, // No shadows needed for points
-        type: THREE.PCFSoftShadowMap, // Soft shadows if enabled
+        type: THREE.PCFShadowMap, // PCF is soft by default since three r182
       },
     },
 
