@@ -253,6 +253,33 @@ luxar gsplat render splats.gsplats.zarr rendered.npy --shape 128,128,128
 luxar gsplat compare fitted.gsplats.zarr original.tiff
 luxar gsplat compare fitted.gsplats.zarr original.npy --output-json metrics.json --device cuda
 
+# Calibrate splat count K via blind-spot cross-validation
+# Sweeps K, identifies the held-out PSNR peak (K*), and reports the noise floor.
+# Uses the manuscript's Noise2Self protocol: 5% donut-median masking; held-out
+# evaluation against the original (pre-mask) values at masked voxels.
+luxar gsplat cal volume.tiff cal.json                            # 10-point sweep, [1K, 512K]
+luxar gsplat cal volume.zarr cal.json --n-grid 5 --k-max 128000  # Faster: 5-point sweep
+luxar gsplat cal volume.zarr cal.json --k-grid '1000,4000,16000,64000,256000'  # Explicit
+luxar gsplat cal volume.tiff cal.json --pdf cal_report.pdf       # Multi-page PDF report
+luxar gsplat cal volume.tiff cal.json --pdf rep.pdf --keep-fits fits/  # Slice montages too
+luxar gsplat cal volume.zarr cal.json --progression power --power 2  # Polynomial K spacing
+# Output: K* + curve type {peak | plateau | signal_limited} + noise-floor σ̂ + PSNR ceiling.
+# Then re-run fit at the recommended K: luxar gsplat fit volume.zarr out.zarr --seeds <K*>
+
+# Build an additive LOD ladder from a fitted gsplat dataset (post-fit ordering)
+# Progressive fitting now returns a single flattened dataset; the LOD ladder is
+# built explicitly here via the supp-doc additive-LOD algorithm (greedy /
+# matching-pursuit ordering). Default method is `greedy`; for very large N use
+# `self_energy` (cheap O(N log N), 2-10% AUC gap on real datasets).
+luxar gsplat lod additive in.gsplats.zarr out.gsplats.zarr                 # 4 equal-count levels (default)
+luxar gsplat lod additive in.gsplats.zarr out.gsplats.zarr --n-lods 6      # 6 equal-count levels
+luxar gsplat lod additive in.gsplats.zarr out.gsplats.zarr \
+    --breakpoints energy:0.5,0.9,0.99,1.0                                   # cumulative energy fractions
+luxar gsplat lod additive in.gsplats.zarr out.gsplats.zarr \
+    --breakpoints counts:1000,5000,25000                                    # explicit cumulative splat counts
+luxar gsplat lod additive in.gsplats.zarr out.gsplats.zarr --method self_energy  # cheap O(N log N) fallback
+luxar gsplat lod additive in.gsplats.zarr out.gsplats.zarr -m mass -b counts:500,2000,10000
+
 # Split into parts
 luxar gsplat split splats.gsplats.zarr output_dir/ --parts 4
 luxar gsplat split splats.gsplats.zarr output_dir/ --indices "1000,5000"

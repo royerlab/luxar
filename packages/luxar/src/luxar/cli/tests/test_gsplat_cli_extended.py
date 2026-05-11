@@ -1664,3 +1664,227 @@ class TestTransformCommand:
             np.sort(original.centers[:, 2] + 30),
             atol=1e-3,
         )
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Calibrate (cal) command tests
+# ═══════════════════════════════════════════════════════════════════════
+
+
+@pytest.fixture
+def smooth_blob_volume(tmp_path: Path) -> Path:
+    """A small smooth-blob volume that splats can fit quickly on CPU.
+
+    16^3 keeps the fit time per K under a few seconds even with patience-based
+    stopping; the smooth Gaussian blob gives the auto-seeder something to find.
+    """
+    rng = np.random.default_rng(0)
+    Y, X, Z = np.meshgrid(
+        np.linspace(0, 1, 16),
+        np.linspace(0, 1, 16),
+        np.linspace(0, 1, 16),
+        indexing="ij",
+    )
+    signal = np.exp(-((X - 0.5) ** 2 + (Y - 0.5) ** 2 + (Z - 0.5) ** 2) * 8)
+    V = (signal + 0.02 * rng.standard_normal(signal.shape)).astype(np.float32)
+    V = np.clip(V, 0, 1)
+    path = tmp_path / "smooth_blob.npy"
+    np.save(str(path), V)
+    return path
+
+
+@pytest.fixture
+def fast_fit_config(tmp_path: Path) -> Path:
+    """YAML config that caps iters low and disables GPU paths for fast CPU tests."""
+    cfg = {
+        "n_iters": 30,
+        "early_stop_patience": 30,
+        "use_cuda": False,
+        "use_metal": False,
+    }
+    path = tmp_path / "fast.yaml"
+    path.write_text(yaml.safe_dump(cfg))
+    return path
+
+
+class TestCalibrateCommand:
+    def test_cal_basic(
+        self,
+        runner: CliRunner,
+        smooth_blob_volume: Path,
+        fast_fit_config: Path,
+        tmp_path: Path,
+    ) -> None:
+        """End-to-end: cal sweeps a 2-K grid and writes a valid JSON result."""
+        import json
+
+        out_json = tmp_path / "cal.json"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "cal",
+                str(smooth_blob_volume),
+                str(out_json),
+                "--n-grid",
+                "2",
+                "--k-min",
+                "20",
+                "--k-max",
+                "100",
+                "--preset",
+                "draft",
+                "--config",
+                str(fast_fit_config),
+                "--device",
+                "cpu",
+            ],
+        )
+        assert result.exit_code == 0, f"cal failed:\n{result.stdout}"
+        assert out_json.exists()
+
+        with open(out_json) as f:
+            data = json.load(f)
+
+        # Required top-level keys
+        for key in [
+            "k_values_requested",
+            "k_values_effective",
+            "held_out_psnr_db",
+            "train_psnr_db",
+            "full_psnr_db",
+            "full_ssim",
+            "held_out_peak",
+            "noise_floor",
+            "fit_times_seconds",
+            "mask_seed",
+            "mask_fraction",
+            "donut_radius",
+            "volume_shape",
+            "timestamp",
+        ]:
+            assert key in data, f"Missing key in JSON: {key}"
+
+        # Sweep was 2 K values
+        assert len(data["k_values_requested"]) == 2
+        assert len(data["held_out_psnr_db"]) == 2
+
+        # K* must be one of the swept values
+        assert data["held_out_peak"]["k_star"] in data["k_values_requested"]
+        assert data["held_out_peak"]["type"] in ("peak", "plateau", "signal_limited")
+
+        # Noise floor present and finite (or sentinel)
+        nf = data["noise_floor"]
+        for sig_key in ("sigma_hat", "sigma_laplacian", "sigma_haar"):
+            assert sig_key in nf
+
+        # Stdout shows the recommended K* line
+        assert "Recommended K" in result.stdout
+
+    def test_cal_explicit_grid_overrides(
+        self,
+        runner: CliRunner,
+        smooth_blob_volume: Path,
+        fast_fit_config: Path,
+        tmp_path: Path,
+    ) -> None:
+        """--k-grid takes precedence over --n-grid/--k-min/--k-max."""
+        import json
+
+        out_json = tmp_path / "cal.json"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "cal",
+                str(smooth_blob_volume),
+                str(out_json),
+                "--k-grid",
+                "30,90",
+                # These should be ignored when --k-grid is present
+                "--n-grid",
+                "10",
+                "--k-min",
+                "1",
+                "--k-max",
+                "999",
+                "--preset",
+                "draft",
+                "--config",
+                str(fast_fit_config),
+                "--device",
+                "cpu",
+            ],
+        )
+        assert result.exit_code == 0, f"cal failed:\n{result.stdout}"
+        with open(out_json) as f:
+            data = json.load(f)
+        assert data["k_values_requested"] == [30, 90]
+
+    def test_cal_invalid_progression(
+        self,
+        runner: CliRunner,
+        smooth_blob_volume: Path,
+        tmp_path: Path,
+    ) -> None:
+        """Bogus --progression name surfaces as a non-zero exit code."""
+        out_json = tmp_path / "cal.json"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "cal",
+                str(smooth_blob_volume),
+                str(out_json),
+                "--progression",
+                "cubic",  # not a valid name
+                "--device",
+                "cpu",
+            ],
+        )
+        assert result.exit_code != 0
+
+    def test_cal_pdf_and_keep_fits(
+        self,
+        runner: CliRunner,
+        smooth_blob_volume: Path,
+        fast_fit_config: Path,
+        tmp_path: Path,
+    ) -> None:
+        """--pdf and --keep-fits both produce their expected outputs."""
+        # Skip if matplotlib isn't installed (the PDF path degrades but the
+        # rest of cal must still complete; this test specifically checks PDF).
+        pytest.importorskip("matplotlib")
+
+        out_json = tmp_path / "cal.json"
+        out_pdf = tmp_path / "cal.pdf"
+        out_fits = tmp_path / "fits"
+
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "cal",
+                str(smooth_blob_volume),
+                str(out_json),
+                "--k-grid",
+                "30,90",
+                "--preset",
+                "draft",
+                "--config",
+                str(fast_fit_config),
+                "--device",
+                "cpu",
+                "--pdf",
+                str(out_pdf),
+                "--keep-fits",
+                str(out_fits),
+            ],
+        )
+        assert result.exit_code == 0, f"cal failed:\n{result.stdout}"
+        assert out_pdf.exists()
+        assert out_pdf.stat().st_size > 1000  # not an empty PDF
+        # Per-K fits persisted
+        assert out_fits.is_dir()
+        persisted = sorted(out_fits.iterdir())
+        assert len(persisted) == 2

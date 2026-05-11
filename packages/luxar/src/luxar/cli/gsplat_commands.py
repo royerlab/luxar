@@ -2629,6 +2629,249 @@ def compare_quality(
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# cal — Calibrate splat count K via blind-spot cross-validation
+# ═══════════════════════════════════════════════════════════════════════
+
+
+@app_gsplat.command("cal")
+def calibrate_command(
+    input_path: Path = typer.Argument(
+        ..., exists=True, help="Input volume (.zarr, .zarr.zip, .tiff, .npy, .npz)"
+    ),
+    output_json: Path = typer.Argument(
+        ..., help="Output JSON with full sweep curves and recommended K*"
+    ),
+    # K grid
+    k_grid: Optional[str] = typer.Option(
+        None,
+        "--k-grid",
+        help="Explicit comma-separated K values (e.g. '1000,4000,16000'). Overrides --n-grid/--k-min/--k-max.",
+    ),
+    n_grid: int = typer.Option(
+        10, "--n-grid", help="Number of K values when --k-grid is not given"
+    ),
+    k_min: int = typer.Option(1_000, "--k-min", help="Smallest K in the sweep"),
+    k_max: int = typer.Option(512_000, "--k-max", help="Largest K in the sweep"),
+    progression: str = typer.Option(
+        "exp",
+        "--progression",
+        help="Spacing of the K grid: 'exp' (geometric/log-spaced) or 'power' (polynomial)",
+    ),
+    power: int = typer.Option(
+        2, "--power", help="Exponent when --progression power (1=linear, 2=quadratic, ...)"
+    ),
+    # CV mask
+    mask_seed: int = typer.Option(42, "--mask-seed", help="RNG seed for the held-out mask"),
+    mask_fraction: float = typer.Option(
+        0.05, "--mask-fraction", help="Fraction of voxels to hold out (default 5%)"
+    ),
+    # Fit configuration (delegated to existing config loader)
+    preset: str = typer.Option(
+        "standard", "--preset", help="Fit preset: draft, standard, hifi, ultra"
+    ),
+    config: Optional[Path] = typer.Option(
+        None, "--config", help="YAML overrides for fit parameters"
+    ),
+    device: Optional[str] = typer.Option(
+        None, "--device", "-d", help="Device: auto/cpu/cuda/mps"
+    ),
+    # Volume loader pass-through (matches `compare` and `fit`)
+    channel: Optional[int] = typer.Option(
+        None, "--channel", "-c", help="Channel index for OME-Zarr inputs"
+    ),
+    timepoint: Optional[int] = typer.Option(
+        None, "--timepoint", help="Timepoint index for OME-Zarr inputs"
+    ),
+    array_key: Optional[str] = typer.Option(
+        None, "--array-key", help="Array key within .npz / nested zarr"
+    ),
+    # Optional outputs
+    pdf_report: Optional[Path] = typer.Option(
+        None, "--pdf", help="Generate calibration PDF report (rate-distortion + slice montages + CV curves)"
+    ),
+    keep_fits: Optional[Path] = typer.Option(
+        None,
+        "--keep-fits",
+        help="Directory to persist per-K .gsplats.zarr fits for later inspection",
+    ),
+    quiet: bool = typer.Option(
+        False,
+        "--quiet",
+        "-q",
+        help="Suppress the terminal summary table (the JSON file is still written)",
+    ),
+) -> None:
+    """Calibrate splat count via blind-spot cross-validation.
+
+    Sweeps Gaussian-splat fits over a grid of K values, evaluates held-out
+    PSNR at masked voxels, and reports the recommended K* (the held-out
+    peak) plus the dataset's noise-floor PSNR ceiling.
+
+    The fit at each K runs against a 5%-donut-median-filled volume so the
+    optimiser never sees the original noisy values at masked positions —
+    this is the Noise2Self protocol from Batson & Royer (2019), as used
+    in the Luxar manuscript's model-selection analysis.
+
+    Examples:
+        luxar gsplat cal kidney_dapi.tiff cal.json
+        luxar gsplat cal volume.zarr cal.json --n-grid 5 --k-max 128000 --preset draft
+        luxar gsplat cal volume.zarr cal.json --k-grid '1000,4000,16000,64000,256000'
+        luxar gsplat cal volume.tiff cal.json --pdf report.pdf --keep-fits fits/
+    """
+    try:
+        import math
+
+        from luxar.cli.gsplat_config import load_fit_config, load_volume
+        from luxar.gsplats.calibration import build_k_grid, calibrate
+
+        # 1. Resolve K grid
+        explicit: Optional[list[int]] = None
+        if k_grid is not None:
+            explicit = [int(x.strip()) for x in k_grid.split(",") if x.strip()]
+        ks = build_k_grid(
+            explicit=explicit,
+            n_points=n_grid,
+            k_min=k_min,
+            k_max=k_max,
+            progression=progression,
+            power=power,
+        )
+
+        # 2. Load volume (reuse the loader used by `compare` and `fit`)
+        with asection(f"Calibration: {input_path.name}"):
+            with asection("Loading volume"):
+                volume = load_volume(
+                    input_path,
+                    channel=channel,
+                    timepoint=timepoint,
+                    array_key=array_key,
+                )
+
+            aprint(
+                f"Mask: {mask_fraction * 100:.1f}% (seed={mask_seed}); donut radius=1"
+            )
+            aprint(f"K grid ({len(ks)} points): {ks}")
+
+            # 3. Build fit kwargs from preset + YAML config + CLI overrides
+            fit_kwargs = load_fit_config(
+                preset=preset,
+                config_path=config,
+                cli_overrides={"device": device},
+            )
+            # Calibration runs many fits — keep them quiet
+            fit_kwargs["verbose"] = False
+
+            if keep_fits is not None:
+                keep_fits = Path(keep_fits)
+                keep_fits.mkdir(parents=True, exist_ok=True)
+                aprint(f"Per-K fits will be saved under {keep_fits}")
+
+            # 4. Run sweep
+            def _on_progress(i: int, n: int, msg: str) -> None:
+                aprint(f"  [{i + 1}/{n}] {msg}")
+
+            with asection(f"Sweeping {len(ks)} fits"):
+                t0 = time.perf_counter()
+                result = calibrate(
+                    volume,
+                    k_grid=ks,
+                    fit_kwargs=fit_kwargs,
+                    mask_seed=mask_seed,
+                    mask_fraction=mask_fraction,
+                    keep_fits=keep_fits,
+                    progress_callback=_on_progress,
+                )
+                elapsed = time.perf_counter() - t0
+
+            # 5. Write JSON
+            with asection("Writing results"):
+                output_json.parent.mkdir(parents=True, exist_ok=True)
+                result.to_json(output_json)
+                aprint(f"Wrote {output_json}")
+
+            # 6. Optional PDF
+            if pdf_report is not None:
+                with asection("Generating PDF report"):
+                    try:
+                        from luxar.gsplats.calibration_report import (
+                            render_calibration_report,
+                        )
+
+                        pdf_report.parent.mkdir(parents=True, exist_ok=True)
+                        render_calibration_report(
+                            result=result,
+                            volume=volume,
+                            output_path=pdf_report,
+                            splat_paths=result.splat_paths,
+                        )
+                        aprint(f"Wrote {pdf_report}")
+                    except ImportError as exc:
+                        aprint(
+                            f"Skipping PDF report: optional dependency missing ({exc})"
+                        )
+                        aprint(
+                            "Install matplotlib to enable --pdf: pip install matplotlib"
+                        )
+
+        # 7. Print formatted table
+        if not quiet:
+            aprint("\n" + "═" * 64)
+            aprint(f"  CALIBRATION  —  {input_path.name}")
+            aprint("═" * 64)
+            aprint(f"  Volume:         {tuple(result.volume_shape)} {result.volume_dtype}")
+            sigma = result.noise_floor.sigma_hat
+            ceil_db = result.noise_floor.psnr_max_db
+            sigma_str = f"{sigma:.4f}" if math.isfinite(sigma) else "—"
+            ceil_str = (
+                f"{ceil_db:.1f} dB"
+                if math.isfinite(ceil_db)
+                else (">60 dB" if math.isinf(ceil_db) else "—")
+            )
+            aprint(f"  Noise floor:    σ = {sigma_str}, PSNR ceiling = {ceil_str}")
+            aprint("")
+            aprint(
+                "    K_req     K_eff    PSNR_train  PSNR_held-out   PSNR_full   SSIM_full   fit (s)"
+            )
+            aprint("    " + "-" * 76)
+            for i, k_req in enumerate(result.k_values_requested):
+                k_eff = result.k_values_effective[i]
+                pt = result.train_psnr_db[i]
+                ph = result.held_out_psnr_db[i]
+                pf = result.full_psnr_db[i]
+                sf = result.full_ssim[i]
+                ft = result.fit_times_seconds[i]
+
+                def _f(x: float) -> str:
+                    if math.isnan(x):
+                        return "  nan"
+                    if math.isinf(x):
+                        return "  inf"
+                    return f"{x:6.2f}"
+
+                marker = "★" if k_req == result.held_out_peak.k_star else " "
+                aprint(
+                    f"  {marker} {k_req:7d}  {k_eff:7d}    {_f(pt)} dB     {_f(ph)} dB    {_f(pf)} dB    {sf:5.3f}    {ft:6.1f}"
+                )
+            aprint("")
+            aprint(
+                f"  ★ Recommended K* = {result.held_out_peak.k_star:,}  "
+                f"(type: {result.held_out_peak.type}, "
+                f"confidence: {result.held_out_peak.confidence_db:.2f} dB)"
+            )
+            aprint(f"  Total wall-clock: {elapsed:.1f} s")
+            aprint("═" * 64)
+
+    except typer.Exit:
+        raise
+    except Exception as exc:
+        aprint(f"Error: {exc}")
+        import traceback
+
+        traceback.print_exc()
+        raise typer.Exit(1)
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # merge — Combine multiple gsplat datasets
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -4247,4 +4490,227 @@ def batch_denoise_preprocess_cmd(
         raise
     except Exception as e:
         aprint(f"Error: {e}")
+        raise typer.Exit(1) from e
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# lod — Build LOD ladders from a fitted gsplat dataset
+# ═══════════════════════════════════════════════════════════════════════
+
+app_lod = typer.Typer(help="Build LOD ladders from a fitted gsplat dataset")
+app_gsplat.add_typer(app_lod, name="lod")
+
+
+def _parse_lod_breakpoints(spec: str) -> "str | list[int] | list[float]":
+    """Parse the ``--breakpoints`` CLI string into the form expected by
+    :func:`luxar.gsplats.lod.make_additive_lod`.
+
+    Accepted forms:
+      - ``equal-count``  → literal ``'equal-count'``.
+      - ``counts:5,10,15,20`` → ``[5, 10, 15, 20]`` (cumulative splat counts).
+      - ``energy:0.5,0.9,0.99,1.0`` → ``[0.5, 0.9, 0.99, 1.0]``
+        (cumulative energy fractions in (0, 1]).
+    """
+    s = spec.strip()
+    if s == "equal-count":
+        return "equal-count"
+    if s.startswith("counts:"):
+        body = s[len("counts:") :]
+        try:
+            values_int = [int(p.strip()) for p in body.split(",") if p.strip()]
+        except ValueError as e:
+            raise typer.BadParameter(
+                f"counts breakpoints must be ints; got {body!r}"
+            ) from e
+        if not values_int:
+            raise typer.BadParameter("counts breakpoints list is empty")
+        return values_int
+    if s.startswith("energy:"):
+        body = s[len("energy:") :]
+        try:
+            values_flt = [float(p.strip()) for p in body.split(",") if p.strip()]
+        except ValueError as e:
+            raise typer.BadParameter(
+                f"energy breakpoints must be floats; got {body!r}"
+            ) from e
+        if not values_flt:
+            raise typer.BadParameter("energy breakpoints list is empty")
+        return values_flt
+    raise typer.BadParameter(
+        f"breakpoints must be 'equal-count', 'counts:...', or 'energy:...'; "
+        f"got {spec!r}"
+    )
+
+
+@app_lod.command("additive")
+def lod_additive(
+    input_path: Path = typer.Argument(
+        ..., exists=True, help="Input .gsplats.zarr (single- or multi-LOD)"
+    ),
+    output_path: Path = typer.Argument(
+        ..., help="Output .gsplats.zarr (multi-LOD)"
+    ),
+    n_lods: int = typer.Option(
+        4,
+        "--n-lods",
+        help="Number of LOD levels when --breakpoints=equal-count",
+        min=1,
+    ),
+    method: str = typer.Option(
+        "greedy",
+        "--method",
+        "-m",
+        help=(
+            "Ordering method: greedy (default), self_energy, mass, "
+            "amplitude, spectral, random. greedy is provably (1-1/e)-optimal "
+            "at every prefix; self_energy is the recommended O(N log N) "
+            "fallback for very large N."
+        ),
+    ),
+    breakpoints: str = typer.Option(
+        "equal-count",
+        "--breakpoints",
+        "-b",
+        help=(
+            "How to slice the ordered set into LODs. "
+            "'equal-count' uses --n-lods bins of equal size. "
+            "'counts:5,10,15,20' uses explicit cumulative splat counts. "
+            "'energy:0.5,0.9,1.0' uses cumulative energy fractions in (0, 1]."
+        ),
+    ),
+    truncation_sigmas: float = typer.Option(
+        3.0,
+        "--truncation-sigmas",
+        help="Mahalanobis cutoff (in sigmas) for sparse-Gram pruning. "
+        "Larger keeps more pairs (slower but tighter); smaller is faster.",
+    ),
+    max_n_dense: int = typer.Option(
+        2000,
+        "--max-n-dense",
+        help="At N <= this, greedy uses a dense Gram + scan-greedy. "
+        "Above it, sparse Gram + lazy greedy.",
+    ),
+    seed: Optional[int] = typer.Option(
+        None, "--seed", help="Random seed for --method=random."
+    ),
+    overwrite: bool = typer.Option(
+        False, "--overwrite", help="Overwrite output if it exists."
+    ),
+    encoding_mode: Literal["auto", "precision", "memory"] = typer.Option(
+        "auto",
+        "--encoding",
+        "-e",
+        help="Encoding mode for output",
+    ),
+    compress: Optional[str] = typer.Option(
+        None,
+        "--compress",
+        help="Optional output compression: 'zip' or 'tar.gz' for an archive; "
+        "omit for a plain .gsplats.zarr directory.",
+    ),
+) -> None:
+    """Build an additive LOD ladder from a fitted gsplat dataset.
+
+    The original splats are reordered by the chosen method, then sliced into
+    ``--n-lods`` (or as many levels as ``--breakpoints`` implies) so that
+    ``up_to_lod(k)`` is the best L^2 approximation of the full scene at
+    that splat budget.
+
+    \b
+    Examples:
+        luxar gsplat lod additive in.gsplats.zarr out.gsplats.zarr
+        luxar gsplat lod additive in.gsplats.zarr out.gsplats.zarr --n-lods 6
+        luxar gsplat lod additive in.gsplats.zarr out.gsplats.zarr \\
+            --breakpoints energy:0.5,0.9,0.99,1.0
+        luxar gsplat lod additive in.gsplats.zarr out.gsplats.zarr \\
+            --breakpoints counts:1000,5000,25000
+        luxar gsplat lod additive in.gsplats.zarr out.gsplats.zarr \\
+            --method self_energy
+    """
+    try:
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.lod import make_additive_lod
+
+        method_norm = method.strip().replace("-", "_")
+        valid_methods = {
+            "greedy",
+            "self_energy",
+            "mass",
+            "amplitude",
+            "spectral",
+            "random",
+        }
+        if method_norm not in valid_methods:
+            raise typer.BadParameter(
+                f"--method must be one of {sorted(valid_methods)}, "
+                f"got {method!r}"
+            )
+
+        bp = _parse_lod_breakpoints(breakpoints)
+        encoding_mode_obj = _resolve_encoding_mode(encoding_mode)
+
+        if compress not in (None, "zip", "tar.gz"):
+            raise typer.BadParameter(
+                f"--compress must be 'zip' or 'tar.gz'; got {compress!r}"
+            )
+
+        if output_path.exists() and not overwrite:
+            raise typer.BadParameter(
+                f"Output {output_path} exists; pass --overwrite to replace it."
+            )
+
+        with asection(f"LOD additive: {input_path.name}"):
+            with asection("Loading dataset"):
+                data = GSplatData.load(input_path, include_stats=True)
+                aprint(f"Loaded {data.n_splats:,} splats ({data.ndim}D)")
+                if data.n_lods > 1:
+                    aprint(
+                        f"Input is multi-LOD ({data.n_lods} LODs); "
+                        "operating on the flattened concatenation."
+                    )
+
+            with asection(f"Ordering ({method_norm})"):
+                t0 = time.time()
+                ladder = make_additive_lod(
+                    data,
+                    n_lods=n_lods,
+                    method=method_norm,  # type: ignore[arg-type]
+                    breakpoints=bp,  # type: ignore[arg-type]
+                    truncation_sigmas=truncation_sigmas,
+                    max_n_dense=max_n_dense,
+                    seed=seed,
+                )
+                aprint(
+                    f"Built {ladder.n_lods}-level ladder in "
+                    f"{time.time() - t0:.2f}s"
+                )
+                cuts = ladder.stats.get("lod_cutpoints", [])
+                kind = ladder.stats.get("lod_breakpoints_kind", "?")
+                aprint(f"Cutpoints ({kind}): {cuts}")
+                for level in range(ladder.n_lods):
+                    lod = ladder.at_lod(level)
+                    aprint(f"  LOD {level}: {lod.n_splats:,} splats")
+
+            with asection("Saving"):
+                if output_path.exists() and overwrite:
+                    if output_path.is_dir():
+                        shutil.rmtree(output_path)
+                    else:
+                        output_path.unlink()
+                ladder.save(
+                    output_path,
+                    encoding_mode=encoding_mode_obj,
+                    compress=compress,  # type: ignore[arg-type]
+                )
+                aprint(f"Saved to {output_path}")
+
+    except typer.Exit:
+        raise
+    except typer.BadParameter:
+        raise
+    except Exception as e:
+        aprint(f"Error: {e}")
+        import traceback
+
+        traceback.print_exc()
         raise typer.Exit(1) from e

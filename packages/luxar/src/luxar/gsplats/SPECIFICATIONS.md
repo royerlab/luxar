@@ -566,6 +566,104 @@ def fit(
 - `render_gaussians_numpy()`: NumPy wrapper with no gradients
 - `render_gaussians_pytorch()`: PyTorch wrapper accepting packed parameters
 
+## 8. Calibration (`calibration.py`)
+
+### Purpose
+Implement the manuscript's blind-spot cross-validation protocol (Supp. Doc. 2, `splat_count_vs_quality`) to recommend a principled splat budget `K*` for a given dataset, and report the dataset's noise-floor PSNR ceiling. Purely additive — `fit_gaussian_splats` is called unchanged at each K in the sweep.
+
+### Why a separate module, not a `fit --cv` flag
+Held-out PSNR is a *capacity*-selection criterion (across K), not an *iteration*-selection one. At fixed K, bounded splat parameters (clamped Cholesky diagonals, L1 amplitude regularisation, conservative culling) prevent the held-out trajectory from peak-and-declining over iterations — within-fit held-out monitoring would add no value beyond the existing patience-based early stop. Calibration therefore sits outside the fitter and treats `fit_gaussian_splats` as a black box.
+
+### Pipeline
+1. Generate a deterministic Bernoulli mask `M` over voxel positions (`fraction = 0.05`, `seed = 42` by default; matches Batson & Royer 2019).
+2. Replace masked voxels with the median of their `(2r+1)^D` donut neighbourhood (centre excluded) to produce `V_filled`. Default `r = 1` → 3^D donut, 26 neighbours in 3D. Edge handling: `numpy reflect` padding.
+3. For each `K` in the sweep grid:
+   - Fit a Gaussian-splat model with `fit_gaussian_splats(V_filled, seeds=K, **fit_kwargs)`.
+   - Render the result back to volume via `render_to_volume_tensor`.
+   - Compute held-out PSNR at masked positions against the *original* (pre-fill) `V`; train PSNR at unmasked positions; full-volume PSNR/SSIM against the original.
+4. Estimate the noise floor on `V` (after `[0, 1]` normalisation) via a three-estimator ensemble: discrete-Laplacian MAD (Immerkaer 1996, kernel-norm `K = 2D(2D+1)`), Haar HH-subband MAD (Donoho & Johnstone 1994), and background-region MAD on voxels below the 10th percentile. Take the median across finite estimators (robust to one outlier on the low side, typical when the dark tail is quantised).
+5. Detect the held-out peak via the manuscript's hybrid rule:
+   - **peak**: argmax is strictly interior AND `mean(pre-argmax)` and `mean(post-argmax)` are both ≥ 0.1 dB below the peak. Return the argmax.
+   - **signal_limited**: the argmax is the last K and the curve rose by ≥ 0.3 dB over the sweep — the volume is signal-limited under the current model class (typical for clean light-sheet data). Return the last K.
+   - **plateau**: otherwise. Return the smallest K within 0.3 dB of the maximum (onset of diminishing returns).
+
+### Public API
+
+```python
+def cv_mask(shape, fraction=0.05, seed=42) -> np.ndarray  # bool
+def donut_median_fill(V, mask, radius=1) -> np.ndarray
+def held_out_psnr(V_hat, V_original, mask, data_range=None) -> float
+
+@dataclass
+class NoiseFloor:
+    sigma_hat: float
+    sigma_laplacian: float
+    sigma_haar: float
+    sigma_background: float
+    psnr_max_db: float    # = -20 * log10(sigma_hat) for [0,1]-normalised data
+
+def estimate_noise_floor(V) -> NoiseFloor
+
+def build_k_grid(
+    explicit=None, n_points=10, k_min=1_000, k_max=512_000,
+    progression="exp", power=2,
+) -> List[int]
+
+@dataclass
+class HeldOutPeak:
+    k_star: int
+    type: Literal["peak", "plateau", "signal_limited"]
+    confidence_db: float
+
+def find_k_star(k_values, held_out_psnr_values) -> HeldOutPeak
+
+@dataclass
+class CalibrationResult:
+    k_values_requested: List[int]
+    k_values_effective: List[int]   # post-cull splat counts
+    held_out_psnr_db: List[float]
+    train_psnr_db: List[float]
+    held_out_mse: List[float]
+    full_psnr_db: List[float]
+    full_ssim: List[float]
+    held_out_peak: HeldOutPeak
+    noise_floor: NoiseFloor
+    fit_times_seconds: List[float]
+    splat_paths: Optional[List[str]]
+    mask_seed: int
+    mask_fraction: float
+    donut_radius: int
+    fit_config: Dict[str, Any]
+    volume_shape: List[int]
+    volume_dtype: str
+    timestamp: str
+    def to_json(self, path) -> None
+    @classmethod
+    def from_json(cls, path) -> CalibrationResult
+
+def calibrate(
+    V, k_grid, *,
+    fit_kwargs=None, mask_seed=42, mask_fraction=0.05, donut_radius=1,
+    keep_fits=None, progress_callback=None,
+) -> CalibrationResult
+```
+
+### Determinism and reproducibility
+- `cv_mask` uses `np.random.RandomState(seed).rand(*shape) < fraction` — identical mask across runs at the same `(shape, fraction, seed)`.
+- `fit_kwargs.seeds` is overridden per-K and pop-ed before forwarding; all other `fit_kwargs` are passed verbatim.
+- `verbose=False` is set as the default for the inner fits; override via `fit_kwargs={"verbose": True}` when debugging.
+- `keep_fits=Path(...)` persists each fit as `<dir>/k<8-digit>.gsplats.zarr`. The fitter's standard stats (`psnr_db`, `ssim`, `time_seconds`, ...) ride along via `GSplatData.stats`; calibration-specific fields are kept in the global `cal.json` (referenced from `splat_paths`) since `GSplatData.save()` whitelists fitting-info keys.
+
+### CLI integration (`luxar gsplat cal`)
+The CLI delegates to `calibrate` with parsed K-grid args, mask args, and `load_fit_config` for the standard preset/YAML/CLI override chain. Output: a formatted Arbol summary table + JSON sidecar via `CalibrationResult.to_json`. Optional `--pdf` triggers `calibration_report.render_calibration_report`. Optional `--keep-fits <dir>` enables slice-montage panels in the PDF.
+
+### Failure modes the test suite covers
+- All-zero volume → ensemble σ̂ = 0, PSNR ceiling = +inf (or sentinel ">60 dB" in CLI output).
+- Constant volume passed to `donut_median_fill` → identity (median of constant is the constant).
+- Very small (16³) volumes → calibration runs end-to-end on CPU in seconds.
+- NaN / +inf in held-out curves → preserved through JSON round-trip via `null` sentinels.
+- Synthetic Gaussian noise of known σ → `estimate_noise_floor` recovers σ within 25%.
+
 ## 7. Integration Requirements
 
 ### Device Support
