@@ -633,10 +633,10 @@ async function projectLinesTo3D(params: {
   /**
    * View state for projection. Same `ProjectionViewState` shape every
    * `project*To3D` worker function accepts — keeps the worker API
-   * uniform across node types. `tolerance` is required for parity
-   * even though Lines doesn't consult it directly (chunk bounds
-   * handle the visibility test); the field is validated for length
-   * to catch malformed payloads at the boundary.
+   * uniform across node types. All three fields are consumed: the
+   * WASM `clip_segments_batch` step reads `slicePosition` + `tolerance`
+   * + `displayDims` to decide per-segment visibility and to clip
+   * partially-visible segments at the slice boundary.
    */
   viewState: ProjectionViewState;
   ndim: number;
