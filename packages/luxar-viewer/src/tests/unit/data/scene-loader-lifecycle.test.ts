@@ -84,25 +84,53 @@ describe('SceneLoader lifecycle stress', () => {
     await sceneLoader.dispose();
   });
 
-  it('50× load → dispose cycle leaves loaders/_zarrStore/rootGroup empty each time', { timeout: 20_000 }, async () => {
-    for (let i = 0; i < 50; i++) {
-      const url = `http://localhost:8000/test-${i}.zarr`;
-      await sceneLoader.loadScene(url);
-      // After loadScene, the internal _zarrStore is wired up.
-      expect((sceneLoader as any)._zarrStore).not.toBeNull();
-      await sceneLoader.dispose();
-      // After dispose, all transient state is null and loaders is empty.
-      expect((sceneLoader as any).loaders.size).toBe(0);
-      expect((sceneLoader as any)._zarrStore).toBeNull();
-      expect((sceneLoader as any).rootGroup).toBeNull();
-      expect((sceneLoader as any).cachingStore).toBeNull();
+  it(
+    '50× load → dispose cycle leaves loaders/_zarrStore/rootGroup empty each time',
+    { timeout: 20_000 },
+    async () => {
+      for (let i = 0; i < 50; i++) {
+        const url = `http://localhost:8000/test-${i}.zarr`;
+        await sceneLoader.loadScene(url);
+        // After loadScene, the internal _zarrStore is wired up.
+        expect((sceneLoader as any)._zarrStore).not.toBeNull();
+        await sceneLoader.dispose();
+        // After dispose, all transient state is null and loaders is empty.
+        expect((sceneLoader as any).loaders.size).toBe(0);
+        expect((sceneLoader as any)._zarrStore).toBeNull();
+        expect((sceneLoader as any).rootGroup).toBeNull();
+        expect((sceneLoader as any).cachingStore).toBeNull();
+      }
     }
-  });
+  );
 
   it('idempotent dispose: calling dispose() twice does not throw', async () => {
     await sceneLoader.loadScene('http://localhost:8000/test.zarr');
     await sceneLoader.dispose();
     await expect(sceneLoader.dispose()).resolves.toBeUndefined();
+  });
+
+  it('clears predictive-prefetch baseline when a loader update throws', async () => {
+    const path = '/bad-loader';
+    const loader = {};
+    const previousViewState = {
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0, 4],
+      tolerance: [0, 0, 0, 1],
+    };
+
+    (sceneLoader as any)._prevPerNodeViewState.set(path, previousViewState);
+
+    const result = await (sceneLoader as any).runLoaderUpdates(
+      new Map([[path, loader]]),
+      'Points',
+      async () => {
+        throw new Error('synthetic loader failure');
+      }
+    );
+
+    expect(result).toEqual([null]);
+    expect((sceneLoader as any)._prevPerNodeViewState.has(path)).toBe(false);
+    expect((sceneLoader as any).failedLoaders.has(path)).toBe(true);
   });
 
   // Note on coverage: a "rapid loadScene → loadScene without an explicit

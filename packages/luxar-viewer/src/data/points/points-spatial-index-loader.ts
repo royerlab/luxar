@@ -27,7 +27,7 @@ import { computeLoadLatency, recordLoadEvent } from '../loaders/loader-metrics';
 import { LoaderEventEmitter } from '../loaders/monitor-events';
 import {
   loadPointsChunkIndex,
-  registerArrayBounds,
+  registerPointsArrayBounds,
   type PointsChunkIndex,
   type PointsNodeAttrsForIndex,
 } from './chunk-index-loader';
@@ -176,11 +176,11 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
 
   /**
    * Register array shape with the prefetcher for upper-bounds checking.
-   * Thin wrapper around the shared `registerArrayBounds` helper so the
-   * three call sites in `initialize()` keep their compact form.
+   * Thin wrapper around the shared `registerPointsArrayBounds` helper
+   * so the three call sites in `initialize()` keep their compact form.
    */
   private registerBounds(arrayName: string, array: zarr.Array<zarr.DataType, zarr.Readable>): void {
-    registerArrayBounds(this.prefetcher, this.node.path, arrayName, array);
+    registerPointsArrayBounds(this.prefetcher, this.node.path, arrayName, array);
   }
 
   /**

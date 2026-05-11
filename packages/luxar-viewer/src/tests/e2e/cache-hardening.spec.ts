@@ -100,15 +100,34 @@ test.describe('Cache hardening — debug snapshot diagnostics', () => {
       { timeout: 5000 }
     );
 
-    const statusBadges = await page.$$eval(
-      '[data-field="cache-status-row"] [data-badge]',
-      (els) => els.map((e) => e.getAttribute('data-badge'))
+    const statusBadges = await page.$$eval('[data-field="cache-status-row"] [data-badge]', (els) =>
+      els.map((e) => e.getAttribute('data-badge'))
     );
     expect(statusBadges).toContain('cache-enabled');
 
     const healthMode = await page.textContent('[data-field="cache-health-mode"]');
     expect(healthMode?.trim()).toBeTruthy();
     expect(healthMode).toContain('Content Hash');
+  });
+
+  test('@visual cache tab screenshot captures status/health layout', async ({ page }) => {
+    await page.goto(`/?src=${POINTS_DATASET}&debug&cache-stats`);
+    await waitForLuxarReady(page);
+
+    await page.waitForFunction(
+      () =>
+        document.querySelector('[data-field="cache-status-row"] [data-badge="cache-enabled"]') !==
+          null && document.querySelector('[data-field="cache-health-mode"]') !== null,
+      undefined,
+      { timeout: 5000 }
+    );
+
+    const cacheTab = page.locator('.luxar-tab-content--cache').first();
+    await expect(cacheTab).toBeVisible();
+    const image = await cacheTab.screenshot({
+      path: 'test-results/cache-tab-status-health.png',
+    });
+    expect(image.byteLength).toBeGreaterThan(1000);
   });
 });
 
@@ -151,9 +170,7 @@ test.describe('Cache hardening — dataset switch lifecycle', () => {
       await page.evaluate(async () => (window as any).__luxarDebug.cache.clearAll());
       // Brief settle for any in-flight to unwind.
       await page.waitForTimeout(50);
-      const stats = await page.evaluate(
-        async () => (window as any).__luxarDebug.cache.getStats()
-      );
+      const stats = await page.evaluate(async () => (window as any).__luxarDebug.cache.getStats());
       expect(stats.prefetch.queued).toBeLessThan(50);
     }
 
@@ -168,9 +185,7 @@ test.describe('Cache hardening — node-type parity', () => {
     const state = await getLuxarState(page);
     expect(state.totalPoints).toBeGreaterThan(0);
 
-    const stats = await page.evaluate(
-      async () => (window as any).__luxarDebug.cache.getStats()
-    );
+    const stats = await page.evaluate(async () => (window as any).__luxarDebug.cache.getStats());
     expect(stats.l0).toBeDefined();
     expect(stats.l0.count).toBeGreaterThan(0);
     expect(stats.health).toBeDefined();
@@ -180,9 +195,7 @@ test.describe('Cache hardening — node-type parity', () => {
     await page.goto(`/?src=${LINES_DATASET}&debug`);
     await waitForLuxarReady(page);
 
-    const stats = await page.evaluate(
-      async () => (window as any).__luxarDebug.cache.getStats()
-    );
+    const stats = await page.evaluate(async () => (window as any).__luxarDebug.cache.getStats());
     // Same fields populated for lines as for points.
     expect(stats.l0).toBeDefined();
     expect(stats.l0.count).toBeGreaterThan(0);
@@ -203,9 +216,7 @@ test.describe('Cache hardening — node-type parity', () => {
     await page.goto(`/?src=${POINTS_4D_DATASET}&debug`);
     await waitForLuxarReady(page);
 
-    const stats1 = await page.evaluate(async () =>
-      (window as any).__luxarDebug.cache.getStats()
-    );
+    const stats1 = await page.evaluate(async () => (window as any).__luxarDebug.cache.getStats());
     expect(stats1).toBeDefined();
     expect(stats1.l1).toBeDefined();
     expect(stats1.health).toBeDefined();
@@ -218,9 +229,7 @@ test.describe('Cache hardening — node-type parity', () => {
     // Give the loader pipeline a moment to fetch the new slice.
     await page.waitForTimeout(500);
 
-    const stats2 = await page.evaluate(async () =>
-      (window as any).__luxarDebug.cache.getStats()
-    );
+    const stats2 = await page.evaluate(async () => (window as any).__luxarDebug.cache.getStats());
     // Either: new misses appeared (the load issued additional fetches),
     // or L0 hits increased (cache served the new slice). Either way
     // the cache stays responsive — the failure mode we're guarding

@@ -17,7 +17,7 @@ vi.mock('../../../../data/loaders/chunk-bounds-loader', () => ({
 import { fetchChunkBoundsArray } from '../../../../data/loaders/chunk-bounds-loader';
 import {
   loadPointsChunkIndex,
-  registerArrayBounds,
+  registerPointsArrayBounds,
   type PointsNodeAttrsForIndex,
 } from '../../../../data/points/chunk-index-loader';
 import { log } from '../../../../utils/log';
@@ -174,13 +174,15 @@ describe('loadPointsChunkIndex', () => {
   });
 });
 
-describe('registerArrayBounds', () => {
+describe('registerPointsArrayBounds', () => {
   function makePrefetcher(): {
     prefetcher: ChunkPrefetcher;
     register: ReturnType<typeof vi.fn>;
   } {
     const register = vi.fn();
     const prefetcher = {
+      // The underlying prefetcher primitive keeps its bare name —
+      // it's the generic method, not the per-type wrapper.
       registerArrayBounds: register,
     } as unknown as ChunkPrefetcher;
     return { prefetcher, register };
@@ -198,25 +200,30 @@ describe('registerArrayBounds', () => {
 
   it('is a no-op when prefetcher is null', () => {
     expect(() =>
-      registerArrayBounds(null, '/group/sub', 'positions', makeArray([100, 3], [50, 3]))
+      registerPointsArrayBounds(null, '/group/sub', 'positions', makeArray([100, 3], [50, 3]))
     ).not.toThrow();
   });
 
   it('is a no-op when prefetcher is undefined', () => {
     expect(() =>
-      registerArrayBounds(undefined, 'group/sub', 'positions', makeArray([100, 3], [50, 3]))
+      registerPointsArrayBounds(undefined, 'group/sub', 'positions', makeArray([100, 3], [50, 3]))
     ).not.toThrow();
   });
 
   it('strips leading slash from node path before joining with arrayName', () => {
     const { prefetcher, register } = makePrefetcher();
-    registerArrayBounds(prefetcher, '/group/sub', 'positions', makeArray([100, 3], [50, 3]));
+    registerPointsArrayBounds(
+      prefetcher,
+      '/group/sub',
+      'positions',
+      makeArray([100, 3], [50, 3])
+    );
     expect(register).toHaveBeenCalledWith('group/sub/positions', [100, 3], [50, 3]);
   });
 
   it('keeps a path that has no leading slash unchanged', () => {
     const { prefetcher, register } = makePrefetcher();
-    registerArrayBounds(prefetcher, 'group/sub', 'colors', makeArray([100, 4], [25, 4]));
+    registerPointsArrayBounds(prefetcher, 'group/sub', 'colors', makeArray([100, 4], [25, 4]));
     expect(register).toHaveBeenCalledWith('group/sub/colors', [100, 4], [25, 4]);
   });
 });

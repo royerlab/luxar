@@ -282,9 +282,7 @@ export class SceneLoader {
   }
 
   /** List datasets currently held by the L1/L2 caching store. */
-  async listCachedDatasets(): Promise<
-    Awaited<ReturnType<MultiLevelCachingStore['listDatasets']>>
-  > {
+  async listCachedDatasets(): Promise<Awaited<ReturnType<MultiLevelCachingStore['listDatasets']>>> {
     return listCachedDatasetsHelper(this.cachingStore);
   }
 
@@ -736,6 +734,13 @@ export class SceneLoader {
           // on the appropriate paths.
           return await updateFn(path, loader, session);
         } catch (error) {
+          // Predictive prefetch is keyed by the previous successful
+          // derived view-state for this path. If the demand update
+          // fails, discard that baseline so the next success
+          // re-baselines instead of extrapolating across a stale/error
+          // gap and warming irrelevant chunks.
+          this._prevPerNodeViewState.delete(path);
+
           const errorInfo = this.failedLoaders.get(path);
           const retryCount = errorInfo ? errorInfo.retryCount + 1 : 0;
           this.failedLoaders.set(path, {
@@ -1564,10 +1569,7 @@ export class SceneLoader {
       const staged = await this.processLinesData(node.path, data, linesViewState);
       if (staged) this.commitLinesGeometry(staged);
 
-      log.success(
-        Modules.SCENE_LOADER,
-        `Loaded ${data.segmentCount} segments for ${node.path}`
-      );
+      log.success(Modules.SCENE_LOADER, `Loaded ${data.segmentCount} segments for ${node.path}`);
 
       return placeholder;
     } catch (error) {
@@ -2134,11 +2136,7 @@ export class SceneLoader {
    * completes; fire-and-forget in a microtask so a slow prefetch
    * cannot delay the commit path.
    */
-  private _dispatchPerLoaderPrefetch(
-    path: string,
-    current: ViewState,
-    loader: unknown
-  ): void {
+  private _dispatchPerLoaderPrefetch(path: string, current: ViewState, loader: unknown): void {
     const prev = this._prevPerNodeViewState.get(path) ?? null;
     // Snapshot current — keeps the saved value immune to later
     // in-place mutation by downstream loader work.
@@ -2158,9 +2156,7 @@ export class SceneLoader {
     if (prev === null) return;
 
     queueMicrotask(() => {
-      dispatchPredictivePrefetch(prev, snapshot, [
-        loader as PrefetchableLoader,
-      ]);
+      dispatchPredictivePrefetch(prev, snapshot, [loader as PrefetchableLoader]);
     });
   }
 

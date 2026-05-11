@@ -462,6 +462,23 @@ export function renderCacheStatusBadges(badges: CacheStatusBadge[] | undefined):
 }
 
 /**
+ * Render the cache-status badge row. In the full L1/L2 cache view we
+ * keep the row mounted even when empty so the incremental updater can
+ * patch it in place. Disabled/fallback cache views pass `always=false`
+ * so a truly empty status set doesn't add a blank spacer above the
+ * explanatory disabled message.
+ */
+function renderCacheStatusRow(badges: CacheStatusBadge[] | undefined, always = false): string {
+  const signature = (badges ?? []).join('|');
+  if (!always && signature.length === 0) return '';
+  return `
+    <div class="luxar-cache-status" data-field="cache-status-row" data-signature="${signature}" title="Cache operational state">
+      ${renderCacheStatusBadges(badges)}
+    </div>
+  `;
+}
+
+/**
  * R3: Friendly label for a validation mode. The cache-tab UI shows
  * this verbatim; null/undefined render as a neutral placeholder so
  * callers don't have to guard the value themselves.
@@ -515,8 +532,7 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
   // variant gets a faithful message. Fall back to the legacy
   // `enabled` boolean only when telemetryState is absent.
   const stateKind =
-    cacheMetrics.telemetryState?.kind ??
-    (cacheMetrics.enabled === false ? 'not-wired' : 'enabled');
+    cacheMetrics.telemetryState?.kind ?? (cacheMetrics.enabled === false ? 'not-wired' : 'enabled');
 
   if (stateKind !== 'enabled') {
     let message: string;
@@ -538,6 +554,7 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
     }
     return `
       <div class="luxar-tab-content--cache">
+        ${renderCacheStatusRow(cacheMetrics.status)}
         <div class="luxar-cache-disabled">
           <div class="luxar-cache-disabled__icon">🚫</div>
           <div class="luxar-cache-disabled__message">${message}</div>
@@ -551,9 +568,13 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
   const hasL1L2 = cacheMetrics.l1 !== undefined && cacheMetrics.l2 !== undefined;
 
   if (!hasL1L2) {
-    // Fallback to basic view if no cache stats provider connected
+    // Fallback to basic view if no cache stats provider connected.
+    // Keep any status badges visible here as well (for example an
+    // enabled/provider-missing diagnostic) even though the full L1/L2
+    // cache structure is not mounted yet.
     return `
       <div class="luxar-tab-content--cache">
+        ${renderCacheStatusRow(cacheMetrics.status)}
         <div class="luxar-grid-2">
           ${renderMetricCard(
             'CACHE MEMORY',
@@ -593,11 +614,7 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
   // R3: status pill row at the top of the cache tab. Always rendered
   // (with `data-field="cache-status-row"`) so the incremental
   // patcher can refresh badge sets without a full re-render.
-  const statusRowHtml = `
-    <div class="luxar-cache-status" data-field="cache-status-row" data-signature="${(cacheMetrics.status ?? []).join('|')}" title="Cache operational state">
-      ${renderCacheStatusBadges(cacheMetrics.status)}
-    </div>
-  `;
+  const statusRowHtml = renderCacheStatusRow(cacheMetrics.status, true);
 
   // R3: L2 error-counter card. Sums the four OPFS health counters
   // (quotaWriteSkipped + writeFailures + corruptedEntries +
@@ -875,10 +892,7 @@ export function getCacheHitRateColorClass(rate: number): string {
  * freshly loaded session shows hit-rate cards in red (error color)
  * on first paint, then flips to dimmed on the next 1s poll tick.
  */
-export function getCacheHitRateColorClassWithGuard(
-  rate: number,
-  totalAccesses: number
-): string {
+export function getCacheHitRateColorClassWithGuard(rate: number, totalAccesses: number): string {
   if (totalAccesses === 0) return getColorClass('dimmed');
   return getCacheHitRateColorClass(rate);
 }

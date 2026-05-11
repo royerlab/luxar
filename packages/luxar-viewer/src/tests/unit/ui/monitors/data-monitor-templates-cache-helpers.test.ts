@@ -14,8 +14,59 @@ import {
   renderCacheStatusBadges,
   getCacheHitRateColorClass,
   getCacheHitRateColorClassWithGuard,
+  renderCacheContent,
 } from '../../../../ui/monitors/data-monitor-templates';
-import type { CacheStatusBadge } from '../../../../types/data-monitor-types';
+import type {
+  CacheMetrics,
+  CacheStatusBadge,
+  GlobalStats,
+} from '../../../../types/data-monitor-types';
+
+function makeGlobalStats(): GlobalStats {
+  return {
+    totalLoaders: 0,
+    activeSpatialLoaders: 0,
+    activeFallbackLoaders: 0,
+    totalPoints: 0,
+    totalMemory: 0,
+    datasetSize: 0,
+    visiblePoints: 0,
+    datasetSegments: 0,
+    visibleSegments: 0,
+    datasetSplats: 0,
+    visibleSplats: 0,
+    totalQueries: 0,
+    totalLoads: 0,
+    totalCacheHits: 0,
+    totalPointsLoaded: 0,
+    totalMemoryUsed: 0,
+    globalCacheHitRate: 0,
+    avgQueryTime: 0,
+    queriesPerSecond: 0,
+    recommendations: [],
+  };
+}
+
+function makeCacheMetrics(overrides: Partial<CacheMetrics> = {}): CacheMetrics {
+  return {
+    totalCacheMemory: 0,
+    memoryLimit: 1024,
+    memoryPercent: 0,
+    totalEntries: 0,
+    totalAccesses: 0,
+    recentHitRate: 0,
+    evictionsTotal: 0,
+    avgEntrySize: 0,
+    reuseRatio: 0,
+    hitsPerSecond: 0,
+    missesPerSecond: 0,
+    avgAccessTime: 0,
+    queriesPerSec: 0,
+    loadsPerSec: 0,
+    bandwidth: 0,
+    ...overrides,
+  };
+}
 
 describe('CACHE_BADGE_COLOR', () => {
   it('maps every CacheStatusBadge to a CSS class', () => {
@@ -107,9 +158,7 @@ describe('l2ErrorTotal', () => {
   });
 
   it('returns 0 when all counters are zero or missing', () => {
-    expect(
-      l2ErrorTotal({ size: 0, count: 0, reads: 0, writes: 0, misses: 0 })
-    ).toBe(0);
+    expect(l2ErrorTotal({ size: 0, count: 0, reads: 0, writes: 0, misses: 0 })).toBe(0);
   });
 
   it('sums the four health counters', () => {
@@ -171,9 +220,56 @@ describe('getCacheHitRateColorClassWithGuard (S3)', () => {
     // The guard is purely a no-data wrapper; once totalAccesses > 0
     // the two functions must agree.
     for (const rate of [0, 25, 51, 65, 80.01, 95]) {
-      expect(getCacheHitRateColorClassWithGuard(rate, 1)).toBe(
-        getCacheHitRateColorClass(rate)
-      );
+      expect(getCacheHitRateColorClassWithGuard(rate, 1)).toBe(getCacheHitRateColorClass(rate));
     }
+  });
+});
+
+describe('renderCacheContent status rows in non-full cache views', () => {
+  it('renders the no-cache badge in the disabled ?no-cache view', () => {
+    const html = renderCacheContent(
+      makeGlobalStats(),
+      makeCacheMetrics({
+        enabled: false,
+        telemetryState: { kind: 'disabled-no-cache' },
+        status: ['no-cache'],
+      })
+    );
+
+    expect(html).toContain('Caching disabled by ?no-cache');
+    expect(html).toContain('data-field="cache-status-row"');
+    expect(html).toContain('data-badge="no-cache"');
+  });
+
+  it('renders the disabled-config badge in the config-disabled view', () => {
+    const html = renderCacheContent(
+      makeGlobalStats(),
+      makeCacheMetrics({
+        enabled: false,
+        telemetryState: { kind: 'disabled-config' },
+        status: ['disabled-config'],
+      })
+    );
+
+    expect(html).toContain('Caching disabled by configuration');
+    expect(html).toContain('data-badge="disabled-config"');
+  });
+
+  it('renders status badges in the enabled fallback/loading view', () => {
+    const html = renderCacheContent(
+      makeGlobalStats(),
+      makeCacheMetrics({
+        enabled: true,
+        telemetryState: { kind: 'enabled' },
+        status: ['cache-enabled', 'provider-missing'],
+        // No l1/l2: exercises the fallback "Loading cache statistics" view.
+        l1: undefined,
+        l2: undefined,
+      })
+    );
+
+    expect(html).toContain('Loading cache statistics');
+    expect(html).toContain('data-badge="cache-enabled"');
+    expect(html).toContain('data-badge="provider-missing"');
   });
 });

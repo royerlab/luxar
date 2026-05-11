@@ -6,6 +6,18 @@ All notable changes to Luxar are documented in this file.
 
 ### May 2026
 
+#### Changed — Cache final polish after S1–S7 (2026-05-10)
+
+- Added browser screenshot artifact coverage for the Cache tab's status
+  badge / Cache Health layout in `cache-hardening.spec.ts`.
+- Cache disabled/fallback views now render any available cache-status
+  badges (for example `no-cache`, `disabled-config`, or
+  `provider-missing`) above the explanatory panel instead of only
+  showing badges in the full L1/L2 view.
+- SceneLoader clears the per-node predictive-prefetch baseline when a
+  loader update throws, so the next successful update re-baselines
+  rather than extrapolating across a stale/error gap.
+
 #### Changed — Cache recheck polish S1–S7 (2026-05-10)
 
 Follow-up to the cache recheck at
