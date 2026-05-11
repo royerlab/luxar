@@ -6,6 +6,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock zarrita before importing the loader
 vi.mock('zarrita', () => ({
+  registry: {},
   open: vi.fn(),
   root: vi.fn(),
   get: vi.fn(),

@@ -19,10 +19,11 @@
  * @module data/loaders/color-attribute-utils
  */
 
-import * as zarr from 'zarrita';
-import { get, slice } from 'zarrita';
+import * as zarr from '../zarr';
+import { get, slice } from '../zarr';
 import { ArrayDecoder, type ArrayMetadata } from '../utils/array-decoder';
 import type { RangeLoader, LoadRange } from './range-loader';
+import { clamp } from '../../utils/clamp';
 
 /** Minimal shape needed by the helpers — both SplatRange and SegmentRange match. */
 export interface ColorRange {
@@ -137,7 +138,7 @@ export function restoreOriginalDtype(
   if (UINT8_DTYPES.has(originalDtype)) {
     const out = new Uint8Array(totalElements);
     for (let i = 0; i < totalElements; i++) {
-      out[i] = Math.round(Math.max(0, Math.min(255, decoded[i])));
+      out[i] = Math.round(clamp(decoded[i], 0, 255));
     }
     return out;
   }
@@ -145,7 +146,7 @@ export function restoreOriginalDtype(
   if (UINT16_DTYPES.has(originalDtype)) {
     const out = new Uint16Array(totalElements);
     for (let i = 0; i < totalElements; i++) {
-      out[i] = Math.round(Math.max(0, Math.min(65535, decoded[i])));
+      out[i] = Math.round(clamp(decoded[i], 0, 65535));
     }
     return out;
   }

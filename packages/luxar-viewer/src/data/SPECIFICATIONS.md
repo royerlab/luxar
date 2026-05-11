@@ -807,8 +807,8 @@ The data loading system integrates with the two-level caching architecture provi
 
 **Architecture**:
 
-- `MultiLevelCachingStore` wraps the zarr.FetchStore
-- All zarr chunk fetches automatically go through the cache
+- `MultiLevelCachingStore` is exposed to the Luxar Zarr facade as a readable store
+- All Zarr chunk fetches automatically go through the cache
 - Spatial index queries benefit from cached chunk metadata
 - No manual cache management needed at data layer
 
@@ -1509,7 +1509,31 @@ For a 250-frame animation with 2.2M total vertices but only 32K visible per fram
 
 **Key Insight**: This optimization mirrors the approach already implemented in `PointSpatialIndexLoader.loadRanges()` (see lines 650-880 in point-spatial-index-loader.ts).
 
-### 7.13 Lines Fallback (No Spatial Index)
+### 7.13 Lines Worker Fallback (Per-Vertex Scalars)
+
+When a Lines dataset carries per-vertex scalars (for colormap mode),
+`projectLinesTo3DUsingWorker` skips the worker and runs the main-thread
+`buildInstanceBuffers` path instead. This is an **accepted trade-off**,
+not a bug:
+
+- The worker payload schema does not yet carry per-vertex scalar
+  buffers. Extending it requires transferable typed-array plumbing,
+  dtype-aware compaction (Float32/Float16/Uint8 paths), and parity
+  tests for the colormap normalization across all three dtypes — non-
+  trivial and best done as its own focused PR.
+- For the typical line workloads luxar targets (neural arbors, vector
+  overlays — usually under ~10k–100k segments) main-thread projection
+  completes well within frame budget and is not a user-visible cliff.
+- A one-shot `log.warning` fires on the first scalar-Lines update so
+  the cliff is observable in the console rather than silent.
+
+**Revisit trigger**: a real workload exceeds ~500k segments AND has a
+colormap enabled AND profiling shows the main-thread projection step
+blocking interactive frames. Until then, prefer the main-thread path
+for correctness simplicity. See
+`src/data/scene-loader/data-processor-lines.ts::projectLinesTo3DUsingWorker`.
+
+### 7.14 Lines Fallback (No Spatial Index)
 
 When `ordering === "none"`, load all data:
 

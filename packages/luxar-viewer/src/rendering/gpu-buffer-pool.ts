@@ -106,6 +106,15 @@ export interface PoolStats {
   pooledBytes: number;
   totalBytes: number;
   largestPooledBytes: number;
+  /**
+   * Number of pooled buffers whose eviction was deferred past the
+   * current `evictUnused()` call because the per-call batch cap
+   * (`evictBatchSize`, default 5) was hit. Diagnostic only — these
+   * buffers will be picked up on the next frame's eviction sweep.
+   * Useful for spotting "user paused for 5 min then resumed and the
+   * eviction queue is stretching across many frames" scenarios.
+   */
+  deferredEvictions: number;
   // Per-type breakdown
   byType: {
     points: TypePoolStats;
@@ -195,7 +204,15 @@ export class GPUBufferPool {
     reuses: 0,
     evictions: 0,
     capacityGrowths: 0,
+    /** Pooled buffers skipped this `evictUnused` call due to batch cap. */
+    deferredEvictions: 0,
   };
+
+  /**
+   * One-shot guard: have we already logged the >100MB pooled-buffer
+   * warning? Re-checked per `evictUnused` so the noise stays bounded.
+   */
+  private largePoolWarningEmitted = false;
 
   // Per-type stats tracking
   private typeStats = {
@@ -1272,7 +1289,10 @@ export class GPUBufferPool {
     const batchCap = mustEvict ? Number.POSITIVE_INFINITY : this.evictBatchSize;
 
     // Helper to evict from a pool, returns count evicted. Stops early
-    // when the per-call budget is exhausted.
+    // when the per-call budget is exhausted. Buffers that WERE
+    // eviction-eligible but couldn't run this call (batch cap exhausted)
+    // are counted as `deferredEvictions` on the global stats so callers
+    // can observe the eviction queue stretching across frames.
     const evictFromPool = (pool: Map<number, PooledBuffer[]>, budget: number): number => {
       let poolEvicted = 0;
       if (budget <= 0) return 0;
@@ -1290,6 +1310,7 @@ export class GPUBufferPool {
             buffer.geometry.dispose();
             poolEvicted++;
           } else {
+            if (evictable) this.stats.deferredEvictions++;
             kept.push(buffer);
           }
         }
@@ -1370,6 +1391,29 @@ export class GPUBufferPool {
     collect(this.pointBuffers);
     collect(this.lineBuffers);
     collect(this.gsplatBuffers);
+
+    // One-shot warning when a pooled buffer crosses 100 MB. Such
+    // buffers are usually correct (huge Lines/GSplats datasets), but
+    // the size class makes a single eviction pause a frame visibly,
+    // and silent gigabyte-class accumulation is the failure mode
+    // worth flagging. Bound the noise: emit at most once per pool
+    // instance.
+    if (!this.largePoolWarningEmitted) {
+      const LARGE_POOLED_BYTES_THRESHOLD = 100_000_000; // 100 MB
+      const largest = refs.reduce(
+        (max, r) => (r.bytes > max ? r.bytes : max),
+        0
+      );
+      if (largest > LARGE_POOLED_BYTES_THRESHOLD) {
+        this.largePoolWarningEmitted = true;
+        log.warning(
+          Modules.GPU_BUFFER_POOL,
+          `Pooled buffer of ${(largest / 1024 / 1024).toFixed(1)} MB exceeds the ` +
+            '100 MB diagnostic threshold. Eviction of this buffer will pause a frame ' +
+            '(geometry.dispose can take 5-20 ms on slow GPUs).'
+        );
+      }
+    }
 
     const totalBytes = refs.reduce((sum, r) => sum + r.bytes, 0);
     if (totalBytes <= this.maxPoolBytes) return 0;

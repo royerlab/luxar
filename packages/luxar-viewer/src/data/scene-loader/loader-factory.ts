@@ -20,7 +20,7 @@
  * @module data/scene-loader/loader-factory
  */
 
-import * as zarr from 'zarrita';
+import * as zarr from '../zarr';
 import { PointsSpatialIndexLoader } from '../points/points-spatial-index-loader';
 export type { PointsSpatialIndexLoader } from '../points/points-spatial-index-loader';
 import { LinesSpatialIndexLoader } from '../lines/lines-spatial-index-loader';

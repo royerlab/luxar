@@ -23,6 +23,13 @@ import * as THREE from 'three';
  * and resets `uScalarMin`/`uScalarScale` so a later `clone()` can use
  * `defines.USE_COLORMAP` (or absence of texture value) as the source of
  * truth without resurrecting stale colormap state.
+ *
+ * @param material - The shader material whose uniforms/defines to mutate.
+ * @param texture - The LUT texture to bind, or `null` to disable.
+ * @returns `{ wasEnabled, nowEnabled }` so callers can detect a transition
+ *   and apply material-specific side effects (e.g. PointMaterial toggles
+ *   `vertexColors`).
+ * @public
  */
 export function applyColormapTextureToMaterial(
   material: THREE.ShaderMaterial,
@@ -66,6 +73,13 @@ export function applyColormapTextureToMaterial(
  * inspection. No-op for materials whose colormap mode is disabled
  * (uniforms aren't allocated until `applyColormapTextureToMaterial`
  * runs the first time).
+ *
+ * @param material - The shader material whose colormap uniforms to update.
+ * @param min - Lower bound of the scalar range to map to LUT index 0.
+ * @param max - Upper bound of the scalar range to map to LUT index 1. If
+ *   `max - min` is degenerate, the scale is clamped to `1e10` (safe
+ *   numerical fallback).
+ * @public
  */
 export function applyScalarRangeToMaterial(
   material: THREE.ShaderMaterial,
@@ -94,6 +108,13 @@ export function applyScalarRangeToMaterial(
  * Use this to fail-closed: if `false`, the caller should NOT enable
  * `USE_COLORMAP` and should log a warning so the user understands why
  * a metadata-authored colormap did not take effect.
+ *
+ * @param nodeType - `'points' | 'lines' | 'gsplats'`.
+ * @param geometry - Optional buffer geometry; required for `points` and
+ *   `lines`. When `undefined` for those types, returns `false` (fail-closed).
+ * @returns `true` only when the geometry has the per-node-type scalar
+ *   attributes wired up.
+ * @public
  */
 export function supportsScalarColormap(
   nodeType: 'points' | 'lines' | 'gsplats',

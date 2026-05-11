@@ -9,8 +9,8 @@
  * Reference: luxar.encoding specification (../../luxar/src/luxar/encoding/SPECIFICATIONS.md)
  */
 
-import * as zarr from 'zarrita';
-import { get } from 'zarrita';
+import * as zarr from '../zarr';
+import { get } from '../zarr';
 import { log, Modules } from '../../utils/log';
 
 /**

@@ -28,6 +28,7 @@ import {
 } from '../../utils/camera-utils';
 import type { LuxarCamera } from '../../utils/camera-utils';
 import { log, Modules } from '../../utils/log';
+import { clamp } from '../../utils/clamp';
 
 /** Result of a successful pick operation. */
 export interface PickResult {
@@ -63,8 +64,8 @@ export const MAX_PICK_BUFFER_DIM = 1024;
  * smaller than 1 pixel.
  */
 export function computePickBufferSize(drawW: number, drawH: number): { w: number; h: number } {
-  const w = Math.max(1, Math.min(MAX_PICK_BUFFER_DIM, Math.floor(drawW / 2)));
-  const h = Math.max(1, Math.min(MAX_PICK_BUFFER_DIM, Math.floor(drawH / 2)));
+  const w = clamp(Math.floor(drawW / 2), 1, MAX_PICK_BUFFER_DIM);
+  const h = clamp(Math.floor(drawH / 2), 1, MAX_PICK_BUFFER_DIM);
   return { w, h };
 }
 
@@ -381,8 +382,8 @@ export class PickingSystem {
     const cursorY = pickH - Math.floor(correctedY * scaleY);
 
     const half = Math.floor(PICK_SIZE / 2);
-    this._lastReadX = Math.max(0, Math.min(cursorX - half, pickW - PICK_SIZE));
-    this._lastReadY = Math.max(0, Math.min(cursorY - half, pickH - PICK_SIZE));
+    this._lastReadX = clamp(cursorX - half, 0, pickW - PICK_SIZE);
+    this._lastReadY = clamp(cursorY - half, 0, pickH - PICK_SIZE);
 
     // Ray-BBox culling: quick check if cursor is near any node at all
     // Use corrected coordinates so the ray matches the undistorted pick buffer

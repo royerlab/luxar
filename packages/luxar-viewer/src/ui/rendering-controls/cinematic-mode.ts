@@ -203,12 +203,9 @@ export class CinematicModeController {
       settings.fovPreset = '50mm Normal';
     }
 
-    // Apply post-processing changes via deferred rebuild. The
-    // try/finally guarantees `endDeferRebuild()` runs even if any
-    // sub-setter throws, so the depth counter cannot strand above zero
-    // and silently disable future rebuilds.
-    postProcessing.startDeferRebuild();
-    try {
+    // Batch post-processing changes through `withDeferredRebuild` so the
+    // depth counter unwinds even when a sub-setter throws.
+    postProcessing.withDeferredRebuild(() => {
       postProcessing.setToneMapping(TONE_MAPPING_MAP[settings.toneMapping]);
 
       postProcessing.setDetectorNoiseEnabled(
@@ -235,9 +232,7 @@ export class CinematicModeController {
         settings.chromaticLensFocalLengthY,
         settings.chromaticLensSkew
       );
-    } finally {
-      postProcessing.endDeferRebuild();
-    }
+    });
 
     // Apply FOV change to camera.
     const targetFOV = settings.fov;

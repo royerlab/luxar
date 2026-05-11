@@ -23,7 +23,8 @@ import * as zarr from 'zarrita';
 // Mock zarrita (external dependency - network I/O for zarr stores)
 vi.mock('zarrita', () => ({
   FetchStore: vi.fn(),
-  tryWithConsolidated: vi.fn(),
+  withMaybeConsolidatedMetadata: vi.fn(),
+  registry: {},
   root: vi.fn(),
   open: vi.fn(),
   get: vi.fn(),
@@ -118,7 +119,7 @@ describe('SceneLoader', () => {
 
     // Mock zarrita functions
     (zarr.FetchStore as any).mockImplementation(() => mockStore);
-    (zarr as any).tryWithConsolidated.mockResolvedValue(mockStore);
+    (zarr as any).withMaybeConsolidatedMetadata.mockResolvedValue(mockStore);
     (zarr.root as any).mockReturnValue(mockRootLoc);
     (zarr.open as any).mockResolvedValue(mockZarrGroup);
 
@@ -136,7 +137,7 @@ describe('SceneLoader', () => {
       const scene = await sceneLoader.loadScene(url);
 
       // Verify scene loaded correctly (implementation may use FetchStore or MultiLevelCachingStore)
-      expect((zarr as any).tryWithConsolidated).toHaveBeenCalled();
+      expect((zarr as any).withMaybeConsolidatedMetadata).toHaveBeenCalled();
       expect(scene).toBeDefined();
       expect(scene.name).toBe('LuxarScene');
     });
@@ -412,7 +413,9 @@ describe('SceneLoader', () => {
 
   describe('error handling', () => {
     it('should handle store opening failures', async () => {
-      (zarr as any).tryWithConsolidated.mockRejectedValue(new Error('Failed to open store'));
+      (zarr as any).withMaybeConsolidatedMetadata.mockRejectedValue(
+        new Error('Failed to open store')
+      );
 
       await expect(sceneLoader.loadScene('http://invalid.url')).rejects.toThrow(
         'Failed to open store'

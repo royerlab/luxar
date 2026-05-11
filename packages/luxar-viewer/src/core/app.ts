@@ -30,7 +30,7 @@ import { type AppFactories, resolveFactories } from './app-factories';
 import { ThemeManager } from '../themes/theme-manager';
 import type { ZarrViewerConfig } from '../types/zarr';
 import { OverlayManager } from '../ui/helpers/overlay-manager';
-import * as zarr from 'zarrita';
+import * as zarr from '../data/zarr';
 import { PickingSystem, type PickResult } from '../rendering/picking/picking-system';
 import { LabelLoader } from '../data/loaders/label-loader';
 import { ImageLabelLoader } from '../data/loaders/image-label-loader';
@@ -221,6 +221,19 @@ export class LuxarApp {
     if (typeof window === 'undefined' || typeof document === 'undefined') {
       throw new Error(
         'LuxarApp requires a browser environment (window and document must be defined).'
+      );
+    }
+
+    // THREE.js peer-dep version guard. The package.json declares
+    // `three@^0.163.0` as a peer; embedders that install an older
+    // (or far-newer breaking) version hit cryptic errors deep in
+    // material construction. Fail fast with a clear message instead.
+    // We check `REVISION` (THREE's published revision string, e.g. `"163"`).
+    const threeRevision = parseInt(THREE.REVISION ?? '0', 10);
+    if (!Number.isFinite(threeRevision) || threeRevision < 163) {
+      throw new Error(
+        `Luxar requires three@>=0.163.0 (found r${THREE.REVISION ?? '?'}). ` +
+          'Update the three peer dependency in your embedder.'
       );
     }
 

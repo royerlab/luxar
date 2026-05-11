@@ -272,3 +272,54 @@ describe('PostProcessingManager.startDeferRebuild / endDeferRebuild', () => {
     expect(m.rebuildEffectPass).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('PostProcessingManager.withDeferredRebuild', () => {
+  type DeferManager = {
+    deferRebuildDepth: number;
+    rebuildEffectPass: ReturnType<typeof vi.fn>;
+  };
+
+  function makeManager(): DeferManager {
+    const m = Object.create(PostProcessingManager.prototype) as DeferManager;
+    m.deferRebuildDepth = 0;
+    m.rebuildEffectPass = vi.fn();
+    return m;
+  }
+
+  const withDeferredRebuild = PostProcessingManager.prototype
+    .withDeferredRebuild as unknown as <T>(this: DeferManager, fn: () => T) => T;
+
+  it('triggers exactly one rebuild after the closure returns', () => {
+    const m = makeManager();
+    const result = withDeferredRebuild.call(m, () => 42);
+    expect(result).toBe(42);
+    expect(m.deferRebuildDepth).toBe(0);
+    expect(m.rebuildEffectPass).toHaveBeenCalledTimes(1);
+  });
+
+  it('rethrows the closure error AND drains depth to zero', () => {
+    const m = makeManager();
+    expect(() =>
+      withDeferredRebuild.call(m, () => {
+        throw new Error('boom');
+      })
+    ).toThrow('boom');
+    expect(m.deferRebuildDepth).toBe(0);
+    // The rebuild still ran (matching the manual try/finally semantics).
+    expect(m.rebuildEffectPass).toHaveBeenCalledTimes(1);
+  });
+
+  it('nested withDeferredRebuild rebuilds only on the outermost return', () => {
+    const m = makeManager();
+    withDeferredRebuild.call(m, () => {
+      withDeferredRebuild.call(m, () => {
+        // Inner closure does its work; depth is 2 here.
+        expect(m.deferRebuildDepth).toBe(2);
+      });
+      // Inner has returned; depth is back to 1, no rebuild yet.
+      expect(m.rebuildEffectPass).not.toHaveBeenCalled();
+    });
+    expect(m.deferRebuildDepth).toBe(0);
+    expect(m.rebuildEffectPass).toHaveBeenCalledTimes(1);
+  });
+});

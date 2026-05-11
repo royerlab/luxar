@@ -33,12 +33,11 @@ Request → L0 (Decompressed) → L1 (Memory) → L2 (OPFS) → Remote HTTP
 
 ## Quick Start
 
-The cache is **enabled by default** and works transparently through zarrita:
+The cache is **enabled by default** and works transparently through the Luxar Zarr facade:
 
 ```typescript
 import { MultiLevelCachingStore } from '../cache';
-import { withMaybeConsolidatedMetadata } from '../data/zarrita-compat';
-import * as zarr from 'zarrita';
+import * as zarr from '../data/zarr';
 
 // Create caching store
 const store = new MultiLevelCachingStore('https://example.com/dataset.zarr', {
@@ -49,9 +48,9 @@ const store = new MultiLevelCachingStore('https://example.com/dataset.zarr', {
 
 await store.init();
 
-// Use with zarrita - completely transparent!
-const zarrStore = await withMaybeConsolidatedMetadata(store);
-const root = await zarr.open(zarrStore);
+// Open through the Luxar Zarr facade - completely transparent!
+const zarrStore = await zarr.openStore(store);
+const root = await zarr.openGroup(zarrStore);
 
 // First load: HTTP → L2 → L1 → decompress → L0 → render
 // Second load: L0 → render (~1μs, no decompression!)

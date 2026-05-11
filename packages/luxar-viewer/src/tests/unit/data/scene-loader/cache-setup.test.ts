@@ -28,6 +28,7 @@ vi.mock('../../../../cache', () => {
 });
 
 vi.mock('zarrita', () => ({
+  registry: {},
   FetchStore: vi.fn().mockImplementation(() => ({})),
 }));
 

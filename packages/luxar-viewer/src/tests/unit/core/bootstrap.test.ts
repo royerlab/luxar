@@ -67,8 +67,7 @@ vi.mock('zarrita', () => ({
     get: (key: string) => (key === 'blosc' ? mocks.bloscThunk : undefined),
   },
   // Stubbed for vitest strict-mock compatibility; bootstrap path
-  // doesn't reach the scene loader, so neither helper is invoked.
-  tryWithConsolidated: undefined,
+  // doesn't reach the scene loader, so this helper is not invoked.
   withMaybeConsolidatedMetadata: undefined,
 }));
 

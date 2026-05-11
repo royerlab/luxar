@@ -30,6 +30,7 @@ function makeStubContext(overrides: Partial<RenderingSettings> = {}): {
     setChromaticLensDistortionEnabled: ReturnType<typeof vi.fn>;
     startDeferRebuild: ReturnType<typeof vi.fn>;
     endDeferRebuild: ReturnType<typeof vi.fn>;
+    withDeferredRebuild: ReturnType<typeof vi.fn>;
   };
   sceneManager: { currentFov: number; updateFOV: ReturnType<typeof vi.fn> };
   saveSettings: ReturnType<typeof vi.fn>;
@@ -48,6 +49,17 @@ function makeStubContext(overrides: Partial<RenderingSettings> = {}): {
     setChromaticLensDistortionEnabled: vi.fn(),
     startDeferRebuild: vi.fn(),
     endDeferRebuild: vi.fn(),
+    // The production code calls `withDeferredRebuild(fn)`; mirror its
+    // try/finally semantics so the closure runs and rebuild bookkeeping
+    // happens on both success and throw paths.
+    withDeferredRebuild: vi.fn((fn: () => void) => {
+      postProcessing.startDeferRebuild();
+      try {
+        return fn();
+      } finally {
+        postProcessing.endDeferRebuild();
+      }
+    }),
   };
   const sceneManager = {
     currentFov: 50,

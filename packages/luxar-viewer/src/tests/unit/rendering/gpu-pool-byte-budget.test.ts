@@ -319,4 +319,32 @@ describe('byte-budget eviction', () => {
     expect(stats1.pooledBuffers).toBeLessThanOrEqual(2);
     evictPool.dispose();
   });
+
+  it('under-budget pool: evictUnused does not dispose any pooled buffer', () => {
+    // Lock in the early-return path in `_evictUntilUnderByteBudget`:
+    // if total pooled bytes are already under the configured budget,
+    // eviction must NOT dispose any pooled buffer (and the eviction
+    // counter must not advance from the byte-budget path).
+    const generousPool = new GPUBufferPool(20, 300, 5, 100_000_000);
+    generousPool.acquirePointsGeometry('p1', pointsData(50), 50);
+    generousPool.acquirePointsGeometry('p2', pointsData(50), 50);
+    generousPool.releasePointsGeometry('p1');
+    generousPool.releasePointsGeometry('p2');
+
+    // Capture pre-eviction stats; the auto-eviction inside `release`
+    // shouldn't have done anything either (both buffers are tiny,
+    // budget is 100 MB).
+    const before = generousPool.getStats();
+    expect(before.pooledBuffers).toBe(2);
+
+    generousPool.evictUnused();
+
+    const after = generousPool.getStats();
+    // Same pooled-buffer count; no eviction triggered.
+    expect(after.pooledBuffers).toBe(before.pooledBuffers);
+    expect(after.pooledBytes).toBe(before.pooledBytes);
+    expect(after.byType.points.evictions).toBe(before.byType.points.evictions);
+
+    generousPool.dispose();
+  });
 });

@@ -6,9 +6,10 @@
  * all attributes are loaded with the same point ranges for proper alignment.
  */
 
-import * as zarr from 'zarrita';
-import { get, slice } from 'zarrita';
+import * as zarr from '../zarr';
+import { get, slice } from '../zarr';
 import { log, Modules } from '../../utils/log';
+import { clamp } from '../../utils/clamp';
 import {
   DataLoader,
   ViewState,
@@ -1162,7 +1163,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
       ) {
         const uint8Output = new Uint8Array(totalElements);
         for (let i = 0; i < totalElements; i++) {
-          uint8Output[i] = Math.round(Math.max(0, Math.min(255, decodedFloat32[i])));
+          uint8Output[i] = Math.round(clamp(decodedFloat32[i], 0, 255));
         }
         output = uint8Output;
         log.info(
@@ -1177,7 +1178,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
       ) {
         const uint16Output = new Uint16Array(totalElements);
         for (let i = 0; i < totalElements; i++) {
-          uint16Output[i] = Math.round(Math.max(0, Math.min(65535, decodedFloat32[i])));
+          uint16Output[i] = Math.round(clamp(decodedFloat32[i], 0, 65535));
         }
         output = uint16Output;
         log.info(
@@ -1234,7 +1235,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
       // Convert float32 → uint8 (values should already be in 0-255 range)
       const uint8Output = new Uint8Array(totalElements);
       for (let i = 0; i < totalElements; i++) {
-        uint8Output[i] = Math.round(Math.max(0, Math.min(255, decodedFloat32[i])));
+        uint8Output[i] = Math.round(clamp(decodedFloat32[i], 0, 255));
       }
       output = uint8Output;
       log.info(
@@ -1250,7 +1251,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
       // Convert float32 → uint16
       const uint16Output = new Uint16Array(totalElements);
       for (let i = 0; i < totalElements; i++) {
-        uint16Output[i] = Math.round(Math.max(0, Math.min(65535, decodedFloat32[i])));
+        uint16Output[i] = Math.round(clamp(decodedFloat32[i], 0, 65535));
       }
       output = uint16Output;
       log.info(

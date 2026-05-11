@@ -1,6 +1,7 @@
 import { SimpleDims, DimensionMetadata } from '../types/dims';
 import * as THREE from 'three';
 import { log, Modules } from '../utils/log';
+import { clamp } from '../utils/clamp';
 
 /**
  * Centralized dimension state manager ensuring consistency across all nD objects in the scene.
@@ -245,7 +246,7 @@ export class SceneDimsManager {
     // Apply range constraints to prevent navigation beyond data bounds
     if (this.dimensionRanges) {
       const [min, max] = this.dimensionRanges[dimIndex];
-      value = Math.max(min, Math.min(max, value));
+      value = clamp(value, min, max);
     }
 
     // Handle discrete dimensions (e.g., time frames, categorical data)

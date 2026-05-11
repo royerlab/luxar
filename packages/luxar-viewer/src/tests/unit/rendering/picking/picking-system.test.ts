@@ -213,6 +213,40 @@ describe('PickingSystem — context-restore registration drop', () => {
     expect(disposeSpy).not.toHaveBeenCalled();
     disposeSpy.mockRestore();
   });
+
+  it('round-trip: clearRegistrationsForRebuild followed by re-register restores node tracking', () => {
+    // After context restore, `NodeFactory.rebuildAfterContextRestore`
+    // calls `clearRegistrationsForRebuild` then re-registers every
+    // scene node with fresh pick materials. This test locks in that
+    // the system accepts new registrations cleanly after a clear,
+    // with no stale state leaking between rounds.
+    const pickMesh1 = new THREE.Mesh(
+      new THREE.BufferGeometry(),
+      new THREE.MeshBasicMaterial()
+    );
+    const pickMesh2 = new THREE.Mesh(
+      new THREE.BufferGeometry(),
+      new THREE.MeshBasicMaterial()
+    );
+
+    // Initial registration before "context loss".
+    system.registerNode(new THREE.Object3D(), pickMesh1, system.allocatePickId());
+    expect(system.registeredNodeCount).toBe(1);
+
+    // Simulate context-loss clear.
+    system.clearRegistrationsForRebuild();
+    expect(system.registeredNodeCount).toBe(0);
+
+    // Simulate post-restore re-registration with a fresh pick mesh.
+    const newId = system.allocatePickId();
+    system.registerNode(new THREE.Object3D(), pickMesh2, newId);
+    expect(system.registeredNodeCount).toBe(1);
+    // The new pick ID is unique relative to the original allocation
+    // stream (allocatePickId is monotonic — it does not reset across
+    // a clear, which prevents the ambiguity of two materials sharing
+    // an ID across a restore).
+    expect(newId).toBeGreaterThan(1);
+  });
 });
 
 describe('PickingSystem — camera + suppression', () => {

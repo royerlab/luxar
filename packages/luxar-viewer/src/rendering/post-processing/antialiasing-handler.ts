@@ -11,6 +11,7 @@
  */
 
 import { SMAAPreset } from 'postprocessing';
+import { clamp } from '../../utils/clamp';
 
 /** SMAA preset names exposed to the UI / public API. */
 export type SMAAPresetName = 'LOW' | 'MEDIUM' | 'HIGH' | 'ULTRA';
@@ -82,7 +83,7 @@ export function validateMSAASamples(requested: number, maxSamples: number): MSAA
  * impractical (16x pixel budget).
  */
 export function clampSSAAMultiplier(value: number): number {
-  return Math.max(1.0, Math.min(4.0, value));
+  return clamp(value, 1.0, 4.0);
 }
 
 /** Result of {@link checkMSAACapability}. */

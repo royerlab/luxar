@@ -28,23 +28,47 @@ import * as THREE from 'three';
 import type { BlendingMode } from './material-manager';
 
 /**
- * F.2: discriminator predicates over `BlendingMode`. Centralising the
+ * Discriminator predicates over `BlendingMode`. Centralising the
  * `mode === 'foo'` literal comparisons here keeps the modes string-typed
  * (zero runtime cost) while making intent explicit at call sites and
  * giving us one place to change if the mode enum ever gets reshaped.
+ *
+ * @param mode - the blending mode to test
+ * @returns `true` when `mode` matches the predicate's mode
+ * @public
  */
 export function isAdditiveMode(mode: BlendingMode): boolean {
   return mode === 'additive';
 }
+/**
+ * @param mode - the blending mode to test
+ * @returns `true` when `mode === 'opaque'`
+ * @public
+ */
 export function isOpaqueMode(mode: BlendingMode): boolean {
   return mode === 'opaque';
 }
+/**
+ * @param mode - the blending mode to test
+ * @returns `true` when `mode === 'max'`
+ * @public
+ */
 export function isMaxMode(mode: BlendingMode): boolean {
   return mode === 'max';
 }
+/**
+ * @param mode - the blending mode to test
+ * @returns `true` when `mode === 'luminous'`
+ * @public
+ */
 export function isLuminousMode(mode: BlendingMode): boolean {
   return mode === 'luminous';
 }
+/**
+ * @param mode - the blending mode to test
+ * @returns `true` when `mode === 'normal'`
+ * @public
+ */
 export function isNormalMode(mode: BlendingMode): boolean {
   return mode === 'normal';
 }
@@ -75,6 +99,16 @@ export interface CompleteBlendingState {
  * `opacity` only affects `depthWrite` for `normal` mode (a fully-opaque
  * normal layer should write depth so it occludes additive layers
  * behind it). All other modes are opacity-independent.
+ *
+ * @param mode - One of `'normal'`, `'additive'`, `'max'`, `'opaque'`,
+ *   `'luminous'`. See the file-level header for per-mode semantics.
+ * @param opacity - Layer opacity in `[0, 1]`. Currently only consulted
+ *   for `mode === 'normal'`, where `opacity >= 0.99` flips on
+ *   `depthWrite`. Default `1.0`.
+ * @returns The complete THREE.js material state to apply (blending,
+ *   blend factors, depth, transparency, and a `shaderOutputMode` hint
+ *   for fragment shaders that need to know how to compose RGB).
+ * @public
  */
 export function getCompleteBlendingState(
   mode: BlendingMode,
@@ -162,6 +196,14 @@ export function getCompleteBlendingState(
  *
  * Does NOT update `userData.blendingMode` or shader defines —
  * material-specific `applyBlendingMode()` methods own those.
+ *
+ * @param material - The THREE material to mutate in place.
+ * @param state - Output of {@link getCompleteBlendingState}.
+ * @returns `true` if any of `blending` / `blendEquation` /
+ *   `blendSrc` / `blendDst` / `depthTest` / `depthWrite` / `transparent`
+ *   actually changed on the material. Use this to decide whether to set
+ *   `material.needsUpdate = true`.
+ * @public
  */
 export function applyBlendingStateToMaterial(
   material: THREE.Material,

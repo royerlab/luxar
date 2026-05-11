@@ -12,6 +12,7 @@ import { LineMaterial } from './line-material';
 import { GSplatMaterial } from './gsplat-material';
 import type { CameraAwareMaterial } from './camera-aware-material';
 import { log, Modules } from '../utils/log';
+import { clamp } from '../utils/clamp';
 import { config } from '../config';
 
 /**
@@ -88,10 +89,10 @@ function getCommonMaterialBuckets(props: {
   offset: number;
 }): { opacityBucket: number; gammaBucket: number; intensityBucket: number; offsetBucket: number } {
   return {
-    opacityBucket: Math.round(Math.max(0, Math.min(1, props.opacity)) * 100),
-    gammaBucket: Math.round(Math.max(0, Math.min(10, props.gamma)) * 100),
-    intensityBucket: Math.round(Math.max(0, Math.min(100, props.intensity)) * 100),
-    offsetBucket: Math.round((Math.max(-10, Math.min(10, props.offset)) + 10) * 10),
+    opacityBucket: Math.round(clamp(props.opacity, 0, 1) * 100),
+    gammaBucket: Math.round(clamp(props.gamma, 0, 10) * 100),
+    intensityBucket: Math.round(clamp(props.intensity, 0, 100) * 100),
+    offsetBucket: Math.round((clamp(props.offset, -10, 10) + 10) * 10),
   };
 }
 

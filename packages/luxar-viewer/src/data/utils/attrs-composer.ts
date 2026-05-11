@@ -19,6 +19,7 @@
  */
 
 import type { SceneNode } from '../data-loader-types';
+import { clamp } from '../../utils/clamp';
 
 export interface ComposableAttrs {
   opacity?: number;
@@ -68,8 +69,8 @@ export function composeAttrs(chainRootToLeaf: readonly ComposableAttrs[]): Effec
   }
 
   // Clamp per spec
-  opacity = Math.max(0, Math.min(1, opacity));
-  gamma = Math.max(0.1, Math.min(10, gamma));
+  opacity = clamp(opacity, 0, 1);
+  gamma = clamp(gamma, 0.1, 10);
   intensity = Math.max(0, intensity);
 
   return { opacity, gamma, intensity, offset, blending_mode };

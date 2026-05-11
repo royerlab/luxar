@@ -2,26 +2,14 @@
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "entry": [
     "src/index.ts",
-    "src/core/main.ts",
     "src/lib-styles-entry.ts",
     "src/tests/**/*.{test,spec}.ts",
-    "src/tests/global-setup.ts",
-    "src/tests/setup.ts",
     "scripts/**/*.{ts,mjs,js}",
     "tools/**/*.ts",
-    "tests/fixtures/**/*.{ts,py}",
-    "playwright.config.ts",
-    "playwright.screenshots.config.ts",
-    "playwright.videos.config.ts",
-    "vite.config.ts",
-    "vite.lib.config.ts",
-    "vitest.config.ts"
+    "tests/fixtures/**/*.{ts,py}"
   ],
   "project": ["src/**/*.ts"],
   "ignore": [
-    "examples/embed/embed.js",
-    "node_modules/.cache/**",
-    "**/*.d.ts",
     "src/rendering/picking/index.ts",
     "src/rendering/shaders/index.ts",
     "src/themes/index.ts",

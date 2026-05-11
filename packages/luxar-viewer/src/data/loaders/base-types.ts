@@ -7,7 +7,7 @@
  * @module data/loaders/base-types
  */
 
-import type * as zarr from 'zarrita';
+import type * as zarr from '../zarr';
 import type * as THREE from 'three';
 import type { DimensionMetadata } from '../../types/dims';
 import type { UpdateSession } from '../../profiling/update-profiler';

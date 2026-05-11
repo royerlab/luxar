@@ -11,7 +11,7 @@
  * "open cache → open zarr → enumerate → build scene" sequence.
  */
 
-import * as zarr from 'zarrita';
+import * as zarr from '../zarr';
 import {
   MultiLevelCachingStore,
   ChunkPrefetcher,
@@ -35,7 +35,7 @@ export interface CacheSetupFlags {
 export interface CacheSetupResult {
   l0Cache: DecompressedChunkCache | null;
   cachingStore: MultiLevelCachingStore | null;
-  rawStore: zarr.Readable;
+  rawStore: zarr.AsyncReadable;
   /**
    * Resolved cache telemetry state for the UI monitor. Reflects the
    * actual policy decision the cache stack made:
@@ -50,15 +50,15 @@ export interface CacheSetupResult {
 
 /**
  * Build the L0/L1/L2 cache stack and return the raw store the caller
- * should pass to the zarrita consolidated-metadata compatibility wrapper.
+ * should pass to the Luxar Zarr facade's `openStore()`.
  *
  * Behavior matches the previous inline block in `SceneLoader.loadScene()`:
  *   - L0 is enabled iff `appConfig.cache.l0Enabled && !flags.noCache`.
  *   - L1/L2 are enabled iff `appConfig.cache.enabled && !flags.noCache`.
  *   - When L1/L2 + L0 are both active, L0 is registered as an
  *     invalidation listener so a content-hash bump clears all three.
- *   - When caching is fully disabled, falls back to a vanilla
- *     `zarr.FetchStore`.
+ *   - When caching is fully disabled, falls back to a vanilla fetch store
+ *     created by the Luxar Zarr facade.
  */
 export async function setupCaches(
   url: string,
@@ -91,7 +91,7 @@ export async function setupCaches(
     log.info(Modules.SCENE_LOADER, 'L0 cache disabled via ?no-cache URL parameter');
   }
 
-  let rawStore: zarr.Readable;
+  let rawStore: zarr.AsyncReadable;
   let cachingStore: MultiLevelCachingStore | null = null;
 
   if (appConfig.cache.enabled && !noCache) {
@@ -121,7 +121,7 @@ export async function setupCaches(
 
     rawStore = cachingStore;
   } else {
-    rawStore = new zarr.FetchStore(url);
+    rawStore = zarr.createFetchStore(url);
   }
 
   // Resolve the telemetry state. URL flag wins (most user-visible);

@@ -10,7 +10,7 @@
  * @module cache/cached-zarr-array
  */
 
-import type * as zarr from 'zarrita';
+import type * as zarr from '../data/zarr';
 import { DecompressedChunkCache, type DecompressedChunk } from './decompressed-chunk-cache';
 
 /**

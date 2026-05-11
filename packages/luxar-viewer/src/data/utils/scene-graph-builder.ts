@@ -15,7 +15,7 @@
  * @module data/scene-graph-builder
  */
 
-import * as zarr from 'zarrita';
+import * as zarr from '../zarr';
 import { SceneNode } from '../data-loader-types';
 import { ZarrNodeAttrs, hasContentsMethod } from '../../types/zarr';
 import { log, Modules } from '../../utils/log';

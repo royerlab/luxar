@@ -34,7 +34,7 @@ import { setNotifierBackend } from '../utils/notifier';
 import { ThemeManager } from '../themes/theme-manager';
 import { consoleInterceptor } from '../utils/console-interceptor';
 import { log, Modules, LogEmoji } from '../utils/log';
-import { registry as codecRegistry } from 'zarrita';
+import { codecRegistry } from '../data/zarr';
 
 /**
  * Options for {@link bootstrapStandalone}.

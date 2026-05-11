@@ -202,7 +202,7 @@ function validateControls(config: AppConfig, errors: string[], _warnings: string
 /**
  * Validate data loading configuration
  */
-function validateDataLoading(config: AppConfig, errors: string[], _warnings: string[]): void {
+function validateDataLoading(config: AppConfig, errors: string[], warnings: string[]): void {
   const { dataLoading } = config;
 
   // Network validation: reject NaN (comparisons with NaN are always
@@ -225,6 +225,20 @@ function validateDataLoading(config: AppConfig, errors: string[], _warnings: str
   ) {
     errors.push(
       `Invalid validation timeout: ${dataLoading.network.validationTimeoutMs} ms (must be a finite positive number)`
+    );
+  } else if (dataLoading.network.validationTimeoutMs < 3000) {
+    // Soft warning, not a hard error. The documented default (5 s) is
+    // a fail-fast budget tuned for broadband; values under 3 s are
+    // almost always too aggressive — every round-trip including DNS,
+    // TLS, and server processing must complete in that window or the
+    // validation aborts and forces a re-fetch of otherwise-valid
+    // cached data. For 3G / Edge / high-latency targets, raise to
+    // >=8000 instead. See
+    // `DataLoadingNetworkConfig.validationTimeoutMs` JSDoc.
+    warnings.push(
+      `Very low cache validation timeout: ${dataLoading.network.validationTimeoutMs} ms ` +
+        '(values <3000 ms cause spurious validation aborts; consider 5000 ms default ' +
+        'or >=8000 ms for 3G/Edge targets)'
     );
   }
   if (

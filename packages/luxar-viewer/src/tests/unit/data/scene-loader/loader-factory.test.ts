@@ -52,6 +52,7 @@ function makeStubLoc(path: string): { kind: 'resolved'; path: string; resolve: (
 }
 const zarrOpenMock = vi.fn(async (_loc: unknown, _opts: unknown) => ({ attrs: { foo: 'bar' } }));
 vi.mock('zarrita', () => ({
+  registry: {},
   root: (_store: unknown) => makeStubLoc(''),
   open: (loc: unknown, opts: unknown) => zarrOpenMock(loc, opts),
 }));

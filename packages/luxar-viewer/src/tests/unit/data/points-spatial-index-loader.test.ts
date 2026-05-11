@@ -31,6 +31,7 @@ vi.mock('three', async (importOriginal) => {
 
 // Mock zarrita
 vi.mock('zarrita', () => ({
+  registry: {},
   open: vi.fn(),
   get: vi.fn(),
   slice: vi.fn((start, end) => ({ start, end })),

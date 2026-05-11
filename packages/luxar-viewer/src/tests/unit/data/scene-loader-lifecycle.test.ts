@@ -18,14 +18,8 @@ import * as zarr from 'zarrita';
 
 vi.mock('zarrita', () => ({
   FetchStore: vi.fn(),
-  // `tryWithConsolidated` is the zarrita <= 0.5 API. Recent code routes
-  // through `zarrita-compat.withMaybeConsolidatedMetadata`, which falls
-  // back to `tryWithConsolidated` when the newer helper isn't a
-  // function. Defining `withMaybeConsolidatedMetadata: undefined`
-  // satisfies vitest's strict "export must exist" check on the mock
-  // factory while preserving the fallback semantics.
-  tryWithConsolidated: vi.fn(),
-  withMaybeConsolidatedMetadata: undefined,
+  withMaybeConsolidatedMetadata: vi.fn(),
+  registry: {},
   root: vi.fn(),
   open: vi.fn(),
   get: vi.fn(),
@@ -79,7 +73,7 @@ describe('SceneLoader lifecycle stress', () => {
       },
     };
     (zarr.FetchStore as any).mockImplementation(() => mockStore);
-    (zarr as any).tryWithConsolidated.mockResolvedValue(mockStore);
+    (zarr as any).withMaybeConsolidatedMetadata.mockResolvedValue(mockStore);
     (zarr.root as any).mockReturnValue(mockRootLoc);
     (zarr.open as any).mockResolvedValue(mockZarrGroup);
 

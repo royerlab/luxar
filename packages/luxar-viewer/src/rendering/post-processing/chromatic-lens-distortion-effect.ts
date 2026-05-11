@@ -23,6 +23,7 @@
 
 import { BlendFunction, Effect } from 'postprocessing';
 import * as THREE from 'three';
+import { clamp } from '../../utils/clamp';
 
 /**
  * Fragment shader for chromatic lens distortion
@@ -243,7 +244,7 @@ export class ChromaticLensDistortionEffect extends Effect {
 
   set dispersion(value: number) {
     // Clamp to reasonable range to prevent extreme artifacts
-    this.uniforms.get('dispersion')!.value = Math.max(0, Math.min(1, value));
+    this.uniforms.get('dispersion')!.value = clamp(value, 0, 1);
   }
 }
 

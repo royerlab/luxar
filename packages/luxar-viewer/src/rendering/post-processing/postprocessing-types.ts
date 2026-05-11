@@ -6,6 +6,7 @@
  */
 
 import { BloomEffect, ToneMappingEffect, DepthOfFieldEffect, VignetteEffect } from 'postprocessing';
+import { clamp } from '../../utils/clamp';
 
 /**
  * Extended BloomEffect type with proper typing for internal properties
@@ -81,7 +82,7 @@ export class PerspectiveDepthMapper {
    */
   static worldToNormalizedDepth(distance: number, near: number, far: number): number {
     // Clamp distance to valid range
-    const clampedDistance = Math.max(near, Math.min(far, distance));
+    const clampedDistance = clamp(distance, near, far);
 
     // Use inverse depth mapping for better precision distribution
     // This gives more precision to near objects (as GPU depth buffers do)
@@ -107,7 +108,7 @@ export class PerspectiveDepthMapper {
    */
   static normalizedDepthToWorld(normalizedDepth: number, near: number, far: number): number {
     // Clamp normalized depth to valid range
-    const clamped = Math.max(0, Math.min(1, normalizedDepth));
+    const clamped = clamp(normalizedDepth, 0, 1);
 
     // Reverse the inverse depth mapping
     const invNear = 1.0 / near;
@@ -130,7 +131,7 @@ export class PerspectiveDepthMapper {
    * @returns Normalized logarithmic depth value
    */
   static worldToLogDepth(distance: number, near: number, far: number): number {
-    const clampedDistance = Math.max(near, Math.min(far, distance));
+    const clampedDistance = clamp(distance, near, far);
 
     // Logarithmic mapping
     const logNear = Math.log(near);
@@ -150,7 +151,7 @@ export class PerspectiveDepthMapper {
    * @returns World-space distance
    */
   static logDepthToWorld(logDepth: number, near: number, far: number): number {
-    const clamped = Math.max(0, Math.min(1, logDepth));
+    const clamped = clamp(logDepth, 0, 1);
 
     const logNear = Math.log(near);
     const logFar = Math.log(far);

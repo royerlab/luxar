@@ -8,6 +8,7 @@
  */
 
 import { config } from '../config';
+import { clamp } from '../utils/clamp';
 
 /**
  * 3D bounding box representation
@@ -190,7 +191,7 @@ export function calculateCameraDistance(
  * @returns Clamped FOV value
  */
 export function validateFOV(fov: number, min: number = 10, max: number = 120): number {
-  return Math.max(min, Math.min(max, fov));
+  return clamp(fov, min, max);
 }
 
 /**

@@ -393,6 +393,35 @@ export class PostProcessingManager {
   }
 
   /**
+   * Closure-based scope helper that guarantees `endDeferRebuild()` runs
+   * even when the bulk-update block throws. Prefer this over manual
+   * `start/try/finally/end` at call sites — a forgotten `finally` would
+   * strand the depth counter above zero and silently disable future
+   * rebuilds.
+   *
+   * @param fn - The bulk-update closure. May be sync (most common) or
+   *   async; the helper awaits Promise returns so async callers stay
+   *   exception-safe.
+   * @returns Whatever `fn` returns (sync) or resolves to (async).
+   *
+   * @example
+   * ```typescript
+   * postProcessing.withDeferredRebuild(() => {
+   *   postProcessing.updateBloomSettings(1.5);
+   *   postProcessing.setVignetteEnabled(true);
+   * });
+   * ```
+   */
+  withDeferredRebuild<T>(fn: () => T): T {
+    this.startDeferRebuild();
+    try {
+      return fn();
+    } finally {
+      this.endDeferRebuild();
+    }
+  }
+
+  /**
    * Replace the active camera (e.g., when switching between perspective and orthographic).
    * Updates the render pass and rebuilds effect passes that hold camera references.
    */
@@ -1356,7 +1385,18 @@ export class PostProcessingManager {
     );
     this.secondaryPass = undefined;
 
-    this.composer.dispose();
+    // try/catch: a mid-recreation context loss could throw here and
+    // strand the composer reference. Logging + continuing lets the new
+    // composer take over cleanly.
+    try {
+      this.composer.dispose();
+    } catch (error) {
+      log.warning(
+        Modules.POST_PROCESSING,
+        'composer.dispose() threw during composer recreation; continuing',
+        error
+      );
+    }
 
     // Recreate composer with new MSAA setting. Do NOT call composer.setSize()
     // here — all callers (setSSAAEnabled, setSSAAMultiplier, setMSAAEnabled,
@@ -1402,13 +1442,11 @@ export class PostProcessingManager {
   setQualityPreset(preset: 'low' | 'medium' | 'high' | 'ultra'): void {
     this._qualityPreset = preset;
 
-    // Use deferred rebuild to prevent multiple rebuilds. The try/finally
-    // ensures the deferRebuild depth always returns to zero even if any
-    // sub-setter throws (e.g. effect construction fails on an
+    // Batch the multi-setting update so we rebuild the effect pass once.
+    // `withDeferredRebuild` guarantees the depth counter unwinds even if
+    // a sub-setter throws (e.g. effect construction fails on an
     // unsupported GPU).
-    this.startDeferRebuild();
-    try {
-      // Apply preset settings
+    this.withDeferredRebuild(() => {
       switch (preset) {
         case 'low':
           this.setBloomLevels(3); // Coarse bloom for performance
@@ -1448,9 +1486,7 @@ export class PostProcessingManager {
           this.setSSAAMultiplier(2.0);
           break;
       }
-    } finally {
-      this.endDeferRebuild();
-    }
+    });
 
     log.info(Modules.POST_PROCESSING, `Quality preset set to: ${preset}`);
   }
@@ -1843,8 +1879,19 @@ export class PostProcessingManager {
     this.disposeAllEffects('during cleanup');
 
     // Dispose composer (it also disposes passes added to it; we already did
-    // that above for safety).
-    this.composer.dispose();
+    // that above for safety). Wrap in try/catch: on a mid-teardown context
+    // loss the composer can throw, and we'd lose the subsequent reference
+    // nulling. Matches the safeDisposeEffect/safeRemoveAndDisposePass
+    // pattern used for individual effects/passes.
+    try {
+      this.composer.dispose();
+    } catch (error) {
+      log.warning(
+        Modules.POST_PROCESSING,
+        'composer.dispose() threw during cleanup; continuing teardown',
+        error
+      );
+    }
 
     // Clear individual effect references — symmetric across every effect
     // owned by the manager, so dispose paths are safely idempotent and

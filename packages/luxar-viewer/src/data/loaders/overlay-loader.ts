@@ -5,7 +5,7 @@
  * overlay metadata from each child group's .zattrs.
  */
 
-import * as zarr from 'zarrita';
+import * as zarr from '../zarr';
 import { hasContentsMethod } from '../../types/zarr';
 import { log, Modules } from '../../utils/log';
 

@@ -16,8 +16,8 @@
  * URL.revokeObjectURL on eviction.
  */
 
-import * as zarr from 'zarrita';
-import { get, slice } from 'zarrita';
+import * as zarr from '../zarr';
+import { get, slice } from '../zarr';
 import { LRUCache } from '../../cache/lru-cache';
 import { log, Modules } from '../../utils/log';
 

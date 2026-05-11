@@ -73,6 +73,19 @@ describe('Shader hot-path string regressions', () => {
     it('uses inversesqrt for the Mahalanobis ray-quad reciprocal', () => {
       expect(GSPLAT_VERTEX_SHADER).toMatch(/inversesqrt\s*\(\s*quad\s*\)/);
     });
+
+    it('computes the Mahalanobis quadratic form rᵀΣ⁻¹r before the inversesqrt', () => {
+      // The shader assembles the per-axis pre-multiplied vector
+      // (prx/pry/prz = Σ⁻¹·r) and then folds it with `rayDir` to form
+      // the scalar quadratic that feeds `inversesqrt(quad)`. Locking
+      // the rayDir × pr* assembly guards against a refactor that
+      // accidentally drops the cross terms (which would produce wrong
+      // splat sizes that look "almost right" — the worst kind of
+      // regression).
+      expect(GSPLAT_VERTEX_SHADER).toMatch(/rayDir\.x\s*\*\s*prx/);
+      expect(GSPLAT_VERTEX_SHADER).toMatch(/rayDir\.y\s*\*\s*pry/);
+      expect(GSPLAT_VERTEX_SHADER).toMatch(/rayDir\.z\s*\*\s*prz/);
+    });
   });
 
   describe('GSplat fragment', () => {

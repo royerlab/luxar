@@ -2121,6 +2121,13 @@ export class SceneLoader {
     };
     this._prevPerNodeViewState.set(path, snapshot);
 
+    // First call for this path (no prev) — there's nothing to
+    // extrapolate, the dispatcher would return `false`. Skip the
+    // microtask so we don't pay queue overhead for a guaranteed no-op.
+    // The next updateView observes this snapshot as `prev` and the
+    // user's first scrub-direction delta is captured then.
+    if (prev === null) return;
+
     queueMicrotask(() => {
       dispatchPredictivePrefetch(prev, snapshot, [
         loader as PrefetchableLoader,

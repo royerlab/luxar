@@ -12,7 +12,7 @@
  * Concurrent requests for the same node share a single in-flight promise.
  */
 
-import * as zarr from 'zarrita';
+import * as zarr from '../zarr';
 import { log, Modules } from '../../utils/log';
 
 export class LabelLoader {

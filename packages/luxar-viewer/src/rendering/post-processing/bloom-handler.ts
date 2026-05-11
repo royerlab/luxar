@@ -15,6 +15,7 @@
 import { BlendFunction, KernelSize } from 'postprocessing';
 import type { BloomEffect } from 'postprocessing';
 import { log, Modules } from '../../utils/log';
+import { clamp } from '../../utils/clamp';
 import { config } from '../../config';
 import type { BloomEffectTyped } from './postprocessing-types';
 import { isBloomEffectTyped } from './postprocessing-types';
@@ -190,5 +191,5 @@ export function applyBloomSettings(
  * to the nearest integer. Pure.
  */
 export function clampBloomLevels(levels: number): number {
-  return Math.round(Math.max(1, Math.min(12, levels)));
+  return Math.round(clamp(levels, 1, 12));
 }

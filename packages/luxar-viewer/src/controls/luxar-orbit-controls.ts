@@ -14,6 +14,7 @@
 
 import * as THREE from 'three';
 import type { LuxarCamera } from '../utils/camera-utils';
+import { clamp } from '../utils/clamp';
 
 export interface LuxarOrbitControlsConfig {
   enableDamping?: boolean;
@@ -488,7 +489,7 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
       this.distance *= scale;
     } else {
       const cam = this.camera as THREE.OrthographicCamera;
-      cam.zoom = Math.max(this.minZoom, Math.min(this.maxZoom, cam.zoom / scale));
+      cam.zoom = clamp(cam.zoom / scale, this.minZoom, this.maxZoom);
       cam.updateProjectionMatrix();
     }
   }

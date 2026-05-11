@@ -11,8 +11,8 @@
  * @module data/lines-spatial-index-loader
  */
 
-import * as zarr from 'zarrita';
-import { get, slice } from 'zarrita';
+import * as zarr from '../zarr';
+import { get, slice } from '../zarr';
 import { log, Modules } from '../../utils/log';
 import type {
   LinesMetadata,

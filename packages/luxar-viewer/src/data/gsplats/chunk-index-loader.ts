@@ -21,7 +21,7 @@
  * @module data/gsplats/chunk-index-loader
  */
 
-import * as zarr from 'zarrita';
+import * as zarr from '../zarr';
 import { log, Modules } from '../../utils/log';
 import { fetchChunkBoundsArray } from '../loaders/chunk-bounds-loader';
 import { type ChunkSpatialIndex } from '../loaders';

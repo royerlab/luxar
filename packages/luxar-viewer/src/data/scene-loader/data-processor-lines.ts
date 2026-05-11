@@ -61,15 +61,25 @@ export async function projectLinesTo3DUsingWorker(
   updateVersion: number
 ): Promise<ProcessedLinesData> {
   // When the dataset has per-vertex scalars, use the main-thread
-  // buildInstanceBuffers path. The worker payload does not carry
-  // scalar arrays, and the main-thread path preserves colormap
+  // `buildInstanceBuffers` path. The worker payload does not carry
+  // scalar arrays today; the main-thread path preserves colormap
   // correctness end-to-end.
   //
-  // C.1: TODO(viewer-code-review-rerun) — extend the worker schema to
-  // carry per-vertex scalar buffers so colormap-enabled line datasets
-  // don't pay the main-thread cost. For now, emit a one-shot warning
-  // so users see the performance cliff exists. Reset semantics: the
-  // module-scoped flag stays set for the lifetime of the JS context.
+  // Accepted trade-off (not a TODO). For the typical line workloads
+  // luxar targets (neural arbors, vector overlays — usually under
+  // ~10k–100k segments) main-thread projection is sub-frame and not a
+  // user-visible cliff. The schema extension to carry per-vertex
+  // scalars across the worker boundary is non-trivial (transferable
+  // typed-array plumbing, dtype-aware compaction, parity tests across
+  // Float32/Float16/Uint8 scalar dtypes) and would be its own
+  // contained PR. Revisit only when a real workload exceeds ~500k
+  // segments with a colormap enabled AND profiling shows the
+  // main-thread step blocking interactive frames; see
+  // `data/SPECIFICATIONS.md` "Lines worker fallback" for the trigger
+  // condition. The one-shot warning below makes the cliff observable
+  // so a future workload doesn't hit it silently. Reset semantics:
+  // the module-scoped flag stays set for the lifetime of the JS
+  // context.
   if (data.scalars) {
     if (!_linesScalarWorkerFallbackWarned) {
       _linesScalarWorkerFallbackWarned = true;
