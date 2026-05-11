@@ -542,6 +542,12 @@ export interface RenderingSettings {
   controlType: 'orbit' | 'fly' | 'ortho';
   autoRotate: boolean;
   autoRotateSpeed: number;
+  /**
+   * "Natural drag" — swap LEFT ↔ RIGHT mouse buttons in orbit mode so a
+   * one-finger touchpad drag rotates (and two-finger / right-drag pans).
+   * Defaults to true on macOS. Orbit (3D) only; ortho and fly modes ignore.
+   */
+  naturalDrag: boolean;
   // Fly controls - these are added at runtime from config.controls.fly
   flyMovementSpeed?: number;
   flyRotationSpeed?: number;

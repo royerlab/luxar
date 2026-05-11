@@ -1167,6 +1167,20 @@ export class SceneManager extends THREE.EventDispatcher<{
   }
 
   /**
+   * Toggle "natural drag" — swap LEFT ↔ RIGHT mouse buttons in orbit mode so
+   * a one-finger touchpad drag rotates and right-drag pans. Applies to
+   * orbit (3D) only; ortho and fly modes ignore.
+   */
+  setNaturalDrag(enabled: boolean): void {
+    this.controls.setNaturalDrag(enabled);
+    log.custom(
+      LogEmoji.SCENE,
+      Modules.SCENE_MANAGER,
+      `Natural drag ${enabled ? 'enabled' : 'disabled'}`
+    );
+  }
+
+  /**
    * Get current auto-rotation state
    */
   getAutoRotate(): boolean {

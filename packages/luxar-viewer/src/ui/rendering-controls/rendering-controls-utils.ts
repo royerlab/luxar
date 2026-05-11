@@ -203,6 +203,7 @@ export function validateRenderingSettings(settings: Partial<RenderingSettings>):
     -100,
     100
   );
+  merged.naturalDrag = booleanOrDefault(merged.naturalDrag, defaults.naturalDrag);
 
   // Fly controls (all optional in the type — only validate when present).
   if (merged.flyMovementSpeed !== undefined) {

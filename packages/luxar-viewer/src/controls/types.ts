@@ -90,6 +90,7 @@ export interface RenderingControllers {
   // Orbit controls
   autoRotate?: Controller;
   autoRotateSpeed?: Controller;
+  naturalDrag?: Controller;
   // Fly controls
   flyMovementSpeed?: Controller;
   flyRotationSpeed?: Controller;

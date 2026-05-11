@@ -70,6 +70,9 @@ export function syncCurrentState(context: SyncCurrentStateContext): void {
     settings.autoRotate = controls.autoRotate;
     settings.autoRotateSpeed = controls.autoRotateSpeed;
   }
+  // naturalDrag is persisted at the ControlsManager level (not the active
+  // controls instance, so it survives mode switches).
+  settings.naturalDrag = sceneManager.controls.getNaturalDrag();
 
   // Update individual controller bindings we hold a reference to.
   if (controllers.controlType) {
@@ -113,6 +116,10 @@ export function syncCurrentState(context: SyncCurrentStateContext): void {
   if (controllers.autoRotateSpeed) {
     controllers.autoRotateSpeed.setValue(settings.autoRotateSpeed);
     controllers.autoRotateSpeed.updateDisplay();
+  }
+  if (controllers.naturalDrag) {
+    controllers.naturalDrag.setValue(settings.naturalDrag);
+    controllers.naturalDrag.updateDisplay();
   }
 
   if (controllers.fov) {

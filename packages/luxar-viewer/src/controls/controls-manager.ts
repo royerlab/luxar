@@ -23,11 +23,19 @@ import { log, Modules, LogEmoji } from '../utils/log';
 import { EventGroup } from '../utils/event-group';
 import type { LuxarCamera } from '../utils/camera-utils';
 import type { ControlType } from './types';
+import { isMacPlatform } from '../utils/platform';
 export type { ControlType };
 
 export interface ControlsManagerConfig {
   autoRotate?: boolean;
   autoRotateSpeed?: number;
+  /**
+   * Swap LEFT ↔ RIGHT mouse-button mapping in orbit (3D) mode. When true,
+   * one-finger drag rotates and right-drag pans (touchpad ergonomics);
+   * when false, the classic CAD/Blender mapping (left-drag pans, right-
+   * drag rotates) stays in place. Ignored in ortho and fly modes.
+   */
+  naturalDrag?: boolean;
   flyMovementSpeed?: number;
   flyRotationSpeed?: number;
   flyLookSpeed?: number;
@@ -68,6 +76,9 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   private config: ControlsManagerConfig = {
     autoRotate: false,
     autoRotateSpeed: config.controls.orbit.autoRotate.speed.default,
+    // Default to true on macOS; rendering-controls persistence overrides
+    // this with any stored user choice as soon as settings load.
+    naturalDrag: isMacPlatform(),
     flyMovementSpeed: config.controls.fly.movement.speed.default,
     flyRotationSpeed: config.controls.fly.rotation.speed.default,
     flyLookSpeed: config.controls.fly.look.mouseSpeed.default,
@@ -198,6 +209,17 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
 
     // Shift+scroll = view-axis rotation (roll)
     controls.enableViewAxisRotation();
+
+    // Apply "natural drag" mapping (touchpad-friendly: LEFT=rotate, RIGHT=pan)
+    // when enabled. The default in LuxarOrbitControls is the mouse-friendly
+    // mapping (LEFT=pan, RIGHT=rotate); we only need to act when swapping in.
+    if (this.config.naturalDrag) {
+      controls.mouseButtons = {
+        LEFT: THREE.MOUSE.ROTATE,
+        MIDDLE: THREE.MOUSE.DOLLY,
+        RIGHT: THREE.MOUSE.PAN,
+      };
+    }
 
     // Target is set in restoreCameraState() after creation
     this.currentControls = controls;
@@ -358,6 +380,26 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
     if (this.currentControls instanceof LuxarOrbitControls) {
       this.currentControls.autoRotateSpeed = speed;
     }
+  }
+
+  /**
+   * Toggle the orbit-mode LEFT ↔ RIGHT mouse-button mapping. Updates stored
+   * config and, only when the active control is orbit (3D), mutates the
+   * live mouseButtons in place so the change applies immediately without a
+   * mode switch. Ortho and fly are intentionally ignored: ortho uses its
+   * own RIGHT=null mapping, fly doesn't use mouseButtons at all.
+   */
+  public setNaturalDrag(enabled: boolean): void {
+    this.config.naturalDrag = enabled;
+    if (this.currentType !== 'orbit') return;
+    if (!(this.currentControls instanceof LuxarOrbitControls)) return;
+    this.currentControls.mouseButtons = enabled
+      ? { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN }
+      : { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE };
+  }
+
+  public getNaturalDrag(): boolean {
+    return this.config.naturalDrag ?? false;
   }
 
   public getAutoRotate(): boolean {

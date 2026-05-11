@@ -4,6 +4,7 @@
 
 import * as THREE from 'three';
 import type { AppConfig } from './types';
+import { isMacPlatform } from '../utils/platform';
 
 /**
  * Main configuration object containing all application settings
@@ -274,6 +275,10 @@ export const config: AppConfig = {
       controlType: 'orbit' as const, // Default to orbit controls
       autoRotate: false, // Auto-rotation disabled by default
       autoRotateSpeed: 0.25, // Slow rotation speed for presentations
+      // Touchpad-friendly orbit drag mapping (LEFT=rotate, RIGHT=pan).
+      // Default-on for Mac users; off elsewhere. The rendering-controls
+      // persistence layer overrides this with the user's stored choice.
+      naturalDrag: isMacPlatform(),
       // Note: Fly control settings are referenced directly from controls.fly to avoid duplication
       // Adaptive resolution (runtime/UI toggle; overrides adaptiveDPR.enabled after init)
       adaptiveDPREnabled: true, // Persisted per-scene via localStorage

@@ -336,6 +336,7 @@ export class RenderingControls {
     this.sceneManager.setControlType(this.settings.controlType);
     this.sceneManager.setAutoRotate(this.settings.autoRotate);
     this.sceneManager.setAutoRotateSpeed(this.settings.autoRotateSpeed);
+    this.sceneManager.setNaturalDrag(this.settings.naturalDrag);
     this.sceneManager.setFlyMovementSpeed(defaults.flyMovementSpeed);
     this.sceneManager.setFlyRotationSpeed(defaults.flyRotationSpeed);
     this.sceneManager.setFlyInertialMode(defaults.flyInertialMode);
@@ -491,6 +492,7 @@ export class RenderingControls {
     this.sceneManager.setControlType(this.settings.controlType);
     this.sceneManager.setAutoRotate(this.settings.autoRotate);
     this.sceneManager.setAutoRotateSpeed(this.settings.autoRotateSpeed);
+    this.sceneManager.setNaturalDrag(this.settings.naturalDrag);
 
     // Apply fly control settings (if they exist in loaded settings)
     if (this.settings.flyMovementSpeed !== undefined) {
@@ -567,6 +569,9 @@ export class RenderingControls {
     }
     if (zarrOverrides.autoRotateSpeed !== undefined) {
       this.sceneManager.setAutoRotateSpeed(this.settings.autoRotateSpeed);
+    }
+    if (zarrOverrides.naturalDrag !== undefined) {
+      this.sceneManager.setNaturalDrag(this.settings.naturalDrag);
     }
 
     // Update GUI controllers to reflect new values

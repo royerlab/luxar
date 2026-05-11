@@ -88,6 +88,19 @@ describe('rendering-controls-utils', () => {
       expect(result.controlType).toBe('ortho');
     });
 
+    it('preserves an explicit naturalDrag=false (user opt-out overrides platform default)', () => {
+      // Regression: when a Mac user unchecks "Natural drag" the stored
+      // `false` must survive validation, NOT get replaced by the
+      // platform default of true.
+      const result = validateRenderingSettings({ naturalDrag: false });
+      expect(result.naturalDrag).toBe(false);
+    });
+
+    it('preserves an explicit naturalDrag=true', () => {
+      const result = validateRenderingSettings({ naturalDrag: true });
+      expect(result.naturalDrag).toBe(true);
+    });
+
     it('should round bloomLevels to integer', () => {
       const result = validateRenderingSettings({ bloomLevels: 5.7 });
       expect(result.bloomLevels).toBe(6);
@@ -112,6 +125,7 @@ describe('rendering-controls-utils', () => {
         ['detectorNoiseEnabled', 'detectorNoiseEnabled' as const],
         ['chromaticLensDistortionEnabled', 'chromaticLensDistortionEnabled' as const],
         ['autoRotate', 'autoRotate' as const],
+        ['naturalDrag', 'naturalDrag' as const],
         ['dynamicClippingEnabled', 'dynamicClippingEnabled' as const],
         ['adaptiveDPREnabled', 'adaptiveDPREnabled' as const],
         ['cinematicMode', 'cinematicMode' as const],

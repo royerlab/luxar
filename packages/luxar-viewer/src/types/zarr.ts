@@ -110,6 +110,7 @@ export interface ZarrViewerConfig {
   control_type?: string;
   auto_rotate?: boolean;
   auto_rotate_speed?: number;
+  natural_drag?: boolean;
 
   // Cinematic
   cinematic_mode?: boolean;
