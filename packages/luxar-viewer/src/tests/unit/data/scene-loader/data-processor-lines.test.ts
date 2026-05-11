@@ -9,7 +9,7 @@
  *     or returns canned data.
  *   - Mock `appConfig` indirectly: the threshold (`segmentCount > 1000`)
  *     is exercised by simply varying `data.segmentCount` in tests.
- *   - Mock `buildInstanceBuffers` so we can detect main-thread vs
+ *   - Mock `projectLinesTo3D` so we can detect main-thread vs
  *     worker code paths without running the real clipping math.
  *
  * The class isLinesUserData / mesh.userData.attrs / nodeType plumbing
@@ -19,10 +19,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as THREE from 'three';
 
-// Mock buildInstanceBuffers so we can sniff which path ran
+// Mock projectLinesTo3D so we can sniff which path ran
 const mockBuildInstanceBuffers = vi.fn();
 vi.mock('../../../../data/lines/projection', () => ({
-  buildInstanceBuffers: (...args: unknown[]) => mockBuildInstanceBuffers(...args),
+  projectLinesTo3D: (...args: unknown[]) => mockBuildInstanceBuffers(...args),
 }));
 
 const mockGetWorkerPool = vi.fn();
@@ -129,7 +129,7 @@ describe('processLinesData', () => {
     expect(result).toBeNull();
   });
 
-  it('uses main thread (buildInstanceBuffers) for small datasets', async () => {
+  it('uses main thread (projectLinesTo3D) for small datasets', async () => {
     const root = new THREE.Group();
     root.add(makeMesh('/lines'));
     const result = await processLinesData(
@@ -307,7 +307,7 @@ describe('projectLinesTo3DUsingWorker', () => {
     // files it may have already fired; assert the matching text
     // appeared at least zero times this run (we can't reliably reset
     // the module-private flag) — but the fallback path was taken
-    // (buildInstanceBuffers ran twice).
+    // (projectLinesTo3D ran twice).
     expect(mockBuildInstanceBuffers).toHaveBeenCalledTimes(2);
     void warnSpy;
   });

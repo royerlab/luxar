@@ -605,7 +605,8 @@ async function projectPointsTo3D(params: {
 /**
  * Project Lines from nD to 3D with segment clipping.
  *
- * This function implements the same algorithm as buildInstanceBuffers but in a worker:
+ * This function mirrors the main-thread `data/lines/projection.ts::projectLinesTo3D`
+ * but runs in a worker:
  * 1. Clips all segments to the nD slice using WASM batch functions
  * 2. Projects clipped endpoints to 3D
  * 3. Interpolates per-vertex attributes (colors, widths, sharpness)

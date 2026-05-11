@@ -3,7 +3,7 @@
  *
  * Covers:
  *  - LinesDataAccumulator: scalar buffer init/grow/fill/getData.
- *  - buildInstanceBuffers (TS path): scalars interpolated at clipped
+ *  - projectLinesTo3D (TS path): scalars interpolated at clipped
  *    endpoints; output omits scalars when input has none.
  *  - GPU pool updateLinesGeometry: lazily allocates aStartScalar /
  *    aEndScalar when present; non-scalar updates leave geometry without
@@ -17,7 +17,7 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { LinesDataAccumulator } from '../../../data/utils/data-accumulator';
-import { buildInstanceBuffers } from '../../../data/lines/projection';
+import { projectLinesTo3D } from '../../../data/lines/projection';
 import { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
 import {
   createInstancedLinesMesh,
@@ -153,7 +153,7 @@ describe('LinesDataAccumulator scalar buffer', () => {
   });
 });
 
-describe('buildInstanceBuffers scalar interpolation', () => {
+describe('projectLinesTo3D scalar interpolation', () => {
   it('passes scalars through unclipped segments unchanged', () => {
     const data = loadedLines({
       positions: new Float32Array([0, 0, 0, 1, 0, 0]),
@@ -162,7 +162,7 @@ describe('buildInstanceBuffers scalar interpolation', () => {
       scalars: new Float32Array([0.0, 1.0]),
     });
     // No clipping — slice covers full range.
-    const out = buildInstanceBuffers(
+    const out = projectLinesTo3D(
       data,
       [0, 0, 0, 0],
       [Infinity, Infinity, Infinity, Infinity],
@@ -181,7 +181,7 @@ describe('buildInstanceBuffers scalar interpolation', () => {
       widths: new Float32Array([0.1, 0.1]),
       scalars: undefined,
     });
-    const out = buildInstanceBuffers(
+    const out = projectLinesTo3D(
       data,
       [0, 0, 0, 0],
       [Infinity, Infinity, Infinity, Infinity],
@@ -199,7 +199,7 @@ describe('buildInstanceBuffers scalar interpolation', () => {
       widths: new Float32Array([0.1, 0.1]),
       scalars: new Float32Array([0.5]) as Float32Array,
     });
-    const out = buildInstanceBuffers(
+    const out = projectLinesTo3D(
       data,
       [0, 0, 0, 0],
       [Infinity, Infinity, Infinity, Infinity],
@@ -224,12 +224,12 @@ describe('buildInstanceBuffers scalar interpolation', () => {
     expect((buf as Uint8Array)[0]).toBe(64);
     expect((buf as Uint8Array)[1]).toBe(192);
 
-    // Output of accumulator carries Uint8 scalars; buildInstanceBuffers
+    // Output of accumulator carries Uint8 scalars; projectLinesTo3D
     // widens to Float32 in the output via numeric assignment.
     const data = acc.getData(1, 2);
     expect(data.scalars).toBeInstanceOf(Uint8Array);
 
-    const out = buildInstanceBuffers(
+    const out = projectLinesTo3D(
       data,
       [0, 0, 0, 0],
       [Infinity, Infinity, Infinity, Infinity],
@@ -405,7 +405,7 @@ describe('end-to-end scalar binding for Lines', () => {
       widths: new Float32Array([0.1, 0.1]),
       scalars: new Float32Array([0.0, 1.0]),
     });
-    const processed = buildInstanceBuffers(
+    const processed = projectLinesTo3D(
       data,
       [0, 0, 0, 0],
       [Infinity, Infinity, Infinity, Infinity],
@@ -422,7 +422,7 @@ describe('end-to-end scalar binding for Lines', () => {
       widths: new Float32Array([0.1, 0.1]),
       scalars: undefined,
     });
-    const processed = buildInstanceBuffers(
+    const processed = projectLinesTo3D(
       data,
       [0, 0, 0, 0],
       [Infinity, Infinity, Infinity, Infinity],

@@ -14,7 +14,7 @@
  *   - per-vertex scalars (colormap mode) ride the worker payload too —
  *     forwarded as a transferable typed-array and interpolated via
  *     `interpolate_scalars_batch` on the worker side,
- *   - worker failures fall back to `buildInstanceBuffers` (which itself
+ *   - worker failures fall back to `projectLinesTo3D` (which itself
  *     handles the scalar path on the main thread),
  *   - first-update info logs are gated by `updateVersion <= 1`,
  *   - commits use the GPU buffer pool when enabled, otherwise
@@ -24,7 +24,7 @@
  */
 
 import * as THREE from 'three';
-import { buildInstanceBuffers } from '../lines/projection';
+import { projectLinesTo3D } from '../lines/projection';
 import type { LinesViewState, LoadedLinesData, ProcessedLinesData } from '../../types/lines';
 import { isLinesUserData } from '../../types/lines';
 import { computeTolerance } from '../utils/tolerance-computer';
@@ -44,7 +44,7 @@ export interface StagedLinesCommit {
 
 /**
  * Project nD lines to a 3D instance-buffer set on a worker thread.
- * Falls back to the main-thread `buildInstanceBuffers` on worker
+ * Falls back to the main-thread `projectLinesTo3D` on worker
  * failure with a warning log — the user-visible behavior is identical
  * either way; only timing differs.
  *
@@ -136,7 +136,7 @@ export async function projectLinesTo3DUsingWorker(
       'Worker lines projection failed, falling back to main thread:',
       error
     );
-    return buildInstanceBuffers(
+    return projectLinesTo3D(
       data,
       viewState.slicePosition,
       tolerance,
@@ -199,7 +199,7 @@ export async function processLinesData(
     if (useWorkerProjection) {
       return projectLinesTo3DUsingWorker(data, viewState, tolerance, updateVersion);
     }
-    return buildInstanceBuffers(
+    return projectLinesTo3D(
       data,
       viewState.slicePosition,
       tolerance,

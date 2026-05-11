@@ -38,8 +38,8 @@ describe('coerceColorsToFloat32', () => {
 
   it('worker output matches main-thread reference for Uint8 RGB', () => {
     // Mirrors the reference normalization in
-    // data/gsplats/projection.ts:processGSplats3DOnly and
-    // data/lines/projection.ts:buildInstanceBuffers — both apply
+    // data/gsplats/projection.ts:projectGSplats3DOnly and
+    // data/lines/projection.ts:projectLinesTo3D — both apply
     // colors[i] * (1/255) before passing to WASM. The worker path
     // must produce byte-equal output.
     const input = new Uint8Array([0, 64, 128, 192, 255, 1]);

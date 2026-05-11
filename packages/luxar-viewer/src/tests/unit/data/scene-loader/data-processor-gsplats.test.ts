@@ -4,7 +4,7 @@
  * Strategy mirrors data-processor-lines.test.ts:
  *   - Real `THREE.Group` + `THREE.Mesh` for `rootGroup` so the
  *     getObjectByName + nodeType guard is exercised in full.
- *   - Mock `processGSplats` and `packCholeskyForShader` so tests aren't
+ *   - Mock `projectGSplats` and `packCholeskyForShader` so tests aren't
  *     coupled to the real Mahalanobis math; we only verify orchestration.
  *   - Mock the worker pool so we can control success / failure /
  *     fallback paths.
@@ -15,7 +15,7 @@ import * as THREE from 'three';
 
 const mockProcessGSplats = vi.fn();
 vi.mock('../../../../data/gsplats/projection', () => ({
-  processGSplats: (...args: unknown[]) => mockProcessGSplats(...args),
+  projectGSplats: (...args: unknown[]) => mockProcessGSplats(...args),
 }));
 
 const mockPackCholesky = vi.fn();

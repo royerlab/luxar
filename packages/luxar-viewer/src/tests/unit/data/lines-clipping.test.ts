@@ -4,8 +4,8 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import {
   clipSegmentToSlice,
-  buildInstanceBuffers,
-  buildInstanceBuffersWASM,
+  projectLinesTo3D,
+  projectLinesTo3DWASM,
   createEmptyLinesData,
   lerp,
   lerpVec3,
@@ -271,7 +271,7 @@ describe('distance3D', () => {
   });
 });
 
-describe('buildInstanceBuffers', () => {
+describe('projectLinesTo3D', () => {
   it('should transform loaded data to GPU-ready format', () => {
     const loadedData: LoadedLinesData = {
       positions: new Float32Array([
@@ -305,7 +305,7 @@ describe('buildInstanceBuffers', () => {
       ndim: 3,
     };
 
-    const result = buildInstanceBuffers(
+    const result = projectLinesTo3D(
       loadedData,
       [0, 0, 0], // slice position
       [1e10, 1e10, 1e10], // tolerance (all visible)
@@ -356,7 +356,7 @@ describe('buildInstanceBuffers', () => {
       ndim: 4,
     };
 
-    const result = buildInstanceBuffers(
+    const result = projectLinesTo3D(
       loadedData,
       [0, 0, 0, 5], // Slice at dim3 = 5
       [1e10, 1e10, 1e10, 0.5], // Tolerance 0.5 on dim3
@@ -414,7 +414,7 @@ describe('buildInstanceBuffers', () => {
       ndim: 4,
     };
 
-    const result = buildInstanceBuffers(
+    const result = projectLinesTo3D(
       loadedData,
       [0, 0, 0, 5],
       [1e10, 1e10, 1e10, 0.5],
@@ -438,7 +438,7 @@ describe('buildInstanceBuffers', () => {
       ndim: 3,
     };
 
-    const result = buildInstanceBuffers(loadedData, [0, 0, 0], [1e10, 1e10, 1e10], [0, 1, 2]);
+    const result = projectLinesTo3D(loadedData, [0, 0, 0], [1e10, 1e10, 1e10], [0, 1, 2]);
 
     // Default white color
     expect(Array.from(result.startColors.slice(0, 3))).toEqual([1, 1, 1]);
@@ -458,7 +458,7 @@ describe('buildInstanceBuffers', () => {
       ndim: 3,
     };
 
-    const result = buildInstanceBuffers(loadedData, [0, 0, 0], [1e10, 1e10, 1e10], [0, 1, 2]);
+    const result = projectLinesTo3D(loadedData, [0, 0, 0], [1e10, 1e10, 1e10], [0, 1, 2]);
 
     // Default sharpness 1.0
     expect(result.startSharpness[0]).toBe(1.0);
@@ -478,7 +478,7 @@ describe('buildInstanceBuffers', () => {
       ndim: 3,
     };
 
-    const result = buildInstanceBuffers(loadedData, [0, 0, 0], [1e10, 1e10, 1e10], [0, 1, 2]);
+    const result = projectLinesTo3D(loadedData, [0, 0, 0], [1e10, 1e10, 1e10], [0, 1, 2]);
 
     expect(result.segmentCount).toBe(0);
     expect(result.startPositions.length).toBe(0);
@@ -501,7 +501,7 @@ describe('buildInstanceBuffers', () => {
       ndim: 3,
     };
 
-    const result = buildInstanceBuffers(loadedData, [0, 0, 0], [1e10, 1e10, 1e10], [0, 1, 2]);
+    const result = projectLinesTo3D(loadedData, [0, 0, 0], [1e10, 1e10, 1e10], [0, 1, 2]);
 
     expect(result.segmentCount).toBe(1);
     expect(Array.from(result.startColors.slice(0, 3))).toEqual([1, 0, 0]);
@@ -521,7 +521,7 @@ describe('buildInstanceBuffers', () => {
       ndim: 3,
     };
 
-    const result = buildInstanceBuffers(loadedData, [0, 0, 0], [1e10, 1e10, 1e10], [0, 1, 2]);
+    const result = projectLinesTo3D(loadedData, [0, 0, 0], [1e10, 1e10, 1e10], [0, 1, 2]);
 
     expect(result.segmentCount).toBe(1);
     expect(result.startColors[0]).toBeCloseTo(1, 5);
@@ -543,7 +543,7 @@ describe('buildInstanceBuffers', () => {
       ndim: 3,
     };
 
-    const result = buildInstanceBuffers(loadedData, [0, 0, 0], [1e10, 1e10, 1e10], [0, 1, 2]);
+    const result = projectLinesTo3D(loadedData, [0, 0, 0], [1e10, 1e10, 1e10], [0, 1, 2]);
 
     expect(result.segmentCount).toBe(1);
     expect(Array.from(result.startColors.slice(0, 3))).toEqual([0.5, 0.25, 0.75]);
@@ -555,7 +555,7 @@ describe('buildInstanceBuffers', () => {
 // WASM vs TypeScript Comparison Tests
 // ============================================================================
 
-describe.skipIf(!wasmFilesExist)('buildInstanceBuffersWASM vs buildInstanceBuffers', () => {
+describe.skipIf(!wasmFilesExist)('projectLinesTo3DWASM vs projectLinesTo3D', () => {
   // Initialize WASM module before tests
   beforeAll(async () => {
     if (!wasmFilesExist) return;
@@ -575,8 +575,8 @@ describe.skipIf(!wasmFilesExist)('buildInstanceBuffersWASM vs buildInstanceBuffe
    * Helper to compare ProcessedLinesData from both implementations
    */
   function compareResults(
-    tsResult: ReturnType<typeof buildInstanceBuffers>,
-    wasmResult: ReturnType<typeof buildInstanceBuffersWASM>,
+    tsResult: ReturnType<typeof projectLinesTo3D>,
+    wasmResult: ReturnType<typeof projectLinesTo3DWASM>,
     tolerance = 1e-5
   ) {
     // Segment counts must match
@@ -646,8 +646,8 @@ describe.skipIf(!wasmFilesExist)('buildInstanceBuffersWASM vs buildInstanceBuffe
     const tolerance = [1e10, 1e10, 1e10];
     const displayDims = [0, 1, 2];
 
-    const tsResult = buildInstanceBuffers(loadedData, slicePos, tolerance, displayDims);
-    const wasmResult = buildInstanceBuffersWASM(loadedData, slicePos, tolerance, displayDims);
+    const tsResult = projectLinesTo3D(loadedData, slicePos, tolerance, displayDims);
+    const wasmResult = projectLinesTo3DWASM(loadedData, slicePos, tolerance, displayDims);
 
     compareResults(tsResult, wasmResult);
   });
@@ -678,8 +678,8 @@ describe.skipIf(!wasmFilesExist)('buildInstanceBuffersWASM vs buildInstanceBuffe
     const tolerance = [1e10, 1e10, 1e10, 0.5];
     const displayDims = [0, 1, 2];
 
-    const tsResult = buildInstanceBuffers(loadedData, slicePos, tolerance, displayDims);
-    const wasmResult = buildInstanceBuffersWASM(loadedData, slicePos, tolerance, displayDims);
+    const tsResult = projectLinesTo3D(loadedData, slicePos, tolerance, displayDims);
+    const wasmResult = projectLinesTo3DWASM(loadedData, slicePos, tolerance, displayDims);
 
     compareResults(tsResult, wasmResult);
   });
@@ -719,8 +719,8 @@ describe.skipIf(!wasmFilesExist)('buildInstanceBuffersWASM vs buildInstanceBuffe
     const tolerance = [1e10, 1e10, 1e10, 0.5];
     const displayDims = [0, 1, 2];
 
-    const tsResult = buildInstanceBuffers(loadedData, slicePos, tolerance, displayDims);
-    const wasmResult = buildInstanceBuffersWASM(loadedData, slicePos, tolerance, displayDims);
+    const tsResult = projectLinesTo3D(loadedData, slicePos, tolerance, displayDims);
+    const wasmResult = projectLinesTo3DWASM(loadedData, slicePos, tolerance, displayDims);
 
     compareResults(tsResult, wasmResult);
     expect(tsResult.segmentCount).toBe(1); // Only one visible
@@ -743,8 +743,8 @@ describe.skipIf(!wasmFilesExist)('buildInstanceBuffersWASM vs buildInstanceBuffe
     const tolerance = [1e10, 1e10, 1e10];
     const displayDims = [0, 1, 2];
 
-    const tsResult = buildInstanceBuffers(loadedData, slicePos, tolerance, displayDims);
-    const wasmResult = buildInstanceBuffersWASM(loadedData, slicePos, tolerance, displayDims);
+    const tsResult = projectLinesTo3D(loadedData, slicePos, tolerance, displayDims);
+    const wasmResult = projectLinesTo3DWASM(loadedData, slicePos, tolerance, displayDims);
 
     compareResults(tsResult, wasmResult);
     // Verify default white
@@ -768,8 +768,8 @@ describe.skipIf(!wasmFilesExist)('buildInstanceBuffersWASM vs buildInstanceBuffe
     const tolerance = [1e10, 1e10, 1e10];
     const displayDims = [0, 1, 2];
 
-    const tsResult = buildInstanceBuffers(loadedData, slicePos, tolerance, displayDims);
-    const wasmResult = buildInstanceBuffersWASM(loadedData, slicePos, tolerance, displayDims);
+    const tsResult = projectLinesTo3D(loadedData, slicePos, tolerance, displayDims);
+    const wasmResult = projectLinesTo3DWASM(loadedData, slicePos, tolerance, displayDims);
 
     compareResults(tsResult, wasmResult);
     // Verify default sharpness
@@ -793,8 +793,8 @@ describe.skipIf(!wasmFilesExist)('buildInstanceBuffersWASM vs buildInstanceBuffe
     const tolerance = [1e10, 1e10, 1e10];
     const displayDims = [0, 1, 2];
 
-    const tsResult = buildInstanceBuffers(loadedData, slicePos, tolerance, displayDims);
-    const wasmResult = buildInstanceBuffersWASM(loadedData, slicePos, tolerance, displayDims);
+    const tsResult = projectLinesTo3D(loadedData, slicePos, tolerance, displayDims);
+    const wasmResult = projectLinesTo3DWASM(loadedData, slicePos, tolerance, displayDims);
 
     compareResults(tsResult, wasmResult);
     expect(wasmResult.segmentCount).toBe(0);
@@ -838,8 +838,8 @@ describe.skipIf(!wasmFilesExist)('buildInstanceBuffersWASM vs buildInstanceBuffe
     const tolerance = [1e10, 1e10, 1e10, 0.5, 1.0];
     const displayDims = [0, 1, 2];
 
-    const tsResult = buildInstanceBuffers(loadedData, slicePos, tolerance, displayDims);
-    const wasmResult = buildInstanceBuffersWASM(loadedData, slicePos, tolerance, displayDims);
+    const tsResult = projectLinesTo3D(loadedData, slicePos, tolerance, displayDims);
+    const wasmResult = projectLinesTo3DWASM(loadedData, slicePos, tolerance, displayDims);
 
     compareResults(tsResult, wasmResult);
   });
@@ -891,8 +891,8 @@ describe.skipIf(!wasmFilesExist)('buildInstanceBuffersWASM vs buildInstanceBuffe
     const tolerance = [1e10, 1e10, 1e10, 1.0];
     const displayDims = [0, 1, 2];
 
-    const tsResult = buildInstanceBuffers(loadedData, slicePos, tolerance, displayDims);
-    const wasmResult = buildInstanceBuffersWASM(loadedData, slicePos, tolerance, displayDims);
+    const tsResult = projectLinesTo3D(loadedData, slicePos, tolerance, displayDims);
+    const wasmResult = projectLinesTo3DWASM(loadedData, slicePos, tolerance, displayDims);
 
     compareResults(tsResult, wasmResult);
   });
@@ -923,8 +923,8 @@ describe.skipIf(!wasmFilesExist)('buildInstanceBuffersWASM vs buildInstanceBuffe
     const tolerance = [1e10, 1e10, 1e10, 0.5];
     const displayDims = [0, 1, 2];
 
-    const tsResult = buildInstanceBuffers(loadedData, slicePos, tolerance, displayDims);
-    const wasmResult = buildInstanceBuffersWASM(loadedData, slicePos, tolerance, displayDims);
+    const tsResult = projectLinesTo3D(loadedData, slicePos, tolerance, displayDims);
+    const wasmResult = projectLinesTo3DWASM(loadedData, slicePos, tolerance, displayDims);
 
     compareResults(tsResult, wasmResult);
 
@@ -959,8 +959,8 @@ describe.skipIf(!wasmFilesExist)('buildInstanceBuffersWASM vs buildInstanceBuffe
     const tolerance = [1e10, 1e10, 1e10, 0.5];
     const displayDims = [0, 1, 2];
 
-    const tsResult = buildInstanceBuffers(loadedData, slicePos, tolerance, displayDims);
-    const wasmResult = buildInstanceBuffersWASM(loadedData, slicePos, tolerance, displayDims);
+    const tsResult = projectLinesTo3D(loadedData, slicePos, tolerance, displayDims);
+    const wasmResult = projectLinesTo3DWASM(loadedData, slicePos, tolerance, displayDims);
 
     compareResults(tsResult, wasmResult);
     expect(wasmResult.segmentCount).toBe(0);

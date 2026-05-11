@@ -56,7 +56,7 @@ export type { ArrayMetadata } from './utils/array-decoder';
 export { LinesSpatialIndexLoader } from './lines/lines-spatial-index-loader';
 export {
   clipSegmentToSlice,
-  buildInstanceBuffers,
+  projectLinesTo3D,
   lerp,
   lerpVec3,
   distance3D,

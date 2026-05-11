@@ -12,7 +12,7 @@
  *   - return zero-copy subarrays from `accumulator.getData()`,
  *   - achieve zero-allocation operation in the loading hot path.
  *
- * Processing helpers (buildInstanceBuffers, processGSplats) are kept on
+ * Processing helpers (projectLinesTo3D, projectGSplats) are kept on
  * their two-pass algorithms — accumulator integration there did not
  * pay off in benchmarks.
  */

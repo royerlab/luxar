@@ -179,7 +179,7 @@ function mahalanobisDistanceReuse(
  * @param truncate - Truncation radius in sigmas for shifted Gaussian (default 3.0)
  * @returns Processed 3D gsplats data ready for GPU
  */
-export function processGSplatsTo3D(
+export function projectGSplatsTo3D(
   loaded: LoadedGSplatsData,
   viewState: GSplatsViewState,
   truncate: number = 3.0
@@ -390,9 +390,9 @@ export function processGSplatsTo3D(
  * @param loaded - Raw 3D gsplats data from zarr
  * @returns Processed 3D gsplats data ready for GPU
  */
-export function processGSplats3DOnly(loaded: LoadedGSplatsData): ProcessedGSplatsData {
+export function projectGSplats3DOnly(loaded: LoadedGSplatsData): ProcessedGSplatsData {
   if (loaded.ndim !== 3) {
-    throw new Error(`processGSplats3DOnly requires ndim=3, got ${loaded.ndim}`);
+    throw new Error(`projectGSplats3DOnly requires ndim=3, got ${loaded.ndim}`);
   }
 
   const splatCount = loaded.splatCount;
@@ -443,7 +443,7 @@ export function processGSplats3DOnly(loaded: LoadedGSplatsData): ProcessedGSplat
  * @param viewState - Current view state
  * @returns Processed 3D gsplats data ready for GPU
  */
-export function processGSplats(
+export function projectGSplats(
   loaded: LoadedGSplatsData,
   viewState: GSplatsViewState,
   truncate: number = 3.0
@@ -457,10 +457,10 @@ export function processGSplats(
       viewState.displayDims[2] === 2;
 
     if (isStandard3D) {
-      return processGSplats3DOnly(loaded);
+      return projectGSplats3DOnly(loaded);
     }
   }
 
   // General nD → 3D processing
-  return processGSplatsTo3D(loaded, viewState, truncate);
+  return projectGSplatsTo3D(loaded, viewState, truncate);
 }

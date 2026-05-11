@@ -41,7 +41,7 @@ data/
 ├── lines/                         # Lines geometry — facade + chunk-index probe + projection math
 │   ├── lines-spatial-index-loader.ts  # Loads lines with nD clipping + attribute interpolation
 │   ├── chunk-index-loader.ts          # Dual-bounds zarr probe + computeVertexRangesFromIndices
-│   └── projection.ts                  # clipSegmentToSlice + lerp + buildInstanceBuffers (TS + WASM) + initLinesWASM
+│   └── projection.ts                  # clipSegmentToSlice + lerp + projectLinesTo3D (TS + WASM) + initLinesWASM
 │
 ├── gsplats/                       # GSplats geometry — facade + chunk-index probe + processor + multi-LOD wrapper
 │   ├── gsplats-spatial-index-loader.ts  # Loads Gaussian splats with nD visibility

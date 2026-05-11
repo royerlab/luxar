@@ -10,7 +10,7 @@
  *   - truncation radius is read from the mesh material,
  *   - Cholesky factors are packed after projection,
  *   - worker args derive discreteDims / discreteSteps / extendToAllDims from `viewState.dimensions`,
- *   - worker failures fall back to `processGSplats`,
+ *   - worker failures fall back to `projectGSplats`,
  *   - first-update info logs are gated by `updateVersion <= 1`,
  *   - commits use the GPU buffer pool when enabled, otherwise
  *     `updateInstancedGSplatsMesh`.
@@ -19,7 +19,7 @@
  */
 
 import * as THREE from 'three';
-import { processGSplats } from '../gsplats/projection';
+import { projectGSplats } from '../gsplats/projection';
 import {
   updateInstancedGSplatsMesh,
   packCholeskyForShader,
@@ -41,7 +41,7 @@ const DEFAULT_TRUNCATE = 3.0;
 /** Staged data carried between async processing and the GPU commit. */
 export interface StagedGSplatsCommit {
   path: string;
-  processed: ReturnType<typeof processGSplats>;
+  processed: ReturnType<typeof projectGSplats>;
   cholesky01: Float32Array;
   cholesky23: Float32Array;
   cholesky45: Float32Array;
@@ -61,7 +61,7 @@ function readTruncate(mesh: THREE.Mesh): number {
 
 /**
  * Project GSplats to 3D on a worker thread. Falls back to the main
- * thread `processGSplats` on worker failure with a warning log.
+ * thread `projectGSplats` on worker failure with a warning log.
  *
  * `updateVersion` gates the first-update info logs.
  */
@@ -70,7 +70,7 @@ export async function projectGSplatsTo3DUsingWorker(
   viewState: GSplatsViewState,
   truncate: number,
   updateVersion: number
-): Promise<ReturnType<typeof processGSplats>> {
+): Promise<ReturnType<typeof projectGSplats>> {
   try {
     if (updateVersion <= 1) {
       log.info(
@@ -150,7 +150,7 @@ export async function projectGSplatsTo3DUsingWorker(
       'Worker GSplats projection failed, falling back to main thread:',
       error
     );
-    return processGSplats(data, viewState, truncate);
+    return projectGSplats(data, viewState, truncate);
   }
 }
 
@@ -189,7 +189,7 @@ export async function processGSplatsData(
 
   const truncate = readTruncate(mesh);
 
-  let processed: ReturnType<typeof processGSplats>;
+  let processed: ReturnType<typeof projectGSplats>;
   let cholesky01: Float32Array;
   let cholesky23: Float32Array;
   let cholesky45: Float32Array;
@@ -198,7 +198,7 @@ export async function processGSplatsData(
     if (useWorkerProjection) {
       return projectGSplatsTo3DUsingWorker(data, viewState, truncate, updateVersion);
     }
-    return processGSplats(data, viewState, truncate);
+    return projectGSplats(data, viewState, truncate);
   };
 
   if (session) {

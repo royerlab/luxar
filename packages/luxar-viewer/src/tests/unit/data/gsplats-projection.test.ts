@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
-  processGSplatsTo3D,
-  processGSplats3DOnly,
-  processGSplats,
+  projectGSplatsTo3D,
+  projectGSplats3DOnly,
+  projectGSplats,
   createEmptyGSplatsData,
 } from '../../../data/gsplats/projection';
 import type {
@@ -11,7 +11,7 @@ import type {
   GSplatsMetadata,
 } from '../../../types/gsplats';
 
-describe('processGSplats3DOnly', () => {
+describe('projectGSplats3DOnly', () => {
   it('should copy 3D data directly', () => {
     const loaded: LoadedGSplatsData = {
       positions: new Float32Array([0, 0, 0, 1, 1, 1, 2, 2, 2]),
@@ -42,7 +42,7 @@ describe('processGSplats3DOnly', () => {
       ndim: 3,
     };
 
-    const result = processGSplats3DOnly(loaded);
+    const result = projectGSplats3DOnly(loaded);
 
     expect(result.splatCount).toBe(3);
     expect(result.centers3D.length).toBe(9);
@@ -67,7 +67,7 @@ describe('processGSplats3DOnly', () => {
       ndim: 3,
     };
 
-    const result = processGSplats3DOnly(loaded);
+    const result = projectGSplats3DOnly(loaded);
     expect(result.splatCount).toBe(1);
   });
 
@@ -82,7 +82,7 @@ describe('processGSplats3DOnly', () => {
       ndim: 3,
     };
 
-    const result = processGSplats3DOnly(loaded);
+    const result = projectGSplats3DOnly(loaded);
 
     expect(result.colors[0]).toBe(1.0);
     expect(result.colors[1]).toBe(1.0);
@@ -100,11 +100,11 @@ describe('processGSplats3DOnly', () => {
       ndim: 4,
     };
 
-    expect(() => processGSplats3DOnly(loaded)).toThrow('requires ndim=3');
+    expect(() => projectGSplats3DOnly(loaded)).toThrow('requires ndim=3');
   });
 });
 
-describe('processGSplatsTo3D', () => {
+describe('projectGSplatsTo3D', () => {
   it('should process 3D data with no hidden dims', () => {
     const loaded: LoadedGSplatsData = {
       positions: new Float32Array([0, 0, 0, 1, 1, 1]),
@@ -122,7 +122,7 @@ describe('processGSplatsTo3D', () => {
       tolerance: [1, 1, 1],
     };
 
-    const result = processGSplatsTo3D(loaded, viewState);
+    const result = projectGSplatsTo3D(loaded, viewState);
 
     expect(result.splatCount).toBe(2);
     expect(result.amplitudes[0]).toBe(1.0); // No attenuation
@@ -172,7 +172,7 @@ describe('processGSplatsTo3D', () => {
       tolerance: [1, 1, 1, 1],
     };
 
-    const result = processGSplatsTo3D(loaded, viewState);
+    const result = projectGSplatsTo3D(loaded, viewState);
 
     // First splat: on slice, no attenuation
     expect(result.amplitudes[0]).toBeCloseTo(1.0, 5);
@@ -215,7 +215,7 @@ describe('processGSplatsTo3D', () => {
       tolerance: [1, 1, 1, 1],
     };
 
-    const result = processGSplatsTo3D(loaded, viewState);
+    const result = projectGSplatsTo3D(loaded, viewState);
 
     // 3D Cholesky should be [L00, L10, L11, L20, L21, L22] = [1, 2, 3, 4, 5, 6]
     expect(result.choleskyFactors3D[0]).toBe(1); // L00
@@ -245,7 +245,7 @@ describe('processGSplatsTo3D', () => {
       tolerance: [1, 1, 1, 1, 1],
     };
 
-    const result = processGSplatsTo3D(loaded, viewState);
+    const result = projectGSplatsTo3D(loaded, viewState);
 
     // 3D center should be [dim1, dim3, dim4] = [20, 40, 50]
     expect(result.centers3D[0]).toBe(20);
@@ -254,7 +254,7 @@ describe('processGSplatsTo3D', () => {
   });
 });
 
-describe('processGSplats', () => {
+describe('projectGSplats', () => {
   it('should use optimized path for standard 3D data', () => {
     const loaded: LoadedGSplatsData = {
       positions: new Float32Array([0, 0, 0]),
@@ -272,7 +272,7 @@ describe('processGSplats', () => {
       tolerance: [1, 1, 1],
     };
 
-    const result = processGSplats(loaded, viewState);
+    const result = projectGSplats(loaded, viewState);
 
     expect(result.splatCount).toBe(1);
   });
@@ -295,7 +295,7 @@ describe('processGSplats', () => {
       tolerance: [1, 1, 1],
     };
 
-    const result = processGSplats(loaded, viewState);
+    const result = projectGSplats(loaded, viewState);
 
     expect(result.splatCount).toBe(1);
     // requested displayDims order is preserved (matches Points/Lines).
@@ -322,7 +322,7 @@ describe('processGSplats', () => {
       tolerance: [1, 1, 1, 1],
     };
 
-    const result = processGSplats(loaded, viewState);
+    const result = projectGSplats(loaded, viewState);
 
     expect(result.splatCount).toBe(1);
   });
@@ -346,7 +346,7 @@ describe('edge cases', () => {
       tolerance: [1, 1, 1],
     };
 
-    const result = processGSplats(loaded, viewState);
+    const result = projectGSplats(loaded, viewState);
 
     expect(result.splatCount).toBe(0);
     expect(result.centers3D.length).toBe(0);
@@ -369,7 +369,7 @@ describe('edge cases', () => {
       tolerance: [1, 1, 1],
     };
 
-    const result = processGSplatsTo3D(loaded, viewState);
+    const result = projectGSplatsTo3D(loaded, viewState);
 
     expect(result.splatCount).toBe(1); // Only first splat
     expect(result.centers3D[0]).toBe(0);
@@ -393,7 +393,7 @@ describe('edge cases', () => {
       tolerance: [1, 1, 1],
     };
 
-    const result = processGSplatsTo3D(loaded, viewState);
+    const result = projectGSplatsTo3D(loaded, viewState);
     expect(result.splatCount).toBe(1);
   });
 });
@@ -416,7 +416,7 @@ describe('workspace reuse safety', () => {
       slicePosition: [0, 0, 0, 0],
       tolerance: [1, 1, 1, 1],
     };
-    const result4D = processGSplatsTo3D(loaded4D, viewState4D);
+    const result4D = projectGSplatsTo3D(loaded4D, viewState4D);
 
     // Second call: 5D data (2 hidden dims) — workspace must be clean
     const loaded5D: LoadedGSplatsData = {
@@ -434,7 +434,7 @@ describe('workspace reuse safety', () => {
       slicePosition: [0, 0, 0, 0, 0],
       tolerance: [1, 1, 1, 1, 1],
     };
-    const result5D = processGSplatsTo3D(loaded5D, viewState5D);
+    const result5D = projectGSplatsTo3D(loaded5D, viewState5D);
 
     // Third call: back to 3D (0 hidden dims) — workspace must not interfere
     const loaded3D: LoadedGSplatsData = {
@@ -451,7 +451,7 @@ describe('workspace reuse safety', () => {
       slicePosition: [0, 0, 0],
       tolerance: [1, 1, 1],
     };
-    const result3D = processGSplatsTo3D(loaded3D, viewState3D);
+    const result3D = projectGSplatsTo3D(loaded3D, viewState3D);
 
     // Verify each call produced correct independent results
     expect(result4D.splatCount).toBe(1);
@@ -513,7 +513,7 @@ describe('workspace reuse safety', () => {
       tolerance: [1, 1, 1, 1],
     };
 
-    const result = processGSplatsTo3D(loaded, viewState);
+    const result = projectGSplatsTo3D(loaded, viewState);
 
     expect(result.splatCount).toBe(1);
     // Shifted Gaussian attenuation: scale * max(0, exp(-0.5 * D²) - C) where C = exp(-4.5)
@@ -615,7 +615,7 @@ describe('workspace reuse safety', () => {
       tolerance: [1, 1, 1, 1],
     };
 
-    const result = processGSplatsTo3D(loaded, viewState);
+    const result = projectGSplatsTo3D(loaded, viewState);
 
     // Only splats 0 and 2 should survive
     expect(result.splatCount).toBe(2);
@@ -665,7 +665,7 @@ describe('discrete dimension handling', () => {
       ],
     };
 
-    const result = processGSplatsTo3D(loaded, viewState);
+    const result = projectGSplatsTo3D(loaded, viewState);
 
     expect(result.splatCount).toBe(1);
     // Discrete dim: no Gaussian attenuation, full amplitude
@@ -696,7 +696,7 @@ describe('discrete dimension handling', () => {
       ],
     };
 
-    const result = processGSplatsTo3D(loaded, viewState);
+    const result = projectGSplatsTo3D(loaded, viewState);
 
     expect(result.splatCount).toBe(0); // Filtered out by discrete check
   });
@@ -728,7 +728,7 @@ describe('discrete dimension handling', () => {
       ],
     };
 
-    const result = processGSplatsTo3D(loaded, viewState);
+    const result = projectGSplatsTo3D(loaded, viewState);
 
     // Time passes (discrete, exact match), wavelength offset = 2.0
     // Continuous Mahalanobis for dim 4 only: diff=2.0, sigma=1 → mahal=2.0
@@ -768,7 +768,7 @@ describe('discrete dimension handling', () => {
       ],
     };
 
-    const result = processGSplatsTo3D(loaded, viewState);
+    const result = projectGSplatsTo3D(loaded, viewState);
 
     // Splat should be visible: membranes=1 matches, nuclei is extend_to_all (skipped)
     expect(result.splatCount).toBe(1);
@@ -794,7 +794,7 @@ describe('discrete dimension handling', () => {
       // No dimensions metadata → backward-compatible Gaussian behavior
     };
 
-    const result = processGSplatsTo3D(loaded, viewState);
+    const result = projectGSplatsTo3D(loaded, viewState);
 
     expect(result.splatCount).toBe(1);
     // Shifted Gaussian attenuation: mahal=0.5

@@ -13,7 +13,7 @@
  * the viewer's world-space query back to local space before querying.
  *
  * This means NO changes are needed in any loader internals (projectTo3D,
- * clipSegmentToSlice, buildInstanceBuffers, etc.).
+ * clipSegmentToSlice, projectLinesTo3D, etc.).
  *
  * @module data/nd-transform
  */

@@ -9,13 +9,13 @@
  *
  * - `clipSegmentToSlice`, `lerp`, `lerpVec3`, `distance3D` —
  *   per-segment math primitives (TS path).
- * - `buildInstanceBuffers` — TS path: clip + interpolate + build the
+ * - `projectLinesTo3D` — TS path: clip + interpolate + build the
  *   GPU instance buffers from a `LoadedLinesData` blob.
- * - `buildInstanceBuffersWASM` — WASM-accelerated equivalent that
+ * - `projectLinesTo3DWASM` — WASM-accelerated equivalent that
  *   batches clipping, interpolation, and length calculations through
  *   the compiled module.
  * - `initLinesWASM` — eager warm-up of the WASM module so the first
- *   `buildInstanceBuffersWASM` call doesn't pay the load cost.
+ *   `projectLinesTo3DWASM` call doesn't pay the load cost.
  *
  * @module data/lines/projection
  */
@@ -245,7 +245,7 @@ export function distance3D(a: number[], b: number[]): number {
  * @param displayDims - Which dimensions to display
  * @returns Processed data ready for GPU
  */
-export function buildInstanceBuffers(
+export function projectLinesTo3D(
   loadedData: LoadedLinesData,
   slicePosition: readonly number[],
   tolerance: readonly number[],
@@ -270,7 +270,7 @@ export function buildInstanceBuffers(
 
   // Diagnostic: log input shape for large-segment-count Lines updates.
   if (segmentCount > 10000 && appConfig.dataLoading.performance.enablePerformanceMonitoring) {
-    log.custom(LogEmoji.DEBUG, Modules.LINES_LOADER, 'buildInstanceBuffers input');
+    log.custom(LogEmoji.DEBUG, Modules.LINES_LOADER, 'projectLinesTo3D input');
     log.custom(LogEmoji.DEBUG, Modules.LINES_LOADER, 'segmentCount', segmentCount);
     log.custom(
       LogEmoji.DEBUG,
@@ -422,7 +422,7 @@ export function buildInstanceBuffers(
 
   // Diagnostic: log post-clipping output shape for large-segment-count updates.
   if (segmentCount > 10000 && appConfig.dataLoading.performance.enablePerformanceMonitoring) {
-    log.custom(LogEmoji.DEBUG, Modules.LINES_LOADER, 'buildInstanceBuffers output');
+    log.custom(LogEmoji.DEBUG, Modules.LINES_LOADER, 'projectLinesTo3D output');
     log.custom(
       LogEmoji.DEBUG,
       Modules.LINES_LOADER,
@@ -475,7 +475,7 @@ export function buildInstanceBuffers(
 }
 
 /**
- * WASM-accelerated version of buildInstanceBuffers.
+ * WASM-accelerated version of projectLinesTo3D.
  *
  * Uses batch WASM functions for significantly faster nD clipping:
  * - clip_segments_batch: Process all segments at once
@@ -491,7 +491,7 @@ export function buildInstanceBuffers(
  * @param displayDims - Which dimensions to display
  * @returns Processed data ready for GPU
  */
-export function buildInstanceBuffersWASM(
+export function projectLinesTo3DWASM(
   loadedData: LoadedLinesData,
   slicePosition: number[],
   tolerance: number[],

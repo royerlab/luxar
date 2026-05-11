@@ -4,11 +4,11 @@
  * Sharing matrix:
  *
  * - **Lines** uses this helper on **both** threads — the main-thread
- *   `data/lines/projection.ts:buildInstanceBuffers` and both WASM
+ *   `data/lines/projection.ts:projectLinesTo3D` and both WASM
  *   call paths import `coerceColorsToFloat32` from here.
  * - **GSplats** uses this helper on the **worker thread only**
  *   (`workers/data-worker.ts:projectGSplatsTo3D`). The main-thread
- *   path `data/gsplats/projection.ts:processGSplats3DOnly`
+ *   path `data/gsplats/projection.ts:projectGSplats3DOnly`
  *   intentionally inlines the same `1/255` / `1/65535` math: it
  *   already has a pre-allocated output Float32Array and writes
  *   directly with no extra allocation. Per-frame splat counts are

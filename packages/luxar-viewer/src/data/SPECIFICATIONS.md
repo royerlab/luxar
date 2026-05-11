@@ -1330,10 +1330,10 @@ function queryVisibleSegmentRanges(viewState: LinesViewState): SegmentRange[] {
 
 2. **Tolerance override for clipping**: Lines have TWO places that filter visibility:
    - `queryVisibleSegmentRanges()` - spatial index query (handled above)
-   - `buildInstanceBuffers()` - clips segments based on tolerance per dimension
+   - `projectLinesTo3D()` - clips segments based on tolerance per dimension
 
    For `extend_to_all` to work fully, tolerance must be set to infinity (`1e10`) for
-   extended dimensions BEFORE calling `buildInstanceBuffers`. This is done in
+   extended dimensions BEFORE calling `projectLinesTo3D`. This is done in
    `scene-loader.ts` in both `loadLines()` and `updateLinesGeometry()`:
 
    ```typescript
@@ -1519,7 +1519,7 @@ and produces compacted per-segment `startScalars` / `endScalars`
 via `interpolate_scalars_batch` — the same WASM kernel that handles
 widths and sharpness.
 
-The main-thread `buildInstanceBuffers` path remains the fallback when
+The main-thread `projectLinesTo3D` path remains the fallback when
 the worker pool is unavailable, the worker call times out, or the
 caller's AbortSignal fires; both paths produce identical output shape
 so callers cannot tell which ran.
@@ -1780,7 +1780,7 @@ This section documents all TypeScript source files in the `data/` package with t
 
 **Purpose**: Lines data loader using dual spatial indices. It first queries segment chunks for visible segments, then derives the vertex chunks needed by those segments. Also handles nD slicing with endpoint clipping.
 
-**Key Exports**: `LinesSpatialIndexLoader`, `buildInstanceBuffers()`, `clipSegmentToSlice()`, `lerp()`, `lerpVec3()`, `distance3D()`
+**Key Exports**: `LinesSpatialIndexLoader`, `projectLinesTo3D()`, `clipSegmentToSlice()`, `lerp()`, `lerpVec3()`, `distance3D()`
 
 **Relationships**: Uses `SpatialQueryBuilder` + `ChunkSpatialIndex` from `loaders/spatial-query-builder.ts` for the segment chunk query, `tolerance-computer.computeTolerance('lines', …)` indirectly via the builder, `ArrayDecoder`/`ArrayRefRegistry` from `array-decoder.ts`, `RangeLoader` from `loaders/`, and `LinesDataAccumulator` from `data-accumulator.ts`. The dual-bounds (`vertex_chunk_bounds` + `segment_chunk_bounds`) zarr probe and the lines-specific `computeVertexRangesFromIndices` (sorted-indices → contiguous ranges) are private to this module.
 
@@ -1818,7 +1818,7 @@ This section documents all TypeScript source files in the `data/` package with t
 
 **Purpose**: Handles conversion of nD gsplats data to 3D for rendering. Key operations: (1) extract 3D center from nD center using display dimensions, (2) extract 3D Cholesky submatrix from nD Cholesky via marginal covariance reconstruction, (3) attenuate amplitude based on distance to hyperplane in hidden dimensions. Uses pre-allocated workspace buffers to avoid per-call allocation in tight loops.
 
-**Key Exports**: `processGSplats()`
+**Key Exports**: `projectGSplats()`
 
 **Relationships**: Called by `SceneLoader` during GSplats geometry updates. Consumes `LoadedGSplatsData`, `ProcessedGSplatsData`, and `GSplatsViewState` types from `types/gsplats.ts`.
 
