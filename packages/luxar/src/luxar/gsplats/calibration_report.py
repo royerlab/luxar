@@ -87,7 +87,9 @@ def _plot_rate_distortion(
 
     # SSIM panel
     ax_ssim.plot(ks, ssim, "o-", color="C2")
-    ax_ssim.plot(ks[star_idx], ssim[star_idx], marker="*", color="C3", markersize=18, zorder=10)
+    ax_ssim.plot(
+        ks[star_idx], ssim[star_idx], marker="*", color="C3", markersize=18, zorder=10
+    )
     _safe_log_x(ax_ssim)
     ax_ssim.set_xlabel("Effective splat count K")
     ax_ssim.set_ylabel("SSIM")
@@ -106,7 +108,9 @@ def _plot_rate_distortion(
     ax_gap.plot(ks, gap, "o-", color="C5")
     ax_gap.axhline(0.0, color="grey", linestyle="-", linewidth=0.8)
     ax_gap.fill_between(ks, gap, 0.0, where=gap > 0, alpha=0.2, color="C3")
-    ax_gap.plot(ks[star_idx], gap[star_idx], marker="*", color="C3", markersize=18, zorder=10)
+    ax_gap.plot(
+        ks[star_idx], gap[star_idx], marker="*", color="C3", markersize=18, zorder=10
+    )
     _safe_log_x(ax_gap)
     ax_gap.set_xlabel("Effective splat count K")
     ax_gap.set_ylabel("PSNR_train − PSNR_held-out (dB)")
@@ -123,7 +127,9 @@ def _plot_blind_spot(fig: "Figure", ax: "Axes", result: CalibrationResult) -> No
 
     ax.plot(ks, train, "s-", color="C0", label="train")
     ax.plot(ks, held, "o-", color="C1", label="held-out (model selection)")
-    ax.fill_between(ks, train, held, where=(train > held).tolist(), alpha=0.15, color="C3")
+    ax.fill_between(
+        ks, train, held, where=(train > held).tolist(), alpha=0.15, color="C3"
+    )
 
     if math.isfinite(psnr_ceiling):
         ax.axhline(psnr_ceiling, color="grey", linestyle=":", linewidth=1)
@@ -345,7 +351,9 @@ def render_calibration_report(
         plt.close(fig)
 
         # ── Page 3: slice montages (gracefully skipped without --keep-fits) ──
-        if splat_paths is not None and len(splat_paths) == len(result.k_values_requested):
+        if splat_paths is not None and len(splat_paths) == len(
+            result.k_values_requested
+        ):
             ks_req = result.k_values_requested
             k_low = ks_req[0]
             k_high = ks_req[-1]

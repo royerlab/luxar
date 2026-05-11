@@ -2658,10 +2658,14 @@ def calibrate_command(
         help="Spacing of the K grid: 'exp' (geometric/log-spaced) or 'power' (polynomial)",
     ),
     power: int = typer.Option(
-        2, "--power", help="Exponent when --progression power (1=linear, 2=quadratic, ...)"
+        2,
+        "--power",
+        help="Exponent when --progression power (1=linear, 2=quadratic, ...)",
     ),
     # CV mask
-    mask_seed: int = typer.Option(42, "--mask-seed", help="RNG seed for the held-out mask"),
+    mask_seed: int = typer.Option(
+        42, "--mask-seed", help="RNG seed for the held-out mask"
+    ),
     mask_fraction: float = typer.Option(
         0.05, "--mask-fraction", help="Fraction of voxels to hold out (default 5%)"
     ),
@@ -2687,7 +2691,9 @@ def calibrate_command(
     ),
     # Optional outputs
     pdf_report: Optional[Path] = typer.Option(
-        None, "--pdf", help="Generate calibration PDF report (rate-distortion + slice montages + CV curves)"
+        None,
+        "--pdf",
+        help="Generate calibration PDF report (rate-distortion + slice montages + CV curves)",
     ),
     keep_fits: Optional[Path] = typer.Option(
         None,
@@ -2818,7 +2824,9 @@ def calibrate_command(
             aprint("\n" + "═" * 64)
             aprint(f"  CALIBRATION  —  {input_path.name}")
             aprint("═" * 64)
-            aprint(f"  Volume:         {tuple(result.volume_shape)} {result.volume_dtype}")
+            aprint(
+                f"  Volume:         {tuple(result.volume_shape)} {result.volume_dtype}"
+            )
             sigma = result.noise_floor.sigma_hat
             ceil_db = result.noise_floor.psnr_max_db
             sigma_str = f"{sigma:.4f}" if math.isfinite(sigma) else "—"
@@ -4547,9 +4555,7 @@ def lod_additive(
     input_path: Path = typer.Argument(
         ..., exists=True, help="Input .gsplats.zarr (single- or multi-LOD)"
     ),
-    output_path: Path = typer.Argument(
-        ..., help="Output .gsplats.zarr (multi-LOD)"
-    ),
+    output_path: Path = typer.Argument(..., help="Output .gsplats.zarr (multi-LOD)"),
     n_lods: int = typer.Option(
         4,
         "--n-lods",
@@ -4642,8 +4648,7 @@ def lod_additive(
         }
         if method_norm not in valid_methods:
             raise typer.BadParameter(
-                f"--method must be one of {sorted(valid_methods)}, "
-                f"got {method!r}"
+                f"--method must be one of {sorted(valid_methods)}, got {method!r}"
             )
 
         bp = _parse_lod_breakpoints(breakpoints)
@@ -4680,10 +4685,7 @@ def lod_additive(
                     max_n_dense=max_n_dense,
                     seed=seed,
                 )
-                aprint(
-                    f"Built {ladder.n_lods}-level ladder in "
-                    f"{time.time() - t0:.2f}s"
-                )
+                aprint(f"Built {ladder.n_lods}-level ladder in {time.time() - t0:.2f}s")
                 cuts = ladder.stats.get("lod_cutpoints", [])
                 kind = ladder.stats.get("lod_breakpoints_kind", "?")
                 aprint(f"Cutpoints ({kind}): {cuts}")
