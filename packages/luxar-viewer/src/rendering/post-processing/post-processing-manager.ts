@@ -1730,7 +1730,7 @@ export class PostProcessingManager {
       exrType === THREE.HalfFloatType ? float32ToHalfFloat(pixels) : pixels;
 
     const texture = new THREE.DataTexture(
-      data as BufferSource,
+      data,
       width,
       height,
       THREE.RGBAFormat,

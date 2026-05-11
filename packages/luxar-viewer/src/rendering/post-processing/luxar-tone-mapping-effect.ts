@@ -1,7 +1,7 @@
 /**
  * LuxarToneMappingEffect — Vendored tone mapping with Exposure-Offset-Gamma (EOG)
  *
- * This is a copy of pmndrs/postprocessing ToneMappingEffect (v6.38.0) with
+ * This is a copy of pmndrs/postprocessing ToneMappingEffect (v6.39.1) with
  * three additional uniforms for global color adjustment applied BEFORE tone mapping:
  *
  *   1. Exposure (log2 stops): color * 2^exposure
@@ -26,7 +26,7 @@ import { LinearMipmapLinearFilter, REVISION, Uniform, WebGLRenderTarget } from '
 import type { WebGLRenderer } from 'three';
 
 // ============================================================================
-// Vendored GLSL fragment shader (from pmndrs/postprocessing v6.38.0)
+// Vendored GLSL fragment shader (from pmndrs/postprocessing v6.39.1)
 // Modified: EOG block injected before mainImage
 // ============================================================================
 
@@ -326,7 +326,7 @@ export class LuxarToneMappingEffect extends Effect {
 
   update(renderer: WebGLRenderer, inputBuffer: WebGLRenderTarget, deltaTime?: number): void {
     if (this.adaptiveLuminancePass.enabled) {
-      this.luminancePass.render(renderer, inputBuffer, this.renderTargetLuminance);
+      this.luminancePass.render(renderer, inputBuffer, null);
       this.adaptiveLuminancePass.render(renderer, null, null, deltaTime);
     }
   }
