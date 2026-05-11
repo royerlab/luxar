@@ -151,6 +151,31 @@ describe('LayerStateManager', () => {
     expect(layer.dataMax).toBe(1);
   });
 
+  it('expands slider bounds to encompass authored intensity/offset display range', () => {
+    // Regression: when a node has authored intensity != 1, the recovered
+    // display range can extend beyond color_data_range. If the slider's
+    // <input type="range"> bounds stay narrow, the browser clamps the thumb
+    // values and the first interaction snaps the layer state from the
+    // authored brightness to the slider-implied one — a sudden visible jump.
+    mgr.initFromSceneGraph(
+      makeSceneGraph([
+        {
+          color_data_range: [0.157, 0.973] as [number, number],
+          intensity: 0.2,
+          offset: 0.0,
+        },
+      ])
+    );
+    const layer = mgr.getLayers()[0];
+    // displayMax = (1 - 0) / 0.2 = 5 — beyond color_data_range's 0.973
+    expect(layer.displayMin).toBeCloseTo(0);
+    expect(layer.displayMax).toBeCloseTo(5);
+    // Slider bounds must include the whole display range so the
+    // <input type="range"> doesn't silently clamp the thumb on first render.
+    expect(layer.dataMin).toBeLessThanOrEqual(layer.displayMin);
+    expect(layer.dataMax).toBeGreaterThanOrEqual(layer.displayMax);
+  });
+
   // ─── Selection ─────────────────────────────────────
 
   it('select single clears others', () => {
