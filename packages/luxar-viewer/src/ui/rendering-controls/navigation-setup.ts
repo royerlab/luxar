@@ -134,6 +134,26 @@ export function setupNavigationControls(context: SetupContext): SetupResult {
       '• 5.0 = Fast (12 seconds per rotation)'
   );
 
+  // Natural drag — touchpad-friendly orbit-mode mapping (LEFT=rotate,
+  // RIGHT=pan). Defaults to ON on macOS via RenderingSettings defaults.
+  const naturalDragControl = orbitFolder
+    .add(settings, 'naturalDrag')
+    .name('Natural drag')
+    .onChange((value: boolean) => {
+      sceneManager.setNaturalDrag(value);
+      saveSettings();
+      triggerAnimation();
+    });
+  controllers.naturalDrag = naturalDragControl;
+  naturalDragControl.domElement.setAttribute(
+    'title',
+    'Natural drag: invert left- and right-drag for touchpad ergonomics\n' +
+      '• OFF: left-drag pans, right-drag rotates (mouse-default)\n' +
+      '• ON: left-drag rotates, right-drag pans (touchpad-friendly)\n' +
+      '• Shift+left-drag always picks the inverse action\n' +
+      '• Defaults to ON on macOS'
+  );
+
   // Fly controls settings - use ranges from config.controls.fly
   const flyMovementConfig = config.controls.fly.movement.speed;
   const flySpeedControl = flyFolder

@@ -11,7 +11,7 @@
  * - src/tests/unit/rendering/material-manager.test.ts (34 tests)
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import {
   waitForLuxarReady,
   getLuxarState,

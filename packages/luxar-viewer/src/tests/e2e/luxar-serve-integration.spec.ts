@@ -11,7 +11,7 @@
  * Skipped if `hatch` is not available (e.g., in CI environments without Python).
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { waitForLuxarReady, waitForPointsLoaded, assertNoConsoleErrors } from './helpers';
 import { spawn, execSync, type ChildProcess } from 'child_process';
 import * as path from 'path';

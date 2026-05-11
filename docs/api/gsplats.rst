@@ -197,6 +197,23 @@ PSNR, SSIM, and MSE metrics for evaluating reconstruction quality.
    :members:
    :undoc-members:
 
+Calibration (Blind-Spot Cross-Validation)
+-----------------------------------------
+
+Noise2Self model selection for Gaussian splat fits: sweep splat count
+``K``, fit each at against a 5%-donut-median-filled volume, and report
+the held-out PSNR peak (``K*``) plus the dataset's noise-floor PSNR
+ceiling. Used by the ``luxar gsplat cal`` CLI command.
+
+.. automodule:: luxar.gsplats.calibration
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: luxar.gsplats.calibration_report
+   :members:
+   :undoc-members:
+
 GPU Profiling
 -------------
 

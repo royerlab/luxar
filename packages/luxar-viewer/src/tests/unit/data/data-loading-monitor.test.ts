@@ -3,8 +3,8 @@
  */
 
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { DataLoadingMonitor } from '../../../ui/data-loading-monitor';
-import type { MonitorEvent, LoaderMonitor, LoaderMetrics } from '../../../ui/data-monitor-types';
+import { DataLoadingMonitor } from '../../../ui/monitors/data-loading-monitor';
+import type { MonitorEvent, LoaderMonitor, LoaderMetrics } from '../../../types/data-monitor-types';
 
 // Mock DOM environment
 beforeEach(() => {
@@ -1036,7 +1036,7 @@ describe('DataLoadingMonitor', () => {
             misses: 20,
             evictions: 5,
           },
-          l2: { size: 1024 * 1024, count: 100, reads: 80, writes: 50 },
+          l2: { size: 1024 * 1024, count: 100, reads: 80, writes: 50, misses: 20 },
           network: { bytesTransferred: 5000000, requestCount: 100, bandwidth: 100000 },
         })),
         clearL1: vi.fn(),
@@ -1063,7 +1063,7 @@ describe('DataLoadingMonitor', () => {
             misses: 0,
             evictions: 0,
           },
-          l2: { size: 0, count: 0, reads: 0, writes: 0 },
+          l2: { size: 0, count: 0, reads: 0, writes: 0, misses: 0 },
           network: { bytesTransferred: 0, requestCount: 0, bandwidth: 0 },
         })),
         clearL1: vi.fn(),
@@ -1090,7 +1090,7 @@ describe('DataLoadingMonitor', () => {
             misses: 0,
             evictions: 0,
           },
-          l2: { size: 0, count: 0, reads: 0, writes: 0 },
+          l2: { size: 0, count: 0, reads: 0, writes: 0, misses: 0 },
           network: { bytesTransferred: 0, requestCount: 0, bandwidth: 0 },
         })),
         clearL1: vi.fn(),
@@ -1100,7 +1100,9 @@ describe('DataLoadingMonitor', () => {
       };
 
       monitor.setCacheStatsProvider(mockProvider);
-      await monitor.clearL2Cache();
+      // skipConfirm avoids the new confirm-dialog (commit 7.3); tests
+      // that exercise the dialog directly are below.
+      await monitor.clearL2Cache({ skipConfirm: true });
 
       expect(mockProvider.clearL2).toHaveBeenCalledTimes(1);
     });
@@ -1117,7 +1119,7 @@ describe('DataLoadingMonitor', () => {
             misses: 0,
             evictions: 0,
           },
-          l2: { size: 0, count: 0, reads: 0, writes: 0 },
+          l2: { size: 0, count: 0, reads: 0, writes: 0, misses: 0 },
           network: { bytesTransferred: 0, requestCount: 0, bandwidth: 0 },
         })),
         clearL1: vi.fn(),
@@ -1127,9 +1129,40 @@ describe('DataLoadingMonitor', () => {
       };
 
       monitor.setCacheStatsProvider(mockProvider);
-      await monitor.clearAllCaches();
+      await monitor.clearAllCaches({ skipConfirm: true });
 
       expect(mockProvider.clearAll).toHaveBeenCalledTimes(1);
+    });
+
+    it('clearL2Cache without skipConfirm respects window.confirm cancel (commit 7.3)', async () => {
+      const mockProvider = {
+        getStats: vi.fn(() => ({
+          l1: {
+            metadataSize: 0,
+            chunksSize: 0,
+            metadataCount: 0,
+            chunksCount: 0,
+            hits: 0,
+            misses: 0,
+            evictions: 0,
+          },
+          l2: { size: 0, count: 0, reads: 0, writes: 0, misses: 0 },
+          network: { bytesTransferred: 0, requestCount: 0, bandwidth: 0 },
+        })),
+        clearL1: vi.fn(),
+        clearL2: vi.fn(() => Promise.resolve()),
+        clearAll: vi.fn(() => Promise.resolve()),
+        isEnabled: vi.fn(() => true),
+      };
+      monitor.setCacheStatsProvider(mockProvider);
+      const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+      try {
+        await monitor.clearL2Cache();
+        expect(confirmSpy).toHaveBeenCalled();
+        expect(mockProvider.clearL2).not.toHaveBeenCalled();
+      } finally {
+        confirmSpy.mockRestore();
+      }
     });
 
     it('should handle missing provider gracefully', () => {

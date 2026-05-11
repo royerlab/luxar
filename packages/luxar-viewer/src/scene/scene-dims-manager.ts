@@ -1,6 +1,7 @@
 import { SimpleDims, DimensionMetadata } from '../types/dims';
 import * as THREE from 'three';
 import { log, Modules } from '../utils/log';
+import { clamp } from '../utils/clamp';
 
 /**
  * Centralized dimension state manager ensuring consistency across all nD objects in the scene.
@@ -98,9 +99,10 @@ export class SceneDimsManager {
     }
 
     // Step 4: Parse and normalize dimension metadata
-    const metadata: DimensionMetadata[] = sceneDimensions.dimensions.map((dim: any) => ({
-      name: dim.name,
-      unit: dim.unit,
+    type RawDim = Partial<DimensionMetadata> & { range?: number[] };
+    const metadata: DimensionMetadata[] = sceneDimensions.dimensions.map((dim: RawDim) => ({
+      name: dim.name as string,
+      unit: dim.unit as string,
       scale: dim.scale || 1.0,
       range: dim.range ? [dim.range[0], dim.range[1]] : undefined,
       display: dim.display,
@@ -244,7 +246,7 @@ export class SceneDimsManager {
     // Apply range constraints to prevent navigation beyond data bounds
     if (this.dimensionRanges) {
       const [min, max] = this.dimensionRanges[dimIndex];
-      value = Math.max(min, Math.min(max, value));
+      value = clamp(value, min, max);
     }
 
     // Handle discrete dimensions (e.g., time frames, categorical data)

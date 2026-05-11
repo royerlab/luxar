@@ -4,6 +4,7 @@
 
 import * as THREE from 'three';
 import type { AppConfig } from './types';
+import { isMacPlatform } from '../utils/platform';
 
 /**
  * Main configuration object containing all application settings
@@ -143,8 +144,8 @@ export const config: AppConfig = {
       size: 24, // Loading spinner size in pixels
       borderWidth: 3, // Spinner border width
     },
-    // NOTE: ui.styles section has been removed - all styling now uses CSS variables
-    // and classes in src/styles/ (see theming system in src/themes/)
+    // Styling is provided by CSS variables and classes in src/styles/
+    // (see the theming system in src/themes/).
 
     // Debug console configuration (migrated from debug-console.ts)
     debugConsole: {
@@ -244,12 +245,12 @@ export const config: AppConfig = {
       smaaSearchSteps: 8, // SMAA search steps for pattern detection (4-32)
       ssaaEnabled: false, // SSAA disabled by default (highest quality, heavy performance cost)
       ssaaMultiplier: 2.0, // SSAA resolution multiplier (1.5x, 2x, 4x)
-      // New post-processing effects
+      // Post-processing effects
       toneMapping: 'Neutral' as const, // Tone mapping method (Neutral preserves hue fidelity for scientific data)
       dofEnabled: false, // Depth of field disabled by default
       dofFocus: 10, // DOF focus distance
       dofStrength: 0.5, // DOF blur strength (0-1)
-      // New pmndrs effects
+      // pmndrs effect defaults
       aoEnabled: false, // Ambient occlusion disabled by default
       aoQuality: 'medium' as const, // AO quality level
       vignetteEnabled: false, // Vignette disabled by default
@@ -260,7 +261,7 @@ export const config: AppConfig = {
       detectorNoiseReadoutSigma: 0.002, // Temporal readout noise sigma (0-0.1)
       detectorNoisePhotonGain: 0.002, // Photon gain for shot noise visibility (0.0001-0.1)
       detectorNoiseFpnSigma: 0.001, // Fixed pattern noise sigma (0-0.05)
-      // Chromatic lens distortion effect settings (replaces old separate lens distortion + chromatic aberration)
+      // Chromatic lens distortion effect settings
       chromaticLensDistortionEnabled: false, // Chromatic lens distortion disabled by default
       chromaticLensDistortionX: 0, // Radial distortion coefficient X (50mm Normal: no distortion)
       chromaticLensDistortionY: 0, // Radial distortion coefficient Y (50mm Normal: no distortion)
@@ -274,6 +275,10 @@ export const config: AppConfig = {
       controlType: 'orbit' as const, // Default to orbit controls
       autoRotate: false, // Auto-rotation disabled by default
       autoRotateSpeed: 0.25, // Slow rotation speed for presentations
+      // Touchpad-friendly orbit drag mapping (LEFT=rotate, RIGHT=pan).
+      // Default-on for Mac users; off elsewhere. The rendering-controls
+      // persistence layer overrides this with the user's stored choice.
+      naturalDrag: isMacPlatform(),
       // Note: Fly control settings are referenced directly from controls.fly to avoid duplication
       // Adaptive resolution (runtime/UI toggle; overrides adaptiveDPR.enabled after init)
       adaptiveDPREnabled: true, // Persisted per-scene via localStorage
@@ -383,7 +388,7 @@ export const config: AppConfig = {
     network: {
       timeoutMs: 30000,
       // Dedicated short budget for the L2 cache-validation HEAD probe
-      // (TwoLevelCachingStore.getRemoteContentHash). On flaky networks this
+      // (MultiLevelCachingStore.getRemoteContentHash). On flaky networks this
       // path must NOT block scene loading for the full timeoutMs — failing
       // fast is better since we can render from cached data.
       validationTimeoutMs: 5000,
@@ -428,37 +433,57 @@ export const config: AppConfig = {
         bandwidthCalculationWindow: 1000,
       },
     },
-    // Performance optimization settings (Phase 1-4)
-    // Current integration status: See PERFORMANCE_OPTIMIZATION_COMPLETE.md
+    // Performance optimization settings.
     performance: {
-      // Phase 1: Object Pooling - ENABLED ✅ (DEEP INTEGRATION COMPLETE!)
-      // Multi-type accumulator with in-place projection and filtering
-      // Eliminates ALL allocations in projectTo3D (positions, filtered arrays, return object)
-      // Zero-copy operation: writes directly to accumulator buffers, compacts in-place
-      useAccumulators: true, // ✅ ACTIVATED - Deep integration complete!
+      // Object pooling — multi-type accumulator with in-place projection
+      // and filtering. Eliminates allocations in projectTo3D (positions,
+      // filtered arrays, return object) by writing directly into
+      // accumulator buffers and compacting in place.
+      useAccumulators: true,
       initialAccumulatorCapacity: 8192,
       accumulatorGrowthFactor: 1.5,
 
-      // Phase 2: Web Workers - ENABLED ✅
-      // Phase 3: WASM - ENABLED ✅ (loads automatically when workers enabled)
-      // Workers offload CPU-heavy operations: nD→3D projection, visibility, decoding
-      // Note: AABB spatial queries always run on main thread (faster than roundtrip)
-      // WASM module built (17KB): public/wasm/luxar_wasm_bg.wasm
-      useWebWorkers: true, // ✅ ACTIVATED - Offloads projection/visibility/decoding to workers
+      // Web workers offload CPU-heavy operations: nD→3D projection,
+      // visibility, decoding. AABB spatial queries always run on the
+      // main thread (faster than the roundtrip).
+      useWebWorkers: true,
       workerCount: 0, // 0 = auto (uses navigator.hardwareConcurrency - 1)
+      // Per-call worker timeouts. Visibility is fast (chunk-bounding-box
+      // test); projection over millions of items is slow. 0 disables
+      // timeout enforcement.
+      workerVisibilityTimeoutMs: 30000,
+      workerProjectionTimeoutMs: 60000,
+      // Worker pool init timeout: protects against unreachable worker
+      // scripts (404 on the chunk URL, blocked by route, dev-server
+      // misconfig). 10s is generous for any healthy environment;
+      // anything longer suggests a real load problem and the app should
+      // fall back to main-thread execution rather than hang on boot.
+      workerInitTimeoutMs: 10000,
+      // Material cache eviction: 200 entries × 3 types = 600 cached
+      // materials max. Users animating sliders can blow through this
+      // quickly so eviction keeps memory bounded.
+      materialCacheMaxSize: 200,
 
-      // Phase 3: WASM Acceleration - Documentation flag
-      // Actual WASM loading is automatic via initWasm() when workers enabled
-      useWASM: true, // WASM module built and ready
+      // WASM acceleration — module loads automatically via initWasm()
+      // when workers are enabled.
+      useWASM: true,
       wasmModulePath: 'wasm/luxar_wasm_bg.wasm', // Resolved relative to bundle via import.meta.url
 
-      // Phase 4: GPU Buffer Pool - ENABLED ✅
-      // Multi-type support: Float32Array, Uint8Array, Uint16Array (with auto normalization)
-      // Reuses geometries when capacity AND types match (0ms allocation on reuse)
-      // Integrated into scene-loader: updatePointsGeometry/updateLinesGeometry/updateGSplatsGeometry
+      // GPU buffer pool — multi-type support (Float32Array, Uint8Array,
+      // Uint16Array with auto normalization). Reuses geometries when
+      // capacity AND types match (0ms allocation on reuse). Integrated
+      // into the scene-loader geometry-update path.
       useGPUBufferPool: true,
       gpuPoolMaxSize: 20,
       gpuPoolEvictionFrames: 300,
+      gpuPoolEvictBatchSize: 5,
+      // byte-budget eviction. Pooled buffers above this many bytes
+      // are evicted (largest-first) regardless of count budget. Without
+      // this, a 10M-element Lines buffer (~760 MB at 1.5× overallocation)
+      // counts the same as a 1K-point buffer (~32 KB) in
+      // `gpuPoolMaxSize`, so a single dataset switch can briefly hold
+      // gigabytes. `0` disables byte-budget (count-only).
+      gpuPoolMaxBytes: 512_000_000, // 512 MB
 
       // Debugging
       enablePerformanceMonitoring: false,
@@ -508,6 +533,8 @@ export const config: AppConfig = {
     l0MaxSizeMB: 200, // 200MB for decompressed chunks (5x larger than compressed, but instant access)
     l1MaxSizeMB: 100,
     l2MaxSizeMB: 2048,
+    opfsOperationTimeoutMs: 10_000,
+    externalDatasetTtlMs: null,
     debug: false,
   },
 

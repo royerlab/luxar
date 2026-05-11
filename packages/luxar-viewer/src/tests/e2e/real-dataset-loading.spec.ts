@@ -8,7 +8,7 @@
  * not just mocked scenarios.
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { waitForLuxarReady, getLuxarState, waitForPointsLoaded } from './helpers';
 
 // Dataset paths (served from Python HTTP server on port 9000)

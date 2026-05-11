@@ -1,4 +1,4 @@
-import type { TwoLevelCachingStore } from './two-level-caching-store';
+import type { MultiLevelCachingStore } from './multi-level-caching-store';
 import { log, Modules, LogEmoji } from '../utils/log';
 
 export interface ChunkPrefetcherOptions {
@@ -8,12 +8,19 @@ export interface ChunkPrefetcherOptions {
   /** Enable/disable prefetching (default: true) */
   enabled?: boolean;
 
-  /** Use Fetch Priority API hint (default: true) */
-  useFetchPriority?: boolean;
-
   /** Enable debug logging (default: false) */
   debug?: boolean;
 }
+
+/**
+ * Prefetch priority. `high` entries are dispatched before `normal`
+ * entries — the queue is drained high-first per processQueue cycle.
+ *
+ * Direction-aware callers (e.g. the dimension-animation hook
+ * predicting the next slice) should use `high`. Neighbor expansions
+ * triggered by `onAccess()` use `normal`.
+ */
+export type PrefetchPriority = 'high' | 'normal';
 
 /**
  * Chunk prefetcher that proactively fetches adjacent zarr chunks.
@@ -31,15 +38,24 @@ export interface ChunkPrefetcherOptions {
  * See: docs/CACHE_PREFETCHING_SPEC.md
  */
 export class ChunkPrefetcher {
-  private store: TwoLevelCachingStore;
+  private store: MultiLevelCachingStore;
   private maxConcurrent: number;
   private enabled: boolean;
   private debug: boolean;
 
-  // Queue management
+  // Queue management. Two-tier queue: `highQueue` is drained before
+  // `normalQueue` each processQueue cycle so direction-aware callers
+  // (e.g. the dimension-animation hook prefetching the next slice)
+  // can jump ahead of normal neighbor expansion. Both Sets preserve
+  // insertion order, so within a tier the ordering is FIFO.
   private inFlight = new Set<string>();
-  private queue = new Set<string>();
+  private highQueue = new Set<string>();
+  private normalQueue = new Set<string>();
   private processing = false;
+  // Lifecycle: set by dispose(). Distinct from `enabled` (a feature toggle)
+  // so we can short-circuit the in-flight `.finally()` continuation
+  // without claiming the feature itself is disabled.
+  private isDisposed = false;
 
   // Tracks all keys whose neighbors have already been enqueued, preventing
   // cascading prefetch amplification: without this, prefetched chunks trigger
@@ -54,7 +70,7 @@ export class ChunkPrefetcher {
   /** Upper bounds per array path for suppressing out-of-range prefetch requests */
   private maxChunkIndices = new Map<string, number[]>();
 
-  constructor(store: TwoLevelCachingStore, options?: ChunkPrefetcherOptions) {
+  constructor(store: MultiLevelCachingStore, options?: ChunkPrefetcherOptions) {
     this.store = store;
     this.maxConcurrent = options?.maxConcurrent ?? 4;
     this.enabled = options?.enabled ?? true;
@@ -68,8 +84,13 @@ export class ChunkPrefetcher {
   /**
    * Called by store after L2 hit or L3 fetch.
    * Enqueues adjacent chunks for prefetching.
+   *
+   * Optional priority routes the neighbor expansion to the high-
+   * priority queue when the access itself is part of an explicit
+   * priority signal (e.g. a dimension-animation hook calling
+   * onAccess for the next-slice anchor key). Default is 'normal'.
    */
-  onAccess(key: string): void {
+  onAccess(key: string, priority: PrefetchPriority = 'normal'): void {
     if (!this.enabled) return;
 
     // Prevent cascading prefetch amplification: if we've already expanded
@@ -89,9 +110,17 @@ export class ChunkPrefetcher {
         if (count++ >= evictCount) break;
         this.seen.delete(k);
       }
-      // Trim parsed cache alongside seen eviction
+      // Trim parsed cache alongside seen eviction. Half-trim (FIFO,
+      // matches Map insertion order) instead of clear() so a single
+      // navigation burst doesn't evict every parsed key — the regex
+      // parse cost recurs for whichever keys come back hot.
       if (this.parsedCache.size > ChunkPrefetcher.MAX_SEEN_SIZE * 2) {
-        this.parsedCache.clear();
+        const trimCount = Math.floor(this.parsedCache.size / 2);
+        let trimmed = 0;
+        for (const k of this.parsedCache.keys()) {
+          if (trimmed++ >= trimCount) break;
+          this.parsedCache.delete(k);
+        }
       }
     }
 
@@ -104,11 +133,7 @@ export class ChunkPrefetcher {
     this.log(`Access: ${key} → ${adjacent.length} adjacent chunks`);
 
     for (const adjKey of adjacent) {
-      // Full deduplication: not in queue, not in-flight
-      if (!this.queue.has(adjKey) && !this.inFlight.has(adjKey)) {
-        this.queue.add(adjKey);
-        this.log(`  Enqueued: ${adjKey}`);
-      }
+      this.addToQueue(adjKey, priority);
     }
 
     // Fire-and-forget (not awaited)
@@ -116,34 +141,100 @@ export class ChunkPrefetcher {
   }
 
   /**
+   * Enqueue arbitrary keys at the given priority without going through
+   * the neighbor-expansion path. Use this when a caller has a precise
+   * set of chunks they want warmed (e.g. the dimension-animation hook
+   * prefetching the next slice's chunk anchors).
+   *
+   * Suppresses duplicate enqueues and entries already in flight.
+   * Returns synchronously; queue processing is fire-and-forget.
+   */
+  enqueueWithPriority(keys: Iterable<string>, priority: PrefetchPriority = 'high'): void {
+    if (!this.enabled || this.isDisposed) return;
+    let added = 0;
+    for (const key of keys) {
+      if (this.addToQueue(key, priority)) added++;
+    }
+    if (added > 0) {
+      this.processQueue();
+    }
+  }
+
+  /**
+   * Add a key to the appropriate priority tier. Returns true if the
+   * key was added (i.e. not already queued or in-flight). Promotes
+   * normal-tier entries to the high tier when a higher-priority
+   * caller arrives — the entry doesn't sit in normal while a high
+   * caller is waiting.
+   */
+  private addToQueue(key: string, priority: PrefetchPriority): boolean {
+    if (this.inFlight.has(key)) return false;
+    if (priority === 'high') {
+      if (this.highQueue.has(key)) return false;
+      // Promote: if it was queued at normal, move it to high.
+      this.normalQueue.delete(key);
+      this.highQueue.add(key);
+      this.log(`  Enqueued (high): ${key}`);
+      return true;
+    }
+    // priority === 'normal'
+    if (this.highQueue.has(key) || this.normalQueue.has(key)) return false;
+    this.normalQueue.add(key);
+    this.log(`  Enqueued: ${key}`);
+    return true;
+  }
+
+  /**
    * Process the prefetch queue with concurrency limiting.
    * Race-condition safe via processing flag and queueMicrotask re-trigger.
    */
   private async processQueue(): Promise<void> {
+    // Disposed-prefetcher short-circuit: bail before any further fetch
+    // dispatch so a dispose() during in-flight processing cannot enqueue
+    // additional store.getResult calls.
+    if (this.isDisposed) return;
     // Prevent concurrent processing
     if (this.processing) return;
     this.processing = true;
 
     try {
-      while (this.queue.size > 0 && this.inFlight.size < this.maxConcurrent) {
-        const key = this.queue.values().next().value;
-        if (!key) break; // Safety check (should never happen due to while condition)
+      while (
+        (this.highQueue.size > 0 || this.normalQueue.size > 0) &&
+        this.inFlight.size < this.maxConcurrent
+      ) {
+        if (this.isDisposed) break;
+        // Drain high-priority entries before normal-priority ones.
+        // Within a tier, Set insertion order gives FIFO semantics.
+        const sourceQueue = this.highQueue.size > 0 ? this.highQueue : this.normalQueue;
+        const key = sourceQueue.values().next().value;
+        if (!key) break;
 
-        this.queue.delete(key);
+        sourceQueue.delete(key);
         this.inFlight.add(key);
 
         this.log(`Prefetching: ${key} (${this.inFlight.size}/${this.maxConcurrent} slots)`);
 
-        // Fire-and-forget with cleanup
+        // Fire-and-forget with cleanup. Use getResult so a transient
+        // network failure surfaces in the prefetch log instead of being
+        // silently indistinguishable from a 404. Suppress
+        // prefetcher.onAccess() inside getResult — without this flag,
+        // a prefetch of K+1 would call onAccess(K+1) and enqueue K+2,
+        // K+3, ... cascading until MAX_SEEN_SIZE bounds it.
         this.store
-          .get(key)
-          .catch(() => {
-            // Ignore errors (404s, network failures)
+          .getResult(key, { suppressPrefetch: true })
+          .then((r) => {
+            if (!r.ok && r.error.kind === 'NetworkError') {
+              this.log(`Prefetch network error: ${key} (${r.error.cause.message})`);
+            }
           })
           .finally(() => {
             this.inFlight.delete(key);
-            // Trigger queue processing when slot frees up
-            if (this.queue.size > 0) {
+            // Trigger queue processing when slot frees up — but only if
+            // the prefetcher is still alive. Without this guard, a fetch
+            // that started before dispose() can keep re-entering
+            // processQueue and dispatching additional fetches against
+            // the (now-disposed) store.
+            if (!this.isDisposed && (this.highQueue.size > 0 || this.normalQueue.size > 0)) {
               queueMicrotask(() => this.processQueue());
             }
           });
@@ -277,11 +368,13 @@ export class ChunkPrefetcher {
    * Dispose the prefetcher, clearing all internal state and stopping processing.
    */
   dispose(): void {
+    this.isDisposed = true;
     this.enabled = false;
     this.seen.clear();
     this.parsedCache.clear();
     this.maxChunkIndices.clear();
-    this.queue.clear();
+    this.highQueue.clear();
+    this.normalQueue.clear();
     this.inFlight.clear();
     this.processing = false;
   }
@@ -289,9 +382,17 @@ export class ChunkPrefetcher {
   /**
    * Get prefetch statistics.
    */
-  getStats(): { queued: number; inFlight: number; enabled: boolean } {
+  getStats(): {
+    queued: number;
+    inFlight: number;
+    enabled: boolean;
+    queuedHigh: number;
+    queuedNormal: number;
+  } {
     return {
-      queued: this.queue.size,
+      queued: this.highQueue.size + this.normalQueue.size,
+      queuedHigh: this.highQueue.size,
+      queuedNormal: this.normalQueue.size,
       inFlight: this.inFlight.size,
       enabled: this.enabled,
     };

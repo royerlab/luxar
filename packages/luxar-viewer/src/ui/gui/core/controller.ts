@@ -14,9 +14,10 @@
 import type { ChangeCallback, FinishChangeCallback, ControllerType } from './types';
 import { EventManager } from '../dom/event-manager';
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export abstract class Controller<T = any> {
   /** Target object containing the property */
-  protected object: Record<string, any>;
+  protected object: Record<string, unknown>;
 
   /** Property name being controlled */
   protected property: string;
@@ -51,7 +52,7 @@ export abstract class Controller<T = any> {
    * @param object - Target object
    * @param property - Property name
    */
-  constructor(object: Record<string, any>, property: string) {
+  constructor(object: Record<string, unknown>, property: string) {
     this.object = object;
     this.property = property;
     this.label = property; // Default label
@@ -96,7 +97,11 @@ export abstract class Controller<T = any> {
    * @returns Current value
    */
   public getValue(): T {
-    return this.object[this.property];
+    // The target object holds property values keyed by name; the
+    // `T` is declared by the concrete subclass (NumberController,
+    // StringController, etc.), so this cast bridges the structural
+    // `unknown` of the bag to the controller's declared value type.
+    return this.object[this.property] as T;
   }
 
   /**

@@ -25,6 +25,9 @@ export interface CacheStats {
 /**
  * Extended statistics for the full two-level cache system.
  * Used by CacheStatsProvider for DataLoadingMonitor integration.
+ *
+ * @internal — not consumed externally; preserved for future
+ * provider implementations.
  */
 export interface ExtendedCacheStats {
   /** L1 memory cache statistics */
@@ -48,6 +51,19 @@ export interface ExtendedCacheStats {
  * Metadata structure persisted to OPFS for L2 cache management.
  * Stored in _cache_meta.json within each dataset's OPFS directory.
  */
+/**
+ * How the cached dataset is validated against the remote source.
+ *
+ * - `content-hash`: dataset has Luxar's `content_hash` attr; mismatch
+ *   triggers a full clear. Strongest guarantee.
+ * - `ttl`: external dataset without `content_hash`; we trust the
+ *   cache for `cache.externalDatasetTtlMs` and revalidate after.
+ * - `none`: external dataset, no TTL configured — cache may be stale
+ *   indefinitely until manually cleared. Surfaced in the UI as a
+ *   warning badge so the user knows what they're getting.
+ */
+export type CacheValidationMode = 'content-hash' | 'ttl' | 'none';
+
 export interface OPFSMetadata {
   /** Original dataset URL (for listDatasets() debugging) */
   baseUrl: string;
@@ -59,4 +75,22 @@ export interface OPFSMetadata {
   orderCounter: number;
   /** Content hash of root .zattrs for cache invalidation */
   contentHash: string | null;
+  /**
+   * Filename-encoding version. Bumped when keyToFileName() output
+   * changes so a loadMetadata() with a stale version invalidates the
+   * directory rather than reading old-format files. Absent (undefined)
+   * means version 1 (legacy `btoa(key)` Latin-1 only).
+   */
+  encodingVersion?: number;
+  /**
+   * Validation mode used at last init. Persisted so a session that
+   * loaded with TTL semantics can re-evaluate the TTL window on the
+   * next visit; persisted alongside `lastValidatedAt`.
+   */
+  validationMode?: CacheValidationMode;
+  /** Wall-clock millis at last successful validation. */
+  lastValidatedAt?: number;
 }
+
+/** Current OPFS filename-encoding version. Bumped only when keyToFileName changes. */
+export const OPFS_ENCODING_VERSION = 2;

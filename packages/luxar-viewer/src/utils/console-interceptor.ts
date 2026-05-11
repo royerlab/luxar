@@ -11,7 +11,7 @@
 export interface BufferedMessage {
   type: 'log' | 'warn' | 'error' | 'info' | 'debug';
   timestamp: Date;
-  args: any[];
+  args: unknown[];
   stack?: string;
 }
 
@@ -112,19 +112,19 @@ class ConsoleInterceptor {
     this.isIntercepting = true;
 
     // Override console.log
-    console.log = (...args: any[]) => {
+    console.log = (...args: unknown[]) => {
       this.captureMessage('log', args);
       this.originalConsole.log(...args);
     };
 
     // Override console.warn
-    console.warn = (...args: any[]) => {
+    console.warn = (...args: unknown[]) => {
       this.captureMessage('warn', args);
       this.originalConsole.warn(...args);
     };
 
     // Override console.error
-    console.error = (...args: any[]) => {
+    console.error = (...args: unknown[]) => {
       const error = args[0];
       const stack = this.extractStack(error);
       this.captureMessage('error', args, stack);
@@ -132,13 +132,13 @@ class ConsoleInterceptor {
     };
 
     // Override console.info
-    console.info = (...args: any[]) => {
+    console.info = (...args: unknown[]) => {
       this.captureMessage('info', args);
       this.originalConsole.info(...args);
     };
 
     // Override console.debug
-    console.debug = (...args: any[]) => {
+    console.debug = (...args: unknown[]) => {
       this.captureMessage('debug', args);
       this.originalConsole.debug(...args);
     };
@@ -153,9 +153,13 @@ class ConsoleInterceptor {
   /**
    * Extract stack trace from error object or create one
    */
-  private extractStack(error: any): string | undefined {
-    if (error?.stack) {
+  private extractStack(error: unknown): string | undefined {
+    if (error instanceof Error && error.stack) {
       return error.stack;
+    }
+    if (typeof error === 'object' && error !== null && 'stack' in error) {
+      const stack = (error as { stack?: unknown }).stack;
+      if (typeof stack === 'string') return stack;
     }
 
     // Create a stack trace if it's an error message without stack
@@ -170,7 +174,7 @@ class ConsoleInterceptor {
   /**
    * Capture a console message using ring buffer pattern
    */
-  private captureMessage(type: BufferedMessage['type'], args: any[], stack?: string): void {
+  private captureMessage(type: BufferedMessage['type'], args: unknown[], stack?: string): void {
     const message: BufferedMessage = {
       type,
       timestamp: new Date(),
@@ -307,23 +311,20 @@ class ConsoleInterceptor {
  * the bootstrap path that wants buffered console output (e.g. main.ts for
  * the standalone app, LuxarApp.init({ debug: true }) for embedded use).
  */
-export const consoleInterceptor: ConsoleInterceptor = new Proxy(
-  {} as ConsoleInterceptor,
-  {
-    get(_target, prop, receiver) {
-      const instance = ConsoleInterceptor.getInstance();
-      const value = Reflect.get(instance, prop, receiver);
-      return typeof value === 'function' ? value.bind(instance) : value;
-    },
-    set(_target, prop, value, receiver) {
-      const instance = ConsoleInterceptor.getInstance();
-      return Reflect.set(instance, prop, value, receiver);
-    },
-    has(_target, prop) {
-      return prop in ConsoleInterceptor.getInstance();
-    },
-  }
-);
+export const consoleInterceptor: ConsoleInterceptor = new Proxy({} as ConsoleInterceptor, {
+  get(_target, prop, receiver) {
+    const instance = ConsoleInterceptor.getInstance();
+    const value = Reflect.get(instance, prop, receiver);
+    return typeof value === 'function' ? value.bind(instance) : value;
+  },
+  set(_target, prop, value, receiver) {
+    const instance = ConsoleInterceptor.getInstance();
+    return Reflect.set(instance, prop, value, receiver);
+  },
+  has(_target, prop) {
+    return prop in ConsoleInterceptor.getInstance();
+  },
+});
 
 // Also export the type for the singleton
 export type { ConsoleInterceptor };

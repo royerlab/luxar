@@ -10,7 +10,12 @@
  * @module types/gsplats
  */
 
-import type { DimensionMetadata } from './dims';
+import type { ViewState } from '../data/data-loader-types';
+import type {
+  LoaderMetrics,
+  MonitorEventListener,
+  QueryInfo,
+} from './data-monitor-types';
 
 // ============================================================================
 // Metadata Types (from zarr .zattrs)
@@ -232,6 +237,16 @@ export interface GSplatsDataLoader {
    * Always false for non-progressive (single-LOD) loaders.
    */
   readonly hasMoreLODs?: boolean;
+
+  /**
+   * LoaderMonitor surface (optional, for the data-loading-monitor UI).
+   * Mirrors the surface that `points-spatial-index-loader.ts` exposes —
+   * implementations that don't track metrics may omit these methods.
+   */
+  addEventListener?(listener: MonitorEventListener): void;
+  removeEventListener?(listener: MonitorEventListener): void;
+  getMetrics?(): LoaderMetrics;
+  getActiveQueries?(): QueryInfo[];
 }
 
 /**
@@ -239,19 +254,7 @@ export interface GSplatsDataLoader {
  *
  * Extends the points ViewState pattern with gsplats-specific information.
  */
-export interface GSplatsViewState {
-  /** Which dimensions to display (max 3, indices into nD space) */
-  displayDims: number[];
-
-  /** Current position in nD space (one value per dimension) */
-  slicePosition: number[];
-
-  /** Tolerance for slicing in each dimension */
-  tolerance: number[];
-
-  /** Dimension metadata for the dataset */
-  dimensions?: DimensionMetadata[];
-}
+export type GSplatsViewState = ViewState;
 
 /**
  * User data attached to THREE.Mesh for GSplats in scene.

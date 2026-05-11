@@ -613,6 +613,73 @@ metrics = compute_quality_metrics(rendered, target)
 print(f"PSNR={metrics['psnr_db']:.1f} dB, SSIM={metrics['ssim']:.4f}")
 ```
 
+## Calibration (Blind-Spot Cross-Validation)
+
+The `calibration` module implements the manuscript's Noise2Self model-selection protocol — sweep splat count K, fit each at against a 5%-donut-median-filled volume, and pick the K that maximises *held-out* PSNR. As a free byproduct, the module estimates the per-dataset noise floor (Laplacian + Haar HH + background MAD ensemble), giving an absolute PSNR ceiling for the dataset.
+
+Held-out PSNR is fundamentally a *capacity*-selection criterion (across K), not an *iteration*-selection one. Within a single fit at fixed K, bounded splat parameters and L1 amplitude regularisation prevent the held-out trajectory from peak-and-declining over iterations — the patience-based early stop in `fit_gaussian_splats` already handles that regime. The calibration module therefore wraps `fit_gaussian_splats` unchanged at each K rather than augmenting it.
+
+### Quick Example
+
+```python
+from luxar.gsplats.calibration import calibrate, build_k_grid
+
+ks = build_k_grid(n_points=10, k_min=1_000, k_max=512_000)  # manuscript-style sweep
+result = calibrate(volume, k_grid=ks, fit_kwargs={"device": "cuda"})
+
+print(f"Recommended K* = {result.held_out_peak.k_star:,}")
+print(f"Curve type     = {result.held_out_peak.type}")  # peak | plateau | signal_limited
+print(f"Noise floor σ̂ = {result.noise_floor.sigma_hat:.4f}")
+print(f"PSNR ceiling   = {result.noise_floor.psnr_max_db:.1f} dB")
+
+# Persist or re-load the sweep curves
+result.to_json("cal.json")
+```
+
+### CLI
+
+```bash
+luxar gsplat cal volume.tiff cal.json                            # default 10-point sweep
+luxar gsplat cal volume.zarr cal.json --n-grid 5 --k-max 128000  # faster
+luxar gsplat cal volume.zarr cal.json --k-grid '1000,4000,16000,64000,256000'
+luxar gsplat cal volume.tiff cal.json --pdf cal.pdf              # multi-page report
+luxar gsplat cal volume.tiff cal.json --pdf cal.pdf --keep-fits fits/  # + slice montage
+```
+
+After calibration, re-fit at the recommended budget: `luxar gsplat fit volume.zarr out.zarr --seeds <K*>`.
+
+### Functions
+
+- `cv_mask(shape, fraction=0.05, seed=42)` — deterministic Bernoulli held-out mask.
+- `donut_median_fill(V, mask, radius=1)` — replace masked voxels with median of `(2r+1)^D` donut neighbourhood (centre excluded). Operates on arrays of any dimensionality.
+- `held_out_psnr(V_hat, V_original, mask, data_range=None)` — PSNR at masked positions against the *original* (pre-fill) values.
+- `estimate_noise_floor(V) -> NoiseFloor` — ensemble of Laplacian MAD (Immerkaer 1996), Haar HH-subband MAD (Donoho & Johnstone 1994), and background-region MAD; the median across estimators is robust to one outlier on the low side (typical when the dark tail is quantised).
+- `build_k_grid(explicit=None, n_points=10, k_min=1_000, k_max=512_000, progression="exp", power=2)` — exponential (geometric/log-spaced) or polynomial K grid; `explicit` takes precedence when given.
+- `find_k_star(k_values, held_out_psnr_values) -> HeldOutPeak` — hybrid peak-detection rule from `splat_count_vs_quality §4.2`: returns the argmax when both flanks are ≥ 0.1 dB below; the smallest K within 0.3 dB of the max for a plateau; the largest K when the curve is monotone-rising in range (signal-limited).
+- `calibrate(V, k_grid, *, fit_kwargs=None, mask_seed=42, mask_fraction=0.05, donut_radius=1, keep_fits=None, progress_callback=None) -> CalibrationResult` — top-level driver.
+
+### Result Container
+
+`CalibrationResult` carries the full sweep:
+
+- `k_values_requested`, `k_values_effective` — splat counts before and after the post-fit cull.
+- `held_out_psnr_db`, `train_psnr_db`, `held_out_mse` — at each K, against the original volume.
+- `full_psnr_db`, `full_ssim` — over the whole volume against the original (cross-run comparable).
+- `held_out_peak` (`HeldOutPeak`) — recommended `k_star`, curve `type`, `confidence_db`.
+- `noise_floor` (`NoiseFloor`) — `sigma_hat`, the three component estimators, `psnr_max_db`.
+- `fit_times_seconds`, `splat_paths` (when `keep_fits` is set), `mask_seed`, `mask_fraction`, `donut_radius`, `fit_config`, `volume_shape`, `timestamp`.
+- `to_json(path)` / `CalibrationResult.from_json(path)` — round-trip serialisation; non-finite floats become `null`.
+
+### PDF Report (optional)
+
+`luxar.gsplats.calibration_report.render_calibration_report(result, volume, output_path, splat_paths=None)` produces a 3-page matplotlib PDF mirroring the manuscript's per-dataset figures:
+
+1. **Rate-distortion** — PSNR (train / held-out / full) vs K, SSIM vs K, fit-time vs K, train-vs-held-out gap, with K\* annotated and the noise-floor PSNR ceiling overlaid.
+2. **Blind-spot cross-validation** — train + held-out PSNR with the overfitting region shaded.
+3. **Reconstruction slice montages** — target / K_min / K\* / K_max + per-pixel error map. Requires the per-K fits to have been persisted via `--keep-fits`; otherwise the page degrades to a placeholder.
+
+The report module imports matplotlib lazily so it does not inflate cold-start cost when `--pdf` is not set.
+
 ## Rendering
 
 The `rendering` module provides GPU-accelerated volume rendering with automatic backend selection (CUDA > MPS > CPU).
@@ -921,6 +988,9 @@ gsplats/
 ├── gsplat_data.py                 # GSplatData / GSplatLOD dataclasses, save/load, transforms
 ├── culling.py                     # Contribution-based splat culling (CullResult, cull_by_contribution)
 ├── metrics.py                     # Quality metrics (PSNR, SSIM, MSE, relative L2)
+├── calibration.py                 # Blind-spot CV calibration (cv_mask, donut_median_fill,
+│                                  #   estimate_noise_floor, build_k_grid, find_k_star, calibrate)
+├── calibration_report.py          # Optional matplotlib PDF report for `luxar gsplat cal --pdf`
 ├── gpu_profile.py                 # GPU benchmark profile management
 │
 ├── seeds/                         # Seed generation subpackage

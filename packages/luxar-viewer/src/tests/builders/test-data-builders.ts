@@ -144,6 +144,291 @@ export class PointsBuilder {
 }
 
 /**
+ * Builder for lines test data.
+ *
+ * Mirrors the PointsBuilder API: chained `withX()` setters and a final
+ * `build()` that returns plain typed arrays + counts. Use this in
+ * spatial-index loader, projection, and clipping tests so the test
+ * fixtures stay consistent across geometry types.
+ *
+ * @example
+ * ```ts
+ * const lines = new LinesBuilder()
+ *   .withSegments(50)
+ *   .withDimensions(3)
+ *   .withRandomVertices()
+ *   .withWidths(1.0)
+ *   .build();
+ * ```
+ */
+export class LinesBuilder {
+  private numSegments: number = 100;
+  private dimensions: number = 3;
+  // Vertices are stored as flat (numSegments * 2) * dimensions floats.
+  private vertices: Float32Array | null = null;
+  private widths: Float32Array | null = null;
+  private segments: Uint32Array | null = null;
+  private colors: Float32Array | null = null;
+  private sharpness: Float32Array | null = null;
+
+  /** Set the number of line segments. */
+  withSegments(num: number): this {
+    this.numSegments = num;
+    return this;
+  }
+
+  /** Set the number of spatial dimensions. */
+  withDimensions(dims: number): this {
+    this.dimensions = dims;
+    return this;
+  }
+
+  /** Provide explicit vertex data ((numSegments * 2) * dimensions floats). */
+  withVertices(vertices: Float32Array | number[]): this {
+    this.vertices = vertices instanceof Float32Array ? vertices : new Float32Array(vertices);
+    return this;
+  }
+
+  /** Generate random vertex data within `range`. */
+  withRandomVertices(range: [number, number] = [-1, 1]): this {
+    const verts = new Float32Array(this.numSegments * 2 * this.dimensions);
+    const [min, max] = range;
+    for (let i = 0; i < verts.length; i++) {
+      verts[i] = min + Math.random() * (max - min);
+    }
+    this.vertices = verts;
+    return this;
+  }
+
+  /** Set uniform widths. */
+  withWidths(width: number): this {
+    this.widths = new Float32Array(this.numSegments).fill(width);
+    return this;
+  }
+
+  /** Set varying widths. */
+  withVaryingWidths(min: number = 0.1, max: number = 1.0): this {
+    this.widths = new Float32Array(this.numSegments);
+    for (let i = 0; i < this.numSegments; i++) {
+      this.widths[i] = min + Math.random() * (max - min);
+    }
+    return this;
+  }
+
+  /**
+   * Provide explicit segment indices. If omitted, auto-generates the canonical
+   * `[0, 1, 2, 3, ..., 2N-1]` packing where each segment takes two consecutive
+   * vertex indices.
+   */
+  withSegmentIndices(segments: Uint32Array | number[]): this {
+    this.segments = segments instanceof Uint32Array ? segments : new Uint32Array(segments);
+    return this;
+  }
+
+  /** Add per-vertex colors as RGB floats. Random when no values are passed. */
+  withColors(colors?: Float32Array | number[]): this {
+    if (colors) {
+      this.colors = colors instanceof Float32Array ? colors : new Float32Array(colors);
+    } else {
+      this.colors = new Float32Array(this.numSegments * 2 * 3);
+      for (let i = 0; i < this.colors.length; i++) {
+        this.colors[i] = Math.random();
+      }
+    }
+    return this;
+  }
+
+  /** Per-vertex sharpness scalars. */
+  withSharpness(value: number = 2.0): this {
+    this.sharpness = new Float32Array(this.numSegments * 2).fill(value);
+    return this;
+  }
+
+  /**
+   * Build the test fixture. `vertices` is auto-populated with random values
+   * if no `withVertices`/`withRandomVertices` call preceded `build()`.
+   * `widths` defaults to a uniform 1.0 if unset (required attribute).
+   * `segments` defaults to the canonical packing if unset.
+   */
+  build(): {
+    vertices: Float32Array;
+    widths: Float32Array;
+    segments: Uint32Array;
+    colors: Float32Array | null;
+    sharpness: Float32Array | null;
+    numSegments: number;
+    dimensions: number;
+  } {
+    if (!this.vertices) {
+      this.withRandomVertices();
+    }
+    if (!this.widths) {
+      this.withWidths(1.0);
+    }
+    if (!this.segments) {
+      const seg = new Uint32Array(this.numSegments * 2);
+      for (let i = 0; i < seg.length; i++) seg[i] = i;
+      this.segments = seg;
+    }
+    return {
+      vertices: this.vertices!,
+      widths: this.widths!,
+      segments: this.segments!,
+      colors: this.colors,
+      sharpness: this.sharpness,
+      numSegments: this.numSegments,
+      dimensions: this.dimensions,
+    };
+  }
+}
+
+/**
+ * Builder for gsplats test data.
+ *
+ * Mirrors PointsBuilder. Required attributes are `centers`, `amplitudes`,
+ * and `choleskyFactors`. The Cholesky packing follows the lower-triangular
+ * layout used by the rest of the viewer: ndim*(ndim+1)/2 floats per splat.
+ *
+ * @example
+ * ```ts
+ * const gs = new GSplatsBuilder()
+ *   .withSplats(200)
+ *   .withDimensions(3)
+ *   .withRandomCenters()
+ *   .withAmplitudes(1.0)
+ *   .withIsotropicCovariance(0.05)
+ *   .build();
+ * ```
+ */
+export class GSplatsBuilder {
+  private numSplats: number = 100;
+  private dimensions: number = 3;
+  private centers: Float32Array | null = null;
+  private amplitudes: Float32Array | null = null;
+  private choleskyFactors: Float32Array | null = null;
+  private colors: Float32Array | null = null;
+
+  /** Set the number of splats. */
+  withSplats(num: number): this {
+    this.numSplats = num;
+    return this;
+  }
+
+  /** Set the number of spatial dimensions. */
+  withDimensions(dims: number): this {
+    this.dimensions = dims;
+    return this;
+  }
+
+  /** Provide explicit centers. Layout: numSplats * dimensions floats. */
+  withCenters(centers: Float32Array | number[]): this {
+    this.centers = centers instanceof Float32Array ? centers : new Float32Array(centers);
+    return this;
+  }
+
+  /** Generate random centers within `range`. */
+  withRandomCenters(range: [number, number] = [-1, 1]): this {
+    const c = new Float32Array(this.numSplats * this.dimensions);
+    const [min, max] = range;
+    for (let i = 0; i < c.length; i++) {
+      c[i] = min + Math.random() * (max - min);
+    }
+    this.centers = c;
+    return this;
+  }
+
+  /** Uniform amplitudes (required attribute). */
+  withAmplitudes(value: number): this {
+    this.amplitudes = new Float32Array(this.numSplats).fill(value);
+    return this;
+  }
+
+  /** Varying amplitudes. */
+  withVaryingAmplitudes(min: number = 0.1, max: number = 1.0): this {
+    this.amplitudes = new Float32Array(this.numSplats);
+    for (let i = 0; i < this.numSplats; i++) {
+      this.amplitudes[i] = min + Math.random() * (max - min);
+    }
+    return this;
+  }
+
+  /**
+   * Set isotropic Gaussian covariance via a single sigma. The Cholesky factor
+   * for an isotropic Gaussian is sigma * I, so the lower-triangular packing
+   * is sigma on the diagonals and zero elsewhere.
+   *
+   * Packing (ndim=3): `[L00, L10, L11, L20, L21, L22]` →
+   * `[sigma, 0, sigma, 0, 0, sigma]`.
+   */
+  withIsotropicCovariance(sigma: number = 0.1): this {
+    const ndim = this.dimensions;
+    const packed = (ndim * (ndim + 1)) / 2;
+    this.choleskyFactors = new Float32Array(this.numSplats * packed);
+
+    for (let s = 0; s < this.numSplats; s++) {
+      let idx = s * packed;
+      for (let row = 0; row < ndim; row++) {
+        for (let col = 0; col <= row; col++) {
+          this.choleskyFactors[idx++] = row === col ? sigma : 0;
+        }
+      }
+    }
+    return this;
+  }
+
+  /** Provide explicit Cholesky factors (numSplats * ndim*(ndim+1)/2 floats). */
+  withCholeskyFactors(factors: Float32Array | number[]): this {
+    this.choleskyFactors = factors instanceof Float32Array ? factors : new Float32Array(factors);
+    return this;
+  }
+
+  /** Per-splat RGB colors. Random when no values are passed. */
+  withColors(colors?: Float32Array | number[]): this {
+    if (colors) {
+      this.colors = colors instanceof Float32Array ? colors : new Float32Array(colors);
+    } else {
+      this.colors = new Float32Array(this.numSplats * 3);
+      for (let i = 0; i < this.colors.length; i++) {
+        this.colors[i] = Math.random();
+      }
+    }
+    return this;
+  }
+
+  /**
+   * Build the test fixture. `centers` is auto-populated with random values
+   * if unset; `amplitudes` defaults to 1.0; `choleskyFactors` defaults to
+   * isotropic sigma=0.1 if unset (all three are required attributes).
+   */
+  build(): {
+    centers: Float32Array;
+    amplitudes: Float32Array;
+    choleskyFactors: Float32Array;
+    colors: Float32Array | null;
+    numSplats: number;
+    dimensions: number;
+  } {
+    if (!this.centers) {
+      this.withRandomCenters();
+    }
+    if (!this.amplitudes) {
+      this.withAmplitudes(1.0);
+    }
+    if (!this.choleskyFactors) {
+      this.withIsotropicCovariance(0.1);
+    }
+    return {
+      centers: this.centers!,
+      amplitudes: this.amplitudes!,
+      choleskyFactors: this.choleskyFactors!,
+      colors: this.colors,
+      numSplats: this.numSplats,
+      dimensions: this.dimensions,
+    };
+  }
+}
+
+/**
  * Builder for dimension configuration
  */
 export class DimensionsBuilder {

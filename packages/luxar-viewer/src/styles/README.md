@@ -1,10 +1,10 @@
 # luxar-viewer/src/styles
 
-CSS architecture for the Luxar viewer, organized as a four-tier cascade: reset, base, components, and theme overrides.
+CSS architecture for the Luxar viewer, organized as a four-layer cascade: reset, base, components, and theme overrides.
 
 ## Architecture
 
-All styles are imported through `index.css` in strict cascade order:
+All styles are imported through `index.css` in strict cascade order. See `SPECIFICATIONS.md` for invariants and validation rules.
 
 ```
 1. reset.css          — Browser normalization (box-sizing, margins, scrollbars)

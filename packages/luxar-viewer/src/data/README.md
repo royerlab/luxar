@@ -25,48 +25,62 @@ The Luxar Data package provides the critical data loading infrastructure for vis
 ```
 data/
 ├── zarr-loader.ts                 # Main API entry point for loading scenes
-├── scene-loader.ts                # Orchestrates hierarchical scene loading (points + lines)
+├── scene-loader.ts                # Orchestrates hierarchical scene loading (spans all geometries)
 ├── scene-loader-manager.ts        # Singleton manager for SceneLoader instances
-├── point-spatial-index-loader.ts  # Loads points using chunk-based spatial queries
-│                                  #   Inlines its own `chunk_bounds` zarr probe; delegates the
-│                                  #   AABB scan to `loaders/spatial-query-builder.SpatialQueryBuilder`
-│                                  #   with pre-computed tolerance from `effective-radius-calculator`.
-├── lines-spatial-index-loader.ts  # Loads lines with nD clipping and attribute interpolation
-│                                  #   Inlines the dual-bounds zarr probe (vertex + segment); query
-│                                  #   path uses the segment side via `SpatialQueryBuilder`.
-├── gsplats-spatial-index-loader.ts # Loads Gaussian splats with nD visibility
-│                                  #   Inlines its `chunk_bounds` probe; query via `SpatialQueryBuilder`
-│                                  #   with `geometryType: 'gsplats'`.
-├── array-decoder.ts               # Decodes Python luxar.encoding arrays
-├── data-monitor-manager.ts        # Singleton manager for monitoring UI instances
-├── directory-navigator.ts         # Multi-strategy server directory browsing
-├── nd-transform.ts                # nD transform inverse-query for non-displayed dimensions
+├── data-loader-types.ts           # TypeScript interfaces and types
+├── view-state-manager.ts          # Centralized ViewState initialization and validation
+├── index.ts                       # Package exports
+├── README.md                      # This documentation
+│
+├── points/                        # Points geometry — facade + decomposition + math
+│   ├── points-spatial-index-loader.ts # Loads points using chunk-based spatial queries
+│   ├── chunk-index-loader.ts          # `chunk_bounds` zarr probe + registerBounds
+│   ├── projection.ts                  # nD → 3D projection (worker + main-thread paths)
+│   └── effective-radius-calculator.ts # Effective-radii math for nD slicing
+│
+├── lines/                         # Lines geometry — facade + chunk-index probe + projection math
+│   ├── lines-spatial-index-loader.ts  # Loads lines with nD clipping + attribute interpolation
+│   ├── chunk-index-loader.ts          # Dual-bounds zarr probe + computeVertexRangesFromIndices
+│   └── projection.ts                  # clipSegmentToSlice + lerp + projectLinesTo3D (TS + WASM) + initLinesWASM
+│
+├── gsplats/                       # GSplats geometry — facade + chunk-index probe + processor + multi-LOD wrapper
+│   ├── gsplats-spatial-index-loader.ts  # Loads Gaussian splats with nD visibility
+│   ├── chunk-index-loader.ts            # `chunk_bounds` zarr probe + array-bounds prefetcher registration
+│   ├── gsplats-progressive-loader.ts    # Composite-pattern multi-LOD facade (loads N LODs sequentially)
+│   └── projection.ts                    # nD → 3D pure-math companion (centers, Cholesky, attenuation)
+│
+├── transforms/                    # nD transform helpers
+│   └── nd-transform.ts            # Inverse-query for non-displayed dimensions
 │                                  #   Given a world-space query (slicePosition + tolerance) and a
 │                                  #   composed nd_transform, produces the equivalent local-space query.
 │                                  #   Avoids transforming geometry data — all loader internals unchanged.
-├── gsplats-progressive-loader.ts  # Progressive multi-LOD GSplats loader (Composite pattern)
-├── effective-radius-calculator.ts # Calculates effective radii for nD slicing (points-specific
-│                                  #   tolerance helper, paired with `calculateEffectiveRadii`).
-├── data-loader-types.ts           # TypeScript interfaces and types
-├── data-accumulator.ts            # Zero-allocation buffer pooling
-├── scene-graph-builder.ts         # Scene hierarchy builder (extracted from SceneLoader)
-├── view-state-manager.ts          # Centralized ViewState initialization and validation
-├── stats-aggregator.ts            # Accumulator stats aggregation across loaders
-├── loader-registry.ts             # Lifecycle management for geometry loaders (Points, Lines, GSplats)
-├── tolerance-computer.ts          # Canonical tolerance computer (`computeTolerance`) used by all
+│
+├── utils/                         # Pure data utilities (no I/O, no GPU state)
+│   ├── array-decoder.ts           # Decodes Python luxar.encoding arrays
+│   ├── attrs-composer.ts          # Composes per-layer attributes along the scene graph
+│   ├── data-accumulator.ts        # Zero-allocation buffer pooling
+│   ├── directory-navigator.ts     # Multi-strategy server directory browsing
+│   ├── scene-graph-builder.ts     # Scene hierarchy builder (extracted from SceneLoader)
+│   ├── stats-aggregator.ts        # Accumulator stats aggregation across loaders
+│   └── tolerance-computer.ts      # Canonical tolerance computer (`computeTolerance`) used by all
 │                                  #   geometry types via `SpatialQueryBuilder` + by SceneLoader
 │                                  #   for lines projection clipping.
-├── index.ts                       # Package exports
-├── README.md                      # This documentation
 │
 ├── loaders/                       # Unified loader infrastructure (see loaders/README.md)
 │   ├── base-types.ts              # Common types (BaseViewState, LoadRange)
 │   ├── range-loader.ts            # Unified encoding dispatch
 │   ├── spatial-query-builder.ts   # Canonical chunk-bounds query API
 │   │                              #   `SpatialQueryBuilder` accepts either a `geometryType` (delegates
-│   │                              #   tolerance to `tolerance-computer.computeTolerance`) or a
+│   │                              #   tolerance to `utils/tolerance-computer.computeTolerance`) or a
 │   │                              #   pre-computed `tolerance: number[]`.
-│   └── transferable-accumulator.ts # Zero-allocation buffer management
+│   ├── transferable-accumulator.ts # Zero-allocation buffer management
+│   ├── image-label-loader.ts      # Lazy per-element image fetching from zarr
+│   ├── label-loader.ts            # Lazy CSR-style label fetching from zarr
+│   ├── overlay-loader.ts          # Reads overlay configurations from zarr store
+│   ├── loader-registry.ts         # Lifecycle management for geometry loaders
+│   ├── loader-metrics.ts          # Shared latency / event metrics (per-geometry)
+│   ├── monitor-events.ts          # Shared LoaderEventEmitter for monitor events
+│   └── color-attribute-utils.ts   # Shared color-range loader (points, lines, gsplats)
 │
 └── (related: ../workers/)         # Web Worker infrastructure
     ├── worker-pool.ts             # Pool manager with load balancing
@@ -144,6 +158,11 @@ The SceneLoader has been refactored into focused, testable modules:
 - Material creation and colormap application
 - Transform application and validation
 - Picking system integration (shadow pick-node creation)
+- **Empty-placeholder factories**
+  (`createEmpty{Points,Lines,GSplats}Node`) — every loader attaches a
+  placeholder before the first fetch so a transient load failure leaves
+  a findable, retryable node in the scene rather than a hole. The same
+  node is later populated in place by `commit*Geometry` helpers.
 
 **Data Accumulators** (`data-accumulator.ts`):
 
@@ -155,7 +174,28 @@ The SceneLoader has been refactored into focused, testable modules:
 
 - **Testability**: Each module tested independently (88+ new tests)
 - **Maintainability**: Clear responsibility boundaries
-- **Reduced Complexity**: SceneLoader reduced from ~2000 to ~800 lines
+- **Reduced Complexity**: SceneLoader is ~2,100 lines and continues to
+  shrink as concerns extract out. Long-term target is under 1,500. See
+  `scene-loader/` siblings for the extracted modules:
+  `data-processor-lines`, `data-processor-gsplats`,
+  `commit-points-geometry`, `effective-attrs`, `extend-tolerance`,
+  `loader-factory`, `scene-graph-converter`, `url-normalization`,
+  `cache-api`, `cache-setup`, and `monitor-wiring`.
+
+**Next extractions (planned, not yet done).** Each is a self-contained
+unit that does not span multiple geometry types:
+
+- `metadata-loader.ts` — pull `loadRootMetadata()` out (~80 LOC). It is
+  pure I/O over the zarr root group attrs and has no scene-graph
+  dependency.
+- `attrs-applier.ts` — extract `applyEffectiveAttrs()` (~60 LOC). It
+  composes parent + node attrs and delegates to
+  `data/utils/attrs-composer.ts`.
+- `view-updater.ts` — pull the `updateView()` orchestration shell
+  (~100 LOC) leaving the per-geometry data-processor calls in place.
+
+These extractions are incremental and should not change behavior. Land
+them as separate small PRs to keep the diff reviewable.
 
 ---
 
@@ -804,7 +844,15 @@ clearCaches();
 ### Advanced Instance Management
 
 ```typescript
-import { SceneLoaderManager, DataMonitorManager } from 'luxar-viewer/data';
+// The data/ and ui/ layers are kept separate: SceneLoader receives a
+// SceneLoaderMonitorPort factory at construction (wired in
+// core/app.ts) instead of importing DataMonitorManager directly.
+// Production code resolves the monitor through that port; the example
+// below shows direct registry access for diagnostic/advanced cases.
+import { SceneLoaderManager } from 'luxar-viewer/data';
+// DataMonitorManager lives in ui/ now; only import it from there if you
+// truly need to inspect the monitor singleton (rare).
+import { DataMonitorManager } from 'luxar-viewer/ui/monitors';
 
 // Direct access to manager for advanced use cases
 const loaderManager = SceneLoaderManager.getInstance();
@@ -964,7 +1012,7 @@ location /data/ {
 | `getAllLoaders()`                          | Get all active loader instances             |
 | `destroyLoader(id)`                        | Dispose and remove a specific loader        |
 | `destroyAll()`                             | Dispose all loaders and reset manager       |
-| `reset()`                                  | Reset singleton (for testing)               |
+| `disposeInstance()`                        | Dispose the singleton (call from app dispose; preserved for re-init) |
 
 ### Scene Loading (scene-loader.ts)
 
@@ -1031,8 +1079,8 @@ location /data/ {
 
 ### Tolerance computer (tolerance-computer.ts)
 
-| Symbol                                                              | Description                                                                                  |
-| ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Symbol                                                               | Description                                                                                  |
+| -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
 | `computeTolerance(geometryType, displayDims, ndim, dims?, options?)` | Geometry-aware per-dimension tolerance. Used by `SpatialQueryBuilder`'s geometry-aware path. |
 
 ### Monitoring Management (data-monitor-manager.ts)
@@ -1048,7 +1096,7 @@ location /data/ {
 | `hideMonitor(id?)`                      | Hide specific or default monitor           |
 | `toggleMonitor(id?)`                    | Toggle specific or default monitor         |
 | `destroyMonitor(id)`                    | Dispose and remove a specific monitor      |
-| `reset()`                               | Reset singleton (for testing)              |
+| `disposeInstance()`                     | Dispose the singleton (called from app dispose) |
 
 ### Directory Navigation (directory-navigator.ts)
 

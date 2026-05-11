@@ -41,8 +41,20 @@ import zarr
 from arbol import Arbol, aprint, asection
 
 from luxar.gsplats.fit_progressive_gsplats import fit_progressive_gaussian_splats
+from luxar.gsplats.lod import make_additive_lod
 from luxar.gsplats.models.gsplats.rendering_wrappers import render_gaussians_numpy
 from luxar.gsplats.utils.trils import tril_size
+
+
+def _psnr(rendered: np.ndarray, target: np.ndarray) -> float:
+    mse = float(np.mean((rendered.astype(np.float64) - target.astype(np.float64)) ** 2))
+    if mse <= 0.0:
+        return float("inf")
+    rng = float(target.max() - target.min())
+    if rng <= 0.0:
+        return float("inf")
+    return 10.0 * float(np.log10(rng**2 / mse))
+
 
 # Check for --no-napari flag
 NO_NAPARI = "--no-napari" in sys.argv
@@ -63,6 +75,8 @@ TIME_POINT = 0  # First time point
 # NLM denoising parameters
 NLM_PATCH_SIZE = 3
 NLM_PATCH_DISTANCE = 5
+# Additive-LOD ladder size
+N_LODS = 4
 # ==========================
 
 Arbol.max_depth = 5
@@ -229,11 +243,16 @@ with asection("3D DAPI Progressive Gaussian Splatting Demo"):
             max_eccentricity=6.0,
         )
 
+    # --- Build the additive LOD ladder (post-fit, principled) ---
+    with asection(f"Building additive LOD ladder ({N_LODS} levels)"):
+        result = make_additive_lod(result, n_lods=N_LODS, method="greedy")
+        aprint(f"Cutpoints: {result.stats.get('lod_cutpoints', [])}")
+
     # --- Summary ---
     with asection("Results"):
         aprint(f"Total splats: {result.n_splats:,}")
-        aprint(f"LOD levels: {result.n_lods}")
-        aprint(f"Final PSNR: {result.stats.get('psnr_db', 0):.2f} dB")
+        aprint(f"LOD levels (additive ladder): {result.n_lods}")
+        aprint(f"Final PSNR (fit): {result.stats.get('psnr_db', 0):.2f} dB")
         aprint(f"Stop reason: {result.stats.get('stop_reason', '?')}")
         aprint(f"Total time: {result.stats.get('time_seconds', 0):.1f}s")
 
@@ -244,19 +263,14 @@ with asection("3D DAPI Progressive Gaussian Splatting Demo"):
         image_bits = V.size * 32
         fold = image_bits / max(model_bits, 1)
         aprint(f"Compression: {fold:.1f}x ({100 * (1 - model_bits / image_bits):.1f}%)")
-        aprint("")
-
-        psnrs = result.lod_psnrs()
-        for i in range(result.n_lods):
-            lod = result.at_lod(i)
-            cumul_splats = result.up_to_lod(i).n_splats
-            aprint(
-                f"  LOD {i}: +{lod.n_splats:,} splats "
-                f"(total: {cumul_splats:,}), "
-                f"PSNR = {psnrs[i]:.2f} dB"
-            )
+        aprint(
+            f"Fitting passes: {result.stats.get('n_passes', '?')} "
+            f"(per-pass PSNRs: "
+            f"{[f'{p:.2f}' for p in result.stats.get('pass_psnrs', [])]})"
+        )
 
     # --- Render each LOD level cumulatively ---
+    psnrs: list[float] = []
     with asection("Rendering LOD levels"):
         n_lods = result.n_lods
         stack_recon = np.zeros((n_lods,) + V.shape, dtype=np.float32)
@@ -269,9 +283,13 @@ with asection("3D DAPI Progressive Gaussian Splatting Demo"):
             )
             stack_recon[level] = rendered
             stack_resid[level] = V - rendered
+            psnr_val = _psnr(rendered, V)
+            psnrs.append(psnr_val)
+            lod_n = result.at_lod(level).n_splats
             aprint(
-                f"LOD 0..{level}: {data_at_level.n_splats:,} splats, "
-                f"PSNR = {psnrs[level]:.2f} dB"
+                f"  LOD {level}: +{lod_n:,} splats "
+                f"(total: {data_at_level.n_splats:,}), "
+                f"PSNR = {psnr_val:.2f} dB"
             )
 
 # --- Full results napari viewer ---

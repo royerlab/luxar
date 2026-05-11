@@ -74,14 +74,11 @@ export class ResolutionIndicator {
    * @param dpr - Current device pixel ratio to display
    */
   show(dpr?: number): void {
-    // Only show once per mode activation
+    // Only show once per mode activation. `hasShownForCurrentMode` and
+    // `isVisible` are flipped together below, so a second show() in the
+    // same activation always returns here without touching the DOM —
+    // useful when the AdaptiveDPR caller streams every DPR change.
     if (this.hasShownForCurrentMode) {
-      return;
-    }
-
-    if (this.isVisible) {
-      // Just update text if already visible
-      this.updateText(dpr);
       return;
     }
 

@@ -102,6 +102,8 @@ export interface SimpleDims {
  * @param metadata - Optional metadata describing each dimension's properties
  * @returns Initialized SimpleDims object ready for use
  * @throws Error if the positions array structure is invalid
+ *
+ * @internal — used by SceneDimsManager initialization; not part of the public API.
  */
 export function initializeDims(
   numPoints: number,
@@ -165,6 +167,8 @@ export function initializeDims(
  * @param ndim - Number of dimensions per point
  * @param numPoints - Total number of points in the dataset
  * @returns Array of [min, max] tuples for each dimension
+ *
+ * @internal — used by SceneDimsManager initialization; not part of the public API.
  */
 export function getDimensionRanges(
   positions: Float32Array,

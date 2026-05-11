@@ -82,6 +82,27 @@ describe('EventManager', () => {
       expect(handler2).toHaveBeenCalledOnce();
       expect(manager.count()).toBe(1);
     });
+
+    it('removes capture-phase listeners by replaying the original options', () => {
+      // addEventListener treats capture as part of the listener identity, so
+      // a listener registered with `{ capture: true }` is *not* the same as
+      // one registered without options. EventManager.remove() must look up
+      // the stored options to make the removal stick.
+      const removeSpy = vi.spyOn(element, 'removeEventListener');
+      const handler = vi.fn();
+
+      manager.add(element, 'click', handler, { capture: true });
+      manager.remove(element, 'click', handler);
+
+      // The third arg should be the stored options object.
+      expect(removeSpy).toHaveBeenCalledWith(
+        'click',
+        handler,
+        expect.objectContaining({ capture: true })
+      );
+      expect(manager.count()).toBe(0);
+      removeSpy.mockRestore();
+    });
   });
 
   describe('removeAll()', () => {

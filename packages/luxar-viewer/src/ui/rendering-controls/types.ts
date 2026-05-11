@@ -8,7 +8,7 @@
 import type GUI from '../gui';
 import type { Folder } from '../gui';
 import type { RenderingSettings } from '../../config';
-import type { PostProcessingManager } from '../../rendering/post-processing-manager';
+import type { PostProcessingManager } from '../../rendering/post-processing/post-processing-manager';
 import type { SceneManager } from '../../scene/scene-manager';
 import type { AnimationController } from '../../scene/animation-controller';
 import type { RenderingControllers } from '../../controls/types';
@@ -64,6 +64,6 @@ export interface SetupResult {
   /** Shadow objects for special UI patterns (optional) */
   shadowObjects?: {
     hdrLogValue?: { log: number };
-    [key: string]: any;
+    [key: string]: unknown;
   };
 }

@@ -238,25 +238,26 @@ dimensionAnimation: {
 
 ### Data Loading Performance Configuration
 
-Multi-phase performance optimization pipeline:
+Performance optimization pipeline (object pooling, web workers, WASM,
+GPU buffer pool):
 
 ```typescript
 dataLoading: {
   performance: {
-    // Phase 1: Object pooling (reuse buffers across updates)
+    // Object pooling (reuse buffers across updates)
     useAccumulators: true,
     initialAccumulatorCapacity: 8192,
     accumulatorGrowthFactor: 1.5,
 
-    // Phase 2: Web Workers (offload CPU work)
+    // Web Workers (offload CPU work)
     useWebWorkers: true,
     workerCount: 0,                  // 0 = auto-detect based on navigator.hardwareConcurrency
 
-    // Phase 3: WASM acceleration
+    // WASM acceleration
     useWASM: true,
     wasmModulePath: '/wasm/luxar_wasm_bg.wasm',
 
-    // Phase 4: GPU buffer pool (reuse WebGL buffers)
+    // GPU buffer pool (reuse WebGL buffers)
     useGPUBufferPool: true,
     gpuPoolMaxSize: 20,
     gpuPoolEvictionFrames: 300,
@@ -267,12 +268,12 @@ dataLoading: {
 }
 ```
 
-**Phases**:
+**Components**:
 
-- **Phase 1 (Accumulators)**: Pre-allocate and reuse typed arrays to avoid GC pressure
-- **Phase 2 (Workers)**: Offload nD projection and visibility computation to Web Workers
-- **Phase 3 (WASM)**: Rust-compiled WebAssembly for spatial queries, visibility, and decoding
-- **Phase 4 (GPU Buffer Pool)**: Reuse WebGL buffer objects to avoid GPU allocation overhead
+- **Accumulators**: Pre-allocate and reuse typed arrays to avoid GC pressure
+- **Workers**: Offload nD projection and visibility computation to Web Workers
+- **WASM**: Rust-compiled WebAssembly for spatial queries, visibility, and decoding
+- **GPU Buffer Pool**: Reuse WebGL buffer objects to avoid GPU allocation overhead
 
 ### Debug Console Configuration
 

@@ -122,6 +122,51 @@ describe('ControlsManager', () => {
       controlsManager.setEnableZoom(true);
       expect(controls.enableZoom).toBe(true);
     });
+
+    describe('natural drag (LEFT ↔ RIGHT swap)', () => {
+      it('swaps mouseButtons live when toggled on for an active orbit controls', () => {
+        const controls = controlsManager.getControls() as LuxarOrbitControls;
+        // Establish baseline: default mapping (LEFT=PAN, RIGHT=ROTATE).
+        controlsManager.setNaturalDrag(false);
+        expect(controls.mouseButtons.LEFT).toBe(THREE.MOUSE.PAN);
+        expect(controls.mouseButtons.RIGHT).toBe(THREE.MOUSE.ROTATE);
+
+        controlsManager.setNaturalDrag(true);
+        expect(controls.mouseButtons.LEFT).toBe(THREE.MOUSE.ROTATE);
+        expect(controls.mouseButtons.MIDDLE).toBe(THREE.MOUSE.DOLLY);
+        expect(controls.mouseButtons.RIGHT).toBe(THREE.MOUSE.PAN);
+        expect(controlsManager.getNaturalDrag()).toBe(true);
+      });
+
+      it('reverts the swap when toggled off again', () => {
+        controlsManager.setNaturalDrag(true);
+        controlsManager.setNaturalDrag(false);
+        const controls = controlsManager.getControls() as LuxarOrbitControls;
+        expect(controls.mouseButtons.LEFT).toBe(THREE.MOUSE.PAN);
+        expect(controls.mouseButtons.RIGHT).toBe(THREE.MOUSE.ROTATE);
+      });
+
+      it('survives orbit→fly→orbit mode switch (stored value re-applied)', () => {
+        controlsManager.setNaturalDrag(true);
+        controlsManager.setControlType('fly');
+        controlsManager.setControlType('orbit');
+        const controls = controlsManager.getControls() as LuxarOrbitControls;
+        expect(controls.mouseButtons.LEFT).toBe(THREE.MOUSE.ROTATE);
+        expect(controls.mouseButtons.RIGHT).toBe(THREE.MOUSE.PAN);
+      });
+
+      it('does NOT mutate ortho mouseButtons (RIGHT stays null)', () => {
+        const orthoCam = new THREE.OrthographicCamera(-5, 5, 5, -5, 0.1, 1000);
+        orthoCam.position.copy(camera.position);
+        controlsManager.setCamera(orthoCam);
+        controlsManager.setControlType('ortho');
+
+        controlsManager.setNaturalDrag(true);
+        const controls = controlsManager.getControls() as LuxarOrbitControls;
+        // Ortho's RIGHT=null mapping must not be touched.
+        expect(controls.mouseButtons.RIGHT).toBeNull();
+      });
+    });
   });
 
   describe('fly controls configuration', () => {

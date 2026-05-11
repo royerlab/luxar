@@ -10,7 +10,7 @@
  * - all-examples-smoke-test.spec.ts
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { execSync } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';

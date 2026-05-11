@@ -15,7 +15,7 @@
  * - points tests      -> points.rs / points.ts
  * - lines tests       -> lines.rs / lines.ts
  * - gsplats tests     -> gsplats.rs / gsplats.ts
- * - effective_radii tests -> effective_radii.rs / effective_radii.ts
+ * - effective_radii tests -> effective_radii.rs / effective-radii.ts
  */
 
 import { describe, it, expect } from 'vitest';

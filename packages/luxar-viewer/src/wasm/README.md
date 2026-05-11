@@ -130,11 +130,11 @@ wasm/
 │   ├── spatial.ts        — Spatial queries
 │   ├── points.ts         — Point visibility
 │   ├── lines.ts          — Line visibility
-│   ├── lines_clipping.ts — Line clipping
+│   ├── lines-clipping.ts — Line clipping
 │   ├── gsplats.ts        — GSplat visibility
-│   ├── gsplats_processing.ts — GSplat processing
+│   ├── gsplats-processing.ts — GSplat processing
 │   ├── decode.ts         — Array decoding
-│   ├── effective_radii.ts — Radius calculations
+│   ├── effective-radii.ts — Radius calculations
 │   └── projection.ts     — nD → 3D projection
 └── rust/                 — Rust source (parallel to TypeScript)
     ├── README.md         — Detailed Rust/WASM build docs

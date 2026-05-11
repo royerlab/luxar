@@ -41,7 +41,9 @@ export class ViewStateManager {
   static initializeFromDimensions(sceneDims: SceneDimensions): ViewState {
     // Validate input - cannot initialize with empty dimensions
     if (!sceneDims.dimensions || sceneDims.dimensions.length === 0) {
-      throw new Error('Cannot initialize ViewState: dimensions array is empty or undefined');
+      throw new Error(
+        '[ViewState] Cannot initialize: dimensions array is empty or undefined'
+      );
     }
 
     const metadata = this.extractMetadata(sceneDims);
@@ -50,16 +52,12 @@ export class ViewStateManager {
     const slicePosition = this.calculateInitialSlice(metadata, displayed);
     const tolerance = this.buildToleranceArray(metadata, displayed);
 
+    void ndim;
     return {
       displayDims: displayed,
       slicePosition,
       tolerance,
-      dimensions: {
-        ndim,
-        currentStep: slicePosition,
-        displayed,
-        metadata,
-      },
+      dimensions: metadata,
     };
   }
 
@@ -94,9 +92,10 @@ export class ViewStateManager {
    * Extract and normalize metadata from scene dimensions
    */
   private static extractMetadata(sceneDims: SceneDimensions): DimensionMetadata[] {
-    return sceneDims.dimensions.map((dim: any) => ({
-      name: dim.name,
-      unit: dim.unit,
+    type RawDim = Partial<DimensionMetadata> & { range?: unknown };
+    return sceneDims.dimensions.map((dim: RawDim) => ({
+      name: dim.name as string,
+      unit: dim.unit as string,
       scale: dim.scale || 1.0, // Required, default to 1.0
       range: dim.range as [number, number] | undefined,
       display: dim.display,

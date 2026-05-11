@@ -11,7 +11,7 @@ export class BooleanController extends Controller<boolean> {
 
   private checkbox!: HTMLInputElement;
 
-  constructor(object: Record<string, any>, property: string) {
+  constructor(object: Record<string, unknown>, property: string) {
     super(object, property);
 
     // Initialize DOM
