@@ -1,6 +1,6 @@
 # luxar-viewer/src/workers
 
-Multi-threaded worker pool for offloading CPU-intensive spatial queries, nD visibility computations, and array decoding from the main thread.
+Multi-threaded worker pool for offloading CPU-intensive spatial queries, nD visibility computations, projection, clipping, and array decoding from the main thread. See `SPECIFICATIONS.md` for worker-pool invariants and validation rules.
 
 ## Architecture
 
@@ -50,22 +50,25 @@ import { getWorkerPool, disposeWorkerPool } from './workers';
 const pool = getWorkerPool();
 await pool.initialize();
 
-// Simple: get a worker (round-robin selection, no tracking)
-const worker = await pool.getWorker();
-const result = await worker.querySpatialIndex(/* ... */);
-
-// With tracking: enables accurate load balancing
-const { api, markQueryStart, markQueryEnd } = await pool.getWorkerWithTracking();
-markQueryStart();
-try {
-  const result = await api.querySpatialIndex(/* ... */);
-} finally {
-  markQueryEnd();
-}
+// Recommended: route every call through `runWithTimeout()` so
+// hung workers are detected via the per-call budget. The pool
+// picks a worker via load-balanced selection, tracks the call,
+// and applies the configured timeout (visibility / projection /
+// decode kinds map to different default budgets).
+const result = await pool.runWithTimeout(
+  'querySpatialIndex',
+  'visibility',
+  (api) => api.querySpatialIndex(/* ... */)
+);
 
 // Clean up
 disposeWorkerPool();
 ```
+
+**Note**: `pool.getWorker()` and `pool.getWorkerWithTracking()`
+also exist for advanced scenarios but bypass the per-call
+timeout guard. Production hot paths should use `runWithTimeout`
+unless they have their own timeout strategy.
 
 ## Worker Pool
 

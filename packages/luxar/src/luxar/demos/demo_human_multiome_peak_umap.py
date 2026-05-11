@@ -239,8 +239,12 @@ def create_human_scene(
 
             # Dimension-aware attribute labels + HTML legends
             attr_keys = [
-                "celltype", "chromosome", "leiden_coarse",
-                "lineage", "peak_type", "timepoint",
+                "celltype",
+                "chromosome",
+                "leiden_coarse",
+                "lineage",
+                "peak_type",
+                "timepoint",
             ]
             for attr_id, (label, attr_key) in enumerate(
                 zip(category_labels, attr_keys)
@@ -309,7 +313,9 @@ def main() -> None:
     # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
     if "--no-serve" in sys.argv:
         output_path = get_demos_output_dir() / "human_multiome_peak_umap.zarr"
-        _n_points = create_human_scene(output_path, coordinates, attributes, category_maps)
+        _n_points = create_human_scene(
+            output_path, coordinates, attributes, category_maps
+        )
         aprint(f"Dataset generated at {output_path}")
         return
 
@@ -318,7 +324,9 @@ def main() -> None:
         output_path = Path(tmpdir) / "human_umap.zarr"
 
         # Create scene
-        _n_points = create_human_scene(output_path, coordinates, attributes, category_maps)
+        _n_points = create_human_scene(
+            output_path, coordinates, attributes, category_maps
+        )
 
         aprint("")
         aprint("=" * 70)

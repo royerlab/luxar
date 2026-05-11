@@ -11,9 +11,9 @@ The Luxar Rendering package provides a modern, high-performance rendering pipeli
 - **HDR Rendering Pipeline**: 16-bit float buffers for true HDR support
 - **Modern Post-Processing**: Powered by pmndrs/postprocessing
 - **Professional Effects**: Bloom, SSAO, DOF, tone mapping, and more
-- **Custom Shader System**: Optimized shaders for points and lines
+- **Custom Shader System**: Optimized shaders for Points, Lines, and GSplats
 - **Line Rendering**: Instanced quad geometry for thick lines with seamless joints
-- **Material Management**: Efficient caching and reuse for points and lines
+- **Material Management**: Efficient caching and reuse for Points, Lines, and GSplats
 - **World-Space Point Sizing**: Physically accurate scaling
 - **Multiple Anti-Aliasing Options**: FXAA, SMAA, MSAA, and SSAA support
 
@@ -21,22 +21,22 @@ The Luxar Rendering package provides a modern, high-performance rendering pipeli
 
 ```
 rendering/
-├── post-processing-manager.ts          # Post-processing pipeline using pmndrs
-├── point-material.ts                   # Custom points shaders (with per-node GOG)
-├── line-material.ts                    # Instanced line rendering with semicircle kernel
+├── point-material.ts                   # Custom points shaders (per-node GOG + scalar colormaps)
+├── line-material.ts                    # Instanced line rendering with fragment cap math
 ├── gsplat-material.ts                  # Gaussian splatting with volumetric rendering
-├── material-manager.ts                 # Material creation and caching (points + lines + gsplats)
-├── luxar-tone-mapping-effect.ts        # Vendored tone mapping with EOG (exposure-offset-gamma)
-├── chromatic-lens-distortion-effect.ts # Physically accurate lens distortion + chromatic aberration
-├── robust-vignette-effect.ts           # Custom vignette for additive blending
-├── detector-noise-effect.ts            # Physics-based detector noise
-├── gpu-buffer-pool.ts                  # Geometry reuse with size-based bucketing and LRU eviction
-├── adaptive-dpr-manager.ts             # Dynamic resolution scaling based on real-time FPS
+├── blending-state.ts                   # Complete THREE blending state for every Luxar mode
+├── material-manager.ts                 # Material creation, caching, and global camera updates
+├── material-colormap-helpers.ts        # Shared scalar-colormap guards and uniform helpers
+├── gpu-buffer-pool.ts                  # Geometry reuse with count and byte-budget eviction
 ├── colormap-data.ts                    # Built-in colormap lookup tables (auto-generated)
-├── colormap-textures.ts                # Colormap texture management (DataTexture creation + caching)
-├── postprocessing-types.ts             # Type utilities and depth mapper
-├── SPECIFICATIONS.md                   # Technical specification
-└── README.md                           # This documentation
+├── colormap-textures.ts                # Built-in/custom DataTexture creation and cache disposal
+├── line-geometry.ts                    # Instanced line mesh creation/update helpers
+├── gsplat-geometry.ts                  # Instanced GSplat mesh creation/update helpers
+├── shaders/                           # GLSL source for Points, Lines, and GSplats
+├── picking/                           # GPU picking materials and picking-system orchestration
+├── post-processing/                   # pmndrs effects, handlers, HDR capture, and manager
+├── SPECIFICATIONS.md                  # Technical specification
+└── README.md                          # This documentation
 ```
 
 ---
@@ -203,7 +203,7 @@ Specialized shader material for volumetric Gaussian splatting with nD slicing su
 
 ### 5. Material Manager
 
-Singleton manager for efficient material creation and caching (supports both points and lines).
+Singleton manager for efficient material creation and caching across Points, Lines, and GSplats. Runtime blending changes use `blending-state.ts` so UI updates apply the same complete THREE.js state as material creation.
 
 ```typescript
 // Get cached point material
@@ -261,10 +261,10 @@ The `GPUBufferPool` manages geometry reuse for Points, Lines, and GSplats, elimi
 
 **Key Features:**
 
-- Size-based bucketing: reuses geometries when size AND type match (0ms GPU allocation)
+- Size-based bucketing: reuses geometries when size and type match (0ms GPU allocation)
 - In-place attribute updates via `TypedArray.set()`
-- LRU eviction after 300 frames of non-use
-- Multi-type support: Points (Float32), Lines (Float32 + Uint8), GSplats (Float32)
+- Count-based and byte-budget eviction (`gpuPoolMaxBytes`, `gpuPoolEvictBatchSize`)
+- Multi-type support: Points, Lines, and GSplats, including optional scalar attributes for colormaps
 
 ### 7. Adaptive DPR Manager
 
@@ -283,7 +283,7 @@ The `AdaptiveDPRManager` dynamically adjusts device pixel ratio based on real-ti
 
 ### 9. Colormap Textures
 
-`colormap-textures.ts` manages creation and caching of `THREE.DataTexture` instances from colormap LUTs. It provides a single function to get a 1D texture for any named colormap, creating it on first access and reusing it on subsequent calls.
+`colormap-textures.ts` manages creation and caching of `THREE.DataTexture` instances from built-in and custom colormap LUTs. Built-in textures live for the app lifetime; custom LUT textures are bounded and can be disposed on dataset unload.
 
 ### 10. Luxar Tone Mapping Effect
 
@@ -403,7 +403,7 @@ Physically accurate lens distortion with wavelength-dependent chromatic aberrati
 - Full camera model: Distortion, principal point, focal length, skew
 - Barrel/pincushion distortion for wide angle/telephoto simulation
 - **More efficient**: 3 texture samples in single pass vs separate effects
-- **Custom Implementation**: See `chromatic-lens-distortion-effect.ts`
+- **Custom Implementation**: See `post-processing/chromatic-lens-distortion-effect.ts`
 
 #### Detector Noise (Physics-Based)
 

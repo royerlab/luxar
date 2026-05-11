@@ -2,104 +2,38 @@
 // Provides real-time control over post-processing and rendering parameters
 
 import GUI, { Folder } from './gui';
-import * as THREE from 'three';
-import { PostProcessingManager } from '../rendering/post-processing-manager';
+import { PostProcessingManager } from '../rendering/post-processing/post-processing-manager';
 import { SceneManager } from '../scene/scene-manager';
 import { AnimationController } from '../scene/animation-controller';
 import { config, type RenderingSettings } from '../config';
-import { ThemeManager } from '../themes/theme-manager';
 
 import type { RenderingControllers } from '../controls/types';
-import { isOrbitControls } from '../controls/types';
-import { serializeSettings, deserializeSettings } from './rendering-controls-utils';
 import { log, Modules } from '../utils/log';
-import { StorageKeys } from '../utils/storage-keys';
 import { setupNavigationControls } from './rendering-controls/navigation-setup';
 import { setupCameraControls } from './rendering-controls/camera-setup';
 import { setupHDRControls } from './rendering-controls/hdr-setup';
 import { setupAntiAliasingControls } from './rendering-controls/anti-aliasing-setup';
 import { setupPostProcessingControls } from './rendering-controls/post-processing-setup';
+import { CinematicModeController } from './rendering-controls/cinematic-mode';
+import { applyRenderingSettings } from './rendering-controls/apply-settings';
+import { syncCurrentState as syncCurrentStateImpl } from './rendering-controls/sync-current-state';
+import { FocusManager } from './rendering-controls/focus-manager';
+import {
+  buildBaseDefaults,
+  buildResetDefaults,
+  clearStoredSettings,
+  saveSettingsToStorage,
+  loadSettingsFromStorage,
+} from './rendering-controls/settings-persistence';
+import { setupPerformanceControls } from './rendering-controls/performance-setup';
+import { setupThemeControls } from './rendering-controls/theme-setup';
+import { ClippingDisplay } from './rendering-controls/clipping-display';
+import { validateRenderingSettings } from './rendering-controls/rendering-controls-utils';
 import type { AdaptiveDPRManager } from '../rendering/adaptive-dpr-manager';
 import type { ZarrViewerConfig } from '../types/zarr';
 import { extractRenderingOverrides } from '../config/viewer-config-utils';
 
-/** String-to-THREE.ToneMapping map (shared between applySettings and cinematic toggle) */
-const TONE_MAPPING_MAP: Record<string, THREE.ToneMapping> = {
-  None: THREE.NoToneMapping,
-  Linear: THREE.LinearToneMapping,
-  Reinhard: THREE.ReinhardToneMapping,
-  Cineon: THREE.CineonToneMapping,
-  ACES: THREE.ACESFilmicToneMapping,
-  AgX: THREE.AgXToneMapping,
-  Neutral: THREE.NeutralToneMapping,
-};
-
-/** Keys of RenderingSettings that cinematic mode touches */
-export type CinematicSnapshotKeys =
-  | 'toneMapping'
-  | 'detectorNoiseEnabled'
-  | 'detectorNoiseReadoutSigma'
-  | 'detectorNoisePhotonGain'
-  | 'detectorNoiseFpnSigma'
-  | 'vignetteEnabled'
-  | 'chromaticLensDistortionEnabled'
-  | 'chromaticLensDistortionX'
-  | 'chromaticLensDistortionY'
-  | 'chromaticLensDispersion'
-  | 'chromaticLensPrincipalPointX'
-  | 'chromaticLensPrincipalPointY'
-  | 'chromaticLensFocalLengthX'
-  | 'chromaticLensFocalLengthY'
-  | 'chromaticLensSkew'
-  | 'fov'
-  | 'fovPreset';
-
-export type CinematicSnapshot = Pick<RenderingSettings, CinematicSnapshotKeys>;
-
-/** All snapshot keys as an array for iteration */
-const CINEMATIC_SNAPSHOT_KEYS: CinematicSnapshotKeys[] = [
-  'toneMapping',
-  'detectorNoiseEnabled',
-  'detectorNoiseReadoutSigma',
-  'detectorNoisePhotonGain',
-  'detectorNoiseFpnSigma',
-  'vignetteEnabled',
-  'chromaticLensDistortionEnabled',
-  'chromaticLensDistortionX',
-  'chromaticLensDistortionY',
-  'chromaticLensDispersion',
-  'chromaticLensPrincipalPointX',
-  'chromaticLensPrincipalPointY',
-  'chromaticLensFocalLengthX',
-  'chromaticLensFocalLengthY',
-  'chromaticLensSkew',
-  'fov',
-  'fovPreset',
-];
-
-/** Build the known cinematic-ON values (used for apply and dirty-check on restore) */
-function buildCinematicValues(): CinematicSnapshot {
-  const lens35 = config.camera.lensDistortionPresets['35mm'];
-  return {
-    toneMapping: 'ACES',
-    detectorNoiseEnabled: true,
-    detectorNoiseReadoutSigma: 0.002,
-    detectorNoisePhotonGain: 0.002,
-    detectorNoiseFpnSigma: 0.001,
-    vignetteEnabled: true,
-    chromaticLensDistortionEnabled: true,
-    chromaticLensDistortionX: lens35.distortionX,
-    chromaticLensDistortionY: lens35.distortionY,
-    chromaticLensDispersion: lens35.dispersion,
-    chromaticLensPrincipalPointX: lens35.principalPointX,
-    chromaticLensPrincipalPointY: lens35.principalPointY,
-    chromaticLensFocalLengthX: lens35.focalLengthX,
-    chromaticLensFocalLengthY: lens35.focalLengthY,
-    chromaticLensSkew: lens35.skew,
-    fov: config.camera.fovPresets['35mm'],
-    fovPreset: '35mm',
-  };
-}
+export type { CinematicSnapshot, CinematicSnapshotKeys } from './rendering-controls/cinematic-mode';
 
 /**
  * Advanced rendering parameters GUI for real-time visual control.
@@ -159,8 +93,8 @@ export class RenderingControls {
   /** Visibility state */
   private visible: boolean = false;
 
-  /** Deferred setup handle for outside-click focus management. */
-  private clickOutsideTimeout: ReturnType<typeof setTimeout> | null = null;
+  /** Outside-click + focus management for the panel. */
+  private readonly focusManager: FocusManager;
 
   /** References to GUI controllers for updates */
   private controllers: RenderingControllers = {};
@@ -175,15 +109,14 @@ export class RenderingControls {
   /** Callback to update adaptive DPR control visibility (set by setAdaptiveDPRManager) */
   private updateAdaptiveDPRVisibility?: (enabled: boolean) => void;
 
-  /** RAF ID for periodic clipping display updates when dynamic clipping is enabled */
-  private clippingDisplayRAF: number | null = null;
-  private lastClippingDisplayUpdate: number = 0;
+  /** RAF-driven mirror of the camera near/far values into the slider displays. */
+  private readonly clippingDisplay: ClippingDisplay;
 
   /** Cleanup callbacks collected during setup, called on dispose */
   private cleanupCallbacks: (() => void)[] = [];
 
-  /** Snapshot of settings before cinematic mode was enabled (null when cinematic is off) */
-  private cinematicSnapshot: CinematicSnapshot | null = null;
+  /** Cinematic mode preset controller (lazily wired in `setAdaptiveDPRManager`). */
+  private cinematic?: CinematicModeController;
 
   /**
    * Create rendering controls UI with complete parameter access.
@@ -207,15 +140,7 @@ export class RenderingControls {
   constructor(postProcessing: PostProcessingManager, sceneManager: SceneManager) {
     this.postProcessing = postProcessing;
     this.sceneManager = sceneManager;
-    this.settings = {
-      ...config.renderingControls.defaults,
-      // Add fly control defaults from config.controls.fly
-      flyMovementSpeed: config.controls.fly.movement.speed.default,
-      flyRotationSpeed: config.controls.fly.rotation.speed.default,
-      flyInertialMode: config.controls.fly.inertialMode.default,
-      flyDamping: config.controls.fly.movement.damping.default,
-      flyRotationDamping: config.controls.fly.rotation.damping.default,
-    };
+    this.settings = buildBaseDefaults();
 
     // Initialize GUI with close button callback
     this.gui = new GUI({
@@ -236,6 +161,18 @@ export class RenderingControls {
     this.gui.hide();
 
     // Custom styling now in src/styles/components/rendering-controls.css
+
+    this.clippingDisplay = new ClippingDisplay({
+      sceneManager: this.sceneManager,
+      settings: this.settings,
+      getNearPlane: () => this.controllers.nearPlane,
+      getFarPlane: () => this.controllers.farPlane,
+    });
+
+    this.focusManager = new FocusManager({
+      panel: this.gui.domElement,
+      canvas: this.sceneManager.renderer.domElement,
+    });
 
     this.setupControls();
   }
@@ -340,64 +277,32 @@ export class RenderingControls {
     Object.assign(this.controllers, ppResult.controllers);
 
     // Theme selector
-    this.setupThemeControls();
+    setupThemeControls({ gui: this.gui, triggerAnimation: () => this.triggerAnimation() });
 
     // Note: Reset to Defaults button is added at the end of setAdaptiveDPRManager
     // to ensure it appears after the Performance folder
+
+    this.cinematic = this.createCinematicController();
   }
 
-  /**
-   * Setup theme controls
-   */
-  private setupThemeControls(): void {
-    const themeFolder = this.gui.addFolder('🎨 Theme');
-
-    themeFolder.domElement?.setAttribute(
-      'title',
-      'Theme: Choose the visual appearance of the viewer UI\n\n' +
-        'Themes change the background, panel colors, and overall look.\n' +
-        'Your choice is automatically saved and restored next session.'
-    );
-
-    const themeManager = ThemeManager.getInstance();
-    const themes = themeManager.getAllThemes();
-
-    // Create theme options object { 'Dark Theme': 'dark', 'Light Theme': 'light', ... }
-    const themeOptions = themes.reduce(
-      (acc, theme) => {
-        acc[theme.name] = theme.id;
-        return acc;
+  /** Build the cinematic-mode controller. `animationController` is read lazily so
+   * the cinematic toggle works correctly after `setAnimationController()` runs. */
+  private createCinematicController(): CinematicModeController {
+    const self = this;
+    return new CinematicModeController({
+      settings: this.settings,
+      postProcessing: this.postProcessing,
+      sceneManager: this.sceneManager,
+      controllers: this.controllers,
+      get animationController() {
+        return self.animationController;
       },
-      {} as Record<string, string>
-    );
-
-    const themeSettings = {
-      theme: themeManager.getCurrentTheme().id,
-    };
-
-    const themeControl = themeFolder
-      .add(themeSettings, 'theme', themeOptions)
-      .name('Active Theme')
-      .onChange((themeId: string) => {
-        themeManager.setTheme(themeId);
-        // Theme is persisted automatically by ThemeManager
-        log.info(Modules.RENDERER, `Theme changed to: ${themeId}`);
-
-        // Trigger re-render to apply theme changes immediately
-        this.triggerAnimation();
-      });
-
-    themeControl.domElement.setAttribute(
-      'title',
-      'Switch between visual themes\n' +
-        '• Dark: Default scientific visualization theme\n' +
-        '• Light: Bright theme for well-lit environments\n' +
-        '• Frosted Glass: Subtle translucent glassmorphism\n' +
-        '• Liquid Glass: True glass effect with inner glow and tint'
-    );
-
-    // Close folder by default
-    themeFolder.close();
+      saveSettings: () => this.saveSettings(),
+      triggerAnimation: () => this.triggerAnimation(),
+      refreshAllControllers: () => {
+        this.gui.controllersRecursive().forEach((c) => c.updateDisplay());
+      },
+    });
   }
 
   /**
@@ -405,39 +310,16 @@ export class RenderingControls {
    */
   private resetToDefaults(): void {
     // Clear cinematic snapshot since we're resetting all settings
-    this.cinematicSnapshot = null;
+    this.cinematic?.clearSnapshot();
 
-    // Get fresh defaults from config, including fly control defaults
-    const defaults = {
-      ...config.renderingControls.defaults,
-      flyMovementSpeed: config.controls.fly.movement.speed.default,
-      flyRotationSpeed: config.controls.fly.rotation.speed.default,
-      flyInertialMode: config.controls.fly.inertialMode.default,
-      flyDamping: config.controls.fly.movement.damping.default,
-      flyRotationDamping: config.controls.fly.rotation.damping.default,
-    };
-
-    // Overlay zarr viewer_config on top of hardcoded defaults (if available).
-    // This makes the data author's recommendations the "true defaults" for this scene.
-    if (this.zarrViewerConfig) {
-      const zarrOverrides = extractRenderingOverrides(this.zarrViewerConfig);
-      Object.assign(defaults, zarrOverrides);
-    }
+    // Get fresh defaults (zarr overrides are layered on top when available).
+    const defaults = buildResetDefaults(this.zarrViewerConfig);
 
     // Update settings object in place to maintain GUI bindings
     Object.assign(this.settings, defaults);
 
     // Clear saved settings for this scene (before applying, so user sees clean state).
-    // Wrapped in try/catch so a host page with localStorage disabled (private
-    // mode strict, sandboxed iframe) doesn't break the reset flow.
-    if (this.sceneId) {
-      try {
-        const key = StorageKeys.rendering(this.sceneId);
-        localStorage.removeItem(key);
-      } catch (err) {
-        log.warning(Modules.RENDERING_CONTROLS, 'Failed to clear saved rendering settings', err);
-      }
-    }
+    clearStoredSettings(this.sceneId);
 
     // Apply camera settings to scene manager (before post-processing)
     const currentFOV = this.sceneManager.currentFov;
@@ -454,6 +336,7 @@ export class RenderingControls {
     this.sceneManager.setControlType(this.settings.controlType);
     this.sceneManager.setAutoRotate(this.settings.autoRotate);
     this.sceneManager.setAutoRotateSpeed(this.settings.autoRotateSpeed);
+    this.sceneManager.setNaturalDrag(this.settings.naturalDrag);
     this.sceneManager.setFlyMovementSpeed(defaults.flyMovementSpeed);
     this.sceneManager.setFlyRotationSpeed(defaults.flyRotationSpeed);
     this.sceneManager.setFlyInertialMode(defaults.flyInertialMode);
@@ -526,159 +409,17 @@ export class RenderingControls {
   setAdaptiveDPRManager(manager: AdaptiveDPRManager): void {
     this.adaptiveDPRManager = manager;
 
-    // Create Performance folder with adaptive DPR controls
-    const performanceFolder = this.gui.addFolder('⚡ Performance');
-
-    performanceFolder.domElement?.setAttribute(
-      'title',
-      'Performance: Controls that trade visual quality for speed\n\n' +
-        '• Adaptive Resolution: Automatically lowers pixel ratio when FPS drops,\n' +
-        '  then gradually restores quality when the GPU catches up.\n' +
-        '• Manual DPR: Set a fixed pixel ratio (lower = faster but blurrier).\n\n' +
-        'Useful for large datasets or lower-end GPUs where smooth interaction\n' +
-        'matters more than pixel-perfect sharpness.'
-    );
-
-    // Adaptive Resolution toggle (onChange registered below after manual DPR control is created)
-    const adaptiveToggle = performanceFolder
-      .add(this.settings, 'adaptiveDPREnabled')
-      .name('Adaptive Resolution');
-
-    adaptiveToggle.domElement.setAttribute(
-      'title',
-      'Adaptive Resolution: Automatically adjusts rendering quality for smooth FPS\n' +
-        '• When FPS drops below 50, reduces pixel ratio\n' +
-        '• Gradually restores quality when FPS stabilizes above 58\n' +
-        '• Minimum DPR: 0.5 (50% of native resolution)'
-    );
-
-    // Manual DPR control (shown when adaptive is OFF)
-    const nativeDPR = manager.getNativeDPR();
-    const manualDPRSettings = { dpr: nativeDPR };
-
-    const manualDPRControl = performanceFolder
-      .add(manualDPRSettings, 'dpr', 0.25, nativeDPR, 0.05)
-      .name('Manual DPR')
-      .onChange((value: number) => {
-        if (this.adaptiveDPRManager && !this.settings.adaptiveDPREnabled) {
-          this.adaptiveDPRManager.setManualDPR(value);
-          this.triggerAnimation();
-        }
-      });
-
-    manualDPRControl.domElement.setAttribute(
-      'title',
-      'Manual Device Pixel Ratio (when adaptive is off)\n' +
-        `• Native: ${nativeDPR.toFixed(2)}\n` +
-        '• Lower values = better performance, less sharpness\n' +
-        '• 1.0 = 100% resolution, 0.5 = 50% resolution'
-    );
-
-    // Create simple text displays for DPR and FPS (read-only info, shown when adaptive is ON)
-    const createDisplayRow = (label: string, tooltip: string): HTMLElement => {
-      const row = document.createElement('div');
-      row.className = 'luxar-gui__controller';
-      row.style.opacity = '0.7';
-      row.setAttribute('title', tooltip);
-
-      const nameEl = document.createElement('div');
-      nameEl.className = 'luxar-gui__controller-name';
-      nameEl.textContent = label;
-
-      const valueEl = document.createElement('div');
-      valueEl.className = 'luxar-gui__controller-widget';
-      valueEl.style.textAlign = 'right';
-      valueEl.style.paddingRight = '8px';
-      valueEl.style.fontFamily = 'monospace';
-
-      row.appendChild(nameEl);
-      row.appendChild(valueEl);
-      return row;
-    };
-
-    const dprRow = createDisplayRow(
-      'Current DPR',
-      `Current Device Pixel Ratio\n• Native: ${nativeDPR.toFixed(2)}\n• Lower values = better performance, less sharpness`
-    );
-    const dprValue = dprRow.querySelector('.luxar-gui__controller-widget') as HTMLElement;
-
-    const fpsRow = createDisplayRow(
-      'Current FPS',
-      'Current Frames Per Second\n• Target: 55-60 FPS\n• Scales down if below 50 FPS'
-    );
-    const fpsValue = fpsRow.querySelector('.luxar-gui__controller-widget') as HTMLElement;
-
-    // Access folder's children container to append display rows
-    const folderEl = performanceFolder.domElement;
-    if (folderEl) {
-      const childrenContainer = folderEl.querySelector('.luxar-gui__children');
-      if (childrenContainer) {
-        childrenContainer.appendChild(dprRow);
-        childrenContainer.appendChild(fpsRow);
-      }
-    }
-
-    // Helper function to update visibility of controls based on adaptive state
-    const updateControlVisibility = (adaptiveEnabled: boolean) => {
-      if (adaptiveEnabled) {
-        // Adaptive ON: show display rows, hide manual control
-        manualDPRControl.hide();
-        dprRow.style.display = '';
-        fpsRow.style.display = '';
-        // Update display values immediately
-        if (this.adaptiveDPRManager) {
-          const state = this.adaptiveDPRManager.getState();
-          dprValue.textContent = state.currentDPR.toFixed(2);
-          fpsValue.textContent = Math.round(state.currentFPS).toString();
-        }
-      } else {
-        // Adaptive OFF: show manual control, hide display rows
-        manualDPRControl.show();
-        // Sync manual DPR slider with current value
-        manualDPRSettings.dpr = this.adaptiveDPRManager?.getCurrentDPR() ?? nativeDPR;
-        manualDPRControl.updateDisplay();
-        dprRow.style.display = 'none';
-        fpsRow.style.display = 'none';
-      }
-    };
-
-    // Store visibility update callback for use by loadSettings
-    this.updateAdaptiveDPRVisibility = updateControlVisibility;
-
-    // Sync initial state from manager BEFORE setting visibility
-    this.settings.adaptiveDPREnabled = manager.isActive();
-    adaptiveToggle.updateDisplay();
-
-    // Set initial visibility based on synced state
-    updateControlVisibility(this.settings.adaptiveDPREnabled);
-
-    // Register onChange handler for adaptive toggle
-    adaptiveToggle.onChange((enabled: boolean) => {
-      if (this.adaptiveDPRManager) {
-        this.adaptiveDPRManager.setEnabled(enabled);
-      }
-      this.saveSettings();
-      log.info(Modules.RENDERER, `Adaptive resolution ${enabled ? 'enabled' : 'disabled'}`);
-      updateControlVisibility(enabled);
+    const result = setupPerformanceControls({
+      gui: this.gui,
+      settings: this.settings,
+      manager,
+      saveSettings: () => this.saveSettings(),
+      triggerAnimation: () => this.triggerAnimation(),
     });
 
-    // Update displays periodically (only when adaptive is enabled)
-    const updateInterval = setInterval(() => {
-      if (this.adaptiveDPRManager && this.settings.adaptiveDPREnabled) {
-        const state = this.adaptiveDPRManager.getState();
-        dprValue.textContent = state.currentDPR.toFixed(2);
-        fpsValue.textContent = Math.round(state.currentFPS).toString();
-      }
-    }, 500);
-
-    // Register cleanup for the update interval
-    this.cleanupCallbacks.push(() => clearInterval(updateInterval));
-
-    // Close folder by default
-    performanceFolder.close();
-
-    // Store controller references
-    this.controllers.adaptiveDPREnabled = adaptiveToggle;
+    this.controllers.adaptiveDPREnabled = result.adaptiveDPREnabled;
+    this.updateAdaptiveDPRVisibility = result.updateVisibility;
+    this.cleanupCallbacks.push(result.cleanup);
 
     // Cinematic Mode checkbox (added before reset button)
     const cinematicModeControl = this.gui
@@ -751,6 +492,7 @@ export class RenderingControls {
     this.sceneManager.setControlType(this.settings.controlType);
     this.sceneManager.setAutoRotate(this.settings.autoRotate);
     this.sceneManager.setAutoRotateSpeed(this.settings.autoRotateSpeed);
+    this.sceneManager.setNaturalDrag(this.settings.naturalDrag);
 
     // Apply fly control settings (if they exist in loaded settings)
     if (this.settings.flyMovementSpeed !== undefined) {
@@ -797,8 +539,12 @@ export class RenderingControls {
   applyZarrDefaults(): void {
     if (!this.zarrViewerConfig) return;
 
+    // Route zarr overrides through validateRenderingSettings so a
+    // corrupted viewer_config can't inject NaN/Infinity/out-of-range
+    // values into runtime rendering state. Validation clamps to defaults.
     const zarrOverrides = extractRenderingOverrides(this.zarrViewerConfig);
-    Object.assign(this.settings, zarrOverrides);
+    const validated = validateRenderingSettings({ ...this.settings, ...zarrOverrides });
+    Object.assign(this.settings, validated);
 
     // Apply FOV if overridden
     if (zarrOverrides.fov !== undefined) {
@@ -823,6 +569,9 @@ export class RenderingControls {
     }
     if (zarrOverrides.autoRotateSpeed !== undefined) {
       this.sceneManager.setAutoRotateSpeed(this.settings.autoRotateSpeed);
+    }
+    if (zarrOverrides.naturalDrag !== undefined) {
+      this.sceneManager.setNaturalDrag(this.settings.naturalDrag);
     }
 
     // Update GUI controllers to reflect new values
@@ -852,76 +601,7 @@ export class RenderingControls {
    * - Disable pointer events so sliders can't be manually adjusted
    */
   private updateClippingControlsState(dynamicEnabled: boolean): void {
-    const opacity = dynamicEnabled ? '0.5' : '1.0';
-    const pointerEvents = dynamicEnabled ? 'none' : 'auto';
-
-    if (this.controllers.nearPlane) {
-      const container = this.controllers.nearPlane.domElement.closest('.luxar-gui__controller');
-      if (container instanceof HTMLElement) {
-        container.style.opacity = opacity;
-        container.style.pointerEvents = pointerEvents;
-      }
-    }
-
-    if (this.controllers.farPlane) {
-      const container = this.controllers.farPlane.domElement.closest('.luxar-gui__controller');
-      if (container instanceof HTMLElement) {
-        container.style.opacity = opacity;
-        container.style.pointerEvents = pointerEvents;
-      }
-    }
-
-    // Cancel any existing RAF loop
-    if (this.clippingDisplayRAF !== null) {
-      cancelAnimationFrame(this.clippingDisplayRAF);
-      this.clippingDisplayRAF = null;
-    }
-
-    // When dynamic clipping is enabled, update slider displays synced to RAF
-    // (throttled to ~100ms to avoid excessive DOM updates)
-    if (dynamicEnabled) {
-      this.updateClippingSliderDisplays();
-
-      const scheduleClippingUpdate = () => {
-        this.clippingDisplayRAF = requestAnimationFrame((timestamp) => {
-          if (timestamp - this.lastClippingDisplayUpdate >= 100) {
-            this.updateClippingSliderDisplays();
-            this.lastClippingDisplayUpdate = timestamp;
-          }
-          scheduleClippingUpdate();
-        });
-      };
-      scheduleClippingUpdate();
-    }
-  }
-
-  /**
-   * Update the near/far clipping slider displays to show actual camera values.
-   * Called periodically when dynamic clipping is enabled.
-   */
-  private updateClippingSliderDisplays(): void {
-    const camera = this.sceneManager.camera;
-    if (!camera) return;
-
-    // Update near plane slider display (don't trigger onChange)
-    if (this.controllers.nearPlane) {
-      // Only update if value actually changed to avoid unnecessary DOM updates
-      const currentNear = camera.near;
-      if (Math.abs(this.settings.near - currentNear) > 0.0001) {
-        this.settings.near = currentNear;
-        this.controllers.nearPlane.updateDisplay();
-      }
-    }
-
-    // Update far plane slider display (don't trigger onChange)
-    if (this.controllers.farPlane) {
-      // Only update if value actually changed to avoid unnecessary DOM updates
-      const currentFar = camera.far;
-      if (Math.abs(this.settings.far - currentFar) > 0.1) {
-        this.settings.far = currentFar;
-        this.controllers.farPlane.updateDisplay();
-      }
-    }
+    this.clippingDisplay.setDynamicEnabled(dynamicEnabled);
   }
 
   /**
@@ -946,8 +626,15 @@ export class RenderingControls {
     const newStep = Math.max(0.01, scaledSpeed * 0.01);
 
     if (this.controllers.flyMovementSpeed) {
-      // NumberController supports dynamic .min()/.max()/.step()
-      const ctrl = this.controllers.flyMovementSpeed as any;
+      // NumberController supports dynamic .min()/.max()/.step() but the
+      // base Controller type doesn't expose them; structural cast targets
+      // just those three fluent methods.
+      type ChainableNumber = {
+        min(v: number): ChainableNumber;
+        max(v: number): ChainableNumber;
+        step(v: number): ChainableNumber;
+      };
+      const ctrl = this.controllers.flyMovementSpeed as unknown as ChainableNumber;
       if (typeof ctrl.min === 'function') {
         ctrl.min(newMin).max(newMax).step(newStep);
       }
@@ -1019,83 +706,52 @@ export class RenderingControls {
     }
   }
 
-  /**
-   * Save current settings to localStorage
-   */
+  /** Save current settings to localStorage. */
   private saveSettings(): void {
-    if (!this.sceneId) return;
-
-    try {
-      const key = StorageKeys.rendering(this.sceneId);
-      localStorage.setItem(key, serializeSettings(this.settings));
-    } catch (err) {
-      // Ignore quota / disabled-storage errors — settings just don't persist.
-      log.warning(
-        Modules.RENDERING_CONTROLS,
-        'Failed to save rendering settings to localStorage',
-        err
-      );
-    }
+    saveSettingsToStorage(this.sceneId, this.settings);
   }
 
-  /**
-   * Load settings from localStorage
-   */
+  /** Load settings from localStorage and apply them to GUI / managers. */
   private loadSettings(): void {
     if (!this.sceneId) return;
 
     // Snapshot is session-only; clear it when loading persisted settings
-    this.cinematicSnapshot = null;
+    this.cinematic?.clearSnapshot();
 
-    let stored: string | null = null;
-    try {
-      const key = StorageKeys.rendering(this.sceneId);
-      stored = localStorage.getItem(key);
-    } catch (err) {
-      log.warning(
-        Modules.RENDERING_CONTROLS,
-        'Failed to read rendering settings from localStorage',
-        err
-      );
+    const { stored, loaded } = loadSettingsFromStorage(this.sceneId);
+    this.hasStoredLocalSettings = stored;
+
+    if (!stored) return;
+
+    if (!loaded) {
+      log.warning(Modules.RENDERER, 'Failed to parse rendering settings');
+      return;
     }
-    this.hasStoredLocalSettings = !!stored;
 
-    if (stored) {
-      const loadedSettings = deserializeSettings(stored);
-      if (loadedSettings) {
-        // Update settings properties IN PLACE to maintain GUI controller bindings
-        // This is critical - replacing the entire settings object breaks the GUI bindings
-        Object.assign(this.settings, {
-          ...config.renderingControls.defaults,
-          // Add fly control defaults from config.controls.fly
-          flyMovementSpeed: config.controls.fly.movement.speed.default,
-          flyRotationSpeed: config.controls.fly.rotation.speed.default,
-          flyInertialMode: config.controls.fly.inertialMode.default,
-          flyDamping: config.controls.fly.movement.damping.default,
-          flyRotationDamping: config.controls.fly.rotation.damping.default,
-          ...loadedSettings,
-        });
+    // Update settings properties IN PLACE to maintain GUI controller
+    // bindings (replacing the entire settings object would break the
+    // GUI bindings). Validate the merged base+loaded settings so
+    // corrupted localStorage can't inject NaN/Infinity into runtime
+    // rendering state.
+    const validated = validateRenderingSettings({ ...buildBaseDefaults(), ...loaded });
+    Object.assign(this.settings, validated);
 
-        // Update GUI to reflect loaded values
-        // Note: HDR controller's updateDisplay is overridden to show actual intensity
-        this.gui.controllersRecursive().forEach((controller) => {
-          controller.updateDisplay();
-        });
+    // Update GUI to reflect loaded values
+    // Note: HDR controller's updateDisplay is overridden to show actual intensity
+    this.gui.controllersRecursive().forEach((controller) => {
+      controller.updateDisplay();
+    });
 
-        // Sync adaptive DPR manager state and update visibility
-        if (this.adaptiveDPRManager && this.updateAdaptiveDPRVisibility) {
-          this.adaptiveDPRManager.setEnabled(this.settings.adaptiveDPREnabled);
-          this.updateAdaptiveDPRVisibility(this.settings.adaptiveDPREnabled);
-        }
-
-        // Update cinematic mode checkbox based on loaded effects state
-        this.updateCinematicModeCheckbox();
-
-        log.info(Modules.RENDERER, `Loaded rendering settings for scene: ${this.sceneId}`);
-      } else {
-        log.warning(Modules.RENDERER, 'Failed to parse rendering settings');
-      }
+    // Sync adaptive DPR manager state and update visibility
+    if (this.adaptiveDPRManager && this.updateAdaptiveDPRVisibility) {
+      this.adaptiveDPRManager.setEnabled(this.settings.adaptiveDPREnabled);
+      this.updateAdaptiveDPRVisibility(this.settings.adaptiveDPREnabled);
     }
+
+    // Update cinematic mode checkbox based on loaded effects state
+    this.updateCinematicModeCheckbox();
+
+    log.info(Modules.RENDERER, `Loaded rendering settings for scene: ${this.sceneId}`);
   }
 
   /**
@@ -1103,228 +759,27 @@ export class RenderingControls {
    * This ensures the GUI reflects the actual state when opened
    */
   public syncCurrentState(): void {
-    // Sync camera settings
-    this.settings.fov = this.sceneManager.currentFov;
-    this.settings.near = this.sceneManager.camera.near;
-    this.settings.far = this.sceneManager.camera.far;
-
-    // Check if current FOV matches any preset
-    const currentPreset = Object.entries(config.camera.fovPresets).find(
-      ([_, fovValue]) => fovValue > 0 && Math.abs(fovValue - this.settings.fov) < 0.5
-    );
-    this.settings.fovPreset = (
-      currentPreset ? currentPreset[0] : 'Custom'
-    ) as typeof this.settings.fovPreset;
-
-    // Get current control type
-    const currentControlType = this.sceneManager.controls.getControlType();
-    this.settings.controlType = currentControlType;
-
-    // Get current controls instance
-    const controls = this.sceneManager.controls.getControls();
-
-    // Always get fly controls config from ControlsManager
-    // This ensures settings persist even when in orbit mode
-    const flyConfig = this.sceneManager.controls.getFlyConfig();
-    this.settings.flyInertialMode = flyConfig.inertialMode;
-    this.settings.flyMovementSpeed = flyConfig.movementSpeed;
-    this.settings.flyRotationSpeed = flyConfig.rotationSpeed;
-    this.settings.flyDamping = flyConfig.damping;
-    this.settings.flyRotationDamping = flyConfig.rotationDamping;
-
-    // Update orbit controls state using type guard
-    if (isOrbitControls(controls)) {
-      this.settings.autoRotate = controls.autoRotate;
-      this.settings.autoRotateSpeed = controls.autoRotateSpeed;
-    }
-
-    // Update specific controllers that we have references to
-    if (this.controllers.controlType) {
-      this.controllers.controlType.setValue(currentControlType);
-      this.controllers.controlType.updateDisplay();
-    }
-
-    if (this.controllers.flyInertialMode) {
-      this.controllers.flyInertialMode.setValue(this.settings.flyInertialMode);
-      this.controllers.flyInertialMode.updateDisplay();
-    }
-
-    if (this.controllers.flyMovementSpeed) {
-      this.controllers.flyMovementSpeed.setValue(this.settings.flyMovementSpeed);
-      this.controllers.flyMovementSpeed.updateDisplay();
-    }
-
-    if (this.controllers.flyRotationSpeed) {
-      this.controllers.flyRotationSpeed.setValue(this.settings.flyRotationSpeed);
-      this.controllers.flyRotationSpeed.updateDisplay();
-    }
-
-    if (this.controllers.flyDamping) {
-      this.controllers.flyDamping.setValue(this.settings.flyDamping);
-      this.controllers.flyDamping.updateDisplay();
-      // Show/hide damping based on inertial mode
-      if (this.settings.flyInertialMode) {
-        this.controllers.flyDamping.show();
-      } else {
-        this.controllers.flyDamping.hide();
-      }
-    }
-
-    if (this.controllers.flyRotationDamping) {
-      this.controllers.flyRotationDamping.setValue(this.settings.flyRotationDamping);
-      this.controllers.flyRotationDamping.updateDisplay();
-      // Show/hide rotation damping based on inertial mode
-      if (this.settings.flyInertialMode) {
-        this.controllers.flyRotationDamping.show();
-      } else {
-        this.controllers.flyRotationDamping.hide();
-      }
-    }
-
-    if (this.controllers.autoRotate) {
-      this.controllers.autoRotate.setValue(this.settings.autoRotate);
-      this.controllers.autoRotate.updateDisplay();
-    }
-
-    if (this.controllers.autoRotateSpeed) {
-      this.controllers.autoRotateSpeed.setValue(this.settings.autoRotateSpeed);
-      this.controllers.autoRotateSpeed.updateDisplay();
-    }
-
-    if (this.controllers.fov) {
-      this.controllers.fov.setValue(this.settings.fov);
-      this.controllers.fov.updateDisplay();
-    }
-
-    if (this.controllers.fovPreset) {
-      this.controllers.fovPreset.setValue(this.settings.fovPreset);
-      this.controllers.fovPreset.updateDisplay();
-    }
-
-    if (this.controllers.nearPlane) {
-      this.controllers.nearPlane.setValue(this.settings.near);
-      this.controllers.nearPlane.updateDisplay();
-    }
-
-    if (this.controllers.farPlane) {
-      this.controllers.farPlane.setValue(this.settings.far);
-      this.controllers.farPlane.updateDisplay();
-    }
-
-    // Sync dynamic clipping state from scene manager
-    const dynamicClippingState = this.sceneManager.getDynamicClippingState();
-    this.settings.dynamicClippingEnabled = dynamicClippingState.enabled;
-
-    if (this.controllers.dynamicClippingEnabled) {
-      this.controllers.dynamicClippingEnabled.setValue(this.settings.dynamicClippingEnabled);
-      this.controllers.dynamicClippingEnabled.updateDisplay();
-    }
-
-    // Update near/far control state based on dynamic clipping
-    this.updateClippingControlsState(this.settings.dynamicClippingEnabled);
-
-    // Sync logarithmic HDR slider
-    // Update all controllers
-    this.gui.controllersRecursive().forEach((controller) => {
-      controller.updateDisplay();
+    syncCurrentStateImpl({
+      gui: this.gui,
+      settings: this.settings,
+      sceneManager: this.sceneManager,
+      controllers: this.controllers,
+      updateClippingControlsState: (enabled) => this.updateClippingControlsState(enabled),
+      updateCinematicModeCheckbox: () => this.updateCinematicModeCheckbox(),
+      updateNavigationControls: (controlType) => this.updateNavigationControls(controlType),
     });
-
-    // Update cinematic mode checkbox based on current effects state
-    this.updateCinematicModeCheckbox();
-
-    // Update folder visibility based on current control type
-    this.updateNavigationControls(currentControlType);
   }
 
-  /**
-   * Apply current settings to rendering pipeline
-   */
+  /** Apply current settings to the rendering pipeline. Delegates to a pure helper. */
   private applySettings(): void {
-    // Apply bloom settings (enabled state + parameters)
-    this.postProcessing.setBloomEnabled(
-      this.settings.bloomEnabled,
-      this.settings.bloomStrength,
-      this.settings.bloomRadius,
-      this.settings.bloomThreshold
-    );
-    this.postProcessing.setBloomLevels(this.settings.bloomLevels);
-
-    // Apply global EOG (Exposure-Offset-Gamma) — routed to post-processing
-    this.sceneManager.updateExposure(this.settings.exposure);
-    this.sceneManager.updateGlobalOffset(this.settings.globalOffset);
-    this.sceneManager.updateGlobalGamma(this.settings.globalGamma);
-
-    // Apply SSAA settings
-    this.postProcessing.setSSAAEnabled(this.settings.ssaaEnabled);
-    this.postProcessing.setSSAAMultiplier(this.settings.ssaaMultiplier);
-
-    // Apply FXAA setting
-    this.postProcessing.setFXAAEnabled(this.settings.fxaaEnabled);
-
-    // Apply MSAA settings
-    this.postProcessing.setMSAAEnabled(this.settings.msaaEnabled);
-    this.postProcessing.setMSAASamples(this.settings.msaaSamples);
-
-    // Apply SMAA settings
-    this.postProcessing.setSMAAEnabled(this.settings.smaaEnabled);
-    if (this.settings.smaaEnabled) {
-      this.postProcessing.updateSMAASettings();
-    }
-
-    // Apply tone mapping
-    this.postProcessing.setToneMapping(TONE_MAPPING_MAP[this.settings.toneMapping]);
-
-    // Apply DOF settings
-    this.postProcessing.setDOF(
-      this.settings.dofEnabled,
-      this.settings.dofFocus,
-      this.settings.dofStrength
-    );
-
-    // Apply detector noise effect
-    this.postProcessing.setDetectorNoiseEnabled(
-      this.settings.detectorNoiseEnabled,
-      this.settings.detectorNoiseReadoutSigma,
-      this.settings.detectorNoisePhotonGain,
-      this.settings.detectorNoiseFpnSigma
-    );
-
-    // Start animation if detector noise is enabled (from loaded settings)
-    if (this.settings.detectorNoiseEnabled) {
-      this.animationController?.startAnimation();
-    }
-
-    // Apply vignette effect
-    this.postProcessing.setVignetteEnabled(
-      this.settings.vignetteEnabled,
-      this.settings.vignetteDarkness,
-      this.settings.vignetteOffset
-    );
-
-    // Apply chromatic lens distortion effect (replaces old separate effects)
-    this.postProcessing.setChromaticLensDistortionEnabled(
-      this.settings.chromaticLensDistortionEnabled,
-      this.settings.chromaticLensDistortionX,
-      this.settings.chromaticLensDistortionY,
-      this.settings.chromaticLensDispersion,
-      this.settings.chromaticLensPrincipalPointX,
-      this.settings.chromaticLensPrincipalPointY,
-      this.settings.chromaticLensFocalLengthX,
-      this.settings.chromaticLensFocalLengthY,
-      this.settings.chromaticLensSkew
-    );
-
-    // Apply ambient occlusion (always call to ensure proper enable/disable)
-    this.postProcessing.setAOEnabled(this.settings.aoEnabled, this.settings.aoQuality);
-
-    // Apply dynamic clipping settings
-    this.sceneManager.setDynamicClipping(this.settings.dynamicClippingEnabled);
-
-    // Update near/far control state based on dynamic clipping
-    this.updateClippingControlsState(this.settings.dynamicClippingEnabled);
-
-    // Trigger render to ensure changes are visible
-    this.triggerAnimation();
+    applyRenderingSettings({
+      settings: this.settings,
+      postProcessing: this.postProcessing,
+      sceneManager: this.sceneManager,
+      animationController: this.animationController,
+      updateClippingControlsState: (enabled) => this.updateClippingControlsState(enabled),
+      triggerAnimation: () => this.triggerAnimation(),
+    });
   }
 
   /**
@@ -1345,49 +800,20 @@ export class RenderingControls {
    * ```
    */
   show(): void {
-    // Sync current state from scene manager before showing
     this.syncCurrentState();
-
     this.gui.show();
     this.visible = true;
-
-    // Add click handler to auto-blur inputs when clicking outside them.
-    // This helps prevent focus getting stuck. Track the timer so dispose()/hide()
-    // cannot race with the delayed registration and leave a document listener behind.
-    if (this.clickOutsideTimeout !== null) {
-      clearTimeout(this.clickOutsideTimeout);
-    }
-    this.clickOutsideTimeout = setTimeout(() => {
-      this.clickOutsideTimeout = null;
-      this.addClickOutsideHandler();
-    }, 100);
+    this.focusManager.onPanelShown();
   }
 
   /**
-   * Hide the rendering controls panel.
-   *
-   * Blurs any focused input element to return focus to canvas, ensuring
-   * keyboard shortcuts work after closing. Removes click-outside handler.
-   *
-   * Triggered by R key when controls are visible, or by Escape key.
+   * Hide the rendering controls panel. Returns focus to the canvas so
+   * keyboard shortcuts keep working. Triggered by R or Escape.
    */
   hide(): void {
-    // Blur any focused element to return focus to the main document
-    // This ensures keyboard shortcuts work after closing the panel
-    const activeElement = document.activeElement as HTMLElement;
-    if (activeElement && activeElement.blur) {
-      activeElement.blur();
-    }
-
-    // Remove pending/active click outside handler
-    this.clearClickOutsideTimer();
-    this.removeClickOutsideHandler();
-
     this.gui.hide();
     this.visible = false;
-
-    // Focus the canvas to ensure keyboard events work
-    this.sceneManager.renderer.domElement.focus();
+    this.focusManager.onPanelHidden();
   }
 
   /**
@@ -1432,217 +858,19 @@ export class RenderingControls {
   }
 
   /**
-   * Add click outside handler to blur inputs
-   */
-  private clickOutsideHandler?: (e: MouseEvent) => void;
-
-  private addClickOutsideHandler(): void {
-    if (this.clickOutsideHandler) return;
-
-    this.clickOutsideHandler = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
-      // If clicking outside the GUI panel, blur any focused element within it
-      if (!this.gui.domElement.contains(target)) {
-        const activeElement = document.activeElement as HTMLElement;
-        if (activeElement && activeElement.blur && this.gui.domElement.contains(activeElement)) {
-          activeElement.blur();
-          // Also focus the canvas for good measure
-          this.sceneManager.renderer.domElement.focus();
-        }
-      }
-    };
-
-    // Use capture phase to ensure we get the event first
-    document.addEventListener('mousedown', this.clickOutsideHandler, true);
-  }
-
-  private clearClickOutsideTimer(): void {
-    if (this.clickOutsideTimeout !== null) {
-      clearTimeout(this.clickOutsideTimeout);
-      this.clickOutsideTimeout = null;
-    }
-  }
-
-  private removeClickOutsideHandler(): void {
-    if (this.clickOutsideHandler) {
-      document.removeEventListener('mousedown', this.clickOutsideHandler, true);
-      this.clickOutsideHandler = undefined;
-    }
-  }
-
-  /**
-   * Update the cinematic mode checkbox to reflect the current state
-   * Called after toggleCinematicMode or when 'C' key is pressed
+   * Update the cinematic mode checkbox to reflect the current state.
+   * Called after toggleCinematicMode or when 'C' key is pressed.
    */
   private updateCinematicModeCheckbox(): void {
-    // Determine cinematic mode state based on majority of effects (including ACES tone mapping)
-    const cinematicEffects = [
-      this.settings.detectorNoiseEnabled,
-      this.settings.vignetteEnabled,
-      this.settings.chromaticLensDistortionEnabled,
-      this.settings.toneMapping === 'ACES',
-    ];
-
-    const enabledCount = cinematicEffects.filter(Boolean).length;
-    const isEnabled = enabledCount >= cinematicEffects.length / 2;
-
-    // Update the setting and GUI controller
-    this.settings.cinematicMode = isEnabled;
-    if (this.controllers.cinematicMode) {
-      this.controllers.cinematicMode.updateDisplay();
-    }
+    this.cinematic?.updateCheckbox();
   }
 
   /**
-   * Toggle cinematic mode (film-like visual preset).
-   *
-   * Triggered by C key. Uses intelligent majority-vote algorithm to determine
-   * whether to enable or disable effects:
-   * - If < 50% effects enabled: Turn ALL on
-   * - If >= 50% effects enabled: Turn ALL off
-   *
-   * Cinematic mode affects:
-   * - Tone mapping (ACES Filmic for cinematic look)
-   * - Detector noise (subtle film grain)
-   * - Vignette (darkened corners)
-   * - Chromatic lens distortion (wavelength-dependent lens distortion + color fringing)
-   * - FOV (35mm wide-angle for cinematic, 50mm normal for regular)
-   *
-   * On enable: snapshots all affected settings before overwriting.
-   * On disable: restores each setting from the snapshot, unless the user
-   * manually changed it while cinematic was active (dirty-check).
-   *
-   * Uses deferred rebuild to apply all changes in single pass (performance).
-   *
-   * @example
-   * ```typescript
-   * // User presses C key
-   * renderingControls.toggleCinematicMode();
-   * // All cinematic effects either turn on or off together
-   *
-   * // Check resulting state
-   * console.log('Cinematic:', renderingControls.settings.detectorNoiseEnabled);
-   * ```
+   * Toggle cinematic mode (film-like visual preset). Delegates to
+   * {@link CinematicModeController}. Triggered by the C key.
    */
   toggleCinematicMode(): void {
-    // Majority vote now includes tone mapping as a 4th signal
-    const cinematicEffects = [
-      this.settings.detectorNoiseEnabled,
-      this.settings.vignetteEnabled,
-      this.settings.chromaticLensDistortionEnabled,
-      this.settings.toneMapping === 'ACES',
-    ];
-
-    const enabledCount = cinematicEffects.filter(Boolean).length;
-    const shouldEnableAll = enabledCount < cinematicEffects.length / 2;
-
-    const cinematicValues = buildCinematicValues();
-
-    if (shouldEnableAll) {
-      // --- ENABLE: snapshot current settings, then apply cinematic values ---
-      const snapshot = {} as CinematicSnapshot;
-      for (const key of CINEMATIC_SNAPSHOT_KEYS) {
-        (snapshot as any)[key] = this.settings[key];
-      }
-      this.cinematicSnapshot = snapshot;
-
-      Object.assign(this.settings, cinematicValues);
-    } else {
-      // --- DISABLE: restore from snapshot (dirty-check per setting) ---
-      if (this.cinematicSnapshot) {
-        for (const key of CINEMATIC_SNAPSHOT_KEYS) {
-          // Only restore if user hasn't manually changed this setting since cinematic was enabled
-          if (this.settings[key] === cinematicValues[key]) {
-            (this.settings as any)[key] = this.cinematicSnapshot[key];
-          }
-        }
-        this.cinematicSnapshot = null;
-      } else {
-        // No snapshot (e.g., loaded from localStorage with cinematic already on).
-        // Fall back to non-cinematic defaults.
-        this.settings.toneMapping = config.renderingControls.defaults.toneMapping;
-        this.settings.detectorNoiseEnabled = false;
-        this.settings.vignetteEnabled = false;
-        this.settings.chromaticLensDistortionEnabled = false;
-        const lens50 = config.camera.lensDistortionPresets['50mm Normal'];
-        this.settings.chromaticLensDistortionX = lens50.distortionX;
-        this.settings.chromaticLensDistortionY = lens50.distortionY;
-        this.settings.chromaticLensDispersion = lens50.dispersion;
-        this.settings.chromaticLensPrincipalPointX = lens50.principalPointX;
-        this.settings.chromaticLensPrincipalPointY = lens50.principalPointY;
-        this.settings.chromaticLensFocalLengthX = lens50.focalLengthX;
-        this.settings.chromaticLensFocalLengthY = lens50.focalLengthY;
-        this.settings.chromaticLensSkew = lens50.skew;
-        this.settings.fov = config.camera.fovPresets['50mm Normal'];
-        this.settings.fovPreset = '50mm Normal';
-      }
-    }
-
-    // Apply all changes to post-processing using deferred rebuild
-    this.postProcessing.startDeferRebuild();
-
-    this.postProcessing.setToneMapping(TONE_MAPPING_MAP[this.settings.toneMapping]);
-
-    this.postProcessing.setDetectorNoiseEnabled(
-      this.settings.detectorNoiseEnabled,
-      this.settings.detectorNoiseReadoutSigma,
-      this.settings.detectorNoisePhotonGain,
-      this.settings.detectorNoiseFpnSigma
-    );
-
-    this.postProcessing.setVignetteEnabled(
-      this.settings.vignetteEnabled,
-      this.settings.vignetteDarkness,
-      this.settings.vignetteOffset
-    );
-
-    this.postProcessing.setChromaticLensDistortionEnabled(
-      this.settings.chromaticLensDistortionEnabled,
-      this.settings.chromaticLensDistortionX,
-      this.settings.chromaticLensDistortionY,
-      this.settings.chromaticLensDispersion,
-      this.settings.chromaticLensPrincipalPointX,
-      this.settings.chromaticLensPrincipalPointY,
-      this.settings.chromaticLensFocalLengthX,
-      this.settings.chromaticLensFocalLengthY,
-      this.settings.chromaticLensSkew
-    );
-
-    this.postProcessing.endDeferRebuild();
-
-    // Apply FOV change to camera
-    const targetFOV = this.settings.fov;
-    const currentFOV = this.sceneManager.currentFov;
-    if (Math.abs(currentFOV - targetFOV) > 0.5) {
-      const delta = (targetFOV - currentFOV) / config.camera.fovSensitivity;
-      this.sceneManager.updateFOV(delta);
-    }
-
-    // Update GUI to reflect new state
-    this.gui.controllersRecursive().forEach((controller) => {
-      controller.updateDisplay();
-    });
-
-    // Save settings and trigger animation
-    this.saveSettings();
-    this.triggerAnimation();
-
-    // Start animation if detector noise is now enabled (requires continuous rendering)
-    if (this.settings.detectorNoiseEnabled) {
-      this.animationController?.startAnimation();
-    }
-
-    // Update cinematic mode checkbox to reflect the new state
-    this.updateCinematicModeCheckbox();
-
-    // Log the action
-    const modeText = shouldEnableAll ? 'enabled' : 'disabled';
-    log.info(
-      Modules.RENDERER,
-      `Cinematic mode ${modeText}: tone=${this.settings.toneMapping}, ` +
-        `noise=${this.settings.detectorNoiseEnabled}, vignette=${this.settings.vignetteEnabled}, ` +
-        `lens=${this.settings.chromaticLensDistortionEnabled}, FOV=${this.settings.fovPreset}`
-    );
+    this.cinematic?.toggle();
   }
 
   /**
@@ -1655,10 +883,7 @@ export class RenderingControls {
    */
   dispose(): void {
     // Clean up clipping display RAF loop
-    if (this.clippingDisplayRAF !== null) {
-      cancelAnimationFrame(this.clippingDisplayRAF);
-      this.clippingDisplayRAF = null;
-    }
+    this.clippingDisplay.dispose();
 
     // Run all registered cleanup callbacks (e.g., adaptive DPR update interval)
     for (const cb of this.cleanupCallbacks) {
@@ -1666,8 +891,7 @@ export class RenderingControls {
     }
     this.cleanupCallbacks = [];
 
-    this.clearClickOutsideTimer();
-    this.removeClickOutsideHandler();
+    this.focusManager.dispose();
 
     // Auto-blur cleanup is now handled by the custom GUI library
     this.gui.destroy();

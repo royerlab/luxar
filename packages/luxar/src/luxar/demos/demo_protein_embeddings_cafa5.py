@@ -623,7 +623,9 @@ def generate_protein_landscape(
                 '<div style="font-weight:bold;color:#ccc;margin-bottom:0.3vh">Function</div>'
             )
             for name, color in legend_items:
-                legend_html += f'<div><span style="color:{color}">\u2588</span> {name}</div>'
+                legend_html += (
+                    f'<div><span style="color:{color}">\u2588</span> {name}</div>'
+                )
             legend_html += "</div>"
 
             scene.add_html(

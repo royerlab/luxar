@@ -123,12 +123,8 @@ from luxar.utils.paths import get_demos_output_dir
 
 CACHE_DIR = Path.home() / ".cache" / "luxar" / "caida"
 
-AS_REL_INDEX_URL = (
-    "https://publicdata.caida.org/datasets/as-relationships/serial-2/"
-)
-AS_ORG_INDEX_URL = (
-    "https://publicdata.caida.org/datasets/as-organizations/"
-)
+AS_REL_INDEX_URL = "https://publicdata.caida.org/datasets/as-relationships/serial-2/"
+AS_ORG_INDEX_URL = "https://publicdata.caida.org/datasets/as-organizations/"
 AS_REL_FILE_PATTERN = re.compile(r'href="(\d{8}\.as-rel2\.txt\.bz2)"')
 AS_ORG_FILE_PATTERN = re.compile(r'href="(\d{8}\.as-org2info\.txt\.gz)"')
 
@@ -146,7 +142,7 @@ DEFAULT_MAX_EDGES = 150_000
 
 # Edge relationship colors
 COLOR_PROVIDER_CUSTOMER: tuple[float, float, float] = (1.00, 0.70, 0.25)  # warm amber
-COLOR_PEER: tuple[float, float, float] = (0.30, 0.85, 1.00)             # cool cyan
+COLOR_PEER: tuple[float, float, float] = (0.30, 0.85, 1.00)  # cool cyan
 
 
 # -----------------------------------------------------------------------------
@@ -160,9 +156,7 @@ def _find_latest_file(index_url: str, pattern: re.Pattern) -> tuple[str, str]:
     r.raise_for_status()
     matches = pattern.findall(r.text)
     if not matches:
-        raise RuntimeError(
-            f"No files matching {pattern.pattern} found at {index_url}"
-        )
+        raise RuntimeError(f"No files matching {pattern.pattern} found at {index_url}")
     latest = sorted(matches)[-1]
     return latest, index_url + latest
 
@@ -206,12 +200,8 @@ def _download(url: str, dest: Path, description: str) -> None:
 def ensure_data(cache_dir: Path) -> tuple[Path, Path]:
     """Fetch latest AS-rel + AS-org2info files. Returns local paths."""
     with asection("Discovering latest CAIDA snapshots"):
-        rel_name, rel_url = _find_latest_file(
-            AS_REL_INDEX_URL, AS_REL_FILE_PATTERN
-        )
-        org_name, org_url = _find_latest_file(
-            AS_ORG_INDEX_URL, AS_ORG_FILE_PATTERN
-        )
+        rel_name, rel_url = _find_latest_file(AS_REL_INDEX_URL, AS_REL_FILE_PATTERN)
+        org_name, org_url = _find_latest_file(AS_ORG_INDEX_URL, AS_ORG_FILE_PATTERN)
         aprint(f"  AS relationships: {rel_name}")
         aprint(f"  AS organizations: {org_name}")
 
@@ -509,8 +499,8 @@ def compute_layout(
         if radius_95 > 0:
             coords *= 10.0 / radius_95
         aprint(
-            f"  Coords: x range {np.ptp(coords[:,0]):.1f}, "
-            f"y {np.ptp(coords[:,1]):.1f}, z {np.ptp(coords[:,2]):.1f}"
+            f"  Coords: x range {np.ptp(coords[:, 0]):.1f}, "
+            f"y {np.ptp(coords[:, 1]):.1f}, z {np.ptp(coords[:, 2]):.1f}"
         )
 
         cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -574,8 +564,15 @@ def build_node_points(
     degrees: np.ndarray,
     tier1: np.ndarray,
 ) -> tuple[
-    np.ndarray, np.ndarray, np.ndarray, list[str],
-    list[str], np.ndarray, np.ndarray, np.ndarray, np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    list[str],
+    list[str],
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
 ]:
     """Assemble Points with two color views duplicated.
 
@@ -598,9 +595,7 @@ def build_node_points(
         ["??"] if "??" in country_counts.index else []
     )
     country_idx = {c: i for i, c in enumerate(country_cats)}
-    country_codes = np.array(
-        [country_idx[c] for c in country_vals], dtype=np.int32
-    )
+    country_codes = np.array([country_idx[c] for c in country_vals], dtype=np.int32)
     country_palette = _categorical_palette(len(country_cats))
     country_colors = country_palette[country_codes]
 
@@ -729,9 +724,7 @@ def build_edge_lines(
     flat_xyz = verts_xyz.reshape(n_edges * 2, 3)
     view0 = np.zeros((n_edges * 2, 1), dtype=np.float32)
     view1 = np.ones((n_edges * 2, 1), dtype=np.float32)
-    vertices = np.vstack(
-        [np.hstack([view0, flat_xyz]), np.hstack([view1, flat_xyz])]
-    )
+    vertices = np.vstack([np.hstack([view0, flat_xyz]), np.hstack([view1, flat_xyz])])
 
     # Widths: tapered for provider→customer (A thick, B thin), uniform for peer
     #   Arrays are laid out as [a0, b0, a1, b1, ...] so index 0::2 is "A end"
@@ -865,7 +858,12 @@ def build_scene(
     ) = build_node_points(nodes, node_df, coords, communities, degrees, tier1)
 
     edges_kept, verts, widths, edge_colors, edge_labels = build_edge_lines(
-        nodes, edges, coords, communities, tier1, node_df,
+        nodes,
+        edges,
+        coords,
+        communities,
+        tier1,
+        node_df,
         max_edges=max_edges,
     )
 
@@ -956,9 +954,7 @@ def build_scene(
 
             # Per-view captions + node legends
             community_legend = _build_community_legend(communities)
-            country_legend = build_legend_html(
-                "country", country_cats, country_codes
-            )
+            country_legend = build_legend_html("country", country_cats, country_codes)
 
             for view_id, caption, legend_html in [
                 (0, "Colored by: Community (Louvain)", community_legend),
@@ -1061,8 +1057,15 @@ def main() -> None:
     if "--no-serve" in argv:
         output_path = get_demos_output_dir() / "caida_as_topology.zarr"
         build_scene(
-            output_path, nodes, node_df, edges, coords,
-            communities, degrees, tier1, max_edges,
+            output_path,
+            nodes,
+            node_df,
+            edges,
+            coords,
+            communities,
+            degrees,
+            tier1,
+            max_edges,
         )
         aprint(f"Dataset generated at {output_path}")
         return
@@ -1070,8 +1073,15 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="luxar_caida_") as tmpdir:
         output_path = Path(tmpdir) / "caida_as_topology.zarr"
         n_nodes, n_edges, n_comms, n_tier1 = build_scene(
-            output_path, nodes, node_df, edges, coords,
-            communities, degrees, tier1, max_edges,
+            output_path,
+            nodes,
+            node_df,
+            edges,
+            coords,
+            communities,
+            degrees,
+            tier1,
+            max_edges,
         )
 
         aprint("")

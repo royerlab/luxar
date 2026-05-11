@@ -126,27 +126,49 @@ Total Update                              [root]
 ├── Points (/scene/nuclei)                [per-loader]
 │   ├── Spatial Query                     [chunk index query]
 │   ├── Load Arrays                       [fetch + decode positions, colors, etc.]
-│   └── Project to 3D                     [nD visibility + projection]
+│   ├── Project to 3D                     [nD visibility + projection]
+│   └── Update Buffers                    [GPU upload — runs in atomic commit stage]
 │
 ├── Lines (/scene/tracks)                 [per-loader]
 │   ├── Spatial Query                     [chunk index query]
 │   ├── Load Segments                     [fetch segment indices]
 │   ├── Load Vertices                     [fetch vertex data]
-│   └── Project to 3D                     [nD clipping + projection]
+│   ├── Index Remap                       [global → local vertex map + segment remap]
+│   ├── Project to 3D                     [nD clipping + projection]
+│   └── Update Buffers                    [GPU upload — runs in atomic commit stage]
 │
 ├── GSplats (/scene/gaussians)            [per-loader]
 │   ├── Spatial Query                     [chunk index query]
-│   └── Load Arrays                       [fetch + decode splat data]
+│   ├── Load Arrays                       [fetch + decode splat data]
+│   ├── Project to 3D                     [nD → 3D projection + Cholesky packing]
+│   └── Update Buffers                    [GPU upload — runs in atomic commit stage]
 │
 └── [Skipped: /scene/detector]            [extend_to_all optimization]
 ```
 
+**Session lifecycle**: each per-node session is opened by
+`runLoaderUpdates` via `beginTopLevel()` BEFORE the async load/process
+stage and stays alive past `Promise.all` so the synchronous atomic
+commit stage can record `Update Buffers` as a child entry of the same
+session. The caller (`updateView`) ends the session exactly once after
+the commit, including the staged === null (loader failed / skipped)
+case.
+
 **Notes**:
 
-- Operations run concurrently for different loaders using `timeTopLevel()`
+- Per-node load + process runs concurrently across loaders inside `Promise.all`; each
+  task opens its session via `beginTopLevel()` and ends it after the synchronous
+  commit stage (see *Session lifecycle* above). `timeTopLevel()` remains available
+  for callers that don't need session lifetime to span a commit phase.
 - Each loader type (Points, Lines, GSplats) has its own instrumentation
 - Skipped loaders show `skipped` metadata with reason (e.g., "extend_to_all")
 - Metadata (point/segment/splat counts) is set after successful load
+- Because the per-node session stays open until its commit completes, the
+  per-node `lastMs` includes a small "wait" gap between `Promise.all` completion
+  and the synchronous commit step. The commit stage is sequential (atomic), so
+  later types in the commit loop see the earlier types' commit times in their
+  `lastMs` total. These gaps are typically <10 ms and dominated by the load+process
+  and GPU-upload terms shown as child entries.
 
 ### 3.2 Metadata Per Entry
 

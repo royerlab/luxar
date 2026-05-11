@@ -21,7 +21,7 @@
 
 import * as THREE from 'three';
 import { config } from '../config';
-import type { LuxarCamera } from '../scene/camera-utils';
+import type { LuxarCamera } from '../utils/camera-utils';
 
 // Reusable scratch vectors/quaternions to avoid per-frame/per-event allocations.
 // Names are neutral (v0-v3) because these hold different semantic values depending

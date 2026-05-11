@@ -23,9 +23,7 @@ import pytest
 
 pd = pytest.importorskip("pandas")
 
-_DEMO_PATH = (
-    Path(__file__).resolve().parents[1] / "demo_ppi_flow_field.py"
-)
+_DEMO_PATH = Path(__file__).resolve().parents[1] / "demo_ppi_flow_field.py"
 
 
 def _load_demo_module():
@@ -66,12 +64,12 @@ class TestGridPointsForFlatIndices:
         # All eight cube corners as flat C-order indices on a 4×4×4 grid.
         flats = np.array(
             [
-                0,                       # ( 0,  0,  0)
-                n - 1,                   # ( 0,  0,  3)
-                (n - 1) * n,             # ( 0,  3,  0)
-                (n - 1) * n + (n - 1),   # ( 0,  3,  3)
-                (n - 1) * n * n,         # ( 3,  0,  0)
-                n * n * n - 1,           # ( 3,  3,  3)
+                0,  # ( 0,  0,  0)
+                n - 1,  # ( 0,  0,  3)
+                (n - 1) * n,  # ( 0,  3,  0)
+                (n - 1) * n + (n - 1),  # ( 0,  3,  3)
+                (n - 1) * n * n,  # ( 3,  0,  0)
+                n * n * n - 1,  # ( 3,  3,  3)
             ],
             dtype=np.int64,
         )
@@ -127,9 +125,7 @@ class TestTrilinearVectorBatch:
 
     def test_out_of_bounds_returns_nan(self) -> None:
         flow = self._constant_field()
-        points = np.array(
-            [[-1.0, 0.0, 0.0], [10.0, 10.0, 10.0]], dtype=np.float32
-        )
+        points = np.array([[-1.0, 0.0, 0.0], [10.0, 10.0, 10.0]], dtype=np.float32)
         result = _trilinear_vector_batch(flow, points)
         assert np.isnan(result).all()
 
@@ -156,9 +152,7 @@ class TestTrilinearVectorBatch:
 
 class TestComputeCubicBounds:
     def test_returns_padded_cube_around_coords(self) -> None:
-        coords = np.array(
-            [[0.0, 0.0, 0.0], [10.0, 5.0, 2.0]], dtype=np.float32
-        )
+        coords = np.array([[0.0, 0.0, 0.0], [10.0, 5.0, 2.0]], dtype=np.float32)
         lo, hi = compute_cubic_bounds(coords, pad_fraction=0.1)
         side_lo = hi - lo
         # Cubic: every axis the same span.

@@ -11,7 +11,7 @@ export class StringController extends Controller<string> {
 
   private input!: HTMLInputElement;
 
-  constructor(object: Record<string, any>, property: string) {
+  constructor(object: Record<string, unknown>, property: string) {
     super(object, property);
 
     // Initialize DOM

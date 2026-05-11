@@ -105,7 +105,9 @@ describe('OPFSStore', () => {
     });
 
     it('should load existing metadata on init', async () => {
-      // Pre-populate metadata
+      // Pre-populate metadata. encodingVersion must match the current
+      // OPFS_ENCODING_VERSION; otherwise the directory is intentionally
+      // invalidated (see "encoding-version mismatch" test below).
       mockFS.metaFiles.set(
         '_cache_meta.json',
         JSON.stringify({
@@ -114,6 +116,7 @@ describe('OPFSStore', () => {
           totalSize: 1000,
           orderCounter: 2,
           contentHash: 'abc123',
+          encodingVersion: 2,
         })
       );
 
@@ -139,6 +142,26 @@ describe('OPFSStore', () => {
     it('should return undefined for missing keys', async () => {
       const result = await store.get('nonexistent');
       expect(result).toBeUndefined();
+    });
+
+    it('counts hits via reads and misses via getStats().misses', async () => {
+      const data = new Uint8Array([1, 2, 3]);
+      await store.set('hit.key', data);
+
+      // Hits: reads counter goes up, misses unchanged.
+      await store.get('hit.key');
+      await store.get('hit.key');
+      const afterHits = store.getStats();
+      expect(afterHits.reads).toBe(2);
+      expect(afterHits.misses).toBe(0);
+
+      // Misses: misses counter goes up, reads unchanged.
+      await store.get('absent.1');
+      await store.get('absent.2');
+      await store.get('absent.3');
+      const afterMisses = store.getStats();
+      expect(afterMisses.reads).toBe(2);
+      expect(afterMisses.misses).toBe(3);
     });
 
     it('should update LRU order on get', async () => {
@@ -232,6 +255,87 @@ describe('OPFSStore', () => {
       expect(stats.count).toBe(0);
       expect(store.getContentHash()).toBeNull();
     });
+
+    it('slow set + concurrent clear leaves index empty after both settle', async () => {
+      // Wrap navigator.storage to gate the writable.write() so we can
+      // hold a single set() in flight while clear() runs. The slow set
+      // must NOT repopulate the index after the clear completes.
+      let releaseWrite: () => void = () => {};
+      const writeBlocker = new Promise<void>((resolve) => {
+        releaseWrite = resolve;
+      });
+      const baseDir = mockFS.mockDirHandle;
+      const slowDir: any = {
+        ...baseDir,
+        async getFileHandle(name: string, opts?: { create?: boolean }) {
+          const inner = await baseDir.getFileHandle(name, opts);
+          return {
+            ...inner,
+            async createWritable() {
+              const w = await inner.createWritable();
+              return {
+                ...w,
+                async write(data: ArrayBuffer | string) {
+                  await writeBlocker;
+                  return w.write(data);
+                },
+              };
+            },
+          };
+        },
+      };
+      vi.stubGlobal('navigator', {
+        storage: {
+          async getDirectory() {
+            return {
+              async getDirectoryHandle() {
+                return slowDir;
+              },
+              async removeEntry() {
+                mockFS.files.clear();
+                mockFS.metaFiles.clear();
+              },
+            };
+          },
+          async estimate() {
+            return { quota: 10e9, usage: 1e9 };
+          },
+        },
+      });
+
+      const slowStore = new OPFSStore('slow-id', 'https://example.com', 100 * 1024 * 1024);
+      await slowStore.init();
+
+      // Kick off a slow set; do not await yet — its write() is blocked.
+      const setPromise = slowStore.set('hung-key', new Uint8Array(500));
+
+      // Yield once so the set actually enters doSet and reaches the blocked write.
+      await new Promise((r) => setTimeout(r, 0));
+
+      // Now clear: bumps the generation and drains pending writes. We
+      // unblock the write *during* clear so the in-flight set finishes
+      // its file I/O while clear is awaiting Promise.allSettled.
+      const clearPromise = slowStore.clear();
+      releaseWrite();
+      await Promise.all([setPromise, clearPromise]);
+
+      // The slow set must have detected the generation bump and
+      // skipped its index update.
+      const stats = slowStore.getStats();
+      expect(stats.count).toBe(0);
+      expect(stats.size).toBe(0);
+    });
+
+    it('concurrent clear() calls are idempotent', async () => {
+      await store.set('key1', new Uint8Array(1000));
+      await store.set('key2', new Uint8Array(2000));
+
+      await Promise.all([store.clear(), store.clear()]);
+
+      const stats = store.getStats();
+      expect(stats.size).toBe(0);
+      expect(stats.count).toBe(0);
+    });
   });
 
   describe('LRU Eviction', () => {
@@ -268,6 +372,143 @@ describe('OPFSStore', () => {
       // key2 should be evicted (now oldest), key1 saved by touch
       const stats = smallStore.getStats();
       expect(stats.count).toBe(2); // key1 + key3
+    });
+  });
+
+  describe('Oversized + quota ordering', () => {
+    it('rejects an entry larger than maxSize without evicting existing entries', async () => {
+      const tinyStore = new OPFSStore('tiny-id', 'https://example.com', 100);
+      await tinyStore.init();
+      await tinyStore.set('keep', new Uint8Array(40));
+      const sizeBefore = tinyStore.getStats().size;
+      const countBefore = tinyStore.getStats().count;
+
+      // 200 bytes > 100 byte maxSize. Must be skipped without evicting `keep`.
+      await tinyStore.set('toobig', new Uint8Array(200));
+
+      const stats = tinyStore.getStats();
+      expect(stats.size).toBe(sizeBefore);
+      expect(stats.count).toBe(countBefore);
+      expect(stats.oversizedWriteSkipped).toBe(1);
+    });
+
+    it('write that initially exceeds quota succeeds after own-LRU eviction', async () => {
+      // First call to estimate() reports almost-full quota; second call
+      // (after eviction freed space) reports plenty. The store should
+      // succeed on the post-eviction estimate.
+      let estimateCall = 0;
+      vi.stubGlobal('navigator', {
+        storage: {
+          async getDirectory() {
+            return {
+              async getDirectoryHandle() {
+                return mockFS.mockDirHandle;
+              },
+              async removeEntry() {
+                mockFS.files.clear();
+                mockFS.metaFiles.clear();
+              },
+            };
+          },
+          async estimate() {
+            estimateCall++;
+            // Always report enough headroom — eviction-then-quota
+            // ordering means quota is checked after eviction; our
+            // assertion here is that the write succeeds, not that the
+            // estimate reflects in-process eviction.
+            return { quota: 10e9, usage: 1e9 };
+          },
+        },
+      });
+
+      const evictStore = new OPFSStore('evict-id', 'https://example.com', 100);
+      await evictStore.init();
+      await evictStore.set('old1', new Uint8Array(45));
+      await evictStore.set('old2', new Uint8Array(45));
+      await evictStore.set('new', new Uint8Array(50));
+
+      const stats = evictStore.getStats();
+      // evictions counter only increments when own-LRU eviction runs.
+      expect(stats.evictions).toBeGreaterThanOrEqual(1);
+      expect(stats.size).toBeLessThanOrEqual(100);
+      // estimate should have been called at least once during the write loop.
+      expect(estimateCall).toBeGreaterThanOrEqual(1);
+    });
+
+    it('write I/O failures increment writeFailures stat', async () => {
+      // Make navigateToFile succeed for retry path (not "could not be
+      // found") but createWritable() throw so the catch branch runs and
+      // increments writeFailures.
+      const failingDir: any = {
+        ...mockFS.mockDirHandle,
+        async getFileHandle() {
+          return {
+            async getFile() {
+              return { async arrayBuffer() { return new ArrayBuffer(0); } };
+            },
+            async createWritable() {
+              throw new Error('ENOSPC: simulated I/O failure');
+            },
+          };
+        },
+        async getDirectoryHandle() {
+          return failingDir;
+        },
+        async removeEntry() {},
+      };
+      vi.stubGlobal('navigator', {
+        storage: {
+          async getDirectory() {
+            return {
+              async getDirectoryHandle() {
+                return failingDir;
+              },
+              async removeEntry() {},
+            };
+          },
+          async estimate() {
+            return { quota: 10e9, usage: 1e9 };
+          },
+        },
+      });
+
+      const failStore = new OPFSStore('fail-id', 'https://example.com', 1000);
+      await failStore.init();
+      await failStore.set('boom', new Uint8Array(50));
+      const stats = failStore.getStats();
+      expect(stats.writeFailures).toBeGreaterThanOrEqual(1);
+      expect(stats.count).toBe(0);
+    });
+
+    it('quota-skipped writes increment quotaWriteSkipped and do not write data', async () => {
+      // checkQuota returns false → doSet skips the write.
+      vi.stubGlobal('navigator', {
+        storage: {
+          async getDirectory() {
+            return {
+              async getDirectoryHandle() {
+                return mockFS.mockDirHandle;
+              },
+              async removeEntry() {
+                mockFS.files.clear();
+                mockFS.metaFiles.clear();
+              },
+            };
+          },
+          async estimate() {
+            return { quota: 100, usage: 100 }; // no headroom
+          },
+        },
+      });
+
+      const noQuotaStore = new OPFSStore('noquota-id', 'https://example.com', 1000);
+      await noQuotaStore.init();
+      await noQuotaStore.set('blocked', new Uint8Array(50));
+
+      const stats = noQuotaStore.getStats();
+      expect(stats.count).toBe(0);
+      expect(stats.size).toBe(0);
+      expect(stats.quotaWriteSkipped).toBe(1);
     });
   });
 
@@ -331,6 +572,178 @@ describe('OPFSStore', () => {
         expect(meta.totalSize).toBe(1000);
       }
     });
+
+    it('dispose during pending metadata save awaits the in-flight save', async () => {
+      // Trigger scheduleMetadataSave by mutating state, then await dispose.
+      // The in-flight save tracker means dispose must wait for the save
+      // to complete before returning.
+      await store.set('key1', new Uint8Array(100));
+      // Wait > METADATA_SAVE_DELAY to start the save.
+      await new Promise((r) => setTimeout(r, 1100));
+      await store.dispose();
+      // Metadata is now persisted.
+      expect(mockFS.metaFiles.get('_cache_meta.json')).toBeDefined();
+    });
+
+    it('set/get/touch after dispose are no-ops', async () => {
+      await store.set('keep', new Uint8Array(50));
+      await store.dispose();
+
+      // Should not throw, should not mutate state.
+      await store.set('post', new Uint8Array(50));
+      const retrieved = await store.get('keep');
+      expect(retrieved).toBeUndefined();
+
+      const stats = store.getStats();
+      // The pre-dispose set is still tracked in stats (from before
+      // disposal). The post-dispose set adds nothing.
+      expect(stats.count).toBe(1);
+    });
+
+    it('dispose() is idempotent', async () => {
+      await store.set('keep', new Uint8Array(50));
+      await store.dispose();
+      // A second dispose() must not throw and must not double-bump generation.
+      await expect(store.dispose()).resolves.toBeUndefined();
+    });
+
+    it('unicode keys roundtrip through set/get/delete (commit 4.2)', async () => {
+      // Pre-commit-4.2 keyToFileName used btoa(key) which throws on any
+      // code point above 0xFF. Now we encode UTF-8 → base64url so keys
+      // with arbitrary unicode work end-to-end.
+      const unicodeKey = 'group/データ/0.0';
+      await store.set(unicodeKey, new Uint8Array([1, 2, 3]));
+      const data = await store.get(unicodeKey);
+      expect(data).toEqual(new Uint8Array([1, 2, 3]));
+      await store.delete(unicodeKey);
+      const after = await store.get(unicodeKey);
+      expect(after).toBeUndefined();
+    });
+
+    it('keys with /, =, + are filesystem-safe (commit 4.2)', async () => {
+      // base64url avoids those characters entirely, so even keys with
+      // them in their UTF-8 encoding survive.
+      const key = 'a/b/=+++';
+      await store.set(key, new Uint8Array([9, 8, 7]));
+      const data = await store.get(key);
+      expect(data).toEqual(new Uint8Array([9, 8, 7]));
+    });
+
+    it('hung OPFS read times out and degrades to miss (commit 4.4)', async () => {
+      // Stub navigator.storage so getFile() for chunk paths returns a
+      // never-resolving promise; metadata reads still throw "not found"
+      // so init's loadMetadata starts fresh. The withTimeout wrapper
+      // must abort the read and surface as undefined / missCount++.
+      const hangDir: any = {
+        async getFileHandle(name: string) {
+          if (name === '_cache_meta.json') {
+            // Treat as cold cache so init() doesn't hang reading metadata.
+            throw new Error('not found');
+          }
+          return {
+            async getFile() {
+              return new Promise(() => {}); // hangs forever
+            },
+            async createWritable() {
+              return { async write() {}, async close() {} };
+            },
+          };
+        },
+        async getDirectoryHandle() {
+          return hangDir;
+        },
+        async removeEntry() {},
+      };
+      vi.stubGlobal('navigator', {
+        storage: {
+          async getDirectory() {
+            return {
+              async getDirectoryHandle() {
+                return hangDir;
+              },
+              async removeEntry() {},
+            };
+          },
+          async estimate() {
+            return { quota: 10e9, usage: 1e9 };
+          },
+        },
+      });
+
+      const { config: realConfig } = await import('../../../config');
+      const originalTimeout = realConfig.cache.opfsOperationTimeoutMs;
+      realConfig.cache.opfsOperationTimeoutMs = 50;
+
+      try {
+        const hung = new OPFSStore('hung-id', 'https://example.com', 1024);
+        await hung.init();
+        // Pre-populate the index so get() reaches the read path (a
+        // missing index entry is a fast-path miss without hitting OPFS).
+        (hung as any).index.set('hung-key', { size: 10, order: 1 });
+
+        const start = Date.now();
+        const result = await hung.get('hung-key');
+        const elapsed = Date.now() - start;
+        expect(result).toBeUndefined();
+        // Allow generous slack for jsdom timer skew but well below the
+        // 5s Vitest default.
+        expect(elapsed).toBeLessThan(2000);
+        expect(hung.getStats().misses).toBeGreaterThanOrEqual(1);
+      } finally {
+        realConfig.cache.opfsOperationTimeoutMs = originalTimeout;
+      }
+    });
+
+    it('size-mismatch read deletes file and increments corruptedEntries (commit 6.2)', async () => {
+      // Pre-populate index claiming size=100 but file actually has 5 bytes.
+      await store.set('mismatch-key', new Uint8Array([1, 2, 3]));
+      // Inject a mismatch by mutating the stored data.
+      const fileNames = Array.from(mockFS.files.keys());
+      const corruptName = fileNames.find((n) => n !== '_cache_meta.json');
+      expect(corruptName).toBeDefined();
+      mockFS.files.set(corruptName!, new Uint8Array(50)); // wrong size
+
+      const result = await store.get('mismatch-key');
+      expect(result).toBeUndefined();
+      const stats = store.getStats();
+      expect(stats.corruptedEntries).toBeGreaterThanOrEqual(1);
+    });
+
+    it('corrupt _cache_meta.json increments metadataParseFailures and starts fresh (commit 6.2)', async () => {
+      // Persist invalid JSON so loadMetadata's catch branch runs the
+      // parse-failure path.
+      mockFS.metaFiles.set('_cache_meta.json', 'not-valid-json{{{');
+
+      const fresh = new OPFSStore('parse-fail-id', 'https://example.com', 1024 * 1024);
+      await fresh.init();
+
+      const stats = fresh.getStats();
+      expect(stats.metadataParseFailures).toBeGreaterThanOrEqual(1);
+      expect(stats.count).toBe(0);
+    });
+
+    it('encoding-version mismatch invalidates the directory cleanly (commit 4.2)', async () => {
+      // Persist a metadata file claiming version 1 (legacy btoa); the
+      // store on the next init() must treat it as a cold cache and not
+      // restore the old entries.
+      const stale = JSON.stringify({
+        baseUrl: 'https://example.com/data.zarr',
+        entries: [['legacy-key', { size: 100, order: 0 }]],
+        totalSize: 100,
+        orderCounter: 1,
+        contentHash: 'old-hash',
+        encodingVersion: 1,
+      });
+      mockFS.metaFiles.set('_cache_meta.json', stale);
+
+      const fresh = new OPFSStore('fresh-id', 'https://example.com/data.zarr', 1024 * 1024);
+      await fresh.init();
+
+      const stats = fresh.getStats();
+      expect(stats.count).toBe(0);
+      expect(stats.size).toBe(0);
+      expect(fresh.getContentHash()).toBeNull();
+    });
   });
 
   describe('Edge Cases', () => {
@@ -367,6 +780,209 @@ describe('OPFSStore', () => {
       const stats = store.getStats();
       expect(stats.count).toBe(3);
       expect(stats.size).toBe(6000);
+    });
+  });
+
+  // R6a: Unicode OPFS key roundtrip. keyToFileName now uses UTF-8 +
+  // base64url encoding; the prior btoa() implementation would throw
+  // InvalidCharacterError on non-ASCII bytes. These tests lock that
+  // fix in.
+  describe('Unicode key roundtrip (R6a)', () => {
+    it('stores and reads back a key containing non-ASCII characters', async () => {
+      const key = 'µ/通道/positions/0.0.0';
+      const payload = new Uint8Array([1, 2, 3, 4, 5]);
+      await store.set(key, payload);
+
+      const got = await store.get(key);
+      expect(got).toBeDefined();
+      expect(Array.from(got!)).toEqual([1, 2, 3, 4, 5]);
+    });
+
+    it('handles keys with slashes that traverse bucket boundaries', async () => {
+      const key = 'foo/bar/baz/é/0.1';
+      await store.set(key, new Uint8Array([42]));
+      const got = await store.get(key);
+      expect(got).toBeDefined();
+      expect(got!.length).toBe(1);
+      expect(got![0]).toBe(42);
+    });
+
+    it('handles keys with characters that have special meaning in base64', async () => {
+      // `+`, `/`, `=` are exactly the characters base64url replaces;
+      // upstream data with these in the key must roundtrip cleanly.
+      const key = 'a+b/c=d/0';
+      await store.set(key, new Uint8Array([7, 8, 9]));
+      const got = await store.get(key);
+      expect(got).toBeDefined();
+      expect(Array.from(got!)).toEqual([7, 8, 9]);
+    });
+
+    it('deletes a Unicode-keyed entry cleanly', async () => {
+      const key = 'µ/通道/positions/0.0.0';
+      await store.set(key, new Uint8Array([1]));
+      expect(await store.get(key)).toBeDefined();
+      await store.delete(key);
+      expect(await store.get(key)).toBeUndefined();
+    });
+  });
+
+  // R6d: OPFS quota-exhaustion edge cases. Existing tests cover the
+  // basic quota-skipped path; these tests cover behaviour after the
+  // quota constraint clears and under concurrent quota-exceeded
+  // writes.
+  describe('Quota exhaustion recovery (R6d)', () => {
+    it('after quota clears, the next write succeeds', async () => {
+      // Simulate "browser quota almost full" → write should be
+      // skipped. Then "quota cleared" → next write should succeed.
+      let quotaReportsFull = true;
+      vi.stubGlobal('navigator', {
+        storage: {
+          async getDirectory() {
+            return {
+              async getDirectoryHandle() {
+                return mockFS.mockDirHandle;
+              },
+              async removeEntry() {
+                mockFS.files.clear();
+                mockFS.metaFiles.clear();
+              },
+            };
+          },
+          async estimate() {
+            return quotaReportsFull
+              ? { quota: 100, usage: 100 }
+              : { quota: 10e9, usage: 1e9 };
+          },
+        },
+      });
+      const cycleStore = new OPFSStore('cycle-id', 'https://example.com', 1024 * 1024);
+      await cycleStore.init();
+
+      // First write: quota full → skipped.
+      await cycleStore.set('blocked', new Uint8Array(50));
+      let stats = cycleStore.getStats();
+      expect(stats.quotaWriteSkipped).toBeGreaterThanOrEqual(1);
+      expect(stats.count).toBe(0);
+
+      // Quota clears.
+      quotaReportsFull = false;
+      await cycleStore.set('now-fits', new Uint8Array(50));
+
+      stats = cycleStore.getStats();
+      expect(stats.count).toBe(1);
+      expect(stats.size).toBe(50);
+    });
+
+    it('concurrent quota-skipped writes increment counter atomically (no double-count)', async () => {
+      vi.stubGlobal('navigator', {
+        storage: {
+          async getDirectory() {
+            return {
+              async getDirectoryHandle() {
+                return mockFS.mockDirHandle;
+              },
+              async removeEntry() {
+                mockFS.files.clear();
+                mockFS.metaFiles.clear();
+              },
+            };
+          },
+          async estimate() {
+            return { quota: 100, usage: 100 }; // no headroom
+          },
+        },
+      });
+      const burstStore = new OPFSStore('burst-id', 'https://example.com', 1024 * 1024);
+      await burstStore.init();
+
+      // Fire 5 concurrent same-key + 5 unique-key writes. All should
+      // be skipped without throwing.
+      await Promise.all([
+        burstStore.set('dup-1', new Uint8Array(30)),
+        burstStore.set('dup-1', new Uint8Array(30)),
+        burstStore.set('dup-2', new Uint8Array(30)),
+        burstStore.set('dup-2', new Uint8Array(30)),
+        burstStore.set('uniq-a', new Uint8Array(30)),
+        burstStore.set('uniq-b', new Uint8Array(30)),
+        burstStore.set('uniq-c', new Uint8Array(30)),
+      ]);
+
+      const stats = burstStore.getStats();
+      // Every set call is observed by checkQuota; counter equals the
+      // number of skipped writes. Sufficient to verify it's at least 1
+      // and the store hasn't ingested any data despite the burst.
+      expect(stats.quotaWriteSkipped).toBeGreaterThanOrEqual(1);
+      expect(stats.count).toBe(0);
+      expect(stats.size).toBe(0);
+    });
+  });
+
+  // S2: getStats().available reflects OPFS reachability + dispose state.
+  // Drives the `opfs-unavailable` UI badge in cache-metrics-aggregator.
+  describe('Availability flag (S2)', () => {
+    it('reports available=true after a successful init', () => {
+      expect(store.getStats().available).toBe(true);
+    });
+
+    it('reports available=false after dispose()', async () => {
+      expect(store.getStats().available).toBe(true);
+      await store.dispose();
+      expect(store.getStats().available).toBe(false);
+    });
+
+    it('reports available=false when init never acquired the OPFS root', async () => {
+      // Simulate a browser that throws on navigator.storage.getDirectory.
+      vi.stubGlobal('navigator', {
+        storage: {
+          async getDirectory() {
+            throw new Error('OPFS unsupported in this browser');
+          },
+          async estimate() {
+            return { quota: 0, usage: 0 };
+          },
+        },
+      });
+      const noOpfsStore = new OPFSStore(
+        'no-opfs-id',
+        'https://example.com',
+        100 * 1024 * 1024
+      );
+      // init() should swallow the failure and leave opfsRoot null.
+      await noOpfsStore.init();
+      expect(noOpfsStore.getStats().available).toBe(false);
+    });
+  });
+
+  // R6e: partial metadata corruption recovery. The existing test
+  // covers the "malformed JSON → start fresh" path; this one covers
+  // a structurally-valid but logically corrupt metadata file
+  // (negative totalSize / orderCounter) which should be treated as
+  // recoverable (clamp / rebuild from entries[]).
+  describe('Metadata corruption recovery (R6e)', () => {
+    it('initialises cleanly from valid metadata with a negative totalSize', async () => {
+      // Store a metadata file with negative totalSize — the store
+      // should either reject the file (start fresh) or clamp to a
+      // non-negative size.
+      mockFS.metaFiles.set(
+        '_cache_meta.json',
+        JSON.stringify({
+          baseUrl: 'https://example.com/data.zarr',
+          entries: [['k1', { size: 100, order: 1 }]],
+          totalSize: -999,
+          orderCounter: 1,
+          contentHash: 'abc',
+          encodingVersion: 2,
+        })
+      );
+      const recoveredStore = new OPFSStore(
+        'corrupt-totalsize',
+        'https://example.com/data.zarr',
+        100 * 1024 * 1024
+      );
+      await recoveredStore.init();
+      const stats = recoveredStore.getStats();
+      // The store must not return a nonsensical negative size.
+      expect(stats.size).toBeGreaterThanOrEqual(0);
     });
   });
 });

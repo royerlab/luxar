@@ -1,25 +1,24 @@
 /**
  * Range Extraction Tests for Encoded Arrays
  *
- * CRITICAL: These tests verify the full data path that was previously untested:
+ * These tests verify the full encoded-array range extraction path:
  *   1. Load encoded zarr array
  *   2. Decode array (ArrayDecoder)
  *   3. Extract specific point ranges from decoded data
  *   4. Verify extracted values are correct
  *
- * This tests the code in point-spatial-index-loader.ts lines 704-717 that
- * extracts ranges from decoded arrays. A bug was found where LUT-encoded
- * arrays used the wrong elementsPerPoint (1 instead of 3), causing only
- * 1/3 of data to be copied correctly.
+ * This exercises the points loader path that extracts ranges from decoded
+ * arrays, including LUT arrays where `elementsPerPoint` must match the
+ * decoded attribute width.
  *
  * Test datasets from: packages/luxar-viewer/tests/fixtures/generate_test_data.py
  */
 
 import { describe, it, expect } from 'vitest';
-import { ArrayDecoder, ArrayRefRegistry } from '../../../data/array-decoder';
-import type { ArrayMetadata } from '../../../data/array-decoder';
+import { ArrayDecoder, ArrayRefRegistry } from '../../../data/utils/array-decoder';
+import type { ArrayMetadata } from '../../../data/utils/array-decoder';
 import type { PointRange } from '../../../data/data-loader-types';
-import * as zarr from 'zarrita';
+import * as zarr from '../../../data/zarr';
 import { FileSystemStore } from '@zarrita/storage';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
@@ -41,7 +40,7 @@ async function loadArrayWithAttrs(
 }> {
   const storePath = path.join(FIXTURES_DIR, datasetName);
   const rawStore = new FileSystemStore(storePath);
-  const store = await zarr.tryWithConsolidated(rawStore);
+  const store = await zarr.openStore(rawStore);
   const rootLoc = zarr.root(store);
   const arrayLoc = rootLoc.resolve(arrayPath);
   const array = await zarr.open(arrayLoc, { kind: 'array' });
@@ -50,7 +49,7 @@ async function loadArrayWithAttrs(
 }
 
 /**
- * Extract ranges from decoded array - mirrors the logic in point-spatial-index-loader.ts
+ * Extract ranges from decoded array - mirrors the logic in points-spatial-index-loader.ts
  *
  * CRITICAL: This is the exact logic that had the LUT bug.
  * The bug was using elementsPerPoint instead of actualElementsPerPoint.
@@ -79,7 +78,7 @@ function extractRangesFromDecoded(
 }
 
 /**
- * Get actualElementsPerPoint - mirrors logic in point-spatial-index-loader.ts lines 632-635
+ * Get actualElementsPerPoint - mirrors logic in points-spatial-index-loader.ts lines 632-635
  */
 function getActualElementsPerPoint(
   array: zarr.Array<zarr.DataType, zarr.Readable>,

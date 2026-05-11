@@ -11,13 +11,15 @@ Run from project root:
     hatch run python packages/luxar-viewer/tests/fixtures/generate_test_data.py
 """
 
+import shutil
 from pathlib import Path
 
 import numpy as np
+import zarr
 from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
-from luxar.encoding import EncodingMode
+from luxar.encoding import ArrayEncoder, EncodingMode, SemanticType
 
 # Output directory
 FIXTURES_DIR = Path(__file__).parent
@@ -213,6 +215,554 @@ def generate_array_refs_test():
         aprint(f"✓ Created {output}")
         aprint(f"  Shared positions: {shared_positions.shape}")
         aprint(f"  Shared colors: {shared_colors.shape} (deduplicated)")
+
+
+def generate_array_ref_broadcasting_test():
+    """Test array_ref positions combined with scalar/broadcast attributes.
+
+    This catches a subtle encoder/metadata bug: when a duplicate positions array is
+    stored as an array_ref, the physical zarr array shape is ``(0, D)``. Scalar
+    attributes on the same node must still be broadcast to the logical point count,
+    not to the physical array_ref shape.
+    """
+    with asection("Generating Array Ref + Broadcasting Test"):
+        output = FIXTURES_DIR / "test_array_ref_broadcasting.zarr"
+
+        positions = np.array(
+            [
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+            ],
+            dtype=np.float32,
+        )
+        first_colors = np.array(
+            [
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+                [1.0, 1.0, 0.0],
+            ],
+            dtype=np.float32,
+        )
+        first_radii = np.array([0.25, 0.5, 0.75, 1.0], dtype=np.float32)
+
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
+
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.MEMORY,
+            compressor=None,
+            float16_allowed=False,
+            enable_spatial_index=False,
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+            scene.add_points(
+                "source_points",
+                positions,
+                colors=first_colors,
+                radii=first_radii,
+            )
+            scene.add_points(
+                "ref_points_with_colors",
+                positions,
+                colors=(0.25, 0.5, 0.75),
+                radii=0.5,
+                sharpness=2.0,
+            )
+            scene.add_points(
+                "ref_points_with_scalars",
+                positions,
+                radii=0.5,
+                scalars=1.25,
+                colormap="viridis",
+            )
+
+        aprint(f"✓ Created {output}")
+        aprint("  ref_points_with_colors/positions: array_ref to source_points")
+        aprint("  ref_points_with_scalars/positions: array_ref to source_points")
+        aprint("  Scalar color/radius/sharpness/scalars broadcast to 4 logical points")
+
+
+def generate_encoding_edge_cases_test():
+    """Raw ArrayEncoder fixture covering edge cases outside scene validation."""
+    with asection("Generating Raw Encoding Edge Cases Test"):
+        output = FIXTURES_DIR / "test_encoding_edge_cases.zarr"
+        if output.exists():
+            shutil.rmtree(output)
+
+        root = zarr.open_group(str(output), mode="w")
+        encoder = ArrayEncoder(float16_allowed=False)
+
+        # Empty passthrough array. Scene validation disallows empty geometries,
+        # but the encoder/decoder contract should still handle empty arrays.
+        encoder.encode(
+            np.empty((0, 3), dtype=np.float32),
+            root,
+            "empty_colors",
+            SemanticType.COLOR,
+            mode=EncodingMode.PRECISION,
+            color_mode="sdr",
+            compressor=None,
+        )
+
+        # Scalar and singleton broadcasting through metadata n_elements.
+        encoder.encode(
+            (0.25, 0.5, 0.75),
+            root,
+            "singleton_color",
+            SemanticType.COLOR,
+            mode=EncodingMode.MEMORY,
+            n_elements=1,
+            color_mode="sdr",
+            compressor=None,
+        )
+        encoder.encode(
+            1.5,
+            root,
+            "singleton_radius",
+            SemanticType.POSITIVE_SCALAR,
+            mode=EncodingMode.MEMORY,
+            n_elements=1,
+            compressor=None,
+        )
+
+        # Full uniform arrays should encode as broadcasted with inferred n_elements.
+        encoder.encode(
+            np.tile(np.array([[0.1, 0.2, 0.3]], dtype=np.float32), (4, 1)),
+            root,
+            "uniform_color_array",
+            SemanticType.COLOR,
+            mode=EncodingMode.MEMORY,
+            color_mode="sdr",
+            compressor=None,
+        )
+
+        # Explicit scalar LUT mode for 2D non-color data.
+        scalar_lut_values = np.array(
+            [
+                [0.0, 1.0, 2.0, 3.0],
+                [3.0, 2.0, 1.0, 0.0],
+                [0.0, 1.0, 2.0, 3.0],
+                [3.0, 2.0, 1.0, 0.0],
+                [0.0, 1.0, 2.0, 3.0],
+                [3.0, 2.0, 1.0, 0.0],
+                [0.0, 1.0, 2.0, 3.0],
+                [3.0, 2.0, 1.0, 0.0],
+            ],
+            dtype=np.float32,
+        )
+        encoder.encode(
+            scalar_lut_values,
+            root,
+            "scalar_lut_matrix",
+            SemanticType.BOUNDED_SCALAR,
+            mode=EncodingMode.MEMORY,
+            compressor=None,
+        )
+
+        # Explicit log-space positive scalar encoding. The scene compiler uses
+        # linear positive-scalar encoding by default, so keep a raw fixture for
+        # decoder compatibility with this valid encoder mode.
+        encoder.encode(
+            np.logspace(-2, 2, 32, dtype=np.float32),
+            root,
+            "log_scalar_radii",
+            SemanticType.POSITIVE_SCALAR,
+            mode=EncodingMode.MEMORY,
+            positive_scalar_encoding="log",
+            compressor=None,
+        )
+
+        # Known 4D packed lower-triangular Cholesky values.
+        cholesky = np.array(
+            [
+                [1.0, 0.1, 1.1, 0.2, 0.3, 1.2, 0.4, 0.5, 0.6, 1.3],
+                [2.0, 0.0, 2.1, 0.0, 0.0, 2.2, 0.0, 0.0, 0.0, 2.3],
+            ],
+            dtype=np.float32,
+        )
+        encoder.encode(
+            cholesky,
+            root,
+            "cholesky_4d_packed",
+            SemanticType.CHOLESKY,
+            mode=EncodingMode.PRECISION,
+            compressor=None,
+        )
+
+        zarr.consolidate_metadata(str(output))
+        aprint(f"✓ Created {output}")
+        aprint(
+            "  Covers empty arrays, singleton broadcasts, scalar LUT, log scalar, 4D Cholesky"
+        )
+
+
+def _tag_contract_case(
+    array: zarr.Array,
+    case_id: str,
+    semantic_type: SemanticType | str,
+    description: str,
+) -> None:
+    """Attach machine-readable coverage metadata to raw contract arrays."""
+    array.attrs["contract_case"] = {
+        "case_id": case_id,
+        "semantic_type": str(getattr(semantic_type, "value", semantic_type)),
+        "description": description,
+    }
+
+
+def generate_encoding_contract_matrix_test():
+    """Generate a declarative raw ArrayEncoder contract matrix fixture.
+
+    Scene fixtures are realistic, but they do not exhaustively pin the encoder
+    surface. This fixture intentionally creates small arrays for every semantic
+    type and every decoder-supported encoding family, including dtype and LUT
+    thresholds that are awkward to trigger from normal scene validation.
+    """
+    with asection("Generating Encoding Contract Matrix Test"):
+        output = FIXTURES_DIR / "test_encoding_contract_matrix.zarr"
+        if output.exists():
+            shutil.rmtree(output)
+
+        root = zarr.open_group(str(output), mode="w")
+
+        def encode_case(
+            case_id: str,
+            data: np.ndarray | float | int | tuple[float, ...],
+            semantic_type: SemanticType,
+            description: str,
+            *,
+            mode: EncodingMode = EncodingMode.MEMORY,
+            n_elements: int | None = None,
+            bounds: tuple[float, float] | None = None,
+            positive_scalar_encoding: str = "linear",
+            custom_encoder: str | None = None,
+            color_mode: str | None = None,
+            chunks: tuple[int, ...] | None = None,
+        ) -> None:
+            # Use a fresh encoder per case so array_ref coverage remains explicit
+            # in scene fixtures and does not accidentally appear in this matrix.
+            encoder = ArrayEncoder(float16_allowed=False)
+            encoder.encode(
+                data,
+                root,
+                case_id,
+                semantic_type,
+                mode=mode,
+                n_elements=n_elements,
+                bounds=bounds,
+                positive_scalar_encoding=positive_scalar_encoding,  # type: ignore[arg-type]
+                custom_encoder=custom_encoder,
+                color_mode=color_mode,  # type: ignore[arg-type]
+                chunks=chunks,
+                compressor=None,
+            )
+            _tag_contract_case(root[case_id], case_id, semantic_type, description)
+
+        # COORDINATE: direct float32, empty passthrough, and 4D scalar LUT.
+        encode_case(
+            "coordinate_empty_0x3",
+            np.empty((0, 3), dtype=np.float32),
+            SemanticType.COORDINATE,
+            "empty coordinate passthrough",
+            mode=EncodingMode.PRECISION,
+        )
+        encode_case(
+            "coordinate_float32_chunked_2d",
+            np.array(
+                [[-1.0, 0.0], [1.0, 2.0], [3.5, -4.0], [5.0, 6.0], [7.0, -8.0]],
+                dtype=np.float32,
+            ),
+            SemanticType.COORDINATE,
+            "2D coordinate float32 with row chunks",
+            mode=EncodingMode.PRECISION,
+            chunks=(2, 2),
+        )
+        unique = np.arange(16, dtype=np.float32)
+        coordinate_4d = np.column_stack(
+            [unique % 4, (unique * 2) % 7, (unique * 3) % 11, (unique * 5) % 13]
+        ).astype(np.float32)
+        coordinate_4d = np.tile(coordinate_4d, (4, 1))
+        encode_case(
+            "coordinate_lut_scalar_4d",
+            coordinate_4d,
+            SemanticType.COORDINATE,
+            "4D coordinate scalar LUT with original_shape metadata",
+            mode=EncodingMode.MEMORY,
+            chunks=(5, 4),
+        )
+
+        # COLOR: RGB quantization, direct integer colors, row LUT, and RGB uint16.
+        color_gradient = np.linspace(0.0, 1.0, 17 * 3, dtype=np.float32).reshape(17, 3)
+        encode_case(
+            "color_rgb_uint8_sdr",
+            color_gradient,
+            SemanticType.COLOR,
+            "SDR float color quantized to rgb_uint8",
+            mode=EncodingMode.MEMORY,
+            color_mode="sdr",
+            chunks=(4, 3),
+        )
+        encode_case(
+            "color_rgb_uint16_custom",
+            color_gradient,
+            SemanticType.COLOR,
+            "SDR float color explicitly quantized to rgb_uint16",
+            mode=EncodingMode.CUSTOM,
+            custom_encoder="rgb_uint16",
+            color_mode="sdr",
+            chunks=(4, 3),
+        )
+        encode_case(
+            "color_direct_uint8",
+            np.array([[0, 127, 255], [255, 64, 0], [1, 2, 3]], dtype=np.uint8),
+            SemanticType.COLOR,
+            "direct uint8 color storage",
+            mode=EncodingMode.PRECISION,
+            color_mode="sdr",
+        )
+        encode_case(
+            "color_direct_uint16",
+            np.array(
+                [[0, 32768, 65535], [65535, 4096, 0], [100, 200, 300]], dtype=np.uint16
+            ),
+            SemanticType.COLOR,
+            "direct uint16 color storage",
+            mode=EncodingMode.PRECISION,
+            color_mode="sdr",
+        )
+        lut_rows = np.array(
+            [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [1.0, 1.0, 0.0]],
+            dtype=np.float32,
+        )
+        encode_case(
+            "color_lut_row_chunked",
+            np.tile(lut_rows, (16, 1)),
+            SemanticType.COLOR,
+            "row-mode color LUT with chunked indices",
+            mode=EncodingMode.MEMORY,
+            color_mode="sdr",
+            chunks=(7, 3),
+        )
+        encode_case(
+            "color_broadcast_rgba_singleton",
+            (0.25, 0.5, 0.75, 1.0),
+            SemanticType.COLOR,
+            "RGBA singleton broadcast",
+            mode=EncodingMode.MEMORY,
+            n_elements=1,
+            color_mode="sdr",
+        )
+
+        # BOUNDED_SCALAR: precision, uint8, and uint16 quantization.
+        encode_case(
+            "bounded_scalar_float32_precision",
+            np.array([-1.0, -0.25, 0.0, 0.25, 1.0], dtype=np.float32),
+            SemanticType.BOUNDED_SCALAR,
+            "bounded scalar precision/direct float32",
+            mode=EncodingMode.PRECISION,
+            chunks=(2,),
+        )
+        encode_case(
+            "bounded_scalar_uint8_custom",
+            np.linspace(-2.0, 2.0, 33, dtype=np.float32),
+            SemanticType.BOUNDED_SCALAR,
+            "explicit bounded_scalar_uint8 over negative-to-positive range",
+            mode=EncodingMode.CUSTOM,
+            custom_encoder="bounded_scalar_uint8",
+            bounds=(-2.0, 2.0),
+            chunks=(5,),
+        )
+        encode_case(
+            "bounded_scalar_uint16_custom",
+            np.linspace(0.001, 10.0, 257, dtype=np.float32),
+            SemanticType.BOUNDED_SCALAR,
+            "explicit bounded_scalar_uint16 crossing uint8 precision needs",
+            mode=EncodingMode.CUSTOM,
+            custom_encoder="bounded_scalar_uint16",
+            bounds=(0.0, 10.0),
+            chunks=(17,),
+        )
+
+        # POSITIVE_SCALAR: linear uint16 and log uint8/uint16.
+        encode_case(
+            "positive_scalar_linear_uint16",
+            np.linspace(0.001, 1.0, 257, dtype=np.float32),
+            SemanticType.POSITIVE_SCALAR,
+            "positive scalar linear uint16 chosen by dynamic range",
+            mode=EncodingMode.MEMORY,
+            chunks=(17,),
+        )
+        encode_case(
+            "positive_scalar_log_uint8",
+            np.logspace(-6, 3, 64, dtype=np.float32),
+            SemanticType.POSITIVE_SCALAR,
+            "positive scalar log uint8",
+            mode=EncodingMode.MEMORY,
+            positive_scalar_encoding="log",
+            chunks=(9,),
+        )
+        encode_case(
+            "positive_scalar_log_uint16_custom",
+            np.logspace(-9, 6, 257, dtype=np.float32),
+            SemanticType.POSITIVE_SCALAR,
+            "positive scalar explicit log uint16",
+            mode=EncodingMode.CUSTOM,
+            custom_encoder="log_scalar_uint16",
+            chunks=(17,),
+        )
+
+        # CHOLESKY packed lower-triangular shapes for D=1,2,3,4.
+        encode_case(
+            "cholesky_d1_packed",
+            np.array([[1.0], [2.0], [3.0]], dtype=np.float32),
+            SemanticType.CHOLESKY,
+            "D=1 packed Cholesky",
+            mode=EncodingMode.PRECISION,
+        )
+        encode_case(
+            "cholesky_d2_packed",
+            np.array([[1.0, 0.1, 1.1], [2.0, 0.2, 2.2]], dtype=np.float32),
+            SemanticType.CHOLESKY,
+            "D=2 packed Cholesky",
+            mode=EncodingMode.PRECISION,
+        )
+        encode_case(
+            "cholesky_d4_packed_chunked",
+            np.array(
+                [
+                    [1.0, 0.1, 1.1, 0.2, 0.3, 1.2, 0.4, 0.5, 0.6, 1.3],
+                    [2.0, 0.0, 2.1, 0.0, 0.0, 2.2, 0.0, 0.0, 0.0, 2.3],
+                    [3.0, 0.2, 3.1, 0.3, 0.4, 3.2, 0.5, 0.6, 0.7, 3.3],
+                ],
+                dtype=np.float32,
+            ),
+            SemanticType.CHOLESKY,
+            "D=4 packed Cholesky with row chunks",
+            mode=EncodingMode.PRECISION,
+            chunks=(2, 10),
+        )
+
+        # INDEX: direct integer dtype selection, including uint64.
+        encode_case(
+            "index_uint8",
+            np.array([0, 1, 2, 254, 255], dtype=np.uint16),
+            SemanticType.INDEX,
+            "index values fitting uint8",
+            mode=EncodingMode.MEMORY,
+            chunks=(2,),
+        )
+        encode_case(
+            "index_uint16",
+            np.array([0, 255, 256, 4096, 65535], dtype=np.uint32),
+            SemanticType.INDEX,
+            "index values fitting uint16",
+            mode=EncodingMode.MEMORY,
+            chunks=(2,),
+        )
+        encode_case(
+            "index_uint32",
+            np.array([0, 65536, 2**24 + 1, 2**32 - 1], dtype=np.uint64),
+            SemanticType.INDEX,
+            "index values fitting uint32",
+            mode=EncodingMode.MEMORY,
+            chunks=(2,),
+        )
+        encode_case(
+            "index_uint64",
+            np.array([0, 2**32, 2**40 + 12345], dtype=np.uint64),
+            SemanticType.INDEX,
+            "index values requiring uint64 storage",
+            mode=EncodingMode.MEMORY,
+        )
+
+        # UNIT_VECTOR: direct float path with signed normalized rows.
+        unit_vectors = np.array(
+            [[1.0, 0.0, 0.0], [0.0, -1.0, 0.0], [0.0, 0.0, 1.0], [0.57735026] * 3],
+            dtype=np.float32,
+        )
+        encode_case(
+            "unit_vector_float32",
+            unit_vectors,
+            SemanticType.UNIT_VECTOR,
+            "signed 3D unit vectors direct float32",
+            mode=EncodingMode.PRECISION,
+            chunks=(2, 3),
+        )
+
+        # Manual LUT threshold cases, including lut_uint16 which normal scenes do
+        # not currently emit automatically (the decoder contract still supports it).
+        def manual_lut_case(
+            case_id: str,
+            unique_count: int,
+            *,
+            row_mode: bool = False,
+            dtype: np.dtype = np.dtype("uint8"),
+        ) -> None:
+            name = "lut_uint16" if dtype == np.dtype("uint16") else "lut_uint8"
+            if row_mode:
+                lut = np.column_stack(
+                    [
+                        np.linspace(0.0, 1.0, unique_count, dtype=np.float32),
+                        np.linspace(1.0, 0.0, unique_count, dtype=np.float32),
+                        np.full(unique_count, 0.5, dtype=np.float32),
+                    ]
+                )
+                indices = np.arange(unique_count * 2, dtype=np.uint32) % unique_count
+                indices = indices.astype(dtype)
+                root.create_dataset(
+                    case_id, data=indices, chunks=(17,), compressor=None
+                )
+                root[case_id].attrs["encoding"] = {
+                    "name": name,
+                    "lut": lut.tolist(),
+                    "lut_mode": "row",
+                    "original_dtype": "float32",
+                    "original_shape": [int(indices.shape[0]), 3],
+                }
+                description = f"manual row LUT with {unique_count} unique rows"
+                semantic = SemanticType.COLOR
+            else:
+                lut = np.linspace(-1.0, 1.0, unique_count, dtype=np.float32)
+                indices = np.arange(unique_count * 2, dtype=np.uint32) % unique_count
+                indices = indices.astype(dtype)
+                root.create_dataset(
+                    case_id, data=indices, chunks=(17,), compressor=None
+                )
+                root[case_id].attrs["encoding"] = {
+                    "name": name,
+                    "lut": lut.tolist(),
+                    "lut_mode": "scalar",
+                    "original_dtype": "float32",
+                    "original_shape": [int(indices.shape[0])],
+                }
+                description = f"manual scalar LUT with {unique_count} unique values"
+                semantic = SemanticType.BOUNDED_SCALAR
+            _tag_contract_case(root[case_id], case_id, semantic, description)
+
+        manual_lut_case("lut_scalar_1_unique", 1)
+        manual_lut_case("lut_scalar_2_unique", 2)
+        manual_lut_case("lut_scalar_255_unique", 255)
+        manual_lut_case("lut_scalar_256_unique", 256)
+        manual_lut_case("lut_scalar_257_unique_uint16", 257, dtype=np.dtype("uint16"))
+        manual_lut_case("lut_row_256_unique", 256, row_mode=True)
+        manual_lut_case(
+            "lut_row_257_unique_uint16", 257, row_mode=True, dtype=np.dtype("uint16")
+        )
+
+        zarr.consolidate_metadata(str(output))
+        aprint(f"✓ Created {output}")
+        aprint(
+            "  Covers all semantic types, uint32/uint64, lut_uint16, rgb_uint16, log_uint16"
+        )
 
 
 def generate_mixed_encoding_test():
@@ -417,9 +967,7 @@ def generate_integer_colors_test():
             dtype=np.float32,
         )
         radii = np.full(3, 0.5, dtype=np.float32)
-        colors_u8 = np.array(
-            [[255, 0, 0], [0, 128, 255], [64, 32, 16]], dtype=np.uint8
-        )
+        colors_u8 = np.array([[255, 0, 0], [0, 128, 255], [64, 32, 16]], dtype=np.uint8)
         colors_u16 = np.array(
             [[65535, 0, 0], [0, 32768, 65535], [16384, 8192, 4096]],
             dtype=np.uint16,
@@ -498,15 +1046,14 @@ def generate_hdr_colors_test():
 
 
 def generate_log_scalar_test():
-    """Test dataset with log-space encoded radii (wide dynamic range).
+    """Test scene dataset with wide dynamic range radii.
 
-    CRITICAL: This test verifies log_scalar_uint8 encoding which is used for
-    positive scalars with wide dynamic range (e.g., radii from 0.001 to 100.0).
-
-    Encoding: log1p(value)/max_log → uint8
-    Decoding: expm1(normalized * max_log)
+    The scene compiler currently uses linear positive-scalar encoding by default,
+    so this fixture exercises uint16 bounded-scalar radii. The raw
+    ``test_encoding_edge_cases.zarr`` fixture below covers explicit log-scalar
+    encoder compatibility.
     """
-    with asection("Generating Log-Scalar Encoding Test"):
+    with asection("Generating Wide-Range Scalar Encoding Test"):
         output = FIXTURES_DIR / "test_log_scalar.zarr"
 
         # Create 100 points with radii spanning wide dynamic range
@@ -516,8 +1063,8 @@ def generate_log_scalar_test():
         # Arrange points in a line along X axis
         positions[:, 0] = np.arange(num_points, dtype=np.float32)
 
-        # Radii with wide dynamic range: 0.01 to 100.0 (log scale)
-        # This range benefits from log-space encoding
+        # Radii with wide dynamic range: 0.01 to 100.0.
+        # The scene compiler stores these with bounded_scalar_uint16 by default.
         radii = np.logspace(-2, 2, num_points, dtype=np.float32)  # 0.01 to 100
 
         # Simple colors
@@ -532,7 +1079,7 @@ def generate_log_scalar_test():
             ]
         )
 
-        # Use MEMORY mode which uses log_scalar for wide-range scalars
+        # Use MEMORY mode, which selects uint16 for this dynamic range.
         with LuxarZarrCompiler(
             output,
             encoding_mode=EncodingMode.MEMORY,
@@ -550,8 +1097,8 @@ def generate_log_scalar_test():
 
         aprint(f"✓ Created {output}")
         aprint(f"  Positions: {positions.shape}")
-        aprint(f"  Radii range: [{radii.min():.4f}, {radii.max():.4f}] (log-space)")
-        aprint("  CRITICAL: Verifies log_scalar_uint8 encoding/decoding")
+        aprint(f"  Radii range: [{radii.min():.4f}, {radii.max():.4f}] (wide range)")
+        aprint("  CRITICAL: Verifies bounded_scalar_uint16 encoding/decoding")
 
 
 def generate_4d_scalar_lut_test():
@@ -968,6 +1515,15 @@ def main():
         generate_array_refs_test()
         aprint("")
 
+        generate_array_ref_broadcasting_test()
+        aprint("")
+
+        generate_encoding_edge_cases_test()
+        aprint("")
+
+        generate_encoding_contract_matrix_test()
+        aprint("")
+
         generate_mixed_encoding_test()
         aprint("")
 
@@ -1013,6 +1569,9 @@ def main():
         aprint(f"  {FIXTURES_DIR}/test_lut.zarr")
         aprint(f"  {FIXTURES_DIR}/test_quantization.zarr")
         aprint(f"  {FIXTURES_DIR}/test_array_refs.zarr")
+        aprint(f"  {FIXTURES_DIR}/test_array_ref_broadcasting.zarr")
+        aprint(f"  {FIXTURES_DIR}/test_encoding_edge_cases.zarr")
+        aprint(f"  {FIXTURES_DIR}/test_encoding_contract_matrix.zarr")
         aprint(f"  {FIXTURES_DIR}/test_mixed.zarr")
         aprint(f"  {FIXTURES_DIR}/test_4d.zarr")
         aprint(f"  {FIXTURES_DIR}/test_hierarchical_transforms.zarr")

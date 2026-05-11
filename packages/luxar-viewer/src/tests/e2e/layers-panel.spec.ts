@@ -7,7 +7,7 @@
  * Dataset: sharpness_showcase_example.zarr (8+ point cloud nodes with layer=True)
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import {
   waitForLuxarReady,
   waitForPointsLoaded,
@@ -374,5 +374,50 @@ test.describe('Layers Panel', () => {
       return panel.style.display === 'none' || getComputedStyle(panel).display === 'none';
     });
     expect(panelHidden).toBe(true);
+  });
+
+  test('keyboard listbox: programmatic focus + ArrowDown selects next row, aria-selected updates', async ({
+    page,
+  }) => {
+    // The test programmatically focuses the row via .focus() rather
+    // than driving Tab — Tab in headless depends on every interactive
+    // control between the canvas and the listbox, which is fragile.
+    // This still verifies the listbox keyboard idiom (ArrowDown moves
+    // focus + selection, aria-selected updates) end-to-end against a
+    // real scene + input handler + DOM.
+    await openLayersPanel(page);
+
+    // The listbox container has role="listbox"; rows are role="option".
+    const listbox = page.locator('.luxar-layers-panel__list[role="listbox"]');
+    await expect(listbox).toBeVisible();
+
+    const rows = page.locator('.luxar-layer-row[role="option"]');
+    const rowCount = await rows.count();
+    expect(rowCount).toBeGreaterThan(1); // need ≥ 2 rows for ArrowDown
+
+    // Snapshot which row is selected initially. The panel auto-
+    // selects the first layer at init time.
+    const initiallySelected = await rows
+      .evaluateAll((els) => els.findIndex((el) => el.getAttribute('aria-selected') === 'true'));
+    expect(initiallySelected).toBeGreaterThanOrEqual(0);
+
+    // Focus the initially-selected row (the tabIndex=0 anchor) so the
+    // listbox keyboard handler can route ArrowDown through. Direct
+    // .focus() is more reliable than Tab in headless because Tab
+    // navigation order depends on every interactive control between
+    // the canvas and the listbox.
+    await rows.nth(initiallySelected).focus();
+    await page.keyboard.press('ArrowDown');
+
+    // The next row should now be selected.
+    const nextSelected = await rows
+      .evaluateAll((els) => els.findIndex((el) => el.getAttribute('aria-selected') === 'true'));
+    expect(nextSelected).toBe(initiallySelected + 1);
+
+    // Verify selection-state class flipped (visual rendering + state
+    // both move in lock-step; checking either is enough but checking
+    // both guards against drift).
+    const selectedRow = rows.nth(nextSelected);
+    await expect(selectedRow).toHaveClass(/luxar-layer-row--selected/);
   });
 });

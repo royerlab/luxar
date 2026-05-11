@@ -7,10 +7,18 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
-// NOTE: This test file mocks 10 internal modules (below). This tests
-// initialization order and mock wiring, but not real component behavior.
-// See CLAUDE.md "Over-Mocking in Tests" for guidance on improving this.
-// TODO: Add integration tests with fewer mocks as modules become more testable.
+// NOTE: This test file mocks 9 internal modules (below). It primarily
+// verifies initialization ordering + cross-wiring; component behavior
+// is covered by per-module tests.
+//
+// `LuxarAppOptions.factories` (see `core/app-factories.ts`) exposes
+// construction overrides for the heavy components (SceneManager,
+// AnimationController, RenderingControls, RecordingPanel,
+// LayersPanel). The `vi.mock(...)` calls below still work because the
+// default factories call `new X(...)` and vi.mock intercepts the
+// constructor. New tests can opt into factory stubs instead — see
+// the `factory overrides` describe block below for an example of
+// injecting a SceneManager stub without `vi.mock`.
 
 // Mock all dependencies before importing LuxarApp
 vi.mock('../../../scene/scene-manager');
@@ -19,10 +27,34 @@ vi.mock('../../../input/input-handler');
 vi.mock('../../../ui/rendering-controls');
 vi.mock('../../../ui/recording-panel');
 vi.mock('../../../ui/components/scale-bar');
-vi.mock('../../../ui/dataset-browser');
+vi.mock('../../../ui/panels/dataset-browser');
 vi.mock('../../../ui/helpers');
 vi.mock('../../../ui/layers');
-vi.mock('../../../scene/scene-dims-manager');
+// scene-dims-manager is unmocked: it's a pure JS singleton (no DOM
+// or WebGL), so running it real in app.test improves coverage of the
+// dim-init wiring without affecting jsdom behavior.
+// PerformanceMonitor and DebugConsole are owned by LuxarApp and are
+// mocked here so stats.js / DebugConsole's document.createElement
+// calls don't run in the stubbed-window env.
+vi.mock('../../../ui/monitors/performance-monitor', () => ({
+  PerformanceMonitor: vi.fn().mockImplementation(() => ({
+    show: vi.fn(),
+    hide: vi.fn(),
+    toggle: vi.fn(),
+    cyclePanels: vi.fn(),
+    dispose: vi.fn(),
+    visible: false,
+  })),
+}));
+vi.mock('../../../ui/panels/debug-console', () => ({
+  DebugConsole: vi.fn().mockImplementation(() => ({
+    show: vi.fn(),
+    hide: vi.fn(),
+    toggle: vi.fn(),
+    dispose: vi.fn(),
+    getIsVisible: vi.fn(() => false),
+  })),
+}));
 
 // Setup global mocks
 const mockAddEventListener = vi.fn();
@@ -60,7 +92,7 @@ import { SceneManager } from '../../../scene/scene-manager';
 import { AnimationController } from '../../../scene/animation-controller';
 import { InputHandler } from '../../../input/input-handler';
 import { RenderingControls } from '../../../ui/rendering-controls';
-import { DatasetBrowser } from '../../../ui/dataset-browser';
+import { DatasetBrowser } from '../../../ui/panels/dataset-browser';
 import { cleanupUI as mockCleanupUI, clearError as mockClearError } from '../../../ui/helpers';
 
 // Import LuxarApp after all mocks are set up
@@ -98,6 +130,7 @@ describe('LuxarApp', () => {
       addPerFrameCallback: vi.fn(),
       removePerFrameCallback: vi.fn(),
       setAdaptiveDPRManager: vi.fn(),
+      setContextLostPredicate: vi.fn(),
       dispose: vi.fn(),
       isActive: false,
     };
@@ -108,6 +141,7 @@ describe('LuxarApp', () => {
       setScaleBar: vi.fn(),
       setRecordingPanel: vi.fn(),
       setLayersPanel: vi.fn(),
+      setDatasetBrowser: vi.fn(),
       clearDimensionUI: vi.fn(),
       initDimensionSliders: vi.fn(),
       dispose: vi.fn(),
@@ -188,7 +222,18 @@ describe('LuxarApp', () => {
       mockFetch.mockResolvedValue({ ok: true });
       await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
 
-      expect(InputHandler).toHaveBeenCalledWith(mockSceneManager, mockAnimationController);
+      // InputHandler receives the PerformanceMonitor and DebugConsole
+      // (both constructed at app level rather than in
+      // AnimationController / InputHandler), plus a
+      // DimensionSlidersFactory function so the input layer never
+      // imports the concrete UI panel.
+      expect(InputHandler).toHaveBeenCalledWith(
+        mockSceneManager,
+        mockAnimationController,
+        expect.any(Object),
+        expect.any(Object),
+        expect.any(Function)
+      );
       expect(mockInputHandler.init).toHaveBeenCalled();
     });
 
@@ -577,6 +622,126 @@ describe('LuxarApp', () => {
 
       expect(disposeOrder.indexOf('scene')).toBeGreaterThan(disposeOrder.indexOf('animation'));
     });
+
+    it('disposes the SceneLoaderManager and DataMonitorManager singletons', async () => {
+      // Long-lived static singletons. Without explicit disposeInstance()
+      // calls, their loaders + cache stores + eventBus subscriptions
+      // survive across LuxarApp re-init.
+      const sceneLoaderModule = await import('../../../data/scene-loader-manager');
+      const dataMonitorModule = await import('../../../ui/monitors/data-monitor-manager');
+
+      const sceneLoaderSpy = vi.spyOn(sceneLoaderModule.SceneLoaderManager, 'disposeInstance');
+      const dataMonitorSpy = vi.spyOn(dataMonitorModule.DataMonitorManager, 'disposeInstance');
+
+      app.dispose();
+
+      expect(sceneLoaderSpy).toHaveBeenCalledTimes(1);
+      expect(dataMonitorSpy).toHaveBeenCalledTimes(1);
+
+      // Order: monitor first (its factory wiring holds loader refs),
+      // then the loader manager drops the actual loaders + cache stores.
+      const monitorCallOrder = dataMonitorSpy.mock.invocationCallOrder[0];
+      const loaderCallOrder = sceneLoaderSpy.mock.invocationCallOrder[0];
+      expect(monitorCallOrder).toBeLessThan(loaderCallOrder);
+    });
+
+    it('still disposes singletons + workerPool when an early component throws', async () => {
+      // Pre-existing dispose() wrapped everything in one
+      // try/catch, so a throw early in the chain (sceneManager etc.)
+      // skipped DataMonitorManager / SceneLoaderManager / disposeWorkerPool
+      // / managerRegistry. The safeDispose helper guarantees later
+      // teardown runs regardless.
+      const sceneLoaderModule = await import('../../../data/scene-loader-manager');
+      const dataMonitorModule = await import('../../../ui/monitors/data-monitor-manager');
+      const workerPoolModule = await import('../../../workers/worker-pool');
+
+      const sceneLoaderSpy = vi.spyOn(sceneLoaderModule.SceneLoaderManager, 'disposeInstance');
+      const dataMonitorSpy = vi.spyOn(dataMonitorModule.DataMonitorManager, 'disposeInstance');
+      const workerPoolSpy = vi.spyOn(workerPoolModule, 'disposeWorkerPool');
+
+      // Force an early disposer to throw — animationController is the
+      // very first call site inside dispose().
+      mockAnimationController.dispose.mockImplementation(() => {
+        throw new Error('animation dispose blew up');
+      });
+
+      expect(() => app.dispose()).not.toThrow();
+
+      // The throw must NOT have aborted later cleanup:
+      expect(dataMonitorSpy).toHaveBeenCalledTimes(1);
+      expect(sceneLoaderSpy).toHaveBeenCalledTimes(1);
+      expect(workerPoolSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('still disposes singletons + workerPool when a middle component throws', async () => {
+      const sceneLoaderModule = await import('../../../data/scene-loader-manager');
+      const dataMonitorModule = await import('../../../ui/monitors/data-monitor-manager');
+      const workerPoolModule = await import('../../../workers/worker-pool');
+
+      const sceneLoaderSpy = vi.spyOn(sceneLoaderModule.SceneLoaderManager, 'disposeInstance');
+      const dataMonitorSpy = vi.spyOn(dataMonitorModule.DataMonitorManager, 'disposeInstance');
+      const workerPoolSpy = vi.spyOn(workerPoolModule, 'disposeWorkerPool');
+
+      // sceneManager sits in the middle of the dispose chain — between
+      // the UI/scene panels and the singleton/worker teardown.
+      mockSceneManager.dispose.mockImplementation(() => {
+        throw new Error('sceneManager dispose blew up');
+      });
+
+      expect(() => app.dispose()).not.toThrow();
+
+      expect(dataMonitorSpy).toHaveBeenCalledTimes(1);
+      expect(sceneLoaderSpy).toHaveBeenCalledTimes(1);
+      expect(workerPoolSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('disposes the worker pool after the scene-loader manager', async () => {
+      // Order matters: SceneLoaderManager drops loaders that may still
+      // post messages to workers; disposing workers BEFORE the loader
+      // manager could race a final message into a terminated worker.
+      const sceneLoaderModule = await import('../../../data/scene-loader-manager');
+      const workerPoolModule = await import('../../../workers/worker-pool');
+
+      const sceneLoaderSpy = vi.spyOn(sceneLoaderModule.SceneLoaderManager, 'disposeInstance');
+      const workerPoolSpy = vi.spyOn(workerPoolModule, 'disposeWorkerPool');
+
+      app.dispose();
+
+      expect(sceneLoaderSpy).toHaveBeenCalledTimes(1);
+      expect(workerPoolSpy).toHaveBeenCalledTimes(1);
+      const loaderOrder = sceneLoaderSpy.mock.invocationCallOrder[0];
+      const workerOrder = workerPoolSpy.mock.invocationCallOrder[0];
+      expect(loaderOrder).toBeLessThan(workerOrder);
+    });
+
+    it('closes an open DatasetBrowser and clears app + input-handler refs', () => {
+      // Plant a fake browser to exercise the safeDispose('datasetBrowser')
+      // step. Real construction goes through `showDatasetBrowser()` which
+      // opens it lazily when no `?src=` is given; assigning here matches
+      // the post-init state when the user has the browser open.
+      const browserClose = vi.fn();
+      const setDatasetBrowserSpy = vi.spyOn(mockInputHandler, 'setDatasetBrowser');
+      (app as unknown as { datasetBrowser: { close: () => void } }).datasetBrowser = {
+        close: browserClose,
+      };
+
+      app.dispose();
+
+      expect(browserClose).toHaveBeenCalledTimes(1);
+      expect(setDatasetBrowserSpy).toHaveBeenCalledWith(undefined);
+      // Field cleared: a stale browser ref shouldn't persist on a
+      // disposed app instance.
+      expect(
+        (app as unknown as { datasetBrowser: unknown }).datasetBrowser
+      ).toBeUndefined();
+    });
+
+    it('does not throw when DatasetBrowser is not open at dispose time', () => {
+      // Common path: user navigated with `?src=...`, never opened the
+      // browser. `this.datasetBrowser` is undefined; the optional chain
+      // in safeDispose handles it.
+      expect(() => app.dispose()).not.toThrow();
+    });
   });
 
   describe('focus handling', () => {
@@ -777,6 +942,65 @@ describe('LuxarApp', () => {
       expect(initOrder.indexOf('AnimationController')).toBeLessThan(startAnimationIndex);
       expect(initOrder.indexOf('InputHandler')).toBeLessThan(startAnimationIndex);
       expect(initOrder.indexOf('RenderingControls')).toBeLessThan(startAnimationIndex);
+    });
+  });
+
+  describe('factory overrides', () => {
+    it('factories.sceneManager is consulted instead of `new SceneManager()`', async () => {
+      mockFetch.mockResolvedValue({ ok: true });
+      const factorySpy = vi.fn(() => mockSceneManager);
+      await app.init({
+        canvas: mockCanvas,
+        src: 'http://example.com/data.zarr',
+        factories: { sceneManager: factorySpy },
+      });
+      expect(factorySpy).toHaveBeenCalledTimes(1);
+      // Default SceneManager() should NOT have been called this time.
+      expect(SceneManager).not.toHaveBeenCalled();
+    });
+
+    it('factories.animationController receives the live SceneManager controls/postProcessing', async () => {
+      mockFetch.mockResolvedValue({ ok: true });
+      const factorySpy = vi.fn(() => mockAnimationController);
+      await app.init({
+        canvas: mockCanvas,
+        src: 'http://example.com/data.zarr',
+        factories: { animationController: factorySpy },
+      });
+      expect(factorySpy).toHaveBeenCalledTimes(1);
+      expect(factorySpy).toHaveBeenCalledWith(
+        mockSceneManager.controls,
+        mockSceneManager.postProcessing
+      );
+    });
+
+    it('omitted factories fall back to defaults (vi.mock-intercepted constructors)', async () => {
+      mockFetch.mockResolvedValue({ ok: true });
+      // No `factories` field on options — defaults flow through.
+      await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
+      // The mocked constructors still ran via the default factory path.
+      expect(SceneManager).toHaveBeenCalled();
+      expect(AnimationController).toHaveBeenCalled();
+    });
+
+    it('per-key overrides compose: provide one factory, defaults handle the rest', async () => {
+      mockFetch.mockResolvedValue({ ok: true });
+      const recordingFactory = vi.fn(() => ({
+        setPanelStateCallbacks: vi.fn(),
+        setAdaptiveDPRManager: vi.fn(),
+        setOverlayManager: vi.fn(),
+        dispose: vi.fn(),
+      }));
+      await app.init({
+        canvas: mockCanvas,
+        src: 'http://example.com/data.zarr',
+        factories: { recordingPanel: recordingFactory as never },
+      });
+      expect(recordingFactory).toHaveBeenCalledTimes(1);
+      // Other components went through their default factories (which
+      // vi.mock intercepts):
+      expect(SceneManager).toHaveBeenCalled();
+      expect(AnimationController).toHaveBeenCalled();
     });
   });
 });

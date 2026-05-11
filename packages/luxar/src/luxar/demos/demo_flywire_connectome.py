@@ -121,11 +121,11 @@ DEFAULT_MAX_EDGES = 300_000
 # Neurotransmitter palette: distinctive, roughly matches community conventions
 NT_COLORS: dict[str, tuple[float, float, float]] = {
     "acetylcholine": (1.00, 0.75, 0.25),  # warm amber (excitatory)
-    "gaba":          (0.35, 0.75, 1.00),  # blue (inhibitory)
-    "glutamate":     (1.00, 0.35, 0.85),  # magenta
-    "dopamine":      (0.40, 0.95, 0.55),  # green
-    "serotonin":     (1.00, 0.35, 0.35),  # red
-    "octopamine":    (0.75, 0.45, 1.00),  # purple
+    "gaba": (0.35, 0.75, 1.00),  # blue (inhibitory)
+    "glutamate": (1.00, 0.35, 0.85),  # magenta
+    "dopamine": (0.40, 0.95, 0.55),  # green
+    "serotonin": (1.00, 0.35, 0.35),  # red
+    "octopamine": (0.75, 0.45, 1.00),  # purple
 }
 NT_UNKNOWN = (0.65, 0.65, 0.65)
 
@@ -327,9 +327,7 @@ def load_edges(
         # Argmax across NT columns → dominant presynaptic NT
         if nt_avg_present:
             nt_matrix = pair[nt_avg_present].to_numpy(dtype=np.float32)
-            nt_names = np.array(
-                [NT_AVG_COLS[c] for c in nt_avg_present], dtype=object
-            )
+            nt_names = np.array([NT_AVG_COLS[c] for c in nt_avg_present], dtype=object)
             pair["nt"] = nt_names[nt_matrix.argmax(axis=1)]
             pair = pair.drop(columns=nt_avg_present)
         else:
@@ -467,16 +465,14 @@ def build_edge_lines(
     base_w = (0.4 + 1.8 * log_syn).astype(np.float32)
 
     widths = np.empty(n_edges * 2, dtype=np.float32)
-    widths[0::2] = base_w          # thicker at presynaptic cell
-    widths[1::2] = base_w * 0.35   # tapers toward postsynaptic cell
+    widths[0::2] = base_w  # thicker at presynaptic cell
+    widths[1::2] = base_w * 0.35  # tapers toward postsynaptic cell
 
     pre_types = neurons["cell_type"].to_numpy()[pre_idx]
     post_types = neurons["cell_type"].to_numpy()[post_idx]
     nt_vals = edges["nt"].to_numpy()
     labels: list[str] = []
-    for pt, pot, count, nt in zip(
-        pre_types, post_types, syn, nt_vals, strict=True
-    ):
+    for pt, pot, count, nt in zip(pre_types, post_types, syn, nt_vals, strict=True):
         label = (
             f"{format_label(str(pt)) or '(pre)'} → "
             f"{format_label(str(pot)) or '(post)'}\n"
@@ -544,7 +540,9 @@ def build_scene(
 ) -> tuple[int, int]:
     # Normalize edge widths against the *global* max synapse count so per-NT
     # layers share a consistent thickness scale.
-    log_syn_max = float(np.log1p(edges["syn_count"].to_numpy()).max()) if len(edges) else 1.0
+    log_syn_max = (
+        float(np.log1p(edges["syn_count"].to_numpy()).max()) if len(edges) else 1.0
+    )
 
     # Stable super_class ordering by neuron count (largest first) — used both
     # for the legend palette and for layer order in the viewer.

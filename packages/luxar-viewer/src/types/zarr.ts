@@ -110,6 +110,7 @@ export interface ZarrViewerConfig {
   control_type?: string;
   auto_rotate?: boolean;
   auto_rotate_speed?: number;
+  natural_drag?: boolean;
 
   // Cinematic
   cinematic_mode?: boolean;
@@ -224,14 +225,45 @@ export interface ZarrSceneAttrs {
 }
 
 /**
+ * 4x4 transformation matrix laid out as a flat 16-element array,
+ * column-major (THREE.js convention). Producers must transpose from
+ * NumPy's row-major before serialising; the loader's `validateTransformFormat`
+ * rejects row-major payloads with translation at indices [3,7,11].
+ */
+export type Matrix4x4 = readonly [
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+];
+
+/**
  * Zarr group attributes for nodes in the scene graph
  */
 export interface ZarrNodeAttrs {
   /** Node type (points, group, etc.) */
   type?: 'points' | 'group' | string;
 
-  /** Transformation matrix (16 elements for 4x4 matrix) */
-  transform?: number[];
+  /**
+   * Transformation matrix (16 elements for a column-major 4x4 matrix).
+   * Typed as a wider readonly number array on the input side because
+   * zarr metadata is parsed dynamically; the {@link hasTransform} guard
+   * narrows it to {@link Matrix4x4} once the length-16 invariant has
+   * been verified.
+   */
+  transform?: readonly number[];
 
   /** Per-dimension transforms for non-displayed dimensions */
   nd_transform?: NdTransformMap;
@@ -263,6 +295,27 @@ export interface ZarrNodeAttrs {
   /** Physical units */
   units?: string;
 
+  /**
+   * Colormap name. Built-in (e.g. 'viridis', 'magma') OR 'custom' — the
+   * latter pairs with a `colormap_lut` zarr array sibling.
+   */
+  colormap?: string;
+
+  /** Whether per-element scalar values are present for colormap lookup. */
+  has_scalars?: boolean;
+
+  /** `[min, max]` range used to normalise scalars before LUT lookup. */
+  scalar_data_range?: [number, number];
+
+  /**
+   * bytes loaded from the node's `colormap_lut` zarr array when
+   * `colormap === 'custom'`. Populated by `SceneLoader.buildSceneGraph`
+   * and consumed by `NodeFactory` via
+   * `getColormapTexture('custom', customLutBytes)`. Not authored at the
+   * zarr level — purely a runtime hand-off.
+   */
+  customLutBytes?: Uint8Array;
+
   /** Any additional attributes */
   [key: string]: unknown;
 }
@@ -290,11 +343,15 @@ export function hasContentsMethod(store: unknown): store is ZarrStoreWithContent
 }
 
 /**
- * Type guard to check if attributes contain a transform
+ * Type guard: narrow `attrs.transform` from `readonly number[] | undefined`
+ * to a {@link Matrix4x4} 16-tuple once the length-16 invariant has been
+ * verified at runtime. The geometry-format check (column-major,
+ * translation at indices [12,13,14]) is performed downstream by
+ * `validateTransformFormat` in `node-factory.ts`.
  */
 export function hasTransform(
   attrs: ZarrNodeAttrs
-): attrs is ZarrNodeAttrs & { transform: number[] } {
+): attrs is ZarrNodeAttrs & { transform: Matrix4x4 } {
   return (
     attrs.transform !== undefined && Array.isArray(attrs.transform) && attrs.transform.length === 16
   );

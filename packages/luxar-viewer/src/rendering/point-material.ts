@@ -6,9 +6,19 @@
  */
 
 import * as THREE from 'three';
-import { materialManager } from './material-manager';
 import { POINT_VERTEX_SHADER, POINT_FRAGMENT_SHADER } from './shaders/point-shaders';
 import type { CameraAwareMaterial } from './camera-aware-material';
+import { computePointSizeFactor, computeMaxPointSize } from './camera-uniforms';
+import {
+  applyColormapTextureToMaterial,
+  applyScalarRangeToMaterial,
+} from './material-colormap-helpers';
+import {
+  getCompleteBlendingState,
+  applyBlendingStateToMaterial,
+  type CompleteBlendingState,
+} from './blending-state';
+import type { BlendingMode } from './material-manager';
 
 /**
  * Configuration for point material creation
@@ -116,20 +126,8 @@ export class PointMaterial extends THREE.ShaderMaterial implements CameraAwareMa
     _nearCull?: number
   ): void {
     this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
-    if (isOrtho) {
-      // fov carries frustumHeight in world units for ortho.
-      // Perspective precomputes 2*res.y / tan(fov/2), then shader divides by distance.
-      // tan(fov/2) = frustumHeight / (2*distance), so the effective factor at the
-      // matching distance is 2*res.y / (frustumHeight/2) = 4*res.y / frustumHeight.
-      // Since ortho has invDistance=1, we bake that full factor here.
-      const halfFrustum = fov * 0.5;
-      this.uniforms.pointSizeFactor.value = (2.0 * resolution.y) / halfFrustum;
-    } else {
-      const tanHalfFov = Math.tan(fov / 2);
-      this.uniforms.pointSizeFactor.value = (2.0 * resolution.y) / tanHalfFov;
-    }
-    // maxPointSize = resolution.y * 0.5 (hardware limit)
-    this.uniforms.maxPointSize.value = resolution.y * 0.5;
+    this.uniforms.pointSizeFactor.value = computePointSizeFactor(fov, resolution.y, isOrtho);
+    this.uniforms.maxPointSize.value = computeMaxPointSize(resolution.y);
   }
 
   /**
@@ -183,22 +181,7 @@ export class PointMaterial extends THREE.ShaderMaterial implements CameraAwareMa
    * Update the colormap texture and enable/disable colormap mode.
    */
   updateColormapTexture(texture: THREE.DataTexture | null): void {
-    const wasEnabled = 'USE_COLORMAP' in this.defines;
-    const nowEnabled = !!texture;
-
-    if (nowEnabled) {
-      this.defines.USE_COLORMAP = '';
-      if (!this.uniforms.uColormapTex) {
-        this.uniforms.uColormapTex = { value: texture };
-        this.uniforms.uScalarMin = { value: 0.0 };
-        this.uniforms.uScalarScale = { value: 1.0 };
-      } else {
-        this.uniforms.uColormapTex.value = texture;
-      }
-    } else {
-      delete this.defines.USE_COLORMAP;
-    }
-
+    const { wasEnabled, nowEnabled } = applyColormapTextureToMaterial(this, texture);
     if (wasEnabled !== nowEnabled) {
       // vertexColors controls whether THREE.js injects `in vec3 color` into the shader.
       // Must be disabled for colormap mode (uses scalar + LUT instead of color attribute).
@@ -208,16 +191,64 @@ export class PointMaterial extends THREE.ShaderMaterial implements CameraAwareMa
   }
 
   /**
+   * Apply a Luxar blending mode to this material in-place.
+   *
+   * Single source of truth for both creation-time wiring (called by
+   * `MaterialManager.getPointMaterial`) and runtime UI transitions
+   * (called by `LayersPanel.applyBlendingStateToMaterial`). Without
+   * this method, the LayersPanel generic path forgot to set
+   * `blendSrc`/`blendDst`, so a runtime switch additive→max stranded
+   * SrcAlpha factors and produced inconsistent visuals.
+   *
+   * Sets the `LUXAR_MAX_RGB_CONTRIBUTION` shader define for `max` mode
+   * so the fragment shader premultiplies RGB by falloff/opacity. This
+   * is required because MaxEquation+OneFactor doesn't multiply by
+   * alpha at composite time. Toggling this define triggers a shader
+   * recompilation; that's intentional and only happens on actual mode
+   * transitions (idempotent — see `userData.blendingMode` early exit).
+   */
+  applyBlendingMode(mode: BlendingMode): void {
+    const opacity = (this.uniforms.opacity?.value as number | undefined) ?? 1.0;
+    const state: CompleteBlendingState = getCompleteBlendingState(mode, opacity);
+
+    // Defensive: THREE may leave `defines` undefined when none were
+    // passed at construction. We rely on it as our source of truth for
+    // the LUXAR_MAX_RGB_CONTRIBUTION shader define.
+    if (!this.defines) {
+      this.defines = {};
+    }
+
+    // Idempotent fast path: no need to re-apply identical state.
+    const previousMode = this.userData.blendingMode as BlendingMode | undefined;
+    const wantsContrib = state.shaderOutputMode === 'rgb-contribution';
+    const hasContrib = 'LUXAR_MAX_RGB_CONTRIBUTION' in this.defines;
+    const stateChanged = applyBlendingStateToMaterial(this, state);
+    let definesChanged = false;
+    if (wantsContrib && !hasContrib) {
+      this.defines.LUXAR_MAX_RGB_CONTRIBUTION = '';
+      definesChanged = true;
+    } else if (!wantsContrib && hasContrib) {
+      delete this.defines.LUXAR_MAX_RGB_CONTRIBUTION;
+      definesChanged = true;
+    }
+    this.userData.blendingMode = mode;
+    this.userData.depthTest = state.depthTest;
+
+    if (definesChanged) {
+      // Defines changed → shader must recompile.
+      this.needsUpdate = true;
+    } else if (previousMode !== mode && stateChanged) {
+      // Mode changed but no shader recompile required.
+      // Mark needsUpdate to refresh blend state on the GPU.
+      this.needsUpdate = true;
+    }
+  }
+
+  /**
    * Set the scalar data range for colormap normalization.
    */
   updateScalarRange(min: number, max: number): void {
-    if (this.uniforms.uScalarMin) {
-      this.uniforms.uScalarMin.value = min;
-    }
-    if (this.uniforms.uScalarScale) {
-      this.uniforms.uScalarScale.value = 1.0 / Math.max(1e-10, max - min);
-    }
-    this.userData.scalarRange = [min, max];
+    applyScalarRangeToMaterial(this, min, max);
   }
 
   /**
@@ -255,16 +286,9 @@ export class PointMaterial extends THREE.ShaderMaterial implements CameraAwareMa
     return cloned as this;
   }
 
-  /**
-   * Dispose this material and unregister from MaterialManager
-   * This prevents memory leaks by removing the material from global update lists
-   */
-  dispose(): void {
-    // Unregister from material manager to prevent memory leaks
-    // This removes the material from global update lists and cache
-    materialManager.unregister(this);
-
-    // Call parent dispose to free GPU resources (shaders, uniforms)
-    super.dispose();
-  }
+  // Note: `dispose()` is inherited from THREE.ShaderMaterial.
+  // MaterialManager subscribes to the synchronous `dispose` event the
+  // base class fires, so the material is removed from the registry +
+  // cache automatically. No explicit unregister callback needed here,
+  // which keeps this file out of the manager's import graph.
 }

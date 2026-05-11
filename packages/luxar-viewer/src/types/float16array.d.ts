@@ -35,7 +35,7 @@ interface Float16Array extends ArrayBufferView {
   fill(value: number, start?: number, end?: number): this;
   forEach(
     callbackfn: (value: number, index: number, array: Float16Array) => void,
-    thisArg?: any
+    thisArg?: unknown
   ): void;
   indexOf(searchElement: number, fromIndex?: number): number;
   lastIndexOf(searchElement: number, fromIndex?: number): number;

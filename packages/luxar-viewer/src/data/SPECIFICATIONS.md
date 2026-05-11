@@ -366,7 +366,7 @@ function dequantize(data, bounds, dtype):
 **Format**:
 
 - `.zattrs` contains `array_ref: "hash_value"`
-- Array points to previously loaded array in registry
+- Array points to an already loaded array in the registry
 
 **Algorithm**:
 
@@ -807,18 +807,14 @@ The data loading system integrates with the two-level caching architecture provi
 
 **Architecture**:
 
-- `TwoLevelCachingStore` wraps the zarr.FetchStore
-- All zarr chunk fetches automatically go through the cache
+- `MultiLevelCachingStore` is exposed to the Luxar Zarr facade as a readable store
+- All Zarr chunk fetches automatically go through the cache
 - Spatial index queries benefit from cached chunk metadata
 - No manual cache management needed at data layer
 
-**For Complete Details**: See `../cache/SPECIFICATIONS.md` (v1.2.1) for full cache architecture specification
+**For Complete Details**: See `../cache/SPECIFICATIONS.md` for the full cache architecture specification.
 
-**Integration Point**: SceneLoader creates TwoLevelCachingStore when loading scenes (see scene-loader.ts:89-112)
-
-### 5.1 Legacy Note
-
-**Previous Implementation**: This section previously documented a `RangeCache` class that has been removed in favor of the dedicated cache package. The cache system is now much more sophisticated with two-level storage, content-hash validation, and intelligent prefetching.
+**Integration Point**: SceneLoader creates MultiLevelCachingStore when loading scenes.
 
 ---
 
@@ -849,8 +845,6 @@ interface ChunkSpatialIndex {
 }
 ```
 
-**Note**: The old grid-based `PointSpatialIndex` (v1.0.0) is deprecated and removed.
-
 ### 6.2 ViewState
 
 **Purpose**: Encapsulates current view configuration for nD navigation.
@@ -860,21 +854,32 @@ interface ViewState {
   displayDims: number[]; // Indices of displayed dimensions [0-2]
   slicePosition: number[]; // Current position in nD space
   tolerance: number[]; // Search radius per dimension
-  dimensions?: SimpleDims; // REQUIRED for extend_to_all feature
-}
-
-interface SimpleDims {
-  metadata: DimensionMetadata[]; // Full dimension info with names
-  ndim: number; // Total dimensionality
-  displayed: number[]; // Displayed dimension indices
-  currentStep: number[]; // Current slice position
+  dimensions?: DimensionMetadata[]; // REQUIRED for extend_to_all feature
 }
 ```
 
-**CRITICAL**: The `dimensions` field is required for the `extend_to_all` feature to work.
-If `dimensions` is undefined, nodes with `extend_to_all` will fall back to normal spatial
-queries and may not be visible at all slice positions. Ensure `dimensions` is initialized
-from scene metadata BEFORE loading any data nodes.
+**Boundary note**: there are two related shapes — keep them distinct:
+
+- **Navigation state** (`SimpleDims`, in `scene/scene-dims-manager.ts`)
+  — the high-level UI state owned by `SceneDimsManager`. Has
+  `metadata`, `ndim`, `displayed`, `currentStep`. Used by sliders,
+  the keyboard navigation handlers, and animation controllers.
+- **Per-loader view state** (`ViewState`, in
+  `data/data-loader-types.ts`) — the per-load query the data layer
+  consumes. `dimensions` here is `DimensionMetadata[]`, NOT
+  `SimpleDims`. Loader paths read names + units from this metadata
+  to resolve `extend_to_all` and `nd_transform`.
+
+`simpleDimsToViewState()` (in `data/view-state-utils.ts`) is the
+conversion boundary: navigation state → per-loader state. New code
+that takes a navigation `SimpleDims` and needs a `ViewState` should
+go through that helper, not assemble the fields by hand.
+
+**CRITICAL**: The `dimensions` field is required for the `extend_to_all`
+feature to work. If `dimensions` is undefined, nodes with `extend_to_all`
+will fall back to normal spatial queries and may not be visible at all
+slice positions. Ensure `dimensions` is initialized from scene metadata
+BEFORE loading any data nodes.
 
 ### 6.3 PointRange
 
@@ -1095,17 +1100,17 @@ function queryLinesForView(
 
 ### 7.6 Lines Loading Protocol
 
-**Two-Phase Loading**:
+**Two-Stage Loading**:
 
-Unlike Points where we load point chunks directly, Lines require a two-phase approach:
+Unlike Points where we load point chunks directly, Lines require a two-stage approach:
 
 ```
-Phase 1: Load Segments
+Stage 1: Load Segments
 ├── Query segment_chunk_bounds for visible chunks
 ├── Load segment chunks from segments/ array
 └── Collect unique vertex indices from loaded segments
 
-Phase 2: Load Vertices
+Stage 2: Load Vertices
 ├── Determine which vertex chunks contain required vertices
 ├── Load vertex chunks (positions, widths, colors, sharpness)
 └── Build index remapping for rendering
@@ -1123,7 +1128,7 @@ async function loadLinesForView(
 ): Promise<LoadedLinesData> {
   const { segmentRanges } = queryLinesForView(linesIndex, slicePosition, tolerance);
 
-  // Phase 1: Load visible segments
+  // Stage 1: Load visible segments
   const segments = await loadSegmentRanges(store, segmentRanges);
 
   // Collect unique vertex indices
@@ -1139,13 +1144,11 @@ async function loadLinesForView(
   const sortedVertices = Array.from(uniqueVertexIndices).sort((a, b) => a - b);
   const vertexRanges = computeVertexRangesFromIndices(sortedVertices);
 
-  // Phase 2: Load vertex data
+  // Stage 2: Load vertex data
   const vertices = await loadVertexRanges(store, vertexRanges, attrs.ndim);
   const widths = await loadWidthRanges(store, vertexRanges);
   const colors = attrs.has_colors ? await loadColorRanges(store, vertexRanges) : null;
-  const sharpness = attrs.has_sharpness
-    ? await loadSharpnessRanges(store, vertexRanges)
-    : null;
+  const sharpness = attrs.has_sharpness ? await loadSharpnessRanges(store, vertexRanges) : null;
 
   // Build local index remapping
   // Map global vertex indices → local array indices
@@ -1327,10 +1330,10 @@ function queryVisibleSegmentRanges(viewState: LinesViewState): SegmentRange[] {
 
 2. **Tolerance override for clipping**: Lines have TWO places that filter visibility:
    - `queryVisibleSegmentRanges()` - spatial index query (handled above)
-   - `buildInstanceBuffers()` - clips segments based on tolerance per dimension
+   - `projectLinesTo3D()` - clips segments based on tolerance per dimension
 
    For `extend_to_all` to work fully, tolerance must be set to infinity (`1e10`) for
-   extended dimensions BEFORE calling `buildInstanceBuffers`. This is done in
+   extended dimensions BEFORE calling `projectLinesTo3D`. This is done in
    `scene-loader.ts` in both `loadLines()` and `updateLinesGeometry()`:
 
    ```typescript
@@ -1506,7 +1509,35 @@ For a 250-frame animation with 2.2M total vertices but only 32K visible per fram
 
 **Key Insight**: This optimization mirrors the approach already implemented in `PointSpatialIndexLoader.loadRanges()` (see lines 650-880 in point-spatial-index-loader.ts).
 
-### 7.13 Lines Fallback (No Spatial Index)
+### 7.13 Lines Worker Path (Per-Vertex Scalars)
+
+Per-vertex scalars (the colormap-mode signal for Lines) are carried
+across the worker boundary as a transferable typed-array. The worker
+side accepts `Float32Array | Float16Array | Uint8Array | null`,
+coerces non-Float32 inputs to Float32 (Uint8 normalized by `1/255`),
+and produces compacted per-segment `startScalars` / `endScalars`
+via `interpolate_scalars_batch` — the same WASM kernel that handles
+widths and sharpness.
+
+The main-thread `projectLinesTo3D` path remains the fallback when
+the worker pool is unavailable, the worker call times out, or the
+caller's AbortSignal fires; both paths produce identical output shape
+so callers cannot tell which ran.
+
+Worker-side dtype handling:
+
+| Input dtype | Conversion | Reason |
+|-------------|------------|--------|
+| `Float32Array` | passes through (zero-copy) | already Float32 |
+| `Float16Array` | element-wise expand to Float32 | WASM expects Float32 |
+| `Uint8Array` | element-wise `* 1/255` | match colormap shader's `[0, 1]` contract |
+
+See `src/data/scene-loader/data-processor-lines.ts::projectLinesTo3DUsingWorker`
+and `src/workers/data-worker.ts::projectLinesTo3D` for the
+implementations. `coerceScalarsToFloat32` in `src/workers/color-utils.ts`
+is the shared dtype-coercion helper.
+
+### 7.14 Lines Fallback (No Spatial Index)
 
 When `ordering === "none"`, load all data:
 
@@ -1606,18 +1637,27 @@ The worker pool provides:
 - **Singleton Pattern**: Single global pool instance
 - **Least-Busy Selection**: Routes queries to worker with fewest active tasks
 - **Lazy Initialization**: Workers created on first use
-- **Query Tracking**: Accurate load balancing via `getWorkerWithTracking()`
+- **Per-call Timeout + Tracking**: `runWithTimeout()` enforces a
+  per-call deadline, tracks active queries for load balancing, and
+  releases the worker back to the pool in finally.
 - **Error Handling**: Graceful fallback to main thread on failure
 
 ```typescript
-// Worker acquisition with tracking
-const { worker, done } = await getWorkerPool().getWorkerWithTracking();
-try {
-  const result = await worker.querySpatialIndex(params);
-  return result;
-} finally {
-  done(); // Release worker back to pool
-}
+// Recommended: runWithTimeout owns acquire + tracking + timeout +
+// release in one call. This is the production pattern. The raw
+// getWorker() / getWorkerWithTracking() helpers bypass the timeout
+// guard, require manual done() bookkeeping, and skip the hung-worker
+// eviction path — never call them outside test code.
+//
+// Args: (operationName, TimeoutKind, fn). The TimeoutKind selects which
+// config knob is consulted: 'projection' → workerProjectionTimeoutMs,
+// 'decode' → workerProjectionTimeoutMs (same knob today),
+// 'visibility' → workerVisibilityTimeoutMs.
+const result = await getWorkerPool().runWithTimeout(
+  'querySpatialIndex',
+  'visibility',
+  (api) => api.querySpatialIndex(params)
+);
 ```
 
 ### 8.5 Fallback Behavior
@@ -1630,9 +1670,14 @@ if (!appConfig.dataLoading.performance.useWebWorkers) {
   return mainThreadQuerySpatialIndex(params);
 }
 
-// Worker path
-const worker = await getWorkerPool().getWorker();
-return worker.querySpatialIndex(params);
+// Worker path — runWithTimeout rejects with WorkerTimeoutError on
+// budget overflow, and the loader chooses whether to surface the error
+// or fall back to main thread.
+return await getWorkerPool().runWithTimeout(
+  'querySpatialIndex',
+  'visibility',
+  (api) => api.querySpatialIndex(params)
+);
 ```
 
 ### 8.6 Performance Characteristics
@@ -1661,11 +1706,11 @@ Workers are called at these locations:
 
 **`lines-spatial-index-loader.ts`**:
 
-- Spatial query via `getWorkerPool().getWorker()` - line ~534
+- Spatial query via `getWorkerPool().runWithTimeout('queryLines', 'visibility', ...)` - line ~534
 
 **`gsplats-spatial-index-loader.ts`**:
 
-- Spatial query via `getWorkerPool().getWorker()` - line ~377
+- Spatial query via `getWorkerPool().runWithTimeout('queryGsplats', 'visibility', ...)` - line ~377
 
 **`loaders/range-loader.ts`** (unified encoding dispatch):
 
@@ -1733,15 +1778,15 @@ This section documents all TypeScript source files in the `data/` package with t
 
 #### `lines-spatial-index-loader.ts`
 
-**Purpose**: Lines data loader using dual spatial indices. Implements two-phase loading: (1) query segment chunks for visible segments, (2) derive required vertex chunks from segment indices and load vertices. Also handles nD slicing with endpoint clipping.
+**Purpose**: Lines data loader using dual spatial indices. It first queries segment chunks for visible segments, then derives the vertex chunks needed by those segments. Also handles nD slicing with endpoint clipping.
 
-**Key Exports**: `LinesSpatialIndexLoader`, `buildInstanceBuffers()`, `clipSegmentToSlice()`, `lerp()`, `lerpVec3()`, `distance3D()`
+**Key Exports**: `LinesSpatialIndexLoader`, `projectLinesTo3D()`, `clipSegmentToSlice()`, `lerp()`, `lerpVec3()`, `distance3D()`
 
 **Relationships**: Uses `SpatialQueryBuilder` + `ChunkSpatialIndex` from `loaders/spatial-query-builder.ts` for the segment chunk query, `tolerance-computer.computeTolerance('lines', …)` indirectly via the builder, `ArrayDecoder`/`ArrayRefRegistry` from `array-decoder.ts`, `RangeLoader` from `loaders/`, and `LinesDataAccumulator` from `data-accumulator.ts`. The dual-bounds (`vertex_chunk_bounds` + `segment_chunk_bounds`) zarr probe and the lines-specific `computeVertexRangesFromIndices` (sorted-indices → contiguous ranges) are private to this module.
 
 #### `gsplats-spatial-index-loader.ts`
 
-**Purpose**: GSplats data loader using spatial indices for efficient nD gsplats loading. Unlike Lines, GSplats do not need two-phase loading since all data is per-splat. Handles all array encoding types (broadcasted, quantized, LUT, etc.).
+**Purpose**: GSplats data loader using spatial indices for efficient nD gsplats loading. GSplats load directly by splat because all render attributes are per-splat. Handles all array encoding types (broadcasted, quantized, LUT, etc.).
 
 **Key Exports**: `GSplatsSpatialIndexLoader`
 
@@ -1769,11 +1814,11 @@ This section documents all TypeScript source files in the `data/` package with t
 
 ### 9.4 Data Processing
 
-#### `gsplats-processor.ts`
+#### `gsplats/projection.ts`
 
 **Purpose**: Handles conversion of nD gsplats data to 3D for rendering. Key operations: (1) extract 3D center from nD center using display dimensions, (2) extract 3D Cholesky submatrix from nD Cholesky via marginal covariance reconstruction, (3) attenuate amplitude based on distance to hyperplane in hidden dimensions. Uses pre-allocated workspace buffers to avoid per-call allocation in tight loops.
 
-**Key Exports**: `processGSplats()`
+**Key Exports**: `projectGSplats()`
 
 **Relationships**: Called by `SceneLoader` during GSplats geometry updates. Consumes `LoadedGSplatsData`, `ProcessedGSplatsData`, and `GSplatsViewState` types from `types/gsplats.ts`.
 
@@ -1785,13 +1830,13 @@ This section documents all TypeScript source files in the `data/` package with t
 
 **Relationships**: Used by `PointSpatialIndexLoader` for nD point visibility filtering.
 
-#### `node-factory.ts`
+#### `rendering/node-factory.ts`
 
-**Purpose**: Creates THREE.js scene nodes (Points, Lines, GSplats) from loaded data. Handles geometry creation with proper dtype handling (Float32, Uint8, Float16), material creation with colormap support, transform application and validation, and picking system integration (creates parallel pick-scene shadow nodes).
+**Purpose**: Creates THREE.js scene nodes (Points, Lines, GSplats) from loaded data. Handles geometry creation with proper dtype handling (Float32, Uint8, Float16), material creation with scalar-colormap support, transform application and validation, and picking system integration (creates parallel pick-scene shadow nodes).
 
 **Key Exports**: `NodeFactory`
 
-**Relationships**: Owned by `SceneLoader`. Integrates with `PickingSystem` from `rendering/picking/`, `materialManager` from `rendering/`, and picking material classes (`PointPickingMaterial`, `LinePickingMaterial`, `GSplatPickingMaterial`).
+**Relationships**: Instantiated by `SceneLoader` from the rendering package. Integrates with `PickingSystem` from `rendering/picking/`, `materialManager` from `rendering/`, and picking material classes (`PointPickingMaterial`, `LinePickingMaterial`, `GSplatPickingMaterial`).
 
 ### 9.5 State Management
 
@@ -1815,7 +1860,7 @@ This section documents all TypeScript source files in the `data/` package with t
 
 #### `data-accumulator.ts`
 
-**Purpose**: Multi-type object pooling for Points, Lines, and GSplats. Implements persistent TypedArray buffers that grow by 1.5x when needed, eliminating per-frame allocations and reducing GC pressure. Supports Float32Array, Uint8Array, and Uint16Array natively. All three loaders use deep integration for the loading phase (write directly to accumulator buffers, return zero-copy subarrays).
+**Purpose**: Multi-type object pooling for Points, Lines, and GSplats. Implements persistent TypedArray buffers that grow by 1.5x when needed, eliminating per-frame allocations and reducing GC pressure. Supports Float32Array, Uint8Array, and Uint16Array natively. All three loaders write directly to accumulator buffers and return zero-copy subarrays.
 
 **Key Exports**: `DataAccumulator<T>` (generic interface), `LoadedPointsDataAccumulator`, `LinesDataAccumulator`, `GSplatsDataAccumulator`, `AccumulatorStats`
 
@@ -1827,7 +1872,11 @@ This section documents all TypeScript source files in the `data/` package with t
 
 **Purpose**: Core types and interfaces for the data loading architecture. Defines clean abstractions for loading nD points data with spatial indexing support and aligned attribute loading.
 
-**Key Exports**: `ViewState`, `LoadedPointsData`, `DataLoader`, `LoaderConfig`, `PointRange`, `SceneNode`, `SpatialQueryResult`, `LoaderStats`, `PositionArray`, `ColorArray`, `ScalarArray`, `validateViewStateForExtendToAll()`
+**Key Exports**: `ViewState`, `LoadedPointsData`, `DataLoader`, `LoaderConfig`, `PointRange`, `SceneNode`, `SpatialQueryResult`, `LoaderStats`, `PositionArray`, `ColorArray`, `ScalarArray`
+
+> Dim-name validation lives in `scene-loader/extend-tolerance.ts:
+> validateExtendDims`, which `deriveNodeViewState` calls before
+> applying any extend_to_all tolerance override.
 
 **Relationships**: Foundational type definitions consumed by all loader implementations and the scene loading pipeline.
 
@@ -1911,8 +1960,7 @@ This section documents all TypeScript source files in the `data/` package with t
 - **v1.2.3** (2025-12-10): Lines encoding optimization
   - **ADDED**: Section 7.11 - Optimized Encoding Handling for Lines
   - **FIXED**: `loadVertexRanges()` now loads only needed ranges for encoded arrays
-    - Previously decoded ENTIRE array then extracted ranges (2.2M values)
-    - Now decodes ONLY needed ranges (32K values for 250-frame animation)
+    - Decodes only the needed ranges (32K values for 250-frame animation instead of 2.2M values)
     - ~70x performance improvement for animated line datasets
   - Supports all encoding modes: broadcasted, quantized, LUT, array_ref, direct
   - Mirrors optimization already in `PointSpatialIndexLoader.loadRanges()`
@@ -1939,7 +1987,7 @@ This section documents all TypeScript source files in the `data/` package with t
   - **ADDED**: Section 7 - Lines Spatial Index System
   - Documented dual spatial indexing (vertices + segments)
   - Documented (2×D)-dimensional segment ordering
-  - Documented two-phase loading protocol (segments → vertices)
+  - Documented segment-first loading protocol (segments → vertices)
   - Added `LinesChunkSpatialIndex` data structure with full ordering metadata
   - Added `LoadedLinesData` data structure
   - Added vertex range computation algorithm

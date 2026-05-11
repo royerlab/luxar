@@ -26,6 +26,31 @@ let wasmModule: WasmModule | null = null;
 // Persistent buffers (avoid per-task allocations)
 let visibilityMaskBuffer: Uint8Array | null = null;
 
+// Validation + color helpers live in ./validation and ./color-utils.
+// The worker imports them as bare identifiers (used in projection and
+// decode paths below) and re-exports the color helpers for the
+// existing unit test.
+import {
+  MAX_WASM_DIMS,
+  validateNDArrays,
+  validateProjectionInputs,
+  validateDecodeArgs,
+  validateLineSegmentReferences,
+  validateChunkQueryInputs,
+} from './validation';
+import { coerceColorsToFloat32, coerceScalarsToFloat32, fillColorsWhite } from './color-utils';
+export { coerceColorsToFloat32, coerceScalarsToFloat32, fillColorsWhite };
+
+/**
+ * Single source of truth for the "task called before initialize()"
+ * error. Each task entry point inlines the `if (!wasmModule) throw`
+ * check so TypeScript narrowing persists for the rest of the
+ * function body — `asserts` clauses don't apply to module-scoped
+ * `let` variables, so an extracted guard helper would lose narrowing.
+ */
+const NOT_INITIALIZED_MSG =
+  '[DataWorker] Not initialized - call initialize() first';
+
 /**
  * Initialize worker (called once at startup).
  *
@@ -65,11 +90,18 @@ async function querySpatialIndex(params: {
   numChunks: number;
   ndim: number;
 }): Promise<Uint32Array> {
-  if (!wasmModule) {
-    throw new Error('[DataWorker] Not initialized - call initialize() first');
-  }
+  if (!wasmModule) throw new Error(NOT_INITIALIZED_MSG);
 
   const { chunkBounds, slicePosition, tolerance, numChunks, ndim } = params;
+
+  validateChunkQueryInputs(
+    'querySpatialIndex',
+    chunkBounds,
+    slicePosition,
+    tolerance,
+    ndim,
+    numChunks
+  );
 
   // Output buffer for matching chunk indices
   const matchingChunks = new Uint32Array(numChunks); // Max size
@@ -101,11 +133,19 @@ async function computeNDVisibilityPoints(params: {
   ndim: number;
   numPoints: number;
 }): Promise<{ visibilityMask: Uint8Array; visibleCount: number }> {
-  if (!wasmModule) {
-    throw new Error('[DataWorker] Not initialized - call initialize() first');
-  }
+  if (!wasmModule) throw new Error(NOT_INITIALIZED_MSG);
 
   const { positions, radii, slicePosition, tolerance, ndim, numPoints } = params;
+  validateNDArrays(
+    'computeNDVisibilityPoints',
+    positions,
+    slicePosition,
+    tolerance,
+    ndim,
+    numPoints,
+    ndim,
+    radii
+  );
 
   // Ensure buffer capacity
   if (!visibilityMaskBuffer || visibilityMaskBuffer.length < numPoints) {
@@ -141,11 +181,26 @@ async function computeNDVisibilityLines(params: {
   ndim: number;
   numSegments: number;
 }): Promise<{ visibilityMask: Uint8Array; visibleCount: number }> {
-  if (!wasmModule) {
-    throw new Error('[DataWorker] Not initialized - call initialize() first');
-  }
+  if (!wasmModule) throw new Error(NOT_INITIALIZED_MSG);
 
   const { vertices, segments, widths, slicePosition, tolerance, ndim, numSegments } = params;
+  if (!Number.isInteger(ndim) || ndim < 1 || ndim > MAX_WASM_DIMS) {
+    throw new Error(`computeNDVisibilityLines: ndim=${ndim} out of range [1, ${MAX_WASM_DIMS}]`);
+  }
+  if (slicePosition.length < ndim || tolerance.length < ndim) {
+    throw new Error(`computeNDVisibilityLines: slicePosition/tolerance too short for ndim=${ndim}`);
+  }
+  // Validates segments[i] < vertex-count, plus widths length, against the
+  // max referenced vertex (a stronger check than `>= numSegments`, which
+  // earlier code did).
+  validateLineSegmentReferences(
+    'computeNDVisibilityLines',
+    segments,
+    numSegments,
+    vertices,
+    ndim,
+    { widths }
+  );
 
   // Ensure buffer capacity
   if (!visibilityMaskBuffer || visibilityMaskBuffer.length < numSegments) {
@@ -181,11 +236,25 @@ async function computeNDVisibilityGSplats(params: {
   ndim: number;
   numSplats: number;
 }): Promise<{ visibilityMask: Uint8Array; visibleCount: number }> {
-  if (!wasmModule) {
-    throw new Error('[DataWorker] Not initialized - call initialize() first');
-  }
+  if (!wasmModule) throw new Error(NOT_INITIALIZED_MSG);
 
   const { centers, choleskyFactors, slicePosition, tolerance, ndim, numSplats } = params;
+  validateNDArrays(
+    'computeNDVisibilityGSplats',
+    centers,
+    slicePosition,
+    tolerance,
+    ndim,
+    numSplats
+  );
+  // Cholesky factors: packed lower-triangular has ndim*(ndim+1)/2 entries per splat.
+  const expectedCholesky = numSplats * ((ndim * (ndim + 1)) / 2);
+  if (choleskyFactors.length < expectedCholesky) {
+    throw new Error(
+      'computeNDVisibilityGSplats: choleskyFactors too short ' +
+        `(got ${choleskyFactors.length}, expected ≥ ${expectedCholesky})`
+    );
+  }
 
   // Ensure buffer capacity
   if (!visibilityMaskBuffer || visibilityMaskBuffer.length < numSplats) {
@@ -225,9 +294,9 @@ export interface EffectiveRadiusConfig {
  * View state for projection (subset of main thread ViewState)
  */
 export interface ProjectionViewState {
-  displayDims: number[];
-  slicePosition: number[];
-  tolerance: number[];
+  displayDims: readonly number[];
+  slicePosition: readonly number[];
+  tolerance: readonly number[];
 }
 
 /**
@@ -251,8 +320,8 @@ interface PointsOutputBuffers {
  * 4. Returns compacted arrays ready for GPU
  *
  * TransferableAccumulator pattern:
- * - If `outputBuffers` provided, writes directly to those buffers (zero-allocation)
- * - If not, allocates new arrays (legacy behavior)
+ * - If `outputBuffers` is provided, writes directly to those buffers (zero-allocation)
+ * - If not, allocates new arrays for the response
  * - Returns `outputBuffers` for transfer back to main thread
  */
 async function projectPointsTo3D(params: {
@@ -287,7 +356,70 @@ async function projectPointsTo3D(params: {
     numPoints,
     outputBuffers,
   } = params;
+  if (!wasmModule) throw new Error(NOT_INITIALIZED_MSG);
   const { displayDims, slicePosition } = viewState;
+
+  validateProjectionInputs(
+    'projectPointsTo3D',
+    positions,
+    displayDims,
+    slicePosition,
+    ndim,
+    numPoints
+  );
+  if (radii && radii.length < numPoints) {
+    throw new Error(
+      `projectPointsTo3D: radii too short (got ${radii.length}, expected ≥ ${numPoints})`
+    );
+  }
+  if (sharpness && sharpness.length < numPoints) {
+    throw new Error(
+      `projectPointsTo3D: sharpness too short (got ${sharpness.length}, expected ≥ ${numPoints})`
+    );
+  }
+  // RGB triplet per point — short colors silently produce NaN/0 fill in
+  // the TS-side compaction and corrupt the rendered point colors.
+  if (colors && colors.length < numPoints * 3) {
+    throw new Error(
+      `projectPointsTo3D: colors too short (got ${colors.length}, expected ≥ ${numPoints * 3})`
+    );
+  }
+
+  // Validate effective-radius config inputs before they reach WASM.
+  // The Uint8 array built from spatialExtendDims is fed to
+  // calculate_effective_radii, which expects ndim entries; a short
+  // array silently treats trailing dims as non-extended. maxRadius is
+  // not used here directly but flows into per-vertex math elsewhere
+  // and must be finite to avoid NaN propagation.
+  if (effectiveRadiusConfig) {
+    if (effectiveRadiusConfig.spatialExtendDims.length < ndim) {
+      throw new Error(
+        `projectPointsTo3D: effectiveRadiusConfig.spatialExtendDims too short (got ${effectiveRadiusConfig.spatialExtendDims.length}, expected ≥ ${ndim})`
+      );
+    }
+    if (!Number.isFinite(effectiveRadiusConfig.maxRadius)) {
+      throw new Error(
+        `projectPointsTo3D: effectiveRadiusConfig.maxRadius=${effectiveRadiusConfig.maxRadius} must be a finite number`
+      );
+    }
+    // Tolerance is read by index per non-displayed dim in the
+    // extend_to_all detection path further down; a malformed worker
+    // payload that omits it or provides a short array would either
+    // throw a generic `Cannot read properties of undefined` or
+    // silently treat missing entries as non-extend, changing
+    // effective-radius semantics. Production callers pass the right
+    // shape; this is a worker-boundary validation belt for direct
+    // callers and malformed payloads.
+    if (
+      !viewState ||
+      !viewState.tolerance ||
+      viewState.tolerance.length < ndim
+    ) {
+      throw new Error(
+        `projectPointsTo3D: viewState.tolerance too short for effective radius (got ${viewState?.tolerance?.length ?? 0}, expected ≥ ${ndim})`
+      );
+    }
+  }
 
   // Determine if using pre-allocated buffers (TransferableAccumulator pattern)
   const usePreallocated = !!outputBuffers;
@@ -473,7 +605,8 @@ async function projectPointsTo3D(params: {
 /**
  * Project Lines from nD to 3D with segment clipping.
  *
- * This function implements the same algorithm as buildInstanceBuffers but in a worker:
+ * This function mirrors the main-thread `data/lines/projection.ts::projectLinesTo3D`
+ * but runs in a worker:
  * 1. Clips all segments to the nD slice using WASM batch functions
  * 2. Projects clipped endpoints to 3D
  * 3. Interpolates per-vertex attributes (colors, widths, sharpness)
@@ -487,9 +620,25 @@ async function projectLinesTo3D(params: {
   widths: Float32Array;
   colors: Float32Array | Uint8Array | Uint16Array | null;
   sharpness: Float32Array | null;
-  slicePosition: number[];
-  tolerance: number[];
-  displayDims: number[];
+  /**
+   * Optional per-vertex scalar attribute for colormap-mode Lines.
+   * Accepted dtypes: `Float32Array` (passes through zero-copy),
+   * `Float16Array` (element-wise expand), `Uint8Array` (normalized by
+   * `1/255` to align with the colormap shader's `[0, 1]` contract).
+   * When `null` the worker emits empty `startScalars`/`endScalars`
+   * arrays and the loader leaves the geometry's scalar attribute
+   * unallocated.
+   */
+  scalars: Float32Array | Float16Array | Uint8Array | null;
+  /**
+   * View state for projection. Same `ProjectionViewState` shape every
+   * `project*To3D` worker function accepts — keeps the worker API
+   * uniform across node types. All three fields are consumed: the
+   * WASM `clip_segments_batch` step reads `slicePosition` + `tolerance`
+   * + `displayDims` to decide per-segment visibility and to clip
+   * partially-visible segments at the slice boundary.
+   */
+  viewState: ProjectionViewState;
   ndim: number;
   segmentCount: number;
 }): Promise<{
@@ -501,14 +650,16 @@ async function projectLinesTo3D(params: {
   endWidths: Float32Array;
   startSharpness: Float32Array;
   endSharpness: Float32Array;
+  /** Per-segment start scalar (empty Float32Array when input scalars=null). */
+  startScalars: Float32Array;
+  /** Per-segment end scalar (empty Float32Array when input scalars=null). */
+  endScalars: Float32Array;
   segmentLengths: Float32Array;
   startClipped: Uint8Array;
   endClipped: Uint8Array;
   visibleSegmentCount: number;
 }> {
-  if (!wasmModule) {
-    throw new Error('[DataWorker] Not initialized - call initialize() first');
-  }
+  if (!wasmModule) throw new Error(NOT_INITIALIZED_MSG);
 
   const {
     positions,
@@ -516,12 +667,43 @@ async function projectLinesTo3D(params: {
     widths,
     colors,
     sharpness,
-    slicePosition,
-    tolerance,
-    displayDims,
+    scalars,
+    viewState,
     ndim,
     segmentCount,
   } = params;
+  const { displayDims, slicePosition, tolerance } = viewState;
+
+  // The shared projection validator handles displayDims and the basic
+  // ndim/positions sanity check; we then check segment-vertex bounds
+  // explicitly because positions length depends on max referenced vertex
+  // (not numItems = 1), and finally the per-vertex attribute lengths.
+  validateProjectionInputs(
+    'projectLinesTo3D',
+    positions,
+    displayDims,
+    slicePosition,
+    ndim,
+    1,
+    ndim
+  );
+  if (tolerance.length < ndim) {
+    throw new Error(
+      `projectLinesTo3D: tolerance too short (got ${tolerance.length}, expected ≥ ${ndim})`
+    );
+  }
+  validateLineSegmentReferences(
+    'projectLinesTo3D',
+    segments,
+    segmentCount,
+    positions,
+    ndim,
+    {
+      widths,
+      colors: colors ?? undefined,
+      sharpness: sharpness ?? undefined,
+    }
+  );
 
   // Convert input arrays to WASM-compatible formats
   const slicePosF32 = new Float32Array(slicePosition);
@@ -563,6 +745,8 @@ async function projectLinesTo3D(params: {
         endWidths: new Float32Array(0),
         startSharpness: new Float32Array(0),
         endSharpness: new Float32Array(0),
+        startScalars: new Float32Array(0),
+        endScalars: new Float32Array(0),
         segmentLengths: new Float32Array(0),
         startClipped: emptyFlags,
         endClipped: new Uint8Array(0),
@@ -595,20 +779,8 @@ async function projectLinesTo3D(params: {
   const endColors = new Float32Array(visibleCount * 3);
 
   if (colors) {
-    // Convert to Float32Array if not already
-    let colorsF32: Float32Array;
-    if (colors instanceof Float32Array) {
-      colorsF32 = colors;
-    } else {
-      // Convert Uint8Array or Uint16Array to Float32Array
-      colorsF32 = new Float32Array(colors.length);
-      for (let i = 0; i < colors.length; i++) {
-        colorsF32[i] = colors[i];
-      }
-    }
-
     wasmModule.interpolate_colors_batch(
-      colorsF32,
+      coerceColorsToFloat32(colors),
       segments,
       visibility,
       t1Params,
@@ -618,15 +790,8 @@ async function projectLinesTo3D(params: {
       endColors
     );
   } else {
-    // Default to white (1, 1, 1)
-    for (let i = 0; i < visibleCount; i++) {
-      startColors[i * 3] = 1.0;
-      startColors[i * 3 + 1] = 1.0;
-      startColors[i * 3 + 2] = 1.0;
-      endColors[i * 3] = 1.0;
-      endColors[i * 3 + 1] = 1.0;
-      endColors[i * 3 + 2] = 1.0;
-    }
+    fillColorsWhite(startColors, visibleCount);
+    fillColorsWhite(endColors, visibleCount);
   }
 
   // Step 4: Interpolate widths using WASM
@@ -665,11 +830,37 @@ async function projectLinesTo3D(params: {
     endSharpness.fill(1.0);
   }
 
-  // Step 6: Calculate segment lengths using WASM
+  // Step 6: Interpolate per-vertex scalars using WASM (colormap mode).
+  // Empty arrays are returned when `scalars` is null so the loader can
+  // skip allocating the geometry's scalar attribute. We coerce
+  // Float16/Uint8 to Float32 first since `interpolate_scalars_batch`
+  // expects Float32 inputs (same path widths/sharpness take).
+  let startScalars: Float32Array;
+  let endScalars: Float32Array;
+  if (scalars) {
+    const scalarsF32 = coerceScalarsToFloat32(scalars);
+    startScalars = new Float32Array(visibleCount);
+    endScalars = new Float32Array(visibleCount);
+    wasmModule.interpolate_scalars_batch(
+      scalarsF32,
+      segments,
+      visibility,
+      t1Params,
+      t2Params,
+      segmentCount,
+      startScalars,
+      endScalars
+    );
+  } else {
+    startScalars = new Float32Array(0);
+    endScalars = new Float32Array(0);
+  }
+
+  // Step 7: Calculate segment lengths using WASM
   const segmentLengths = new Float32Array(visibleCount);
   wasmModule.calculate_segment_lengths(startPositions, endPositions, visibleCount, segmentLengths);
 
-  // Step 7: Mark clipped endpoints using WASM
+  // Step 8: Mark clipped endpoints using WASM
   const startClipped = new Uint8Array(visibleCount);
   const endClipped = new Uint8Array(visibleCount);
 
@@ -692,6 +883,8 @@ async function projectLinesTo3D(params: {
     endWidths.buffer as ArrayBuffer,
     startSharpness.buffer as ArrayBuffer,
     endSharpness.buffer as ArrayBuffer,
+    startScalars.buffer as ArrayBuffer,
+    endScalars.buffer as ArrayBuffer,
     segmentLengths.buffer as ArrayBuffer,
     startClipped.buffer as ArrayBuffer,
     endClipped.buffer as ArrayBuffer,
@@ -707,6 +900,8 @@ async function projectLinesTo3D(params: {
       endWidths,
       startSharpness,
       endSharpness,
+      startScalars,
+      endScalars,
       segmentLengths,
       startClipped,
       endClipped,
@@ -740,16 +935,22 @@ async function projectGSplatsTo3D(params: {
   amplitudes: Float32Array;
   colors: Float32Array | Uint8Array | Uint16Array | null;
   sharpness: Float32Array | null;
-  displayDims: number[];
-  slicePosition: number[];
+  /**
+   * View state for projection. Same `ProjectionViewState` shape every
+   * `project*To3D` worker function accepts. GSplats consumes
+   * `displayDims` + `slicePosition`; `tolerance` is required for API
+   * parity but isn't consulted by the WASM kernel (per-axis hidden-
+   * dim attenuation is computed from cholesky factors instead).
+   */
+  viewState: ProjectionViewState;
   ndim: number;
   splatCount: number;
   /** Indices of hidden dimensions that are discrete (binary visibility) */
-  discreteDims?: number[];
+  discreteDims?: readonly number[];
   /** Per-dimension step sizes for discrete dims (keyed by dim index) */
   discreteSteps?: Record<number, number>;
   /** Indices of dimensions to skip entirely (extend_to_all — always visible) */
-  extendToAllDims?: number[];
+  extendToAllDims?: readonly number[];
   /** Truncation radius in sigmas for shifted Gaussian attenuation (default 3.0) */
   truncate?: number;
 }): Promise<{
@@ -760,20 +961,47 @@ async function projectGSplatsTo3D(params: {
   sharpness: Float32Array;
   visibleCount: number;
 }> {
-  if (!wasmModule) {
-    throw new Error('[DataWorker] Not initialized - call initialize() first');
-  }
+  if (!wasmModule) throw new Error(NOT_INITIALIZED_MSG);
 
   const {
     positions,
     choleskyFactors,
     amplitudes,
     colors,
-    displayDims,
-    slicePosition,
+    viewState,
     ndim,
     splatCount,
   } = params;
+  const { displayDims, slicePosition } = viewState;
+
+  validateProjectionInputs(
+    'projectGSplatsTo3D',
+    positions,
+    displayDims,
+    slicePosition,
+    ndim,
+    splatCount
+  );
+  // Cholesky factors: packed lower-triangular = ndim × (ndim + 1) / 2 per splat.
+  const expectedCholesky = splatCount * ((ndim * (ndim + 1)) / 2);
+  if (choleskyFactors.length < expectedCholesky) {
+    throw new Error(
+      'projectGSplatsTo3D: choleskyFactors too short ' +
+        `(got ${choleskyFactors.length}, expected ≥ ${expectedCholesky})`
+    );
+  }
+  if (amplitudes.length < splatCount) {
+    throw new Error(
+      `projectGSplatsTo3D: amplitudes too short (got ${amplitudes.length}, expected ≥ ${splatCount})`
+    );
+  }
+  // RGB triplet per splat — short colors reach WASM compact_by_mask
+  // unchecked and read past the buffer end.
+  if (colors && colors.length < splatCount * 3) {
+    throw new Error(
+      `projectGSplatsTo3D: colors too short (got ${colors.length}, expected ≥ ${splatCount * 3})`
+    );
+  }
 
   // Compute hidden dimensions (all dims not in displayDims)
   const hiddenDims: number[] = [];
@@ -783,8 +1011,10 @@ async function projectGSplatsTo3D(params: {
     }
   }
 
-  // Sort dimensions for consistent submatrix extraction
-  const sortedDisplayDims = [...displayDims].sort((a, b) => a - b);
+  // preserve requested displayDims order (matches main-thread
+  // processor + Points/Lines convention). Hidden dims are still sorted
+  // for the WASM Mahalanobis path which expects ascending indices.
+  const orderedDisplayDims = [...displayDims];
   const sortedHiddenDims = [...hiddenDims].sort((a, b) => a - b);
 
   // Separate hidden dims into discrete (binary visibility) and continuous (Gaussian attenuation).
@@ -799,7 +1029,7 @@ async function projectGSplatsTo3D(params: {
   // Convert to WASM-compatible arrays
   const slicePosF32 = new Float32Array(slicePosition);
   const continuousHiddenDimsU32 = new Uint32Array(continuousHiddenDims);
-  const displayDimsU32 = new Uint32Array(sortedDisplayDims);
+  const displayDimsU32 = new Uint32Array(orderedDisplayDims);
 
   // Minimum amplitude threshold
   const minAmplitude = 1e-6;
@@ -904,25 +1134,16 @@ async function projectGSplatsTo3D(params: {
   // Step 5: Handle colors
   const outColors = new Float32Array(visibleCount * 3);
   if (colors) {
-    // Convert to Float32Array if needed
-    let colorsF32: Float32Array;
-    if (colors instanceof Float32Array) {
-      colorsF32 = colors;
-    } else {
-      colorsF32 = new Float32Array(colors.length);
-      for (let i = 0; i < colors.length; i++) {
-        colorsF32[i] = colors[i];
-      }
-    }
-    // Compact colors by visibility
-    wasmModule.compact_by_mask(colorsF32, visibility, splatCount, 3, outColors);
+    // Compact colors by visibility (WASM expects Float32 input)
+    wasmModule.compact_by_mask(
+      coerceColorsToFloat32(colors),
+      visibility,
+      splatCount,
+      3,
+      outColors
+    );
   } else {
-    // Default to white
-    for (let i = 0; i < visibleCount; i++) {
-      outColors[i * 3] = 1.0;
-      outColors[i * 3 + 1] = 1.0;
-      outColors[i * 3 + 2] = 1.0;
-    }
+    fillColorsWhite(outColors, visibleCount);
   }
 
   // Build transferable list
@@ -965,11 +1186,12 @@ async function decodeQuantized(params: {
   bounds: [number, number];
   dtype: 'uint8' | 'uint16';
 }): Promise<Float32Array> {
-  if (!wasmModule) {
-    throw new Error('[DataWorker] Not initialized - call initialize() first');
-  }
+  if (!wasmModule) throw new Error(NOT_INITIALIZED_MSG);
 
   const { data, bounds, dtype } = params;
+  validateDecodeArgs('decodeQuantized', data, {
+    boundsPair: { name: 'bounds', bounds },
+  });
   const [minVal, maxVal] = bounds;
 
   const result = new Float32Array(data.length);
@@ -998,11 +1220,12 @@ async function decodeLogScalar(params: {
   maxLog: number;
   dtype: 'uint8' | 'uint16';
 }): Promise<Float32Array> {
-  if (!wasmModule) {
-    throw new Error('[DataWorker] Not initialized - call initialize() first');
-  }
+  if (!wasmModule) throw new Error(NOT_INITIALIZED_MSG);
 
   const { data, maxLog, dtype } = params;
+  validateDecodeArgs('decodeLogScalar', data, {
+    finiteScalar: { name: 'maxLog', value: maxLog },
+  });
 
   const result = new Float32Array(data.length);
 
@@ -1033,11 +1256,43 @@ async function decodeLUT(params: {
   lutMode: 'row' | 'scalar';
   dtype?: 'uint8' | 'uint16'; // Optional - inferred from indices type if not provided
 }): Promise<Float32Array> {
-  if (!wasmModule) {
-    throw new Error('[DataWorker] Not initialized - call initialize() first');
-  }
+  if (!wasmModule) throw new Error(NOT_INITIALIZED_MSG);
 
   const { indices, lut, k, lutMode } = params;
+  validateDecodeArgs('decodeLUT', indices, {
+    positiveInt: { name: 'k', value: k },
+    lut: {
+      name: 'lut',
+      values: lut,
+      // Row mode requires the LUT to have ≥ k columns per entry; the
+      // table is flat with `lut.length` total entries (= rows × k).
+      minLength: lutMode === 'row' ? k : 1,
+    },
+  });
+  if (lutMode !== 'row' && lutMode !== 'scalar') {
+    throw new Error(`decodeLUT: lutMode='${lutMode}' must be 'row' or 'scalar'`);
+  }
+
+  // Scan indices for out-of-range values BEFORE handing off to WASM.
+  // Rust functions (decode_lut_scalar_*, decode_lut_row_*) index
+  // `lut[indices[i] as usize]` directly; an out-of-range index panics
+  // or traps inside WASM. JS-side rejection turns malformed encoded
+  // data into a clear error at the worker boundary.
+  if (lutMode === 'row' && lut.length % k !== 0) {
+    throw new Error(
+      `decodeLUT: row-mode lut length ${lut.length} is not divisible by k=${k}`
+    );
+  }
+  const entryCount = lutMode === 'row' ? Math.floor(lut.length / k) : lut.length;
+  for (let i = 0; i < indices.length; i++) {
+    if (indices[i] >= entryCount) {
+      throw new Error(
+        `decodeLUT: indices[${i}]=${indices[i]} out of range for ${entryCount} LUT ` +
+          `entr${entryCount === 1 ? 'y' : 'ies'} (lutMode=${lutMode})`
+      );
+    }
+  }
+
   // Infer dtype from indices type if not explicitly provided
   const dtype = params.dtype ?? (indices instanceof Uint8Array ? 'uint8' : 'uint16');
   const n = indices.length;
@@ -1082,11 +1337,22 @@ async function decodeBroadcasted(params: {
   numPoints: number;
   elementsPerPoint: number;
 }): Promise<Float32Array> {
-  if (!wasmModule) {
-    throw new Error('[DataWorker] Not initialized - call initialize() first');
-  }
+  if (!wasmModule) throw new Error(NOT_INITIALIZED_MSG);
 
   const { value, numPoints, elementsPerPoint } = params;
+  if (!Number.isInteger(numPoints) || numPoints < 0) {
+    throw new Error(`decodeBroadcasted: numPoints=${numPoints} must be a non-negative integer`);
+  }
+  if (!Number.isInteger(elementsPerPoint) || elementsPerPoint < 1) {
+    throw new Error(
+      `decodeBroadcasted: elementsPerPoint=${elementsPerPoint} must be a positive integer`
+    );
+  }
+  if (value.length < elementsPerPoint) {
+    throw new Error(
+      `decodeBroadcasted: value too short (got ${value.length}, expected ≥ ${elementsPerPoint})`
+    );
+  }
   const result = new Float32Array(numPoints * elementsPerPoint);
 
   // Use WASM for broadcasting

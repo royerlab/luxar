@@ -23,10 +23,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { DataMonitorManager, cycleDataMonitor } from '../../../data/data-monitor-manager';
-import { SceneLoader } from '../../../data/scene-loader';
+import { DataMonitorManager, cycleDataMonitor } from '../../../ui/monitors/data-monitor-manager';
 import { SceneLoaderManager } from '../../../data/scene-loader-manager';
-import type { LoaderMonitor, MonitorEvent } from '../../../ui/data-monitor-types';
+import type { LoaderMonitor, MonitorEvent } from '../../../types/data-monitor-types';
 
 // Mock zarr module
 vi.mock('zarr', () => ({
@@ -118,6 +117,18 @@ describe('Data Monitor Integration', () => {
 
     // Setup DOM
     document.body.innerHTML = '<div id="test-container"></div>';
+
+    // Wire the monitor factory the way core/app.ts does at boot —
+    // SceneLoader's monitor coupling is factory-injected, so without
+    // this, SceneLoader instances created in these tests have a null
+    // monitor.
+    SceneLoaderManager.getInstance().setMonitorFactory((monitorId) => {
+      const mgr = DataMonitorManager.getInstance();
+      if (!mgr.hasMonitor(monitorId)) {
+        mgr.createMonitor(monitorId, document.body);
+      }
+      return mgr.getMonitor(monitorId) ?? null;
+    });
   });
 
   afterEach(() => {
@@ -171,34 +182,30 @@ describe('Data Monitor Integration', () => {
   });
 
   describe('SceneLoader integration', () => {
+    // SceneLoader's monitor coupling is a factory injected via
+    // SceneLoaderManager. Tests construct loaders through the manager
+    // (which threads the factory wired up in this file's beforeEach)
+    // rather than via `new SceneLoader(...)` directly — the latter
+    // bypasses the factory and yields a null monitor.
     it('should create monitor on SceneLoader construction', () => {
       const manager = DataMonitorManager.getInstance();
-
-      // Create scene loader with monitor enabled
-      const sceneLoader = new SceneLoader({ enableMonitor: true }, 'test-scene');
-      void sceneLoader; // Explicitly mark as used for testing
-
-      // Monitor should be created
+      SceneLoaderManager.getInstance().createLoader('test-scene', { enableMonitor: true });
       const monitor = manager.getMonitor('test-scene-monitor');
       expect(monitor).toBeDefined();
     });
 
     it('should not create monitor when disabled in config', () => {
       const manager = DataMonitorManager.getInstance();
-
-      // Create scene loader with monitor disabled
-      const sceneLoader = new SceneLoader({ enableMonitor: false }, 'test-scene');
-      void sceneLoader; // Explicitly mark as used for testing
-
-      // Monitor should not be created
+      SceneLoaderManager.getInstance().createLoader('test-scene', { enableMonitor: false });
+      // Monitor should not be created — the factory is gated on
+      // config.enableMonitor inside SceneLoader.
       const monitor = manager.getMonitor('test-scene-monitor');
       expect(monitor).toBeNull();
     });
 
     it('should connect loaders to monitor', async () => {
       const manager = DataMonitorManager.getInstance();
-      const sceneLoader = new SceneLoader({ enableMonitor: true }, 'test-scene');
-      void sceneLoader; // Explicitly mark as used for testing
+      SceneLoaderManager.getInstance().createLoader('test-scene', { enableMonitor: true });
       const monitor = manager.getMonitor('test-scene-monitor');
 
       expect(monitor).toBeDefined();
@@ -225,8 +232,7 @@ describe('Data Monitor Integration', () => {
 
     it('should disconnect all loaders when loading new scene', () => {
       const manager = DataMonitorManager.getInstance();
-      const sceneLoader = new SceneLoader({ enableMonitor: true }, 'test-scene');
-      void sceneLoader; // Explicitly mark as used for testing
+      SceneLoaderManager.getInstance().createLoader('test-scene', { enableMonitor: true });
       const monitor = manager.getMonitor('test-scene-monitor');
 
       if (!monitor) throw new Error('Monitor should exist');
@@ -267,6 +273,71 @@ describe('Data Monitor Integration', () => {
       // Verify disconnection
       expect(mockLoader1.removeEventListener).toHaveBeenCalled();
       expect(monitor.getGlobalStats().totalLoaders).toBe(0);
+    });
+
+    it('disconnectAllLoaders also nulls scene-bound providers (no stale closures)', () => {
+      const manager = DataMonitorManager.getInstance();
+      SceneLoaderManager.getInstance().createLoader('test-scene', { enableMonitor: true });
+      const monitor = manager.getMonitor('test-scene-monitor');
+      if (!monitor) throw new Error('Monitor should exist');
+
+      // Inject providers that throw if called after they should be reset.
+      // This mirrors how SceneLoader's L0 closure throws after dispose
+      // sets `this.l0Cache = null` — without resetSceneProviders the
+      // monitor's stats poll NPEs on the next tick.
+      let l0Calls = 0;
+      monitor.setL0CacheProvider({
+        getStats: () => {
+          l0Calls++;
+          return { count: 0, size: 0, hits: 0, misses: 0, evictions: 0, hitRate: 0 };
+        },
+        clear: () => {},
+      });
+
+      // Drop everything (scene reload path)
+      monitor.disconnectAllLoaders();
+
+      // After reset: clearL0Cache is a no-op (provider is null) and a
+      // subsequent stats fetch won't reach the stale closure.
+      monitor.clearL0Cache();
+      const before = l0Calls;
+      // The provider should be null — clearL0Cache logs nothing and returns.
+      expect(l0Calls).toBe(before);
+    });
+
+    it('dispose() also nulls scene-bound providers and resets UI state', () => {
+      // Pre-13.3 dispose() did NOT call resetSceneProviders() — only
+      // disconnectAllLoaders() did. Direct dispose callers (and any
+      // external/debug references that survive a teardown order
+      // change) could still hold provider closures bound to the
+      // disposed SceneLoader.
+      const manager = DataMonitorManager.getInstance();
+      SceneLoaderManager.getInstance().createLoader('test-scene', { enableMonitor: true });
+      const monitor = manager.getMonitor('test-scene-monitor');
+      if (!monitor) throw new Error('Monitor should exist');
+
+      let l0Calls = 0;
+      monitor.setL0CacheProvider({
+        getStats: () => {
+          l0Calls++;
+          return { count: 0, size: 0, hits: 0, misses: 0, evictions: 0, hitRate: 0 };
+        },
+        clear: () => {},
+      });
+
+      // Force visibility/expanded so we can verify they reset.
+      monitor.show();
+      expect(monitor.isVisible()).toBe(true);
+
+      monitor.dispose();
+
+      // Provider is null — clearL0Cache won't reach the stale closure.
+      const before = l0Calls;
+      monitor.clearL0Cache();
+      expect(l0Calls).toBe(before);
+
+      // UI state is reset.
+      expect(monitor.isVisible()).toBe(false);
     });
   });
 
@@ -527,6 +598,59 @@ describe('Data Monitor Integration', () => {
       // 0: hidden, 1: mini, 2: expanded
       expect(monitor.isVisible()).toBe(true);
       expect(monitor.isExpanded()).toBe(false);
+    });
+  });
+
+  describe('Scene graph state lifecycle', () => {
+    it('disconnectAllLoaders() clears scene graph display state', () => {
+      const manager = DataMonitorManager.getInstance();
+      const monitor = manager.createMonitor('test', document.body);
+
+      // Plant a fake scene graph (mimics post-load state).
+      monitor.setSceneGraph({
+        path: '/',
+        name: 'Scene',
+        type: 'scene',
+        children: [
+          { path: '/Points', name: 'Points', type: 'points', pointCount: 100, children: [] },
+        ],
+      });
+      expect(monitor.getSceneGraph().root).not.toBeNull();
+      expect(monitor.getSceneGraph().pointsNodes).toBe(1);
+
+      // Reload simulation: disconnect loaders should also drop the
+      // tree so the next scene doesn't display a stale shape if it
+      // fails before setSceneGraph() runs.
+      monitor.disconnectAllLoaders();
+
+      const after = monitor.getSceneGraph();
+      expect(after.root).toBeNull();
+      expect(after.pointsNodes).toBe(0);
+      expect(after.totalPoints).toBe(0);
+    });
+
+    it('dispose() clears scene graph display state', () => {
+      const manager = DataMonitorManager.getInstance();
+      const monitor = manager.createMonitor('test', document.body);
+
+      monitor.setSceneGraph({
+        path: '/',
+        name: 'Scene',
+        type: 'scene',
+        children: [
+          { path: '/Lines', name: 'Lines', type: 'lines', segmentCount: 50, children: [] },
+        ],
+      });
+      expect(monitor.getSceneGraph().linesNodes).toBe(1);
+
+      monitor.dispose();
+
+      // A stale debug/external reference reading getSceneGraph() after
+      // dispose should not see the previous scene's tree.
+      const after = monitor.getSceneGraph();
+      expect(after.root).toBeNull();
+      expect(after.linesNodes).toBe(0);
+      expect(after.totalSegments).toBe(0);
     });
   });
 });

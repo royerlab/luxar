@@ -20,13 +20,22 @@ import { LuxarOrbitControls } from './luxar-orbit-controls';
 import { LuxarFlyControls } from './luxar-fly-controls';
 import { config } from '../config';
 import { log, Modules, LogEmoji } from '../utils/log';
-import type { LuxarCamera } from '../scene/camera-utils';
+import { EventGroup } from '../utils/event-group';
+import type { LuxarCamera } from '../utils/camera-utils';
 import type { ControlType } from './types';
+import { isMacPlatform } from '../utils/platform';
 export type { ControlType };
 
 export interface ControlsManagerConfig {
   autoRotate?: boolean;
   autoRotateSpeed?: number;
+  /**
+   * Swap LEFT ↔ RIGHT mouse-button mapping in orbit (3D) mode. When true,
+   * one-finger drag rotates and right-drag pans (touchpad ergonomics);
+   * when false, the classic CAD/Blender mapping (left-drag pans, right-
+   * drag rotates) stays in place. Ignored in ortho and fly modes.
+   */
+  naturalDrag?: boolean;
   flyMovementSpeed?: number;
   flyRotationSpeed?: number;
   flyLookSpeed?: number;
@@ -50,24 +59,26 @@ type ControlEventMap = {
 type ActiveControls = LuxarOrbitControls | LuxarFlyControls;
 type ControlEventDispatcher = THREE.EventDispatcher<ControlEventMap>;
 
-interface ForwardedControlHandlers {
-  change: () => void;
-  start: () => void;
-  end: () => void;
-}
-
 export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventMap> {
   private camera: LuxarCamera;
   private domElement: HTMLElement;
   // Current control instance
   private currentControls: ActiveControls | null = null;
-  private currentControlHandlers: ForwardedControlHandlers | null = null;
+  /**
+   * Cleanup group for the change/start/end event-forwarders attached to
+   * the active controls instance. Rebuilt on every switch so disposing
+   * the previous group detaches the old listeners atomically.
+   */
+  private controlEvents: EventGroup = new EventGroup();
   private currentType: ControlType = 'orbit';
 
   // Configuration - uses defaults from config
   private config: ControlsManagerConfig = {
     autoRotate: false,
     autoRotateSpeed: config.controls.orbit.autoRotate.speed.default,
+    // Default to true on macOS; rendering-controls persistence overrides
+    // this with any stored user choice as soon as settings load.
+    naturalDrag: isMacPlatform(),
     flyMovementSpeed: config.controls.fly.movement.speed.default,
     flyRotationSpeed: config.controls.fly.rotation.speed.default,
     flyLookSpeed: config.controls.fly.look.mouseSpeed.default,
@@ -199,6 +210,17 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
     // Shift+scroll = view-axis rotation (roll)
     controls.enableViewAxisRotation();
 
+    // Apply "natural drag" mapping (touchpad-friendly: LEFT=rotate, RIGHT=pan)
+    // when enabled. The default in LuxarOrbitControls is the mouse-friendly
+    // mapping (LEFT=pan, RIGHT=rotate); we only need to act when swapping in.
+    if (this.config.naturalDrag) {
+      controls.mouseButtons = {
+        LEFT: THREE.MOUSE.ROTATE,
+        MIDDLE: THREE.MOUSE.DOLLY,
+        RIGHT: THREE.MOUSE.PAN,
+      };
+    }
+
     // Target is set in restoreCameraState() after creation
     this.currentControls = controls;
     this.attachControlEventForwarders(controls);
@@ -291,27 +313,31 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   }
 
   private attachControlEventForwarders(controls: ControlEventDispatcher): void {
-    const handlers: ForwardedControlHandlers = {
-      change: () => this.dispatchEvent({ type: 'change' }),
-      start: () => this.dispatchEvent({ type: 'start' }),
-      end: () => this.dispatchEvent({ type: 'end' }),
+    const change = (): void => {
+      this.dispatchEvent({ type: 'change' });
+    };
+    const start = (): void => {
+      this.dispatchEvent({ type: 'start' });
+    };
+    const end = (): void => {
+      this.dispatchEvent({ type: 'end' });
     };
 
-    controls.addEventListener('change', handlers.change);
-    controls.addEventListener('start', handlers.start);
-    controls.addEventListener('end', handlers.end);
-    this.currentControlHandlers = handlers;
+    controls.addEventListener('change', change);
+    controls.addEventListener('start', start);
+    controls.addEventListener('end', end);
+
+    // THREE.EventDispatcher isn't a DOM EventTarget so EventGroup.on()
+    // doesn't apply; register manual cleanup callbacks instead.
+    this.controlEvents.add(() => controls.removeEventListener('change', change));
+    this.controlEvents.add(() => controls.removeEventListener('start', start));
+    this.controlEvents.add(() => controls.removeEventListener('end', end));
   }
 
   private disposeCurrentControls(): void {
     if (this.currentControls) {
-      if (this.currentControlHandlers) {
-        const controls = this.currentControls as ControlEventDispatcher;
-        controls.removeEventListener('change', this.currentControlHandlers.change);
-        controls.removeEventListener('start', this.currentControlHandlers.start);
-        controls.removeEventListener('end', this.currentControlHandlers.end);
-        this.currentControlHandlers = null;
-      }
+      this.controlEvents.dispose();
+      this.controlEvents = new EventGroup();
       this.currentControls.dispose();
       this.currentControls = null;
     }
@@ -354,6 +380,26 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
     if (this.currentControls instanceof LuxarOrbitControls) {
       this.currentControls.autoRotateSpeed = speed;
     }
+  }
+
+  /**
+   * Toggle the orbit-mode LEFT ↔ RIGHT mouse-button mapping. Updates stored
+   * config and, only when the active control is orbit (3D), mutates the
+   * live mouseButtons in place so the change applies immediately without a
+   * mode switch. Ortho and fly are intentionally ignored: ortho uses its
+   * own RIGHT=null mapping, fly doesn't use mouseButtons at all.
+   */
+  public setNaturalDrag(enabled: boolean): void {
+    this.config.naturalDrag = enabled;
+    if (this.currentType !== 'orbit') return;
+    if (!(this.currentControls instanceof LuxarOrbitControls)) return;
+    this.currentControls.mouseButtons = enabled
+      ? { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN }
+      : { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE };
+  }
+
+  public getNaturalDrag(): boolean {
+    return this.config.naturalDrag ?? false;
   }
 
   public getAutoRotate(): boolean {

@@ -5,8 +5,8 @@
  * for optimization. Detects common issues and suggests solutions.
  */
 
-import type { MonitorEvent, Recommendation, LoaderMetrics } from '../data-monitor-types';
-import type { MemoryMetrics } from '../data-monitor-templates';
+import type { MonitorEvent, Recommendation, LoaderMetrics } from '../../types/data-monitor-types';
+import type { MemoryMetrics } from '../monitors/data-monitor-templates';
 import { config } from '../../config';
 
 const PerformanceThresholds = config.dataLoading.monitor.thresholds;
@@ -230,7 +230,7 @@ export class LoadingAdvisor {
   /**
    * Update recommendations based on global stats
    */
-  updateRecommendations(_stats: any): void {
+  updateRecommendations(_stats: unknown): void {
     // Clear old global recommendations
     const toRemove: string[] = [];
     for (const [id, rec] of this.recommendations) {

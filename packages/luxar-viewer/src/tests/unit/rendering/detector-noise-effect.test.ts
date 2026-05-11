@@ -37,7 +37,7 @@ vi.mock('postprocessing', () => ({
 import {
   DetectorNoiseEffect,
   isDetectorNoiseEffect,
-} from '../../../rendering/detector-noise-effect';
+} from '../../../rendering/post-processing/detector-noise-effect';
 
 describe('DetectorNoiseEffect', () => {
   describe('creation', () => {

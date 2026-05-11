@@ -194,8 +194,9 @@ class TestServeIntegration:
 
         captured: dict[str, str] = {}
 
-        def fake_serve_viewer(host, port, data_url=None, open_browser_flag=True,
-                              cors_origin="local"):
+        def fake_serve_viewer(
+            host, port, data_url=None, open_browser_flag=True, cors_origin="local"
+        ):
             captured["viewer"] = cors_origin
 
         def fake_serve_data(path, host, port, *args, **kwargs):
@@ -234,8 +235,9 @@ class TestServeIntegration:
 
         captured: dict[str, str] = {}
 
-        def fake_serve_viewer(host, port, data_url=None, open_browser_flag=True,
-                              cors_origin="local"):
+        def fake_serve_viewer(
+            host, port, data_url=None, open_browser_flag=True, cors_origin="local"
+        ):
             captured["viewer"] = cors_origin
 
         def fake_serve_data(path, host, port, *args, **kwargs):
@@ -279,7 +281,9 @@ class TestServeIntegration:
         (outside / "secret.txt").write_text("secret")
 
         client = TestClient(create_server_app(str(serve_root)))
-        response = client.get("/%2e%2e/outside/", headers={"Accept": "application/json"})
+        response = client.get(
+            "/%2e%2e/outside/", headers={"Accept": "application/json"}
+        )
         assert response.status_code == 403
 
     def test_sensitive_system_path_requires_opt_in(self):

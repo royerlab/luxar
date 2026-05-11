@@ -230,15 +230,6 @@ export function removeGlassFilters(): void {
 }
 
 /**
- * Update glass filter parameters dynamically
- * Call this to adjust the glass effect in real-time
- */
-export function updateGlassFilters(params: Partial<GlassFilterParams>): void {
-  removeGlassFilters();
-  injectGlassFilters({ ...defaultGlassParams, ...params });
-}
-
-/**
  * CSS selectors for glass-enabled panels
  * These elements will receive the real DOM refraction layer
  */

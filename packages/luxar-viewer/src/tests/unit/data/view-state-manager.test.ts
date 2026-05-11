@@ -25,7 +25,7 @@ describe('ViewStateManager', () => {
       expect(viewState.displayDims).toEqual([0, 1, 2]);
       expect(viewState.slicePosition).toEqual([0, 0, 0]); // Displayed dims start at 0
       expect(viewState.tolerance).toEqual([0, 0, 0]); // Displayed dims have 0 tolerance
-      expect(viewState.dimensions?.ndim).toBe(3);
+      expect(viewState.dimensions?.length).toBe(3);
     });
 
     it('should initialize ViewState for 5D dataset with 3 displayed', () => {
@@ -208,7 +208,7 @@ describe('ViewStateManager', () => {
       const viewState = ViewStateManager.initializeFromDimensions(sceneDims);
 
       expect(viewState.displayDims).toEqual([0]);
-      expect(viewState.dimensions?.ndim).toBe(1);
+      expect(viewState.dimensions?.length).toBe(1);
     });
 
     it('should handle dimensions with very large ranges', () => {
@@ -273,10 +273,10 @@ describe('ViewStateManager', () => {
 
       // Check that metadata matches expected structure
       expect(viewState.dimensions).toBeDefined();
-      expect(viewState.dimensions?.metadata).toHaveLength(3);
-      expect(viewState.dimensions?.metadata?.[0].name).toBe('x');
-      expect(viewState.dimensions?.metadata?.[0].unit).toBe('um');
-      expect(viewState.dimensions?.metadata?.[0].scale).toBe(1.0);
+      expect(viewState.dimensions).toHaveLength(3);
+      expect(viewState.dimensions?.[0].name).toBe('x');
+      expect(viewState.dimensions?.[0].unit).toBe('um');
+      expect(viewState.dimensions?.[0].scale).toBe(1.0);
     });
 
     it('should handle all optional DimensionMetadata fields', () => {
@@ -297,7 +297,7 @@ describe('ViewStateManager', () => {
 
       const viewState = ViewStateManager.initializeFromDimensions(sceneDims);
 
-      const timeMeta = viewState.dimensions?.metadata?.[0];
+      const timeMeta = viewState.dimensions?.[0];
       expect(timeMeta?.discrete).toBe(true);
       expect(timeMeta?.step).toBe(10);
       expect(timeMeta?.range).toEqual([0, 1000]);
@@ -334,13 +334,13 @@ describe('ViewStateManager', () => {
 
       const viewState = ViewStateManager.initializeFromDimensions(sceneDims);
 
-      const channelMeta = viewState.dimensions?.metadata?.[0];
+      const channelMeta = viewState.dimensions?.[0];
       expect(channelMeta?.spatial).toBe(false);
       expect(channelMeta?.cyclic).toBe(false);
       expect(channelMeta?.categories).toEqual(['DAPI', 'GFP', 'RFP', 'Merge']);
       expect(channelMeta?.description).toBe('Fluorescence channel');
 
-      const angleMeta = viewState.dimensions?.metadata?.[1];
+      const angleMeta = viewState.dimensions?.[1];
       expect(angleMeta?.spatial).toBe(true);
       expect(angleMeta?.cyclic).toBe(true);
       expect(angleMeta?.description).toBe('Rotation angle');

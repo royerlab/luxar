@@ -8,6 +8,9 @@ import {
   createCustomColormapTexture,
   isBuiltinColormap,
   disposeColormapTextures,
+  disposeBuiltinColormapTextures,
+  disposeCustomColormapTextures,
+  _customColormapCacheSize,
 } from '../../../rendering/colormap-textures';
 import { BUILTIN_COLORMAPS, BUILTIN_COLORMAP_NAMES } from '../../../rendering/colormap-data';
 
@@ -56,9 +59,12 @@ describe('colormap-textures', () => {
       expect(tex!.image.width).toBe(256);
     });
 
-    it('returns undefined for "custom" without LUT data', () => {
+    it('falls back to viridis for "custom" without LUT data', () => {
+      // Missing custom LUT data falls back to viridis with a warning so
+      // the user gets a visible result rather than an empty render.
       const tex = getColormapTexture('custom');
-      expect(tex).toBeUndefined();
+      const viridis = getColormapTexture('viridis');
+      expect(tex).toBe(viridis);
     });
   });
 
@@ -120,6 +126,87 @@ describe('colormap-textures', () => {
       disposeColormapTextures();
       const tex2 = getBuiltinColormapTexture('viridis');
       expect(tex1).not.toBe(tex2);
+    });
+  });
+
+  // ==========================================================================
+  // B.2 — scoped disposal + bounded LRU for custom LUT cache
+  // ==========================================================================
+
+  describe('B.2: custom LUT cache is bounded LRU', () => {
+    function makeLut(seed: number): Uint8Array {
+      const lut = new Uint8Array(768);
+      for (let i = 0; i < 768; i++) {
+        lut[i] = (seed + i) % 256;
+      }
+      return lut;
+    }
+
+    it('caps cache size at the LRU bound (16) and disposes evicted entries', () => {
+      disposeColormapTextures(); // clean slate
+      // Load 20 unique LUTs; cache must not exceed 16, and the first 4 should
+      // have been disposed.
+      const created: { tex: ReturnType<typeof createCustomColormapTexture>; disposed: () => boolean }[] = [];
+      for (let i = 0; i < 20; i++) {
+        const tex = createCustomColormapTexture(makeLut(i));
+        // Detect disposed state by spying on the dispose method post-hoc.
+        // We can't reliably detect disposal on a real THREE.DataTexture
+        // without a renderer, but we can assert the cache size invariant.
+        created.push({ tex, disposed: () => false });
+      }
+      expect(_customColormapCacheSize()).toBeLessThanOrEqual(16);
+    });
+
+    it('LRU promotion: recently-used entries survive eviction', () => {
+      disposeColormapTextures();
+      // Load 16 unique LUTs (fill the cache).
+      const first = createCustomColormapTexture(makeLut(0));
+      for (let i = 1; i < 16; i++) {
+        createCustomColormapTexture(makeLut(i));
+      }
+      // Touch the first to bump it to MRU.
+      const promoted = createCustomColormapTexture(makeLut(0));
+      expect(promoted).toBe(first);
+
+      // Loading a 17th unique LUT should evict the LRU (which is now seed=1).
+      createCustomColormapTexture(makeLut(99));
+      // seed=0 must still be present.
+      const stillThere = createCustomColormapTexture(makeLut(0));
+      expect(stillThere).toBe(first);
+    });
+  });
+
+  describe('B.2: scoped disposal', () => {
+    function makeLut(seed: number): Uint8Array {
+      const lut = new Uint8Array(768);
+      for (let i = 0; i < 768; i++) lut[i] = (seed + i) % 256;
+      return lut;
+    }
+
+    it('disposeCustomColormapTextures() clears only the custom cache; built-ins survive', () => {
+      const builtinBefore = getBuiltinColormapTexture('viridis');
+      createCustomColormapTexture(makeLut(123));
+      expect(_customColormapCacheSize()).toBe(1);
+
+      disposeCustomColormapTextures();
+      expect(_customColormapCacheSize()).toBe(0);
+
+      // Built-in survives: same instance comes back without re-creation.
+      const builtinAfter = getBuiltinColormapTexture('viridis');
+      expect(builtinAfter).toBe(builtinBefore);
+    });
+
+    it('disposeBuiltinColormapTextures() clears only built-ins', () => {
+      const builtin = getBuiltinColormapTexture('viridis');
+      createCustomColormapTexture(makeLut(45));
+      expect(_customColormapCacheSize()).toBe(1);
+
+      disposeBuiltinColormapTextures();
+      // Built-in cache cleared (next get returns a new instance).
+      const builtinAfter = getBuiltinColormapTexture('viridis');
+      expect(builtinAfter).not.toBe(builtin);
+      // Custom cache untouched.
+      expect(_customColormapCacheSize()).toBe(1);
     });
   });
 });

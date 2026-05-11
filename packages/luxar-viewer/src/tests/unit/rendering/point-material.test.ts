@@ -75,8 +75,11 @@ describe('PointMaterial', () => {
     it('should have correct vertex shader with optimized world-space sizing', () => {
       const material = new PointMaterial();
 
-      // Check for correct world-space sizing formula with radius scaling
-      expect(material.vertexShader).toContain('float normalizedRadius = radius * radiusScale');
+      // E.2: radius normalization now flows through sanitizeNonNegative
+      // from glsl-lib (replaces the inline isnan/isinf/<0 check).
+      expect(material.vertexShader).toContain(
+        'float normalizedRadius = sanitizeNonNegative(radius * radiusScale'
+      );
 
       // OPTIMIZATION: Check for inversesqrt with ortho branching
       expect(material.vertexShader).toContain('inversesqrt(dot(mvPosition.xyz, mvPosition.xyz))');
@@ -109,17 +112,21 @@ describe('PointMaterial', () => {
       expect(material.vertexShader).toContain('uniform float radiusScale');
       expect(material.vertexShader).toContain('uniform float sharpnessScale');
 
-      // Check for sharpness normalization and default handling
+      // E.2: sharpness normalization now flows through sanitizePositive
+      // from glsl-lib (replaces the inline isnan/isinf/<=0 check).
       expect(material.vertexShader).toContain(
-        'float normalizedSharpness = sharpness * sharpnessScale'
+        'float normalizedSharpness = sanitizePositive(sharpness * sharpnessScale'
       );
-      expect(material.vertexShader).toContain('isnan(normalizedSharpness)');
-      expect(material.vertexShader).toContain('isinf(normalizedSharpness)');
       expect(material.vertexShader).toContain('vSharpness = normalizedSharpness');
 
-      // Check invalid radius and compensation guards are present
-      expect(material.vertexShader).toContain('isnan(normalizedRadius)');
-      expect(material.vertexShader).toContain('isinf(sharpnessCompensation)');
+      // E.2: GLSL sanitize lib is injected; verify the helper functions
+      // are present (proxies for the legacy inline NaN/Inf checks).
+      expect(material.vertexShader).toContain('bool isInvalidFloat(float v)');
+      expect(material.vertexShader).toContain('float sanitizePositive(float v, float fallback)');
+      expect(material.vertexShader).toContain(
+        'float sanitizeNonNegative(float v, float fallback)'
+      );
+      expect(material.vertexShader).toContain('isInvalidFloat(sharpnessCompensationRaw)');
 
       // Check for mediump precision on varyings (reduces register pressure)
       expect(material.vertexShader).toContain('out mediump vec3 vColor');

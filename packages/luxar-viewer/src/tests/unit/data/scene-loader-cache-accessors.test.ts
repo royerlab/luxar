@@ -19,7 +19,10 @@ describe('SceneLoader cache accessors', () => {
     });
 
     it('returns null for every cache level in getCacheStats()', () => {
-      expect(loader.getCacheStats()).toEqual({ l0: null, l1: null, l2: null });
+      const stats = loader.getCacheStats();
+      expect(stats.l0).toBeNull();
+      expect(stats.l1).toBeNull();
+      expect(stats.l2).toBeNull();
     });
 
     it('returns an empty array from listCachedDatasets()', async () => {
@@ -36,7 +39,7 @@ describe('SceneLoader cache accessors', () => {
 
   describe('with stub cache instances injected (smoke)', () => {
     /**
-     * We don't construct real TwoLevelCachingStore / DecompressedChunkCache
+     * We don't construct real MultiLevelCachingStore / DecompressedChunkCache
      * here — both touch IndexedDB, OPFS, or zarr. Instead, we inject minimal
      * shape-compatible stubs by reaching into the private fields through a
      * narrow interface. This validates that the public methods forward to the
@@ -62,7 +65,15 @@ describe('SceneLoader cache accessors', () => {
 
       const stubCachingStore = {
         getStats: () => ({
-          l1: { metadataSize: 0, chunksSize: 0, metadataCount: 0, chunksCount: 0, hits: 0, misses: 0, evictions: 0 },
+          l1: {
+            metadataSize: 0,
+            chunksSize: 0,
+            metadataCount: 0,
+            chunksCount: 0,
+            hits: 0,
+            misses: 0,
+            evictions: 0,
+          },
           l2: { size: 0, count: 0, reads: 0, writes: 0 },
           network: { bytesTransferred: 0, requestCount: 0, bandwidth: 0 },
         }),

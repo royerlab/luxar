@@ -120,7 +120,8 @@ describe('PostProcessingManager.renderToImageData', () => {
    * (bypasses constructor) and injects mock internals.
    */
   async function callRenderToImageData() {
-    const { PostProcessingManager } = await import('../../../rendering/post-processing-manager');
+    const { PostProcessingManager } =
+      await import('../../../rendering/post-processing/post-processing-manager');
     const instance = Object.create(PostProcessingManager.prototype);
     (instance as any).renderer = mockRenderer;
     (instance as any).composer = mockComposer;
@@ -234,7 +235,8 @@ describe('PostProcessingManager.getResultBuffer', () => {
    * the result of the private getResultBuffer() method.
    */
   async function callGetResultBuffer(passes: Array<{ enabled: boolean; needsSwap?: boolean }>) {
-    const { PostProcessingManager } = await import('../../../rendering/post-processing-manager');
+    const { PostProcessingManager } =
+      await import('../../../rendering/post-processing/post-processing-manager');
     const instance = Object.create(PostProcessingManager.prototype);
     const composer = createMockComposer(passes);
     (instance as any).composer = composer;

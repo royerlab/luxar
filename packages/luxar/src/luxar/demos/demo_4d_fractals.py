@@ -499,8 +499,12 @@ def generate_4d_fractal_dataset(
 
             # Dimension-aware labels for fractal type
             fractal_labels = [
-                "XOR", "Menger", "Sierpinski",
-                "Cantor", "Checkerboard", "Diamond",
+                "XOR",
+                "Menger",
+                "Sierpinski",
+                "Cantor",
+                "Checkerboard",
+                "Diamond",
             ]
             for i, label in enumerate(fractal_labels):
                 scene.add_text(

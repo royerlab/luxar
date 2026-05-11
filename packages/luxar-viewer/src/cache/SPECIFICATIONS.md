@@ -14,7 +14,7 @@ The cache package provides a three-level caching system with intelligent prefetc
 ### Data Pipeline Position
 
 ```
-HTTP Request → TwoLevelCachingStore → zarrita decompression → L0 Cache → ArrayDecoder → Rendering
+HTTP Request → MultiLevelCachingStore → zarrita decompression → L0 Cache → ArrayDecoder → Rendering
                 ↑                            ↑                    ↑
             Caches compressed chunks    ~2ms overhead     Caches decompressed chunks
             (L1/L2)                   (skipped on L0 hit)      (~1μs access)
@@ -463,7 +463,7 @@ For complete details, see: [`docs/guides/specs/CACHE_PREFETCHING_SPEC.md`](../..
 
 ```
 1. zarrita requests chunk "points/positions/0.0.0"
-2. TwoLevelCachingStore.get()
+2. MultiLevelCachingStore.get()
    a. Check L1 → miss
    b. Check L2 → miss
    c. HTTP fetch → 32KB compressed chunk
@@ -478,7 +478,7 @@ For complete details, see: [`docs/guides/specs/CACHE_PREFETCHING_SPEC.md`](../..
 
 ```
 1. zarrita requests chunk
-2. TwoLevelCachingStore.get()
+2. MultiLevelCachingStore.get()
    a. Check L1 → HIT! (~1μs)
    b. Return immediately
 3. zarrita decompresses
@@ -489,7 +489,7 @@ For complete details, see: [`docs/guides/specs/CACHE_PREFETCHING_SPEC.md`](../..
 
 ```
 1. zarrita requests chunk
-2. TwoLevelCachingStore.get()
+2. MultiLevelCachingStore.get()
    a. Check L1 → miss (cleared on page load)
    b. Check L2 → HIT! (~1ms)
    c. Promote to L1
@@ -654,7 +654,7 @@ if data.byteLength != expectedSize:
 
 ### Cache Statistics Interface
 
-The `TwoLevelCachingStore` provides comprehensive statistics via `getStats()`:
+The `MultiLevelCachingStore` provides comprehensive statistics via `getStats()`:
 
 ```typescript
 interface CacheStats {
@@ -777,51 +777,14 @@ Prevents metadata thrashing:
 
 ---
 
-## Historical Architecture Decisions
+## L0 Design Rationale
 
-### Why the Original Range-Based L0 Cache Was Removed (Then Replaced)
+The current L0 DecompressedChunkCache is chunk-keyed rather than range-keyed:
 
-An earlier architecture included a 4-layer cache system with an L0 "RangeCache" that cached decoded Float32Array data keyed by byte ranges. This _range-based_ cache was **removed** for the following reasons:
-
-> **Note**: The current L0 DecompressedChunkCache (documented in Section 3 above) is a _different design_ that addresses these issues using chunk-based keys and ES6 Proxy interception. The problems below applied to the original range-based approach.
-
-**Problems with L0 Cache:**
-
-1. **Memory inefficiency**: 10× worse coverage per MB vs L1
-   - L1 (compressed): ~100MB caches 1GB of decoded data (10× compression)
-   - L0 (decoded): 100MB caches only 100MB of data
-   - Trade-off: L1 gives 10× more coverage for same memory
-
-2. **Minimal performance benefit**: Saves only ~2ms per hit
-   - Decompression overhead: ~2ms (Blosc WASM)
-   - Network latency: ~100ms (50× larger bottleneck)
-   - Prefetching at L1 provides better overall performance
-
-3. **Cache fragmentation**: Range-based keys led to ~50% miss rate
-   - Queries for `positions[100:200]` miss cache for `positions[0:300]`
-   - Unable to assemble results from overlapping cached ranges
-   - Chunk-based L1 caching has 95%+ hit rate with prefetching
-
-4. **Selective caching**: Only cached Float32Array, not Uint8Array colors
-   - Largest arrays (colors) weren't cached at all
-   - Inconsistent performance benefits
-
-5. **Added complexity**: 20% more code for <1ms average improvement
-   - Harder to debug and maintain
-   - Reduced code clarity
-
-**Original Decision**: Use 3-layer architecture (L1 Memory + L2 OPFS + L3 Network)
-
-- ChunkPrefetcher at L1 provides better latency hiding
-- Simpler, more efficient, easier to maintain
-- Measured impact: 0.7ms slower queries but 36% better memory coverage
-
-**Subsequent Evolution** (v1.4.0+): The current L0 DecompressedChunkCache was added later with a _chunk-based_ design that avoids these problems:
-
-- Uses chunk coordinates as keys (not byte ranges) → no fragmentation
-- Uses ES6 Proxy for transparent interception → no zarrita changes needed
-- Caches all TypedArrays (not just Float32Array) → consistent benefits
-- Adds only ~200 lines of code → minimal complexity increase
+- Uses zarr chunk coordinates as keys, avoiding fragmented byte-range entries.
+- Uses ES6 Proxy interception around zarrita arrays, so zarrita itself does not need changes.
+- Caches every ArrayBufferView type returned by chunk decompression, not just Float32Array.
+- Keeps L0 focused on repeat decompression avoidance while L1/L2 provide broad compressed-chunk coverage and persistence.
 
 ---
 
@@ -874,7 +837,7 @@ An earlier architecture included a 4-layer cache system with an L0 "RangeCache" 
   - Removed `getRootAttrs()` method (was reading from cache, causing false positives)
   - Fixes issue where switching datasets on same port showed stale data
   - Added 2 comprehensive unit tests verifying bypass behavior
-  - See: `two-level-caching-store.ts:172-192`
+  - See: `multi-level-caching-store.ts:172-192`
 
 - **v1.2.0** (2025-12-06): Shallow bucketing for OPFS storage
   - Added 256-bucket directory structure to distribute files
