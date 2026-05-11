@@ -182,9 +182,7 @@ def held_out_psnr(
             f"shape mismatch: V_hat {V_hat.shape} vs V_original {V_original.shape}"
         )
     if mask.shape != V_original.shape:
-        raise ValueError(
-            f"mask shape {mask.shape} != volume shape {V_original.shape}"
-        )
+        raise ValueError(f"mask shape {mask.shape} != volume shape {V_original.shape}")
 
     held_pred = V_hat[mask]
     held_true = V_original[mask]
@@ -478,7 +476,11 @@ def find_k_star(
         post_gap = peak - float(np.mean(post_finite))
         if pre_gap >= 0.1 and post_gap >= 0.1:
             sorted_psnr = np.sort(psnr_arr[finite])
-            margin = float(sorted_psnr[-1] - sorted_psnr[-2]) if sorted_psnr.size >= 2 else float(peak)
+            margin = (
+                float(sorted_psnr[-1] - sorted_psnr[-2])
+                if sorted_psnr.size >= 2
+                else float(peak)
+            )
             return HeldOutPeak(
                 k_star=int(k_arr[argmax]),
                 type="peak",
@@ -498,7 +500,9 @@ def find_k_star(
     threshold = peak - 0.3
     above_idx = np.where(np.where(finite, psnr_arr, -np.inf) >= threshold)[0]
     smallest_above = int(above_idx[0])
-    plateau_spread = float(peak - psnr_arr[above_idx][np.isfinite(psnr_arr[above_idx])].min())
+    plateau_spread = float(
+        peak - psnr_arr[above_idx][np.isfinite(psnr_arr[above_idx])].min()
+    )
     return HeldOutPeak(
         k_star=int(k_arr[smallest_above]),
         type="plateau",
@@ -594,11 +598,21 @@ class CalibrationResult:
         )
         nf_raw = raw["noise_floor"]
         nf = NoiseFloor(
-            sigma_hat=float(nf_raw["sigma_hat"]) if nf_raw["sigma_hat"] is not None else float("nan"),
-            sigma_laplacian=float(nf_raw["sigma_laplacian"]) if nf_raw["sigma_laplacian"] is not None else float("nan"),
-            sigma_haar=float(nf_raw["sigma_haar"]) if nf_raw["sigma_haar"] is not None else float("nan"),
-            sigma_background=float(nf_raw["sigma_background"]) if nf_raw["sigma_background"] is not None else float("nan"),
-            psnr_max_db=float(nf_raw["psnr_max_db"]) if nf_raw["psnr_max_db"] is not None else float("inf"),
+            sigma_hat=float(nf_raw["sigma_hat"])
+            if nf_raw["sigma_hat"] is not None
+            else float("nan"),
+            sigma_laplacian=float(nf_raw["sigma_laplacian"])
+            if nf_raw["sigma_laplacian"] is not None
+            else float("nan"),
+            sigma_haar=float(nf_raw["sigma_haar"])
+            if nf_raw["sigma_haar"] is not None
+            else float("nan"),
+            sigma_background=float(nf_raw["sigma_background"])
+            if nf_raw["sigma_background"] is not None
+            else float("nan"),
+            psnr_max_db=float(nf_raw["psnr_max_db"])
+            if nf_raw["psnr_max_db"] is not None
+            else float("inf"),
         )
         return cls(
             k_values_requested=[int(x) for x in raw["k_values_requested"]],

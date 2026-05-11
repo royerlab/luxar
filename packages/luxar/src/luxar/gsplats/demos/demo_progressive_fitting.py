@@ -37,6 +37,7 @@ def _psnr(rendered: np.ndarray, target: np.ndarray) -> float:
         return float("inf")
     return 10.0 * float(np.log10(rng**2 / mse))
 
+
 # Check for --no-napari flag
 NO_NAPARI = "--no-napari" in sys.argv
 if NO_NAPARI:

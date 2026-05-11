@@ -53,6 +53,7 @@ def _psnr(rendered: np.ndarray, target: np.ndarray) -> float:
         return float("inf")
     return 10.0 * float(np.log10(rng**2 / mse))
 
+
 # ======= Configuration =======
 NO_NAPARI = "--no-napari" in sys.argv
 TIMEPOINT = 0
