@@ -225,14 +225,15 @@ export class LuxarApp {
     }
 
     // THREE.js peer-dep version guard. The package.json declares
-    // `three@^0.163.0` as a peer; embedders that install an older
-    // (or far-newer breaking) version hit cryptic errors deep in
-    // material construction. Fail fast with a clear message instead.
-    // We check `REVISION` (THREE's published revision string, e.g. `"163"`).
+    // `three@^0.184.0` as a peer; we use APIs (Timer, current
+    // postprocessing ToneMappingEffect shape) that are not present
+    // in older revisions. Fail fast with a clear message instead of a
+    // cryptic "X is not a constructor" deep in initialization.
+    // We check `REVISION` (THREE's published revision string, e.g. `"184"`).
     const threeRevision = parseInt(THREE.REVISION ?? '0', 10);
-    if (!Number.isFinite(threeRevision) || threeRevision < 163) {
+    if (!Number.isFinite(threeRevision) || threeRevision < 184) {
       throw new Error(
-        `Luxar requires three@>=0.163.0 (found r${THREE.REVISION ?? '?'}). ` +
+        `Luxar requires three@>=0.184.0 (found r${THREE.REVISION ?? '?'}). ` +
           'Update the three peer dependency in your embedder.'
       );
     }

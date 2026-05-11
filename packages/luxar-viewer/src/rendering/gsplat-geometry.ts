@@ -255,7 +255,7 @@ export function updateInstancedGSplatsMesh(
     // current time slice), THREE.js caches _maxInstanceCount=0. Later updates that add
     // instances via setAttribute won't trigger recalculation, so the renderer still draws
     // min(instanceCount, 0) = 0 instances. Deleting the cached value forces recalculation
-    // on the next render frame. (THREE.js r163+ internal property)
+    // on the next render frame.
 
     delete (geometry as unknown as { _maxInstanceCount?: number })._maxInstanceCount;
   } else {

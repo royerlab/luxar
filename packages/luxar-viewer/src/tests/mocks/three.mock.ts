@@ -1448,7 +1448,6 @@ export const ACESFilmicToneMapping = 4;
 // Shadow types
 export const BasicShadowMap = 0;
 export const PCFShadowMap = 1;
-export const PCFSoftShadowMap = 2;
 export const VSMShadowMap = 3;
 
 // Usage types
@@ -1558,7 +1557,6 @@ export default {
   ACESFilmicToneMapping,
   BasicShadowMap,
   PCFShadowMap,
-  PCFSoftShadowMap,
   VSMShadowMap,
   StaticDrawUsage,
   DynamicDrawUsage,
