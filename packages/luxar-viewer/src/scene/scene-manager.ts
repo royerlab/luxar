@@ -16,7 +16,7 @@ import { config } from '../config';
 import { extractCameraOverrides } from '../config/viewer-config-utils';
 import type { ZarrViewerConfig } from '../types/zarr';
 import { PostProcessingManager } from '../rendering/post-processing/post-processing-manager';
-import { materialManager } from '../rendering/material-manager';
+import { materialManager } from '../rendering';
 import { disposeColormapTextures } from '../rendering/colormap-textures';
 import {
   detectHDRCapabilities,

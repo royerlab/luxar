@@ -178,8 +178,14 @@ export class PostProcessingManager {
   private ssaaMultiplier: number = 1.0;
   private renderSize: { width: number; height: number };
 
-  // Rebuild control - prevents redundant rebuilds during bulk changes
-  private deferRebuild: boolean = false;
+  // Rebuild control - prevents redundant rebuilds during bulk changes.
+  // Tracked as a depth counter so nested start/end pairs work; a thrown
+  // error between matching calls is caught by a try/finally at the call
+  // site (e.g. setQualityPreset), so the depth always returns to 0.
+  private deferRebuildDepth: number = 0;
+  private get deferRebuild(): boolean {
+    return this.deferRebuildDepth > 0;
+  }
 
   // Idempotency guard for dispose(); prevents double-dispose of the composer
   // and the underlying GPU resources when shutdown paths overlap.
@@ -346,27 +352,44 @@ export class PostProcessingManager {
    *
    * @example
    * ```typescript
-   * // Change multiple settings efficiently
+   * // Change multiple settings efficiently. Wrap in try/finally so a
+   * // thrown sub-setter cannot strand the depth counter above zero.
    * postProcessing.startDeferRebuild();
-   * postProcessing.updateBloomSettings(1.5);
-   * postProcessing.setVignetteEnabled(true);
-   * postProcessing.setChromaticLensDistortionEnabled(true, -0.05, -0.05, 0.03);
-   * postProcessing.endDeferRebuild();  // Single rebuild
+   * try {
+   *   postProcessing.updateBloomSettings(1.5);
+   *   postProcessing.setVignetteEnabled(true);
+   *   postProcessing.setChromaticLensDistortionEnabled(true, -0.05, -0.05, 0.03);
+   * } finally {
+   *   postProcessing.endDeferRebuild();  // Single rebuild
+   * }
    * ```
    */
   startDeferRebuild(): void {
-    this.deferRebuild = true;
+    this.deferRebuildDepth++;
   }
 
   /**
    * End deferred rebuild mode and trigger single effect pass rebuild.
    *
-   * Rebuilds effect pass with all changes applied. Always call after
-   * startDeferRebuild() to apply batched changes.
+   * Rebuilds the effect pass only once the outermost matching `start`
+   * has been closed (depth returns to 0). Always call after
+   * `startDeferRebuild()` to apply batched changes; pair them in a
+   * `try { ... } finally { endDeferRebuild(); }` so that a thrown error
+   * inside the batch cannot strand the depth above zero and silently
+   * disable subsequent rebuilds.
    */
   endDeferRebuild(): void {
-    this.deferRebuild = false;
-    this.rebuildEffectPass();
+    if (this.deferRebuildDepth === 0) {
+      log.warning(
+        Modules.POST_PROCESSING,
+        'endDeferRebuild called with depth=0; ignoring (likely an unbalanced call)'
+      );
+      return;
+    }
+    this.deferRebuildDepth--;
+    if (this.deferRebuildDepth === 0) {
+      this.rebuildEffectPass();
+    }
   }
 
   /**
@@ -1379,52 +1402,55 @@ export class PostProcessingManager {
   setQualityPreset(preset: 'low' | 'medium' | 'high' | 'ultra'): void {
     this._qualityPreset = preset;
 
-    // Use deferred rebuild to prevent multiple rebuilds
+    // Use deferred rebuild to prevent multiple rebuilds. The try/finally
+    // ensures the deferRebuild depth always returns to zero even if any
+    // sub-setter throws (e.g. effect construction fails on an
+    // unsupported GPU).
     this.startDeferRebuild();
+    try {
+      // Apply preset settings
+      switch (preset) {
+        case 'low':
+          this.setBloomLevels(3); // Coarse bloom for performance
+          this.setFXAAEnabled(true);
+          this.setSMAAEnabled(false);
+          this.setMSAAEnabled(false);
+          this.setSSAAEnabled(false);
+          this.setAOEnabled(false);
+          break;
 
-    // Apply preset settings
-    switch (preset) {
-      case 'low':
-        this.setBloomLevels(3); // Coarse bloom for performance
-        this.setFXAAEnabled(true);
-        this.setSMAAEnabled(false);
-        this.setMSAAEnabled(false);
-        this.setSSAAEnabled(false);
-        this.setAOEnabled(false);
-        break;
+        case 'medium':
+          this.setBloomLevels(6); // Balanced bloom quality
+          this.setFXAAEnabled(false);
+          this.setSMAAEnabled(true);
+          this.updateSMAASettings('MEDIUM');
+          this.setMSAAEnabled(false);
+          this.setSSAAEnabled(false);
+          break;
 
-      case 'medium':
-        this.setBloomLevels(6); // Balanced bloom quality
-        this.setFXAAEnabled(false);
-        this.setSMAAEnabled(true);
-        this.updateSMAASettings('MEDIUM');
-        this.setMSAAEnabled(false);
-        this.setSSAAEnabled(false);
-        break;
+        case 'high':
+          this.setBloomLevels(8); // High quality bloom
+          this.setFXAAEnabled(false);
+          this.setSMAAEnabled(true);
+          this.updateSMAASettings('HIGH');
+          this.setMSAAEnabled(true);
+          this.setMSAASamples(4);
+          break;
 
-      case 'high':
-        this.setBloomLevels(8); // High quality bloom
-        this.setFXAAEnabled(false);
-        this.setSMAAEnabled(true);
-        this.updateSMAASettings('HIGH');
-        this.setMSAAEnabled(true);
-        this.setMSAASamples(4);
-        break;
-
-      case 'ultra':
-        this.setBloomLevels(10); // Very smooth bloom
-        this.setFXAAEnabled(false);
-        this.setSMAAEnabled(true);
-        this.updateSMAASettings('ULTRA');
-        this.setMSAAEnabled(true);
-        this.setMSAASamples(8);
-        this.setSSAAEnabled(true);
-        this.setSSAAMultiplier(2.0);
-        break;
+        case 'ultra':
+          this.setBloomLevels(10); // Very smooth bloom
+          this.setFXAAEnabled(false);
+          this.setSMAAEnabled(true);
+          this.updateSMAASettings('ULTRA');
+          this.setMSAAEnabled(true);
+          this.setMSAASamples(8);
+          this.setSSAAEnabled(true);
+          this.setSSAAMultiplier(2.0);
+          break;
+      }
+    } finally {
+      this.endDeferRebuild();
     }
-
-    // End deferred mode and trigger single rebuild
-    this.endDeferRebuild();
 
     log.info(Modules.POST_PROCESSING, `Quality preset set to: ${preset}`);
   }

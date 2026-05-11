@@ -25,8 +25,15 @@ function makeContainer(): HTMLElement {
     <div data-field="l1-evictions"></div>
     <div data-field="l2-size"></div>
     <div data-field="l2-size-sub"></div>
+    <div data-field="l2-hitrate"></div>
+    <div data-field="l2-hitrate-sub"></div>
     <div data-field="l2-io"></div>
     <div data-field="l2-io-sub"></div>
+    <div data-field="l2-errors"></div>
+    <div data-field="l2-errors-sub"></div>
+    <div data-field="cache-status-row"></div>
+    <div data-field="cache-health-mode"></div>
+    <div data-field="cache-health-validated"></div>
     <div class="luxar-cache-total">
       <span data-field="cache-total"></span>
       <div class="luxar-progress-bar">
@@ -47,7 +54,6 @@ function makeMetrics(overrides: Partial<CacheMetrics> = {}): CacheMetrics {
     totalEntries: 4,
     totalAccesses: 0,
     recentHitRate: 0,
-    evictionsPerMin: 0,
     evictionsTotal: 0,
     avgEntrySize: 256,
     reuseRatio: 0,
@@ -136,6 +142,98 @@ describe('updateCacheTab', () => {
     expect(ioSub.textContent).toContain('6');
   });
 
+  // R2: locked-in regression — the per-tick patcher must update the L2
+  // hit-rate cell so it doesn't freeze at its initial render value.
+  describe('L2 hit-rate live patching (R2)', () => {
+    it('patches l2-hitrate text and success color when hit rate is high', () => {
+      const c = makeContainer();
+      updateCacheTab(
+        c,
+        makeMetrics({
+          l2: { size: 1, count: 1, reads: 80, writes: 0, misses: 20 },
+        })
+      );
+      const hitrate = c.querySelector('[data-field="l2-hitrate"]') as HTMLElement;
+      expect(hitrate.textContent).toContain('80.0%');
+      const sub = c.querySelector('[data-field="l2-hitrate-sub"]') as HTMLElement;
+      expect(sub.textContent).toContain('80');
+      expect(sub.textContent).toContain('20');
+      // Success threshold is >80; 80.0 is on the boundary and renders as warning.
+      // Test the strictly-high case below.
+    });
+
+    it('uses success color for hit rates > 80%', () => {
+      const c = makeContainer();
+      updateCacheTab(
+        c,
+        makeMetrics({
+          l2: { size: 1, count: 1, reads: 90, writes: 0, misses: 10 },
+        })
+      );
+      const hitrate = c.querySelector('[data-field="l2-hitrate"]') as HTMLElement;
+      expect(hitrate.className).toMatch(/success/i);
+    });
+
+    it('uses warning color for hit rates in (50, 80]', () => {
+      const c = makeContainer();
+      updateCacheTab(
+        c,
+        makeMetrics({
+          l2: { size: 1, count: 1, reads: 60, writes: 0, misses: 40 },
+        })
+      );
+      const hitrate = c.querySelector('[data-field="l2-hitrate"]') as HTMLElement;
+      expect(hitrate.className).toMatch(/warning/i);
+    });
+
+    it('uses error color for hit rates ≤ 50%', () => {
+      const c = makeContainer();
+      updateCacheTab(
+        c,
+        makeMetrics({
+          l2: { size: 1, count: 1, reads: 30, writes: 0, misses: 70 },
+        })
+      );
+      const hitrate = c.querySelector('[data-field="l2-hitrate"]') as HTMLElement;
+      expect(hitrate.textContent).toContain('30.0%');
+      expect(hitrate.className).toMatch(/error/i);
+    });
+
+    it('renders em-dash and dimmed color when L2 has no reads or misses yet', () => {
+      const c = makeContainer();
+      updateCacheTab(
+        c,
+        makeMetrics({
+          l2: { size: 0, count: 0, reads: 0, writes: 0, misses: 0 },
+        })
+      );
+      const hitrate = c.querySelector('[data-field="l2-hitrate"]') as HTMLElement;
+      expect(hitrate.textContent).toContain('—');
+      expect(hitrate.className).toMatch(/dimmed|muted/i);
+    });
+
+    it('updates hit-rate across consecutive ticks (no stale freeze)', () => {
+      const c = makeContainer();
+      updateCacheTab(
+        c,
+        makeMetrics({
+          l2: { size: 1, count: 1, reads: 10, writes: 0, misses: 90 },
+        })
+      );
+      const hitrate = c.querySelector('[data-field="l2-hitrate"]') as HTMLElement;
+      expect(hitrate.textContent).toContain('10.0%');
+
+      // Second tick with different numbers — the field must update.
+      updateCacheTab(
+        c,
+        makeMetrics({
+          l2: { size: 1, count: 1, reads: 95, writes: 0, misses: 5 },
+        })
+      );
+      expect(hitrate.textContent).toContain('95.0%');
+    });
+  });
+
   it('updates the total memory bar fill width', () => {
     const c = makeContainer();
     updateCacheTab(c, makeMetrics({ memoryPercent: 73, memoryLimit: 4096 }));
@@ -162,5 +260,212 @@ describe('updateCacheTab', () => {
     expect(() =>
       updateCacheTab(c, makeMetrics({ l0: undefined, l1: undefined, l2: undefined }))
     ).not.toThrow();
+  });
+
+  // R3: status badges + cache health + L2 error counters.
+  describe('cache status badges (R3)', () => {
+    it('renders one pill per badge in cacheMetrics.status', () => {
+      const c = makeContainer();
+      updateCacheTab(
+        c,
+        makeMetrics({ status: ['cache-enabled', 'unvalidated-external-dataset'] })
+      );
+      const row = c.querySelector('[data-field="cache-status-row"]') as HTMLElement;
+      expect(row.querySelectorAll('[data-badge]').length).toBe(2);
+      expect(row.querySelector('[data-badge="cache-enabled"]')).not.toBeNull();
+      expect(row.querySelector('[data-badge="unvalidated-external-dataset"]')).not.toBeNull();
+    });
+
+    it('renders empty row when status is empty/undefined', () => {
+      const c = makeContainer();
+      updateCacheTab(c, makeMetrics({ status: [] }));
+      const row = c.querySelector('[data-field="cache-status-row"]') as HTMLElement;
+      expect(row.querySelectorAll('[data-badge]').length).toBe(0);
+    });
+
+    it('does not rewrite innerHTML when the badge signature is stable', () => {
+      const c = makeContainer();
+      updateCacheTab(c, makeMetrics({ status: ['cache-enabled'] }));
+      const row = c.querySelector('[data-field="cache-status-row"]') as HTMLElement;
+      const firstChild = row.firstElementChild;
+      updateCacheTab(c, makeMetrics({ status: ['cache-enabled'] }));
+      // Same signature → same DOM node (no replace).
+      expect(row.firstElementChild).toBe(firstChild);
+    });
+
+    it('replaces innerHTML when the badge signature changes', () => {
+      const c = makeContainer();
+      updateCacheTab(c, makeMetrics({ status: ['cache-enabled'] }));
+      const row = c.querySelector('[data-field="cache-status-row"]') as HTMLElement;
+      const firstChild = row.firstElementChild;
+      updateCacheTab(
+        c,
+        makeMetrics({ status: ['cache-enabled', 'quota-constrained'] })
+      );
+      expect(row.firstElementChild).not.toBe(firstChild);
+      expect(row.querySelectorAll('[data-badge]').length).toBe(2);
+    });
+  });
+
+  describe('cache health row (R3)', () => {
+    it('shows "Content Hash" for content-hash validation', () => {
+      const c = makeContainer();
+      updateCacheTab(
+        c,
+        makeMetrics({
+          health: {
+            validationMode: 'content-hash',
+            lastValidatedAt: null,
+            unvalidatedExternalDataset: false,
+          },
+        })
+      );
+      const el = c.querySelector('[data-field="cache-health-mode"]') as HTMLElement;
+      expect(el.textContent).toContain('Content Hash');
+    });
+
+    it('shows "TTL" for ttl validation', () => {
+      const c = makeContainer();
+      updateCacheTab(
+        c,
+        makeMetrics({
+          health: {
+            validationMode: 'ttl',
+            lastValidatedAt: null,
+            unvalidatedExternalDataset: false,
+          },
+        })
+      );
+      expect(
+        (c.querySelector('[data-field="cache-health-mode"]') as HTMLElement).textContent
+      ).toContain('TTL');
+    });
+
+    it('shows "None" for none validation', () => {
+      const c = makeContainer();
+      updateCacheTab(
+        c,
+        makeMetrics({
+          health: {
+            validationMode: 'none',
+            lastValidatedAt: null,
+            unvalidatedExternalDataset: true,
+          },
+        })
+      );
+      expect(
+        (c.querySelector('[data-field="cache-health-mode"]') as HTMLElement).textContent
+      ).toContain('None');
+    });
+
+    it('shows "Never" when lastValidatedAt is null', () => {
+      const c = makeContainer();
+      updateCacheTab(
+        c,
+        makeMetrics({
+          health: {
+            validationMode: 'content-hash',
+            lastValidatedAt: null,
+            unvalidatedExternalDataset: false,
+          },
+        })
+      );
+      expect(
+        (c.querySelector('[data-field="cache-health-validated"]') as HTMLElement).textContent
+      ).toContain('Never');
+    });
+
+    it('shows formatted timestamp when lastValidatedAt is set', () => {
+      const c = makeContainer();
+      const ts = new Date('2026-05-10T14:00:00Z').getTime();
+      updateCacheTab(
+        c,
+        makeMetrics({
+          health: {
+            validationMode: 'content-hash',
+            lastValidatedAt: ts,
+            unvalidatedExternalDataset: false,
+          },
+        })
+      );
+      const text = (c.querySelector('[data-field="cache-health-validated"]') as HTMLElement)
+        .textContent;
+      // Cross-locale: the date object always renders the year somewhere.
+      expect(text).toContain('2026');
+      expect(text).not.toContain('Never');
+    });
+  });
+
+  describe('L2 error counters (R3)', () => {
+    it('shows "0" + dimmed color when all counters are zero', () => {
+      const c = makeContainer();
+      updateCacheTab(
+        c,
+        makeMetrics({
+          l2: {
+            size: 1,
+            count: 1,
+            reads: 10,
+            writes: 5,
+            misses: 0,
+            quotaWriteSkipped: 0,
+            writeFailures: 0,
+            corruptedEntries: 0,
+            metadataParseFailures: 0,
+          },
+        })
+      );
+      const el = c.querySelector('[data-field="l2-errors"]') as HTMLElement;
+      expect(el.textContent).toContain('0');
+      expect(el.className).toMatch(/dimmed|muted/i);
+      const sub = c.querySelector('[data-field="l2-errors-sub"]') as HTMLElement;
+      expect(sub.textContent).toContain('no errors');
+    });
+
+    it('shows total + breakdown + error color when any counter is non-zero', () => {
+      const c = makeContainer();
+      updateCacheTab(
+        c,
+        makeMetrics({
+          l2: {
+            size: 1,
+            count: 1,
+            reads: 10,
+            writes: 5,
+            misses: 0,
+            quotaWriteSkipped: 3,
+            writeFailures: 1,
+            corruptedEntries: 2,
+            metadataParseFailures: 0,
+          },
+        })
+      );
+      const el = c.querySelector('[data-field="l2-errors"]') as HTMLElement;
+      expect(el.textContent).toContain('6'); // 3 + 1 + 2
+      expect(el.className).toMatch(/error/i);
+      const sub = c.querySelector('[data-field="l2-errors-sub"]') as HTMLElement;
+      expect(sub.textContent).toContain('3'); // quota
+      expect(sub.textContent).toContain('1'); // write
+      expect(sub.textContent).toContain('2'); // corrupt
+    });
+
+    it('handles missing counter fields gracefully (treats them as 0)', () => {
+      const c = makeContainer();
+      // No counters at all — should not throw, should render as "0 / no errors".
+      updateCacheTab(
+        c,
+        makeMetrics({
+          l2: {
+            size: 1,
+            count: 1,
+            reads: 10,
+            writes: 5,
+            misses: 0,
+          },
+        })
+      );
+      const el = c.querySelector('[data-field="l2-errors"]') as HTMLElement;
+      expect(el.textContent).toContain('0');
+    });
   });
 });

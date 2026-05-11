@@ -9,6 +9,7 @@ import * as zarr from 'zarrita';
 import * as THREE from 'three';
 import { normalizeURL } from './scene-loader/url-normalization';
 import { setupCaches } from './scene-loader/cache-setup';
+import { withMaybeConsolidatedMetadata } from './zarrita-compat';
 import { wireMonitorAfterLoad } from './scene-loader/monitor-wiring';
 import { applyEffectiveAttrs as applyEffectiveAttrsHelper } from './scene-loader/effective-attrs';
 import {
@@ -38,6 +39,10 @@ import {
   type LoaderFactoryDeps,
 } from './scene-loader/loader-factory';
 import { commitPointsGeometry as commitPointsGeometryHelper } from './scene-loader/commit-points-geometry';
+import {
+  dispatchPredictivePrefetch,
+  type PrefetchableLoader,
+} from './scene-loader/predicted-view-state';
 
 export type { StagedLinesCommit } from './scene-loader/data-processor-lines';
 export type { StagedGSplatsCommit } from './scene-loader/data-processor-gsplats';
@@ -235,6 +240,13 @@ export class SceneLoader {
   private _updateVersion = 0; // For logging/debugging
   private _sceneGraph: SceneNode | null = null;
 
+  // R4: previous view state retained for predictive prefetch. Used by
+  // `updateView` to extrapolate the next slice direction so each
+  // loader can warm caches for the next animation tick. Reset to null
+  // on dataset switch (in `loadScene` after dispose) so a stale prev
+  // can't pollute a new dataset's first prefetch.
+  private _prevViewStateForPrefetch: ViewState | null = null;
+
   /** Public accessor for the scene graph built during loadScene(). */
   get sceneGraph(): SceneNode | null {
     return this._sceneGraph;
@@ -428,6 +440,11 @@ export class SceneLoader {
       await this.dispose();
     }
 
+    // R4: reset prefetch predictor state. Without this, the first
+    // updateView on a new dataset would extrapolate from the prior
+    // dataset's slicePosition, producing wild prefetch targets.
+    this._prevViewStateForPrefetch = null;
+
     const cacheResult = await setupCaches(this.normalizeURL(url), {
       noCache: this.config.noCache,
       cacheDebug: this.config.cacheDebug,
@@ -437,7 +454,7 @@ export class SceneLoader {
     });
     this.l0Cache = cacheResult.l0Cache;
     this.cachingStore = cacheResult.cachingStore;
-    this._zarrStore = (await zarr.tryWithConsolidated(
+    this._zarrStore = (await withMaybeConsolidatedMetadata(
       cacheResult.rawStore
     )) as zarr.Readable;
 
@@ -891,6 +908,17 @@ export class SceneLoader {
         linesTask,
         gsplatsTask,
       ]);
+
+      // R4: predictive prefetch for the next-frame view state.
+      // Extrapolate the per-dimension delta and dispatch
+      // `prefetchChunks(predicted)` on each loader that exposes the
+      // method. Fire-and-forget, in a microtask, so prefetch never
+      // blocks the commit/render path below. Demand requests always
+      // win because the prefetcher's two-tier queue serves 'high'
+      // before 'normal' and demand fetches dedupe against pending
+      // prefetches via the same-key coalescing in
+      // MultiLevelCachingStore.getResult.
+      this._dispatchPredictivePrefetch();
 
       // ================================================================
       // Stage 2: Atomic commit — ALL geometry mutations in one sync block.
@@ -2056,6 +2084,42 @@ export class SceneLoader {
   }
 
   /**
+   * R4: predictive prefetch dispatcher. Extrapolates the next-frame
+   * view state from `_prevViewStateForPrefetch` → `this.viewState`
+   * and fires `prefetchChunks(predicted)` on every loader that
+   * exposes the optional method. Called from `updateView` after the
+   * main per-loader load completes; fire-and-forget so a slow
+   * prefetch can't delay the next commit. The first call (when
+   * `_prevViewStateForPrefetch` is null) returns the predicted
+   * viewstate identical to current and short-circuits — there's no
+   * direction to extrapolate yet.
+   */
+  private _dispatchPredictivePrefetch(): void {
+    const prev = this._prevViewStateForPrefetch;
+    // Snapshot current. Cloning here keeps the saved value immune to
+    // later in-place mutation (the SceneLoader sometimes reassigns
+    // `this.viewState` from partial updates).
+    const current: ViewState = {
+      displayDims: [...this.viewState.displayDims],
+      slicePosition: [...this.viewState.slicePosition],
+      tolerance: [...this.viewState.tolerance],
+      dimensions: this.viewState.dimensions,
+    };
+    this._prevViewStateForPrefetch = current;
+
+    // Defer to a microtask so prefetch never blocks the commit/render
+    // path that follows updateView's Promise.all.
+    queueMicrotask(() => {
+      const loaders: PrefetchableLoader[] = [
+        ...(this.loaders.values() as unknown as Iterable<PrefetchableLoader>),
+        ...(this.linesLoaders.values() as unknown as Iterable<PrefetchableLoader>),
+        ...(this.gsplatLoaders.values() as unknown as Iterable<PrefetchableLoader>),
+      ];
+      dispatchPredictivePrefetch(prev, current, loaders);
+    });
+  }
+
+  /**
    * Dispose of all resources.
    *
    * Async because the caching store dispose path drains the prefetcher,
@@ -2122,6 +2186,10 @@ export class SceneLoader {
     this._zarrStore = null;
     this.rootGroup = null;
     this._sceneGraph = null;
+
+    // R4: clear prefetch predictor state on dispose so a reused
+    // SceneLoader doesn't extrapolate from a prior dataset.
+    this._prevViewStateForPrefetch = null;
 
     // Dispose dataset-scoped custom colormap LUTs. The custom-LUT cache
     // is keyed by content hash and shared across all scenes, but entries

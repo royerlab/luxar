@@ -14,6 +14,7 @@ import type {
   LoaderMetrics,
   Recommendation,
   CacheMetrics,
+  CacheStatusBadge,
   SceneGraphNode,
   SceneGraphState,
 } from '../../types/data-monitor-types';
@@ -392,7 +393,9 @@ function renderCacheSection(
     dataField?: string;
   }>
 ): string {
-  const cols = metrics.length === 2 ? 'cols-2' : 'cols-3';
+  // R3: support 4-card sections (L2 now includes an ERRORS card alongside
+  // SIZE / HIT RATE / I/O). 2 → cols-2, 3 → cols-3, anything else → cols-4.
+  const cols = metrics.length === 2 ? 'cols-2' : metrics.length === 3 ? 'cols-3' : 'cols-4';
 
   return `
     <div class="luxar-cache-section">
@@ -425,6 +428,83 @@ function renderCacheSection(
       </div>
     </div>
   `;
+}
+
+/**
+ * R3: Color class per cache status badge. Exported so the cache-tab
+ * incremental updater renders the same colors as the initial template
+ * and so unit tests can assert on the mapping.
+ */
+export const CACHE_BADGE_COLOR: Record<CacheStatusBadge, string> = {
+  'cache-enabled': getColorClass('success'),
+  'no-cache': getColorClass('dimmed'),
+  'disabled-config': getColorClass('dimmed'),
+  'opfs-unavailable': getColorClass('warning'),
+  'quota-constrained': getColorClass('warning'),
+  'cache-errors-detected': getColorClass('error'),
+  'unvalidated-external-dataset': getColorClass('warning'),
+  'provider-missing': getColorClass('error'),
+};
+
+/**
+ * R3: Render one HTML pill per CacheStatusBadge. Returns an empty
+ * string when no badges are present so `data-field="cache-status-row"`
+ * still exists in the DOM (the incremental patcher fills it).
+ */
+export function renderCacheStatusBadges(badges: CacheStatusBadge[] | undefined): string {
+  if (!badges || badges.length === 0) return '';
+  return badges
+    .map(
+      (b) =>
+        `<span class="luxar-badge ${CACHE_BADGE_COLOR[b] ?? getColorClass('muted')}" data-badge="${b}">${b}</span>`
+    )
+    .join('');
+}
+
+/**
+ * R3: Friendly label for a validation mode. The cache-tab UI shows
+ * this verbatim; null/undefined render as a neutral placeholder so
+ * callers don't have to guard the value themselves.
+ */
+export function formatValidationMode(mode: 'content-hash' | 'ttl' | 'none' | undefined): string {
+  switch (mode) {
+    case 'content-hash':
+      return 'Content Hash';
+    case 'ttl':
+      return 'TTL';
+    case 'none':
+      return 'None';
+    default:
+      return '—';
+  }
+}
+
+/**
+ * R3: Friendly timestamp for `health.lastValidatedAt`. null renders
+ * as "Never"; valid timestamps use the browser's locale formatter.
+ */
+export function formatLastValidated(ts: number | null | undefined): string {
+  if (ts == null || !Number.isFinite(ts)) return 'Never';
+  try {
+    return new Date(ts).toLocaleString();
+  } catch {
+    return 'Never';
+  }
+}
+
+/**
+ * R3: Sum of OPFS health-failure counters surfaced on
+ * `CacheMetrics.l2`. Used to decide whether the L2 "ERRORS" card
+ * should render in error vs dimmed color.
+ */
+export function l2ErrorTotal(l2: CacheMetrics['l2']): number {
+  if (!l2) return 0;
+  return (
+    (l2.quotaWriteSkipped ?? 0) +
+    (l2.writeFailures ?? 0) +
+    (l2.corruptedEntries ?? 0) +
+    (l2.metadataParseFailures ?? 0)
+  );
 }
 
 /**
@@ -508,8 +588,25 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
 
   const l1HitRateColorClass = getCacheHitRateColorClass(l1HitRate);
 
+  // R3: status pill row at the top of the cache tab. Always rendered
+  // (with `data-field="cache-status-row"`) so the incremental
+  // patcher can refresh badge sets without a full re-render.
+  const statusRowHtml = `
+    <div class="luxar-cache-status" data-field="cache-status-row" data-signature="${(cacheMetrics.status ?? []).join('|')}" title="Cache operational state">
+      ${renderCacheStatusBadges(cacheMetrics.status)}
+    </div>
+  `;
+
+  // R3: L2 error-counter card. Sums the four OPFS health counters
+  // (quotaWriteSkipped + writeFailures + corruptedEntries +
+  // metadataParseFailures) — shows the total + a per-counter
+  // breakdown subtitle.
+  const l2Errors = l2ErrorTotal(cacheMetrics.l2);
+  const l2 = cacheMetrics.l2!;
+
   return `
     <div class="luxar-tab-content--cache">
+      ${statusRowHtml}
       <!-- L0 Decompressed Chunk Cache Section (fastest layer - avoids Blosc decompression) -->
       ${
         cacheMetrics.l0
@@ -618,9 +715,41 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
               tooltip: 'Disk I/O operations: reads from cache, writes to cache',
               dataField: 'l2-io',
             },
+            {
+              label: 'ERRORS',
+              value: l2Errors > 0 ? formatNumber(l2Errors) : '0',
+              subtitle:
+                l2Errors > 0
+                  ? `${formatNumber(l2.quotaWriteSkipped ?? 0)} quota · ${formatNumber(
+                      l2.writeFailures ?? 0
+                    )} write · ${formatNumber(l2.corruptedEntries ?? 0)} corrupt`
+                  : 'no errors',
+              tooltip:
+                'Quota-skipped + write-failures + corrupted-entries + metadata-parse-failures',
+              colorClass: l2Errors > 0 ? getColorClass('error') : getColorClass('dimmed'),
+              dataField: 'l2-errors',
+            },
           ]
         );
       })()}
+
+      <!-- R3: Cache Health — validation mode + last-validated timestamp.
+           Always rendered so the incremental patcher can refresh values. -->
+      <div class="luxar-cache-health">
+        <div class="luxar-cache-health__header">CACHE HEALTH</div>
+        <div class="luxar-cache-health__row">
+          <span class="luxar-cache-health__label">Validation</span>
+          <span class="luxar-cache-health__value" data-field="cache-health-mode" title="How the cache decides whether to trust stored entries: content-hash (Luxar datasets), ttl (configured time window), none (external dataset, manual clear only)">
+            ${formatValidationMode(cacheMetrics.health?.validationMode)}
+          </span>
+        </div>
+        <div class="luxar-cache-health__row">
+          <span class="luxar-cache-health__label">Last Validated</span>
+          <span class="luxar-cache-health__value" data-field="cache-health-validated" title="When the cache was last revalidated against the source dataset">
+            ${formatLastValidated(cacheMetrics.health?.lastValidatedAt)}
+          </span>
+        </div>
+      </div>
 
       <!-- Combined Stats + Clear All -->
       <div class="luxar-cache-total">

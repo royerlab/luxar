@@ -113,6 +113,8 @@ export function wrapWithCache<D extends zarr.DataType>(
         prop === 'chunks' ||
         prop === 'order' ||
         prop === 'fill_value' ||
+        prop === 'fillValue' ||
+        prop === 'dimensionNames' ||
         prop === 'compressor' ||
         prop === 'filters' ||
         prop === 'codec' ||
@@ -124,9 +126,9 @@ export function wrapWithCache<D extends zarr.DataType>(
       // Intercept getChunk() to add caching
       if (prop === 'getChunk') {
         return async function (
-          chunkCoords: number[],
-          options?: Parameters<typeof target.getChunk>[1]
+          ...args: Parameters<typeof target.getChunk>
         ): Promise<{ data: zarr.TypedArray<D>; shape: number[]; stride: number[] }> {
+          const [chunkCoords] = args;
           const key = DecompressedChunkCache.makeKey(arrayPath, chunkCoords);
 
           // Check L0 cache first
@@ -149,7 +151,7 @@ export function wrapWithCache<D extends zarr.DataType>(
           const chunkPromise = (async () => {
             try {
               // Cache miss — call original getChunk (triggers Blosc decompression)
-              const chunk = await target.getChunk(chunkCoords, options);
+              const chunk = await target.getChunk(...args);
 
               // Cache the decompressed result. Clone the data to
               // prevent callers from mutating the cached copy

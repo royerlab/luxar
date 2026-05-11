@@ -6,6 +6,112 @@ All notable changes to Luxar are documented in this file.
 
 ### May 2026
 
+#### Changed — Cache re-review remediation R1–R7 (2026-05-10)
+
+Follow-up to the cache re-review at
+`delme/viewer-cache-rereview-20260510-140614/`. The Phase 1–8
+hardening had already landed (lifecycle/dispose, OPFS races,
+in-flight coalescing, content-hash/TTL validation, Points/Lines
+prefetch parity); the re-review surfaced remaining UI/observability
+gaps and a handful of edge-case test holes. R1–R7 close those.
+
+- **R1 — config validation for new cache fields.**
+  `validateConfig` rejects bad `cache.opfsOperationTimeoutMs` (NaN
+  / zero / negative / Infinity) and `cache.externalDatasetTtlMs`
+  (NaN / negative; `null` stays valid). Prevents cryptic OPFS
+  timeouts or always-expired TTLs.
+- **R2 — L2 hit-rate now patches live in the cache tab.**
+  `updateCacheTab` patches `l2-hitrate` + `l2-hitrate-sub` and the
+  color class alongside `l2-size` / `l2-io`. The L2 hit-rate card
+  no longer freezes after the initial render.
+- **R3 — Status badges, Cache Health, L2 error counters.**
+  The cache tab now shows a pill row of `CacheStatusBadge` chips
+  (`cache-enabled`, `quota-constrained`,
+  `unvalidated-external-dataset`, …), a dedicated **Cache Health**
+  section with validation mode + last-validated timestamp, and an
+  inline `ERRORS` card on the L2 section summing the four OPFS
+  health counters. `CacheMetrics.l2` carries those counters so
+  debug snapshots and E2E can assert on them without reaching into
+  the provider. `cache/README.md` gains a "Cache Status Badges"
+  section.
+- **R4 — Direction-aware predictive prefetch wired into
+  `updateView`.** `SceneLoader.updateView` extrapolates one step
+  from the previous → current view-state delta and fires
+  `prefetchChunks(predicted)` on every loader (Points, Lines,
+  GSplats) for the predicted state, in a microtask so it never
+  blocks commit. Pure helper `predictNextViewState` is unit-tested
+  in isolation; `dispatchPredictivePrefetch` handles iteration +
+  error swallowing. State resets on dataset switch / dispose.
+- **R5 — Bandwidth window start-index pruning.**
+  `MultiLevelCachingStore.bandwidthWindow` no longer uses
+  `Array.shift()` (O(n)); a `bandwidthWindowStart` index advances
+  forward with amortized O(n) compaction when the dead prefix
+  exceeds half the array. Numeric output unchanged.
+- **R6 — Test gap closure.**
+  - **R6a**: Unicode OPFS key roundtrip (µ, 通, é, base64-special
+    characters, slash-traversing keys).
+  - **R6b**: Demand-while-prefetch-in-flight — one underlying fetch
+    shared via `pendingGets`; demand counter increments exactly once;
+    L1-warm path lets demand hit L1.
+  - **R6c**: 4D node-type cache parity — cache stats populated, slice
+    navigation produces fresh L1 activity.
+  - **R6d**: OPFS quota-clears-then-write-succeeds + concurrent
+    quota-skipped writes don't corrupt the index.
+  - **R6e**: Negative `totalSize` in persisted metadata is clamped /
+    recomputed from `entries[]` (defensive hardening in
+    `OPFSStore.loadMetadata`).
+- **R7 — Real-browser L2 persistence E2E.**
+  New `cache-persistence.spec.ts` asserts L2 entries survive a full
+  page reload in Chromium and that `?clear-cache` wipes L2 across a
+  reload. Skipped on Firefox/WebKit (OPFS persistence semantics
+  across Playwright contexts are unreliable there).
+
+**Result**: 4813 unit tests pass (up from 4662 — +151 new tests
+across R1–R7). 9 cache test files, 272 cache unit tests. Bandwidth
+pruning, metadata corruption recovery, and config validation become
+regression-locked.
+
+Deliberately deferred (re-review §1.6 "future work"): cross-browser
+OPFS comparison harness, sustained-load cache performance benchmarks,
+runtime cache profiles, per-array memory breakdowns, origin-wide
+cache manager UI.
+
+#### Changed — Viewer code-review recheck hardening (2026-05-10)
+
+Follow-up pass against the recheck reports under
+`delme/viewer-code-review-recheck/`. Addresses W-tier findings still
+open after the prior pass:
+
+- **Constants**: `MAX_SUPPORTED_DIMS` consolidated into
+  `src/config/constants.ts`; `wasm/typescript/gsplats-processing.ts`,
+  `data/gsplats/gsplats-processor.ts`, and `workers/validation.ts`
+  (`MAX_WASM_DIMS` alias) now share the canonical value.
+- **Worker init guard**: `projectPointsTo3D` in `workers/data-worker.ts`
+  rejects with `NOT_INITIALIZED_MSG` when called before `initialize()`,
+  matching the existing `projectLinesTo3D` / `projectGSplatsTo3D`
+  guards.
+- **Material registration idempotency**:
+  `MaterialManager.subscribeToDispose` now tracks already-subscribed
+  materials in a `WeakSet` so re-registering the same instance no
+  longer stacks `dispose` listeners on the THREE EventDispatcher.
+- **Post-processing rebuild safety**:
+  `PostProcessingManager` replaces the boolean `deferRebuild` flag with
+  a depth counter; `setQualityPreset` wraps its batch in `try/finally`
+  so a thrown sub-setter cannot strand the counter above zero (which
+  previously made all subsequent effect changes silent no-ops).
+- **Shared clamp util**: `clampDPRScale` in
+  `rendering/post-processing/visual-effects-handler.ts` calls the
+  general `utils/clamp` helper instead of an inline `Math.min(max,
+  Math.max(min, x))`.
+- **Lines TS fallback note**: `data/lines/projection.ts` documents the
+  TS fallback path's allocation profile as an accepted trade-off.
+- **Docs**: `src/data/SPECIFICATIONS.md`, `src/data/loaders/README.md`
+  rewritten to show the `runWithTimeout(name, kind, fn)` pattern
+  instead of raw `getWorker()` access. `CONVENTIONS.md` gains §§12-14
+  for dependency-inversion ports, error-handling discipline, and the
+  disposal pattern. `packages/luxar-viewer/README.md` documents
+  `LUXAR_LAUNCHER_NO_WEBVIEW=1`.
+
 #### Changed — Viewer code-review rerun hardening pass (2026-05-10)
 
 Multi-phase hardening of the scalar-colormap + GPU pool + blending-state

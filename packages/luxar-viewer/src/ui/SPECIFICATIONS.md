@@ -630,11 +630,17 @@ function toggleCinematicMode(): void {
     cinematicSnapshot = null;
   }
 
-  // 4. Batch apply using deferred rebuild
+  // 4. Batch apply using deferred rebuild. The depth counter must
+  // always return to zero, so wrap the batch in try/finally — a
+  // thrown setter would otherwise strand the depth above zero and
+  // silently disable future rebuilds.
   postProcessing.startDeferRebuild();
-  postProcessing.setToneMapping(settings.toneMapping);
-  // ... apply noise, vignette, lens distortion ...
-  postProcessing.endDeferRebuild();
+  try {
+    postProcessing.setToneMapping(settings.toneMapping);
+    // ... apply noise, vignette, lens distortion ...
+  } finally {
+    postProcessing.endDeferRebuild();
+  }
 }
 ```
 

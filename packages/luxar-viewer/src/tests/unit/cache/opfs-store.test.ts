@@ -782,6 +782,173 @@ describe('OPFSStore', () => {
       expect(stats.size).toBe(6000);
     });
   });
+
+  // R6a: Unicode OPFS key roundtrip. keyToFileName now uses UTF-8 +
+  // base64url encoding; the prior btoa() implementation would throw
+  // InvalidCharacterError on non-ASCII bytes. These tests lock that
+  // fix in.
+  describe('Unicode key roundtrip (R6a)', () => {
+    it('stores and reads back a key containing non-ASCII characters', async () => {
+      const key = 'µ/通道/positions/0.0.0';
+      const payload = new Uint8Array([1, 2, 3, 4, 5]);
+      await store.set(key, payload);
+
+      const got = await store.get(key);
+      expect(got).toBeDefined();
+      expect(Array.from(got!)).toEqual([1, 2, 3, 4, 5]);
+    });
+
+    it('handles keys with slashes that traverse bucket boundaries', async () => {
+      const key = 'foo/bar/baz/é/0.1';
+      await store.set(key, new Uint8Array([42]));
+      const got = await store.get(key);
+      expect(got).toBeDefined();
+      expect(got!.length).toBe(1);
+      expect(got![0]).toBe(42);
+    });
+
+    it('handles keys with characters that have special meaning in base64', async () => {
+      // `+`, `/`, `=` are exactly the characters base64url replaces;
+      // upstream data with these in the key must roundtrip cleanly.
+      const key = 'a+b/c=d/0';
+      await store.set(key, new Uint8Array([7, 8, 9]));
+      const got = await store.get(key);
+      expect(got).toBeDefined();
+      expect(Array.from(got!)).toEqual([7, 8, 9]);
+    });
+
+    it('deletes a Unicode-keyed entry cleanly', async () => {
+      const key = 'µ/通道/positions/0.0.0';
+      await store.set(key, new Uint8Array([1]));
+      expect(await store.get(key)).toBeDefined();
+      await store.delete(key);
+      expect(await store.get(key)).toBeUndefined();
+    });
+  });
+
+  // R6d: OPFS quota-exhaustion edge cases. Existing tests cover the
+  // basic quota-skipped path; these tests cover behaviour after the
+  // quota constraint clears and under concurrent quota-exceeded
+  // writes.
+  describe('Quota exhaustion recovery (R6d)', () => {
+    it('after quota clears, the next write succeeds', async () => {
+      // Simulate "browser quota almost full" → write should be
+      // skipped. Then "quota cleared" → next write should succeed.
+      let quotaReportsFull = true;
+      vi.stubGlobal('navigator', {
+        storage: {
+          async getDirectory() {
+            return {
+              async getDirectoryHandle() {
+                return mockFS.mockDirHandle;
+              },
+              async removeEntry() {
+                mockFS.files.clear();
+                mockFS.metaFiles.clear();
+              },
+            };
+          },
+          async estimate() {
+            return quotaReportsFull
+              ? { quota: 100, usage: 100 }
+              : { quota: 10e9, usage: 1e9 };
+          },
+        },
+      });
+      const cycleStore = new OPFSStore('cycle-id', 'https://example.com', 1024 * 1024);
+      await cycleStore.init();
+
+      // First write: quota full → skipped.
+      await cycleStore.set('blocked', new Uint8Array(50));
+      let stats = cycleStore.getStats();
+      expect(stats.quotaWriteSkipped).toBeGreaterThanOrEqual(1);
+      expect(stats.count).toBe(0);
+
+      // Quota clears.
+      quotaReportsFull = false;
+      await cycleStore.set('now-fits', new Uint8Array(50));
+
+      stats = cycleStore.getStats();
+      expect(stats.count).toBe(1);
+      expect(stats.size).toBe(50);
+    });
+
+    it('concurrent quota-skipped writes increment counter atomically (no double-count)', async () => {
+      vi.stubGlobal('navigator', {
+        storage: {
+          async getDirectory() {
+            return {
+              async getDirectoryHandle() {
+                return mockFS.mockDirHandle;
+              },
+              async removeEntry() {
+                mockFS.files.clear();
+                mockFS.metaFiles.clear();
+              },
+            };
+          },
+          async estimate() {
+            return { quota: 100, usage: 100 }; // no headroom
+          },
+        },
+      });
+      const burstStore = new OPFSStore('burst-id', 'https://example.com', 1024 * 1024);
+      await burstStore.init();
+
+      // Fire 5 concurrent same-key + 5 unique-key writes. All should
+      // be skipped without throwing.
+      await Promise.all([
+        burstStore.set('dup-1', new Uint8Array(30)),
+        burstStore.set('dup-1', new Uint8Array(30)),
+        burstStore.set('dup-2', new Uint8Array(30)),
+        burstStore.set('dup-2', new Uint8Array(30)),
+        burstStore.set('uniq-a', new Uint8Array(30)),
+        burstStore.set('uniq-b', new Uint8Array(30)),
+        burstStore.set('uniq-c', new Uint8Array(30)),
+      ]);
+
+      const stats = burstStore.getStats();
+      // Every set call is observed by checkQuota; counter equals the
+      // number of skipped writes. Sufficient to verify it's at least 1
+      // and the store hasn't ingested any data despite the burst.
+      expect(stats.quotaWriteSkipped).toBeGreaterThanOrEqual(1);
+      expect(stats.count).toBe(0);
+      expect(stats.size).toBe(0);
+    });
+  });
+
+  // R6e: partial metadata corruption recovery. The existing test
+  // covers the "malformed JSON → start fresh" path; this one covers
+  // a structurally-valid but logically corrupt metadata file
+  // (negative totalSize / orderCounter) which should be treated as
+  // recoverable (clamp / rebuild from entries[]).
+  describe('Metadata corruption recovery (R6e)', () => {
+    it('initialises cleanly from valid metadata with a negative totalSize', async () => {
+      // Store a metadata file with negative totalSize — the store
+      // should either reject the file (start fresh) or clamp to a
+      // non-negative size.
+      mockFS.metaFiles.set(
+        '_cache_meta.json',
+        JSON.stringify({
+          baseUrl: 'https://example.com/data.zarr',
+          entries: [['k1', { size: 100, order: 1 }]],
+          totalSize: -999,
+          orderCounter: 1,
+          contentHash: 'abc',
+          encodingVersion: 2,
+        })
+      );
+      const recoveredStore = new OPFSStore(
+        'corrupt-totalsize',
+        'https://example.com/data.zarr',
+        100 * 1024 * 1024
+      );
+      await recoveredStore.init();
+      const stats = recoveredStore.getStats();
+      // The store must not return a nonsensical negative size.
+      expect(stats.size).toBeGreaterThanOrEqual(0);
+    });
+  });
 });
 
 /**

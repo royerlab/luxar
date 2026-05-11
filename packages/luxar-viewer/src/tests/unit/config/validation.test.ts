@@ -797,6 +797,85 @@ describe('validateConfig', () => {
         expect.stringMatching(/cache\.l1MaxSizeMB.*must be ≥ 10/)
       );
     });
+
+    // R1: opfsOperationTimeoutMs validation.
+    it('rejects NaN cache.opfsOperationTimeoutMs', () => {
+      const cfg = cloneConfig();
+      cfg.cache.opfsOperationTimeoutMs = NaN;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(
+        expect.stringContaining('cache.opfsOperationTimeoutMs')
+      );
+    });
+
+    it('rejects zero cache.opfsOperationTimeoutMs', () => {
+      const cfg = cloneConfig();
+      cfg.cache.opfsOperationTimeoutMs = 0;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(
+        expect.stringContaining('cache.opfsOperationTimeoutMs')
+      );
+    });
+
+    it('rejects negative cache.opfsOperationTimeoutMs', () => {
+      const cfg = cloneConfig();
+      cfg.cache.opfsOperationTimeoutMs = -100;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(
+        expect.stringContaining('cache.opfsOperationTimeoutMs')
+      );
+    });
+
+    it('accepts positive cache.opfsOperationTimeoutMs', () => {
+      const cfg = cloneConfig();
+      cfg.cache.opfsOperationTimeoutMs = 5_000;
+      const result = validateConfig(cfg);
+      expect(
+        result.errors.filter((e) => e.includes('opfsOperationTimeoutMs'))
+      ).toEqual([]);
+    });
+
+    // R1: externalDatasetTtlMs validation. null is explicitly allowed.
+    it('accepts null cache.externalDatasetTtlMs', () => {
+      const cfg = cloneConfig();
+      cfg.cache.externalDatasetTtlMs = null;
+      const result = validateConfig(cfg);
+      expect(
+        result.errors.filter((e) => e.includes('externalDatasetTtlMs'))
+      ).toEqual([]);
+    });
+
+    it('rejects NaN cache.externalDatasetTtlMs', () => {
+      const cfg = cloneConfig();
+      cfg.cache.externalDatasetTtlMs = NaN;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(
+        expect.stringContaining('cache.externalDatasetTtlMs')
+      );
+    });
+
+    it('rejects negative cache.externalDatasetTtlMs', () => {
+      const cfg = cloneConfig();
+      cfg.cache.externalDatasetTtlMs = -1000;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(
+        expect.stringContaining('cache.externalDatasetTtlMs')
+      );
+    });
+
+    it('accepts positive cache.externalDatasetTtlMs (24h)', () => {
+      const cfg = cloneConfig();
+      cfg.cache.externalDatasetTtlMs = 86_400_000;
+      const result = validateConfig(cfg);
+      expect(
+        result.errors.filter((e) => e.includes('externalDatasetTtlMs'))
+      ).toEqual([]);
+    });
   });
 
   describe('NaN/Infinity hardening for camera + rendering + controls + input', () => {

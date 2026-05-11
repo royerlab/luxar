@@ -10,8 +10,7 @@
 
 import * as THREE from 'three';
 import type { SceneNode } from '../../data/data-loader-types';
-import type { BlendingMode } from '../../rendering/material-manager';
-import type { CameraAwareMaterial } from '../../rendering/camera-aware-material';
+import type { BlendingMode, CameraAwareMaterial } from '../../rendering';
 import {
   LayerStateManager,
   type LayerInfo,
@@ -20,7 +19,7 @@ import {
 import { RangeSlider } from './range-slider';
 import { LabeledSlider } from './labeled-slider';
 import { config } from '../../config';
-import { materialManager } from '../../rendering/material-manager';
+import { materialManager } from '../../rendering';
 import { log, Modules } from '../../utils/log';
 import { EventGroup } from '../../utils/event-group';
 import { showToast } from '../helpers';

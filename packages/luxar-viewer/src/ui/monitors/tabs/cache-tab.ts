@@ -17,6 +17,10 @@ import {
   formatBytes as templateFormatBytes,
   getColorClass,
   getCacheMemoryColorClass,
+  renderCacheStatusBadges,
+  formatValidationMode,
+  formatLastValidated,
+  l2ErrorTotal,
 } from '../data-monitor-templates';
 import { patchField, updateColorClass } from './dom-helpers';
 
@@ -112,12 +116,86 @@ export function updateCacheTab(
     }
   }
 
-  // L2 stats
+  // L2 stats. Note: L2 "reads" already means successful gets (= hits);
+  // L2 hit rate is reads / (reads + misses). R2: the initial template
+  // rendered the hit-rate cell but the per-tick patcher never updated
+  // it, so the value froze after first render — patch parity with L0/L1
+  // here.
   if (cacheMetrics.l2) {
+    const l2Total = cacheMetrics.l2.reads + cacheMetrics.l2.misses;
+    const l2HitRate = l2Total > 0 ? (cacheMetrics.l2.reads / l2Total) * 100 : 0;
+
     patchField(container, 'l2-size', templateFormatBytes(cacheMetrics.l2.size));
     patchField(container, 'l2-size-sub', `${cacheMetrics.l2.count} entries`);
+    patchField(container, 'l2-hitrate', l2Total > 0 ? `${l2HitRate.toFixed(1)}%` : '—');
+    patchField(
+      container,
+      'l2-hitrate-sub',
+      `${templateFormatNumber(cacheMetrics.l2.reads)} hits · ${templateFormatNumber(cacheMetrics.l2.misses)} miss`
+    );
     patchField(container, 'l2-io', `${templateFormatNumber(cacheMetrics.l2.reads)} reads`);
     patchField(container, 'l2-io-sub', `${templateFormatNumber(cacheMetrics.l2.writes)} writes`);
+
+    const l2HitrateEl = container.querySelector(
+      '[data-field="l2-hitrate"]'
+    ) as HTMLElement | null;
+    if (l2HitrateEl) {
+      const colorClass =
+        l2Total === 0
+          ? getColorClass('dimmed')
+          : l2HitRate > 80
+            ? getColorClass('success')
+            : l2HitRate > 50
+              ? getColorClass('warning')
+              : getColorClass('error');
+      updateColorClass(l2HitrateEl, colorClass);
+    }
+  }
+
+  // R3: status pill row. Avoid full innerHTML replace when the badge
+  // set is stable across ticks — cheap join('|') signature compare.
+  const statusRow = container.querySelector(
+    '[data-field="cache-status-row"]'
+  ) as HTMLElement | null;
+  if (statusRow) {
+    const badges = cacheMetrics.status ?? [];
+    const signature = badges.join('|');
+    if (statusRow.dataset.signature !== signature) {
+      statusRow.dataset.signature = signature;
+      statusRow.innerHTML = renderCacheStatusBadges(badges);
+    }
+  }
+
+  // R3: Cache Health — validation mode + last-validated timestamp.
+  patchField(
+    container,
+    'cache-health-mode',
+    formatValidationMode(cacheMetrics.health?.validationMode)
+  );
+  patchField(
+    container,
+    'cache-health-validated',
+    formatLastValidated(cacheMetrics.health?.lastValidatedAt)
+  );
+
+  // R3: L2 error counters card.
+  if (cacheMetrics.l2) {
+    const errTotal = l2ErrorTotal(cacheMetrics.l2);
+    patchField(container, 'l2-errors', errTotal > 0 ? templateFormatNumber(errTotal) : '0');
+    patchField(
+      container,
+      'l2-errors-sub',
+      errTotal > 0
+        ? `${templateFormatNumber(cacheMetrics.l2.quotaWriteSkipped ?? 0)} quota · ${templateFormatNumber(cacheMetrics.l2.writeFailures ?? 0)} write · ${templateFormatNumber(cacheMetrics.l2.corruptedEntries ?? 0)} corrupt`
+        : 'no errors'
+    );
+    const l2ErrEl = container.querySelector('[data-field="l2-errors"]') as HTMLElement | null;
+    if (l2ErrEl) {
+      updateColorClass(
+        l2ErrEl,
+        errTotal > 0 ? getColorClass('error') : getColorClass('dimmed')
+      );
+    }
   }
 
   // Total

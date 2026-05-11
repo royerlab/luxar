@@ -96,7 +96,7 @@
   "dependencies": {
     "comlink": "^4.4.2",
     "fflate": "^0.8.2",
-    "mediabunny": "^1.40.1",
+    "mediabunny": "^1.44.2",
     "postprocessing": "^6.38.0",
     "zarrita": "^0.5.4"
   },

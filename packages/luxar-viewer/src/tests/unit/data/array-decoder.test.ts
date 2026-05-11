@@ -17,6 +17,7 @@
 import { describe, it, expect } from 'vitest';
 import { ArrayDecoder, ArrayRefRegistry } from '../../../data/utils/array-decoder';
 import type { ArrayMetadata } from '../../../data/utils/array-decoder';
+import { withMaybeConsolidatedMetadata } from '../../../data/zarrita-compat';
 import * as zarr from 'zarrita';
 import { FileSystemStore } from '@zarrita/storage';
 import * as path from 'path';
@@ -47,7 +48,7 @@ async function loadArrayWithAttrs(
 
   // Create filesystem store for Node.js (not FetchStore - that's for HTTP)
   const rawStore = new FileSystemStore(storePath);
-  const store = await zarr.tryWithConsolidated(rawStore);
+  const store = await withMaybeConsolidatedMetadata(rawStore);
   const rootLoc = zarr.root(store);
 
   // Navigate to the array using resolve

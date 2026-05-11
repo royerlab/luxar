@@ -14,6 +14,7 @@ import { describe, it, expect } from 'vitest';
 import { ArrayDecoder, ArrayRefRegistry } from '../../../data/utils/array-decoder';
 import type { ArrayMetadata } from '../../../data/utils/array-decoder';
 import { RangeLoader } from '../../../data/loaders/range-loader';
+import { withMaybeConsolidatedMetadata } from '../../../data/zarrita-compat';
 import * as zarr from 'zarrita';
 import { FileSystemStore } from '@zarrita/storage';
 import * as path from 'path';
@@ -84,7 +85,7 @@ async function loadArrayWithAttrs(
 }> {
   const storePath = path.join(FIXTURES_DIR, datasetName);
   const rawStore = new FileSystemStore(storePath);
-  const store = await zarr.tryWithConsolidated(rawStore);
+  const store = await withMaybeConsolidatedMetadata(rawStore);
   const rootLoc = zarr.root(store);
   const array = await zarr.open(rootLoc.resolve(arrayPath), { kind: 'array' });
   const attrs = array.attrs as unknown as ArrayMetadata;

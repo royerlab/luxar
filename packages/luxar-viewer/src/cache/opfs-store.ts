@@ -736,8 +736,23 @@ export class OPFSStore {
       const entries = (meta.entries || []).slice();
       entries.sort((a, b) => a[1].order - b[1].order);
       this.index = new Map(entries);
-      this.totalSize = meta.totalSize || 0;
-      this.orderCounter = meta.orderCounter || 0;
+      // R6e: defensive hardening against partial metadata corruption.
+      // `meta.totalSize` is whatever value the JSON contains; values
+      // like NaN, Infinity, or negatives are accepted by `|| 0` but
+      // surface as nonsensical stats downstream. Clamp to non-negative
+      // and recompute from the live entries when the persisted value
+      // disagrees by more than a trivial amount — entries[] is the
+      // source of truth for what's actually stored.
+      const persistedTotal =
+        Number.isFinite(meta.totalSize) && meta.totalSize >= 0 ? meta.totalSize : 0;
+      const computedTotal = entries.reduce(
+        (sum, [, e]) => sum + (Number.isFinite(e.size) && e.size > 0 ? e.size : 0),
+        0
+      );
+      this.totalSize =
+        Math.abs(persistedTotal - computedTotal) > 1 ? computedTotal : persistedTotal;
+      this.orderCounter =
+        Number.isFinite(meta.orderCounter) && meta.orderCounter >= 0 ? meta.orderCounter : 0;
       this.contentHash = meta.contentHash || null;
       this.validationMode = meta.validationMode ?? 'none';
       this.lastValidatedAt = meta.lastValidatedAt ?? null;

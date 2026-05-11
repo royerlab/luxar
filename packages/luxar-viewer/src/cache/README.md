@@ -37,6 +37,7 @@ The cache is **enabled by default** and works transparently through zarrita:
 
 ```typescript
 import { MultiLevelCachingStore } from '../cache';
+import { withMaybeConsolidatedMetadata } from '../data/zarrita-compat';
 import * as zarr from 'zarrita';
 
 // Create caching store
@@ -49,7 +50,7 @@ const store = new MultiLevelCachingStore('https://example.com/dataset.zarr', {
 await store.init();
 
 // Use with zarrita - completely transparent!
-const zarrStore = await zarr.tryWithConsolidated(store);
+const zarrStore = await withMaybeConsolidatedMetadata(store);
 const root = await zarr.open(zarrStore);
 
 // First load: HTTP → L2 → L1 → decompress → L0 → render
@@ -149,6 +150,31 @@ under "L0 Decompressed Chunk Cache" below.
 - `metadataParseFailures`: `_cache_meta.json` could not be parsed.
 - `orphanedFilesRemoved`: files reclaimed by `cleanupOrphans()` (run
   on metadata parse failure).
+
+## Cache Status Badges
+
+The data monitor's cache tab renders a row of small pill badges
+summarising the cache's operational state. Each badge is also exposed
+on `CacheMetrics.status: CacheStatusBadge[]` so programmatic consumers
+(debug snapshots, E2E tests) can assert on the same set.
+
+| Badge | Meaning | Source |
+|---|---|---|
+| `cache-enabled` | Caching is wired and operational. | `telemetryState.kind === 'enabled'` |
+| `no-cache` | The `?no-cache` URL flag is set; all tiers disabled. | `telemetryState.kind === 'disabled-no-cache'` |
+| `disabled-config` | App config disabled caching (e.g. `cache.enabled: false`). | `telemetryState.kind === 'disabled-config'` |
+| `opfs-unavailable` | The browser does not expose OPFS; L2 is disabled. | OPFS provider absent |
+| `quota-constrained` | L2 has skipped at least one write because of browser quota. | `l2.quotaWriteSkipped > 0` |
+| `cache-errors-detected` | L2 has accumulated I/O / corruption failures. | `l2.writeFailures + corruptedEntries + metadataParseFailures > 0` |
+| `unvalidated-external-dataset` | External dataset, no TTL configured — entries may stay stale. | `health.unvalidatedExternalDataset === true` |
+| `provider-missing` | Telemetry says cache is enabled but no provider is attached. | classifier/provider contradiction |
+
+Several badges may coexist — for example, a Luxar dataset on a near-full
+browser disk can show `cache-enabled` + `quota-constrained` simultaneously.
+The cache tab also shows a dedicated **Cache Health** section with the
+current validation mode and last-validated timestamp, and an inline
+**Errors** card on the L2 section when any of the four OPFS error
+counters is non-zero.
 
 ## Privacy / local persistence
 

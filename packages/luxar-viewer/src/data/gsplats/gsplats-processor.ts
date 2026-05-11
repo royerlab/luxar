@@ -31,6 +31,7 @@ import type {
   ProcessedGSplatsData,
   GSplatsViewState,
 } from '../../types/gsplats';
+import { MAX_SUPPORTED_DIMS } from '../../config/constants';
 
 /**
  * Construct the canonical "no visible splats at this slice" payload.
@@ -56,9 +57,6 @@ export function createEmptyGSplatsData(attrs: GSplatsMetadata): LoadedGSplatsDat
 function packedIndex(row: number, col: number): number {
   return (row * (row + 1)) / 2 + col;
 }
-
-/** Maximum supported dimensions (must match WASM MAX_SUPPORTED_DIMS). */
-const MAX_SUPPORTED_DIMS = 16;
 
 /** Epsilon for degenerate diagonal detection during Cholesky factorization. */
 const CHOLESKY_EPSILON = 1e-10;

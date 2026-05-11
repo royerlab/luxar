@@ -462,6 +462,49 @@ describe('MaterialManager', () => {
       expect(stats.ownedMaterials).toBe(0);
       expect(stats.totalRegistered).toBe(1);
     });
+
+    it('should drop a clone from the registry when the clone is disposed', () => {
+      // Lock in the subscribeToDispose wiring — disposing a clone must
+      // remove it from registeredMaterials, otherwise per-node clones
+      // accumulate forever in the global update loop.
+      manager.getPointMaterial({
+        blendingMode: 'additive',
+        opacity: 1.0,
+        gamma: 1.0,
+        intensity: 1.0,
+        offset: 0.0,
+      });
+      const clone = new PointMaterial({ opacity: 0.5 });
+      manager.register(clone);
+      expect(manager.getCacheStats().totalRegistered).toBe(2);
+
+      clone.dispose();
+      expect(manager.getCacheStats().totalRegistered).toBe(1);
+      expect(manager.getCacheStats().ownedMaterials).toBe(0);
+    });
+
+    it('should not stack dispose listeners when registering the same material twice', () => {
+      // Idempotency guard: re-registering a material that already has a
+      // dispose listener must not stack another listener on the
+      // EventDispatcher. Tested behaviorally via the mock's
+      // `addEventListener` spy — a second `register()` for the same
+      // material must NOT add another listener for the 'dispose' event.
+      const mat = new PointMaterial({ opacity: 1.0 });
+      // PointMaterial extends our mocked ShaderMaterial which exposes
+      // addEventListener as a vi.fn. Pluck it to count calls.
+      const addEventListener = (mat as unknown as { addEventListener: ReturnType<typeof vi.fn> })
+        .addEventListener;
+      addEventListener.mockClear();
+
+      manager.register(mat);
+      manager.register(mat); // second registration — should be a no-op
+
+      const disposeCallCount = addEventListener.mock.calls.filter(
+        (call) => (call as unknown[])[0] === 'dispose'
+      ).length;
+      expect(disposeCallCount).toBe(1);
+      expect(manager.getCacheStats().totalRegistered).toBe(1);
+    });
   });
 
   // =========================================================================

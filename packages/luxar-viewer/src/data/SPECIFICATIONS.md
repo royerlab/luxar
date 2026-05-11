@@ -1616,12 +1616,19 @@ The worker pool provides:
 
 ```typescript
 // Recommended: runWithTimeout owns acquire + tracking + timeout +
-// release in one call. This is the production pattern; raw
-// getWorker() / getWorkerWithTracking() bypass the timeout guard
-// and require manual done() bookkeeping.
+// release in one call. This is the production pattern. The raw
+// getWorker() / getWorkerWithTracking() helpers bypass the timeout
+// guard, require manual done() bookkeeping, and skip the hung-worker
+// eviction path — never call them outside test code.
+//
+// Args: (operationName, TimeoutKind, fn). The TimeoutKind selects which
+// config knob is consulted: 'projection' → workerProjectionTimeoutMs,
+// 'decode' → workerProjectionTimeoutMs (same knob today),
+// 'visibility' → workerVisibilityTimeoutMs.
 const result = await getWorkerPool().runWithTimeout(
-  (worker) => worker.querySpatialIndex(params),
-  { timeoutMs: 5_000 }
+  'querySpatialIndex',
+  'visibility',
+  (api) => api.querySpatialIndex(params)
 );
 ```
 
@@ -1635,10 +1642,13 @@ if (!appConfig.dataLoading.performance.useWebWorkers) {
   return mainThreadQuerySpatialIndex(params);
 }
 
-// Worker path — same runWithTimeout helper as above.
+// Worker path — runWithTimeout rejects with WorkerTimeoutError on
+// budget overflow, and the loader chooses whether to surface the error
+// or fall back to main thread.
 return await getWorkerPool().runWithTimeout(
-  (worker) => worker.querySpatialIndex(params),
-  { timeoutMs: 5_000 }
+  'querySpatialIndex',
+  'visibility',
+  (api) => api.querySpatialIndex(params)
 );
 ```
 
@@ -1668,11 +1678,11 @@ Workers are called at these locations:
 
 **`lines-spatial-index-loader.ts`**:
 
-- Spatial query via `getWorkerPool().getWorker()` - line ~534
+- Spatial query via `getWorkerPool().runWithTimeout('queryLines', 'visibility', ...)` - line ~534
 
 **`gsplats-spatial-index-loader.ts`**:
 
-- Spatial query via `getWorkerPool().getWorker()` - line ~377
+- Spatial query via `getWorkerPool().runWithTimeout('queryGsplats', 'visibility', ...)` - line ~377
 
 **`loaders/range-loader.ts`** (unified encoding dispatch):
 

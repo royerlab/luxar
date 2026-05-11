@@ -203,37 +203,41 @@ export class CinematicModeController {
       settings.fovPreset = '50mm Normal';
     }
 
-    // Apply post-processing changes via deferred rebuild.
+    // Apply post-processing changes via deferred rebuild. The
+    // try/finally guarantees `endDeferRebuild()` runs even if any
+    // sub-setter throws, so the depth counter cannot strand above zero
+    // and silently disable future rebuilds.
     postProcessing.startDeferRebuild();
+    try {
+      postProcessing.setToneMapping(TONE_MAPPING_MAP[settings.toneMapping]);
 
-    postProcessing.setToneMapping(TONE_MAPPING_MAP[settings.toneMapping]);
+      postProcessing.setDetectorNoiseEnabled(
+        settings.detectorNoiseEnabled,
+        settings.detectorNoiseReadoutSigma,
+        settings.detectorNoisePhotonGain,
+        settings.detectorNoiseFpnSigma
+      );
 
-    postProcessing.setDetectorNoiseEnabled(
-      settings.detectorNoiseEnabled,
-      settings.detectorNoiseReadoutSigma,
-      settings.detectorNoisePhotonGain,
-      settings.detectorNoiseFpnSigma
-    );
+      postProcessing.setVignetteEnabled(
+        settings.vignetteEnabled,
+        settings.vignetteDarkness,
+        settings.vignetteOffset
+      );
 
-    postProcessing.setVignetteEnabled(
-      settings.vignetteEnabled,
-      settings.vignetteDarkness,
-      settings.vignetteOffset
-    );
-
-    postProcessing.setChromaticLensDistortionEnabled(
-      settings.chromaticLensDistortionEnabled,
-      settings.chromaticLensDistortionX,
-      settings.chromaticLensDistortionY,
-      settings.chromaticLensDispersion,
-      settings.chromaticLensPrincipalPointX,
-      settings.chromaticLensPrincipalPointY,
-      settings.chromaticLensFocalLengthX,
-      settings.chromaticLensFocalLengthY,
-      settings.chromaticLensSkew
-    );
-
-    postProcessing.endDeferRebuild();
+      postProcessing.setChromaticLensDistortionEnabled(
+        settings.chromaticLensDistortionEnabled,
+        settings.chromaticLensDistortionX,
+        settings.chromaticLensDistortionY,
+        settings.chromaticLensDispersion,
+        settings.chromaticLensPrincipalPointX,
+        settings.chromaticLensPrincipalPointY,
+        settings.chromaticLensFocalLengthX,
+        settings.chromaticLensFocalLengthY,
+        settings.chromaticLensSkew
+      );
+    } finally {
+      postProcessing.endDeferRebuild();
+    }
 
     // Apply FOV change to camera.
     const targetFOV = settings.fov;

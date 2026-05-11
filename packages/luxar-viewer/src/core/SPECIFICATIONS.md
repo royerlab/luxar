@@ -290,10 +290,6 @@ dispose(): void {
   // Worker pool: also covers in-flight workers.
   safeDispose('workerPool', () => disposeWorkerPool());
 
-  // ManagerRegistry is future-facing; today most managers are wired
-  // explicitly above. See `core/manager-registry.ts` header.
-  safeDispose('managerRegistry', () => getManagerRegistry().disposeAll());
-
   // Renderer and globals last.
   safeDispose('sceneManager', () => this.sceneManager?.dispose());
   safeDispose('globalListeners', () => {

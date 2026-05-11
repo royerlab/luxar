@@ -624,9 +624,9 @@ describe('LuxarApp', () => {
     });
 
     it('disposes the SceneLoaderManager and DataMonitorManager singletons', async () => {
-      // Pre-existing static singletons that pre-date ManagerRegistry.
-      // Without explicit disposeInstance() calls, their loaders + cache stores
-      // + eventBus subscriptions survive across LuxarApp re-init.
+      // Long-lived static singletons. Without explicit disposeInstance()
+      // calls, their loaders + cache stores + eventBus subscriptions
+      // survive across LuxarApp re-init.
       const sceneLoaderModule = await import('../../../data/scene-loader-manager');
       const dataMonitorModule = await import('../../../ui/monitors/data-monitor-manager');
 

@@ -115,6 +115,15 @@ export class MaterialManager {
   private lineMaterialCache = new Map<string, LineMaterial>();
   private gsplatMaterialCache = new Map<string, GSplatMaterial>();
   private registeredMaterials = new Set<THREE.Material & CameraAwareMaterial>();
+  /**
+   * Materials whose `dispose` event we have already wired a listener for.
+   * Separate from `registeredMaterials` because `register()` /
+   * `getXMaterial()` can be called repeatedly with the same instance
+   * (cache hits, clones re-registered explicitly), and a second
+   * `addEventListener('dispose', ...)` would silently stack listeners on
+   * THREE's EventDispatcher.
+   */
+  private subscribedMaterials = new WeakSet<THREE.Material & CameraAwareMaterial>();
   /** Per-cache eviction count (read by getCacheStats; no behavior). */
   private evictionCount = 0;
   /**
@@ -193,11 +202,14 @@ export class MaterialManager {
    * {point,line,gsplat}-material.ts.
    */
   private subscribeToDispose(material: THREE.Material & CameraAwareMaterial): void {
+    if (this.subscribedMaterials.has(material)) return;
     const onDispose = (): void => {
+      this.subscribedMaterials.delete(material);
       this.removeFromRegistries(material);
       material.removeEventListener('dispose', onDispose);
     };
     material.addEventListener('dispose', onDispose);
+    this.subscribedMaterials.add(material);
   }
 
   /**
@@ -431,12 +443,13 @@ export class MaterialManager {
   }
 
   /**
-   * Unregister a material from global updates.
-   *
-   * @deprecated Cleanup is now automatic via the material's `dispose`
-   *   event listener registered by `subscribeToDispose`. This method
-   *   stays for the rare external caller that needs to drop a material
-   *   from the registry without disposing it.
+   * Drop a material from the global registry without disposing the
+   * underlying GPU object. The picking-material classes use this in
+   * their custom `dispose()` paths so the manager stops broadcasting
+   * camera updates to the material before the caller disposes it
+   * directly. (When the caller does eventually call `material.dispose()`,
+   * the dispose-event listener from `subscribeToDispose` is a no-op
+   * because the material is already gone from the registries.)
    */
   unregister(material: THREE.Material & CameraAwareMaterial): void {
     this.removeFromRegistries(material);

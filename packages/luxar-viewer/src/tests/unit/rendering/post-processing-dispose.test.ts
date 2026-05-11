@@ -210,3 +210,65 @@ describe('PostProcessingManager.rebuildAfterContextRestore', () => {
     expect(manager.rebuildEffectPass).not.toHaveBeenCalled();
   });
 });
+
+describe('PostProcessingManager.startDeferRebuild / endDeferRebuild', () => {
+  type DeferManager = {
+    deferRebuildDepth: number;
+    rebuildEffectPass: ReturnType<typeof vi.fn>;
+  };
+
+  function makeManager(): DeferManager {
+    const m = Object.create(PostProcessingManager.prototype) as DeferManager;
+    m.deferRebuildDepth = 0;
+    m.rebuildEffectPass = vi.fn();
+    return m;
+  }
+
+  const start = PostProcessingManager.prototype.startDeferRebuild as unknown as (
+    this: DeferManager
+  ) => void;
+  const end = PostProcessingManager.prototype.endDeferRebuild as unknown as (
+    this: DeferManager
+  ) => void;
+
+  it('a single start/end pair triggers exactly one rebuild', () => {
+    const m = makeManager();
+    start.call(m);
+    expect(m.deferRebuildDepth).toBe(1);
+    end.call(m);
+    expect(m.deferRebuildDepth).toBe(0);
+    expect(m.rebuildEffectPass).toHaveBeenCalledTimes(1);
+  });
+
+  it('nested starts only rebuild when the outermost end runs', () => {
+    const m = makeManager();
+    start.call(m);
+    start.call(m);
+    end.call(m);
+    expect(m.rebuildEffectPass).not.toHaveBeenCalled();
+    end.call(m);
+    expect(m.rebuildEffectPass).toHaveBeenCalledTimes(1);
+  });
+
+  it('end without a matching start is a logged no-op (does not rebuild)', () => {
+    const m = makeManager();
+    end.call(m);
+    expect(m.deferRebuildDepth).toBe(0);
+    expect(m.rebuildEffectPass).not.toHaveBeenCalled();
+  });
+
+  it('try/finally keeps the counter balanced when the batch throws', () => {
+    const m = makeManager();
+    expect(() => {
+      start.call(m);
+      try {
+        throw new Error('simulated setter failure');
+      } finally {
+        end.call(m);
+      }
+    }).toThrow('simulated setter failure');
+    expect(m.deferRebuildDepth).toBe(0);
+    // Rebuild still fires once on the outer end despite the thrown error.
+    expect(m.rebuildEffectPass).toHaveBeenCalledTimes(1);
+  });
+});

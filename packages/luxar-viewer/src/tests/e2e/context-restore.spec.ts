@@ -111,6 +111,52 @@ test.describe('WebGL Context Restore (CR-1)', () => {
     expect(errors).toEqual([]);
   });
 
+  test('PickingSystem survives context restore (instance reachable, no exceptions)', async ({
+    page,
+  }) => {
+    // Locks in the picking-system rebuild path on context restore (see
+    // state-lifecycle-reliability.md §T4). We do not assert a specific
+    // pick result — that requires a guaranteed-labeled dataset and a
+    // hit-test pixel position the headless GPU agrees on. Instead we
+    // assert the weaker but reliable invariant: the picking-system
+    // remains reachable through the app after restore AND a renderOnce
+    // following a synthetic mousemove does not throw. A regression that
+    // forgot to re-register picking shadow nodes shows up as either a
+    // dangling reference or an exception from the pick render pass.
+    const errors: string[] = [];
+    page.on('pageerror', (err) => errors.push(err.message));
+
+    await page.goto('/?debug');
+    await waitForLuxarReady(page);
+
+    const beforeRestore = await page.evaluate(() => {
+      const debug = (window as unknown as { __luxarDebug?: { app?: unknown } }).__luxarDebug;
+      const app = debug?.app as { pickingSystem?: unknown } | undefined;
+      return Boolean(app?.pickingSystem);
+    });
+    // Picking-system is only constructed when at least one node has
+    // labels. If the default scene has none, skip the deeper assertion.
+    test.skip(!beforeRestore, 'No picking system in default scene; nothing to validate');
+
+    expect(await loseAndRestoreContext(page)).toBe(true);
+
+    const afterRestore = await page.evaluate(() => {
+      const debug = (window as unknown as { __luxarDebug?: { app?: unknown; renderOnce?: () => void } }).__luxarDebug;
+      const app = debug?.app as { pickingSystem?: unknown } | undefined;
+      if (!app?.pickingSystem) return { reachable: false, rendered: false };
+      try {
+        debug?.renderOnce?.();
+        return { reachable: true, rendered: true };
+      } catch {
+        return { reachable: true, rendered: false };
+      }
+    });
+    expect(afterRestore.reachable).toBe(true);
+    expect(afterRestore.rendered).toBe(true);
+
+    expect(errors).toEqual([]);
+  });
+
   test('Durable user settings survive context restore', async ({ page }) => {
     const errors: string[] = [];
     page.on('pageerror', (err) => errors.push(err.message));

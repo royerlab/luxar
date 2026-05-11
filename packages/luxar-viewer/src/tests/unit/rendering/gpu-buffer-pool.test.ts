@@ -255,6 +255,35 @@ describe('GPUBufferPool', () => {
       expect(stats.activeBuffers).toBe(0);
       expect(stats.pooledBuffers).toBe(0);
     });
+
+    it('acquire under pool pressure returns a usable geometry', () => {
+      // Stress the pool's release → evict → acquire sequence.
+      // Eviction in this codebase is triggered by `releasePointsGeometry`
+      // (which calls `evictUnused()` internally), not by acquire — so
+      // this test fills the pool, advances frames past evictionFrames,
+      // releases to trigger eviction, then asserts the next acquire
+      // returns a valid, undisposed geometry. A dispose-during-pool-
+      // churn bug would surface as either a thrown error inside
+      // acquire or as an already-disposed `attributes.position`.
+      const tinyPool = new GPUBufferPool(2, 0); // maxPoolSize=2, evictionFrames=0
+      const dataA = createMockLoadedPointsData(1000);
+      const dataB = createMockLoadedPointsData(2000);
+
+      tinyPool.acquirePointsGeometry('nodeA', dataA, 1000);
+      tinyPool.releasePointsGeometry('nodeA');
+      tinyPool.acquirePointsGeometry('nodeB', dataB, 2000);
+      tinyPool.releasePointsGeometry('nodeB');
+
+      tinyPool.beginFrame();
+      tinyPool.beginFrame();
+
+      const dataC = createMockLoadedPointsData(100000);
+      const geomC = tinyPool.acquirePointsGeometry('nodeC', dataC, 100000);
+
+      expect(geomC).toBeDefined();
+      expect(geomC.attributes.position).toBeDefined();
+      expect(() => tinyPool.releasePointsGeometry('nodeC')).not.toThrow();
+    });
   });
 
   describe('Size Bucketing', () => {

@@ -359,4 +359,79 @@ describe('Color normalization at WASM boundary', () => {
     expect(arr[1]).toBeCloseTo(32768 / 65535, 5);
     expect(arr[2]).toBeCloseTo(1, 5);
   });
+
+  it('GSplats: Uint8Array colors are normalized to Float32 [0,1] before compact_by_mask', async () => {
+    const { mod, wasm } = await loadWorker();
+    // Make every splat visible. compute_gsplats_attenuation writes into
+    // the caller-supplied `visibility` Uint8Array (arg #9), so the mock
+    // must fill it; otherwise the visibleCount==0 early-exit fires and
+    // colors compaction never runs.
+    wasm.compute_gsplats_attenuation.mockImplementation(
+      (
+        _positions: unknown,
+        _cholesky: unknown,
+        _amplitudes: unknown,
+        _slicePos: unknown,
+        _hiddenDims: unknown,
+        _ndim: unknown,
+        splatCountArg: number,
+        _minAmp: unknown,
+        _truncate: unknown,
+        visibility: Uint8Array
+      ) => {
+        for (let i = 0; i < splatCountArg; i++) visibility[i] = 1;
+        return 0;
+      }
+    );
+    wasm.compact_by_mask.mockImplementation(() => {});
+    wasm.compact_attenuated_amplitudes.mockImplementation(() => {});
+    wasm.extract_visible_cholesky_3d.mockImplementation(() => {});
+    wasm.extract_3d_positions.mockImplementation(() => {});
+
+    const splatCount = 2;
+    const ndim = 3;
+    const k = (ndim * (ndim + 1)) / 2; // 6 for 3D
+    const colorsU8 = new Uint8Array([0, 128, 255, 64, 200, 32]);
+
+    await mod.workerAPI.projectGSplatsTo3D({
+      positions: new Float32Array(splatCount * ndim),
+      choleskyFactors: new Float32Array(splatCount * k),
+      amplitudes: new Float32Array(splatCount).fill(1),
+      colors: colorsU8,
+      sharpness: null,
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0],
+      ndim,
+      splatCount,
+      discreteDims: [],
+      discreteSteps: {},
+      extendToAllDims: [],
+      truncate: 3.0,
+    });
+
+    // compact_by_mask is called for positions (3-component), amplitudes
+    // (1-component), and finally colors (3-component). Find the colors
+    // call by `numComponents === 3` AND the buffer being our normalized
+    // Float32 input (the positions call passes a Float32Array of size
+    // splatCount*3 all zeros, so we filter by content too).
+    const colorCalls = wasm.compact_by_mask.mock.calls.filter((call) => {
+      const arr = (call as unknown[])[0];
+      const components = (call as unknown[])[3];
+      return (
+        components === 3 &&
+        arr instanceof Float32Array &&
+        (arr as Float32Array).length === splatCount * 3 &&
+        // Distinguish from the all-zero positions call.
+        (arr as Float32Array).some((v) => v !== 0)
+      );
+    });
+    expect(colorCalls.length).toBe(1);
+    const colorsArg = (colorCalls[0] as unknown[])[0] as Float32Array;
+    expect(colorsArg[0]).toBeCloseTo(0, 5);
+    expect(colorsArg[1]).toBeCloseTo(128 / 255, 5);
+    expect(colorsArg[2]).toBeCloseTo(1, 5);
+    expect(colorsArg[3]).toBeCloseTo(64 / 255, 5);
+    expect(colorsArg[4]).toBeCloseTo(200 / 255, 5);
+    expect(colorsArg[5]).toBeCloseTo(32 / 255, 5);
+  });
 });

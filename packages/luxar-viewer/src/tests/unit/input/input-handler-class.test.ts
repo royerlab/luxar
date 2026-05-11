@@ -9,7 +9,7 @@
  * exercised with structural stubs.
  *
  * What we cover:
- *   - Constructor wiring (no-throw, ManagerRegistry-style storage)
+ *   - Constructor wiring (no-throw, manager-style storage)
  *   - Optional setters (setRenderingControls / setScaleBar / etc.)
  *   - Setter forwarding to PanelCoordinator (R/C/Esc shortcuts)
  *   - clearDimensionUI is a no-op when no dimension UI exists

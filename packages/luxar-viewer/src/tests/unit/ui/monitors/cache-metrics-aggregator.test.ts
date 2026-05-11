@@ -232,7 +232,7 @@ describe('aggregateCacheMetrics', () => {
       expect(result.missesPerSecond).toBe(1.5);
     });
 
-    it('evictionsTotal field is the unmodified accumulator (was misleadingly named evictionsPerMin)', () => {
+    it('evictionsTotal field is the unmodified accumulator', () => {
       const m = makeLoaderMetrics({ evictions: 7 });
       const result = aggregateCacheMetrics({
         l0Provider: null,
@@ -242,7 +242,6 @@ describe('aggregateCacheMetrics', () => {
         rates: ZERO_RATES,
       });
       expect(result.evictionsTotal).toBe(7);
-      expect(result.evictionsPerMin).toBe(7); // back-compat alias
     });
   });
 
@@ -287,7 +286,7 @@ describe('aggregateCacheMetrics', () => {
     expect(result.memoryLimit).toBe(3000);
     expect(result.totalCacheMemory).toBe(300);
     expect(result.totalEntries).toBe(5); // only m1 has spatialIndex
-    expect(result.evictionsPerMin).toBe(6);
+    expect(result.evictionsTotal).toBe(6);
     // metricsCache mutation: each loader's getMetrics() result was stored.
     expect(metricsCache.get('/p1')).toBe(m1);
     expect(metricsCache.get('/p2')).toBe(m2);
@@ -642,6 +641,70 @@ describe('aggregateCacheMetrics', () => {
       });
       expect(result.status).toContain('cache-enabled');
       expect(result.status).toContain('provider-missing');
+    });
+
+    // R3: cache-tab now renders L2 error counters inline, so the
+    // aggregator must surface them on `l2Stats` (not only into the
+    // badge-computation scratch variables).
+    it('l2 stats carry the four OPFS health counters when provider supplies them', () => {
+      const result = aggregateCacheMetrics({
+        l0Provider: null,
+        cacheStatsProvider: makeProviderWithHealth({
+          quotaWriteSkipped: 3,
+          writeFailures: 1,
+          corruptedEntries: 2,
+          metadataParseFailures: 4,
+        }),
+        loaders: new Map(),
+        metricsCache: new Map(),
+        rates: ZERO_RATES,
+      });
+      expect(result.l2?.quotaWriteSkipped).toBe(3);
+      expect(result.l2?.writeFailures).toBe(1);
+      expect(result.l2?.corruptedEntries).toBe(2);
+      expect(result.l2?.metadataParseFailures).toBe(4);
+    });
+
+    it('l2 stats counters are undefined when provider omits them', () => {
+      // Build a minimal provider that returns only the required L2
+      // fields, exercising the older-provider compatibility path.
+      const provider = {
+        getStats: () => ({
+          l1: {
+            metadataSize: 0,
+            chunksSize: 0,
+            metadataCount: 0,
+            chunksCount: 0,
+            hits: 0,
+            misses: 0,
+            evictions: 0,
+          },
+          l2: {
+            size: 0,
+            count: 0,
+            reads: 0,
+            writes: 0,
+            misses: 0,
+            // No quota/write/corrupt/metadata fields.
+          },
+          network: { bytesTransferred: 0, requestCount: 0, bandwidth: 0 },
+        }),
+        clearL1: () => {},
+        clearL2: async () => {},
+        clearAll: async () => {},
+        isEnabled: () => true,
+      };
+      const result = aggregateCacheMetrics({
+        l0Provider: null,
+        cacheStatsProvider: provider,
+        loaders: new Map(),
+        metricsCache: new Map(),
+        rates: ZERO_RATES,
+      });
+      expect(result.l2?.quotaWriteSkipped).toBeUndefined();
+      expect(result.l2?.writeFailures).toBeUndefined();
+      expect(result.l2?.corruptedEntries).toBeUndefined();
+      expect(result.l2?.metadataParseFailures).toBeUndefined();
     });
   });
 });

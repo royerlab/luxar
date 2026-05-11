@@ -138,6 +138,13 @@ export function aggregateCacheMetrics(params: AggregateCacheMetricsParams): Cach
       reads: stats.l2.reads,
       writes: stats.l2.writes,
       misses: stats.l2.misses,
+      // R3: pass through OPFS health counters so the cache tab can
+      // render them inline. Undefined entries from older providers
+      // stay undefined.
+      quotaWriteSkipped: stats.l2.quotaWriteSkipped,
+      writeFailures: stats.l2.writeFailures,
+      corruptedEntries: stats.l2.corruptedEntries,
+      metadataParseFailures: stats.l2.metadataParseFailures,
     };
 
     // Pull badge-relevant L2 health counters (optional — older
@@ -269,12 +276,8 @@ export function aggregateCacheMetrics(params: AggregateCacheMetricsParams): Cach
     totalAccesses: totalL1Accesses,
     recentHitRate,
     effectiveDemandHitRate,
-    // `evictions` accumulated across loaders. The `evictionsPerMin`
-    // alias is preserved so external dashboards reading it don't
-    // break; new code should read `evictionsTotal` (the value is the
-    // same — `evictionsPerMin` was misnamed and never divided by time).
+    // `evictions` accumulated across loaders.
     evictionsTotal: evictions,
-    evictionsPerMin: evictions,
     avgEntrySize: totalEntries > 0 ? totalCacheMemory / totalEntries : 0,
     reuseRatio: 0,
     // Rolling per-second rates from rate-calculator. Don't recompute

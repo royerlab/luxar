@@ -50,7 +50,7 @@ export interface CacheSetupResult {
 
 /**
  * Build the L0/L1/L2 cache stack and return the raw store the caller
- * should pass to `zarr.tryWithConsolidated()`.
+ * should pass to the zarrita consolidated-metadata compatibility wrapper.
  *
  * Behavior matches the previous inline block in `SceneLoader.loadScene()`:
  *   - L0 is enabled iff `appConfig.cache.l0Enabled && !flags.noCache`.

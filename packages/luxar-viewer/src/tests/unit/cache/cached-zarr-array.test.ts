@@ -56,8 +56,10 @@ describe('cached-zarr-array', () => {
       // Call getChunk
       const result = await wrapped.getChunk([0, 1, 2]);
 
-      // Should have called original getChunk
-      expect(mockArray.getChunk).toHaveBeenCalledWith([0, 1, 2], undefined);
+      // Should have called original getChunk. The proxy forwards args
+      // via rest-spread (`target.getChunk(...args)`), so a no-options
+      // call shows up as a single positional arg, not `(coords, undefined)`.
+      expect(mockArray.getChunk).toHaveBeenCalledWith([0, 1, 2]);
 
       // Should return the chunk data
       expect(result.data).toBeInstanceOf(Float32Array);

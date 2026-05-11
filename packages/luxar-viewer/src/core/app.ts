@@ -15,7 +15,6 @@ import { cleanupUI, clearError, showError, showHelpOverlay } from '../ui/helpers
 import { config } from '../config';
 import { DatasetBrowser } from '../ui/panels/dataset-browser';
 import { log, Modules } from '../utils/log';
-import { getManagerRegistry } from './manager-registry';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
 import { AdaptiveDPRManager } from '../rendering/adaptive-dpr-manager';
 import { ResolutionIndicator } from '../ui/components/resolution-indicator';
@@ -1154,16 +1153,13 @@ export class LuxarApp {
     // open-dataset-browser, picking-system subscriptions).
     safeDispose('events', () => this.events.dispose());
 
-    // Three-tier singleton teardown: SceneLoaderManager and DataMonitorManager
-    // pre-date ManagerRegistry and use static getInstance/disposeInstance.
-    // Monitor first (factory wiring holds loader refs); loader manager drops
-    // loaders + cache stores. Worker pool terminates remaining workers next.
-    // ManagerRegistry walks any singletons that self-registered (none today,
-    // but the path stays correct for future registrants).
+    // Three-tier singleton teardown. Monitor first (factory wiring holds
+    // loader refs); loader manager drops loaders + cache stores; worker
+    // pool terminates remaining workers last so any in-flight worker
+    // call sees the upstream owners gone before being torn down itself.
     safeDispose('dataMonitorManager', () => DataMonitorManager.disposeInstance());
     safeDispose('sceneLoaderManager', () => SceneLoaderManager.disposeInstance());
     safeDispose('workerPool', () => disposeWorkerPool());
-    safeDispose('managerRegistry', () => getManagerRegistry().disposeAll());
 
     if (errors.length > 0) {
       log.error(

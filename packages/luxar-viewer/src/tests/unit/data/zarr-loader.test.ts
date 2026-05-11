@@ -179,6 +179,9 @@ vi.mock('zarrita', async () => {
       };
       return mockFetchStore;
     }),
+    // Force the compatibility wrapper down the zarrita-0.5 branch in this
+    // mock, even when the real installed zarrita also exports the 0.7 helper.
+    withMaybeConsolidatedMetadata: undefined,
     tryWithConsolidated: vi.fn((store) => Promise.resolve(store)),
     open: vi.fn(() => Promise.resolve(mockOpenResult)),
     get: vi.fn((item) => Promise.resolve(mockGetResult(item))),
@@ -1012,11 +1015,11 @@ describe('zarr-loader', () => {
       mockGetResult = () => mockRoot;
 
       // Mock tryWithConsolidated
-      (zarrita.tryWithConsolidated as any).mockResolvedValue(mockFetchStore);
+      (zarrita as any).tryWithConsolidated.mockResolvedValue(mockFetchStore);
 
       await loadScene('http://localhost:8000/consolidated.zarr');
 
-      expect(zarrita.tryWithConsolidated).toHaveBeenCalled();
+      expect((zarrita as any).tryWithConsolidated).toHaveBeenCalled();
     });
 
     it('should work without .zmetadata', async () => {

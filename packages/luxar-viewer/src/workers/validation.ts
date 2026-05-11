@@ -13,13 +13,17 @@
  * worker-local state, which is why they extract cleanly.
  */
 
+import { MAX_SUPPORTED_DIMS } from '../config/constants';
+
 /**
  * Maximum number of dimensions WASM supports. The compiled Rust code
  * uses fixed-size arrays (`[f32; MAX_DIMS]` = 16) for performance, so
  * inputs above this limit must be rejected at the worker boundary
- * rather than triggering an out-of-bounds read inside WASM.
+ * rather than triggering an out-of-bounds read inside WASM. Aliased to
+ * `MAX_SUPPORTED_DIMS` so the worker stays self-documenting at call
+ * sites while sharing the canonical constant.
  */
-export const MAX_WASM_DIMS = 16;
+export const MAX_WASM_DIMS = MAX_SUPPORTED_DIMS;
 
 /**
  * Validate the typed-array inputs that flow into WASM visibility /

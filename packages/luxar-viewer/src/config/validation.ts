@@ -298,6 +298,26 @@ function validateDataLoading(config: AppConfig, errors: string[], _warnings: str
     if (!Number.isFinite(l2) || l2 <= 0) {
       errors.push(`Invalid cache.l2MaxSizeMB: ${l2} (must be a finite positive number)`);
     }
+
+    // R1: opfsOperationTimeoutMs gates every OPFS read/write via withTimeout.
+    // 0 / negative / NaN cause immediate timeout on every op; Infinity disables
+    // the safety net entirely.
+    const opfsTimeout = cache.opfsOperationTimeoutMs;
+    if (!Number.isFinite(opfsTimeout) || opfsTimeout <= 0) {
+      errors.push(
+        `Invalid cache.opfsOperationTimeoutMs: ${opfsTimeout} (must be a finite positive number; 10000 = 10s recommended)`
+      );
+    }
+
+    // R1: externalDatasetTtlMs is allowed to be null (no TTL — content-hash
+    // validation only). Anything else must be a finite positive number.
+    // NaN passes `> 0` checks (always false), so reject it explicitly.
+    const externalTtl = cache.externalDatasetTtlMs;
+    if (externalTtl !== null && (!Number.isFinite(externalTtl) || externalTtl <= 0)) {
+      errors.push(
+        `Invalid cache.externalDatasetTtlMs: ${externalTtl} (must be null or a finite positive number)`
+      );
+    }
   }
 
   // Worker timeouts: 0 disables; otherwise must be a finite positive number

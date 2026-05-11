@@ -12,6 +12,7 @@
  */
 
 import * as THREE from 'three';
+import { clamp } from '../../utils/clamp';
 
 // ---------------------------------------------------------------------------
 // DOF
@@ -85,7 +86,7 @@ export function scaleNoiseSettings(base: NoiseSettings, dprScale: number): Noise
 
 /** Clamp the DPR scale used for noise scaling to its supported [0.25, 1.0] range. */
 export function clampDPRScale(dpr: number): number {
-  return Math.max(0.25, Math.min(1.0, dpr));
+  return clamp(dpr, 0.25, 1.0);
 }
 
 /**

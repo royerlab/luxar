@@ -174,13 +174,28 @@ The SceneLoader has been refactored into focused, testable modules:
 
 - **Testability**: Each module tested independently (88+ new tests)
 - **Maintainability**: Clear responsibility boundaries
-- **Reduced Complexity**: SceneLoader is ~2,000 lines and continues to
+- **Reduced Complexity**: SceneLoader is ~2,100 lines and continues to
   shrink as concerns extract out. Long-term target is under 1,500. See
   `scene-loader/` siblings for the extracted modules:
   `data-processor-lines`, `data-processor-gsplats`,
   `commit-points-geometry`, `effective-attrs`, `extend-tolerance`,
   `loader-factory`, `scene-graph-converter`, `url-normalization`,
   `cache-api`, `cache-setup`, and `monitor-wiring`.
+
+**Next extractions (planned, not yet done).** Each is a self-contained
+unit that does not span multiple geometry types:
+
+- `metadata-loader.ts` — pull `loadRootMetadata()` out (~80 LOC). It is
+  pure I/O over the zarr root group attrs and has no scene-graph
+  dependency.
+- `attrs-applier.ts` — extract `applyEffectiveAttrs()` (~60 LOC). It
+  composes parent + node attrs and delegates to
+  `data/utils/attrs-composer.ts`.
+- `view-updater.ts` — pull the `updateView()` orchestration shell
+  (~100 LOC) leaving the per-geometry data-processor calls in place.
+
+These extractions are incremental and should not change behavior. Land
+them as separate small PRs to keep the diff reviewable.
 
 ---
 

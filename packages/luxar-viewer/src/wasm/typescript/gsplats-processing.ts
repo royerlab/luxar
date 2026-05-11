@@ -9,8 +9,7 @@
  * - Batch attenuation computation for visibility filtering
  */
 
-/** Maximum supported dimensions (must match Rust MAX_SUPPORTED_DIMS). */
-const MAX_SUPPORTED_DIMS = 16;
+import { MAX_SUPPORTED_DIMS } from '../../config/constants';
 
 /** Maximum packed Cholesky size for MAX_SUPPORTED_DIMS. */
 const MAX_PACKED_CHOLESKY_SIZE = (MAX_SUPPORTED_DIMS * (MAX_SUPPORTED_DIMS + 1)) / 2;

@@ -294,8 +294,6 @@ export interface CacheMetrics {
   effectiveDemandHitRate?: number;
   /** Total evictions accumulated across loaders. */
   evictionsTotal: number;
-  /** @deprecated Use `evictionsTotal` — same value, less misleading name. */
-  evictionsPerMin: number;
   avgEntrySize: number;
   reuseRatio: number;
   hitsPerSecond: number;
@@ -321,6 +319,17 @@ export interface CacheMetrics {
     writes: number;
     /** Failed gets (file not present, size mismatch, I/O error). */
     misses: number;
+    /**
+     * R3: surface OPFS health counters so the cache tab can render
+     * them inline (rather than only signalling them via the
+     * `cache-errors-detected` / `quota-constrained` badges). Each is
+     * optional — providers that don't expose them simply omit the
+     * field and the UI degrades to a "no errors" indicator.
+     */
+    quotaWriteSkipped?: number;
+    writeFailures?: number;
+    corruptedEntries?: number;
+    metadataParseFailures?: number;
   };
   /** L0 decompressed chunk cache breakdown (optional, only when L0 cache connected) */
   l0?: {

@@ -12,12 +12,15 @@ documented reason not to.
 3. [CSS class names (BEM)](#3-css-class-names-bem)
 4. [Logging](#4-logging)
 5. [Error handling](#5-error-handling)
-6. [Resource lifecycle (ManagerRegistry pattern)](#6-resource-lifecycle-managerregistry-pattern)
+6. [Resource lifecycle](#6-resource-lifecycle)
 7. [Event listeners](#7-event-listeners)
 8. [Result&lt;T, E&gt; for fallible operations](#8-resultt-e-for-fallible-operations)
 9. [Worker safety](#9-worker-safety)
 10. [Imports and barrels](#10-imports-and-barrels)
 11. [Types](#11-types)
+12. [Dependency inversion via ports and factories](#12-dependency-inversion-via-ports-and-factories)
+13. [Error handling discipline](#13-error-handling-discipline)
+14. [Resource disposal pattern](#14-resource-disposal-pattern)
 
 ---
 
@@ -110,21 +113,12 @@ Avoid `throw` for "the network was slow" — that is a `Result<…>`.
 Avoid `Result<…>` for "the input is structurally invalid" — that is a
 `throw`. The boundary is whether the caller can plausibly *recover*.
 
-## 6. Resource lifecycle (ManagerRegistry pattern)
+## 6. Resource lifecycle
 
-> **Status:** `ManagerRegistry` (`src/core/manager-registry.ts`) is
-> currently **future-facing**. Production teardown uses explicit
-> static `disposeInstance()` calls in `LuxarApp.dispose()` for the
-> long-lived singletons (`SceneLoaderManager`, `DataMonitorManager`,
-> `WorkerPool`, `ThemeManager`). The registry remains the documented
-> model for new long-lived objects and is safe for re-init after
-> `disposeAll()`. New singletons may opt into self-registration or
-> stay in the explicit-disposal model — pick based on whether the
-> singleton has obvious app-wide ownership in `core/app.ts`.
-
-Long-lived objects that hold GPU resources, DOM listeners, workers,
-or timers can register themselves with the central
-`ManagerRegistry`:
+Long-lived objects that hold GPU resources, DOM listeners, workers, or
+timers follow a uniform singleton + explicit-dispose pattern. Production
+teardown is the explicit chain in `LuxarApp.dispose()` (see §14 for the
+disposal rules each manager must implement).
 
 ```typescript
 class FooManager {
@@ -133,22 +127,25 @@ class FooManager {
   static getInstance(): FooManager {
     if (!FooManager.instance) {
       FooManager.instance = new FooManager();
-      getManagerRegistry().register('foo', FooManager.instance);
     }
     return FooManager.instance;
+  }
+
+  static disposeInstance(): void {
+    FooManager.instance?.dispose();
+    FooManager.instance = undefined;
   }
 
   dispose(): void { /* ... idempotent ... */ }
 }
 ```
 
-Disposal order is LIFO — the registry walks its insertion list in
-reverse on `disposeAll()`. `LuxarApp.dispose()` is the single entry
-point that triggers the cascade.
-
 Disposal must be **idempotent**: calling `dispose()` twice is a no-op,
 not an error. Use guards (`if (this.disposed) return;`) or check that
-the resource still exists before tearing it down.
+the resource still exists before tearing it down. New singletons get
+their `disposeInstance()` call wired explicitly into
+`LuxarApp.dispose()` so the cascade order stays auditable in one
+place.
 
 ## 7. Event listeners
 
@@ -262,3 +259,86 @@ thread. Conventions:
   recoverable failures.
 - Augment third-party types in `src/types/*-augmentation.d.ts` rather
   than spreading `as any` casts across call sites.
+
+## 12. Dependency inversion via ports and factories
+
+The layer order `types → config → cache → rendering → data → scene →
+input → ui → core` (see `.dependency-cruiser.cjs`) is enforced at
+`severity: error`. When a lower layer needs behavior that lives in a
+higher layer — typically because the higher layer owns DOM / WebGL /
+THREE state — invert the dependency:
+
+1. Declare a **port interface** in the lower layer describing the
+   shape the lower layer needs.
+2. Implement the port structurally in the higher layer (no `implements`
+   keyword needed; TypeScript matches by shape).
+3. Inject a **factory** from the orchestration layer
+   (`src/core/app.ts`).
+
+Established examples in this repo:
+
+- `SceneLoaderMonitorPort` (`src/data/scene-loader-monitor-port.ts`) —
+  the `SceneLoader` (data layer) pushes loader telemetry into the
+  `DataLoadingMonitor` (ui layer) through this port. The factory is
+  passed into `SceneLoaderManager.createLoader` from `core/app.ts`.
+- `DimensionSlidersFactory` (`src/input/input-handler.ts`) — the input
+  layer needs to mount sliders that live in ui/panels. The factory is
+  injected from `core/app.ts`.
+- `LabelTooltipFactory` (`src/rendering/picking/picking-system.ts`) —
+  the rendering layer needs a ui tooltip element; the factory lives in
+  `core/app.ts`.
+
+Do NOT add the higher-layer module to the dependency-cruiser allowlist
+to "fix" a layer violation — that defeats the layer discipline. Always
+prefer a port + factory pair.
+
+## 13. Error handling discipline
+
+- **Throw directly** in the unexpected case:
+  `throw new Error('[Module] context: details');`. The caller's catch
+  block is responsible for logging.
+- **Log before throw only at async / cross-boundary edges** where the
+  error frame would otherwise be lost. Established sites:
+  - `src/workers/data-worker.ts` (worker initialization, before
+    re-throwing back across the comlink boundary).
+  - `src/data/scene-loader.ts` leaf-node loads — `loadLeafNode` catches
+    per-node failures, classifies them, logs with the appropriate
+    severity, and **returns null** so sibling nodes still render. It
+    does not rethrow.
+- Use `Result<T, E>` (see §8) for recoverable failures where the caller
+  is expected to branch on the outcome (cache lookups, optional
+  resolves), not for unexpected programmer errors.
+- Never swallow an error silently. If a `catch` truly has nothing to
+  do, log at `info` level with a one-line justification (e.g. an
+  already-disposed terminate that the browser quirks on).
+
+## 14. Resource disposal pattern
+
+Every component that owns external resources (DOM nodes, event
+listeners, WebGL buffers, timers, workers, OPFS handles) must implement
+`dispose()` and follow these rules:
+
+- **Idempotent**: `dispose()` is safe to call twice. Use a
+  `private disposed = false;` field plus an early return:
+  ```ts
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    // ... actual teardown ...
+  }
+  ```
+- **Defensive on internal state**: guard each step with `if (this.x)`
+  or optional chaining. Disposal often races with construction failures
+  where some fields were never set.
+- **Top-down order**: dispose children first, then null out parent
+  references. The reverse can leave a child holding a stale parent
+  pointer and re-entering the disposed parent during its own teardown.
+- **Event listeners go through `EventGroup`** (`src/utils/event-group.ts`).
+  Established consumers: `LayersPanel`, `InputHandler`, `SceneManager`.
+  Manual `addEventListener` / `removeEventListener` pairs are the
+  number-one source of leak regressions; the group ties listener
+  installation to disposal in one place.
+- **Async disposal awaits its dependencies**. `SceneLoader.dispose()`
+  awaits `Promise.all` over its per-loader dispose chain so the next
+  `loadScene()` cannot see partially-torn-down caches; do the same
+  whenever a `dispose` triggers async I/O (e.g. OPFS).

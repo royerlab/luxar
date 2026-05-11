@@ -523,6 +523,16 @@ pnpm agent:debug     # Run Playwright agent driver (headless)
 pnpm agent:debug:visible  # Run agent driver with visible browser
 ```
 
+### Native launcher environment variables
+
+The native launcher binaries (produced by `make build-launchers` in the
+repo root and used by `luxar export --native ...`) honor:
+
+- `LUXAR_LAUNCHER_NO_WEBVIEW=1` — Skip the embedded WebView and open the
+  exported scene in the system default browser instead. Useful on
+  headless / minimal Linux installs (missing libwebkit2gtk) and for
+  smoke-testing the launcher itself without a graphical session.
+
 ### Configuration
 
 Luxar Viewer uses a unified configuration system in `src/config/`. Edit `src/config/index.ts` to customize:

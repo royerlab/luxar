@@ -166,25 +166,38 @@ Displayed dimensions always get `1e10` (effectively infinite).
 
 ## Worker Integration
 
-All components automatically use workers when enabled:
+All components automatically use workers when enabled. Always go through
+`runWithTimeout()` — calling `getWorker()` directly bypasses the timeout
+guard and the hung-worker eviction logic. See
+`src/workers/README.md#runwithtimeout` for the full contract.
 
 ```typescript
-// Config check happens automatically
+// Config check happens automatically inside the loader.
 if (appConfig.dataLoading.performance.useWebWorkers) {
-  // Use worker pool
-  const worker = await getWorkerPool().getWorker();
-  result = await worker.someMethod(...);
+  // The pool maps the TimeoutKind ('projection' / 'decode' / 'visibility')
+  // to the corresponding config knob and evicts the worker on timeout.
+  result = await getWorkerPool().runWithTimeout(
+    'someMethod',
+    'projection',
+    (api) => api.someMethod(...)
+  );
 } else {
   // Main thread fallback
   result = mainThreadImplementation(...);
 }
 ```
 
-Worker fallback on error:
+`runWithTimeout()` already rejects with a `WorkerTimeoutError` when the
+operation exceeds the configured budget; catch it (or the more general
+`Error`) at the loader boundary if you want a main-thread fallback:
 
 ```typescript
 try {
-  result = await worker.someMethod(...);
+  result = await getWorkerPool().runWithTimeout(
+    'someMethod',
+    'projection',
+    (api) => api.someMethod(...)
+  );
 } catch (error) {
   log.warning('Worker failed, falling back to main thread');
   result = mainThreadImplementation(...);

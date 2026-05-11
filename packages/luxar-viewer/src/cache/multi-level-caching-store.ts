@@ -149,8 +149,13 @@ export class MultiLevelCachingStore implements AsyncReadable {
   private l2HitCount = 0;
   private demandNetworkRequestCount = 0;
 
-  // Sliding window bandwidth tracking (last ~10 seconds)
+  // Sliding window bandwidth tracking (last ~10 seconds).
+  // R5: pruning advances `bandwidthWindowStart` rather than calling
+  // Array.shift() (O(n) per pop). When the dead prefix exceeds half the
+  // array, we slice off the dead portion in one O(n) hit — amortized
+  // O(1) per push instead of O(n²) under high fetch rates.
   private bandwidthWindow: { timestamp: number; bytes: number }[] = [];
+  private bandwidthWindowStart = 0;
   private static readonly BANDWIDTH_WINDOW_MS = 10_000;
 
   constructor(baseUrl: string, options?: MultiLevelCachingStoreOptions) {
@@ -532,6 +537,17 @@ export class MultiLevelCachingStore implements AsyncReadable {
     this.networkRequestCount++;
     this.networkBytesTransferred += data.byteLength;
     this.bandwidthWindow.push({ timestamp: Date.now(), bytes: data.byteLength });
+    // R5: amortized compaction. When the dead prefix (anything before
+    // bandwidthWindowStart) is bigger than the live tail, slice it
+    // off in one allocation rather than letting the array grow
+    // unbounded.
+    if (
+      this.bandwidthWindowStart > 0 &&
+      this.bandwidthWindowStart > this.bandwidthWindow.length / 2
+    ) {
+      this.bandwidthWindow = this.bandwidthWindow.slice(this.bandwidthWindowStart);
+      this.bandwidthWindowStart = 0;
+    }
 
     // Populate caches once.
     if (this.enabled) {
@@ -869,17 +885,29 @@ export class MultiLevelCachingStore implements AsyncReadable {
     const now = Date.now();
     const windowStart = now - MultiLevelCachingStore.BANDWIDTH_WINDOW_MS;
 
-    // Prune entries older than the window
-    while (this.bandwidthWindow.length > 0 && this.bandwidthWindow[0].timestamp < windowStart) {
-      this.bandwidthWindow.shift();
+    // R5: advance the start index past expired entries instead of
+    // shifting them off. Amortized compaction happens in the push
+    // path (above); here we just walk the index forward.
+    while (
+      this.bandwidthWindowStart < this.bandwidthWindow.length &&
+      this.bandwidthWindow[this.bandwidthWindowStart].timestamp < windowStart
+    ) {
+      this.bandwidthWindowStart++;
     }
 
     let bandwidth: number;
-    if (this.bandwidthWindow.length === 0) {
+    const liveCount = this.bandwidthWindow.length - this.bandwidthWindowStart;
+    if (liveCount === 0) {
       bandwidth = 0;
     } else {
-      const windowBytes = this.bandwidthWindow.reduce((sum, e) => sum + e.bytes, 0);
-      const windowSpan = Math.max(1, (now - this.bandwidthWindow[0].timestamp) / 1000);
+      let windowBytes = 0;
+      for (let i = this.bandwidthWindowStart; i < this.bandwidthWindow.length; i++) {
+        windowBytes += this.bandwidthWindow[i].bytes;
+      }
+      const windowSpan = Math.max(
+        1,
+        (now - this.bandwidthWindow[this.bandwidthWindowStart].timestamp) / 1000
+      );
       bandwidth = windowBytes / windowSpan;
     }
 

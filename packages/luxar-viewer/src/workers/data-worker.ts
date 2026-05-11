@@ -356,6 +356,7 @@ async function projectPointsTo3D(params: {
     numPoints,
     outputBuffers,
   } = params;
+  if (!wasmModule) throw new Error(NOT_INITIALIZED_MSG);
   const { displayDims, slicePosition } = viewState;
 
   validateProjectionInputs(
