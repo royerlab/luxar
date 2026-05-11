@@ -4,7 +4,7 @@ import {
   processGSplats3DOnly,
   processGSplats,
   createEmptyGSplatsData,
-} from '../../../data/gsplats/gsplats-processor';
+} from '../../../data/gsplats/projection';
 import type {
   LoadedGSplatsData,
   GSplatsViewState,

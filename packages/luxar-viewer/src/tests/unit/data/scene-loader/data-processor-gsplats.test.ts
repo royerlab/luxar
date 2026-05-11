@@ -14,7 +14,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as THREE from 'three';
 
 const mockProcessGSplats = vi.fn();
-vi.mock('../../../../data/gsplats/gsplats-processor', () => ({
+vi.mock('../../../../data/gsplats/projection', () => ({
   processGSplats: (...args: unknown[]) => mockProcessGSplats(...args),
 }));
 

@@ -35,7 +35,7 @@ import type { WasmModule } from '../../wasm/types';
 /**
  * Construct the canonical "no visible lines at this slice" payload.
  * Mirrors `createEmptyPointsData` in `points/projection.ts` and
- * `createEmptyGSplatsData` in `gsplats/gsplats-processor.ts`.
+ * `createEmptyGSplatsData` in `gsplats/projection.ts`.
  */
 export function createEmptyLinesData(attrs: LinesMetadata): LoadedLinesData {
   return {

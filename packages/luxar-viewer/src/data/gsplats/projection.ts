@@ -22,7 +22,7 @@
  *     hidden-display covariance, which is the typical case for
  *     time-stamped or channel-stamped splats.
  *
- * @module data/gsplats-processor
+ * @module data/gsplats/projection
  */
 
 import type {

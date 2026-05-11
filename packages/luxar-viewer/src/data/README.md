@@ -47,7 +47,7 @@ data/
 │   ├── gsplats-spatial-index-loader.ts  # Loads Gaussian splats with nD visibility
 │   ├── chunk-index-loader.ts            # `chunk_bounds` zarr probe + array-bounds prefetcher registration
 │   ├── gsplats-progressive-loader.ts    # Composite-pattern multi-LOD facade (loads N LODs sequentially)
-│   └── gsplats-processor.ts             # nD → 3D pure-math companion (centers, Cholesky, attenuation)
+│   └── projection.ts                    # nD → 3D pure-math companion (centers, Cholesky, attenuation)
 │
 ├── transforms/                    # nD transform helpers
 │   └── nd-transform.ts            # Inverse-query for non-displayed dimensions

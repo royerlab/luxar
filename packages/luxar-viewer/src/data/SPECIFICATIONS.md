@@ -1814,7 +1814,7 @@ This section documents all TypeScript source files in the `data/` package with t
 
 ### 9.4 Data Processing
 
-#### `gsplats-processor.ts`
+#### `gsplats/projection.ts`
 
 **Purpose**: Handles conversion of nD gsplats data to 3D for rendering. Key operations: (1) extract 3D center from nD center using display dimensions, (2) extract 3D Cholesky submatrix from nD Cholesky via marginal covariance reconstruction, (3) attenuate amplitude based on distance to hyperplane in hidden dimensions. Uses pre-allocated workspace buffers to avoid per-call allocation in tight loops.
 

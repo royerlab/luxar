@@ -38,7 +38,7 @@ describe('coerceColorsToFloat32', () => {
 
   it('worker output matches main-thread reference for Uint8 RGB', () => {
     // Mirrors the reference normalization in
-    // data/gsplats/gsplats-processor.ts:processGSplats3DOnly and
+    // data/gsplats/projection.ts:processGSplats3DOnly and
     // data/lines/projection.ts:buildInstanceBuffers — both apply
     // colors[i] * (1/255) before passing to WASM. The worker path
     // must produce byte-equal output.

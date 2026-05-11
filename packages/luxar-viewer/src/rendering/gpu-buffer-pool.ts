@@ -37,7 +37,7 @@ import type { ProcessedLinesData } from '../types/lines';
 export { estimateGeometryBytes, invalidateCachedByteSize };
 
 /**
- * Packed GSplats data ready for GPU upload (from gsplats-processor.ts)
+ * Packed GSplats data ready for GPU upload (from gsplats/projection.ts)
  */
 export interface PackedGSplatsData {
   centers3D: Float32Array; // M * 3

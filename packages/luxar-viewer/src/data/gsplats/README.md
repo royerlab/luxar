@@ -9,7 +9,7 @@ specific to the GSplats node type.
 | File | Role |
 |------|------|
 | `gsplats-spatial-index-loader.ts` | Spatial-index loader for GSplats: queries the chunk-bounds index, fetches encoded ranges through `RangeLoader`, and emits a `LoadedGSplatsData` payload |
-| `gsplats-processor.ts` | nD→3D projection: marginal Cholesky extraction, Mahalanobis-distance attenuation, 3D center extraction. Mirrors the WASM kernel for use as a TypeScript fallback. |
+| `projection.ts` | nD→3D projection: marginal Cholesky extraction, Mahalanobis-distance attenuation, 3D center extraction. Mirrors the WASM kernel for use as a TypeScript fallback. |
 | `gsplats-progressive-loader.ts` | Progressive amplitude-ordered loading — surfaces the brightest splats first while the rest stream in |
 | `chunk-index-loader.ts` | Loads the GSplats chunk-bounds index from zarr metadata |
 
@@ -33,8 +33,7 @@ imports the concrete class — it goes through `loader-factory.ts`.
 - Hidden-dim attenuation uses **marginal** Σ, not conditional. The
   marginal path is correct for diagonal hidden-display covariance
   (the typical case for time-stamped / channel-stamped splats). See
-  `gsplats-processor.ts` header for the conditional-slicing trade-
-  off.
+  `projection.ts` header for the conditional-slicing trade-off.
 
 ## See also
 

@@ -32,7 +32,7 @@ import {
   loadGSplatsChunkIndex,
   registerGSplatsArrayBounds,
 } from './chunk-index-loader';
-import { createEmptyGSplatsData } from './gsplats-processor';
+import { createEmptyGSplatsData } from './projection';
 import { getExpectedColorType, loadColorRanges } from '../loaders/color-attribute-utils';
 import { computeLoadLatency, recordLoadEvent } from '../loaders/loader-metrics';
 import { LoaderEventEmitter } from '../loaders/monitor-events';

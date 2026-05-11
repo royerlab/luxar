@@ -19,7 +19,7 @@
  */
 
 import * as THREE from 'three';
-import { processGSplats } from '../gsplats/gsplats-processor';
+import { processGSplats } from '../gsplats/projection';
 import {
   updateInstancedGSplatsMesh,
   packCholeskyForShader,
