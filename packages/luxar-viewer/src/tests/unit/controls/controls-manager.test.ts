@@ -362,12 +362,12 @@ describe('ControlsManager', () => {
       expect(disposeSpy).toHaveBeenCalled();
     });
 
-    it('should stop clock on dispose', () => {
+    it('should dispose clock on dispose', () => {
       const clock = (controlsManager as any).clock;
-      const stopSpy = vi.spyOn(clock, 'stop');
+      const disposeSpy = vi.spyOn(clock, 'dispose');
 
       controlsManager.dispose();
-      expect(stopSpy).toHaveBeenCalled();
+      expect(disposeSpy).toHaveBeenCalled();
     });
   });
 
