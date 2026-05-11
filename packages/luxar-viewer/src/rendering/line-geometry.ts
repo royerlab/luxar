@@ -291,7 +291,6 @@ export function updateInstancedLinesMesh(
 
     // CRITICAL: Force THREE.js to recalculate _maxInstanceCount.
     // Same issue as gsplats: meshes created with 0 instances cache _maxInstanceCount=0.
-    // (THREE.js r163+ internal property)
     delete (geometry as unknown as { _maxInstanceCount?: number })._maxInstanceCount;
   } else {
     // Same size: update in place (zero GPU allocation)

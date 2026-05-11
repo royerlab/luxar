@@ -23,7 +23,7 @@ vi.mock('three', async () => {
         vi.fn(() => ({ left: 0, top: 0, width: 800, height: 600, right: 800, bottom: 600 }));
       return canvas;
     })();
-    shadowMap = { enabled: false, type: actual.PCFSoftShadowMap };
+    shadowMap = { enabled: false, type: actual.PCFShadowMap };
     outputColorSpace = actual.SRGBColorSpace;
     toneMapping = actual.NoToneMapping;
 
