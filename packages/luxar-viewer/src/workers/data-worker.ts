@@ -38,8 +38,8 @@ import {
   validateLineSegmentReferences,
   validateChunkQueryInputs,
 } from './validation';
-import { coerceColorsToFloat32, fillColorsWhite } from './color-utils';
-export { coerceColorsToFloat32, fillColorsWhite };
+import { coerceColorsToFloat32, coerceScalarsToFloat32, fillColorsWhite } from './color-utils';
+export { coerceColorsToFloat32, coerceScalarsToFloat32, fillColorsWhite };
 
 /**
  * Single source of truth for the "task called before initialize()"
@@ -619,6 +619,16 @@ async function projectLinesTo3D(params: {
   widths: Float32Array;
   colors: Float32Array | Uint8Array | Uint16Array | null;
   sharpness: Float32Array | null;
+  /**
+   * Optional per-vertex scalar attribute for colormap-mode Lines.
+   * Accepted dtypes: `Float32Array` (passes through zero-copy),
+   * `Float16Array` (element-wise expand), `Uint8Array` (normalized by
+   * `1/255` to align with the colormap shader's `[0, 1]` contract).
+   * When `null` the worker emits empty `startScalars`/`endScalars`
+   * arrays and the loader leaves the geometry's scalar attribute
+   * unallocated.
+   */
+  scalars: Float32Array | Float16Array | Uint8Array | null;
   slicePosition: readonly number[];
   tolerance: readonly number[];
   displayDims: readonly number[];
@@ -633,6 +643,10 @@ async function projectLinesTo3D(params: {
   endWidths: Float32Array;
   startSharpness: Float32Array;
   endSharpness: Float32Array;
+  /** Per-segment start scalar (empty Float32Array when input scalars=null). */
+  startScalars: Float32Array;
+  /** Per-segment end scalar (empty Float32Array when input scalars=null). */
+  endScalars: Float32Array;
   segmentLengths: Float32Array;
   startClipped: Uint8Array;
   endClipped: Uint8Array;
@@ -646,6 +660,7 @@ async function projectLinesTo3D(params: {
     widths,
     colors,
     sharpness,
+    scalars,
     slicePosition,
     tolerance,
     displayDims,
@@ -724,6 +739,8 @@ async function projectLinesTo3D(params: {
         endWidths: new Float32Array(0),
         startSharpness: new Float32Array(0),
         endSharpness: new Float32Array(0),
+        startScalars: new Float32Array(0),
+        endScalars: new Float32Array(0),
         segmentLengths: new Float32Array(0),
         startClipped: emptyFlags,
         endClipped: new Uint8Array(0),
@@ -807,11 +824,37 @@ async function projectLinesTo3D(params: {
     endSharpness.fill(1.0);
   }
 
-  // Step 6: Calculate segment lengths using WASM
+  // Step 6: Interpolate per-vertex scalars using WASM (colormap mode).
+  // Empty arrays are returned when `scalars` is null so the loader can
+  // skip allocating the geometry's scalar attribute. We coerce
+  // Float16/Uint8 to Float32 first since `interpolate_scalars_batch`
+  // expects Float32 inputs (same path widths/sharpness take).
+  let startScalars: Float32Array;
+  let endScalars: Float32Array;
+  if (scalars) {
+    const scalarsF32 = coerceScalarsToFloat32(scalars);
+    startScalars = new Float32Array(visibleCount);
+    endScalars = new Float32Array(visibleCount);
+    wasmModule.interpolate_scalars_batch(
+      scalarsF32,
+      segments,
+      visibility,
+      t1Params,
+      t2Params,
+      segmentCount,
+      startScalars,
+      endScalars
+    );
+  } else {
+    startScalars = new Float32Array(0);
+    endScalars = new Float32Array(0);
+  }
+
+  // Step 7: Calculate segment lengths using WASM
   const segmentLengths = new Float32Array(visibleCount);
   wasmModule.calculate_segment_lengths(startPositions, endPositions, visibleCount, segmentLengths);
 
-  // Step 7: Mark clipped endpoints using WASM
+  // Step 8: Mark clipped endpoints using WASM
   const startClipped = new Uint8Array(visibleCount);
   const endClipped = new Uint8Array(visibleCount);
 
@@ -834,6 +877,8 @@ async function projectLinesTo3D(params: {
     endWidths.buffer as ArrayBuffer,
     startSharpness.buffer as ArrayBuffer,
     endSharpness.buffer as ArrayBuffer,
+    startScalars.buffer as ArrayBuffer,
+    endScalars.buffer as ArrayBuffer,
     segmentLengths.buffer as ArrayBuffer,
     startClipped.buffer as ArrayBuffer,
     endClipped.buffer as ArrayBuffer,
@@ -849,6 +894,8 @@ async function projectLinesTo3D(params: {
       endWidths,
       startSharpness,
       endSharpness,
+      startScalars,
+      endScalars,
       segmentLengths,
       startClipped,
       endClipped,

@@ -17,6 +17,8 @@ import {
   getColormapTexture,
   createCustomColormapTexture,
   disposeColormapTextures,
+  getCustomColormapCacheStats,
+  _resetCustomColormapCacheStatsForTests,
 } from '../../../rendering/colormap-textures';
 import { NodeFactory } from '../../../rendering/node-factory';
 import { GSplatMaterial } from '../../../rendering/gsplat-material';
@@ -130,6 +132,42 @@ describe('custom LUT byte-loading', () => {
       const t1 = createCustomColormapTexture(lut);
       const t2 = createCustomColormapTexture(lut);
       expect(t1).toBe(t2);
+    });
+  });
+
+  describe('getCustomColormapCacheStats', () => {
+    beforeEach(() => {
+      disposeColormapTextures();
+      _resetCustomColormapCacheStatsForTests();
+    });
+
+    it('counts a fresh LUT as a miss and a repeat as a hit', () => {
+      const lut = makeRgbLut(42);
+      createCustomColormapTexture(lut);
+      const after1 = getCustomColormapCacheStats();
+      expect(after1.misses).toBe(1);
+      expect(after1.hits).toBe(0);
+
+      createCustomColormapTexture(lut);
+      const after2 = getCustomColormapCacheStats();
+      expect(after2.misses).toBe(1);
+      expect(after2.hits).toBe(1);
+
+      // Diagnostic shape is stable.
+      expect(after2.maxSize).toBeGreaterThan(0);
+      expect(after2.size).toBeGreaterThanOrEqual(1);
+      expect(after2.collisions).toBe(0);
+    });
+
+    it('counts evictions when the cache overflows', () => {
+      // Custom cache max is 16; push past it with 20 unique LUTs.
+      for (let i = 0; i < 20; i++) {
+        createCustomColormapTexture(makeRgbLut(1000 + i));
+      }
+      const stats = getCustomColormapCacheStats();
+      expect(stats.misses).toBe(20);
+      expect(stats.evictions).toBeGreaterThanOrEqual(4);
+      expect(stats.size).toBeLessThanOrEqual(stats.maxSize);
     });
   });
 

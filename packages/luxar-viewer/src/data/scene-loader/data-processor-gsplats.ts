@@ -133,6 +133,10 @@ export async function projectGSplatsTo3DUsingWorker(
       splatCount: workerResult.visibleCount,
     };
   } catch (error) {
+    // Dataset-switch abort: don't burn CPU on stale main-thread work.
+    if (error instanceof Error && error.name === 'WorkerAbortError') {
+      throw error;
+    }
     log.warning(
       Modules.SCENE_LOADER,
       'Worker GSplats projection failed, falling back to main thread:',

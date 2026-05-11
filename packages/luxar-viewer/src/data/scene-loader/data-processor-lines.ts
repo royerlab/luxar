@@ -11,7 +11,11 @@
  *   - tolerance computation delegates to `tolerance-computer`,
  *   - `extend_to_all` flips covered dimensions to infinite tolerance,
  *   - worker projection is used when `useWebWorkers && segmentCount > 1000`,
- *   - worker failures fall back to `buildInstanceBuffers`,
+ *   - per-vertex scalars (colormap mode) ride the worker payload too —
+ *     forwarded as a transferable typed-array and interpolated via
+ *     `interpolate_scalars_batch` on the worker side,
+ *   - worker failures fall back to `buildInstanceBuffers` (which itself
+ *     handles the scalar path on the main thread),
  *   - first-update info logs are gated by `updateVersion <= 1`,
  *   - commits use the GPU buffer pool when enabled, otherwise
  *     `updateInstancedLinesMesh`.
@@ -27,13 +31,6 @@ import { computeTolerance } from '../utils/tolerance-computer';
 import { EXTEND_TO_ALL_TOLERANCE } from './extend-tolerance';
 import { config as appConfig } from '../../config';
 import { log, Modules } from '../../utils/log';
-
-/**
- * C.1: track whether the lines-scalar-worker-fallback warning has been
- * emitted this session so we surface the cliff once per process,
- * not per frame. Reset on hot-module-reload by reload, not in tests.
- */
-let _linesScalarWorkerFallbackWarned = false;
 import { getWorkerPool } from '../../workers/worker-pool';
 import type { UpdateSession } from '../../profiling/update-profiler';
 import type { GPUBufferPool } from '../../rendering/gpu-buffer-pool';
@@ -60,44 +57,11 @@ export async function projectLinesTo3DUsingWorker(
   tolerance: readonly number[],
   updateVersion: number
 ): Promise<ProcessedLinesData> {
-  // When the dataset has per-vertex scalars, use the main-thread
-  // `buildInstanceBuffers` path. The worker payload does not carry
-  // scalar arrays today; the main-thread path preserves colormap
-  // correctness end-to-end.
-  //
-  // Accepted trade-off (not a TODO). For the typical line workloads
-  // luxar targets (neural arbors, vector overlays — usually under
-  // ~10k–100k segments) main-thread projection is sub-frame and not a
-  // user-visible cliff. The schema extension to carry per-vertex
-  // scalars across the worker boundary is non-trivial (transferable
-  // typed-array plumbing, dtype-aware compaction, parity tests across
-  // Float32/Float16/Uint8 scalar dtypes) and would be its own
-  // contained PR. Revisit only when a real workload exceeds ~500k
-  // segments with a colormap enabled AND profiling shows the
-  // main-thread step blocking interactive frames; see
-  // `data/SPECIFICATIONS.md` "Lines worker fallback" for the trigger
-  // condition. The one-shot warning below makes the cliff observable
-  // so a future workload doesn't hit it silently. Reset semantics:
-  // the module-scoped flag stays set for the lifetime of the JS
-  // context.
-  if (data.scalars) {
-    if (!_linesScalarWorkerFallbackWarned) {
-      _linesScalarWorkerFallbackWarned = true;
-      log.warning(
-        Modules.SCENE_LOADER,
-        'Lines with scalar colormap fall back to main-thread projection ' +
-          '(worker schema does not yet carry per-vertex scalars). Large line ' +
-          'datasets may stutter on view updates until the worker path is extended.'
-      );
-    }
-    return buildInstanceBuffers(
-      data,
-      viewState.slicePosition,
-      tolerance,
-      viewState.displayDims
-    );
-  }
-
+  // Per-vertex scalars (colormap-mode Lines) ride the worker path:
+  // they are forwarded as a transferable typed-array and the worker
+  // calls `interpolate_scalars_batch` on them just like widths /
+  // sharpness. The empty-scalar (no colormap) case is preserved by
+  // passing `null`.
   try {
     if (updateVersion <= 1) {
       log.info(
@@ -116,6 +80,7 @@ export async function projectLinesTo3DUsingWorker(
           widths: data.widths,
           colors: data.colors,
           sharpness: data.sharpness,
+          scalars: data.scalars,
           slicePosition: viewState.slicePosition,
           tolerance,
           displayDims: viewState.displayDims,
@@ -131,6 +96,11 @@ export async function projectLinesTo3DUsingWorker(
       );
     }
 
+    // Worker returns empty Float32Array when input scalars=null; the
+    // loader treats `null`/`undefined` as the "no scalars" signal so
+    // the geometry's scalar attribute stays unallocated downstream.
+    const hasScalars = data.scalars !== null && workerResult.startScalars.length > 0;
+
     return {
       startPositions: workerResult.startPositions,
       endPositions: workerResult.endPositions,
@@ -140,12 +110,18 @@ export async function projectLinesTo3DUsingWorker(
       endWidths: workerResult.endWidths,
       startSharpness: workerResult.startSharpness,
       endSharpness: workerResult.endSharpness,
+      startScalars: hasScalars ? workerResult.startScalars : undefined,
+      endScalars: hasScalars ? workerResult.endScalars : undefined,
       segmentLengths: workerResult.segmentLengths,
       startClipped: workerResult.startClipped,
       endClipped: workerResult.endClipped,
       segmentCount: workerResult.visibleSegmentCount,
     };
   } catch (error) {
+    // Dataset-switch abort: don't burn CPU on stale main-thread work.
+    if (error instanceof Error && error.name === 'WorkerAbortError') {
+      throw error;
+    }
     log.warning(
       Modules.SCENE_LOADER,
       'Worker lines projection failed, falling back to main thread:',

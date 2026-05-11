@@ -673,6 +673,14 @@ export async function projectPointsTo3DUsingWorker(
       },
     };
   } catch (error) {
+    // If the dataset-scope abort signal fired (user switched datasets),
+    // the worker call rejects with `WorkerAbortError`. Falling back to
+    // main thread would burn CPU computing geometry for a scene the
+    // user has navigated away from. Re-throw so the caller's
+    // dataset-switch path can unwind without a stale commit.
+    if (error instanceof Error && error.name === 'WorkerAbortError') {
+      throw error;
+    }
     // C.3: fallback to main thread on worker failure. When the loader
     // owns an accumulator, route the projection through its buffers so
     // we don't allocate a fresh Float32Array per worker timeout — the

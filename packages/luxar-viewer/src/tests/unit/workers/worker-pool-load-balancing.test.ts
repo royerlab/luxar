@@ -32,6 +32,94 @@ function makeFakeWorker(label: string, activeQueries = 0): FakeWorkerInstance {
     activeQueries,
   };
 }
+describe('WorkerPool — AbortSignal', () => {
+  it('rejects immediately when called with an already-aborted signal', async () => {
+    const w0 = makeFakeWorker('A');
+    const pool = makePool([w0]);
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      (pool as any).runWithTimeout(
+        'aborted-op',
+        'visibility',
+        (api: any) => api.handle(),
+        controller.signal
+      )
+    ).rejects.toMatchObject({ name: 'WorkerAbortError', operation: 'aborted-op' });
+    // Worker was never reached.
+    expect(w0.api.handle).not.toHaveBeenCalled();
+  });
+
+  it('rejects when the signal aborts after dispatch', async () => {
+    // Worker call that never resolves on its own — the abort must
+    // settle the promise.
+    const w0 = makeFakeWorker('A');
+    w0.api.handle = vi.fn(() => new Promise(() => {}));
+    const pool = makePool([w0]);
+    const controller = new AbortController();
+    const promise = (pool as any).runWithTimeout(
+      'mid-flight-abort',
+      'visibility',
+      (api: any) => api.handle(),
+      controller.signal
+    );
+    // Give microtasks a tick to start the call, then abort.
+    await Promise.resolve();
+    controller.abort();
+    await expect(promise).rejects.toMatchObject({ name: 'WorkerAbortError' });
+  });
+
+  it('pool-wide setAbortSignal applies to every subsequent runWithTimeout', async () => {
+    const w0 = makeFakeWorker('A');
+    const pool = makePool([w0]);
+    const controller = new AbortController();
+    pool.setAbortSignal(controller.signal);
+    controller.abort();
+    await expect(
+      (pool as any).runWithTimeout(
+        'pool-signal-op',
+        'visibility',
+        (api: any) => api.handle()
+      )
+    ).rejects.toMatchObject({ name: 'WorkerAbortError' });
+    // Clearing the pool signal restores normal behavior.
+    pool.setAbortSignal(undefined);
+    const result = await (pool as any).runWithTimeout(
+      'after-clear-op',
+      'visibility',
+      (api: any) => api.handle()
+    );
+    expect(result).toBe('A');
+  });
+});
+
+describe('WorkerPool — getStats / getQueueDepth', () => {
+  it('getQueueDepth sums activeQueries across workers', () => {
+    const w0 = makeFakeWorker('A', 3);
+    const w1 = makeFakeWorker('B', 5);
+    const w2 = makeFakeWorker('C', 0);
+    const pool = makePool([w0, w1, w2]);
+    expect(pool.getQueueDepth()).toBe(8);
+  });
+
+  it('getQueueDepth returns 0 when the pool is uninitialized', () => {
+    const pool = makePool([]);
+    expect(pool.getQueueDepth()).toBe(0);
+  });
+
+  it('getStats returns workerCount, activeQueries, totalActive, peakActive', () => {
+    const w0 = makeFakeWorker('A', 3);
+    const w1 = makeFakeWorker('B', 5);
+    const w2 = makeFakeWorker('C', 0);
+    const pool = makePool([w0, w1, w2]);
+    const stats = pool.getStats();
+    expect(stats.workerCount).toBe(3);
+    expect(stats.activeQueries).toEqual([3, 5, 0]);
+    expect(stats.totalActive).toBe(8);
+    expect(stats.peakActive).toBe(5);
+  });
+});
+
 describe('WorkerPool — load balancing', () => {
   afterEach(() => {
     vi.restoreAllMocks();

@@ -56,3 +56,32 @@ export function fillColorsWhite(out: Float32Array, count: number): void {
     out[i * 3 + 2] = 1.0;
   }
 }
+
+/**
+ * Coerce a per-vertex scalar buffer (`ScalarArray`) to Float32 so the
+ * WASM `interpolate_scalars_batch` kernel can consume it.
+ *
+ * - `Float32Array` passes through unchanged (zero copy).
+ * - `Float16Array` is expanded element-wise (Float16Array's element
+ *   accessor returns a JS `number`, so a simple copy through a new
+ *   Float32Array is correct).
+ * - `Uint8Array` is normalized by `1/255` to match the colormap
+ *   shader's `[0, 1]` scalar contract (consistent with how Points
+ *   handles its uint8 scalar attribute via `radiusScale = 1/255`).
+ *
+ * Float16 is *not* normalized: it's already a real-valued scalar in
+ * whatever range the dataset author chose. The shader's
+ * `uScalarMin`/`uScalarScale` uniforms perform the LUT remapping.
+ */
+export function coerceScalarsToFloat32(
+  scalars: Float32Array | Float16Array | Uint8Array
+): Float32Array {
+  if (scalars instanceof Float32Array) return scalars;
+  const isUint8 = scalars instanceof Uint8Array;
+  const norm = isUint8 ? 1 / 255 : 1;
+  const out = new Float32Array(scalars.length);
+  for (let i = 0; i < scalars.length; i++) {
+    out[i] = (scalars[i] as number) * norm;
+  }
+  return out;
+}

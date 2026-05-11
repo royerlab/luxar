@@ -7,6 +7,7 @@
 
 import * as zarr from './zarr';
 import * as THREE from 'three';
+import { getWorkerPool } from '../workers/worker-pool';
 import { normalizeURL } from './scene-loader/url-normalization';
 import { setupCaches } from './scene-loader/cache-setup';
 import { wireMonitorAfterLoad } from './scene-loader/monitor-wiring';
@@ -249,6 +250,17 @@ export class SceneLoader {
   // instead of extrapolating from a stale snapshot.
   private _prevPerNodeViewState: Map<string, ViewState> = new Map();
 
+  /**
+   * Per-dataset AbortController. Created on every `loadScene` and
+   * aborted at the START of the next `loadScene` (and on `dispose`)
+   * so worker tasks queued by the previous dataset settle
+   * immediately instead of running to completion against a
+   * superseded scene. The signal is registered with the WorkerPool
+   * via `setAbortSignal`. WASM execution itself cannot be cancelled,
+   * but the orphan results are discarded — see {@link WorkerAbortError}.
+   */
+  private _datasetAbortController: AbortController | null = null;
+
   /** Public accessor for the scene graph built during loadScene(). */
   get sceneGraph(): SceneNode | null {
     return this._sceneGraph;
@@ -433,6 +445,18 @@ export class SceneLoader {
     // Clear any existing loaders from monitor before loading new scene
     this.monitor?.disconnectAllLoaders();
 
+    // Abort any in-flight worker tasks queued by the previous dataset.
+    // Doing this BEFORE `dispose()` settles already-racing
+    // `runWithTimeout` callers immediately so they unwind without
+    // waiting for the worker tasks to complete — the worker keeps
+    // executing the WASM kernels to completion (no WASM cancellation),
+    // but the results are dropped.
+    if (this._datasetAbortController) {
+      this._datasetAbortController.abort();
+      this._datasetAbortController = null;
+    }
+    getWorkerPool().setAbortSignal(undefined);
+
     // Dispose of any existing loaders. Awaited so the previous caching
     // store fully drains (prefetcher tear-down, OPFS metadata flush,
     // validation cancellation) before we construct the next one — without
@@ -441,6 +465,11 @@ export class SceneLoader {
     if (this.loaders.size > 0) {
       await this.dispose();
     }
+
+    // Fresh abort source for THIS dataset; wire into the worker pool so
+    // every subsequent `runWithTimeout` races against it.
+    this._datasetAbortController = new AbortController();
+    getWorkerPool().setAbortSignal(this._datasetAbortController.signal);
 
     // S6: reset per-loader prefetch predictor state. Without this,
     // the first updateView on a new dataset would extrapolate from
@@ -2158,6 +2187,18 @@ export class SceneLoader {
    * which is the right scope for that lifecycle.
    */
   async dispose(): Promise<void> {
+    // Abort the dataset-scoped signal first so any in-flight worker
+    // `runWithTimeout` callers settle immediately instead of waiting
+    // for their tasks to complete (WASM tasks themselves keep running
+    // but their results are discarded). Clear the pool's reference
+    // afterwards so future workers don't get an already-aborted
+    // signal from this disposed loader.
+    if (this._datasetAbortController) {
+      this._datasetAbortController.abort();
+      this._datasetAbortController = null;
+    }
+    getWorkerPool().setAbortSignal(undefined);
+
     // Dispose all geometry loaders via registry
     this.registry.disposeAll();
 

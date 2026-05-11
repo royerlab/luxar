@@ -223,17 +223,18 @@ export function distance3D(a: number[], b: number[]): number {
  * - Calculates 3D segment lengths
  * - Tracks which endpoints were clipped
  *
- * **Allocation profile (accepted trade-off).** This TS path runs only as
- * a fallback when the WASM module is unavailable or when a worker call
- * has timed out and recovery is on the main thread. It allocates per-
- * segment temporaries (color lerps, slice copies) — fine for the ≤10k–
- * 100k-segment workloads that hit this path in practice. The hot path is
- * the WASM batch builder (`workers/data-worker.ts::projectLinesTo3D`),
- * which writes through pre-allocated output buffers and uses
- * `coerceColorsToFloat32` for zero-copy on Float32 inputs. Do not
- * optimize this fallback without first adding an allocation benchmark —
- * the audit history (commit `35f1e48b` removed the prior
- * `lines-color-alloc-bench.ts`) treats it as accepted overhead.
+ * **Allocation profile (accepted trade-off for the fallback path).**
+ * This TS path runs only as a fallback when the WASM module is
+ * unavailable or when a worker call has timed out and recovery is on
+ * the main thread. It allocates per-segment temporaries (color lerps,
+ * slice copies) — fine for the ≤10k–100k-segment workloads that hit
+ * this path in practice. The hot path is the WASM batch builder
+ * (`workers/data-worker.ts::projectLinesTo3D`), which writes through
+ * pre-allocated output buffers, uses `coerceColorsToFloat32` for
+ * zero-copy on Float32 inputs, and handles per-vertex scalars via
+ * `interpolate_scalars_batch` so colormap-enabled Lines stay on the
+ * worker thread. To measure the fallback overhead vs the WASM path
+ * run `src/tests/benchmarks/lines-ts-fallback-alloc-bench.ts`.
  *
  * @param loadedData - Raw lines data from loader
  * @param slicePosition - Current position in nD space

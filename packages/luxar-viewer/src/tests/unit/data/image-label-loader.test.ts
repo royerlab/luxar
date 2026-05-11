@@ -4,13 +4,19 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-// Mock zarrita before importing the loader
+// Mock zarrita before importing the loader.
+// `withMaybeConsolidatedMetadata` is the zarrita >=0.7 helper that the
+// scene-loader path probes through `zarrita-compat`. Declaring it as
+// `undefined` keeps vitest's strict mock contract happy (any access via
+// `(zarr as any).withMaybeConsolidatedMetadata` returns undefined and
+// the compat shim falls back to `tryWithConsolidated`).
 vi.mock('zarrita', () => ({
   registry: {},
   open: vi.fn(),
   root: vi.fn(),
   get: vi.fn(),
   slice: vi.fn((start: number, end: number) => ({ start, end })),
+  withMaybeConsolidatedMetadata: undefined,
 }));
 
 import * as zarr from 'zarrita';

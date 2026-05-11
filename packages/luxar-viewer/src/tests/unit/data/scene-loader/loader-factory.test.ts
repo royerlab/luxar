@@ -55,6 +55,9 @@ vi.mock('zarrita', () => ({
   registry: {},
   root: (_store: unknown) => makeStubLoc(''),
   open: (loc: unknown, opts: unknown) => zarrOpenMock(loc, opts),
+  // Stubbed for vitest strict-mock compatibility; loader-factory tests
+  // don't reach the consolidation probe but mock isolation can leak.
+  withMaybeConsolidatedMetadata: undefined,
 }));
 
 import {

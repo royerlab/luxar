@@ -79,6 +79,17 @@ declare global {
       };
 
       /**
+       * Worker pool diagnostics. `getQueueDepth()` returns the aggregate
+       * in-flight task count across the pool — useful for spotting
+       * prefetch backpressure or task accumulation after rapid dataset
+       * switches.
+       */
+      workers?: {
+        getQueueDepth: () => number;
+        getStats: () => unknown;
+      };
+
+      /**
        * Last viewer state exported via the keyboard shortcut handler in
        * input-handler.ts (in addition to the clipboard copy). Surfaced for
        * Playwright agent flows that want a stable reference across runs.

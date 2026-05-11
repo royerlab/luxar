@@ -1509,29 +1509,33 @@ For a 250-frame animation with 2.2M total vertices but only 32K visible per fram
 
 **Key Insight**: This optimization mirrors the approach already implemented in `PointSpatialIndexLoader.loadRanges()` (see lines 650-880 in point-spatial-index-loader.ts).
 
-### 7.13 Lines Worker Fallback (Per-Vertex Scalars)
+### 7.13 Lines Worker Path (Per-Vertex Scalars)
 
-When a Lines dataset carries per-vertex scalars (for colormap mode),
-`projectLinesTo3DUsingWorker` skips the worker and runs the main-thread
-`buildInstanceBuffers` path instead. This is an **accepted trade-off**,
-not a bug:
+Per-vertex scalars (the colormap-mode signal for Lines) are carried
+across the worker boundary as a transferable typed-array. The worker
+side accepts `Float32Array | Float16Array | Uint8Array | null`,
+coerces non-Float32 inputs to Float32 (Uint8 normalized by `1/255`),
+and produces compacted per-segment `startScalars` / `endScalars`
+via `interpolate_scalars_batch` — the same WASM kernel that handles
+widths and sharpness.
 
-- The worker payload schema does not yet carry per-vertex scalar
-  buffers. Extending it requires transferable typed-array plumbing,
-  dtype-aware compaction (Float32/Float16/Uint8 paths), and parity
-  tests for the colormap normalization across all three dtypes — non-
-  trivial and best done as its own focused PR.
-- For the typical line workloads luxar targets (neural arbors, vector
-  overlays — usually under ~10k–100k segments) main-thread projection
-  completes well within frame budget and is not a user-visible cliff.
-- A one-shot `log.warning` fires on the first scalar-Lines update so
-  the cliff is observable in the console rather than silent.
+The main-thread `buildInstanceBuffers` path remains the fallback when
+the worker pool is unavailable, the worker call times out, or the
+caller's AbortSignal fires; both paths produce identical output shape
+so callers cannot tell which ran.
 
-**Revisit trigger**: a real workload exceeds ~500k segments AND has a
-colormap enabled AND profiling shows the main-thread projection step
-blocking interactive frames. Until then, prefer the main-thread path
-for correctness simplicity. See
-`src/data/scene-loader/data-processor-lines.ts::projectLinesTo3DUsingWorker`.
+Worker-side dtype handling:
+
+| Input dtype | Conversion | Reason |
+|-------------|------------|--------|
+| `Float32Array` | passes through (zero-copy) | already Float32 |
+| `Float16Array` | element-wise expand to Float32 | WASM expects Float32 |
+| `Uint8Array` | element-wise `* 1/255` | match colormap shader's `[0, 1]` contract |
+
+See `src/data/scene-loader/data-processor-lines.ts::projectLinesTo3DUsingWorker`
+and `src/workers/data-worker.ts::projectLinesTo3D` for the
+implementations. `coerceScalarsToFloat32` in `src/workers/color-utils.ts`
+is the shared dtype-coercion helper.
 
 ### 7.14 Lines Fallback (No Spatial Index)
 

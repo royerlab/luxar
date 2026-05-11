@@ -27,6 +27,23 @@ const builtinCache = new Map<string, THREE.DataTexture>();
 const customCache = new Map<string, THREE.DataTexture>();
 
 /**
+ * Per-process counters for the custom-LUT cache. Used to validate the
+ * LRU is doing useful work (high hit rate) and to spot fingerprint-
+ * collision induced misses. Counters are cumulative since process
+ * start; surfaced via {@link getCustomColormapCacheStats}.
+ */
+const customCacheStats = {
+  /** Cache lookups that returned a stored texture (post-fingerprint validate). */
+  hits: 0,
+  /** Cache lookups that missed and built a fresh texture. */
+  misses: 0,
+  /** Hits that were rejected by fingerprint mismatch (hash collision). */
+  collisions: 0,
+  /** LRU evictions due to `CUSTOM_LUT_CACHE_MAX` overflow. */
+  evictions: 0,
+};
+
+/**
  * Maximum number of custom LUT textures kept in the per-app cache.
  * Once exceeded, the oldest entry is disposed and dropped. 16 covers
  * realistic use (a single dataset rarely uses more than 2–3 unique
@@ -55,6 +72,7 @@ function customCacheLruSet(key: string, value: THREE.DataTexture): void {
     if (lruKey === undefined) break;
     const lruTex = customCache.get(lruKey);
     customCache.delete(lruKey);
+    customCacheStats.evictions++;
     if (lruTex) {
       try {
         lruTex.dispose();
@@ -211,9 +229,11 @@ export function createCustomColormapTexture(lut: Uint8Array): THREE.DataTexture 
     const cachedFp = (cached.userData as { originalLutSample?: Uint8Array })
       .originalLutSample;
     if (cachedFp && fingerprintMatches(cachedFp, incomingFp)) {
+      customCacheStats.hits++;
       return cached;
     }
     // Fingerprint mismatch → collision. Dispose and fall through.
+    customCacheStats.collisions++;
     try {
       cached.dispose();
     } catch {
@@ -223,6 +243,7 @@ export function createCustomColormapTexture(lut: Uint8Array): THREE.DataTexture 
     // re-insert so the new texture takes the slot.
     // Note: customCacheLruSet handles this by checking has() first.
   }
+  customCacheStats.misses++;
 
   // 1024-byte RGBA LUTs upload directly; 768-byte RGB LUTs go through
   // rgbToRgba (preserves the existing path).
@@ -300,4 +321,43 @@ export function disposeColormapTextures(): void {
  */
 export function _customColormapCacheSize(): number {
   return customCache.size;
+}
+
+/**
+ * Snapshot of the custom-LUT cache counters. Cumulative since process
+ * start. Exposed for the data monitor and diagnostics. The shape is
+ * stable: `{ size, maxSize, hits, misses, collisions, evictions }`.
+ *
+ * Hit rate = `hits / (hits + misses)`. A low hit rate after many
+ * lookups means the LRU isn't doing much (the working set exceeds
+ * `maxSize`) or fingerprint collisions are forcing rebuilds.
+ */
+export function getCustomColormapCacheStats(): {
+  size: number;
+  maxSize: number;
+  hits: number;
+  misses: number;
+  collisions: number;
+  evictions: number;
+} {
+  return {
+    size: customCache.size,
+    maxSize: CUSTOM_LUT_CACHE_MAX,
+    hits: customCacheStats.hits,
+    misses: customCacheStats.misses,
+    collisions: customCacheStats.collisions,
+    evictions: customCacheStats.evictions,
+  };
+}
+
+/**
+ * Reset the custom-LUT cache counters. Intended for tests and
+ * dev-mode diagnostics where a per-session view of the rate is more
+ * useful than the lifetime count.
+ */
+export function _resetCustomColormapCacheStatsForTests(): void {
+  customCacheStats.hits = 0;
+  customCacheStats.misses = 0;
+  customCacheStats.collisions = 0;
+  customCacheStats.evictions = 0;
 }

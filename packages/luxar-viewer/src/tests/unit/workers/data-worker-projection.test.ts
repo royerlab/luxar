@@ -220,6 +220,7 @@ describe('projectLinesTo3D — happy paths', () => {
       widths,
       colors: null,
       sharpness: null,
+      scalars: null,
       slicePosition: [0, 0, 0],
       tolerance: [10, 10, 10],
       displayDims: [0, 1, 2],
@@ -228,6 +229,108 @@ describe('projectLinesTo3D — happy paths', () => {
     });
 
     expect(wasm.clip_segments_batch).toHaveBeenCalledTimes(1);
+  });
+
+  it('scalars=null returns empty startScalars/endScalars and does not call interpolate_scalars_batch for scalars', async () => {
+    const { mod, wasm } = await loadWorker();
+    wasm.clip_segments_batch.mockImplementation(() => 1);
+    const ndim = 3;
+    const positions = new Float32Array(2 * ndim);
+    const segments = new Uint32Array([0, 1]);
+    const widths = new Float32Array([1.0, 1.0]);
+
+    const result = (await mod.workerAPI.projectLinesTo3D({
+      positions,
+      segments,
+      widths,
+      colors: null,
+      sharpness: null,
+      scalars: null,
+      slicePosition: [0, 0, 0],
+      tolerance: [10, 10, 10],
+      displayDims: [0, 1, 2],
+      ndim,
+      segmentCount: 1,
+    })) as { startScalars: Float32Array; endScalars: Float32Array };
+
+    expect(result.startScalars.length).toBe(0);
+    expect(result.endScalars.length).toBe(0);
+    // interpolate_scalars_batch is still called for widths/sharpness;
+    // assert it's NOT called a third time for scalars.
+    expect(wasm.interpolate_scalars_batch.mock.calls.length).toBeLessThanOrEqual(2);
+  });
+
+  it('Float32Array scalars are passed through to interpolate_scalars_batch unchanged', async () => {
+    const { mod, wasm } = await loadWorker();
+    wasm.clip_segments_batch.mockImplementation(() => 1);
+    const ndim = 3;
+    const positions = new Float32Array(2 * ndim);
+    const segments = new Uint32Array([0, 1]);
+    const widths = new Float32Array([1.0, 1.0]);
+    const scalars = new Float32Array([0.25, 0.75]);
+
+    await mod.workerAPI.projectLinesTo3D({
+      positions,
+      segments,
+      widths,
+      colors: null,
+      sharpness: null,
+      scalars,
+      slicePosition: [0, 0, 0],
+      tolerance: [10, 10, 10],
+      displayDims: [0, 1, 2],
+      ndim,
+      segmentCount: 1,
+    });
+
+    // Find the scalar-interpolation call: 1st arg is the scalars buffer,
+    // distinguishable from widths/sharpness by content.
+    const calls = wasm.interpolate_scalars_batch.mock.calls as unknown[][];
+    const scalarCall = calls.find((call) => {
+      const arr = call[0];
+      return arr instanceof Float32Array && arr.length === 2 && (arr as Float32Array)[0] === 0.25;
+    });
+    expect(scalarCall).toBeDefined();
+  });
+
+  it('Uint8Array scalars are normalized by 1/255 before WASM', async () => {
+    const { mod, wasm } = await loadWorker();
+    wasm.clip_segments_batch.mockImplementation(() => 1);
+    const ndim = 3;
+    const positions = new Float32Array(2 * ndim);
+    const segments = new Uint32Array([0, 1]);
+    const widths = new Float32Array([1.0, 1.0]);
+    const scalars = new Uint8Array([0, 128, 255, 64]);
+
+    await mod.workerAPI.projectLinesTo3D({
+      positions,
+      segments,
+      widths,
+      colors: null,
+      sharpness: null,
+      scalars,
+      slicePosition: [0, 0, 0],
+      tolerance: [10, 10, 10],
+      displayDims: [0, 1, 2],
+      ndim,
+      segmentCount: 1,
+    });
+
+    const calls = wasm.interpolate_scalars_batch.mock.calls as unknown[][];
+    const scalarCall = calls.find((call) => {
+      const arr = call[0];
+      return (
+        arr instanceof Float32Array &&
+        arr.length === 4 &&
+        Math.abs((arr as Float32Array)[1] - 128 / 255) < 1e-5
+      );
+    });
+    expect(scalarCall).toBeDefined();
+    const arr = scalarCall![0] as Float32Array;
+    expect(arr[0]).toBeCloseTo(0, 5);
+    expect(arr[1]).toBeCloseTo(128 / 255, 5);
+    expect(arr[2]).toBeCloseTo(1, 5);
+    expect(arr[3]).toBeCloseTo(64 / 255, 5);
   });
 });
 

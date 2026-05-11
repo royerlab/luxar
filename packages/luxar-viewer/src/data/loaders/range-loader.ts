@@ -268,6 +268,9 @@ export class RangeLoader {
         output.set(decoded);
         return;
       } catch (error) {
+        if (error instanceof Error && error.name === 'WorkerAbortError') {
+          throw error;
+        }
         log.warning(
           this.config.logModule,
           `Worker broadcast failed for ${arrayName}, falling back to main thread:`,
@@ -345,6 +348,9 @@ export class RangeLoader {
             );
           }
         } catch (error) {
+          if (error instanceof Error && error.name === 'WorkerAbortError') {
+            throw error;
+          }
           log.warning(
             this.config.logModule,
             'Worker decoding failed, falling back to main thread:',
@@ -420,6 +426,9 @@ export class RangeLoader {
             })
           );
         } catch (error) {
+          if (error instanceof Error && error.name === 'WorkerAbortError') {
+            throw error;
+          }
           log.warning(
             this.config.logModule,
             'Worker LUT decode failed, falling back to main thread:',

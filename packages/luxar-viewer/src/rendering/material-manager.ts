@@ -127,6 +127,21 @@ export class MaterialManager {
   private subscribedMaterials = new WeakSet<THREE.Material & CameraAwareMaterial>();
   /** Per-cache eviction count (read by getCacheStats; no behavior). */
   private evictionCount = 0;
+
+  /**
+   * Diagnostic: cumulative wall-clock time spent constructing
+   * materials (Point/Line/GSplat). Each `getXMaterial()` cache miss
+   * runs `new XMaterial(...)` which builds the shader source string
+   * and allocates uniforms; the WebGL program compile cost itself
+   * happens later during the first render. The number here is a
+   * useful proxy for "how much time does the user spend waiting for
+   * material-creation work" — first-use stutter shows up as a single
+   * large delta in this counter on the affected animation frame.
+   *
+   * Exposed in `getCacheStats()` as `{ totalCreateMs, createCount }`.
+   */
+  private totalCreateMs = 0;
+  private createCount = 0;
   /**
    * Materials registered for camera updates but not owned by a cache entry.
    *
@@ -279,6 +294,7 @@ export class MaterialManager {
     // would diverge from creation (notably max mode, which needs
     // OneFactor/OneFactor blend factors AND the
     // LUXAR_MAX_RGB_CONTRIBUTION shader define).
+    const createStart = performance.now();
     material = new PointMaterial({
       opacity: props.opacity,
       gamma: props.gamma,
@@ -291,6 +307,8 @@ export class MaterialManager {
       sharpnessScale: props.sharpnessScale,
     });
     material.applyBlendingMode(props.blendingMode);
+    this.totalCreateMs += performance.now() - createStart;
+    this.createCount++;
 
     // Register for global updates
     this.registeredMaterials.add(material);
@@ -331,6 +349,7 @@ export class MaterialManager {
     }
 
     // Create new LineMaterial instance
+    const createStart = performance.now();
     material = new LineMaterial({
       opacity: props.opacity,
       gamma: props.gamma,
@@ -338,6 +357,8 @@ export class MaterialManager {
       offset: props.offset,
       blendingMode: props.blendingMode,
     });
+    this.totalCreateMs += performance.now() - createStart;
+    this.createCount++;
 
     // Register for global updates
     this.registeredMaterials.add(material);
@@ -372,6 +393,7 @@ export class MaterialManager {
     }
 
     // Create new GSplatMaterial instance
+    const createStart = performance.now();
     material = new GSplatMaterial({
       opacity: props.opacity,
       gamma: props.gamma,
@@ -380,6 +402,8 @@ export class MaterialManager {
       blendingMode: props.blendingMode,
       truncationRadius: props.truncationRadius ?? 3.0,
     });
+    this.totalCreateMs += performance.now() - createStart;
+    this.createCount++;
 
     // Register for global updates
     this.registeredMaterials.add(material);
@@ -545,6 +569,15 @@ export class MaterialManager {
       evictions: this.evictionCount,
       /** Configured cache bound (`0` = disabled). */
       maxSize: config.dataLoading.performance.materialCacheMaxSize,
+      /**
+       * Cumulative wall-clock ms spent inside `new XMaterial(...)`
+       * calls (cache-miss path). Excludes WebGL program compilation,
+       * which happens lazily on first render. Useful to spot
+       * first-use stutter — divide by `createCount` for an average.
+       */
+      totalCreateMs: this.totalCreateMs,
+      /** Number of `new XMaterial(...)` calls (cache misses). */
+      createCount: this.createCount,
       keys: [
         ...Array.from(this.pointMaterialCache.keys()),
         ...Array.from(this.lineMaterialCache.keys()),

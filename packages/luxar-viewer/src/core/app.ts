@@ -38,7 +38,7 @@ import type { LoaderConfig } from '../data/data-loader-types';
 import { consoleInterceptor } from '../utils/console-interceptor';
 import { EventGroup } from '../utils/event-group';
 import { setWasmJsUrl } from '../wasm';
-import { setDataWorkerUrl, disposeWorkerPool } from '../workers/worker-pool';
+import { setDataWorkerUrl, disposeWorkerPool, getWorkerPool } from '../workers/worker-pool';
 import { replaceBrowserDataSourceUrl } from '../config/url-params';
 import { classifyBrowserUrl } from './browser-decision';
 import { applyViewerConfigState as applyViewerConfigStateHelper } from './viewer-config-applier';
@@ -951,6 +951,15 @@ export class LuxarApp {
       sceneDimsManager: sceneDimsManager,
       app: this,
 
+      // Worker pool diagnostics. `queueDepth` is the aggregate count of
+      // in-flight worker tasks; useful for spotting prefetch
+      // backpressure or task accumulation after rapid dataset switches.
+      // Returns 0 when the pool is idle / uninitialized.
+      workers: {
+        getQueueDepth: () => getWorkerPool().getQueueDepth(),
+        getStats: () => getWorkerPool().getStats(),
+      },
+
       // Helper function to get current state snapshot.
       // Implementation lives in `core/debug-state.ts` so the
       // scene-walking logic can be unit-tested directly.
@@ -1000,6 +1009,10 @@ export class LuxarApp {
     log.info(Modules.LUXAR, '  __luxarDebug.camera - Access camera');
     log.info(Modules.LUXAR, '  __luxarDebug.app - Access LuxarApp instance');
     log.info(Modules.LUXAR, '  __luxarDebug.cache.getStats() - Get cache statistics (L0, L1, L2)');
+    log.info(
+      Modules.LUXAR,
+      '  __luxarDebug.workers.getQueueDepth() - In-flight worker task count (backpressure diagnostic)'
+    );
     log.info(
       Modules.LUXAR,
       '  __luxarDebug.cache.listDatasets() - List all cached datasets (URL, hash, size)'

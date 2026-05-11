@@ -50,6 +50,30 @@ export class WorkerTimeoutError extends Error {
 }
 
 /**
+ * Thrown when a worker call is aborted via the caller-supplied
+ * AbortSignal — either because the signal was already aborted when
+ * `runWithTimeout` was called or because it fired before the worker
+ * task settled.
+ *
+ * IMPORTANT: aborting does NOT actually cancel work running inside
+ * the WASM kernel (WebAssembly has no cancellation primitive). The
+ * abort only:
+ * (a) Rejects the promise immediately so the caller stops awaiting.
+ * (b) Skips dispatch entirely if the signal was already aborted on entry.
+ *
+ * The worker continues processing the now-orphan task to completion;
+ * its result is discarded. This is the same trade-off as `fetch`
+ * + `AbortSignal`: the request may keep flying on the wire, but the
+ * caller has moved on.
+ */
+export class WorkerAbortError extends Error {
+  constructor(public readonly operation: string) {
+    super(`Worker call '${operation}' aborted by caller signal`);
+    this.name = 'WorkerAbortError';
+  }
+}
+
+/**
  * Optional override for the data-worker module URL.
  *
  * The default `new Worker(new URL('./data-worker.ts', import.meta.url))`
@@ -74,6 +98,19 @@ export class WorkerPool {
   private workers: WorkerInstance[] = [];
   private initPromise: Promise<void> | null = null;
   private nextWorkerIndex = 0;
+  /**
+   * Pool-wide abort signal. When set (by `setAbortSignal`), every
+   * `runWithTimeout` call additionally races against this signal so
+   * a dataset-switch in `SceneLoader` can immediately settle all
+   * in-flight worker promises. The signal does not cancel WASM
+   * execution — see {@link WorkerAbortError} for the trade-off.
+   *
+   * Setting a new signal replaces (not chains) any previously-set
+   * signal. The new signal applies to subsequent `runWithTimeout`
+   * calls; already-racing promises continue with their original
+   * signal until they settle.
+   */
+  private poolAbortSignal: AbortSignal | undefined;
 
   // Dispose-mid-init defense. `initialize()` spawns workers via
   // `Array.from(...).map(async ...)` and pushes them to `this.workers`
@@ -524,25 +561,109 @@ export class WorkerPool {
   async runWithTimeout<T>(
     op: string,
     kind: TimeoutKind,
-    fn: (api: Remote<DataWorkerAPI>) => Promise<T>
+    fn: (api: Remote<DataWorkerAPI>) => Promise<T>,
+    signal?: AbortSignal
   ): Promise<T> {
+    // Resolve the effective signal: pool-wide one OR caller's. If both
+    // are present, race them together so either can settle the call.
+    const effectiveSignal = this.combineSignals(this.poolAbortSignal, signal);
+
+    // Pre-check: signal already aborted? Bail before dispatching any work.
+    if (effectiveSignal?.aborted) {
+      throw new WorkerAbortError(op);
+    }
+
     // Route through getWorkerWithTracking so a stalled worker (one
     // whose activeQueries has grown past the others) stops being
     // selected. The previous round-robin via nextWorkerInstance had
     // no load awareness, so a slow worker received every Nth call
     // until each call timed out individually — head-of-line blocking.
     const tracked = await this.getWorkerWithTracking();
+
+    // Second-chance abort check: the await above may have yielded long
+    // enough for the caller's dataset-switch to fire. Don't even start.
+    if (effectiveSignal?.aborted) {
+      throw new WorkerAbortError(op);
+    }
+
     tracked.markQueryStart();
     try {
-      return await this.withTimeout(
+      // Race the worker call against the timeout AND the abort signal.
+      // The abort cannot kill the WASM task, but it can settle the
+      // promise immediately so the caller proceeds with whatever the
+      // dataset-switch wants to do next.
+      const workerPromise = this.withTimeout(
         op,
         fn(tracked.api),
         this.pickTimeoutMs(kind),
         tracked.worker
       );
+
+      if (!effectiveSignal) {
+        return await workerPromise;
+      }
+
+      let onAbort: (() => void) | undefined;
+      const abortPromise = new Promise<never>((_, reject) => {
+        onAbort = (): void => reject(new WorkerAbortError(op));
+        effectiveSignal.addEventListener('abort', onAbort, { once: true });
+      });
+
+      try {
+        return await Promise.race([workerPromise, abortPromise]);
+      } finally {
+        if (onAbort) effectiveSignal.removeEventListener('abort', onAbort);
+      }
     } finally {
       tracked.markQueryEnd();
     }
+  }
+
+  /**
+   * Set or clear the pool-wide abort signal. Every subsequent
+   * {@link runWithTimeout} call additionally races against this
+   * signal. Used by `SceneLoader.loadScene` to immediately settle
+   * worker tasks queued by the previous dataset when the user
+   * switches datasets.
+   *
+   * Pass `undefined` to clear (no pool-wide signal — only caller-
+   * supplied signals apply).
+   *
+   * Setting a new signal replaces (not chains) any previously-set
+   * signal. Already-racing promises continue with their original
+   * effective signal until they settle.
+   */
+  setAbortSignal(signal: AbortSignal | undefined): void {
+    this.poolAbortSignal = signal;
+  }
+
+  /**
+   * Combine the pool-wide signal with a caller-supplied signal into
+   * a single abort source. Returns `undefined` when both are absent.
+   * Uses native `AbortSignal.any` when available (modern browsers /
+   * Node 20+) and falls back to the simpler "trip either one" wiring
+   * for older runtimes.
+   */
+  private combineSignals(
+    a: AbortSignal | undefined,
+    b: AbortSignal | undefined
+  ): AbortSignal | undefined {
+    if (!a && !b) return undefined;
+    if (a && !b) return a;
+    if (!a && b) return b;
+    // Both present. `AbortSignal.any` is the standard combinator; fall
+    // back to manual wiring when unavailable.
+    const anyFn = (AbortSignal as unknown as { any?: (signals: AbortSignal[]) => AbortSignal })
+      .any;
+    if (typeof anyFn === 'function') {
+      return anyFn([a as AbortSignal, b as AbortSignal]);
+    }
+    const controller = new AbortController();
+    const forward = (): void => controller.abort();
+    (a as AbortSignal).addEventListener('abort', forward, { once: true });
+    (b as AbortSignal).addEventListener('abort', forward, { once: true });
+    if ((a as AbortSignal).aborted || (b as AbortSignal).aborted) controller.abort();
+    return controller.signal;
   }
 
   /**
@@ -605,11 +726,42 @@ export class WorkerPool {
   /**
    * Get pool statistics for monitoring
    */
-  getStats(): { workerCount: number; activeQueries: number[] } {
+  getStats(): {
+    workerCount: number;
+    activeQueries: number[];
+    /** Aggregate across all workers — sum of per-worker `activeQueries`. */
+    totalActive: number;
+    /** Per-worker peak since init; useful for spotting one hot worker. */
+    peakActive: number;
+  } {
+    const activeQueries = this.workers.map((w) => w.activeQueries);
+    let totalActive = 0;
+    let peakActive = 0;
+    for (const n of activeQueries) {
+      totalActive += n;
+      if (n > peakActive) peakActive = n;
+    }
     return {
       workerCount: this.workers.length,
-      activeQueries: this.workers.map((w) => w.activeQueries),
+      activeQueries,
+      totalActive,
+      peakActive,
     };
+  }
+
+  /**
+   * Convenience accessor for the aggregate "in-flight task" count.
+   * Exposed in `__luxarDebug.workers.queueDepth` for live diagnostics
+   * of prefetch backpressure / dataset-switch task accumulation.
+   *
+   * @returns The number of worker tasks currently in flight across the
+   *   pool (sum of `activeQueries` per worker). Zero when the pool is
+   *   idle.
+   */
+  getQueueDepth(): number {
+    let total = 0;
+    for (const w of this.workers) total += w.activeQueries;
+    return total;
   }
 
   /**
