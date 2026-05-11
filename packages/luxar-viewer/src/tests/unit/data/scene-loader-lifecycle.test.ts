@@ -128,7 +128,13 @@ describe('SceneLoader lifecycle stress', () => {
       }
     );
 
-    expect(result).toEqual([null]);
+    // runLoaderUpdates returns { staged, session } pairs so the commit
+    // stage can record "Update Buffers" timing under the per-node
+    // session before closing it. A failed loader still produces a pair
+    // with staged === null and a (no-op) session that the caller ends.
+    expect(result).toHaveLength(1);
+    expect(result[0].staged).toBeNull();
+    expect(typeof result[0].session?.end).toBe('function');
     expect((sceneLoader as any)._prevPerNodeViewState.has(path)).toBe(false);
     expect((sceneLoader as any).failedLoaders.has(path)).toBe(true);
   });

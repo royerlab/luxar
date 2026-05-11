@@ -712,7 +712,7 @@ export class SceneLoader {
     loaders: Map<string, TLoader>,
     loaderType: 'Points' | 'Lines' | 'GSplats',
     updateFn: (path: string, loader: TLoader, session: UpdateSession) => Promise<TStaged | null>
-  ): Promise<(TStaged | null)[]> {
+  ): Promise<Array<{ staged: TStaged | null; session: UpdateSession }>> {
     const noopSession: UpdateSession = {
       begin: () => noopSession,
       end: () => {},
@@ -721,45 +721,38 @@ export class SceneLoader {
     };
 
     const tasks = Array.from(loaders.entries()).map(async ([path, loader]) => {
-      const wrappedFn = async (session: UpdateSession): Promise<TStaged | null> => {
-        try {
-          // The helper does NOT clear failedLoaders on success
-          // — that decision differs by return mode:
-          //   * success-with-data and success-no-data → delete
-          //     (loader ran successfully for this view)
-          //   * skip (no work needed for this view) → preserve the
-          //     existing failure record so a future retry still
-          //     picks it up
-          // Each per-type updateFn calls failedLoaders.delete itself
-          // on the appropriate paths.
-          return await updateFn(path, loader, session);
-        } catch (error) {
-          // Predictive prefetch is keyed by the previous successful
-          // derived view-state for this path. If the demand update
-          // fails, discard that baseline so the next success
-          // re-baselines instead of extrapolating across a stale/error
-          // gap and warming irrelevant chunks.
-          this._prevPerNodeViewState.delete(path);
+      // Open a top-level session per node and keep it alive across the
+      // atomic commit stage so the per-node "Update Buffers" child entry
+      // nests under this session. The caller is responsible for calling
+      // session.end() once the commit has run.
+      const session = this.profiler
+        ? this.profiler.beginTopLevel(`${loaderType} (${path})`)
+        : noopSession;
+      try {
+        const staged = await updateFn(path, loader, session);
+        return { staged, session };
+      } catch (error) {
+        // Predictive prefetch is keyed by the previous successful
+        // derived view-state for this path. If the demand update
+        // fails, discard that baseline so the next success
+        // re-baselines instead of extrapolating across a stale/error
+        // gap and warming irrelevant chunks.
+        this._prevPerNodeViewState.delete(path);
 
-          const errorInfo = this.failedLoaders.get(path);
-          const retryCount = errorInfo ? errorInfo.retryCount + 1 : 0;
-          this.failedLoaders.set(path, {
-            error: error as Error,
-            timestamp: Date.now(),
-            retryCount,
-          });
-          const lcType = loaderType === 'Points' ? '' : `${loaderType.toLowerCase()} `;
-          log.error(
-            Modules.SCENE_LOADER,
-            `Failed to update ${lcType}${path} (attempt ${retryCount + 1}): ${(error as Error).message}`
-          );
-          return null;
-        }
-      };
-      if (this.profiler) {
-        return this.profiler.timeTopLevel(`${loaderType} (${path})`, wrappedFn);
+        const errorInfo = this.failedLoaders.get(path);
+        const retryCount = errorInfo ? errorInfo.retryCount + 1 : 0;
+        this.failedLoaders.set(path, {
+          error: error as Error,
+          timestamp: Date.now(),
+          retryCount,
+        });
+        const lcType = loaderType === 'Points' ? '' : `${loaderType.toLowerCase()} `;
+        log.error(
+          Modules.SCENE_LOADER,
+          `Failed to update ${lcType}${path} (attempt ${retryCount + 1}): ${(error as Error).message}`
+        );
+        return { staged: null, session };
       }
-      return wrappedFn(noopSession);
     });
     return Promise.all(tasks);
   }
@@ -976,14 +969,45 @@ export class SceneLoader {
         this._gpuBufferPool.beginFrame();
       }
 
-      for (const staged of pointsStaged) {
-        if (staged) this.updatePointsGeometry(staged.path, staged.data);
-      }
-      for (const staged of linesStaged) {
-        if (staged) this.commitLinesGeometry(staged);
-      }
-      for (const staged of gsplatsStaged) {
-        if (staged) this.commitGSplatsGeometry(staged);
+      // Commits run inside each per-node session so the GPU-upload step
+      // ("Update Buffers") shows up under Points/Lines/GSplats in the
+      // Performance tab. Always end the session afterwards — including
+      // the staged === null case (loader failed or marked skipped) so
+      // every opened session is closed exactly once.
+      //
+      // Belt-and-braces: if a commit throws synchronously, the
+      // remaining iterations and the later geometry-type loops never
+      // run, leaving their sessions un-ended. The outer `finally`
+      // sweeps every staged session afterwards. `SessionImpl.end()`
+      // is idempotent (no-ops on already-ended sessions), so this is
+      // safe to overlay on the per-iteration end() calls that record
+      // accurate per-node timings on the happy path.
+      try {
+        for (const { staged, session } of pointsStaged) {
+          try {
+            if (staged) this.updatePointsGeometry(staged.path, staged.data, session);
+          } finally {
+            session.end();
+          }
+        }
+        for (const { staged, session } of linesStaged) {
+          try {
+            if (staged) this.commitLinesGeometry(staged, session);
+          } finally {
+            session.end();
+          }
+        }
+        for (const { staged, session } of gsplatsStaged) {
+          try {
+            if (staged) this.commitGSplatsGeometry(staged, session);
+          } finally {
+            session.end();
+          }
+        }
+      } finally {
+        for (const { session } of pointsStaged) session.end();
+        for (const { session } of linesStaged) session.end();
+        for (const { session } of gsplatsStaged) session.end();
       }
 
       // Invalidate cached pick buffer after geometry changes
@@ -1203,9 +1227,12 @@ export class SceneLoader {
   /**
    * Commit lines geometry to GPU buffers (synchronous).
    * Called as part of the atomic commit stage — no async operations allowed.
+   * The optional `session` is forwarded so the helper can record an
+   * "Update Buffers" child entry under the per-node profiler session
+   * (parity with Points and GSplats).
    */
-  private commitLinesGeometry(staged: StagedLinesCommit): void {
-    commitLinesGeometryHelper(staged, this.rootGroup, this._gpuBufferPool);
+  private commitLinesGeometry(staged: StagedLinesCommit, session?: UpdateSession): void {
+    commitLinesGeometryHelper(staged, this.rootGroup, this._gpuBufferPool, session);
   }
 
   /**
@@ -1233,9 +1260,12 @@ export class SceneLoader {
   /**
    * Commit gsplats geometry to GPU buffers (synchronous).
    * Called as part of the atomic commit stage — no async operations allowed.
+   * The optional `session` is forwarded so the helper can record an
+   * "Update Buffers" child entry under the per-node profiler session
+   * (parity with Points and Lines).
    */
-  private commitGSplatsGeometry(staged: StagedGSplatsCommit): void {
-    commitGSplatsGeometryHelper(staged, this.rootGroup, this._gpuBufferPool);
+  private commitGSplatsGeometry(staged: StagedGSplatsCommit, session?: UpdateSession): void {
+    commitGSplatsGeometryHelper(staged, this.rootGroup, this._gpuBufferPool, session);
   }
 
   /**
