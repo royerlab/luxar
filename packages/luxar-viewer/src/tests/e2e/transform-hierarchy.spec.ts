@@ -14,7 +14,7 @@
  * 4. Transform updates propagate correctly
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { waitForLuxarReady, waitForNextRender } from './helpers';
 
 // Use pre-generated hierarchy example

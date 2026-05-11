@@ -16,6 +16,8 @@ export type ControlType = 'orbit' | 'fly' | 'ortho';
 
 /**
  * Complete control state for both orbit and fly modes
+ *
+ * @internal — reserved state-snapshot shape; not consumed today.
  */
 export interface ControlState {
   type: ControlType;
@@ -51,6 +53,8 @@ export interface FlyState {
 
 /**
  * Type-safe references to GUI controllers
+ *
+ * @internal — reserved controller-snapshot shape.
  */
 export interface GuiControllers {
   navigation: RenderingControllers;
@@ -74,7 +78,7 @@ export interface RenderingControllers {
   exposure?: Controller;
   globalOffset?: Controller;
   globalGamma?: Controller;
-  // Chromatic lens distortion controls (replaces old separate lens + chromatic effects)
+  // Chromatic lens distortion controls
   chromaticLensDistortionX?: Controller;
   chromaticLensDistortionY?: Controller;
   chromaticLensDispersion?: Controller;
@@ -86,6 +90,7 @@ export interface RenderingControllers {
   // Orbit controls
   autoRotate?: Controller;
   autoRotateSpeed?: Controller;
+  naturalDrag?: Controller;
   // Fly controls
   flyMovementSpeed?: Controller;
   flyRotationSpeed?: Controller;
@@ -136,6 +141,8 @@ export function isFlyControls(control: ControlInstance | null): control is Luxar
 
 /**
  * Control configuration with validation ranges
+ *
+ * @internal — reserved config-validation shape.
  */
 export interface ControlConfig {
   fly: FlyConfig;

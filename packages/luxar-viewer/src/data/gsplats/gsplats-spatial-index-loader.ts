@@ -1,0 +1,750 @@
+/**
+ * GSplats spatial index-based data loader for efficient nD gsplats loading.
+ *
+ * This loader implements spatial-index based loading:
+ * 1. Query chunk bounds to find chunks intersecting the view
+ * 2. Load splat data for those chunks
+ *
+ * Unlike lines, gsplats load directly because all data is per-splat.
+ *
+ * @module data/gsplats-spatial-index-loader
+ */
+
+import * as zarr from '../zarr';
+import { get, slice } from '../zarr';
+import { log, Modules } from '../../utils/log';
+import type {
+  GSplatsMetadata,
+  LoadedGSplatsData,
+  GSplatsDataLoader,
+  GSplatsViewState,
+  SplatRange,
+} from '../../types/gsplats';
+import type { SceneNode, PointRange } from '../data-loader-types';
+import { ArrayRefRegistry, type ArrayMetadata } from '../utils/array-decoder';
+import {
+  RangeLoader,
+  SpatialQueryBuilder,
+  type ChunkSpatialIndex,
+  type LoadRange,
+} from '../loaders';
+import {
+  loadGSplatsChunkIndex,
+  registerGSplatsArrayBounds,
+} from './chunk-index-loader';
+import { createEmptyGSplatsData } from './projection';
+import { getExpectedColorType, loadColorRanges } from '../loaders/color-attribute-utils';
+import { computeLoadLatency, recordLoadEvent } from '../loaders/loader-metrics';
+import { LoaderEventEmitter } from '../loaders/monitor-events';
+import { OnceInit } from '../loaders/once-init';
+import type {
+  LoaderMetrics,
+  MonitorEvent,
+  MonitorEventListener,
+  QueryInfo,
+} from '../../types/data-monitor-types';
+import {
+  warnExtendToAllNoDimensions,
+  announceExtendToAllOnce,
+} from '../loaders/extend-to-all-preflight';
+import { choleskyPackedSize } from '../../types/gsplats';
+import { GSplatsDataAccumulator, type AccumulatorStats } from '../utils/data-accumulator';
+import { config as appConfig } from '../../config';
+import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profiler';
+import { DecompressedChunkCache, wrapWithCache, ChunkPrefetcher } from '../../cache';
+
+/**
+ * GSplats data loader using spatial indices for efficient nD queries.
+ *
+ * Key features:
+ * - Chunk-based loading using spatial index
+ * - Handles all array encoding types (broadcasted, quantized, LUT, etc.)
+ * - Support for optional arrays (colors)
+ */
+export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
+  private chunkIndex: ChunkSpatialIndex | null = null;
+  private zarrLocation: zarr.Location<zarr.Readable>;
+  private node: SceneNode;
+  private _onceInit = new OnceInit();
+  private rangeLoader: RangeLoader;
+  private zarrStore: zarr.Readable | null = null;
+
+  // Data accumulator for object pooling.
+  private _accumulator: GSplatsDataAccumulator | null = null;
+
+  // L0 decompressed chunk cache (optional, avoids Blosc decompression on repeat access)
+  private l0Cache: DecompressedChunkCache | null = null;
+
+  // Chunk prefetcher (optional, for registering array bounds to suppress 404s)
+  private prefetcher: ChunkPrefetcher | null = null;
+
+  // Suppress detail logs after first successful view update
+  private _initialLoadDone = false;
+
+  // LoaderMonitor surface — same shape as the points and lines facades.
+  private readonly events = new LoaderEventEmitter();
+  private readonly metrics: LoaderMetrics;
+  private readonly activeQueries = new Map<string, QueryInfo>();
+  private nextQueryId = 0;
+
+  private arrays: {
+    centers?: zarr.Array<zarr.DataType, zarr.Readable>;
+    amplitudes?: zarr.Array<zarr.DataType, zarr.Readable>;
+    cholesky_factors?: zarr.Array<zarr.DataType, zarr.Readable>;
+    colors?: zarr.Array<zarr.DataType, zarr.Readable>;
+  } = {};
+
+  constructor(
+    zarrLocation: zarr.Location<zarr.Readable>,
+    node: SceneNode,
+    refRegistry?: ArrayRefRegistry,
+    zarrStore?: zarr.Readable,
+    profiler?: UpdateProfiler,
+    l0Cache?: DecompressedChunkCache,
+    prefetcher?: ChunkPrefetcher
+  ) {
+    this.zarrLocation = zarrLocation;
+    this.node = node;
+    this.rangeLoader = new RangeLoader(refRegistry || new ArrayRefRegistry());
+    this.zarrStore = zarrStore || null;
+    this.l0Cache = l0Cache || null;
+    this.prefetcher = prefetcher || null;
+    // profiler parameter kept for API compatibility; session is passed directly to methods
+    void profiler;
+
+    this.metrics = {
+      type: 'gsplats-spatial-index',
+      path: node.path,
+      queries: 0,
+      loads: 0,
+      evictions: 0,
+      errors: 0,
+      pointsLoaded: 0, // Shared loader metric; counts splats for gsplats.
+      bytesLoaded: 0,
+      datasetSize: 0,
+      visiblePoints: 0, // counts visible splats for gsplats
+      avgQueryTime: 0,
+      avgLoadTime: 0,
+      memoryUsed: 0,
+      memoryLimit: 0,
+    };
+  }
+
+  /**
+   * Thin wrapper around the shared `registerGSplatsArrayBounds` helper
+   * so the call sites read more naturally than passing the prefetcher
+   * and node path on every call.
+   */
+  private registerBounds(arrayName: string, array: zarr.Array<zarr.DataType, zarr.Readable>): void {
+    registerGSplatsArrayBounds(this.prefetcher, this.node.path, arrayName, array);
+  }
+
+  /**
+   * Initialize the loader by loading spatial index and opening arrays
+   */
+  async initialize(): Promise<void> {
+    const attrs = this.node.attrs as unknown as GSplatsMetadata;
+
+    // Load spatial index
+    try {
+      this.chunkIndex = await this.loadChunkBounds(attrs);
+
+      if (!this.chunkIndex) {
+        log.info(
+          Modules.GSPLATS_SPATIAL_INDEX_LOADER,
+          `No spatial index for GSplats ${this.node.path} - will load all data`
+        );
+      } else {
+        log.query(
+          Modules.GSPLATS_SPATIAL_INDEX_LOADER,
+          `GSplats index loaded: ${this.chunkIndex.chunkCount} chunks`
+        );
+      }
+    } catch (error) {
+      log.error(
+        Modules.GSPLATS_SPATIAL_INDEX_LOADER,
+        `Failed to load GSplats spatial index for ${this.node.path}:`,
+        error
+      );
+      throw error;
+    }
+
+    // Open required arrays
+    try {
+      let centersArray = await zarr.open(this.zarrLocation.resolve('centers'), {
+        kind: 'array',
+      });
+      let amplitudesArray = await zarr.open(this.zarrLocation.resolve('amplitudes'), {
+        kind: 'array',
+      });
+      let choleskyArray = await zarr.open(this.zarrLocation.resolve('cholesky_factors'), {
+        kind: 'array',
+      });
+      // Wrap with L0 cache if enabled (caches decoded chunks to avoid Blosc decompression)
+      if (this.l0Cache) {
+        centersArray = wrapWithCache(centersArray, this.l0Cache, `${this.node.path}/centers`);
+        amplitudesArray = wrapWithCache(
+          amplitudesArray,
+          this.l0Cache,
+          `${this.node.path}/amplitudes`
+        );
+        choleskyArray = wrapWithCache(
+          choleskyArray,
+          this.l0Cache,
+          `${this.node.path}/cholesky_factors`
+        );
+      }
+      this.arrays.centers = centersArray;
+      this.arrays.amplitudes = amplitudesArray;
+      this.arrays.cholesky_factors = choleskyArray;
+
+      // Register array bounds with prefetcher for upper-bounds checking
+      this.registerBounds('centers', centersArray);
+      this.registerBounds('amplitudes', amplitudesArray);
+      this.registerBounds('cholesky_factors', choleskyArray);
+    } catch (e) {
+      log.error(Modules.GSPLATS_SPATIAL_INDEX_LOADER, 'Failed to open required GSplats arrays:', e);
+      throw e;
+    }
+
+    // Try to open optional arrays
+    try {
+      let colorsArray = await zarr.open(this.zarrLocation.resolve('colors'), { kind: 'array' });
+      this.registerBounds('colors', colorsArray);
+      if (this.l0Cache) {
+        colorsArray = wrapWithCache(colorsArray, this.l0Cache, `${this.node.path}/colors`);
+      }
+      this.arrays.colors = colorsArray;
+    } catch {
+      log.info(Modules.GSPLATS_SPATIAL_INDEX_LOADER, 'No colors array found (using default white)');
+    }
+
+    // Initialize data accumulator for object pooling. The hot path
+    // (loadGSplats below) reuses this accumulator's buffers across
+    // updates when `useAccumulators` is true.
+    if (appConfig.dataLoading.performance.useAccumulators) {
+      const totalSplats = attrs.n_splats || 0;
+      const ndim = attrs.ndim || this.arrays.centers?.shape[1] || 3;
+
+      // Estimate initial capacity (at least 1024, or ~10% of total)
+      const initialCapacity = Math.min(
+        appConfig.dataLoading.performance.initialAccumulatorCapacity,
+        Math.max(1024, Math.ceil(totalSplats / 10))
+      );
+
+      this._accumulator = new GSplatsDataAccumulator(initialCapacity, ndim);
+
+      if (appConfig.dataLoading.performance.enablePerformanceMonitoring) {
+        const stats = this._accumulator.getStats();
+        log.info(
+          Modules.DATA_ACCUMULATOR,
+          `Initialized GSplatsDataAccumulator for ${this.node.path}: ` +
+            `capacity=${stats.capacity}, ndim=${ndim}, totalSplats=${totalSplats}`
+        );
+      }
+    }
+  }
+
+  /**
+   * Load gsplats data for the given view state
+   * @param viewState - Current view state
+   * @param session - Optional profiler session for nested timing
+   */
+  async loadGSplats(
+    viewState: GSplatsViewState,
+    session?: UpdateSession
+  ): Promise<LoadedGSplatsData> {
+    const startTime = Date.now();
+    const queryId = `${this.node.path}-${startTime}-${this.nextQueryId++}`;
+
+    try {
+      const result = await this.loadGSplatsInternal(viewState, session, queryId, startTime);
+      this.finishQueryTracking(queryId, startTime, 'complete');
+      return result;
+    } catch (err) {
+      this.metrics.errors += 1;
+      this.finishQueryTracking(queryId, startTime, 'error');
+      // Emit a monitor 'error' event for parity with Points (see
+      // lines-spatial-index-loader.ts comment).
+      this.emitEvent({
+        type: 'error',
+        loader: 'gsplats-spatial-index',
+        timestamp: Date.now(),
+        data: {
+          path: this.node.path,
+          error: String(err),
+        },
+      });
+      throw err;
+    }
+  }
+
+  private async loadGSplatsInternal(
+    viewState: GSplatsViewState,
+    session: UpdateSession | undefined,
+    queryId: string,
+    startTime: number
+  ): Promise<LoadedGSplatsData> {
+    await this._onceInit.ensure(() => this.initialize());
+
+    if (!this.arrays.centers || !this.arrays.amplitudes || !this.arrays.cholesky_factors) {
+      throw new Error('[GSplatsLoader] Loader not properly initialized');
+    }
+
+    const attrs = this.node.attrs as unknown as GSplatsMetadata;
+
+    // Query visible splat ranges (async to allow worker offload).
+    let splatRanges: SplatRange[];
+    if (session) {
+      const querySession = session.begin('Spatial Query');
+      try {
+        splatRanges = await this.queryVisibleSplatRanges(viewState);
+      } finally {
+        querySession.end();
+      }
+    } else {
+      splatRanges = await this.queryVisibleSplatRanges(viewState);
+    }
+
+    // Count total splats to load and begin query tracking.
+    const totalSplats = splatRanges.reduce((sum, r) => sum + (r.end - r.start), 0);
+    this.metrics.queries += 1;
+    this.metrics.visiblePoints = totalSplats;
+    this.activeQueries.set(queryId, {
+      id: queryId,
+      loader: 'gsplats-spatial-index',
+      path: this.node.path,
+      startTime,
+      status: 'loading',
+      cells: splatRanges.length,
+      points: totalSplats,
+      ranges: splatRanges as unknown as PointRange[],
+    });
+    this.emitEvent({
+      type: 'query',
+      loader: 'gsplats-spatial-index',
+      timestamp: Date.now(),
+      data: {
+        path: this.node.path,
+        ranges: splatRanges as unknown as PointRange[],
+        cells: splatRanges.length,
+        points: totalSplats,
+        queryPosition: viewState.slicePosition,
+        queryTolerance: viewState.tolerance,
+      },
+    });
+
+    if (splatRanges.length === 0) {
+      log.info(Modules.GSPLATS_SPATIAL_INDEX_LOADER, 'No visible gsplats - returning empty data');
+      return createEmptyGSplatsData(attrs);
+    }
+
+    if (!this._initialLoadDone) {
+      log.load(
+        Modules.GSPLATS_SPATIAL_INDEX_LOADER,
+        `Loading ${totalSplats} gsplats from ${splatRanges.length} ranges`
+      );
+    }
+
+    // Load directly into the accumulator buffers (zero allocations).
+    if (this._accumulator && appConfig.dataLoading.performance.useAccumulators) {
+      // Ensure capacity FIRST
+      this._accumulator.ensureCapacity(totalSplats);
+
+      // Initialize accumulator types based on array metadata (must be done BEFORE loading!)
+      // This ensures colorBuffer has the correct type (Uint8/Uint16/Float32)
+      if (this.arrays.colors) {
+        const colorDtype = String(this.arrays.colors.dtype);
+        const colorType = getExpectedColorType(colorDtype);
+        // Create a small typed array to initialize accumulator types
+        const sampleColors =
+          colorType === 'Uint8Array'
+            ? new Uint8Array(3)
+            : colorType === 'Uint16Array'
+              ? new Uint16Array(3)
+              : new Float32Array(3);
+        this._accumulator.fill(0, {
+          positions: new Float32Array(attrs.ndim),
+          amplitudes: new Float32Array(1),
+          choleskyFactors: new Float32Array(choleskyPackedSize(attrs.ndim)),
+          colors: sampleColors,
+        });
+      }
+
+      // Get direct buffer references for zero-allocation loading (now colorBuffer has correct type!)
+      const centerBuffer = this._accumulator.getCenterBuffer();
+      const amplitudeBuffer = this._accumulator.getAmplitudeBuffer();
+      const choleskyBuffer = this._accumulator.getCholeskyBuffer();
+
+      // Load directly into accumulator buffers (ZERO intermediate allocations!)
+      const loadSession = session?.begin('Load Arrays');
+      try {
+        await this.loadArrayRanges('centers', splatRanges, attrs.ndim, centerBuffer);
+        await this.loadArrayRanges('amplitudes', splatRanges, 1, amplitudeBuffer);
+        await this.loadArrayRanges(
+          'cholesky_factors',
+          splatRanges,
+          choleskyPackedSize(attrs.ndim),
+          choleskyBuffer
+        );
+
+        // Load optional arrays directly to accumulator
+        if (this.arrays.colors) {
+          // Use loadColorRanges for proper multi-type handling
+          // NOTE: For LUT encoding, loadColorRanges may return a different buffer type
+          // (Float32Array) than the accumulator's colorBuffer (Uint8Array based on stored dtype).
+          // We MUST use the returned buffer since it contains the decoded colors.
+          const colorBuffer = this._accumulator.getColorBuffer();
+          const loadedColors = await this.loadColorRanges(splatRanges, colorBuffer);
+
+          // If loadColorRanges returned a different buffer (e.g., LUT decoded to Float32Array),
+          // we need to update the accumulator with the new buffer
+          if (loadedColors !== colorBuffer) {
+            // Replace accumulator's color buffer with the decoded colors
+            // This handles LUT encoding where decoded output is Float32Array
+            this._accumulator.setColorBuffer(loadedColors);
+          }
+        }
+      } finally {
+        loadSession?.end();
+      }
+
+      // Return from accumulator (subarrays, zero copy!)
+      // NO fill() needed - data already in buffers!
+      return this._accumulator.getData(totalSplats);
+    }
+
+    // Fallback: Load to separate arrays (allocations when accumulator disabled)
+    let centers: Float32Array;
+    let amplitudes: Float32Array;
+    let choleskyFactors: Float32Array;
+    let colors: Float32Array | Uint8Array | Uint16Array | null = null;
+
+    if (session) {
+      const loadSession = session.begin('Load Arrays');
+      try {
+        centers = await this.loadArrayRanges('centers', splatRanges, attrs.ndim);
+        amplitudes = await this.loadArrayRanges('amplitudes', splatRanges, 1);
+        choleskyFactors = await this.loadArrayRanges(
+          'cholesky_factors',
+          splatRanges,
+          choleskyPackedSize(attrs.ndim)
+        );
+
+        // Use multi-type loadColorRanges for colors
+        colors = this.arrays.colors ? await this.loadColorRanges(splatRanges) : null;
+      } finally {
+        loadSession.end();
+      }
+    } else {
+      centers = await this.loadArrayRanges('centers', splatRanges, attrs.ndim);
+      amplitudes = await this.loadArrayRanges('amplitudes', splatRanges, 1);
+      choleskyFactors = await this.loadArrayRanges(
+        'cholesky_factors',
+        splatRanges,
+        choleskyPackedSize(attrs.ndim)
+      );
+
+      // Use multi-type loadColorRanges for colors
+      colors = this.arrays.colors ? await this.loadColorRanges(splatRanges) : null;
+    }
+
+    return {
+      positions: centers,
+      amplitudes,
+      choleskyFactors,
+      colors,
+      splatCount: totalSplats,
+      ndim: attrs.ndim,
+    };
+  }
+
+  /**
+   * Update view for new position.
+   * @param viewState - Current view state
+   * @param session - Optional profiler session for nested timing
+   */
+  async updateView(
+    viewState: GSplatsViewState,
+    session?: UpdateSession
+  ): Promise<LoadedGSplatsData> {
+    const result = await this.loadGSplats(viewState, session);
+    if (!this._initialLoadDone) {
+      this._initialLoadDone = true;
+      this.rangeLoader.setVerbose(false);
+    }
+    return result;
+  }
+
+  /**
+   * Probe the gsplats `chunk_bounds` array.
+   *
+   * Implementation lives in `gsplats/chunk-index-loader.ts`. The thin
+   * wrapper here exists for symmetry with the points + lines facades,
+   * which follow the same pattern.
+   */
+  private async loadChunkBounds(attrs: GSplatsMetadata): Promise<ChunkSpatialIndex | null> {
+    return loadGSplatsChunkIndex(this.zarrLocation, attrs);
+  }
+
+  /**
+   * Query visible splat ranges based on view state.
+   *
+   * Delegates the chunk-bounds AABB scan and range coalescing to the canonical
+   * `SpatialQueryBuilder`, which also handles the `extend_to_all` short-circuit.
+   * Returns a load-all range when no spatial index is available.
+   */
+  private async queryVisibleSplatRanges(viewState: GSplatsViewState): Promise<SplatRange[]> {
+    const attrs = this.node.attrs as unknown as GSplatsMetadata;
+    const extendDims: string[] = attrs.extend_to_all || [];
+
+    warnExtendToAllNoDimensions({
+      extendDims,
+      hasResolvedDimensions: !!viewState.dimensions && viewState.dimensions.length > 0,
+      nodePath: this.node.path,
+      logModule: Modules.GSPLATS_SPATIAL_INDEX_LOADER,
+    });
+
+    if (!this.chunkIndex) {
+      return [{ start: 0, end: attrs.n_splats }];
+    }
+
+    if (!this._initialLoadDone) {
+      announceExtendToAllOnce({
+        extendDims,
+        nodePath: this.node.path,
+        logModule: Modules.GSPLATS_SPATIAL_INDEX_LOADER,
+      });
+    }
+
+    const ranges = await new SpatialQueryBuilder(this.chunkIndex, viewState, {
+      geometryType: 'gsplats',
+      totalElements: attrs.n_splats,
+      chunkSize: attrs.chunk_size,
+      extendDims,
+      logModule: Modules.GSPLATS_SPATIAL_INDEX_LOADER,
+    }).execute();
+
+    return ranges;
+  }
+
+  /**
+   * Load array ranges with optional target buffer for zero-allocation operation.
+   *
+   * Uses RangeLoader for unified encoding dispatch (broadcasted, quantized, lut, direct).
+   * Array references are handled specially (need zarrStore access to resolve target).
+   *
+   * @param arrayName - Name of array to load
+   * @param ranges - Ranges to load
+   * @param elementsPerSplat - Elements per splat
+   * @param targetBuffer - Optional target buffer (for accumulator integration)
+   * @returns Loaded data (new array or subarray of target)
+   */
+  private async loadArrayRanges(
+    arrayName: string,
+    ranges: SplatRange[],
+    elementsPerSplat: number,
+    targetBuffer?: Float32Array
+  ): Promise<Float32Array> {
+    const array = this.arrays[arrayName as keyof typeof this.arrays];
+    if (!array) {
+      throw new Error(`Array ${arrayName} not initialized`);
+    }
+
+    const totalSplats = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
+    const totalElements = totalSplats * elementsPerSplat;
+
+    // Use target buffer or allocate (ZERO allocation when targetBuffer provided!)
+    const output = targetBuffer ? targetBuffer : new Float32Array(totalElements);
+    const attrs = array.attrs as unknown as ArrayMetadata;
+
+    // The shared helper resolves array_ref against zarrStore when needed and
+    // delegates to RangeLoader.loadRanges for everything else. The hint
+    // elementsPerItem is only consulted when no ref is in play; ref targets
+    // recompute it from their own shape.
+    const storeToUse = this.zarrStore || this.zarrLocation.store;
+    await this.rangeLoader.loadRangesResolvingRef(
+      array,
+      attrs,
+      ranges as LoadRange[],
+      output,
+      totalSplats,
+      elementsPerSplat,
+      storeToUse,
+      'GSplats'
+    );
+
+    this.recordLoadMetrics(arrayName, totalSplats, output);
+    return output;
+  }
+
+  /**
+   * Load color ranges with multi-type support (preserves original_dtype)
+   *
+   * This method handles the full encoding/decoding pipeline for colors,
+   * including original_dtype restoration for encoded arrays.
+   */
+  private async loadColorRanges(
+    ranges: SplatRange[],
+    targetBuffer?: Float32Array | Uint8Array | Uint16Array
+  ): Promise<Float32Array | Uint8Array | Uint16Array> {
+    const array = this.arrays.colors;
+    if (!array) {
+      throw new Error('[GSplatsLoader] Colors array not initialized');
+    }
+    const storeToUse = this.zarrStore || this.zarrLocation.store;
+    const totalSplats = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
+    const output = await loadColorRanges(
+      array,
+      ranges,
+      this.rangeLoader,
+      storeToUse,
+      'GSplats',
+      targetBuffer
+    );
+    this.recordLoadMetrics('colors', totalSplats, output);
+    return output;
+  }
+
+
+  /**
+   * Prefetch chunks for the given view state into the cache without decoding.
+   *
+   * Performs the same spatial index query as updateView() and issues zarr
+   * get() calls for each visible range on every array.  The fetched data
+   * populates the HTTP cache and L0 decompressed-chunk cache but is NOT
+   * accumulated into output buffers — the typed-array results are immediately
+   * discarded.  This makes the subsequent updateView() call a fast cache hit
+   * without the memory cost of allocating full-size output arrays that would
+   * only be thrown away.
+   */
+  async prefetchChunks(viewState: GSplatsViewState): Promise<void> {
+    await this._onceInit.ensure(() => this.initialize());
+
+    // Query which splat ranges are visible
+    const splatRanges = await this.queryVisibleSplatRanges(viewState);
+    if (splatRanges.length === 0) return;
+
+    // Fire get() on every array × every range.  The zarr get() populates
+    // both the HTTP cache (L1) and the decompressed-chunk cache (L0) as a
+    // side-effect.  We deliberately do NOT allocate output buffers — the
+    // returned typed arrays are discarded immediately.
+    const arrays = [
+      this.arrays.centers,
+      this.arrays.amplitudes,
+      this.arrays.cholesky_factors,
+      this.arrays.colors,
+    ].filter((a): a is zarr.Array<zarr.DataType, zarr.Readable> => a != null);
+
+    const fetches: Promise<unknown>[] = [];
+
+    for (const array of arrays) {
+      const shape = array.shape;
+      for (const range of splatRanges) {
+        const sliceSpec: zarr.Slice[] =
+          shape.length === 2
+            ? [slice(range.start, range.end), slice(null)]
+            : [slice(range.start, range.end)];
+        fetches.push(get(array, sliceSpec));
+      }
+    }
+
+    await Promise.all(fetches);
+  }
+
+  /**
+   * Get accumulator stats for memory monitoring
+   */
+  getAccumulatorStats(): AccumulatorStats | null {
+    return this._accumulator?.getStats() ?? null;
+  }
+
+  // ────────────────────────────────────────────────────────────────────
+  // LoaderMonitor surface — same shape as the points and lines facades.
+  // ────────────────────────────────────────────────────────────────────
+
+  addEventListener(listener: MonitorEventListener): void {
+    this.events.add(listener);
+  }
+
+  removeEventListener(listener: MonitorEventListener): void {
+    this.events.remove(listener);
+  }
+
+  getMetrics(): LoaderMetrics {
+    const attrs = this.node.attrs as unknown as GSplatsMetadata;
+    if (typeof attrs.n_splats === 'number') {
+      this.metrics.datasetSize = attrs.n_splats;
+    }
+    return { ...this.metrics };
+  }
+
+  getActiveQueries(): QueryInfo[] {
+    return Array.from(this.activeQueries.values());
+  }
+
+  /**
+   * Update metrics + emit a 'load' event. Mirrors the points / lines facade's
+   * recordLoadMetrics shape.
+   */
+  private recordLoadMetrics(arrayName: string, items: number, output: ArrayBufferView): void {
+    const queryStart = this.activeQueries.values().next().value?.startTime;
+    const loadTime = computeLoadLatency(queryStart);
+    const bytes = output.byteLength;
+
+    recordLoadEvent(this.metrics, items, bytes, loadTime);
+
+    this.emitEvent({
+      type: 'load',
+      loader: 'gsplats-spatial-index',
+      timestamp: Date.now(),
+      data: {
+        path: this.node.path,
+        arrayName,
+        points: items,
+        memory: bytes,
+        latency: loadTime,
+      },
+    });
+  }
+
+  private emitEvent(event: MonitorEvent): void {
+    this.events.emit(event);
+  }
+
+  private finishQueryTracking(
+    queryId: string,
+    startTime: number,
+    status: 'complete' | 'error'
+  ): void {
+    const query = this.activeQueries.get(queryId);
+    if (query) {
+      query.status = status;
+      query.endTime = Date.now();
+      this.activeQueries.delete(queryId);
+    }
+    const queryTime = Date.now() - startTime;
+    if (this.metrics.queries > 0) {
+      this.metrics.avgQueryTime =
+        (this.metrics.avgQueryTime * (this.metrics.queries - 1) + queryTime) /
+        this.metrics.queries;
+    }
+  }
+
+  /**
+   * Clean up resources
+   */
+  dispose(): void {
+    this.chunkIndex = null;
+    this.arrays = {};
+    this._onceInit.reset();
+    this.events.clear();
+    this.activeQueries.clear();
+
+    // Dispose accumulator
+    if (this._accumulator) {
+      this._accumulator.dispose();
+      this._accumulator = null;
+    }
+  }
+}

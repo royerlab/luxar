@@ -560,9 +560,7 @@ class Scene(Group):
         validate_text_align(text_align)
         validate_transition(transition)
         validate_overlay_blend_mode(blend_mode)
-        validated_range = validate_visible_range(
-            visible_range, self._dimensions.names
-        )
+        validated_range = validate_visible_range(visible_range, self._dimensions.names)
 
         attrs: Dict[str, Any] = {
             "type": "overlay_text",
@@ -596,7 +594,9 @@ class Scene(Group):
             attrs["visible_range"] = validated_range
 
         overlay = self._write_overlay(name, "overlay_text", position, attrs)
-        aprint(f"✓ Text overlay '{name}' added at ({position[0]:.2f}, {position[1]:.2f})")
+        aprint(
+            f"✓ Text overlay '{name}' added at ({position[0]:.2f}, {position[1]:.2f})"
+        )
         return overlay
 
     def add_image(
@@ -665,9 +665,7 @@ class Scene(Group):
         validate_anchor(anchor)
         validate_overlay_blend_mode(blend_mode)
         validate_transition(transition)
-        validated_range = validate_visible_range(
-            visible_range, self._dimensions.names
-        )
+        validated_range = validate_visible_range(visible_range, self._dimensions.names)
 
         image_bytes, fmt = validate_image_input(image, fmt=format)
         image_filename = f"image.{fmt}"
@@ -697,7 +695,9 @@ class Scene(Group):
             image_data=image_bytes,
             image_filename=image_filename,
         )
-        aprint(f"✓ Image overlay '{name}' added at ({position[0]:.2f}, {position[1]:.2f})")
+        aprint(
+            f"✓ Image overlay '{name}' added at ({position[0]:.2f}, {position[1]:.2f})"
+        )
         return overlay
 
     def add_html(
@@ -773,9 +773,7 @@ class Scene(Group):
         validate_anchor(anchor)
         validate_transition(transition)
         validate_overlay_blend_mode(blend_mode)
-        validated_range = validate_visible_range(
-            visible_range, self._dimensions.names
-        )
+        validated_range = validate_visible_range(visible_range, self._dimensions.names)
 
         sanitized = sanitize_html(html)
 
@@ -802,7 +800,9 @@ class Scene(Group):
             attrs["visible_range"] = validated_range
 
         overlay = self._write_overlay(name, "overlay_html", position, attrs)
-        aprint(f"✓ HTML overlay '{name}' added at ({position[0]:.2f}, {position[1]:.2f})")
+        aprint(
+            f"✓ HTML overlay '{name}' added at ({position[0]:.2f}, {position[1]:.2f})"
+        )
         return overlay
 
     # ---------------------------------------------------------- overlay internals

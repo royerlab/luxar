@@ -6,7 +6,7 @@ import {
   invertNdTransformForQuery,
   composeNdTransforms,
   computeWorldNdTransform,
-} from '../../../data/nd-transform';
+} from '../../../data/transforms/nd-transform';
 import type { NdTransformMap } from '../../../types/zarr';
 
 describe('invertNdTransformForQuery', () => {

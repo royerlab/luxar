@@ -96,7 +96,9 @@ class TestSelectSeeds:
             positions=np.zeros((n_cells, 3), dtype=np.float32),
             velocities=np.zeros((n_cells, 3), dtype=np.float32),
             anatomy_codes=anatomy_codes,
-            anatomy_categories=[f"class{i}" for i in range(int(anatomy_codes.max()) + 1)],
+            anatomy_categories=[
+                f"class{i}" for i in range(int(anatomy_codes.max()) + 1)
+            ],
             stage_codes=np.zeros(n_cells, dtype=np.int32),
             stage_categories=["s0"],
         )

@@ -1,13 +1,13 @@
 # luxar-viewer.rendering - Technical Specification
 
-**Version**: 1.3.7
-**Last Updated**: 2025-12-17
+**Version**: 1.4.0
+**Last Updated**: 2026-05-10
 
 ## Purpose
 
-The `luxar-viewer.rendering` package provides advanced WebGL rendering capabilities including HDR post-processing pipeline, custom point and line materials with world-space sizing, and material management for data visualization.
+The `luxar-viewer.rendering` package provides advanced WebGL rendering capabilities including the HDR post-processing pipeline, custom Point/Line/GSplat materials, scalar colormap support, GPU buffer pooling, picking materials, and material management for data visualization.
 
-**Core Responsibility**: Deliver professional-grade visual effects through pmndrs/postprocessing library integration, custom shaders for physically accurate point and line rendering, and efficient material caching.
+**Core Responsibility**: Deliver professional-grade visual effects through pmndrs/postprocessing integration, custom shaders for physically accurate geometry rendering, complete blending-state management, and efficient material/geometry caching.
 
 **Related Specifications**:
 
@@ -25,7 +25,8 @@ The `luxar-viewer.rendering` package provides advanced WebGL rendering capabilit
 6. [Anti-Aliasing](#anti-aliasing)
 7. [Line Material System](#line-material-system)
 8. [GSplat Material System](#gsplat-material-system)
-9. [Adaptive Resolution System](#adaptive-resolution-system)
+9. [GPU Buffer Pool](#gpu-buffer-pool)
+10. [Adaptive Resolution System](#adaptive-resolution-system)
 
 ---
 
@@ -108,7 +109,7 @@ function buildEffectPasses(enabledEffects: Effect[]): Pass[] {
     dof,
     ao,
     vignette,
-    chromaticLensDistortion, // Combined effect (replaces old chromaticAberration + lensDistortion)
+    chromaticLensDistortion, // Combined lens distortion + chromatic aberration effect
     detectorNoise,
     toneMapping,
     aa,
@@ -161,6 +162,7 @@ function buildEffectPasses(enabledEffects: Effect[]): Pass[] {
 - `color`: vec3 - RGB color (or HDR)
 - `radius`: float - World-space radius
 - `sharpness`: float - Edge falloff power
+- `scalar`: float - Optional scalar value for colormap lookup
 
 **Uniforms**:
 
@@ -773,50 +775,60 @@ const dofEffect = new DepthOfFieldEffect(camera, {
 
 ### 5.1 Material Caching
 
-**Purpose**: Reuse materials with identical properties to reduce memory and shader compilations.
+**Purpose**: Reuse materials with identical properties to reduce memory use and shader compilations.
 
-**Cache Key**:
+**Material Families**:
 
-```typescript
-function getMaterialCacheKey(config: MaterialConfig): string {
-  return `${config.blendingMode}_${config.opacity}_${config.gamma}`;
-}
-```
+- `PointMaterial`
+- `LineMaterial`
+- `GSplatMaterial`
+
+Each family has its own bounded LRU cache. Cache keys bucket common numeric properties (`opacity`, `gamma`, `intensity`, `offset`) and include material-specific state such as blending mode and truncation radius.
 
 **Cache Algorithm**:
 
 ```typescript
 class MaterialManager {
-  private cache = new Map<string, THREE.ShaderMaterial>();
+  private pointMaterialCache = new Map<string, PointMaterial>();
+  private lineMaterialCache = new Map<string, LineMaterial>();
+  private gsplatMaterialCache = new Map<string, GSplatMaterial>();
+  private registeredMaterials = new Set<CameraAwareMaterial>();
 
-  getPointMaterial(config: MaterialConfig): THREE.ShaderMaterial {
-    const key = getMaterialCacheKey(config);
+  getPointMaterial(config: PointMaterialProperties): PointMaterial {
+    const key = getPointMaterialKey(config);
+    const cached = this.lruGet(this.pointMaterialCache, key);
+    if (cached) return cached;
 
-    if (this.cache.has(key)) {
-      return this.cache.get(key)!;
-    }
-
-    const material = createPointMaterial(config);
-    this.cache.set(key, material);
+    const material = new PointMaterial(config);
+    this.lruSet(this.pointMaterialCache, key, material);
+    this.register(material);
     return material;
   }
 
-  updateGlobalParams(fov: number, resolution: [number, number]): void {
-    // Update all cached materials
-    for (const material of this.cache.values()) {
-      material.uniforms.uFOV.value = fov;
-      material.uniforms.uResolution.value.set(resolution[0], resolution[1]);
+  updateCameraParams(
+    fov: number,
+    resolution: THREE.Vector2,
+    isOrtho: boolean,
+    nearCull: number
+  ): void {
+    for (const material of this.registeredMaterials) {
+      material.updateCameraParams(fov, resolution, isOrtho, nearCull);
     }
   }
 
   dispose(): void {
-    for (const material of this.cache.values()) {
+    for (const material of this.registeredMaterials) {
       material.dispose();
     }
-    this.cache.clear();
+    this.registeredMaterials.clear();
+    this.pointMaterialCache.clear();
+    this.lineMaterialCache.clear();
+    this.gsplatMaterialCache.clear();
   }
 }
 ```
+
+**Blending state**: Runtime UI changes and material creation both use `getCompleteBlendingState()` from `blending-state.ts`. This ensures each mode sets the full THREE.js blend state (`blending`, equations, blend factors, depth test/write, transparency, and shader output mode) instead of leaving stale low-level blend factors on a reused material.
 
 ### 5.2 Dynamic Parameter Updates
 
@@ -1100,6 +1112,8 @@ Normalized: I(p) / I(0) = 1 - p²/R²
 - `aSegmentLength`: float - World-space length of segment (for cap calculation)
 - `aStartClipped`: float - 1.0 if start was clipped by nD slicing
 - `aEndClipped`: float - 1.0 if end was clipped by nD slicing
+- `aStartScalar`: float - Optional scalar value at start endpoint for colormap lookup
+- `aEndScalar`: float - Optional scalar value at end endpoint for colormap lookup
 
 **Per-vertex attribute** (quad corners):
 
@@ -1766,13 +1780,64 @@ mesh.frustumCulled = true;
 
 ---
 
-## 9. Adaptive Resolution System
+## 9. GPU Buffer Pool
 
 ### 9.1 Purpose
 
+`GPUBufferPool` reuses `THREE.BufferGeometry` and `THREE.InstancedBufferGeometry` objects for Points, Lines, and GSplats. Reuse avoids per-frame GPU allocations during dimension navigation and dataset updates.
+
+### 9.2 Supported Geometry State
+
+- **Points**: position, color, radius, sharpness, optional `scalar`, dtype scale metadata for normalized radii/sharpness.
+- **Lines**: start/end positions, colors, widths, sharpness, segment length, clipping flags, optional start/end scalar attributes.
+- **GSplats**: centers, amplitudes, colors, packed Cholesky factors, truncation-aware bounds.
+
+### 9.3 Eviction Policy
+
+The pool applies both count-based and byte-budget constraints:
+
+```text
+1. Reuse an active geometry when the same node id is updated.
+2. Reuse a pooled geometry when type and capacity are compatible.
+3. Return unused geometries to per-type pools.
+4. Evict least-recently-used pooled entries after the inactive-frame threshold.
+5. Evict largest pooled buffers while pooledBytes exceeds gpuPoolMaxBytes.
+6. Limit each eviction pass by gpuPoolEvictBatchSize to avoid frame spikes.
+```
+
+**Byte-budget eviction (D.2)**: implemented as a single-pass collect +
+largest-first sort + walk. The pure-function selector
+(`selectBuffersToEvict(refs, maxBytes, total?)`) is exported from
+`gpu-buffer-pool.ts` so the eviction policy can be unit-tested
+independent of side effects. The eviction loop is bounded by
+`max(maxPoolSize * 3, 16)` iterations as a defensive cap against
+pathological non-disposing buffer refs (D.1) — if hit, a warning
+is logged and the next eviction sweep retries from a fresh state.
+
+**Byte-size caching (D.3)**: `estimateGeometryBytes` caches its result
+on `geometry.userData.cachedByteSize` so repeated `getStats()` polls
+don't re-iterate every attribute. The three `growXGeometry` paths
+call `invalidateCachedByteSize(geometry)` once before resizing any
+attribute to invalidate the cache.
+
+`getStats()` reports active/pooled counts plus activeBytes, pooledBytes, totalBytes, largestPooledBytes, and evictions. These stats are surfaced through `__luxarDebug.getState().gpuPool` when the pool is enabled.
+
+### 9.4 Invariants
+
+- Optional scalar attributes are allocated lazily only when source data carries scalars.
+- Growing a geometry preserves existing scalar attributes when present.
+- Reused Points geometries must fill default color/radius/sharpness when an update omits optional attributes.
+- Reused material uniforms are synchronized with geometry dtype scale metadata after Points commits.
+
+---
+
+## 10. Adaptive Resolution System
+
+### 10.1 Purpose
+
 The AdaptiveDPRManager dynamically adjusts the device pixel ratio (DPR) based on real-time FPS to maintain smooth rendering performance. When frame rates drop below threshold, resolution is reduced; when performance improves, resolution is restored.
 
-### 9.2 Algorithm
+### 10.2 Algorithm
 
 **Core Loop** (evaluated every 500ms):
 
@@ -1792,7 +1857,7 @@ Notify callback (for UI indicators)
 
 **Hysteresis**: Scale up requires sustained high FPS (configurable, default 2 seconds) to prevent rapid toggling.
 
-### 9.3 Public API
+### 10.3 Public API
 
 ```typescript
 class AdaptiveDPRManager {
@@ -1833,7 +1898,7 @@ interface AdaptiveDPRState {
 type DPRChangeCallback = (dpr: number, isReducedResolution: boolean) => void;
 ```
 
-### 9.4 Configuration
+### 10.4 Configuration
 
 ```typescript
 interface AdaptiveDPRConfig {
@@ -1848,7 +1913,7 @@ interface AdaptiveDPRConfig {
 }
 ```
 
-### 9.5 Manual DPR Control
+### 10.5 Manual DPR Control
 
 When adaptive mode is disabled, users can manually set the DPR:
 
@@ -1896,6 +1961,12 @@ This status is passed to UI components (ResolutionIndicator) via the callback.
 
 ## Changelog
 
+- **v1.4.0** (2026-05-10): Shader/material, colormap, HDR capture, and GPU pool updates
+  - Documented Point/Line scalar colormap attributes and fail-closed material guards
+  - Documented complete blending state through `blending-state.ts`
+  - Added GPU buffer pool byte-budget behavior and debug stats
+  - Updated package architecture for `post-processing/`, `picking/`, and `shaders/` subpackages
+
 - **v1.3.8** (2025-12-28): Terminology fix - "Low Power Mode" → "Reduced Resolution"
   - **RENAMED**: `isLowPowerMode` → `isReducedResolution` throughout codebase
   - **RENAMED**: `getIsLowPowerMode()` → `getIsReducedResolution()`
@@ -1939,7 +2010,7 @@ This status is passed to UI components (ResolutionIndicator) via the callback.
     - Added `RobustVignetteEffect` to replace pmndrs `VignetteEffect`
     - Root cause: Additive blending accumulates alpha, which can overflow to Infinity in Float16
     - Fix: Force alpha to 1.0 in vignette output (screen-space effects should always be opaque)
-    - See: `robust-vignette-effect.ts`
+    - See: `post-processing/robust-vignette-effect.ts`
   - **BUGFIX**: Fixed detector noise time overflow after long sessions
     - Use `mod(time, 1000.0)` to prevent precision loss
   - **BUGFIX**: Fixed detector noise "burning" in dark areas
@@ -2000,7 +2071,7 @@ This status is passed to UI components (ResolutionIndicator) via the callback.
   - Three-component physics model: Shot (Poisson) + Readout (Gaussian temporal) + FPN (Gaussian static)
   - New API: `setDetectorNoiseEnabled(enabled, readoutSigma?, photonGain?, fpnSigma?)`
   - New config properties: `detectorNoiseReadoutSigma`, `detectorNoisePhotonGain`, `detectorNoiseFpnSigma`
-  - See: `detector-noise-effect.ts`, `post-processing-manager.ts`
+  - See: `post-processing/detector-noise-effect.ts`, `post-processing/post-processing-manager.ts`
 
 - **v1.1.0** (2025-12-08): Physics-based detector noise effect
   - Added `DetectorNoiseEffect` class for realistic camera/detector noise simulation
@@ -2009,7 +2080,7 @@ This status is passed to UI components (ResolutionIndicator) via the callback.
   - Uses clamped logistic distribution for efficient Gaussian approximation
   - Uses Anscombe transform for Poisson approximation
   - Integrated into PostProcessingManager via `setDetectorNoiseEnabled()`
-  - See: `detector-noise-effect.ts`, `post-processing-manager.ts`
+  - See: `post-processing/detector-noise-effect.ts`, `post-processing/post-processing-manager.ts`
 
 - **v1.0.1** (2025-12-08): Material lifecycle improvements
   - Added `MaterialManager.unregister()` method to remove materials from global update lists

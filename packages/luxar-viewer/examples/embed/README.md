@@ -68,8 +68,8 @@ from npm and let your bundler resolve it.)
 | `wasmPath`       | string           | —       | Override for bundlers that don't resolve `import.meta.url` for WASM.  |
 | `workerPath`     | string           | —       | Same, but for the data worker.                                        |
 
-## Phase 2
+## Out of scope
 
 Multi-instance (multiple viewers on the same host page), `:root`-scoped
-themes, Shadow DOM wrappers, and React/web-component bindings are
-explicitly out of scope for this v1 embed. They land in a follow-up batch.
+themes, Shadow DOM wrappers, and React/web-component bindings are not
+part of the v1 embed.

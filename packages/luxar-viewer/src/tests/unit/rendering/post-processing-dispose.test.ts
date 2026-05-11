@@ -11,7 +11,7 @@ vi.mock('../../../utils/log', () => ({
   Modules: { POST_PROCESSING: 'PostProcessing' },
 }));
 
-import { PostProcessingManager } from '../../../rendering/post-processing-manager';
+import { PostProcessingManager } from '../../../rendering/post-processing/post-processing-manager';
 
 type Disposable = { dispose: ReturnType<typeof vi.fn> };
 type DisposableEffectKey =
@@ -208,5 +208,118 @@ describe('PostProcessingManager.rebuildAfterContextRestore', () => {
     expect(manager.initializeTransientResources).not.toHaveBeenCalled();
     expect(manager.applyDurableState).not.toHaveBeenCalled();
     expect(manager.rebuildEffectPass).not.toHaveBeenCalled();
+  });
+});
+
+describe('PostProcessingManager.startDeferRebuild / endDeferRebuild', () => {
+  type DeferManager = {
+    deferRebuildDepth: number;
+    rebuildEffectPass: ReturnType<typeof vi.fn>;
+  };
+
+  function makeManager(): DeferManager {
+    const m = Object.create(PostProcessingManager.prototype) as DeferManager;
+    m.deferRebuildDepth = 0;
+    m.rebuildEffectPass = vi.fn();
+    return m;
+  }
+
+  const start = PostProcessingManager.prototype.startDeferRebuild as unknown as (
+    this: DeferManager
+  ) => void;
+  const end = PostProcessingManager.prototype.endDeferRebuild as unknown as (
+    this: DeferManager
+  ) => void;
+
+  it('a single start/end pair triggers exactly one rebuild', () => {
+    const m = makeManager();
+    start.call(m);
+    expect(m.deferRebuildDepth).toBe(1);
+    end.call(m);
+    expect(m.deferRebuildDepth).toBe(0);
+    expect(m.rebuildEffectPass).toHaveBeenCalledTimes(1);
+  });
+
+  it('nested starts only rebuild when the outermost end runs', () => {
+    const m = makeManager();
+    start.call(m);
+    start.call(m);
+    end.call(m);
+    expect(m.rebuildEffectPass).not.toHaveBeenCalled();
+    end.call(m);
+    expect(m.rebuildEffectPass).toHaveBeenCalledTimes(1);
+  });
+
+  it('end without a matching start is a logged no-op (does not rebuild)', () => {
+    const m = makeManager();
+    end.call(m);
+    expect(m.deferRebuildDepth).toBe(0);
+    expect(m.rebuildEffectPass).not.toHaveBeenCalled();
+  });
+
+  it('try/finally keeps the counter balanced when the batch throws', () => {
+    const m = makeManager();
+    expect(() => {
+      start.call(m);
+      try {
+        throw new Error('simulated setter failure');
+      } finally {
+        end.call(m);
+      }
+    }).toThrow('simulated setter failure');
+    expect(m.deferRebuildDepth).toBe(0);
+    // Rebuild still fires once on the outer end despite the thrown error.
+    expect(m.rebuildEffectPass).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('PostProcessingManager.withDeferredRebuild', () => {
+  type DeferManager = {
+    deferRebuildDepth: number;
+    rebuildEffectPass: ReturnType<typeof vi.fn>;
+  };
+
+  function makeManager(): DeferManager {
+    const m = Object.create(PostProcessingManager.prototype) as DeferManager;
+    m.deferRebuildDepth = 0;
+    m.rebuildEffectPass = vi.fn();
+    return m;
+  }
+
+  const withDeferredRebuild = PostProcessingManager.prototype
+    .withDeferredRebuild as unknown as <T>(this: DeferManager, fn: () => T) => T;
+
+  it('triggers exactly one rebuild after the closure returns', () => {
+    const m = makeManager();
+    const result = withDeferredRebuild.call(m, () => 42);
+    expect(result).toBe(42);
+    expect(m.deferRebuildDepth).toBe(0);
+    expect(m.rebuildEffectPass).toHaveBeenCalledTimes(1);
+  });
+
+  it('rethrows the closure error AND drains depth to zero', () => {
+    const m = makeManager();
+    expect(() =>
+      withDeferredRebuild.call(m, () => {
+        throw new Error('boom');
+      })
+    ).toThrow('boom');
+    expect(m.deferRebuildDepth).toBe(0);
+    // The rebuild still ran (matching the manual try/finally semantics).
+    expect(m.rebuildEffectPass).toHaveBeenCalledTimes(1);
+  });
+
+  it('nested withDeferredRebuild rebuilds only on the outermost return', () => {
+    const m = makeManager();
+    withDeferredRebuild.call(m, () => {
+      withDeferredRebuild.call(m, () => {
+        // Inner closure does its work; depth is 2 here.
+        expect(m.deferRebuildDepth).toBe(2);
+      });
+      // Inner has returned; depth is back to 1, no rebuild yet.
+      expect(m.rebuildEffectPass).not.toHaveBeenCalled();
+    });
+    expect(m.deferRebuildDepth).toBe(0);
+    expect(m.rebuildEffectPass).toHaveBeenCalledTimes(1);
   });
 });

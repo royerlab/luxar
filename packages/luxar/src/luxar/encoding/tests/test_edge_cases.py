@@ -173,7 +173,9 @@ class TestModeEdgeCases:
             data = np.random.randint(0, 256, (100, 3), dtype=np.uint8)
 
             with pytest.raises(ValueError, match="Integer COLOR arrays are SDR"):
-                encoder.encode(data, group, "test", SemanticType.COLOR, color_mode="hdr")
+                encoder.encode(
+                    data, group, "test", SemanticType.COLOR, color_mode="hdr"
+                )
 
     def test_float_color_rejects_invalid_color_mode(self):
         """Float colors require color_mode='sdr' or 'hdr'."""
@@ -184,7 +186,9 @@ class TestModeEdgeCases:
             data = np.random.rand(100, 3).astype(np.float32)
 
             with pytest.raises(ValueError, match="color_mode must be 'sdr' or 'hdr'"):
-                encoder.encode(data, group, "test", SemanticType.COLOR, color_mode="bad")
+                encoder.encode(
+                    data, group, "test", SemanticType.COLOR, color_mode="bad"
+                )
 
     def test_hdr_color_invalid_mode(self):
         """Test HDR colors with wrong mode."""

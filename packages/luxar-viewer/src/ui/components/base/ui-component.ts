@@ -45,7 +45,7 @@ import type { Theme } from '../../../themes/types';
  * }
  * ```
  */
-export abstract class UIComponent<TConfig = any> {
+export abstract class UIComponent<TConfig = unknown> {
   protected element: HTMLElement;
   protected config: TConfig;
 

@@ -322,6 +322,10 @@ class ViewerConfig:
     control_type: Optional[str] = None
     auto_rotate: Optional[bool] = None
     auto_rotate_speed: Optional[float] = None
+    # Touchpad-friendly orbit drag mapping (LEFT=rotate, RIGHT=pan). When
+    # unset, the viewer derives a default from `navigator.platform` (true on
+    # macOS, false elsewhere) and persists the user's choice per-scene.
+    natural_drag: Optional[bool] = None
 
     # Cinematic effects
     cinematic_mode: Optional[bool] = None
@@ -467,6 +471,7 @@ class ViewerConfig:
         "control_type",
         "auto_rotate",
         "auto_rotate_speed",
+        "natural_drag",
         "cinematic_mode",
         "vignette_enabled",
         "vignette_darkness",

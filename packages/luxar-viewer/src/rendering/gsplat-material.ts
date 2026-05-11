@@ -29,9 +29,20 @@
  */
 
 import * as THREE from 'three';
-import { materialManager } from './material-manager';
 import { GSPLAT_VERTEX_SHADER, GSPLAT_FRAGMENT_SHADER } from './shaders/gsplat-shaders';
 import type { CameraAwareMaterial } from './camera-aware-material';
+import { computeFocalLength } from './camera-uniforms';
+import {
+  applyColormapTextureToMaterial,
+  applyScalarRangeToMaterial,
+} from './material-colormap-helpers';
+import {
+  isAdditiveMode,
+  isLuminousMode,
+  isMaxMode,
+  isNormalMode,
+  isOpaqueMode,
+} from './blending-state';
 
 /**
  * Configuration for gsplat material creation
@@ -63,6 +74,8 @@ export interface GSplatMaterialConfig {
 
 /**
  * GSplat material uniforms interface
+ *
+ * @internal — reserved extension shape; no current consumer.
  */
 export interface GSplatMaterialUniforms {
   /** Viewport resolution [width, height] */
@@ -190,28 +203,25 @@ export class GSplatMaterial extends THREE.ShaderMaterial implements CameraAwareM
       side: THREE.DoubleSide, // Splats visible from both sides
     });
 
-    // Configure custom blending for additive-style modes
-    // CRITICAL: Use OneFactor to avoid squaring intensity (SrcAlpha would square it)
-    if (blendingMode === 'additive' || blendingMode === 'luminous') {
-      // Linear additive: final = src + dst (no alpha multiplication)
-      this.blendEquation = THREE.AddEquation;
-      this.blendSrc = THREE.OneFactor;
-      this.blendDst = THREE.OneFactor;
-      // Prevent alpha accumulation that causes bloom/postprocessing artifacts.
-      // With AddEquation, alpha would sum: 1.0 + 1.0 + ... = N per overlapping splat,
-      // overflowing HalfFloat16 and causing dark halos via premultipliedAlpha compositing.
-      // MaxEquation keeps alpha = max(1.0, existing) = 1.0, preventing accumulation.
-      this.blendEquationAlpha = THREE.MaxEquation;
-      this.blendSrcAlpha = THREE.OneFactor;
-      this.blendDstAlpha = THREE.OneFactor;
-    } else if (blendingMode === 'max') {
-      this.blendEquation = THREE.MaxEquation; // Max(source, destination)
-      this.blendSrc = THREE.OneFactor;
-      this.blendDst = THREE.OneFactor;
+    // Apply mode-specific blending state (sets blending, blendEquation,
+    // blendSrc/Dst, alpha equation, transparent/depthTest/depthWrite,
+    // userData.blendingMode, and uProjectionMode). Same path used by
+    // live mode updates from the layers panel — keeps construction and
+    // runtime in sync.
+    this.applyBlendingMode(blendingMode);
+
+    // Honor explicit overrides from the config after the mode-derived
+    // defaults. Production callers don't pass these; preserved for
+    // existing consumer parity.
+    if (materialConfig.transparent !== undefined) {
+      this.transparent = materialConfig.transparent;
+    }
+    if (materialConfig.depthTest !== undefined) {
+      this.depthTest = materialConfig.depthTest;
     }
 
-    // Store blendingMode, gamma, and scalarRange in userData for clone()
-    this.userData.blendingMode = blendingMode;
+    // Store gamma + scalarRange in userData for clone(); blendingMode
+    // and depthTest are already set by applyBlendingMode.
     this.userData.gamma = gammaValue;
     this.userData.depthTest = materialConfig.depthTest ?? !isAdditive;
     this.userData.scalarRange = materialConfig.scalarRange;
@@ -232,19 +242,9 @@ export class GSplatMaterial extends THREE.ShaderMaterial implements CameraAwareM
     this.uniforms.uResolution.value.copy(resolution);
     this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
 
-    if (isOrtho) {
-      // fov = frustumHeight in world units; direct linear mapping
-      const fy = resolution.y / fov;
-      this.uniforms.uFx.value = fy;
-      this.uniforms.uFy.value = fy;
-    } else {
-      // Compute focal lengths in pixels from FOV
-      // f = height / (2 * tan(fov/2)) for vertical FOV
-      const tanHalfFov = Math.tan(fov / 2);
-      const fy = resolution.y / (2 * tanHalfFov);
-      this.uniforms.uFx.value = fy;
-      this.uniforms.uFy.value = fy;
-    }
+    const fy = computeFocalLength(fov, resolution.y, isOrtho);
+    this.uniforms.uFx.value = fy;
+    this.uniforms.uFy.value = fy;
 
     if (nearCull !== undefined) {
       this.uniforms.uNearCull.value = nearCull;
@@ -309,22 +309,7 @@ export class GSplatMaterial extends THREE.ShaderMaterial implements CameraAwareM
    * @param texture - Colormap LUT texture (256x1 RGB), or null to disable
    */
   updateColormapTexture(texture: THREE.DataTexture | null): void {
-    const wasEnabled = 'USE_COLORMAP' in this.defines;
-    const nowEnabled = !!texture;
-
-    if (nowEnabled) {
-      this.defines.USE_COLORMAP = '';
-      if (!this.uniforms.uColormapTex) {
-        this.uniforms.uColormapTex = { value: texture };
-        this.uniforms.uScalarMin = { value: 0.0 };
-        this.uniforms.uScalarScale = { value: 1.0 };
-      } else {
-        this.uniforms.uColormapTex.value = texture;
-      }
-    } else {
-      delete this.defines.USE_COLORMAP;
-    }
-
+    const { wasEnabled, nowEnabled } = applyColormapTextureToMaterial(this, texture);
     if (wasEnabled !== nowEnabled) {
       this.needsUpdate = true; // Triggers shader recompilation
     }
@@ -337,13 +322,7 @@ export class GSplatMaterial extends THREE.ShaderMaterial implements CameraAwareM
    * @param max - Maximum scalar value (maps to LUT index 255)
    */
   updateScalarRange(min: number, max: number): void {
-    if (this.uniforms.uScalarMin) {
-      this.uniforms.uScalarMin.value = min;
-    }
-    if (this.uniforms.uScalarScale) {
-      this.uniforms.uScalarScale.value = 1.0 / Math.max(1e-10, max - min);
-    }
-    this.userData.scalarRange = [min, max];
+    applyScalarRangeToMaterial(this, min, max);
   }
 
   /**
@@ -404,11 +383,102 @@ export class GSplatMaterial extends THREE.ShaderMaterial implements CameraAwareM
     return cloned as this;
   }
 
+  // Dispose is inherited from THREE.ShaderMaterial. The MaterialManager
+  // subscribes to the synchronous `dispose` event THREE fires from
+  // super.dispose(), so registry cleanup happens automatically without
+  // this file needing to import the manager (which would create a cycle).
+
   /**
-   * Dispose this material and unregister from MaterialManager.
+   * Apply a blending mode to this material in-place.
+   *
+   * GSplat-specific because the constructor uses `CustomBlending +
+   * OneFactor` (NOT `THREE.AdditiveBlending` — that uses SrcAlpha which
+   * squares intensity) for additive/luminous, and toggles the
+   * `uProjectionMode` uniform when switching to/from `max`. Without a
+   * type-specific method, the layers panel's generic
+   * `mat.blending = state.blending` would either:
+   *   - assign `AdditiveBlending` (squaring intensity) when switching to
+   *     additive/luminous, or
+   *   - leave `uProjectionMode = 0` while the framebuffer blends with
+   *     `MaxEquation` — physically wrong max projection.
+   *
+   * Used by both the constructor and runtime mode changes from the
+   * layers panel. After this returns, `userData.blendingMode` reflects
+   * the live mode so subsequent `clone()` calls preserve it.
    */
-  dispose(): void {
-    materialManager.unregister(this);
-    super.dispose();
+  applyBlendingMode(mode: 'additive' | 'normal' | 'max' | 'opaque' | 'luminous'): void {
+    const previousMode = this.userData.blendingMode as
+      | 'additive'
+      | 'normal'
+      | 'max'
+      | 'opaque'
+      | 'luminous'
+      | undefined;
+    // F.2: predicate-driven mode dispatch.
+    const isOpaque = isOpaqueMode(mode);
+    const isAdditive = isAdditiveMode(mode);
+    const isMax = isMaxMode(mode);
+    const opacity = (this.uniforms.uOpacity?.value as number | undefined) ?? 1.0;
+
+    // Pick base blending. Additive-style modes go through CustomBlending
+    // so the alpha factors below take effect.
+    if (isOpaque || isNormalMode(mode)) {
+      this.blending = THREE.NormalBlending;
+    } else {
+      this.blending = THREE.CustomBlending;
+    }
+
+    this.transparent = !isOpaque;
+    this.depthWrite = isOpaque || (isNormalMode(mode) && opacity >= 0.99);
+    // Additive ignores depth (renders on top); luminous respects it.
+    this.depthTest = !isAdditive;
+
+    // Projection mode uniform: 0=sum (additive/luminous/normal/opaque),
+    // 1=max. The shader has separate sum vs max branches.
+    if (this.uniforms.uProjectionMode) {
+      this.uniforms.uProjectionMode.value = isMax ? 1 : 0;
+    }
+
+    // Mode-specific blend factors.
+    if (isAdditive || isLuminousMode(mode)) {
+      // Linear sum projection — OneFactor avoids the SrcAlpha squaring.
+      this.blendEquation = THREE.AddEquation;
+      this.blendSrc = THREE.OneFactor;
+      this.blendDst = THREE.OneFactor;
+      // MaxEquation on alpha prevents accumulation that would otherwise
+      // overflow HalfFloat16 and produce dark halos in post-processing.
+      this.blendEquationAlpha = THREE.MaxEquation;
+      this.blendSrcAlpha = THREE.OneFactor;
+      this.blendDstAlpha = THREE.OneFactor;
+    } else if (isMax) {
+      this.blendEquation = THREE.MaxEquation;
+      this.blendSrc = THREE.OneFactor;
+      this.blendDst = THREE.OneFactor;
+      // Alpha tracks RGB by default in CustomBlending — null means "use
+      // the RGB equation". Reset so a previous additive→max switch
+      // doesn't strand MaxEquation alpha state.
+      this.blendEquationAlpha = null;
+      this.blendSrcAlpha = null;
+      this.blendDstAlpha = null;
+    } else {
+      // normal/opaque: NormalBlending is selected above and ignores
+      // these. Reset to THREE defaults so a switch back from custom
+      // blending starts from a clean slate.
+      this.blendEquation = THREE.AddEquation;
+      this.blendSrc = THREE.SrcAlphaFactor;
+      this.blendDst = THREE.OneMinusSrcAlphaFactor;
+      this.blendEquationAlpha = null;
+      this.blendSrcAlpha = null;
+      this.blendDstAlpha = null;
+    }
+
+    this.userData.blendingMode = mode;
+    this.userData.depthTest = this.depthTest;
+    // only mark needsUpdate when mode actually changed. The
+    // GSplat shader doesn't toggle defines on mode switches, but
+    // changes to blending state need to flush to the renderer once.
+    if (previousMode !== mode) {
+      this.needsUpdate = true;
+    }
   }
 }

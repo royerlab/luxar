@@ -33,6 +33,7 @@ import type { AnimationController } from './animation-controller';
 import type { SceneDimsManager } from './scene-dims-manager';
 import { config } from '../config';
 import { log, Modules } from '../utils/log';
+import { clamp } from '../utils/clamp';
 import type {
   DimensionAnimationState,
   DimensionAnimationEvents,
@@ -530,7 +531,7 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
 
     // Clamp to valid range
     const { customMin, customMax } = config.dimensionAnimation.presets;
-    state.targetFPS = Math.max(customMin, Math.min(customMax, fps));
+    state.targetFPS = clamp(fps, customMin, customMax);
 
     this.dispatchEvent({ type: 'speedChange', dimIndex, fps: state.targetFPS });
     log.info(Modules.ANIMATION, `Set dimension ${dimIndex} speed to ${state.targetFPS} FPS`);

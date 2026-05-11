@@ -183,12 +183,17 @@ Paste this into the Luxar viewer console (`Ctrl+L`):
               ' B' + gl.getParameter(gl.BLUE_BITS));
   console.log('  GPU:', gl.getParameter(gl.RENDERER));
 
-  // Check Luxar state
+  // Check Luxar state.
+  // `__luxarDebug.getState()` does NOT include a `rendering` field —
+  // tone-mapping/exposure live on the rendering-controls settings and
+  // post-processing manager. Read them directly from those:
   if (window.__luxarDebug) {
-    const state = window.__luxarDebug.getState();
+    const settings = window.__luxarDebug.renderingControls?.settings;
+    const pp = window.__luxarDebug.postProcessing;
     console.log('\nLuxar HDR Settings:');
-    console.log('  Tone Mapping:', state.rendering?.toneMapping || 'Unknown');
-    console.log('  Exposure:', state.rendering?.exposure || 'Unknown');
+    console.log('  Tone Mapping:', settings?.toneMapping ?? 'Unknown');
+    console.log('  Exposure:', settings?.exposure ?? 'Unknown');
+    console.log('  Effective AA:', pp?.getStatus?.()?.effectiveAA ?? 'Unknown');
   }
 
   console.log('\n✅ Test complete');

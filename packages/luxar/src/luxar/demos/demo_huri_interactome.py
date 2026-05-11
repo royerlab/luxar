@@ -206,9 +206,7 @@ def _download_zip_member(
                 blob = r.content
             with zipfile.ZipFile(io.BytesIO(blob)) as zf:
                 names = zf.namelist()
-                target = next(
-                    (n for n in names if n.endswith(member_suffix)), None
-                )
+                target = next((n for n in names if n.endswith(member_suffix)), None)
                 if target is None:
                     aprint(f"    ⚠ {member_suffix} not in zip ({names})")
                     continue
@@ -233,7 +231,9 @@ def ensure_data(cache_dir: Path) -> tuple[Path, Path, Path | None]:
         _download(HURI_URL, huri_path, "HuRI network (~2 MB)")
         _download(HGNC_URL, hgnc_path, "HGNC complete set (~30 MB)")
         ok = _download_zip_member(
-            CORUM_URLS, CORUM_FILENAME, corum_path,
+            CORUM_URLS,
+            CORUM_FILENAME,
+            corum_path,
             "CORUM complexes (optional, enables 'shared complex' hovers)",
         )
         if not ok:
@@ -282,9 +282,7 @@ def load_huri_edges(tsv_path: Path, hgnc: pd.DataFrame) -> pd.DataFrame:
     with asection("Loading HuRI interactions"):
         df = pd.read_csv(tsv_path, sep="\t", header=None, dtype=str, low_memory=False)
         if df.shape[1] < 2:
-            raise RuntimeError(
-                f"Unexpected HuRI format (got {df.shape[1]} columns)"
-            )
+            raise RuntimeError(f"Unexpected HuRI format (got {df.shape[1]} columns)")
         df = df.iloc[:, :2].copy()
         df.columns = ["ensg_a", "ensg_b"]
         # Filter to ENSG-looking rows (handles presence or absence of header)
@@ -451,8 +449,8 @@ def compute_layout(
         if radius_95 > 0:
             coords *= 10.0 / radius_95
         aprint(
-            f"  Coords (µu): x range {np.ptp(coords[:,0]):.1f}, "
-            f"y {np.ptp(coords[:,1]):.1f}, z {np.ptp(coords[:,2]):.1f}"
+            f"  Coords (µu): x range {np.ptp(coords[:, 0]):.1f}, "
+            f"y {np.ptp(coords[:, 1]):.1f}, z {np.ptp(coords[:, 2]):.1f}"
         )
 
         cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -571,8 +569,14 @@ def build_node_points(
     communities: np.ndarray,
     degrees: np.ndarray,
 ) -> tuple[
-    np.ndarray, np.ndarray, np.ndarray, list[str],
-    list[str], np.ndarray, np.ndarray, np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    list[str],
+    list[str],
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
 ]:
     """Assemble Points attributes duplicated across both color views.
 
@@ -629,15 +633,19 @@ def build_node_points(
     # Hover labels (one per vertex, replicated per view)
     per_node_labels = [
         f"{sym}\n[chr{ch} · deg {int(d)} · community {int(c)}]"
-        for sym, ch, d, c in zip(
-            nodes, chroms, degrees, communities, strict=True
-        )
+        for sym, ch, d, c in zip(nodes, chroms, degrees, communities, strict=True)
     ]
     labels = per_node_labels * 2
 
     return (
-        positions, colors, radii, labels,
-        chrom_cats, chrom_codes, comm_palette, chrom_palette,
+        positions,
+        colors,
+        radii,
+        labels,
+        chrom_cats,
+        chrom_codes,
+        comm_palette,
+        chrom_palette,
     )
 
 
@@ -724,9 +732,7 @@ def build_edge_lines(
 
     # Colors
     same_rgb = comm_palette[communities[a_idx]]
-    cross_rgb = np.tile(
-        np.array(CROSS_COMMUNITY_COLOR, dtype=np.float32), (n_edges, 1)
-    )
+    cross_rgb = np.tile(np.array(CROSS_COMMUNITY_COLOR, dtype=np.float32), (n_edges, 1))
     rgb_per_edge = np.where(same[:, None], same_rgb, cross_rgb).astype(np.float32)
     rgb_per_vertex_1view = np.repeat(rgb_per_edge, 2, axis=0)
     colors = np.vstack([rgb_per_vertex_1view, rgb_per_vertex_1view])
@@ -763,9 +769,7 @@ def build_edge_lines(
 # -----------------------------------------------------------------------------
 
 
-def _build_community_legend(
-    communities: np.ndarray, top_n: int = 20
-) -> str:
+def _build_community_legend(communities: np.ndarray, top_n: int = 20) -> str:
     """Top-N communities by size, sorted descending."""
     unique, counts = np.unique(communities, return_counts=True)
     order = np.argsort(-counts)
@@ -852,9 +856,7 @@ def build_scene(
                     unit="",
                     categories=["Community", "Chromosome"],
                     display=False,
-                    description=(
-                        "Color coding (press '1' then '[' / ']' to switch)"
-                    ),
+                    description=("Color coding (press '1' then '[' / ']' to switch)"),
                 ),
                 Dimension("x", unit="UMAP", display=True),
                 Dimension("y", unit="UMAP", display=True),
@@ -995,9 +997,7 @@ def _path_arg(argv: list[str], flag: str) -> Path | None:
     return None
 
 
-def _node_degrees(
-    nodes: list[str], edges: pd.DataFrame
-) -> np.ndarray:
+def _node_degrees(nodes: list[str], edges: pd.DataFrame) -> np.ndarray:
     """Degree per node, in the same order as ``nodes``."""
     counts = pd.concat([edges["sym_a"], edges["sym_b"]]).value_counts()
     return counts.reindex(nodes, fill_value=0).to_numpy(dtype=np.int32)
@@ -1033,8 +1033,15 @@ def main() -> None:
     if "--no-serve" in argv:
         output_path = get_demos_output_dir() / "huri_interactome.zarr"
         build_scene(
-            output_path, nodes, node_df, edges, coords,
-            communities, degrees, corum_lookup, max_edges,
+            output_path,
+            nodes,
+            node_df,
+            edges,
+            coords,
+            communities,
+            degrees,
+            corum_lookup,
+            max_edges,
         )
         aprint(f"Dataset generated at {output_path}")
         return
@@ -1042,8 +1049,15 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="luxar_huri_") as tmpdir:
         output_path = Path(tmpdir) / "huri_interactome.zarr"
         n_nodes, n_edges, n_comms = build_scene(
-            output_path, nodes, node_df, edges, coords,
-            communities, degrees, corum_lookup, max_edges,
+            output_path,
+            nodes,
+            node_df,
+            edges,
+            coords,
+            communities,
+            degrees,
+            corum_lookup,
+            max_edges,
         )
 
         aprint("")

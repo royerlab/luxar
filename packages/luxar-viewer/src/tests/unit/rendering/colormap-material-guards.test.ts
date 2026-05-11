@@ -70,6 +70,33 @@ describe('Material colormap guards', () => {
       expect(mat.vertexColors).toBe(true);
     });
 
+    it('updateColormapTexture(null) clears uColormapTex.value and userData.scalarRange', () => {
+      const tex = new THREE.DataTexture(new Uint8Array(1024), 256, 1, THREE.RGBAFormat);
+      const mat = new PointMaterial({ colormapTexture: tex, scalarRange: [0.5, 2.5] });
+      expect(mat.uniforms.uColormapTex.value).toBe(tex);
+      expect(mat.userData.scalarRange).toEqual([0.5, 2.5]);
+
+      mat.updateColormapTexture(null);
+      expect(mat.defines.USE_COLORMAP).toBeUndefined();
+      expect(mat.uniforms.uColormapTex.value).toBeNull();
+      expect(mat.uniforms.uScalarMin.value).toBe(0.0);
+      expect(mat.uniforms.uScalarScale.value).toBe(1.0);
+      expect(mat.userData.scalarRange).toBeUndefined();
+    });
+
+    it('disable→clone does not resurrect colormap state', () => {
+      const tex = new THREE.DataTexture(new Uint8Array(1024), 256, 1, THREE.RGBAFormat);
+      const mat = new PointMaterial({ colormapTexture: tex, scalarRange: [0, 1] });
+      mat.updateColormapTexture(null);
+      const cloned = mat.clone();
+      expect(cloned.defines.USE_COLORMAP).toBeUndefined();
+      // Clone may still allocate uColormapTex uniform on the cloned material
+      // depending on which path the constructor took, but its value must not
+      // resurrect the disabled texture.
+      expect(cloned.uniforms.uColormapTex?.value ?? null).toBeNull();
+      expect(cloned.vertexColors).toBe(true);
+    });
+
     it('vertex shader contains #ifdef USE_COLORMAP guard', () => {
       const mat = new PointMaterial();
       expect(mat.vertexShader).toContain('#ifdef USE_COLORMAP');

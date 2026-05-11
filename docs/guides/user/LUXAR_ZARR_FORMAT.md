@@ -282,6 +282,51 @@ Points nodes contain the actual point data.
 - **Default:** 2.0 if not provided
 - **Validation:** All values must be positive
 
+## Scalar Colormap Attributes
+
+For Points and Lines, an optional per-element `scalars` zarr array
+enables colormap-driven shading. The presence and configuration are
+declared through three attrs on the data node (next to `type`,
+`opacity`, etc.):
+
+```json
+{
+  "type": "points",
+  "has_scalars": true,
+  "scalar_data_range": [0.0, 1.0],
+  "colormap": "viridis"
+}
+```
+
+- **`has_scalars: bool`** — gates whether the loader opens the
+  `scalars` zarr array. Set by the writer when a scalar array exists;
+  ignored otherwise.
+- **`scalar_data_range: [min, max]`** — input range used to normalize
+  scalars to `[0, 1]` before the LUT lookup. Required when
+  `has_scalars` is true; defaults to `[0, 1]` if omitted.
+- **`colormap: 'viridis' | 'plasma' | ... | 'custom'`** — selects a
+  built-in LUT (15+ available) or `'custom'` to enable a user-supplied
+  LUT sibling array.
+
+**Custom LUT**: when `colormap = 'custom'`, the scene loader looks for
+a sibling array named `colormap_lut` (alongside the data node, not
+nested inside `scalars`). Shape: `[256, 3]` (RGB) or `[256, 4]` (RGBA),
+dtype `uint8`. The loader passes the raw bytes through to
+`getColormapTexture` which builds a 256×1 DataTexture; invalid
+lengths fall back to viridis with a warning. Custom LUT textures are
+cached per-app with a bounded LRU (16 entries) and disposed on scene
+unload (B.2 of the viewer-code-review-rerun hardening pass).
+
+**Scalar dtype**: the `scalars` zarr array may be `float32`,
+`float16`, or `uint8`. Uint8 scalars are kept in their native dtype
+through the loader and accumulator and widened to Float32 at the GPU
+upload boundary (A.2 of the same hardening pass).
+
+**Per-vertex Lines**: the Lines `scalars` array is per-vertex
+(matching `widths`), not per-segment. Projection interpolates between
+endpoints at clipped boundaries so the LUT lookup at a slice edge
+uses the correct value.
+
 ## Layers (Viewer Panel)
 
 Any scene-graph node — `points`, `lines`, `gsplats`, or a container `group` —

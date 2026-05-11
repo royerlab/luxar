@@ -15,9 +15,19 @@
  */
 
 import * as THREE from 'three';
-import { materialManager } from './material-manager';
 import { LINE_VERTEX_SHADER, LINE_FRAGMENT_SHADER } from './shaders/line-shaders';
 import type { CameraAwareMaterial } from './camera-aware-material';
+import {
+  applyColormapTextureToMaterial,
+  applyScalarRangeToMaterial,
+} from './material-colormap-helpers';
+import {
+  isAdditiveMode,
+  isLuminousMode,
+  isMaxMode,
+  isNormalMode,
+  isOpaqueMode,
+} from './blending-state';
 
 /**
  * Configuration for line material creation
@@ -45,6 +55,8 @@ export interface LineMaterialConfig {
 
 /**
  * Line material uniforms interface
+ *
+ * @internal — reserved extension shape; no current consumer.
  */
 export interface LineMaterialUniforms {
   /** Field of view in radians */
@@ -100,6 +112,9 @@ export class LineMaterial extends THREE.ShaderMaterial implements CameraAwareMat
         uInvGamma: { value: 1.0 / gammaValue }, // Pre-computed inverse for performance
         uIntensity: { value: materialConfig.intensity ?? 1.0 },
         uOffset: { value: materialConfig.offset ?? 0.0 },
+        // near-plane safety + max-pixel-width clamp uniforms.
+        uNearCull: { value: 0.05 },
+        uMaxLinePixelWidth: { value: 540 }, // ≈ resolution.y * 0.5 default; updated in updateCameraParams
         // Colormap uniforms (only when USE_COLORMAP define is set)
         ...(materialConfig.colormapTexture
           ? {
@@ -136,15 +151,20 @@ export class LineMaterial extends THREE.ShaderMaterial implements CameraAwareMat
       side: THREE.DoubleSide, // Lines visible from both sides
     });
 
-    // Configure custom blending for max mode
-    if (blendingMode === 'max') {
-      this.blendEquation = THREE.MaxEquation; // Max(source, destination)
-      this.blendSrc = THREE.OneFactor;
-      this.blendDst = THREE.OneFactor;
+    // Apply mode-specific blending state via the canonical method —
+    // same path used by live mode updates from the layers panel.
+    this.applyBlendingMode(blendingMode);
+
+    // Honor explicit overrides from config after mode-derived defaults.
+    if (materialConfig.transparent !== undefined) {
+      this.transparent = materialConfig.transparent;
+    }
+    if (materialConfig.depthTest !== undefined) {
+      this.depthTest = materialConfig.depthTest;
     }
 
-    // Store in userData for clone()
-    this.userData.blendingMode = blendingMode;
+    // gamma + scalarRange in userData for clone(); blendingMode and
+    // depthTest are already set by applyBlendingMode.
     this.userData.gamma = gammaValue;
     this.userData.depthTest = materialConfig.depthTest ?? !isAdditive;
     this.userData.scalarRange = materialConfig.scalarRange;
@@ -160,11 +180,18 @@ export class LineMaterial extends THREE.ShaderMaterial implements CameraAwareMat
     fov: number,
     resolution: THREE.Vector2,
     isOrtho: boolean = false,
-    _nearCull?: number
+    nearCull?: number
   ): void {
     this.uniforms.uFOV.value = fov; // FOV in radians (perspective) or frustumHeight (ortho)
     this.uniforms.uResolution.value.copy(resolution);
     this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
+    // Apply the near-plane safety distance when provided.
+    if (nearCull !== undefined && nearCull > 0) {
+      this.uniforms.uNearCull.value = nearCull;
+    }
+    // clamp screen-space line width to half the viewport height so a
+    // near-camera segment can't paint the entire screen.
+    this.uniforms.uMaxLinePixelWidth.value = Math.max(2, resolution.y * 0.5);
   }
 
   /**
@@ -202,22 +229,7 @@ export class LineMaterial extends THREE.ShaderMaterial implements CameraAwareMat
    * Update the colormap texture and enable/disable colormap mode.
    */
   updateColormapTexture(texture: THREE.DataTexture | null): void {
-    const wasEnabled = 'USE_COLORMAP' in this.defines;
-    const nowEnabled = !!texture;
-
-    if (nowEnabled) {
-      this.defines.USE_COLORMAP = '';
-      if (!this.uniforms.uColormapTex) {
-        this.uniforms.uColormapTex = { value: texture };
-        this.uniforms.uScalarMin = { value: 0.0 };
-        this.uniforms.uScalarScale = { value: 1.0 };
-      } else {
-        this.uniforms.uColormapTex.value = texture;
-      }
-    } else {
-      delete this.defines.USE_COLORMAP;
-    }
-
+    const { wasEnabled, nowEnabled } = applyColormapTextureToMaterial(this, texture);
     if (wasEnabled !== nowEnabled) {
       this.needsUpdate = true;
     }
@@ -227,13 +239,7 @@ export class LineMaterial extends THREE.ShaderMaterial implements CameraAwareMat
    * Set the scalar data range for colormap normalization.
    */
   updateScalarRange(min: number, max: number): void {
-    if (this.uniforms.uScalarMin) {
-      this.uniforms.uScalarMin.value = min;
-    }
-    if (this.uniforms.uScalarScale) {
-      this.uniforms.uScalarScale.value = 1.0 / Math.max(1e-10, max - min);
-    }
-    this.userData.scalarRange = [min, max];
+    applyScalarRangeToMaterial(this, min, max);
   }
 
   /**
@@ -261,16 +267,96 @@ export class LineMaterial extends THREE.ShaderMaterial implements CameraAwareMat
 
     cloned.uniforms.uFOV.value = this.uniforms.uFOV.value;
     cloned.uniforms.uResolution.value.copy(this.uniforms.uResolution.value);
+    // Preserve orthographic state and the near-plane / max-pixel-width
+    // clamp uniforms.
+    cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
+    cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
+    cloned.uniforms.uMaxLinePixelWidth.value = this.uniforms.uMaxLinePixelWidth.value;
     cloned.uniforms.uInvGamma.value = this.uniforms.uInvGamma.value;
 
     return cloned as this;
   }
 
+  // Dispose is inherited from THREE.ShaderMaterial. The MaterialManager
+  // subscribes to the synchronous `dispose` event THREE fires from
+  // super.dispose(), so registry cleanup happens automatically without
+  // this file needing to import the manager (which would create a cycle).
+
   /**
-   * Dispose this material and unregister from MaterialManager.
+   * Apply a blending mode to this material in-place.
+   *
+   * Lines use `THREE.AdditiveBlending` (SrcAlpha factors) for
+   * additive/luminous because the per-pixel intensity-squaring concern
+   * that GSplats face doesn't apply to thin line segments. Only `max`
+   * mode goes through CustomBlending. After this returns,
+   * `userData.blendingMode` reflects the live mode so subsequent
+   * `clone()` calls preserve it.
    */
-  dispose(): void {
-    materialManager.unregister(this);
-    super.dispose();
+  applyBlendingMode(mode: 'additive' | 'normal' | 'max' | 'opaque' | 'luminous'): void {
+    const previousMode = this.userData.blendingMode as
+      | 'additive'
+      | 'normal'
+      | 'max'
+      | 'opaque'
+      | 'luminous'
+      | undefined;
+    // F.2: predicates over BlendingMode replace inline string comparisons.
+    const isOpaque = isOpaqueMode(mode);
+    const isAdditive = isAdditiveMode(mode);
+    const isMax = isMaxMode(mode);
+    const opacity = (this.uniforms.uOpacity?.value as number | undefined) ?? 1.0;
+
+    // Defensive: THREE may leave defines undefined when none were
+    // passed at construction.
+    if (!this.defines) this.defines = {};
+
+    if (isOpaque || isNormalMode(mode)) {
+      this.blending = THREE.NormalBlending;
+    } else if (isAdditive || isLuminousMode(mode)) {
+      this.blending = THREE.AdditiveBlending;
+    } else if (isMax) {
+      this.blending = THREE.CustomBlending;
+    } else {
+      this.blending = THREE.NormalBlending;
+    }
+
+    this.transparent = !isOpaque;
+    this.depthWrite = isOpaque || (isNormalMode(mode) && opacity >= 0.99);
+    this.depthTest = !isAdditive;
+
+    // gate fragment LUXAR_MAX_RGB_CONTRIBUTION on max mode so the
+    // shader premultiplies RGB by intensity*opacity (necessary for
+    // OneFactor blend factors to capture contribution-weighted max).
+    const wantsContrib = isMax;
+    const hasContrib = 'LUXAR_MAX_RGB_CONTRIBUTION' in this.defines;
+    let definesChanged = false;
+    if (wantsContrib && !hasContrib) {
+      this.defines.LUXAR_MAX_RGB_CONTRIBUTION = '';
+      definesChanged = true;
+    } else if (!wantsContrib && hasContrib) {
+      delete this.defines.LUXAR_MAX_RGB_CONTRIBUTION;
+      definesChanged = true;
+    }
+
+    if (isMax) {
+      this.blendEquation = THREE.MaxEquation;
+      this.blendSrc = THREE.OneFactor;
+      this.blendDst = THREE.OneFactor;
+    } else {
+      // Reset CustomBlending state so a switch out of max doesn't strand
+      // MaxEquation. AdditiveBlending and NormalBlending ignore these.
+      this.blendEquation = THREE.AddEquation;
+      this.blendSrc = THREE.SrcAlphaFactor;
+      this.blendDst = THREE.OneMinusSrcAlphaFactor;
+    }
+
+    this.userData.blendingMode = mode;
+    this.userData.depthTest = this.depthTest;
+
+    // Only mark needsUpdate when something changed that the GPU side
+    // actually cares about.
+    if (definesChanged || previousMode !== mode) {
+      this.needsUpdate = true;
+    }
   }
 }

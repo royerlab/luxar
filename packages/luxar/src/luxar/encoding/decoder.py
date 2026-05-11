@@ -110,7 +110,9 @@ class ArrayDecoder:
         enc = dict(raw)
         name = enc.get("name")
         if not isinstance(name, str) or not name:
-            raise ValueError("encoding.name is required when encoding metadata is present")
+            raise ValueError(
+                "encoding.name is required when encoding metadata is present"
+            )
         if name not in self.KNOWN_ENCODINGS:
             raise ValueError(f"Unknown encoding name: {name}")
         if name == "array_ref":
@@ -138,7 +140,9 @@ class ArrayDecoder:
         missing = [field for field in fields if field not in enc]
         if missing:
             joined = ", ".join(missing)
-            raise ValueError(f"{encoding_name} encoding requires metadata field(s): {joined}")
+            raise ValueError(
+                f"{encoding_name} encoding requires metadata field(s): {joined}"
+            )
 
     def _decode_bounded_scalar(self, arr: zarr.Array, enc: dict) -> np.ndarray:
         """Decode bounded scalar: uint → original dtype using min/max.

@@ -40,7 +40,11 @@ function drawColormapGradient(canvas: HTMLCanvasElement, colormapName: string): 
 }
 
 export class ColormapLegend extends UIComponent<ColormapLegendConfig> {
-  private unsubscribe: (() => void) | null = null;
+  // `declare` skips the implicit `= undefined` initializer. With
+  // useDefineForClassFields=true, a regular field declaration would run
+  // AFTER super(), which would wipe the subscription set up by
+  // `attachEventListeners` (called from UIComponent's constructor).
+  declare private unsubscribe?: () => void;
   private lastHash = '';
 
   protected getClassName(): string {
@@ -145,7 +149,7 @@ export class ColormapLegend extends UIComponent<ColormapLegendConfig> {
   protected onDispose(): void {
     if (this.unsubscribe) {
       this.unsubscribe();
-      this.unsubscribe = null;
+      this.unsubscribe = undefined;
     }
   }
 }

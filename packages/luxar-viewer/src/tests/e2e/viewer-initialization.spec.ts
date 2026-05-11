@@ -9,7 +9,7 @@
  * - `all-examples-smoke-test.spec.ts` - All examples smoke test
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { waitForLuxarReady, getLuxarState, waitForNextRender } from './helpers';
 
 test.describe('Viewer Initialization', () => {

@@ -67,7 +67,7 @@ fly mode is active.
 
 ### Layer 3 — UI-local handlers (in `ui/*.ts`)
 
-UI components attach their own listeners for genuinely *local* concerns
+UI components attach their own listeners for genuinely _local_ concerns
 that have no business going through a viewer-wide handler:
 
 - `ui/helpers.ts` — close help overlay on outside-click.
@@ -83,7 +83,7 @@ outside click — that's strictly local knowledge.
 
 ### Rule of thumb
 
-Adding a new listener? Pick the layer by *who knows what*:
+Adding a new listener? Pick the layer by _who knows what_:
 
 - **Affects the whole viewer** (resize, global shortcut, fullscreen) → Layer 1.
 - **Camera motion** → Layer 2 (and register through `InputContextManager`,
@@ -94,7 +94,7 @@ Adding a new listener? Pick the layer by *who knows what*:
 Watch out in particular for:
 
 - Two `keydown` listeners on `window` from different layers — Layer 1's
-  `InputContextManager` is the *only* place that should attach a global
+  `InputContextManager` is the _only_ place that should attach a global
   `keydown`.
 - Document-level click handlers competing for "outside click" semantics —
   if two popups can be open simultaneously and both want the next click,
@@ -468,9 +468,21 @@ inputElement.addEventListener('blur', () => {
 import { InputHandler } from './input/input-handler';
 import { SceneManager } from './scene/scene-manager';
 import { AnimationController } from './scene/animation-controller';
+import { PerformanceMonitor } from './ui/monitors/performance-monitor';
+import { DebugConsole } from './ui/panels/debug-console';
 
-// Create input handler (context manager and debug console are created internally)
-const inputHandler = new InputHandler(sceneManager, animationController);
+// Create input handler. PerformanceMonitor and DebugConsole are owned
+// by LuxarApp and passed in here. The optional dimensionSlidersFactory
+// keeps the `input/` layer free of `ui/` imports — pass
+// `(c) => new DimensionSliders(c)` if dimension navigation is needed.
+const inputHandler = new InputHandler(
+  sceneManager,
+  animationController,
+  performanceMonitor,
+  debugConsole,
+  // optional: dimension sliders factory
+);
+inputHandler.init();
 ```
 
 ### Mode Switching

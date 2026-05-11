@@ -4,16 +4,23 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-// Mock zarrita before importing the loader
+// Mock zarrita before importing the loader.
+// `withMaybeConsolidatedMetadata` is the zarrita >=0.7 helper that the
+// scene-loader path probes through `zarrita-compat`. Declaring it as
+// `undefined` keeps vitest's strict mock contract happy (any access via
+// `(zarr as any).withMaybeConsolidatedMetadata` returns undefined and
+// the compat shim falls back to `tryWithConsolidated`).
 vi.mock('zarrita', () => ({
+  registry: {},
   open: vi.fn(),
   root: vi.fn(),
   get: vi.fn(),
   slice: vi.fn((start: number, end: number) => ({ start, end })),
+  withMaybeConsolidatedMetadata: undefined,
 }));
 
 import * as zarr from 'zarrita';
-import { ImageLabelLoader } from '../../../data/image-label-loader';
+import { ImageLabelLoader } from '../../../data/loaders/image-label-loader';
 
 // Helper: create a BigUint64Array of offsets
 function makeOffsets(sizes: number[]): BigUint64Array {
@@ -78,10 +85,7 @@ function createLoader(maxCacheBytes = 50 * 1024 * 1024): ImageLabelLoader {
   return new ImageLabelLoader(store, rootLoc, maxCacheBytes);
 }
 
-function setupMocks(
-  offsets: BigUint64Array,
-  imageData: Uint8Array
-): void {
+function setupMocks(offsets: BigUint64Array, imageData: Uint8Array): void {
   const mockOffsetsArr = { dtype: 'uint64' };
   const mockBytesArr = { dtype: 'uint8' };
 
@@ -109,11 +113,7 @@ describe('ImageLabelLoader', () => {
     it('returns a blob URL for a valid image', async () => {
       const loader = createLoader();
       const offsets = makeOffsets([6, 8, 6]); // 3 images
-      const imageData = new Uint8Array([
-        ...JPEG_HEADER,
-        ...PNG_HEADER,
-        ...JPEG_HEADER,
-      ]);
+      const imageData = new Uint8Array([...JPEG_HEADER, ...PNG_HEADER, ...JPEG_HEADER]);
       setupMocks(offsets, imageData);
 
       const url = await loader.getImageUrl('/node', 0);

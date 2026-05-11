@@ -555,8 +555,7 @@ Controls:
                 total_amp = sum(a.sum() for a in all_amps)
                 if total_amp > 0:
                     shared_centroid = (
-                        sum(c.T @ a for c, a in zip(all_centers, all_amps))
-                        / total_amp
+                        sum(c.T @ a for c, a in zip(all_centers, all_amps)) / total_amp
                     )
                 else:
                     shared_centroid = np.mean(
@@ -565,9 +564,7 @@ Controls:
                 aprint(f"Shared centroid: {shared_centroid}")
 
             # Add each channel as a layer-enabled gsplats node
-            for i, (gsplats, ch_config) in enumerate(
-                zip(gsplats_list, CHANNELS)
-            ):
+            for i, (gsplats, ch_config) in enumerate(zip(gsplats_list, CHANNELS)):
                 ch_name = ch_config["name"]
                 colormap = ch_config["colormap"]
 
@@ -585,9 +582,7 @@ Controls:
                         layer=True,
                         colormap=colormap,
                     )
-                    aprint(
-                        f"Added {n_splats:,} splats with colormap='{colormap}'"
-                    )
+                    aprint(f"Added {n_splats:,} splats with colormap='{colormap}'")
 
             # --- Overlays ---
             scene.add_text(
@@ -636,7 +631,9 @@ def show_roundtrip_comparison(
     try:
         import matplotlib.pyplot as plt
     except ImportError:
-        aprint("matplotlib is required for --show-roundtrip. Install with: pip install matplotlib")
+        aprint(
+            "matplotlib is required for --show-roundtrip. Install with: pip install matplotlib"
+        )
         return
 
     n_channels = len(volumes)

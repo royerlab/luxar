@@ -433,9 +433,7 @@ def build_legend_html(
             f'<span style="color:{color}">\u2588</span> {name}</div>'
         )
     if n_cats > max_entries:
-        lines.append(
-            f'<div style="color:#888">... +{n_cats - max_entries} more</div>'
-        )
+        lines.append(f'<div style="color:#888">... +{n_cats - max_entries} more</div>')
     lines.append("</div>")
     return "".join(lines)
 

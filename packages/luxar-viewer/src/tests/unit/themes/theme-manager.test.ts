@@ -329,11 +329,9 @@ describe('ThemeManager', () => {
           issuedHandles.push(handle);
           return handle;
         });
-      const cafSpy = vi
-        .spyOn(window, 'cancelAnimationFrame')
-        .mockImplementation((h: number) => {
-          cancelledHandles.push(h);
-        });
+      const cafSpy = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((h: number) => {
+        cancelledHandles.push(h);
+      });
 
       const manager = ThemeManager.getInstance();
       manager.setTheme('liquid-glass');
@@ -372,11 +370,9 @@ describe('ThemeManager', () => {
           issuedHandles.push(handle);
           return handle;
         });
-      const cafSpy = vi
-        .spyOn(window, 'cancelAnimationFrame')
-        .mockImplementation((h: number) => {
-          cancelledHandles.push(h);
-        });
+      const cafSpy = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((h: number) => {
+        cancelledHandles.push(h);
+      });
 
       const manager = ThemeManager.getInstance();
       manager.setTheme('liquid-glass');

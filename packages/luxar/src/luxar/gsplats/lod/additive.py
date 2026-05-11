@@ -99,7 +99,8 @@ def _truncation_radii(data: GSplatData, sigmas: float = 3.0) -> np.ndarray:
     Sigma = L @ L.transpose(0, 2, 1)
     eigs = np.linalg.eigvalsh(Sigma)  # ascending eigenvalues, shape (N, d)
     lam_max = np.maximum(eigs[:, -1], 0.0)
-    return float(sigmas) * np.sqrt(lam_max)
+    radii: np.ndarray = np.asarray(float(sigmas) * np.sqrt(lam_max), dtype=np.float64)
+    return radii
 
 
 # ─────────────────────────────────────────────────────────────────────

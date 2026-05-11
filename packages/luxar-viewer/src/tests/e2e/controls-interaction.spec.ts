@@ -8,7 +8,7 @@
  * - Help overlay appears
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import {
   waitForLuxarReady,
   getLuxarState,
@@ -98,6 +98,8 @@ test.describe('Luxar Controls & Keyboard Shortcuts', () => {
         debug?.renderOnce?.();
       }
     });
+    // Damping settle past the synchronous renderOnce loop — same shape
+    // as mouse-interactions.spec.ts and ortho-mode.spec.ts.
     await page.waitForTimeout(500);
 
     // Get new camera position

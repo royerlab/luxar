@@ -103,9 +103,7 @@ def validate_position(position: Any) -> Tuple[float, float]:
         )
     x, y = float(position[0]), float(position[1])
     if not (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0):
-        raise ValueError(
-            f"position coordinates must be in [0, 1], got ({x}, {y})"
-        )
+        raise ValueError(f"position coordinates must be in [0, 1], got ({x}, {y})")
     return (x, y)
 
 

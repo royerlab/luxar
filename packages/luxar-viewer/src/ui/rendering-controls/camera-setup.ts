@@ -10,21 +10,7 @@
 import { config } from '../../config';
 import { log, Modules } from '../../utils/log';
 import type { SetupContext, SetupResult } from './types';
-
-/**
- * Calculate approximate 35mm equivalent focal length from horizontal FOV.
- * Formula: focal_length = sensor_width / (2 * tan(FOV/2))
- * For 35mm sensor, width = 36mm
- *
- * @param fovDegrees - Horizontal field of view in degrees
- * @returns Approximate focal length in mm (rounded to integer)
- */
-function fovToFocalLength(fovDegrees: number): number {
-  const sensorWidth = 36; // 35mm film width in mm
-  const fovRadians = (fovDegrees * Math.PI) / 180;
-  const focalLength = sensorWidth / (2 * Math.tan(fovRadians / 2));
-  return Math.round(focalLength);
-}
+import { fovToFocalLength } from './fov-utils';
 
 /**
  * Set up camera controls in the rendering controls GUI.

@@ -62,6 +62,13 @@ export function normalizeDataSourceUrl(rawSrc: string | null): string | null {
     try {
       const url = new URL(src);
       if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+      // Return canonical url.href (trailing slash stripped) so
+      // mixed-case schemes like `HTTPS://...` flow through downstream
+      // helpers as `https://...`. The scene-loader's url-normalization
+      // helper only matches lowercase prefixes; returning `src` verbatim
+      // would let it treat the URL as a relative path.
+      const canonical = url.href.replace(/\/+$/, '');
+      return canonical.length === 0 ? null : canonical;
     } catch {
       return null;
     }
@@ -91,6 +98,12 @@ export interface UrlParams {
   noPrefetch: boolean;
   /** Verbose prefetch logging (`?prefetch-debug`). */
   prefetchDebug: boolean;
+  /**
+   * Auto-open the data-loading monitor in expanded mode on the Cache tab
+   * (`?cache-stats`). Useful for measuring L0/L1/L2 hit rates without
+   * having to find the monitor's keyboard shortcut first.
+   */
+  cacheStats: boolean;
 }
 
 /**
@@ -113,6 +126,7 @@ export function readUrlParams(search?: string): UrlParams {
     clearCache: params.has('clear-cache'),
     noPrefetch: params.has('no-prefetch'),
     prefetchDebug: params.has('prefetch-debug'),
+    cacheStats: params.has('cache-stats'),
   };
 }
 

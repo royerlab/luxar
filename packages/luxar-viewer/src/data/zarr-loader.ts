@@ -17,12 +17,14 @@ import { ViewState, LoaderConfig } from './data-loader-types';
 import { SimpleDims } from '../types/dims';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { config } from '../config';
+import { simpleDimsToViewState } from './utils/dims-to-view-state';
+import { computeSceneStats } from './utils/scene-stats';
 
 /**
  * Load a complete scene from a Zarr store using the new architecture.
  *
  * This is the main entry point that replaces the old loadScene function.
- * It uses the new SceneLoader which uses PointSpatialIndexLoader for all points.
+ * It uses the new SceneLoader which uses PointsSpatialIndexLoader for all points.
  *
  * @param src - URL or path to the Zarr store
  * @param config - Optional loader configuration
@@ -99,29 +101,10 @@ export async function updateSceneForDimensions(
   scene: THREE.Group,
   loaderId?: string
 ): Promise<void> {
-  const viewState: ViewState = {
-    displayDims: [...dims.displayed], // Copy to avoid reference mutation
-    slicePosition: [...dims.currentStep], // Copy to avoid reference mutation
-    tolerance: new Array(dims.ndim).fill(config.dataLoading.spatial.defaultTolerance), // Default tolerance
-    dimensions: dims,
-  };
-
-  // Update max radius from scene metadata if available
   const maxRadius = scene.userData.maxRadius || config.dataLoading.spatial.defaultMaxRadius;
-
-  // Set tolerance per dimension based on type:
-  // - Displayed dimensions: 0 (they're in the viewing plane, not queried)
-  // - Discrete non-displayed: 0.5 (exact match with float tolerance)
-  // - Spatial/continuous non-displayed: maxRadius (points extend through these)
-  viewState.tolerance = viewState.tolerance.map((_, i) => {
-    if (dims.displayed.includes(i)) {
-      return 0;
-    }
-    const meta = dims.metadata?.[i];
-    if (meta?.discrete && !meta?.spatial) {
-      return 0.5; // Discrete dimensions need near-exact match
-    }
-    return maxRadius;
+  const viewState = simpleDimsToViewState(dims, {
+    maxRadius,
+    defaultTolerance: config.dataLoading.spatial.defaultTolerance,
   });
 
   await updateView(viewState, loaderId);
@@ -145,48 +128,24 @@ export function dispose(loaderId?: string): void {
 }
 
 /**
- * Log statistics about the loaded scene.
+ * Log statistics about the loaded scene. The traversal/counting logic is
+ * `data/utils/scene-stats.ts::computeSceneStats`; this function is only
+ * the logging layer.
  */
 function logSceneStats(scene: THREE.Group): void {
-  let totalPoints = 0;
-  let totalPointsObjects = 0;
-  let totalGSplats = 0;
-  let totalGSplatsObjects = 0;
-  let usedSpatialIndex = 0;
-
-  // Check if scene has traverse method (it might be a mock in tests)
-  if (!scene || typeof scene.traverse !== 'function') {
+  const stats = computeSceneStats(scene);
+  if (!stats) {
     log.warning(Modules.LUXAR, 'Scene does not have traverse method, skipping stats');
     return;
   }
 
-  scene.traverse((obj) => {
-    if (obj instanceof THREE.Points) {
-      totalPointsObjects++;
-      const geometry = obj.geometry;
-      const positions = geometry.getAttribute('position');
-      if (positions) {
-        totalPoints += positions.count;
-      }
-      if (obj.userData.attrs?.has_spatial_index) {
-        usedSpatialIndex++;
-      }
-    } else if (obj instanceof THREE.Mesh && obj.userData?.nodeType === 'gsplats') {
-      totalGSplatsObjects++;
-      totalGSplats += obj.userData.visibleSplatCount ?? 0;
-      if (obj.userData.attrs?.has_spatial_index) {
-        usedSpatialIndex++;
-      }
-    }
-  });
-
   log.info(Modules.LUXAR, 'Scene statistics:');
-  log.info(Modules.LUXAR, `  - Points objects: ${totalPointsObjects}`);
-  log.info(Modules.LUXAR, `  - Total points loaded: ${totalPoints.toLocaleString()}`);
-  log.info(Modules.LUXAR, `  - GSplats objects: ${totalGSplatsObjects}`);
-  log.info(Modules.LUXAR, `  - Total gsplats loaded: ${totalGSplats.toLocaleString()}`);
+  log.info(Modules.LUXAR, `  - Points objects: ${stats.pointsObjects}`);
+  log.info(Modules.LUXAR, `  - Total points loaded: ${stats.totalPoints.toLocaleString()}`);
+  log.info(Modules.LUXAR, `  - GSplats objects: ${stats.gsplatsObjects}`);
+  log.info(Modules.LUXAR, `  - Total gsplats loaded: ${stats.totalGSplats.toLocaleString()}`);
   log.info(
     Modules.LUXAR,
-    `  - Using spatial index: ${usedSpatialIndex}/${totalPointsObjects + totalGSplatsObjects}`
+    `  - Using spatial index: ${stats.spatialIndexed}/${stats.pointsObjects + stats.gsplatsObjects}`
   );
 }

@@ -40,7 +40,10 @@ export async function renderOnce(page: Page): Promise<void> {
   await page.evaluate(() => {
     (window as any).__luxarDebug.renderOnce();
   });
-  // Wait for render to complete
+  // Intentional fixed sleep: renderOnce() schedules a single
+  // requestAnimationFrame, but the actual paint lands on the next
+  // browser frame which is not directly observable from JS. 100 ms
+  // is one paint cycle past 60 fps with margin.
   await page.waitForTimeout(100);
 }
 
@@ -219,8 +222,9 @@ export async function waitForDimensionSelected(
     (idx) => {
       const debug = (window as any).__luxarDebug;
       if (!debug?.getState?.()?.initialized) return false;
-      // Try to verify the selected dimension via sceneDimsManager
-      const selected = debug?.app?.inputHandler?.sceneDimsManager?.getSelectedDimension?.();
+      // Verify the selected dimension via the canonical sceneDimsManager
+      // exposed at __luxarDebug.sceneDimsManager (see app.ts:912-927).
+      const selected = debug?.sceneDimsManager?.getSelectedDimension?.();
       if (typeof selected === 'number') return selected === idx;
       // Fallback: if API not available, just wait for initialized state
       return true;
@@ -231,8 +235,12 @@ export async function waitForDimensionSelected(
 }
 
 /**
- * Wait for spatial index query to complete
- * Detects when query finishes by checking console or state changes
+ * Wait for spatial index query to complete.
+ *
+ * **Silent on timeout** — returns normally even if the condition was
+ * never reached. Use when the query completing fast is a *bonus*, not
+ * a precondition. For tests that genuinely depend on the query
+ * having finished, use {@link waitForSpatialQueryOrThrow} instead.
  */
 export async function waitForSpatialQuery(page: Page, timeout = 8000): Promise<void> {
   const startTime = Date.now();
@@ -254,6 +262,24 @@ export async function waitForSpatialQuery(page: Page, timeout = 8000): Promise<v
   }
 
   // Timeout not an error - query might have completed
+}
+
+/**
+ * Throwing variant of {@link waitForSpatialQuery}. Rejects with a
+ * descriptive error if the query never settles within `timeout`.
+ * Prefer this when the test logic that follows assumes the query has
+ * actually completed (e.g. point-count assertions).
+ */
+export async function waitForSpatialQueryOrThrow(page: Page, timeout = 8000): Promise<void> {
+  await page.waitForFunction(
+    () => {
+      const debug = (window as any).__luxarDebug;
+      const state = debug?.getState?.();
+      return state && !state.isLoading && state.totalPoints >= 0;
+    },
+    null,
+    { timeout }
+  );
 }
 
 /**
@@ -495,10 +521,10 @@ export async function waitForDimensionSystemReady(page: Page, timeout = 10000): 
     try {
       const hasInitialized = await page.evaluate(() => {
         const debug = (window as any).__luxarDebug;
-        if (!debug?.app?.inputHandler) return null;
+        if (!debug) return null;
 
-        // Check if sceneDimsManager exists and has dims
-        const dims = debug.app.inputHandler.sceneDimsManager?.getDims();
+        // Canonical path per app.ts:912-927.
+        const dims = debug.sceneDimsManager?.getDims?.();
         return dims !== null && dims !== undefined;
       });
 
@@ -515,10 +541,11 @@ export async function waitForDimensionSystemReady(page: Page, timeout = 10000): 
     await page.waitForTimeout(100);
   }
 
-  // Timeout - check final state
+  // Timeout — final probe via the canonical path. Use truthiness, not
+  // `!== null`, so `undefined` cannot produce a false pass.
   const finalState = await page.evaluate(() => {
     const debug = (window as any).__luxarDebug;
-    return debug?.app?.inputHandler?.sceneDimsManager?.getDims() !== null;
+    return !!debug?.sceneDimsManager?.getDims?.();
   });
 
   return finalState;
@@ -533,6 +560,13 @@ export async function waitForDimensionSystemReady(page: Page, timeout = 10000): 
  *
  * @param page - Playwright page
  * @param timeout - Maximum wait time in ms
+ */
+/**
+ * Wait for nD navigation to complete.
+ *
+ * **Silent on timeout** — returns normally even if `isLoading` never
+ * cleared. Use {@link waitForNavigationCompleteOrThrow} for tests
+ * that depend on navigation actually finishing.
  */
 export async function waitForNavigationComplete(page: Page, timeout = 15000): Promise<void> {
   const startTime = Date.now();
@@ -573,6 +607,25 @@ export async function waitForNavigationComplete(page: Page, timeout = 15000): Pr
 }
 
 /**
+ * Throwing variant of {@link waitForNavigationComplete}. Rejects with
+ * a descriptive error if navigation never settles within `timeout`.
+ */
+export async function waitForNavigationCompleteOrThrow(
+  page: Page,
+  timeout = 15000
+): Promise<void> {
+  await page.waitForFunction(
+    () => {
+      const debug = (window as any).__luxarDebug;
+      const state = debug?.getState?.();
+      return state && state.isLoading === false;
+    },
+    null,
+    { timeout }
+  );
+}
+
+/**
  * Wait for render frames to stabilize
  *
  * Useful for visual regression tests that need stable screenshots.
@@ -587,36 +640,58 @@ export async function waitForRenderStable(
   minFrames = 3,
   timeout = 10000
 ): Promise<void> {
-  // First check if frame counter is available
-  const hasFrameCounter = await page.evaluate(() => {
+  // Snapshot the current frame BEFORE the wait. The previous version
+  // checked `frame >= minFrames` against the lifetime counter, so once
+  // the initial paint exceeded `minFrames` (which it does within
+  // milliseconds of viewer startup), the helper would resolve
+  // immediately on every subsequent call — ignoring any post-action
+  // paints. Screenshot tests captured pre-action state.
+  const start = await page.evaluate(() => {
     const debug = (window as any).__luxarDebug;
-    return typeof debug?.renderer?.info?.render?.frame === 'number';
+    return typeof debug?.renderer?.info?.render?.frame === 'number'
+      ? debug.renderer.info.render.frame
+      : null;
   });
 
-  if (hasFrameCounter) {
-    // Use frame counter for precise wait
-    await page.waitForFunction(
-      (minFrames) => {
-        const debug = (window as any).__luxarDebug;
-        return debug?.renderer?.info?.render?.frame >= minFrames;
-      },
-      minFrames, // pass minFrames as argument (this one is correct)
-      { timeout }
-    );
-  } else {
-    // Fallback: wait for data to load + buffer time for rendering
-    await page.waitForFunction(
-      () => {
-        const debug = (window as any).__luxarDebug;
-        const state = debug?.getState?.();
-        return state && !state.isLoading && state.initialized;
-      },
-      null,
-      { timeout }
-    );
-    // Additional buffer for GPU to render frames
-    await page.waitForTimeout(minFrames * 100);
+  if (start !== null) {
+    // Kick the animation loop in case it's idle (auto-paused after ~2s
+    // of inactivity); without this, the frame counter never advances
+    // and we'd always fall through to the time-based fallback.
+    await page.evaluate(() => {
+      const debug = (window as any).__luxarDebug;
+      debug?.renderOnce?.();
+    });
+
+    const target = start + minFrames;
+    try {
+      await page.waitForFunction(
+        (t: number) => {
+          const debug = (window as any).__luxarDebug;
+          const frame = debug?.renderer?.info?.render?.frame;
+          return typeof frame === 'number' && frame >= t;
+        },
+        target,
+        { timeout: Math.min(timeout, 3000) }
+      );
+      return;
+    } catch {
+      // Frame counter didn't advance (loop truly stopped) — fall
+      // through to the state-based wait.
+    }
   }
+
+  // Fallback: wait for data to load + buffer time for rendering.
+  await page.waitForFunction(
+    () => {
+      const debug = (window as any).__luxarDebug;
+      const state = debug?.getState?.();
+      return state && !state.isLoading && state.initialized;
+    },
+    null,
+    { timeout }
+  );
+  // Additional buffer for GPU to render frames
+  await page.waitForTimeout(minFrames * 100);
 }
 
 /**
@@ -857,21 +932,35 @@ export async function assertNoConsoleErrors(
  * @param page - Playwright page
  */
 export async function dismissDatasetBrowser(page: Page): Promise<void> {
-  const dismissed = await page.evaluate(() => {
+  const isVisible = await page.evaluate(() => {
     const browser = document.querySelector(
       '.luxar-dataset-browser, .dataset-browser, #luxar-dataset-browser'
     );
-    if (browser && getComputedStyle(browser).display !== 'none') {
-      (browser as HTMLElement).remove();
-      return true;
-    }
-    return false;
+    return browser ? getComputedStyle(browser).display !== 'none' : false;
   });
 
-  if (dismissed) {
-    // Give the UI a moment to settle after removing the modal
-    await page.waitForTimeout(100);
-  }
+  if (!isVisible) return;
+
+  // Press Escape so the browser routes through PanelCoordinator.closeAll()
+  // → datasetBrowser.close(), which keeps LuxarApp.datasetBrowser in sync.
+  // Yanking the DOM node directly bypasses that and hides the exact
+  // bug a regression check would catch.
+  //
+  // Escape is exempted from the typing-input guard in
+  // `InputHandler.onKeyDown`, so it reliably reaches PanelCoordinator
+  // regardless of focus location (manual-path field, debug-console
+  // filter, etc.). If Escape stops reaching the coordinator, the hard
+  // timeout here is the right signal.
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(
+    () => {
+      const el = document.querySelector(
+        '.luxar-dataset-browser, .dataset-browser, #luxar-dataset-browser'
+      );
+      return !el || getComputedStyle(el).display === 'none';
+    },
+    { timeout: 2000 }
+  );
 }
 
 /**
@@ -925,13 +1014,14 @@ export async function getAnimationManager(page: Page): Promise<any> {
 
 /**
  * Get the scene dims manager from the debug interface.
- * Standardizes access: debug.app.inputHandler.sceneDimsManager.
+ * Canonical access: `debug.sceneDimsManager` (exposed directly by
+ * `app.ts`). The manager is not a child of input-handler in the
+ * debug surface.
  */
 export async function getSceneDimsManager(page: Page): Promise<any> {
   return await page.evaluate(() => {
     const debug = (window as any).__luxarDebug;
-    const ih = debug?.app?.inputHandler ?? debug?.inputHandler;
-    return ih?.sceneDimsManager ?? debug?.sceneDimsManager ?? null;
+    return debug?.sceneDimsManager ?? null;
   });
 }
 
@@ -1128,4 +1218,67 @@ export async function validateSceneAttributes(page: Page): Promise<
 
     return results;
   });
+}
+
+/**
+ * Assert no shader compile / link / attribute / uniform errors are
+ * present in the buffered console messages. WebGL surfaces shader
+ * issues asynchronously (the browser logs to console), so this is the
+ * canonical way to detect them after a render.
+ *
+ * The patterns match strings emitted by Chromium's WebGL implementation
+ * for compile/link failures and missing-attribute warnings, plus
+ * Luxar's internal `[❌] [Shader]`/`[Material]` log emoji.
+ */
+export async function assertNoShaderErrors(page: Page): Promise<void> {
+  const messages = await getConsoleMessages(page);
+  const all = [...messages.errors, ...messages.warnings, ...messages.all];
+  const shaderErrPattern =
+    /shader|GLSL|attribute.*not\s*found|uniform.*not\s*found|fragment\s*shader|vertex\s*shader|program\s*link|invalid_operation/i;
+  const offending = all.filter((m) => shaderErrPattern.test(m));
+  if (offending.length > 0) {
+    throw new Error(
+      `shader/GLSL errors detected in browser console (${offending.length} message(s)):\n` +
+        offending.slice(0, 8).join('\n')
+    );
+  }
+}
+
+/**
+ * Read a single pixel from a canvas selector at fractional
+ * coordinates `(fx, fy)` in `[0,1]`. Returns the RGBA byte values.
+ *
+ * Useful for "non-black" or "specific color" assertions on rendered
+ * output without needing a full screenshot diff. Reads from the visible
+ * 2D drawing buffer, so SSAA-upscaled framebuffers are downsampled
+ * automatically.
+ */
+export async function samplePixelAt(
+  page: Page,
+  selector: string,
+  fx: number,
+  fy: number
+): Promise<{ r: number; g: number; b: number; a: number }> {
+  return await page.evaluate(
+    ({ sel, x, y }) => {
+      const canvas = document.querySelector(sel) as HTMLCanvasElement | null;
+      if (!canvas) throw new Error(`samplePixelAt: no canvas at ${sel}`);
+      const bbox = canvas.getBoundingClientRect();
+      const px = Math.max(0, Math.min(canvas.width - 1, Math.round(x * canvas.width)));
+      const py = Math.max(0, Math.min(canvas.height - 1, Math.round(y * canvas.height)));
+      void bbox;
+      // Use a 2D offscreen canvas to drawImage and read pixels — this works
+      // regardless of preserveDrawingBuffer because we're reading from a
+      // copied bitmap, not the live framebuffer.
+      const off = document.createElement('canvas');
+      off.width = canvas.width;
+      off.height = canvas.height;
+      const ctx = off.getContext('2d');
+      if (!ctx) throw new Error('samplePixelAt: 2D context unavailable');
+      ctx.drawImage(canvas, 0, 0);
+      const data = ctx.getImageData(px, py, 1, 1).data;
+      return { r: data[0], g: data[1], b: data[2], a: data[3] };
+    },
+    { sel: selector, x: fx, y: fy }
+  );
 }

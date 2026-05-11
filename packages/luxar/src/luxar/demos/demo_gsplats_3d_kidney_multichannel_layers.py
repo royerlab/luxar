@@ -308,8 +308,8 @@ def fit_channel(volume, channel_name, cache_file):
         device=DEVICE,
         verbose=True,
         enable_dynamic_ops=True,
-        #boundary_penalty=0.1,
-        #clip_to_bounds=True,
+        # boundary_penalty=0.1,
+        # clip_to_bounds=True,
         voxel_size=VOXEL_SIZE_ZYX,
     )
 
@@ -491,7 +491,9 @@ def show_roundtrip_comparison(
     try:
         import matplotlib.pyplot as plt
     except ImportError:
-        aprint("matplotlib is required for --show-roundtrip. Install with: pip install matplotlib")
+        aprint(
+            "matplotlib is required for --show-roundtrip. Install with: pip install matplotlib"
+        )
         return
 
     n_channels = len(volumes)

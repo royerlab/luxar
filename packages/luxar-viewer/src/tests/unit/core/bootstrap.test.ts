@@ -51,12 +51,24 @@ vi.mock('../../../config/validation', () => ({
 
 vi.mock('../../../ui/helpers', () => ({
   showError: mocks.showError,
+  // bootstrap.ts also imports the rest to wire setNotifierBackend(...).
+  // The bootstrap unit tests don't exercise the notifier path; stubs
+  // are sufficient.
+  showToast: vi.fn(),
+  showHelpOverlay: vi.fn(),
+  hideHelpOverlay: vi.fn(),
+  showLoadingIndicator: vi.fn(),
+  hideLoadingIndicator: vi.fn(),
+  clearError: vi.fn(),
 }));
 
 vi.mock('zarrita', () => ({
   registry: {
     get: (key: string) => (key === 'blosc' ? mocks.bloscThunk : undefined),
   },
+  // Stubbed for vitest strict-mock compatibility; bootstrap path
+  // doesn't reach the scene loader, so this helper is not invoked.
+  withMaybeConsolidatedMetadata: undefined,
 }));
 
 import { bootstrapStandalone } from '../../../core/bootstrap';
@@ -73,6 +85,7 @@ const EMPTY_PARAMS: UrlParams = {
   clearCache: false,
   noPrefetch: false,
   prefetchDebug: false,
+  cacheStats: false,
 };
 
 describe('bootstrapStandalone', () => {

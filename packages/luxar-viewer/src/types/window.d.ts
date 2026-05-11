@@ -13,13 +13,13 @@
 
 import type { LuxarApp } from '../core/app';
 import type { ConsoleInterceptor } from '../utils/console-interceptor';
-import type { LuxarCamera } from '../scene/camera-utils';
+import type { LuxarCamera } from '../utils/camera-utils';
 import type { AnimationController } from '../scene/animation-controller';
 import type { InputHandler } from '../input/input-handler';
 import type { RenderingControls } from '../ui/rendering-controls';
 import type { RecordingPanel } from '../ui/recording-panel';
 import type { ControlsManager } from '../controls/controls-manager';
-import type { PostProcessingManager } from '../rendering/post-processing-manager';
+import type { PostProcessingManager } from '../rendering/post-processing/post-processing-manager';
 import type { SceneDimsManager } from '../scene/scene-dims-manager';
 import type * as THREE from 'three';
 
@@ -76,6 +76,17 @@ declare global {
         clearL1: () => void;
         clearL2: () => Promise<void>;
         clearAll: () => Promise<void>;
+      };
+
+      /**
+       * Worker pool diagnostics. `getQueueDepth()` returns the aggregate
+       * in-flight task count across the pool — useful for spotting
+       * prefetch backpressure or task accumulation after rapid dataset
+       * switches.
+       */
+      workers?: {
+        getQueueDepth: () => number;
+        getStats: () => unknown;
       };
 
       /**

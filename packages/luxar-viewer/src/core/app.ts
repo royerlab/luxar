@@ -2,34 +2,52 @@
 
 import * as THREE from 'three';
 import { SceneManager } from '../scene/scene-manager';
+import {
+  captureSnapshot as captureViewerSnapshot,
+  restoreSnapshot as restoreViewerSnapshot,
+  type ViewerSnapshot,
+} from './viewer-snapshot';
 import { AnimationController } from '../scene/animation-controller';
 import { InputHandler } from '../input/input-handler';
+import { DimensionSliders } from '../ui/panels/dimension-sliders';
 import { RenderingControls } from '../ui/rendering-controls';
 import { cleanupUI, clearError, showError, showHelpOverlay } from '../ui/helpers';
 import { config } from '../config';
-import { DatasetBrowser } from '../ui/dataset-browser';
+import { DatasetBrowser } from '../ui/panels/dataset-browser';
 import { log, Modules } from '../utils/log';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
 import { AdaptiveDPRManager } from '../rendering/adaptive-dpr-manager';
 import { ResolutionIndicator } from '../ui/components/resolution-indicator';
+import { PerformanceMonitor } from '../ui/monitors/performance-monitor';
+import { DataMonitorManager } from '../ui/monitors/data-monitor-manager';
+import { DebugConsole } from '../ui/panels/debug-console';
 import { SceneLoaderManager, getSceneLoader } from '../data/scene-loader-manager';
 import { ScaleBar } from '../ui/components/scale-bar';
 import { ColormapLegend } from '../ui/components/colormap-legend';
 import { RecordingPanel } from '../ui/recording-panel';
 import { LayersPanel } from '../ui/layers';
+import { type AppFactories, resolveFactories } from './app-factories';
 import { ThemeManager } from '../themes/theme-manager';
 import type { ZarrViewerConfig } from '../types/zarr';
-import { OverlayManager } from '../ui/overlay-manager';
-import * as zarr from 'zarrita';
+import { OverlayManager } from '../ui/helpers/overlay-manager';
+import * as zarr from '../data/zarr';
 import { PickingSystem, type PickResult } from '../rendering/picking/picking-system';
-import { LabelLoader } from '../data/label-loader';
-import { ImageLabelLoader } from '../data/image-label-loader';
+import { LabelLoader } from '../data/loaders/label-loader';
+import { ImageLabelLoader } from '../data/loaders/image-label-loader';
 import type { LoaderConfig } from '../data/data-loader-types';
 import { consoleInterceptor } from '../utils/console-interceptor';
 import { EventGroup } from '../utils/event-group';
 import { setWasmJsUrl } from '../wasm';
-import { setDataWorkerUrl } from '../workers/worker-pool';
+import { setDataWorkerUrl, disposeWorkerPool, getWorkerPool } from '../workers/worker-pool';
 import { replaceBrowserDataSourceUrl } from '../config/url-params';
+import { classifyBrowserUrl } from './browser-decision';
+import { applyViewerConfigState as applyViewerConfigStateHelper } from './viewer-config-applier';
+import { computeDebugState } from './debug-state';
+import { buildDebugCacheHelpers } from './debug-cache-helpers';
+import {
+  getPanelVisibilityStates as getPanelVisibilityStatesHelper,
+  restorePanelVisibilityStates as restorePanelVisibilityStatesHelper,
+} from './panel-visibility';
 
 /**
  * Init-time options for {@link LuxarApp.init}.
@@ -78,11 +96,31 @@ export interface LuxarAppOptions {
    * if your bundler can't resolve worker URLs that way.
    */
   workerPath?: string;
+
+  /**
+   * Open the data-loading monitor in expanded mode on the Cache tab as
+   * soon as the scene is wired up. Set by the standalone bootstrap when
+   * `?cache-stats` is in the URL; embedders can pass it explicitly when
+   * profiling cache behaviour.
+   */
+  openCacheStats?: boolean;
+
+  /**
+   * Optional construction overrides for the heavy components
+   * constructed by `init()`. When omitted (or per-key undefined),
+   * `defaultFactories` is used and the production path simply calls
+   * the matching `new X(...)`. Embedders + tests use this hook to
+   * substitute alternate scene managers, recording panels, etc.
+   * See `app-factories.ts`.
+   */
+  factories?: AppFactories;
 }
 
 export class LuxarApp {
   private sceneManager!: SceneManager;
   private animationController!: AnimationController;
+  private performanceMonitor!: PerformanceMonitor;
+  private debugConsole!: DebugConsole;
   private inputHandler!: InputHandler;
   private renderingControls!: RenderingControls;
   private adaptiveDPRManager!: AdaptiveDPRManager;
@@ -186,8 +224,22 @@ export class LuxarApp {
       );
     }
 
-    // Reset the idempotency guard so a fresh init followed by dispose works
-    // even if the same instance was previously initialized and disposed.
+    // THREE.js peer-dep version guard. The package.json declares
+    // `three@^0.163.0` as a peer; embedders that install an older
+    // (or far-newer breaking) version hit cryptic errors deep in
+    // material construction. Fail fast with a clear message instead.
+    // We check `REVISION` (THREE's published revision string, e.g. `"163"`).
+    const threeRevision = parseInt(THREE.REVISION ?? '0', 10);
+    if (!Number.isFinite(threeRevision) || threeRevision < 163) {
+      throw new Error(
+        `Luxar requires three@>=0.163.0 (found r${THREE.REVISION ?? '?'}). ` +
+          'Update the three peer dependency in your embedder.'
+      );
+    }
+
+    // Reset the idempotency guard so a fresh init followed by dispose
+    // works even if the same instance was already initialized and
+    // disposed.
     this.isDisposed = false;
     this.options = options;
 
@@ -213,18 +265,34 @@ export class LuxarApp {
 
       const sceneSrc = this.options.src ?? config.defaultZarrPath;
 
+      // Resolve construction-factory overrides once. Without
+      // overrides each entry simply calls the matching `new X(...)`.
+      const factories = resolveFactories(this.options.factories);
+
       // Initialize scene manager first
-      this.sceneManager = new SceneManager();
+      this.sceneManager = factories.sceneManager();
       await this.sceneManager.init({
         canvas: this.options.canvas,
         debug: this.options.debug,
       });
 
-      // Initialize animation controller with HDR post-processing
-      this.animationController = new AnimationController(
+      // Initialize animation controller with HDR post-processing.
+      // The PerformanceMonitor UI panel is constructed up here (not in
+      // the controller) and subscribes to the bus events the
+      // controller emits each frame. Owning it at the app level keeps
+      // the lower scene/ layer free of UI imports.
+      this.animationController = factories.animationController(
         this.sceneManager.controls,
         this.sceneManager.postProcessing
       );
+      // Skip GPU rendering while the WebGL context is lost.
+      // SceneManager flips this flag in its webglcontextlost/restored
+      // handlers; the loop polls each frame.
+      this.animationController.setContextLostPredicate(() =>
+        this.sceneManager.isWebGLContextLost()
+      );
+      this.performanceMonitor = new PerformanceMonitor();
+      this.debugConsole = new DebugConsole();
 
       // Set up per-frame callback for dynamic clipping plane updates
       // Uses unique ID so it won't conflict with other per-frame callbacks (e.g., dimension animation)
@@ -251,12 +319,56 @@ export class LuxarApp {
         }
       });
 
-      // Initialize input handler
-      this.inputHandler = new InputHandler(this.sceneManager, this.animationController);
+      // Re-register picking-system / GPU-pool resources after a WebGL
+      // context-restore event. SceneManager rebuilds the renderer +
+      // post-processing + material cache before dispatching, then we
+      // call NodeFactory.rebuildAfterContextRestore on the loaded
+      // scene so the picking system gets fresh registrations against
+      // the new context.
+      //
+      // Track the listener via this.events so dispose() removes it.
+      // An untracked anonymous arrow here would leak if sceneManager
+      // outlives app teardown — inconsistent with every other
+      // app-level listener.
+      if (typeof this.sceneManager.addEventListener === 'function') {
+        const onContextRestored = (): void => {
+          const sceneLoader = getSceneLoader('default');
+          if (sceneLoader && this.sceneManager.scene) {
+            sceneLoader.nodeFactory.rebuildAfterContextRestore(this.sceneManager.scene);
+          }
+        };
+        this.sceneManager.addEventListener('webgl-context-restored', onContextRestored);
+        this.events.add(() =>
+          this.sceneManager.removeEventListener('webgl-context-restored', onContextRestored)
+        );
+      }
+
+      // Inject the monitor factory into SceneLoaderManager so each
+      // SceneLoader can resolve its UI monitor without the data/ layer
+      // importing ui/ directly.
+      SceneLoaderManager.getInstance().setMonitorFactory((monitorId) => {
+        if (typeof document === 'undefined') return null;
+        const mgr = DataMonitorManager.getInstance();
+        if (!mgr.hasMonitor(monitorId)) {
+          mgr.createMonitor(monitorId, document.body);
+        }
+        return mgr.getMonitor(monitorId) ?? null;
+      });
+
+      // Initialize input handler. The DimensionSliders factory is
+      // injected here so the input layer never imports the concrete
+      // ui/ panel — input → ui is a layer-cruiser violation.
+      this.inputHandler = new InputHandler(
+        this.sceneManager,
+        this.animationController,
+        this.performanceMonitor,
+        this.debugConsole,
+        (config) => new DimensionSliders(config)
+      );
       this.inputHandler.init();
 
       // Initialize rendering controls
-      this.renderingControls = new RenderingControls(
+      this.renderingControls = factories.renderingControls(
         this.sceneManager.postProcessing,
         this.sceneManager
       );
@@ -271,7 +383,7 @@ export class LuxarApp {
       this.inputHandler.setRenderingControls(this.renderingControls);
 
       // Initialize recording panel (screenshot/video capture)
-      this.recordingPanel = new RecordingPanel(this.sceneManager, this.animationController);
+      this.recordingPanel = factories.recordingPanel(this.sceneManager, this.animationController);
       this.recordingPanel.setPanelStateCallbacks(
         () => this.getPanelVisibilityStates(),
         (states) => this.restorePanelVisibilityStates(states)
@@ -280,7 +392,7 @@ export class LuxarApp {
       this.inputHandler.setRecordingPanel(this.recordingPanel);
 
       // Initialize layers panel (per-node controls)
-      this.layersPanel = new LayersPanel(document.body, this.animationController);
+      this.layersPanel = factories.layersPanel(document.body, this.animationController);
       this.inputHandler.setLayersPanel(this.layersPanel);
 
       // Start animation loop first to ensure background is rendered
@@ -333,15 +445,9 @@ export class LuxarApp {
    * Check if we should show the dataset browser
    */
   private async shouldShowBrowser(src: string): Promise<boolean> {
-    // If no source or empty string, show browser immediately
-    if (!src || src.trim() === '') {
-      return true;
-    }
-
-    // If it's a directory URL (ends with /), show browser
-    if (src.endsWith('/')) {
-      return true;
-    }
+    // Synchronous classification: empty / trailing-slash URLs always
+    // need the browser, no point firing a zarr-metadata probe.
+    if (classifyBrowserUrl(src) === 'must-browse') return true;
 
     // Check if it's a Zarr dataset by looking for zarr metadata files
     // Try both v2 (.zgroup) and v3 (zarr.json) formats
@@ -411,8 +517,16 @@ export class LuxarApp {
       },
       onClose: () => {
         this.datasetBrowser = undefined;
+        // Clear the close handle in PanelCoordinator so a follow-on
+        // Escape doesn't try to close an already-closed browser.
+        this.inputHandler?.setDatasetBrowser(undefined);
       },
     });
+
+    // Hand a close handle to the InputHandler/PanelCoordinator so
+    // Escape routes through `close()` (which fires onClose above)
+    // instead of yanking the DOM node and stranding our ref.
+    this.inputHandler?.setDatasetBrowser(this.datasetBrowser);
   }
 
   /**
@@ -421,6 +535,11 @@ export class LuxarApp {
   private async loadDataset(src: string): Promise<void> {
     // Clear any existing dimension UI
     this.inputHandler.clearDimensionUI();
+
+    // Dispose previous-scene overlays upfront so they are cleared in lockstep
+    // with clearSceneContent() — otherwise a failing scene load leaves the old
+    // overlay DOM elements visible on top of an empty canvas.
+    this.disposeOverlays();
 
     // Note: Monitor cleanup is handled by SceneLoader.loadScene() which calls
     // monitor.disconnectAllLoaders() when loading a new scene
@@ -469,8 +588,28 @@ export class LuxarApp {
     // Apply zarr viewer_config: UI visibility, theme, dimension state, animation
     this.applyViewerConfigState(viewerConfig);
 
+    // ?cache-stats: open the data-loading monitor on the Cache tab. The
+    // monitor was created during sceneManager.loadSceneData() above, so
+    // it's safe to look it up via DataMonitorManager now.
+    if (this.options.openCacheStats) {
+      this.openCacheStatsView();
+    }
+
     // Trigger animation to ensure scene is rendered immediately
     this.animationController.startAnimation();
+  }
+
+  /**
+   * Open the data-loading monitor in expanded mode on the Cache tab.
+   * Best-effort: silently skips when no monitor was created (e.g.
+   * embedded contexts that disable the monitor).
+   */
+  private openCacheStatsView(): void {
+    const monitor = DataMonitorManager.getInstance().getDefaultMonitor();
+    if (!monitor) return;
+    monitor.show();
+    monitor.expand();
+    monitor.setActiveTab('cache');
   }
 
   /**
@@ -484,39 +623,17 @@ export class LuxarApp {
    * preserve the viewer's built-in defaults.
    */
   private applyViewerConfigState(viewerConfig: ZarrViewerConfig | undefined): void {
-    if (!viewerConfig) return;
-
-    // --- UI panel visibility ---
-    const ui = viewerConfig.ui;
-    if (ui) {
-      if (ui.show_help === true) showHelpOverlay();
-      if (ui.show_rendering_controls === true) this.renderingControls.show();
-      if (ui.show_rendering_controls === false) this.renderingControls.hide();
-      if (ui.show_performance_monitor === true) {
-        this.animationController.performanceStats?.show();
-      }
-      if (ui.show_dimensions === true) {
-        this.inputHandler.showDimensionSliders();
-      }
-      if (ui.show_scale_bar === true && this.scaleBar) this.scaleBar.show();
-      if (ui.show_scale_bar === false && this.scaleBar) this.scaleBar.hide();
-      if (ui.show_layers === true && this.layersPanel) this.layersPanel.show();
-      if (ui.show_layers === false && this.layersPanel) this.layersPanel.hide();
-      if (ui.show_overlays === true && this.overlayManager) this.overlayManager.show();
-      if (ui.show_overlays === false && this.overlayManager) this.overlayManager.hide();
-    }
-
-    // --- Theme ---
-    if (viewerConfig.theme) {
-      ThemeManager.getInstance().setTheme(viewerConfig.theme);
-    }
-
-    // --- Dimension navigation state ---
-    if (viewerConfig.dimensions?.current_step) {
-      for (let i = 0; i < viewerConfig.dimensions.current_step.length; i++) {
-        sceneDimsManager.setDimensionValue(i, viewerConfig.dimensions.current_step[i]);
-      }
-    }
+    applyViewerConfigStateHelper(viewerConfig, {
+      showHelp: showHelpOverlay,
+      renderingControls: this.renderingControls,
+      performanceMonitor: this.performanceMonitor,
+      inputHandler: this.inputHandler,
+      scaleBar: this.scaleBar,
+      layersPanel: this.layersPanel,
+      overlayManager: this.overlayManager,
+      setTheme: (id) => ThemeManager.getInstance().setTheme(id),
+      setDimensionValue: (i, v) => sceneDimsManager.setDimensionValue(i, v),
+    });
   }
 
   /**
@@ -572,15 +689,23 @@ export class LuxarApp {
   }
 
   /**
-   * Initialize screen-space overlays from zarr metadata.
-   * Creates an OverlayManager if the loaded scene contains overlays.
+   * Tear down the current OverlayManager, removing its DOM elements.
    */
-  private async initOverlays(): Promise<void> {
-    // Dispose previous overlay manager if reloading
+  private disposeOverlays(): void {
     if (this.overlayManager) {
       this.overlayManager.dispose();
       this.overlayManager = undefined;
     }
+  }
+
+  /**
+   * Initialize screen-space overlays from zarr metadata.
+   * Creates an OverlayManager if the loaded scene contains overlays.
+   */
+  private async initOverlays(): Promise<void> {
+    // Defensive: loadDataset() already disposes overlays upfront, but keep
+    // this idempotent in case initOverlays() is called from another path.
+    this.disposeOverlays();
 
     const root = this.sceneManager.scene?.children?.find((c) => c.name === 'LuxarScene') as
       | THREE.Group
@@ -826,90 +951,27 @@ export class LuxarApp {
       sceneDimsManager: sceneDimsManager,
       app: this,
 
-      // Helper function to get current state snapshot
-      getState: () => {
-        const scene = this.sceneManager.scene;
+      // Worker pool diagnostics. `queueDepth` is the aggregate count of
+      // in-flight worker tasks; useful for spotting prefetch
+      // backpressure or task accumulation after rapid dataset switches.
+      // Returns 0 when the pool is idle / uninitialized.
+      workers: {
+        getQueueDepth: () => getWorkerPool().getQueueDepth(),
+        getStats: () => getWorkerPool().getStats(),
+      },
 
-        // Count points across all point clouds
-        let totalPoints = 0;
-        const pointClouds: any[] = [];
-
-        // Count gsplats across all gsplat meshes
-        let totalGSplats = 0;
-        const gsplatMeshes: any[] = [];
-
-        scene.traverse((object) => {
-          if (object.type === 'Points') {
-            const geometry = (object as any).geometry;
-            // Use drawRange.count if set (GPU buffer pool uses drawRange to limit rendering)
-            // Fall back to position.count for geometries without drawRange
-            const drawRangeCount = geometry?.drawRange?.count;
-            const bufferCount = geometry?.attributes?.position?.count || 0;
-            // Infinity means "draw all", so use buffer count in that case
-            const pointCount =
-              drawRangeCount !== undefined && drawRangeCount !== Infinity
-                ? Math.min(drawRangeCount, bufferCount)
-                : bufferCount;
-            totalPoints += pointCount;
-
-            pointClouds.push({
-              name: object.name || 'unnamed',
-              pointCount,
-              visible: object.visible,
-              hasColors: !!geometry?.attributes?.color,
-              hasRadii: !!geometry?.attributes?.radius,
-              hasSharpness: !!geometry?.attributes?.sharpness,
-            });
-          }
-
-          // Count gsplat instances (Mesh with InstancedBufferGeometry and nodeType 'gsplats')
-          if (
-            object instanceof THREE.Mesh &&
-            (object as any).userData?.nodeType === 'gsplats' &&
-            object.geometry instanceof THREE.InstancedBufferGeometry
-          ) {
-            const splatCount = (object.geometry as THREE.InstancedBufferGeometry).instanceCount;
-            totalGSplats += splatCount;
-            gsplatMeshes.push({
-              name: object.name || 'unnamed',
-              splatCount,
-              visible: object.visible,
-            });
-          }
-        });
-
-        // Get dimensions from sceneDimsManager
-        const dims = sceneDimsManager.getDims();
-        const dimensionsInfo = dims
-          ? { ndim: dims.ndim, displayed: dims.displayed, currentStep: dims.currentStep }
-          : null;
-
-        return {
-          totalPoints,
-          totalGSplats,
-          totalElements: totalPoints + totalGSplats,
-          pointClouds,
-          gsplatMeshes,
-          dimensions: dimensionsInfo,
-          camera: {
-            position: {
-              x: this.sceneManager.camera.position.x,
-              y: this.sceneManager.camera.position.y,
-              z: this.sceneManager.camera.position.z,
-            },
-            fov: this.sceneManager.currentFov,
-          },
-          // Keep legacy cameraPosition for backward compatibility
-          cameraPosition: {
-            x: this.sceneManager.camera.position.x,
-            y: this.sceneManager.camera.position.y,
-            z: this.sceneManager.camera.position.z,
-          },
-          cameraFov: this.sceneManager.currentFov,
+      // Helper function to get current state snapshot.
+      // Implementation lives in `core/debug-state.ts` so the
+      // scene-walking logic can be unit-tested directly.
+      getState: () =>
+        computeDebugState({
+          scene: this.sceneManager.scene,
+          camera: this.sceneManager.camera,
+          currentFov: this.sceneManager.currentFov,
           isAnimating: this.animationController.isActive,
           initialized: this.isInitialized,
-        };
-      },
+          dims: sceneDimsManager.getDims(),
+        }),
 
       // Helper to trigger a single frame render (for stable screenshots)
       renderOnce: () => {
@@ -921,62 +983,13 @@ export class LuxarApp {
         return SceneLoaderManager.getInstance();
       },
 
-      // Cache-specific helpers — thin wrappers over the SceneLoader cache API.
-      cache: {
-        getStats: () => {
-          const loader = SceneLoaderManager.getInstance().getDefaultLoader();
-          if (!loader) return { error: 'No active loader found' };
-          return loader.getCacheStats();
-        },
-
-        listDatasets: async () => {
-          const loader = SceneLoaderManager.getInstance().getDefaultLoader();
-          if (!loader || !loader.hasCachingStore) {
-            return { error: 'No active cache found' };
-          }
-          return loader.listCachedDatasets();
-        },
-
-        clearL0: () => {
-          const loader = SceneLoaderManager.getInstance().getDefaultLoader();
-          if (!loader) {
-            log.warning(Modules.CACHE, 'No L0 cache found');
-            return;
-          }
-          loader.clearL0Cache();
-          log.info(Modules.CACHE, 'L0 cache cleared');
-        },
-
-        clearL1: () => {
-          const loader = SceneLoaderManager.getInstance().getDefaultLoader();
-          if (!loader || !loader.hasCachingStore) {
-            log.warning(Modules.CACHE, 'No active cache found');
-            return;
-          }
-          loader.clearL1Cache();
-          log.info(Modules.CACHE, 'L1 cache cleared');
-        },
-
-        clearL2: async () => {
-          const loader = SceneLoaderManager.getInstance().getDefaultLoader();
-          if (!loader || !loader.hasCachingStore) {
-            log.warning(Modules.CACHE, 'No active cache found');
-            return;
-          }
-          await loader.clearL2Cache();
-          log.info(Modules.CACHE, 'L2 cache cleared');
-        },
-
-        clearAll: async () => {
-          const loader = SceneLoaderManager.getInstance().getDefaultLoader();
-          if (!loader) {
-            log.warning(Modules.CACHE, 'No active loader found');
-            return;
-          }
-          await loader.clearAllCaches();
-          log.info(Modules.CACHE, 'All caches cleared (L0, L1, L2)');
-        },
-      },
+      // Cache-specific helpers — thin wrappers over the SceneLoader cache
+      // API. Implementation lives in `core/debug-cache-helpers.ts` so the
+      // not-found / no-cache / success branches can be unit-tested
+      // directly with a stub loader.
+      cache: buildDebugCacheHelpers(() =>
+        SceneLoaderManager.getInstance().getDefaultLoader()
+      ),
 
       // Test-friendly hook for the error-dialog component. Lets
       // visual-regression specs render the dialog directly without going
@@ -996,6 +1009,14 @@ export class LuxarApp {
     log.info(Modules.LUXAR, '  __luxarDebug.camera - Access camera');
     log.info(Modules.LUXAR, '  __luxarDebug.app - Access LuxarApp instance');
     log.info(Modules.LUXAR, '  __luxarDebug.cache.getStats() - Get cache statistics (L0, L1, L2)');
+    log.info(
+      Modules.LUXAR,
+      '  __luxarDebug.workers.getQueueDepth() - In-flight worker task count (backpressure diagnostic)'
+    );
+    log.info(
+      Modules.LUXAR,
+      '  __luxarDebug.cache.listDatasets() - List all cached datasets (URL, hash, size)'
+    );
     log.info(Modules.LUXAR, '  __luxarDebug.cache.clearL0() - Clear L0 decompressed chunk cache');
     log.info(Modules.LUXAR, '  __luxarDebug.cache.clearL1() - Clear L1 memory cache');
     log.info(Modules.LUXAR, '  __luxarDebug.cache.clearL2() - Clear L2 OPFS cache');
@@ -1030,6 +1051,43 @@ export class LuxarApp {
    * dispose(), the LuxarApp instance is in an uninitialized state — call
    * init() again to re-create resources, or discard the instance.
    */
+  /**
+   * Capture a JSON-serialisable snapshot of the current viewer state.
+   *
+   * Includes camera placement (position, target, up, projection params)
+   * and per-dimension slice positions. Layer-panel state and rendering-
+   * controls settings are not included in v1 — see
+   * `src/core/viewer-snapshot.ts` for the rationale and the schema.
+   *
+   * Use the returned object to share a view, write a regression fixture,
+   * or hand to {@link restoreSnapshot} on another LuxarApp instance.
+   *
+   * @throws if the app has not been initialised yet.
+   */
+  captureSnapshot(): ViewerSnapshot {
+    if (!this.isInitialized) {
+      throw new Error('LuxarApp.captureSnapshot called before init()');
+    }
+    return captureViewerSnapshot(this.sceneManager);
+  }
+
+  /**
+   * Restore viewer state from a snapshot produced by {@link captureSnapshot}.
+   *
+   * Returns which parts of the snapshot were applied. Camera always applies
+   * if the version matches; dims apply only when the snapshot's `ndim`
+   * matches the loaded dataset (otherwise skipped with a warning rather
+   * than throwing — common for cross-dataset link sharing).
+   *
+   * @throws if the app has not been initialised yet.
+   */
+  restoreSnapshot(snapshot: ViewerSnapshot): { cameraApplied: boolean; dimsApplied: boolean } {
+    if (!this.isInitialized) {
+      throw new Error('LuxarApp.restoreSnapshot called before init()');
+    }
+    return restoreViewerSnapshot(this.sceneManager, snapshot);
+  }
+
   dispose(): void {
     // Idempotency: a second dispose() after a successful one is a no-op.
     // Component fields still reference their (already disposed) instances,
@@ -1045,127 +1103,120 @@ export class LuxarApp {
     // teardown throws partway through.
     this.isInitialized = false;
 
-    try {
-      // Stop animation first
-      if (this.animationController) {
-        this.animationController.dispose();
+    // Per-component teardown: a single throwing component must NOT skip
+    // later cleanup (especially singletons + workers + the manager registry).
+    // Each step is wrapped in safeDispose; errors collect and log without
+    // bubbling out of dispose().
+    const errors: Array<{ label: string; error: unknown }> = [];
+    const safeDispose = (label: string, fn: () => void): void => {
+      try {
+        fn();
+      } catch (error) {
+        errors.push({ label, error });
+        log.warning(Modules.LUXAR, `Error disposing ${label}:`, error);
       }
+    };
 
-      // Clean up adaptive DPR manager
-      if (this.adaptiveDPRManager) {
-        this.adaptiveDPRManager.dispose();
-      }
+    // Stop animation first.
+    safeDispose('animationController', () => this.animationController?.dispose());
+    safeDispose('adaptiveDPRManager', () => this.adaptiveDPRManager?.dispose());
+    safeDispose('resolutionIndicator', () => this.resolutionIndicator?.dispose());
+    safeDispose('scaleBar', () => {
+      this.scaleBar?.dispose();
+      this.scaleBar = undefined;
+    });
+    safeDispose('colormapLegend', () => {
+      this.colormapLegend?.dispose();
+      this.colormapLegend = undefined;
+    });
+    // Clear recording-panel back-reference before overlayManager dispose.
+    safeDispose('overlayManager', () => {
+      this.recordingPanel?.setOverlayManager(null);
+      this.overlayManager?.dispose();
+      this.overlayManager = undefined;
+    });
+    safeDispose('recordingPanel', () => {
+      this.recordingPanel?.dispose();
+      this.recordingPanel = undefined;
+    });
+    safeDispose('layersPanel', () => {
+      this.layersPanel?.dispose();
+      this.layersPanel = undefined;
+    });
+    // pickingEvents is reusable: dispose() leaves it empty for next initPicking().
+    safeDispose('pickingEvents', () => this.pickingEvents.dispose());
+    safeDispose('pickingSystem', () => {
+      this.pickingSystem?.dispose();
+      this.pickingSystem = undefined;
+    });
+    safeDispose('labelLoader', () => {
+      this.labelLoader?.dispose();
+      this.labelLoader = undefined;
+    });
+    safeDispose('imageLabelLoader', () => {
+      this.imageLabelLoader?.dispose();
+      this.imageLabelLoader = undefined;
+    });
+    // Explicitly close any open DatasetBrowser BEFORE input-handler
+    // teardown. The browser is a child panel owned by LuxarApp; without
+    // this step its DOM stays attached and the PanelCoordinator close
+    // handle stays bound until input-handler disposes its listeners.
+    // Embedded re-init scenarios must not start with a stale browser
+    // modal from the prior app.
+    safeDispose('datasetBrowser', () => {
+      this.datasetBrowser?.close();
+      this.datasetBrowser = undefined;
+      this.inputHandler?.setDatasetBrowser(undefined);
+    });
+    safeDispose('inputHandler', () => this.inputHandler?.dispose());
+    safeDispose('renderingControls', () => this.renderingControls?.dispose());
+    safeDispose('sceneManager', () => this.sceneManager?.dispose());
+    // ThemeManager: disconnects glass-refraction MutationObserver, removes
+    // injected SVG filters, clears CSS custom properties.
+    safeDispose('themeManager', () => ThemeManager.disposeInstance());
+    safeDispose('cleanupUI', () => cleanupUI());
+    // App-level event listeners (focus, visibility, beforeunload,
+    // open-dataset-browser, picking-system subscriptions).
+    safeDispose('events', () => this.events.dispose());
 
-      // Clean up resolution indicator
-      if (this.resolutionIndicator) {
-        this.resolutionIndicator.dispose();
-      }
+    // Three-tier singleton teardown. Monitor first (factory wiring holds
+    // loader refs); loader manager drops loaders + cache stores; worker
+    // pool terminates remaining workers last so any in-flight worker
+    // call sees the upstream owners gone before being torn down itself.
+    safeDispose('dataMonitorManager', () => DataMonitorManager.disposeInstance());
+    safeDispose('sceneLoaderManager', () => SceneLoaderManager.disposeInstance());
+    safeDispose('workerPool', () => disposeWorkerPool());
 
-      // Clean up scale bar
-      if (this.scaleBar) {
-        this.scaleBar.dispose();
-        this.scaleBar = undefined;
-      }
-
-      // Clean up colormap legend
-      if (this.colormapLegend) {
-        this.colormapLegend.dispose();
-        this.colormapLegend = undefined;
-      }
-
-      // Clean up overlay manager (before recording panel so we can clear the reference)
-      if (this.overlayManager) {
-        this.recordingPanel?.setOverlayManager(null);
-        this.overlayManager.dispose();
-        this.overlayManager = undefined;
-      }
-
-      // Clean up recording panel
-      if (this.recordingPanel) {
-        this.recordingPanel.dispose();
-        this.recordingPanel = undefined;
-      }
-
-      // Clean up layers panel
-      if (this.layersPanel) {
-        this.layersPanel.dispose();
-        this.layersPanel = undefined;
-      }
-
-      // Clean up picking system listeners (DOM mousemove, controls/scene
-      // event subscriptions). pickingEvents is reusable: dispose() leaves it
-      // in an empty state ready for the next initPicking() call.
-      this.pickingEvents.dispose();
-      if (this.pickingSystem) {
-        this.pickingSystem.dispose();
-        this.pickingSystem = undefined;
-      }
-      if (this.labelLoader) {
-        this.labelLoader.dispose();
-        this.labelLoader = undefined;
-      }
-      if (this.imageLabelLoader) {
-        this.imageLabelLoader.dispose();
-        this.imageLabelLoader = undefined;
-      }
-
-      // Clean up input handlers
-      if (this.inputHandler) {
-        this.inputHandler.dispose();
-      }
-
-      // Clean up rendering controls
-      if (this.renderingControls) {
-        this.renderingControls.dispose();
-      }
-
-      // Clean up scene resources
-      if (this.sceneManager) {
-        this.sceneManager.dispose();
-      }
-
-      // Tear down the theme manager (disconnects glass-refraction MutationObserver,
-      // removes injected SVG filters, clears CSS custom properties).
-      ThemeManager.disposeInstance();
-
-      // Clean up UI resources
-      cleanupUI();
-
-      // Tear down all app-level event listeners (focus, visibility, beforeunload,
-      // open-dataset-browser, and any picking-system subscriptions added later
-      // via this.events.add()) in one call.
-      this.events.dispose();
-    } catch (error) {
-      log.error(Modules.LUXAR, 'Error during dispose:', error);
-    } finally {
-      this.isDisposing = false;
-      this.isDisposed = true;
+    if (errors.length > 0) {
+      log.error(
+        Modules.LUXAR,
+        `dispose(): ${errors.length} component(s) threw during teardown`,
+        errors.map((e) => e.label).join(', ')
+      );
     }
+
+    this.isDisposing = false;
+    this.isDisposed = true;
   }
 
   /**
    * Get visibility states of all UI panels for save/restore during recording.
+   * Implementation lives in `core/panel-visibility.ts`.
    */
   private getPanelVisibilityStates(): Map<string, boolean> {
-    const states = new Map<string, boolean>();
-    states.set('renderingControls', this.renderingControls?.isVisible() ?? false);
-    states.set('recordingPanel', this.recordingPanel?.isVisible() ?? false);
-    return states;
+    return getPanelVisibilityStatesHelper({
+      renderingControls: this.renderingControls,
+      recordingPanel: this.recordingPanel,
+    });
   }
 
   /**
    * Restore UI panel visibility from a saved state map.
    */
   private restorePanelVisibilityStates(states: Map<string, boolean>): void {
-    if (states.get('renderingControls')) {
-      this.renderingControls?.show();
-    } else {
-      if (this.renderingControls?.isVisible()) this.renderingControls.hide();
-    }
-    if (states.get('recordingPanel')) {
-      this.recordingPanel?.show();
-    } else {
-      if (this.recordingPanel?.isVisible()) this.recordingPanel.hide();
-    }
+    restorePanelVisibilityStatesHelper(states, {
+      renderingControls: this.renderingControls,
+      recordingPanel: this.recordingPanel,
+    });
   }
 }

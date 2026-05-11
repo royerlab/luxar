@@ -589,8 +589,8 @@ def quick_view(
                         actual_port,
                         None,  # bandwidth_mbps
                         None,  # latency_ms
-                        0.0,   # jitter_percent
-                        0.0,   # packet_loss_rate
+                        0.0,  # jitter_percent
+                        0.0,  # packet_loss_rate
                         False,  # allow_sensitive_path
                         cors_origin,
                     ),
@@ -982,7 +982,9 @@ def filter_dataset(
     ),
     # Truncation
     truncate: Optional[float] = typer.Option(
-        None, "--truncate", help="Sigma truncation for volume computation. Defaults to dataset's stored value."
+        None,
+        "--truncate",
+        help="Sigma truncation for volume computation. Defaults to dataset's stored value.",
     ),
     # Output options
     encoding_mode: Literal["auto", "precision", "memory"] = typer.Option(
@@ -1116,7 +1118,9 @@ def filter_dataset(
                     aprint(f"Saved filtered dataset: {output_path}")
 
                     if output_path.exists():
-                        aprint(f"  Size: {format_memory_size(output_path.stat().st_size)}")
+                        aprint(
+                            f"  Size: {format_memory_size(output_path.stat().st_size)}"
+                        )
 
     except typer.Exit:
         raise
@@ -1365,7 +1369,9 @@ def slice_dataset(
                     aprint(f"Saved sliced dataset: {output_path}")
 
                     if output_path.exists():
-                        aprint(f"  Size: {format_memory_size(output_path.stat().st_size)}")
+                        aprint(
+                            f"  Size: {format_memory_size(output_path.stat().st_size)}"
+                        )
 
     except typer.Exit:
         raise
@@ -1979,7 +1985,11 @@ def fit_volume(
                         norm_vol, _, _ = normalize_volume(volume)
                         t_vol = torch.from_numpy(norm_vol)
                         # Auto-select CUDA > MPS > CPU when --device is omitted.
-                        dev = resolve_torch_device(device) if device else resolve_torch_device()
+                        dev = (
+                            resolve_torch_device(device)
+                            if device
+                            else resolve_torch_device()
+                        )
                         _denoise_effective_h = calibrate_nlm_h(
                             t_vol,
                             patch_size=denoise_patch_size,
@@ -2225,7 +2235,9 @@ def fit_volume(
                 n_splats = result.n_splats
                 aprint(f"Saved {n_splats:,} splats")
                 if output_path.exists():
-                    aprint(f"File size: {format_memory_size(output_path.stat().st_size)}")
+                    aprint(
+                        f"File size: {format_memory_size(output_path.stat().st_size)}"
+                    )
 
         time_s = result.stats.get("time_seconds", 0)
         aprint(f"\nDone: {n_splats:,} splats in {time_s:.1f}s")
@@ -2339,7 +2351,10 @@ def render_to_file(
         None, "--device", "-d", help="Device: auto/cpu/cuda/mps"
     ),
     truncate: Optional[float] = typer.Option(
-        None, "--truncate", "-t", help="Truncation radius in sigma. Defaults to dataset's stored value."
+        None,
+        "--truncate",
+        "-t",
+        help="Truncation radius in sigma. Defaults to dataset's stored value.",
     ),
 ) -> None:
     """Render Gaussian splats back to a volume.
@@ -2406,7 +2421,9 @@ def render_to_file(
                     np.save(str(output_path), volume)
 
                 if output_path.exists():
-                    aprint(f"File size: {format_memory_size(output_path.stat().st_size)}")
+                    aprint(
+                        f"File size: {format_memory_size(output_path.stat().st_size)}"
+                    )
 
         aprint(f"\nSaved: {output_path}")
 
@@ -2442,7 +2459,10 @@ def compare_quality(
         None, "--device", "-d", help="Device: auto/cpu/cuda/mps"
     ),
     truncate: Optional[float] = typer.Option(
-        None, "--truncate", "-t", help="Truncation radius in sigma. Defaults to dataset's stored value."
+        None,
+        "--truncate",
+        "-t",
+        help="Truncation radius in sigma. Defaults to dataset's stored value.",
     ),
     channel: Optional[int] = typer.Option(
         None, "--channel", "-c", help="Channel index for OME-Zarr reference"
