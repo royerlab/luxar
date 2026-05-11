@@ -237,7 +237,8 @@ export async function processGSplatsData(
 export function commitGSplatsGeometry(
   staged: StagedGSplatsCommit,
   rootGroup: THREE.Group | null,
-  gpuBufferPool: GPUBufferPool | null
+  gpuBufferPool: GPUBufferPool | null,
+  session?: UpdateSession
 ): void {
   if (!rootGroup) return;
 
@@ -246,44 +247,49 @@ export function commitGSplatsGeometry(
 
   const { processed, cholesky01, cholesky23, cholesky45 } = staged;
 
-  if (gpuBufferPool) {
-    const geometry = gpuBufferPool.acquireGSplatsGeometry(staged.path, processed.splatCount);
-    const truncationRadius = readTruncate(mesh);
-    gpuBufferPool.updateGSplatsGeometry(
-      geometry,
-      {
-        centers3D: processed.centers3D,
-        amplitudes: processed.amplitudes,
+  const bufferSession = session?.begin('Update Buffers');
+  try {
+    if (gpuBufferPool) {
+      const geometry = gpuBufferPool.acquireGSplatsGeometry(staged.path, processed.splatCount);
+      const truncationRadius = readTruncate(mesh);
+      gpuBufferPool.updateGSplatsGeometry(
+        geometry,
+        {
+          centers3D: processed.centers3D,
+          amplitudes: processed.amplitudes,
+          cholesky01,
+          cholesky23,
+          cholesky45,
+          colors: processed.colors,
+          splatCount: processed.splatCount,
+        },
+        processed.splatCount,
+        truncationRadius
+      );
+      mesh.geometry = geometry;
+    } else {
+      updateInstancedGSplatsMesh(mesh, {
+        centers: processed.centers3D,
         cholesky01,
         cholesky23,
         cholesky45,
+        amplitudes: processed.amplitudes,
         colors: processed.colors,
         splatCount: processed.splatCount,
-      },
-      processed.splatCount,
-      truncationRadius
-    );
-    mesh.geometry = geometry;
-  } else {
-    updateInstancedGSplatsMesh(mesh, {
-      centers: processed.centers3D,
-      cholesky01,
-      cholesky23,
-      cholesky45,
-      amplitudes: processed.amplitudes,
-      colors: processed.colors,
-      splatCount: processed.splatCount,
-    });
-  }
+      });
+    }
 
-  if (mesh.userData) {
-    (mesh.userData as GSplatsUserData).visibleSplatCount = processed.splatCount;
-  }
+    if (mesh.userData) {
+      (mesh.userData as GSplatsUserData).visibleSplatCount = processed.splatCount;
+    }
 
-  if (processed.splatCount === 0) {
-    log.info(
-      Modules.SCENE_LOADER,
-      `Clearing gsplats for ${staged.path} (no visible splats at current slice)`
-    );
+    if (processed.splatCount === 0) {
+      log.info(
+        Modules.SCENE_LOADER,
+        `Clearing gsplats for ${staged.path} (no visible splats at current slice)`
+      );
+    }
+  } finally {
+    bufferSession?.end();
   }
 }

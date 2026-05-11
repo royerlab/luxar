@@ -546,25 +546,31 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
         loadVertSession?.end();
       }
 
-      // Build global → local index mapping
-      const vertexIndexMap = new Map<number, number>();
-      let localIdx = 0;
-      for (const range of mergedVertexRanges) {
-        for (let i = range.start; i < range.end; i++) {
-          vertexIndexMap.set(i, localIdx++);
+      const remapSession = session?.begin('Index Remap');
+      let vertexCount: number;
+      try {
+        // Build global → local index mapping
+        const vertexIndexMap = new Map<number, number>();
+        let localIdx = 0;
+        for (const range of mergedVertexRanges) {
+          for (let i = range.start; i < range.end; i++) {
+            vertexIndexMap.set(i, localIdx++);
+          }
         }
-      }
 
-      // Remap segment indices directly in accumulator buffer (ZERO allocation!)
-      for (let i = 0; i < segmentData.length; i++) {
-        const localIndex = vertexIndexMap.get(segmentData[i]);
-        if (localIndex === undefined) {
-          throw new Error(`Vertex index ${segmentData[i]} not found in loaded data`);
+        // Remap segment indices directly in accumulator buffer (ZERO allocation!)
+        for (let i = 0; i < segmentData.length; i++) {
+          const localIndex = vertexIndexMap.get(segmentData[i]);
+          if (localIndex === undefined) {
+            throw new Error(`Vertex index ${segmentData[i]} not found in loaded data`);
+          }
+          segmentBuffer[i] = localIndex;
         }
-        segmentBuffer[i] = localIndex;
-      }
 
-      const vertexCount = vertexIndexMap.size;
+        vertexCount = vertexIndexMap.size;
+      } finally {
+        remapSession?.end();
+      }
 
       // Return from accumulator (subarrays, zero copy!)
       return this._accumulator.getData(segmentCount, vertexCount);
@@ -612,23 +618,31 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
         : undefined;
     }
 
-    // Build global → local index mapping
-    const vertexIndexMap = new Map<number, number>();
-    let localIdx = 0;
-    for (const range of mergedVertexRanges) {
-      for (let i = range.start; i < range.end; i++) {
-        vertexIndexMap.set(i, localIdx++);
+    const remapSession = session?.begin('Index Remap');
+    let remappedSegments: Uint32Array;
+    let vertexIndexMapSize: number;
+    try {
+      // Build global → local index mapping
+      const vertexIndexMap = new Map<number, number>();
+      let localIdx = 0;
+      for (const range of mergedVertexRanges) {
+        for (let i = range.start; i < range.end; i++) {
+          vertexIndexMap.set(i, localIdx++);
+        }
       }
-    }
 
-    // Remap segment indices to local space
-    const remappedSegments = new Uint32Array(segmentData.length);
-    for (let i = 0; i < segmentData.length; i++) {
-      const localIndex = vertexIndexMap.get(segmentData[i]);
-      if (localIndex === undefined) {
-        throw new Error(`Vertex index ${segmentData[i]} not found in loaded data`);
+      // Remap segment indices to local space
+      remappedSegments = new Uint32Array(segmentData.length);
+      for (let i = 0; i < segmentData.length; i++) {
+        const localIndex = vertexIndexMap.get(segmentData[i]);
+        if (localIndex === undefined) {
+          throw new Error(`Vertex index ${segmentData[i]} not found in loaded data`);
+        }
+        remappedSegments[i] = localIndex;
       }
-      remappedSegments[i] = localIndex;
+      vertexIndexMapSize = vertexIndexMap.size;
+    } finally {
+      remapSession?.end();
     }
 
     // Fallback: Return new object
@@ -641,7 +655,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       // scalars now flow through the loader fallback path.
       scalars,
       segmentCount: Math.floor(segmentData.length / 2),
-      vertexCount: vertexIndexMap.size,
+      vertexCount: vertexIndexMapSize,
       ndim: attrs.ndim,
     };
   }

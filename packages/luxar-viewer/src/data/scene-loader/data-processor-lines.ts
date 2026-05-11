@@ -239,7 +239,8 @@ export async function processLinesData(
 export function commitLinesGeometry(
   staged: StagedLinesCommit,
   rootGroup: THREE.Group | null,
-  gpuBufferPool: GPUBufferPool | null
+  gpuBufferPool: GPUBufferPool | null,
+  session?: UpdateSession
 ): void {
   if (!rootGroup) return;
 
@@ -248,22 +249,27 @@ export function commitLinesGeometry(
 
   const { processed } = staged;
 
-  if (gpuBufferPool) {
-    const geometry = gpuBufferPool.acquireLinesGeometry(staged.path, processed.segmentCount);
-    gpuBufferPool.updateLinesGeometry(geometry, processed, processed.segmentCount);
-    mesh.geometry = geometry;
-  } else {
-    updateInstancedLinesMesh(mesh, processed);
-  }
+  const bufferSession = session?.begin('Update Buffers');
+  try {
+    if (gpuBufferPool) {
+      const geometry = gpuBufferPool.acquireLinesGeometry(staged.path, processed.segmentCount);
+      gpuBufferPool.updateLinesGeometry(geometry, processed, processed.segmentCount);
+      mesh.geometry = geometry;
+    } else {
+      updateInstancedLinesMesh(mesh, processed);
+    }
 
-  if (isLinesUserData(mesh.userData)) {
-    mesh.userData.visibleSegmentCount = processed.segmentCount;
-  }
+    if (isLinesUserData(mesh.userData)) {
+      mesh.userData.visibleSegmentCount = processed.segmentCount;
+    }
 
-  if (processed.segmentCount === 0) {
-    log.info(
-      Modules.SCENE_LOADER,
-      `Clearing lines for ${staged.path} (no visible segments at current slice)`
-    );
+    if (processed.segmentCount === 0) {
+      log.info(
+        Modules.SCENE_LOADER,
+        `Clearing lines for ${staged.path} (no visible segments at current slice)`
+      );
+    }
+  } finally {
+    bufferSession?.end();
   }
 }
