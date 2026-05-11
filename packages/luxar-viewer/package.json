@@ -51,7 +51,7 @@
     "./dist/lib/luxar-viewer-styles.js"
   ],
   "peerDependencies": {
-    "three": "^0.163.0"
+    "three": "^0.170.0"
   },
   "scripts": {
     "dev": "vite",
@@ -105,7 +105,7 @@
     "@playwright/test": "^1.59.1",
     "@types/node": "^24.10.1",
     "@types/stats.js": "^0.17.4",
-    "@types/three": "^0.163.0",
+    "@types/three": "^0.170.0",
     "@typescript-eslint/eslint-plugin": "^8.59.1",
     "@typescript-eslint/parser": "^8.59.1",
     "@vitest/coverage-v8": "^4.1.5",
