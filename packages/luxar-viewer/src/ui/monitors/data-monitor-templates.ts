@@ -580,13 +580,15 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
   // L0 hit rate calculation (if available)
   const l0Total = cacheMetrics.l0 ? cacheMetrics.l0.hits + cacheMetrics.l0.misses : 0;
   const l0HitRate = l0Total > 0 ? (cacheMetrics.l0!.hits / l0Total) * 100 : 0;
-  const l0HitRateColorClass = getCacheHitRateColorClass(l0HitRate);
+  // S3: dimmed on no-access, matches the incremental updater so a
+  // freshly loaded session doesn't flash red on first paint.
+  const l0HitRateColorClass = getCacheHitRateColorClassWithGuard(l0HitRate, l0Total);
 
   // L1 hit rate calculation
   const l1Total = cacheMetrics.l1!.hits + cacheMetrics.l1!.misses;
   const l1HitRate = l1Total > 0 ? (cacheMetrics.l1!.hits / l1Total) * 100 : 0;
 
-  const l1HitRateColorClass = getCacheHitRateColorClass(l1HitRate);
+  const l1HitRateColorClass = getCacheHitRateColorClassWithGuard(l1HitRate, l1Total);
 
   // R3: status pill row at the top of the cache tab. Always rendered
   // (with `data-field="cache-status-row"`) so the incremental
@@ -684,7 +686,7 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
       ${(() => {
         const l2Total = cacheMetrics.l2!.reads + cacheMetrics.l2!.misses;
         const l2HitRate = l2Total > 0 ? (cacheMetrics.l2!.reads / l2Total) * 100 : 0;
-        const l2HitRateColorClass = getCacheHitRateColorClass(l2HitRate);
+        const l2HitRateColorClass = getCacheHitRateColorClassWithGuard(l2HitRate, l2Total);
         return renderCacheSection(
           'L2 OPFS CACHE',
           'Origin Private File System: persistent browser storage for cached data',
@@ -863,6 +865,22 @@ export function getCacheHitRateColorClass(rate: number): string {
   if (rate > 80) return getColorClass('success');
   if (rate > 50) return getColorClass('warning');
   return getColorClass('error');
+}
+
+/**
+ * Like {@link getCacheHitRateColorClass} but returns the dimmed color
+ * when no accesses have happened yet. Keeps the initial render of
+ * the cache tab consistent with the incremental cache-tab updater,
+ * which already special-cases the no-data state. Without this, a
+ * freshly loaded session shows hit-rate cards in red (error color)
+ * on first paint, then flips to dimmed on the next 1s poll tick.
+ */
+export function getCacheHitRateColorClassWithGuard(
+  rate: number,
+  totalAccesses: number
+): string {
+  if (totalAccesses === 0) return getColorClass('dimmed');
+  return getCacheHitRateColorClass(rate);
 }
 
 /**

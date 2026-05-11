@@ -57,12 +57,16 @@ export function updateCacheTab(
       '[data-field="l0-hitrate"]'
     ) as HTMLElement | null;
     if (l0HitrateEl) {
+      // S3: dimmed when no accesses yet, matching the initial render
+      // (data-monitor-templates uses getCacheHitRateColorClassWithGuard).
       const colorClass =
-        l0HitRate > 80
-          ? getColorClass('success')
-          : l0HitRate > 50
-            ? getColorClass('warning')
-            : getColorClass('error');
+        l0Total === 0
+          ? getColorClass('dimmed')
+          : l0HitRate > 80
+            ? getColorClass('success')
+            : l0HitRate > 50
+              ? getColorClass('warning')
+              : getColorClass('error');
       updateColorClass(l0HitrateEl, colorClass);
     }
 
@@ -96,12 +100,15 @@ export function updateCacheTab(
       '[data-field="l1-hitrate"]'
     ) as HTMLElement | null;
     if (l1HitrateEl) {
+      // S3: dimmed when no accesses yet (matches L0 + L2).
       const colorClass =
-        l1HitRate > 80
-          ? getColorClass('success')
-          : l1HitRate > 50
-            ? getColorClass('warning')
-            : getColorClass('error');
+        l1Total === 0
+          ? getColorClass('dimmed')
+          : l1HitRate > 80
+            ? getColorClass('success')
+            : l1HitRate > 50
+              ? getColorClass('warning')
+              : getColorClass('error');
       updateColorClass(l1HitrateEl, colorClass);
     }
 

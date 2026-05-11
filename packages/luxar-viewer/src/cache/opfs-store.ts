@@ -477,6 +477,14 @@ export class OPFSStore {
     corruptedEntries: number;
     metadataParseFailures: number;
     orphanedFilesRemoved: number;
+    /**
+     * S2: `true` when OPFS was reachable on init and the store is
+     * still alive. `false` when init couldn't acquire a directory
+     * handle (browser without OPFS support, private mode in some
+     * configs) or after dispose(). Drives the `opfs-unavailable`
+     * status badge.
+     */
+    available: boolean;
   } {
     return {
       size: this.totalSize,
@@ -491,6 +499,7 @@ export class OPFSStore {
       corruptedEntries: this.corruptedEntries,
       metadataParseFailures: this.metadataParseFailures,
       orphanedFilesRemoved: this.orphanedFilesRemoved,
+      available: this.opfsRoot !== null && !this.disposed,
     };
   }
 

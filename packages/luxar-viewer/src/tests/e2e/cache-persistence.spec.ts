@@ -59,29 +59,30 @@ test.describe('L2 persistence across page reload (R7)', () => {
     expect(after.l2.reads + after.l1.hits).toBeGreaterThan(0);
   });
 
-  test('?clear-cache wipes L2 across reload', async ({ page, browserName }) => {
+  test('?clear-cache invokes clearAll on init (S4)', async ({ page, browserName }) => {
     test.skip(browserName !== 'chromium', 'Chromium-only');
 
+    // Pass 1: warm the cache with a regular load.
     await page.goto(`/?src=${DATASET}&debug`);
     await waitForLuxarReady(page);
     await waitForCacheStable(page);
 
-    // Now reload with ?clear-cache appended. The clear must run on
-    // the next page lifecycle and reset L2 to zero.
-    await page.goto(`/?src=${DATASET}&debug&clear-cache`);
-    await waitForLuxarReady(page);
-    // Give the clear path a tick to settle before sampling.
-    await page.waitForTimeout(250);
-
-    const stats = await page.evaluate(async () =>
+    // Sanity: no clear on this load.
+    const beforeClear = await page.evaluate(async () =>
       (window as any).__luxarDebug.cache.getStats()
     );
-    // After ?clear-cache: l2.size is reset to 0 entries (the page
-    // may have re-fetched and started repopulating, so allow ≥ 0).
-    // The key signal is that ?clear-cache fired without throwing
-    // and the cache is in a healthy state post-reload.
-    expect(stats).toBeDefined();
-    expect(stats.l2).toBeDefined();
-    expect(stats.l2.size).toBeGreaterThanOrEqual(0);
+    expect(beforeClear.clearOnInitCount ?? 0).toBe(0);
+
+    // Pass 2: reload with ?clear-cache. The store's init path must
+    // increment `clearOnInitCount` exactly once when ?clear-cache
+    // is present. This is the real observable signal — previously
+    // the test only asserted `l2.size >= 0`, which is trivially true.
+    await page.goto(`/?src=${DATASET}&debug&clear-cache`);
+    await waitForLuxarReady(page);
+
+    const afterClear = await page.evaluate(async () =>
+      (window as any).__luxarDebug.cache.getStats()
+    );
+    expect(afterClear.clearOnInitCount).toBeGreaterThanOrEqual(1);
   });
 });

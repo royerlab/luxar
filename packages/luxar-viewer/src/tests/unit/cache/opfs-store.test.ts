@@ -917,6 +917,42 @@ describe('OPFSStore', () => {
     });
   });
 
+  // S2: getStats().available reflects OPFS reachability + dispose state.
+  // Drives the `opfs-unavailable` UI badge in cache-metrics-aggregator.
+  describe('Availability flag (S2)', () => {
+    it('reports available=true after a successful init', () => {
+      expect(store.getStats().available).toBe(true);
+    });
+
+    it('reports available=false after dispose()', async () => {
+      expect(store.getStats().available).toBe(true);
+      await store.dispose();
+      expect(store.getStats().available).toBe(false);
+    });
+
+    it('reports available=false when init never acquired the OPFS root', async () => {
+      // Simulate a browser that throws on navigator.storage.getDirectory.
+      vi.stubGlobal('navigator', {
+        storage: {
+          async getDirectory() {
+            throw new Error('OPFS unsupported in this browser');
+          },
+          async estimate() {
+            return { quota: 0, usage: 0 };
+          },
+        },
+      });
+      const noOpfsStore = new OPFSStore(
+        'no-opfs-id',
+        'https://example.com',
+        100 * 1024 * 1024
+      );
+      // init() should swallow the failure and leave opfsRoot null.
+      await noOpfsStore.init();
+      expect(noOpfsStore.getStats().available).toBe(false);
+    });
+  });
+
   // R6e: partial metadata corruption recovery. The existing test
   // covers the "malformed JSON → start fresh" path; this one covers
   // a structurally-valid but logically corrupt metadata file

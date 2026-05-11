@@ -1574,28 +1574,70 @@ describe('MultiLevelCachingStore', () => {
       expect(stats.network.bandwidth).toBeGreaterThan(2000);
     });
 
-    it('compacts the array when more than half is stale (amortized O(1))', () => {
+    it('compacts the array when more than half is stale (amortized O(1))', async () => {
       const internals = getInternals(store);
       const now = Date.now();
-      // Add 21 stale entries and 1 fresh; expire the 21 by pruning.
+      // Seed 21 stale entries directly. They sit in the window with
+      // bandwidthWindowStart = 0 until the next getStats call.
       for (let i = 0; i < 21; i++) {
         internals.bandwidthWindow.push({ timestamp: now - 30_000 + i, bytes: 100 });
       }
       internals.bandwidthWindow.push({ timestamp: now, bytes: 1000 });
+
+      // Advance the start index past the 21 stale entries.
       store.getStats();
       expect(internals.bandwidthWindowStart).toBe(21);
+      expect(internals.bandwidthWindow.length).toBe(22);
 
-      // The compaction path runs on push, not getStats. Push more
-      // entries until the start index crosses the half-length boundary.
-      // Need 22 entries with start=21 → push one more → length=23
-      // → start (21) > length/2 (11.5)? Yes — compaction should fire.
-      internals.bandwidthWindow.push({ timestamp: now, bytes: 1000 });
-      // The store doesn't call compaction from a test-level push, so
-      // we replay the production path via getResult to trigger it.
-      // Simpler: call getStats again to verify the window is non-empty
-      // and that further pushes through the real path would compact.
-      // For now: drive bandwidth through a real fetch + verify
-      // bounded growth.
+      // Drive a real network fetch — the production push site
+      // (multi-level-caching-store.ts ~line 534) appends an entry
+      // AND checks "start > length/2". With start=21 and length=23
+      // after this push, compaction must fire: array gets sliced
+      // down to the live tail and start resets to 0.
+      global.fetch = vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          async arrayBuffer() {
+            return new Uint8Array([0]).buffer;
+          },
+        } as Response)
+      ) as unknown as typeof fetch;
+
+      await store.getResult('compaction-trigger');
+
+      // Compaction fired: start reset to 0, array shrunk to live tail.
+      expect(internals.bandwidthWindowStart).toBe(0);
+      expect(internals.bandwidthWindow.length).toBeLessThan(22);
+      // At least the two recent entries remain (the pre-existing
+      // `now`-timestamped entry plus the one just pushed).
+      expect(internals.bandwidthWindow.length).toBeGreaterThanOrEqual(2);
+    });
+
+    // S2: opfsAvailable is propagated from the L2 store's getStats().available.
+    // It MUST always be true when caching is disabled (no L2 expected).
+    it('health.opfsAvailable === true for a healthy store with L2 reachable', () => {
+      const stats = store.getStats();
+      expect(stats.health.opfsAvailable).toBe(true);
+    });
+
+    // S4: clearOnInitCount counts ?clear-cache invocations. A store
+    // constructed without clearCache stays at 0; one with clearCache
+    // increments to 1 after init.
+    it('clearOnInitCount stays 0 when ?clear-cache was not requested', () => {
+      const stats = store.getStats();
+      expect(stats.clearOnInitCount).toBe(0);
+    });
+
+    it('clearOnInitCount === 1 after init with clearCache: true', async () => {
+      const clearStore = new MultiLevelCachingStore('https://example.com/clr.zarr', {
+        clearCache: true,
+        l1MaxSize: 20 * 1024 * 1024,
+        l2MaxSize: 4096,
+      });
+      await clearStore.init();
+      const stats = clearStore.getStats();
+      expect(stats.clearOnInitCount).toBe(1);
     });
 
     it('produces zero bandwidth when no entries are within the window', async () => {

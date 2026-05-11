@@ -1,4 +1,4 @@
-import type { AsyncReadable } from '@zarrita/storage';
+import type { AsyncReadable } from '../data/zarr';
 import { SegmentedLRUCache } from './segmented-lru-cache';
 import { OPFSStore } from './opfs-store';
 import type { ChunkPrefetcher } from './chunk-prefetcher';
@@ -84,6 +84,10 @@ export class MultiLevelCachingStore implements AsyncReadable {
   private enabled: boolean;
   private debug: boolean;
   private shouldClearOnInit: boolean;
+  // S4: increments each time `?clear-cache` triggers a clearAll on
+  // init. Surfaced through getStats() so the E2E suite can prove the
+  // clear actually ran rather than only checking that stats survived.
+  private clearOnInitCount = 0;
 
   private static readonly DEFAULT_L1_SIZE = config.cache.l1MaxSizeMB * 1024 * 1024;
   private static readonly DEFAULT_L2_SIZE = config.cache.l2MaxSizeMB * 1024 * 1024;
@@ -263,6 +267,9 @@ export class MultiLevelCachingStore implements AsyncReadable {
     if (this.shouldClearOnInit) {
       this.log('Clearing cache due to ?clear-cache parameter');
       await this.clearAll();
+      // S4: observable signal for the E2E suite — proves clearAll
+      // actually ran in response to `?clear-cache` on init.
+      this.clearOnInitCount++;
     }
 
     // Validate cache using content hash. Validation is serialized per dataset
@@ -879,7 +886,21 @@ export class MultiLevelCachingStore implements AsyncReadable {
        * stale indefinitely.
        */
       unvalidatedExternalDataset: boolean;
+      /**
+       * S2: `true` when OPFS is available and L2 is operational, or
+       * when caching is disabled (no L2 expected). `false` only when
+       * caching is enabled but OPFS could not be acquired — drives
+       * the `opfs-unavailable` status badge.
+       */
+      opfsAvailable: boolean;
     };
+    /**
+     * S4: number of times `?clear-cache` triggered a clearAll on
+     * init for this store. Increments at most once per store
+     * lifetime today but typed as a counter so future re-init paths
+     * stay observable.
+     */
+    clearOnInitCount: number;
   } {
     // Calculate bandwidth using sliding window (last ~10 seconds)
     const now = Date.now();
@@ -916,6 +937,13 @@ export class MultiLevelCachingStore implements AsyncReadable {
       lastValidatedAt: null,
     };
 
+    // S2: opfsAvailable signals whether L2 storage is operational.
+    // When caching is disabled (config / ?no-cache), L2 wasn't
+    // expected, so report `true` so the UI doesn't surface a
+    // misleading badge.
+    const l2Stats = this.l2Store?.getStats();
+    const opfsAvailable = this.enabled ? (l2Stats?.available ?? false) : true;
+
     return {
       l1: this.l1Cache.getStats(),
       l2: this.l2Store?.getStats() ?? {
@@ -939,7 +967,9 @@ export class MultiLevelCachingStore implements AsyncReadable {
         validationMode: validationState.mode,
         lastValidatedAt: validationState.lastValidatedAt,
         unvalidatedExternalDataset: validationState.mode === 'none',
+        opfsAvailable,
       },
+      clearOnInitCount: this.clearOnInitCount,
     };
   }
 

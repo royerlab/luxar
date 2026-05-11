@@ -471,6 +471,77 @@
   grid-template-columns: repeat(3, 1fr);
 }
 
+/* S1: 4-card grid for the L2 section (SIZE / HIT RATE / I/O / ERRORS).
+   Falls back to 2 columns under 480px so the row stays readable on
+   narrow viewports. */
+.luxar-cache-section__metrics--cols-4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+@media (max-width: 480px) {
+  .luxar-cache-section__metrics--cols-4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* ========== Cache status badges (S1) ========== */
+
+/* Pill row at the top of the cache tab summarising operational
+   state. Each badge inherits its tint from a .luxar-color--* modifier
+   class applied alongside .luxar-badge. */
+.luxar-cache-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--luxar-spacing-2);
+  padding: var(--luxar-spacing-2) 0;
+  margin-bottom: var(--luxar-spacing-3);
+}
+
+.luxar-badge {
+  display: inline-block;
+  padding: 1px var(--luxar-spacing-2);
+  border-radius: var(--luxar-radius-full);
+  border: 1px solid var(--luxar-border-default);
+  background: var(--luxar-bg-tertiary);
+  font-size: 0.7em;
+  font-weight: 500;
+  text-transform: lowercase;
+  letter-spacing: 0.02em;
+}
+
+/* ========== Cache Health section (S1) ========== */
+
+.luxar-cache-health {
+  background: var(--luxar-bg-secondary);
+  border: 1px solid var(--luxar-border-subtle);
+  border-radius: var(--luxar-radius-sm);
+  padding: var(--luxar-spacing-3);
+  margin: var(--luxar-spacing-3) 0;
+}
+
+.luxar-cache-health__header {
+  font-size: 0.75em;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--luxar-text-secondary);
+  margin-bottom: var(--luxar-spacing-2);
+}
+
+.luxar-cache-health__row {
+  display: flex;
+  justify-content: space-between;
+  padding: 2px 0;
+}
+
+.luxar-cache-health__label {
+  color: var(--luxar-text-secondary);
+}
+
+.luxar-cache-health__value {
+  color: var(--luxar-text-primary);
+  font-weight: 500;
+}
+
 /* ========== Recommendations ========== */
 
 .luxar-recommendation {

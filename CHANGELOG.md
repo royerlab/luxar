@@ -6,6 +6,66 @@ All notable changes to Luxar are documented in this file.
 
 ### May 2026
 
+#### Changed — Cache recheck polish S1–S7 (2026-05-10)
+
+Follow-up to the cache recheck at
+`delme/viewer-cache-rereview-20260510-200308/`, which confirmed R1–R7
+closed most prior gaps and flagged seven concrete remaining items.
+S1–S7 close those.
+
+- **S1 — CSS for the new cache UI classes.** `data-loading-monitor.css`
+  gains rules for `.luxar-cache-section__metrics--cols-4` (the L2
+  ERRORS card row, with a 2-column fallback under 480px),
+  `.luxar-cache-status` (badge pill row), `.luxar-badge` (pill shape,
+  reuses `.luxar-color--*` text-color modifiers for tint), and
+  `.luxar-cache-health` / `.luxar-cache-health__{header,row,label,value}`
+  (validation-mode + last-validated panel).
+- **S2 — `opfs-unavailable` badge is wired and no longer dead.**
+  `OPFSStore.getStats()` exposes `available: boolean` (true when
+  `opfsRoot !== null && !disposed`). `MultiLevelCachingStore.getStats().health`
+  surfaces `opfsAvailable: boolean`, treating caching-disabled modes
+  as `true` (no L2 expected). `aggregateCacheMetrics` emits the badge
+  only when explicitly `false`. Older providers that omit the field
+  stay silent (treat-as-true).
+- **S3 — L0/L1/L2 hit-rate no-data color is dimmed (not red).** New
+  `getCacheHitRateColorClassWithGuard(rate, totalAccesses)` returns
+  dimmed when `totalAccesses === 0`; otherwise delegates to the
+  existing thresholds. Used by both the initial render in
+  `renderCacheContent` and (for L0/L1 parity) the incremental
+  `updateCacheTab`. Fixes the first-paint red-flash on empty caches.
+- **S4 — `clearOnInitCount` telemetry + a real `?clear-cache` E2E
+  assertion.** `MultiLevelCachingStore` counts each `?clear-cache`
+  invocation in `init()`. Surfaced via `getStats().clearOnInitCount`
+  and the cache-API snapshot. `cache-persistence.spec.ts` now asserts
+  `clearOnInitCount > 0` after navigating with `?clear-cache` —
+  proves the clear path executed, replacing the trivially-true
+  `l2.size >= 0` assertion.
+- **S5 — Bandwidth compaction test now exercises the production
+  path.** The R5 test stub (seeded stale entries, never asserted
+  compaction) now drives a real `getResult()` fetch so the
+  production push site's `start > length/2` check fires; asserts
+  `bandwidthWindowStart` resets to 0 and the array shrinks.
+- **S6 — Predictive prefetch uses per-loader derived view-state.**
+  `SceneLoader._dispatchPredictivePrefetch` no longer fans one
+  global view-state to every loader. The dispatch now lives inside
+  each loader-task branch (Points / Lines / GSplats) and uses the
+  per-node `derived.viewState` computed by `deriveNodeViewState`.
+  `extend_to_all`-skipped nodes no longer receive prefetch hints
+  they would have skipped on demand. A per-loader `Map<path,
+  ViewState>` tracks prev state; cleared on `loadScene` / `dispose`
+  and on skip transitions.
+- **S7 — `evictionsPerMin` API break recorded.** As part of the R1–R7
+  batch (commit `2f7feaaf`), the deprecated `CacheMetrics.evictionsPerMin`
+  alias was removed in favor of `evictionsTotal`. External consumers
+  reading `evictionsPerMin` now see `undefined`; this CHANGELOG note
+  records the removal explicitly so the API break is discoverable.
+
+**Result**: cache UI is fully styled, every documented status badge
+is actually emitted, the predictor honors per-node tolerance/skip
+semantics, the `?clear-cache` E2E proves real observable behavior,
+and the bandwidth-compaction test exercises the real production
+path. Tests: 89 cache unit + 86 monitor unit + 1 strengthened E2E.
+
 #### Changed — Cache re-review remediation R1–R7 (2026-05-10)
 
 Follow-up to the cache re-review at

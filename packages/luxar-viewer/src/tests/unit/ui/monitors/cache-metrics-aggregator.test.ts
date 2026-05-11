@@ -630,6 +630,63 @@ describe('aggregateCacheMetrics', () => {
       expect(result.health?.validationMode).toBe('none');
     });
 
+    // S2: opfs-unavailable badge fires when the provider reports
+    // health.opfsAvailable === false. Older providers omit the field —
+    // in that case the badge stays unemitted.
+    it("status includes 'opfs-unavailable' when health.opfsAvailable is false", () => {
+      const provider = makeProviderWithHealth({});
+      const baseStats = provider.getStats();
+      const wrapped = {
+        ...provider,
+        getStats: () => ({
+          ...baseStats,
+          health: { ...baseStats.health, opfsAvailable: false },
+        }),
+      };
+      const result = aggregateCacheMetrics({
+        l0Provider: null,
+        cacheStatsProvider: wrapped,
+        loaders: new Map(),
+        metricsCache: new Map(),
+        rates: ZERO_RATES,
+      });
+      expect(result.status).toContain('opfs-unavailable');
+      expect(result.health?.opfsAvailable).toBe(false);
+    });
+
+    it("status does NOT include 'opfs-unavailable' when opfsAvailable is true", () => {
+      const provider = makeProviderWithHealth({});
+      const baseStats = provider.getStats();
+      const wrapped = {
+        ...provider,
+        getStats: () => ({
+          ...baseStats,
+          health: { ...baseStats.health, opfsAvailable: true },
+        }),
+      };
+      const result = aggregateCacheMetrics({
+        l0Provider: null,
+        cacheStatsProvider: wrapped,
+        loaders: new Map(),
+        metricsCache: new Map(),
+        rates: ZERO_RATES,
+      });
+      expect(result.status).not.toContain('opfs-unavailable');
+    });
+
+    it("status does NOT include 'opfs-unavailable' when provider omits opfsAvailable (older API)", () => {
+      // makeProviderWithHealth does not include opfsAvailable in the
+      // health object — older providers leave it undefined.
+      const result = aggregateCacheMetrics({
+        l0Provider: null,
+        cacheStatsProvider: makeProviderWithHealth({}),
+        loaders: new Map(),
+        metricsCache: new Map(),
+        rates: ZERO_RATES,
+      });
+      expect(result.status).not.toContain('opfs-unavailable');
+    });
+
     it("status includes 'provider-missing' when telemetry says enabled but no provider exists", () => {
       const result = aggregateCacheMetrics({
         l0Provider: null,

@@ -198,3 +198,96 @@ describe('dispatchPredictivePrefetch', () => {
     expect(spy).not.toHaveBeenCalled();
   });
 });
+
+// S6: per-path prev-state tracking pattern (the same pattern SceneLoader
+// uses inside its Points/Lines/GSplats task branches). Verified here at
+// the unit-helper level so SceneLoader can rely on the contract.
+describe('per-path predictive prefetch pattern (S6)', () => {
+  function runUpdate(
+    perPath: Map<string, ViewState>,
+    path: string,
+    current: ViewState,
+    loader: PrefetchableLoader
+  ) {
+    const prev = perPath.get(path) ?? null;
+    perPath.set(path, current);
+    dispatchPredictivePrefetch(prev, current, [loader]);
+  }
+
+  it('different paths track independent prev viewStates', () => {
+    const perPath = new Map<string, ViewState>();
+    const spyA = vi.fn().mockResolvedValue(undefined);
+    const spyB = vi.fn().mockResolvedValue(undefined);
+
+    // First update on each path — no prefetch (no prev).
+    runUpdate(perPath, 'a', vs({ slicePosition: [0, 0, 0, 5] }), {
+      prefetchChunks: spyA,
+    });
+    runUpdate(perPath, 'b', vs({ slicePosition: [0, 0, 0, 10] }), {
+      prefetchChunks: spyB,
+    });
+    expect(spyA).not.toHaveBeenCalled();
+    expect(spyB).not.toHaveBeenCalled();
+
+    // Second update: each path extrapolates independently.
+    runUpdate(perPath, 'a', vs({ slicePosition: [0, 0, 0, 6] }), {
+      prefetchChunks: spyA,
+    });
+    runUpdate(perPath, 'b', vs({ slicePosition: [0, 0, 0, 8] }), {
+      prefetchChunks: spyB,
+    });
+    expect(spyA).toHaveBeenCalledTimes(1);
+    expect(spyB).toHaveBeenCalledTimes(1);
+    expect(spyA.mock.calls[0][0].slicePosition[3]).toBe(7); // 6 + (6-5)
+    expect(spyB.mock.calls[0][0].slicePosition[3]).toBe(6); // 8 + (8-10)
+  });
+
+  it('skipped path deletes prev so next non-skip re-baselines', () => {
+    const perPath = new Map<string, ViewState>();
+    const spy = vi.fn().mockResolvedValue(undefined);
+
+    // Update 1: baseline (no prefetch).
+    runUpdate(perPath, 'p', vs({ slicePosition: [0, 0, 0, 5] }), {
+      prefetchChunks: spy,
+    });
+    // Update 2: skip — the SceneLoader mirrors this by calling
+    // `perPath.delete(path)` before returning. We model that here.
+    perPath.delete('p');
+
+    // Update 3: non-skip resume. Because prev was cleared, no
+    // extrapolation happens this tick.
+    runUpdate(perPath, 'p', vs({ slicePosition: [0, 0, 0, 100] }), {
+      prefetchChunks: spy,
+    });
+    expect(spy).not.toHaveBeenCalled();
+
+    // Update 4: now there's a prev again — extrapolation resumes.
+    runUpdate(perPath, 'p', vs({ slicePosition: [0, 0, 0, 101] }), {
+      prefetchChunks: spy,
+    });
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0][0].slicePosition[3]).toBe(102);
+  });
+
+  it('clearing the per-path map (dataset switch) resets all paths', () => {
+    const perPath = new Map<string, ViewState>();
+    const spy = vi.fn().mockResolvedValue(undefined);
+    runUpdate(perPath, 'x', vs({ slicePosition: [0, 0, 0, 5] }), {
+      prefetchChunks: spy,
+    });
+    runUpdate(perPath, 'x', vs({ slicePosition: [0, 0, 0, 6] }), {
+      prefetchChunks: spy,
+    });
+    expect(spy).toHaveBeenCalledTimes(1);
+
+    // Dataset switch → clear all prev state.
+    perPath.clear();
+
+    // First update on the new dataset: no prefetch even though the
+    // path is named the same as before.
+    runUpdate(perPath, 'x', vs({ slicePosition: [0, 0, 0, 100] }), {
+      prefetchChunks: spy,
+    });
+    expect(spy).toHaveBeenCalledTimes(1); // still just the one from before
+  });
+});

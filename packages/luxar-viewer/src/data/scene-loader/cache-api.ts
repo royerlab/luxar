@@ -41,6 +41,12 @@ export interface CacheStatsSnapshot {
   demand?: ReturnType<MultiLevelCachingStore['getStats']>['demand'] | null;
   prefetch?: { queued: number; inFlight: number; enabled: boolean } | null;
   health?: ReturnType<MultiLevelCachingStore['getStats']>['health'] | null;
+  /**
+   * S4: number of times `?clear-cache` triggered a clearAll on init
+   * for the active store. Surfaced so E2E tests can assert that a
+   * clear actually ran rather than only checking that stats survived.
+   */
+  clearOnInitCount?: number;
 }
 
 /**
@@ -75,6 +81,7 @@ export function getCacheStats(
         }
       : null,
     health: stats?.health ?? null,
+    clearOnInitCount: stats?.clearOnInitCount,
   };
 }
 

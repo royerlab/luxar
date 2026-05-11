@@ -375,6 +375,12 @@ export interface CacheMetrics {
     validationMode?: 'content-hash' | 'ttl' | 'none';
     lastValidatedAt?: number | null;
     unvalidatedExternalDataset?: boolean;
+    /**
+     * S2: `true` when OPFS L2 storage is operational or caching is
+     * disabled (no L2 expected). `false` when L2 was expected but
+     * could not be initialised — drives the `opfs-unavailable` badge.
+     */
+    opfsAvailable?: boolean;
   };
 }
 
@@ -544,6 +550,14 @@ export interface CacheStatsProvider {
       validationMode: 'content-hash' | 'ttl' | 'none';
       lastValidatedAt: number | null;
       unvalidatedExternalDataset: boolean;
+      /**
+       * S2: `true` when OPFS L2 storage is operational or caching is
+       * disabled (no L2 expected). `false` only when L2 was expected
+       * but could not be initialised. Older providers omit the field
+       * entirely; consumers treat the absent case as "unknown / assume
+       * available".
+       */
+      opfsAvailable?: boolean;
     };
   };
   /** Clear L1 memory cache */

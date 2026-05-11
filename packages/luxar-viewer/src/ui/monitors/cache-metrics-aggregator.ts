@@ -166,12 +166,16 @@ export function aggregateCacheMetrics(params: AggregateCacheMetricsParams): Cach
       demand = stats.demand;
     }
 
-    // Cache validation health drives the unvalidated-external-dataset badge.
+    // Cache validation health drives the unvalidated-external-dataset
+    // and (S2) opfs-unavailable badges.
     if (stats.health) {
       health = {
         validationMode: stats.health.validationMode,
         lastValidatedAt: stats.health.lastValidatedAt,
         unvalidatedExternalDataset: stats.health.unvalidatedExternalDataset,
+        // opfsAvailable was added in S2; older providers omit it,
+        // in which case the badge stays unemitted (treat-as-true).
+        opfsAvailable: stats.health.opfsAvailable,
       };
     }
 
@@ -266,6 +270,12 @@ export function aggregateCacheMetrics(params: AggregateCacheMetricsParams): Cach
   }
   if (health?.unvalidatedExternalDataset) {
     status.push('unvalidated-external-dataset');
+  }
+  // S2: emit `opfs-unavailable` only when the provider explicitly
+  // says false. `undefined` means an older provider that doesn't
+  // expose the field — assume available (no badge).
+  if (health?.opfsAvailable === false) {
+    status.push('opfs-unavailable');
   }
 
   return {

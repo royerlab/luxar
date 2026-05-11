@@ -12,6 +12,8 @@ import {
   formatLastValidated,
   l2ErrorTotal,
   renderCacheStatusBadges,
+  getCacheHitRateColorClass,
+  getCacheHitRateColorClassWithGuard,
 } from '../../../../ui/monitors/data-monitor-templates';
 import type { CacheStatusBadge } from '../../../../types/data-monitor-types';
 
@@ -138,5 +140,40 @@ describe('l2ErrorTotal', () => {
         // writeFailures, corruptedEntries, metadataParseFailures all undefined
       })
     ).toBe(5);
+  });
+});
+
+// S3: no-data guard so initial render uses dimmed instead of error
+// when there are no accesses yet — matches the incremental updater.
+describe('getCacheHitRateColorClassWithGuard (S3)', () => {
+  it('returns dimmed color when totalAccesses === 0', () => {
+    expect(getCacheHitRateColorClassWithGuard(0, 0)).toMatch(/dimmed/);
+    // Same response regardless of rate value when nothing has been accessed.
+    expect(getCacheHitRateColorClassWithGuard(99, 0)).toMatch(/dimmed/);
+  });
+
+  it('returns error color when totalAccesses > 0 and rate is ≤ 50', () => {
+    expect(getCacheHitRateColorClassWithGuard(0, 1)).toMatch(/error/);
+    expect(getCacheHitRateColorClassWithGuard(50, 100)).toMatch(/error/);
+  });
+
+  it('returns warning color when rate is in (50, 80]', () => {
+    expect(getCacheHitRateColorClassWithGuard(60, 100)).toMatch(/warning/);
+    expect(getCacheHitRateColorClassWithGuard(80, 100)).toMatch(/warning/);
+  });
+
+  it('returns success color when rate > 80', () => {
+    expect(getCacheHitRateColorClassWithGuard(90, 100)).toMatch(/success/);
+    expect(getCacheHitRateColorClassWithGuard(100, 100)).toMatch(/success/);
+  });
+
+  it('matches getCacheHitRateColorClass for any non-zero totalAccesses', () => {
+    // The guard is purely a no-data wrapper; once totalAccesses > 0
+    // the two functions must agree.
+    for (const rate of [0, 25, 51, 65, 80.01, 95]) {
+      expect(getCacheHitRateColorClassWithGuard(rate, 1)).toBe(
+        getCacheHitRateColorClass(rate)
+      );
+    }
   });
 });
