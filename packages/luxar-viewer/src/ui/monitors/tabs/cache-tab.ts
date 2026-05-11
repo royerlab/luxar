@@ -229,7 +229,10 @@ export function updateCacheTab(
   }
   const barLabel = container.querySelector('.luxar-cache-total .luxar-progress-bar__label');
   if (barLabel) {
-    barLabel.textContent = `${cacheMetrics.memoryPercent.toFixed(0)}% of ${templateFormatBytes(cacheMetrics.memoryLimit)} limit`;
+    barLabel.textContent =
+      cacheMetrics.memoryLimit > 0
+        ? `${cacheMetrics.memoryPercent.toFixed(0)}% of ${templateFormatBytes(cacheMetrics.memoryLimit)} limit`
+        : 'no memory limit configured';
   }
 
   return true;

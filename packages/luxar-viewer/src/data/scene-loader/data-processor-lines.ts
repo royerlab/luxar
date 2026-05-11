@@ -80,7 +80,11 @@ export async function projectLinesTo3DUsingWorker(
           widths: data.widths,
           colors: data.colors,
           sharpness: data.sharpness,
-          scalars: data.scalars,
+          // Loader-side `data.scalars` is `ScalarArray | undefined`
+          // (optional, matching `LoadedPointsData`); the worker API
+          // boundary uses `... | null` so Comlink doesn't strip the
+          // field. Map `undefined → null` at the dispatch site.
+          scalars: data.scalars ?? null,
           slicePosition: viewState.slicePosition,
           tolerance,
           displayDims: viewState.displayDims,
@@ -97,9 +101,12 @@ export async function projectLinesTo3DUsingWorker(
     }
 
     // Worker returns empty Float32Array when input scalars=null; the
-    // loader treats `null`/`undefined` as the "no scalars" signal so
-    // the geometry's scalar attribute stays unallocated downstream.
-    const hasScalars = data.scalars !== null && workerResult.startScalars.length > 0;
+    // loader treats absent (undefined) source scalars as the
+    // "no colormap" signal so the geometry's scalar attribute stays
+    // unallocated downstream. `data.scalars` is now `?: ScalarArray`
+    // (optional), so the truthy check covers both undefined and
+    // null inputs uniformly.
+    const hasScalars = !!data.scalars && workerResult.startScalars.length > 0;
 
     return {
       startPositions: workerResult.startPositions,

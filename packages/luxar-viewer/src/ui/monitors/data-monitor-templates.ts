@@ -779,7 +779,7 @@ export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetri
         <div class="luxar-cache-total__value" data-field="cache-total" title="${cacheMetrics.totalCacheMemory.toLocaleString()} bytes total cached">
           ${formatBytes(cacheMetrics.totalCacheMemory)}
         </div>
-        ${renderProgressBar(cacheMetrics.memoryPercent, getCacheMemoryColorClass(cacheMetrics.memoryPercent), `${cacheMetrics.memoryPercent.toFixed(0)}% of ${formatBytes(cacheMetrics.memoryLimit)} limit`, 6)}
+        ${renderProgressBar(cacheMetrics.memoryPercent, getCacheMemoryColorClass(cacheMetrics.memoryPercent), cacheMetrics.memoryLimit > 0 ? `${cacheMetrics.memoryPercent.toFixed(0)}% of ${formatBytes(cacheMetrics.memoryLimit)} limit` : 'no memory limit configured', 6)}
         ${
           cacheMetrics.effectiveDemandHitRate !== undefined
             ? `<div class="luxar-cache-total__demand" data-field="cache-effective-hitrate" title="Demand hit-rate across all tiers: (l0 + l1 + l2 hits) / total demand requests">

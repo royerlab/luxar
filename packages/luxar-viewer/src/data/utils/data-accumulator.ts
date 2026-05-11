@@ -951,7 +951,11 @@ export class LinesDataAccumulator implements DataAccumulator<
       colors: this.hasColors ? this.colorBuffer.subarray(0, vertexCount * 3) : null,
       sharpness: this.hasSharpness ? this.sharpnessBuffer.subarray(0, vertexCount) : null,
       // per-vertex scalars now flow through the accumulator path.
-      scalars: this.hasScalars ? this.scalarBuffer.subarray(0, vertexCount) : null,
+      // Omitted (undefined) when not present to match the new
+      // optional `LoadedLinesData.scalars?` shape.
+      ...(this.hasScalars
+        ? { scalars: this.scalarBuffer.subarray(0, vertexCount) }
+        : {}),
       segmentCount,
       vertexCount,
       ndim: this.ndim,

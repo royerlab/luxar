@@ -491,7 +491,7 @@ describe('C.4 — lazy scalar buffer allocation', () => {
       widths: new Float32Array([0.1]),
     });
     const data = acc.getData(1, 1);
-    expect(data.scalars).toBeNull();
+    expect(data.scalars).toBeUndefined();
   });
 
   it('LinesDataAccumulator: scalar buffer allocates on first scalar fill', () => {

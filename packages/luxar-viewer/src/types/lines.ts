@@ -195,19 +195,21 @@ export interface LoadedLinesData {
   sharpness: Float32Array | null;
 
   /**
-   * Per-vertex scalar values for colormap lookup (N,), null if not present.
+   * Per-vertex scalar values for colormap lookup (N,). Optional —
+   * when omitted (undefined), the line shader's `USE_COLORMAP` path
+   * stays inactive and `ProcessedLinesData.startScalars`/`endScalars`
+   * are also undefined.
    *
-   * when present, projection produces `startScalars`/`endScalars`
-   * arrays in `ProcessedLinesData` that get bound as
-   * `aStartScalar`/`aEndScalar` instanced attributes. Required for the
-   * line shader's `USE_COLORMAP` path to be active.
+   * Aligned with `LoadedPointsData.scalars?: ScalarArray` (both
+   * optional + undefined absence) so consumer truthy-checks read
+   * uniformly across node types.
    *
-   * A.2: dtype aligned with `ScalarArray` (Float32/Float16/Uint8) so
+   * Dtype aligned with `ScalarArray` (Float32/Float16/Uint8) so
    * Uint8 loaders can keep native dtype through the accumulator and
    * pay a single widening at projection time rather than 4× memory up
    * front.
    */
-  scalars: ScalarArray | null;
+  scalars?: ScalarArray;
 
   /** Number of segments loaded */
   segmentCount: number;

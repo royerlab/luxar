@@ -38,13 +38,16 @@ import type { WasmModule } from '../../wasm/types';
  * `createEmptyGSplatsData` in `gsplats/projection.ts`.
  */
 export function createEmptyLinesData(attrs: LinesMetadata): LoadedLinesData {
+  // `scalars` is omitted (optional + undefined) to match
+  // `LoadedPointsData`. The downstream truthy check
+  // (`if (data.scalars)`) treats undefined and null identically, so
+  // existing call sites are unaffected.
   return {
     positions: new Float32Array(0),
     segments: new Uint32Array(0),
     widths: new Float32Array(0),
     colors: null,
     sharpness: null,
-    scalars: null, // C4
     segmentCount: 0,
     vertexCount: 0,
     ndim: attrs.ndim,
@@ -262,7 +265,7 @@ export function buildInstanceBuffers(
         '(expected one scalar per vertex). Suppressing scalar projection — ' +
         'colormap mode will be off until the source data is fixed.'
     );
-    scalars = null;
+    scalars = undefined;
   }
 
   // Diagnostic: log input shape for large-segment-count Lines updates.
@@ -506,7 +509,7 @@ export function buildInstanceBuffersWASM(
       `Scalar length mismatch (WASM path): ${scalars.length} scalars for ${vertexCount} vertices. ` +
         'Suppressing scalar projection.'
     );
-    scalars = null;
+    scalars = undefined;
   }
 
   // Get WASM module (uses cached instance or fallback)

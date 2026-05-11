@@ -72,7 +72,7 @@ function makeData(segmentCount = 100): LoadedLinesData {
     widths: new Float32Array(segmentCount * 2),
     colors: new Float32Array(segmentCount * 6),
     sharpness: new Float32Array(segmentCount * 2),
-      scalars: null,
+      scalars: undefined,
     segmentCount,
     vertexCount: segmentCount * 2,
     ndim: 3,

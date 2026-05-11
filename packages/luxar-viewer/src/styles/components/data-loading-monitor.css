@@ -179,6 +179,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--luxar-spacing-4);
+  padding-bottom: var(--luxar-spacing-4);
 }
 
 .luxar-overview__scene-loaders {
@@ -464,11 +465,17 @@
 }
 
 .luxar-cache-section__metrics--cols-2 {
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+/* 3-card sections (L0/L1) share the same 4-column grid as L2 so column
+   boundaries align across all cache sections. The trailing card spans
+   2 columns to fill the row. */
 .luxar-cache-section__metrics--cols-3 {
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.luxar-cache-section__metrics--cols-3 > .luxar-metric-card:last-child {
+  grid-column: span 2;
 }
 
 /* S1: 4-card grid for the L2 section (SIZE / HIT RATE / I/O / ERRORS).
@@ -478,8 +485,12 @@
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 @media (max-width: 480px) {
+  .luxar-cache-section__metrics--cols-3,
   .luxar-cache-section__metrics--cols-4 {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .luxar-cache-section__metrics--cols-3 > .luxar-metric-card:last-child {
+    grid-column: span 2;
   }
 }
 
@@ -892,6 +903,15 @@
   font-weight: var(--luxar-font-bold);
   color: var(--luxar-text-primary);
   margin-bottom: var(--luxar-spacing-1);
+}
+
+.luxar-cache-total__demand {
+  margin-top: var(--luxar-spacing-3);
+  font-size: var(--luxar-text-xs);
+  font-weight: var(--luxar-font-semibold);
+  color: var(--luxar-text-muted);
+  letter-spacing: 0.02em;
+  text-align: right;
 }
 
 /* ========== Grid Layouts ========== */

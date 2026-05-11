@@ -32,12 +32,12 @@ function loadedLines({
   positions,
   segments,
   widths,
-  scalars = null,
+  scalars,
 }: {
   positions: Float32Array;
   segments: Uint32Array;
   widths: Float32Array;
-  scalars?: Float32Array | null;
+  scalars?: Float32Array;
 }): LoadedLinesData {
   const ndim = 3;
   const vertexCount = positions.length / ndim;
@@ -47,7 +47,7 @@ function loadedLines({
     widths,
     colors: null,
     sharpness: null,
-    scalars,
+    ...(scalars ? { scalars } : {}),
     segmentCount: segments.length / 2,
     vertexCount,
     ndim,
@@ -91,7 +91,7 @@ describe('LinesDataAccumulator scalar buffer', () => {
       widths: new Float32Array([0.1]),
     });
     let data = acc.getData(1, 1);
-    expect(data.scalars).toBeNull();
+    expect(data.scalars).toBeUndefined();
 
     // Direct buffer write + markScalarsLoaded mirrors the loader's path.
     acc.getScalarBuffer()[0] = 0.5;
@@ -114,7 +114,7 @@ describe('LinesDataAccumulator scalar buffer', () => {
     expect(data.scalars![0]).toBeCloseTo(0.7);
   });
 
-  it('returns scalars: null when no scalars were filled', () => {
+  it('returns scalars: undefined when no scalars were filled', () => {
     const acc = new LinesDataAccumulator(64, 32, 3);
     acc.fill(0, 0, {
       positions: new Float32Array([0, 0, 0]),
@@ -122,7 +122,7 @@ describe('LinesDataAccumulator scalar buffer', () => {
       widths: new Float32Array([0.1]),
     });
     const data = acc.getData(1, 1);
-    expect(data.scalars).toBeNull();
+    expect(data.scalars).toBeUndefined();
   });
 
   it('grows scalar buffer with vertex capacity', () => {
@@ -149,7 +149,7 @@ describe('LinesDataAccumulator scalar buffer', () => {
     acc.dispose();
     expect(acc.getScalarBuffer().length).toBe(0);
     const data = acc.getData(0, 0);
-    expect(data.scalars).toBeNull();
+    expect(data.scalars).toBeUndefined();
   });
 });
 
@@ -179,7 +179,7 @@ describe('buildInstanceBuffers scalar interpolation', () => {
       positions: new Float32Array([0, 0, 0, 1, 0, 0]),
       segments: new Uint32Array([0, 1]),
       widths: new Float32Array([0.1, 0.1]),
-      scalars: null,
+      scalars: undefined,
     });
     const out = buildInstanceBuffers(
       data,
@@ -420,7 +420,7 @@ describe('end-to-end scalar binding for Lines', () => {
       positions: new Float32Array([0, 0, 0, 1, 0, 0]),
       segments: new Uint32Array([0, 1]),
       widths: new Float32Array([0.1, 0.1]),
-      scalars: null,
+      scalars: undefined,
     });
     const processed = buildInstanceBuffers(
       data,
