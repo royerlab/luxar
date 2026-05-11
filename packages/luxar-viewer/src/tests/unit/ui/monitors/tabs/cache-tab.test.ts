@@ -250,6 +250,47 @@ describe('updateCacheTab', () => {
     expect(fill.style.width).toBe('100%');
   });
 
+  it('progress-bar label reads "X% of Y limit" when memoryLimit > 0', () => {
+    const c = makeContainer();
+    updateCacheTab(c, makeMetrics({ memoryPercent: 25, memoryLimit: 4096 }));
+
+    const label = c.querySelector(
+      '.luxar-cache-total .luxar-progress-bar__label'
+    ) as HTMLElement;
+    expect(label.textContent).toMatch(/25% of/);
+    expect(label.textContent).toContain('limit');
+    expect(label.textContent).not.toContain('no memory limit');
+  });
+
+  it('progress-bar label reads "no memory limit configured" when memoryLimit is 0', () => {
+    const c = makeContainer();
+    updateCacheTab(
+      c,
+      makeMetrics({ totalCacheMemory: 2_200_000, memoryLimit: 0, memoryPercent: 0 })
+    );
+
+    const label = c.querySelector(
+      '.luxar-cache-total .luxar-progress-bar__label'
+    ) as HTMLElement;
+    expect(label.textContent).toBe('no memory limit configured');
+    // Misleading legacy label must not slip back in across ticks.
+    expect(label.textContent).not.toContain('0% of 0B');
+    expect(label.textContent).not.toContain('of 0B');
+  });
+
+  it('progress-bar label updates across ticks when memoryLimit toggles 0 → N', () => {
+    const c = makeContainer();
+    updateCacheTab(c, makeMetrics({ memoryLimit: 0, memoryPercent: 0 }));
+    const label = c.querySelector(
+      '.luxar-cache-total .luxar-progress-bar__label'
+    ) as HTMLElement;
+    expect(label.textContent).toBe('no memory limit configured');
+
+    updateCacheTab(c, makeMetrics({ memoryLimit: 1024, memoryPercent: 50 }));
+    expect(label.textContent).toMatch(/50% of/);
+    expect(label.textContent).toContain('limit');
+  });
+
   it('returns true when patching succeeds', () => {
     const c = makeContainer();
     expect(updateCacheTab(c, makeMetrics())).toBe(true);

@@ -273,3 +273,112 @@ describe('renderCacheContent status rows in non-full cache views', () => {
     expect(html).toContain('data-badge="provider-missing"');
   });
 });
+
+/**
+ * Layout guards for the full L0/L1/L2 cache view. These tests pin
+ * the visual contract surfaced in `renderCacheContent`: shared column
+ * grid across all sections, the no-limit progress-bar label, and the
+ * styled EFFECTIVE-HIT-RATE footer.
+ */
+describe('renderCacheContent layout guards (full L0/L1/L2 view)', () => {
+  function makeFullCacheMetrics(overrides: Partial<CacheMetrics> = {}): CacheMetrics {
+    return makeCacheMetrics({
+      enabled: true,
+      telemetryState: { kind: 'enabled' },
+      status: ['cache-enabled'],
+      l0: { size: 845_900, count: 54, hits: 54, misses: 54, evictions: 0, hitRate: 0.5 },
+      l1: { size: 694_000, count: 58, hits: 45, misses: 113, evictions: 0 },
+      l2: { size: 694_000, count: 58, reads: 58, writes: 0, misses: 12 },
+      ...overrides,
+    });
+  }
+
+  /**
+   * Slice the rendered HTML into the text region between two section
+   * headers so we can assert the cols class belongs to *that* section
+   * (not the next one further down).
+   */
+  function sliceBetween(html: string, from: string, to: string): string {
+    const start = html.indexOf(from);
+    const end = to ? html.indexOf(to) : html.length;
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    return html.slice(start, end);
+  }
+
+  it('renders the L0 section with the 3-card grid class (and not cols-4)', () => {
+    const html = renderCacheContent(makeGlobalStats(), makeFullCacheMetrics());
+    const region = sliceBetween(html, 'L0 DECOMPRESSED CACHE', 'L1 MEMORY CACHE');
+    expect(region).toContain('luxar-cache-section__metrics--cols-3');
+    expect(region).not.toContain('luxar-cache-section__metrics--cols-4');
+  });
+
+  it('renders the L1 section with the 3-card grid class (and not cols-4)', () => {
+    const html = renderCacheContent(makeGlobalStats(), makeFullCacheMetrics());
+    const region = sliceBetween(html, 'L1 MEMORY CACHE', 'L2 OPFS CACHE');
+    expect(region).toContain('luxar-cache-section__metrics--cols-3');
+    expect(region).not.toContain('luxar-cache-section__metrics--cols-4');
+  });
+
+  it('renders the L2 section with the 4-card grid class (and not cols-3)', () => {
+    const html = renderCacheContent(makeGlobalStats(), makeFullCacheMetrics());
+    // L2 is followed by CACHE HEALTH in the rendered template.
+    const region = sliceBetween(html, 'L2 OPFS CACHE', 'CACHE HEALTH');
+    expect(region).toContain('luxar-cache-section__metrics--cols-4');
+    expect(region).not.toContain('luxar-cache-section__metrics--cols-3');
+  });
+
+  it('progress-bar label reads "X% of Y limit" when memoryLimit > 0', () => {
+    const html = renderCacheContent(
+      makeGlobalStats(),
+      makeFullCacheMetrics({
+        totalCacheMemory: 1024,
+        memoryLimit: 4096,
+        memoryPercent: 25,
+      })
+    );
+
+    expect(html).toContain('25% of');
+    expect(html).toContain('limit');
+    expect(html).not.toContain('no memory limit configured');
+  });
+
+  it('progress-bar label reads "no memory limit configured" when memoryLimit is 0', () => {
+    const html = renderCacheContent(
+      makeGlobalStats(),
+      makeFullCacheMetrics({
+        totalCacheMemory: 2_200_000,
+        memoryLimit: 0,
+        memoryPercent: 0,
+      })
+    );
+
+    expect(html).toContain('no memory limit configured');
+    // The misleading legacy label must not slip back in.
+    expect(html).not.toContain('0% of 0B limit');
+    expect(html).not.toContain('of 0B');
+  });
+
+  it('renders the EFFECTIVE HIT RATE footer when effectiveDemandHitRate is defined', () => {
+    const html = renderCacheContent(
+      makeGlobalStats(),
+      makeFullCacheMetrics({ effectiveDemandHitRate: 1.0 })
+    );
+
+    // Footer is wrapped in its own styled container so it reads as
+    // part of the TOTAL card rather than unstyled stray text.
+    expect(html).toMatch(/<div[^>]*class="luxar-cache-total__demand"/);
+    expect(html).toContain('data-field="cache-effective-hitrate"');
+    expect(html).toContain('EFFECTIVE HIT RATE: 100.0%');
+  });
+
+  it('omits the EFFECTIVE HIT RATE footer when effectiveDemandHitRate is undefined', () => {
+    const html = renderCacheContent(
+      makeGlobalStats(),
+      makeFullCacheMetrics({ effectiveDemandHitRate: undefined })
+    );
+
+    expect(html).not.toContain('luxar-cache-total__demand');
+    expect(html).not.toContain('EFFECTIVE HIT RATE');
+  });
+});
