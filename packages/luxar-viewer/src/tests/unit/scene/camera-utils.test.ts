@@ -10,7 +10,7 @@ import {
   getCameraFovRadians,
   updateCameraAspect,
   getOrthoFrustumHeight,
-} from '../../../scene/camera-utils';
+} from '../../../utils/camera-utils';
 
 describe('camera-utils', () => {
   describe('isPerspectiveCamera', () => {

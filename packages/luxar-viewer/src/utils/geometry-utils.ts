@@ -1,0 +1,59 @@
+/**
+ * Geometry-related utility functions shared across the rendering layer.
+ *
+ * D.4: extracted from `rendering/gpu-buffer-pool.ts` so the helpers can
+ * be reused outside the pool (e.g., monitor stats, layer-level audits)
+ * without pulling in pool-specific imports.
+ *
+ * @module utils/geometry-utils
+ */
+
+import * as THREE from 'three';
+
+/**
+ * Estimate the GPU-resident byte footprint of a geometry by summing
+ * the underlying typed-array byte lengths of every attribute (and
+ * the index, if present). Mirrors what THREE.js will actually upload
+ * — slightly overstates because we count the full backing array even
+ * if `count < array.length / itemSize`, but that's the footprint that
+ * matters for pool memory pressure.
+ *
+ * D.3: result cached on `geometry.userData.cachedByteSize` so repeated
+ * stats polls don't re-iterate attribute byteLengths. Grow paths
+ * invalidate the cache via `invalidateCachedByteSize()`.
+ */
+export function estimateGeometryBytes(geometry: THREE.BufferGeometry): number {
+  const userData = geometry.userData as { cachedByteSize?: number };
+  if (typeof userData.cachedByteSize === 'number') {
+    return userData.cachedByteSize;
+  }
+  let total = 0;
+  for (const name in geometry.attributes) {
+    const attr = geometry.attributes[name] as THREE.BufferAttribute;
+    const arr = attr.array as ArrayBufferView | undefined;
+    if (arr && typeof arr.byteLength === 'number') {
+      total += arr.byteLength;
+    }
+  }
+  // InstancedBufferGeometry indices are shared with the base geometry
+  // (a single quad), so they're a fixed overhead — small, but include
+  // them for correctness.
+  if (geometry.index) {
+    const idxArr = geometry.index.array as ArrayBufferView | undefined;
+    if (idxArr && typeof idxArr.byteLength === 'number') {
+      total += idxArr.byteLength;
+    }
+  }
+  userData.cachedByteSize = total;
+  return total;
+}
+
+/**
+ * Invalidate the cached byte estimate on a geometry. Call after
+ * resizing/replacing any attribute or index so the next
+ * `estimateGeometryBytes` call recomputes.
+ */
+export function invalidateCachedByteSize(geometry: THREE.BufferGeometry): void {
+  const userData = geometry.userData as { cachedByteSize?: number };
+  delete userData.cachedByteSize;
+}

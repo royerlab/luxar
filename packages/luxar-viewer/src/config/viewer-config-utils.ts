@@ -32,6 +32,7 @@ export const RENDERING_SETTINGS_MAP: Record<string, keyof RenderingSettings> = {
   control_type: 'controlType',
   auto_rotate: 'autoRotate',
   auto_rotate_speed: 'autoRotateSpeed',
+  natural_drag: 'naturalDrag',
 
   // Cinematic
   cinematic_mode: 'cinematicMode',

@@ -2,15 +2,17 @@
 """
 Progressive Gaussian splatting demo on the human mitosis dataset.
 
-Demonstrates the progressive fitting approach: fit splats in multiple passes,
-each targeting the residual of the previous approximation.  The result is a
-multi-LOD GSplatData where each LOD captures progressively finer detail.
+Demonstrates the progressive fitting approach (fit splats in multiple passes,
+each targeting the residual of the previous approximation) followed by a
+post-fit *additive-LOD* construction (greedy ordering + cutpoints) — see
+:mod:`luxar.gsplats.lod.additive`.  The fitter itself returns a single
+flattened ``GSplatData``; the LOD ladder is built explicitly here.
 
 Features:
-- Progressive residual fitting with automatic PSNR-based stopping
-- Per-pass quality tracking (PSNR improves with each LOD)
-- Napari visualization: scrub through LOD levels to see coarse-to-fine
-- Compression analysis at each LOD level
+- Progressive residual fitting with automatic PSNR-based stopping.
+- Principled additive LOD ladder (greedy / matching-pursuit ordering).
+- Napari visualization: scrub through LOD levels to see coarse-to-fine.
+- Per-LOD PSNR computed from the rendered prefix sums.
 """
 
 import sys
@@ -21,7 +23,20 @@ from arbol import Arbol, aprint, asection
 from skimage import color, data, img_as_float32
 
 from luxar.gsplats.fit_progressive_gsplats import fit_progressive_gaussian_splats
+from luxar.gsplats.lod import make_additive_lod
 from luxar.gsplats.models.gsplats.rendering_wrappers import render_gaussians_numpy
+
+
+def _psnr(rendered: np.ndarray, target: np.ndarray) -> float:
+    """Peak signal-to-noise ratio (dB) of ``rendered`` against ``target``."""
+    mse = float(np.mean((rendered.astype(np.float64) - target.astype(np.float64)) ** 2))
+    if mse <= 0.0:
+        return float("inf")
+    rng = float(target.max() - target.min())
+    if rng <= 0.0:
+        return float("inf")
+    return 10.0 * float(np.log10(rng**2 / mse))
+
 
 # Check for --no-napari flag
 NO_NAPARI = "--no-napari" in sys.argv
@@ -35,6 +50,7 @@ ITERS_PER_PASS = 2000  # Optimization iterations per pass
 PSNR_PATIENCE = 0.1  # Stop if ΔPSNR < 0.1 dB between passes
 DEVICE = None  # None -> auto; or "cuda"/"cpu"/"mps"
 TRUNCATE_SIG = 3.0  # Rendering support truncation (≈ ±3σ)
+N_LODS = 4  # Number of additive-LOD levels for the post-fit ladder
 # ==========================
 
 Arbol.max_depth = 4
@@ -64,39 +80,44 @@ with asection("Progressive Gaussian Splatting Demo (Human Mitosis)"):
             max_eccentricity=4.0,
         )
 
+    # --- Build the additive LOD ladder (post-fit, principled) ---
+    with asection(f"Building additive LOD ladder ({N_LODS} levels)"):
+        result = make_additive_lod(result, n_lods=N_LODS, method="greedy")
+        aprint(f"Cutpoints: {result.stats.get('lod_cutpoints', [])}")
+
     # --- Summary ---
     with asection("Results"):
         aprint(f"Total splats: {result.n_splats:,}")
-        aprint(f"LOD levels: {result.n_lods}")
-        aprint(f"Final PSNR: {result.stats.get('psnr_db', 0):.2f} dB")
+        aprint(f"LOD levels (additive ladder): {result.n_lods}")
+        aprint(f"Final PSNR (fit): {result.stats.get('psnr_db', 0):.2f} dB")
         aprint(f"Stop reason: {result.stats.get('stop_reason', '?')}")
         aprint(f"Total time: {result.stats.get('time_seconds', 0):.1f}s")
-        aprint("")
-        psnrs = result.lod_psnrs()
-        for i in range(result.n_lods):
-            lod = result.at_lod(i)
-            aprint(
-                f"  LOD {i}: {lod.n_splats:,} splats, "
-                f"cumulative PSNR = {psnrs[i]:.2f} dB"
-            )
+        aprint(
+            f"Fitting passes: {result.stats.get('n_passes', '?')} "
+            f"(per-pass PSNRs: "
+            f"{[f'{p:.2f}' for p in result.stats.get('pass_psnrs', [])]})"
+        )
 
     # --- Render each LOD level cumulatively for visualization ---
+    psnrs: list[float] = []
     with asection("Rendering LOD levels"):
         n_lods = result.n_lods
         stack_recon = np.zeros((n_lods,) + V.shape, dtype=np.float32)
         stack_resid = np.zeros_like(stack_recon)
 
         for level in range(n_lods):
-            # Render splats up to this LOD level
+            # Render splats up to this LOD level (additive prefix).
             data_at_level = result.up_to_lod(level)
             rendered = render_gaussians_numpy(
                 V.shape, data_at_level, truncate=TRUNCATE_SIG
             )
             stack_recon[level] = rendered
             stack_resid[level] = V - rendered
+            psnr_val = _psnr(rendered, V)
+            psnrs.append(psnr_val)
             aprint(
                 f"LOD 0..{level}: {data_at_level.n_splats:,} splats, "
-                f"PSNR = {psnrs[level]:.2f} dB"
+                f"PSNR = {psnr_val:.2f} dB"
             )
 
 # --- Napari visualization ---

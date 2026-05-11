@@ -13,7 +13,7 @@
 import { UIComponent } from './base/ui-component';
 import { ControlsManager } from '../../controls/controls-manager';
 import { sceneDimsManager } from '../../scene/scene-dims-manager';
-import { type LuxarCamera, isPerspectiveCamera } from '../../scene/camera-utils';
+import { type LuxarCamera, isPerspectiveCamera } from '../../utils/camera-utils';
 
 export interface ScaleBarConfig {
   camera: LuxarCamera;

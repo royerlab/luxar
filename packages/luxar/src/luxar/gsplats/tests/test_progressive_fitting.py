@@ -1,4 +1,12 @@
-"""Tests for progressive Gaussian splat fitting."""
+"""Tests for progressive Gaussian splat fitting.
+
+The progressive fitter returns a *single-LOD* :class:`GSplatData`
+containing all splats from all passes.  Per-pass detail is surfaced
+through the ``on_pass_complete`` callback and the
+``stats['pass_stats']`` / ``stats['pass_psnrs']`` / ``stats['n_passes']``
+fields on the returned dataset.  To build a streamable LOD ladder, run
+:func:`luxar.gsplats.lod.make_additive_lod` on the result.
+"""
 
 from __future__ import annotations
 
@@ -46,11 +54,12 @@ class TestProgressiveFitting:
         )
         assert isinstance(result, GSplatData)
         assert result.n_splats > 0
-        assert result.n_lods >= 1
+        # Single flattened LOD post-decoupling.
+        assert result.n_lods == 1
         assert result.ndim == 2
 
     def test_multi_pass(self):
-        """Verify multiple passes are executed."""
+        """Verify multiple passes are executed (recorded in stats)."""
         V = _make_synthetic_volume(shape=(32, 32))
         result = fit_progressive_gaussian_splats(
             V,
@@ -60,9 +69,8 @@ class TestProgressiveFitting:
             psnr_patience=0.01,  # Very low patience to force multiple passes
             verbose=False,
         )
-        # Should have at least 2 passes (may stop by PSNR patience)
-        assert result.n_lods >= 2
-        # Total splats should be approximately max_splats_per_pass * n_lods
+        # Should have at least 2 passes (may stop by PSNR patience).
+        assert result.stats["n_passes"] >= 2
         assert result.n_splats > 0
 
     def test_max_splats_respected(self):
@@ -89,15 +97,22 @@ class TestProgressiveFitting:
             psnr_patience=5.0,  # Very high patience = stop early
             verbose=False,
         )
-        # Should stop after 2 passes since ΔPSNR < 5 dB
-        assert result.n_lods <= 5  # At most a few passes
+        # Should stop after a few passes since ΔPSNR < 5 dB.
+        assert result.stats["n_passes"] <= 5
         assert result.stats.get("stop_reason") in (
             "psnr_patience",
             "residual_negligible",
         )
 
-    def test_lod_structure(self):
-        """Verify each pass produces a valid LOD."""
+    def test_per_pass_stats_recorded(self):
+        """Per-pass stats are surfaced through ``stats['pass_stats']``.
+
+        The progressive fitter no longer exposes per-pass GSplatLOD
+        intermediates on the returned dataset (it is flattened).  We
+        therefore verify the per-pass detail through the dedicated
+        ``pass_stats`` list, which mirrors what was previously stored
+        on each LOD.
+        """
         V = _make_synthetic_volume(shape=(32, 32))
         result = fit_progressive_gaussian_splats(
             V,
@@ -107,14 +122,12 @@ class TestProgressiveFitting:
             psnr_patience=0.01,
             verbose=False,
         )
-        for i in range(result.n_lods):
-            lod = result.at_lod(i)
-            assert isinstance(lod, GSplatLOD)
-            assert lod.ndim == 2
-            assert "pass_index" in lod.stats
-            assert lod.stats["pass_index"] == i
-        # At least pass 0 must have splats
-        assert result.at_lod(0).n_splats > 0
+        n_passes = result.stats["n_passes"]
+        pass_stats = result.stats["pass_stats"]
+        assert isinstance(pass_stats, list)
+        assert len(pass_stats) == n_passes
+        for i, ps in enumerate(pass_stats):
+            assert ps["pass_index"] == i
 
     def test_cumulative_passes_produce_positive_psnr(self):
         """Verify each progressive pass produces a positive PSNR value.
@@ -134,12 +147,12 @@ class TestProgressiveFitting:
             psnr_patience=0.01,
             verbose=False,
         )
-        if result.n_lods >= 2:
-            psnrs = result.lod_psnrs()
+        if result.stats["n_passes"] >= 2:
+            psnrs = result.stats["pass_psnrs"]
             assert all(p > 0 for p in psnrs)
 
     def test_callback_invoked(self):
-        """Verify on_pass_complete callback is called."""
+        """Verify on_pass_complete callback is called once per pass."""
         V = _make_synthetic_volume(shape=(32, 32))
         callback_log: list[tuple[int, int, float]] = []
 
@@ -155,7 +168,7 @@ class TestProgressiveFitting:
             on_pass_complete=my_callback,
             verbose=False,
         )
-        assert len(callback_log) == result.n_lods
+        assert len(callback_log) == result.stats["n_passes"]
         assert callback_log[0][0] == 0  # First pass index is 0
 
     def test_stats(self):
@@ -171,14 +184,16 @@ class TestProgressiveFitting:
             cull_retention=None,  # Disable for deterministic count
         )
         assert result.stats["fitter_name"] == "progressive"
-        assert result.stats["n_passes"] == result.n_lods
+        assert result.stats["n_passes"] >= 1
         assert result.stats["n_splats"] == result.n_splats
         assert "time_seconds" in result.stats
         assert "psnr_db" in result.stats
         assert "stop_reason" in result.stats
+        assert "pass_psnrs" in result.stats
+        assert "pass_splats" in result.stats
 
     def test_save_load_roundtrip(self):
-        """Verify multi-LOD result can be saved and loaded."""
+        """Verify the (single-LOD) result can be saved and loaded."""
         V = _make_synthetic_volume(shape=(32, 32))
         result = fit_progressive_gaussian_splats(
             V,
@@ -188,17 +203,13 @@ class TestProgressiveFitting:
             psnr_patience=0.01,
             verbose=False,
         )
-
-        # Flatten to avoid saving empty LODs (small test data may produce
-        # 0-splat LODs after residual thresholding)
-        save_result = result.flattened() if result.n_splats > 0 else result
-
+        # The result is already flattened.
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "test.gsplats.zarr"
-            save_result.save(str(path), ordering="none")
+            result.save(str(path), ordering="none")
             loaded = GSplatData.load(str(path), include_stats=True)
 
-            assert loaded.n_splats == save_result.n_splats
+            assert loaded.n_splats == result.n_splats
 
     def test_max_passes_limits_passes(self):
         """Verify max_passes caps the number of passes."""
@@ -212,7 +223,7 @@ class TestProgressiveFitting:
             psnr_patience=0.01,
             verbose=False,
         )
-        assert result.n_lods <= 2
+        assert result.stats["n_passes"] <= 2
         # May stop by max_passes or psnr_patience (if residual thresholded to zero)
         assert result.stats.get("stop_reason") in (
             "max_passes",
@@ -258,7 +269,13 @@ class TestProgressiveFitting:
         assert result_culled.n_splats <= result_no_cull.n_splats
 
     def test_adaptive_seed_reduction_tracked(self):
-        """Verify per-LOD stats track seeds_requested and splats_after_culling."""
+        """Per-pass ``seeds_requested`` / ``splats_after_culling`` are
+        carried in ``stats['pass_stats']``.
+
+        On the flattened return value, per-pass GSplatLOD intermediates
+        are not preserved; ``stats['pass_stats']`` is the canonical
+        source of per-pass detail.
+        """
         V = _make_synthetic_volume(shape=(32, 32))
         result = fit_progressive_gaussian_splats(
             V,
@@ -269,7 +286,8 @@ class TestProgressiveFitting:
             verbose=False,
             cull_retention=None,  # Disable for deterministic per-LOD counts
         )
-        for lod in result.lods:
-            assert "seeds_requested" in lod.stats
-            assert "splats_after_culling" in lod.stats
-            assert lod.stats["splats_after_culling"] == lod.n_splats
+        pass_stats = result.stats["pass_stats"]
+        assert len(pass_stats) >= 1
+        for ps in pass_stats:
+            assert "seeds_requested" in ps
+            assert "splats_after_culling" in ps

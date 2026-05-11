@@ -1,7 +1,7 @@
 # luxar-viewer.core - Technical Specification
 
-**Version**: 1.1.0
-**Last Updated**: 2025-12-09
+**Version**: 1.2.0
+**Last Updated**: 2026-05-08
 
 ## Purpose
 
@@ -132,9 +132,18 @@ async function shouldShowBrowser(src: string): Promise<boolean> {
   // 2. Check for Zarr markers (.zgroup, .zattrs, zarr.json) via Promise.any()
   try {
     await Promise.any([
-      fetch(src + '/.zgroup', { method: 'HEAD' }).then(r => { if (!r.ok) throw r; return r; }),
-      fetch(src + '/.zattrs', { method: 'HEAD' }).then(r => { if (!r.ok) throw r; return r; }),
-      fetch(src + '/zarr.json', { method: 'HEAD' }).then(r => { if (!r.ok) throw r; return r; }),
+      fetch(src + '/.zgroup', { method: 'HEAD' }).then((r) => {
+        if (!r.ok) throw r;
+        return r;
+      }),
+      fetch(src + '/.zattrs', { method: 'HEAD' }).then((r) => {
+        if (!r.ok) throw r;
+        return r;
+      }),
+      fetch(src + '/zarr.json', { method: 'HEAD' }).then((r) => {
+        if (!r.ok) throw r;
+        return r;
+      }),
     ]);
     return false; // Valid Zarr, load directly
   } catch {
@@ -239,31 +248,54 @@ function showError(message: string): void {
 
 ### 5.1 Dispose Sequence
 
-**Purpose**: Properly dispose all resources to prevent memory leaks.
+**Purpose**: Properly dispose all resources to prevent memory leaks
+and double-disposal hazards. The current implementation lives in
+`LuxarApp.dispose()` (`src/core/app.ts`).
 
-**Order** (reverse of initialization):
+**Conventions**:
+
+- Each component is torn down through a `safeDispose(name, fn)`
+  helper that catches exceptions per-step; one failing dispose can't
+  abort the rest of the teardown.
+- Order is roughly reverse of construction: stop new work first
+  (animation, input, scheduled callbacks), then dispose UI panels,
+  then data systems, then renderer/WebGL, then global listeners and
+  singletons (worker pool, monitor manager, scene-loader manager).
+- `DatasetBrowser.close()` is called early in dispose so the panel
+  is removed from the DOM and `LuxarApp.datasetBrowser` is cleared
+  even if the user dismisses the app while the panel is still open.
+- `disposeWorkerPool()` terminates in-flight workers via the pool's
+  `pendingWorkers` set + `initGeneration` token, so a dispose mid-init
+  does not leak Worker instances.
 
 ```typescript
-function dispose(): void {
-  // 1. Stop animation (prevents new work)
-  this.animationController?.dispose();
+dispose(): void {
+  // Stop new work first.
+  safeDispose('animation', () => this.animationController?.dispose());
+  safeDispose('input', () => this.inputHandler?.dispose());
 
-  // 2. Remove input listeners
-  this.inputHandler?.dispose();
+  // Panels with their own DOM teardown.
+  safeDispose('datasetBrowser', () => {
+    this.datasetBrowser?.close();
+    this.datasetBrowser = undefined;
+    this.inputHandler?.setDatasetBrowser(undefined);
+  });
+  safeDispose('renderingControls', () => this.renderingControls?.dispose());
+  // ... other panels ...
 
-  // 3. Dispose UI components
-  this.renderingControls?.dispose();
-  this.datasetBrowser?.dispose();
+  // Data + monitor singletons (each owns its own getInstance/disposeInstance).
+  safeDispose('sceneLoaderManager', () => SceneLoaderManager.disposeInstance());
+  safeDispose('dataMonitorManager', () => DataMonitorManager.disposeInstance());
 
-  // 4. Dispose data loaders
-  dispose(); // From data/zarr-loader
+  // Worker pool: also covers in-flight workers.
+  safeDispose('workerPool', () => disposeWorkerPool());
 
-  // 5. Dispose scene (WebGL resources)
-  this.sceneManager?.dispose();
-
-  // 6. Remove global listeners
-  window.removeEventListener('beforeunload', this.boundDispose);
-  window.removeEventListener('resize', this.handleResize);
+  // Renderer and globals last.
+  safeDispose('sceneManager', () => this.sceneManager?.dispose());
+  safeDispose('globalListeners', () => {
+    window.removeEventListener('beforeunload', this.boundDispose);
+    // ... other window-level listeners owned by LuxarApp ...
+  });
 }
 ```
 
@@ -330,11 +362,11 @@ interface LuxarApp {
 
 ```typescript
 interface LuxarAppOptions {
-  canvas: HTMLCanvasElement;     // Render target (resolved by main.ts)
-  src?: string;                  // Dataset URL (defaults to config.defaultZarrPath)
-  debug?: boolean;               // Enable window.__luxarDebug + verbose logging
-  loaderConfig?: LoaderConfig;   // Cache and prefetch flags
-  updateBrowserUrl?: boolean;    // Mirror selected dataset into URL bar (default false; standalone sets true)
+  canvas: HTMLCanvasElement; // Render target (resolved by main.ts)
+  src?: string; // Dataset URL (defaults to config.defaultZarrPath)
+  debug?: boolean; // Enable window.__luxarDebug + verbose logging
+  loaderConfig?: LoaderConfig; // Cache and prefetch flags
+  updateBrowserUrl?: boolean; // Mirror selected dataset into URL bar (default false; standalone sets true)
 }
 ```
 
@@ -383,7 +415,7 @@ declare global {
       renderingControls?: any;
       getState?: () => any;
       renderOnce?: () => void;
-      getSceneLoader?: () => Promise<any>;
+      getSceneLoader?: () => SceneLoaderManager;
       runtimeReady?: boolean;
       cache?: CacheDebugAPI;
     };
@@ -447,7 +479,7 @@ window.__luxarDebug.consoleInterceptor.getMessages();
   // Helper functions (see sections below)
   getState: () => StateSnapshot,           // Get current state
   renderOnce: () => void,                  // Trigger single frame
-  getSceneLoader: () => Promise<SceneLoaderManager>, // Get loader instance
+  getSceneLoader: () => SceneLoaderManager, // Get loader instance (sync)
 
   // Cache API (see section 6.5)
   cache: CacheDebugAPI,
@@ -486,6 +518,9 @@ window.__luxarDebug.controls.setOrbitMode();
 ```typescript
 getState(): {
   totalPoints: number;
+  totalGSplats: number;
+  totalLines: number;
+  totalElements: number;
   pointClouds: Array<{
     name: string;
     pointCount: number;
@@ -494,11 +529,35 @@ getState(): {
     hasRadii: boolean;
     hasSharpness: boolean;
   }>;
+  gsplatMeshes: Array<{
+    name: string;
+    splatCount: number;
+    visible: boolean;
+  }>;
+  lineMeshes: Array<{
+    name: string;
+    segmentCount: number;
+    visible: boolean;
+    hasColormap: boolean;
+  }>;
+  gpuPool?: {
+    activeBuffers: number;
+    pooledBuffers: number;
+    activeBytes: number;
+    pooledBytes: number;
+    totalBytes: number;
+    largestPooledBytes: number;
+    evictions: number;
+  };
   dimensions: {
     ndim: number;
     displayed: number[];
     currentStep: number[];
   } | null;
+  camera: {
+    position: { x: number; y: number; z: number };
+    fov: number;
+  };
   cameraPosition: { x: number; y: number; z: number };
   cameraFov: number;
   isAnimating: boolean;
@@ -510,17 +569,18 @@ getState(): {
 
 ```javascript
 const state = window.__luxarDebug.getState();
-console.log(`Loaded ${state.totalPoints} points`);
-console.log(`Camera FOV: ${state.cameraFov}`);
+console.log(`Loaded ${state.totalElements} renderable elements`);
+console.log(`Camera FOV: ${state.camera.fov}`);
 console.log(`Dimensions: ${state.dimensions?.ndim}D`);
 ```
 
 **Implementation Details**:
 
-- Traverses scene to count points across all `THREE.Points` objects
-- Inspects geometry attributes for metadata
+- Traverses scene to count Points, Lines, and GSplats render objects
+- Inspects geometry/material attributes for per-mesh debug metadata
 - Queries `sceneDimsManager` for dimensional state
-- Returns camera position and FOV
+- Returns nested camera state plus flat compatibility fields
+- Includes GPU buffer pool byte stats when a provider is wired in
 
 #### renderOnce()
 
@@ -551,24 +611,26 @@ setTimeout(() => {
 **Signature**:
 
 ```typescript
-async getSceneLoader(): Promise<SceneLoaderManager>
+getSceneLoader(): SceneLoaderManager
 ```
 
 **Usage**:
 
 ```javascript
-const manager = await window.__luxarDebug.getSceneLoader();
+const manager = window.__luxarDebug.getSceneLoader();
 const loader = manager.getDefaultLoader();
 console.log(loader);
 ```
 
-**Note**: Uses dynamic import to avoid circular dependencies.
+**Note**: Synchronous; lives in `debug-state.ts`. The dependency was
+inverted so a dynamic import is no longer needed to break a circular
+dependency.
 
 ---
 
 ### 6.5 Cache Debug API
 
-**Purpose**: Inspect and manipulate two-tier cache (L1 memory + L2 OPFS).
+**Purpose**: Inspect and manipulate cache levels (L0 decompressed chunks, L1 memory, and L2 OPFS).
 
 **Location**: `app.ts` lines 362-423
 
@@ -807,11 +869,11 @@ interface LuxarApp {
 
 ```typescript
 interface LuxarAppOptions {
-  canvas: HTMLCanvasElement;     // Render target (resolved by main.ts)
-  src?: string;                  // Dataset URL (defaults to config.defaultZarrPath)
-  debug?: boolean;               // Enable window.__luxarDebug + verbose logging
-  loaderConfig?: LoaderConfig;   // Cache and prefetch flags
-  updateBrowserUrl?: boolean;    // Mirror selected dataset into URL bar (default false; standalone sets true)
+  canvas: HTMLCanvasElement; // Render target (resolved by main.ts)
+  src?: string; // Dataset URL (defaults to config.defaultZarrPath)
+  debug?: boolean; // Enable window.__luxarDebug + verbose logging
+  loaderConfig?: LoaderConfig; // Cache and prefetch flags
+  updateBrowserUrl?: boolean; // Mirror selected dataset into URL bar (default false; standalone sets true)
 }
 ```
 

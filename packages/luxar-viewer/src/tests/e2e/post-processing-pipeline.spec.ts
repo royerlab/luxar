@@ -12,7 +12,7 @@
  * Dataset: build_example_structured.zarr (3D, reliable point count)
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import {
   waitForLuxarReady,
   waitForPointsLoaded,
@@ -191,7 +191,11 @@ test.describe('Post-Processing Pipeline', () => {
   });
 
   test('should survive rapid effect toggling', async ({ page }) => {
-    // Toggle cinematic mode (C key) 10 times rapidly
+    // Toggle cinematic mode (C key) 10 times rapidly. The 50 ms pacing
+    // is intentional: the test exercises the rapid-toggle race window
+    // where successive enable/disable transitions land in the same
+    // animation frame batch. Replacing this with a tighter loop changes
+    // the failure mode being exercised.
     for (let i = 0; i < 10; i++) {
       await page.keyboard.press('c');
       await page.waitForTimeout(50);
@@ -210,10 +214,10 @@ test.describe('Post-Processing Pipeline', () => {
     expect(glErrors).toEqual([]);
   });
 
-  test('visual regression: scene with default post-processing', async ({ page }) => {
-    // Wait for rendering to fully stabilize
+  test('@visual visual regression: scene with default post-processing', async ({ page }) => {
+    // waitForRenderStable already drives the wait off the renderer frame
+    // counter; an additional fixed sleep would be redundant.
     await waitForRenderStable(page, 5);
-    await page.waitForTimeout(500);
 
     await expect(page).toHaveScreenshot('post-processing-default.png', {
       maxDiffPixelRatio: 0.08,

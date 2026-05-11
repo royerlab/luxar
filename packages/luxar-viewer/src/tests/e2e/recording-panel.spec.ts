@@ -9,7 +9,7 @@
  * - Video recording confirmation dialog
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import {
   waitForLuxarReady,
   waitForNextRender,
@@ -208,22 +208,20 @@ test.describe('Recording Panel', () => {
       await panel.startVideoRecording();
     });
 
-    await page.waitForTimeout(500);
-
-    // Verify recording indicator is visible
+    // Recording indicator should appear; expect.toBeVisible() polls
+    // automatically with its own retry-with-timeout, so a fixed sleep is
+    // redundant.
     const indicator = page.locator('.luxar-recording-indicator');
-    await expect(indicator).toBeVisible();
+    await expect(indicator).toBeVisible({ timeout: 5000 });
 
     // Verify it shows REC text
     const recText = await indicator.locator('.luxar-recording-indicator__text').textContent();
     expect(recText).toBe('REC');
 
-    // Stop recording
+    // Stop recording — indicator is removed asynchronously after
+    // MediaRecorder.stop() resolves; expect.not.toBeVisible polls.
     await page.keyboard.press('Escape');
-    await page.waitForTimeout(1000);
-
-    // Indicator should be gone
-    await expect(indicator).not.toBeVisible();
+    await expect(indicator).not.toBeVisible({ timeout: 5000 });
   });
 
   test('should have Show Panels toggle in Advanced Options', async ({ page }) => {

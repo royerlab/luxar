@@ -9,6 +9,8 @@
  * napari-style.
  */
 
+import { clamp } from '../gui/utils/value-formatting';
+
 export interface RangeSliderOptions {
   container: HTMLElement;
   min: number;
@@ -256,8 +258,8 @@ export class RangeSlider {
         // Clamp current values into new bounds
         let low = parseFloat(this.lowInput.value);
         let high = parseFloat(this.highInput.value);
-        low = Math.max(newMin, Math.min(newMax, low));
-        high = Math.max(newMin, Math.min(newMax, high));
+        low = clamp(low, newMin, newMax);
+        high = clamp(high, newMin, newMax);
         this.lowInput.value = String(low);
         this.highInput.value = String(high);
         this.updateLabels();
@@ -323,8 +325,8 @@ export class RangeSlider {
     // Clamp current thumb values into new bounds
     let low = parseFloat(this.lowInput.value);
     let high = parseFloat(this.highInput.value);
-    low = Math.max(newMin, Math.min(newMax, low));
-    high = Math.max(newMin, Math.min(newMax, high));
+    low = clamp(low, newMin, newMax);
+    high = clamp(high, newMin, newMax);
     this.lowInput.value = String(low);
     this.highInput.value = String(high);
     this.updateLabels();

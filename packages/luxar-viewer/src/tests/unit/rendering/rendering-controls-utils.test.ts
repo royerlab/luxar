@@ -14,7 +14,7 @@ import {
   getSettingsRequiringRebuild,
   calculatePerformanceImpact,
   getDefaultRenderingSettings,
-} from '../../../ui/rendering-controls-utils';
+} from '../../../ui/rendering-controls/rendering-controls-utils';
 
 describe('rendering-controls-utils', () => {
   describe('validateRenderingSettings', () => {
@@ -88,6 +88,19 @@ describe('rendering-controls-utils', () => {
       expect(result.controlType).toBe('ortho');
     });
 
+    it('preserves an explicit naturalDrag=false (user opt-out overrides platform default)', () => {
+      // Regression: when a Mac user unchecks "Natural drag" the stored
+      // `false` must survive validation, NOT get replaced by the
+      // platform default of true.
+      const result = validateRenderingSettings({ naturalDrag: false });
+      expect(result.naturalDrag).toBe(false);
+    });
+
+    it('preserves an explicit naturalDrag=true', () => {
+      const result = validateRenderingSettings({ naturalDrag: true });
+      expect(result.naturalDrag).toBe(true);
+    });
+
     it('should round bloomLevels to integer', () => {
       const result = validateRenderingSettings({ bloomLevels: 5.7 });
       expect(result.bloomLevels).toBe(6);
@@ -97,6 +110,98 @@ describe('rendering-controls-utils', () => {
       const defaults = getDefaultRenderingSettings();
       const result = validateRenderingSettings({ near: 10, far: 5 });
       expect(result.far).toBe(defaults.far);
+    });
+
+    describe('boolean fields default on non-boolean injection', () => {
+      it.each([
+        ['bloomEnabled', 'bloomEnabled' as const],
+        ['fxaaEnabled', 'fxaaEnabled' as const],
+        ['msaaEnabled', 'msaaEnabled' as const],
+        ['ssaaEnabled', 'ssaaEnabled' as const],
+        ['smaaEnabled', 'smaaEnabled' as const],
+        ['dofEnabled', 'dofEnabled' as const],
+        ['aoEnabled', 'aoEnabled' as const],
+        ['vignetteEnabled', 'vignetteEnabled' as const],
+        ['detectorNoiseEnabled', 'detectorNoiseEnabled' as const],
+        ['chromaticLensDistortionEnabled', 'chromaticLensDistortionEnabled' as const],
+        ['autoRotate', 'autoRotate' as const],
+        ['naturalDrag', 'naturalDrag' as const],
+        ['dynamicClippingEnabled', 'dynamicClippingEnabled' as const],
+        ['adaptiveDPREnabled', 'adaptiveDPREnabled' as const],
+        ['cinematicMode', 'cinematicMode' as const],
+      ])('%s rejects string injection and falls back to default', (_name, key) => {
+        const defaults = getDefaultRenderingSettings();
+        const result = validateRenderingSettings({ [key]: 'oops' as unknown as boolean });
+        expect(result[key]).toBe(defaults[key]);
+      });
+    });
+
+    describe('chromatic lens distortion fields', () => {
+      it('rejects NaN focal length and defaults', () => {
+        const defaults = getDefaultRenderingSettings();
+        const result = validateRenderingSettings({
+          chromaticLensFocalLengthX: NaN,
+          chromaticLensFocalLengthY: -1,
+        });
+        expect(result.chromaticLensFocalLengthX).toBe(defaults.chromaticLensFocalLengthX);
+        expect(result.chromaticLensFocalLengthY).toBe(defaults.chromaticLensFocalLengthY);
+      });
+
+      it('clamps distortion strengths to [-1, 1]', () => {
+        const defaults = getDefaultRenderingSettings();
+        const result = validateRenderingSettings({
+          chromaticLensDistortionX: 5,
+          chromaticLensDistortionY: -10,
+          chromaticLensSkew: Infinity,
+        });
+        expect(result.chromaticLensDistortionX).toBe(defaults.chromaticLensDistortionX);
+        expect(result.chromaticLensDistortionY).toBe(defaults.chromaticLensDistortionY);
+        expect(result.chromaticLensSkew).toBe(defaults.chromaticLensSkew);
+      });
+    });
+
+    describe('detector noise fields', () => {
+      it('rejects NaN/Infinity numeric values', () => {
+        const defaults = getDefaultRenderingSettings();
+        const result = validateRenderingSettings({
+          detectorNoiseReadoutSigma: NaN,
+          detectorNoisePhotonGain: Infinity,
+          detectorNoiseFpnSigma: -1,
+        });
+        expect(result.detectorNoiseReadoutSigma).toBe(defaults.detectorNoiseReadoutSigma);
+        expect(result.detectorNoisePhotonGain).toBe(defaults.detectorNoisePhotonGain);
+        expect(result.detectorNoiseFpnSigma).toBe(defaults.detectorNoiseFpnSigma);
+      });
+    });
+
+    describe('AA fields', () => {
+      it('rounds smaaSearchSteps to integer and clamps to [1, 32]', () => {
+        const result = validateRenderingSettings({ smaaSearchSteps: 7.7 });
+        expect(result.smaaSearchSteps).toBe(8);
+
+        const defaults = getDefaultRenderingSettings();
+        const result2 = validateRenderingSettings({ smaaSearchSteps: 100 });
+        expect(result2.smaaSearchSteps).toBe(defaults.smaaSearchSteps);
+      });
+
+      it('clamps ssaaMultiplier to [1, 8]', () => {
+        const defaults = getDefaultRenderingSettings();
+        const result = validateRenderingSettings({ ssaaMultiplier: 0 });
+        expect(result.ssaaMultiplier).toBe(defaults.ssaaMultiplier);
+      });
+    });
+
+    describe('autoRotateSpeed', () => {
+      it('clamps NaN to default', () => {
+        const defaults = getDefaultRenderingSettings();
+        const result = validateRenderingSettings({ autoRotateSpeed: NaN });
+        expect(result.autoRotateSpeed).toBe(defaults.autoRotateSpeed);
+      });
+
+      it('preserves valid negative speed (counter-clockwise)', () => {
+        const result = validateRenderingSettings({ autoRotateSpeed: -2 });
+        expect(result.autoRotateSpeed).toBe(-2);
+      });
     });
   });
 
@@ -141,6 +246,21 @@ describe('rendering-controls-utils', () => {
       expect(clampMSAASamples(3)).toBe(4);
       expect(clampMSAASamples(6)).toBe(8);
       expect(clampMSAASamples(20)).toBe(16);
+    });
+
+    it('defaults to 0 (disabled) for non-finite input', () => {
+      // NaN comparisons are always false, so without a type/finite
+      // guard the function would silently return 16. Verify the
+      // explicit guard.
+      expect(clampMSAASamples(NaN)).toBe(0);
+      expect(clampMSAASamples(Infinity)).toBe(0);
+      expect(clampMSAASamples(-Infinity)).toBe(0);
+    });
+
+    it('defaults to 0 for non-numeric input (string, undefined, object)', () => {
+      expect(clampMSAASamples('4' as unknown as number)).toBe(0);
+      expect(clampMSAASamples(undefined as unknown as number)).toBe(0);
+      expect(clampMSAASamples({} as unknown as number)).toBe(0);
     });
   });
 

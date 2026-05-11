@@ -9,7 +9,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import * as THREE from 'three';
-import { NodeFactory } from '../../../data/node-factory';
+import { NodeFactory } from '../../../rendering/node-factory';
 import type { LoadedPointsData } from '../../../data/data-loader-types';
 
 // Helper to create mock LoadedPointsData
@@ -234,10 +234,22 @@ describe('NodeFactory', () => {
     it('should not throw for valid column-major transform', () => {
       // Identity matrix with translation at [12,13,14]
       const transform = [
-        1, 0, 0, 0, // Column 0
-        0, 1, 0, 0, // Column 1
-        0, 0, 1, 0, // Column 2
-        5, 10, 15, 1, // Column 3 (translation)
+        1,
+        0,
+        0,
+        0, // Column 0
+        0,
+        1,
+        0,
+        0, // Column 1
+        0,
+        0,
+        1,
+        0, // Column 2
+        5,
+        10,
+        15,
+        1, // Column 3 (translation)
       ];
 
       expect(() => factory.validateTransformFormat(transform)).not.toThrow();
@@ -246,15 +258,25 @@ describe('NodeFactory', () => {
     it('should throw for row-major transform', () => {
       // Row-major matrix with translation at [3,7,11]
       const transform = [
-        1, 0, 0, 5, // Row 0 (tx at index 3)
-        0, 1, 0, 10, // Row 1 (ty at index 7)
-        0, 0, 1, 15, // Row 2 (tz at index 11)
-        0, 0, 0, 1, // Row 3
+        1,
+        0,
+        0,
+        5, // Row 0 (tx at index 3)
+        0,
+        1,
+        0,
+        10, // Row 1 (ty at index 7)
+        0,
+        0,
+        1,
+        15, // Row 2 (tz at index 11)
+        0,
+        0,
+        0,
+        1, // Row 3
       ];
 
-      expect(() => factory.validateTransformFormat(transform)).toThrow(
-        /row-major/
-      );
+      expect(() => factory.validateTransformFormat(transform)).toThrow(/row-major/);
     });
 
     it('should not throw for identity matrix', () => {
@@ -316,9 +338,7 @@ describe('NodeFactory', () => {
       const object = new THREE.Object3D();
       const rowMajor = [1, 0, 0, 5, 0, 1, 0, 10, 0, 0, 1, 15, 0, 0, 0, 1];
 
-      expect(() => factory.applyTransform(object, rowMajor)).toThrow(
-        /row-major/
-      );
+      expect(() => factory.applyTransform(object, rowMajor)).toThrow(/row-major/);
     });
   });
 
@@ -357,7 +377,7 @@ describe('NodeFactory', () => {
     });
 
     it('should pass radius and sharpness scales', () => {
-      const attrs = { opacity: 0.8, gamma: 2.2, blending_mode: 'additive' };
+      const attrs = { opacity: 0.8, gamma: 2.2, blending_mode: 'additive' as const };
       const material = factory.createPointsMaterial(attrs, 2.0, 10.0);
 
       expect(material).toBeInstanceOf(THREE.ShaderMaterial);

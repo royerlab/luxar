@@ -1,24 +1,12 @@
 /**
- * Value formatting utilities for controllers
+ * Value formatting utilities for controllers.
+ *
+ * `clamp` lives in `src/utils/clamp.ts` (cross-cutting foundation) so
+ * `rendering` can import it without crossing layers. Re-exported here
+ * for back-compat with existing `ui/` callers.
  */
 
-/**
- * Clamp a value between min and max
- *
- * @param value - Value to clamp
- * @param min - Minimum value (optional)
- * @param max - Maximum value (optional)
- * @returns Clamped value
- */
-export function clamp(value: number, min?: number, max?: number): number {
-  if (min !== undefined && value < min) {
-    return min;
-  }
-  if (max !== undefined && value > max) {
-    return max;
-  }
-  return value;
-}
+export { clamp } from '../../../utils/clamp';
 
 /**
  * Format a number for display based on step value

@@ -1021,7 +1021,23 @@ export const Material = vi.fn().mockImplementation(() => ({
     this.userData = JSON.parse(JSON.stringify(source.userData));
     return this;
   }),
-  dispose: vi.fn(),
+  // Minimal EventDispatcher surface — MaterialManager subscribes to
+  // the synchronous `dispose` event so it can clean up automatically.
+  _listeners: {} as Record<string, ((...args: unknown[]) => void)[]>,
+  addEventListener: vi.fn(function (this: any, type: string, listener: (...args: unknown[]) => void) {
+    this._listeners ??= {};
+    (this._listeners[type] ??= []).push(listener);
+  }),
+  removeEventListener: vi.fn(function (this: any, type: string, listener: (...args: unknown[]) => void) {
+    if (!this._listeners?.[type]) return;
+    this._listeners[type] = this._listeners[type].filter((l: unknown) => l !== listener);
+  }),
+  dispatchEvent: vi.fn(function (this: any, event: { type: string }) {
+    this._listeners?.[event.type]?.forEach((l: (e: unknown) => void) => l(event));
+  }),
+  dispose: vi.fn(function (this: any) {
+    this.dispatchEvent?.({ type: 'dispose', target: this });
+  }),
 }));
 
 export const ShaderMaterial = vi.fn().mockImplementation((parameters: any = {}) => {

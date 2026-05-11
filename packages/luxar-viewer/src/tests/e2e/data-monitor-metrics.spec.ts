@@ -8,7 +8,7 @@
  * - Monitor UI can be toggled with M key
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import {
   waitForLuxarReady,
   waitForPointsLoaded,
@@ -53,8 +53,7 @@ test.describe('Data Loading Monitor Metrics', () => {
     expect(scenePointCount).toBeGreaterThan(0);
     // State totalPoints and scene count should agree within 2x. Both are
     // single-frame reads of the same scene; large divergence indicates a
-    // real reporting bug. (Was previously 0.1-10x, which permitted
-    // essentially any non-zero count.)
+    // real reporting bug.
     if (state.totalPoints > 0 && scenePointCount > 0) {
       const ratio = scenePointCount / state.totalPoints;
       expect(ratio).toBeGreaterThan(0.5);
@@ -95,7 +94,10 @@ test.describe('Data Loading Monitor Metrics', () => {
     const initialPoints = initialState.totalPoints;
     expect(initialPoints).toBeGreaterThan(0);
 
-    // Perform some interactions that trigger re-renders
+    // Perform some interactions that trigger re-renders. The pacing
+    // sleep between wheel events is intentional: the test simulates
+    // discrete user-driven zoom events rather than a single tight burst,
+    // so the viewer's per-event damping/render path runs each time.
     await focusCanvas(page);
     for (let i = 0; i < 5; i++) {
       await page.mouse.wheel(0, 100); // Zoom

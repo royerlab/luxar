@@ -18,15 +18,17 @@
  */
 
 import * as THREE from 'three';
-import type { PostProcessingManager } from '../post-processing-manager';
+import type { PostProcessingManager } from '../post-processing/post-processing-manager';
 import { isCameraAwareMaterial } from '../camera-aware-material';
+import { materialManager } from '../material-manager';
 import {
   getCameraFovRadians,
   isOrthographicCamera,
   getOrthoFrustumHeight,
-} from '../../scene/camera-utils';
-import type { LuxarCamera } from '../../scene/camera-utils';
+} from '../../utils/camera-utils';
+import type { LuxarCamera } from '../../utils/camera-utils';
 import { log, Modules } from '../../utils/log';
+import { clamp } from '../../utils/clamp';
 
 /** Result of a successful pick operation. */
 export interface PickResult {
@@ -62,8 +64,8 @@ export const MAX_PICK_BUFFER_DIM = 1024;
  * smaller than 1 pixel.
  */
 export function computePickBufferSize(drawW: number, drawH: number): { w: number; h: number } {
-  const w = Math.max(1, Math.min(MAX_PICK_BUFFER_DIM, Math.floor(drawW / 2)));
-  const h = Math.max(1, Math.min(MAX_PICK_BUFFER_DIM, Math.floor(drawH / 2)));
+  const w = clamp(Math.floor(drawW / 2), 1, MAX_PICK_BUFFER_DIM);
+  const h = clamp(Math.floor(drawH / 2), 1, MAX_PICK_BUFFER_DIM);
   return { w, h };
 }
 
@@ -147,6 +149,13 @@ export class PickingSystem {
     pickNode.matrixAutoUpdate = false;
     pickNode.matrixWorldAutoUpdate = false;
 
+    // forward link main → pick so commit helpers (e.g.
+    // `syncPointMaterialWithGeometry`) can reach the picking material
+    // without a reverse map lookup. Keeps lifecycle simple — when the
+    // main node disposes, picking-system.unregisterNode also clears
+    // this via the nodeMap removal.
+    mainNode.userData.pickNode = pickNode;
+
     this.nodeMap.set(pickId, { main: mainNode, pick: pickNode });
   }
 
@@ -178,6 +187,50 @@ export class PickingSystem {
   /** Number of registered pick nodes. */
   get registeredNodeCount(): number {
     return this.nodeMap.size;
+  }
+
+  /**
+   * Drop all node registrations *without* disposing the pick
+   * materials. Used after a WebGL context-loss event: the pick
+   * materials' shader programs are already invalid (the context they
+   * were compiled against is gone), and calling `dispose()` on them
+   * would throw on some drivers. The caller (`NodeFactory.rebuildAfterContextRestore`)
+   * is responsible for re-registering every scene node afterward,
+   * which produces fresh pick materials against the new context.
+   *
+   * Pick materials are registered with `materialManager.register(...)`
+   * at construction (see `node-factory.ts`). Without unregistering
+   * them here, repeated context-restore cycles accumulate stale
+   * references in the materialManager registry — camera-uniform
+   * updates would target dead materials and the
+   * `getStats().totalRegistered` count grows unboundedly. We
+   * unregister WITHOUT disposing (calls
+   * `materialManager.unregister(material)` not `dispose(material)`),
+   * matching the "no-dispose during context loss" contract for
+   * visible materials.
+   *
+   * Distinct from `unregisterNode(id)` which intentionally disposes
+   * the pick material when removing a single live node.
+   */
+  clearRegistrationsForRebuild(): void {
+    for (const entry of this.nodeMap.values()) {
+      const material = (entry.pick as THREE.Mesh).material;
+      const list = Array.isArray(material) ? material : [material];
+      for (const m of list) {
+        // Pick materials are constructed in NodeFactory and ALWAYS
+        // implement CameraAwareMaterial (Point/Line/GSplatPickingMaterial
+        // each declare `implements CameraAwareMaterial`), so the cast
+        // is safe. `isCameraAwareMaterial(m)` is the runtime guard.
+        if (m && isCameraAwareMaterial(m)) {
+          materialManager.unregister(m);
+        }
+      }
+    }
+    this.nodeMap.clear();
+    while (this.pickScene.children.length > 0) {
+      this.pickScene.remove(this.pickScene.children[0]);
+    }
+    this._dirty = true;
   }
 
   /** Update camera reference (e.g., after perspective ↔ orthographic swap). */
@@ -329,8 +382,8 @@ export class PickingSystem {
     const cursorY = pickH - Math.floor(correctedY * scaleY);
 
     const half = Math.floor(PICK_SIZE / 2);
-    this._lastReadX = Math.max(0, Math.min(cursorX - half, pickW - PICK_SIZE));
-    this._lastReadY = Math.max(0, Math.min(cursorY - half, pickH - PICK_SIZE));
+    this._lastReadX = clamp(cursorX - half, 0, pickW - PICK_SIZE);
+    this._lastReadY = clamp(cursorY - half, 0, pickH - PICK_SIZE);
 
     // Ray-BBox culling: quick check if cursor is near any node at all
     // Use corrected coordinates so the ray matches the undistorted pick buffer

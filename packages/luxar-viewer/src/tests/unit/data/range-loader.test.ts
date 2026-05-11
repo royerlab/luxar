@@ -14,9 +14,14 @@
  */
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import type { ArrayMetadata } from '../../../data/array-decoder';
-import { ArrayRefRegistry } from '../../../data/array-decoder';
-import { RangeLoader } from '../../../data/loaders/range-loader';
+import type { ArrayMetadata } from '../../../data/utils/array-decoder';
+import { ArrayRefRegistry } from '../../../data/utils/array-decoder';
+import {
+  RangeLoader,
+  getSharedRangeLoader,
+  getSharedRefRegistry,
+  resetSharedRangeLoader,
+} from '../../../data/loaders/range-loader';
 import type { LoadRange } from '../../../data/loaders/range-loader';
 
 // ---------------------------------------------------------------------------
@@ -41,7 +46,9 @@ vi.mock('../../../workers/worker-pool', () => ({
   },
 }));
 
-// Mock zarrita get/slice to return controlled data
+// Mock zarrita get/slice to return controlled data. open() and root() are
+// mocked too so that loadRangesResolvingRef can be exercised without an
+// actual zarr store.
 vi.mock('zarrita', async () => {
   const actual = await vi.importActual('zarrita');
   return {
@@ -49,11 +56,15 @@ vi.mock('zarrita', async () => {
     // get() is replaced per-test via mockZarrGet
     get: vi.fn(),
     slice: (start: number | null, end?: number | null) => ({ start, end }),
+    open: vi.fn(),
+    root: vi.fn(),
   };
 });
 
-import { get as zarrGet } from 'zarrita';
+import { get as zarrGet, open as zarrOpen, root as zarrRoot } from 'zarrita';
 const mockZarrGet = vi.mocked(zarrGet);
+const mockZarrOpen = vi.mocked(zarrOpen);
+const mockZarrRoot = vi.mocked(zarrRoot);
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -242,7 +253,12 @@ describe('RangeLoader.detectEncoding', () => {
   });
 
   it('rejects malformed prefix-matching encoding names', () => {
-    for (const name of ['lut_float32', 'bounded_scalar_uint32', 'log_scalar_float32', 'rgb_uint32']) {
+    for (const name of [
+      'lut_float32',
+      'bounded_scalar_uint32',
+      'log_scalar_float32',
+      'rgb_uint32',
+    ]) {
       const attrs: ArrayMetadata = { encoding: { name } };
       expect(() => RangeLoader.detectEncoding(attrs)).toThrow('Unknown encoding name');
     }
@@ -446,7 +462,11 @@ describe('RangeLoader.loadQuantized (via loadRanges)', () => {
     setMockData(new Uint8Array([0, 127, 255]));
 
     const attrs: ArrayMetadata = {
-      encoding: { name: 'rgb_uint8', bounds: [0, 1] as [number, number], original_dtype: 'float32' },
+      encoding: {
+        name: 'rgb_uint8',
+        bounds: [0, 1] as [number, number],
+        original_dtype: 'float32',
+      },
     };
     const output = new Float32Array(3);
     const ranges: LoadRange[] = [{ start: 0, end: 3 }];
@@ -490,7 +510,11 @@ describe('RangeLoader.loadQuantized (via loadRanges)', () => {
     setMockData(new Uint16Array([0, 32767, 65535]));
 
     const attrs: ArrayMetadata = {
-      encoding: { name: 'rgb_uint16', bounds: [0, 1] as [number, number], original_dtype: 'float32' },
+      encoding: {
+        name: 'rgb_uint16',
+        bounds: [0, 1] as [number, number],
+        original_dtype: 'float32',
+      },
     };
     const output = new Float32Array(3);
     const ranges: LoadRange[] = [{ start: 0, end: 3 }];
@@ -526,7 +550,11 @@ describe('RangeLoader.loadQuantized (via loadRanges)', () => {
     setMockData(new Uint8Array([0, 0, 0, 255, 128, 64]));
 
     const attrs: ArrayMetadata = {
-      encoding: { name: 'rgb_uint8', bounds: [0, 1] as [number, number], original_dtype: 'float32' },
+      encoding: {
+        name: 'rgb_uint8',
+        bounds: [0, 1] as [number, number],
+        original_dtype: 'float32',
+      },
     };
     const output = new Float32Array(6);
     const ranges: LoadRange[] = [{ start: 0, end: 2 }];
@@ -803,5 +831,171 @@ describe('RangeLoader.loadArrayRef (via loadRanges)', () => {
     await expect(loader.loadRanges(array, attrs, ranges, output, 5, 3)).rejects.toThrow(
       'Array reference encountered in RangeLoader but not pre-resolved'
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// loadRangesResolvingRef
+// ---------------------------------------------------------------------------
+
+describe('RangeLoader.loadRangesResolvingRef', () => {
+  let loader: RangeLoader;
+
+  beforeEach(() => {
+    loader = createLoader();
+    mockZarrGet.mockReset();
+    mockZarrOpen.mockReset();
+    mockZarrRoot.mockReset();
+  });
+
+  it('passes non-ref attrs straight through to loadRanges (direct encoding)', async () => {
+    setMockData(new Float32Array([1, 2, 3]));
+    const output = new Float32Array(3);
+    const array = mockZarrArray('float32', [10]);
+    const ranges: LoadRange[] = [{ start: 0, end: 3 }];
+
+    const written = await loader.loadRangesResolvingRef(
+      array,
+      undefined,
+      ranges,
+      output,
+      3,
+      1,
+      {} as never
+    );
+
+    expect(written).toBe(3);
+    expect(Array.from(output)).toEqual([1, 2, 3]);
+    // No ref → never opened anything.
+    expect(mockZarrOpen).not.toHaveBeenCalled();
+    expect(mockZarrRoot).not.toHaveBeenCalled();
+  });
+
+  it('resolves array_ref by opening the target and delegating to loadRanges', async () => {
+    // Wire up a fake target array that returns a deterministic chunk.
+    const targetArray = {
+      dtype: 'float32',
+      shape: [100, 3],
+      attrs: {},
+    } as unknown as ReturnType<typeof mockZarrArray>;
+    const fakeStore = { kind: 'mock-store' } as never;
+    const fakeRootLocation = { resolve: vi.fn().mockReturnValue('resolved-target-loc') };
+    mockZarrRoot.mockReturnValue(fakeRootLocation as never);
+    mockZarrOpen.mockResolvedValue(targetArray as never);
+    setMockData(new Float32Array([10, 20, 30, 40, 50, 60]));
+
+    const refAttrs: ArrayMetadata = {
+      encoding: { name: 'array_ref', target: '/Shared/colors', hash: 'sha-test' },
+    };
+    const placeholder = {} as ReturnType<typeof mockZarrArray>;
+    const output = new Float32Array(6);
+    const ranges: LoadRange[] = [{ start: 0, end: 2 }];
+
+    const written = await loader.loadRangesResolvingRef(
+      placeholder,
+      refAttrs,
+      ranges,
+      output,
+      2,
+      999, // hint should be ignored — target shape says 3
+      fakeStore
+    );
+
+    expect(mockZarrRoot).toHaveBeenCalledWith(fakeStore);
+    expect(fakeRootLocation.resolve).toHaveBeenCalledWith('/Shared/colors');
+    expect(mockZarrOpen).toHaveBeenCalledWith('resolved-target-loc', { kind: 'array' });
+    expect(written).toBe(6);
+    expect(Array.from(output)).toEqual([10, 20, 30, 40, 50, 60]);
+  });
+
+  it('uses target.shape[1] as elementsPerItem (overriding caller hint) for ref targets', async () => {
+    // Same flow, but verify we do not pass `999` (caller hint) when there's
+    // an array_ref. The output length tracks target shape semantics.
+    const targetArray = {
+      dtype: 'float32',
+      shape: [10], // 1-D target → elementsPerItem = 1
+      attrs: {},
+    } as unknown as ReturnType<typeof mockZarrArray>;
+    const fakeStore = {} as never;
+    mockZarrRoot.mockReturnValue({ resolve: () => 'tloc' } as never);
+    mockZarrOpen.mockResolvedValue(targetArray as never);
+    setMockData(new Float32Array([7, 8]));
+
+    const refAttrs: ArrayMetadata = {
+      encoding: { name: 'array_ref', target: '/Shared/scalars', hash: 'h' },
+    };
+    const placeholder = {} as ReturnType<typeof mockZarrArray>;
+    const output = new Float32Array(2);
+
+    const written = await loader.loadRangesResolvingRef(
+      placeholder,
+      refAttrs,
+      [{ start: 0, end: 2 }],
+      output,
+      2,
+      999,
+      fakeStore
+    );
+
+    expect(written).toBe(2);
+    expect(Array.from(output)).toEqual([7, 8]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Shared singleton helpers
+// ---------------------------------------------------------------------------
+
+describe('getSharedRangeLoader / getSharedRefRegistry / reset', () => {
+  beforeEach(() => {
+    resetSharedRangeLoader();
+  });
+
+  it('returns the same instance across calls (singleton)', () => {
+    const a = getSharedRangeLoader();
+    const b = getSharedRangeLoader();
+    expect(a).toBe(b);
+  });
+
+  it('uses the supplied registry on first construction', () => {
+    const reg = new ArrayRefRegistry();
+    const a = getSharedRangeLoader(reg);
+    const b = getSharedRangeLoader();
+    expect(a).toBe(b);
+    // The shared registry should match the one we supplied initially.
+    expect(getSharedRefRegistry()).toBe(reg);
+  });
+
+  it('ignores a registry passed AFTER first construction', () => {
+    const r1 = new ArrayRefRegistry();
+    const r2 = new ArrayRefRegistry();
+    getSharedRangeLoader(r1);
+    getSharedRangeLoader(r2); // ignored
+    expect(getSharedRefRegistry()).toBe(r1);
+  });
+
+  it('getSharedRefRegistry() lazily creates a registry when called first', () => {
+    const reg = getSharedRefRegistry();
+    expect(reg).toBeInstanceOf(ArrayRefRegistry);
+    // Subsequent call returns the same one.
+    expect(getSharedRefRegistry()).toBe(reg);
+  });
+
+  it('resetSharedRangeLoader() forces a fresh singleton on next access', () => {
+    const before = getSharedRangeLoader();
+    resetSharedRangeLoader();
+    const after = getSharedRangeLoader();
+    expect(after).not.toBe(before);
+  });
+});
+
+describe('RangeLoader.getDecoder', () => {
+  it('returns the underlying ArrayDecoder', () => {
+    const reg = new ArrayRefRegistry();
+    const loader = new RangeLoader(reg);
+    const decoder = loader.getDecoder();
+    expect(decoder).toBeDefined();
+    // Two calls return the same instance (no rebuild per call).
+    expect(loader.getDecoder()).toBe(decoder);
   });
 });

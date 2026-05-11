@@ -448,7 +448,7 @@ export function setupPostProcessingControls(
       '• 1.0 = Effect only at very edges'
   );
 
-  // Chromatic Lens Distortion subfolder (combined effect - replaces old separate effects)
+  // Chromatic Lens Distortion subfolder (combined optical distortion effect)
   const chromaticLensDistortionFolder = effectsFolder.addFolder('Chromatic Lens Distortion');
   chromaticLensDistortionFolder.close();
 

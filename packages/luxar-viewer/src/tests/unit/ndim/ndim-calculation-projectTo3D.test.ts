@@ -1,7 +1,7 @@
 /**
  * ndim Calculation and projectTo3D Logic Tests
  *
- * CRITICAL: These tests verify the bug fix in point-spatial-index-loader.ts:787-805
+ * CRITICAL: These tests verify the bug fix in points-spatial-index-loader.ts:787-805
  *
  * THE BUG:
  * - The old code used: `const ndim = this.chunkIndex?.metadata.ndim || 3;`
@@ -22,7 +22,7 @@ import { describe, it, expect } from 'vitest';
 /**
  * Calculate ndim from positions array - mirrors the fixed logic in projectTo3D
  *
- * This is the EXACT logic from point-spatial-index-loader.ts lines 787-794
+ * This is the EXACT logic from points-spatial-index-loader.ts lines 787-794
  */
 function calculateNdim(
   positions: Float32Array,
@@ -35,7 +35,7 @@ function calculateNdim(
 /**
  * Extract 3D positions from nD data - mirrors logic in projectTo3D
  *
- * This is the EXACT loop from point-spatial-index-loader.ts lines 811-821
+ * This is the EXACT loop from points-spatial-index-loader.ts lines 811-821
  */
 function projectTo3D(
   positions: Float32Array,

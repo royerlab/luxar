@@ -10,19 +10,16 @@ export { loadScene, updateView, updateSceneForDimensions, dispose } from './zarr
 
 // Core components
 export { SceneLoader } from './scene-loader';
-export { PointSpatialIndexLoader } from './point-spatial-index-loader';
+export { PointsSpatialIndexLoader } from './points/points-spatial-index-loader';
 export { ViewStateManager, type SceneDimensions } from './view-state-manager';
 
 // State management
 export { SceneLoaderManager, getSceneLoader } from './scene-loader-manager';
-export {
-  DataMonitorManager,
-  getDataMonitor,
-  showDataMonitor,
-  hideDataMonitor,
-  toggleDataMonitor,
-  cycleDataMonitor,
-} from './data-monitor-manager';
+// Note: DataMonitorManager (and the cycleDataMonitor accessor) lives
+// in `../ui/monitors/data-monitor-manager` — it's a UI panel
+// manager, not a data-loading concern. Import from there directly.
+// The show/hide/toggle accessors were removed; production code uses
+// the 'panel-cycle' / 'panel-hide' event bus instead.
 
 // Types
 export type {
@@ -48,32 +45,32 @@ export {
 } from './loaders';
 
 // Directory navigation
-export { DirectoryNavigator } from './directory-navigator';
-export type { DirectoryEntry, NavigationResult } from './directory-navigator';
+export { DirectoryNavigator } from './utils/directory-navigator';
+export type { DirectoryEntry, NavigationResult } from './utils/directory-navigator';
 
 // Array decoding (for Python luxar.encoding compatibility)
-export { ArrayDecoder, ArrayRefRegistry, loadAndDecodeOptionalArray } from './array-decoder';
-export type { ArrayMetadata } from './array-decoder';
+export { ArrayDecoder, ArrayRefRegistry, loadAndDecodeOptionalArray } from './utils/array-decoder';
+export type { ArrayMetadata } from './utils/array-decoder';
 
 // Lines data loading
-export { LinesSpatialIndexLoader } from './lines-spatial-index-loader';
+export { LinesSpatialIndexLoader } from './lines/lines-spatial-index-loader';
 export {
   clipSegmentToSlice,
-  buildInstanceBuffers,
+  projectLinesTo3D,
   lerp,
   lerpVec3,
   distance3D,
-} from './lines-spatial-index-loader';
+} from './lines/projection';
 
 // Scene graph builder (extracted from SceneLoader for modularity)
-export { SceneGraphBuilder } from './scene-graph-builder';
-export type { StoreEntry } from './scene-graph-builder';
+export { SceneGraphBuilder } from './utils/scene-graph-builder';
+export type { StoreEntry } from './utils/scene-graph-builder';
 
 // Extracted modules (decomposed from SceneLoader)
 export {
   getAggregatedPointsAccumulatorStats,
   getAggregatedLinesAccumulatorStats,
   getAggregatedGSplatsAccumulatorStats,
-} from './stats-aggregator';
-export { LoaderRegistry, type FailedLoaderInfo } from './loader-registry';
-export { computeTolerance, type GeometryType, type ToleranceOptions } from './tolerance-computer';
+} from './utils/stats-aggregator';
+export { LoaderRegistry, type FailedLoaderInfo } from './loaders/loader-registry';
+export { computeTolerance, type GeometryType, type ToleranceOptions } from './utils/tolerance-computer';

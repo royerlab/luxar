@@ -13,6 +13,7 @@ import {
   validateFOV,
   boundingBoxToSphere,
   calculateClippingPlanesFromSphere,
+  projectBoundsToDisplayDims,
   SPHERE_SAFETY_EXPANSION,
   MIN_NEAR_PLANE,
   isValidBoundingBox,
@@ -510,6 +511,52 @@ describe('scene-manager-utils', () => {
 
       expect(transformed.min).toEqual({ x: -2, y: -3, z: -4 });
       expect(transformed.max).toEqual({ x: 2, y: 3, z: 4 });
+    });
+  });
+
+  describe('projectBoundsToDisplayDims', () => {
+    it('maps the first three displayDims to X / Y / Z when all three are present', () => {
+      const min = [0, 10, 20, 30];
+      const max = [1, 11, 21, 31];
+      const box = projectBoundsToDisplayDims(min, max, [0, 1, 2]);
+      expect(box.min).toEqual({ x: 0, y: 10, z: 20 });
+      expect(box.max).toEqual({ x: 1, y: 11, z: 21 });
+    });
+
+    it('reorders bounds when displayDims pick non-leading dimensions', () => {
+      const min = [0, 10, 20, 30];
+      const max = [1, 11, 21, 31];
+      const box = projectBoundsToDisplayDims(min, max, [3, 1, 0]);
+      expect(box.min).toEqual({ x: 30, y: 10, z: 0 });
+      expect(box.max).toEqual({ x: 31, y: 11, z: 1 });
+    });
+
+    it('leaves Z at 0 when fewer than 3 displayDims are supplied', () => {
+      const box = projectBoundsToDisplayDims([0, 10], [1, 11], [0, 1]);
+      expect(box.min).toEqual({ x: 0, y: 10, z: 0 });
+      expect(box.max).toEqual({ x: 1, y: 11, z: 0 });
+    });
+
+    it('leaves an axis at 0 when its displayDim is out of range (defensive)', () => {
+      // displayDims[1] = 99 → out of range, so y stays 0.
+      const box = projectBoundsToDisplayDims([0, 10], [1, 11], [0, 99, 1]);
+      expect(box.min).toEqual({ x: 0, y: 0, z: 10 });
+      expect(box.max).toEqual({ x: 1, y: 0, z: 11 });
+    });
+
+    it('returns the all-zero default for empty displayDims', () => {
+      const box = projectBoundsToDisplayDims([0, 10, 20], [1, 11, 21], []);
+      expect(box.min).toEqual({ x: 0, y: 0, z: 0 });
+      expect(box.max).toEqual({ x: 0, y: 0, z: 0 });
+    });
+
+    it('caps at 3 axes even when more displayDims are supplied', () => {
+      const min = [0, 10, 20, 30, 40];
+      const max = [1, 11, 21, 31, 41];
+      const box = projectBoundsToDisplayDims(min, max, [0, 1, 2, 3, 4]);
+      // Only first 3 used; 4th and 5th are ignored.
+      expect(box.min).toEqual({ x: 0, y: 10, z: 20 });
+      expect(box.max).toEqual({ x: 1, y: 11, z: 21 });
     });
   });
 });

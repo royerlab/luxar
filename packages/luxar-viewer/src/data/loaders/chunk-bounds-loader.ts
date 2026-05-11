@@ -14,8 +14,8 @@
  * @module data/loaders/chunk-bounds-loader
  */
 
-import * as zarr from 'zarrita';
-import { get } from 'zarrita';
+import * as zarr from '../zarr';
+import { get } from '../zarr';
 import { log } from '../../utils/log';
 
 /**

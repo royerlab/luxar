@@ -42,23 +42,33 @@ import type { RecordingPanel } from '../ui/recording-panel';
 import type { LayersPanel } from '../ui/layers';
 import type { ScaleBar } from '../ui/components/scale-bar';
 import type { ColormapLegend } from '../ui/components/colormap-legend';
-import type { OverlayManager } from '../ui/overlay-manager';
-import { showHelpOverlay, hideHelpOverlay, clearError, showToast } from '../ui/helpers';
-import { config } from '../config';
+import type { OverlayManager } from '../ui/helpers/overlay-manager';
+import { notifier } from '../utils/notifier';
 import { captureViewerState } from '../config/viewer-state-capture';
-import { SimpleDims } from '../types/dims';
-import { DimensionSliders } from '../ui/dimension-sliders';
+import type { DimensionSliders, SliderConfig } from '../ui/panels/dimension-sliders';
+
+/**
+ * Factory used by `InputHandler.initDimensionSliders()` to construct
+ * the slider panel. Injected from `core/app.ts` so the input layer
+ * never imports the concrete UI class at runtime — it only knows the
+ * shape via `import type`. Closes the input → ui layer-cruiser
+ * exception (see `.dependency-cruiser.cjs`'s `KNOWN_LAYER_EXCEPTIONS`).
+ */
+export type DimensionSlidersFactory = (config: SliderConfig) => DimensionSliders;
 import { sceneDimsManager } from '../scene/scene-dims-manager';
-import { DebugConsole } from '../ui/debug-console';
+import type { DebugConsole } from '../ui/panels/debug-console';
+import type { PerformanceMonitor } from '../ui/monitors/performance-monitor';
 import { InputContextManager, InputContext } from './input-context-manager';
-import {
-  getNonDisplayedDimensions,
-  calculateStepSize,
-  calculateNextPosition,
-  mapKeyToDimension,
-} from './input-handler-utils';
+import { computeDimensionStep, resolveSelectedDimension } from './handlers/dimension-navigation';
+import { PanelCoordinator } from './handlers/panel-coordinator';
+import { WindowEventHandler } from './handlers/window-event-handler';
+import { AnimationShortcuts } from './handlers/animation-shortcuts';
+import { registerAllKeyBindings } from './handlers/key-bindings';
+import { isTypingInInput, isFocusOnSceneCanvas } from './handlers/focus-utils';
+import { nextControlType } from './handlers/control-mode-cycle';
 import { log, Modules, LogEmoji } from '../utils/log';
-import { updateSceneForDimensions, cycleDataMonitor, hideDataMonitor } from '../data';
+import { updateSceneForDimensions } from '../data';
+import { eventBus } from '../utils/event-bus';
 
 /**
  * Central coordinator for all user input events and nD navigation.
@@ -68,6 +78,14 @@ import { updateSceneForDimensions, cycleDataMonitor, hideDataMonitor } from '../
 export class InputHandler {
   /** Cleanup functions for all registered event listeners */
   private eventListeners: (() => void)[] = [];
+
+  // Idempotency guard. `init()` is one-shot — calling it twice would
+  // double-bind keydown/keyup, controls start/change, and canvas
+  // mousedown/touchstart listeners (each is a fresh bound function, so
+  // removeEventListener can't dedupe). The guard prevents an HMR
+  // re-init / context-restore / test re-setup from silently doubling
+  // input event volume.
+  private _initialized = false;
 
   /** Optional reference to advanced rendering controls */
   private renderingControls?: RenderingControls;
@@ -96,11 +114,33 @@ export class InputHandler {
   /** Animation manager for dimension playback */
   private animationManager?: DimensionAnimationManager;
 
+  /**
+   * sceneDimsManager listener. Stored so dispose / clearDimensionUI
+   * can remove it — without this, app dispose (without a subsequent
+   * dataset switch) leaves the listener attached to the singleton
+   * and retains a disposed InputHandler.
+   */
+  private sceneDimsListener?: () => Promise<void>;
+
   /** Debug console for capturing browser console output */
   private debugConsole: DebugConsole;
 
   /** Input context manager for handling keyboard conflicts */
   private contextManager: InputContextManager;
+
+  /**
+   * Panel-coordination concern: owns the priority-ordered "close all
+   * panels" flow used by Escape. Constructed in the InputHandler ctor
+   * once `debugConsole` and `animationController` are available.
+   */
+  private panelCoordinator: PanelCoordinator;
+
+  /**
+   * Window-event concern: owns resize / wheel / fullscreenchange.
+   * Keyboard listeners stay in InputHandler — they're a separate
+   * concern coordinating with InputContextManager.
+   */
+  private windowEvents: WindowEventHandler;
 
   /**
    * Create a new input handler for nD visualization interaction.
@@ -132,15 +172,44 @@ export class InputHandler {
    * inputHandler.initDimensionSliders();
    * ```
    */
+  /**
+   * Optional factory injected by `core/app.ts` to construct
+   * `DimensionSliders` lazily once a scene is loaded. When omitted
+   * (e.g. tests, embedders without nD navigation),
+   * `initDimensionSliders()` becomes a no-op rather than reaching into
+   * the ui layer directly.
+   */
+  private dimensionSlidersFactory?: DimensionSlidersFactory;
+
   constructor(
     private sceneManager: SceneManager,
-    private animationController: AnimationController
+    private animationController: AnimationController,
+    private performanceMonitor: PerformanceMonitor,
+    debugConsole: DebugConsole,
+    dimensionSlidersFactory?: DimensionSlidersFactory
   ) {
-    // Initialize debug console
-    this.debugConsole = new DebugConsole();
+    this.dimensionSlidersFactory = dimensionSlidersFactory;
+    // DebugConsole is constructed at the app level and passed in here,
+    // so InputHandler doesn't need to import the class — keeps the
+    // input → ui layer-cruiser rule clean.
+    this.debugConsole = debugConsole;
 
     // Initialize input context manager
     this.contextManager = new InputContextManager();
+
+    // Wire the panel coordinator with the always-present panels.
+    // Optional panels (renderingControls, dimensionSliders, recordingPanel)
+    // are pushed in via setRenderingControls / initDimensionSliders /
+    // setRecordingPanel as they're created.
+    this.panelCoordinator = new PanelCoordinator({
+      debugConsole: this.debugConsole,
+      performanceStats: this.performanceMonitor,
+    });
+
+    this.windowEvents = new WindowEventHandler(
+      this.sceneManager,
+      this.animationController
+    );
   }
 
   /**
@@ -165,6 +234,8 @@ export class InputHandler {
    */
   setRenderingControls(controls: RenderingControls): void {
     this.renderingControls = controls;
+    this.panelCoordinator.setRenderingControls(controls);
+    this.windowEvents.setRenderingControls(controls);
   }
 
   setScaleBar(scaleBar: ScaleBar): void {
@@ -177,6 +248,18 @@ export class InputHandler {
 
   setRecordingPanel(panel: RecordingPanel): void {
     this.recordingPanel = panel;
+    this.panelCoordinator.setRecordingPanel(panel);
+  }
+
+  /**
+   * Forward a dataset-browser close handle (or `undefined` to clear it)
+   * to PanelCoordinator so the Escape path closes via the panel's own
+   * `close()` method — which fires `onClose` and clears the owner's
+   * `LuxarApp.datasetBrowser` reference. The `O` shortcut needs that
+   * reference cleared in order to reopen the panel.
+   */
+  setDatasetBrowser(browser: { close(): void } | undefined): void {
+    this.panelCoordinator.setDatasetBrowser(browser);
   }
 
   setOverlayManager(manager: OverlayManager): void {
@@ -185,6 +268,11 @@ export class InputHandler {
 
   setLayersPanel(panel: LayersPanel): void {
     this.layersPanel = panel;
+    // Forward to PanelCoordinator so Escape (the shortcut the panel's
+    // close button advertises via aria-keyshortcuts) actually closes
+    // the panel. Without this, Escape only flows through key-bindings
+    // for the `L` shortcut and never reaches LayersPanel.hide().
+    this.panelCoordinator.setLayersPanel(panel);
   }
 
   /**
@@ -213,6 +301,11 @@ export class InputHandler {
    * ```
    */
   init(): void {
+    if (this._initialized) {
+      log.warning(Modules.INPUT, 'InputHandler.init() called twice; ignoring re-entry');
+      return;
+    }
+    this._initialized = true;
     this.setupWindowEvents();
     this.setupControlEvents();
     this.setupUserInteractionEvents();
@@ -242,12 +335,20 @@ export class InputHandler {
     if (this.dimensionSliders) {
       this.dimensionSliders.dispose();
       this.dimensionSliders = undefined;
+      this.panelCoordinator.setDimensionSliders(undefined);
     }
 
     // Dispose of animation manager
     if (this.animationManager) {
       this.animationManager.dispose();
       this.animationManager = undefined;
+    }
+
+    // Remove the listener before resetting so a stale closure can't
+    // observe a half-reset state.
+    if (this.sceneDimsListener) {
+      sceneDimsManager.removeListener(this.sceneDimsListener);
+      this.sceneDimsListener = undefined;
     }
 
     // Reset the scene dimension manager
@@ -317,44 +418,65 @@ export class InputHandler {
       this.dimensionSliders.dispose();
     }
 
-    // Create new dimension sliders
-    const dimensionNames = sceneDimsManager.getDimensionNames();
-    const dimensionUnits = sceneDimsManager.getDimensionUnits();
+    // Build the slider panel only if a factory is injected. Listener
+    // wiring + animation manager + initial update are hoisted out of
+    // this branch so embed callers without a slider factory still get
+    // keyboard nD navigation that actually loads data.
+    if (this.dimensionSlidersFactory) {
+      const dimensionNames = sceneDimsManager.getDimensionNames();
+      const dimensionUnits = sceneDimsManager.getDimensionUnits();
 
-    this.dimensionSliders = new DimensionSliders({
-      container: document.body,
-      dims,
-      dimensionRanges,
-      dimensionNames,
-      dimensionUnits,
-    });
+      this.dimensionSliders = this.dimensionSlidersFactory({
+        container: document.body,
+        dims,
+        dimensionRanges,
+        dimensionNames,
+        dimensionUnits,
+      });
+      this.panelCoordinator.setDimensionSliders(this.dimensionSliders);
 
-    // Show sliders only if we have non-displayed dimensions
-    this.dimensionSliders.setVisible(sceneDimsManager.hasNonDisplayedDimensions());
+      // Show sliders only if we have non-displayed dimensions
+      this.dimensionSliders.setVisible(sceneDimsManager.hasNonDisplayedDimensions());
+    } else {
+      log.warning(
+        Modules.INPUT,
+        'No DimensionSliders factory provided; skipping slider construction'
+      );
+      this.panelCoordinator.setDimensionSliders(undefined);
+    }
 
-    // Initialize animation manager and register keyboard shortcuts
+    // Initialize animation manager and register keyboard shortcuts —
+    // these don't depend on the slider panel existing.
     this.initAnimationManager();
 
-    // Pass animation manager to dimension sliders and recording panel
+    // Cross-link animation manager. Slider link is null-guarded; the
+    // recording-panel link runs unconditionally.
     if (this.animationManager) {
       this.dimensionSliders?.setAnimationManager(this.animationManager);
       this.recordingPanel?.setAnimationManager(this.animationManager);
     }
 
-    // Listen for dimension changes (returns Promise for animation synchronization)
-    sceneDimsManager.addListener(async () => {
-      // Update sliders immediately (sync UI feedback)
+    // Listen for dimension changes (returns Promise for animation
+    // synchronization). The slider .update() inside the callback is
+    // null-guarded, so this listener works fine without a slider
+    // panel. Stored on the instance so clearDimensionUI / dispose
+    // can remove it cleanly. Replace any prior listener instead of
+    // stacking when initDimensionSliders runs more than once.
+    if (this.sceneDimsListener) {
+      sceneDimsManager.removeListener(this.sceneDimsListener);
+    }
+    this.sceneDimsListener = async (): Promise<void> => {
       if (this.dimensionSliders) {
         this.dimensionSliders.update();
       }
-      // Trigger animation to render the changes
       this.animationController.startAnimation();
-      // Await data loading - this allows animation to synchronize
       await this.updateAllNDNodes();
-    });
+    };
+    sceneDimsManager.addListener(this.sceneDimsListener);
 
-    // Trigger initial update now that listener is registered
-    // This ensures data loads at the correct initial slice position
+    // Trigger initial update now that listener is registered — ensures
+    // data loads at the correct initial slice position whether or not
+    // a slider panel exists.
     this.updateAllNDNodes();
     this.animationController.startAnimation();
   }
@@ -379,119 +501,18 @@ export class InputHandler {
         this.animationController
       );
 
-      // Register animation shortcuts
-      this.registerAnimationShortcuts();
+      // Register animation shortcuts via the dedicated AnimationShortcuts
+      // concern. The context callbacks read instance state at dispatch
+      // time so subsequent dim selections / animation-manager swaps are
+      // picked up automatically.
+      const shortcuts = new AnimationShortcuts(this.contextManager, {
+        getSelectedDimension: () => this.selectedDimension,
+        getAnimationManager: () => this.animationManager,
+      });
+      shortcuts.register();
     }
   }
 
-  /**
-   * Get the actual dimension index from the selected position.
-   * Converts from position in navigable dimensions list to actual dimension index.
-   *
-   * @returns Dimension index, or -1 if no dimension selected
-   * @private
-   */
-  private getSelectedDimensionIndex(): number {
-    if (this.selectedDimension < 0) {
-      return -1;
-    }
-    const dims = sceneDimsManager.getDims();
-    if (!dims) {
-      return -1;
-    }
-    const navigableDims = this.getNavigableDimensionsList(dims);
-    if (this.selectedDimension >= navigableDims.length) return -1;
-    return navigableDims[this.selectedDimension];
-  }
-
-  /**
-   * Register dimension animation keyboard shortcuts
-   * Uses InputContextManager for proper context handling
-   * @private
-   */
-  private registerAnimationShortcuts(): void {
-    // K - Toggle play/pause
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: 'k',
-      handler: () => {
-        const dimIndex = this.getSelectedDimensionIndex();
-        if (dimIndex >= 0 && this.animationManager) {
-          const isPlaying = this.animationManager.togglePlay(dimIndex);
-          log.info(Modules.ANIMATION, `Dimension ${dimIndex} ${isPlaying ? 'playing' : 'paused'}`);
-        }
-      },
-      preventDefault: true,
-      description: 'Toggle dimension animation (K)',
-    });
-
-    // Home - Jump to start
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: 'Home',
-      handler: () => {
-        const dimIndex = this.getSelectedDimensionIndex();
-        if (dimIndex >= 0) {
-          const ranges = sceneDimsManager.getDimensionRanges();
-          if (ranges) {
-            sceneDimsManager.setDimensionValue(dimIndex, ranges[dimIndex][0]);
-            log.info(Modules.ANIMATION, `Jumped to start of dimension ${dimIndex}`);
-          }
-        }
-      },
-      preventDefault: true,
-      description: 'Jump to dimension start (Home)',
-    });
-
-    // End - Jump to end
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: 'End',
-      handler: () => {
-        const dimIndex = this.getSelectedDimensionIndex();
-        if (dimIndex >= 0) {
-          const ranges = sceneDimsManager.getDimensionRanges();
-          if (ranges) {
-            sceneDimsManager.setDimensionValue(dimIndex, ranges[dimIndex][1]);
-            log.info(Modules.ANIMATION, `Jumped to end of dimension ${dimIndex}`);
-          }
-        }
-      },
-      preventDefault: true,
-      description: 'Jump to dimension end (End)',
-    });
-
-    // Shift+Up - Increase speed
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: 'ArrowUp',
-      modifiers: { shift: true },
-      handler: () => {
-        const dimIndex = this.getSelectedDimensionIndex();
-        if (dimIndex >= 0 && this.animationManager) {
-          this.animationManager.increaseSpeed(dimIndex);
-          const fps = this.animationManager.getState(dimIndex)?.targetFPS;
-          log.info(Modules.ANIMATION, `Increased speed to ${fps} FPS`);
-        }
-      },
-      preventDefault: true,
-      description: 'Increase animation speed (Shift+↑)',
-    });
-
-    // Shift+Down - Decrease speed
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: 'ArrowDown',
-      modifiers: { shift: true },
-      handler: () => {
-        const dimIndex = this.getSelectedDimensionIndex();
-        if (dimIndex >= 0 && this.animationManager) {
-          this.animationManager.decreaseSpeed(dimIndex);
-          const fps = this.animationManager.getState(dimIndex)?.targetFPS;
-          log.info(Modules.ANIMATION, `Decreased speed to ${fps} FPS`);
-        }
-      },
-      preventDefault: true,
-      description: 'Decrease animation speed (Shift+↓)',
-    });
-
-    log.success(Modules.ANIMATION, 'Animation keyboard shortcuts registered');
-  }
 
   /**
    * Update all nD nodes (points, lines, splats) with current dimension values.
@@ -548,28 +569,23 @@ export class InputHandler {
    * @private
    */
   private setupWindowEvents(): void {
-    const onResize = this.onWindowResize.bind(this);
-    const onWheel = this.onWheel.bind(this);
+    // Window-level resize / wheel / fullscreenchange — owned by
+    // WindowEventHandler. Keyboard stays here because it has to
+    // coordinate with InputContextManager and the registered
+    // key-binding table.
+    this.windowEvents.attach(this.eventListeners);
+
     const onKeyDown = this.onKeyDown.bind(this);
     const onKeyUp = this.onKeyUp.bind(this);
-    const onFullscreenChange = this.onFullscreenChange.bind(this);
-
-    window.addEventListener('resize', onResize);
-    window.addEventListener('wheel', onWheel);
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
-    document.addEventListener('fullscreenchange', onFullscreenChange);
 
     // Register all key bindings with context manager
     this.registerAllKeyBindings();
 
-    // Store cleanup functions
     this.eventListeners.push(
-      () => window.removeEventListener('resize', onResize),
-      () => window.removeEventListener('wheel', onWheel),
       () => window.removeEventListener('keydown', onKeyDown),
-      () => window.removeEventListener('keyup', onKeyUp),
-      () => document.removeEventListener('fullscreenchange', onFullscreenChange)
+      () => window.removeEventListener('keyup', onKeyUp)
     );
   }
 
@@ -617,88 +633,6 @@ export class InputHandler {
   }
 
   /**
-   * Handle window resize events.
-   *
-   * Updates canvas size, camera aspect ratio, and renderer dimensions
-   * when browser window is resized. Triggers re-render to display
-   * resized view without distortion.
-   *
-   * @private
-   */
-  private onWindowResize(): void {
-    this.sceneManager.updateSize();
-    // Trigger animation to render the resized scene
-    this.animationController.startAnimation();
-  }
-
-  /**
-   * Handle fullscreen mode enter/exit events.
-   *
-   * Adjusts canvas inline styles so the canvas fills the entire viewport
-   * while in fullscreen, and clears those styles on exit. Page-level
-   * background is the host page's responsibility (see index.html).
-   *
-   * Fullscreen is triggered by Space key (when not focused on UI element).
-   *
-   * @private
-   */
-  private onFullscreenChange(): void {
-    const canvas = this.sceneManager.renderer.domElement;
-
-    if (document.fullscreenElement) {
-      // Entering fullscreen - ensure canvas fills the entire screen
-      canvas.style.width = '100vw';
-      canvas.style.height = '100vh';
-      canvas.style.position = 'fixed';
-      canvas.style.top = '0';
-      canvas.style.left = '0';
-      // Ensure the canvas has full opacity and no filters
-      canvas.style.opacity = '1';
-      canvas.style.filter = 'none';
-    } else {
-      // Exiting fullscreen - completely clear all inline styles
-      canvas.removeAttribute('style');
-    }
-
-    // Single resize after browser has applied fullscreen layout.
-    // Modern browsers fire fullscreenchange after the transition completes,
-    // so one rAF is sufficient to capture final dimensions.
-    requestAnimationFrame(() => {
-      this.sceneManager.updateSize();
-      this.animationController.startAnimation();
-    });
-  }
-
-  /**
-   * Handle mouse wheel events for zoom and FOV control.
-   *
-   * Normal wheel: Zoom in/out via orbit controls
-   * Ctrl+wheel: Adjust field of view (wide angle vs telephoto)
-   * (Shift+wheel is used for view-axis rotation in orbit/ortho modes)
-   *
-   * FOV changes update rendering controls display if active, switching
-   * preset to "Custom" since FOV was manually adjusted.
-   *
-   * @param event - Wheel event with deltaY for scroll direction/amount
-   * @private
-   */
-  private onWheel(event: WheelEvent): void {
-    this.animationController.startAnimation();
-
-    if (event.ctrlKey || event.metaKey) {
-      event.preventDefault();
-      this.sceneManager.updateFOV(event.deltaY);
-
-      // Update rendering controls display if available
-      if (this.renderingControls) {
-        // Ctrl+wheel FOV change should switch to Custom preset
-        this.renderingControls.settings.fovPreset = 'Custom';
-        this.renderingControls.syncCurrentState();
-      }
-    }
-  }
-
-  /**
    * Handle cycling the data loading monitor (hidden → mini → expanded → hidden).
    *
    * Extracted to a method to support binding registration.
@@ -706,7 +640,7 @@ export class InputHandler {
    * @private
    */
   private handleDataMonitorCycle(): void {
-    cycleDataMonitor();
+    eventBus.emit('panel-cycle', { panelId: 'data-monitor' });
     log.info(Modules.DATA_MONITOR, 'Data loading monitor cycled');
   }
 
@@ -724,350 +658,35 @@ export class InputHandler {
    * @private
    */
   private registerAllKeyBindings(): void {
-    // ===== NAVIGATION CONTEXT BINDINGS =====
-    // These work in the default orbit navigation mode
-
-    // Ctrl/Cmd key - disable zoom while held so Ctrl+scroll only adjusts FOV.
-    // Use a counter so releasing one key while the other is held doesn't re-enable zoom.
-    let fovKeyHeldCount = 0;
-    const resetFovKeyState = (): void => {
-      if (fovKeyHeldCount === 0) return;
-      fovKeyHeldCount = 0;
-      this.sceneManager.controls.setEnableZoom(true);
-    };
-    const resetFovKeyStateWhenHidden = (): void => {
-      if (document.visibilityState === 'hidden') resetFovKeyState();
-    };
-
-    for (const key of ['Control', 'Meta']) {
-      this.contextManager.registerBinding(InputContext.NAVIGATION, {
-        key,
-        handler: () => {
-          fovKeyHeldCount++;
-          this.sceneManager.controls.setEnableZoom(false);
-        },
-        keyupHandler: () => {
-          fovKeyHeldCount = Math.max(0, fovKeyHeldCount - 1);
-          if (fovKeyHeldCount === 0) {
-            this.sceneManager.controls.setEnableZoom(true);
-          }
-        },
-        description: 'FOV control (hold Ctrl/Cmd + scroll to adjust field of view)',
-      });
-    }
-    window.addEventListener('blur', resetFovKeyState);
-    document.addEventListener('visibilitychange', resetFovKeyStateWhenHidden);
-    this.eventListeners.push(
-      () => window.removeEventListener('blur', resetFovKeyState),
-      () => document.removeEventListener('visibilitychange', resetFovKeyStateWhenHidden)
-    );
-
-    // Dimension navigation
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: '[',
-      handler: () => this.handleDimensionNavigation(-1),
-      preventDefault: true,
-      description: 'Navigate dimension backward',
-    });
-
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: ']',
-      handler: () => this.handleDimensionNavigation(1),
-      preventDefault: true,
-      description: 'Navigate dimension forward',
-    });
-
-    // Dimension selection (keys 1-9, only without modifiers)
-    for (let i = 1; i <= 9; i++) {
-      this.contextManager.registerBinding(InputContext.NAVIGATION, {
-        key: String(i),
-        handler: (event) => {
-          if (!event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
-            event.preventDefault();
-            this.selectDimension(i - 1);
-          }
-        },
-        preventDefault: false,
-        description: `Select dimension ${i}`,
-      });
-    }
-
-    // Help overlay
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: 'h',
-      handler: () => this.toggleHelp(),
-      preventDefault: true,
-      description: 'Toggle help overlay',
-    });
-
-    // Dimension sliders
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: 'n',
-      handler: () => this.toggleDimensionSliders(),
-      preventDefault: true,
-      description: 'Toggle dimension sliders',
-    });
-
-    // Dataset browser
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: 'o',
-      handler: () => window.dispatchEvent(new CustomEvent('open-dataset-browser')),
-      preventDefault: true,
-      description: 'Open dataset browser',
-    });
-
-    // Performance stats
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: 'p',
-      handler: () => this.togglePerformanceStats(),
-      preventDefault: true,
-      description: 'Toggle performance stats',
-    });
-
-    // Rendering controls (only without modifiers)
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: 'r',
-      handler: (event) => {
-        if (!event.metaKey && !event.ctrlKey && !event.shiftKey) {
-          event.preventDefault();
-          this.toggleRenderingControls();
-        }
+    registerAllKeyBindings({
+      contextManager: this.contextManager,
+      sceneManager: this.sceneManager,
+      debugConsole: this.debugConsole,
+      cleanups: this.eventListeners,
+      panels: {
+        getScaleBar: () => this.scaleBar,
+        getColormapLegend: () => this.colormapLegend,
+        getOverlayManager: () => this.overlayManager,
+        getRecordingPanel: () => this.recordingPanel,
+        getLayersPanel: () => this.layersPanel,
       },
-      preventDefault: false,
-      description: 'Toggle rendering controls',
-    });
-
-    // Scale bar overlay
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: 'b',
-      handler: () => this.scaleBar?.toggle(),
-      preventDefault: true,
-      description: 'Toggle scale bar',
-    });
-
-    // Colormap legend overlay
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: config.input.keyboard.shortcuts.toggleColormapLegend,
-      handler: () => this.colormapLegend?.toggle(),
-      preventDefault: true,
-      description: 'Toggle colormap legend',
-    });
-
-    // Screen-space overlays toggle
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: config.input.keyboard.shortcuts.toggleOverlays,
-      handler: () => this.overlayManager?.toggle(),
-      preventDefault: true,
-      description: 'Toggle overlays',
-    });
-
-    // Recording panel toggle
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: 't',
-      handler: () => this.recordingPanel?.toggle(),
-      preventDefault: true,
-      description: 'Toggle recording panel',
-    });
-
-    // Quick screenshot
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: 'g',
-      handler: () => this.recordingPanel?.captureScreenshot(),
-      preventDefault: true,
-      description: 'Quick screenshot',
-    });
-
-    // Layers panel (L key without modifiers).
-    // If the focus is already inside the panel (e.g. on a range slider,
-    // select, or bound-edit text input), swallow L so dragging sliders
-    // doesn't accidentally close the panel.
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: config.input.keyboard.shortcuts.toggleLayers,
-      handler: (event) => {
-        if (event.metaKey || event.ctrlKey || event.shiftKey) return;
-        const active = document.activeElement as HTMLElement | null;
-        if (active && active.closest('.luxar-layers-panel')) return;
-        event.preventDefault();
-        this.layersPanel?.toggle();
+      commands: {
+        navigateDimension: (direction) => this.handleDimensionNavigation(direction),
+        selectDimension: (index) => this.selectDimension(index),
+        toggleHelp: () => this.toggleHelp(),
+        toggleDimensionSliders: () => this.toggleDimensionSliders(),
+        togglePerformanceStats: () => this.togglePerformanceStats(),
+        toggleRenderingControls: () => this.toggleRenderingControls(),
+        toggleControlMode: () => this.toggleControlMode(),
+        toggleInertialMode: () => this.toggleInertialMode(),
+        toggleCinematicMode: () => this.toggleCinematicMode(),
+        toggleFullscreen: () => this.toggleFullscreen(),
+        cycleDataMonitor: () => this.handleDataMonitorCycle(),
+        recenterCamera: () => this.recenterCamera(),
+        exportViewerState: () => this.exportViewerState(),
+        handleEscape: () => this.handleEscapeKey(),
+        shouldHandleSpaceKey: () => this.shouldHandleSpaceKey(),
       },
-      preventDefault: false,
-      description: 'Toggle layers panel',
-    });
-
-    // Debug console (Ctrl+L)
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: 'l',
-      modifiers: { ctrl: true },
-      handler: () => {
-        this.debugConsole.toggle();
-        log.info(
-          Modules.DEBUG_CONSOLE,
-          `Debug console ${this.debugConsole.getIsVisible() ? 'opened' : 'closed'}`
-        );
-      },
-      preventDefault: true,
-      description: 'Toggle debug console',
-    });
-
-    // Data loading monitor (M key, no modifiers)
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: 'm',
-      handler: (event) => {
-        if (!event.ctrlKey && !event.metaKey && !event.shiftKey) {
-          event.preventDefault();
-          this.handleDataMonitorCycle();
-        }
-      },
-      preventDefault: false,
-      description: 'Cycle data loading monitor',
-    });
-
-    // Recenter camera (F key, no modifiers)
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: 'f',
-      handler: (event) => {
-        if (!event.ctrlKey && !event.metaKey && !event.shiftKey) {
-          event.preventDefault();
-          this.recenterCamera();
-        }
-      },
-      preventDefault: false,
-      description: 'Recenter camera on scene',
-    });
-
-    // Toggle control mode (V key, no modifiers)
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: 'v',
-      handler: (event) => {
-        if (!event.ctrlKey && !event.metaKey && !event.shiftKey) {
-          event.preventDefault();
-          this.toggleControlMode();
-        }
-      },
-      preventDefault: false,
-      description: 'Cycle control mode (orbit/fly/ortho)',
-    });
-
-    // Toggle inertial mode (I key, no modifiers)
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: 'i',
-      handler: (event) => {
-        if (!event.ctrlKey && !event.metaKey && !event.shiftKey) {
-          event.preventDefault();
-          this.toggleInertialMode();
-        }
-      },
-      preventDefault: false,
-      description: 'Toggle inertial mode (fly controls)',
-    });
-
-    // Toggle cinematic mode (C key, no modifiers)
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: 'c',
-      handler: (event) => {
-        if (!event.ctrlKey && !event.metaKey && !event.shiftKey) {
-          event.preventDefault();
-          this.toggleCinematicMode();
-        }
-      },
-      preventDefault: false,
-      description: 'Toggle cinematic mode',
-    });
-
-    // Fullscreen toggle (Space, context-aware)
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: ' ',
-      handler: (event) => {
-        if (this.shouldHandleSpaceKey()) {
-          event.preventDefault();
-          this.toggleFullscreen();
-        }
-      },
-      preventDefault: false,
-      description: 'Toggle fullscreen',
-    });
-
-    // Escape key - context-aware panel closing
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: 'Escape',
-      handler: () => this.handleEscapeKey(),
-      preventDefault: true,
-      description: 'Close panels / Exit fullscreen',
-    });
-
-    // Export viewer state (Ctrl+Shift+S)
-    this.contextManager.registerBinding(InputContext.NAVIGATION, {
-      key: 's',
-      modifiers: { ctrl: true, shift: true },
-      handler: (event) => {
-        event.preventDefault();
-        this.exportViewerState();
-      },
-      preventDefault: true,
-      description: 'Export viewer state to clipboard',
-    });
-
-    // ===== FLY CONTROLS CONTEXT BINDINGS =====
-    // These are active when in fly mode (WASD movement)
-    // Fly controls must work with ANY modifiers:
-    // - Shift: Speed boost
-    // - Alt: Vertical movement (W/S only)
-    // - Shift+Alt: Fast vertical movement
-
-    // Get fly controls reference once
-    const getFlyControls = () => this.sceneManager.controls.getFlyControls();
-
-    // WASD movement keys - register with all relevant modifier combinations
-    // Need both keydown (start movement) and keyup (stop movement) handlers
-    const flyMovementKeys = ['w', 'a', 's', 'd', 'q', 'e'];
-    const modifierCombinations = [
-      {}, // No modifiers
-      { shift: true }, // Shift only (speed boost)
-      { alt: true }, // Alt only (vertical for W/S)
-      { shift: true, alt: true }, // Shift+Alt (fast vertical)
-    ];
-
-    for (const key of flyMovementKeys) {
-      for (const modifiers of modifierCombinations) {
-        this.contextManager.registerBinding(InputContext.FLY_CONTROLS, {
-          key,
-          modifiers: Object.keys(modifiers).length > 0 ? modifiers : undefined,
-          handler: (event) => getFlyControls()?.handleKeyDown(event),
-          keyupHandler: (event) => getFlyControls()?.handleKeyUp(event),
-          description: `Fly: ${key.toUpperCase()}${
-            modifiers.shift ? '+Shift' : ''
-          }${modifiers.alt ? '+Alt' : ''}`,
-        });
-      }
-    }
-
-    // Arrow keys for look direction (with and without Shift)
-    const arrowKeys = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
-    for (const key of arrowKeys) {
-      // Base arrow key
-      this.contextManager.registerBinding(InputContext.FLY_CONTROLS, {
-        key,
-        handler: (event) => getFlyControls()?.handleKeyDown(event),
-        keyupHandler: (event) => getFlyControls()?.handleKeyUp(event),
-        description: `Fly look: ${key}`,
-      });
-
-      // Arrow + Shift (potentially faster look)
-      this.contextManager.registerBinding(InputContext.FLY_CONTROLS, {
-        key,
-        modifiers: { shift: true },
-        handler: (event) => getFlyControls()?.handleKeyDown(event),
-        keyupHandler: (event) => getFlyControls()?.handleKeyUp(event),
-        description: `Fly look: ${key}+Shift`,
-      });
-    }
-
-    // Shift key in fly mode - also used for speed boost
-    this.contextManager.registerBinding(InputContext.FLY_CONTROLS, {
-      key: 'Shift',
-      handler: () => this.sceneManager.controls.setEnableZoom(false),
-      keyupHandler: () => this.sceneManager.controls.setEnableZoom(true),
-      description: 'Speed boost + zoom control',
     });
   }
 
@@ -1078,8 +697,14 @@ export class InputHandler {
    * No special cases - everything uses the unified binding system.
    */
   private onKeyDown(event: KeyboardEvent): void {
-    // Check if typing in input field (belt-and-suspenders with context manager)
-    if (this.isTypingInInput()) {
+    // Escape always reaches the context manager so it can close panels
+    // even when focus is inside a text input — e.g. the dataset-browser
+    // manual-path field, the debug-console filter input. The typing-
+    // context Escape path dispatches through NAVIGATION bindings (see
+    // InputContextManager.dispatchEscapeFromTypingContext); this
+    // exception is what routes Escape into the panel-close flow when
+    // focus is inside an input.
+    if (this.isTypingInInput() && event.key !== 'Escape') {
       return;
     }
 
@@ -1112,9 +737,9 @@ export class InputHandler {
   private toggleHelp(): void {
     const helpOverlay = document.getElementById('luxar-help-overlay');
     if (helpOverlay) {
-      hideHelpOverlay();
+      notifier.hideHelp();
     } else {
-      showHelpOverlay();
+      notifier.showHelp();
     }
   }
 
@@ -1145,7 +770,7 @@ export class InputHandler {
    * @private
    */
   private togglePerformanceStats(): void {
-    this.animationController.performanceStats.toggle();
+    this.performanceMonitor.toggle();
   }
 
   /**
@@ -1242,12 +867,12 @@ export class InputHandler {
     navigator.clipboard
       .writeText(json)
       .then(() => {
-        showToast('Viewer state copied to clipboard');
+        notifier.toast('Viewer state copied to clipboard');
         log.info(Modules.INPUT, 'Viewer state exported to clipboard');
       })
       .catch((err) => {
         log.error(Modules.INPUT, 'Failed to copy state to clipboard:', err);
-        showToast('Failed to copy state to clipboard');
+        notifier.toast('Failed to copy state to clipboard');
       });
 
     // Also store on debug interface for programmatic access
@@ -1271,24 +896,9 @@ export class InputHandler {
    */
   private toggleControlMode(): void {
     const currentType = this.sceneManager.controls.getControlType();
-    let newType: 'orbit' | 'fly' | 'ortho';
-
     log.custom(LogEmoji.CONTROLS, Modules.INPUT, `toggleControlMode called: ${currentType} → ?`);
 
-    // Cycle through: orbit -> fly -> ortho -> orbit
-    switch (currentType) {
-      case 'orbit':
-        newType = 'fly';
-        break;
-      case 'fly':
-        newType = 'ortho';
-        break;
-      case 'ortho':
-        newType = 'orbit';
-        break;
-      default:
-        newType = 'orbit';
-    }
+    const newType = nextControlType(currentType);
 
     // Use sceneManager.setControlType for ortho (handles camera swap)
     this.sceneManager.setControlType(newType);
@@ -1361,42 +971,17 @@ export class InputHandler {
    * @private
    */
   private shouldHandleSpaceKey(): boolean {
-    const activeElement = document.activeElement;
-    return (
-      activeElement === document.body || activeElement === this.sceneManager.renderer.domElement
-    );
+    return isFocusOnSceneCanvas(document.activeElement, this.sceneManager.renderer.domElement);
   }
 
   /**
-   * Check if user is currently typing in a text input field.
-   *
-   * Checks if focus is in an input, textarea, select, or contenteditable
-   * element. Used to prevent navigation shortcuts from interfering with
-   * text entry. For example, prevents [ ] keys from navigating dimensions
-   * when user is typing in a search box.
-   *
-   * @returns true if user is typing in text field, false otherwise
+   * Check if user is currently typing in a text input field. Thin wrapper
+   * around the pure {@link isTypingInInput} helper so callers in this file
+   * keep their compact `this.isTypingInInput()` shape.
    * @private
    */
   private isTypingInInput(): boolean {
-    const activeElement = document.activeElement;
-    if (!activeElement) return false;
-
-    const tagName = activeElement.tagName.toLowerCase();
-    // Check if it's an input field or contenteditable element
-    // Exclude non-text input types (range sliders, checkboxes, radios) that don't capture typing
-    if (tagName === 'input') {
-      const inputType = (activeElement as HTMLInputElement).type?.toLowerCase();
-      if (inputType === 'range' || inputType === 'checkbox' || inputType === 'radio') {
-        return false;
-      }
-      return true;
-    }
-    return (
-      tagName === 'textarea' ||
-      tagName === 'select' ||
-      activeElement.getAttribute('contenteditable') === 'true'
-    );
+    return isTypingInInput(document.activeElement);
   }
 
   /**
@@ -1415,41 +1000,16 @@ export class InputHandler {
    * @private
    */
   private handleDimensionNavigation(direction: -1 | 1): void {
-    const dims = sceneDimsManager.getDims();
-    const dimensionRanges = sceneDimsManager.getDimensionRanges();
-    if (!dims || !dimensionRanges) return;
-
-    const navigableDims = this.getNavigableDimensionsList(dims);
-    if (navigableDims.length === 0) return;
-
-    // Target the currently selected dimension (bounded by available dimensions)
-    const dimIndex = Math.min(this.selectedDimension, navigableDims.length - 1);
-    const targetDim = navigableDims[dimIndex];
-
-    // Gather dimension properties for step calculation
-    const currentValue = dims.currentStep[targetDim];
-    const dimMeta = dims.metadata?.[targetDim];
-    const [min, max] = dimensionRanges[targetDim];
-
-    // Use utility functions for step calculation and navigation
-    const stepSize = calculateStepSize(targetDim, dims);
-    const isCyclic = dimMeta?.cyclic || false; // Respect cyclic flag from metadata
-    const newValue = calculateNextPosition(
-      currentValue,
+    const step = computeDimensionStep(
       direction,
-      stepSize,
-      [min, max],
-      dimMeta?.discrete,
-      isCyclic // Enable wrap-around for cyclic dimensions
+      this.selectedDimension,
+      sceneDimsManager.getDims(),
+      sceneDimsManager.getDimensionRanges()
     );
+    if (!step || !step.changed) return;
 
-    // Update dimension state if value actually changed
-    if (Math.abs(newValue - currentValue) > 1e-6) {
-      sceneDimsManager.setDimensionValue(targetDim, newValue);
-
-      // Trigger visual update
-      this.animationController.startAnimation();
-    }
+    sceneDimsManager.setDimensionValue(step.targetDim, step.newValue);
+    this.animationController.startAnimation();
   }
 
   /**
@@ -1463,39 +1023,15 @@ export class InputHandler {
    * @private
    */
   private selectDimension(index: number): void {
-    const dims = sceneDimsManager.getDims();
-    if (!dims) {
-      return;
-    }
-
-    // mapKeyToDimension maps key (index+1) to the N-th navigable dimension
-    const dimIndex = mapKeyToDimension((index + 1).toString(), dims);
-
-    if (dimIndex >= 0) {
-      // index is already the 0-based navigable position (key 1 → index 0, etc.)
-      this.selectedDimension = index;
-    } else {
-      const navigableDims = this.getNavigableDimensionsList(dims);
+    const result = resolveSelectedDimension(index, sceneDimsManager.getDims());
+    if (result.selectedDimension !== null) {
+      this.selectedDimension = result.selectedDimension;
+    } else if ('navigableCount' in result) {
       log.info(
         Modules.INPUT,
-        `Dimension ${index + 1} not available (only ${navigableDims.length} non-displayed dimensions)`
+        `Dimension ${index + 1} not available (only ${result.navigableCount} non-displayed dimensions)`
       );
     }
-  }
-
-  /**
-   * Get list of navigable (non-displayed) dimension indices.
-   *
-   * Delegates to the extracted utility function getNonDisplayedDimensions.
-   * Returns dimensions that are not part of the 3D spatial view and can be
-   * controlled with keyboard navigation.
-   *
-   * @param dims - Dimension configuration
-   * @returns Array of non-displayed dimension indices
-   * @private
-   */
-  private getNavigableDimensionsList(dims: SimpleDims): number[] {
-    return getNonDisplayedDimensions(dims);
   }
 
   /**
@@ -1510,78 +1046,14 @@ export class InputHandler {
    *
    * @private
    */
-  private handleEscapeKey(): void {
-    // If recording video, stop recording first (takes priority)
-    if (this.recordingPanel?.isCurrentlyRecording()) {
-      this.recordingPanel.stopVideoRecording();
-      return;
-    }
-
-    // Only close panels if we're NOT in fullscreen
-    // When in fullscreen, the browser handles ESC to exit fullscreen
-    if (!document.fullscreenElement) {
-      this.closeAllPanels();
-    }
-  }
-
   /**
-   * Close all open UI panels and overlays.
-   *
-   * Closes in priority order (topmost first):
-   * 1. Help overlay
-   * 2. Dataset browser
-   * 3. Rendering controls
-   * 4. Data loading monitor
-   * 5. Dimension sliders
-   * 6. Debug console
-   * 7. Performance stats
-   *
-   * Used by Escape key handling to provide clean "exit all UI" behavior.
-   *
-   * @private
+   * Escape-key dispatch. Delegates to PanelCoordinator which owns the
+   * recording-priority and fullscreen-defer rules.
    */
-  private closeAllPanels(): void {
-    // Close all open panels (starting with topmost)
-    // Close help overlay (usually topmost) - use hideHelpOverlay to clean up click listener
-    hideHelpOverlay();
-
-    // Close error messages
-    clearError();
-
-    // Close dataset browser
-    const datasetBrowser = document.getElementById('luxar-dataset-browser');
-    if (datasetBrowser) {
-      datasetBrowser.remove();
-    }
-
-    // Close rendering controls
-    if (this.renderingControls?.isVisible()) {
-      this.renderingControls.hide();
-    }
-
-    // Close data loading monitor
-    hideDataMonitor();
-
-    // Close dimension sliders
-    if (this.dimensionSliders?.getIsVisible()) {
-      this.dimensionSliders.hide();
-    }
-
-    // Close debug console
-    if (this.debugConsole.getIsVisible()) {
-      this.debugConsole.hide();
-    }
-
-    // Close recording panel
-    if (this.recordingPanel?.isVisible()) {
-      this.recordingPanel.hide();
-    }
-
-    // Close performance stats
-    if (this.animationController.performanceStats.visible) {
-      this.animationController.performanceStats.hide();
-    }
+  private handleEscapeKey(): void {
+    this.panelCoordinator.handleEscape();
   }
+
 
   /**
    * Frame camera to fit the entire scene.
@@ -1633,6 +1105,15 @@ export class InputHandler {
     if (this.animationManager) {
       this.animationManager.dispose();
       this.animationManager = undefined;
+    }
+
+    // Remove the sceneDimsManager listener. The dataset-switch path
+    // also does this via clearDimensionUI, but app-dispose without
+    // a subsequent switch would otherwise leak the listener on the
+    // singleton, retaining this disposed InputHandler.
+    if (this.sceneDimsListener) {
+      sceneDimsManager.removeListener(this.sceneDimsListener);
+      this.sceneDimsListener = undefined;
     }
 
     // Dispose debug console

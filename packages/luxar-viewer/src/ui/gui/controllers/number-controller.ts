@@ -32,13 +32,13 @@ export class NumberController extends Controller<number> {
   /** Custom display override (for logarithmic patterns) */
   private customUpdateDisplay?: () => void;
 
-  constructor(object: Record<string, any>, property: string, options: ControllerOptions) {
+  constructor(object: Record<string, unknown>, property: string, options: ControllerOptions) {
     super(object, property);
 
     this.minValue = options.min;
     this.maxValue = options.max;
     this.stepValue = options.step ?? (this.hasRange() ? this.getDefaultStep() : undefined);
-    this.initialValue = object[property];
+    this.initialValue = object[property] as number;
 
     // Initialize DOM after properties are set
     this.initializeDOMElement();

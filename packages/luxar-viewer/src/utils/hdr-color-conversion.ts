@@ -5,6 +5,8 @@
  * format suitable for WebCodecs VideoFrame with HDR metadata.
  */
 
+import { clamp } from './clamp';
+
 // sRGB linear → BT.2020 linear color space matrix (3x3)
 // Source: ITU-R BT.2087 conversion from BT.709 to BT.2020
 const SRGB_TO_BT2020 = [0.6274, 0.3293, 0.0433, 0.0691, 0.9195, 0.0114, 0.0164, 0.088, 0.8956];
@@ -95,7 +97,7 @@ export function rgbaFloatToI420P10(rgba: Float32Array, width: number, height: nu
     // 4. Quantize to 10-bit
     // Y: [0, 1] → [64, 940] (limited range)
     // Cb/Cr: [-0.5, 0.5] → [64, 960] (limited range, centered at 512)
-    const yQ = Math.round(Math.min(940, Math.max(64, y * 876 + 64)));
+    const yQ = Math.round(clamp(y * 876 + 64, 64, 940));
     output[i] = yQ;
 
     cbFull[i] = cb;
@@ -119,8 +121,8 @@ export function rgbaFloatToI420P10(rgba: Float32Array, width: number, height: nu
       const crAvg = (crFull[i00] + crFull[i01] + crFull[i10] + crFull[i11]) * 0.25;
 
       const uvIdx = j * uvWidth + k;
-      output[uOffset + uvIdx] = Math.round(Math.min(960, Math.max(64, cbAvg * 896 + 512)));
-      output[vOffset + uvIdx] = Math.round(Math.min(960, Math.max(64, crAvg * 896 + 512)));
+      output[uOffset + uvIdx] = Math.round(clamp(cbAvg * 896 + 512, 64, 960));
+      output[vOffset + uvIdx] = Math.round(clamp(crAvg * 896 + 512, 64, 960));
     }
   }
 

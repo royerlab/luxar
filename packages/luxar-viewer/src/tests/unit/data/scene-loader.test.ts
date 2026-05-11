@@ -10,187 +10,30 @@ import { SceneLoader, type LoaderConfig, type ViewState } from '../../../data';
 import * as THREE from 'three';
 import * as zarr from 'zarrita';
 
-// Mock THREE.js (external dependency - requires WebGL context, must be mocked in unit tests)
-vi.mock('three', () => ({
-  Group: vi.fn().mockImplementation(() => ({
-    add: vi.fn(),
-    name: '',
-    userData: {},
-    children: [],
-    getObjectByName: vi.fn(),
-    traverse: vi.fn((callback) => {
-      // Simple traverse implementation for testing
-      callback({ name: 'test' });
-    }),
-    position: {
-      copy: vi.fn().mockReturnThis(),
-      set: vi.fn().mockReturnThis(),
-    },
-    quaternion: {
-      copy: vi.fn().mockReturnThis(),
-    },
-    scale: {
-      copy: vi.fn().mockReturnThis(),
-      set: vi.fn().mockReturnThis(),
-    },
-  })),
-  Box3: vi.fn().mockImplementation(() => ({
-    expandByPoint: vi.fn(),
-    clone: vi.fn().mockReturnThis(),
-  })),
-  Vector2: vi.fn().mockImplementation((x = 0, y = 0) => ({
-    x,
-    y,
-    set: vi.fn().mockReturnThis(),
-    copy: vi.fn().mockReturnThis(),
-  })),
-  Vector3: vi.fn().mockImplementation((x = 0, y = 0, z = 0) => ({
-    x,
-    y,
-    z,
-    set: vi.fn().mockReturnThis(),
-    copy: vi.fn().mockReturnThis(),
-  })),
-  Quaternion: vi.fn().mockImplementation(() => ({
-    x: 0,
-    y: 0,
-    z: 0,
-    w: 1,
-    copy: vi.fn().mockReturnThis(),
-  })),
-  Matrix4: vi.fn().mockImplementation(() => ({
-    fromArray: vi.fn().mockReturnThis(),
-    decompose: vi.fn((pos: any, _quat: any, scale: any) => {
-      pos.set(0, 0, 0);
-      scale.set(1, 1, 1);
-    }),
-  })),
-  Points: vi.fn().mockImplementation((geometry, material) => ({
-    name: '',
-    userData: {},
-    geometry,
-    material,
-    position: {
-      copy: vi.fn().mockReturnThis(),
-      set: vi.fn().mockReturnThis(),
-    },
-    quaternion: {
-      copy: vi.fn().mockReturnThis(),
-    },
-    scale: {
-      copy: vi.fn().mockReturnThis(),
-      set: vi.fn().mockReturnThis(),
-    },
-  })),
-  Mesh: vi.fn().mockImplementation((geometry, material) => ({
-    name: '',
-    userData: {},
-    geometry,
-    material,
-    count: 0,
-    position: {
-      copy: vi.fn().mockReturnThis(),
-      set: vi.fn().mockReturnThis(),
-    },
-    quaternion: {
-      copy: vi.fn().mockReturnThis(),
-    },
-    scale: {
-      copy: vi.fn().mockReturnThis(),
-      set: vi.fn().mockReturnThis(),
-    },
-  })),
-  BufferGeometry: vi.fn().mockImplementation(() => {
-    const attributes: Record<string, any> = {};
-    return {
-      setAttribute: vi.fn((name: string, attr: any) => {
-        attributes[name] = attr;
-      }),
-      getAttribute: vi.fn((name: string) => attributes[name]),
-      setDrawRange: vi.fn(),
-      setIndex: vi.fn(),
-      boundingBox: null,
-      boundingSphere: null,
-      dispose: vi.fn(),
-      computeBoundingBox: vi.fn(),
-      computeBoundingSphere: vi.fn(),
-    };
-  }),
-  InstancedBufferGeometry: vi.fn().mockImplementation(() => {
-    const attributes: Record<string, any> = {};
-    return {
-      setAttribute: vi.fn((name: string, attr: any) => {
-        attributes[name] = attr;
-      }),
-      getAttribute: vi.fn((name: string) => attributes[name]),
-      setDrawRange: vi.fn(),
-      setIndex: vi.fn(),
-      boundingBox: null,
-      boundingSphere: null,
-      instanceCount: 0,
-      dispose: vi.fn(),
-    };
-  }),
-  BufferAttribute: vi.fn().mockImplementation((array, itemSize) => ({
-    array,
-    itemSize,
-    count: array.length / itemSize,
-  })),
-  Float32BufferAttribute: vi.fn().mockImplementation((sizeOrArray, itemSize) => {
-    const array = typeof sizeOrArray === 'number' ? new Float32Array(sizeOrArray) : sizeOrArray;
-    const size = itemSize || 1;
-    return {
-      array,
-      itemSize: size,
-      count: array.length / size,
-      setUsage: vi.fn(),
-      set: vi.fn(),
-      needsUpdate: false,
-    };
-  }),
-  InstancedBufferAttribute: vi.fn().mockImplementation((array, itemSize) => ({
-    array,
-    itemSize,
-    count: array.length / itemSize,
-    setUsage: vi.fn(),
-    set: vi.fn(),
-    needsUpdate: false,
-  })),
-  DynamicDrawUsage: 35048,
-  ShaderMaterial: vi.fn().mockImplementation(() => ({
-    uniforms: {},
-  })),
-  EventDispatcher: vi.fn().mockImplementation(() => ({
-    addEventListener: vi.fn(),
-    removeEventListener: vi.fn(),
-    dispatchEvent: vi.fn(),
-  })),
-  // Constants
-  HalfFloatType: 1016,
-  FloatType: 1015,
-  UnsignedByteType: 1009,
-  LinearSRGBColorSpace: 'srgb-linear',
-  SRGBColorSpace: 'srgb',
-  NoToneMapping: 0,
-  ACESFilmicToneMapping: 4,
-  PCFSoftShadowMap: 2,
-  NormalBlending: 0,
-  AdditiveBlending: 2,
-}));
+// THREE is NOT mocked here. The classes SceneLoader touches —
+// Group / Points / Mesh / Box3 / Vector3 / Matrix4 /
+// {,Instanced}Buffer{Geometry,Attribute} — are pure JS and run fine in
+// jsdom; the WebGL-bound layer (renderers, shaders) is one level up.
+// Earlier revisions kept a 165-line stand-in so individual constructor
+// calls could be counted, but the resulting tests asserted on
+// implementation details rather than behavior. The behavior assertions
+// further down (transform validation, scene-graph shape, etc.) are
+// stronger when run against real THREE.
 
 // Mock zarrita (external dependency - network I/O for zarr stores)
 vi.mock('zarrita', () => ({
   FetchStore: vi.fn(),
-  tryWithConsolidated: vi.fn(),
+  withMaybeConsolidatedMetadata: vi.fn(),
+  registry: {},
   root: vi.fn(),
   open: vi.fn(),
   get: vi.fn(),
   slice: vi.fn((start, end) => ({ start, end })),
 }));
 
-// Mock material manager (depends on WebGL shader compilation - must be mocked)
-// TODO: Consider extracting material creation logic into pure functions that can be tested
-// without WebGL, reducing the need for this mock.
+// Mock material manager (depends on WebGL shader compilation - must be mocked).
+// NOTE: shader-side material plumbing is intentionally untested in jsdom; the
+// pure factory paths are covered separately in `material-manager.test.ts`.
 vi.mock('../../../rendering/material-manager', () => ({
   materialManager: {
     getPointMaterial: vi.fn().mockReturnValue({
@@ -203,8 +46,25 @@ vi.mock('../../../rendering/material-manager', () => ({
   },
 }));
 
+// SceneLoader now uses `notifier.toast` for the >16D scene-dimensions
+// warning. Mock the notifier so the test can assert toast() was called.
+const notifierMocks = vi.hoisted(() => ({
+  toast: vi.fn(),
+}));
+vi.mock('../../../utils/notifier', () => ({
+  notifier: {
+    toast: notifierMocks.toast,
+    error: vi.fn(),
+    showHelp: vi.fn(),
+    hideHelp: vi.fn(),
+    showLoading: vi.fn(),
+    hideLoading: vi.fn(),
+    clearError: vi.fn(),
+  },
+}));
+
 // NOTE: Previous mocks for DataLoadingMonitor ('../ui/data-loading-monitor'),
-// PointSpatialIndexLoader ('../data/point-spatial-index-loader'), and
+// PointsSpatialIndexLoader ('../data/points-spatial-index-loader'), and
 // DataMonitorManager ('../data/data-monitor-manager') were removed because
 // their paths were relative to the test file location (src/tests/unit/data/)
 // and resolved to non-existent modules, making them dead code that never
@@ -213,7 +73,7 @@ vi.mock('../../../rendering/material-manager', () => ({
 //
 // If mocking these becomes necessary in the future, use paths relative to
 // the test file that resolve to the actual source modules, e.g.:
-//   vi.mock('../../../data/point-spatial-index-loader', ...)
+//   vi.mock('../../../data/points-spatial-index-loader', ...)
 //   vi.mock('../../../data/data-monitor-manager', ...)
 
 describe('SceneLoader', () => {
@@ -259,7 +119,7 @@ describe('SceneLoader', () => {
 
     // Mock zarrita functions
     (zarr.FetchStore as any).mockImplementation(() => mockStore);
-    (zarr.tryWithConsolidated as any).mockResolvedValue(mockStore);
+    (zarr as any).withMaybeConsolidatedMetadata.mockResolvedValue(mockStore);
     (zarr.root as any).mockReturnValue(mockRootLoc);
     (zarr.open as any).mockResolvedValue(mockZarrGroup);
 
@@ -276,8 +136,8 @@ describe('SceneLoader', () => {
       const url = 'http://localhost:8000/test.zarr';
       const scene = await sceneLoader.loadScene(url);
 
-      // Verify scene loaded correctly (implementation may use FetchStore or TwoLevelCachingStore)
-      expect(zarr.tryWithConsolidated).toHaveBeenCalled();
+      // Verify scene loaded correctly (implementation may use FetchStore or MultiLevelCachingStore)
+      expect((zarr as any).withMaybeConsolidatedMetadata).toHaveBeenCalled();
       expect(scene).toBeDefined();
       expect(scene.name).toBe('LuxarScene');
     });
@@ -439,12 +299,26 @@ describe('SceneLoader', () => {
     it('should dispose all resources properly', async () => {
       await sceneLoader.loadScene('http://localhost:8000/test.zarr');
 
-      sceneLoader.dispose();
+      await sceneLoader.dispose();
 
       // Verify cleanup
       expect((sceneLoader as any).loaders.size).toBe(0);
       expect((sceneLoader as any)._zarrStore).toBeNull();
       expect((sceneLoader as any).rootGroup).toBeNull();
+    });
+
+    it('SceneLoader.dispose returns a Promise that resolves cleanly (async signature)', async () => {
+      // Locks in commit 2.1's signature change. loadScene's call site
+      // (commit 2.3) now uses `await this.dispose()` — we cannot directly
+      // observe the await ordering in this test fixture (loadScene's
+      // dispose path is gated on loaders.size > 0 and the jsdom mocks
+      // don't populate spatial-index loaders), but a Promise return type
+      // is the contract that lets that await work in production.
+      await sceneLoader.loadScene('http://localhost:8000/test.zarr');
+      const result = sceneLoader.dispose();
+      expect(result).toBeInstanceOf(Promise);
+      await result;
+      expect((sceneLoader as any)._zarrStore).toBeNull();
     });
   });
 
@@ -471,33 +345,58 @@ describe('SceneLoader', () => {
       mockZarrGroup.attrs = {
         type: 'points',
         transform: [
-          1, 0, 0, 0, // Column 0
-          0, 1, 0, 0, // Column 1
-          0, 0, 1, 0, // Column 2
-          10, 20, 30, 1, // Column 3 (translation)
+          1,
+          0,
+          0,
+          0, // Column 0
+          0,
+          1,
+          0,
+          0, // Column 1
+          0,
+          0,
+          1,
+          0, // Column 2
+          10,
+          20,
+          30,
+          1, // Column 3 (translation)
         ],
       };
 
-      await sceneLoader.loadScene('http://localhost:8000/test.zarr');
-
-      // Verify transform was processed
-      expect(THREE.Matrix4).toHaveBeenCalled();
+      // Behavior assertion: a column-major transform must load without
+      // throwing. The negative path (row-major rejection) is the more
+      // useful contract and is covered by the next test + the
+      // transform-validation block further down.
+      await expect(sceneLoader.loadScene('http://localhost:8000/test.zarr')).resolves.toBeDefined();
     });
 
     it('should reject row-major transforms', async () => {
       mockZarrGroup.attrs = {
         type: 'points',
         transform: [
-          1, 0, 0, 10, // Row 0 (tx at [3])
-          0, 1, 0, 20, // Row 1 (ty at [7])
-          0, 0, 1, 30, // Row 2 (tz at [11])
-          0, 0, 0, 1,
+          1,
+          0,
+          0,
+          10, // Row 0 (tx at [3])
+          0,
+          1,
+          0,
+          20, // Row 1 (ty at [7])
+          0,
+          0,
+          1,
+          30, // Row 2 (tz at [11])
+          0,
+          0,
+          0,
+          1,
         ],
       };
 
-      await expect(
-        sceneLoader.loadScene('http://localhost:8000/test.zarr')
-      ).rejects.toThrow(/row-major/);
+      await expect(sceneLoader.loadScene('http://localhost:8000/test.zarr')).rejects.toThrow(
+        /row-major/
+      );
     });
 
     it('should reject invalid transform lengths', async () => {
@@ -506,15 +405,17 @@ describe('SceneLoader', () => {
         transform: [1, 2, 3], // Invalid length
       };
 
-      await expect(
-        sceneLoader.loadScene('http://localhost:8000/test.zarr')
-      ).rejects.toThrow(/Invalid transform length/);
+      await expect(sceneLoader.loadScene('http://localhost:8000/test.zarr')).rejects.toThrow(
+        /Invalid transform length/
+      );
     });
   });
 
   describe('error handling', () => {
     it('should handle store opening failures', async () => {
-      (zarr.tryWithConsolidated as any).mockRejectedValue(new Error('Failed to open store'));
+      (zarr as any).withMaybeConsolidatedMetadata.mockRejectedValue(
+        new Error('Failed to open store')
+      );
 
       await expect(sceneLoader.loadScene('http://invalid.url')).rejects.toThrow(
         'Failed to open store'
@@ -890,25 +791,40 @@ describe('SceneLoader', () => {
       await sceneLoader.loadScene('http://localhost:8000/test.zarr');
     });
 
+    /**
+     * Drop a real `THREE.Points` into the loader's rootGroup so the
+     * `getObjectByName(path)` lookup inside `commitPointsGeometry`
+     * returns it. The Points instance carries pre-sized buffer
+     * attributes so the same-size in-place update branch can reuse
+     * them; an `oldCount` mismatch sends commit through the
+     * dispose+recreate branch, which still works against real THREE.
+     */
+    function attachPointsChild(name: string, oldCount: number): THREE.Points {
+      const root = (sceneLoader as any).rootGroup as THREE.Group;
+      const geom = new THREE.BufferGeometry();
+      geom.setAttribute(
+        'position',
+        new THREE.BufferAttribute(new Float32Array(oldCount * 3), 3)
+      );
+      geom.setAttribute('color', new THREE.BufferAttribute(new Float32Array(oldCount * 3), 3));
+      geom.setAttribute('radius', new THREE.BufferAttribute(new Float32Array(oldCount), 1));
+      geom.setAttribute(
+        'sharpness',
+        new THREE.BufferAttribute(new Float32Array(oldCount), 1)
+      );
+      const points = new THREE.Points(geom);
+      points.name = name;
+      // commitPointsGeometry only writes `visiblePointCount` when the
+      // node passes `isPointsUserData` (nodeType === 'points'). Mirror
+      // what NodeFactory.createPointsNode would set up so the commit
+      // path treats it as a real points node.
+      points.userData = { nodeType: 'points', ndim: 3, visiblePointCount: oldCount };
+      root.add(points);
+      return points;
+    }
+
     it('should update geometry with new points data', () => {
-      // Create mock points object
-      const mockGeometry = {
-        dispose: vi.fn(),
-        boundingBox: { clone: vi.fn().mockReturnThis() },
-        boundingSphere: null,
-        computeBoundingBox: vi.fn(),
-        computeBoundingSphere: vi.fn(),
-      };
-      const mockPoints = {
-        name: '/test_points',
-        geometry: mockGeometry,
-      };
-
-      // Mock getObjectByName to return our mock points
-      if (sceneLoader['rootGroup']) {
-        (sceneLoader['rootGroup'].getObjectByName as any).mockReturnValue(mockPoints);
-      }
-
+      const points = attachPointsChild('/test_points', 0);
       const newData = {
         positions: new Float32Array([4, 5, 6, 7, 8, 9]),
         colors: new Float32Array([1, 1, 1, 1, 1, 1]),
@@ -919,37 +835,22 @@ describe('SceneLoader', () => {
         metadata: {
           totalPoints: 2,
           loadedPoints: 2,
-          bounds: { clone: vi.fn().mockReturnThis() },
+          bounds: new THREE.Box3(),
           usedSpatialIndex: true,
         },
       };
 
       (sceneLoader as any).updatePointsGeometry('/test_points', newData);
 
-      // With GPU buffer pool, geometry is reused (not disposed)
-      // Verify geometry is still assigned (might be new geometry from pool or reused)
-      expect(mockPoints.geometry).toBeDefined();
+      // After the update the Points still has a (possibly recreated) geometry,
+      // and its visiblePointCount reflects the new data.
+      expect(points.geometry).toBeDefined();
+      expect(points.userData.visiblePointCount).toBe(2);
     });
 
-    it('should reuse geometry when GPU buffer pool is enabled', () => {
-      const disposeSpy = vi.fn();
-      const mockGeometry = {
-        dispose: disposeSpy,
-        boundingBox: { clone: vi.fn().mockReturnThis() },
-        boundingSphere: null,
-        computeBoundingBox: vi.fn(),
-        computeBoundingSphere: vi.fn(),
-      };
-      const mockPoints = {
-        name: '/test_points',
-        geometry: mockGeometry,
-      };
-
-      if (sceneLoader['rootGroup']) {
-        (sceneLoader['rootGroup'].getObjectByName as any).mockReturnValue(mockPoints);
-      }
-
-      const newData = {
+    it('writes new positions through whichever path the loader takes (pool or in-place)', () => {
+      const points = attachPointsChild('/test_points', 1);
+      const sameSizeData = {
         positions: new Float32Array([1, 2, 3]),
         colors: new Float32Array([1, 1, 1]),
         radii: new Float32Array([0.5]),
@@ -959,38 +860,27 @@ describe('SceneLoader', () => {
         metadata: {
           totalPoints: 1,
           loadedPoints: 1,
-          bounds: { clone: vi.fn().mockReturnThis() },
+          bounds: new THREE.Box3(),
           usedSpatialIndex: true,
         },
       };
 
-      (sceneLoader as any).updatePointsGeometry('/test_points', newData);
+      (sceneLoader as any).updatePointsGeometry('/test_points', sameSizeData);
 
-      // With GPU buffer pool, geometry is NOT disposed during updates (it's reused)
-      // Disposal only happens on final cleanup or when pool evicts unused geometries
-      // This is the key optimization: reuse instead of dispose+allocate
+      // Whether commit takes the buffer-pool path or the in-place path
+      // (depends on whether _gpuBufferPool is wired up in this fixture),
+      // the live position attribute must reflect the new payload.
+      const afterPositions = points.geometry.getAttribute('position') as THREE.BufferAttribute;
+      expect(Array.from(afterPositions.array as Float32Array).slice(0, 3)).toEqual([1, 2, 3]);
+      expect(points.userData.visiblePointCount).toBe(1);
     });
 
     it('should update bounding box from metadata', () => {
-      const mockBoundingBox = { clone: vi.fn().mockReturnThis() };
-      const mockBoundingSphere = { clone: vi.fn().mockReturnThis() };
-      const mockGeometry = {
-        dispose: vi.fn(),
-        boundingBox: mockBoundingBox,
-        boundingSphere: mockBoundingSphere,
-        computeBoundingBox: vi.fn(),
-        computeBoundingSphere: vi.fn(),
-      };
-      const mockPoints = {
-        name: '/test_points',
-        geometry: mockGeometry,
-      };
-
-      if (sceneLoader['rootGroup']) {
-        (sceneLoader['rootGroup'].getObjectByName as any).mockReturnValue(mockPoints);
-      }
-
-      const newBounds = { clone: vi.fn().mockReturnThis() };
+      const points = attachPointsChild('/test_points', 1);
+      const newBounds = new THREE.Box3(
+        new THREE.Vector3(0, 0, 0),
+        new THREE.Vector3(10, 10, 10)
+      );
       const newData = {
         positions: new Float32Array([1, 2, 3]),
         colors: new Float32Array([1, 1, 1]),
@@ -1009,27 +899,14 @@ describe('SceneLoader', () => {
 
       (sceneLoader as any).updatePointsGeometry('/test_points', newData);
 
-      // With GPU buffer pool, bounding box is set directly from metadata (bounds.clone())
-      // The old geometry's bounding box is not cloned
-      expect(newBounds.clone).toHaveBeenCalled();
+      // The same-size path computes bounding box from the geometry itself.
+      // For the dispose-and-recreate path metadata bounds are cloned, but
+      // either way the geometry ends up with a defined bounding box.
+      expect(points.geometry.boundingBox).not.toBeNull();
     });
 
     it('should handle empty geometry updates (clearing points)', () => {
-      const mockGeometry = {
-        dispose: vi.fn(),
-        boundingBox: null,
-        boundingSphere: null,
-        computeBoundingBox: vi.fn(),
-        computeBoundingSphere: vi.fn(),
-      };
-      const mockPoints = {
-        name: '/test_points',
-        geometry: mockGeometry,
-      };
-
-      if (sceneLoader['rootGroup']) {
-        (sceneLoader['rootGroup'].getObjectByName as any).mockReturnValue(mockPoints);
-      }
+      attachPointsChild('/test_points', 1);
 
       const emptyData = {
         positions: new Float32Array([]), // Empty
@@ -1041,7 +918,7 @@ describe('SceneLoader', () => {
         metadata: {
           totalPoints: 1000,
           loadedPoints: 0, // No points visible at current slice
-          bounds: { clone: vi.fn().mockReturnThis() },
+          bounds: new THREE.Box3(),
           ndim: 4,
           usedSpatialIndex: true,
         },
@@ -1146,6 +1023,39 @@ describe('SceneLoader', () => {
       // Should handle gracefully even with too many displayed dimensions
       const scene = await sceneLoader.loadScene('http://localhost:8000/test.zarr');
       expect(scene).toBeDefined();
+    });
+
+    it('does NOT toast on a 16D scene (≤ WASM ceiling)', async () => {
+      notifierMocks.toast.mockClear();
+      const dims = Array.from({ length: 16 }, (_, i) => ({
+        name: `d${i}`,
+        unit: '',
+        range: [0, 10] as [number, number],
+        display: i < 3,
+        step: 1,
+      }));
+      mockZarrGroup.attrs = { scene_dimensions: { dimensions: dims } };
+
+      await sceneLoader.loadScene('http://localhost:8000/test.zarr');
+      expect(notifierMocks.toast).not.toHaveBeenCalled();
+    });
+
+    it('toasts on > 16D scenes warning about WASM fallback', async () => {
+      notifierMocks.toast.mockClear();
+      const dims = Array.from({ length: 18 }, (_, i) => ({
+        name: `d${i}`,
+        unit: '',
+        range: [0, 10] as [number, number],
+        display: i < 3,
+        step: 1,
+      }));
+      mockZarrGroup.attrs = { scene_dimensions: { dimensions: dims } };
+
+      await sceneLoader.loadScene('http://localhost:8000/test.zarr');
+      expect(notifierMocks.toast).toHaveBeenCalledWith(
+        expect.stringContaining('18 dimensions'),
+        expect.any(Number)
+      );
     });
   });
 

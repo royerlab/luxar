@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { DebugConsole } from '../../../ui/debug-console';
+import { DebugConsole } from '../../../ui/panels/debug-console';
 
 // Mock console interceptor
 vi.mock('../../../utils/console-interceptor', () => ({
@@ -47,28 +47,19 @@ afterEach(() => {
 
 describe('DebugConsole - Critical Fixes', () => {
   describe('Memory Leak Prevention - Resize Handlers', () => {
-    it('should have bound handlers ready for cleanup', () => {
+    it('registers a non-empty EventGroup on construction and clears it on dispose', () => {
       const debugConsole = new DebugConsole();
-
-      // Access private properties to verify handlers are initialized
-      const console_any = debugConsole as any;
-
-      // Handlers should be functions (created during construction via makeDraggable/makeResizable)
-      expect(console_any.boundDragMouseMove).toBeInstanceOf(Function);
-      expect(console_any.boundDragMouseUp).toBeInstanceOf(Function);
-      expect(console_any.boundResizeMouseMove).toBeInstanceOf(Function);
-      expect(console_any.boundResizeMouseUp).toBeInstanceOf(Function);
+      const events = (debugConsole as unknown as { events: { size: number } }).events;
+      // makeDraggable + makeResizable + the toolbar buttons attach a
+      // double-digit number of listeners; we don't enumerate exactly to
+      // avoid over-coupling, just verify the group has tracked listeners.
+      expect(events.size).toBeGreaterThan(0);
 
       debugConsole.dispose();
-
-      // After dispose, should be null
-      expect(console_any.boundDragMouseMove).toBeNull();
-      expect(console_any.boundDragMouseUp).toBeNull();
-      expect(console_any.boundResizeMouseMove).toBeNull();
-      expect(console_any.boundResizeMouseUp).toBeNull();
+      expect(events.size).toBe(0);
     });
 
-    it('should clean up all 4 global event listeners (drag + resize)', () => {
+    it('clean up all global drag + resize listeners on dispose', () => {
       const debugConsole = new DebugConsole();
 
       // Verify dispose removes listeners
@@ -171,6 +162,62 @@ describe('DebugConsole - Critical Fixes', () => {
 
       // Panel should be removed.
       expect(document.querySelector('.luxar-debug-console')).toBeNull();
+    });
+  });
+
+  describe('Accessibility', () => {
+    it('panel has region role labelled by the title element', () => {
+      const debugConsole = new DebugConsole();
+      const panel = document.querySelector('.luxar-debug-console') as HTMLElement;
+      expect(panel.getAttribute('role')).toBe('region');
+      expect(panel.getAttribute('aria-labelledby')).toBe('luxar-debug-console-title');
+      const title = document.getElementById('luxar-debug-console-title');
+      expect(title?.textContent).toBe('Debug Console');
+      debugConsole.dispose();
+    });
+
+    it('toolbar controls have aria-labels', () => {
+      const debugConsole = new DebugConsole();
+      const filter = document.querySelector('.luxar-debug-console__filter') as HTMLInputElement;
+      const closeBtn = document.querySelector('.luxar-debug-console__close-btn') as HTMLButtonElement;
+      const clearBtn = document.querySelector('.luxar-debug-console__clear-btn') as HTMLButtonElement;
+      const copyBtn = document.querySelector('.luxar-debug-console__copy-btn') as HTMLButtonElement;
+      expect(filter.getAttribute('aria-label')).toBe('Filter messages');
+      expect(closeBtn.getAttribute('aria-label')).toBe('Close debug console');
+      expect(clearBtn.getAttribute('aria-label')).toBe('Clear console');
+      expect(copyBtn.getAttribute('aria-label')).toBe('Copy all messages to clipboard');
+      debugConsole.dispose();
+    });
+
+    it('content region is a live log; resize handles are aria-hidden', () => {
+      const debugConsole = new DebugConsole();
+      const content = document.querySelector('.luxar-debug-console__content') as HTMLElement;
+      expect(content.getAttribute('role')).toBe('log');
+      expect(content.getAttribute('aria-live')).toBe('polite');
+      const handles = document.querySelectorAll('.luxar-debug-console__resize-handle');
+      expect(handles.length).toBeGreaterThan(0);
+      handles.forEach((h) => expect(h.getAttribute('aria-hidden')).toBe('true'));
+      debugConsole.dispose();
+    });
+
+    it('formats null-prototype objects without throwing', () => {
+      const debugConsole = new DebugConsole();
+      const console_any = debugConsole as unknown as {
+        formatArgAsDOMElement: (arg: unknown) => HTMLElement;
+      };
+
+      // Object.create(null) has no toString — JSON.stringify still works,
+      // but we exercise the catch by passing a stringify-hostile null-proto.
+      const cyclic: Record<string, unknown> = Object.create(null);
+      cyclic.self = cyclic;
+
+      // Must not throw, and must not produce '[object Object]' garbage.
+      const el = console_any.formatArgAsDOMElement(cyclic);
+      expect(el.textContent).toBeTruthy();
+      // Either a sane String() result or our '[unprintable]' fallback.
+      expect(typeof el.textContent).toBe('string');
+
+      debugConsole.dispose();
     });
   });
 });

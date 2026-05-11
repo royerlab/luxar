@@ -15,9 +15,7 @@ The `luxar-viewer.utils` package provides specialized utility functions for cons
 
 1. [Console Interception](#console-interception)
 2. [HDR Detection](#hdr-detection)
-3. [Memory Detection](#memory-detection)
-4. [Structured Logging](#structured-logging)
-5. [Memory Monitoring](#memory-monitoring)
+3. [Structured Logging](#structured-logging)
 
 ---
 
@@ -322,50 +320,15 @@ function configureHDRRenderer(
 
 ---
 
-## 3. Memory Detection
+## 3. Structured Logging
 
-### 3.1 System Memory Estimation
-
-**Purpose**: Detect available system memory for intelligent cache sizing.
-
-**Algorithm**:
-
-```typescript
-function detectAvailableMemory(): number {
-  // Try to get actual memory from performance API
-  if ('memory' in performance) {
-    const perfMemory = (performance as any).memory;
-    if (perfMemory?.jsHeapSizeLimit) {
-      return perfMemory.jsHeapSizeLimit / (1024 * 1024); // MB
-    }
-  }
-
-  // Fallback: Estimate from device class
-  const userAgent = navigator.userAgent.toLowerCase();
-
-  // Mobile devices
-  if (/mobile|android|iphone|ipad/.test(userAgent)) {
-    return 512; // Conservative 512 MB for mobile
-  }
-
-  // Desktop/laptop
-  return 2048; // 2 GB default for desktop
-}
-```
-
-**Usage**: Size caches appropriately (e.g., 25% of available memory).
-
----
-
-## 4. Structured Logging
-
-### 4.1 Log Format
+### 3.1 Log Format
 
 **Standard**: `[emoji] [Module] message`
 
 All logs follow consistent formatting that works seamlessly with the console interceptor. This is a lightweight wrapper ensuring standardization while preserving console interceptor compatibility.
 
-### 4.2 Module Constants
+### 3.2 Module Constants
 
 Complete list of predefined module identifiers:
 
@@ -412,7 +375,7 @@ export const Modules = {
 } as const;
 ```
 
-### 4.3 Emoji Constants
+### 3.3 Emoji Constants
 
 Complete list of standard log emojis categorized by purpose:
 
@@ -469,7 +432,7 @@ export const LogEmoji = {
 } as const;
 ```
 
-### 4.4 Core Logging API
+### 3.4 Core Logging API
 
 The `log` object provides 10 specialized methods for different log levels and actions:
 
@@ -525,7 +488,7 @@ log.raw(formattedMessage: string, ...args: any[]): void;
 // Output: formattedMessage (as-is)
 ```
 
-### 4.5 Utility Functions
+### 3.5 Utility Functions
 
 ```typescript
 // Format a message manually (rarely needed)
@@ -546,7 +509,7 @@ createModuleLogger(module: string): {
 };
 ```
 
-### 4.6 Usage Examples
+### 3.6 Usage Examples
 
 **Basic Usage**:
 
@@ -595,194 +558,6 @@ log.data(Modules.SCENE_LOADER, 'Loaded node:', {
 
 // Logs: [📊] [SceneLoader] Loaded node: {name: 'points/0', ...}
 ```
-
----
-
-## 5. Memory Monitoring
-
-### 5.1 Purpose
-
-Dynamic memory monitoring that adapts cache sizes based on real-time memory pressure. Prevents out-of-memory errors by reducing cache usage when heap utilization is high.
-
-### 5.2 MemoryMonitor Class
-
-**Responsibility**: Monitor JavaScript heap usage and trigger cache size adjustments when memory pressure exceeds thresholds.
-
-**Architecture**:
-
-```typescript
-export class MemoryMonitor {
-  private callback?: (newSizeMB: number) => void;
-  private currentSizeMB: number;
-  private intervalId?: number;
-
-  constructor(initialSizeMB: number, callback?: (newSizeMB: number) => void) {
-    this.currentSizeMB = initialSizeMB;
-    this.callback = callback;
-  }
-
-  start(): void;
-  stop(): void;
-}
-```
-
-### 5.3 Monitoring Algorithm
-
-**Polling Interval**: 10 seconds
-
-**Memory Pressure Thresholds**:
-
-```typescript
-const CRITICAL_THRESHOLD = 0.85; // 85% heap usage
-const HIGH_THRESHOLD = 0.7; // 70% heap usage
-const MIN_CACHE_MB = 128; // Minimum useful cache size
-const ADJUSTMENT_THRESHOLD = 64; // Only adjust if change > 64MB
-```
-
-**Adjustment Logic**:
-
-```typescript
-start(): void {
-  // Only works with Chrome's performance.memory API
-  if (!(performance as any).memory) return;
-
-  this.intervalId = window.setInterval(() => {
-    const mem = (performance as any).memory;
-    const usagePercent = mem.usedJSHeapSize / mem.jsHeapSizeLimit;
-
-    let newSize = this.currentSizeMB;
-
-    if (usagePercent > CRITICAL_THRESHOLD) {
-      // Critical: reduce by 50%
-      newSize = Math.max(MIN_CACHE_MB, this.currentSizeMB * 0.5);
-    } else if (usagePercent > HIGH_THRESHOLD) {
-      // High: reduce by 25%
-      newSize = Math.max(MIN_CACHE_MB * 2, this.currentSizeMB * 0.75);
-    }
-
-    // Only notify if change is significant (> 64MB)
-    if (Math.abs(newSize - this.currentSizeMB) > ADJUSTMENT_THRESHOLD) {
-      this.currentSizeMB = Math.round(newSize);
-      if (this.callback) {
-        this.callback(this.currentSizeMB);
-      }
-      console.log(
-        `💾 [Luxar] Adjusted cache to ${this.currentSizeMB}MB (memory pressure: ${(usagePercent * 100).toFixed(0)}%)`
-      );
-    }
-  }, 10000);
-}
-```
-
-### 5.4 Integration with Cache Systems
-
-**Typical Usage Pattern**:
-
-```typescript
-import { detectMemory, MemoryMonitor } from './utils/memory-detector';
-
-// Initial memory detection
-const memInfo = detectMemory();
-let currentCacheSizeMB = memInfo.recommendedCacheMB;
-
-// Create cache with initial size
-const cache = new RangeCache(currentCacheSizeMB);
-
-// Start monitoring and adapt cache size
-const monitor = new MemoryMonitor(currentCacheSizeMB, (newSizeMB) => {
-  console.log(`Adjusting cache from ${currentCacheSizeMB}MB to ${newSizeMB}MB`);
-  cache.setMaxSize(newSizeMB);
-  currentCacheSizeMB = newSizeMB;
-});
-
-monitor.start();
-
-// Cleanup on app shutdown
-window.addEventListener('beforeunload', () => {
-  monitor.stop();
-});
-```
-
-### 5.5 Memory Detection Strategy
-
-**Primary Method**: Chrome's `performance.memory` API (most accurate)
-
-```typescript
-if ((performance as any).memory) {
-  const mem = (performance as any).memory;
-  const heapLimitMB = mem.jsHeapSizeLimit / (1024 * 1024);
-  const usedMB = mem.usedJSHeapSize / (1024 * 1024);
-  const availableMB = heapLimitMB - usedMB;
-
-  // Use 80% of available heap for cache
-  const recommendedMB = Math.round(availableMB * 0.8);
-  return Math.max(128, recommendedMB);
-}
-```
-
-**Fallback 1**: Device Memory API (estimates based on total device RAM)
-
-```typescript
-if ((navigator as any).deviceMemory) {
-  const deviceGB = (navigator as any).deviceMemory;
-
-  // Conservative estimates based on device RAM
-  let estimatedHeapMB: number;
-
-  if (deviceGB <= 2) {
-    estimatedHeapMB = deviceGB * 1024 * 0.25; // 25% for low-memory devices
-  } else if (deviceGB <= 8) {
-    estimatedHeapMB = deviceGB * 1024 * 0.35; // 35% for mid-range
-  } else {
-    estimatedHeapMB = deviceGB * 1024 * 0.5; // 50% for high-memory systems
-  }
-
-  return Math.max(128, Math.round(estimatedHeapMB * 0.8));
-}
-```
-
-**Fallback 2**: Platform-based defaults
-
-```typescript
-// Mobile detection
-const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || window.innerWidth <= 768;
-
-return isMobile ? 256 : 1024; // MB
-```
-
-### 5.6 Return Values
-
-```typescript
-interface MemoryInfo {
-  recommendedCacheMB: number; // Recommended cache size in MB
-  confidence: 'high' | 'medium' | 'low'; // Detection method confidence
-  source: 'api' | 'device' | 'default'; // Which detection method was used
-}
-```
-
-**Confidence Levels**:
-
-- `high` + `api`: Chrome's performance.memory API (actual heap size)
-- `medium` + `device`: Device Memory API (estimated from total RAM)
-- `low` + `default`: Platform detection fallback (conservative defaults)
-
-### 5.7 Design Rationale
-
-**Why No Upper Bound**:
-
-The detection algorithm intentionally has no artificial maximum cache size. It uses the browser's actual heap limit as the constraint, allowing high-memory systems to utilize available resources effectively.
-
-**Why 80% of Available Heap**:
-
-Spatial index loading is the primary memory consumer in Luxar. Being aggressive with cache sizing (80% of available heap) is safe because:
-
-1. Other memory consumers (THREE.js scene, UI) are relatively small
-2. Memory monitor will reduce cache if pressure rises
-3. Modern browsers have efficient garbage collection
-
-**Why 10-Second Polling**:
-
-Memory pressure changes slowly. 10-second intervals provide responsive adaptation without excessive overhead.
 
 ---
 

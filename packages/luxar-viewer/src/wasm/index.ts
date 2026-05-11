@@ -76,8 +76,7 @@ export async function initWasm(): Promise<WasmModule> {
     // can override the URL via {@link setWasmJsUrl} (forwarded by
     // LuxarAppOptions.wasmPath).
     const wasmRelativePath = '../wasm/luxar_wasm.js';
-    const wasmJsUrl =
-      wasmJsUrlOverride ?? new URL(wasmRelativePath, import.meta.url).href;
+    const wasmJsUrl = wasmJsUrlOverride ?? new URL(wasmRelativePath, import.meta.url).href;
 
     // Use Function constructor to avoid TypeScript compile-time module resolution
     // This allows the code to compile even when WASM module doesn't exist yet
