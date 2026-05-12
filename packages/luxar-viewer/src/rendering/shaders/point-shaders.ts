@@ -5,6 +5,7 @@
  * Contains world-space sizing, sharpness compensation, nD slicing, and projection logic.
  */
 import { GLSL_SANITIZE_FUNCTIONS } from './glsl-lib';
+import type { ShaderSource } from './shader-source';
 
 export const POINT_VERTEX_SHADER = /* glsl */ `
     precision highp float;
@@ -147,3 +148,8 @@ export const POINT_FRAGMENT_SHADER = /* glsl */ `
       #endif
     }
   `;
+
+export const POINT_SOURCE: ShaderSource = {
+  name: 'point',
+  webgl: { vertex: POINT_VERTEX_SHADER, fragment: POINT_FRAGMENT_SHADER },
+};

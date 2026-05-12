@@ -34,6 +34,7 @@
  *     intensity regardless of opacity, intensity, or fade.
  */
 import { GLSL_SANITIZE_FUNCTIONS } from './glsl-lib';
+import type { ShaderSource } from './shader-source';
 
 export const LINE_VERTEX_SHADER = /* glsl */ `
     precision highp float;
@@ -330,3 +331,8 @@ export const LINE_FRAGMENT_SHADER = /* glsl */ `
       #endif
     }
   `;
+
+export const LINE_SOURCE: ShaderSource = {
+  name: 'line',
+  webgl: { vertex: LINE_VERTEX_SHADER, fragment: LINE_FRAGMENT_SHADER },
+};
