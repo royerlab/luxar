@@ -50,7 +50,7 @@ function makeCtx(overrides: Partial<CaptureContext> = {}): CaptureContext {
       },
     } as never,
     fps: 30,
-    renderFrameToCanvas: vi.fn(() => fakeCanvas),
+    renderFrameToCanvas: vi.fn(async () => fakeCanvas),
     generateFilename: (ext: string) => `cap.${ext}`,
     generateFfmpegScript: (rate, frames, ext) =>
       `ffmpeg -framerate ${rate} -i frame_%06d.${ext} -frames:v ${frames} out.mp4`,
@@ -91,8 +91,8 @@ describe('ImageSequenceDriver', () => {
     await driver.setup(ctx);
     await driver.captureFrame(ctx, 0, progress);
 
-    const canvas = (ctx.renderFrameToCanvas as ReturnType<typeof vi.fn>).mock.results[0]
-      .value as HTMLCanvasElement & { toBlob: ReturnType<typeof vi.fn> };
+    const canvas = (await (ctx.renderFrameToCanvas as ReturnType<typeof vi.fn>).mock.results[0]
+      .value) as HTMLCanvasElement & { toBlob: ReturnType<typeof vi.fn> };
     expect(canvas.toBlob).toHaveBeenCalledWith(expect.any(Function), 'image/jpeg', 0.7);
   });
 
@@ -109,7 +109,7 @@ describe('ImageSequenceDriver', () => {
       height: 100,
       toBlob: vi.fn((cb: BlobCallback) => Promise.resolve().then(() => cb(null))),
     } as unknown as HTMLCanvasElement;
-    const ctx = makeCtx({ renderFrameToCanvas: () => fakeCanvas });
+    const ctx = makeCtx({ renderFrameToCanvas: async () => fakeCanvas });
     const driver = new ImageSequenceDriver('png');
     await driver.setup(ctx);
 

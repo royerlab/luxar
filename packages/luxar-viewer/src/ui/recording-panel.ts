@@ -330,7 +330,7 @@ export class RecordingPanel {
         this.downloadBlob(blob, this.generateFilename('exr'));
         showToast('HDR screenshot saved (EXR)');
       } else {
-        const captureCanvas = this.renderFrameToCanvas();
+        const captureCanvas = await this.renderFrameToCanvas();
 
         const { format: effectiveFormat, warning } = normalizeScreenshotFormat(
           format,
@@ -1761,7 +1761,7 @@ export class RecordingPanel {
    * captureScreenshot (SDR path) and runOfflineCaptureLoop (image + video modes).
    * The returned canvas can be passed to toBlob() or to VideoSample.
    */
-  private renderFrameToCanvas(): HTMLCanvasElement {
+  private renderFrameToCanvas(): Promise<HTMLCanvasElement> {
     return renderFrameToCanvasHelper(
       this.sceneManager.postProcessing,
       this.options.includeOverlays,

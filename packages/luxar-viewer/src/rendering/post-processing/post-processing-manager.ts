@@ -865,9 +865,9 @@ export class PostProcessingManager {
    *   - `'raw-scene-hdr'`: bypass the mega-shader entirely — render
    *     the scene to hdrTarget and read it (no bloom, no effects).
    */
-  captureHDRPixels(
+  async captureHDRPixels(
     mode: 'visible-ldr' | 'hdr-effects-pre-tone' | 'raw-scene-hdr' = 'hdr-effects-pre-tone'
-  ): { pixels: Float32Array; width: number; height: number } {
+  ): Promise<{ pixels: Float32Array; width: number; height: number }> {
     if (mode === 'raw-scene-hdr') {
       // Scene render only — no bloom, no mega-shader.
       // Save/restore the renderer's current target + autoClear so a
@@ -952,7 +952,7 @@ export class PostProcessingManager {
     mode?: 'visible-ldr' | 'hdr-effects-pre-tone' | 'raw-scene-hdr';
   }): Promise<Uint8Array> {
     const exrType: THREE.TextureDataType = options?.type ?? THREE.HalfFloatType;
-    const { pixels, width, height } = this.captureHDRPixels(options?.mode);
+    const { pixels, width, height } = await this.captureHDRPixels(options?.mode);
 
     const data: Float32Array | Uint16Array =
       exrType === THREE.HalfFloatType ? float32ToHalfFloat(pixels) : pixels;
@@ -980,7 +980,7 @@ export class PostProcessingManager {
    * Run a full render and read the backbuffer back as an ImageData
    * (used by screenshot/video export paths).
    */
-  renderToImageData(): ImageData {
+  async renderToImageData(): Promise<ImageData> {
     this.render();
     // RendererCapabilities owns the binding + readback (it knows to
     // bind the canvas backbuffer before reading). Today this is sync;
