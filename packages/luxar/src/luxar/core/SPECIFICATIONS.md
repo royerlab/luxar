@@ -224,27 +224,19 @@ All fields are `Optional` and default to `None`. Only non-None fields are serial
 | `control_type` | `Optional[str]` | One of: `"orbit"`, `"fly"`, `"ortho"` |
 | `auto_rotate` | `Optional[bool]` | -- |
 | `auto_rotate_speed` | `Optional[float]` | -- |
-| `cinematic_mode` | `Optional[bool]` | Activates vignette, DOF, and bloom as a preset |
+| `cinematic_mode` | `Optional[bool]` | Activates a curated preset (vignette + lens distortion + detector noise + tone-mapping + FOV) |
 | `vignette_enabled` | `Optional[bool]` | -- |
 | `vignette_darkness` | `Optional[float]` | 0 to 1 |
 | `vignette_offset` | `Optional[float]` | -- |
-| `dof_enabled` | `Optional[bool]` | -- |
-| `dof_focus` | `Optional[float]` | -- |
-| `dof_strength` | `Optional[float]` | 0 to 1 |
 | `detector_noise_enabled` | `Optional[bool]` | -- |
 | `detector_noise_readout_sigma` | `Optional[float]` | 0 to 0.1 |
 | `detector_noise_photon_gain` | `Optional[float]` | 0.0001 to 0.1 |
 | `detector_noise_fpn_sigma` | `Optional[float]` | 0 to 0.05 |
 | `fxaa_enabled` | `Optional[bool]` | -- |
-| `smaa_enabled` | `Optional[bool]` | -- |
-| `smaa_threshold` | `Optional[float]` | -- |
-| `smaa_search_steps` | `Optional[int]` | -- |
 | `msaa_enabled` | `Optional[bool]` | -- |
 | `msaa_samples` | `Optional[int]` | -- |
 | `ssaa_enabled` | `Optional[bool]` | -- |
 | `ssaa_multiplier` | `Optional[float]` | -- |
-| `ao_enabled` | `Optional[bool]` | -- |
-| `ao_quality` | `Optional[str]` | One of: `"low"`, `"medium"`, `"high"`, `"ultra"` |
 | `chromatic_lens_distortion_enabled` | `Optional[bool]` | -- |
 | `chromatic_lens_distortion_x` | `Optional[float]` | -- |
 | `chromatic_lens_distortion_y` | `Optional[float]` | -- |

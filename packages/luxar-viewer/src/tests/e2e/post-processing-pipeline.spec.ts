@@ -160,12 +160,13 @@ test.describe('Post-Processing Pipeline', () => {
     });
     await waitForNextRender(page);
 
-    // Toggle SMAA off/on
+    // Toggle FXAA off/on (SMAA was dropped in the mega-shader refactor;
+    // FXAA is the remaining inline AA path)
     await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
       const settings = debug.renderingControls?.settings;
-      if (settings && 'smaaEnabled' in settings) {
-        settings.smaaEnabled = !settings.smaaEnabled;
+      if (settings && 'fxaaEnabled' in settings) {
+        settings.fxaaEnabled = !settings.fxaaEnabled;
       }
     });
     await waitForNextRender(page);
@@ -173,8 +174,8 @@ test.describe('Post-Processing Pipeline', () => {
     await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
       const settings = debug.renderingControls?.settings;
-      if (settings && 'smaaEnabled' in settings) {
-        settings.smaaEnabled = !settings.smaaEnabled;
+      if (settings && 'fxaaEnabled' in settings) {
+        settings.fxaaEnabled = !settings.fxaaEnabled;
       }
     });
     await waitForNextRender(page);

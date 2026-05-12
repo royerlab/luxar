@@ -409,11 +409,22 @@ export class SceneManager extends THREE.EventDispatcher<{
     const width = canvas.clientWidth || window.innerWidth;
     const height = canvas.clientHeight || window.innerHeight;
 
-    // Create post-processing manager with actual canvas dimensions
-    this.postProcessing = new PostProcessingManager(this.renderer, this.scene, this.camera, {
-      width,
-      height,
-    });
+    // Create post-processing manager with actual canvas dimensions.
+    // The onResize callback fires whenever the manager reallocates
+    // its render-target pyramid (window resize, SSAA toggle, MSAA
+    // toggle, DPR change). Scene material uniforms cache
+    // pointSizeFactor / uResolution from `renderer.getDrawingBufferSize()`
+    // and would otherwise stay stale until the next manual window
+    // resize.
+    this.postProcessing = new PostProcessingManager(
+      this.renderer,
+      this.scene,
+      this.camera,
+      { width, height },
+      () => {
+        if (this.camera) this.updateMaterialsForCurrentCamera();
+      }
+    );
 
     log.success(Modules.POST_PROCESSING, 'HDR pipeline initialized');
   }

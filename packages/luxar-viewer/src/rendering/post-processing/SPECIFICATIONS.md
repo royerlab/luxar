@@ -2,194 +2,277 @@
 
 Algorithms, data structures, and invariants for the
 `rendering/post-processing/` subsystem. The
-[README](./README.md) covers usage; this document covers the
-machinery.
+[README](./README.md) covers usage and the module map; this document
+covers the machinery.
 
 ## Pipeline architecture
 
 ```
-RenderPass (scene → texture in linear HDR space)
+scene (linear HDR materials)
        │
        ▼
-EffectPass A (pre-tonemap)  → bloom, AO, vignette,
-                              chromatic lens, detector noise, DOF
+scene render → hdrTarget (HalfFloat, optional MSAA)
+       │
+       ├─────────────────────────────────────────────┐
+       │                                             │
+       ▼                                             │
+BloomChain (only when bloom is enabled)              │
+   threshold + 2× downsample → mip[0]                │
+   downsample chain          mip[i]   → mip[i+1]     │
+   upsample chain   mip[i+1] → mip[i] (additive)     │
+   output = mip[0] = bloom texture                   │
+       │                                             │
+       │   ┌─────────────────────────────────────────┘
+       │   │
+       ▼   ▼
+MegaShader fullscreen pass — fragment shader fuses:
+   1. lens distortion (per-channel sample @ distorted UVs)
+   2. bloom mix       (sample bloom texture, additive)
+   3. detector noise  (procedural per-pixel)
+   4. EOG             (exposure / offset / gamma)
+   5. tone mapping    (Linear / Reinhard / Cineon / ACES / AgX / Neutral)
+   6. vignette        (multiplicative)
+   7. sRGB encoding   (skipped for capture paths)
        │
        ▼
-EffectPass B (post-tonemap) → tone mapping, FXAA
+ldrTarget (only allocated when FXAA enabled OR for capture)
        │
        ▼
-SMAAPass / MSAA-aware target / SSAA-resolved output
+FxaaPass (only when fxaaEnabled)
        │
        ▼
-Canvas / HDR capture target
+canvas backbuffer
 ```
 
-### Why two effect passes
+### Why a fused mega-shader
 
-pmndrs effects compose by chaining fragment passes through a single
-ping-pong target. Bloom + AO + vignette need to see **linear HDR**
-input; tone mapping converts to a display-ready signal. Splitting
-into Pass A (HDR) and Pass B (LDR) keeps the math straight: tone
-mapping happens once at a defined boundary, not implicitly mixed with
-spatial filters.
+The old pmndrs pipeline ran one full-screen pass per effect, with a
+ping-pong target pair between them. For the per-pixel effects we
+care about (chromatic lens distortion, detector noise, EOG, tone
+mapping, vignette, sRGB encode) there's no inter-pixel dependency —
+they read one pixel, write one pixel. Folding them into a single
+fragment shader means the GPU does one rasterization, one set of
+texture binds, one program switch, and reuses the linear-HDR sample
+all the way through.
 
-`effect-orchestrator.ts` decides which effect goes into which pass.
-Bloom/AO/vignette/etc. always go to Pass A; tone mapping is always
-the first effect in Pass B; FXAA is always the last effect in Pass B
-(after tonemap, before display).
+Bloom is kept as a separate pre-pass because it needs neighbor reads
+(threshold + multi-tap downsample / upsample). FXAA is kept as a
+separate post-pass because its edge detection needs neighbor reads
+of the already-tone-mapped LDR output.
 
-## Tone mapping
+## Operation ordering
 
-Implemented in `luxar-tone-mapping-effect.ts`. Supported modes:
+The order of operations in the mega-shader mirrors the canonical
+order the old pmndrs `EffectComposer` ran through:
 
-| Mode         | Curve                         | Use                                            |
-| ------------ | ----------------------------- | ---------------------------------------------- |
-| `Linear`     | identity, clipped to `[0, 1]` | reference / debugging                          |
-| `Neutral`    | THREE's neutral curve         | scientific data (hue-preserving) — **default** |
-| `ACESFilmic` | ACES filmic                   | cinematic, increases contrast                  |
-| `AgX`        | AgX tone curve                | photographic, well-behaved highlights          |
-| `Reinhard`   | x / (1 + x)                   | conservative, low-contrast                     |
-| `Cineon`     | logarithmic film curve        | filmic / wide gamut                            |
-
-Each mode has a `shaderOutputMode` hint (`alpha-weighted` /
-`rgb-contribution` / `opaque`) consumed by the underlying material
-shaders so RGB composition stays correct (e.g. `max` blending requires
-premultiplied RGB; tonemap RGB needs unweighted).
-
-The exposure uniform is applied **before** the tone curve:
-`tonemapped = curve(exposure × radiance + offset)^gamma`. `offset` and
-`gamma` are LDR adjustments applied post-curve.
-
-## Bloom
-
-Bloom uses pmndrs's `BloomEffect`. The `levels` parameter (1-12)
-controls the number of mipmap levels of the bright-pass texture; more
-levels = larger / smoother glow, at the cost of one extra blur pass
-per level. Defaults: `low=3`, `medium=6`, `high=8`, `ultra=10`.
-
-`threshold` is the luminance above which a pixel contributes to bloom.
-`strength` is the additive intensity at composite time. `radius`
-controls the Kawase-style upsample radius.
-
-Bloom levels swap **in-place** when changed (the old bloom effect is
-disposed AFTER the new one is constructed and wired, to avoid a brief
-use-after-free window — see `effect-disposal.ts`).
-
-## Anti-aliasing
-
-Four modes, applied at different pipeline stages:
-
-| Mode     | Stage                                 | Cost                          | Quality                                               |
-| -------- | ------------------------------------- | ----------------------------- | ----------------------------------------------------- |
-| **FXAA** | Pass B (post-tonemap)                 | very cheap                    | medium; blurs subpixel detail                         |
-| **SMAA** | Dedicated SMAAPass after Pass B       | low-medium                    | very good edges; preset-tuned (LOW/MEDIUM/HIGH/ULTRA) |
-| **MSAA** | Hardware multisample on render target | medium; GPU-feature dependent | great geometry; can't AA shader-introduced edges      |
-| **SSAA** | Supersample target sized × multiplier | very high (squared cost)      | best; brute-force                                     |
-
-These are independent — multiple can stack (e.g. MSAA for geometry +
-FXAA for shader edges), at the cost of compounding GPU time.
-
-SMAA settings (`smaaThreshold`, `smaaSearchSteps`) tune detection
-sensitivity and pattern search depth. `updateSMAASettings('PRESET')`
-maps a string preset to those parameters.
-
-## Deferred rebuild (depth-counter semantics)
-
-Effect-pass rebuilds are expensive: pass reconstruction, effect
-re-attachment, shader recompilation, render-target re-sizing. Bulk
-setting updates batch through:
-
-```typescript
-this.deferRebuildDepth = 0;  // counter, not a boolean
-private get deferRebuild(): boolean { return this.deferRebuildDepth > 0; }
+```
+ChromaticLensDistortion → Bloom (additive) → DetectorNoise →
+ToneMapping (with EOG) → Vignette → AA → sRGB encode
 ```
 
-- `startDeferRebuild()` increments depth.
-- `endDeferRebuild()` decrements depth; rebuilds only when depth
-  reaches 0.
-- Nested `start/end` pairs are supported and only the outermost
-  `end` triggers the rebuild.
+Critically, chromatic distortion samples the scene **after** bloom
+was additively blended in. In the fused shader this is preserved by
+having `sampleHdrPlusBloom(uv)` return `texture(uHdrScene, uv) +
+texture(uBloomTexture, uv) * uBloomIntensity` — so a per-channel
+distorted sample picks up bloom at the same chromatically-aberrated
+UV, exactly as the old chain produced.
 
-### Why a counter and not a boolean
+## Capture modes
 
-A boolean `deferRebuild = true/false` flag has a fragile failure
-mode: if a setter throws between `start` and `end`, the boolean
-stays `true` until the next `end` runs — which never happens unless
-the caller has a try/finally. The depth counter fails the same way
-under the same bug, but `withDeferredRebuild(fn)` (a closure helper)
-wraps `start/end` in `try/finally` so the depth always unwinds.
-**Always prefer `withDeferredRebuild`** at call sites; the
-lower-level start/end remain only for cases where a closure boundary
-is inconvenient.
+| Mode                   | Bypasses                            | Output                    | Used by               |
+| ---------------------- | ----------------------------------- | ------------------------- | --------------------- |
+| `hdr-effects-pre-tone` | EOG, tone mapping, vignette, noise, | **Linear HDR** with bloom | EXR export, recording |
+| (default)              | chromatic distortion, sRGB encoding |                           |                       |
+| `visible-ldr`          | sRGB encoding only                  | **Linear LDR**            | Composer parity       |
+| `raw-scene-hdr`        | Mega-shader entirely (no bloom)     | Pure scene HDR            | Diagnostics           |
 
-## Context-restore protocol
-
-WebGL contexts can be lost — tab switch, driver crash, deliberate
-`WEBGL_lose_context.loseContext()`. The manager preserves its
-**identity** across restore so cached references in consumer modules
-(`PickingSystem`, `AnimationController`, `RenderingControls`,
-`RecordingPanel`) stay valid.
-
-Sequence:
-
-1. `captureDurableState()` snapshots every user-facing setting into a
-   plain serializable object: `{ exposure, offset, gamma, bloom: {…},
-dof: {…}, vignette: {…}, detectorNoise: {…}, chromaticLens: {…},
-aa: {…}, toneMapping: {…} }`.
-2. `disposeTransientResources()` tears down composer + passes +
-   effects through the `safe*` helpers.
-3. `initializeTransientResources()` rebuilds composer + render pass +
-   empty effect graph.
-4. `applyDurableState(snapshot)` reinstates every captured setting
-   (which re-creates effects as needed, via the same setters that
-   handle first-time creation).
-
-The E2E lock-in lives in `tests/e2e/context-restore.spec.ts`. Unit
-tests in `tests/unit/rendering/post-processing/context-recovery.test.ts`
-exercise capture/apply on plain objects without a WebGL context.
-
-## Disposal invariants
-
-`dispose()` MUST be idempotent. Guard with `this.disposed = false`
-field, return early on second call. Order:
-
-1. Effect-level `safeDisposeEffect` on every owned effect (try/catch
-   per call). pmndrs's event-driven disposal can throw on partially-
-   constructed effects.
-2. `safeRemoveAndDisposePass` for each pass.
-3. `this.composer.dispose()` wrapped in a try/catch so a thrown
-   composer dispose (rare; possible on mid-teardown context loss)
-   doesn't strand the remaining cleanup.
-4. Null out instance fields.
+The bypasses are implemented as `#define`-gated shortcuts in the
+shader (`LUXAR_CAPTURE_RAW_HDR`, `LUXAR_CAPTURE_LINEAR_LDR`). Toggling
+a define triggers `material.needsUpdate = true`, but THREE.js caches
+compiled programs by define-set so repeated capture calls reuse the
+cached programs.
 
 ## Render-target sizing
 
-`render-target-sizing.ts` computes the effective render-target size:
-`drawingBuffer = canvasSize × DPR × ssaaMultiplier`. MSAA samples are
-applied as a property of the GL render target itself (not size-
-multiplying), so MSAA × SSAA stacks multiplicatively in cost but
-additively in dimensions.
+Two unit systems:
 
-DPR is **clamped** through `adaptive-dpr-manager.ts` so a 4K monitor
-under DPR=2 (effectively 5K render) doesn't blow GPU memory.
+- **Logical** (CSS) pixels — what `renderer.setSize(width, height)`
+  takes. THREE multiplies by `pixelRatio` to derive the canvas
+  backbuffer.
+- **Physical** pixels — `logical × pixelRatio`. This is what
+  `getDrawingBufferSize()` reports to scene materials, what the
+  canvas backbuffer is, and what our render targets MUST match.
 
-## HDR capture
+`getPhysicalSize()` = `effectiveSize × renderer.getPixelRatio()` where
+`effectiveSize` = `renderSize × ssaaMultiplier` (when SSAA enabled).
+All targets — `hdrTarget`, `ldrTarget`, the bloom mip pyramid, the
+FXAA pass — are allocated at this physical size. Mismatching this
+(e.g. allocating in logical pixels at DPR > 1) causes the materials'
+`gl_PointSize` math to overshoot the actual framebuffer and the
+scene to appear noticeably brighter than at DPR 1.
 
-`hdr-capture.ts` reads back the pre-tonemap HDR texture for video /
-image recording. The capture path bypasses tone-mapping pass so
-external tools (e.g. ffmpeg with HDR10 metadata) can apply their own
-curve.
+Whenever the size changes (resize / SSAA toggle / MSAA toggle / DPR
+change) the manager calls the optional `onResize` callback. The host
+wires that to `SceneManager.updateMaterialsForCurrentCamera()` so the
+scene materials pick up the new drawing-buffer dimensions on the same
+frame.
 
-`hdr-pixel-utils.ts` provides the float-to-half-float packing for
-EXR-style file formats.
+## Tone-mapping enum
 
-## Performance targets
+The internal define `LUXAR_TONE_MAPPING_MODE` uses Luxar-internal IDs
+(1..6), not THREE's enum (which has gaps for `Custom` and was
+renumbered across r-bumps). The mapping is in
+`mega-shader-material.ts:toneMappingModeDefine()`:
 
-- 1M points @ 1080p: ≤ 5ms base render pass; effects add ~1-3ms
-  each on integrated GPUs, ~0.5-1ms on dedicated.
-- Bloom at 8 levels: ~1.5ms @ 1080p on dedicated GPU.
-- SMAA HIGH: ~1ms @ 1080p.
-- SSAA × 2: ~3-4× base cost; reserve for stills/screenshots.
+| THREE constant          | Luxar mode | GLSL function           |
+| ----------------------- | ---------- | ----------------------- |
+| `NoToneMapping`         | 1 (alias)  | `LinearToneMapping`     |
+| `LinearToneMapping`     | 1          | `LinearToneMapping`     |
+| `ReinhardToneMapping`   | 2          | `ReinhardToneMapping`   |
+| `CineonToneMapping`     | 3          | `CineonToneMapping`     |
+| `ACESFilmicToneMapping` | 4          | `ACESFilmicToneMapping` |
+| `AgXToneMapping`        | 5          | `AgXToneMapping`        |
+| `NeutralToneMapping`    | 6          | `NeutralToneMapping`    |
 
-These are guidance; profile on the target GPU before locking in
-quality presets.
+`NoToneMapping` is deliberately aliased to `LinearToneMapping` (which
+saturates / clamps to [0,1]) — the old `THREE.NoToneMapping →
+pmndrs.LINEAR` mapping had the same effect.
+
+The functions come from THREE's `<tonemapping_pars_fragment>` chunk.
+The chunk declares `uniform float toneMappingExposure`, which we
+provide via `material.uniforms` and pin to `1.0` (because our own
+`uExposure` already pre-multiplies before the tone-mapping call).
+
+**Critical**: every post-processing material sets `toneMapped: false`.
+Without it, THREE auto-injects the tone-mapping chunk again on top of
+our explicit `#include`, producing a `toneMappingExposure:
+redefinition` GLSL compile error and a black canvas.
+
+## Bloom chain
+
+The pyramid has 1..12 mip levels (UI-tunable). Mip[0] is half the
+physical-pixel resolution — bloom is a soft glow and full-res doesn't
+visibly improve quality while doubling memory.
+
+Threshold uses **Rec.709 relative luma** `dot(c, vec3(0.2126,
+0.7152, 0.0722))` — same shape as the old pmndrs `LuminanceMaterial`.
+A previous iteration used `max(r, g, b)` which overstated saturated
+single-channel pixels (pure red would bloom even at low intensity);
+fixed.
+
+Downsample is a 2×2 box filter. Upsample is a 4-tap tent filter
+blended additively (via `THREE.AdditiveBlending` on the material).
+The autoclear state is briefly flipped to `false` during the upsample
+chain so each pass accumulates onto the previous larger mip; the
+chain saves and restores `renderer.autoClear` around its work.
+
+`setLevels(n, canvasSize?)` accepts an explicit canvas size so a
+mid-resize-debounce quality-preset change doesn't re-allocate the
+pyramid at a stale `mip[0].width × 2`. The manager passes
+`getPhysicalSize()` from the host side.
+
+## Detector noise
+
+Three components, summed at the per-pixel level:
+
+1. **Shot noise (Poisson)** — Anscombe transform stabilizes variance,
+   add a unit-variance Gaussian, inverse-transform back. Smoothstep
+   weighting in the [0, 0.01] intensity range fades the Anscombe-3/8
+   bias to zero in pure-black pixels (otherwise vignette-darkened
+   areas would brighten).
+2. **Readout noise (Gaussian, temporal)** — clamped logistic
+   approximation (scale 0.5513 for ~unit variance after the [-4, 4]
+   clamp). Fed from a per-pixel/per-frame Bob Jenkins hash.
+3. **Fixed pattern noise (Gaussian, static)** — same Gaussian
+   approximation, but the seed depends only on UV — pattern is stable
+   across frames.
+
+Time advances via wall-clock `dt` measured between successive
+`render()` calls. Render-duration around the pipeline used to be the
+source and animated noise ~4× slower at 60 FPS because rendering
+takes well under 16 ms — fixed.
+
+The `_previousRenderTimestamp` field is reset to 0 in
+`rebuildAfterContextRestore()` so the first post-restore frame
+doesn't see a multi-second `dt` jump.
+
+## Chromatic lens distortion
+
+Brown-Conrady radial distortion plus a 3-component camera intrinsic
+matrix. Per-channel sample at distorted UVs with a soft border mask
+suppresses out-of-bounds bleed. The dispersion parameter scales the
+distortion coefficient per channel — blue gets more distortion than
+red, matching the physical Abbe behavior of optical glass.
+
+Bloom is sampled at the SAME distorted UVs per channel — see
+"Operation ordering" above.
+
+`getLensDistortionParams()` returns cloned `Vector2` values so the
+picking system (which uses these to back-project mouse coords through
+the distortion) cannot accidentally mutate the shader's live uniforms.
+
+## sRGB encoding
+
+Linear → sRGB (Rec.709 transfer function) is applied at the END of
+the mega-shader. Required for both write targets (`ldrTarget` is
+sampled by FXAA, then written to backbuffer with `outputColorSpace =
+SRGBColorSpace`). FXAA reads the already-sRGB-encoded ldrTarget and
+passes it through unchanged; its luma-based edge detection works on
+sRGB inputs (in fact that's closer to how FXAA was originally tuned
+than the linear-LDR input the old composer fed it).
+
+The encoding is conditionally skipped under
+`LUXAR_CAPTURE_LINEAR_LDR` so the visible-ldr EXR capture matches
+the old composer's HalfFloat ping-pong contents (linear LDR).
+
+## Deferred-rebuild contract
+
+The mega-shader-era pipeline has cheap rebuilds (each effect toggle
+is a `#define` change + lazy program recompile, which THREE caches
+by define-set). The `withDeferredRebuild` / `start/endDeferRebuild`
+API is preserved for source-compatibility with cinematic-mode
+batching, but it's effectively a no-op pass-through. The depth
+counter still exists so a thrown sub-setter doesn't strand the
+manager in a half-built state.
+
+## Context-restore
+
+WebGL contexts can be lost. The manager preserves its **identity**
+across restore so cached references in `PickingSystem`,
+`AnimationController`, and `RenderingControls` stay valid.
+
+1. `rebuildAfterContextRestore` first resets `_previousRenderTimestamp`
+   to 0 (otherwise detector noise jumps).
+2. Captures every user-facing uniform / define / toggle from the
+   current `MegaShaderMaterial` + bloom-chain state.
+3. `disposeTransientResources()` tears down all GPU resources.
+4. `initializeTransientResources()` rebuilds at the current physical
+   size.
+5. Restores the snapshot via the regular setter API.
+
+The E2E test `tests/e2e/context-restore.spec.ts` asserts both
+identity preservation and a non-default exposure round-tripping.
+
+## Renderer state save/restore
+
+`runPipeline()` is defensive: it saves the renderer's current
+`renderTarget` and `autoClear` flag on entry and restores them in a
+`finally` block. This protects future callers (picking, offscreen
+probe) that might invoke `runPipeline` while another target is bound.
+
+`renderToImageData()` follows up with an explicit
+`renderer.setRenderTarget(null)` before `gl.readPixels` so the
+backbuffer is bound regardless of what the prior caller had set.
+
+## Lifecycle
+
+`dispose()` is **idempotent** (`this.disposed` guard). It disposes:
+
+- `MegaShaderMaterial` (frees uniforms + program)
+- `BloomChain` (all mip targets + threshold/downsample/upsample
+  materials + the shared fullscreen mesh)
+- `FxaaPass` (material + mesh)
+- `hdrTarget` and `ldrTarget`
+
+There are no pmndrs-era event-driven disposal traps to work around;
+every owned resource has a direct, idempotent `dispose()`.

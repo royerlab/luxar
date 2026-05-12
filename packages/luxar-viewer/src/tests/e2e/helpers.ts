@@ -1103,7 +1103,7 @@ export async function getPostProcessingState(page: Page): Promise<{
   bloomStrength: number | null;
   exposure: number | null;
   vignetteEnabled: boolean | null;
-  smaaEnabled: boolean | null;
+  fxaaEnabled: boolean | null;
 } | null> {
   return await page.evaluate(() => {
     const debug = (window as any).__luxarDebug;
@@ -1115,7 +1115,7 @@ export async function getPostProcessingState(page: Page): Promise<{
       bloomStrength: settings?.bloomStrength ?? null,
       exposure: settings?.exposure ?? null,
       vignetteEnabled: settings?.vignetteEnabled ?? null,
-      smaaEnabled: settings?.smaaEnabled ?? null,
+      fxaaEnabled: settings?.fxaaEnabled ?? null,
     };
   });
 }

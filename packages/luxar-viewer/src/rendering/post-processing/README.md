@@ -1,78 +1,118 @@
 # Post-processing
 
-WebGL post-processing pipeline for the viewer: tone mapping, bloom,
-ambient occlusion, anti-aliasing (FXAA / SMAA / MSAA / SSAA), depth of
-field, detector noise, vignette, and chromatic lens distortion.
+WebGL post-processing pipeline for the viewer. Built from a custom
+mega-shader: tone mapping, bloom, anti-aliasing (FXAA / MSAA / SSAA),
+detector noise, vignette, and chromatic lens distortion.
 
-The implementation builds on
-[`postprocessing`](https://pmndrs.github.io/postprocessing/) (pmndrs)
-and adds Luxar-specific effects, lifecycle discipline, and HDR-aware
-state capture/restore.
+This module previously sat on top of `pmndrs/postprocessing` and its
+`EffectComposer`. That was replaced with a hand-written three-stage
+pipeline that fuses all per-pixel effects into a single fullscreen
+fragment shader. Net effect: fewer fullscreen passes per frame, no
+third-party dependency, easier path to WebGPU/TSL later.
 
 ## Architecture
 
 ```
-┌─────────────────┐    ┌──────────────────────────────────────┐
-│  PostProcessing │───▶│  EffectComposer                      │
-│  Manager        │    │  ├─ RenderPass (scene → texture)     │
-│  (public API)   │    │  ├─ EffectPass(es) (effect chain)    │
-└─────────────────┘    │  └─ SMAAPass / FXAAPass / output     │
-                       └──────────────────────────────────────┘
-                                       │
-                                       ▼
-                              ┌────────────────┐
-                              │  Canvas / HDR  │
-                              └────────────────┘
+                         ┌────────────────────────┐
+                         │  PostProcessingManager │
+                         │  (public API, owns     │
+                         │   lifecycle + state)   │
+                         └─────────┬──────────────┘
+                                   │
+        ┌──────────────────────────┼────────────────────────┐
+        ▼                          ▼                        ▼
+┌────────────────┐        ┌────────────────┐        ┌──────────────┐
+│  scene →       │        │  bloom pyramid │        │  MegaShader  │
+│  hdrTarget     │        │  (BloomChain)  │        │  fullscreen  │
+│  (HalfFloat,   │        │  threshold ↓   │        │  pass — all  │
+│   optional     │        │  ↓ downsample  │        │  per-pixel   │
+│   MSAA)        │        │  ↑ tent upsamp.│        │  effects     │
+└────────┬───────┘        └────────┬───────┘        └──────┬───────┘
+         │                         │                       │
+         └─────────────────────────┴───────────────────────┘
+                                   │
+                                   ▼
+                       ┌────────────────────┐
+                       │  optional FXAA     │
+                       │  (FxaaPass)        │
+                       └─────────┬──────────┘
+                                 │
+                                 ▼
+                       ┌────────────────────┐
+                       │  canvas / EXR      │
+                       └────────────────────┘
 ```
 
-`PostProcessingManager` is the single owner of the composer + effect
-graph. Every other module (`scene/`, `ui/rendering-controls/`,
-`ui/recording-panel`) routes through its public API and never touches
-the composer directly.
+The mega-shader fuses these steps in one fragment pass:
 
-## Key modules
+1. Chromatic lens distortion (per-channel sample at distorted UVs)
+2. Additive bloom mix from the bloom texture
+3. Detector noise (procedural per-pixel)
+4. EOG — Exposure / Offset / Gamma
+5. Tone mapping (THREE's `<tonemapping_pars_fragment>` chunk;
+   Linear / Reinhard / Cineon / ACES / AgX / Neutral)
+6. Vignette (multiplicative)
+7. sRGB encoding (skipped when capturing for EXR)
 
-| File                                                                                    | Role                                                                                                                      |
-| --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `post-processing-manager.ts`                                                            | Lifecycle owner; composer creation, effect graph, durable state capture/apply, deferred rebuild, dispose, context-restore |
-| `effect-orchestrator.ts`                                                                | Pure helper that decides which effect goes into which pass (Pass A pre-tonemap, Pass B post-tonemap)                      |
-| `effect-disposal.ts`                                                                    | `safeDisposeEffect`, `safeRemoveAndDisposePass` — try/catch wrappers for pmndrs's event-driven disposal                   |
-| `context-recovery.ts`                                                                   | Capture / re-apply durable settings across WebGL context loss                                                             |
-| `hdr-capture.ts`, `hdr-pixel-utils.ts`                                                  | Render-target readback for video/image recording                                                                          |
-| `bloom-handler.ts`                                                                      | Bloom levels / radius / threshold / strength                                                                              |
-| `antialiasing-handler.ts`                                                               | FXAA / SMAA / MSAA / SSAA configuration                                                                                   |
-| `tone-mapping-handler.ts`, `luxar-tone-mapping-effect.ts`, `tone-mapping-mode-names.ts` | HDR tone-mapping pipeline (Neutral / ACES / AGX / Linear / etc.)                                                          |
-| `chromatic-lens-distortion-effect.ts`                                                   | Lens distortion + chromatic dispersion                                                                                    |
-| `detector-noise-effect.ts`                                                              | Physics-based detector noise (Poisson + Gaussian + FPN)                                                                   |
-| `robust-vignette-effect.ts`                                                             | Vignette with darkness + offset controls                                                                                  |
-| `visual-effects-handler.ts`                                                             | DOF focus / strength + DPR-scaled noise math                                                                              |
-| `postprocessing-types.ts`                                                               | Shared effect-state types + clamps + numeric guards                                                                       |
-| `render-target-sizing.ts`                                                               | DPR/MSAA-aware render-target sizing                                                                                       |
+Two `#define`-gated shortcuts cover the EXR/HDR-capture paths
+(`LUXAR_CAPTURE_RAW_HDR` for pre-tone linear HDR,
+`LUXAR_CAPTURE_LINEAR_LDR` for post-tone-mapped linear LDR).
+
+## Module map
+
+| File                         | Role                                                                         |
+| ---------------------------- | ---------------------------------------------------------------------------- |
+| `post-processing-manager.ts` | Public API: setters, lifecycle, capture paths, context-restore               |
+| `mega-shader.glsl.ts`        | Fused fragment shader (vertex is a trivial fullscreen triangle)              |
+| `mega-shader-material.ts`    | `ShaderMaterial` wrapper — uniform layout, `#define` toggles for each effect |
+| `bloom-chain.ts`             | Threshold + downsample/upsample pyramid producing the bloom texture          |
+| `fxaa-pass.ts`               | Inline FXAA on the LDR ldrTarget → backbuffer                                |
+| `hdr-capture.ts`             | One helper — the EXR log-line formatter                                      |
+| `hdr-pixel-utils.ts`         | HalfFloat ↔ Float32 conversion + vertical flip for `ImageData`               |
+| `render-target-sizing.ts`    | DPR/SSAA-aware physical-pixel size helper                                    |
 
 ## Public surface
-
-The entry point is the [`PostProcessingManager`](./post-processing-manager.ts)
-class. It exposes setters for every effect, a quality-preset switcher
-(`setQualityPreset('low' | 'medium' | 'high' | 'ultra')`), and the
-deferred-rebuild contract (see below).
 
 ```typescript
 import { PostProcessingManager } from '@/rendering';
 
-const pp = new PostProcessingManager(renderer, scene, camera, dpr);
+const pp = new PostProcessingManager(renderer, scene, camera, { width, height }, () =>
+  sceneManager.updateMaterialsForCurrentCamera()
+);
+
 pp.setBloomEnabled(true);
 pp.updateBloomSettings(1.5, 0.5);
-pp.setQualityPreset('high'); // batches its sub-setters internally
+pp.setToneMapping(THREE.AgXToneMapping);
+pp.updateExposure(0.5);
+pp.setVignetteEnabled(true, 0.5, 0.6);
+pp.setMSAAEnabled(true);
+pp.setMSAASamples(4);
 ```
 
-## Deferred-rebuild contract
+The optional `onResize` callback runs after every render-target
+reallocation (resize, SSAA toggle, MSAA toggle, DPR change). The host
+wires it to `SceneManager.updateMaterialsForCurrentCamera()` so the
+scene materials' cached `pointSizeFactor` / `uResolution` uniforms
+follow the new drawing-buffer dimensions.
 
-The effect graph is **expensive to rebuild** (effect construction,
-shader compilation, render-target allocation). Bulk setting updates
-should batch through the deferred-rebuild API so the composer rebuilds
-once at the end of the batch.
+### Capture paths
 
-The recommended form is the closure helper:
+```typescript
+// EXR with linear HDR (default — bloom kept, EOG / tone / vignette /
+// detector noise / lens distortion bypassed):
+const exr = await pp.captureHDRAsEXR();
+
+// EXR with full pipeline but linear (post-tone-mapped, pre-sRGB):
+const exr2 = await pp.captureHDRAsEXR({ mode: 'visible-ldr' });
+
+// Raw scene HDR with no bloom and no mega-shader:
+const raw = await pp.captureHDRAsEXR({ mode: 'raw-scene-hdr' });
+
+// Display-ready ImageData (full pipeline, sRGB-encoded, FXAA if on):
+const img = pp.renderToImageData();
+```
+
+### Deferred rebuild
 
 ```typescript
 pp.withDeferredRebuild(() => {
@@ -82,61 +122,63 @@ pp.withDeferredRebuild(() => {
 });
 ```
 
-`withDeferredRebuild` wraps a `start/end` pair in `try/finally`, so a
-thrown sub-setter cannot strand the depth counter above zero (which
-would silently disable all future rebuilds — see SPECIFICATIONS for
-the depth-counter semantics).
-
-The lower-level `startDeferRebuild()` / `endDeferRebuild()` calls
-remain available and are nestable (depth-counter), but should be
-used only when a closure boundary is inconvenient.
+This API is kept for source-compatibility with the old pmndrs era. In
+the mega-shader pipeline individual setters are cheap, so the
+deferred-rebuild path is effectively a no-op pass-through. The
+`try/finally` in `withDeferredRebuild` still protects the depth
+counter against sub-setter throws.
 
 ## Context-restore protocol
 
 WebGL contexts can be lost on tab switch, GPU driver crash, or
-deliberate `WEBGL_lose_context.loseContext()`. The manager preserves
-its **identity** across restore so cached references in `PickingSystem`,
+`WEBGL_lose_context.loseContext()`. The manager preserves its
+**identity** across restore so cached references in `PickingSystem`,
 `AnimationController`, and `RenderingControls` stay valid.
 
-1. `captureDurableState()` snapshots every user-facing setting to a
-   plain object (exposure / bloom / DOF / vignette / detector noise /
-   chromatic lens / etc.).
-2. `disposeTransientResources()` tears down the composer + passes +
-   effects.
-3. `initializeTransientResources()` rebuilds them fresh.
-4. `applyDurableState()` reinstates the snapshot.
+1. Snapshot every user-facing uniform / define / toggle from the
+   current `MegaShaderMaterial` + bloom-chain state.
+2. `disposeTransientResources()` tears down all GPU resources.
+3. `initializeTransientResources()` rebuilds them fresh at the current
+   physical size.
+4. Re-apply the snapshot through the regular setter API.
+
+The detector-noise wall-clock timestamp is also reset so the first
+post-restore frame doesn't see a multi-second `dt` jump.
 
 The E2E test `tests/e2e/context-restore.spec.ts` asserts both identity
 preservation and a non-default exposure round-tripping across restore.
 
-## Lifecycle
+## Dropped features
 
-`dispose()` is **idempotent** (`this.disposed` guard). It walks the
-effect list with `safeDisposeEffect` per effect (try/catch wrapped),
-removes passes from the composer with `safeRemoveAndDisposePass`, and
-finally disposes the composer itself.
+The mega-shader refactor explicitly removed three effects that don't
+fit a single-pass model:
 
-Per-effect `safe*` wrappers exist because pmndrs's event-driven
-disposal can throw on a partially-initialized effect (e.g. when a
-prior construction failed mid-way). A throw in one effect must not
-prevent the rest from being cleaned up.
+- **SMAA** — 3-pass edge-detect → weight → blend; can't fuse cleanly.
+  FXAA remains as the inline AA option.
+- **Depth of Field** — needs depth-aware multi-pass blur.
+- **Ambient Occlusion** — needs surface normals which point / gsplat /
+  line geometry don't provide. The previous SSAO output was always
+  degenerate for our scenes.
+
+The corresponding `RenderingSettings` fields, viewer-config keys, and
+UI controls were removed in the same change.
 
 ## Troubleshooting
 
-- **Effects don't update after a bulk change**: a `startDeferRebuild`
-  somewhere never balanced with `endDeferRebuild` (depth stuck > 0).
-  Switch to `withDeferredRebuild(fn)` and the counter unwinds on
-  throw.
-- **Black screen after settings change**: an effect construction
-  failed; check the console for the `safeDisposeEffect` warning that
-  identifies which effect.
-- **Wrong colors after tone-mapping mode swap**: the manager wires
-  shader-output-mode + tone-mapping-mode together; mode swaps must go
-  through `setToneMapping(mode)`, not direct uniform writes.
-- **Lost settings after tab restore**: durable-state capture/apply
-  covers only documented settings. Custom uniforms you set externally
-  must be re-applied by your own context-restore hook.
+- **Black canvas, console "redefinition" GLSL error** — a custom
+  ShaderMaterial got `toneMapped = true` (THREE's default), so THREE
+  injected `<tonemapping_pars_fragment>` on top of our explicit
+  include. Every PP material must set `toneMapped: false`.
+- **Brightness changes with DPR** — render targets allocated in
+  logical pixels instead of physical. They MUST be sized as
+  `effectiveSize × renderer.getPixelRatio()` (see `getPhysicalSize`)
+  so they match what materials read from `getDrawingBufferSize`.
+- **Point/line sizes feel off after toggling SSAA/MSAA** — the
+  `onResize` callback isn't wired or the manager's caller forgot to
+  pass it. Re-check the constructor call site.
+- **Detector noise jumps after context restore** — the
+  `_previousRenderTimestamp` field needs to be cleared in
+  `rebuildAfterContextRestore()` (it is).
 
-See `SPECIFICATIONS.md` for the algorithms behind tone mapping, bloom
-mipmap math, anti-aliasing trade-offs, and the deferred-rebuild
-depth-counter semantics.
+See `SPECIFICATIONS.md` for the per-effect math and the wider
+operation-ordering invariants.

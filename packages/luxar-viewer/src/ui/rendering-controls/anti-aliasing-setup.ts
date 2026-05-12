@@ -1,11 +1,15 @@
 /**
  * Anti-aliasing controls setup for rendering controls UI.
  *
- * Creates controls for various AA techniques:
+ * Creates controls for the AA techniques the mega-shader pipeline
+ * supports:
  * - SSAA (Supersampling) with resolution multiplier
  * - FXAA (Fast Approximate AA)
  * - MSAA (Multisample AA) with sample count
- * - SMAA (Subpixel Morphological AA)
+ *
+ * SMAA was dropped in the mega-shader refactor — its 3-pass
+ * edge-detect → weight → blend algorithm doesn't fold cleanly into
+ * the single fullscreen pass, and FXAA covers the same niche.
  */
 
 import type { SetupContext, SetupResult } from './types';
@@ -30,10 +34,9 @@ export function setupAntiAliasingControls(context: SetupContext): SetupResult {
     'title',
     'Anti-Aliasing: Smooths jagged edges in the rendered image\n\n' +
       'Different scenes benefit from different AA methods:\n' +
-      '• Point clouds with fine detail → FXAA or SMAA (fast, preserves detail)\n' +
+      '• Point clouds with fine detail → FXAA (fast, preserves detail)\n' +
       '• Dense scenes with overlapping points → MSAA (hardware-accelerated, sharp)\n' +
-      '• Final renders or screenshots → SSAA (best quality, highest cost)\n' +
-      '• Sparse scenes with large points → SMAA (clean edges, low cost)\n\n' +
+      '• Final renders or screenshots → SSAA (best quality, highest cost)\n\n' +
       'You can combine methods (e.g., MSAA + FXAA) but watch for diminishing\n' +
       'returns and increased GPU cost. Start with one and add more only if needed.'
   );
