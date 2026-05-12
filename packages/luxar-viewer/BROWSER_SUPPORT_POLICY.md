@@ -1,6 +1,32 @@
 # Browser-support policy for the WebGPU migration
 
-## Context
+## Hard constraint up front: `ShaderMaterial` blocks `WebGPURenderer`
+
+Three.js's `WebGPURenderer` does **not** support `THREE.ShaderMaterial` or
+`THREE.RawShaderMaterial`. From the Three.js manual:
+
+> Custom materials based on `ShaderMaterial`, `RawShaderMaterial` and
+> modifications of built-in materials via `onBeforeCompile()` are not
+> supported in `WebGPURenderer`. This part of your application must
+> be ported to node materials and TSL.
+>
+> — *Three.js manual, "Using WebGPURenderer"*
+
+Every one of Luxar's materials today is `THREE.ShaderMaterial({
+glslVersion: GLSL3 })`. There are roughly 34 such instances across
+the scene materials, post-processing materials, and picking materials.
+
+`{ forceWebGL: true }` does not rescue this: it instructs
+`WebGPURenderer` to dispatch through its WebGL2 backend, but the
+materials it accepts are still `NodeMaterial`-based. A
+`ShaderMaterial` handed to `WebGPURenderer` (with or without
+`forceWebGL`) will not render.
+
+Consequence: until the TSL ports land — which **are** the migration —
+`WebGPURenderer` is not usable. The migration is the TSL ports, not
+a renderer swap.
+
+## Userbase
 
 WebGPU shipped in Chrome 113 (May 2023), Edge 113 (May 2023), and
 Safari 18 (Sep 2024). Firefox has it behind `dom.webgpu.enabled` on
@@ -14,9 +40,26 @@ roughly into:
 - **Neither**: very old browsers we won't try to support.
 
 This document records the policy decision for which of these
-populations Luxar Viewer targets post-WebGPU-port.
+populations Luxar Viewer targets *after* the migration completes,
+and what we run *today*.
 
-## Options
+## Today
+
+Until TSL ports land:
+
+- We run `THREE.WebGLRenderer`. There is no alternative.
+- Equivalent to "Option A" in spirit, but framed by force rather
+  than choice.
+- The runtime-detection helper at `src/utils/webgpu-availability.ts`
+  exists and is honest about what it reports — it can identify a
+  WebGPU-capable browser, but knowing this changes nothing about
+  what renderer we hand to a user today.
+
+## Target end-state (post-TSL-ports)
+
+Three options are conceivable once `ShaderMaterial` is no longer
+in the picture (i.e. every material has a `NodeMaterial` /
+TSL counterpart in its `ShaderSource.webgpu` slot).
 
 ### Option A — Require WebGPU
 
@@ -27,54 +70,61 @@ Safari users still on 17 or below.
 ### Option B — Dual-stack
 
 Maintain both `WebGLRenderer` and `WebGPURenderer` in the bundle.
-Runtime detect, branch. Every shader gets two implementations
-(GLSL3 + TSL). Visual parity must hold across the two stacks for
-every effect. Highest maintenance burden — every PR that touches a
-material has to be reviewed against both pipelines.
+Runtime detect, branch. Every shader needs both GLSL3 and TSL
+implementations *running*, not just present in the source. Visual
+parity must hold across the two stacks for every effect. Highest
+maintenance burden — every PR that touches a material gets reviewed
+against both pipelines.
 
 ### Option C — Single renderer, Three.js internal fallback
 
-Use `WebGPURenderer` exclusively in our code. Three.js's
-`three.webgpu.js` build includes an internal WebGL2 fallback path
-inside `WebGPURenderer` itself: when no adapter is available, the
-same `WebGPURenderer` instance dispatches through WebGL2. Our code
-only knows about *one* renderer; Three.js handles the dispatch.
+Use `WebGPURenderer` exclusively. Three.js's `three.webgpu.js`
+build includes an internal WebGL2 fallback inside the
+`WebGPURenderer` itself: when no adapter is available (or
+`forceWebGL: true` is set), the same `WebGPURenderer` instance
+dispatches through WebGL2. Our code only knows about *one* renderer;
+Three.js handles the dispatch. Crucially, this option requires that
+the material pipeline is `NodeMaterial`-based — `WebGPURenderer`'s
+internal WebGL2 fallback dispatches `NodeMaterial`, not
+`ShaderMaterial`. So Option C is a strict subset of post-TSL-ports
+state.
 
-Material pipeline: one source-of-truth per shader (the
-`ShaderSource` modules already in place from Item 2 of the prep
-plan), each providing a GLSL3 string today and a TSL factory after
-the port. Three.js routes the active one through the active backend.
+## Target decision
 
-## Decision
+**Option C — single renderer with Three.js internal fallback**,
+contingent on:
 
-**Option C — single renderer with Three.js internal fallback.**
+1. The TSL ports landing for every material (the migration itself).
+2. The `WEBGPU_FALLBACK_REPORT.md` experiment confirming that the
+   ported `NodeMaterial` pipeline renders correctly under
+   `WebGPURenderer({ forceWebGL: true })`. The experiment will be
+   meaningful **only after** Item 1 (the first TSL port) lands —
+   running it today, with the existing `ShaderMaterial`s, would
+   simply confirm what this section already states.
 
-Subject to Item 5 of the migration plan (running the existing E2E
-suite against `WebGPURenderer` in `{ forceWebGL: true }` mode)
-showing acceptable visual parity. If the fallback path produces
-unacceptable artefacts on our shaders, fall back to Option A (the
-dual-stack maintenance cost is not justified for a Firefox-only
-audience).
+If the post-TSL fallback experiment finds an artefact we can't fix,
+fall back to Option A (the dual-stack maintenance cost in Option B
+is not justified for a Firefox-stable-only audience, which is what
+B costs us).
 
-Rationale:
+Rationale (for Option C, assuming the experiment passes):
 
 1. **One renderer to maintain.** The mega-shader refactor already
-   collapsed our post-processing surface to a single fullscreen pass;
-   keeping two parallel implementations of that pass would undo the
-   architectural win.
-2. **Three.js's fallback path is already tested by the upstream
-   project.** We get WebGL2 coverage without owning the dispatch
-   layer.
+   collapsed our post-processing surface to a single fullscreen
+   pass; keeping two parallel implementations of that pass would
+   undo the architectural win.
+2. **Three.js's fallback path is upstream-maintained.** We get
+   WebGL2 coverage without owning the dispatch layer.
 3. **TSL writes one shader that compiles to both targets.** The
-   GLSL3 strings stay around as the WebGL2 path; the TSL factory
-   slot in `ShaderSource` becomes the WebGPU path; Three.js picks
-   the one that matches the active backend. We never write two
-   parallel shader sources.
+   GLSL3 strings can be removed; the TSL factory slot in
+   `ShaderSource.webgpu` becomes the only source; Three.js routes
+   it through the active backend. We never write two parallel
+   shader sources.
 4. **Audience coverage is acceptable.** WebGPU-native users get
    the fast path; WebGL2-only users still get a working viewer
-   (potentially slower, but not broken). Only true "neither"
-   users are excluded — and they're already excluded today (we
-   require WebGL2).
+   (potentially slower, but not broken). Only true "neither" users
+   are excluded — and they're already excluded today (we require
+   WebGL2).
 
 ## Runtime detection
 
@@ -89,7 +139,7 @@ These are **diagnostic** signals — for a "fast path enabled" badge,
 for telemetry on which backend users land on, for the `?backend=`
 URL parameter override during testing. They do **not** drive the
 renderer choice (Three.js's internal fallback handles that
-transparently).
+transparently, once we're on Option C).
 
 `RendererCapabilities.api` reports the API the renderer actually
 runs on, which may differ from the page-load probe if the user has
@@ -120,6 +170,9 @@ by the existing pre-renderer error path in `scene-manager.ts`.
 
 ## Revisit if
 
+- Three.js drops the `ShaderMaterial` restriction on
+  `WebGPURenderer`. Then Option C becomes available *before* the
+  TSL ports complete, which would change the sequencing argument.
 - Firefox's WebGPU default flips to "on" on Linux. At that point
   WebGL2 fallback covers a much smaller population, and Option A
   becomes more attractive.
@@ -128,3 +181,10 @@ by the existing pre-renderer error path in `scene-manager.ts`.
 - We hit a shader where TSL can't express what the GLSL version
   does. We'd need either a per-backend hand-written variant
   (Option B in microcosm) or to redesign the shader.
+
+## References
+
+- [Three.js manual, "Using WebGPURenderer"](https://threejs.org/manual/en/webgpurenderer.html) —
+  authoritative statement of the `ShaderMaterial` non-support.
+- [GitHub three.js #26719 — custom shader support for `WebGPURenderer`](https://github.com/mrdoob/three.js/issues/26719) —
+  upstream tracking issue.
