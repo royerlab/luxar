@@ -19,10 +19,10 @@ import { PostProcessingManager } from '../rendering/post-processing/post-process
 import { materialManager } from '../rendering';
 import { disposeColormapTextures } from '../rendering/colormap-textures';
 import {
-  detectHDRCapabilities,
-  configureHDRRenderer,
-  logHDRCapabilities,
-} from '../utils/hdr-detection';
+  createRendererCapabilities,
+  type RendererCapabilities,
+} from '../rendering/renderer-capabilities';
+import { configureHDRRenderer, logHDRCapabilities } from '../utils/hdr-detection';
 import {
   validateFOV,
   getBoundingBoxDiagonal,
@@ -89,6 +89,13 @@ export class SceneManager extends THREE.EventDispatcher<{
 }> {
   /** Three.js WebGL renderer - handles all GPU-accelerated rendering */
   public renderer!: THREE.WebGLRenderer;
+
+  /**
+   * Capabilities snapshot for the active renderer. Hides raw-GL queries
+   * behind a typed interface so the eventual WebGPU port has a single
+   * implementation seam.
+   */
+  public capabilities!: RendererCapabilities;
 
   /** Three.js scene graph - container for all 3D objects and lights */
   public scene!: THREE.Scene;
@@ -243,7 +250,14 @@ export class SceneManager extends THREE.EventDispatcher<{
    * - Fullscreen immersive experience
    */
   private setupRenderer(): void {
-    // Try to get HDR canvas context first using config values
+    // Try to get HDR canvas context first using config values.
+    //
+    // NOTE: This is the ONE legitimate raw-GL call in the codebase —
+    // it creates the WebGL2 context *before* the renderer exists, so
+    // it cannot live behind `RendererCapabilities`. Under WebGPU the
+    // parallel call will be `navigator.gpu.requestAdapter()` / async
+    // `renderer.init()`; everything else in the codebase goes through
+    // `this.capabilities`.
     let gl: WebGLRenderingContext | null = null;
     try {
       gl = this.canvasElement.getContext(
@@ -285,14 +299,16 @@ export class SceneManager extends THREE.EventDispatcher<{
     // background) is the responsibility of the host page (index.html for
     // the standalone app), not of SceneManager.
 
+    // Build the renderer-capabilities snapshot. This is the single
+    // module that owns raw-GL probes (MAX_SAMPLES, point-size range,
+    // HDR extensions). All downstream consumers read from here, never
+    // from `renderer.getContext()`.
+    this.capabilities = createRendererCapabilities(this.renderer);
+
     // Report hardware point size limits when debug logging is requested.
     if (this.debug) {
-      const glContext = this.renderer.getContext();
-      const pointSizeRange = glContext.getParameter(glContext.ALIASED_POINT_SIZE_RANGE);
-      log.info(
-        Modules.RENDERER,
-        `Hardware point size limits: ${pointSizeRange[0]}-${pointSizeRange[1]} pixels`
-      );
+      const [minPt, maxPt] = this.capabilities.pointSizeRange;
+      log.info(Modules.RENDERER, `Hardware point size limits: ${minPt}-${maxPt} pixels`);
     }
     // This allows for better integration into complex HTML pages
 
@@ -300,7 +316,7 @@ export class SceneManager extends THREE.EventDispatcher<{
     this.updateRendererSize();
 
     // Detect and configure HDR capabilities
-    const hdrCapabilities = detectHDRCapabilities(this.renderer);
+    const hdrCapabilities = this.capabilities.hdr;
     logHDRCapabilities(hdrCapabilities);
     configureHDRRenderer(this.renderer, hdrCapabilities);
 
@@ -430,6 +446,7 @@ export class SceneManager extends THREE.EventDispatcher<{
     // resize.
     this.postProcessing = new PostProcessingManager(
       this.renderer,
+      this.capabilities,
       this.scene,
       this.camera,
       { width, height },
