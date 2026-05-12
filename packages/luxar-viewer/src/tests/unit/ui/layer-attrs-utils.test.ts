@@ -8,11 +8,7 @@
 
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import {
-  clampGamma,
-  getBlendingState,
-  liveLayerAttrs,
-} from '../../../ui/layers/layer-attrs-utils';
+import { clampGamma, getBlendingState, liveLayerAttrs } from '../../../ui/layers/layer-attrs-utils';
 import type { LayerInfo } from '../../../ui/layers/layer-state';
 
 describe('clampGamma', () => {

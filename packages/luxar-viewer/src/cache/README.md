@@ -157,16 +157,16 @@ summarising the cache's operational state. Each badge is also exposed
 on `CacheMetrics.status: CacheStatusBadge[]` so programmatic consumers
 (debug snapshots, E2E tests) can assert on the same set.
 
-| Badge | Meaning | Source |
-|---|---|---|
-| `cache-enabled` | Caching is wired and operational. | `telemetryState.kind === 'enabled'` |
-| `no-cache` | The `?no-cache` URL flag is set; all tiers disabled. | `telemetryState.kind === 'disabled-no-cache'` |
-| `disabled-config` | App config disabled caching (e.g. `cache.enabled: false`). | `telemetryState.kind === 'disabled-config'` |
-| `opfs-unavailable` | The browser does not expose OPFS; L2 is disabled. | OPFS provider absent |
-| `quota-constrained` | L2 has skipped at least one write because of browser quota. | `l2.quotaWriteSkipped > 0` |
-| `cache-errors-detected` | L2 has accumulated I/O / corruption failures. | `l2.writeFailures + corruptedEntries + metadataParseFailures > 0` |
-| `unvalidated-external-dataset` | External dataset, no TTL configured — entries may stay stale. | `health.unvalidatedExternalDataset === true` |
-| `provider-missing` | Telemetry says cache is enabled but no provider is attached. | classifier/provider contradiction |
+| Badge                          | Meaning                                                       | Source                                                            |
+| ------------------------------ | ------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `cache-enabled`                | Caching is wired and operational.                             | `telemetryState.kind === 'enabled'`                               |
+| `no-cache`                     | The `?no-cache` URL flag is set; all tiers disabled.          | `telemetryState.kind === 'disabled-no-cache'`                     |
+| `disabled-config`              | App config disabled caching (e.g. `cache.enabled: false`).    | `telemetryState.kind === 'disabled-config'`                       |
+| `opfs-unavailable`             | The browser does not expose OPFS; L2 is disabled.             | OPFS provider absent                                              |
+| `quota-constrained`            | L2 has skipped at least one write because of browser quota.   | `l2.quotaWriteSkipped > 0`                                        |
+| `cache-errors-detected`        | L2 has accumulated I/O / corruption failures.                 | `l2.writeFailures + corruptedEntries + metadataParseFailures > 0` |
+| `unvalidated-external-dataset` | External dataset, no TTL configured — entries may stay stale. | `health.unvalidatedExternalDataset === true`                      |
+| `provider-missing`             | Telemetry says cache is enabled but no provider is attached.  | classifier/provider contradiction                                 |
 
 Several badges may coexist — for example, a Luxar dataset on a near-full
 browser disk can show `cache-enabled` + `quota-constrained` simultaneously.
@@ -190,7 +190,8 @@ this origin. Cleared by:
 OPFS storage is sandboxed per origin. Cross-origin pages cannot read
 this cache. Private/incognito browser windows typically expose a
 reduced-quota OPFS that wipes on tab close — the cache degrades to L1
-+ network with no persistence.
+
+- network with no persistence.
 
 ## OPFS availability and quota
 
@@ -295,7 +296,7 @@ mutation is unavoidable — switch the wrapped array to skip caching for
 that path.
 
 The miss-path clone in `wrapWithCache` (via `cloneArrayBufferView`)
-gives the *first caller* a private buffer they can technically mutate
+gives the _first caller_ a private buffer they can technically mutate
 without poisoning the cache, but this should not be relied upon: the
 contract is "read-only on every path" so future cache changes (e.g.
 removing the miss-path clone for a perf win) don't break loaders.

@@ -191,10 +191,7 @@ describe('applyViewerConfigState', () => {
 
   describe('dimensions / current_step', () => {
     it('forwards each step value via setDimensionValue', () => {
-      applyViewerConfigState(
-        { dimensions: { current_step: [10, 20, 30] } },
-        asPorts(ports)
-      );
+      applyViewerConfigState({ dimensions: { current_step: [10, 20, 30] } }, asPorts(ports));
       expect(ports.setDimensionValue).toHaveBeenCalledTimes(3);
       expect(ports.setDimensionValue).toHaveBeenNthCalledWith(1, 0, 10);
       expect(ports.setDimensionValue).toHaveBeenNthCalledWith(2, 1, 20);

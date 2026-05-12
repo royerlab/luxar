@@ -72,12 +72,12 @@ class LuxarApp {
 
     // 3. Input System Integration
     this.inputHandler = new InputHandler(
-  this.sceneManager,
-  this.animationController,
-  this.performanceMonitor,
-  this.debugConsole,
-  /* optional */ (parent) => new DimensionSliders(parent)
-);
+      this.sceneManager,
+      this.animationController,
+      this.performanceMonitor,
+      this.debugConsole,
+      /* optional */ (parent) => new DimensionSliders(parent)
+    );
     this.inputHandler.init();
 
     // 4. UI Controls Configuration

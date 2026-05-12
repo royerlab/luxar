@@ -22,10 +22,7 @@ import {
   type KeyBindingsCommands,
   type KeyBindingsPanelGetters,
 } from '../../../../input/handlers/key-bindings';
-import {
-  InputContext,
-  type InputContextManager,
-} from '../../../../input/input-context-manager';
+import { InputContext, type InputContextManager } from '../../../../input/input-context-manager';
 import type { SceneManager } from '../../../../scene/scene-manager';
 import type { DebugConsole } from '../../../../ui/panels/debug-console';
 
@@ -45,10 +42,7 @@ function makeContextManager(): {
 } {
   const bindings: CapturedBinding[] = [];
   const registerBinding = vi.fn(
-    (
-      context: InputContext,
-      binding: Omit<CapturedBinding, 'context'>
-    ) => {
+    (context: InputContext, binding: Omit<CapturedBinding, 'context'>) => {
       bindings.push({ context, ...binding });
     }
   );
@@ -185,9 +179,7 @@ function findBinding(
       (b.modifiers?.alt ?? false) === (modifiers.alt ?? false)
   );
   if (!match) {
-    throw new Error(
-      `binding ${key} (mods=${JSON.stringify(modifiers)}) on ${context} not found`
-    );
+    throw new Error(`binding ${key} (mods=${JSON.stringify(modifiers)}) on ${context} not found`);
   }
   return match;
 }

@@ -79,10 +79,7 @@ describe('createEmptyPointsData', () => {
   });
 
   it('returns ndim from chunkIndex.metadata when present', () => {
-    const data = createEmptyPointsData(
-      makeCtx({ chunkIndex: makeChunkIndex(7) }),
-      makeViewState()
-    );
+    const data = createEmptyPointsData(makeCtx({ chunkIndex: makeChunkIndex(7) }), makeViewState());
     expect(data.ndim).toBe(7);
   });
 

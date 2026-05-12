@@ -219,10 +219,7 @@ export class WebGLContextRecovery {
       this.contextLostHandler = null;
     }
     if (this.contextRestoredHandler) {
-      this.deps.canvas.removeEventListener(
-        'webglcontextrestored',
-        this.contextRestoredHandler
-      );
+      this.deps.canvas.removeEventListener('webglcontextrestored', this.contextRestoredHandler);
       this.contextRestoredHandler = null;
     }
   }

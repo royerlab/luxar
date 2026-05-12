@@ -151,9 +151,7 @@ function validateBloomConsistency(config: AppConfig, errors: string[], warnings:
   }
 
   if (!Number.isInteger(bloom.bloomLevels) || bloom.bloomLevels < 1 || bloom.bloomLevels > 12) {
-    errors.push(
-      `Invalid bloom.bloomLevels: ${bloom.bloomLevels} (must be an integer in 1-12)`
-    );
+    errors.push(`Invalid bloom.bloomLevels: ${bloom.bloomLevels} (must be an integer in 1-12)`);
   }
 }
 
@@ -208,10 +206,7 @@ function validateDataLoading(config: AppConfig, errors: string[], warnings: stri
   // Network validation: reject NaN (comparisons with NaN are always
   // false, so `<= 0` accepts it), Infinity, and non-integers where
   // integer semantics are required.
-  if (
-    !Number.isFinite(dataLoading.network.timeoutMs) ||
-    dataLoading.network.timeoutMs <= 0
-  ) {
+  if (!Number.isFinite(dataLoading.network.timeoutMs) || dataLoading.network.timeoutMs <= 0) {
     errors.push(
       `Invalid network timeout: ${dataLoading.network.timeoutMs} ms (must be a finite positive number)`
     );
@@ -262,9 +257,7 @@ function validateDataLoading(config: AppConfig, errors: string[], warnings: stri
   // bare `<= 0 || > 1` check would let NaN through.
   const targetHeap = dataLoading.memory.targetHeapUsage;
   if (!Number.isFinite(targetHeap) || targetHeap <= 0 || targetHeap > 1) {
-    errors.push(
-      `Invalid target heap usage: ${targetHeap} (must be a finite number in (0, 1])`
-    );
+    errors.push(`Invalid target heap usage: ${targetHeap} (must be a finite number in (0, 1])`);
   }
   const minCache = dataLoading.memory.minCacheMB;
   if (!Number.isFinite(minCache) || minCache <= 0) {
@@ -275,15 +268,11 @@ function validateDataLoading(config: AppConfig, errors: string[], warnings: stri
   if (dataLoading.spatial) {
     const tol = dataLoading.spatial.defaultTolerance;
     if (!Number.isFinite(tol) || tol <= 0) {
-      errors.push(
-        `Invalid spatial default tolerance: ${tol} (must be a finite positive number)`
-      );
+      errors.push(`Invalid spatial default tolerance: ${tol} (must be a finite positive number)`);
     }
     const maxR = dataLoading.spatial.defaultMaxRadius;
     if (!Number.isFinite(maxR) || maxR <= 0) {
-      errors.push(
-        `Invalid spatial default max radius: ${maxR} (must be a finite positive number)`
-      );
+      errors.push(`Invalid spatial default max radius: ${maxR} (must be a finite positive number)`);
     }
   }
 

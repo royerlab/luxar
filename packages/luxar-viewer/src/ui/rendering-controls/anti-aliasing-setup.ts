@@ -170,30 +170,9 @@ export function setupAntiAliasingControls(context: SetupContext): SetupResult {
       '• More samples = smoother edges but more GPU work'
   );
 
-  // SMAA anti-aliasing (no subfolder needed - only on/off toggle)
-  const smaaControl = aaFolder
-    .add(settings, 'smaaEnabled')
-    .name('SMAA Enabled')
-    .onChange((value: boolean) => {
-      postProcessing.setSMAAEnabled(value);
-      saveSettings();
-      triggerAnimation();
-    });
-
-  // Set tooltip for SMAA
-  smaaControl.domElement.setAttribute(
-    'title',
-    'SMAA (Subpixel Morphological Anti-Aliasing)\n' +
-      '• Advanced edge detection anti-aliasing\n' +
-      '• Better quality than FXAA, faster than SSAA\n' +
-      '• Preserves sharpness while smoothing edges\n' +
-      '• Good balance of quality and performance\n' +
-      '• Uses HIGH preset (optimal quality/performance balance)'
-  );
-
-  // Note: SMAA threshold and search steps controls removed because pmndrs/postprocessing
-  // SMAAEffect only supports preset-based configuration (LOW/MEDIUM/HIGH/ULTRA).
-  // Fine-grained control is not available in the underlying library.
+  // SMAA dropped in the mega-shader refactor: it's a 3-pass
+  // edge-detect → weight → blend algorithm that can't fold into the
+  // single mega-shader pass. FXAA is the inline anti-alias path.
 
   // Initially show/hide folders based on settings
   if (settings.ssaaEnabled) {

@@ -43,7 +43,11 @@ vi.mock('../../../../data/gsplats/gsplats-progressive-loader', () => ({
 
 // Stub zarrita: every resolve() returns another stub with its own
 // resolve() so chained calls (parent.resolve('lod_0')) still work.
-function makeStubLoc(path: string): { kind: 'resolved'; path: string; resolve: (s: string) => { kind: 'resolved'; path: string; resolve: (s: string) => unknown } } {
+function makeStubLoc(path: string): {
+  kind: 'resolved';
+  path: string;
+  resolve: (s: string) => { kind: 'resolved'; path: string; resolve: (s: string) => unknown };
+} {
   return {
     kind: 'resolved',
     path,

@@ -49,8 +49,6 @@ describe('extractRenderingOverrides', () => {
       cinematic_mode: true,
       vignette_enabled: true,
       vignette_darkness: 0.6,
-      dof_enabled: true,
-      dof_strength: 0.5,
     };
 
     const overrides = extractRenderingOverrides(zarrConfig);
@@ -58,8 +56,6 @@ describe('extractRenderingOverrides', () => {
     expect(overrides.cinematicMode).toBe(true);
     expect(overrides.vignetteEnabled).toBe(true);
     expect(overrides.vignetteDarkness).toBe(0.6);
-    expect(overrides.dofEnabled).toBe(true);
-    expect(overrides.dofStrength).toBe(0.5);
   });
 
   it('should map detector noise settings', () => {
@@ -81,11 +77,9 @@ describe('extractRenderingOverrides', () => {
   it('should map anti-aliasing settings', () => {
     const overrides = extractRenderingOverrides({
       fxaa_enabled: true,
-      smaa_enabled: false,
     });
 
     expect(overrides.fxaaEnabled).toBe(true);
-    expect(overrides.smaaEnabled).toBe(false);
   });
 
   it('should extract camera.fov into RenderingSettings.fov', () => {
@@ -135,15 +129,11 @@ describe('extractRenderingOverrides', () => {
     expect(overrides.bloomLevels).toBe(8);
   });
 
-  it('should map vignette_offset and ao fields', () => {
+  it('should map vignette_offset', () => {
     const overrides = extractRenderingOverrides({
       vignette_offset: 0.3,
-      ao_enabled: true,
-      ao_quality: 'high',
     });
     expect(overrides.vignetteOffset).toBe(0.3);
-    expect(overrides.aoEnabled).toBe(true);
-    expect(overrides.aoQuality).toBe('high');
   });
 
   it('should map extended AA fields', () => {
@@ -152,15 +142,11 @@ describe('extractRenderingOverrides', () => {
       msaa_samples: 4,
       ssaa_enabled: false,
       ssaa_multiplier: 2.0,
-      smaa_threshold: 0.1,
-      smaa_search_steps: 16,
     });
     expect(overrides.msaaEnabled).toBe(true);
     expect(overrides.msaaSamples).toBe(4);
     expect(overrides.ssaaEnabled).toBe(false);
     expect(overrides.ssaaMultiplier).toBe(2.0);
-    expect(overrides.smaaThreshold).toBe(0.1);
-    expect(overrides.smaaSearchSteps).toBe(16);
   });
 
   it('should map chromatic lens fields', () => {
@@ -357,14 +343,8 @@ describe('RENDERING_SETTINGS_MAP completeness', () => {
       'vignette_enabled',
       'vignette_darkness',
       'vignette_offset',
-      'dof_enabled',
-      'ao_enabled',
-      'ao_quality',
       'detector_noise_enabled',
       'fxaa_enabled',
-      'smaa_enabled',
-      'smaa_threshold',
-      'smaa_search_steps',
       'msaa_enabled',
       'msaa_samples',
       'ssaa_enabled',

@@ -12,11 +12,7 @@
  */
 
 import * as zarr from '../zarr';
-import {
-  MultiLevelCachingStore,
-  ChunkPrefetcher,
-  DecompressedChunkCache,
-} from '../../cache';
+import { MultiLevelCachingStore, ChunkPrefetcher, DecompressedChunkCache } from '../../cache';
 import { config as appConfig } from '../../config';
 import { log, Modules } from '../../utils/log';
 import type { CacheTelemetryState } from '../../types/data-monitor-types';
@@ -60,10 +56,7 @@ export interface CacheSetupResult {
  *   - When caching is fully disabled, falls back to a vanilla fetch store
  *     created by the Luxar Zarr facade.
  */
-export async function setupCaches(
-  url: string,
-  flags: CacheSetupFlags
-): Promise<CacheSetupResult> {
+export async function setupCaches(url: string, flags: CacheSetupFlags): Promise<CacheSetupResult> {
   const noCache = flags.noCache ?? false;
   const cacheDebug = flags.cacheDebug ?? false;
   const clearCache = flags.clearCache ?? false;

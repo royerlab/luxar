@@ -240,19 +240,10 @@ export const config: AppConfig = {
       fxaaEnabled: false, // FXAA disabled by default
       msaaEnabled: false, // MSAA disabled by default (enable for fast hardware-accelerated AA)
       msaaSamples: 4, // MSAA sample count (2, 4, 8)
-      smaaEnabled: false, // SMAA disabled by default
-      smaaThreshold: 0.1, // SMAA edge detection threshold (0.05-0.2)
-      smaaSearchSteps: 8, // SMAA search steps for pattern detection (4-32)
       ssaaEnabled: false, // SSAA disabled by default (highest quality, heavy performance cost)
       ssaaMultiplier: 2.0, // SSAA resolution multiplier (1.5x, 2x, 4x)
-      // Post-processing effects
-      toneMapping: 'Neutral' as const, // Tone mapping method (Neutral preserves hue fidelity for scientific data)
-      dofEnabled: false, // Depth of field disabled by default
-      dofFocus: 10, // DOF focus distance
-      dofStrength: 0.5, // DOF blur strength (0-1)
-      // pmndrs effect defaults
-      aoEnabled: false, // Ambient occlusion disabled by default
-      aoQuality: 'medium' as const, // AO quality level
+      // Tone mapping (Neutral preserves hue fidelity for scientific data)
+      toneMapping: 'Neutral' as const,
       vignetteEnabled: false, // Vignette disabled by default
       vignetteDarkness: 0.5, // Vignette darkness (0-1)
       vignetteOffset: 0.5, // Vignette offset from center (0-1)

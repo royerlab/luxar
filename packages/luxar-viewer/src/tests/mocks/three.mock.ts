@@ -1024,11 +1024,19 @@ export const Material = vi.fn().mockImplementation(() => ({
   // Minimal EventDispatcher surface — MaterialManager subscribes to
   // the synchronous `dispose` event so it can clean up automatically.
   _listeners: {} as Record<string, ((...args: unknown[]) => void)[]>,
-  addEventListener: vi.fn(function (this: any, type: string, listener: (...args: unknown[]) => void) {
+  addEventListener: vi.fn(function (
+    this: any,
+    type: string,
+    listener: (...args: unknown[]) => void
+  ) {
     this._listeners ??= {};
     (this._listeners[type] ??= []).push(listener);
   }),
-  removeEventListener: vi.fn(function (this: any, type: string, listener: (...args: unknown[]) => void) {
+  removeEventListener: vi.fn(function (
+    this: any,
+    type: string,
+    listener: (...args: unknown[]) => void
+  ) {
     if (!this._listeners?.[type]) return;
     this._listeners[type] = this._listeners[type].filter((l: unknown) => l !== listener);
   }),

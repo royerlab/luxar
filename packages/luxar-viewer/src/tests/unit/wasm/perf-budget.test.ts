@@ -94,7 +94,10 @@ function median(values: number[]): number {
  * Run `RUNS` independent timing pairs and return the median speedup ratio.
  * Each run does its own warmup so the JIT state is consistent across runs.
  */
-function medianSpeedup(tsFn: () => void, wasmFn: () => void): { speedup: number; tsTime: number; wasmTime: number } {
+function medianSpeedup(
+  tsFn: () => void,
+  wasmFn: () => void
+): { speedup: number; tsTime: number; wasmTime: number } {
   const ratios: number[] = [];
   let lastTs = 0;
   let lastWasm = 0;
@@ -146,154 +149,176 @@ function generateCholeskyFactors(count: number, ndim: number): Float32Array {
 
 const describeIfWasm = wasmAvailable ? describe : describe.skip;
 
-function reportSpeedup(name: string, r: { speedup: number; tsTime: number; wasmTime: number }): string {
+function reportSpeedup(
+  name: string,
+  r: { speedup: number; tsTime: number; wasmTime: number }
+): string {
   return `${name}: median speedup ${r.speedup.toFixed(2)}× (last: ts=${r.tsTime.toFixed(2)}ms, wasm=${r.wasmTime.toFixed(2)}ms)`;
 }
 
-describeIfWasm(`WASM perf budget — each hot path must have median speedup ≥ ${MIN_SPEEDUP}×`, () => {
-  // Long timeout: under `--coverage` the v8 instrumentation slows the
-  // TS path enough that the 1 M-element work exceeds the default 5 s test
-  // budget. The ratio measurement is meaningless under coverage anyway
-  // (TS is instrumented, WASM binary is not), but bumping the timeout
-  // keeps the suite from going red.
-  it('compute_nd_visibility_points', { timeout: 60_000 }, () => {
-    const ndim = 5;
-    const positions = generatePositions(SIZE, ndim);
-    const radii = generateRadii(SIZE);
-    const slicePos = new Float32Array(ndim).fill(0);
-    const tolerance = new Float32Array(ndim).fill(1.0);
-    const tsOut = new Uint8Array(SIZE);
-    const wasmOut = new Uint8Array(SIZE);
+describeIfWasm(
+  `WASM perf budget — each hot path must have median speedup ≥ ${MIN_SPEEDUP}×`,
+  () => {
+    // Long timeout: under `--coverage` the v8 instrumentation slows the
+    // TS path enough that the 1 M-element work exceeds the default 5 s test
+    // budget. The ratio measurement is meaningless under coverage anyway
+    // (TS is instrumented, WASM binary is not), but bumping the timeout
+    // keeps the suite from going red.
+    it('compute_nd_visibility_points', { timeout: 60_000 }, () => {
+      const ndim = 5;
+      const positions = generatePositions(SIZE, ndim);
+      const radii = generateRadii(SIZE);
+      const slicePos = new Float32Array(ndim).fill(0);
+      const tolerance = new Float32Array(ndim).fill(1.0);
+      const tsOut = new Uint8Array(SIZE);
+      const wasmOut = new Uint8Array(SIZE);
 
-    const r = medianSpeedup(
-      () =>
-        tsModule.compute_nd_visibility_points(positions, radii, slicePos, tolerance, ndim, SIZE, tsOut),
-      () =>
-        wasmModule!.compute_nd_visibility_points(
-          positions,
-          radii,
-          slicePos,
-          tolerance,
-          ndim,
-          SIZE,
-          wasmOut
-        )
-    );
+      const r = medianSpeedup(
+        () =>
+          tsModule.compute_nd_visibility_points(
+            positions,
+            radii,
+            slicePos,
+            tolerance,
+            ndim,
+            SIZE,
+            tsOut
+          ),
+        () =>
+          wasmModule!.compute_nd_visibility_points(
+            positions,
+            radii,
+            slicePos,
+            tolerance,
+            ndim,
+            SIZE,
+            wasmOut
+          )
+      );
 
-    expect(r.speedup, reportSpeedup('compute_nd_visibility_points', r)).toBeGreaterThanOrEqual(MIN_SPEEDUP);
-  });
+      expect(r.speedup, reportSpeedup('compute_nd_visibility_points', r)).toBeGreaterThanOrEqual(
+        MIN_SPEEDUP
+      );
+    });
 
-  it('compute_nd_visibility_lines', { timeout: 60_000 }, () => {
-    const ndim = 5;
-    const vertices = generatePositions(SIZE + 1, ndim);
-    const segments = generateSegments(SIZE);
-    const widths = generateRadii(SIZE + 1);
-    const slicePos = new Float32Array(ndim).fill(0);
-    const tolerance = new Float32Array(ndim).fill(1.0);
-    const tsOut = new Uint8Array(SIZE);
-    const wasmOut = new Uint8Array(SIZE);
+    it('compute_nd_visibility_lines', { timeout: 60_000 }, () => {
+      const ndim = 5;
+      const vertices = generatePositions(SIZE + 1, ndim);
+      const segments = generateSegments(SIZE);
+      const widths = generateRadii(SIZE + 1);
+      const slicePos = new Float32Array(ndim).fill(0);
+      const tolerance = new Float32Array(ndim).fill(1.0);
+      const tsOut = new Uint8Array(SIZE);
+      const wasmOut = new Uint8Array(SIZE);
 
-    const r = medianSpeedup(
-      () =>
-        tsModule.compute_nd_visibility_lines(
-          vertices,
-          segments,
-          widths,
-          slicePos,
-          tolerance,
-          ndim,
-          SIZE,
-          tsOut
-        ),
-      () =>
-        wasmModule!.compute_nd_visibility_lines(
-          vertices,
-          segments,
-          widths,
-          slicePos,
-          tolerance,
-          ndim,
-          SIZE,
-          wasmOut
-        )
-    );
+      const r = medianSpeedup(
+        () =>
+          tsModule.compute_nd_visibility_lines(
+            vertices,
+            segments,
+            widths,
+            slicePos,
+            tolerance,
+            ndim,
+            SIZE,
+            tsOut
+          ),
+        () =>
+          wasmModule!.compute_nd_visibility_lines(
+            vertices,
+            segments,
+            widths,
+            slicePos,
+            tolerance,
+            ndim,
+            SIZE,
+            wasmOut
+          )
+      );
 
-    expect(r.speedup, reportSpeedup('compute_nd_visibility_lines', r)).toBeGreaterThanOrEqual(MIN_SPEEDUP);
-  });
+      expect(r.speedup, reportSpeedup('compute_nd_visibility_lines', r)).toBeGreaterThanOrEqual(
+        MIN_SPEEDUP
+      );
+    });
 
-  it('compute_nd_visibility_gsplats', { timeout: 60_000 }, () => {
-    const ndim = 4;
-    const centers = generatePositions(SIZE, ndim);
-    const choleskyFactors = generateCholeskyFactors(SIZE, ndim);
-    const slicePos = new Float32Array(ndim).fill(0);
-    const tolerance = new Float32Array(ndim).fill(1.0);
-    const tsOut = new Uint8Array(SIZE);
-    const wasmOut = new Uint8Array(SIZE);
+    it('compute_nd_visibility_gsplats', { timeout: 60_000 }, () => {
+      const ndim = 4;
+      const centers = generatePositions(SIZE, ndim);
+      const choleskyFactors = generateCholeskyFactors(SIZE, ndim);
+      const slicePos = new Float32Array(ndim).fill(0);
+      const tolerance = new Float32Array(ndim).fill(1.0);
+      const tsOut = new Uint8Array(SIZE);
+      const wasmOut = new Uint8Array(SIZE);
 
-    const r = medianSpeedup(
-      () =>
-        tsModule.compute_nd_visibility_gsplats(
-          centers,
-          choleskyFactors,
-          slicePos,
-          tolerance,
-          ndim,
-          SIZE,
-          tsOut
-        ),
-      () =>
-        wasmModule!.compute_nd_visibility_gsplats(
-          centers,
-          choleskyFactors,
-          slicePos,
-          tolerance,
-          ndim,
-          SIZE,
-          wasmOut
-        )
-    );
+      const r = medianSpeedup(
+        () =>
+          tsModule.compute_nd_visibility_gsplats(
+            centers,
+            choleskyFactors,
+            slicePos,
+            tolerance,
+            ndim,
+            SIZE,
+            tsOut
+          ),
+        () =>
+          wasmModule!.compute_nd_visibility_gsplats(
+            centers,
+            choleskyFactors,
+            slicePos,
+            tolerance,
+            ndim,
+            SIZE,
+            wasmOut
+          )
+      );
 
-    expect(r.speedup, reportSpeedup('compute_nd_visibility_gsplats', r)).toBeGreaterThanOrEqual(MIN_SPEEDUP);
-  });
+      expect(r.speedup, reportSpeedup('compute_nd_visibility_gsplats', r)).toBeGreaterThanOrEqual(
+        MIN_SPEEDUP
+      );
+    });
 
-  it('calculate_effective_radii', { timeout: 60_000 }, () => {
-    const ndim = 6;
-    const positions = generatePositions(SIZE, ndim);
-    const radii = generateRadii(SIZE);
-    const displayDims = new Uint32Array([0, 1, 2]);
-    const slicePos = new Float32Array(ndim).fill(0);
-    const spatialExtend = new Uint8Array(ndim).fill(1);
-    const tsOut = new Float32Array(SIZE);
-    const wasmOut = new Float32Array(SIZE);
+    it('calculate_effective_radii', { timeout: 60_000 }, () => {
+      const ndim = 6;
+      const positions = generatePositions(SIZE, ndim);
+      const radii = generateRadii(SIZE);
+      const displayDims = new Uint32Array([0, 1, 2]);
+      const slicePos = new Float32Array(ndim).fill(0);
+      const spatialExtend = new Uint8Array(ndim).fill(1);
+      const tsOut = new Float32Array(SIZE);
+      const wasmOut = new Float32Array(SIZE);
 
-    const r = medianSpeedup(
-      () =>
-        tsModule.calculate_effective_radii(
-          positions,
-          radii,
-          displayDims,
-          slicePos,
-          spatialExtend,
-          ndim,
-          SIZE,
-          tsOut
-        ),
-      () =>
-        wasmModule!.calculate_effective_radii(
-          positions,
-          radii,
-          displayDims,
-          slicePos,
-          spatialExtend,
-          ndim,
-          SIZE,
-          wasmOut
-        )
-    );
+      const r = medianSpeedup(
+        () =>
+          tsModule.calculate_effective_radii(
+            positions,
+            radii,
+            displayDims,
+            slicePos,
+            spatialExtend,
+            ndim,
+            SIZE,
+            tsOut
+          ),
+        () =>
+          wasmModule!.calculate_effective_radii(
+            positions,
+            radii,
+            displayDims,
+            slicePos,
+            spatialExtend,
+            ndim,
+            SIZE,
+            wasmOut
+          )
+      );
 
-    expect(r.speedup, reportSpeedup('calculate_effective_radii', r)).toBeGreaterThanOrEqual(MIN_SPEEDUP);
-  });
-});
+      expect(r.speedup, reportSpeedup('calculate_effective_radii', r)).toBeGreaterThanOrEqual(
+        MIN_SPEEDUP
+      );
+    });
+  }
+);
 
 if (!wasmAvailable) {
   describe.skip('WASM perf budget (WASM module not built — run `make build-wasm`)', () => {

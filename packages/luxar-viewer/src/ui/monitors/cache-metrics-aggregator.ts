@@ -87,9 +87,7 @@ export function aggregateCacheMetrics(params: AggregateCacheMetricsParams): Cach
   let l1Stats: CacheMetrics['l1'] | undefined;
   let l2Stats: CacheMetrics['l2'] | undefined;
   let networkStats: CacheMetrics['network'] | undefined;
-  let demand:
-    | { l1Hits: number; l2Hits: number; networkRequests: number }
-    | undefined;
+  let demand: { l1Hits: number; l2Hits: number; networkRequests: number } | undefined;
   let health: CacheMetrics['health'] | undefined;
   // Counters that drive the cache-errors-detected and quota-constrained
   // badges below. Sourced from the L2 stats payload but not surfaced on
@@ -257,11 +255,7 @@ export function aggregateCacheMetrics(params: AggregateCacheMetricsParams): Cach
   }
   // Provider-health: telemetry classifier said enabled but providers
   // are absent → contradiction; flag as provider-missing.
-  if (
-    telemetryState.kind === 'enabled' &&
-    !cacheStatsProvider &&
-    !l0Provider
-  ) {
+  if (telemetryState.kind === 'enabled' && !cacheStatsProvider && !l0Provider) {
     status.push('provider-missing');
   }
   if (l2QuotaSkipped > 0) status.push('quota-constrained');

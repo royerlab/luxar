@@ -802,16 +802,10 @@ describe('SceneLoader', () => {
     function attachPointsChild(name: string, oldCount: number): THREE.Points {
       const root = (sceneLoader as any).rootGroup as THREE.Group;
       const geom = new THREE.BufferGeometry();
-      geom.setAttribute(
-        'position',
-        new THREE.BufferAttribute(new Float32Array(oldCount * 3), 3)
-      );
+      geom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(oldCount * 3), 3));
       geom.setAttribute('color', new THREE.BufferAttribute(new Float32Array(oldCount * 3), 3));
       geom.setAttribute('radius', new THREE.BufferAttribute(new Float32Array(oldCount), 1));
-      geom.setAttribute(
-        'sharpness',
-        new THREE.BufferAttribute(new Float32Array(oldCount), 1)
-      );
+      geom.setAttribute('sharpness', new THREE.BufferAttribute(new Float32Array(oldCount), 1));
       const points = new THREE.Points(geom);
       points.name = name;
       // commitPointsGeometry only writes `visiblePointCount` when the
@@ -877,10 +871,7 @@ describe('SceneLoader', () => {
 
     it('should update bounding box from metadata', () => {
       const points = attachPointsChild('/test_points', 1);
-      const newBounds = new THREE.Box3(
-        new THREE.Vector3(0, 0, 0),
-        new THREE.Vector3(10, 10, 10)
-      );
+      const newBounds = new THREE.Box3(new THREE.Vector3(0, 0, 0), new THREE.Vector3(10, 10, 10));
       const newData = {
         positions: new Float32Array([1, 2, 3]),
         colors: new Float32Array([1, 1, 1]),

@@ -29,7 +29,7 @@ const VALID_TONE_MAPPINGS = ['None', 'Linear', 'Reinhard', 'Cineon', 'ACES', 'Ag
 const VALID_CONTROL_TYPES = ['orbit', 'fly', 'ortho'];
 
 /** Valid AO quality levels */
-const VALID_AO_QUALITIES = ['low', 'medium', 'high', 'ultra'];
+// (VALID_AO_QUALITIES removed with AO; mega-shader refactor dropped SSAO entirely.)
 
 /**
  * Validates rendering settings and applies defaults for missing/invalid values.
@@ -90,26 +90,16 @@ export function validateRenderingSettings(settings: Partial<RenderingSettings>):
   merged.globalOffset = clampOrDefault(merged.globalOffset, defaults.globalOffset, -1, 1);
   merged.globalGamma = clampOrDefault(merged.globalGamma, defaults.globalGamma, 0.1, 10);
 
-  // Anti-aliasing
+  // Anti-aliasing (SMAA dropped in mega-shader refactor — FXAA is the
+  // inline AA path; SSAA and MSAA still apply at framebuffer level)
   merged.fxaaEnabled = booleanOrDefault(merged.fxaaEnabled, defaults.fxaaEnabled);
-  merged.smaaEnabled = booleanOrDefault(merged.smaaEnabled, defaults.smaaEnabled);
-  merged.smaaThreshold = clampOrDefault(merged.smaaThreshold, defaults.smaaThreshold, 0, 1);
-  merged.smaaSearchSteps = integerClampOrDefault(
-    merged.smaaSearchSteps,
-    defaults.smaaSearchSteps,
-    1,
-    32
-  );
   merged.msaaEnabled = booleanOrDefault(merged.msaaEnabled, defaults.msaaEnabled);
   merged.msaaSamples = clampMSAASamples(merged.msaaSamples);
   merged.ssaaEnabled = booleanOrDefault(merged.ssaaEnabled, defaults.ssaaEnabled);
   merged.ssaaMultiplier = clampOrDefault(merged.ssaaMultiplier, defaults.ssaaMultiplier, 1, 8);
 
-  // DOF + AO
-  merged.dofEnabled = booleanOrDefault(merged.dofEnabled, defaults.dofEnabled);
-  merged.dofFocus = clampOrDefault(merged.dofFocus, defaults.dofFocus, 0, 1);
-  merged.dofStrength = clampOrDefault(merged.dofStrength, defaults.dofStrength, 0, 1);
-  merged.aoEnabled = booleanOrDefault(merged.aoEnabled, defaults.aoEnabled);
+  // DoF and AO were dropped in the mega-shader refactor — no
+  // corresponding rendering setters remain.
 
   // Vignette
   merged.vignetteEnabled = booleanOrDefault(merged.vignetteEnabled, defaults.vignetteEnabled);
@@ -254,9 +244,6 @@ export function validateRenderingSettings(settings: Partial<RenderingSettings>):
   if (!VALID_CONTROL_TYPES.includes(merged.controlType)) {
     merged.controlType = defaults.controlType;
   }
-  if (!VALID_AO_QUALITIES.includes(merged.aoQuality)) {
-    merged.aoQuality = defaults.aoQuality;
-  }
 
   return merged;
 }
@@ -377,9 +364,6 @@ export function getSettingsRequiringRebuild(
   ) {
     rebuildRequired.push('msaa');
   }
-  if (current.smaaEnabled !== previous.smaaEnabled) {
-    rebuildRequired.push('smaa');
-  }
   if (
     current.ssaaEnabled !== previous.ssaaEnabled ||
     current.ssaaMultiplier !== previous.ssaaMultiplier
@@ -409,7 +393,6 @@ export function calculatePerformanceImpact(settings: RenderingSettings): number 
 
   // Anti-aliasing impact
   if (settings.fxaaEnabled) score += 5;
-  if (settings.smaaEnabled) score += 10;
   if (settings.msaaEnabled) score += 15 + settings.msaaSamples * 2;
   if (settings.ssaaEnabled) score += 20 + settings.ssaaMultiplier * 10;
 
@@ -423,9 +406,8 @@ export function calculatePerformanceImpact(settings: RenderingSettings): number 
     score += 5;
   }
 
-  // DOF and chromatic lens distortion impact
-  if (settings.dofEnabled) score += 8;
-  if (settings.chromaticLensDistortionEnabled) score += 4; // Slightly higher than old chromatic (3 texture samples)
+  // Chromatic lens distortion impact (3 texture samples in mega-shader)
+  if (settings.chromaticLensDistortionEnabled) score += 4;
 
   // Auto-rotate impact (continuous rendering)
   if (settings.autoRotate) score += 5;

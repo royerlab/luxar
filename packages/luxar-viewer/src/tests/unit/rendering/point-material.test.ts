@@ -123,9 +123,7 @@ describe('PointMaterial', () => {
       // are present (proxies for the legacy inline NaN/Inf checks).
       expect(material.vertexShader).toContain('bool isInvalidFloat(float v)');
       expect(material.vertexShader).toContain('float sanitizePositive(float v, float fallback)');
-      expect(material.vertexShader).toContain(
-        'float sanitizeNonNegative(float v, float fallback)'
-      );
+      expect(material.vertexShader).toContain('float sanitizeNonNegative(float v, float fallback)');
       expect(material.vertexShader).toContain('isInvalidFloat(sharpnessCompensationRaw)');
 
       // Check for mediump precision on varyings (reduces register pressure)

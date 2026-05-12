@@ -414,12 +414,7 @@ describe('projectLinesTo3D', () => {
       ndim: 4,
     };
 
-    const result = projectLinesTo3D(
-      loadedData,
-      [0, 0, 0, 5],
-      [1e10, 1e10, 1e10, 0.5],
-      [0, 1, 2]
-    );
+    const result = projectLinesTo3D(loadedData, [0, 0, 0, 5], [1e10, 1e10, 1e10, 0.5], [0, 1, 2]);
 
     // Only one segment should remain
     expect(result.segmentCount).toBe(1);

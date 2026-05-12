@@ -17,10 +17,7 @@ import {
   clearL2Cache,
   clearAllCaches,
 } from '../../../../data/scene-loader/cache-api';
-import type {
-  MultiLevelCachingStore,
-  DecompressedChunkCache,
-} from '../../../../cache';
+import type { MultiLevelCachingStore, DecompressedChunkCache } from '../../../../cache';
 
 function makeL0Stub() {
   const stats = { entries: 3, sizeBytes: 1024 };
@@ -79,11 +76,23 @@ describe('getCacheStats', () => {
     // Stub a caching store that exposes everything the snapshot
     // surfaces — including the prefetcher and the new health field.
     const stubGetStats = vi.fn(() => ({
-      l1: { metadataSize: 0, chunksSize: 0, metadataCount: 0, chunksCount: 0, hits: 0, misses: 0, evictions: 0 },
+      l1: {
+        metadataSize: 0,
+        chunksSize: 0,
+        metadataCount: 0,
+        chunksCount: 0,
+        hits: 0,
+        misses: 0,
+        evictions: 0,
+      },
       l2: { size: 0, count: 0, reads: 0, writes: 0, misses: 0 },
       network: { bytesTransferred: 1234, requestCount: 5, bandwidth: 100 },
       demand: { l1Hits: 1, l2Hits: 2, networkRequests: 3 },
-      health: { validationMode: 'content-hash' as const, lastValidatedAt: 99, unvalidatedExternalDataset: false },
+      health: {
+        validationMode: 'content-hash' as const,
+        lastValidatedAt: 99,
+        unvalidatedExternalDataset: false,
+      },
     }));
     const stubPrefetcher = {
       getStats: () => ({ queued: 4, inFlight: 1, enabled: true }),

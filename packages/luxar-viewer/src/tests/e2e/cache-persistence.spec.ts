@@ -28,9 +28,7 @@ test.describe('L2 persistence across page reload (R7)', () => {
     await waitForLuxarReady(page);
     await waitForCacheStable(page);
 
-    const before = await page.evaluate(async () =>
-      (window as any).__luxarDebug.cache.getStats()
-    );
+    const before = await page.evaluate(async () => (window as any).__luxarDebug.cache.getStats());
     // L2 should contain entries after a clean first load (cache may
     // be empty initially in this browser context, so the assertion
     // tolerates a 0-count first run by exiting early — only the
@@ -47,9 +45,7 @@ test.describe('L2 persistence across page reload (R7)', () => {
     await waitForLuxarReady(page);
     await waitForCacheStable(page);
 
-    const after = await page.evaluate(async () =>
-      (window as any).__luxarDebug.cache.getStats()
-    );
+    const after = await page.evaluate(async () => (window as any).__luxarDebug.cache.getStats());
     expect(after.l2).toBeDefined();
     // L2 count is preserved (no entries dropped during reload).
     expect(after.l2.count).toBeGreaterThanOrEqual(before.l2.count);

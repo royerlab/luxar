@@ -243,7 +243,7 @@ describe('LayersPanel.dispose', () => {
     expect(eyeBtn).not.toBeNull();
 
     // Internal event group should have non-zero size before dispose.
-     
+
     const events = (panel as any).events as { size: number };
     expect(events.size).toBeGreaterThan(0);
 
@@ -252,7 +252,7 @@ describe('LayersPanel.dispose', () => {
     // After dispose, the group is replaced with a fresh empty one
     // (so a subsequent show()/initFromScene doesn't reuse a disposed
     // group). Either size === 0 OR the group reference changed.
-     
+
     const eventsAfter = (panel as any).events as { size: number };
     expect(eventsAfter.size).toBe(0);
 

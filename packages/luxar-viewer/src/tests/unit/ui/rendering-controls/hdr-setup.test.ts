@@ -101,7 +101,15 @@ function makeContext(): ContextStubs {
     updateClippingControlsState: vi.fn(),
     updateNavigationControls: vi.fn(),
   } as unknown as SetupContext;
-  return { context, folder, sceneManager, postProcessing, saveSettings, triggerAnimation, settings };
+  return {
+    context,
+    folder,
+    sceneManager,
+    postProcessing,
+    saveSettings,
+    triggerAnimation,
+    settings,
+  };
 }
 
 describe('setupHDRControls', () => {

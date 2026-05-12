@@ -25,20 +25,20 @@ cleanly.
 
 ## Files
 
-| File | Role |
-|------|------|
-| `video-mode-driver.ts` | Real-time MediaRecorder capture (MP4 / WebM / MKV) |
+| File                        | Role                                                                         |
+| --------------------------- | ---------------------------------------------------------------------------- |
+| `video-mode-driver.ts`      | Real-time MediaRecorder capture (MP4 / WebM / MKV)                           |
 | `offline-capture-driver.ts` | Frame-by-frame deterministic capture; locks DPR + resize for reproducibility |
-| `image-sequence-driver.ts` | PNG/JPEG per-frame export |
-| `exr-sequence-driver.ts` | HDR float capture per frame |
-| `zip-sequence-capture.ts` | Bundles a sequence into a downloadable zip |
-| `screenshot-exporter.ts` | Single-frame PNG export |
-| `video-codec-selection.ts` | Picks the best supported MediaRecorder mimeType per browser |
-| `media-utilities.ts` | Shared `Blob` / `ArrayBuffer` plumbing |
-| `overlay-compositor.ts` | Renders the recording overlay onto the captured frame |
-| `animation-sync.ts` | Drives `AnimationController` deterministically during offline capture |
-| `gui-builder.ts` | Recording-panel GUI construction |
-| `types.ts` | Shared recording types |
+| `image-sequence-driver.ts`  | PNG/JPEG per-frame export                                                    |
+| `exr-sequence-driver.ts`    | HDR float capture per frame                                                  |
+| `zip-sequence-capture.ts`   | Bundles a sequence into a downloadable zip                                   |
+| `screenshot-exporter.ts`    | Single-frame PNG export                                                      |
+| `video-codec-selection.ts`  | Picks the best supported MediaRecorder mimeType per browser                  |
+| `media-utilities.ts`        | Shared `Blob` / `ArrayBuffer` plumbing                                       |
+| `overlay-compositor.ts`     | Renders the recording overlay onto the captured frame                        |
+| `animation-sync.ts`         | Drives `AnimationController` deterministically during offline capture        |
+| `gui-builder.ts`            | Recording-panel GUI construction                                             |
+| `types.ts`                  | Shared recording types                                                       |
 
 ## Codec selection
 

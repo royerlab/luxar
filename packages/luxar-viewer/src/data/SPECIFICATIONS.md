@@ -1526,11 +1526,11 @@ so callers cannot tell which ran.
 
 Worker-side dtype handling:
 
-| Input dtype | Conversion | Reason |
-|-------------|------------|--------|
-| `Float32Array` | passes through (zero-copy) | already Float32 |
-| `Float16Array` | element-wise expand to Float32 | WASM expects Float32 |
-| `Uint8Array` | element-wise `* 1/255` | match colormap shader's `[0, 1]` contract |
+| Input dtype    | Conversion                     | Reason                                    |
+| -------------- | ------------------------------ | ----------------------------------------- |
+| `Float32Array` | passes through (zero-copy)     | already Float32                           |
+| `Float16Array` | element-wise expand to Float32 | WASM expects Float32                      |
+| `Uint8Array`   | element-wise `* 1/255`         | match colormap shader's `[0, 1]` contract |
 
 See `src/data/scene-loader/data-processor-lines.ts::projectLinesTo3DUsingWorker`
 and `src/workers/data-worker.ts::projectLinesTo3D` for the
@@ -1653,10 +1653,8 @@ The worker pool provides:
 // config knob is consulted: 'projection' → workerProjectionTimeoutMs,
 // 'decode' → workerProjectionTimeoutMs (same knob today),
 // 'visibility' → workerVisibilityTimeoutMs.
-const result = await getWorkerPool().runWithTimeout(
-  'querySpatialIndex',
-  'visibility',
-  (api) => api.querySpatialIndex(params)
+const result = await getWorkerPool().runWithTimeout('querySpatialIndex', 'visibility', (api) =>
+  api.querySpatialIndex(params)
 );
 ```
 
@@ -1673,10 +1671,8 @@ if (!appConfig.dataLoading.performance.useWebWorkers) {
 // Worker path — runWithTimeout rejects with WorkerTimeoutError on
 // budget overflow, and the loader chooses whether to surface the error
 // or fall back to main thread.
-return await getWorkerPool().runWithTimeout(
-  'querySpatialIndex',
-  'visibility',
-  (api) => api.querySpatialIndex(params)
+return await getWorkerPool().runWithTimeout('querySpatialIndex', 'visibility', (api) =>
+  api.querySpatialIndex(params)
 );
 ```
 
@@ -1875,7 +1871,7 @@ This section documents all TypeScript source files in the `data/` package with t
 **Key Exports**: `ViewState`, `LoadedPointsData`, `DataLoader`, `LoaderConfig`, `PointRange`, `SceneNode`, `SpatialQueryResult`, `LoaderStats`, `PositionArray`, `ColorArray`, `ScalarArray`
 
 > Dim-name validation lives in `scene-loader/extend-tolerance.ts:
-> validateExtendDims`, which `deriveNodeViewState` calls before
+validateExtendDims`, which `deriveNodeViewState` calls before
 > applying any extend_to_all tolerance override.
 
 **Relationships**: Foundational type definitions consumed by all loader implementations and the scene loading pipeline.

@@ -265,25 +265,7 @@ describe('RenderingControls', () => {
     });
   });
 
-  describe('Bug Fix #2: AO Disable', () => {
-    it('should disable AO when aoEnabled is false', () => {
-      const controls = renderingControls as any;
-
-      // Setup: Enable AO
-      controls.settings.aoEnabled = true;
-      controls.settings.aoQuality = 'high';
-      controls.applySettings();
-      expect(mockPostProcessing.setAOEnabled).toHaveBeenCalledWith(true, 'high');
-
-      // Action: Disable AO
-      mockPostProcessing.setAOEnabled.mockClear();
-      controls.settings.aoEnabled = false;
-      controls.applySettings();
-
-      // Verify: setAOEnabled called with false
-      expect(mockPostProcessing.setAOEnabled).toHaveBeenCalledWith(false, 'high');
-    });
-  });
+  // Bug Fix #2 (AO disable) — feature removed in mega-shader refactor.
 
   describe('Bug Fix #4: Initialization Sync', () => {
     it('should apply camera settings after loading from localStorage', () => {
@@ -486,7 +468,6 @@ describe('RenderingControls', () => {
       // Setup: Change many settings to non-default values
       controls.settings.fov = 120;
       controls.settings.bloomStrength = 2.0;
-      controls.settings.aoEnabled = true;
       controls.settings.vignetteEnabled = true;
       controls.settings.controlType = 'fly';
       controls.settings.flyInertialMode = true;
@@ -506,7 +487,6 @@ describe('RenderingControls', () => {
       // Verify: Settings reset to defaults
       expect(controls.settings.fov).toBe(47);
       expect(controls.settings.bloomStrength).toBe(0.25);
-      expect(controls.settings.aoEnabled).toBe(false);
       expect(controls.settings.vignetteEnabled).toBe(false);
       expect(controls.settings.controlType).toBe('orbit');
 
@@ -524,7 +504,6 @@ describe('RenderingControls', () => {
 
       // Verify: Post-processing settings applied
       expect(mockPostProcessing.setBloomEnabled).toHaveBeenCalled();
-      expect(mockPostProcessing.setAOEnabled).toHaveBeenCalledWith(false, expect.any(String));
     });
   });
 

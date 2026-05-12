@@ -42,14 +42,10 @@ export const RENDERING_SETTINGS_MAP: Record<string, keyof RenderingSettings> = {
   vignette_darkness: 'vignetteDarkness',
   vignette_offset: 'vignetteOffset',
 
-  // DOF
-  dof_enabled: 'dofEnabled',
-  dof_focus: 'dofFocus',
-  dof_strength: 'dofStrength',
-
-  // Ambient occlusion
-  ao_enabled: 'aoEnabled',
-  ao_quality: 'aoQuality',
+  // DoF and AO (SSAO) were dropped in the mega-shader refactor. Old
+  // viewer_config blocks that still set `dof_*` / `ao_*` keys are
+  // ignored on load; no migration needed because we explicitly chose
+  // not to carry backwards compatibility.
 
   // Detector noise
   detector_noise_enabled: 'detectorNoiseEnabled',
@@ -57,11 +53,8 @@ export const RENDERING_SETTINGS_MAP: Record<string, keyof RenderingSettings> = {
   detector_noise_photon_gain: 'detectorNoisePhotonGain',
   detector_noise_fpn_sigma: 'detectorNoiseFpnSigma',
 
-  // Anti-aliasing
+  // Anti-aliasing (SMAA dropped — see mega-shader-design.md)
   fxaa_enabled: 'fxaaEnabled',
-  smaa_enabled: 'smaaEnabled',
-  smaa_threshold: 'smaaThreshold',
-  smaa_search_steps: 'smaaSearchSteps',
   msaa_enabled: 'msaaEnabled',
   msaa_samples: 'msaaSamples',
   ssaa_enabled: 'ssaaEnabled',

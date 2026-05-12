@@ -26,7 +26,10 @@ export interface CodecSelectionInput {
    * supplies the import so this module stays free of mediabunny
    * coupling and is unit-testable with a stub.
    */
-  canEncodeVideo: (codec: MediabunnyCodec, opts: CodecSelectionInput['encOpts']) => Promise<boolean>;
+  canEncodeVideo: (
+    codec: MediabunnyCodec,
+    opts: CodecSelectionInput['encOpts']
+  ) => Promise<boolean>;
 }
 
 export interface CodecSelectionResult {
@@ -62,9 +65,7 @@ const USER_TO_MEDIABUNNY: Readonly<Record<VideoCodecOption, MediabunnyCodec>> = 
  *    compatible subset.
  * 5. Return the first supported codec, or `null` if nothing works.
  */
-export async function selectVideoCodec(
-  input: CodecSelectionInput
-): Promise<CodecSelectionResult> {
+export async function selectVideoCodec(input: CodecSelectionInput): Promise<CodecSelectionResult> {
   const { preferredCodec, containerMode, encOpts, canEncodeVideo } = input;
 
   const initial = USER_TO_MEDIABUNNY[preferredCodec];

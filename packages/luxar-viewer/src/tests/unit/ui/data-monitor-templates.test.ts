@@ -161,9 +161,7 @@ describe('renderMetricCard', () => {
   });
 
   it('applies size modifier to both block class and value class', () => {
-    expect(renderMetricCard('a', 1, undefined, '', 'small')).toContain(
-      'luxar-metric-card--small'
-    );
+    expect(renderMetricCard('a', 1, undefined, '', 'small')).toContain('luxar-metric-card--small');
     expect(renderMetricCard('a', 1, undefined, '', 'small')).toContain(
       'luxar-metric-card__value--small'
     );
@@ -218,9 +216,7 @@ describe('renderStatGrid', () => {
   });
 
   it('applies the per-item colorClass when supplied', () => {
-    const html = renderStatGrid([
-      { label: 'a', value: 1, colorClass: 'luxar-color--success' },
-    ]);
+    const html = renderStatGrid([{ label: 'a', value: 1, colorClass: 'luxar-color--success' }]);
     expect(html).toContain('luxar-color--success');
   });
 });

@@ -507,19 +507,11 @@ export interface RenderingSettings {
   fxaaEnabled: boolean;
   msaaEnabled: boolean;
   msaaSamples: number;
-  smaaEnabled: boolean;
-  smaaThreshold: number;
-  smaaSearchSteps: number;
   ssaaEnabled: boolean;
   ssaaMultiplier: number;
-  // Post-processing effects
+  // Post-processing effects (SMAA, DoF, and SSAO were dropped in the
+  // mega-shader refactor — see mega-shader-design.md for rationale).
   toneMapping: 'None' | 'Linear' | 'Reinhard' | 'Cineon' | 'ACES' | 'AgX' | 'Neutral';
-  dofEnabled: boolean;
-  dofFocus: number;
-  dofStrength: number;
-  // pmndrs effect controls
-  aoEnabled: boolean;
-  aoQuality: 'low' | 'medium' | 'high' | 'ultra';
   vignetteEnabled: boolean;
   vignetteDarkness: number;
   vignetteOffset: number;

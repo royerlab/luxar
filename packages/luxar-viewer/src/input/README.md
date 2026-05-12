@@ -479,7 +479,7 @@ const inputHandler = new InputHandler(
   sceneManager,
   animationController,
   performanceMonitor,
-  debugConsole,
+  debugConsole
   // optional: dimension sliders factory
 );
 inputHandler.init();

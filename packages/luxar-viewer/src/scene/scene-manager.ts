@@ -37,19 +37,13 @@ import {
 } from './scene-manager-utils';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { sceneDimsManager } from './scene-dims-manager';
-import {
-  clearLoadedSceneContent,
-  disposeSceneGraphResources,
-} from './scene-setup/scene-disposal';
+import { clearLoadedSceneContent, disposeSceneGraphResources } from './scene-setup/scene-disposal';
 import {
   applyZarrViewerConfig as applyZarrViewerConfigHelper,
   createDefaultPerspectiveCamera,
   resetCameraToInitialPosition,
 } from './scene-setup/camera-setup';
-import {
-  computeSceneBoundingBox,
-  fitCameraToBounds,
-} from './scene-setup/camera-framing';
+import { computeSceneBoundingBox, fitCameraToBounds } from './scene-setup/camera-framing';
 import { WebGLContextRecovery } from './scene-setup/webgl-context-recovery';
 import {
   type LuxarCamera,

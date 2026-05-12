@@ -433,7 +433,12 @@ describe('MultiLevelCachingStore', () => {
             },
           } as Response;
         }
-        return { ok: true, async arrayBuffer() { return new ArrayBuffer(0); } } as Response;
+        return {
+          ok: true,
+          async arrayBuffer() {
+            return new ArrayBuffer(0);
+          },
+        } as Response;
       }) as any;
 
       // Drive the private doValidateCache directly — bypasses the
@@ -643,7 +648,13 @@ describe('MultiLevelCachingStore', () => {
       const originalFetch = global.fetch;
       global.fetch = vi.fn(async (url: string) => {
         if (url.includes('missing-chunk')) {
-          return { ok: false, status: 404, async arrayBuffer() { return new ArrayBuffer(0); } } as Response;
+          return {
+            ok: false,
+            status: 404,
+            async arrayBuffer() {
+              return new ArrayBuffer(0);
+            },
+          } as Response;
         }
         return originalFetch(url, undefined as unknown as RequestInit);
       }) as unknown as typeof fetch;
@@ -876,7 +887,9 @@ describe('MultiLevelCachingStore', () => {
       const stats = store.getStats();
       expect(stats.health).toBeDefined();
       expect(['content-hash', 'ttl', 'none']).toContain(stats.health.validationMode);
-      expect(stats.health.lastValidatedAt === null || typeof stats.health.lastValidatedAt === 'number').toBe(true);
+      expect(
+        stats.health.lastValidatedAt === null || typeof stats.health.lastValidatedAt === 'number'
+      ).toBe(true);
       expect(typeof stats.health.unvalidatedExternalDataset).toBe('boolean');
     });
 

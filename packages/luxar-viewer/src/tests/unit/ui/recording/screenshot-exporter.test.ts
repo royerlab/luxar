@@ -50,13 +50,11 @@ describe('encodeScreenshotBlob', () => {
   function makeFakeCanvas(): HTMLCanvasElement {
     const canvas = {} as HTMLCanvasElement;
     Object.defineProperty(canvas, 'toBlob', {
-      value: vi.fn(
-        (resolve: (b: Blob | null) => void, mimeType: string, quality?: number) => {
-          // Surface mime/quality on the spy so the test can assert.
-          (canvas as unknown as { lastCall: unknown }).lastCall = { mimeType, quality };
-          resolve(new Blob(['x'], { type: mimeType }));
-        }
-      ),
+      value: vi.fn((resolve: (b: Blob | null) => void, mimeType: string, quality?: number) => {
+        // Surface mime/quality on the spy so the test can assert.
+        (canvas as unknown as { lastCall: unknown }).lastCall = { mimeType, quality };
+        resolve(new Blob(['x'], { type: mimeType }));
+      }),
       writable: true,
     });
     return canvas;
@@ -125,11 +123,9 @@ describe('downloadBlob', () => {
     // some test environments) must not leak the object URL.
     const createSpy = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:throws');
     const revokeSpy = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
-    const appendSpy = vi
-      .spyOn(document.body, 'appendChild')
-      .mockImplementation(() => {
-        throw new Error('detached document');
-      });
+    const appendSpy = vi.spyOn(document.body, 'appendChild').mockImplementation(() => {
+      throw new Error('detached document');
+    });
 
     try {
       expect(() => downloadBlob(new Blob(['x']), 'test.png')).toThrow('detached document');

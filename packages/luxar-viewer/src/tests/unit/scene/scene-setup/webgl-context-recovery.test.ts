@@ -69,7 +69,16 @@ function makeDeps(overrides: Partial<WebGLContextRecoveryDeps> = {}): {
     triggerChange,
     ...overrides,
   };
-  return { deps, canvas, scene, resetState, ppRebuild, updateRendererSize, onContextRestored, triggerChange };
+  return {
+    deps,
+    canvas,
+    scene,
+    resetState,
+    ppRebuild,
+    updateRendererSize,
+    onContextRestored,
+    triggerChange,
+  };
 }
 
 describe('WebGLContextRecovery', () => {
@@ -102,8 +111,15 @@ describe('WebGLContextRecovery', () => {
   });
 
   it('webglcontextrestored runs the rebuild order then dispatches events', async () => {
-    const { deps, canvas, resetState, ppRebuild, updateRendererSize, onContextRestored, triggerChange } =
-      makeDeps();
+    const {
+      deps,
+      canvas,
+      resetState,
+      ppRebuild,
+      updateRendererSize,
+      onContextRestored,
+      triggerChange,
+    } = makeDeps();
     const recovery = new WebGLContextRecovery(deps);
     recovery.attach();
     canvas.dispatchEvent(new Event('webglcontextlost'));

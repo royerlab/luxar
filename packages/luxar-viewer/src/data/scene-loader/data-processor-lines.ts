@@ -136,12 +136,7 @@ export async function projectLinesTo3DUsingWorker(
       'Worker lines projection failed, falling back to main thread:',
       error
     );
-    return projectLinesTo3D(
-      data,
-      viewState.slicePosition,
-      tolerance,
-      viewState.displayDims
-    );
+    return projectLinesTo3D(data, viewState.slicePosition, tolerance, viewState.displayDims);
   }
 }
 
@@ -168,21 +163,14 @@ export async function processLinesData(
   // Compute base tolerance, then mutate per-dim for extend_to_all
   // dimensions. Copy first to avoid mutating shared arrays.
   const ndim = data.ndim;
-  let tolerance = computeTolerance(
-    'lines',
-    viewState.displayDims,
-    ndim,
-    viewState.dimensions
-  );
+  let tolerance = computeTolerance('lines', viewState.displayDims, ndim, viewState.dimensions);
 
   const attrs = mesh.userData.attrs as { extend_to_all?: string[] };
   const extendDims: string[] = attrs.extend_to_all || [];
   if (extendDims.length > 0 && viewState.dimensions) {
     tolerance = [...tolerance];
     for (const dimName of extendDims) {
-      const dimIndex = viewState.dimensions.findIndex(
-        (d: { name?: string }) => d.name === dimName
-      );
+      const dimIndex = viewState.dimensions.findIndex((d: { name?: string }) => d.name === dimName);
       if (dimIndex >= 0 && dimIndex < tolerance.length) {
         tolerance[dimIndex] = EXTEND_TO_ALL_TOLERANCE;
       }
@@ -199,12 +187,7 @@ export async function processLinesData(
     if (useWorkerProjection) {
       return projectLinesTo3DUsingWorker(data, viewState, tolerance, updateVersion);
     }
-    return projectLinesTo3D(
-      data,
-      viewState.slicePosition,
-      tolerance,
-      viewState.displayDims
-    );
+    return projectLinesTo3D(data, viewState.slicePosition, tolerance, viewState.displayDims);
   };
 
   if (session) {

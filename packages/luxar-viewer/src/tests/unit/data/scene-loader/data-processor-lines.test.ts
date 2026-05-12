@@ -72,7 +72,7 @@ function makeData(segmentCount = 100): LoadedLinesData {
     widths: new Float32Array(segmentCount * 2),
     colors: new Float32Array(segmentCount * 6),
     sharpness: new Float32Array(segmentCount * 2),
-      scalars: undefined,
+    scalars: undefined,
     segmentCount,
     vertexCount: segmentCount * 2,
     ndim: 3,
@@ -97,21 +97,33 @@ beforeEach(() => {
 
 describe('processLinesData', () => {
   it('returns null when rootGroup is null', async () => {
-    const result = await processLinesData('/foo', makeData(), {
-      displayDims: [0, 1, 2],
-      slicePosition: [0, 0, 0],
-      tolerance: [0, 0, 0],
-    }, null, 1);
+    const result = await processLinesData(
+      '/foo',
+      makeData(),
+      {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0],
+        tolerance: [0, 0, 0],
+      },
+      null,
+      1
+    );
     expect(result).toBeNull();
   });
 
   it('returns null when no mesh with the path is found', async () => {
     const root = new THREE.Group();
-    const result = await processLinesData('/missing', makeData(), {
-      displayDims: [0, 1, 2],
-      slicePosition: [0, 0, 0],
-      tolerance: [0, 0, 0],
-    }, root, 1);
+    const result = await processLinesData(
+      '/missing',
+      makeData(),
+      {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0],
+        tolerance: [0, 0, 0],
+      },
+      root,
+      1
+    );
     expect(result).toBeNull();
   });
 
@@ -121,11 +133,17 @@ describe('processLinesData', () => {
     mesh.name = '/foo';
     mesh.userData = { nodeType: 'points', attrs: {} };
     root.add(mesh);
-    const result = await processLinesData('/foo', makeData(), {
-      displayDims: [0, 1, 2],
-      slicePosition: [0, 0, 0],
-      tolerance: [0, 0, 0],
-    }, root, 1);
+    const result = await processLinesData(
+      '/foo',
+      makeData(),
+      {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0],
+        tolerance: [0, 0, 0],
+      },
+      root,
+      1
+    );
     expect(result).toBeNull();
   });
 

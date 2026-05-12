@@ -206,10 +206,7 @@ export class InputHandler {
       performanceStats: this.performanceMonitor,
     });
 
-    this.windowEvents = new WindowEventHandler(
-      this.sceneManager,
-      this.animationController
-    );
+    this.windowEvents = new WindowEventHandler(this.sceneManager, this.animationController);
   }
 
   /**
@@ -512,7 +509,6 @@ export class InputHandler {
       shortcuts.register();
     }
   }
-
 
   /**
    * Update all nD nodes (points, lines, splats) with current dimension values.
@@ -1053,7 +1049,6 @@ export class InputHandler {
   private handleEscapeKey(): void {
     this.panelCoordinator.handleEscape();
   }
-
 
   /**
    * Frame camera to fit the entire scene.

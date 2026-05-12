@@ -29,10 +29,7 @@ import { patchField, updateColorClass } from './dom-helpers';
  * within a single tick (each call rewrites all fields); returns
  * `false` if the tab structure isn't present in the container yet.
  */
-export function updateCacheTab(
-  container: HTMLElement | null,
-  cacheMetrics: CacheMetrics
-): boolean {
+export function updateCacheTab(container: HTMLElement | null, cacheMetrics: CacheMetrics): boolean {
   if (!container) return false;
   // Structure validation: cache-total is always present in the
   // L1/L2 view; if missing the structure hasn't been rendered yet.
@@ -53,9 +50,7 @@ export function updateCacheTab(
     );
     patchField(container, 'l0-evictions', templateFormatNumber(cacheMetrics.l0.evictions));
 
-    const l0HitrateEl = container.querySelector(
-      '[data-field="l0-hitrate"]'
-    ) as HTMLElement | null;
+    const l0HitrateEl = container.querySelector('[data-field="l0-hitrate"]') as HTMLElement | null;
     if (l0HitrateEl) {
       // S3: dimmed when no accesses yet, matching the initial render
       // (data-monitor-templates uses getCacheHitRateColorClassWithGuard).
@@ -70,9 +65,7 @@ export function updateCacheTab(
       updateColorClass(l0HitrateEl, colorClass);
     }
 
-    const l0EvictEl = container.querySelector(
-      '[data-field="l0-evictions"]'
-    ) as HTMLElement | null;
+    const l0EvictEl = container.querySelector('[data-field="l0-evictions"]') as HTMLElement | null;
     if (l0EvictEl) {
       updateColorClass(
         l0EvictEl,
@@ -96,9 +89,7 @@ export function updateCacheTab(
     );
     patchField(container, 'l1-evictions', templateFormatNumber(cacheMetrics.l1.evictions));
 
-    const l1HitrateEl = container.querySelector(
-      '[data-field="l1-hitrate"]'
-    ) as HTMLElement | null;
+    const l1HitrateEl = container.querySelector('[data-field="l1-hitrate"]') as HTMLElement | null;
     if (l1HitrateEl) {
       // S3: dimmed when no accesses yet (matches L0 + L2).
       const colorClass =
@@ -112,9 +103,7 @@ export function updateCacheTab(
       updateColorClass(l1HitrateEl, colorClass);
     }
 
-    const l1EvictEl = container.querySelector(
-      '[data-field="l1-evictions"]'
-    ) as HTMLElement | null;
+    const l1EvictEl = container.querySelector('[data-field="l1-evictions"]') as HTMLElement | null;
     if (l1EvictEl) {
       updateColorClass(
         l1EvictEl,
@@ -143,9 +132,7 @@ export function updateCacheTab(
     patchField(container, 'l2-io', `${templateFormatNumber(cacheMetrics.l2.reads)} reads`);
     patchField(container, 'l2-io-sub', `${templateFormatNumber(cacheMetrics.l2.writes)} writes`);
 
-    const l2HitrateEl = container.querySelector(
-      '[data-field="l2-hitrate"]'
-    ) as HTMLElement | null;
+    const l2HitrateEl = container.querySelector('[data-field="l2-hitrate"]') as HTMLElement | null;
     if (l2HitrateEl) {
       const colorClass =
         l2Total === 0
@@ -198,10 +185,7 @@ export function updateCacheTab(
     );
     const l2ErrEl = container.querySelector('[data-field="l2-errors"]') as HTMLElement | null;
     if (l2ErrEl) {
-      updateColorClass(
-        l2ErrEl,
-        errTotal > 0 ? getColorClass('error') : getColorClass('dimmed')
-      );
+      updateColorClass(l2ErrEl, errTotal > 0 ? getColorClass('error') : getColorClass('dimmed'));
     }
   }
 

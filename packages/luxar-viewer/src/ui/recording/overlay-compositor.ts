@@ -57,8 +57,7 @@ export function compositeOverlays(
     ctx.save();
 
     if (config.blend_mode && config.blend_mode !== 'normal') {
-      ctx.globalCompositeOperation =
-        BLEND_MODE_TO_COMPOSITE[config.blend_mode] ?? 'source-over';
+      ctx.globalCompositeOperation = BLEND_MODE_TO_COMPOSITE[config.blend_mode] ?? 'source-over';
     }
 
     ctx.globalAlpha = parseFloat(el.style.opacity) || config.opacity;
@@ -95,8 +94,7 @@ export function compositeTextOverlay(
   // Font sizes / paddings / strokes are stored as vh-relative fractions;
   // resolve against canvas height for capture-time pixel values.
   const fontSize = (config.font_size ?? 0.03) * canvasH;
-  const fontFamily =
-    FONT_PRESETS[config.font ?? 'sans'] ?? config.font ?? FONT_PRESETS.sans;
+  const fontFamily = FONT_PRESETS[config.font ?? 'sans'] ?? config.font ?? FONT_PRESETS.sans;
   ctx.font = `${fontSize}px ${fontFamily}`;
   ctx.textBaseline = 'top';
 

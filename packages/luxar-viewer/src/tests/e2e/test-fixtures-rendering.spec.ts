@@ -465,9 +465,7 @@ test.describe('Console Error Detection', () => {
           const debug = (window as any).__luxarDebug;
           if (!debug?.consoleInterceptor?.getBufferedMessages) return false;
           const msgs = debug.consoleInterceptor.getBufferedMessages();
-          return msgs.some(
-            (m: { type?: string }) => m.type === 'error' || m.type === 'warning'
-          );
+          return msgs.some((m: { type?: string }) => m.type === 'error' || m.type === 'warning');
         },
         null,
         { timeout: 8000 }

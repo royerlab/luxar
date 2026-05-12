@@ -9,10 +9,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { LoadingAdvisor } from '../../../../ui/components/loading-advisor';
-import type {
-  LoaderMetrics,
-  MonitorEvent,
-} from '../../../../types/data-monitor-types';
+import type { LoaderMetrics, MonitorEvent } from '../../../../types/data-monitor-types';
 import type { MemoryMetrics } from '../../../../ui/monitors/data-monitor-templates';
 
 const baseMetrics: LoaderMetrics = {
@@ -153,9 +150,7 @@ describe('LoadingAdvisor', () => {
           rangesInCache: 0,
         },
       });
-      expect(
-        advisor.getRecommendations().find((r) => r.id === 'low-efficiency')
-      ).toBeUndefined();
+      expect(advisor.getRecommendations().find((r) => r.id === 'low-efficiency')).toBeUndefined();
     });
   });
 
@@ -177,9 +172,7 @@ describe('LoadingAdvisor', () => {
       for (let i = 0; i < 20; i++) {
         advisor.analyzeEvent(makeEvent({ type: 'load', data: {} }));
       }
-      expect(
-        advisor.getRecommendations().find((r) => r.id === 'high-errors')
-      ).toBeUndefined();
+      expect(advisor.getRecommendations().find((r) => r.id === 'high-errors')).toBeUndefined();
     });
   });
 
@@ -206,9 +199,7 @@ describe('LoadingAdvisor', () => {
         timestamp: Date.now(),
         data: {},
       });
-      expect(
-        advisor.getRecommendations().find((r) => r.id === 'memory-pressure')
-      ).toBeUndefined();
+      expect(advisor.getRecommendations().find((r) => r.id === 'memory-pressure')).toBeUndefined();
     });
   });
 
@@ -250,9 +241,7 @@ describe('LoadingAdvisor', () => {
       metrics.gpuPool!.reuses = 4; // 4/16 = 0.25 → warning (0.25 > 0.2 error boundary)
       advisor.analyzeMemoryMetrics(metrics);
 
-      const rec = advisor
-        .getRecommendations()
-        .find((r) => r.id === 'low-gpu-reuse-overall');
+      const rec = advisor.getRecommendations().find((r) => r.id === 'low-gpu-reuse-overall');
       expect(rec).toBeDefined();
       expect(rec?.severity).toBe('warning');
     });
@@ -263,9 +252,7 @@ describe('LoadingAdvisor', () => {
       metrics.gpuPool!.reuses = 5; // 5/105 ≈ 4.7 %
       advisor.analyzeMemoryMetrics(metrics);
 
-      const rec = advisor
-        .getRecommendations()
-        .find((r) => r.id === 'low-gpu-reuse-overall');
+      const rec = advisor.getRecommendations().find((r) => r.id === 'low-gpu-reuse-overall');
       expect(rec?.severity).toBe('error');
     });
 
@@ -304,9 +291,7 @@ describe('LoadingAdvisor', () => {
       });
       advisor.analyzeMemoryMetrics(metrics);
 
-      const rec = advisor
-        .getRecommendations()
-        .find((r) => r.id === 'excessive-growth-points');
+      const rec = advisor.getRecommendations().find((r) => r.id === 'excessive-growth-points');
       expect(rec).toBeDefined();
       expect(rec?.severity).toBe('warning');
     });
@@ -321,9 +306,7 @@ describe('LoadingAdvisor', () => {
       });
       advisor.analyzeMemoryMetrics(metrics);
 
-      const rec = advisor
-        .getRecommendations()
-        .find((r) => r.id === 'excessive-growth-lines');
+      const rec = advisor.getRecommendations().find((r) => r.id === 'excessive-growth-lines');
       expect(rec?.severity).toBe('error');
     });
   });
@@ -351,10 +334,12 @@ describe('LoadingAdvisor', () => {
 
       const recs = advisor.getRecommendations();
       const order = recs.map((r) => r.severity);
-      expect(order).toEqual([...order].sort((a, b) => {
-        const rank = { error: 0, warning: 1, info: 2 } as const;
-        return rank[a] - rank[b];
-      }));
+      expect(order).toEqual(
+        [...order].sort((a, b) => {
+          const rank = { error: 0, warning: 1, info: 2 } as const;
+          return rank[a] - rank[b];
+        })
+      );
     });
 
     it('hasWarnings returns true when any warning/error is present', () => {
@@ -400,9 +385,7 @@ describe('LoadingAdvisor', () => {
       advisor.analyzeEvent(makeEvent({ type: 'query', data: { latency: 250 } }));
       advisor.updateRecommendations({});
       // slow-query is non-global → preserved.
-      expect(
-        advisor.getRecommendations().find((r) => r.id === 'slow-query')
-      ).toBeDefined();
+      expect(advisor.getRecommendations().find((r) => r.id === 'slow-query')).toBeDefined();
     });
   });
 });

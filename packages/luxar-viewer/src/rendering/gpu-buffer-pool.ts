@@ -145,9 +145,7 @@ export function selectBuffersToEvict<R extends PooledBufferRef>(
   precomputedTotal?: number
 ): R[] {
   const total =
-    precomputedTotal !== undefined
-      ? precomputedTotal
-      : refs.reduce((sum, r) => sum + r.bytes, 0);
+    precomputedTotal !== undefined ? precomputedTotal : refs.reduce((sum, r) => sum + r.bytes, 0);
   if (total <= maxBytes) return [];
   // Stable largest-first ordering. JS sort is stable in modern engines
   // (V8, JSC, SpiderMonkey since 2019) so equal-size buffers retain
@@ -162,7 +160,6 @@ export function selectBuffersToEvict<R extends PooledBufferRef>(
   }
   return targets;
 }
-
 
 /**
  * GPU buffer pool for reusing THREE.BufferGeometry objects.
@@ -718,9 +715,7 @@ export class GPUBufferPool {
           const n = Math.min(count, src.length);
           for (let i = 0; i < n; i++) dst[i] = src[i];
         } else {
-          (scalarAttr.array as Float32Array).set(
-            data.scalars.subarray(0, count) as Float32Array
-          );
+          (scalarAttr.array as Float32Array).set(data.scalars.subarray(0, count) as Float32Array);
         }
       } else {
         // No source scalars but the buffer exists — fill zero so a
@@ -1400,10 +1395,7 @@ export class GPUBufferPool {
     // instance.
     if (!this.largePoolWarningEmitted) {
       const LARGE_POOLED_BYTES_THRESHOLD = 100_000_000; // 100 MB
-      const largest = refs.reduce(
-        (max, r) => (r.bytes > max ? r.bytes : max),
-        0
-      );
+      const largest = refs.reduce((max, r) => (r.bytes > max ? r.bytes : max), 0);
       if (largest > LARGE_POOLED_BYTES_THRESHOLD) {
         this.largePoolWarningEmitted = true;
         log.warning(

@@ -36,12 +36,10 @@ function makeCtx(overrides: Partial<CaptureContext> = {}): CaptureContext {
   const fakeCanvas = {
     width: 1920,
     height: 1080,
-    toBlob: vi.fn(
-      (cb: BlobCallback, _type?: string, _quality?: number) => {
-        // Resolve asynchronously to mimic the browser behaviour.
-        Promise.resolve().then(() => cb(blobStub));
-      }
-    ),
+    toBlob: vi.fn((cb: BlobCallback, _type?: string, _quality?: number) => {
+      // Resolve asynchronously to mimic the browser behaviour.
+      Promise.resolve().then(() => cb(blobStub));
+    }),
   } as unknown as HTMLCanvasElement;
 
   return {
@@ -95,11 +93,7 @@ describe('ImageSequenceDriver', () => {
 
     const canvas = (ctx.renderFrameToCanvas as ReturnType<typeof vi.fn>).mock.results[0]
       .value as HTMLCanvasElement & { toBlob: ReturnType<typeof vi.fn> };
-    expect(canvas.toBlob).toHaveBeenCalledWith(
-      expect.any(Function),
-      'image/jpeg',
-      0.7
-    );
+    expect(canvas.toBlob).toHaveBeenCalledWith(expect.any(Function), 'image/jpeg', 0.7);
   });
 
   it('shouldAbort is false by default and after a normal capture', async () => {

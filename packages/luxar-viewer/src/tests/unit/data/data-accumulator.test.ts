@@ -390,9 +390,9 @@ describe('B.6 — accumulator dispose-state guards', () => {
   it('LoadedPointsDataAccumulator: fill() throws after dispose()', () => {
     const acc = new LoadedPointsDataAccumulator(64, 3, 100);
     acc.dispose();
-    expect(() =>
-      acc.fill(0, { positions: new Float32Array([0, 0, 0]) })
-    ).toThrow(/called after dispose/);
+    expect(() => acc.fill(0, { positions: new Float32Array([0, 0, 0]) })).toThrow(
+      /called after dispose/
+    );
   });
 
   it('LoadedPointsDataAccumulator: ensureCapacity() throws after dispose()', () => {

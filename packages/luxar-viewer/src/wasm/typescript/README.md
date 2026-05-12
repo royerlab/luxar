@@ -8,16 +8,16 @@ path.
 
 ## Files
 
-| File | Role |
-|------|------|
-| `index.ts` | Aggregator implementing the `WasmModule` interface from `src/wasm/index.ts` |
-| `effective-radii.ts` | nD effective-radius computation (Points spatial culling) |
-| `decode.ts` | LUT / quantized / log-scalar decoding kernels |
-| `projection.ts` | nD→3D position extraction |
-| `spatial.ts` | nD visibility masks (per-element slab tests) |
-| `points.ts` | Points-specific kernels (radius_to_visibility_mask, compact_by_mask) |
-| `lines.ts`, `lines-clipping.ts` | Lines clipping + interpolation |
-| `gsplats.ts`, `gsplats-processing.ts` | GSplats Mahalanobis distance, marginal Cholesky, compaction |
+| File                                  | Role                                                                        |
+| ------------------------------------- | --------------------------------------------------------------------------- |
+| `index.ts`                            | Aggregator implementing the `WasmModule` interface from `src/wasm/index.ts` |
+| `effective-radii.ts`                  | nD effective-radius computation (Points spatial culling)                    |
+| `decode.ts`                           | LUT / quantized / log-scalar decoding kernels                               |
+| `projection.ts`                       | nD→3D position extraction                                                   |
+| `spatial.ts`                          | nD visibility masks (per-element slab tests)                                |
+| `points.ts`                           | Points-specific kernels (radius_to_visibility_mask, compact_by_mask)        |
+| `lines.ts`, `lines-clipping.ts`       | Lines clipping + interpolation                                              |
+| `gsplats.ts`, `gsplats-processing.ts` | GSplats Mahalanobis distance, marginal Cholesky, compaction                 |
 
 ## Public surface
 

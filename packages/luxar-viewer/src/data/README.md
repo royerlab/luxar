@@ -1002,16 +1002,16 @@ location /data/ {
 
 ### Instance Management (scene-loader-manager.ts)
 
-| Class/Method                               | Description                                 |
-| ------------------------------------------ | ------------------------------------------- |
-| `SceneLoaderManager`                       | Singleton manager for SceneLoader instances |
-| `getInstance()`                            | Get the singleton manager instance          |
-| `createLoader(id, config?, setAsDefault?)` | Create a new loader instance                |
-| `getLoader(id)`                            | Get a specific loader by ID                 |
-| `getDefaultLoader()`                       | Get the default loader instance             |
-| `getAllLoaders()`                          | Get all active loader instances             |
-| `destroyLoader(id)`                        | Dispose and remove a specific loader        |
-| `destroyAll()`                             | Dispose all loaders and reset manager       |
+| Class/Method                               | Description                                                          |
+| ------------------------------------------ | -------------------------------------------------------------------- |
+| `SceneLoaderManager`                       | Singleton manager for SceneLoader instances                          |
+| `getInstance()`                            | Get the singleton manager instance                                   |
+| `createLoader(id, config?, setAsDefault?)` | Create a new loader instance                                         |
+| `getLoader(id)`                            | Get a specific loader by ID                                          |
+| `getDefaultLoader()`                       | Get the default loader instance                                      |
+| `getAllLoaders()`                          | Get all active loader instances                                      |
+| `destroyLoader(id)`                        | Dispose and remove a specific loader                                 |
+| `destroyAll()`                             | Dispose all loaders and reset manager                                |
 | `disposeInstance()`                        | Dispose the singleton (call from app dispose; preserved for re-init) |
 
 ### Scene Loading (scene-loader.ts)
@@ -1085,17 +1085,17 @@ location /data/ {
 
 ### Monitoring Management (data-monitor-manager.ts)
 
-| Class/Method                            | Description                                |
-| --------------------------------------- | ------------------------------------------ |
-| `DataMonitorManager`                    | Singleton manager for monitor UI instances |
-| `getInstance()`                         | Get the singleton manager instance         |
-| `createMonitor(id, container, config?)` | Create a new monitor UI instance           |
-| `getMonitor(id)`                        | Get a specific monitor by ID               |
-| `getDefaultMonitor()`                   | Get the default monitor instance           |
-| `showMonitor(id?)`                      | Show specific or default monitor           |
-| `hideMonitor(id?)`                      | Hide specific or default monitor           |
-| `toggleMonitor(id?)`                    | Toggle specific or default monitor         |
-| `destroyMonitor(id)`                    | Dispose and remove a specific monitor      |
+| Class/Method                            | Description                                     |
+| --------------------------------------- | ----------------------------------------------- |
+| `DataMonitorManager`                    | Singleton manager for monitor UI instances      |
+| `getInstance()`                         | Get the singleton manager instance              |
+| `createMonitor(id, container, config?)` | Create a new monitor UI instance                |
+| `getMonitor(id)`                        | Get a specific monitor by ID                    |
+| `getDefaultMonitor()`                   | Get the default monitor instance                |
+| `showMonitor(id?)`                      | Show specific or default monitor                |
+| `hideMonitor(id?)`                      | Hide specific or default monitor                |
+| `toggleMonitor(id?)`                    | Toggle specific or default monitor              |
+| `destroyMonitor(id)`                    | Dispose and remove a specific monitor           |
 | `disposeInstance()`                     | Dispose the singleton (called from app dispose) |
 
 ### Directory Navigation (directory-navigator.ts)

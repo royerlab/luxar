@@ -23,12 +23,7 @@ import type {
 } from '../../types/lines';
 import type { SceneNode, PointRange } from '../data-loader-types';
 import { ArrayRefRegistry, type ArrayMetadata } from '../utils/array-decoder';
-import {
-  RangeLoader,
-  SpatialQueryBuilder,
-  mergeRanges,
-  type LoadRange,
-} from '../loaders';
+import { RangeLoader, SpatialQueryBuilder, mergeRanges, type LoadRange } from '../loaders';
 import { getExpectedColorType, loadColorRanges } from '../loaders/color-attribute-utils';
 import { computeLoadLatency, recordLoadEvent } from '../loaders/loader-metrics';
 import { LoaderEventEmitter } from '../loaders/monitor-events';
@@ -887,7 +882,6 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     return widths;
   }
 
-
   /**
    * Get accumulator stats for memory monitoring
    */
@@ -967,8 +961,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     const queryTime = Date.now() - startTime;
     if (this.metrics.queries > 0) {
       this.metrics.avgQueryTime =
-        (this.metrics.avgQueryTime * (this.metrics.queries - 1) + queryTime) /
-        this.metrics.queries;
+        (this.metrics.avgQueryTime * (this.metrics.queries - 1) + queryTime) / this.metrics.queries;
     }
   }
 
@@ -989,4 +982,3 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     }
   }
 }
-

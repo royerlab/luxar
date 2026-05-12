@@ -354,9 +354,7 @@ describe('RecordingPanel', () => {
 
         // Expect the user-visible refusal toast and that the recording's
         // saved state was not overwritten or cleared.
-        expect(showToast).toHaveBeenCalledWith(
-          'Stop recording before taking a screenshot'
-        );
+        expect(showToast).toHaveBeenCalledWith('Stop recording before taking a screenshot');
         expect((panel as any).savedRecordingState).toBe(recordingSavedState);
         expect(saveStateSpy).not.toHaveBeenCalled();
         expect(restoreStateSpy).not.toHaveBeenCalled();
@@ -385,9 +383,7 @@ describe('RecordingPanel', () => {
       try {
         await panel.captureScreenshot();
 
-        expect(showToast).toHaveBeenCalledWith(
-          'Stop recording before taking a screenshot'
-        );
+        expect(showToast).toHaveBeenCalledWith('Stop recording before taking a screenshot');
         expect((panel as any).savedRecordingState).toBe(recordingSavedState);
         expect(saveStateSpy).not.toHaveBeenCalled();
       } finally {
@@ -798,9 +794,7 @@ describe('RecordingPanel', () => {
       expect(overlay.getAttribute('role')).toBe('dialog');
       expect(overlay.getAttribute('aria-modal')).toBe('true');
       expect(overlay.getAttribute('aria-labelledby')).toBe('luxar-recording-confirm-title');
-      expect(overlay.getAttribute('aria-describedby')).toBe(
-        'luxar-recording-confirm-message'
-      );
+      expect(overlay.getAttribute('aria-describedby')).toBe('luxar-recording-confirm-message');
       expect(overlay.querySelector('#luxar-recording-confirm-title')).toBeTruthy();
       expect(overlay.querySelector('#luxar-recording-confirm-message')).toBeTruthy();
 

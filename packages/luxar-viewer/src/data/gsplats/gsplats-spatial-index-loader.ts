@@ -28,10 +28,7 @@ import {
   type ChunkSpatialIndex,
   type LoadRange,
 } from '../loaders';
-import {
-  loadGSplatsChunkIndex,
-  registerGSplatsArrayBounds,
-} from './chunk-index-loader';
+import { loadGSplatsChunkIndex, registerGSplatsArrayBounds } from './chunk-index-loader';
 import { createEmptyGSplatsData } from './projection';
 import { getExpectedColorType, loadColorRanges } from '../loaders/color-attribute-utils';
 import { computeLoadLatency, recordLoadEvent } from '../loaders/loader-metrics';
@@ -606,7 +603,6 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     return output;
   }
 
-
   /**
    * Prefetch chunks for the given view state into the cache without decoding.
    *
@@ -726,8 +722,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     const queryTime = Date.now() - startTime;
     if (this.metrics.queries > 0) {
       this.metrics.avgQueryTime =
-        (this.metrics.avgQueryTime * (this.metrics.queries - 1) + queryTime) /
-        this.metrics.queries;
+        (this.metrics.avgQueryTime * (this.metrics.queries - 1) + queryTime) / this.metrics.queries;
     }
   }
 

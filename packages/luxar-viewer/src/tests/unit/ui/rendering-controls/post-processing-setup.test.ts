@@ -3,7 +3,7 @@
  *
  * Stubs the GUI/Folder + postProcessing dependencies and verifies
  * that setupPostProcessingControls wires the 26 onChange callbacks
- * across 6 effect sub-folders (Bloom, Detector Noise, DOF, AO,
+ * across 4 effect sub-folders (Bloom, Detector Noise,
  * Vignette, Chromatic Lens Distortion) to the right downstream
  * methods + re-saves settings + triggers a re-render.
  */
@@ -166,13 +166,11 @@ describe('setupPostProcessingControls', () => {
     stubs = makeContext();
   });
 
-  it('creates the Post-Processing folder, closed by default, with 6 sub-folders', () => {
+  it('creates the Post-Processing folder, closed by default, with 4 sub-folders', () => {
     setupPostProcessingControls(stubs.context, noControllers);
     expect(stubs.effectsFolder.close).toHaveBeenCalled();
     expect(stubs.effectsFolder.subFolders.has('Bloom')).toBe(true);
     expect(stubs.effectsFolder.subFolders.has('Detector Noise')).toBe(true);
-    expect(stubs.effectsFolder.subFolders.has('Depth of Field')).toBe(true);
-    expect(stubs.effectsFolder.subFolders.has('Ambient Occlusion')).toBe(true);
     expect(stubs.effectsFolder.subFolders.has('Vignette')).toBe(true);
     expect(stubs.effectsFolder.subFolders.has('Chromatic Lens Distortion')).toBe(true);
   });
@@ -299,62 +297,9 @@ describe('setupPostProcessingControls', () => {
     });
   });
 
-  describe('Depth of Field', () => {
-    function ctrls() {
-      return stubs.effectsFolder.subFolders.get('Depth of Field')!.controllers;
-    }
-
-    it('enabled toggle forwards (value, focus, strength)', () => {
-      stubs.settings.dofFocus = 12;
-      stubs.settings.dofStrength = 0.8;
-      setupPostProcessingControls(stubs.context, noControllers);
-
-      ctrls()[0]._onChangeFn?.(true);
-      expect(stubs.postProcessing.setDOF).toHaveBeenCalledWith(true, 12, 0.8);
-    });
-
-    it('focus slider forwards via updateDOF({focus})', () => {
-      setupPostProcessingControls(stubs.context, noControllers);
-      ctrls()[1]._onChangeFn?.(25);
-      expect(stubs.postProcessing.updateDOF).toHaveBeenCalledWith({ focus: 25 });
-    });
-
-    it('strength slider forwards via updateDOF({strength})', () => {
-      setupPostProcessingControls(stubs.context, noControllers);
-      ctrls()[2]._onChangeFn?.(0.9);
-      expect(stubs.postProcessing.updateDOF).toHaveBeenCalledWith({ strength: 0.9 });
-    });
-  });
-
-  describe('Ambient Occlusion', () => {
-    function ctrls() {
-      return stubs.effectsFolder.subFolders.get('Ambient Occlusion')!.controllers;
-    }
-
-    it('enabled toggle forwards (value, quality)', () => {
-      stubs.settings.aoQuality = 'high';
-      setupPostProcessingControls(stubs.context, noControllers);
-
-      ctrls()[0]._onChangeFn?.(true);
-      expect(stubs.postProcessing.setAOEnabled).toHaveBeenCalledWith(true, 'high');
-    });
-
-    it('quality update only fires setAOEnabled when AO is currently enabled', () => {
-      stubs.settings.aoEnabled = true;
-      setupPostProcessingControls(stubs.context, noControllers);
-
-      ctrls()[1]._onChangeFn?.('ultra');
-      expect(stubs.postProcessing.setAOEnabled).toHaveBeenCalledWith(true, 'ultra');
-    });
-
-    it('quality update is a no-op when AO is disabled', () => {
-      stubs.settings.aoEnabled = false;
-      setupPostProcessingControls(stubs.context, noControllers);
-
-      ctrls()[1]._onChangeFn?.('ultra');
-      expect(stubs.postProcessing.setAOEnabled).not.toHaveBeenCalled();
-    });
-  });
+  // Depth-of-field and Ambient Occlusion UI sections were removed in the
+  // mega-shader refactor (DoF niche for scientific viz; SSAO has no
+  // surface normals for point/gsplat geometry). Their UI tests dropped.
 
   describe('Vignette', () => {
     function ctrls() {

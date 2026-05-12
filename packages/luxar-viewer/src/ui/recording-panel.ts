@@ -38,10 +38,7 @@ import {
   FORMAT_LABEL_TO_VALUE,
   CODEC_LABEL_TO_VALUE,
 } from './recording/gui-builder';
-import type {
-  CaptureContext,
-  OfflineCaptureDriver,
-} from './recording/offline-capture-driver';
+import type { CaptureContext, OfflineCaptureDriver } from './recording/offline-capture-driver';
 import { ImageSequenceDriver } from './recording/image-sequence-driver';
 import { ExrSequenceDriver } from './recording/exr-sequence-driver';
 import { VideoModeDriver } from './recording/video-mode-driver';
@@ -277,12 +274,8 @@ export class RecordingPanel {
     // Remove offline-capture callbacks. The normal loop path also
     // removes them in finally; this covers the dispose-while-awaiting
     // case where the loop hasn't reached its finally yet.
-    this.animationController.removePerFrameCallback(
-      RecordingPanel.OFFLINE_CAPTURE_CALLBACK_ID
-    );
-    this.animationController.removePerFrameCallback(
-      RecordingPanel.OFFLINE_KEEPALIVE_CALLBACK_ID
-    );
+    this.animationController.removePerFrameCallback(RecordingPanel.OFFLINE_CAPTURE_CALLBACK_ID);
+    this.animationController.removePerFrameCallback(RecordingPanel.OFFLINE_KEEPALIVE_CALLBACK_ID);
     this.cleanupSyncListener();
     this.restoreAutoRotate();
     this.restoreRecordingState();
@@ -949,10 +942,7 @@ export class RecordingPanel {
             : 'error';
           await driver.abort?.(ctx, reason as 'disposed' | 'user-cancel' | 'error');
         } catch (abortErr) {
-          log.warning(
-            Modules.RECORDING,
-            `Driver abort during cleanup failed: ${abortErr}`
-          );
+          log.warning(Modules.RECORDING, `Driver abort during cleanup failed: ${abortErr}`);
         }
       }
       // Idempotent cleanup. removePerFrameCallback tolerates unknown

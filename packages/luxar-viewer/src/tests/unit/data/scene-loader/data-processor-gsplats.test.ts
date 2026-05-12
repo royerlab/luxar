@@ -107,25 +107,13 @@ beforeEach(() => {
 
 describe('processGSplatsData', () => {
   it('returns null when rootGroup is null', async () => {
-    const result = await processGSplatsData(
-      '/foo',
-      makeData(),
-      makeViewState(),
-      null,
-      1
-    );
+    const result = await processGSplatsData('/foo', makeData(), makeViewState(), null, 1);
     expect(result).toBeNull();
   });
 
   it('returns null when no mesh with the path is found', async () => {
     const root = new THREE.Group();
-    const result = await processGSplatsData(
-      '/missing',
-      makeData(),
-      makeViewState(),
-      root,
-      1
-    );
+    const result = await processGSplatsData('/missing', makeData(), makeViewState(), root, 1);
     expect(result).toBeNull();
   });
 
@@ -178,13 +166,7 @@ describe('processGSplatsData', () => {
       runWithTimeout: vi.fn(async (_op, _kind, fn) => fn({ projectGSplatsTo3D })),
     });
 
-    const result = await processGSplatsData(
-      '/g',
-      makeData(2000, 4),
-      makeViewState(),
-      root,
-      1
-    );
+    const result = await processGSplatsData('/g', makeData(2000, 4), makeViewState(), root, 1);
     expect(result).not.toBeNull();
     expect(projectGSplatsTo3D).toHaveBeenCalledTimes(1);
     expect(mockProcessGSplats).not.toHaveBeenCalled();
@@ -242,12 +224,7 @@ describe('projectGSplatsTo3DUsingWorker', () => {
       runWithTimeout: vi.fn(async (_op, _kind, fn) => fn({ projectGSplatsTo3D })),
     });
 
-    const result = await projectGSplatsTo3DUsingWorker(
-      makeData(),
-      makeViewState(),
-      3.0,
-      1
-    );
+    const result = await projectGSplatsTo3DUsingWorker(makeData(), makeViewState(), 3.0, 1);
     expect(result.splatCount).toBe(1);
     expect(Array.from(result.centers3D)).toEqual([1, 2, 3]);
   });
@@ -260,12 +237,7 @@ describe('projectGSplatsTo3DUsingWorker', () => {
     });
     mockProcessGSplats.mockReturnValue(makeProcessed(7));
 
-    const result = await projectGSplatsTo3DUsingWorker(
-      makeData(),
-      makeViewState(),
-      3.0,
-      1
-    );
+    const result = await projectGSplatsTo3DUsingWorker(makeData(), makeViewState(), 3.0, 1);
     expect(result.splatCount).toBe(7);
     expect(mockProcessGSplats).toHaveBeenCalledTimes(1);
   });

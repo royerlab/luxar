@@ -42,14 +42,14 @@ the first effect in Pass B; FXAA is always the last effect in Pass B
 
 Implemented in `luxar-tone-mapping-effect.ts`. Supported modes:
 
-| Mode | Curve | Use |
-|------|-------|-----|
-| `Linear` | identity, clipped to `[0, 1]` | reference / debugging |
-| `Neutral` | THREE's neutral curve | scientific data (hue-preserving) — **default** |
-| `ACESFilmic` | ACES filmic | cinematic, increases contrast |
-| `AgX` | AgX tone curve | photographic, well-behaved highlights |
-| `Reinhard` | x / (1 + x) | conservative, low-contrast |
-| `Cineon` | logarithmic film curve | filmic / wide gamut |
+| Mode         | Curve                         | Use                                            |
+| ------------ | ----------------------------- | ---------------------------------------------- |
+| `Linear`     | identity, clipped to `[0, 1]` | reference / debugging                          |
+| `Neutral`    | THREE's neutral curve         | scientific data (hue-preserving) — **default** |
+| `ACESFilmic` | ACES filmic                   | cinematic, increases contrast                  |
+| `AgX`        | AgX tone curve                | photographic, well-behaved highlights          |
+| `Reinhard`   | x / (1 + x)                   | conservative, low-contrast                     |
+| `Cineon`     | logarithmic film curve        | filmic / wide gamut                            |
 
 Each mode has a `shaderOutputMode` hint (`alpha-weighted` /
 `rgb-contribution` / `opaque`) consumed by the underlying material
@@ -79,12 +79,12 @@ use-after-free window — see `effect-disposal.ts`).
 
 Four modes, applied at different pipeline stages:
 
-| Mode | Stage | Cost | Quality |
-|------|-------|------|---------|
-| **FXAA** | Pass B (post-tonemap) | very cheap | medium; blurs subpixel detail |
-| **SMAA** | Dedicated SMAAPass after Pass B | low-medium | very good edges; preset-tuned (LOW/MEDIUM/HIGH/ULTRA) |
-| **MSAA** | Hardware multisample on render target | medium; GPU-feature dependent | great geometry; can't AA shader-introduced edges |
-| **SSAA** | Supersample target sized × multiplier | very high (squared cost) | best; brute-force |
+| Mode     | Stage                                 | Cost                          | Quality                                               |
+| -------- | ------------------------------------- | ----------------------------- | ----------------------------------------------------- |
+| **FXAA** | Pass B (post-tonemap)                 | very cheap                    | medium; blurs subpixel detail                         |
+| **SMAA** | Dedicated SMAAPass after Pass B       | low-medium                    | very good edges; preset-tuned (LOW/MEDIUM/HIGH/ULTRA) |
+| **MSAA** | Hardware multisample on render target | medium; GPU-feature dependent | great geometry; can't AA shader-introduced edges      |
+| **SSAA** | Supersample target sized × multiplier | very high (squared cost)      | best; brute-force                                     |
 
 These are independent — multiple can stack (e.g. MSAA for geometry +
 FXAA for shader edges), at the cost of compounding GPU time.
@@ -134,8 +134,8 @@ Sequence:
 
 1. `captureDurableState()` snapshots every user-facing setting into a
    plain serializable object: `{ exposure, offset, gamma, bloom: {…},
-   dof: {…}, vignette: {…}, detectorNoise: {…}, chromaticLens: {…},
-   aa: {…}, toneMapping: {…} }`.
+dof: {…}, vignette: {…}, detectorNoise: {…}, chromaticLens: {…},
+aa: {…}, toneMapping: {…} }`.
 2. `disposeTransientResources()` tears down composer + passes +
    effects through the `safe*` helpers.
 3. `initializeTransientResources()` rebuilds composer + render pass +

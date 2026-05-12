@@ -111,10 +111,9 @@ describe('PickingSystem — registration', () => {
 
   it('unregisterNode disposes the pick mesh material', () => {
     const dispose = vi.fn();
-    const pickMesh = new THREE.Mesh(
-      new THREE.BufferGeometry(),
-      { dispose } as unknown as THREE.Material
-    );
+    const pickMesh = new THREE.Mesh(new THREE.BufferGeometry(), {
+      dispose,
+    } as unknown as THREE.Material);
     const id = system.allocatePickId();
     system.registerNode(new THREE.Object3D(), pickMesh, id);
 
@@ -152,15 +151,10 @@ describe('PickingSystem — context-restore registration drop', () => {
 
   it('clearRegistrationsForRebuild empties the node map without disposing materials', () => {
     const dispose = vi.fn();
-    const pickMesh = new THREE.Mesh(
-      new THREE.BufferGeometry(),
-      { dispose } as unknown as THREE.Material
-    );
-    system.registerNode(
-      new THREE.Object3D(),
-      pickMesh,
-      system.allocatePickId()
-    );
+    const pickMesh = new THREE.Mesh(new THREE.BufferGeometry(), {
+      dispose,
+    } as unknown as THREE.Material);
+    system.registerNode(new THREE.Object3D(), pickMesh, system.allocatePickId());
     expect(system.registeredNodeCount).toBe(1);
 
     system.clearRegistrationsForRebuild();
@@ -179,9 +173,7 @@ describe('PickingSystem — context-restore registration drop', () => {
     // accumulated stale references; camera-uniform updates would
     // target dead materials and `getCacheStats().totalRegistered`
     // would grow unboundedly.
-    const { materialManager } = await import(
-      '../../../../rendering/material-manager'
-    );
+    const { materialManager } = await import('../../../../rendering/material-manager');
 
     // Use a real THREE.Material so EventDispatcher is wired (the
     // materialManager subscribes to the 'dispose' event), then graft
@@ -220,14 +212,8 @@ describe('PickingSystem — context-restore registration drop', () => {
     // scene node with fresh pick materials. This test locks in that
     // the system accepts new registrations cleanly after a clear,
     // with no stale state leaking between rounds.
-    const pickMesh1 = new THREE.Mesh(
-      new THREE.BufferGeometry(),
-      new THREE.MeshBasicMaterial()
-    );
-    const pickMesh2 = new THREE.Mesh(
-      new THREE.BufferGeometry(),
-      new THREE.MeshBasicMaterial()
-    );
+    const pickMesh1 = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
+    const pickMesh2 = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
 
     // Initial registration before "context loss".
     system.registerNode(new THREE.Object3D(), pickMesh1, system.allocatePickId());

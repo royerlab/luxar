@@ -10,10 +10,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { GSplatsProgressiveLoader } from '../../../data/gsplats/gsplats-progressive-loader';
 import type { GSplatsSpatialIndexLoader } from '../../../data/gsplats/gsplats-spatial-index-loader';
-import type {
-  GSplatsViewState,
-  LoadedGSplatsData,
-} from '../../../types/gsplats';
+import type { GSplatsViewState, LoadedGSplatsData } from '../../../types/gsplats';
 
 interface SubLoaderStub {
   updateView: ReturnType<typeof vi.fn>;

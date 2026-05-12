@@ -16,11 +16,7 @@
  * found (the caller can use the boolean to decide whether the DOM
  * structure needs a full rebuild).
  */
-export function patchField(
-  container: HTMLElement | null,
-  field: string,
-  text: string
-): boolean {
+export function patchField(container: HTMLElement | null, field: string, text: string): boolean {
   const el = container?.querySelector(`[data-field="${field}"]`);
   if (!el) return false;
   el.textContent = text;

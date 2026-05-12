@@ -25,14 +25,12 @@ function makeController(): ControllerStub {
   // Provide a real <select> element so the production code's option
   // toggling between 'Custom' and the focal-length label can run for real.
   const select = document.createElement('select');
-  ['28mm Wide', '35mm', '50mm Normal', '85mm Portrait', '135mm Tele', 'Custom'].forEach(
-    (label) => {
-      const opt = document.createElement('option');
-      opt.value = label;
-      opt.textContent = label;
-      select.appendChild(opt);
-    }
-  );
+  ['28mm Wide', '35mm', '50mm Normal', '85mm Portrait', '135mm Tele', 'Custom'].forEach((label) => {
+    const opt = document.createElement('option');
+    opt.value = label;
+    opt.textContent = label;
+    select.appendChild(opt);
+  });
 
   const ctrl: ControllerStub = {
     name: vi.fn(),
@@ -134,14 +132,22 @@ function makeContext(initial: Partial<ContextStubs['settings']> = {}): ContextSt
   const controllersRef: SetupResult['controllers'] = {
     fov: makeController() as unknown as SetupResult['controllers']['fov'],
     fovPreset: makeController() as unknown as SetupResult['controllers']['fovPreset'],
-    chromaticLensDistortionX: makeController() as unknown as SetupResult['controllers']['chromaticLensDistortionX'],
-    chromaticLensDistortionY: makeController() as unknown as SetupResult['controllers']['chromaticLensDistortionY'],
-    chromaticLensDispersion: makeController() as unknown as SetupResult['controllers']['chromaticLensDispersion'],
-    chromaticLensPrincipalPointX: makeController() as unknown as SetupResult['controllers']['chromaticLensPrincipalPointX'],
-    chromaticLensPrincipalPointY: makeController() as unknown as SetupResult['controllers']['chromaticLensPrincipalPointY'],
-    chromaticLensFocalLengthX: makeController() as unknown as SetupResult['controllers']['chromaticLensFocalLengthX'],
-    chromaticLensFocalLengthY: makeController() as unknown as SetupResult['controllers']['chromaticLensFocalLengthY'],
-    chromaticLensSkew: makeController() as unknown as SetupResult['controllers']['chromaticLensSkew'],
+    chromaticLensDistortionX:
+      makeController() as unknown as SetupResult['controllers']['chromaticLensDistortionX'],
+    chromaticLensDistortionY:
+      makeController() as unknown as SetupResult['controllers']['chromaticLensDistortionY'],
+    chromaticLensDispersion:
+      makeController() as unknown as SetupResult['controllers']['chromaticLensDispersion'],
+    chromaticLensPrincipalPointX:
+      makeController() as unknown as SetupResult['controllers']['chromaticLensPrincipalPointX'],
+    chromaticLensPrincipalPointY:
+      makeController() as unknown as SetupResult['controllers']['chromaticLensPrincipalPointY'],
+    chromaticLensFocalLengthX:
+      makeController() as unknown as SetupResult['controllers']['chromaticLensFocalLengthX'],
+    chromaticLensFocalLengthY:
+      makeController() as unknown as SetupResult['controllers']['chromaticLensFocalLengthY'],
+    chromaticLensSkew:
+      makeController() as unknown as SetupResult['controllers']['chromaticLensSkew'],
   };
   const settings = {
     fov: 50,
@@ -295,9 +301,7 @@ describe('setupCameraControls', () => {
       fovCtrl._onChangeFn?.(50);
 
       const presetRef = stubs.controllersRef.fovPreset as unknown as ControllerStub;
-      const customOpt = Array.from(presetRef.$input!.options).find(
-        (o) => o.value === 'Custom'
-      );
+      const customOpt = Array.from(presetRef.$input!.options).find((o) => o.value === 'Custom');
       expect(customOpt?.textContent?.startsWith('~')).toBe(true);
       expect(customOpt?.textContent?.endsWith('mm')).toBe(true);
     });

@@ -101,10 +101,7 @@ describe('resolveTargetNodeCenter', () => {
 
   it('returns the world-space center of the first matching descendant', () => {
     const root = new THREE.Group();
-    const target = new THREE.Mesh(
-      new THREE.BoxGeometry(2, 2, 2),
-      new THREE.MeshBasicMaterial()
-    );
+    const target = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2), new THREE.MeshBasicMaterial());
     target.name = 'pivot';
     target.position.set(10, 0, 0);
     root.add(target);
@@ -118,16 +115,10 @@ describe('resolveTargetNodeCenter', () => {
 
   it('stops on the first match (does not match later siblings with the same name)', () => {
     const root = new THREE.Group();
-    const a = new THREE.Mesh(
-      new THREE.BoxGeometry(2, 2, 2),
-      new THREE.MeshBasicMaterial()
-    );
+    const a = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2), new THREE.MeshBasicMaterial());
     a.name = 'pivot';
     a.position.set(10, 0, 0);
-    const b = new THREE.Mesh(
-      new THREE.BoxGeometry(2, 2, 2),
-      new THREE.MeshBasicMaterial()
-    );
+    const b = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2), new THREE.MeshBasicMaterial());
     b.name = 'pivot';
     b.position.set(20, 0, 0);
     root.add(a);
@@ -189,10 +180,7 @@ describe('applyZarrViewerConfig', () => {
   });
 
   it('target_node takes precedence over explicit target', () => {
-    const named = new THREE.Mesh(
-      new THREE.BoxGeometry(2, 2, 2),
-      new THREE.MeshBasicMaterial()
-    );
+    const named = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2), new THREE.MeshBasicMaterial());
     named.name = 'pivot';
     named.position.set(99, 0, 0);
     root.add(named);

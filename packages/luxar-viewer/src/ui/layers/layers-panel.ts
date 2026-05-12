@@ -11,11 +11,7 @@
 import * as THREE from 'three';
 import type { SceneNode } from '../../data/data-loader-types';
 import type { BlendingMode, CameraAwareMaterial } from '../../rendering';
-import {
-  LayerStateManager,
-  type LayerInfo,
-  type SelectionMode,
-} from './layer-state';
+import { LayerStateManager, type LayerInfo, type SelectionMode } from './layer-state';
 import { RangeSlider } from './range-slider';
 import { LabeledSlider } from './labeled-slider';
 import { config } from '../../config';
@@ -450,9 +446,7 @@ export class LayersPanel {
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault();
         const nextIdx =
-          e.key === 'ArrowDown'
-            ? Math.min(layers.length - 1, idx + 1)
-            : Math.max(0, idx - 1);
+          e.key === 'ArrowDown' ? Math.min(layers.length - 1, idx + 1) : Math.max(0, idx - 1);
         const next = layers[nextIdx];
         const nextRow = this.rowElements.get(next.path);
         if (nextRow) {
@@ -752,11 +746,12 @@ export class LayersPanel {
       return;
     }
 
-    const opacityUniform = (mat as unknown as {
-      uniforms?: { opacity?: { value?: number }; uOpacity?: { value?: number } };
-    }).uniforms;
-    const liveOpacity =
-      opacityUniform?.opacity?.value ?? opacityUniform?.uOpacity?.value ?? 1.0;
+    const opacityUniform = (
+      mat as unknown as {
+        uniforms?: { opacity?: { value?: number }; uOpacity?: { value?: number } };
+      }
+    ).uniforms;
+    const liveOpacity = opacityUniform?.opacity?.value ?? opacityUniform?.uOpacity?.value ?? 1.0;
     const state = getBlendingState(mode, liveOpacity);
     mat.blending = state.blending;
     mat.depthTest = state.depthTest;

@@ -610,10 +610,7 @@ export async function waitForNavigationComplete(page: Page, timeout = 15000): Pr
  * Throwing variant of {@link waitForNavigationComplete}. Rejects with
  * a descriptive error if navigation never settles within `timeout`.
  */
-export async function waitForNavigationCompleteOrThrow(
-  page: Page,
-  timeout = 15000
-): Promise<void> {
+export async function waitForNavigationCompleteOrThrow(page: Page, timeout = 15000): Promise<void> {
   await page.waitForFunction(
     () => {
       const debug = (window as any).__luxarDebug;

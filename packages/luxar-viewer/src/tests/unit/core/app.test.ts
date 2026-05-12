@@ -731,9 +731,7 @@ describe('LuxarApp', () => {
       expect(setDatasetBrowserSpy).toHaveBeenCalledWith(undefined);
       // Field cleared: a stale browser ref shouldn't persist on a
       // disposed app instance.
-      expect(
-        (app as unknown as { datasetBrowser: unknown }).datasetBrowser
-      ).toBeUndefined();
+      expect((app as unknown as { datasetBrowser: unknown }).datasetBrowser).toBeUndefined();
     });
 
     it('does not throw when DatasetBrowser is not open at dispose time', () => {

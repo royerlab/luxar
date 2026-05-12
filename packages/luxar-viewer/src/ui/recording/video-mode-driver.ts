@@ -55,9 +55,7 @@ export class VideoModeDriver implements OfflineCaptureDriver {
       return false;
     }
     if (!selection.isPreferred && selection.fallbackFrom) {
-      ctx.logWarning(
-        `${selection.fallbackFrom} not supported, falling back to ${selection.codec}`
-      );
+      ctx.logWarning(`${selection.fallbackFrom} not supported, falling back to ${selection.codec}`);
     }
     const codec = selection.codec;
 

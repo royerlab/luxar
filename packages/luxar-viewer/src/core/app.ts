@@ -988,9 +988,7 @@ export class LuxarApp {
       // API. Implementation lives in `core/debug-cache-helpers.ts` so the
       // not-found / no-cache / success branches can be unit-tested
       // directly with a stub loader.
-      cache: buildDebugCacheHelpers(() =>
-        SceneLoaderManager.getInstance().getDefaultLoader()
-      ),
+      cache: buildDebugCacheHelpers(() => SceneLoaderManager.getInstance().getDefaultLoader()),
 
       // Test-friendly hook for the error-dialog component. Lets
       // visual-regression specs render the dialog directly without going

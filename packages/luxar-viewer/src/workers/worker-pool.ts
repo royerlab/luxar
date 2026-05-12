@@ -209,9 +209,7 @@ export class WorkerPool {
             // generation has moved on. Self-terminate and reject so the
             // parent doesn't push us into the post-dispose pool.
             if (this.initGeneration !== myGeneration) {
-              throw new Error(
-                `Worker ${index + 1} aborted: pool was disposed during init`
-              );
+              throw new Error(`Worker ${index + 1} aborted: pool was disposed during init`);
             }
             this.pendingWorkers.delete(worker);
             log.info(Modules.WORKER_POOL, `Worker ${index + 1}/${workerCount} ready`);
@@ -368,7 +366,10 @@ export class WorkerPool {
         if (typeof event.preventDefault === 'function') event.preventDefault();
       };
       worker.onmessageerror = () => {
-        settle('err', new Error(`Worker ${workerNumber} produced an unserializable message during init`));
+        settle(
+          'err',
+          new Error(`Worker ${workerNumber} produced an unserializable message during init`)
+        );
       };
       api.initialize().then(
         () => settle('ok'),
@@ -541,9 +542,7 @@ export class WorkerPool {
    */
   private pickTimeoutMs(kind: TimeoutKind): number {
     const perf = config.dataLoading.performance;
-    return kind === 'visibility'
-      ? perf.workerVisibilityTimeoutMs
-      : perf.workerProjectionTimeoutMs;
+    return kind === 'visibility' ? perf.workerVisibilityTimeoutMs : perf.workerProjectionTimeoutMs;
   }
 
   /**
@@ -653,8 +652,7 @@ export class WorkerPool {
     if (!a && b) return b;
     // Both present. `AbortSignal.any` is the standard combinator; fall
     // back to manual wiring when unavailable.
-    const anyFn = (AbortSignal as unknown as { any?: (signals: AbortSignal[]) => AbortSignal })
-      .any;
+    const anyFn = (AbortSignal as unknown as { any?: (signals: AbortSignal[]) => AbortSignal }).any;
     if (typeof anyFn === 'function') {
       return anyFn([a as AbortSignal, b as AbortSignal]);
     }

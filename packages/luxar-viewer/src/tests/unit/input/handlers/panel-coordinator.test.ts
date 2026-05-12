@@ -76,10 +76,12 @@ function makeDebugConsole(initiallyVisible = true): {
   return { console, hide };
 }
 
-function makeRecordingPanel(opts: {
-  isVisible?: boolean;
-  isRecording?: boolean;
-} = {}): {
+function makeRecordingPanel(
+  opts: {
+    isVisible?: boolean;
+    isRecording?: boolean;
+  } = {}
+): {
   panel: RecordingPanel;
   hide: ReturnType<typeof vi.fn>;
   stopVideoRecording: ReturnType<typeof vi.fn>;

@@ -48,8 +48,7 @@ export { coerceColorsToFloat32, coerceScalarsToFloat32, fillColorsWhite };
  * function body — `asserts` clauses don't apply to module-scoped
  * `let` variables, so an extracted guard helper would lose narrowing.
  */
-const NOT_INITIALIZED_MSG =
-  '[DataWorker] Not initialized - call initialize() first';
+const NOT_INITIALIZED_MSG = '[DataWorker] Not initialized - call initialize() first';
 
 /**
  * Initialize worker (called once at startup).
@@ -193,14 +192,9 @@ async function computeNDVisibilityLines(params: {
   // Validates segments[i] < vertex-count, plus widths length, against the
   // max referenced vertex (a stronger check than `>= numSegments`, which
   // earlier code did).
-  validateLineSegmentReferences(
-    'computeNDVisibilityLines',
-    segments,
-    numSegments,
-    vertices,
-    ndim,
-    { widths }
-  );
+  validateLineSegmentReferences('computeNDVisibilityLines', segments, numSegments, vertices, ndim, {
+    widths,
+  });
 
   // Ensure buffer capacity
   if (!visibilityMaskBuffer || visibilityMaskBuffer.length < numSegments) {
@@ -410,11 +404,7 @@ async function projectPointsTo3D(params: {
     // effective-radius semantics. Production callers pass the right
     // shape; this is a worker-boundary validation belt for direct
     // callers and malformed payloads.
-    if (
-      !viewState ||
-      !viewState.tolerance ||
-      viewState.tolerance.length < ndim
-    ) {
+    if (!viewState || !viewState.tolerance || viewState.tolerance.length < ndim) {
       throw new Error(
         `projectPointsTo3D: viewState.tolerance too short for effective radius (got ${viewState?.tolerance?.length ?? 0}, expected ≥ ${ndim})`
       );
@@ -661,17 +651,8 @@ async function projectLinesTo3D(params: {
 }> {
   if (!wasmModule) throw new Error(NOT_INITIALIZED_MSG);
 
-  const {
-    positions,
-    segments,
-    widths,
-    colors,
-    sharpness,
-    scalars,
-    viewState,
-    ndim,
-    segmentCount,
-  } = params;
+  const { positions, segments, widths, colors, sharpness, scalars, viewState, ndim, segmentCount } =
+    params;
   const { displayDims, slicePosition, tolerance } = viewState;
 
   // The shared projection validator handles displayDims and the basic
@@ -692,18 +673,11 @@ async function projectLinesTo3D(params: {
       `projectLinesTo3D: tolerance too short (got ${tolerance.length}, expected ≥ ${ndim})`
     );
   }
-  validateLineSegmentReferences(
-    'projectLinesTo3D',
-    segments,
-    segmentCount,
-    positions,
-    ndim,
-    {
-      widths,
-      colors: colors ?? undefined,
-      sharpness: sharpness ?? undefined,
-    }
-  );
+  validateLineSegmentReferences('projectLinesTo3D', segments, segmentCount, positions, ndim, {
+    widths,
+    colors: colors ?? undefined,
+    sharpness: sharpness ?? undefined,
+  });
 
   // Convert input arrays to WASM-compatible formats
   const slicePosF32 = new Float32Array(slicePosition);
@@ -963,15 +937,7 @@ async function projectGSplatsTo3D(params: {
 }> {
   if (!wasmModule) throw new Error(NOT_INITIALIZED_MSG);
 
-  const {
-    positions,
-    choleskyFactors,
-    amplitudes,
-    colors,
-    viewState,
-    ndim,
-    splatCount,
-  } = params;
+  const { positions, choleskyFactors, amplitudes, colors, viewState, ndim, splatCount } = params;
   const { displayDims, slicePosition } = viewState;
 
   validateProjectionInputs(
@@ -1135,13 +1101,7 @@ async function projectGSplatsTo3D(params: {
   const outColors = new Float32Array(visibleCount * 3);
   if (colors) {
     // Compact colors by visibility (WASM expects Float32 input)
-    wasmModule.compact_by_mask(
-      coerceColorsToFloat32(colors),
-      visibility,
-      splatCount,
-      3,
-      outColors
-    );
+    wasmModule.compact_by_mask(coerceColorsToFloat32(colors), visibility, splatCount, 3, outColors);
   } else {
     fillColorsWhite(outColors, visibleCount);
   }
@@ -1279,9 +1239,7 @@ async function decodeLUT(params: {
   // or traps inside WASM. JS-side rejection turns malformed encoded
   // data into a clear error at the worker boundary.
   if (lutMode === 'row' && lut.length % k !== 0) {
-    throw new Error(
-      `decodeLUT: row-mode lut length ${lut.length} is not divisible by k=${k}`
-    );
+    throw new Error(`decodeLUT: row-mode lut length ${lut.length} is not divisible by k=${k}`);
   }
   const entryCount = lutMode === 'row' ? Math.floor(lut.length / k) : lut.length;
   for (let i = 0; i < indices.length; i++) {

@@ -179,8 +179,12 @@ describe('DebugConsole - Critical Fixes', () => {
     it('toolbar controls have aria-labels', () => {
       const debugConsole = new DebugConsole();
       const filter = document.querySelector('.luxar-debug-console__filter') as HTMLInputElement;
-      const closeBtn = document.querySelector('.luxar-debug-console__close-btn') as HTMLButtonElement;
-      const clearBtn = document.querySelector('.luxar-debug-console__clear-btn') as HTMLButtonElement;
+      const closeBtn = document.querySelector(
+        '.luxar-debug-console__close-btn'
+      ) as HTMLButtonElement;
+      const clearBtn = document.querySelector(
+        '.luxar-debug-console__clear-btn'
+      ) as HTMLButtonElement;
       const copyBtn = document.querySelector('.luxar-debug-console__copy-btn') as HTMLButtonElement;
       expect(filter.getAttribute('aria-label')).toBe('Filter messages');
       expect(closeBtn.getAttribute('aria-label')).toBe('Close debug console');
