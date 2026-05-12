@@ -28,6 +28,8 @@ In `src/scene/scene-manager.ts`, replace `setupRenderer()` with an
 async variant that branches on an env variable. Skeleton:
 
 ```ts
+import type { Renderer } from '../rendering/renderer-capabilities';
+
 private async setupRenderer(): Promise<void> {
   const useWebGPU = import.meta.env.VITE_LUXAR_USE_WEBGPU_RENDERER === '1';
 
@@ -44,7 +46,7 @@ private async setupRenderer(): Promise<void> {
       forceWebGL: true,
     });
     await r.init();
-    this.renderer = r as unknown as THREE.WebGLRenderer;
+    this.renderer = r as Renderer;  // widen Renderer to the union first
   } else {
     // existing WebGLRenderer construction unchanged
     this.renderer = new THREE.WebGLRenderer({ ... });
@@ -55,10 +57,13 @@ private async setupRenderer(): Promise<void> {
 
 Also update `async init` to `await this.setupRenderer();`.
 
-The `as unknown as` cast is a deliberate spot-check escape: the
-union type `WebGLRenderer | WebGPURenderer` is what we'll commit
-to in the actual port, but for the experiment a single-cast keeps
-the diff small.
+The `Renderer` type alias from `renderer-capabilities.ts` is
+single-arm today (`THREE.WebGLRenderer`). Before this experiment
+runs, widen it to
+`THREE.WebGLRenderer | import('three/webgpu').WebGPURenderer` so
+the cast above becomes a no-op. That single edit is the entire
+typing seam — every consumer that holds a renderer reference
+absorbs it automatically.
 
 ### Step 2 — Run
 

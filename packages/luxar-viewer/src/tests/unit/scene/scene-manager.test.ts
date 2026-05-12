@@ -328,10 +328,14 @@ const mockHideLoading = notifierMocks.hideLoading;
 const mockShowError = notifierMocks.error;
 
 vi.mock('../../../utils/hdr-detection', () => ({
-  detectHDRCapabilities: vi.fn(() => ({
-    hasHDRCanvas: false,
-    hasFloatTextures: true,
-    hasHalfFloatTextures: true,
+  detectDisplayCapabilities: vi.fn(() => ({
+    p3Gamut: false,
+    rec2020Gamut: false,
+    hdr: false,
+    deepColor: false,
+    floatTextures: false,
+    colorDepth: { red: 8, green: 8, blue: 8 },
+    recommendedColorSpace: 'srgb',
   })),
   configureHDRRenderer: vi.fn(),
   logHDRCapabilities: vi.fn(),

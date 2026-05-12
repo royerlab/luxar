@@ -10,7 +10,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as THREE from 'three';
 import {
-  detectHDRCapabilities,
+  detectDisplayCapabilities,
   isHDRDisplay,
   getOptimalRenderTargetType,
   configureHDRRenderer,
@@ -54,14 +54,15 @@ function makeCaps(over: Partial<HDRCapabilities> = {}): HDRCapabilities {
 }
 
 // ---------------------------------------------------------------------
-// detectHDRCapabilities — without a renderer
+// detectDisplayCapabilities — CSS-media-query branch only.
+// (Renderer-side GL probes moved to renderer-capabilities.test.ts.)
 // ---------------------------------------------------------------------
 
-describe('detectHDRCapabilities (no renderer)', () => {
+describe('detectDisplayCapabilities', () => {
   it('returns sRGB defaults when no media query matches', () => {
     const restore = installMatchMedia(new Set());
     try {
-      const caps = detectHDRCapabilities();
+      const caps = detectDisplayCapabilities();
       expect(caps).toEqual({
         p3Gamut: false,
         rec2020Gamut: false,
@@ -79,7 +80,7 @@ describe('detectHDRCapabilities (no renderer)', () => {
   it('reports p3Gamut when (color-gamut: p3) matches', () => {
     const restore = installMatchMedia(new Set(['(color-gamut: p3)']));
     try {
-      const caps = detectHDRCapabilities();
+      const caps = detectDisplayCapabilities();
       expect(caps.p3Gamut).toBe(true);
       expect(caps.rec2020Gamut).toBe(false);
       expect(caps.recommendedColorSpace).toBe('display-p3');
@@ -91,7 +92,7 @@ describe('detectHDRCapabilities (no renderer)', () => {
   it('prefers Rec2020 when both Rec2020 gamut AND HDR are detected', () => {
     const restore = installMatchMedia(new Set(['(color-gamut: rec2020)', '(dynamic-range: high)']));
     try {
-      const caps = detectHDRCapabilities();
+      const caps = detectDisplayCapabilities();
       expect(caps.rec2020Gamut).toBe(true);
       expect(caps.hdr).toBe(true);
       expect(caps.recommendedColorSpace).toBe('rec2020');
@@ -104,7 +105,7 @@ describe('detectHDRCapabilities (no renderer)', () => {
     // Rec2020 without HDR signal → not promoted, P3 (matched here too) wins.
     const restore = installMatchMedia(new Set(['(color-gamut: rec2020)', '(color-gamut: p3)']));
     try {
-      const caps = detectHDRCapabilities();
+      const caps = detectDisplayCapabilities();
       expect(caps.recommendedColorSpace).toBe('display-p3');
     } finally {
       restore();
@@ -115,77 +116,12 @@ describe('detectHDRCapabilities (no renderer)', () => {
     for (const q of ['(color: 48)', '(color: 30)']) {
       const restore = installMatchMedia(new Set([q]));
       try {
-        const caps = detectHDRCapabilities();
+        const caps = detectDisplayCapabilities();
         expect(caps.deepColor).toBe(true);
       } finally {
         restore();
       }
     }
-  });
-});
-
-// ---------------------------------------------------------------------
-// detectHDRCapabilities — with a (mocked) renderer
-// ---------------------------------------------------------------------
-
-describe('detectHDRCapabilities (with renderer)', () => {
-  let restoreMatchMedia: () => void;
-
-  beforeEach(() => {
-    restoreMatchMedia = installMatchMedia(new Set());
-  });
-
-  afterEach(() => {
-    restoreMatchMedia();
-  });
-
-  function fakeRenderer(opts: {
-    extensions?: string[];
-    colorBits?: { red: number; green: number; blue: number };
-  }): THREE.WebGLRenderer {
-    const { extensions = [], colorBits = { red: 8, green: 8, blue: 8 } } = opts;
-    const RED_BITS = 0x0d52;
-    const GREEN_BITS = 0x0d53;
-    const BLUE_BITS = 0x0d54;
-    const fakeGL = {
-      getExtension: vi.fn((name: string) => (extensions.includes(name) ? {} : null)),
-      getParameter: vi.fn((name: number) => {
-        if (name === RED_BITS) return colorBits.red;
-        if (name === GREEN_BITS) return colorBits.green;
-        if (name === BLUE_BITS) return colorBits.blue;
-        return 0;
-      }),
-      RED_BITS,
-      GREEN_BITS,
-      BLUE_BITS,
-    };
-    return {
-      getContext: () => fakeGL,
-    } as unknown as THREE.WebGLRenderer;
-  }
-
-  it('reads RED/GREEN/BLUE bits from the WebGL context', () => {
-    const renderer = fakeRenderer({ colorBits: { red: 10, green: 10, blue: 10 } });
-    const caps = detectHDRCapabilities(renderer);
-    expect(caps.colorDepth).toEqual({ red: 10, green: 10, blue: 10 });
-  });
-
-  it('reports floatTextures=true when EXT_color_buffer_float is present', () => {
-    const renderer = fakeRenderer({ extensions: ['EXT_color_buffer_float'] });
-    const caps = detectHDRCapabilities(renderer);
-    expect(caps.floatTextures).toBe(true);
-  });
-
-  it('reports floatTextures=true when only the half-float extension is present', () => {
-    const renderer = fakeRenderer({ extensions: ['EXT_color_buffer_half_float'] });
-    const caps = detectHDRCapabilities(renderer);
-    expect(caps.floatTextures).toBe(true);
-  });
-
-  it('reports floatTextures=false when no float-buffer extension is present', () => {
-    const renderer = fakeRenderer({ extensions: [] });
-    const caps = detectHDRCapabilities(renderer);
-    expect(caps.floatTextures).toBe(false);
   });
 });
 
