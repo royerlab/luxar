@@ -64,7 +64,7 @@ camera: {
 
 ### Shader Configuration
 
-Point rendering uses `falloff * opacity` for alpha, matching line material behavior. Per-node color adjustment (intensity, offset, gamma) is configured per-material. Global exposure/offset/gamma are in `renderingControls.defaults` and applied in the `LuxarToneMappingEffect` post-processing pass.
+Point rendering uses `falloff * opacity` for alpha, matching line material behavior. Per-node color adjustment (intensity, offset, gamma) is configured per-material. Global exposure/offset/gamma are in `renderingControls.defaults` and applied inside the mega-shader post-processing pass.
 
 ### User Interface Configuration
 
@@ -128,7 +128,7 @@ renderingControls: {
     bloomStrength: 0.25,
     bloomRadius: 1.0,
     bloomLevels: 8,
-    // Global EOG (Exposure-Offset-Gamma) in LuxarToneMappingEffect
+    // Global EOG (Exposure-Offset-Gamma) applied in the mega-shader
     exposure: 0.0,
     globalOffset: 0.0,
     globalGamma: 1.0,
@@ -136,17 +136,14 @@ renderingControls: {
     fxaaEnabled: false,
     msaaEnabled: false,         // Incompatible with additive blending
     msaaSamples: 4,
-    smaaEnabled: false,
     ssaaEnabled: false,
     toneMapping: 'Neutral',
-    dofEnabled: false,          // Depth of field
     // Detector noise (physics-based: Poisson + Gaussian + FPN)
     detectorNoiseEnabled: false,
     detectorNoiseReadoutSigma: 0.002,  // Temporal readout noise
     detectorNoisePhotonGain: 0.002,    // Shot noise visibility
     detectorNoiseFpnSigma: 0.001,     // Fixed pattern noise
     vignetteEnabled: false,
-    aoEnabled: false,           // Ambient occlusion
     controlType: 'orbit',       // vs 'fly' or 'ortho'
     autoRotate: false
   }
@@ -320,12 +317,13 @@ const camera = new THREE.PerspectiveCamera(
 );
 
 // In PostProcessing
-const bloomEffect = new BloomEffect({
-  intensity: config.renderingControls.defaults.bloomStrength,
-  luminanceThreshold: config.renderingControls.defaults.bloomThreshold,
-  levels: config.renderingControls.defaults.bloomLevels,
-  // radius is set on mipmapBlurPass after creation
-});
+postProcessing.setBloomEnabled(
+  config.renderingControls.defaults.bloomEnabled,
+  config.renderingControls.defaults.bloomStrength,
+  config.renderingControls.defaults.bloomRadius,
+  config.renderingControls.defaults.bloomThreshold
+);
+postProcessing.setBloomLevels(config.renderingControls.defaults.bloomLevels);
 ```
 
 ### Customizing Configuration

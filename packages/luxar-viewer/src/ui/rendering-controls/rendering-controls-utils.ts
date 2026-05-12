@@ -90,16 +90,12 @@ export function validateRenderingSettings(settings: Partial<RenderingSettings>):
   merged.globalOffset = clampOrDefault(merged.globalOffset, defaults.globalOffset, -1, 1);
   merged.globalGamma = clampOrDefault(merged.globalGamma, defaults.globalGamma, 0.1, 10);
 
-  // Anti-aliasing (SMAA dropped in mega-shader refactor — FXAA is the
-  // inline AA path; SSAA and MSAA still apply at framebuffer level)
+  // Anti-aliasing (FXAA inline; SSAA + MSAA at framebuffer level)
   merged.fxaaEnabled = booleanOrDefault(merged.fxaaEnabled, defaults.fxaaEnabled);
   merged.msaaEnabled = booleanOrDefault(merged.msaaEnabled, defaults.msaaEnabled);
   merged.msaaSamples = clampMSAASamples(merged.msaaSamples);
   merged.ssaaEnabled = booleanOrDefault(merged.ssaaEnabled, defaults.ssaaEnabled);
   merged.ssaaMultiplier = clampOrDefault(merged.ssaaMultiplier, defaults.ssaaMultiplier, 1, 8);
-
-  // DoF and AO were dropped in the mega-shader refactor — no
-  // corresponding rendering setters remain.
 
   // Vignette
   merged.vignetteEnabled = booleanOrDefault(merged.vignetteEnabled, defaults.vignetteEnabled);

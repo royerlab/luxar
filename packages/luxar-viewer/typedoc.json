@@ -45,12 +45,6 @@
   },
   "commentStyle": "jsdoc",
   "excludeTags": ["@internal"],
-  "externalSymbolLinkMappings": {
-    "postprocessing": {
-      "EffectPass": "https://pmndrs.github.io/postprocessing/public/docs/class/src/passes/EffectPass.js~EffectPass.html",
-      "EffectComposer": "https://pmndrs.github.io/postprocessing/public/docs/class/src/core/EffectComposer.js~EffectComposer.html"
-    }
-  },
   "plugin": [],
   "jsDocCompatibility": {
     "defaultTag": true,

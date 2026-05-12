@@ -3,8 +3,8 @@
  *
  * Extracted from `rendering/post-processing-manager.ts` so the SSAA
  * upscale arithmetic — multiply the screen size by `ssaaMultiplier` only
- * when SSAA is on, otherwise pass through — is testable without a full
- * EffectComposer / WebGL context.
+ * when SSAA is on, otherwise pass through — is testable without a
+ * WebGL context.
  *
  * @module rendering/post-processing/render-target-sizing
  */

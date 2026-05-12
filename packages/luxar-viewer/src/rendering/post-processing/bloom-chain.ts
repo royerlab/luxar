@@ -2,8 +2,7 @@
  * Bloom pyramid: downsample + upsample chain producing a soft-glow
  * texture from an HDR scene.
  *
- * Replaces `pmndrs/postprocessing` `BloomEffect`. Algorithm follows the
- * standard mipmap-blur pattern (Next-Gen Post Processing, GDC 2015):
+ * Standard mipmap-blur pattern (Next-Gen Post Processing, GDC 2015):
  *
  *   1. Threshold + 2× downsample → mip[0]
  *   2. For i in 0..levels-2: 2× downsample mip[i] → mip[i+1]
@@ -54,10 +53,9 @@ const THRESHOLD_VERT = /* glsl */ `
  * Threshold + 2× box downsample. Extracts bright pixels above the
  * threshold with a smooth knee to avoid banding at the cutoff.
  *
- * Uses Rec.709 relative luminance for the brightness test, matching
- * the pmndrs BloomEffect's LuminanceMaterial. (Earlier versions of
- * this file used max(r,g,b), which overstated saturated-channel
- * pixels — e.g. pure red would bloom even at low intensity.)
+ * Uses Rec.709 relative luminance for the brightness test. An
+ * earlier version used max(r,g,b), which overstated saturated-channel
+ * pixels — e.g. pure red would bloom even at low intensity.
  */
 const THRESHOLD_FRAG = /* glsl */ `
   precision highp float;
@@ -71,7 +69,7 @@ const THRESHOLD_FRAG = /* glsl */ `
 
   // Soft-knee: smoothstep around the threshold on relative luma, then
   // multiply by the source color (preserves chroma; only the brightness
-  // gate is luma-based — same shape as pmndrs LuminanceMaterial).
+  // gate is luma-based).
   vec3 thresholdKnee(vec3 color) {
     float l = dot(color, vec3(0.2126, 0.7152, 0.0722));
     float soft = smoothstep(uThreshold, uThreshold + uSmoothing, l);
@@ -148,18 +146,18 @@ interface MipLevel {
 export class BloomChain {
   private levels: number;
   private threshold: number;
-  private smoothing: number;
+  private readonly smoothing: number;
   private radius: number;
 
   private mips: MipLevel[] = [];
 
-  private thresholdMat: THREE.ShaderMaterial;
-  private downsampleMat: THREE.ShaderMaterial;
-  private upsampleMat: THREE.ShaderMaterial;
+  private readonly thresholdMat: THREE.ShaderMaterial;
+  private readonly downsampleMat: THREE.ShaderMaterial;
+  private readonly upsampleMat: THREE.ShaderMaterial;
 
-  private fullscreenScene: THREE.Scene;
-  private fullscreenMesh: THREE.Mesh;
-  private camera: THREE.OrthographicCamera;
+  private readonly fullscreenScene: THREE.Scene;
+  private readonly fullscreenMesh: THREE.Mesh;
+  private readonly camera: THREE.OrthographicCamera;
 
   constructor(cfg: BloomChainConfig) {
     this.levels = clamp(Math.round(cfg.levels ?? 8), 1, 12);
@@ -238,18 +236,9 @@ export class BloomChain {
     this.allocateMips(w, h);
   }
 
-  getLevels(): number {
-    return this.levels;
-  }
-
   setThreshold(t: number): void {
     this.threshold = t;
     this.thresholdMat.uniforms.uThreshold.value = t;
-  }
-
-  setSmoothing(s: number): void {
-    this.smoothing = s;
-    this.thresholdMat.uniforms.uSmoothing.value = s;
   }
 
   setRadius(r: number): void {

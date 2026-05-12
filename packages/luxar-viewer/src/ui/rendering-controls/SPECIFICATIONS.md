@@ -270,7 +270,7 @@ function setupHDRControls(context: SetupContext, exposureLogValue: { log: number
   - Slider controls `exposureLogValue.log` (linear log10 values)
   - onChange converts: `actualValue = 10^logValue`
   - Custom `updateDisplay()` shows actual value, not log value
-- **Global EOG Model**: `adjusted = color * exposure + globalOffset; clip; pow(adjusted, 1/globalGamma)` applied in LuxarToneMappingEffect before tone mapping
+- **Global EOG Model**: `adjusted = color * exposure + globalOffset; clip; pow(adjusted, 1/globalGamma)` applied inside the mega-shader fragment before the tone-mapping operator
 - **Format Helper**: Shows `0.01` (3 decimals) to `10` (0 decimals) to `100` (0 decimals)
 
 **Algorithm**:
@@ -317,7 +317,6 @@ function setupAntiAliasingControls(context: SetupContext): SetupResult;
   - MSAA Enabled checkbox
   - MSAA Settings subfolder (conditional)
     - Sample Count dropdown (2, 4, 8)
-  - SMAA Enabled checkbox
 
 **Returns**:
 
@@ -331,7 +330,6 @@ function setupAntiAliasingControls(context: SetupContext): SetupResult;
 **Special Behavior**:
 
 - **Conditional Subfolders**: SSAA and MSAA settings only visible when enabled
-- **SMAA Preset-Only**: Fine-grained controls (threshold, search steps) not exposed because pmndrs/postprocessing only supports preset modes
 
 **Initial State**:
 

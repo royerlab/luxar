@@ -8,10 +8,6 @@
  * - Chromatic Lens Distortion (barrel/pincushion + chromatic aberration
  *   via per-channel sampling at distorted UVs)
  * - Vignette (multiplicative edge darkening)
- *
- * Depth-of-Field and Ambient Occlusion were dropped in the
- * mega-shader refactor: DoF needs depth-aware multi-pass blur, SSAO
- * needs surface normals which point/gsplat/line geometry don't have.
  */
 
 import type { SetupContext, SetupResult } from './types';
@@ -260,12 +256,6 @@ export function setupPostProcessingControls(
       '• 0.02 = Moderate (older detector)\n' +
       '• 0.05 = High (uncalibrated sensor)'
   );
-
-  // Depth of Field and Ambient Occlusion dropped in the mega-shader
-  // refactor. DoF is niche for scientific viz; SSAO has no surface
-  // normals to work with for point/gsplat geometry. Their UI sections
-  // were removed; the settings fields remain in config to absorb old
-  // user state without errors.
 
   // Vignette subfolder
   const vignetteFolder = effectsFolder.addFolder('Vignette');

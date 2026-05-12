@@ -200,7 +200,6 @@ installAllMocks(); // Sets up all mocks at once
 
 - Core classes: `Scene`, `Camera`, `Renderer`, `Mesh`, `Geometry`, `Material`
 - Point rendering: `Points`, `PointsMaterial`, `BufferGeometry`, `BufferAttribute`
-- Post-processing: `EffectComposer`, `RenderPass`, `ShaderPass`
 - Controls: Orbit/fly controls (see `orbit-controls.mock.ts`)
 
 **Key features**:

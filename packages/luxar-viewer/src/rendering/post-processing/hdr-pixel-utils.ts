@@ -4,7 +4,7 @@
  * Extracted from `post-processing-manager.ts`'s captureHDRPixels /
  * captureHDRAsEXR / renderToImageData paths so the typed-array
  * conversions and the WebGL → ImageData vertical flip are testable
- * without a renderer or EffectComposer.
+ * without a renderer.
  *
  * @module rendering/post-processing/hdr-pixel-utils
  */

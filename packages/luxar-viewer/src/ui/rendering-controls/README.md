@@ -85,7 +85,7 @@ Creates controls for:
 - Global Gamma (linear slider, 0.1 to 10.0)
 - Tone mapping selector (None, Linear, Reinhard, Cineon, ACES, AgX, Neutral)
 
-Global EOG is applied in the vendored `LuxarToneMappingEffect` before tone mapping in a single shader pass.
+Global EOG is applied inside the mega-shader fragment immediately before the tone-mapping operator.
 
 ### anti-aliasing-setup.ts
 
@@ -96,7 +96,6 @@ Creates controls for:
 - SSAA (Supersampling) with resolution multiplier
 - FXAA (Fast Approximate AA)
 - MSAA (Multisample AA) with sample count
-- SMAA (Subpixel Morphological AA)
 
 Includes dynamic subfolder showing/hiding based on AA enablement.
 
@@ -104,13 +103,11 @@ Includes dynamic subfolder showing/hiding based on AA enablement.
 
 **Post-processing visual effects**
 
-Creates controls for 7 effects:
+Creates controls for:
 
 - **Bloom**: Glow/light bleeding (threshold, strength, radius, mipmap levels)
 - **Detector Noise**: Physics-based noise (shot, readout, FPN)
-- **Depth of Field**: Bokeh blur (focus, strength)
-- **Chromatic Aberration**: Lens color fringing
-- **Ambient Occlusion**: Contact shadows (quality presets)
+- **Chromatic Lens Distortion**: Brown-Conrady + camera intrinsics + per-channel dispersion
 - **Vignette**: Edge darkening (darkness, offset)
 - **Lens Distortion**: Full camera model (distortion, principal point, focal length, skew)
 

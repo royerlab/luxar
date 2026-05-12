@@ -2,10 +2,8 @@
  * FXAA post-pass.
  *
  * Standard "FXAA Quality" preset — single-pass edge anti-aliasing on
- * tone-mapped LDR pixels. Replaces `pmndrs/postprocessing` `FXAAEffect`.
- *
- * Runs after the mega-shader and writes to the renderer's current
- * target (typically the canvas backbuffer).
+ * tone-mapped LDR pixels. Runs after the mega-shader and writes to
+ * the renderer's current target (typically the canvas backbuffer).
  *
  * @module rendering/post-processing/fxaa-pass
  */

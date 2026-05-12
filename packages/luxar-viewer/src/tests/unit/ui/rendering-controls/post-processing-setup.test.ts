@@ -74,9 +74,6 @@ interface ContextStubs {
     setBloomLevels: ReturnType<typeof vi.fn>;
     setDetectorNoiseEnabled: ReturnType<typeof vi.fn>;
     updateDetectorNoiseSettings: ReturnType<typeof vi.fn>;
-    setDOF: ReturnType<typeof vi.fn>;
-    updateDOF: ReturnType<typeof vi.fn>;
-    setAOEnabled: ReturnType<typeof vi.fn>;
     setVignetteEnabled: ReturnType<typeof vi.fn>;
     setChromaticLensDistortionEnabled: ReturnType<typeof vi.fn>;
     updateChromaticLensDistortion: ReturnType<typeof vi.fn>;
@@ -96,9 +93,6 @@ function makeContext(initial: Partial<Record<string, unknown>> = {}): ContextStu
     setBloomLevels: vi.fn(),
     setDetectorNoiseEnabled: vi.fn(),
     updateDetectorNoiseSettings: vi.fn(),
-    setDOF: vi.fn(),
-    updateDOF: vi.fn(),
-    setAOEnabled: vi.fn(),
     setVignetteEnabled: vi.fn(),
     setChromaticLensDistortionEnabled: vi.fn(),
     updateChromaticLensDistortion: vi.fn(),
@@ -116,11 +110,6 @@ function makeContext(initial: Partial<Record<string, unknown>> = {}): ContextStu
     detectorNoiseReadoutSigma: 0.01,
     detectorNoisePhotonGain: 0.01,
     detectorNoiseFpnSigma: 0.005,
-    dofEnabled: false,
-    dofFocus: 10,
-    dofStrength: 0.5,
-    aoEnabled: false,
-    aoQuality: 'medium',
     vignetteEnabled: false,
     vignetteDarkness: 0.5,
     vignetteOffset: 0.5,

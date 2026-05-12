@@ -26,14 +26,10 @@ function makeStubs() {
     setFXAAEnabled: vi.fn(),
     setMSAAEnabled: vi.fn(),
     setMSAASamples: vi.fn(),
-    setSMAAEnabled: vi.fn(),
-    updateSMAASettings: vi.fn(),
     setToneMapping: vi.fn(),
-    setDOF: vi.fn(),
     setDetectorNoiseEnabled: vi.fn(),
     setVignetteEnabled: vi.fn(),
     setChromaticLensDistortionEnabled: vi.fn(),
-    setAOEnabled: vi.fn(),
   };
   const sceneManager = {
     updateExposure: vi.fn(),

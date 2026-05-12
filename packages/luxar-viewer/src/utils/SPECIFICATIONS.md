@@ -285,7 +285,7 @@ function detectHDRCapabilities(renderer: THREE.WebGLRenderer): HDRCapabilities {
 
 **Purpose**: Log detected HDR capabilities to console for informational purposes.
 
-**IMPORTANT**: This function does NOT configure the renderer. All HDR configuration is handled by `PostProcessingManager` to avoid conflicts with the pmndrs/postprocessing library.
+**IMPORTANT**: This function does NOT configure the renderer. All HDR configuration is owned by `PostProcessingManager` (the mega-shader pipeline applies tone mapping internally and pins `renderer.outputColorSpace = SRGB` / `renderer.toneMapping = NoToneMapping`).
 
 ```typescript
 function configureHDRRenderer(
@@ -302,18 +302,13 @@ function configureHDRRenderer(
   } else {
     console.log('Standard sRGB display detected');
   }
-
-  // Note: Actual renderer configuration (outputColorSpace, toneMapping) is done by
-  // PostProcessingManager in the rendering/ package. This avoids conflicts with
-  // pmndrs/postprocessing library which manages these settings internally.
 }
 ```
 
 **Why This Design**:
 
 - PostProcessingManager sets `renderer.outputColorSpace = THREE.SRGBColorSpace`
-- PostProcessingManager sets `renderer.toneMapping = THREE.NoToneMapping`
-- The pmndrs library handles all HDR → LDR conversion internally
+- PostProcessingManager sets `renderer.toneMapping = THREE.NoToneMapping` (the mega-shader does its own tone mapping)
 - Setting these values here would be overridden and cause confusion
 
 **Function Name**: Could be renamed to `logHDRCapabilities()` for clarity, but kept for backward compatibility.

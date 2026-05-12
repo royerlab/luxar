@@ -90,7 +90,7 @@ export function setupPerformanceControls(context: PerformanceSetupContext): Perf
   const manualDPRControl = performanceFolder
     .add(manualDPRSettings, 'dpr', 0.25, nativeDPR, 0.05)
     .name('Manual DPR')
-    .onChange((value: number) => {
+    .onFinishChange((value: number) => {
       if (!settings.adaptiveDPREnabled) {
         manager.setManualDPR(value);
         triggerAnimation();
@@ -102,6 +102,7 @@ export function setupPerformanceControls(context: PerformanceSetupContext): Perf
     'Manual Device Pixel Ratio (when adaptive is off)\n' +
       `• Native: ${nativeDPR.toFixed(2)}\n` +
       '• Lower values = better performance, less sharpness\n' +
+      '• Applied when you release/commit the slider to avoid GPU resize thrash\n' +
       '• 1.0 = 100% resolution, 0.5 = 50% resolution'
   );
 

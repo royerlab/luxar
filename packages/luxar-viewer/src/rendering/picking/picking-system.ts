@@ -476,8 +476,9 @@ export class PickingSystem {
 
   /**
    * Apply Brown-Conrady lens distortion to UV coordinates.
-   * TypeScript port of the GLSL applyDistortion() function in chromatic-lens-distortion-effect.ts.
-   * Uses the green channel distortion (reference, no chromatic offset).
+   * TypeScript port of the GLSL `applyDistortion` in the mega-shader
+   * fragment (`rendering/post-processing/mega-shader.glsl.ts`). Uses
+   * the green-channel distortion (reference, no chromatic offset).
    *
    * This maps from distorted screen space to undistorted source space — exactly
    * what we need to convert mouse coords on the distorted display to pick buffer coords.

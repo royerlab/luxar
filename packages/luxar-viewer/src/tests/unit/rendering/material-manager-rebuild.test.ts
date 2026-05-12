@@ -72,8 +72,8 @@ describe('MaterialManager.rebuildAfterContextRestore', () => {
   });
 
   it('does NOT call material.dispose() on cached entries (avoids dead-context errors)', () => {
-    // The reasoning is documented in the method's doc comment: pmndrs +
-    // some THREE drivers throw when disposing programs from a now-dead
+    // The reasoning is documented in the method's doc comment: some
+    // THREE drivers throw when disposing programs from a now-dead
     // WebGL context. We test the behavior indirectly: the rebuild path
     // succeeds even on a brand-new manager whose materials were never
     // disposed (no explicit disposal of pre-existing cache happens).

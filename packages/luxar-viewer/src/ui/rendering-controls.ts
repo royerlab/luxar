@@ -41,7 +41,7 @@ export type { CinematicSnapshot, CinematicSnapshotKeys } from './rendering-contr
  * Provides comprehensive UI for controlling:
  * - Post-processing effects (bloom, noise, vignette, chromatic aberration, lens distortion)
  * - HDR intensity and tone mapping
- * - Anti-aliasing options (FXAA, SMAA, MSAA, SSAA)
+ * - Anti-aliasing options (FXAA, MSAA, SSAA)
  * - Camera controls (orbit, fly, ortho modes with physics parameters)
  * - Point rendering (base size, near/far size, sharpness, saturation)
  * - Dynamic clipping planes for nD visualization

@@ -60,8 +60,8 @@ The `luxar-viewer.scene` package manages the THREE.js scene graph, animation loo
    - Target at scene center
 
 5. Initialize Post-Processing
-   - EffectComposer with HDR buffers
-   - Bloom, tone mapping, optional effects
+   - PostProcessingManager (mega-shader pipeline) with HDR HalfFloat buffers
+   - Bloom pre-pass, tone mapping, optional FXAA
 
 6. Start Animation Loop
    - Idle detection enabled
@@ -730,6 +730,8 @@ function updatePixelRatio(): void {
 
 - During initialization
 - On window DPI change (rare)
+
+**Adaptive/manual DPR interaction**: when AdaptiveDPRManager or the manual DPR slider has set an explicit DPR override, ordinary window resizes must preserve that override instead of blindly resetting to native `window.devicePixelRatio`. The override is cleared when DPR returns to native so future monitor-DPI changes continue to track the browser.
 
 ### 6.3 Resize Debouncing (Performance Optimization)
 

@@ -15,26 +15,34 @@ import {
 interface ControllerStub {
   name: ReturnType<typeof vi.fn>;
   onChange: ReturnType<typeof vi.fn>;
+  onFinishChange: ReturnType<typeof vi.fn>;
   hide: ReturnType<typeof vi.fn>;
   show: ReturnType<typeof vi.fn>;
   updateDisplay: ReturnType<typeof vi.fn>;
   domElement: HTMLElement;
   _onChangeFn: ((value: unknown) => void) | null;
+  _onFinishChangeFn: ((value: unknown) => void) | null;
 }
 
 function makeController(): ControllerStub {
   const ctrl: ControllerStub = {
     name: vi.fn(),
     onChange: vi.fn(),
+    onFinishChange: vi.fn(),
     hide: vi.fn(),
     show: vi.fn(),
     updateDisplay: vi.fn(),
     domElement: document.createElement('div'),
     _onChangeFn: null,
+    _onFinishChangeFn: null,
   };
   ctrl.name.mockReturnValue(ctrl);
   ctrl.onChange.mockImplementation((fn: (v: unknown) => void) => {
     ctrl._onChangeFn = fn;
+    return ctrl;
+  });
+  ctrl.onFinishChange.mockImplementation((fn: (v: unknown) => void) => {
+    ctrl._onFinishChangeFn = fn;
     return ctrl;
   });
   return ctrl;
@@ -169,11 +177,15 @@ describe('setupPerformanceControls', () => {
   });
 
   describe('manual DPR slider', () => {
-    it('forwards the new DPR to manager.setManualDPR when adaptive is OFF', () => {
+    it('defers applying DPR until slider/input interaction is committed', () => {
       settings.adaptiveDPREnabled = false;
       setupPerformanceControls(makeContext());
       const manualCtrl = folder.controllers[1];
+
       manualCtrl._onChangeFn?.(1.0);
+      expect(manager.setManualDPR).not.toHaveBeenCalled();
+
+      manualCtrl._onFinishChangeFn?.(1.0);
       expect(manager.setManualDPR).toHaveBeenCalledWith(1.0);
       expect(triggerAnimation).toHaveBeenCalled();
     });
@@ -184,7 +196,7 @@ describe('setupPerformanceControls', () => {
       manager.isActive.mockReturnValue(true);
       setupPerformanceControls(makeContext());
       const manualCtrl = folder.controllers[1];
-      manualCtrl._onChangeFn?.(1.0);
+      manualCtrl._onFinishChangeFn?.(1.0);
       expect(manager.setManualDPR).not.toHaveBeenCalled();
     });
   });

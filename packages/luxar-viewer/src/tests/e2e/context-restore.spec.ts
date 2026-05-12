@@ -173,7 +173,7 @@ test.describe('WebGL Context Restore (CR-1)', () => {
       const pp = debug?.postProcessing;
       if (!pp || typeof pp.updateExposure !== 'function') return false;
       pp.updateExposure(exposure);
-      return pp.toneMappingEffect?.exposure === exposure;
+      return typeof pp.getExposure === 'function' && pp.getExposure() === exposure;
     }, targetExposure);
     expect(targetSetOk).toBe(true);
 
@@ -182,7 +182,7 @@ test.describe('WebGL Context Restore (CR-1)', () => {
     const exposureAfter = await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
       const pp = debug?.postProcessing;
-      return pp?.toneMappingEffect?.exposure ?? null;
+      return typeof pp?.getExposure === 'function' ? pp.getExposure() : null;
     });
     expect(exposureAfter).toBeCloseTo(targetExposure, 5);
 

@@ -46,9 +46,7 @@ export function applyRenderingSettings(context: ApplySettingsContext): void {
   sceneManager.updateGlobalOffset(settings.globalOffset);
   sceneManager.updateGlobalGamma(settings.globalGamma);
 
-  // Anti-aliasing — SSAA + FXAA + MSAA (SMAA was dropped in the
-  // mega-shader refactor; the mega-shader pipeline is one pass and
-  // SMAA's 3-pass blend would defeat the point).
+  // Anti-aliasing: SSAA, FXAA, MSAA.
   postProcessing.setSSAAEnabled(settings.ssaaEnabled);
   postProcessing.setSSAAMultiplier(settings.ssaaMultiplier);
   postProcessing.setFXAAEnabled(settings.fxaaEnabled);
@@ -86,10 +84,6 @@ export function applyRenderingSettings(context: ApplySettingsContext): void {
     settings.chromaticLensFocalLengthY,
     settings.chromaticLensSkew
   );
-
-  // SSAO and DoF were dropped in the mega-shader refactor: SSAO has
-  // no surface normals for point/gsplat geometry and DoF is niche for
-  // scientific viz. Removed call sites here intentionally.
 
   sceneManager.setDynamicClipping(settings.dynamicClippingEnabled);
 

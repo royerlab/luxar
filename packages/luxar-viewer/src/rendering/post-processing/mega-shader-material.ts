@@ -2,10 +2,9 @@
  * Mega-shader material: single-pass post-processing.
  *
  * Wraps {@link MEGA_FRAGMENT_SHADER} as a `THREE.ShaderMaterial` that
- * the host renders against a fullscreen triangle. Replaces the
- * pmndrs/postprocessing `EffectPass` + four custom Effect subclasses
- * (LuxarToneMapping, DetectorNoise, ChromaticLensDistortion,
- * RobustVignette) with one pass.
+ * the host renders against a fullscreen triangle. One pass fuses
+ * chromatic lens distortion, detector noise, EOG, tone mapping,
+ * vignette, and sRGB encoding.
  *
  * The host renders bloom into a separate texture before invoking this
  * material (see {@link BloomChain}) and runs FXAA on the output if
@@ -26,9 +25,7 @@ import { MEGA_VERTEX_SHADER, MEGA_FRAGMENT_SHADER } from './mega-shader.glsl';
  * enum values (which split 0,1,2,3,4,5=Custom,6=AgX,7=Neutral).
  *
  * `NoToneMapping` deliberately routes to mode 1 (Linear) so its
- * shader behavior — clamp/saturate to [0,1] — matches the old
- * pipeline. The old `tone-mapping-handler.ts` explicitly mapped
- * `THREE.NoToneMapping → pmndrs.LINEAR` for the same reason.
+ * shader behavior is clamp/saturate to [0,1].
  */
 function toneMappingModeDefine(mode: THREE.ToneMapping): string {
   switch (mode) {
@@ -330,7 +327,7 @@ export class MegaShaderMaterial extends THREE.ShaderMaterial {
    * pre-EOG linear HDR. Use only during `captureHDRPixels`
    * `'hdr-effects-pre-tone'` mode; callers MUST also disable
    * detector noise / vignette / lens distortion via the regular
-   * `toggle*` methods to match the old pmndrs semantics.
+   * `toggle*` methods so they don't pollute the linear HDR output.
    */
   toggleRawHdrCapture(enabled: boolean): void {
     this.setDefineFlag('LUXAR_CAPTURE_RAW_HDR', enabled);
@@ -338,10 +335,9 @@ export class MegaShaderMaterial extends THREE.ShaderMaterial {
 
   /**
    * Skip ONLY the final sRGB encoding step; the rest of the pipeline
-   * (EOG, tone mapping, vignette) runs normally. Use during
-   * `captureHDRPixels` `'visible-ldr'` mode to match the old pmndrs
-   * pipeline which read from a HalfFloat ping-pong buffer that held
-   * linear-LDR (post-tone-mapped) values.
+   * (EOG, tone mapping, vignette) runs normally. Output is linear LDR
+   * (post-tone-mapped, pre-sRGB). Used by `captureHDRPixels`
+   * `'visible-ldr'` mode.
    */
   toggleLinearLdrCapture(enabled: boolean): void {
     this.setDefineFlag('LUXAR_CAPTURE_LINEAR_LDR', enabled);
