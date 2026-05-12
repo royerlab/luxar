@@ -34,10 +34,11 @@ Make the readback async. The pick result for cursor position `(x, y)`
 arrives one frame after the mouse moves there.
 
 **Pros**:
-- Minimal code change. `performPick` becomes async; the existing
-  debounce already swallows higher latencies during interaction.
+- Minimal code change. `performPick` becomes async; `readbackAndVote`
+  becomes async; the orchestrating callback at `app.ts:782` is
+  already `async`.
 - No new data structures to keep in sync.
-- The `_dirty` flag already prevents re-render during pan/orbit;
+- The `_dirty` flag still prevents re-render during pan/orbit;
   this option preserves that.
 
 **Cons**:
@@ -47,10 +48,16 @@ arrives one frame after the mouse moves there.
   by one frame too. Marginal on 60 Hz, noticeable on 30 Hz.
 - A fast mouse motion that crosses a small element entirely within
   one frame may produce a stale pick.
+- *Important*: the existing 16 ms throttle on the hover-fast-path
+  (`picking-system.ts:290`) does **not** absorb async-readback
+  latency. The throttle and the per-frame readback both run at
+  the display refresh rate — they're parallel, not serial. The
+  cursor still updates at refresh rate; the *pick result* is
+  what's delayed by one frame. Mitigation lives in the
+  stale-tooltip suppression below, not in any existing buffering.
 
-**Implementation cost**: ~20-line change in `picking-system.ts`.
-`readbackAndVote` becomes async; `performPick` awaits it; the
-callback wiring at `app.ts:782` is already async-capable.
+**Implementation cost**: ~20-line change in `picking-system.ts`
+(see implementation outline section).
 
 ### Option B — CPU spatial index
 
@@ -113,10 +120,17 @@ Rationale:
 1. **The latency is below human perception thresholds** at 60 Hz
    (16 ms). Below 60 Hz, the user has bigger problems than picking
    lag, so optimising it doesn't move the needle.
-2. **The existing dirty-flag debounce already absorbs latency**
-   during interactive pan/orbit (when readback is skipped entirely).
-   Async makes the *non-interactive* path 1 frame slower; the
-   *interactive* path is unchanged.
+2. **The *interactive* path is unchanged.** During pan/orbit the
+   `_dirty` flag suppresses readback entirely (the debounce at
+   `picking-system.ts:294-300` only kicks in on the dirty branch,
+   coalescing the eventual single readback to when the camera
+   settles). Async readback adds 1 frame on top of that
+   already-debounced fire, which is invisible against the much
+   larger camera-motion debounce window. The *hover-on-static-scene*
+   path is where the 1-frame latency lands — there the only existing
+   throttle is the 16 ms refresh-rate gate, which runs in parallel
+   with each readback rather than buffering against it. So the
+   1 frame is real, but it is bounded.
 3. **Option B's complexity is not justified** until we have user
    reports of perceived hover lag. The maintenance cost of keeping
    screen-space bounds in sync with vertex-shader projection logic
@@ -143,22 +157,51 @@ Rationale:
 
 ## Implementation outline (for the port PR, not this design doc)
 
+The real `performPick` (around `picking-system.ts:338`) does the
+work of setting `this._lastReadX`/`_lastReadY` from the cursor
+coordinates, then calls `readbackAndVote()` with no arguments —
+`readbackAndVote` reads its window position from those fields
+(see `picking-system.ts:519-527`). So the async edit is two
+methods, no signature changes on the caller-facing API:
+
 ```ts
-// picking-system.ts — diff sketch, NOT to be implemented yet
+// picking-system.ts — diff sketch, NOT to be implemented yet.
+// Signatures match the existing methods; only the keyword `async`
+// and one `await` are added.
+
 private async performPick(screenX: number, screenY: number): Promise<void> {
-  if (this._dirty) {
-    this.renderPickBuffer();
-    this._dirty = false;
-  }
-  const result = await this.readbackAndVote(screenX, screenY); // was sync
-  this.lastResult = result;
-  this.onPick(result);
+  // … existing cursor → _lastReadX/_lastReadY math …
+  // … existing _dirty re-render branch …
+  // … existing ray-bbox early-out …
+
+  // The line that changes:
+  const result = await this.readbackAndVote();   // was: const result = this.readbackAndVote();
+  this.onPickResult(result);
+}
+
+private async readbackAndVote(): Promise<PickResult | null> {
+  // WebGL2: renderer.readRenderTargetPixelsAsync exists in r184+;
+  // it returns Promise<void> after the GPU finishes the readback.
+  // Under WebGPU the same call dispatches buffer.mapAsync.
+  await this.renderer.readRenderTargetPixelsAsync(
+    this.pickTarget,
+    this._lastReadX, this._lastReadY,
+    PICK_SIZE, PICK_SIZE,
+    this.readBuffer
+  );
+  // … existing vote logic over this.readBuffer …
 }
 ```
 
-The `readbackAndVote` signature change ripples to the `onPick`
-callback at `app.ts:782`, which is already declared `async`. No
-public-API change needed.
+The orchestrating callback at `app.ts:782` is **already** declared
+`async (result: PickResult | null) => { … }` (verified during the
+audit-fix planning). No call-site change needed there.
+
+Mouse-move dispatch in `onMouseMove` (around `picking-system.ts:270`)
+needs no change either: `performPick` is fired in a fire-and-forget
+shape from both the clean-buffer branch (line 292) and the
+debounce branch (line 295-300); both already discard the return
+value, so awaiting nothing changes.
 
 ## Future revision criteria
 
