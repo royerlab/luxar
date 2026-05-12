@@ -7,7 +7,9 @@
 
 The `luxar-viewer.rendering` package provides advanced WebGL rendering capabilities including the HDR post-processing pipeline, custom Point/Line/GSplat materials, scalar colormap support, GPU buffer pooling, picking materials, and material management for data visualization.
 
-**Core Responsibility**: Deliver professional-grade visual effects through pmndrs/postprocessing integration, custom shaders for physically accurate geometry rendering, complete blending-state management, and efficient material/geometry caching.
+**Core Responsibility**: Deliver high-quality visual effects through a custom mega-shader post-processing pipeline, custom shaders for physically accurate geometry rendering, complete blending-state management, and efficient material/geometry caching.
+
+> **Note**: The post-processing layer was rewritten in 2026 to replace `pmndrs/postprocessing` with a hand-written mega-shader pipeline (one fused fragment pass instead of N effect passes). See `post-processing/README.md` and `post-processing/SPECIFICATIONS.md` for the authoritative reference. Some sections below predate this rewrite and are kept for historical context — where they conflict with the post-processing docs, the post-processing docs win.
 
 **Related Specifications**:
 
@@ -39,22 +41,26 @@ The `luxar-viewer.rendering` package provides advanced WebGL rendering capabilit
 **Setup**:
 
 ```typescript
-const composer = new EffectComposer(renderer, {
-  frameBufferType: THREE.HalfFloatType, // 16-bit float for HDR
-  multisampling: 0, // MSAA samples configurable via rendering controls
+const hdrTarget = new THREE.WebGLRenderTarget(width, height, {
+  type: THREE.HalfFloatType,
+  samples: msaaEnabled ? msaaSamples : 0,
 });
 ```
 
 **Color Space Pipeline**:
 
 ```
-Scene Rendering (per-node GOG) → HDR Buffer (LinearSRGB) → Effects → EOG + Tone Mapping (LuxarToneMappingEffect) → Output (SRGB)
+Scene Rendering (per-node GOG) → HDR Buffer (LinearSRGB) →
+BloomChain (optional) →
+MegaShader fused pass (chromatic distortion, bloom mix, detector noise,
+                       EOG, tone mapping, vignette, sRGB encode) →
+FxaaPass (optional) → Canvas (SRGB)
 ```
 
 **Two-Level Color Adjustment**:
 
 - **Per-node GOG** (in material shaders): `adjusted = color * intensity + offset; clip; pow(adjusted, 1/gamma)` -- per-node artistic control
-- **Global EOG** (in LuxarToneMappingEffect): `adjusted = color * exposure + globalOffset; clip; pow(adjusted, 1/globalGamma)` -- scene-wide exposure control before tone mapping
+- **Global EOG** (in mega-shader): `adjusted = color * exposure + globalOffset; clip; pow(adjusted, 1/globalGamma)` -- scene-wide exposure control before tone mapping
 
 ### 1.2 Tone Mapping
 
@@ -70,83 +76,43 @@ Scene Rendering (per-node GOG) → HDR Buffer (LinearSRGB) → Effects → EOG +
 | **Reinhard**    | Classic operator   | Simple, local adaptation            |
 | **Linear**      | No mapping         | Raw HDR (clips >1)                  |
 
-**Implementation** (vendored LuxarToneMappingEffect):
+**Implementation** (mega-shader fragment, `post-processing/mega-shader.glsl.ts`):
 
-The tone mapping pipeline uses a vendored `LuxarToneMappingEffect` that extends the pmndrs `ToneMappingEffect` with a global EOG (Exposure-Offset-Gamma) stage applied before the tone mapping operator in a single shader pass:
+The mega-shader applies the global EOG stage immediately before the tone mapping call, inside a single fullscreen fragment pass:
 
 ```glsl
 // EOG applied before tone mapping
-color *= exposure;
-color += globalOffset;
+color *= uExposure;
+color += uGlobalOffset;
 color = clamp(color, 0.0, 1e6);
-color = pow(color, vec3(1.0 / globalGamma));
-// Then apply tone mapping operator (ACES, AgX, etc.)
+color = pow(color, vec3(1.0 / uGlobalGamma));
+// Then apply selected tone mapping operator (THREE's <tonemapping_pars_fragment>)
+color = LuxarToneMap(color);
 ```
 
 ```typescript
-const toneMappingEffect = new LuxarToneMappingEffect({
-  mode: ToneMappingMode.ACES_FILMIC,
-  resolution: 256,
-  adaptive: false,
-});
-// Global EOG uniforms
-toneMappingEffect.exposure = 1.0;
-toneMappingEffect.globalOffset = 0.0;
-toneMappingEffect.globalGamma = 1.0;
+postProcessing.setToneMapping(THREE.ACESFilmicToneMapping);
+postProcessing.updateExposure(0.5);
+postProcessing.updateGlobalOffset(0.0);
+postProcessing.updateGlobalGamma(1.0);
 ```
 
 ### 1.3 Effect Composition Strategy
 
-**Dynamic Pass Assignment Algorithm**:
+The mega-shader pipeline runs **at most three** GPU passes regardless of how many effects are enabled:
 
-```typescript
-function buildEffectPasses(enabledEffects: Effect[]): Pass[] {
-  const passes: Pass[] = [];
+1. **Bloom pre-pass** (only if bloom is enabled): threshold + mip downsample/upsample pyramid producing a bloom texture.
+2. **Mega-shader fullscreen pass**: fragment shader fuses chromatic lens distortion, additive bloom mix, detector noise, EOG, tone mapping, vignette, and sRGB encoding. The pipeline is gated by `#define` flags so disabled effects compile out entirely.
+3. **FXAA post-pass** (only if FXAA is enabled): single-pass edge-detect on the tone-mapped LDR output.
 
-  // Effects in visual order
-  const orderedEffects = [
-    bloom,
-    dof,
-    ao,
-    vignette,
-    chromaticLensDistortion, // Combined lens distortion + chromatic aberration effect
-    detectorNoise,
-    toneMapping,
-    aa,
-  ].filter((e) => e && e.enabled);
+Operation order inside the mega-shader (matches the canonical pmndrs-era order so visual parity is preserved):
 
-  // Note: ChromaticLensDistortionEffect combines wavelength-dependent lens distortion
-  // with chromatic aberration in a single UV transformation pass. This is more efficient
-  // and physically accurate than separate effects.
-
-  // Detect incompatibilities (currently none with simplified effect set)
-  let switchToPassB = false;
-  const passA: Effect[] = [];
-  const passB: Effect[] = [];
-
-  for (const effect of orderedEffects) {
-    // UV transformation effects would be incompatible with convolution effects
-    // Currently we use ChromaticLensDistortion (UV-based) instead of separate effects
-    if (switchToPassB) {
-      passB.push(effect);
-    } else {
-      passA.push(effect);
-    }
-  }
-
-  // Create passes
-  if (passA.length > 0) {
-    passes.push(new EffectPass(camera, ...passA));
-  }
-  if (passB.length > 0) {
-    passes.push(new EffectPass(camera, ...passB));
-  }
-
-  return passes;
-}
+```
+ChromaticLensDistortion → Bloom (additive) → DetectorNoise →
+ToneMapping (with EOG) → Vignette → sRGB encode
 ```
 
-**Invariant**: Tone mapping always in final pass to ensure proper HDR→LDR conversion.
+See `post-processing/SPECIFICATIONS.md` for the per-effect math and bypass-mode defines.
 
 ---
 
@@ -358,19 +324,14 @@ material.uniforms.uResolution.value.set(actualWidth, actualHeight);
 
 **Purpose**: Simulate light scattering for bright objects (HDR colors > 1.0).
 
-**Algorithm** (via pmndrs/postprocessing):
+**Algorithm** (`post-processing/bloom-chain.ts`):
+
+The bloom chain is a Rec.709 luma threshold + 2× downsample to mip[0], a downsample chain (mip[i] → mip[i+1]) and an additive tent-upsample chain (mip[i+1] → mip[i]). The output bloom texture is mip[0], sampled by the mega-shader and added with intensity `uBloomIntensity`.
 
 ```typescript
-const bloomEffect = new BloomEffect({
-  intensity: 0.5, // Bloom strength
-  luminanceThreshold: 0.01, // Brightness threshold
-  luminanceSmoothing: 0.9, // Threshold smoothing
-  mipmapBlur: true, // Use mipmap blur (better quality)
-  levels: 8, // Mipmap levels (1-12)
-});
-
-// Separate blur pass for radius control
-bloomEffect.mipmapBlurPass.radius = 0.6;
+postProcessing.setBloomEnabled(true);
+postProcessing.updateBloomSettings(/* intensity */ 0.5, /* radius */ 0.6, /* threshold */ 0.01);
+postProcessing.setBloomLevels(8); // mip count, 1..12
 ```
 
 **Key Parameters**:
@@ -380,38 +341,13 @@ bloomEffect.mipmapBlurPass.radius = 0.6;
 - **Radius**: Blur extent (larger = more spread)
 - **Levels**: More levels = smoother bloom, higher cost
 
-### 4.2 Ambient Occlusion (SSAO)
+### 4.2 Ambient Occlusion (SSAO) — REMOVED
 
-**Purpose**: Screen-space ambient occlusion for depth perception.
+Removed in the mega-shader refactor. SSAO needs surface normals which our point/gsplat/line geometry doesn't provide; the previous SSAO output was always degenerate for our scenes. See `post-processing/MEGA_SHADER_DESIGN.md`.
 
-**Algorithm**:
+### 4.3 Depth of Field (DOF) — REMOVED
 
-```typescript
-const ssaoEffect = new SSAOEffect(camera, normalBuffer, {
-  samples: 16, // Sample count (higher = better quality)
-  radius: 0.1, // Occlusion radius
-  intensity: 1.0, // Effect strength
-  luminanceInfluence: 0.7, // How much lighting affects AO
-});
-```
-
-**Quality Levels**:
-
-- Low: samples=8, radius=0.05
-- Medium: samples=16, radius=0.1
-- High: samples=32, radius=0.15
-
-### 4.3 Depth of Field (DOF)
-
-**Purpose**: Simulate camera focus with bokeh blur.
-
-```typescript
-const dofEffect = new DepthOfFieldEffect(camera, {
-  focusDistance: 10.0, // Focus plane distance
-  focalLength: 0.05, // Lens focal length
-  bokehScale: 2.0, // Bokeh blur size
-});
-```
+Removed in the mega-shader refactor. DOF needs depth-aware multi-pass blur which can't fuse into a single fragment pass; the effect was also niche for our scientific use cases. See `post-processing/MEGA_SHADER_DESIGN.md`.
 
 ### 4.4 Detector Noise Effect (Physics-Based)
 
@@ -438,12 +374,15 @@ I_observed = Poisson(I_true / gain) × gain + Gaussian_temporal(0, σ_read²) + 
 **Implementation**:
 
 ```typescript
-const detectorNoiseEffect = new DetectorNoiseEffect({
-  readoutSigma: 0.002, // Temporal readout noise sigma (0-0.1)
-  photonGain: 0.002, // Controls shot noise visibility (0.0001-0.1)
-  fpnSigma: 0.001, // Fixed pattern noise sigma (0-0.05)
-});
+postProcessing.setDetectorNoiseEnabled(
+  true,
+  /* readoutSigma */ 0.002,
+  /* photonGain   */ 0.002,
+  /* fpnSigma     */ 0.001
+);
 ```
+
+The three sigmas drive uniforms inside the mega-shader (no separate pass / no separate Effect class).
 
 **Default Values** (as of v1.3.7):
 
@@ -519,11 +458,17 @@ private applyScaledNoiseSettings(): void {
   const scale = this.currentDPRScale; // e.g., 0.5 for 50% resolution
 
   // Gaussian noise: σ scales linearly with DPR
-  this.detectorNoiseEffect.readoutSigma = this.baseNoiseSettings.readoutSigma * scale;
-  this.detectorNoiseEffect.fpnSigma = this.baseNoiseSettings.fpnSigma * scale;
+  this.megaShader.setDetectorNoiseReadoutSigma(
+    this.baseNoiseSettings.readoutSigma * scale
+  );
+  this.megaShader.setDetectorNoiseFpnSigma(
+    this.baseNoiseSettings.fpnSigma * scale
+  );
 
   // Shot noise: σ ∝ √photonGain, so photonGain scales by DPR²
-  this.detectorNoiseEffect.photonGain = this.baseNoiseSettings.photonGain * scale * scale;
+  this.megaShader.setDetectorNoisePhotonGain(
+    this.baseNoiseSettings.photonGain * scale * scale
+  );
 }
 
 setDPRScale(dpr: number): void {
@@ -607,15 +552,20 @@ float b = texture2D(inputBuffer, (kk * vec3(xDistorted_B, 1.0)).xy * 0.5 + 0.5).
 **Implementation**:
 
 ```typescript
-import { ChromaticLensDistortionEffect } from '../rendering/chromatic-lens-distortion-effect';
-
-const chromaticLensEffect = new ChromaticLensDistortionEffect({
-  distortion: new THREE.Vector2(-0.05, -0.05), // Barrel distortion (wide angle)
-  dispersion: 0.03, // Subtle chromatic aberration
-  principalPoint: new THREE.Vector2(0, 0), // Centered
-  focalLength: new THREE.Vector2(1, 1), // Normal focal length
-  skew: 0, // No skew
-});
+// Configured via the PostProcessingManager. The Brown-Conrady
+// distortion + per-channel sampling runs inside the mega-shader
+// (gated by USE_LENS_DISTORTION).
+postProcessing.setChromaticLensDistortionEnabled(
+  true,
+  /* distortionX */ -0.05, // Barrel distortion (wide angle)
+  /* distortionY */ -0.05,
+  /* dispersion  */ 0.03, // Subtle chromatic aberration
+  /* principalPointX */ 0, // Centered
+  /* principalPointY */ 0,
+  /* focalLengthX   */ 1, // Normal focal length
+  /* focalLengthY   */ 1,
+  /* skew           */ 0
+);
 ```
 
 **Parameters**:
@@ -647,127 +597,18 @@ const chromaticLensEffect = new ChromaticLensDistortionEffect({
 - Pincushion distortion: Cyan-Red fringing (blue outside, red inside)
 - Dispersion = 0.0: Pure lens distortion (no chromatic effect)
 
-### 4.6 RobustVignetteEffect (Custom Implementation)
+### 4.6 Vignette (mega-shader stage)
 
-**Purpose**: Screen edge darkening effect that handles additive blending artifacts.
+Vignette is now applied as a multiplicative step inside the mega-shader fragment, after tone mapping and before sRGB encoding. It has two parameters:
 
-**Problem Solved**: The standard pmndrs `VignetteEffect` preserves alpha channel values, which causes rendering artifacts when:
+- `darkness`: edge darkening amount in [0, 1]
+- `offset`: radial start distance in [0, 1]
 
-- Using additive blending (`THREE.AdditiveBlending`) with many overlapping points/lines
-- Alpha values accumulate and can exceed 1.0 or even overflow to `Infinity` in Float16 HDR buffers
-- Subsequent effects receive problematic alpha values causing brightness artifacts
+The mega-shader controls its own alpha output (always 1.0 at the final write), so the dedicated `RobustVignetteEffect` workaround the pmndrs-era pipeline needed is no longer required. The previous `RobustVignetteEffect` class has been removed.
 
-**Solution**: `RobustVignetteEffect` forces output alpha to 1.0, preventing alpha overflow artifacts while maintaining identical visual output.
+### 4.7 PerspectiveDepthMapper — REMOVED
 
-**Implementation**:
-
-```typescript
-// Drop-in replacement for VignetteEffect
-import { RobustVignetteEffect } from '../rendering/robust-vignette-effect';
-
-const vignetteEffect = new RobustVignetteEffect({
-  darkness: 0.5, // Edge darkening amount [0, 1]
-  offset: 0.5, // Vignette start distance [0, 1]
-});
-```
-
-**Key Differences from Standard VignetteEffect**:
-
-- ✅ Identical parameters and visual output
-- ✅ Compatible with additive blending
-- ✅ Prevents alpha overflow in Float16 HDR buffers
-- ✅ No brightness artifacts in dark areas (e.g., vignette edges)
-
-**Technical Detail**: The fix is simple but critical - the fragment shader's final line sets `gl_FragColor.a = 1.0;` instead of preserving the input alpha. This prevents accumulated alpha from additive blending from propagating through the effect pipeline.
-
-**Use Case**: Always use `RobustVignetteEffect` instead of pmndrs `VignetteEffect` when:
-
-- Using additive blending for points or lines
-- Using Float16 HDR render targets
-- Rendering many overlapping transparent objects
-
-### 4.6 PerspectiveDepthMapper (Utility Class)
-
-**Purpose**: Converts between different depth representations for effects that need depth information (e.g., DOF, SSAO).
-
-**Problem**: THREE.js stores depth in various formats:
-
-- **View-space depth**: Linear distance from camera in world units (negative Z in view space)
-- **NDC depth**: Non-linear depth in [0, 1] stored in depth buffer
-- **Camera-relative depth**: Distance from camera origin
-- **Normalized linear depth**: Linear depth normalized to [near, far] range
-
-Effects like DOF need specific depth representations, requiring conversions between these formats.
-
-**Implementation**:
-
-```typescript
-import { PerspectiveDepthMapper } from '../rendering/postprocessing-types';
-
-const mapper = new PerspectiveDepthMapper(camera);
-
-// Four conversion methods:
-const viewZ = mapper.getViewZ(ndc); // NDC → view-space Z
-const ndcDepth = mapper.getNDC(viewZ); // view-space Z → NDC
-const linearDepth = mapper.getLinear(ndc); // NDC → normalized linear
-const orthoDepth = mapper.getOrtho(viewZ); // view-space Z → orthographic
-```
-
-**Conversion Formulas**:
-
-1. **NDC to View-Space Z**: `getViewZ(ndc)`
-
-   ```glsl
-   viewZ = (near * far) / (far - ndc * (far - near))
-   ```
-
-   Converts non-linear depth buffer value to linear view-space distance.
-
-2. **View-Space Z to NDC**: `getNDC(viewZ)`
-
-   ```glsl
-   ndc = (far * (viewZ - near)) / (viewZ * (far - near))
-   ```
-
-   Inverse of the above transformation.
-
-3. **NDC to Normalized Linear**: `getLinear(ndc)`
-
-   ```glsl
-   linear = (viewZ - near) / (far - near)
-   ```
-
-   Linear depth in [0, 1] where 0 = near plane, 1 = far plane.
-
-4. **View-Space Z to Orthographic**: `getOrtho(viewZ)`
-   ```glsl
-   ortho = (viewZ + (far + near) / 2) / (far - near)
-   ```
-   Used for orthographic projections (less common).
-
-**Usage with DOF Effect**:
-
-```typescript
-const mapper = new PerspectiveDepthMapper(camera);
-const dofEffect = new DepthOfFieldEffect(camera, {
-  focusDistance: mapper.getViewZ(0.5), // Focus at middle depth
-  // ...other params
-});
-```
-
-**Key Properties**:
-
-- `near`: Camera near plane distance
-- `far`: Camera far plane distance
-- All methods handle perspective projection math correctly
-- Thread-safe (pure functions based on camera parameters)
-
-**When to Use**:
-
-- Setting DOF focus distances from screen-space depth
-- Converting depth buffer values for custom shaders
-- Debugging depth-based effects
-- Implementing custom depth-dependent effects
+The old DOF/SSAO depth-mapping utility class was removed alongside DOF and SSAO. The mega-shader pipeline does not consume a depth buffer (chromatic distortion, bloom, noise, tone mapping, and vignette are all 2D fragment operations).
 
 ---
 
@@ -854,7 +695,7 @@ materialManager.updateGlobalParams(
 
 **Global EOG (Exposure-Offset-Gamma) Updates**:
 
-Global exposure, offset, and gamma are applied in the vendored `LuxarToneMappingEffect` post-processing pass (not per-material). The MaterialManager no longer manages a global HDR multiplier uniform. Instead, per-node `intensity` and `offset` uniforms are set on each material individually at creation time.
+Global exposure, offset, and gamma are applied inside the mega-shader fragment (not per-material). The MaterialManager no longer manages a global HDR multiplier uniform. Instead, per-node `intensity` and `offset` uniforms are set on each material individually at creation time.
 
 ---
 
@@ -872,30 +713,12 @@ Global exposure, offset, and gamma are applied in the vendored `LuxarToneMapping
 **Setup**:
 
 ```typescript
-const fxaaEffect = new FXAAEffect();
-effectPass.addEffect(fxaaEffect);
+postProcessing.setFXAAEnabled(true);
 ```
 
-### 6.2 SMAA (Subpixel Morphological)
+### 6.2 SMAA — REMOVED
 
-**Characteristics**:
-
-- Superior edge detection
-- Multiple quality presets (LOW, MEDIUM, HIGH, ULTRA)
-- Better quality than FXAA
-- Moderate performance impact (1-2ms)
-- Compatible with additive blending
-
-**UI Behavior**: The rendering controls UI exposes SMAA as a simple on/off toggle using the HIGH preset. The pmndrs/postprocessing SMAAEffect only supports preset-based configuration, so custom threshold/searchSteps values are not available.
-
-**Setup**:
-
-```typescript
-const smaaEffect = new SMAAEffect({
-  preset: SMAAPreset.HIGH,
-});
-effectPass.addEffect(smaaEffect);
-```
+SMAA was removed in the mega-shader refactor. SMAA's 3-pass edge-detect → weight → blend pipeline can't fuse cleanly into a single-pass shader; FXAA covers the same use case in one pass. See `post-processing/MEGA_SHADER_DESIGN.md`.
 
 ### 6.3 MSAA (Multisample)
 
@@ -966,14 +789,9 @@ interface PostProcessingConfig {
     mode: 'ACES' | 'AgX' | 'Reinhard' | 'Linear' | 'Neutral';
   };
   aa: {
-    method: 'none' | 'FXAA' | 'SMAA' | 'SSAA';
-    smaaQuality?: 'LOW' | 'MEDIUM' | 'HIGH' | 'ULTRA';
-    ssaaMultiplier?: 1.5 | 2 | 3 | 4;
-  };
-  dof: {
-    enabled: boolean;
-    focusDistance: number;
-    bokehScale: number;
+    fxaa: boolean;
+    msaa: { enabled: boolean; samples: 2 | 4 | 8 };
+    ssaa: { enabled: boolean; multiplier: 1.5 | 2 | 3 | 4 };
   };
   // ... other effects
 }
@@ -1927,21 +1745,27 @@ manager.setManualDPR(0.75); // Set 75% of native resolution
 
 **Use Case**: Testing performance at specific resolutions, or deliberately reducing quality for presentations.
 
+**UI behavior**: the manual DPR slider applies the new DPR on interaction commit (`onFinishChange`, e.g. mouseup/Enter/blur), not on every raw slider `input` event. DPR changes reallocate the canvas and post-processing render targets, so applying on every drag tick can create GPU resize thrash that looks like worse rendering performance while the user is lowering DPR.
+
 ### 9.6 Integration with Scene Manager
 
 ```typescript
 // In SceneManager
 setAdaptivePixelRatio(dpr: number): void {
-  this.renderer.setPixelRatio(dpr);
-  const w = this.canvas.clientWidth;
-  const h = this.canvas.clientHeight;
-  this.renderer.setSize(w, h, false);
+  const w = canvas.clientWidth || window.innerWidth;
+  const h = canvas.clientHeight || window.innerHeight;
 
-  // Update post-processing resolution
+  // Store explicit reduced/native DPR state. Native DPR clears the override
+  // so future monitor-DPI changes keep tracking window.devicePixelRatio.
+  const activeDPR = this.setPixelRatioOverride(dpr);
+  this.renderer.setPixelRatio(activeDPR);
+
+  // Update post-processing resolution. Render targets are allocated at
+  // physical pixels = logical size × activeDPR.
   if (this.postProcessing) {
     this.postProcessing.resize(w, h);
-    // Scale noise parameters for perceptual consistency
-    const normalizedDPR = dpr / window.devicePixelRatio;
+    // Scale noise parameters for perceptual consistency.
+    const normalizedDPR = activeDPR / window.devicePixelRatio;
     this.postProcessing.setDPRScale(normalizedDPR);
   }
 }

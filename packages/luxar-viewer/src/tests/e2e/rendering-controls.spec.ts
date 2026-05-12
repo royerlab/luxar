@@ -234,7 +234,7 @@ test.describe('Rendering Controls API', () => {
         hasBloomThreshold: 'bloomThreshold' in settings,
         hasFov: 'fov' in settings,
         hasControlType: 'controlType' in settings,
-        hasAoEnabled: 'aoEnabled' in settings,
+        hasVignetteEnabled: 'vignetteEnabled' in settings,
       };
     });
 
@@ -244,7 +244,7 @@ test.describe('Rendering Controls API', () => {
     expect(settingsProps?.hasBloomThreshold).toBe(true);
     expect(settingsProps?.hasFov).toBe(true);
     expect(settingsProps?.hasControlType).toBe(true);
-    expect(settingsProps?.hasAoEnabled).toBe(true);
+    expect(settingsProps?.hasVignetteEnabled).toBe(true);
   });
 
   test('should have exposure with valid default value', async ({ page }) => {

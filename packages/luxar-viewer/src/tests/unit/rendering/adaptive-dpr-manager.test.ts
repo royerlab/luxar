@@ -335,6 +335,42 @@ describe('AdaptiveDPRManager — setManualDPR', () => {
       restore();
     }
   });
+
+  it('skips duplicate manual DPR updates to avoid redundant GPU reallocations', () => {
+    const m = new AdaptiveDPRManager();
+    try {
+      const renderer = makeRenderer();
+      m.setRenderer(renderer);
+      m.setEnabled(false);
+      renderer.setAdaptivePixelRatio.mockClear();
+
+      m.setManualDPR(1.0);
+      m.setManualDPR(1.0);
+      m.setManualDPR(1.005); // within idempotency epsilon
+
+      expect(renderer.setAdaptivePixelRatio).toHaveBeenCalledTimes(1);
+      expect(renderer.setAdaptivePixelRatio).toHaveBeenLastCalledWith(1.0);
+    } finally {
+      restore();
+    }
+  });
+
+  it('updates reduced-resolution state for manual DPR changes', () => {
+    const m = new AdaptiveDPRManager();
+    try {
+      const renderer = makeRenderer();
+      m.setRenderer(renderer);
+      m.setEnabled(false);
+
+      m.setManualDPR(1.0);
+      expect(m.getState().isReducedResolution).toBe(true);
+
+      m.setManualDPR(2.0);
+      expect(m.getState().isReducedResolution).toBe(false);
+    } finally {
+      restore();
+    }
+  });
 });
 
 describe('AdaptiveDPRManager — dispose', () => {

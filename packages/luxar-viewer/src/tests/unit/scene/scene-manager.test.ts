@@ -449,6 +449,20 @@ describe('SceneManager', () => {
 
       expect((sceneManager.camera as THREE.PerspectiveCamera).aspect).toBeCloseTo(800 / 600);
     });
+
+    it('preserves manual/adaptive DPR override across window resize', () => {
+      const setPixelRatioSpy = vi.spyOn(sceneManager.renderer, 'setPixelRatio');
+
+      sceneManager.setAdaptivePixelRatio(0.5);
+      setPixelRatioSpy.mockClear();
+
+      (sceneManager as unknown as { doUpdateSize: (w: number, h: number) => void }).doUpdateSize(
+        800,
+        600
+      );
+
+      expect(setPixelRatioSpy).toHaveBeenCalledWith(0.5);
+    });
   });
 
   describe('resource management', () => {

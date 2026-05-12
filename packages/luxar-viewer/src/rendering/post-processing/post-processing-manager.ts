@@ -1,8 +1,7 @@
 /**
  * Post-processing pipeline manager.
  *
- * Replaces the pmndrs/postprocessing `EffectComposer`-based pipeline
- * with a tight three-stage pass:
+ * Three-stage pipeline:
  *
  *   1. Scene render → HDR HalfFloat target (with optional MSAA + SSAA)
  *   2. Bloom pyramid → bloom texture       (see {@link BloomChain})
@@ -12,11 +11,6 @@
  *   4. Optional FXAA → backbuffer          (see {@link FxaaPass})
  *
  * When FXAA is disabled, stage (3) writes directly to the backbuffer.
- *
- * Public API preserves the call shape used by the rest of the viewer
- * (rendering-controls, recording-panel, picking-system, cinematic-mode).
- * The dropped surfaces (SMAA / SSAO / DoF) are gone entirely — the
- * upstream callers in `rendering-controls/` are updated in lockstep.
  *
  * @module rendering/post-processing/post-processing-manager
  */
@@ -142,12 +136,11 @@ export class PostProcessingManager {
    * renderer's canvas backbuffer AND what materials read from
    * `renderer.getDrawingBufferSize()`.
    *
-   * Mirrors the pmndrs `EffectComposer.setSize` behavior: composer
-   * internally multiplied by pixelRatio before allocating buffers.
-   * Without this, at DPR > 1 our hdrTarget is smaller than the
+   * Without this, at DPR > 1 the hdrTarget would be smaller than the
    * canvas (and smaller than what point/line materials expect), and
-   * `gl_PointSize` values overshoot the viewport — visibly brightening
-   * the scene through extra additive-blended pixel coverage.
+   * `gl_PointSize` values would overshoot the viewport — visibly
+   * brightening the scene through extra additive-blended pixel
+   * coverage.
    */
   private getPhysicalSize(): { width: number; height: number } {
     const { width, height } = this.computeEffectiveSize();
@@ -405,6 +398,10 @@ export class PostProcessingManager {
 
   updateExposure(value: number): void {
     this.megaShader.setExposure(value);
+  }
+
+  getExposure(): number {
+    return this.megaShader.uniforms.uExposure.value as number;
   }
 
   updateGlobalOffset(value: number): void {
@@ -707,11 +704,10 @@ export class PostProcessingManager {
   // ================================================================
 
   render(): void {
-    // Wall-clock delta since previous render() (in seconds). This is
-    // the time the detector-noise effect uses to animate temporal
-    // patterns; advancing by render *duration* (as we did before)
-    // ran 4x slower at 60fps with 4ms render time. Match the old
-    // pmndrs path which fed actual frame deltaTime to Effect.update().
+    // Wall-clock delta since previous render() (in seconds). Detector
+    // noise uses this to animate its temporal pattern. Must be
+    // wall-clock delta, not render duration — render duration is
+    // ~4 ms at 60 fps and would slow the noise animation 4x.
     const now = performance.now();
     const dt =
       this._previousRenderTimestamp === 0 ? 0 : (now - this._previousRenderTimestamp) / 1000;
@@ -855,33 +851,29 @@ export class PostProcessingManager {
   // ================================================================
 
   /**
-   * Read raw HDR float pixel data, matching the old pmndrs pipeline's
-   * three capture modes:
+   * Read raw HDR float pixel data in one of three capture modes:
    *
    *   - `'hdr-effects-pre-tone'` (default): keep HDR-space effects
    *     (bloom) but disable tone mapping, EOG, vignette, detector
    *     noise, chromatic lens distortion. **Linear HDR output** —
-   *     this is the canonical EXR-export mode. Recovered via the
+   *     the canonical EXR-export mode. Implemented via the
    *     mega-shader's `LUXAR_CAPTURE_RAW_HDR` early-exit (skips EOG,
    *     tone mapping, vignette, sRGB encoding).
    *   - `'visible-ldr'`: full pipeline (EOG + tone mapping + every
    *     enabled effect), but skip the final sRGB encoding so the
-   *     captured pixels are **linear LDR** floats matching what the
-   *     old composer's HalfFloat ping-pong target held.
-   *   - `'raw-scene-hdr'`: bypass the mega-shader entirely — just
-   *     render the scene to hdrTarget and read it (no bloom, no
-   *     anything).
+   *     captured pixels are **linear LDR** floats.
+   *   - `'raw-scene-hdr'`: bypass the mega-shader entirely — render
+   *     the scene to hdrTarget and read it (no bloom, no effects).
    */
   captureHDRPixels(
     mode: 'visible-ldr' | 'hdr-effects-pre-tone' | 'raw-scene-hdr' = 'hdr-effects-pre-tone'
   ): { pixels: Float32Array; width: number; height: number } {
     if (mode === 'raw-scene-hdr') {
-      // Just the scene render — no bloom, no mega-shader.
+      // Scene render only — no bloom, no mega-shader.
       // Save/restore the renderer's current target + autoClear so a
       // caller that invokes capture while another target is bound
       // (picking, offscreen probe) doesn't get its state clobbered.
-      // The mega-shader-pipeline path (`runPipeline`) wraps the same
-      // way; mirror it here for the bypass branch too.
+      // `runPipeline` wraps the same way; mirror it here too.
       const prevTarget = this.renderer.getRenderTarget();
       const prevAutoClear = this.renderer.autoClear;
       try {
@@ -898,9 +890,9 @@ export class PostProcessingManager {
     if (mode === 'hdr-effects-pre-tone') {
       // Save state, disable LDR-space effects, set the RAW_HDR
       // capture define so the mega-shader bypasses EOG, tone mapping,
-      // vignette, and sRGB encoding. Bloom contribution stays in the
-      // sample (USE_BLOOM is left as-is, matching old pmndrs which
-      // also kept Bloom in this mode).
+      // vignette, and sRGB encoding. Bloom is intentionally kept in
+      // the sample (USE_BLOOM is left as-is) — bloom is an HDR-space
+      // effect and belongs in linear-HDR captures.
       const wasNoise = this.megaShader.isDetectorNoiseEnabled();
       const wasVignette = this.megaShader.isVignetteEnabled();
       const wasLens = this.megaShader.isLensDistortionEnabled();
@@ -923,8 +915,7 @@ export class PostProcessingManager {
 
     // 'visible-ldr': full pipeline (every enabled effect, EOG, tone
     // mapping) but skip the final sRGB encoding so the captured
-    // pixels are post-tone-mapping LINEAR LDR — matches the old
-    // composer's HalfFloat ping-pong buffer contents pre-screen-write.
+    // pixels are post-tone-mapping LINEAR LDR.
     this.megaShader.toggleLinearLdrCapture(true);
     try {
       this.runPipeline({ applyFxaa: false, finalTarget: this.ldrTarget });

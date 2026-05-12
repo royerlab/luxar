@@ -195,7 +195,7 @@ export function configureHDRRenderer(
 }
 ```
 
-**Note**: Despite the legacy name, this function only logs HDR capabilities. It does NOT configure the renderer. All actual HDR configuration (outputColorSpace, toneMapping) is handled by `PostProcessingManager` to avoid conflicts with the pmndrs/postprocessing library.
+**Note**: Despite the legacy name, this function only logs HDR capabilities. It does NOT configure the renderer. All actual HDR configuration (outputColorSpace, toneMapping) is owned by `PostProcessingManager` (the mega-shader pipeline applies tone mapping internally).
 
 ## Usage Examples
 

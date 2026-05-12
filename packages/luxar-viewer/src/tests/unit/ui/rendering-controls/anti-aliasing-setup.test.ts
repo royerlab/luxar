@@ -81,7 +81,6 @@ interface ContextStubs {
     setFXAAEnabled: ReturnType<typeof vi.fn>;
     setMSAAEnabled: ReturnType<typeof vi.fn>;
     setMSAASamples: ReturnType<typeof vi.fn>;
-    setSMAAEnabled: ReturnType<typeof vi.fn>;
   };
   saveSettings: ReturnType<typeof vi.fn>;
   triggerAnimation: ReturnType<typeof vi.fn>;
@@ -91,7 +90,6 @@ interface ContextStubs {
     fxaaEnabled: boolean;
     msaaEnabled: boolean;
     msaaSamples: number;
-    smaaEnabled: boolean;
   };
 }
 
@@ -106,7 +104,6 @@ function makeContext(initialSettings: Partial<ContextStubs['settings']> = {}): C
     setFXAAEnabled: vi.fn(),
     setMSAAEnabled: vi.fn(),
     setMSAASamples: vi.fn(),
-    setSMAAEnabled: vi.fn(),
   };
   const saveSettings = vi.fn();
   const triggerAnimation = vi.fn();
@@ -116,7 +113,6 @@ function makeContext(initialSettings: Partial<ContextStubs['settings']> = {}): C
     fxaaEnabled: false,
     msaaEnabled: false,
     msaaSamples: 4,
-    smaaEnabled: false,
     ...initialSettings,
   };
   const context = {

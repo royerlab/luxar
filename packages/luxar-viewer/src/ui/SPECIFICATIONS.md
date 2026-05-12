@@ -2120,10 +2120,6 @@ interface RenderingSettings {
   fxaaEnabled: boolean;
   msaaEnabled: boolean;
   msaaSamples: number;
-  smaaEnabled: boolean;
-  // Note: smaaThreshold and smaaSearchSteps exist in config but are not exposed
-  // in the UI because pmndrs/postprocessing SMAAEffect only supports preset-based
-  // configuration (LOW/MEDIUM/HIGH/ULTRA). The UI shows only an on/off toggle.
 
   // Effects
   bloomStrength: number;

@@ -99,16 +99,11 @@ export function configureHDRRenderer(
   _renderer: THREE.WebGLRenderer,
   capabilities: HDRCapabilities
 ): void {
-  // IMPORTANT: When using pmndrs/postprocessing library, we should NOT set
-  // outputColorSpace or toneMapping on the renderer here. The post-processing
-  // library handles these internally. Setting them here causes conflicts.
-  //
-  // The PostProcessingManager will:
-  // 1. Set renderer.outputColorSpace = THREE.SRGBColorSpace
-  // 2. Set renderer.toneMapping = THREE.NoToneMapping
-  // 3. Handle all color space conversions and tone mapping in its pipeline
-
-  // Log detected capabilities for informational purposes only
+  // Do NOT set renderer.outputColorSpace or renderer.toneMapping here.
+  // The post-processing pipeline owns both: the mega-shader applies
+  // tone mapping internally and the host pins
+  // outputColorSpace = SRGB / toneMapping = NoToneMapping at
+  // PostProcessingManager construction.
   if (capabilities.rec2020Gamut && capabilities.hdr) {
     log.success(
       Modules.HDR,
@@ -122,10 +117,6 @@ export function configureHDRRenderer(
   } else {
     log.info(Modules.HDR, 'Standard sRGB display detected');
   }
-
-  // Note: The actual tone mapping and color space configuration is handled by
-  // PostProcessingManager to avoid conflicts with the pmndrs library.
-  // These settings will be overridden when PostProcessingManager is initialized.
 }
 
 /**

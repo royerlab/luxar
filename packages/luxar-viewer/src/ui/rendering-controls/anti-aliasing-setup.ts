@@ -1,15 +1,11 @@
 /**
  * Anti-aliasing controls setup for rendering controls UI.
  *
- * Creates controls for the AA techniques the mega-shader pipeline
- * supports:
+ * Creates controls for the three AA techniques the post-processing
+ * pipeline supports:
  * - SSAA (Supersampling) with resolution multiplier
  * - FXAA (Fast Approximate AA)
  * - MSAA (Multisample AA) with sample count
- *
- * SMAA was dropped in the mega-shader refactor — its 3-pass
- * edge-detect → weight → blend algorithm doesn't fold cleanly into
- * the single fullscreen pass, and FXAA covers the same niche.
  */
 
 import type { SetupContext, SetupResult } from './types';
@@ -172,10 +168,6 @@ export function setupAntiAliasingControls(context: SetupContext): SetupResult {
       '• 8 = Best quality, highest cost\n' +
       '• More samples = smoother edges but more GPU work'
   );
-
-  // SMAA dropped in the mega-shader refactor: it's a 3-pass
-  // edge-detect → weight → blend algorithm that can't fold into the
-  // single mega-shader pass. FXAA is the inline anti-alias path.
 
   // Initially show/hide folders based on settings
   if (settings.ssaaEnabled) {

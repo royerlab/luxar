@@ -535,12 +535,11 @@ export class MaterialManager {
    * transient (hidden layers, off-screen panels) and the renderer
    * will re-request only the materials it actually needs.
    *
-   * Mirror of the durable-state pattern in
-   * `rendering/post-processing/context-recovery.ts`: this method is
-   * idempotent and safe to call repeatedly. Unlike `dispose()`,
-   * however, it does NOT call `material.dispose()` on the entries —
-   * those programs are already detached from a dead WebGL context, and
-   * calling `dispose` on them tends to throw on some drivers.
+   * The method is idempotent and safe to call repeatedly. Unlike
+   * `dispose()`, it does NOT call `material.dispose()` on the cached
+   * entries — those programs are already detached from a dead WebGL
+   * context, and calling `dispose` on them tends to throw on some
+   * drivers.
    */
   rebuildAfterContextRestore(): void {
     // Drop allocation caches only — fresh shaders will be compiled on

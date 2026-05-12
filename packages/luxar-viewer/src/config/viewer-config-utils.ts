@@ -42,18 +42,13 @@ export const RENDERING_SETTINGS_MAP: Record<string, keyof RenderingSettings> = {
   vignette_darkness: 'vignetteDarkness',
   vignette_offset: 'vignetteOffset',
 
-  // DoF and AO (SSAO) were dropped in the mega-shader refactor. Old
-  // viewer_config blocks that still set `dof_*` / `ao_*` keys are
-  // ignored on load; no migration needed because we explicitly chose
-  // not to carry backwards compatibility.
-
   // Detector noise
   detector_noise_enabled: 'detectorNoiseEnabled',
   detector_noise_readout_sigma: 'detectorNoiseReadoutSigma',
   detector_noise_photon_gain: 'detectorNoisePhotonGain',
   detector_noise_fpn_sigma: 'detectorNoiseFpnSigma',
 
-  // Anti-aliasing (SMAA dropped — see mega-shader-design.md)
+  // Anti-aliasing
   fxaa_enabled: 'fxaaEnabled',
   msaa_enabled: 'msaaEnabled',
   msaa_samples: 'msaaSamples',

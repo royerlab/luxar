@@ -161,16 +161,11 @@ describe('RenderingControls', () => {
       setFXAAEnabled: vi.fn(),
       setMSAAEnabled: vi.fn(),
       setMSAASamples: vi.fn(),
-      setSMAAEnabled: vi.fn(),
-      updateSMAASettings: vi.fn(),
       setToneMapping: vi.fn(),
-      setDOF: vi.fn(),
-      updateDOF: vi.fn(),
       setDetectorNoiseEnabled: vi.fn(),
       setVignetteEnabled: vi.fn(),
       setChromaticLensDistortionEnabled: vi.fn(),
       updateChromaticLensDistortion: vi.fn(),
-      setAOEnabled: vi.fn(),
       startDeferRebuild: vi.fn(),
       endDeferRebuild: vi.fn(),
     };
@@ -419,7 +414,7 @@ describe('RenderingControls', () => {
       // Setup: Modify various settings
       controls.settings.fov = 85;
       controls.settings.bloomStrength = 1.5;
-      controls.settings.aoEnabled = true;
+      controls.settings.vignetteEnabled = true;
       controls.settings.controlType = 'fly';
       controls.settings.flyMovementSpeed = 3.0;
       controls.settings.flyRotationSpeed = 2.0;
@@ -430,7 +425,7 @@ describe('RenderingControls', () => {
       // Reset to different values
       controls.settings.fov = 47;
       controls.settings.bloomStrength = 0.5;
-      controls.settings.aoEnabled = false;
+      controls.settings.vignetteEnabled = false;
 
       // Load back
       controls.loadSettings();
@@ -438,7 +433,7 @@ describe('RenderingControls', () => {
       // Verify: All settings restored
       expect(controls.settings.fov).toBe(85);
       expect(controls.settings.bloomStrength).toBe(1.5);
-      expect(controls.settings.aoEnabled).toBe(true);
+      expect(controls.settings.vignetteEnabled).toBe(true);
       expect(controls.settings.controlType).toBe('fly');
       expect(controls.settings.flyMovementSpeed).toBe(3.0);
       expect(controls.settings.flyRotationSpeed).toBe(2.0);

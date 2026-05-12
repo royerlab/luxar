@@ -141,6 +141,17 @@ export class SceneManager extends THREE.EventDispatcher<{
   /** Reusable Vector2 for getDrawingBufferSize (avoids per-call allocation) */
   private readonly _bufferSize = new THREE.Vector2();
 
+  /**
+   * Explicit DPR selected by adaptive/manual resolution control.
+   *
+   * `null` means "track the browser's native `window.devicePixelRatio`".
+   * Non-null values must survive ordinary window resizes; otherwise a
+   * resize event immediately after a manual DPR change silently restores
+   * native resolution while the AdaptiveDPRManager/UI still reports the
+   * reduced DPR.
+   */
+  private pixelRatioOverride: number | null = null;
+
   /** Current FOV in degrees (perspective) or the default FOV (orthographic). */
   get currentFov(): number {
     return isPerspectiveCamera(this.camera)
@@ -398,10 +409,11 @@ export class SceneManager extends THREE.EventDispatcher<{
   }
 
   /**
-   * Initialize the HDR post-processing pipeline (pmndrs/postprocessing).
+   * Initialize the HDR post-processing pipeline.
    *
-   * Creates an EffectComposer with 16-bit float buffers, bloom, tone mapping,
-   * and optional AA effects. See PostProcessingManager for the full pipeline.
+   * Wires up the mega-shader pipeline with 16-bit float (HalfFloat)
+   * buffers, the bloom pre-pass, and the optional FXAA post-pass.
+   * See PostProcessingManager for the full pipeline.
    */
   private setupPostProcessing(): void {
     // Get canvas dimensions for proper HDR render target sizing
@@ -709,9 +721,11 @@ export class SceneManager extends THREE.EventDispatcher<{
       updateCameraAspect(this.camera, width, height);
     }
 
-    // Ensure pixel ratio stays current (matters when dragging between monitors
-    // with different DPI — devicePixelRatio changes and a resize fires).
-    this.renderer.setPixelRatio(window.devicePixelRatio);
+    // Ensure pixel ratio stays current. When adaptive/manual DPR is active,
+    // preserve that explicit override across ordinary window resizes; when
+    // no override is active, track native devicePixelRatio changes (e.g.
+    // dragging between monitors with different DPI).
+    this.renderer.setPixelRatio(this.getActivePixelRatio());
 
     // PostProcessingManager owns renderer + composer sizing — it calls
     // renderer.setSize() and composer.setSize() internally via resize().
@@ -719,6 +733,7 @@ export class SceneManager extends THREE.EventDispatcher<{
     // before PostProcessingManager has been created.
     if (this.postProcessing) {
       this.postProcessing.resize(width, height);
+      this.syncPostProcessingDPRScale();
     } else {
       this.updateRendererSize(width, height);
     }
@@ -737,8 +752,8 @@ export class SceneManager extends THREE.EventDispatcher<{
     const w = width || window.innerWidth;
     const h = height || window.innerHeight;
 
-    // Set pixel ratio BEFORE size for correct buffer calculations
-    this.renderer.setPixelRatio(window.devicePixelRatio);
+    // Set pixel ratio BEFORE size for correct buffer calculations.
+    this.renderer.setPixelRatio(this.getActivePixelRatio());
     // Let Three.js handle CSS sizing normally
     this.renderer.setSize(w, h); // Allow Three.js to set CSS size
 
@@ -748,6 +763,35 @@ export class SceneManager extends THREE.EventDispatcher<{
     }
   }
 
+  /** Return the DPR currently applied to renderer sizing. */
+  private getActivePixelRatio(): number {
+    return (this.pixelRatioOverride ?? window.devicePixelRatio) || 1;
+  }
+
+  /**
+   * Store/clear the explicit DPR override and return the effective DPR.
+   * Native DPR clears the override so future monitor-DPI changes continue
+   * to track `window.devicePixelRatio` automatically.
+   */
+  private setPixelRatioOverride(dpr: number): number {
+    const nativeDPR = window.devicePixelRatio || 1;
+    const safeDPR = Number.isFinite(dpr) && dpr > 0 ? dpr : nativeDPR;
+    this.pixelRatioOverride = Math.abs(safeDPR - nativeDPR) < 0.01 ? null : safeDPR;
+    return this.getActivePixelRatio();
+  }
+
+  /** Normalize active DPR relative to current native DPR for perceptual effect scaling. */
+  private getNormalizedDPRScale(dpr: number = this.getActivePixelRatio()): number {
+    const nativeDPR = window.devicePixelRatio || 1;
+    return dpr / nativeDPR;
+  }
+
+  /** Keep DPR-dependent post-processing effects consistent after DPR/resize changes. */
+  private syncPostProcessingDPRScale(): void {
+    if (!this.postProcessing) return;
+    this.postProcessing.setDPRScale(this.getNormalizedDPRScale());
+  }
+
   /**
    * Update pixel ratio for adaptive performance optimization.
    *
@@ -755,17 +799,20 @@ export class SceneManager extends THREE.EventDispatcher<{
    * while reducing the internal buffer resolution for better performance.
    *
    * This method is called by the AdaptiveDPRManager when FPS drops below
-   * acceptable thresholds.
+   * acceptable thresholds, and by the manual DPR control when adaptive
+   * mode is disabled.
    *
    * @param dpr - The new device pixel ratio to use
    */
   public setAdaptivePixelRatio(dpr: number): void {
-    const w = window.innerWidth;
-    const h = window.innerHeight;
+    const canvas = this.renderer.domElement;
+    const w = canvas.clientWidth || window.innerWidth;
+    const h = canvas.clientHeight || window.innerHeight;
+    const activeDPR = this.setPixelRatioOverride(dpr);
 
     // Set new pixel ratio — PostProcessingManager's updateRendererSize()
     // will pick this up when it calls renderer.setSize().
-    this.renderer.setPixelRatio(dpr);
+    this.renderer.setPixelRatio(activeDPR);
 
     // PostProcessingManager owns renderer + composer sizing.
     // Its resize() → updateRendererSize() calls renderer.setSize(w, h, false)
@@ -774,10 +821,8 @@ export class SceneManager extends THREE.EventDispatcher<{
       this.postProcessing.resize(w, h);
 
       // Scale noise parameters based on DPR to maintain perceptual consistency
-      // At lower DPR, each pixel covers more area, so noise should be scaled down
-      const nativeDPR = window.devicePixelRatio;
-      const normalizedDPR = dpr / nativeDPR; // 1.0 at native, <1.0 when reduced
-      this.postProcessing.setDPRScale(normalizedDPR);
+      // At lower DPR, each pixel covers more area, so noise should be scaled down.
+      this.postProcessing.setDPRScale(this.getNormalizedDPRScale(activeDPR));
     }
 
     // Update material uniforms for world-space point sizing
@@ -787,7 +832,9 @@ export class SceneManager extends THREE.EventDispatcher<{
 
     log.update(
       Modules.SCENE_MANAGER,
-      `Adaptive DPR: ${dpr.toFixed(2)} (buffer: ${Math.round(w * dpr)}x${Math.round(h * dpr)})`
+      `Adaptive DPR: ${activeDPR.toFixed(2)} (buffer: ${Math.round(w * activeDPR)}x${Math.round(
+        h * activeDPR
+      )})`
     );
   }
 

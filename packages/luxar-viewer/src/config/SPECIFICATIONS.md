@@ -387,7 +387,7 @@ interface ShaderConfig {
 }
 ```
 
-**Note**: Per-node color adjustment (intensity, offset, gamma) is configured per-material via `MaterialConfig`. Global exposure/offset/gamma are applied in the `LuxarToneMappingEffect` post-processing pass. Point alpha is computed as `falloff * opacity`, matching line material behavior.
+**Note**: Per-node color adjustment (intensity, offset, gamma) is configured per-material via `MaterialConfig`. Global exposure/offset/gamma are applied inside the mega-shader post-processing pass. Point alpha is computed as `falloff * opacity`, matching line material behavior.
 
 ---
 
@@ -395,7 +395,7 @@ interface ShaderConfig {
 
 ### 7.1 Purpose
 
-Controls HDR rendering, tone mapping, and post-processing effects including bloom, depth of field, ambient occlusion, vignette, chromatic aberration, detector noise, and lens distortion.
+Controls HDR rendering, tone mapping, and post-processing effects: bloom, vignette, detector noise, and chromatic lens distortion.
 
 ### 7.2 Structure
 
@@ -459,17 +459,6 @@ All effect settings are in `renderingControls.defaults` (section 13):
 - **bloomRadius**: 1.0 (blur spread)
 - **bloomLevels**: 8 (mipmap levels, 1-12)
 
-**Depth of Field**:
-
-- **dofEnabled**: false
-- **dofFocus**: 10 (focus distance)
-- **dofStrength**: 0.5 (blur strength, 0-1)
-
-**Ambient Occlusion**:
-
-- **aoEnabled**: false
-- **aoQuality**: 'medium' ('low' | 'medium' | 'high' | 'ultra')
-
 **Vignette**:
 
 - **vignetteEnabled**: false
@@ -513,7 +502,6 @@ All effect settings are in `renderingControls.defaults` (section 13):
 - **bloomStrength**: Typical 0-2 (can go higher)
 - **bloomRadius**: Typical 0-2
 - **bloomLevels**: 1-12
-- **dofStrength**: 0-1
 - **vignetteDarkness**: 0-1
 - **vignetteOffset**: 0-1
 - **detectorNoise** parameters: must be within specified ranges
@@ -1082,7 +1070,7 @@ interface RenderingSettings {
   bloomStrength: number;
   bloomRadius: number;
   bloomLevels: number;
-  // Global EOG (Exposure-Offset-Gamma) in LuxarToneMappingEffect
+  // Global EOG (Exposure-Offset-Gamma) applied in the mega-shader
   exposure: number;
   globalOffset: number;
   globalGamma: number;
@@ -1090,23 +1078,20 @@ interface RenderingSettings {
   fxaaEnabled: boolean;
   msaaEnabled: boolean;
   msaaSamples: number;
-  smaaEnabled: boolean;
-  smaaThreshold: number;
-  smaaSearchSteps: number;
   ssaaEnabled: boolean;
   ssaaMultiplier: number;
   // Tone mapping
   toneMapping: 'None' | 'Linear' | 'Reinhard' | 'Cineon' | 'ACES' | 'AgX' | 'Neutral';
-  // Depth of field
-  dofEnabled: boolean;
-  dofFocus: number;
-  dofStrength: number;
-  // Chromatic aberration
-  chromaticAberrationEnabled: boolean;
-  chromaticAberrationStrength: number;
-  // Ambient occlusion
-  aoEnabled: boolean;
-  aoQuality: 'low' | 'medium' | 'high' | 'ultra';
+  // Chromatic lens distortion
+  chromaticLensDistortionEnabled: boolean;
+  chromaticLensDistortionX: number;
+  chromaticLensDistortionY: number;
+  chromaticLensDispersion: number;
+  chromaticLensPrincipalPointX: number;
+  chromaticLensPrincipalPointY: number;
+  chromaticLensFocalLengthX: number;
+  chromaticLensFocalLengthY: number;
+  chromaticLensSkew: number;
   // Vignette
   vignetteEnabled: boolean;
   vignetteDarkness: number;
@@ -1116,15 +1101,6 @@ interface RenderingSettings {
   detectorNoiseReadoutSigma: number;
   detectorNoisePhotonGain: number;
   detectorNoiseFpnSigma: number;
-  // Lens distortion
-  lensDistortionEnabled: boolean;
-  lensDistortionX: number;
-  lensDistortionY: number;
-  lensPrincipalPointX: number;
-  lensPrincipalPointY: number;
-  lensFocalLengthX: number;
-  lensFocalLengthY: number;
-  lensSkew: number;
   // Navigation
   controlType: 'orbit' | 'fly' | 'ortho';
   autoRotate: boolean;
@@ -1166,9 +1142,6 @@ interface RenderingSettings {
 - **fxaaEnabled**: false
 - **msaaEnabled**: false (incompatible with additive blending)
 - **msaaSamples**: 4
-- **smaaEnabled**: false
-- **smaaThreshold**: 0.1 (not exposed in UI - library uses presets only)
-- **smaaSearchSteps**: 8 (not exposed in UI - library uses presets only)
 - **ssaaEnabled**: false (brightness issues with additive)
 - **ssaaMultiplier**: 2.0
 
@@ -1176,21 +1149,14 @@ interface RenderingSettings {
 
 - **toneMapping**: 'Neutral' (preserves hue fidelity for scientific data; ACES used in cinematic mode)
 
-**Depth of Field**:
+**Chromatic Lens Distortion**:
 
-- **dofEnabled**: false
-- **dofFocus**: 10
-- **dofStrength**: 0.5
-
-**Chromatic Aberration**:
-
-- **chromaticAberrationEnabled**: false
-- **chromaticAberrationStrength**: 0.15
-
-**Ambient Occlusion**:
-
-- **aoEnabled**: false
-- **aoQuality**: 'medium'
+- **chromaticLensDistortionEnabled**: false
+- **chromaticLensDistortionX / Y**: 0
+- **chromaticLensDispersion**: 0
+- **chromaticLensPrincipalPointX / Y**: 0
+- **chromaticLensFocalLengthX / Y**: 1
+- **chromaticLensSkew**: 0
 
 **Vignette**:
 
@@ -1204,17 +1170,6 @@ interface RenderingSettings {
 - **detectorNoiseReadoutSigma**: 0.01
 - **detectorNoisePhotonGain**: 0.01
 - **detectorNoiseFpnSigma**: 0.005
-
-**Lens Distortion**:
-
-- **lensDistortionEnabled**: false
-- **lensDistortionX**: -0.04
-- **lensDistortionY**: -0.04
-- **lensPrincipalPointX**: 0
-- **lensPrincipalPointY**: 0
-- **lensFocalLengthX**: 1.045
-- **lensFocalLengthY**: 1.045
-- **lensSkew**: 0
 
 **Navigation**:
 
@@ -1230,31 +1185,22 @@ import { config } from '../config';
 // Initialize rendering settings from defaults
 let settings = { ...config.renderingControls.defaults };
 
-// Apply bloom settings
-const bloomPass = new UnrealBloomPass(
-  new THREE.Vector2(width, height),
+// Apply bloom settings via PostProcessingManager
+postProcessing.setBloomEnabled(
+  settings.bloomEnabled,
   settings.bloomStrength,
   settings.bloomRadius,
   settings.bloomThreshold
 );
-bloomPass.nMips = settings.bloomLevels;
+postProcessing.setBloomLevels(settings.bloomLevels);
 
-// Apply tone mapping
-renderer.toneMapping = getToneMappingConstant(settings.toneMapping);
-
-// Toggle depth of field
-if (settings.dofEnabled) {
-  const dofPass = new DepthOfFieldPass(camera, {
-    focus: settings.dofFocus,
-    strength: settings.dofStrength,
-  });
-  composer.addPass(dofPass);
-}
+// Apply tone mapping (mode is the THREE constant resolved by tone-mapping name)
+postProcessing.setToneMapping(TONE_MAPPING_MAP[settings.toneMapping]);
 
 // Update settings from UI
 function onBloomStrengthChange(value: number) {
   settings.bloomStrength = value;
-  bloomPass.strength = value;
+  postProcessing.updateBloomSettings(value);
   saveSettings(settings);
 }
 ```
@@ -1265,10 +1211,9 @@ function onBloomStrengthChange(value: number) {
 - **bloomStrength**: Typical 0-2
 - **bloomRadius**: Typical 0-2
 - **bloomLevels**: 1-12
-- **exposure**: >= 0
+- **exposure**: log2 stops (any float)
 - **globalOffset**: any float
 - **globalGamma**: > 0
-- **dofStrength**: 0-1
 - **vignetteDarkness**: 0-1
 - **vignetteOffset**: 0-1
 - **detectorNoiseReadoutSigma**: 0-0.1

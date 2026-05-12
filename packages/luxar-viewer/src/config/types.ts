@@ -509,8 +509,6 @@ export interface RenderingSettings {
   msaaSamples: number;
   ssaaEnabled: boolean;
   ssaaMultiplier: number;
-  // Post-processing effects (SMAA, DoF, and SSAO were dropped in the
-  // mega-shader refactor — see mega-shader-design.md for rationale).
   toneMapping: 'None' | 'Linear' | 'Reinhard' | 'Cineon' | 'ACES' | 'AgX' | 'Neutral';
   vignetteEnabled: boolean;
   vignetteDarkness: number;

@@ -334,7 +334,13 @@ export class AdaptiveDPRManager {
     // Clamp DPR to reasonable range
     const minDPR = 0.25;
     const clampedDPR = clamp(dpr, minDPR, this.nativeDPR);
+
+    // DPR changes force renderer/post-processing target reallocations, so
+    // avoid repeating that expensive path for duplicate slider/input events.
+    if (Math.abs(clampedDPR - this.currentDPR) < 0.01) return;
+
     this.currentDPR = clampedDPR;
+    this.isReducedResolution = clampedDPR < this.nativeDPR * 0.95;
     this.applyDPR();
 
     log.info(Modules.ADAPTIVE_DPR, `Manual DPR set to ${clampedDPR.toFixed(2)}`);

@@ -1,23 +1,20 @@
 /**
  * Mega-shader: single-pass post-processing fragment shader.
  *
- * Collapses what used to be a chain of pmndrs/postprocessing Effects
- * (chromatic lens distortion, detector noise, EOG, tone mapping,
- * vignette) into one fullscreen pass. Each effect is gated behind an
- * `#ifdef USE_*` define so a recompile is needed only when an effect
- * is toggled on/off — value tweaks just update uniforms.
+ * Fuses chromatic lens distortion, detector noise, EOG, tone mapping,
+ * and vignette into one fullscreen pass. Each effect is gated behind
+ * an `#ifdef USE_*` define so a recompile is needed only when an
+ * effect is toggled on/off — value tweaks just update uniforms.
  *
  * Pre-stages owned by the host:
  *   - Bloom pyramid renders into `uBloomTexture` (see {@link BloomChain}).
  *     The mega-shader samples bloom at the SAME (chromatic-aberrated)
- *     UVs as the scene; that matches the pmndrs chain semantics in
- *     which bloom was additively blended into the HDR buffer BEFORE
- *     chromatic lens distortion sampled from it.
+ *     UVs as the scene so bloom is effectively additively-blended into
+ *     the HDR buffer BEFORE chromatic lens distortion samples from it.
  *   - FXAA is a separate post-pass after the mega-shader, since edge
  *     detection needs neighbor reads of the *final* LDR pixels.
  *
- * Operation order matches the canonical pmndrs chain order
- * (`effect-orchestrator.ts:buildOrderedEffects`):
+ * Operation order:
  *   1. Bloom additively mixed into the HDR scene (per-channel at
  *      distorted UVs when lens distortion is on)
  *   2. Lens distortion (sampling lookup)
@@ -27,7 +24,7 @@
  *      shader-define; values are Luxar-internal IDs 1..6, NOT THREE's
  *      enum values — see `toneMappingModeDefine` in the material file
  *      for the mapping. `NoToneMapping` aliases to Linear so it
- *      clamps to [0,1] like the old pipeline did.)
+ *      clamps to [0,1].)
  *   6. Vignette
  *   7. sRGB encoding (final write; matches outputColorSpace = sRGB)
  *
@@ -70,13 +67,13 @@ export const MEGA_VERTEX_SHADER = /* glsl */ `
  *                                   bypasses EOG, tone mapping,
  *                                   vignette, sRGB encoding. Used by
  *                                   captureHDRPixels('hdr-effects-pre-tone')
- *                                   to recover the old pmndrs
- *                                   linear-HDR-with-bloom semantics.
+ *                                   to produce linear-HDR-with-bloom
+ *                                   output for EXR export.
  *   - `LUXAR_CAPTURE_LINEAR_LDR`  — skips ONLY the final sRGB
- *                                   encoding. Used by captureHDRPixels('visible-ldr')
- *                                   to match the old linear-LDR
- *                                   capture (post-tone-mapping but
- *                                   pre-sRGB).
+ *                                   encoding. Used by
+ *                                   captureHDRPixels('visible-ldr')
+ *                                   to produce a post-tone-mapping
+ *                                   linear LDR capture.
  *
  * Note: `toneMappingExposure` is provided by THREE's
  * `<tonemapping_pars_fragment>` chunk; we deliberately do not
@@ -139,10 +136,9 @@ export const MEGA_FRAGMENT_SHADER = /* glsl */ `
   uniform float uBloomIntensity;
   #endif
 
-  // Sample (scene + bloom) at a single UV. Matches the original
-  // pmndrs pipeline where Bloom was additively mixed into the HDR
-  // buffer BEFORE chromatic lens distortion sampled it; so a
-  // distorted sample picks up bloom at the distorted UV too.
+  // Sample (scene + bloom) at a single UV. Bloom is additively mixed
+  // into the HDR sample BEFORE chromatic lens distortion samples from
+  // it; a distorted sample picks up bloom at the distorted UV too.
   vec3 sampleHdrPlusBloom(vec2 uv) {
     vec3 result = texture(uHdrScene, uv).rgb;
     #ifdef USE_BLOOM
@@ -153,7 +149,6 @@ export const MEGA_FRAGMENT_SHADER = /* glsl */ `
 
   // ============================================================
   // Detector noise (Bob Jenkins hash + Anscombe Poisson + Gaussian)
-  // Lifted verbatim from detector-noise-effect.ts.
   // ============================================================
   #ifdef USE_DETECTOR_NOISE
   uniform float uTime;
@@ -294,8 +289,8 @@ export const MEGA_FRAGMENT_SHADER = /* glsl */ `
 
     // (1+2) Sample (scene + bloom). When lens distortion is on, the
     //       sample happens at chromatically-distorted UVs per channel.
-    //       Matches the original pmndrs ordering (bloom additively
-    //       mixed BEFORE chromatic distortion sampled the buffer).
+    //       Bloom is additively mixed BEFORE chromatic distortion
+    //       samples the buffer.
     #ifdef USE_LENS_DISTORTION
     {
       vec2 distR = uDistortion * (1.0 - uDispersion);
@@ -317,9 +312,7 @@ export const MEGA_FRAGMENT_SHADER = /* glsl */ `
     // the host disables USE_DETECTOR_NOISE / USE_VIGNETTE /
     // USE_LENS_DISTORTION and wants the pre-EOG linear HDR pixels for
     // EXR export. Skip every downstream step (EOG, tone mapping,
-    // vignette, sRGB encoding). Output is the scene+bloom sample
-    // exactly as the old pmndrs hdr-effects-pre-tone chain wrote into
-    // its HalfFloat ping-pong target.
+    // vignette, sRGB encoding). Output is the scene+bloom sample.
     #ifdef LUXAR_CAPTURE_RAW_HDR
     fragColor = vec4(color, 1.0);
     return;
@@ -338,8 +331,8 @@ export const MEGA_FRAGMENT_SHADER = /* glsl */ `
     // (5) Tone mapping — LUXAR_TONE_MAPPING_MODE is a Luxar-internal
     //     compressed ID (1..6) set by toneMappingModeDefine() in the
     //     material file. THREE.NoToneMapping is aliased to mode 1
-    //     (Linear) at the host so it clamps like the old pipeline.
-    //     Functions come from <tonemapping_pars_fragment>.
+    //     (Linear) so it clamps to [0,1]. Functions come from
+    //     <tonemapping_pars_fragment>.
     #if LUXAR_TONE_MAPPING_MODE == 1
       color = LinearToneMapping(color);
     #elif LUXAR_TONE_MAPPING_MODE == 2
@@ -368,16 +361,13 @@ export const MEGA_FRAGMENT_SHADER = /* glsl */ `
     //     surface (backbuffer or sRGB-encoded ldrTarget read by FXAA
     //     and then written to backbuffer).
     //     LUXAR_CAPTURE_LINEAR_LDR disables this step for the
-    //     visible-ldr EXR capture mode — the old pmndrs pipeline read
-    //     from a HalfFloat ping-pong buffer that held linear LDR
-    //     (post-tone-mapping, pre-sRGB) values.
+    //     visible-ldr EXR capture mode (post-tone-mapping, pre-sRGB).
     #ifndef LUXAR_CAPTURE_LINEAR_LDR
     color = linearToSRGB(color);
     #endif
 
     // Alpha forced to 1.0 — input alpha may be NaN/Inf from heavy
-    // additive blending of points/lines (RobustVignetteEffect's
-    // original rationale; still applies here).
+    // additive blending of points/lines.
     fragColor = vec4(color, 1.0);
   }
 `;
