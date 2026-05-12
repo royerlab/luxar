@@ -41,34 +41,6 @@ import { clamp } from '../../utils/clamp';
 const VALID_MSAA_SAMPLES = [0, 2, 4, 8, 16] as const;
 
 /**
- * Human-readable name for a THREE tone-mapping constant. Mirrors the
- * label used by the pre-refactor `tone-mapping-mode-names.ts` helper —
- * surfaced via `getEffectsStatus().toneMapping` for the UI / status
- * panel. Aliases `NoToneMapping` to `'Linear'` because our pipeline
- * routes both to mode 1 (the saturating linear curve).
- */
-function toneMappingLabel(mode: THREE.ToneMapping): string {
-  switch (mode) {
-    case THREE.NoToneMapping:
-      return 'Linear';
-    case THREE.LinearToneMapping:
-      return 'Linear';
-    case THREE.ReinhardToneMapping:
-      return 'Reinhard';
-    case THREE.CineonToneMapping:
-      return 'Cineon';
-    case THREE.ACESFilmicToneMapping:
-      return 'ACES';
-    case THREE.AgXToneMapping:
-      return 'AgX';
-    case THREE.NeutralToneMapping:
-      return 'Neutral';
-    default:
-      return 'Unknown';
-  }
-}
-
-/**
  * Manages HDR post-processing: scene → bloom → mega-shader → (FXAA) →
  * backbuffer. Owns all transient GPU resources and a small amount of
  * persisted state (DPR noise scaling baseline, quality preset, etc.).
@@ -108,7 +80,6 @@ export class PostProcessingManager {
   private bloomIntensity: number = config.renderingControls.defaults.bloomStrength;
   private bloomRadius: number = config.renderingControls.defaults.bloomRadius;
   private bloomThreshold: number = config.renderingControls.defaults.bloomThreshold;
-  private _qualityPreset: 'low' | 'medium' | 'high' | 'ultra' = 'medium';
 
   // Deferred-rebuild: kept for API compatibility with cinematic-mode batching;
   // with the mega-shader, rebuilds are cheap so the deferred path is a
@@ -116,13 +87,6 @@ export class PostProcessingManager {
   private deferRebuildDepth = 0;
 
   private disposed = false;
-
-  // Performance tracking (cheap, exposed via getPerformanceMetrics).
-  private performanceMetrics = {
-    lastFrameTime: 0,
-    avgFrameTime: 0,
-    frameCount: 0,
-  };
 
   // Wall-clock timestamp of the previous render() call, used to derive
   // the inter-frame delta for detector-noise time advancement. 0 means
@@ -411,10 +375,6 @@ export class PostProcessingManager {
     log.info(Modules.POST_PROCESSING, `Bloom mipmap levels set to ${next}`);
   }
 
-  getBloomLevels(): number {
-    return this.bloomLevels;
-  }
-
   // ================================================================
   // Tone mapping + EOG
   // ================================================================
@@ -422,10 +382,6 @@ export class PostProcessingManager {
   setToneMapping(mode: THREE.ToneMapping): void {
     this.megaShader.setToneMapping(mode);
     log.update(Modules.POST_PROCESSING, `Tone mapping set to mode ${mode}`);
-  }
-
-  getToneMapping(): THREE.ToneMapping {
-    return this.megaShader.getToneMapping();
   }
 
   updateExposure(value: number): void {
@@ -455,10 +411,6 @@ export class PostProcessingManager {
       this.fxaaPass = null;
     }
     log.update(Modules.POST_PROCESSING, `FXAA ${enabled ? 'enabled' : 'disabled'}`);
-  }
-
-  isFXAAEnabled(): boolean {
-    return this.fxaaEnabled;
   }
 
   // ================================================================
@@ -703,18 +655,6 @@ export class PostProcessingManager {
     }
   }
 
-  getMSAASamples(): number {
-    return this.msaaSamples;
-  }
-
-  isMSAAEnabled(): boolean {
-    return this.msaaEnabled;
-  }
-
-  getActualMSAASamples(): number {
-    return this.msaaEnabled ? this.msaaSamples : 0;
-  }
-
   setSSAAEnabled(enabled: boolean): void {
     if (this.ssaaEnabled === enabled) return;
     this.ssaaEnabled = enabled;
@@ -736,49 +676,6 @@ export class PostProcessingManager {
   }
 
   // ================================================================
-  // Quality preset
-  // ================================================================
-
-  getQualityPreset(): 'low' | 'medium' | 'high' | 'ultra' {
-    return this._qualityPreset;
-  }
-
-  setQualityPreset(preset: 'low' | 'medium' | 'high' | 'ultra'): void {
-    this._qualityPreset = preset;
-    this.withDeferredRebuild(() => {
-      switch (preset) {
-        case 'low':
-          this.setBloomLevels(3);
-          this.setFXAAEnabled(true);
-          this.setMSAAEnabled(false);
-          this.setSSAAEnabled(false);
-          break;
-        case 'medium':
-          this.setBloomLevels(6);
-          this.setFXAAEnabled(true);
-          this.setMSAAEnabled(false);
-          this.setSSAAEnabled(false);
-          break;
-        case 'high':
-          this.setBloomLevels(8);
-          this.setFXAAEnabled(true);
-          this.setMSAAEnabled(true);
-          this.setMSAASamples(4);
-          break;
-        case 'ultra':
-          this.setBloomLevels(10);
-          this.setFXAAEnabled(true);
-          this.setMSAAEnabled(true);
-          this.setMSAASamples(8);
-          this.setSSAAEnabled(true);
-          this.setSSAAMultiplier(2.0);
-          break;
-      }
-    });
-    log.info(Modules.POST_PROCESSING, `Quality preset set to: ${preset}`);
-  }
-
-  // ================================================================
   // Animation loop hook
   // ================================================================
 
@@ -786,57 +683,20 @@ export class PostProcessingManager {
     return this.megaShader.isDetectorNoiseEnabled();
   }
 
-  getEffectsStatus(): {
-    bloom: boolean;
-    detectorNoise: boolean;
-    fxaa: boolean;
-    msaa: boolean;
-    ssaa: boolean;
-    toneMapping: string;
-    vignette: boolean;
-    chromaticLensDistortion: boolean;
-  } {
-    return {
-      bloom: this.isBloomEnabled(),
-      detectorNoise: this.megaShader.isDetectorNoiseEnabled(),
-      fxaa: this.fxaaEnabled,
-      msaa: this.msaaEnabled,
-      ssaa: this.ssaaEnabled,
-      toneMapping: toneMappingLabel(this.megaShader.getToneMapping()),
-      vignette: this.megaShader.isVignetteEnabled(),
-      chromaticLensDistortion: this.megaShader.isLensDistortionEnabled(),
-    };
-  }
-
-  getPerformanceMetrics(): { avgFrameTime: number; fps: number; memoryUsageMB: number } {
-    const fps =
-      this.performanceMetrics.avgFrameTime > 0 ? 1000 / this.performanceMetrics.avgFrameTime : 0;
-    // Memory estimate uses physical-pixel size (matches what actually
-    // gets allocated on the GPU). 8 bytes/pixel (RGBA HalfFloat) ×
-    // (hdr + ldr targets + ~bloom-chain pyramid at ~0.5× one mip).
-    const { width, height } = this.getPhysicalSize();
-    const baseBytes = width * height * 8 * 2;
-    const bloomBytes = this.bloomChain ? width * height * 8 * 0.5 : 0;
-    const msaa = this.msaaEnabled ? this.msaaSamples : 1;
-    const memoryUsageMB = (baseBytes * msaa + bloomBytes) / (1024 * 1024);
-    return { avgFrameTime: this.performanceMetrics.avgFrameTime, fps, memoryUsageMB };
-  }
-
   // ================================================================
   // Render
   // ================================================================
 
   render(): void {
-    const startTime = performance.now();
-
     // Wall-clock delta since previous render() (in seconds). This is
     // the time the detector-noise effect uses to animate temporal
     // patterns; advancing by render *duration* (as we did before)
     // ran 4x slower at 60fps with 4ms render time. Match the old
     // pmndrs path which fed actual frame deltaTime to Effect.update().
+    const now = performance.now();
     const dt =
-      this._previousRenderTimestamp === 0 ? 0 : (startTime - this._previousRenderTimestamp) / 1000;
-    this._previousRenderTimestamp = startTime;
+      this._previousRenderTimestamp === 0 ? 0 : (now - this._previousRenderTimestamp) / 1000;
+    this._previousRenderTimestamp = now;
 
     // Advance detector-noise time BEFORE rendering so the first frame
     // with the new dt is what gets sampled.
@@ -845,13 +705,6 @@ export class PostProcessingManager {
     }
 
     this.runPipeline({ applyFxaa: this.fxaaPass !== null, finalTarget: null });
-
-    const frameTime = performance.now() - startTime;
-    this.performanceMetrics.lastFrameTime = frameTime;
-    this.performanceMetrics.frameCount++;
-    const alpha = 0.05;
-    this.performanceMetrics.avgFrameTime =
-      this.performanceMetrics.avgFrameTime * (1 - alpha) + frameTime * alpha;
   }
 
   /**
