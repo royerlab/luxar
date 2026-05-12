@@ -23,6 +23,7 @@ type Probes = {
   maxSamples?: number | null;
   pointSizeRange?: ArrayLike<number> | number;
   extensions?: string[];
+  colorBits?: { red: number; green: number; blue: number };
   drawingBufferWidth?: number;
   drawingBufferHeight?: number;
 };
@@ -32,6 +33,7 @@ function fakeRenderer(probes: Probes = {}): THREE.WebGLRenderer {
   const {
     pointSizeRange = new Float32Array([1, 1024]),
     extensions = [],
+    colorBits = { red: 8, green: 8, blue: 8 },
     drawingBufferWidth = 4,
     drawingBufferHeight = 2,
   } = probes;
@@ -49,7 +51,9 @@ function fakeRenderer(probes: Probes = {}): THREE.WebGLRenderer {
     getParameter: (param: number) => {
       if (param === MAX_SAMPLES) return maxSamples;
       if (param === ALIASED_POINT_SIZE_RANGE) return pointSizeRange;
-      if (param === RED_BITS || param === GREEN_BITS || param === BLUE_BITS) return 8;
+      if (param === RED_BITS) return colorBits.red;
+      if (param === GREEN_BITS) return colorBits.green;
+      if (param === BLUE_BITS) return colorBits.blue;
       return 0;
     },
     drawingBufferWidth,
@@ -98,10 +102,10 @@ describe('createRendererCapabilities', () => {
     expect(caps.hdr.floatTextures).toBe(true);
   });
 
-  it('readBackbufferPixels binds the canvas, then reads the backbuffer', () => {
+  it('readBackbufferPixels binds the canvas, then reads the backbuffer', async () => {
     const renderer = fakeRenderer({ drawingBufferWidth: 3, drawingBufferHeight: 2 });
     const caps = createRendererCapabilities(renderer);
-    const result = caps.readBackbufferPixels();
+    const result = await caps.readBackbufferPixels();
 
     expect(renderer.setRenderTarget).toHaveBeenCalledWith(null);
     expect(result.width).toBe(3);
@@ -111,5 +115,37 @@ describe('createRendererCapabilities', () => {
 
     const ctx = renderer.getContext() as unknown as { readPixels: ReturnType<typeof vi.fn> };
     expect(ctx.readPixels).toHaveBeenCalled();
+  });
+
+  // -------------------------------------------------------------------
+  // HDR renderer-side probes — these used to live in hdr-detection.ts
+  // and moved here when raw-GL probing was concentrated in
+  // `createRendererCapabilities`.
+  // -------------------------------------------------------------------
+
+  it('reads RED/GREEN/BLUE bits from the GL context into hdr.colorDepth', () => {
+    const caps = createRendererCapabilities(
+      fakeRenderer({ colorBits: { red: 10, green: 10, blue: 10 } })
+    );
+    expect(caps.hdr.colorDepth).toEqual({ red: 10, green: 10, blue: 10 });
+  });
+
+  it('reports hdr.floatTextures=true when EXT_color_buffer_float is present', () => {
+    const caps = createRendererCapabilities(
+      fakeRenderer({ extensions: ['EXT_color_buffer_float'] })
+    );
+    expect(caps.hdr.floatTextures).toBe(true);
+  });
+
+  it('reports hdr.floatTextures=true when only the half-float extension is present', () => {
+    const caps = createRendererCapabilities(
+      fakeRenderer({ extensions: ['EXT_color_buffer_half_float'] })
+    );
+    expect(caps.hdr.floatTextures).toBe(true);
+  });
+
+  it('reports hdr.floatTextures=false when no float-buffer extension is present', () => {
+    const caps = createRendererCapabilities(fakeRenderer({ extensions: [] }));
+    expect(caps.hdr.floatTextures).toBe(false);
   });
 });

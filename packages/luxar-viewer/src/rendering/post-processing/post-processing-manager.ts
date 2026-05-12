@@ -23,7 +23,7 @@ import { MegaShaderMaterial } from './mega-shader-material';
 import { BloomChain } from './bloom-chain';
 import { FxaaPass } from './fxaa-pass';
 import { computeEffectiveRenderSize } from './render-target-sizing';
-import type { RendererCapabilities } from '../renderer-capabilities';
+import type { RendererCapabilities, Renderer } from '../renderer-capabilities';
 import {
   halfFloatToFloat32,
   float32ToHalfFloat,
@@ -100,7 +100,7 @@ export class PostProcessingManager {
    *   next window resize.
    */
   constructor(
-    private renderer: THREE.WebGLRenderer,
+    private renderer: Renderer,
     private capabilities: RendererCapabilities,
     private scene: THREE.Scene,
     private camera: THREE.Camera,
@@ -983,10 +983,10 @@ export class PostProcessingManager {
   async renderToImageData(): Promise<ImageData> {
     this.render();
     // RendererCapabilities owns the binding + readback (it knows to
-    // bind the canvas backbuffer before reading). Today this is sync;
-    // under WebGPU the underlying implementation becomes async — see
-    // the capture-path Promise-ification in the migration plan.
-    const { pixels, width, height } = this.capabilities.readBackbufferPixels();
+    // bind the canvas backbuffer before reading). Under WebGL2 the
+    // Promise resolves immediately; under WebGPU it awaits the
+    // GPU-buffer map.
+    const { pixels, width, height } = await this.capabilities.readBackbufferPixels();
     const flipped = flipPixelsVerticallyRGBA(
       pixels,
       width,

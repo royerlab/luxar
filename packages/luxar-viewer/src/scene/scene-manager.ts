@@ -21,6 +21,7 @@ import { disposeColormapTextures } from '../rendering/colormap-textures';
 import {
   createRendererCapabilities,
   type RendererCapabilities,
+  type Renderer,
 } from '../rendering/renderer-capabilities';
 import { configureHDRRenderer, logHDRCapabilities } from '../utils/hdr-detection';
 import {
@@ -87,8 +88,12 @@ export class SceneManager extends THREE.EventDispatcher<{
    */
   'webgl-context-restored': {};
 }> {
-  /** Three.js WebGL renderer - handles all GPU-accelerated rendering */
-  public renderer!: THREE.WebGLRenderer;
+  /**
+   * The graphics-API renderer. Typed as the `Renderer` union from
+   * `renderer-capabilities.ts` so the WebGPU port widens this in
+   * one place. Today the union has a single arm (WebGLRenderer).
+   */
+  public renderer!: Renderer;
 
   /**
    * Capabilities snapshot for the active renderer. Hides raw-GL queries
@@ -252,11 +257,18 @@ export class SceneManager extends THREE.EventDispatcher<{
   private setupRenderer(): void {
     // Try to get HDR canvas context first using config values.
     //
-    // NOTE: This is the ONE legitimate raw-GL call in the codebase —
-    // it creates the WebGL2 context *before* the renderer exists, so
-    // it cannot live behind `RendererCapabilities`. Under WebGPU the
-    // parallel call will be `navigator.gpu.requestAdapter()` / async
-    // `renderer.init()`; everything else in the codebase goes through
+    // Allow-list rule: a `getContext` call is permitted ONLY if it
+    // runs before the renderer exists (no `this.capabilities` to
+    // route through yet). Today there are exactly two such sites:
+    //
+    //   1. This line — creates the WebGL2 context the WebGLRenderer
+    //      wraps.
+    //   2. `src/utils/webgpu-availability.ts` — page-load probe that
+    //      classifies the browser as `'webgpu' | 'webgl2' | 'unsupported'`.
+    //
+    // Under WebGPU the parallel call at site (1) becomes
+    // `navigator.gpu.requestAdapter()` / async `renderer.init()`;
+    // everything else in the codebase must go through
     // `this.capabilities`.
     let gl: WebGLRenderingContext | null = null;
     try {
@@ -304,6 +316,11 @@ export class SceneManager extends THREE.EventDispatcher<{
     // HDR extensions). All downstream consumers read from here, never
     // from `renderer.getContext()`.
     this.capabilities = createRendererCapabilities(this.renderer);
+
+    // Log the active graphics API. Doubles as a live consumer of
+    // `capabilities.api` so the discriminator field can't silently
+    // rot before the WebGPU port adds the second arm.
+    log.info(Modules.RENDERER, `Rendering API: ${this.capabilities.api}`);
 
     // Report hardware point size limits when debug logging is requested.
     if (this.debug) {
