@@ -162,11 +162,7 @@ describe('NodeFactory placeholder factories — common contract', () => {
     const lLoader = { dispose: vi.fn() } as unknown as LinesDataLoader;
     const gLoader = { dispose: vi.fn() } as unknown as GSplatsDataLoader;
 
-    const points = factory.createEmptyPointsNode(
-      '/p',
-      { n_points: 0 } as PointsMetadata,
-      pLoader
-    );
+    const points = factory.createEmptyPointsNode('/p', { n_points: 0 } as PointsMetadata, pLoader);
     const lines = factory.createEmptyLinesNode(
       '/l',
       {} as Record<string, unknown>,
@@ -238,7 +234,12 @@ describe('SceneLoader.retryFailedLoader — derived.skip fallback', () => {
   // `as any` everywhere.
   type LoaderInternals = {
     rootGroup: THREE.Group | null;
-    viewState: { displayDims: number[]; slicePosition: number[]; tolerance: number[]; dimensions?: unknown };
+    viewState: {
+      displayDims: number[];
+      slicePosition: number[];
+      tolerance: number[];
+      dimensions?: unknown;
+    };
     deriveNodeViewState: (
       path: string,
       attrs: unknown,
@@ -262,12 +263,7 @@ describe('SceneLoader.retryFailedLoader — derived.skip fallback', () => {
       displayDims: [0, 1, 2],
       slicePosition: [0, 0, 0, 0],
       tolerance: [0.5, 0.5, 0.5, 0.5],
-      dimensions: [
-        { name: 'x' },
-        { name: 'y' },
-        { name: 'z' },
-        { name: 't' },
-      ],
+      dimensions: [{ name: 'x' }, { name: 'y' }, { name: 'z' }, { name: 't' }],
     };
   });
 
@@ -283,7 +279,10 @@ describe('SceneLoader.retryFailedLoader — derived.skip fallback', () => {
     root.add(placeholder);
 
     const updateView = vi.fn().mockResolvedValue(null);
-    internals.registry.registerPointsLoader('/p', { updateView, dispose: vi.fn() } as unknown as DataLoader);
+    internals.registry.registerPointsLoader('/p', {
+      updateView,
+      dispose: vi.fn(),
+    } as unknown as DataLoader);
     internals.registry.recordFailure('/p', new Error('initial network failure'));
 
     vi.spyOn(internals, 'deriveNodeViewState').mockReturnValue({ skip: 'extend_to_all' });
@@ -309,7 +308,10 @@ describe('SceneLoader.retryFailedLoader — derived.skip fallback', () => {
     root.add(placeholder);
 
     const updateView = vi.fn().mockResolvedValue(null);
-    internals.registry.registerLinesLoader('/l', { updateView, dispose: vi.fn() } as unknown as LinesDataLoader);
+    internals.registry.registerLinesLoader('/l', {
+      updateView,
+      dispose: vi.fn(),
+    } as unknown as LinesDataLoader);
     internals.registry.recordFailure('/l', new Error('initial decode failure'));
 
     vi.spyOn(internals, 'deriveNodeViewState').mockReturnValue({ skip: 'extend_to_all' });
@@ -334,10 +336,10 @@ describe('SceneLoader.retryFailedLoader — derived.skip fallback', () => {
     root.add(placeholder);
 
     const updateView = vi.fn().mockResolvedValue(null);
-    internals.registry.registerPointsLoader(
-      '/p',
-      { updateView, dispose: vi.fn() } as unknown as DataLoader
-    );
+    internals.registry.registerPointsLoader('/p', {
+      updateView,
+      dispose: vi.fn(),
+    } as unknown as DataLoader);
     internals.registry.recordFailure('/p', new Error('initial'));
 
     // Simulate "another update is in progress" by flipping the lock.
@@ -381,10 +383,10 @@ describe('SceneLoader.retryFailedLoader — derived.skip fallback', () => {
         releaseRetry = resolve;
       })
     );
-    internals.registry.registerPointsLoader(
-      '/p',
-      { updateView: retryUpdateView, dispose: vi.fn() } as unknown as DataLoader
-    );
+    internals.registry.registerPointsLoader('/p', {
+      updateView: retryUpdateView,
+      dispose: vi.fn(),
+    } as unknown as DataLoader);
     internals.registry.recordFailure('/p', new Error('initial'));
 
     // Step 1: kick off retry; don't await.
@@ -428,10 +430,10 @@ describe('SceneLoader.retryFailedLoader — derived.skip fallback', () => {
     root.add(placeholder);
 
     const updateView = vi.fn().mockResolvedValue(null);
-    internals.registry.registerGSplatsLoader(
-      '/g',
-      { updateView, dispose: vi.fn() } as unknown as GSplatsDataLoader
-    );
+    internals.registry.registerGSplatsLoader('/g', {
+      updateView,
+      dispose: vi.fn(),
+    } as unknown as GSplatsDataLoader);
     internals.registry.recordFailure('/g', new Error('initial validation failure'));
 
     vi.spyOn(internals, 'deriveNodeViewState').mockReturnValue({ skip: 'extend_to_all' });
@@ -473,10 +475,10 @@ describe('SceneLoader.retryFailedLoader — derived.skip fallback', () => {
     root.add(placeholder);
 
     const updateView = vi.fn().mockResolvedValue(null);
-    internals.registry.registerPointsLoader(
-      '/p',
-      { updateView, dispose: vi.fn() } as unknown as DataLoader
-    );
+    internals.registry.registerPointsLoader('/p', {
+      updateView,
+      dispose: vi.fn(),
+    } as unknown as DataLoader);
     internals.registry.recordFailure('/p', new Error('initial'));
 
     const ok = await loader.retryFailedLoader('/p');
@@ -527,19 +529,17 @@ describe('SceneLoader.retryFailedLoader — derived.skip fallback', () => {
     };
 
     const updateView = vi.fn().mockResolvedValue(fakeData);
-    internals.registry.registerPointsLoader(
-      '/p',
-      { updateView, dispose: vi.fn() } as unknown as DataLoader
-    );
+    internals.registry.registerPointsLoader('/p', {
+      updateView,
+      dispose: vi.fn(),
+    } as unknown as DataLoader);
     internals.registry.recordFailure('/p', new Error('initial'));
 
-    const commitSpy = vi
-      .spyOn(internals, 'updatePointsGeometry')
-      .mockImplementation(() => {
-        // Mirror the helper's observable side effect: bump
-        // visiblePointCount so the assertion below sees real change.
-        placeholder.userData.visiblePointCount = fakeData.pointCount;
-      });
+    const commitSpy = vi.spyOn(internals, 'updatePointsGeometry').mockImplementation(() => {
+      // Mirror the helper's observable side effect: bump
+      // visiblePointCount so the assertion below sees real change.
+      placeholder.userData.visiblePointCount = fakeData.pointCount;
+    });
 
     const ok = await loader.retryFailedLoader('/p');
 
@@ -578,20 +578,16 @@ describe('SceneLoader.retryFailedLoader — derived.skip fallback', () => {
     const stagedSentinel = { path: '/l', kind: 'lines' };
 
     const updateView = vi.fn().mockResolvedValue(fakeData);
-    internals.registry.registerLinesLoader(
-      '/l',
-      { updateView, dispose: vi.fn() } as unknown as LinesDataLoader
-    );
+    internals.registry.registerLinesLoader('/l', {
+      updateView,
+      dispose: vi.fn(),
+    } as unknown as LinesDataLoader);
     internals.registry.recordFailure('/l', new Error('initial'));
 
-    const processSpy = vi
-      .spyOn(internals, 'processLinesData')
-      .mockResolvedValue(stagedSentinel);
-    const commitSpy = vi
-      .spyOn(internals, 'commitLinesGeometry')
-      .mockImplementation(() => {
-        placeholder.userData.visibleSegmentCount = fakeData.segmentCount;
-      });
+    const processSpy = vi.spyOn(internals, 'processLinesData').mockResolvedValue(stagedSentinel);
+    const commitSpy = vi.spyOn(internals, 'commitLinesGeometry').mockImplementation(() => {
+      placeholder.userData.visibleSegmentCount = fakeData.segmentCount;
+    });
 
     const ok = await loader.retryFailedLoader('/l');
 
@@ -631,20 +627,16 @@ describe('SceneLoader.retryFailedLoader — derived.skip fallback', () => {
     const stagedSentinel = { path: '/g', kind: 'gsplats' };
 
     const updateView = vi.fn().mockResolvedValue(fakeData);
-    internals.registry.registerGSplatsLoader(
-      '/g',
-      { updateView, dispose: vi.fn() } as unknown as GSplatsDataLoader
-    );
+    internals.registry.registerGSplatsLoader('/g', {
+      updateView,
+      dispose: vi.fn(),
+    } as unknown as GSplatsDataLoader);
     internals.registry.recordFailure('/g', new Error('initial'));
 
-    const processSpy = vi
-      .spyOn(internals, 'processGSplatsData')
-      .mockResolvedValue(stagedSentinel);
-    const commitSpy = vi
-      .spyOn(internals, 'commitGSplatsGeometry')
-      .mockImplementation(() => {
-        placeholder.userData.visibleSplatCount = fakeData.splatCount;
-      });
+    const processSpy = vi.spyOn(internals, 'processGSplatsData').mockResolvedValue(stagedSentinel);
+    const commitSpy = vi.spyOn(internals, 'commitGSplatsGeometry').mockImplementation(() => {
+      placeholder.userData.visibleSplatCount = fakeData.splatCount;
+    });
 
     const ok = await loader.retryFailedLoader('/g');
 
@@ -672,10 +664,10 @@ describe('SceneLoader.retryFailedLoader — derived.skip fallback', () => {
     root.add(placeholder);
 
     const updateView = vi.fn().mockResolvedValue(null);
-    internals.registry.registerPointsLoader(
-      '/p',
-      { updateView, dispose: vi.fn() } as unknown as DataLoader
-    );
+    internals.registry.registerPointsLoader('/p', {
+      updateView,
+      dispose: vi.fn(),
+    } as unknown as DataLoader);
     internals.registry.recordFailure('/p', new Error('initial'));
 
     // Simulate a programmatic node removal between failure and retry.

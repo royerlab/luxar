@@ -373,11 +373,9 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
       // object is typed `EventListenerOptions`; the `passive` flag in
       // capture mode isn't part of that subset, so we cast to the
       // structural shape we actually pass.
-      this.domElement.removeEventListener(
-        'wheel',
-        this.viewAxisRotationHandler,
-        { capture: true } as EventListenerOptions
-      );
+      this.domElement.removeEventListener('wheel', this.viewAxisRotationHandler, {
+        capture: true,
+      } as EventListenerOptions);
       this.viewAxisRotationHandler = null;
     }
 

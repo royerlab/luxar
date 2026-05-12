@@ -84,10 +84,7 @@ export function resetCameraToInitialPosition(camera: LuxarCamera): void {
  * The traversal stops at the first match (the early-exit `!targetObject`
  * guard inside `traverse`).
  */
-export function resolveTargetNodeCenter(
-  root: THREE.Group,
-  nodeName: string
-): THREE.Vector3 | null {
+export function resolveTargetNodeCenter(root: THREE.Group, nodeName: string): THREE.Vector3 | null {
   let targetObject: THREE.Object3D | null = null;
 
   root.traverse((obj) => {
@@ -144,11 +141,7 @@ export function applyZarrViewerConfig(
 
   const camOverrides = extractCameraOverrides(viewerConfig);
   if (camOverrides.position) {
-    camera.position.set(
-      camOverrides.position.x,
-      camOverrides.position.y,
-      camOverrides.position.z
-    );
+    camera.position.set(camOverrides.position.x, camOverrides.position.y, camOverrides.position.z);
   }
 
   // target_node takes precedence over explicit target coordinates.
@@ -185,12 +178,7 @@ export function applyZarrViewerConfig(
     camera.lookAt(controls.getFocusTarget());
   }
 
-  if (
-    camOverrides.position ||
-    camOverrides.target ||
-    camOverrides.targetNode ||
-    camOverrides.up
-  ) {
+  if (camOverrides.position || camOverrides.target || camOverrides.targetNode || camOverrides.up) {
     camera.updateMatrixWorld(true);
     controls.reinitialize();
     controls.update();

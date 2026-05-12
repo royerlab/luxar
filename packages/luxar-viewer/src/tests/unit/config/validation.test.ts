@@ -246,10 +246,14 @@ describe('validateConfig', () => {
     it('should accept bloomThreshold at boundary values (0 and 1)', () => {
       const cfg = cloneConfig();
       cfg.renderingControls.defaults.bloomThreshold = 0;
-      expect(validateConfig(cfg).errors.filter((e) => e.includes('bloomThreshold'))).toHaveLength(0);
+      expect(validateConfig(cfg).errors.filter((e) => e.includes('bloomThreshold'))).toHaveLength(
+        0
+      );
 
       cfg.renderingControls.defaults.bloomThreshold = 1;
-      expect(validateConfig(cfg).errors.filter((e) => e.includes('bloomThreshold'))).toHaveLength(0);
+      expect(validateConfig(cfg).errors.filter((e) => e.includes('bloomThreshold'))).toHaveLength(
+        0
+      );
     });
 
     it('should error when bloomLevels is less than 1', () => {
@@ -804,9 +808,7 @@ describe('validateConfig', () => {
       cfg.cache.opfsOperationTimeoutMs = NaN;
       const result = validateConfig(cfg);
       expect(result.valid).toBe(false);
-      expect(result.errors).toContainEqual(
-        expect.stringContaining('cache.opfsOperationTimeoutMs')
-      );
+      expect(result.errors).toContainEqual(expect.stringContaining('cache.opfsOperationTimeoutMs'));
     });
 
     it('rejects zero cache.opfsOperationTimeoutMs', () => {
@@ -814,9 +816,7 @@ describe('validateConfig', () => {
       cfg.cache.opfsOperationTimeoutMs = 0;
       const result = validateConfig(cfg);
       expect(result.valid).toBe(false);
-      expect(result.errors).toContainEqual(
-        expect.stringContaining('cache.opfsOperationTimeoutMs')
-      );
+      expect(result.errors).toContainEqual(expect.stringContaining('cache.opfsOperationTimeoutMs'));
     });
 
     it('rejects negative cache.opfsOperationTimeoutMs', () => {
@@ -824,18 +824,14 @@ describe('validateConfig', () => {
       cfg.cache.opfsOperationTimeoutMs = -100;
       const result = validateConfig(cfg);
       expect(result.valid).toBe(false);
-      expect(result.errors).toContainEqual(
-        expect.stringContaining('cache.opfsOperationTimeoutMs')
-      );
+      expect(result.errors).toContainEqual(expect.stringContaining('cache.opfsOperationTimeoutMs'));
     });
 
     it('accepts positive cache.opfsOperationTimeoutMs', () => {
       const cfg = cloneConfig();
       cfg.cache.opfsOperationTimeoutMs = 5_000;
       const result = validateConfig(cfg);
-      expect(
-        result.errors.filter((e) => e.includes('opfsOperationTimeoutMs'))
-      ).toEqual([]);
+      expect(result.errors.filter((e) => e.includes('opfsOperationTimeoutMs'))).toEqual([]);
     });
 
     // R1: externalDatasetTtlMs validation. null is explicitly allowed.
@@ -843,9 +839,7 @@ describe('validateConfig', () => {
       const cfg = cloneConfig();
       cfg.cache.externalDatasetTtlMs = null;
       const result = validateConfig(cfg);
-      expect(
-        result.errors.filter((e) => e.includes('externalDatasetTtlMs'))
-      ).toEqual([]);
+      expect(result.errors.filter((e) => e.includes('externalDatasetTtlMs'))).toEqual([]);
     });
 
     it('rejects NaN cache.externalDatasetTtlMs', () => {
@@ -853,9 +847,7 @@ describe('validateConfig', () => {
       cfg.cache.externalDatasetTtlMs = NaN;
       const result = validateConfig(cfg);
       expect(result.valid).toBe(false);
-      expect(result.errors).toContainEqual(
-        expect.stringContaining('cache.externalDatasetTtlMs')
-      );
+      expect(result.errors).toContainEqual(expect.stringContaining('cache.externalDatasetTtlMs'));
     });
 
     it('rejects negative cache.externalDatasetTtlMs', () => {
@@ -863,18 +855,14 @@ describe('validateConfig', () => {
       cfg.cache.externalDatasetTtlMs = -1000;
       const result = validateConfig(cfg);
       expect(result.valid).toBe(false);
-      expect(result.errors).toContainEqual(
-        expect.stringContaining('cache.externalDatasetTtlMs')
-      );
+      expect(result.errors).toContainEqual(expect.stringContaining('cache.externalDatasetTtlMs'));
     });
 
     it('accepts positive cache.externalDatasetTtlMs (24h)', () => {
       const cfg = cloneConfig();
       cfg.cache.externalDatasetTtlMs = 86_400_000;
       const result = validateConfig(cfg);
-      expect(
-        result.errors.filter((e) => e.includes('externalDatasetTtlMs'))
-      ).toEqual([]);
+      expect(result.errors.filter((e) => e.includes('externalDatasetTtlMs'))).toEqual([]);
     });
   });
 
@@ -924,9 +912,7 @@ describe('validateConfig', () => {
       cfg.controls.fly.movement.speed.default = NaN;
       const result = validateConfig(cfg);
       expect(result.valid).toBe(false);
-      expect(result.errors).toContainEqual(
-        expect.stringContaining('non-finite values')
-      );
+      expect(result.errors).toContainEqual(expect.stringContaining('non-finite values'));
     });
 
     it('rejects NaN input.defaultSensitivity', () => {

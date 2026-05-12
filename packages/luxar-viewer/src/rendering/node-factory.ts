@@ -15,14 +15,8 @@ import * as THREE from 'three';
 import { materialManager, type BlendingMode } from './material-manager';
 import { getColormapTexture } from './colormap-textures';
 import { supportsScalarColormap } from './material-colormap-helpers';
-import {
-  createInstancedLinesMesh,
-  type InstancedLinesMeshConfig,
-} from './line-geometry';
-import {
-  createInstancedGSplatsMesh,
-  type InstancedGSplatsMeshConfig,
-} from './gsplat-geometry';
+import { createInstancedLinesMesh, type InstancedLinesMeshConfig } from './line-geometry';
+import { createInstancedGSplatsMesh, type InstancedGSplatsMeshConfig } from './gsplat-geometry';
 import { GSplatMaterial } from './gsplat-material';
 import type { LoadedPointsData, DataLoader } from '../data/data-loader-types';
 import type { PointsMetadata, PointsUserData } from '../types/points';
@@ -205,8 +199,7 @@ export class NodeFactory {
     // has already attached the LUT bytes as `nodeAttrs.customLutBytes`.
     const lnColormapName = nodeAttrs.colormap as string | undefined;
     const lnHasScalars = !!nodeAttrs.has_scalars;
-    const linesScalarsReady =
-      'startScalars' in processed && 'endScalars' in processed;
+    const linesScalarsReady = 'startScalars' in processed && 'endScalars' in processed;
     if (lnColormapName && lnHasScalars) {
       if (!linesScalarsReady) {
         log.warning(
@@ -366,11 +359,7 @@ export class NodeFactory {
    * the two paths (`ndim`, `dtypes`) are overwritten on the first
    * successful commit.
    */
-  createEmptyPointsNode(
-    path: string,
-    attrs: PointsMetadata,
-    loader: DataLoader
-  ): THREE.Points {
+  createEmptyPointsNode(path: string, attrs: PointsMetadata, loader: DataLoader): THREE.Points {
     const emptyData: LoadedPointsData = {
       positions: new Float32Array(0) as LoadedPointsData['positions'],
       pointCount: 0,

@@ -97,7 +97,6 @@
     "comlink": "^4.4.2",
     "fflate": "^0.8.2",
     "mediabunny": "^1.44.2",
-    "postprocessing": "^6.39.1",
     "zarrita": "^0.7.3"
   },
   "devDependencies": {

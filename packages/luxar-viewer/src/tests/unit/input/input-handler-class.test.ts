@@ -95,21 +95,22 @@ describe('InputHandler — construction', () => {
   });
 
   it('constructor accepts the four required deps and does not throw', () => {
-    expect(() =>
-      new InputHandler(sceneManager, animationController, performanceMonitor, debugConsole)
+    expect(
+      () => new InputHandler(sceneManager, animationController, performanceMonitor, debugConsole)
     ).not.toThrow();
   });
 
   it('constructor accepts an optional dimensionSlidersFactory', () => {
     const factory = vi.fn();
-    expect(() =>
-      new InputHandler(
-        sceneManager,
-        animationController,
-        performanceMonitor,
-        debugConsole,
-        factory
-      )
+    expect(
+      () =>
+        new InputHandler(
+          sceneManager,
+          animationController,
+          performanceMonitor,
+          debugConsole,
+          factory
+        )
     ).not.toThrow();
   });
 });

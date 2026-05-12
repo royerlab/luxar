@@ -158,7 +158,7 @@ case.
 
 - Per-node load + process runs concurrently across loaders inside `Promise.all`; each
   task opens its session via `beginTopLevel()` and ends it after the synchronous
-  commit stage (see *Session lifecycle* above). `timeTopLevel()` remains available
+  commit stage (see _Session lifecycle_ above). `timeTopLevel()` remains available
   for callers that don't need session lifetime to span a commit phase.
 - Each loader type (Points, Lines, GSplats) has its own instrumentation
 - Skipped loaders show `skipped` metadata with reason (e.g., "extend_to_all")

@@ -7,10 +7,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import {
-  buildDebugCacheHelpers,
-  type CacheCapableLoader,
-} from '../../../core/debug-cache-helpers';
+import { buildDebugCacheHelpers, type CacheCapableLoader } from '../../../core/debug-cache-helpers';
 
 // vitest's Mock type doesn't structurally satisfy concrete method signatures
 // (e.g. `() => CacheStatsSnapshot`), so the stub keeps the shape inline and we
@@ -157,7 +154,7 @@ describe('buildDebugCacheHelpers', () => {
   describe('loader-getter is called per invocation (not cached)', () => {
     it('looks up the loader each time so dataset switches are picked up', () => {
       let current: LoaderStub | null = null;
-      const helpers = buildDebugCacheHelpers(() => current ? asLoader(current) : null);
+      const helpers = buildDebugCacheHelpers(() => (current ? asLoader(current) : null));
 
       // Initially no loader.
       expect(helpers.getStats()).toEqual({ error: 'No active loader found' });

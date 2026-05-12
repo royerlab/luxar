@@ -141,7 +141,9 @@ test.describe('WebGL Context Restore (CR-1)', () => {
     expect(await loseAndRestoreContext(page)).toBe(true);
 
     const afterRestore = await page.evaluate(() => {
-      const debug = (window as unknown as { __luxarDebug?: { app?: unknown; renderOnce?: () => void } }).__luxarDebug;
+      const debug = (
+        window as unknown as { __luxarDebug?: { app?: unknown; renderOnce?: () => void } }
+      ).__luxarDebug;
       const app = debug?.app as { pickingSystem?: unknown } | undefined;
       if (!app?.pickingSystem) return { reachable: false, rendered: false };
       try {

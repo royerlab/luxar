@@ -254,9 +254,7 @@ describe('updateCacheTab', () => {
     const c = makeContainer();
     updateCacheTab(c, makeMetrics({ memoryPercent: 25, memoryLimit: 4096 }));
 
-    const label = c.querySelector(
-      '.luxar-cache-total .luxar-progress-bar__label'
-    ) as HTMLElement;
+    const label = c.querySelector('.luxar-cache-total .luxar-progress-bar__label') as HTMLElement;
     expect(label.textContent).toMatch(/25% of/);
     expect(label.textContent).toContain('limit');
     expect(label.textContent).not.toContain('no memory limit');
@@ -269,9 +267,7 @@ describe('updateCacheTab', () => {
       makeMetrics({ totalCacheMemory: 2_200_000, memoryLimit: 0, memoryPercent: 0 })
     );
 
-    const label = c.querySelector(
-      '.luxar-cache-total .luxar-progress-bar__label'
-    ) as HTMLElement;
+    const label = c.querySelector('.luxar-cache-total .luxar-progress-bar__label') as HTMLElement;
     expect(label.textContent).toBe('no memory limit configured');
     // Misleading legacy label must not slip back in across ticks.
     expect(label.textContent).not.toContain('0% of 0B');
@@ -281,9 +277,7 @@ describe('updateCacheTab', () => {
   it('progress-bar label updates across ticks when memoryLimit toggles 0 → N', () => {
     const c = makeContainer();
     updateCacheTab(c, makeMetrics({ memoryLimit: 0, memoryPercent: 0 }));
-    const label = c.querySelector(
-      '.luxar-cache-total .luxar-progress-bar__label'
-    ) as HTMLElement;
+    const label = c.querySelector('.luxar-cache-total .luxar-progress-bar__label') as HTMLElement;
     expect(label.textContent).toBe('no memory limit configured');
 
     updateCacheTab(c, makeMetrics({ memoryLimit: 1024, memoryPercent: 50 }));
@@ -307,10 +301,7 @@ describe('updateCacheTab', () => {
   describe('cache status badges (R3)', () => {
     it('renders one pill per badge in cacheMetrics.status', () => {
       const c = makeContainer();
-      updateCacheTab(
-        c,
-        makeMetrics({ status: ['cache-enabled', 'unvalidated-external-dataset'] })
-      );
+      updateCacheTab(c, makeMetrics({ status: ['cache-enabled', 'unvalidated-external-dataset'] }));
       const row = c.querySelector('[data-field="cache-status-row"]') as HTMLElement;
       expect(row.querySelectorAll('[data-badge]').length).toBe(2);
       expect(row.querySelector('[data-badge="cache-enabled"]')).not.toBeNull();
@@ -339,10 +330,7 @@ describe('updateCacheTab', () => {
       updateCacheTab(c, makeMetrics({ status: ['cache-enabled'] }));
       const row = c.querySelector('[data-field="cache-status-row"]') as HTMLElement;
       const firstChild = row.firstElementChild;
-      updateCacheTab(
-        c,
-        makeMetrics({ status: ['cache-enabled', 'quota-constrained'] })
-      );
+      updateCacheTab(c, makeMetrics({ status: ['cache-enabled', 'quota-constrained'] }));
       expect(row.firstElementChild).not.toBe(firstChild);
       expect(row.querySelectorAll('[data-badge]').length).toBe(2);
     });

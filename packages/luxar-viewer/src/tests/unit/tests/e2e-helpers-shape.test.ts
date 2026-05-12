@@ -9,10 +9,7 @@
  *     messages (compile, link, attribute, uniform).
  */
 import { describe, it, expect } from 'vitest';
-import {
-  assertNoShaderErrors,
-  samplePixelAt,
-} from '../../e2e/helpers';
+import { assertNoShaderErrors, samplePixelAt } from '../../e2e/helpers';
 
 const SHADER_ERROR_RX =
   /shader|GLSL|attribute.*not\s*found|uniform.*not\s*found|fragment\s*shader|vertex\s*shader|program\s*link|invalid_operation/i;

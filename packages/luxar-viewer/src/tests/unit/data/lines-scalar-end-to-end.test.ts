@@ -54,10 +54,7 @@ function loadedLines({
   };
 }
 
-function meshConfig(
-  data: ProcessedLinesData,
-  withScalars: boolean
-): InstancedLinesMeshConfig {
+function meshConfig(data: ProcessedLinesData, withScalars: boolean): InstancedLinesMeshConfig {
   const base: InstancedLinesMeshConfig = {
     startPositions: data.startPositions,
     endPositions: data.endPositions,
@@ -390,9 +387,7 @@ describe('line-geometry mesh creation/update', () => {
       endScalars: new Float32Array([0.75]),
     };
     updateInstancedLinesMesh(mesh, updated);
-    const startAttr = mesh.geometry.getAttribute(
-      'aStartScalar'
-    ) as THREE.InstancedBufferAttribute;
+    const startAttr = mesh.geometry.getAttribute('aStartScalar') as THREE.InstancedBufferAttribute;
     expect((startAttr.array as Float32Array)[0]).toBeCloseTo(0.25);
   });
 });

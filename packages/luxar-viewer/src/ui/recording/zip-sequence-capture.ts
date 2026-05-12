@@ -97,9 +97,7 @@ export class ZipSequenceCapture {
       try {
         const handle = await this.env.showSaveFilePicker({
           suggestedName: opts.suggestedName,
-          types: [
-            { description: 'ZIP archive', accept: { 'application/zip': ['.zip'] } },
-          ],
+          types: [{ description: 'ZIP archive', accept: { 'application/zip': ['.zip'] } }],
         });
         this.writable = await handle.createWritable();
       } catch {

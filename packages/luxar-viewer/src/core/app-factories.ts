@@ -46,10 +46,7 @@ export interface AppFactories {
     sceneManager: SceneManager,
     animationController: AnimationController
   ) => RecordingPanel;
-  layersPanel?: (
-    parent: HTMLElement,
-    animationController: AnimationController
-  ) => LayersPanel;
+  layersPanel?: (parent: HTMLElement, animationController: AnimationController) => LayersPanel;
 }
 
 /**
@@ -64,8 +61,7 @@ export const defaultFactories: Required<AppFactories> = {
     new RenderingControls(postProcessing, sceneManager),
   recordingPanel: (sceneManager, animationController) =>
     new RecordingPanel(sceneManager, animationController),
-  layersPanel: (parent, animationController) =>
-    new LayersPanel(parent, animationController),
+  layersPanel: (parent, animationController) => new LayersPanel(parent, animationController),
 };
 
 /**

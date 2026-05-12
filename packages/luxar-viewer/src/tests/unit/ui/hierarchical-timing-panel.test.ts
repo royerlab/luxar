@@ -211,9 +211,7 @@ describe('renderHierarchicalTimingPanel', () => {
           lastMs: 5,
           avgMs: 4,
           count: 1,
-          children: [
-            { name: 'Spatial Query', lastMs: 1, avgMs: 1, count: 1, children: [] },
-          ],
+          children: [{ name: 'Spatial Query', lastMs: 1, avgMs: 1, count: 1, children: [] }],
         },
       ],
     });
@@ -230,9 +228,7 @@ describe('renderHierarchicalTimingPanel', () => {
           lastMs: 5,
           avgMs: 4,
           count: 1,
-          children: [
-            { name: 'Spatial Query', lastMs: 1, avgMs: 1, count: 1, children: [] },
-          ],
+          children: [{ name: 'Spatial Query', lastMs: 1, avgMs: 1, count: 1, children: [] }],
         },
       ],
     });
@@ -262,9 +258,7 @@ describe('toggleExpanded + collapsed rendering', () => {
               lastMs: 1,
               avgMs: 1,
               count: 1,
-              children: [
-                { name: 'Inner', lastMs: 0.5, avgMs: 0.5, count: 1, children: [] },
-              ],
+              children: [{ name: 'Inner', lastMs: 0.5, avgMs: 0.5, count: 1, children: [] }],
             },
           ],
         },
@@ -290,9 +284,7 @@ describe('attachTimingPanelHandlers', () => {
             lastMs: 5,
             avgMs: 4,
             count: 1,
-            children: [
-              { name: 'Spatial Query', lastMs: 1, avgMs: 1, count: 1, children: [] },
-            ],
+            children: [{ name: 'Spatial Query', lastMs: 1, avgMs: 1, count: 1, children: [] }],
           },
         ],
       })
@@ -302,9 +294,7 @@ describe('attachTimingPanelHandlers', () => {
 
     attachTimingPanelHandlers(container, onUpdate);
 
-    const expand = container.querySelector(
-      '.luxar-timing-panel__expand'
-    ) as HTMLElement;
+    const expand = container.querySelector('.luxar-timing-panel__expand') as HTMLElement;
     expand.click();
 
     expect(onUpdate).toHaveBeenCalledTimes(1);
@@ -320,9 +310,7 @@ describe('attachTimingPanelHandlers', () => {
             lastMs: 5,
             avgMs: 4,
             count: 1,
-            children: [
-              { name: 'Spatial Query', lastMs: 1, avgMs: 1, count: 1, children: [] },
-            ],
+            children: [{ name: 'Spatial Query', lastMs: 1, avgMs: 1, count: 1, children: [] }],
           },
         ],
       })
@@ -333,9 +321,7 @@ describe('attachTimingPanelHandlers', () => {
     attachTimingPanelHandlers(container, onUpdate);
     attachTimingPanelHandlers(container, onUpdate);
 
-    const expand = container.querySelector(
-      '.luxar-timing-panel__expand'
-    ) as HTMLElement;
+    const expand = container.querySelector('.luxar-timing-panel__expand') as HTMLElement;
     expand.click();
 
     // If duplicate attach was permitted, onUpdate would fire twice.
@@ -364,9 +350,9 @@ describe('updateTimingPanelValues', () => {
 
     updateTimingPanelValues(container, makeEntry({ count: 99 }));
 
-    expect(
-      container.querySelector('.luxar-timing-panel__update-count')?.textContent
-    ).toBe('99 updates');
+    expect(container.querySelector('.luxar-timing-panel__update-count')?.textContent).toBe(
+      '99 updates'
+    );
   });
 
   it('returns false when the body element is missing', () => {
@@ -383,9 +369,7 @@ describe('updateTimingPanelValues', () => {
           lastMs: 5,
           avgMs: 4,
           count: 1,
-          children: [
-            { name: 'Spatial Query', lastMs: 1, avgMs: 1, count: 1, children: [] },
-          ],
+          children: [{ name: 'Spatial Query', lastMs: 1, avgMs: 1, count: 1, children: [] }],
         },
       ],
     });

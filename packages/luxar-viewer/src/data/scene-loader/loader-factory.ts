@@ -139,9 +139,7 @@ export async function createProgressiveGSplatsLoader(
   parentEffectiveAttrs: SceneNode['attrs'],
   deps: LoaderFactoryDeps
 ): Promise<GSplatsDataLoader> {
-  const parentLoc = zarr
-    .root(deps.zarrStore)
-    .resolve(node.path === '/' ? '' : node.path.slice(1));
+  const parentLoc = zarr.root(deps.zarrStore).resolve(node.path === '/' ? '' : node.path.slice(1));
   const subLoc = parentLoc.resolve(`substitutive_${defaultSub}`);
 
   log.query(

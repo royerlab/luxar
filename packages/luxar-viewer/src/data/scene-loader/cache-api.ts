@@ -107,9 +107,7 @@ export function clearL1Cache(cachingStore: MultiLevelCachingStore | null): void 
 }
 
 /** Clear the persistent L2 OPFS cache. No-op if absent. */
-export async function clearL2Cache(
-  cachingStore: MultiLevelCachingStore | null
-): Promise<void> {
+export async function clearL2Cache(cachingStore: MultiLevelCachingStore | null): Promise<void> {
   await cachingStore?.clearL2();
 }
 

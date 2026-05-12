@@ -116,9 +116,7 @@ describe('OverlayManager.loadOverlays', () => {
     const overlays = document.querySelectorAll('.luxar-overlay');
     expect(overlays.length).toBe(2);
 
-    const dataNames = Array.from(overlays).map((el) =>
-      (el as HTMLElement).dataset.overlayName
-    );
+    const dataNames = Array.from(overlays).map((el) => (el as HTMLElement).dataset.overlayName);
     expect(dataNames).toEqual(expect.arrayContaining(['a', 'b']));
   });
 
@@ -132,10 +130,7 @@ describe('OverlayManager.loadOverlays', () => {
   });
 
   it('marks non-interactive overlays as inert', async () => {
-    await manager.loadOverlays(
-      [makeTextOverlay({ interactive: false })],
-      'http://example.com'
-    );
+    await manager.loadOverlays([makeTextOverlay({ interactive: false })], 'http://example.com');
     const el = document.querySelector('.luxar-overlay') as HTMLDivElement;
     expect(el.inert).toBe(true);
   });
@@ -145,19 +140,13 @@ describe('OverlayManager.loadOverlays', () => {
     // for interactive ones the property is never touched, so jsdom
     // leaves `el.inert` as undefined. Either way, "not inert" is the
     // observable behavior we care about.
-    await manager.loadOverlays(
-      [makeTextOverlay({ interactive: true })],
-      'http://example.com'
-    );
+    await manager.loadOverlays([makeTextOverlay({ interactive: true })], 'http://example.com');
     const el = document.querySelector('.luxar-overlay') as HTMLDivElement;
     expect(el.inert).toBeFalsy();
   });
 
   it('positions overlays using percentage left/top', async () => {
-    await manager.loadOverlays(
-      [makeTextOverlay({ position: [0.25, 0.75] })],
-      'http://example.com'
-    );
+    await manager.loadOverlays([makeTextOverlay({ position: [0.25, 0.75] })], 'http://example.com');
     const el = document.querySelector('.luxar-overlay') as HTMLDivElement;
     expect(el.style.left).toBe('25%');
     expect(el.style.top).toBe('75%');
@@ -178,16 +167,11 @@ describe('OverlayManager.getVisibleOverlays', () => {
 
   it('skips overlays with display: none', async () => {
     await manager.loadOverlays(
-      [
-        makeTextOverlay({ name: 'visible' }),
-        makeTextOverlay({ name: 'hidden' }),
-      ],
+      [makeTextOverlay({ name: 'visible' }), makeTextOverlay({ name: 'hidden' })],
       'http://example.com'
     );
 
-    const hiddenEl = document.querySelector(
-      '[data-overlay-name="hidden"]'
-    ) as HTMLDivElement;
+    const hiddenEl = document.querySelector('[data-overlay-name="hidden"]') as HTMLDivElement;
     hiddenEl.style.display = 'none';
 
     const visible = manager.getVisibleOverlays();
@@ -195,10 +179,7 @@ describe('OverlayManager.getVisibleOverlays', () => {
   });
 
   it('skips overlays with the hidden CSS class', async () => {
-    await manager.loadOverlays(
-      [makeTextOverlay({ name: 'fading' })],
-      'http://example.com'
-    );
+    await manager.loadOverlays([makeTextOverlay({ name: 'fading' })], 'http://example.com');
 
     const el = document.querySelector('.luxar-overlay') as HTMLDivElement;
     el.classList.add('luxar-overlay--hidden');
@@ -214,10 +195,7 @@ describe('OverlayManager.getVisibleOverlays', () => {
   });
 
   it('skips hover overlays even when displayed', async () => {
-    await manager.loadOverlays(
-      [makeTextOverlay({ hover: true })],
-      'http://example.com'
-    );
+    await manager.loadOverlays([makeTextOverlay({ hover: true })], 'http://example.com');
     expect(manager.getVisibleOverlays()).toHaveLength(0);
   });
 });
@@ -291,9 +269,7 @@ describe('OverlayManager.updateHoverContent', () => {
       'http://example.com'
     );
 
-    const el = document.querySelector(
-      '[data-overlay-name="hover-tooltip"]'
-    ) as HTMLDivElement;
+    const el = document.querySelector('[data-overlay-name="hover-tooltip"]') as HTMLDivElement;
 
     // First call: any text-content rendering counts as the baseline;
     // we just ensure the second call doesn't re-render unchanged input.

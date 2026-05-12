@@ -32,22 +32,22 @@ the composer directly.
 
 ## Key modules
 
-| File | Role |
-|------|------|
-| `post-processing-manager.ts` | Lifecycle owner; composer creation, effect graph, durable state capture/apply, deferred rebuild, dispose, context-restore |
-| `effect-orchestrator.ts` | Pure helper that decides which effect goes into which pass (Pass A pre-tonemap, Pass B post-tonemap) |
-| `effect-disposal.ts` | `safeDisposeEffect`, `safeRemoveAndDisposePass` — try/catch wrappers for pmndrs's event-driven disposal |
-| `context-recovery.ts` | Capture / re-apply durable settings across WebGL context loss |
-| `hdr-capture.ts`, `hdr-pixel-utils.ts` | Render-target readback for video/image recording |
-| `bloom-handler.ts` | Bloom levels / radius / threshold / strength |
-| `antialiasing-handler.ts` | FXAA / SMAA / MSAA / SSAA configuration |
-| `tone-mapping-handler.ts`, `luxar-tone-mapping-effect.ts`, `tone-mapping-mode-names.ts` | HDR tone-mapping pipeline (Neutral / ACES / AGX / Linear / etc.) |
-| `chromatic-lens-distortion-effect.ts` | Lens distortion + chromatic dispersion |
-| `detector-noise-effect.ts` | Physics-based detector noise (Poisson + Gaussian + FPN) |
-| `robust-vignette-effect.ts` | Vignette with darkness + offset controls |
-| `visual-effects-handler.ts` | DOF focus / strength + DPR-scaled noise math |
-| `postprocessing-types.ts` | Shared effect-state types + clamps + numeric guards |
-| `render-target-sizing.ts` | DPR/MSAA-aware render-target sizing |
+| File                                                                                    | Role                                                                                                                      |
+| --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `post-processing-manager.ts`                                                            | Lifecycle owner; composer creation, effect graph, durable state capture/apply, deferred rebuild, dispose, context-restore |
+| `effect-orchestrator.ts`                                                                | Pure helper that decides which effect goes into which pass (Pass A pre-tonemap, Pass B post-tonemap)                      |
+| `effect-disposal.ts`                                                                    | `safeDisposeEffect`, `safeRemoveAndDisposePass` — try/catch wrappers for pmndrs's event-driven disposal                   |
+| `context-recovery.ts`                                                                   | Capture / re-apply durable settings across WebGL context loss                                                             |
+| `hdr-capture.ts`, `hdr-pixel-utils.ts`                                                  | Render-target readback for video/image recording                                                                          |
+| `bloom-handler.ts`                                                                      | Bloom levels / radius / threshold / strength                                                                              |
+| `antialiasing-handler.ts`                                                               | FXAA / SMAA / MSAA / SSAA configuration                                                                                   |
+| `tone-mapping-handler.ts`, `luxar-tone-mapping-effect.ts`, `tone-mapping-mode-names.ts` | HDR tone-mapping pipeline (Neutral / ACES / AGX / Linear / etc.)                                                          |
+| `chromatic-lens-distortion-effect.ts`                                                   | Lens distortion + chromatic dispersion                                                                                    |
+| `detector-noise-effect.ts`                                                              | Physics-based detector noise (Poisson + Gaussian + FPN)                                                                   |
+| `robust-vignette-effect.ts`                                                             | Vignette with darkness + offset controls                                                                                  |
+| `visual-effects-handler.ts`                                                             | DOF focus / strength + DPR-scaled noise math                                                                              |
+| `postprocessing-types.ts`                                                               | Shared effect-state types + clamps + numeric guards                                                                       |
+| `render-target-sizing.ts`                                                               | DPR/MSAA-aware render-target sizing                                                                                       |
 
 ## Public surface
 

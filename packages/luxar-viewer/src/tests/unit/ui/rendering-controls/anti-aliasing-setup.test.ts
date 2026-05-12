@@ -95,9 +95,7 @@ interface ContextStubs {
   };
 }
 
-function makeContext(
-  initialSettings: Partial<ContextStubs['settings']> = {}
-): ContextStubs {
+function makeContext(initialSettings: Partial<ContextStubs['settings']> = {}): ContextStubs {
   const aaFolder = makeFolder();
   const gui = {
     addFolder: vi.fn().mockReturnValue(aaFolder),
@@ -141,12 +139,13 @@ describe('setupAntiAliasingControls', () => {
     stubs = makeContext();
   });
 
-  it('creates the AA folder, closes it by default, and adds 4 toggles', () => {
+  it('creates the AA folder, closes it by default, and adds 3 toggles', () => {
     setupAntiAliasingControls(stubs.context);
     // Top folder closed (collapsed).
     expect(stubs.aaFolder.close).toHaveBeenCalled();
-    // Four toggles added directly under aa folder: SSAA, FXAA, MSAA, SMAA.
-    expect(stubs.aaFolder.controllers).toHaveLength(4);
+    // Three toggles added directly under aa folder: SSAA, FXAA, MSAA.
+    // (SMAA dropped in the mega-shader refactor.)
+    expect(stubs.aaFolder.controllers).toHaveLength(3);
   });
 
   it('creates SSAA + MSAA sub-folders', () => {
@@ -250,14 +249,7 @@ describe('setupAntiAliasingControls', () => {
     });
   });
 
-  describe('SMAA toggle', () => {
-    it('forwards to postProcessing.setSMAAEnabled', () => {
-      setupAntiAliasingControls(stubs.context);
-      const smaaToggle = stubs.aaFolder.controllers[3];
-      smaaToggle._onChangeFn?.(true);
-      expect(stubs.postProcessing.setSMAAEnabled).toHaveBeenCalledWith(true);
-    });
-  });
+  // SMAA dropped in the mega-shader refactor — no toggle to test.
 
   describe('initial folder visibility', () => {
     it('hides SSAA sub-folder when ssaaEnabled=false at init', () => {

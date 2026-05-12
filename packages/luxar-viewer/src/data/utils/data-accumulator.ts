@@ -18,7 +18,12 @@
  */
 
 import * as THREE from 'three';
-import type { LoadedPointsData, PositionArray, ColorArray, ScalarArray } from '../data-loader-types';
+import type {
+  LoadedPointsData,
+  PositionArray,
+  ColorArray,
+  ScalarArray,
+} from '../data-loader-types';
 import type { LoadedLinesData } from '../../types/lines';
 import type { LoadedGSplatsData } from '../../types/gsplats';
 import { log, Modules } from '../../utils/log';
@@ -346,9 +351,7 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
         ? (this.sharpnessBuffer.subarray(0, count) as ScalarArray)
         : undefined,
       // scalars optional — populated when the source data carried them.
-      scalars: this.hasScalars
-        ? (this.scalarBuffer.subarray(0, count) as ScalarArray)
-        : undefined,
+      scalars: this.hasScalars ? (this.scalarBuffer.subarray(0, count) as ScalarArray) : undefined,
       pointCount: count,
       ndim: this.ndim,
       metadata: {
@@ -491,7 +494,7 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
       ? data.positions.length / 3
       : data.colors
         ? data.colors.length / 3
-        : data.radii?.length ?? data.sharpness?.length ?? data.scalars?.length ?? 0;
+        : (data.radii?.length ?? data.sharpness?.length ?? data.scalars?.length ?? 0);
     if (filledCount > 0) {
       this.usedCount = Math.max(this.usedCount, offset + filledCount);
     }
@@ -953,9 +956,7 @@ export class LinesDataAccumulator implements DataAccumulator<
       // per-vertex scalars now flow through the accumulator path.
       // Omitted (undefined) when not present to match the new
       // optional `LoadedLinesData.scalars?` shape.
-      ...(this.hasScalars
-        ? { scalars: this.scalarBuffer.subarray(0, vertexCount) }
-        : {}),
+      ...(this.hasScalars ? { scalars: this.scalarBuffer.subarray(0, vertexCount) } : {}),
       segmentCount,
       vertexCount,
       ndim: this.ndim,
@@ -1293,7 +1294,7 @@ export class GSplatsDataAccumulator implements DataAccumulator<
     // C.2: track live prefix for cheap ensureCapacity copies.
     const filledCount = data.positions
       ? data.positions.length / this.ndim
-      : data.amplitudes?.length ?? 0;
+      : (data.amplitudes?.length ?? 0);
     if (filledCount > 0) {
       this.usedCount = Math.max(this.usedCount, offset + filledCount);
     }

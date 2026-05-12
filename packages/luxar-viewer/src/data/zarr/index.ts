@@ -24,10 +24,10 @@ export type TypedArray<D extends DataType> = zarrita.TypedArray<D>;
 export type Slice = zarrita.Slice;
 export type Location<Store = Readable> = zarrita.Location<Store>;
 export type Group<Store extends Readable = Readable> = zarrita.Group<Store>;
-export type Array<
-  D extends DataType = DataType,
-  Store extends Readable = Readable,
-> = zarrita.Array<D, Store>;
+export type Array<D extends DataType = DataType, Store extends Readable = Readable> = zarrita.Array<
+  D,
+  Store
+>;
 export type FetchStore = zarrita.FetchStore;
 export type ArrayChunk<D extends DataType = DataType> = Awaited<
   ReturnType<zarrita.Array<D, Readable>['getChunk']>

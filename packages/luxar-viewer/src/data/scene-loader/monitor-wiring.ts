@@ -16,10 +16,7 @@
 
 import type { SceneNode } from '../data-loader-types';
 import type { DataLoader } from '../data-loader-types';
-import type {
-  SceneGraphNode,
-  CacheTelemetryState,
-} from '../../types/data-monitor-types';
+import type { SceneGraphNode, CacheTelemetryState } from '../../types/data-monitor-types';
 import type { SceneLoaderMonitorPort } from '../scene-loader-monitor-port';
 import type { LinesDataLoader } from '../../types/lines';
 import type { GSplatsDataLoader } from '../../types/gsplats';

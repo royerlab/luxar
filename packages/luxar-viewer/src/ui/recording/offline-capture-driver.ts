@@ -84,22 +84,14 @@ export interface OfflineCaptureDriver {
    * Drivers that name files use ZipSequenceCapture's own success
    * counter and can ignore this parameter.
    */
-  captureFrame(
-    ctx: CaptureContext,
-    frameIndex: number,
-    progress: CaptureProgress
-  ): Promise<void>;
+  captureFrame(ctx: CaptureContext, frameIndex: number, progress: CaptureProgress): Promise<void>;
 
   /**
    * Finalize after the loop completes (or aborts via cancel). Called
    * with the actual count of captured frames (may be < totalFrames
    * if the user cancelled or errors triggered an abort).
    */
-  finalize(
-    ctx: CaptureContext,
-    capturedFrames: number,
-    progress: CaptureProgress
-  ): Promise<void>;
+  finalize(ctx: CaptureContext, capturedFrames: number, progress: CaptureProgress): Promise<void>;
 
   /**
    * Optional: signal whether the driver wants the loop to abort

@@ -100,24 +100,14 @@ describe('WorkerPool.initializeWithGuard — workerInitTimeoutMs:0 disables guar
   it('does not reject a delayed-but-resolving init when timeout is 0', async () => {
     // Pre-fix: setTimeout(..., 0) fires on next macrotask, and a 50ms
     // delayed init lost the race → rejection. Post-fix: no timer is set.
-    const { WorkerPool } = await loadWorkerPool(
-      1,
-      { workerInitTimeoutMs: 0 },
-      'delayed',
-      50
-    );
+    const { WorkerPool } = await loadWorkerPool(1, { workerInitTimeoutMs: 0 }, 'delayed', 50);
     const pool = new WorkerPool();
     await expect(pool.initialize()).resolves.toBeUndefined();
     expect(pool.getWorkerCount()).toBe(1);
   });
 
   it('does not reject a delayed-but-resolving init when timeout is negative', async () => {
-    const { WorkerPool } = await loadWorkerPool(
-      1,
-      { workerInitTimeoutMs: -100 },
-      'delayed',
-      50
-    );
+    const { WorkerPool } = await loadWorkerPool(1, { workerInitTimeoutMs: -100 }, 'delayed', 50);
     const pool = new WorkerPool();
     await expect(pool.initialize()).resolves.toBeUndefined();
   });
@@ -137,11 +127,7 @@ describe('WorkerPool.initializeWithGuard — workerInitTimeoutMs:0 disables guar
     // The timeout is the belt-and-suspenders fallback; the primary error
     // path is api.initialize() rejecting. Disabling the timeout must not
     // mask that.
-    const { WorkerPool } = await loadWorkerPool(
-      1,
-      { workerInitTimeoutMs: 0 },
-      'rejects'
-    );
+    const { WorkerPool } = await loadWorkerPool(1, { workerInitTimeoutMs: 0 }, 'rejects');
     const pool = new WorkerPool();
     await expect(pool.initialize()).rejects.toThrow('Failed to initialize any data workers');
     expect(pool.isInitialized()).toBe(false);
@@ -149,11 +135,7 @@ describe('WorkerPool.initializeWithGuard — workerInitTimeoutMs:0 disables guar
 
   it('rejects with a positive timeout when init never settles', async () => {
     vi.useFakeTimers();
-    const { WorkerPool } = await loadWorkerPool(
-      1,
-      { workerInitTimeoutMs: 100 },
-      'never-settles'
-    );
+    const { WorkerPool } = await loadWorkerPool(1, { workerInitTimeoutMs: 100 }, 'never-settles');
     const pool = new WorkerPool();
     // Capture the rejection at the call site so vitest doesn't see it as
     // an unhandled rejection while the test is awaiting the timer drain.
@@ -177,11 +159,7 @@ describe('WorkerPool.dispose — clears initPromise even with no workers', () =>
     // so a pool that failed to init kept its rejected initPromise around.
     // Subsequent initialize() returned the cached rejection instead of
     // attempting a fresh init.
-    const { WorkerPool } = await loadWorkerPool(
-      1,
-      { workerInitTimeoutMs: 1000 },
-      'rejects'
-    );
+    const { WorkerPool } = await loadWorkerPool(1, { workerInitTimeoutMs: 1000 }, 'rejects');
     const pool = new WorkerPool();
     await expect(pool.initialize()).rejects.toThrow();
     expect(pool.getWorkerCount()).toBe(0);

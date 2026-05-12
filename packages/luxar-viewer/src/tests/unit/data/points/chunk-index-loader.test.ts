@@ -212,12 +212,7 @@ describe('registerPointsArrayBounds', () => {
 
   it('strips leading slash from node path before joining with arrayName', () => {
     const { prefetcher, register } = makePrefetcher();
-    registerPointsArrayBounds(
-      prefetcher,
-      '/group/sub',
-      'positions',
-      makeArray([100, 3], [50, 3])
-    );
+    registerPointsArrayBounds(prefetcher, '/group/sub', 'positions', makeArray([100, 3], [50, 3]));
     expect(register).toHaveBeenCalledWith('group/sub/positions', [100, 3], [50, 3]);
   });
 

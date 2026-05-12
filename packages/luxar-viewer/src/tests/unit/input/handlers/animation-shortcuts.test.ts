@@ -32,7 +32,12 @@ import type { SimpleDims } from '../../../../types/dims';
 
 function makeContextManager(): {
   manager: InputContextManager;
-  bindings: Array<{ context: InputContext; key: string; modifiers?: { shift?: boolean }; handler: () => void }>;
+  bindings: Array<{
+    context: InputContext;
+    key: string;
+    modifiers?: { shift?: boolean };
+    handler: () => void;
+  }>;
 } {
   const bindings: Array<{
     context: InputContext;

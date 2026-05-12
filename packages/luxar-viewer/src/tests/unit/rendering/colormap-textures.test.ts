@@ -146,7 +146,10 @@ describe('colormap-textures', () => {
       disposeColormapTextures(); // clean slate
       // Load 20 unique LUTs; cache must not exceed 16, and the first 4 should
       // have been disposed.
-      const created: { tex: ReturnType<typeof createCustomColormapTexture>; disposed: () => boolean }[] = [];
+      const created: {
+        tex: ReturnType<typeof createCustomColormapTexture>;
+        disposed: () => boolean;
+      }[] = [];
       for (let i = 0; i < 20; i++) {
         const tex = createCustomColormapTexture(makeLut(i));
         // Detect disposed state by spying on the dispose method post-hoc.

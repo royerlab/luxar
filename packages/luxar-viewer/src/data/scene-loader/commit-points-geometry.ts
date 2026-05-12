@@ -105,10 +105,8 @@ export function commitPointsGeometry(
       const attrs = points.userData.attrs;
       const maxRadius = (attrs?.max_radius as number | undefined) ?? 1.0;
       const maxSharpness = (attrs?.max_sharpness as number | undefined) ?? 31.0;
-      geometry.userData.radiusScale =
-        data.radii instanceof Uint8Array ? maxRadius : 1.0;
-      geometry.userData.sharpnessScale =
-        data.sharpness instanceof Uint8Array ? maxSharpness : 1.0;
+      geometry.userData.radiusScale = data.radii instanceof Uint8Array ? maxRadius : 1.0;
+      geometry.userData.sharpnessScale = data.sharpness instanceof Uint8Array ? maxSharpness : 1.0;
 
       points.geometry = geometry;
       syncPointMaterialWithGeometry(points);
@@ -119,9 +117,7 @@ export function commitPointsGeometry(
     // dispose and recreate. Recreation handles all the dtype logic via
     // NodeFactory.
     const oldGeometry = points.geometry;
-    const oldPositionAttr = oldGeometry?.getAttribute(
-      'position'
-    ) as THREE.BufferAttribute | null;
+    const oldPositionAttr = oldGeometry?.getAttribute('position') as THREE.BufferAttribute | null;
     const oldCount = oldPositionAttr ? oldPositionAttr.count : 0;
 
     if (oldCount === data.pointCount && data.pointCount > 0) {

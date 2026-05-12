@@ -370,10 +370,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
     const result = await this.getResult(key);
     if (isErr(result)) {
       if (result.error.kind === 'NetworkError') {
-        log.warning(
-          Modules.CACHE,
-          `Network error fetching ${key}: ${result.error.cause.message}`
-        );
+        log.warning(Modules.CACHE, `Network error fetching ${key}: ${result.error.cause.message}`);
       }
       return undefined;
     }

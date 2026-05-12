@@ -20,15 +20,8 @@
 
 import * as THREE from 'three';
 import { projectGSplats } from '../gsplats/projection';
-import {
-  updateInstancedGSplatsMesh,
-  packCholeskyForShader,
-} from '../../rendering/gsplat-geometry';
-import type {
-  LoadedGSplatsData,
-  GSplatsUserData,
-  GSplatsViewState,
-} from '../../types/gsplats';
+import { updateInstancedGSplatsMesh, packCholeskyForShader } from '../../rendering/gsplat-geometry';
+import type { LoadedGSplatsData, GSplatsUserData, GSplatsViewState } from '../../types/gsplats';
 import { config as appConfig } from '../../config';
 import { log, Modules } from '../../utils/log';
 import { getWorkerPool } from '../../workers/worker-pool';
@@ -183,9 +176,7 @@ export async function processGSplatsData(
   // Worker only worth using for nD projections that are large enough
   // to amortize the postMessage cost; 3D-only data short-circuits.
   const useWorkerProjection =
-    appConfig.dataLoading.performance.useWebWorkers &&
-    data.splatCount > 1000 &&
-    data.ndim > 3;
+    appConfig.dataLoading.performance.useWebWorkers && data.splatCount > 1000 && data.ndim > 3;
 
   const truncate = readTruncate(mesh);
 

@@ -467,7 +467,10 @@ export class DataLoadingMonitor {
    * skipped via `{ skipConfirm: true }`.
    */
   public async clearAllCaches(opts?: { skipConfirm?: boolean }): Promise<void> {
-    if (!opts?.skipConfirm && !this.confirmDestructiveCacheAction('Clear ALL caches (L0 + L1 + L2)?')) {
+    if (
+      !opts?.skipConfirm &&
+      !this.confirmDestructiveCacheAction('Clear ALL caches (L0 + L1 + L2)?')
+    ) {
       return;
     }
     // Clear L0 first (synchronous)

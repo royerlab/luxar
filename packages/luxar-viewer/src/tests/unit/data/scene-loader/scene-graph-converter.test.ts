@@ -60,9 +60,7 @@ describe('convertToSceneGraphNode — type coercion', () => {
   // types through into the `SceneGraphNode['type']` union and lied
   // to TypeScript about it. Whitelist guarantees the union is honest.
   it('falls back to "scene" for an unknown non-empty type', () => {
-    expect(
-      convertToSceneGraphNode(makeNode({ type: 'volume' as 'group' })).type
-    ).toBe('scene');
+    expect(convertToSceneGraphNode(makeNode({ type: 'volume' as 'group' })).type).toBe('scene');
   });
 
   it('preserves "mesh" as a valid type', () => {
@@ -147,9 +145,7 @@ describe('convertToSceneGraphNode — recursion', () => {
         makeNode({
           path: '/grp',
           type: 'group',
-          children: [
-            makeNode({ path: '/grp/inner', type: 'gsplats', attrs: { n_splats: 7 } }),
-          ],
+          children: [makeNode({ path: '/grp/inner', type: 'gsplats', attrs: { n_splats: 7 } })],
         }),
       ],
     });

@@ -9,10 +9,7 @@
 
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import {
-  computeDebugState,
-  type DebugStateContext,
-} from '../../../core/debug-state';
+import { computeDebugState, type DebugStateContext } from '../../../core/debug-state';
 import type { SimpleDims } from '../../../types/dims';
 
 function makePointCloud(
@@ -27,27 +24,15 @@ function makePointCloud(
   } = {}
 ): THREE.Points {
   const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute(
-    'position',
-    new THREE.BufferAttribute(new Float32Array(count * 3), 3)
-  );
+  geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(count * 3), 3));
   if (options.hasColors) {
-    geometry.setAttribute(
-      'color',
-      new THREE.BufferAttribute(new Float32Array(count * 3), 3)
-    );
+    geometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(count * 3), 3));
   }
   if (options.hasRadii) {
-    geometry.setAttribute(
-      'radius',
-      new THREE.BufferAttribute(new Float32Array(count), 1)
-    );
+    geometry.setAttribute('radius', new THREE.BufferAttribute(new Float32Array(count), 1));
   }
   if (options.hasSharpness) {
-    geometry.setAttribute(
-      'sharpness',
-      new THREE.BufferAttribute(new Float32Array(count), 1)
-    );
+    geometry.setAttribute('sharpness', new THREE.BufferAttribute(new Float32Array(count), 1));
   }
   if (options.drawRange !== undefined) {
     geometry.setDrawRange(0, options.drawRange);
@@ -252,9 +237,7 @@ describe('computeDebugState', () => {
 
     it('reports isAnimating + initialized flags', () => {
       const scene = new THREE.Scene();
-      const state = computeDebugState(
-        makeContext(scene, { isAnimating: true, initialized: true })
-      );
+      const state = computeDebugState(makeContext(scene, { isAnimating: true, initialized: true }));
       expect(state.isAnimating).toBe(true);
       expect(state.initialized).toBe(true);
     });

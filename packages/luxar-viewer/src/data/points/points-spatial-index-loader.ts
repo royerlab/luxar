@@ -826,8 +826,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
 
     warnExtendToAllNoDimensions({
       extendDims,
-      hasResolvedDimensions:
-        !!viewState.dimensions && viewState.dimensions.length > 0,
+      hasResolvedDimensions: !!viewState.dimensions && viewState.dimensions.length > 0,
       nodePath: this.node.path,
       logModule: Modules.SPATIAL_INDEX_LOADER,
     });
@@ -1338,7 +1337,6 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
   private createEmptyPointsData(viewState: ViewState): LoadedPointsData {
     return createEmptyPointsDataHelper(this.buildProjectionContext(), viewState);
   }
-
 
   // LoaderMonitor implementation
 

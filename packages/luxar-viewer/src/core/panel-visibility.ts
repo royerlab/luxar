@@ -28,9 +28,7 @@ export interface PanelVisibilityPorts {
  * Missing panels record `false` so the restore path doesn't surprise
  * a caller after a panel is later torn down.
  */
-export function getPanelVisibilityStates(
-  ports: PanelVisibilityPorts
-): Map<string, boolean> {
+export function getPanelVisibilityStates(ports: PanelVisibilityPorts): Map<string, boolean> {
   const states = new Map<string, boolean>();
   states.set('renderingControls', ports.renderingControls?.isVisible() ?? false);
   states.set('recordingPanel', ports.recordingPanel?.isVisible() ?? false);

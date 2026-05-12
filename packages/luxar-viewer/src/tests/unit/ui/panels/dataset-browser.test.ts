@@ -14,9 +14,7 @@ const navigateMock = vi.fn();
 const getFullUrlMock = vi.fn();
 
 vi.mock('../../../../data', async () => {
-  const actual = await vi.importActual<typeof import('../../../../data')>(
-    '../../../../data'
-  );
+  const actual = await vi.importActual<typeof import('../../../../data')>('../../../../data');
   return {
     ...actual,
     DirectoryNavigator: vi.fn().mockImplementation(() => ({
@@ -32,12 +30,14 @@ function makeContainer(): HTMLElement {
   return el;
 }
 
-function defaultNavigateResult(overrides: {
-  entries?: DirectoryEntry[];
-  currentPath?: string;
-  strategy?: 'webdav' | 'html' | 'index' | 'manual';
-  isZarr?: boolean;
-} = {}) {
+function defaultNavigateResult(
+  overrides: {
+    entries?: DirectoryEntry[];
+    currentPath?: string;
+    strategy?: 'webdav' | 'html' | 'index' | 'manual';
+    isZarr?: boolean;
+  } = {}
+) {
   return {
     entries: overrides.entries ?? [],
     currentPath: overrides.currentPath ?? '',
@@ -126,9 +126,7 @@ describe('DatasetBrowser', () => {
         { name: 'a.zarr', path: 'a.zarr', type: 'zarr' },
         { name: 'd.zarr', path: 'd.zarr', type: 'zarr' },
       ];
-      navigateMock.mockResolvedValueOnce(
-        defaultNavigateResult({ entries, strategy: 'webdav' })
-      );
+      navigateMock.mockResolvedValueOnce(defaultNavigateResult({ entries, strategy: 'webdav' }));
 
       new DatasetBrowser({ container, onDatasetSelect, onClose });
       await vi.waitFor(() => {
@@ -137,8 +135,8 @@ describe('DatasetBrowser', () => {
       });
 
       const items = container.querySelectorAll('.luxar-dataset-browser__file-item');
-      const orderedNames = Array.from(items).map((el) =>
-        (el.querySelector('.luxar-dataset-browser__file-name') as HTMLElement).textContent
+      const orderedNames = Array.from(items).map(
+        (el) => (el.querySelector('.luxar-dataset-browser__file-name') as HTMLElement).textContent
       );
       // zarr first (alphabetical), then directories, then files.
       expect(orderedNames).toEqual(['a.zarr', 'd.zarr', 'b_dir', 'c_file.txt']);
@@ -223,9 +221,7 @@ describe('DatasetBrowser', () => {
     });
 
     it('does NOT auto-select when isZarr=true but currentPath is empty', async () => {
-      navigateMock.mockResolvedValueOnce(
-        defaultNavigateResult({ currentPath: '', isZarr: true })
-      );
+      navigateMock.mockResolvedValueOnce(defaultNavigateResult({ currentPath: '', isZarr: true }));
 
       new DatasetBrowser({ container, onDatasetSelect, onClose });
       // Wait one microtask cycle for the navigate promise to resolve.
@@ -248,9 +244,7 @@ describe('DatasetBrowser', () => {
         expect(container.querySelector('.luxar-dataset-browser__file-item')).not.toBeNull();
       });
 
-      const item = container.querySelector(
-        '.luxar-dataset-browser__file-item'
-      ) as HTMLElement;
+      const item = container.querySelector('.luxar-dataset-browser__file-item') as HTMLElement;
       item.click();
 
       expect(onDatasetSelect).toHaveBeenCalledWith('http://example.com/sample.zarr');
@@ -258,9 +252,7 @@ describe('DatasetBrowser', () => {
     });
 
     it('navigates into a directory entry on click', async () => {
-      const entries: DirectoryEntry[] = [
-        { name: 'sub', path: 'sub', type: 'directory' },
-      ];
+      const entries: DirectoryEntry[] = [{ name: 'sub', path: 'sub', type: 'directory' }];
       navigateMock.mockResolvedValueOnce(defaultNavigateResult({ entries }));
 
       new DatasetBrowser({ container, onDatasetSelect, onClose });
@@ -272,9 +264,7 @@ describe('DatasetBrowser', () => {
       navigateMock.mockClear();
       navigateMock.mockResolvedValue(defaultNavigateResult({ currentPath: 'sub' }));
 
-      const item = container.querySelector(
-        '.luxar-dataset-browser__file-item'
-      ) as HTMLElement;
+      const item = container.querySelector('.luxar-dataset-browser__file-item') as HTMLElement;
       item.click();
 
       expect(navigateMock).toHaveBeenCalledWith('sub');
@@ -398,9 +388,7 @@ describe('DatasetBrowser', () => {
         expect(container.querySelector('.luxar-dataset-browser__file-item')).not.toBeNull();
       });
 
-      const item = container.querySelector(
-        '.luxar-dataset-browser__file-item'
-      ) as HTMLElement;
+      const item = container.querySelector('.luxar-dataset-browser__file-item') as HTMLElement;
       item.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
 
       expect(onDatasetSelect).toHaveBeenCalledWith('http://example.com/sample.zarr');
@@ -408,9 +396,7 @@ describe('DatasetBrowser', () => {
     });
 
     it('activates a directory entry via Space key', async () => {
-      const entries: DirectoryEntry[] = [
-        { name: 'sub', path: 'sub', type: 'directory' },
-      ];
+      const entries: DirectoryEntry[] = [{ name: 'sub', path: 'sub', type: 'directory' }];
       navigateMock.mockResolvedValueOnce(defaultNavigateResult({ entries }));
 
       new DatasetBrowser({ container, onDatasetSelect, onClose });
@@ -421,9 +407,7 @@ describe('DatasetBrowser', () => {
       navigateMock.mockClear();
       navigateMock.mockResolvedValue(defaultNavigateResult({ currentPath: 'sub' }));
 
-      const item = container.querySelector(
-        '.luxar-dataset-browser__file-item'
-      ) as HTMLElement;
+      const item = container.querySelector('.luxar-dataset-browser__file-item') as HTMLElement;
       item.dispatchEvent(new KeyboardEvent('keydown', { key: ' ' }));
 
       expect(navigateMock).toHaveBeenCalledWith('sub');
@@ -446,9 +430,7 @@ describe('DatasetBrowser', () => {
         '#luxar-dataset-browser-breadcrumb button.luxar-dataset-browser__breadcrumb-link'
       );
       expect(buttons.length).toBe(2); // "Root" and "data" (final "sub" is current)
-      const current = container.querySelector(
-        '.luxar-dataset-browser__breadcrumb-current'
-      );
+      const current = container.querySelector('.luxar-dataset-browser__breadcrumb-current');
       expect(current?.getAttribute('aria-current')).toBe('location');
     });
 
@@ -470,9 +452,7 @@ describe('DatasetBrowser', () => {
 
     it('status bar has aria-live="polite"', () => {
       new DatasetBrowser({ container, onDatasetSelect, onClose });
-      const status = container.querySelector(
-        '#luxar-dataset-browser-status'
-      ) as HTMLElement;
+      const status = container.querySelector('#luxar-dataset-browser-status') as HTMLElement;
       expect(status.getAttribute('aria-live')).toBe('polite');
     });
   });

@@ -73,12 +73,10 @@ describe('rendering-controls-utils', () => {
       const result = validateRenderingSettings({
         toneMapping: 'InvalidMode' as any,
         controlType: 'magic' as any,
-        aoQuality: 'extreme' as any,
       });
 
       expect(result.toneMapping).toBe(defaults.toneMapping);
       expect(result.controlType).toBe(defaults.controlType);
-      expect(result.aoQuality).toBe(defaults.aoQuality);
     });
 
     it('should accept ortho as a valid control type', () => {
@@ -118,9 +116,6 @@ describe('rendering-controls-utils', () => {
         ['fxaaEnabled', 'fxaaEnabled' as const],
         ['msaaEnabled', 'msaaEnabled' as const],
         ['ssaaEnabled', 'ssaaEnabled' as const],
-        ['smaaEnabled', 'smaaEnabled' as const],
-        ['dofEnabled', 'dofEnabled' as const],
-        ['aoEnabled', 'aoEnabled' as const],
         ['vignetteEnabled', 'vignetteEnabled' as const],
         ['detectorNoiseEnabled', 'detectorNoiseEnabled' as const],
         ['chromaticLensDistortionEnabled', 'chromaticLensDistortionEnabled' as const],
@@ -175,15 +170,6 @@ describe('rendering-controls-utils', () => {
     });
 
     describe('AA fields', () => {
-      it('rounds smaaSearchSteps to integer and clamps to [1, 32]', () => {
-        const result = validateRenderingSettings({ smaaSearchSteps: 7.7 });
-        expect(result.smaaSearchSteps).toBe(8);
-
-        const defaults = getDefaultRenderingSettings();
-        const result2 = validateRenderingSettings({ smaaSearchSteps: 100 });
-        expect(result2.smaaSearchSteps).toBe(defaults.smaaSearchSteps);
-      });
-
       it('clamps ssaaMultiplier to [1, 8]', () => {
         const defaults = getDefaultRenderingSettings();
         const result = validateRenderingSettings({ ssaaMultiplier: 0 });

@@ -70,7 +70,7 @@ spatial-index loaders.
 
 - The geometry's `ChunkBoundsIndex` (per-chunk min/max in nD).
 - A `ViewState`: `{ slicePosition: number[], tolerance: number[],
-  displayDims: number[], dimensions: Dim[] }`.
+displayDims: number[], dimensions: Dim[] }`.
 - A geometry-specific `extendDimsTolerance` callback that adjusts
   per-dim tolerance (Lines have segment-bound padding; GSplats have
   the σ-scaled tolerance; Points use `maxRadius`).

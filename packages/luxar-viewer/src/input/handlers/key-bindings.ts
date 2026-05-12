@@ -26,10 +26,7 @@
 
 import { config } from '../../config';
 import { log, Modules } from '../../utils/log';
-import {
-  InputContext,
-  type InputContextManager,
-} from '../input-context-manager';
+import { InputContext, type InputContextManager } from '../input-context-manager';
 import type { SceneManager } from '../../scene/scene-manager';
 import type { ScaleBar } from '../../ui/components/scale-bar';
 import type { ColormapLegend } from '../../ui/components/colormap-legend';

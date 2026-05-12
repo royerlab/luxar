@@ -23,7 +23,8 @@ const TOOLTIPS: Record<string, string> = {
   'Load Arrays': 'Fetch and decompress zarr chunks from the data source',
   'Load Segments': 'Fetch segment index arrays (pairs of vertex references)',
   'Load Vertices': 'Fetch vertex positions and attributes for referenced vertices',
-  'Index Remap': 'Build global → local vertex map and remap segment indices into local buffer space',
+  'Index Remap':
+    'Build global → local vertex map and remap segment indices into local buffer space',
   'Project to 3D': 'Slice nD data to 3D display space (visibility filtering, Cholesky marginals)',
   'Update Buffers': 'Upload processed data to GPU buffer attributes',
 };

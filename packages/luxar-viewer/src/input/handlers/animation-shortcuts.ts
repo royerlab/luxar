@@ -145,9 +145,6 @@ export class AnimationShortcuts {
       animManager.decreaseSpeed(dimIndex);
     }
     const fps = animManager.getState(dimIndex)?.targetFPS;
-    log.info(
-      Modules.ANIMATION,
-      `${direction > 0 ? 'Increased' : 'Decreased'} speed to ${fps} FPS`
-    );
+    log.info(Modules.ANIMATION, `${direction > 0 ? 'Increased' : 'Decreased'} speed to ${fps} FPS`);
   }
 }

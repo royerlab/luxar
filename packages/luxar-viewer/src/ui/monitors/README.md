@@ -6,14 +6,14 @@ elsewhere — they never mutate loader/cache state directly.
 
 ## Files
 
-| File | Role |
-|------|------|
-| `data-monitor-manager.ts` | Singleton manager owning the monitor lifecycle, factory hooks, and shared event bus |
-| `data-loading-monitor.ts` | The "Data" tab — per-loader progress, recent events, throughput |
-| `cache-metrics-aggregator.ts` | Pure aggregator: rolls L0/L1/L2 stats + loader-side counters into a single `CacheMetrics` snapshot |
-| `data-monitor-templates.ts` | DOM templates and small helpers (`renderCacheStatusBadges`, `formatValidationMode`, `l2ErrorTotal`) |
-| `performance-monitor.ts` | FPS / draw-call / VRAM panel |
-| `rate-calculator.ts` | Sliding-window per-second rate counters (hits/sec, misses/sec, bandwidth) |
+| File                          | Role                                                                                                |
+| ----------------------------- | --------------------------------------------------------------------------------------------------- |
+| `data-monitor-manager.ts`     | Singleton manager owning the monitor lifecycle, factory hooks, and shared event bus                 |
+| `data-loading-monitor.ts`     | The "Data" tab — per-loader progress, recent events, throughput                                     |
+| `cache-metrics-aggregator.ts` | Pure aggregator: rolls L0/L1/L2 stats + loader-side counters into a single `CacheMetrics` snapshot  |
+| `data-monitor-templates.ts`   | DOM templates and small helpers (`renderCacheStatusBadges`, `formatValidationMode`, `l2ErrorTotal`) |
+| `performance-monitor.ts`      | FPS / draw-call / VRAM panel                                                                        |
+| `rate-calculator.ts`          | Sliding-window per-second rate counters (hits/sec, misses/sec, bandwidth)                           |
 
 ## Public surface
 

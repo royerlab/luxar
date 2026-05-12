@@ -226,8 +226,7 @@ export function createCustomColormapTexture(lut: Uint8Array): THREE.DataTexture 
     // G.5: validate cache hit against fingerprint. If two distinct LUTs
     // hashed to the same key, the fingerprints will (with overwhelming
     // probability) diverge — dispose the stale entry and re-create.
-    const cachedFp = (cached.userData as { originalLutSample?: Uint8Array })
-      .originalLutSample;
+    const cachedFp = (cached.userData as { originalLutSample?: Uint8Array }).originalLutSample;
     if (cachedFp && fingerprintMatches(cachedFp, incomingFp)) {
       customCacheStats.hits++;
       return cached;

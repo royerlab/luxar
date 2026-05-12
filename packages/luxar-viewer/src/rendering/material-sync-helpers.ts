@@ -46,9 +46,7 @@ export function syncPointMaterialWithGeometry(points: THREE.Points): void {
   // is disabled this is undefined and the helper is a no-op.
   const pickNode = points.userData?.pickNode as THREE.Object3D | undefined;
   if (pickNode) {
-    const pickMat = (pickNode as THREE.Mesh | THREE.Points).material as
-      | THREE.Material
-      | undefined;
+    const pickMat = (pickNode as THREE.Mesh | THREE.Points).material as THREE.Material | undefined;
     if (pickMat instanceof PointPickingMaterial) {
       pickMat.updateRadiusScale(radiusScale);
       pickMat.updateSharpnessScale(sharpnessScale);

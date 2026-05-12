@@ -5,16 +5,16 @@ single geometry type's loader.
 
 ## Files
 
-| File | Role |
-|------|------|
-| `array-decoder.ts` | Encoding-aware decoder (`broadcasted` / `array_ref` / `LUT` / `quantized` / `direct`). The Python-encoder counterpart on the TS side. |
-| `attrs-composer.ts` | Compose effective node attrs from parent + child + zarr metadata |
-| `data-accumulator.ts` | Zero-allocation buffer accumulator used by Points / Lines / GSplats loaders for nD scrub hot path |
-| `directory-navigator.ts` | Filesystem-style navigation over a zarr group hierarchy (used by dataset browser) |
-| `dims-to-view-state.ts` | Convert scene dimension metadata into the initial `ViewState` |
-| `scene-graph-builder.ts` | Convert a zarr group tree into the Luxar scene-graph form |
-| `scene-stats.ts`, `stats-aggregator.ts` | Roll up per-loader stats into a single scene snapshot |
-| `tolerance-computer.ts` | Geometry-aware tolerance computation for nD slicing |
+| File                                    | Role                                                                                                                                  |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `array-decoder.ts`                      | Encoding-aware decoder (`broadcasted` / `array_ref` / `LUT` / `quantized` / `direct`). The Python-encoder counterpart on the TS side. |
+| `attrs-composer.ts`                     | Compose effective node attrs from parent + child + zarr metadata                                                                      |
+| `data-accumulator.ts`                   | Zero-allocation buffer accumulator used by Points / Lines / GSplats loaders for nD scrub hot path                                     |
+| `directory-navigator.ts`                | Filesystem-style navigation over a zarr group hierarchy (used by dataset browser)                                                     |
+| `dims-to-view-state.ts`                 | Convert scene dimension metadata into the initial `ViewState`                                                                         |
+| `scene-graph-builder.ts`                | Convert a zarr group tree into the Luxar scene-graph form                                                                             |
+| `scene-stats.ts`, `stats-aggregator.ts` | Roll up per-loader stats into a single scene snapshot                                                                                 |
+| `tolerance-computer.ts`                 | Geometry-aware tolerance computation for nD slicing                                                                                   |
 
 ## Public surface
 

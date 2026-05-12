@@ -120,7 +120,12 @@ describe('compositeOverlays', () => {
       { el: makeTextOverlay('A'), config: makeConfig({ position: [0.1, 0.1] }) },
       { el: makeTextOverlay('B'), config: makeConfig({ position: [0.5, 0.5] }) },
     ];
-    compositeOverlays(canvas, fake as unknown as CanvasRenderingContext2D, makeManager(overlays), makeCanvas());
+    compositeOverlays(
+      canvas,
+      fake as unknown as CanvasRenderingContext2D,
+      makeManager(overlays),
+      makeCanvas()
+    );
     expect(fake.save).toHaveBeenCalledTimes(2);
     expect(fake.restore).toHaveBeenCalledTimes(2);
   });
@@ -129,7 +134,12 @@ describe('compositeOverlays', () => {
     const canvas = makeCanvas();
     const fake = makeFakeCtx();
     const overlay = { el: makeTextOverlay('X', '0.3'), config: makeConfig({ opacity: 1 }) };
-    compositeOverlays(canvas, fake as unknown as CanvasRenderingContext2D, makeManager([overlay]), makeCanvas());
+    compositeOverlays(
+      canvas,
+      fake as unknown as CanvasRenderingContext2D,
+      makeManager([overlay]),
+      makeCanvas()
+    );
     expect(fake.globalAlpha).toBeCloseTo(0.3, 5);
   });
 
@@ -140,7 +150,12 @@ describe('compositeOverlays', () => {
       el: makeTextOverlay('X'),
       config: makeConfig({ blend_mode: 'multiply' }),
     };
-    compositeOverlays(canvas, fake as unknown as CanvasRenderingContext2D, makeManager([overlay]), makeCanvas());
+    compositeOverlays(
+      canvas,
+      fake as unknown as CanvasRenderingContext2D,
+      makeManager([overlay]),
+      makeCanvas()
+    );
     expect(fake.globalCompositeOperation).toBe('multiply');
   });
 });
@@ -149,7 +164,15 @@ describe('compositeTextOverlay', () => {
   it('does nothing for empty text', () => {
     const fake = makeFakeCtx();
     const el = makeTextOverlay('');
-    compositeTextOverlay(fake as unknown as CanvasRenderingContext2D, el, makeConfig(), 0, 0, 800, 600);
+    compositeTextOverlay(
+      fake as unknown as CanvasRenderingContext2D,
+      el,
+      makeConfig(),
+      0,
+      0,
+      800,
+      600
+    );
     expect(fake.fillText).not.toHaveBeenCalled();
   });
 
@@ -186,7 +209,15 @@ describe('compositeTextOverlay', () => {
   it('skips background and stroke when not configured', () => {
     const fake = makeFakeCtx();
     const el = makeTextOverlay('Hi');
-    compositeTextOverlay(fake as unknown as CanvasRenderingContext2D, el, makeConfig(), 0, 0, 800, 600);
+    compositeTextOverlay(
+      fake as unknown as CanvasRenderingContext2D,
+      el,
+      makeConfig(),
+      0,
+      0,
+      800,
+      600
+    );
     expect(fake.fillRect).not.toHaveBeenCalled();
     expect(fake.strokeText).not.toHaveBeenCalled();
     expect(fake.fillText).toHaveBeenCalledTimes(1);

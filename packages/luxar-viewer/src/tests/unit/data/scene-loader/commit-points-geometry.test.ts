@@ -20,10 +20,7 @@ function makeData(pointCount: number, withRadii = false): LoadedPointsData {
     sharpness: undefined,
     pointCount,
     metadata: {
-      bounds: new THREE.Box3(
-        new THREE.Vector3(-1, -1, -1),
-        new THREE.Vector3(1, 1, 1)
-      ),
+      bounds: new THREE.Box3(new THREE.Vector3(-1, -1, -1), new THREE.Vector3(1, 1, 1)),
     },
   } as unknown as LoadedPointsData;
 }
@@ -70,9 +67,7 @@ describe('commitPointsGeometry', () => {
     const points = makePoints('/p');
     root.add(points);
     commitPointsGeometry('/p', makeData(0), root, null, mockNodeFactory);
-    expect(
-      (points.userData as { visiblePointCount: number }).visiblePointCount
-    ).toBe(0);
+    expect((points.userData as { visiblePointCount: number }).visiblePointCount).toBe(0);
   });
 
   it('uses GPU buffer pool when supplied', () => {
@@ -86,13 +81,7 @@ describe('commitPointsGeometry', () => {
       updatePointsGeometry: vi.fn(),
     };
 
-    commitPointsGeometry(
-      '/p',
-      makeData(3),
-      root,
-      gpuBufferPool as never,
-      mockNodeFactory
-    );
+    commitPointsGeometry('/p', makeData(3), root, gpuBufferPool as never, mockNodeFactory);
     expect(gpuBufferPool.acquirePointsGeometry).toHaveBeenCalledTimes(1);
     expect(gpuBufferPool.updatePointsGeometry).toHaveBeenCalledTimes(1);
     expect(points.geometry).toBe(newGeometry);
@@ -119,10 +108,7 @@ describe('commitPointsGeometry', () => {
     points.userData = { nodeType: 'points', visiblePointCount: 0 };
     // 3-point geometry to match the 3-point data.
     const geom = new THREE.BufferGeometry();
-    geom.setAttribute(
-      'position',
-      new THREE.BufferAttribute(new Float32Array(9), 3)
-    );
+    geom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(9), 3));
     points.geometry = geom;
     root.add(points);
 
@@ -131,8 +117,6 @@ describe('commitPointsGeometry', () => {
     expect(mockCreatePointsGeometry).not.toHaveBeenCalled();
     // The same geometry instance is preserved.
     expect(points.geometry).toBe(geom);
-    expect(
-      (points.userData as { visiblePointCount: number }).visiblePointCount
-    ).toBe(3);
+    expect((points.userData as { visiblePointCount: number }).visiblePointCount).toBe(3);
   });
 });

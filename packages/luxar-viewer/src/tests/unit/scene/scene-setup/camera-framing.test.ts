@@ -65,10 +65,7 @@ function makeControls(focusTarget = new THREE.Vector3(0, 0, 0)): {
   };
 }
 
-function makeBounds(
-  min: [number, number, number],
-  max: [number, number, number]
-): BoundingBox {
+function makeBounds(min: [number, number, number], max: [number, number, number]): BoundingBox {
   return {
     min: { x: min[0], y: min[1], z: min[2] },
     max: { x: max[0], y: max[1], z: max[2] },
@@ -86,11 +83,7 @@ describe('computeSceneBoundingBox', () => {
   it('aggregates Points bounds and counts position attribute as primitives', () => {
     const scene = new THREE.Scene();
     const geometry = new THREE.BufferGeometry();
-    const positions = new Float32Array([
-      0, 0, 0,
-      1, 1, 1,
-      -1, 0, 2,
-    ]);
+    const positions = new Float32Array([0, 0, 0, 1, 1, 1, -1, 0, 2]);
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     const material = new THREE.PointsMaterial();
     const points = new THREE.Points(geometry, material);
@@ -167,10 +160,7 @@ describe('computeSceneBoundingBox', () => {
     const scene = new THREE.Scene();
     // Points at origin
     const g1 = new THREE.BufferGeometry();
-    g1.setAttribute(
-      'position',
-      new THREE.BufferAttribute(new Float32Array([0, 0, 0]), 3)
-    );
+    g1.setAttribute('position', new THREE.BufferAttribute(new Float32Array([0, 0, 0]), 3));
     scene.add(new THREE.Points(g1, new THREE.PointsMaterial()));
     // InstancedMesh far away
     const g2 = new THREE.BoxGeometry(1, 1, 1);
@@ -195,16 +185,28 @@ describe('fitCameraToBounds', () => {
 
   it('returns 0 and short-circuits on a zero-extent box', () => {
     const { controls, setSceneScale } = makeControls();
-    const result = fitCameraToBounds(perspectiveCamera, controls, makeBounds([0, 0, 0], [0, 0, 0]), {
-      lookAtTarget: new THREE.Vector3(),
-    });
+    const result = fitCameraToBounds(
+      perspectiveCamera,
+      controls,
+      makeBounds([0, 0, 0], [0, 0, 0]),
+      {
+        lookAtTarget: new THREE.Vector3(),
+      }
+    );
     expect(result).toBe(0);
     expect(setSceneScale).not.toHaveBeenCalled();
   });
 
   it('perspective: positions camera at target + (0, 0, distance), sets distance limits', () => {
-    const { controls, setSceneScale, setDistanceLimits, setTarget, reinitialize, update, saveState } =
-      makeControls();
+    const {
+      controls,
+      setSceneScale,
+      setDistanceLimits,
+      setTarget,
+      reinitialize,
+      update,
+      saveState,
+    } = makeControls();
     const target = new THREE.Vector3(5, 0, 0);
     const diagonal = fitCameraToBounds(
       perspectiveCamera,
@@ -239,12 +241,10 @@ describe('fitCameraToBounds', () => {
 
   it('preserveControlsTarget=true suppresses controls.setTarget but still reinitializes', () => {
     const { controls, setTarget, reinitialize } = makeControls();
-    fitCameraToBounds(
-      perspectiveCamera,
-      controls,
-      makeBounds([0, 0, 0], [1, 1, 1]),
-      { lookAtTarget: new THREE.Vector3(), preserveControlsTarget: true }
-    );
+    fitCameraToBounds(perspectiveCamera, controls, makeBounds([0, 0, 0], [1, 1, 1]), {
+      lookAtTarget: new THREE.Vector3(),
+      preserveControlsTarget: true,
+    });
     expect(setTarget).not.toHaveBeenCalled();
     expect(reinitialize).toHaveBeenCalledTimes(1);
   });
