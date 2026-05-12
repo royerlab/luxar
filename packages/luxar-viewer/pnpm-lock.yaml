@@ -30,7 +30,7 @@ importers:
         specifier: ^1.44.2
         version: 1.44.2
       three:
-        specifier: ^0.184.0
+        specifier: ~0.184.0
         version: 0.184.0
       zarrita:
         specifier: ^0.7.3
@@ -49,7 +49,7 @@ importers:
         specifier: ^0.17.4
         version: 0.17.4
       '@types/three':
-        specifier: ^0.184.0
+        specifier: ~0.184.0
         version: 0.184.1
       '@typescript-eslint/eslint-plugin':
         specifier: ^8.59.1
