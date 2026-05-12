@@ -141,10 +141,10 @@ describe('downloadBlob', () => {
 });
 
 describe('renderFrameToCanvas', () => {
-  it('reads an ImageData from postProcessing, sizes the canvas, and returns it', () => {
+  it('reads an ImageData from postProcessing, sizes the canvas, and returns it', async () => {
     const imgData = { width: 200, height: 100, data: new Uint8ClampedArray(200 * 100 * 4) };
     const postProcessing = {
-      renderToImageData: vi.fn(() => imgData as unknown as ImageData),
+      renderToImageData: vi.fn(async () => imgData as unknown as ImageData),
     };
     // jsdom doesn't give us a real 2D context; supply a fake on the
     // canvas's getContext.
@@ -155,7 +155,7 @@ describe('renderFrameToCanvas', () => {
     })) as unknown as typeof HTMLCanvasElement.prototype.getContext;
 
     try {
-      const canvas = renderFrameToCanvas(
+      const canvas = await renderFrameToCanvas(
         postProcessing,
         false,
         null,
@@ -170,10 +170,10 @@ describe('renderFrameToCanvas', () => {
     }
   });
 
-  it('skips compositing when includeOverlays is false', () => {
+  it('skips compositing when includeOverlays is false', async () => {
     const imgData = { width: 10, height: 10, data: new Uint8ClampedArray(10 * 10 * 4) };
     const postProcessing = {
-      renderToImageData: vi.fn(() => imgData as unknown as ImageData),
+      renderToImageData: vi.fn(async () => imgData as unknown as ImageData),
     };
     const overlayManager = {
       getVisibleOverlays: vi.fn(),
@@ -184,7 +184,12 @@ describe('renderFrameToCanvas', () => {
     })) as unknown as typeof HTMLCanvasElement.prototype.getContext;
 
     try {
-      renderFrameToCanvas(postProcessing, false, overlayManager, document.createElement('canvas'));
+      await renderFrameToCanvas(
+        postProcessing,
+        false,
+        overlayManager,
+        document.createElement('canvas')
+      );
       expect(overlayManager.getVisibleOverlays).not.toHaveBeenCalled();
     } finally {
       HTMLCanvasElement.prototype.getContext = origGetContext;

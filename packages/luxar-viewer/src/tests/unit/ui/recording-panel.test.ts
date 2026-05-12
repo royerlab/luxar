@@ -182,7 +182,7 @@ function createMockSceneManager() {
     resizeLocked: false,
     postProcessing: {
       render: vi.fn(),
-      renderToImageData: vi.fn().mockReturnValue(new ImageData(4, 4)),
+      renderToImageData: vi.fn().mockResolvedValue(new ImageData(4, 4)),
       captureHDRAsEXR: vi.fn().mockResolvedValue(new Uint8Array([0x76, 0x2f, 0x31, 0x01])),
       resize: vi.fn(),
     },

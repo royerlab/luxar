@@ -24,8 +24,9 @@ import type { VideoCodecOption } from './types';
 export interface CaptureContext {
   sceneManager: SceneManager;
   fps: number;
-  /** Read the live framebuffer into a 2D canvas. */
-  renderFrameToCanvas: () => HTMLCanvasElement;
+  /** Read the live framebuffer into a 2D canvas. Async to match the
+   *  underlying post-processing readback (sync today, async under WebGPU). */
+  renderFrameToCanvas: () => Promise<HTMLCanvasElement>;
   /** Build a recording filename for a given extension. */
   generateFilename: (ext: string) => string;
   /** Build the bundled `encode_video.sh` script. */

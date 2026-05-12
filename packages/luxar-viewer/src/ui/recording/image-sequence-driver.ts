@@ -33,7 +33,7 @@ export class ImageSequenceDriver implements OfflineCaptureDriver {
     progress: CaptureProgress
   ): Promise<void> {
     if (!this.zip) throw new Error('ImageSequenceDriver: captureFrame before setup');
-    const canvas = ctx.renderFrameToCanvas();
+    const canvas = await ctx.renderFrameToCanvas();
     const mimeType = this.mode === 'jpeg' ? 'image/jpeg' : `image/${this.mode}`;
     const quality = this.mode === 'png' ? undefined : ctx.imageQuality;
     const blob = await new Promise<Blob | null>((resolve) =>

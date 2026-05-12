@@ -24,7 +24,15 @@ import { compositeOverlays } from './overlay-compositor';
 
 /** Subset of PostProcessingManager the screenshot path reads. */
 export interface ScreenshotPostProcessing {
-  renderToImageData(): ImageData;
+  /**
+   * Read the post-processed framebuffer into an ImageData.
+   *
+   * Returns a Promise so that the WebGPU port (which requires async
+   * `buffer.mapAsync()` readback) can swap the implementation without
+   * touching the call sites. Under WebGL2 the underlying read is
+   * still synchronous; the Promise just wraps the result.
+   */
+  renderToImageData(): Promise<ImageData>;
 }
 
 /**
@@ -36,13 +44,13 @@ export interface ScreenshotPostProcessing {
  * The post-processing manager owns the framebuffer read; this helper
  * never touches WebGL state directly.
  */
-export function renderFrameToCanvas(
+export async function renderFrameToCanvas(
   postProcessing: ScreenshotPostProcessing,
   includeOverlays: boolean,
   overlayManager: OverlayManager | null,
   glCanvas: HTMLCanvasElement
-): HTMLCanvasElement {
-  const imgData = postProcessing.renderToImageData();
+): Promise<HTMLCanvasElement> {
+  const imgData = await postProcessing.renderToImageData();
   const canvas = document.createElement('canvas');
   canvas.width = imgData.width;
   canvas.height = imgData.height;

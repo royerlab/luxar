@@ -86,7 +86,7 @@ export class VideoModeDriver implements OfflineCaptureDriver {
     progress: CaptureProgress
   ): Promise<void> {
     if (!this.source) throw new Error('VideoModeDriver: captureFrame before setup');
-    const canvas = ctx.renderFrameToCanvas();
+    const canvas = await ctx.renderFrameToCanvas();
     const frameDuration = 1 / ctx.fps;
     // `frameIndex` is the OUTPUT sequence index (the panel passes
     // capturedFrames), not the source loop index. Tolerated source-
