@@ -116,7 +116,7 @@ export class PostProcessingManager {
 
     this.renderSize = { ...size };
 
-    this.initializeTransientResources();
+    this.initializeTransientResources({ applyDefaults: true });
 
     log.success(
       Modules.POST_PROCESSING,
@@ -158,7 +158,7 @@ export class PostProcessingManager {
     };
   }
 
-  private initializeTransientResources(): void {
+  private initializeTransientResources(opts: { applyDefaults: boolean } = { applyDefaults: true }): void {
     const { width, height } = this.getPhysicalSize();
 
     // HDR target: scene renders here (linear, HalfFloat, optional MSAA).
@@ -210,7 +210,10 @@ export class PostProcessingManager {
     this.megaCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 
     // Bloom chain (built only when enabled; on by default per config).
-    if (config.renderingControls.defaults.bloomEnabled) {
+    // Skip during context-restore rebuilds — the caller restores the
+    // user's bloom-enabled choice from a snapshot, which may have been
+    // off even if config defaults say on.
+    if (opts.applyDefaults && config.renderingControls.defaults.bloomEnabled) {
       this.allocateBloomChain(width, height);
     }
 
@@ -220,7 +223,12 @@ export class PostProcessingManager {
     }
 
     // Apply config defaults to the mega-shader uniforms / defines.
-    this.applyConfigDefaults();
+    // Skipped during context-restore rebuilds — the caller restores user
+    // toggle state from a snapshot, which would otherwise be clobbered
+    // back to defaults here.
+    if (opts.applyDefaults) {
+      this.applyConfigDefaults();
+    }
   }
 
   private allocateBloomChain(width: number, height: number): void {
@@ -869,10 +877,22 @@ export class PostProcessingManager {
   ): { pixels: Float32Array; width: number; height: number } {
     if (mode === 'raw-scene-hdr') {
       // Just the scene render — no bloom, no mega-shader.
-      this.renderer.setRenderTarget(this.hdrTarget);
-      this.renderer.clear();
-      this.renderer.render(this.scene, this.camera);
-      return this.readTarget(this.hdrTarget);
+      // Save/restore the renderer's current target + autoClear so a
+      // caller that invokes capture while another target is bound
+      // (picking, offscreen probe) doesn't get its state clobbered.
+      // The mega-shader-pipeline path (`runPipeline`) wraps the same
+      // way; mirror it here for the bypass branch too.
+      const prevTarget = this.renderer.getRenderTarget();
+      const prevAutoClear = this.renderer.autoClear;
+      try {
+        this.renderer.setRenderTarget(this.hdrTarget);
+        this.renderer.clear();
+        this.renderer.render(this.scene, this.camera);
+        return this.readTarget(this.hdrTarget);
+      } finally {
+        this.renderer.setRenderTarget(prevTarget);
+        this.renderer.autoClear = prevAutoClear;
+      }
     }
 
     if (mode === 'hdr-effects-pre-tone') {
@@ -1032,7 +1052,11 @@ export class PostProcessingManager {
     };
 
     this.disposeTransientResources();
-    this.initializeTransientResources();
+    // Pass applyDefaults=false: the snapshot below is authoritative for
+    // every user-togglable effect. Letting initialize re-apply config
+    // defaults would clobber user-disabled effects (regression vs. the
+    // pre-mega-shader pipeline, which built optional effects lazily).
+    this.initializeTransientResources({ applyDefaults: false });
 
     // Re-apply state.
     this.bloomIntensity = snapshot.bloomIntensity;

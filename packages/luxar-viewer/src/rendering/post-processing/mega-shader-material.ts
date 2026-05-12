@@ -22,7 +22,7 @@ import { MEGA_VERTEX_SHADER, MEGA_FRAGMENT_SHADER } from './mega-shader.glsl';
 
 /**
  * Map THREE.ToneMapping → the `LUXAR_TONE_MAPPING_MODE` shader-define
- * value. These are Luxar-internal compressed IDs (0..6), NOT THREE's
+ * value. These are Luxar-internal compressed IDs (1..6), NOT THREE's
  * enum values (which split 0,1,2,3,4,5=Custom,6=AgX,7=Neutral).
  *
  * `NoToneMapping` deliberately routes to mode 1 (Linear) so its
