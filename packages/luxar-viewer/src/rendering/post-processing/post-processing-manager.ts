@@ -94,11 +94,22 @@ export class PostProcessingManager {
   // step), matching THREE.Timer's initial behavior.
   private _previousRenderTimestamp = 0;
 
+  /**
+   * @param onResize  Optional callback invoked after every
+   *   reallocation of the render-target pyramid (resize, SSAA
+   *   toggle, MSAA toggle, DPR change). SceneManager wires this to
+   *   `updateMaterialsForCurrentCamera()` so point/line/gsplat
+   *   shaders pick up the new drawing-buffer size — otherwise their
+   *   pre-computed `pointSizeFactor` / `uResolution` uniforms go
+   *   stale on AA toggles and the scene looks subtly wrong until the
+   *   next window resize.
+   */
   constructor(
     private renderer: THREE.WebGLRenderer,
     private scene: THREE.Scene,
     private camera: THREE.Camera,
-    size: { width: number; height: number }
+    size: { width: number; height: number },
+    private onResize?: () => void
   ) {
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.NoToneMapping; // We tone-map in mega-shader.
@@ -724,29 +735,41 @@ export class PostProcessingManager {
     applyFxaa: boolean;
     finalTarget: THREE.WebGLRenderTarget | null;
   }): void {
-    // (0) Scene → HDR target
-    this.renderer.setRenderTarget(this.hdrTarget);
-    this.renderer.clear();
-    this.renderer.render(this.scene, this.camera);
+    // Defensive save/restore: the typical call sites (`render()` and
+    // `captureHDRPixels`) don't care about pre-existing renderer
+    // state, but a future caller (picking, offscreen probe) might
+    // invoke runPipeline while another target is bound. Mirroring
+    // BloomChain.render's pattern keeps the pipeline composable.
+    const prevTarget = this.renderer.getRenderTarget();
+    const prevAutoClear = this.renderer.autoClear;
+    try {
+      // (0) Scene → HDR target
+      this.renderer.setRenderTarget(this.hdrTarget);
+      this.renderer.clear();
+      this.renderer.render(this.scene, this.camera);
 
-    // (1) Bloom pyramid
-    if (this.bloomChain) {
-      this.bloomChain.render(this.renderer, this.hdrTarget.texture);
-    }
+      // (1) Bloom pyramid
+      if (this.bloomChain) {
+        this.bloomChain.render(this.renderer, this.hdrTarget.texture);
+      }
 
-    // (2) Mega-shader
-    this.megaShader.setHdrSceneTexture(this.hdrTarget.texture);
+      // (2) Mega-shader
+      this.megaShader.setHdrSceneTexture(this.hdrTarget.texture);
 
-    if (opts.applyFxaa && this.fxaaPass) {
-      // Mega → ldrTarget → FXAA → finalTarget
-      this.renderer.setRenderTarget(this.ldrTarget);
-      this.renderer.render(this.megaScene, this.megaCamera);
-      this.renderer.setRenderTarget(opts.finalTarget);
-      this.fxaaPass.render(this.renderer, this.ldrTarget.texture);
-    } else {
-      // Mega → finalTarget directly (no FXAA)
-      this.renderer.setRenderTarget(opts.finalTarget);
-      this.renderer.render(this.megaScene, this.megaCamera);
+      if (opts.applyFxaa && this.fxaaPass) {
+        // Mega → ldrTarget → FXAA → finalTarget
+        this.renderer.setRenderTarget(this.ldrTarget);
+        this.renderer.render(this.megaScene, this.megaCamera);
+        this.renderer.setRenderTarget(opts.finalTarget);
+        this.fxaaPass.render(this.renderer, this.ldrTarget.texture);
+      } else {
+        // Mega → finalTarget directly (no FXAA)
+        this.renderer.setRenderTarget(opts.finalTarget);
+        this.renderer.render(this.megaScene, this.megaCamera);
+      }
+    } finally {
+      this.renderer.setRenderTarget(prevTarget);
+      this.renderer.autoClear = prevAutoClear;
     }
   }
 
@@ -810,6 +833,13 @@ export class PostProcessingManager {
         `render ${logicalW}x${logicalH} logical → ${physW}x${physH} physical ` +
         `(DPR=${this.renderer.getPixelRatio().toFixed(2)})`
     );
+
+    // Notify the host (SceneManager) that the canvas backbuffer
+    // dimensions changed. Scene materials cache pointSizeFactor /
+    // uResolution based on `renderer.getDrawingBufferSize()` and
+    // would otherwise stay at the pre-resize values until the next
+    // window resize fired.
+    this.onResize?.();
   }
 
   // ================================================================
@@ -941,6 +971,12 @@ export class PostProcessingManager {
    */
   renderToImageData(): ImageData {
     this.render();
+    // `gl.readPixels` reads from whichever framebuffer is currently
+    // bound. `runPipeline` is now defensive about restoring its prior
+    // render target (see save/restore inside `runPipeline`); to be
+    // safe regardless of what the prior target was, bind the canvas
+    // backbuffer explicitly before reading.
+    this.renderer.setRenderTarget(null);
     const gl = this.renderer.getContext();
     const width = gl.drawingBufferWidth;
     const height = gl.drawingBufferHeight;
@@ -965,6 +1001,12 @@ export class PostProcessingManager {
   rebuildAfterContextRestore(): void {
     if (this.disposed) return;
     log.info(Modules.POST_PROCESSING, 'Rebuilding post-processing pipeline after context restore');
+
+    // Discard the pre-loss render-time baseline. Otherwise the first
+    // post-restore frame would advance detector-noise `uTime` by the
+    // (potentially long) elapsed wall-clock duration of the context
+    // loss, producing a visible noise jump.
+    this._previousRenderTimestamp = 0;
 
     // Snapshot user-facing state from the mega-shader before disposal.
     const snapshot = {

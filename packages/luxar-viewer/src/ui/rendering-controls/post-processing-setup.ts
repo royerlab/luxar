@@ -1,14 +1,17 @@
 /**
  * Post-processing effects controls setup for rendering controls UI.
  *
- * Creates controls for all visual effects:
- * - Bloom (glow/light bleeding)
+ * Creates controls for the visual effects the mega-shader pipeline
+ * supports:
+ * - Bloom (glow/light bleeding, separate pre-pass + mix in mega-shader)
  * - Detector Noise (physics-based: shot, readout, FPN)
- * - Depth of Field (bokeh blur)
- * - Chromatic Aberration (lens color fringing)
- * - Ambient Occlusion (contact shadows)
- * - Vignette (edge darkening)
- * - Lens Distortion (barrel/pincushion with full camera model)
+ * - Chromatic Lens Distortion (barrel/pincushion + chromatic aberration
+ *   via per-channel sampling at distorted UVs)
+ * - Vignette (multiplicative edge darkening)
+ *
+ * Depth-of-Field and Ambient Occlusion were dropped in the
+ * mega-shader refactor: DoF needs depth-aware multi-pass blur, SSAO
+ * needs surface normals which point/gsplat/line geometry don't have.
  */
 
 import type { SetupContext, SetupResult } from './types';
@@ -39,8 +42,6 @@ export function setupPostProcessingControls(
       'Each effect is independent and can be toggled on/off:\n' +
       '• Bloom — glow around bright areas (great for HDR data)\n' +
       '• Detector Noise — physics-based noise (shot, readout, FPN)\n' +
-      '• Depth of Field — focus blur simulating a camera lens\n' +
-      '• Ambient Occlusion — darkens corners for depth perception\n' +
       '• Vignette — darkened edges for cinematic framing\n' +
       '• Chromatic Lens Distortion — barrel/pincushion + color fringing\n\n' +
       'Tip: Enable multiple effects for cinematic results, or use\n' +
