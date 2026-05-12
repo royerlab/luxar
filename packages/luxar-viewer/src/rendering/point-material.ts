@@ -8,6 +8,7 @@
 import * as THREE from 'three';
 import { POINT_VERTEX_SHADER, POINT_FRAGMENT_SHADER } from './shaders/point-shaders';
 import type { CameraAwareMaterial } from './camera-aware-material';
+import type { ColormapAwareMaterial } from './colormap-aware-material';
 import { computePointSizeFactor, computeMaxPointSize } from './camera-uniforms';
 import {
   applyColormapTextureToMaterial,
@@ -42,7 +43,10 @@ export interface PointMaterialConfig {
  * Points material with physically accurate world-space sizing.
  * Extends THREE.ShaderMaterial to provide specialized point rendering.
  */
-export class PointMaterial extends THREE.ShaderMaterial implements CameraAwareMaterial {
+export class PointMaterial
+  extends THREE.ShaderMaterial
+  implements CameraAwareMaterial, ColormapAwareMaterial
+{
   /**
    * Create a new PointMaterial with the specified configuration
    */
@@ -284,6 +288,41 @@ export class PointMaterial extends THREE.ShaderMaterial implements CameraAwareMa
     cloned.uniforms.sharpnessScale.value = this.uniforms.sharpnessScale.value;
 
     return cloned as this;
+  }
+
+  // -------------------------------------------------------------
+  // ColormapAwareMaterial
+  //
+  // These setters concentrate the colormap-uniform writes inside
+  // the material that owns the uniforms. External code reaches
+  // colormap state through `material-colormap-helpers.ts`, which
+  // delegates here. The WebGPU port rewrites the setter bodies
+  // (node-uniform reassignment) without touching call sites.
+  // -------------------------------------------------------------
+
+  setColormapTexture(texture: THREE.DataTexture | null): void {
+    if (texture) {
+      this.defines.USE_COLORMAP = '';
+      if (!this.uniforms.uColormapTex) {
+        this.uniforms.uColormapTex = { value: texture };
+        this.uniforms.uScalarMin = { value: 0.0 };
+        this.uniforms.uScalarScale = { value: 1.0 };
+      } else {
+        this.uniforms.uColormapTex.value = texture;
+      }
+    } else {
+      delete this.defines.USE_COLORMAP;
+      if (this.uniforms.uColormapTex) this.uniforms.uColormapTex.value = null;
+      if (this.uniforms.uScalarMin) this.uniforms.uScalarMin.value = 0.0;
+      if (this.uniforms.uScalarScale) this.uniforms.uScalarScale.value = 1.0;
+    }
+  }
+
+  setScalarRange(min: number, max: number): void {
+    if (this.uniforms.uScalarMin) this.uniforms.uScalarMin.value = min;
+    if (this.uniforms.uScalarScale) {
+      this.uniforms.uScalarScale.value = 1.0 / Math.max(1e-10, max - min);
+    }
   }
 
   // Note: `dispose()` is inherited from THREE.ShaderMaterial.

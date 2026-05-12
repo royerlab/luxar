@@ -17,6 +17,7 @@
 import * as THREE from 'three';
 import { LINE_VERTEX_SHADER, LINE_FRAGMENT_SHADER } from './shaders/line-shaders';
 import type { CameraAwareMaterial } from './camera-aware-material';
+import type { ColormapAwareMaterial } from './colormap-aware-material';
 import {
   applyColormapTextureToMaterial,
   applyScalarRangeToMaterial,
@@ -78,7 +79,10 @@ export interface LineMaterialUniforms {
  * - Endpoint cap factor: 0.5 (half intensity at true endpoints)
  * - Joint rendering: 0.5 + 0.5 = 1.0 (seamless sum)
  */
-export class LineMaterial extends THREE.ShaderMaterial implements CameraAwareMaterial {
+export class LineMaterial
+  extends THREE.ShaderMaterial
+  implements CameraAwareMaterial, ColormapAwareMaterial
+{
   /**
    * Create a new LineMaterial with the specified configuration.
    *
@@ -357,6 +361,35 @@ export class LineMaterial extends THREE.ShaderMaterial implements CameraAwareMat
     // actually cares about.
     if (definesChanged || previousMode !== mode) {
       this.needsUpdate = true;
+    }
+  }
+
+  // -------------------------------------------------------------
+  // ColormapAwareMaterial — see colormap-aware-material.ts.
+  // -------------------------------------------------------------
+
+  setColormapTexture(texture: THREE.DataTexture | null): void {
+    if (texture) {
+      this.defines.USE_COLORMAP = '';
+      if (!this.uniforms.uColormapTex) {
+        this.uniforms.uColormapTex = { value: texture };
+        this.uniforms.uScalarMin = { value: 0.0 };
+        this.uniforms.uScalarScale = { value: 1.0 };
+      } else {
+        this.uniforms.uColormapTex.value = texture;
+      }
+    } else {
+      delete this.defines.USE_COLORMAP;
+      if (this.uniforms.uColormapTex) this.uniforms.uColormapTex.value = null;
+      if (this.uniforms.uScalarMin) this.uniforms.uScalarMin.value = 0.0;
+      if (this.uniforms.uScalarScale) this.uniforms.uScalarScale.value = 1.0;
+    }
+  }
+
+  setScalarRange(min: number, max: number): void {
+    if (this.uniforms.uScalarMin) this.uniforms.uScalarMin.value = min;
+    if (this.uniforms.uScalarScale) {
+      this.uniforms.uScalarScale.value = 1.0 / Math.max(1e-10, max - min);
     }
   }
 }

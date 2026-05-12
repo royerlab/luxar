@@ -1,34 +1,45 @@
 /**
- * Shared helpers for colormap LUT + scalar-range uniform updates.
- * Point/Line/GSplat materials all bind the same `uColormapTex` /
- * `uScalarMin` / `uScalarScale` uniform contract and the same
- * `USE_COLORMAP` define toggle. PointMaterial additionally needs to
- * toggle `vertexColors` (its shader uses the color attribute when
- * colormap is OFF, scalar+LUT when ON); Lines and GSplats don't.
+ * Shared helpers for colormap LUT + scalar-range plumbing on
+ * Point/Line/GSplat materials.
  *
- * These helpers do the uniform/define plumbing and return whether the
- * enabled-state changed so the caller can decide what other side
- * effects to apply (vertexColors, needsUpdate).
+ * The actual uniform / define writes live on the materials themselves
+ * (see `ColormapAwareMaterial`). These helpers wrap the material's
+ * setters with two extra concerns the materials don't care about:
+ *
+ *   - **transition tracking** — `applyColormapTextureToMaterial`
+ *     returns `{ wasEnabled, nowEnabled }` so callers (PointMaterial
+ *     toggling `vertexColors`, `material-manager` deciding whether
+ *     to rebuild) can detect an on/off flip.
+ *   - **userData.scalarRange bookkeeping** — package-level metadata
+ *     that lets later code inspect the colormap range without
+ *     reaching into uniforms.
+ *
+ * No `material.uniforms.X.value =` writes happen in this file. That
+ * keeps the WebGPU-port surface confined to the material classes.
  */
 
 import * as THREE from 'three';
+import {
+  isColormapAwareMaterial,
+  type ColormapAwareMaterial,
+} from './colormap-aware-material';
 
 /**
- * Apply a colormap texture (or null to disable) to a material's
- * USE_COLORMAP define + uColormapTex uniform contract. Returns the
- * before/after enabled state so the caller can apply material-
- * specific side effects on a transition.
+ * Apply a colormap texture (or `null` to disable) to a material.
  *
- * On disable (texture=null), the helper also clears `uColormapTex.value`
- * and resets `uScalarMin`/`uScalarScale` so a later `clone()` can use
- * `defines.USE_COLORMAP` (or absence of texture value) as the source of
- * truth without resurrecting stale colormap state.
+ * Delegates the uniform / define mutation to the material's
+ * `setColormapTexture` setter; reports the enabled-state transition
+ * so callers can apply side effects on a flip.
  *
- * @param material - The shader material whose uniforms/defines to mutate.
+ * Materials that don't implement `ColormapAwareMaterial` are
+ * silently ignored — callers can pass any `THREE.ShaderMaterial`
+ * and the helper falls through. The enabled-state check still uses
+ * `material.defines.USE_COLORMAP` because that's the canonical
+ * source of truth (see `setColormapTexture`).
+ *
+ * @param material - The shader material to mutate.
  * @param texture - The LUT texture to bind, or `null` to disable.
- * @returns `{ wasEnabled, nowEnabled }` so callers can detect a transition
- *   and apply material-specific side effects (e.g. PointMaterial toggles
- *   `vertexColors`).
+ * @returns `{ wasEnabled, nowEnabled }` so callers can detect a transition.
  * @public
  */
 export function applyColormapTextureToMaterial(
@@ -38,28 +49,11 @@ export function applyColormapTextureToMaterial(
   const wasEnabled = 'USE_COLORMAP' in material.defines;
   const nowEnabled = !!texture;
 
-  if (nowEnabled) {
-    material.defines.USE_COLORMAP = '';
-    if (!material.uniforms.uColormapTex) {
-      material.uniforms.uColormapTex = { value: texture };
-      material.uniforms.uScalarMin = { value: 0.0 };
-      material.uniforms.uScalarScale = { value: 1.0 };
-    } else {
-      material.uniforms.uColormapTex.value = texture;
-    }
-  } else {
-    delete material.defines.USE_COLORMAP;
-    // Clear uniforms so clone() doesn't resurrect the colormap from the
-    // texture-uniform's value. defines.USE_COLORMAP is the source of truth.
-    if (material.uniforms.uColormapTex) {
-      material.uniforms.uColormapTex.value = null;
-    }
-    if (material.uniforms.uScalarMin) {
-      material.uniforms.uScalarMin.value = 0.0;
-    }
-    if (material.uniforms.uScalarScale) {
-      material.uniforms.uScalarScale.value = 1.0;
-    }
+  if (isColormapAwareMaterial(material)) {
+    (material as unknown as ColormapAwareMaterial).setColormapTexture(texture);
+  }
+
+  if (!nowEnabled) {
     delete material.userData.scalarRange;
   }
 
@@ -67,18 +61,18 @@ export function applyColormapTextureToMaterial(
 }
 
 /**
- * Apply a scalar-range update to the `uScalarMin` / `uScalarScale`
- * uniform contract (used in the colormap-mode shader path). Stores
- * the original `[min, max]` on `userData.scalarRange` for later
- * inspection. No-op for materials whose colormap mode is disabled
- * (uniforms aren't allocated until `applyColormapTextureToMaterial`
- * runs the first time).
+ * Apply a scalar-range update to a material's colormap uniforms.
+ * Records `[min, max]` on `material.userData.scalarRange` so later
+ * code can inspect the range without touching uniforms.
  *
- * @param material - The shader material whose colormap uniforms to update.
- * @param min - Lower bound of the scalar range to map to LUT index 0.
- * @param max - Upper bound of the scalar range to map to LUT index 1. If
- *   `max - min` is degenerate, the scale is clamped to `1e10` (safe
- *   numerical fallback).
+ * Materials that don't implement `ColormapAwareMaterial` are
+ * silently ignored. The `userData.scalarRange` is still recorded
+ * — it's the public "what was the last range" record regardless
+ * of whether the material actually rendered with a colormap.
+ *
+ * @param material - The shader material to mutate.
+ * @param min - Lower bound of the scalar range.
+ * @param max - Upper bound of the scalar range.
  * @public
  */
 export function applyScalarRangeToMaterial(
@@ -86,11 +80,8 @@ export function applyScalarRangeToMaterial(
   min: number,
   max: number
 ): void {
-  if (material.uniforms.uScalarMin) {
-    material.uniforms.uScalarMin.value = min;
-  }
-  if (material.uniforms.uScalarScale) {
-    material.uniforms.uScalarScale.value = 1.0 / Math.max(1e-10, max - min);
+  if (isColormapAwareMaterial(material)) {
+    (material as unknown as ColormapAwareMaterial).setScalarRange(min, max);
   }
   material.userData.scalarRange = [min, max];
 }

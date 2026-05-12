@@ -1,5 +1,23 @@
 # Browser-support policy for the WebGPU migration
 
+## Codebase-side hard guarantees
+
+These are verified facts about Luxar's current state that the
+migration depends on. Each is a grep-resistant invariant — a CI
+check enforcing them would be appropriate later.
+
+- **`onBeforeCompile` is not used anywhere in `src/`.** Three.js's
+  WebGPURenderer manual states modifications via `onBeforeCompile()`
+  are not supported. Verified by `grep -rn 'onBeforeCompile' src/`
+  → zero matches. Keep this clean through the port — a future
+  consumer should reach for a `ShaderSource.webgpu` factory
+  instead, never for a build-time shader patch.
+- **All `material.uniforms.X.value =` writes happen inside material-
+  owner files.** `material-colormap-helpers.ts` is the historical
+  exception and was refactored to delegate to material setters
+  (`ColormapAwareMaterial.setColormapTexture/setScalarRange`).
+  Confirmed by the spot-check grep in the migration plan.
+
 ## Hard constraint up front: `ShaderMaterial` blocks `WebGPURenderer`
 
 Three.js's `WebGPURenderer` does **not** support `THREE.ShaderMaterial` or
