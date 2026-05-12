@@ -23,6 +23,7 @@ import { MegaShaderMaterial } from './mega-shader-material';
 import { BloomChain } from './bloom-chain';
 import { FxaaPass } from './fxaa-pass';
 import { computeEffectiveRenderSize } from './render-target-sizing';
+import type { RendererCapabilities } from '../renderer-capabilities';
 import {
   halfFloatToFloat32,
   float32ToHalfFloat,
@@ -100,6 +101,7 @@ export class PostProcessingManager {
    */
   constructor(
     private renderer: THREE.WebGLRenderer,
+    private capabilities: RendererCapabilities,
     private scene: THREE.Scene,
     private camera: THREE.Camera,
     size: { width: number; height: number },
@@ -634,8 +636,7 @@ export class PostProcessingManager {
   setMSAAEnabled(enabled: boolean): void {
     if (this.msaaEnabled === enabled) return;
     if (enabled) {
-      const gl = this.renderer.getContext() as WebGL2RenderingContext;
-      const maxSamples = (gl.getParameter(gl.MAX_SAMPLES) as number) ?? 0;
+      const maxSamples = this.capabilities.maxMSAASamples;
       if (maxSamples < 2) {
         log.error(Modules.POST_PROCESSING, `MSAA not supported (MAX_SAMPLES: ${maxSamples})`);
         return;
@@ -654,8 +655,7 @@ export class PostProcessingManager {
       log.warning(Modules.POST_PROCESSING, `Invalid MSAA samples: ${samples}. Using 4.`);
       samples = 4;
     }
-    const gl = this.renderer.getContext() as WebGL2RenderingContext;
-    const maxSamples = (gl.getParameter(gl.MAX_SAMPLES) as number) ?? 0;
+    const maxSamples = this.capabilities.maxMSAASamples;
     if (samples > maxSamples) {
       log.warning(
         Modules.POST_PROCESSING,
@@ -982,17 +982,11 @@ export class PostProcessingManager {
    */
   renderToImageData(): ImageData {
     this.render();
-    // `gl.readPixels` reads from whichever framebuffer is currently
-    // bound. `runPipeline` is now defensive about restoring its prior
-    // render target (see save/restore inside `runPipeline`); to be
-    // safe regardless of what the prior target was, bind the canvas
-    // backbuffer explicitly before reading.
-    this.renderer.setRenderTarget(null);
-    const gl = this.renderer.getContext();
-    const width = gl.drawingBufferWidth;
-    const height = gl.drawingBufferHeight;
-    const pixels = new Uint8Array(width * height * 4);
-    gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+    // RendererCapabilities owns the binding + readback (it knows to
+    // bind the canvas backbuffer before reading). Today this is sync;
+    // under WebGPU the underlying implementation becomes async — see
+    // the capture-path Promise-ification in the migration plan.
+    const { pixels, width, height } = this.capabilities.readBackbufferPixels();
     const flipped = flipPixelsVerticallyRGBA(
       pixels,
       width,
