@@ -274,9 +274,13 @@ export class BloomChain {
     renderer.setRenderTarget(this.mips[0].target);
     renderer.render(this.fullscreenScene, this.camera);
 
-    // Downsample chain: mip[i] → mip[i+1]
+    // Downsample chain: mip[i] → mip[i+1]. Iterate over actually-
+    // allocated mips, not the user-requested `levels` — allocateMips
+    // skips levels whose next mip would fall below MIN_MIP_DIM, so
+    // `this.mips.length` may be smaller than `this.levels` at low DPR.
+    const actualLevels = this.mips.length;
     this.fullscreenMesh.material = this.downsampleMat;
-    for (let i = 0; i < this.levels - 1; i++) {
+    for (let i = 0; i < actualLevels - 1; i++) {
       const src = this.mips[i];
       const dst = this.mips[i + 1];
       this.downsampleMat.uniforms.uInput.value = src.target.texture;
@@ -289,7 +293,7 @@ export class BloomChain {
     // Uses AdditiveBlending on the material so the destination's
     // existing pixels are preserved and the upsampled samples add on.
     this.fullscreenMesh.material = this.upsampleMat;
-    for (let i = this.levels - 2; i >= 0; i--) {
+    for (let i = actualLevels - 2; i >= 0; i--) {
       const src = this.mips[i + 1];
       const dst = this.mips[i];
       this.upsampleMat.uniforms.uInput.value = src.target.texture;
@@ -317,11 +321,27 @@ export class BloomChain {
   // Internal
   // ----------------------------------------------------------------
 
+  /**
+   * Allocate the mip pyramid for a canvas of the given size.
+   *
+   * `this.levels` is the user-requested ceiling, but levels are also
+   * capped on physical size: a mip whose dimension would drop below
+   * `MIN_MIP_DIM` is skipped, because at 1×1 / 2×1 / 3×2 the per-pass
+   * overhead (FBO bind, viewport setup, tile setup on TBDR GPUs)
+   * dwarfs the actual texture work and adds visible cost without any
+   * visual contribution. The first mip is always allocated so the
+   * bloom output texture exists even at very low resolutions.
+   */
   private allocateMips(canvasWidth: number, canvasHeight: number): void {
+    const MIN_MIP_DIM = 4;
     this.mips = [];
     let w = Math.max(1, Math.floor(canvasWidth / 2));
     let h = Math.max(1, Math.floor(canvasHeight / 2));
     for (let i = 0; i < this.levels; i++) {
+      // Drop levels that have collapsed below the useful-resolution
+      // threshold. Keep at least one mip so `outputTexture` always
+      // exists.
+      if (this.mips.length > 0 && (w < MIN_MIP_DIM || h < MIN_MIP_DIM)) break;
       const target = new THREE.WebGLRenderTarget(w, h, {
         type: THREE.HalfFloatType,
         format: THREE.RGBAFormat,
