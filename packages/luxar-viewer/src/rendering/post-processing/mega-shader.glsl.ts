@@ -44,6 +44,8 @@
  *     viewMatrix, projectionMatrix, etc.); we use `position`
  *     directly without them since we already hand NDC coords.
  */
+import type { ShaderSource } from '../shaders/shader-source';
+
 export const MEGA_VERTEX_SHADER = /* glsl */ `
   out vec2 vUv;
 
@@ -371,3 +373,8 @@ export const MEGA_FRAGMENT_SHADER = /* glsl */ `
     fragColor = vec4(color, 1.0);
   }
 `;
+
+export const MEGA_SOURCE: ShaderSource = {
+  name: 'mega',
+  webgl: { vertex: MEGA_VERTEX_SHADER, fragment: MEGA_FRAGMENT_SHADER },
+};

@@ -20,6 +20,11 @@
 
 import * as THREE from 'three';
 import { clamp } from '../../utils/clamp';
+import {
+  BLOOM_THRESHOLD_SOURCE,
+  BLOOM_DOWNSAMPLE_SOURCE,
+  BLOOM_UPSAMPLE_SOURCE,
+} from './bloom-shaders';
 
 export interface BloomChainConfig {
   /** Number of mip levels (1..12). Higher = wider, softer bloom. */
@@ -34,103 +39,6 @@ export interface BloomChainConfig {
   width: number;
   height: number;
 }
-
-/**
- * Shared fullscreen-triangle vertex shader for all three bloom passes
- * (threshold, downsample, upsample). The host supplies a unit triangle
- * in NDC via the geometry's `position` attribute, which THREE's
- * ShaderMaterial auto-declares — do NOT redeclare it here.
- */
-const THRESHOLD_VERT = /* glsl */ `
-  out vec2 vUv;
-  void main() {
-    vUv = position.xy * 0.5 + 0.5;
-    gl_Position = vec4(position.xy, 0.0, 1.0);
-  }
-`;
-
-/**
- * Threshold + 2× box downsample. Extracts bright pixels above the
- * threshold with a smooth knee to avoid banding at the cutoff.
- *
- * Uses Rec.709 relative luminance for the brightness test. An
- * earlier version used max(r,g,b), which overstated saturated-channel
- * pixels — e.g. pure red would bloom even at low intensity.
- */
-const THRESHOLD_FRAG = /* glsl */ `
-  precision highp float;
-  in vec2 vUv;
-  out vec4 fragColor;
-
-  uniform sampler2D uInput;
-  uniform vec2 uTexelSize;
-  uniform float uThreshold;
-  uniform float uSmoothing;
-
-  // Soft-knee: smoothstep around the threshold on relative luma, then
-  // multiply by the source color (preserves chroma; only the brightness
-  // gate is luma-based).
-  vec3 thresholdKnee(vec3 color) {
-    float l = dot(color, vec3(0.2126, 0.7152, 0.0722));
-    float soft = smoothstep(uThreshold, uThreshold + uSmoothing, l);
-    return color * soft;
-  }
-
-  void main() {
-    // 2x2 box downsample
-    vec2 d = uTexelSize * 0.5;
-    vec3 s0 = texture(uInput, vUv + d * vec2(-1.0, -1.0)).rgb;
-    vec3 s1 = texture(uInput, vUv + d * vec2( 1.0, -1.0)).rgb;
-    vec3 s2 = texture(uInput, vUv + d * vec2(-1.0,  1.0)).rgb;
-    vec3 s3 = texture(uInput, vUv + d * vec2( 1.0,  1.0)).rgb;
-    vec3 avg = (s0 + s1 + s2 + s3) * 0.25;
-    fragColor = vec4(thresholdKnee(avg), 1.0);
-  }
-`;
-
-/** Plain 2× box downsample (no threshold). */
-const DOWNSAMPLE_FRAG = /* glsl */ `
-  precision highp float;
-  in vec2 vUv;
-  out vec4 fragColor;
-
-  uniform sampler2D uInput;
-  uniform vec2 uTexelSize;
-
-  void main() {
-    vec2 d = uTexelSize * 0.5;
-    vec3 s0 = texture(uInput, vUv + d * vec2(-1.0, -1.0)).rgb;
-    vec3 s1 = texture(uInput, vUv + d * vec2( 1.0, -1.0)).rgb;
-    vec3 s2 = texture(uInput, vUv + d * vec2(-1.0,  1.0)).rgb;
-    vec3 s3 = texture(uInput, vUv + d * vec2( 1.0,  1.0)).rgb;
-    fragColor = vec4((s0 + s1 + s2 + s3) * 0.25, 1.0);
-  }
-`;
-
-/**
- * 4-tap tent upsample. Samples the smaller mip with a unit-radius
- * tent and additively blends into the larger mip (achieved by
- * blending with `THREE.AdditiveBlending` on the material).
- */
-const UPSAMPLE_FRAG = /* glsl */ `
-  precision highp float;
-  in vec2 vUv;
-  out vec4 fragColor;
-
-  uniform sampler2D uInput;
-  uniform vec2 uTexelSize;
-  uniform float uRadius;
-
-  void main() {
-    vec2 r = uTexelSize * uRadius;
-    vec3 s0 = texture(uInput, vUv + r * vec2(-1.0,  0.0)).rgb;
-    vec3 s1 = texture(uInput, vUv + r * vec2( 1.0,  0.0)).rgb;
-    vec3 s2 = texture(uInput, vUv + r * vec2( 0.0, -1.0)).rgb;
-    vec3 s3 = texture(uInput, vUv + r * vec2( 0.0,  1.0)).rgb;
-    vec3 c  = texture(uInput, vUv).rgb;
-    fragColor = vec4(c * 0.5 + (s0 + s1 + s2 + s3) * 0.125, 1.0);
-  }
-`;
 
 interface MipLevel {
   target: THREE.WebGLRenderTarget;
@@ -166,10 +74,13 @@ export class BloomChain {
     this.radius = cfg.radius ?? 1.0;
 
     // Bloom pyramid uses HalfFloat for HDR preservation.
-    const buildMaterial = (frag: string, blending: THREE.Blending = THREE.NoBlending) => {
+    const buildMaterial = (
+      source: typeof BLOOM_THRESHOLD_SOURCE,
+      blending: THREE.Blending = THREE.NoBlending
+    ) => {
       return new THREE.ShaderMaterial({
-        vertexShader: THRESHOLD_VERT,
-        fragmentShader: frag,
+        vertexShader: source.webgl.vertex,
+        fragmentShader: source.webgl.fragment,
         glslVersion: THREE.GLSL3,
         depthTest: false,
         depthWrite: false,
@@ -187,10 +98,10 @@ export class BloomChain {
       });
     };
 
-    this.thresholdMat = buildMaterial(THRESHOLD_FRAG);
-    this.downsampleMat = buildMaterial(DOWNSAMPLE_FRAG);
+    this.thresholdMat = buildMaterial(BLOOM_THRESHOLD_SOURCE);
+    this.downsampleMat = buildMaterial(BLOOM_DOWNSAMPLE_SOURCE);
     // Upsample blends additively onto the previous (larger) mip.
-    this.upsampleMat = buildMaterial(UPSAMPLE_FRAG, THREE.AdditiveBlending);
+    this.upsampleMat = buildMaterial(BLOOM_UPSAMPLE_SOURCE, THREE.AdditiveBlending);
 
     // Fullscreen triangle (NDC positions {-1,-1}, {3,-1}, {-1,3}).
     // One triangle covers the screen with no clipping waste.

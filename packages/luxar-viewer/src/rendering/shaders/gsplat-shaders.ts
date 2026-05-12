@@ -6,6 +6,7 @@
  * oriented quad expansion, near-plane fade, and screen-coverage safety.
  */
 import { GLSL_SANITIZE_FUNCTIONS } from './glsl-lib';
+import type { ShaderSource } from './shader-source';
 
 export const GSPLAT_VERTEX_SHADER = /* glsl */ `
     precision highp float;
@@ -395,3 +396,8 @@ export const GSPLAT_FRAGMENT_SHADER = /* glsl */ `
         fragColor = vec4(finalColor, 1.0);
     }
   `;
+
+export const GSPLAT_SOURCE: ShaderSource = {
+  name: 'gsplat',
+  webgl: { vertex: GSPLAT_VERTEX_SHADER, fragment: GSPLAT_FRAGMENT_SHADER },
+};
