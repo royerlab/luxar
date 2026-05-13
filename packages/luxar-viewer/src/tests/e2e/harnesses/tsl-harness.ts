@@ -206,6 +206,31 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
         useBloom: true,
       }) as unknown as THREE.Material,
   },
+  // Mega + detector noise: validates the M9-bis Bob Jenkins hash +
+  // Anscombe Poisson + clampedLogistic Gaussian port. The noise is
+  // deterministic per (uv, time) so both backends should agree
+  // bit-for-bit modulo float-precision rounding.
+  'mega-detector-noise': {
+    source: MEGA_SOURCE,
+    buildUniforms: () => ({
+      uHdrScene: { value: buildTestTexture() },
+      uResolution: { value: new THREE.Vector2(8, 8) },
+      uExposure: { value: 0.0 },
+      uGlobalOffset: { value: 0.0 },
+      uGlobalGamma: { value: 1.0 },
+      toneMappingExposure: { value: 1.0 },
+      uTime: { value: 0.123 }, // fixed value → deterministic
+      uReadoutSigma: { value: 0.02 },
+      uPhotonGain: { value: 0.05 },
+      uFpnSigma: { value: 0.01 },
+    }),
+    buildDefines: () => ({ LUXAR_TONE_MAPPING_MODE: '1', USE_DETECTOR_NOISE: '' }),
+    buildTSLMaterial: (uniforms) =>
+      megaWebGPUFactory(uniforms, {
+        toneMappingMode: 1,
+        useDetectorNoise: true,
+      }) as unknown as THREE.Material,
+  },
   // Mega + vignette: validates the `USE_VIGNETTE` JS-side branch.
   'mega-vignette': {
     source: MEGA_SOURCE,
