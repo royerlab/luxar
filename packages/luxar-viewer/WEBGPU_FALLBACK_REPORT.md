@@ -147,12 +147,52 @@ alongside the first M5-scoped fallback run.
 
 ### Targeted specs
 
+After landing M3-bis (`playwright.config.ts` env-forwarding fix in
+commit `<TBD>`) and re-running with the existing dev server killed
+so a fresh one spawns under the env var:
+
 | Spec | Result | Notes |
 |---|---|---|
-| `basic-rendering.spec.ts` | _deferred to M5_ | run was inconclusive (env var didn't propagate to reused server) |
-| `visual-regression.spec.ts` | _deferred to M5_ | |
-| `geometry-types.spec.ts` | _deferred to M5_ | |
-| `post-processing-pipeline.spec.ts` | _deferred to M5_ | |
+| `basic-rendering.spec.ts` | **4 failed / 1 passed** | All rendering tests fail with `THREE.NodeBuilder: Material "ShaderMaterial" is not compatible.` The 1 passing test exercises the missing-dataset graceful-handling path which doesn't render anything. |
+| `visual-regression.spec.ts` | _not run — blocked by basic-rendering_ | |
+| `geometry-types.spec.ts` | _not run — blocked by basic-rendering_ | |
+| `post-processing-pipeline.spec.ts` | _not run — blocked by basic-rendering_ | |
+
+### Decisive finding
+
+**`WebGPURenderer({ forceWebGL: true })` does NOT bypass the
+`ShaderMaterial`-not-supported restriction.** The NodeBuilder check
+runs *before* the backend selection — it rejects `ShaderMaterial`
+inputs regardless of which backend the renderer is dispatching
+through.
+
+This matches the up-front warning in `BROWSER_SUPPORT_POLICY.md`
+("Hard constraint: ShaderMaterial blocks WebGPURenderer"). Now
+empirically confirmed.
+
+### What this means for the migration
+
+- The FXAA + bloom TSL ports landed in M4 + M6-M8 are *necessary
+  but not sufficient* — they're never invoked because the scene-
+  material `ShaderMaterial`s (point/line/gsplat) fail first and
+  abort the render.
+- M11-M16 (scene-material TSL ports) are **mandatory** before any
+  end-to-end WebGPU rendering can be verified.
+- M9 (mega-shader TSL port) is similarly mandatory but operates
+  on the post-processing chain after scene materials produce
+  output — so it can be ported in any order relative to M11-M16.
+- The "fallback E2E" can't return real signal until **all** the
+  scene materials and the mega-shader have TSL factories. The
+  per-shader F-column check in `MIGRATION_PROGRESS.md` will
+  remain empty until then.
+
+### Classified failures (one category, one signature)
+
+- **Category A (shader-compile error)**: 4× failures, all from
+  `THREE.NodeBuilder: Material "ShaderMaterial" is not
+  compatible.` The remediation is the scene-material TSL ports —
+  no per-shader specifics yet because the error fires uniformly
+  across all material types.
 
 ### Full suite
 

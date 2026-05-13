@@ -120,13 +120,21 @@ export default defineConfig({
   // Start BOTH the viewer dev server AND a server for examples/
   webServer: [
     {
-      // TypeScript viewer dev server
+      // TypeScript viewer dev server.
+      // VITE_LUXAR_USE_WEBGPU_RENDERER is forwarded so per-test runs
+      // (e.g. WebGPU fallback experiment under
+      // `VITE_LUXAR_USE_WEBGPU_RENDERER=1 pnpm playwright test`)
+      // can reach the dev server. Without this, Playwright spawns
+      // (or reuses) the server in its own env and the flag is lost.
       command: 'pnpm dev',
       url: 'http://localhost:5173',
       reuseExistingServer: !process.env.CI,
       timeout: 120000,
       stdout: 'pipe',
       stderr: 'pipe',
+      env: {
+        VITE_LUXAR_USE_WEBGPU_RENDERER: process.env.VITE_LUXAR_USE_WEBGPU_RENDERER ?? '',
+      },
     },
     {
       // Python HTTP server to serve repository datasets/examples for E2E tests.
