@@ -214,7 +214,7 @@ export class PostProcessingManager {
 
     // FXAA pass (built only when enabled).
     if (this.fxaaEnabled) {
-      this.fxaaPass = new FxaaPass(width, height);
+      this.fxaaPass = new FxaaPass(width, height, this.capabilities);
     }
 
     // Apply config defaults to the mega-shader uniforms / defines.
@@ -423,7 +423,7 @@ export class PostProcessingManager {
     this.fxaaEnabled = enabled;
     if (enabled && !this.fxaaPass) {
       const { width, height } = this.getPhysicalSize();
-      this.fxaaPass = new FxaaPass(width, height);
+      this.fxaaPass = new FxaaPass(width, height, this.capabilities);
     } else if (!enabled && this.fxaaPass) {
       this.fxaaPass.dispose();
       this.fxaaPass = null;

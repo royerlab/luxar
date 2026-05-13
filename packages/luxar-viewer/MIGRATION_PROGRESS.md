@@ -116,7 +116,7 @@ Legend:
 | `bloom-threshold`   | x |   |   |   |   |
 | `bloom-downsample`  | x |   |   |   |   |
 | `bloom-upsample`    | x |   |   |   |   |
-| `fxaa`              | x |   |   |   |   |
+| `fxaa`              | x | x |   |   |   |
 
 ### Picking
 

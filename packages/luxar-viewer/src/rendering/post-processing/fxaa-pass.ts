@@ -10,32 +10,43 @@
 
 import * as THREE from 'three';
 import { FXAA_SOURCE } from './fxaa-shaders';
+import { buildMaterial } from '../material-builder';
+import type { RendererCapabilities } from '../renderer-capabilities';
 
 /**
  * Runs FXAA on an LDR input texture, writing to the renderer's
- * current target. Owns one ShaderMaterial + one fullscreen triangle.
+ * current target. Owns one `THREE.Material` (built via the
+ * backend-aware `buildMaterial` helper) and one fullscreen triangle.
  */
 export class FxaaPass {
-  private material: THREE.ShaderMaterial;
+  private material: THREE.Material & { uniforms: Record<string, THREE.IUniform> };
+  private uniforms: { uInput: THREE.IUniform; uResolution: THREE.IUniform<THREE.Vector2> };
   private mesh: THREE.Mesh;
   private scene: THREE.Scene;
   private camera: THREE.OrthographicCamera;
 
-  constructor(width: number, height: number) {
-    this.material = new THREE.ShaderMaterial({
-      vertexShader: FXAA_SOURCE.webgl.vertex,
-      fragmentShader: FXAA_SOURCE.webgl.fragment,
-      glslVersion: THREE.GLSL3,
-      depthTest: false,
-      depthWrite: false,
-      // Bypass renderer-level tone mapping injection — FXAA reads
-      // already-tone-mapped LDR values and writes them through.
-      toneMapped: false,
-      uniforms: {
-        uInput: { value: null as THREE.Texture | null },
-        uResolution: { value: new THREE.Vector2(width, height) },
+  constructor(width: number, height: number, caps: RendererCapabilities) {
+    // Uniforms are held by reference so the FxaaPass's existing
+    // `setSize` / `render` setters keep working under both backends:
+    // mutating `.value` flows through to whichever material type
+    // buildMaterial returned.
+    this.uniforms = {
+      uInput: { value: null as THREE.Texture | null },
+      uResolution: { value: new THREE.Vector2(width, height) },
+    };
+    this.material = buildMaterial(
+      FXAA_SOURCE,
+      {
+        uniforms: this.uniforms,
+        depthTest: false,
+        depthWrite: false,
+        // Bypass renderer-level tone mapping injection — FXAA
+        // reads already-tone-mapped LDR values and writes them
+        // through.
+        toneMapped: false,
       },
-    });
+      caps
+    ) as THREE.Material & { uniforms: Record<string, THREE.IUniform> };
 
     // Fullscreen triangle (NDC positions {-1,-1}, {3,-1}, {-1,3}).
     const geo = new THREE.BufferGeometry();
@@ -51,7 +62,7 @@ export class FxaaPass {
   }
 
   setSize(width: number, height: number): void {
-    this.material.uniforms.uResolution.value.set(width, height);
+    this.uniforms.uResolution.value.set(width, height);
   }
 
   /**
@@ -59,7 +70,7 @@ export class FxaaPass {
    * (use `renderer.setRenderTarget(null)` for the backbuffer).
    */
   render(renderer: THREE.WebGLRenderer, inputTexture: THREE.Texture): void {
-    this.material.uniforms.uInput.value = inputTexture;
+    this.uniforms.uInput.value = inputTexture;
     renderer.render(this.scene, this.camera);
   }
 
