@@ -23,6 +23,7 @@
 import type { ShaderSource } from '../shaders/shader-source';
 import { pointPickWebGPUFactory } from './point-pick.tsl';
 import { linePickWebGPUFactory } from './line-pick.tsl';
+import { gsplatPickWebGPUFactory } from './gsplat-pick.tsl';
 
 // ---------------------------------------------------------------------
 // Points
@@ -545,4 +546,6 @@ export const GSPLAT_PICK_FRAGMENT_SHADER = /* glsl */ `
 export const GSPLAT_PICK_SOURCE: ShaderSource = {
   name: 'gsplat-pick',
   webgl: { vertex: GSPLAT_PICK_VERTEX_SHADER, fragment: GSPLAT_PICK_FRAGMENT_SHADER },
+  webgpu: (uniforms: Record<string, unknown>) =>
+    gsplatPickWebGPUFactory(uniforms as Record<string, import('three').IUniform>),
 };

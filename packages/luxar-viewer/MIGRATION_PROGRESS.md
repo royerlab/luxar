@@ -258,7 +258,7 @@ Legend:
 |---------------|---|---|---|---|---|
 | `point-pick`  | x | x | x |   |   |
 | `line-pick`   | x | x | x |   |   |
-| `gsplat-pick` | x |   |   |   |   |
+| `gsplat-pick` | x | x | x |   |   |
 
 ## Recommended port order
 
