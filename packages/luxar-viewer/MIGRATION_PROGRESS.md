@@ -240,7 +240,7 @@ Legend:
 |-------------------|---|---|---|---|---|
 | `point`           | x | x | x |   |   |
 | `line`            | x | x | x |   |   |
-| `gsplat`          | x |   |   |   |   |
+| `gsplat`          | x | x | x |   |   |
 
 ### Post-processing
 

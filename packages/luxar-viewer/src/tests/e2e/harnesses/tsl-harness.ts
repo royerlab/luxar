@@ -39,6 +39,9 @@ import { lineWebGPUFactory } from '../../../rendering/line.tsl';
 import { LINE_PICK_SOURCE } from '../../../rendering/picking/picking-shaders';
 import { linePickWebGPUFactory } from '../../../rendering/picking/line-pick.tsl';
 import { createLineQuadGeometry } from '../../../rendering/line-geometry';
+import { GSPLAT_SOURCE } from '../../../rendering/shaders/gsplat-shaders';
+import { gsplatWebGPUFactory } from '../../../rendering/gsplat.tsl';
+import { createGSplatQuadGeometry } from '../../../rendering/gsplat-geometry';
 import type { ShaderSource } from '../../../rendering/shaders/shader-source';
 
 /**
@@ -229,6 +232,28 @@ function buildLineInstancedMesh(material: THREE.Material): THREE.Object3D {
   return mesh;
 }
 
+/**
+ * Build a single-splat gsplat mesh. Isotropic covariance (identity
+ * Cholesky) at world origin, fixed amplitude. Test exercises 3D→2D
+ * covariance projection + Mahalanobis fragment math.
+ */
+function buildGSplatInstancedMesh(material: THREE.Material): THREE.Object3D {
+  const geom = createGSplatQuadGeometry();
+  geom.setAttribute('aCenter', new THREE.InstancedBufferAttribute(new Float32Array([0, 0, 0]), 3));
+  // Isotropic: L = 0.1 · I, so packed [L00, L10, L11, L20, L21, L22] = [0.1, 0, 0.1, 0, 0, 0.1].
+  geom.setAttribute('aCholesky01', new THREE.InstancedBufferAttribute(new Float32Array([0.1, 0]), 2));
+  geom.setAttribute('aCholesky23', new THREE.InstancedBufferAttribute(new Float32Array([0.1, 0]), 2));
+  geom.setAttribute('aCholesky45', new THREE.InstancedBufferAttribute(new Float32Array([0, 0.1]), 2));
+  geom.setAttribute('aAmplitude', new THREE.InstancedBufferAttribute(new Float32Array([1.0]), 1));
+  geom.setAttribute(
+    'aColor',
+    new THREE.InstancedBufferAttribute(new Float32Array([1.0, 0.5, 0.25]), 3)
+  );
+  const mesh = new THREE.Mesh(geom, material);
+  mesh.frustumCulled = false;
+  return mesh;
+}
+
 const SHADER_REGISTRY: Record<string, RegistryEntry> = {
   'const-rgb': {
     source: CONST_SHADER,
@@ -390,6 +415,38 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
       return m;
     },
     buildMesh: buildLineInstancedMesh,
+  },
+  // M15 gsplat parity: isotropic Gaussian splat at world origin with
+  // identity Cholesky factor. Ortho camera for deterministic projection.
+  // Tests the 3D→2D covariance Jacobian, Cholesky factorisation,
+  // eigendecomposition, oriented-quad expansion, Mahalanobis fragment.
+  gsplat: {
+    source: GSPLAT_SOURCE,
+    buildUniforms: () => ({
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      uFx: { value: 32.0 }, // ortho frustum 2 units → 32 px/unit
+      uFy: { value: 32.0 },
+      uTruncate: { value: 3.0 },
+      uTruncateSq: { value: 9.0 },
+      uRayIntegralFactor: { value: 2.433 },
+      uProjectionMode: { value: 1 }, // max projection — no Σ⁻¹ ray-integral path
+      uIsOrtho: { value: 1 },
+      uNearCull: { value: 0.01 },
+      uMaxExtentFactor: { value: 1.0 },
+      uOpacity: { value: 1.0 },
+      uInvGamma: { value: 1.0 / 2.2 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+      uShiftC: { value: Math.exp(-0.5 * 9) }, // exp(-T²/2) for T=3
+      uInvOneMinusC: { value: 1.0 / (1.0 - Math.exp(-0.5 * 9)) },
+    }),
+    buildTSLMaterial: (uniforms) => {
+      const m = gsplatWebGPUFactory(uniforms, {}) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: buildGSplatInstancedMesh,
   },
   // M14 line-pick parity: same quad-expansion math as `line` but
   // fragment outputs (nodeId, elementId, brightness, 1.0) and

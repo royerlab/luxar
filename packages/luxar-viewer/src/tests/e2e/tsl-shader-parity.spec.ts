@@ -252,6 +252,33 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     ).toBeLessThan(2.0);
   });
 
+  test('gsplat: isotropic splat covariance projection + Mahalanobis fragment', async ({
+    page,
+  }) => {
+    await bootHarness(page);
+
+    const glslPixels = await runGLSL(page, 'gsplat');
+    const tslResult = await runTSL(page, 'gsplat');
+
+    const diff = meanAbsDiff(glslPixels, tslResult.pixels);
+    const samplePx = (px: number[], x: number, y: number) =>
+      `${px[(y * 64 + x) * 4]},${px[(y * 64 + x) * 4 + 1]},${px[(y * 64 + x) * 4 + 2]},${px[(y * 64 + x) * 4 + 3]}`;
+    const samples = [
+      `  (32,32) GLSL=${samplePx(glslPixels, 32, 32)} TSL=${samplePx(tslResult.pixels, 32, 32)}`,
+      `  (28,32) GLSL=${samplePx(glslPixels, 28, 32)} TSL=${samplePx(tslResult.pixels, 28, 32)}`,
+      `  (24,32) GLSL=${samplePx(glslPixels, 24, 32)} TSL=${samplePx(tslResult.pixels, 24, 32)}`,
+      `  (32,28) GLSL=${samplePx(glslPixels, 32, 28)} TSL=${samplePx(tslResult.pixels, 32, 28)}`,
+    ].join('\n');
+    // The gsplat shader's covariance projection has more accumulated
+    // float-precision drift than the simpler pipelines (matrix
+    // products + reciprocals + eigendecomp). Allow a slightly looser
+    // tolerance — the structural correctness is what matters.
+    expect(
+      diff,
+      `GSplat parity: mean abs diff ${diff.toFixed(2)} on 0-255 scale.\nSamples:\n${samples}`
+    ).toBeLessThan(3.0);
+  });
+
   test('line-pick: instanced quad line with nodeId / elementId / brightness output', async ({
     page,
   }) => {
