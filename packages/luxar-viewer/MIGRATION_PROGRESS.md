@@ -256,7 +256,7 @@ Legend:
 
 | Shader        | G | T | F | R | D |
 |---------------|---|---|---|---|---|
-| `point-pick`  | x |   |   |   |   |
+| `point-pick`  | x | x | x |   |   |
 | `line-pick`   | x |   |   |   |   |
 | `gsplat-pick` | x |   |   |   |   |
 

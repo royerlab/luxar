@@ -31,6 +31,8 @@ import { MEGA_SOURCE } from '../../../rendering/post-processing/mega-shader.glsl
 import { megaWebGPUFactory } from '../../../rendering/post-processing/mega.tsl';
 import { POINT_SOURCE } from '../../../rendering/shaders/point-shaders';
 import { pointWebGPUFactory } from '../../../rendering/point.tsl';
+import { POINT_PICK_SOURCE } from '../../../rendering/picking/picking-shaders';
+import { pointPickWebGPUFactory } from '../../../rendering/picking/point-pick.tsl';
 import { createPointQuadGeometry } from '../../../rendering/point-geometry';
 import type { ShaderSource } from '../../../rendering/shaders/shader-source';
 
@@ -303,6 +305,24 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
       m.blending = THREE.NoBlending;
       return m;
     },
+    buildMesh: buildPointInstancedMesh,
+  },
+  // M12 point-pick parity: identical sprite layout to `point` but
+  // the fragment outputs (nodeId, elementId, brightness, 1.0) and
+  // depth = 1 - brightness. Pick footprint is half-radius (×0.5).
+  'point-pick': {
+    source: POINT_PICK_SOURCE,
+    buildUniforms: () => ({
+      pointSizeFactor: { value: 32.0 },
+      maxPointSize: { value: 32.0 },
+      radiusScale: { value: 1.0 },
+      sharpnessScale: { value: 1.0 },
+      uIsOrtho: { value: 1 },
+      uNodeId: { value: 42 },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+    }),
+    buildTSLMaterial: (uniforms) =>
+      pointPickWebGPUFactory(uniforms) as unknown as THREE.Material,
     buildMesh: buildPointInstancedMesh,
   },
 };
