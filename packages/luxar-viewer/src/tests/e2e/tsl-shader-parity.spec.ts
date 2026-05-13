@@ -170,6 +170,23 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     ).toBeLessThan(2.0);
   });
 
+  test('points-hello: TSL PointsNodeMaterial matches gl_PointSize/gl_PointCoord path', async ({
+    page,
+  }) => {
+    await bootHarness(page);
+
+    const glslPixels = await runGLSL(page, 'points-hello');
+    const tslResult = await runTSL(page, 'points-hello');
+
+    const diff = meanAbsDiff(glslPixels, tslResult.pixels);
+    expect(
+      diff,
+      `Points-hello parity: mean abs diff ${diff.toFixed(2)} on 0-255 scale.\n` +
+        `GLSL first 4 pixels:\n${previewPixels(glslPixels)}\n` +
+        `TSL first 4 pixels:\n${previewPixels(tslResult.pixels)}`
+    ).toBeLessThan(2.0);
+  });
+
   test('mega with USE_VIGNETTE matches across backends', async ({ page }) => {
     await bootHarness(page);
 

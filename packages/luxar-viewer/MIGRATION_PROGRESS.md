@@ -83,10 +83,37 @@ Tracked separately because they unblock the per-shader rows below.
     shader. Pass the raw JS value (or `IUniform.value`) straight
     to `uniform()`. Bloom factories were updated.
 
-  Patterns are now validated for fullscreen-pass shaders. The
-  Points-sprite path remains the next prerequisite before M11
-  resumes — needs a hello-world that exercises typed attribute
-  reads against a real `THREE.Points` mesh.
+  Patterns are now validated for fullscreen-pass shaders.
+
+  **Points-sprite prerequisite — landed.** The `points-hello`
+  entry in `tsl-shader-parity.spec.ts` exercises every TSL
+  primitive M11+ needs:
+  - `attribute('radius', 'float')` — typed scalar attribute that
+    correctly dispatches `.mul()` etc. via `NumExtensions<'float'>`.
+  - `PointsNodeMaterial.sizeNode = scalarNode` — accepts the raw
+    attribute; PointsNodeMaterial wraps in `vec2(...)` internally.
+  - `uv()` inside a fragment-stage `Fn` — maps 1:1 onto WebGL's
+    `gl_PointCoord` under `forceWebGL`. (Three logs a benign
+    "Vertex attribute 'uv' not found on geometry" warning; the
+    PointsNodeMaterial path supplies sprite-internal UVs at
+    runtime, so the warning is cosmetic and the pixel output is
+    correct.)
+  - `Discard(boolNode)` inside the `Fn` — TSL's structured
+    equivalent of `if (cond) discard;`. Works.
+  - `length(vec2)` for radial distance.
+  Both backends produce pixel-identical disks at the configured
+  sprite size. M11-M16 can now resume as mechanical translations.
+
+  **Production-deployment caveat.** PointsNodeMaterial's `sizeNode`
+  only has effect under `THREE.Points` when the backend is WebGL2
+  (including `forceWebGL: true`). On real WebGPU, `THREE.Points`
+  is restricted to 1-pixel point primitives — the sized-sprite
+  path needs `THREE.Sprite` with instancing (per the r184 docs in
+  `PointsNodeMaterial.d.ts`). For M18 we'll either keep
+  forceWebGL on indefinitely, or migrate the geometry container
+  from `THREE.Points` to `THREE.InstancedMesh` / `THREE.Sprite`.
+  The M11+ ports should target the `PointsNodeMaterial.sizeNode`
+  contract and leave the container question to M18.
 - [ ] **`tsconfig.json moduleResolution` bump from `Node` to
   `Bundler`** — required to resolve `three/webgpu` types
   (currently shipped under `@types/three/build/three.webgpu.d.ts`
