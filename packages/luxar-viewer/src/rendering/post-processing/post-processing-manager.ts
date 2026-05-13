@@ -23,7 +23,7 @@ import { MegaShaderMaterial } from './mega-shader-material';
 import { BloomChain } from './bloom-chain';
 import { FxaaPass } from './fxaa-pass';
 import { computeEffectiveRenderSize } from './render-target-sizing';
-import type { RendererCapabilities, Renderer } from '../renderer-capabilities';
+import type { RendererCapabilities } from '../renderer-capabilities';
 import {
   halfFloatToFloat32,
   float32ToHalfFloat,
@@ -100,7 +100,7 @@ export class PostProcessingManager {
    *   next window resize.
    */
   constructor(
-    private renderer: Renderer,
+    private renderer: THREE.WebGLRenderer,
     private capabilities: RendererCapabilities,
     private scene: THREE.Scene,
     private camera: THREE.Camera,

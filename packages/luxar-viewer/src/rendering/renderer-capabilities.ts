@@ -8,24 +8,34 @@
  * port lands, only this file changes.
  */
 import * as THREE from 'three';
-// Type-only re-export of `WebGPURenderer` doubles as a smoke
-// check that the `three/webgpu` subpath resolves cleanly under
-// the `~0.184.0` pin (requires `tsconfig.moduleResolution:
-// "Bundler"`). M2 lands the actual `Renderer` union arm + runtime
-// branch in `scene-manager.ts:setupRenderer`. Zero runtime cost
-// today — the import is erased at build time.
-export type { WebGPURenderer } from 'three/webgpu';
+import type { WebGPURenderer } from 'three/webgpu';
 
 import { detectDisplayCapabilities, type HDRCapabilities } from '../utils/hdr-detection';
 
+export type { WebGPURenderer } from 'three/webgpu';
+
 /**
- * The graphics-API renderer Luxar uses. Single-arm today; the WebGPU
- * port widens this to `THREE.WebGLRenderer | THREE.WebGPURenderer`.
- * Consumers that hold a renderer reference should type it as
- * `Renderer` rather than `THREE.WebGLRenderer` so the port is a
- * one-edit widening.
+ * The graphics-API renderer Luxar uses.
+ *
+ * `THREE.WebGLRenderer` is the WebGL2 path; `WebGPURenderer` (with
+ * `forceWebGL: true` until the TSL ports complete) is the WebGPU
+ * path. Consumers hold renderer references typed as `Renderer` so
+ * future widening (post-port: drop the WebGLRenderer arm entirely)
+ * is a one-line change here.
  */
-export type Renderer = THREE.WebGLRenderer;
+export type Renderer = THREE.WebGLRenderer | WebGPURenderer;
+
+/**
+ * Shape-narrow a `Renderer` to `THREE.WebGLRenderer`. Used in
+ * `createRendererCapabilities` to gate raw-GL probes. The check
+ * is structural rather than `instanceof` so we don't have to
+ * runtime-import `WebGPURenderer` just to type-test against it
+ * (the import would force eager loading of `three/webgpu` even
+ * when WebGL is the active backend).
+ */
+function isWebGLRenderer(renderer: Renderer): renderer is THREE.WebGLRenderer {
+  return typeof (renderer as THREE.WebGLRenderer).getContext === 'function';
+}
 
 /**
  * What downstream code needs to know about the underlying graphics
@@ -62,53 +72,84 @@ export interface RendererCapabilities {
  * consumers (PostProcessingManager, SceneManager, …).
  */
 export function createRendererCapabilities(renderer: Renderer): RendererCapabilities {
-  const gl = renderer.getContext() as WebGL2RenderingContext;
-
-  const maxMSAASamplesRaw = gl.getParameter(gl.MAX_SAMPLES) as number | null;
-  const maxMSAASamples = typeof maxMSAASamplesRaw === 'number' ? maxMSAASamplesRaw : 0;
-
-  const rawRange = gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE);
-  const pointSizeRange: readonly [number, number] =
-    rawRange &&
-    typeof (rawRange as ArrayLike<number>)[0] === 'number' &&
-    typeof (rawRange as ArrayLike<number>)[1] === 'number'
-      ? [(rawRange as ArrayLike<number>)[0], (rawRange as ArrayLike<number>)[1]]
-      : [1, 1024];
-
-  // HDR: merge display-side detection (CSS media queries) with
-  // renderer-side probes (float-texture extension, color buffer bit
-  // depth). The renderer-side probes are the only raw-GL probes
-  // outside `readBackbufferPixels`; concentrating them here is the
-  // whole point of this module.
   const display = detectDisplayCapabilities();
-  const floatTextures = !!(
-    gl.getExtension('EXT_color_buffer_float') ||
-    gl.getExtension('EXT_color_buffer_half_float') ||
-    gl.getExtension('WEBGL_color_buffer_float')
-  );
-  const colorDepth = {
-    red: (gl.getParameter(gl.RED_BITS) as number) ?? 8,
-    green: (gl.getParameter(gl.GREEN_BITS) as number) ?? 8,
-    blue: (gl.getParameter(gl.BLUE_BITS) as number) ?? 8,
+
+  if (isWebGLRenderer(renderer)) {
+    // WebGL2 path: probe raw-GL for capabilities. This is the only
+    // place in the codebase that calls `getContext()` post-renderer
+    // (the canvas-side pre-renderer call in `scene-manager` and the
+    // probe in `webgpu-availability` are the documented exceptions).
+    const gl = renderer.getContext() as WebGL2RenderingContext;
+
+    const maxMSAASamplesRaw = gl.getParameter(gl.MAX_SAMPLES) as number | null;
+    const maxMSAASamples = typeof maxMSAASamplesRaw === 'number' ? maxMSAASamplesRaw : 0;
+
+    const rawRange = gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE);
+    const pointSizeRange: readonly [number, number] =
+      rawRange &&
+      typeof (rawRange as ArrayLike<number>)[0] === 'number' &&
+      typeof (rawRange as ArrayLike<number>)[1] === 'number'
+        ? [(rawRange as ArrayLike<number>)[0], (rawRange as ArrayLike<number>)[1]]
+        : [1, 1024];
+
+    const floatTextures = !!(
+      gl.getExtension('EXT_color_buffer_float') ||
+      gl.getExtension('EXT_color_buffer_half_float') ||
+      gl.getExtension('WEBGL_color_buffer_float')
+    );
+    const colorDepth = {
+      red: (gl.getParameter(gl.RED_BITS) as number) ?? 8,
+      green: (gl.getParameter(gl.GREEN_BITS) as number) ?? 8,
+      blue: (gl.getParameter(gl.BLUE_BITS) as number) ?? 8,
+    };
+    const hdr: HDRCapabilities = { ...display, floatTextures, colorDepth };
+
+    return {
+      api: 'webgl2',
+      hdr,
+      maxMSAASamples,
+      pointSizeRange,
+      readBackbufferPixels() {
+        // Bind the canvas backbuffer explicitly. `runPipeline` is
+        // defensive about restoring its prior render target, but we
+        // can't assume the caller arrived here through that path.
+        renderer.setRenderTarget(null);
+        const ctx = renderer.getContext();
+        const width = ctx.drawingBufferWidth;
+        const height = ctx.drawingBufferHeight;
+        const pixels = new Uint8Array(width * height * 4);
+        ctx.readPixels(0, 0, width, height, ctx.RGBA, ctx.UNSIGNED_BYTE, pixels);
+        return Promise.resolve({ pixels, width, height });
+      },
+    };
+  }
+
+  // WebGPU path: WebGPURenderer doesn't expose a `getContext()`
+  // returning a WebGL2 context. Most capability probes that the
+  // WebGL2 path uses (MAX_SAMPLES, ALIASED_POINT_SIZE_RANGE, GL
+  // extensions, channel bit depths) don't have direct WebGPU
+  // equivalents — WebGPU's adapter limits cover different things.
+  // For now, use sensible defaults; M17 fills in the real
+  // backbuffer-readback body and may expose more capabilities
+  // when needed.
+  const hdr: HDRCapabilities = {
+    ...display,
+    floatTextures: true, // WebGPU canvas formats include float-texture targets
+    colorDepth: { red: 8, green: 8, blue: 8 },
   };
-  const hdr: HDRCapabilities = { ...display, floatTextures, colorDepth };
 
   return {
-    api: 'webgl2',
+    api: 'webgpu',
     hdr,
-    maxMSAASamples,
-    pointSizeRange,
+    maxMSAASamples: 4, // WebGPU adapters guarantee at least 4× MSAA
+    pointSizeRange: [1, 1024],
     readBackbufferPixels() {
-      // Bind the canvas backbuffer explicitly. `runPipeline` is
-      // defensive about restoring its prior render target, but we
-      // can't assume the caller arrived here through that path.
-      renderer.setRenderTarget(null);
-      const ctx = renderer.getContext();
-      const width = ctx.drawingBufferWidth;
-      const height = ctx.drawingBufferHeight;
-      const pixels = new Uint8Array(width * height * 4);
-      ctx.readPixels(0, 0, width, height, ctx.RGBA, ctx.UNSIGNED_BYTE, pixels);
-      return Promise.resolve({ pixels, width, height });
+      // M17 will implement this against WebGPU's offscreen target +
+      // readRenderTargetPixelsAsync. Until then, the WebGPU path
+      // doesn't reach the screenshot/EXR capture code.
+      return Promise.reject(
+        new Error('readBackbufferPixels: WebGPU body not yet implemented (M17)')
+      );
     },
   };
 }
