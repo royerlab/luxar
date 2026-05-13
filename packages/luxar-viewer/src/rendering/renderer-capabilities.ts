@@ -33,16 +33,16 @@ export type Renderer = THREE.WebGLRenderer | WebGPURenderer;
  * (the import would force eager loading of `three/webgpu` even
  * when WebGL is the active backend).
  *
- * The discriminator is the `isWebGPURenderer` flag that
- * WebGPURenderer's constructor sets on `this`. Probing for
+ * Uses the positive `isWebGLRenderer` flag that
+ * `THREE.WebGLRenderer`'s constructor sets on `this`. A negative
+ * check (`!isWebGPURenderer`) would mis-identify any future
+ * renderer type that doesn't carry the WebGPU flag. Probing for
  * `.getContext` would mis-identify `WebGPURenderer({ forceWebGL:
- * true })` as a WebGLRenderer — that path's `getContext()`
- * delegates to the backend's WebGL2 context, so the method is
- * present even though the renderer is structurally a
- * WebGPURenderer that rejects `ShaderMaterial`.
+ * true })` as a WebGLRenderer because that path's `getContext()`
+ * delegates to the backend's WebGL2 context.
  */
 function isWebGLRenderer(renderer: Renderer): renderer is THREE.WebGLRenderer {
-  return !(renderer as { isWebGPURenderer?: boolean }).isWebGPURenderer;
+  return (renderer as { isWebGLRenderer?: boolean }).isWebGLRenderer === true;
 }
 
 /**

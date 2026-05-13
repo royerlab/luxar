@@ -99,6 +99,16 @@ function getCommonMaterialBuckets(props: {
 }
 
 /**
+ * Point material returned by `MaterialManager.getPointMaterial`. The
+ * concrete class is either the GLSL `PointMaterial` (WebGL2 path) or
+ * the TSL `PointTSLMaterial` (WebGPU / fallback-via-WebGPURenderer
+ * path). Both classes expose the same surface — `updateOpacity`,
+ * `updateCameraParams`, `applyBlendingMode`, `clone()`, etc. — so
+ * call sites treat the return type as a single LuxarPointMaterial.
+ */
+export type LuxarPointMaterial = PointMaterial | PointTSLMaterial;
+
+/**
  * Manages all materials in the scene with caching and global updates.
  * Supports points, lines, and future material types.
  *
@@ -113,16 +123,6 @@ function getCommonMaterialBuckets(props: {
  * `config.dataLoading.performance.materialCacheMaxSize` (default 200).
  * `0` disables eviction.
  */
-/**
- * Point material returned by `MaterialManager.getPointMaterial`. The
- * concrete class is either the GLSL `PointMaterial` (WebGL2 path) or
- * the TSL `PointTSLMaterial` (WebGPU / fallback-via-WebGPURenderer
- * path). Both classes expose the same surface — `updateOpacity`,
- * `updateCameraParams`, `applyBlendingMode`, `clone()`, etc. — so
- * call sites treat the return type as a single LuxarPointMaterial.
- */
-export type LuxarPointMaterial = PointMaterial | PointTSLMaterial;
-
 export class MaterialManager {
   private pointMaterialCache = new Map<string, LuxarPointMaterial>();
   private lineMaterialCache = new Map<string, LineMaterial>();

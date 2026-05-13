@@ -116,14 +116,23 @@ export class PointTSLMaterial
    * Re-run the TSL factory and attach the resulting vertexNode /
    * colorNode + blending state to ourselves. Called from the
    * constructor and from `updateColormapTexture` when the
-   * `USE_COLORMAP` branch toggles (the colormap branch is gated on
-   * a JS-side `if`, so the graph itself changes shape).
+   * colormap state changes (the colormap branch is gated on a
+   * JS-side `if`, so the graph itself changes shape; TSL's
+   * `texture()` captures the Texture object at factory-call time
+   * so a swap also requires a rebuild).
+   *
+   * Drives `useColormap` from `defines.USE_COLORMAP` — the same
+   * source of truth the GLSL wrapper uses. Probing
+   * `!!this.uniforms.uColormapTex` would be wrong because
+   * `setColormapTexture(null)` keeps the IUniform object around
+   * with `.value = null` (mirroring PointMaterial's behaviour); the
+   * uniform existence outlives the colormap-enabled state.
    */
   private rebuildGraph(): void {
     pointWebGPUFactory(
       this.uniforms,
       {
-        useColormap: !!this.uniforms.uColormapTex,
+        useColormap: !!this.defines && 'USE_COLORMAP' in this.defines,
         blendingMode: (this.userData.blendingMode as BlendingMode | undefined) ?? 'additive',
       },
       this
@@ -175,15 +184,25 @@ export class PointTSLMaterial
   }
 
   /**
-   * Toggle the colormap branch. The branch is JS-side in the TSL
-   * factory (rather than a shader-side `#define` flip), so we rebuild
-   * the graph whenever the on/off state changes — the same trigger
-   * point the GLSL wrapper uses to set `needsUpdate = true` for a
-   * recompile.
+   * Toggle the colormap branch. Rebuild the graph whenever the
+   * colormap state actually changes — either an on/off flip OR a
+   * texture-identity swap.
+   *
+   * TSL's `texture(value, …)` captures the Texture object passed to
+   * it at factory-call time; subsequent mutations to
+   * `iuniform.value` don't re-route the underlying TextureNode. So a
+   * swap (old non-null → new non-null) needs a graph rebuild too,
+   * not just the enable/disable transitions. The GLSL wrapper gets
+   * away with a single `material.uniforms.uColormapTex.value =
+   * texture` write because `ShaderMaterial` reads the IUniform by
+   * reference at render time.
    */
   updateColormapTexture(texture: THREE.DataTexture | null): void {
+    const oldTexture = (this.uniforms.uColormapTex?.value as THREE.Texture | null | undefined) ??
+      null;
     const { wasEnabled, nowEnabled } = applyColormapTextureToMaterial(this, texture);
-    if (wasEnabled !== nowEnabled) {
+    const textureChanged = oldTexture !== texture;
+    if (wasEnabled !== nowEnabled || textureChanged) {
       this.rebuildGraph();
     }
   }
