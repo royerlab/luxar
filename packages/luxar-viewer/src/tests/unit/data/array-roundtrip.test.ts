@@ -142,7 +142,7 @@ async function decodeRange(
 
   const output = new Float32Array(operation.flat_length);
   const written = await rangeLoader.loadRangesResolvingRef(
-    array as unknown as zarr.Array<zarr.DataType, zarr.FetchStore>,
+    array as unknown as zarr.Array<zarr.DataType, zarr.Readable>,
     attrs,
     [{ start, end }],
     output,
