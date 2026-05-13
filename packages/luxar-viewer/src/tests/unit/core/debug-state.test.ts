@@ -22,22 +22,38 @@ function makePointCloud(
     hasRadii?: boolean;
     hasSharpness?: boolean;
   } = {}
-): THREE.Points {
+): THREE.Mesh {
+  // After the container migration, point clouds are THREE.Mesh with
+  // instanced quad geometry and per-instance attributes prefixed `a*`.
+  // `computeDebugState` selects on `userData.nodeType === 'points'`.
   const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(count * 3), 3));
+  geometry.setAttribute(
+    'aCenter',
+    new THREE.InstancedBufferAttribute(new Float32Array(count * 3), 3)
+  );
   if (options.hasColors) {
-    geometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(count * 3), 3));
+    geometry.setAttribute(
+      'aColor',
+      new THREE.InstancedBufferAttribute(new Float32Array(count * 3), 3)
+    );
   }
   if (options.hasRadii) {
-    geometry.setAttribute('radius', new THREE.BufferAttribute(new Float32Array(count), 1));
+    geometry.setAttribute(
+      'aRadius',
+      new THREE.InstancedBufferAttribute(new Float32Array(count), 1)
+    );
   }
   if (options.hasSharpness) {
-    geometry.setAttribute('sharpness', new THREE.BufferAttribute(new Float32Array(count), 1));
+    geometry.setAttribute(
+      'aSharpness',
+      new THREE.InstancedBufferAttribute(new Float32Array(count), 1)
+    );
   }
   if (options.drawRange !== undefined) {
     geometry.setDrawRange(0, options.drawRange);
   }
-  const points = new THREE.Points(geometry);
+  const points = new THREE.Mesh(geometry);
+  points.userData = { nodeType: 'points' };
   if (options.name !== undefined) points.name = options.name;
   if (options.visible !== undefined) points.visible = options.visible;
   return points;

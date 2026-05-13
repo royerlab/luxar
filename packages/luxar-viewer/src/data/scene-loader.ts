@@ -839,7 +839,7 @@ export class SceneLoader {
         this.loaders,
         'Points',
         async (path, loader, session) => {
-          const pointsObj = this.rootGroup?.getObjectByName(path) as THREE.Points | undefined;
+          const pointsObj = this.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
           const attrs = pointsObj?.userData?.attrs as { extend_to_all?: string[] } | undefined;
           const derived = this.deriveNodeViewState(path, attrs, {
             applyPartialExtendTolerance: true,
@@ -1459,7 +1459,7 @@ export class SceneLoader {
     node: SceneNode,
     parentThree: THREE.Object3D,
     loc: zarr.Location<zarr.Readable>
-  ): Promise<THREE.Points | null> {
+  ): Promise<THREE.Mesh | null> {
     log.custom('📍', Modules.SCENE_LOADER, `Loading points: ${node.path}`);
     log.info(Modules.SCENE_LOADER, `  Has spatial index: ${node.hasSpatialIndex}`);
     log.info(Modules.SCENE_LOADER, `  Total points: ${node.attrs.n_points || 'unknown'}`);

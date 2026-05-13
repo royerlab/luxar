@@ -33,8 +33,13 @@ import type { ShaderSource } from '../shaders/shader-source';
 export const POINT_PICK_VERTEX_SHADER = /* glsl */ `
     precision highp float;
 
-    in float radius;
-    in float sharpness;
+    // Per-vertex (4 corners shared across all instances)
+    in vec2 aQuadCorner;
+
+    // Per-instance (one per point)
+    in vec3 aCenter;
+    in float aRadius;
+    in float aSharpness;
 
     uniform float pointSizeFactor;
     uniform float maxPointSize;
@@ -42,21 +47,23 @@ export const POINT_PICK_VERTEX_SHADER = /* glsl */ `
     uniform float sharpnessScale;
     uniform int uIsOrtho;
     uniform float uNodeId;
+    uniform vec2 uResolution;
 
     out highp float vRadius;
     out mediump float vSharpness;
+    out mediump vec2 vSpriteCoord;
     flat out highp float vNodeId;
     flat out highp float vElementId;
 
     void main() {
-      float normalizedSharpness = sharpness * sharpnessScale;
+      float normalizedSharpness = aSharpness * sharpnessScale;
       vSharpness = normalizedSharpness > 0.0 ? normalizedSharpness : 2.0;
 
-      vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-      gl_Position = projectionMatrix * mvPosition;
-
-      float normalizedRadius = radius * radiusScale;
+      float normalizedRadius = aRadius * radiusScale;
       vRadius = normalizedRadius;
+
+      vec4 mvPosition = modelViewMatrix * vec4(aCenter, 1.0);
+      vec4 projCenter = projectionMatrix * mvPosition;
 
       float invDistance = (uIsOrtho == 1) ? 1.0 : inversesqrt(dot(mvPosition.xyz, mvPosition.xyz));
       float basePointSize = normalizedRadius * pointSizeFactor * invDistance;
@@ -65,11 +72,18 @@ export const POINT_PICK_VERTEX_SHADER = /* glsl */ `
       // Use sharpness compensation * 0.5 so we only pick the bright core
       float sharpnessCompensation = 1.0 / (1.0 - pow(0.01, 1.0 / max(vSharpness, 0.01)));
       float pointSize = basePointSize * sharpnessCompensation * 0.5;
+      pointSize = max(1.0, min(pointSize, maxPointSize));
 
-      gl_PointSize = max(1.0, min(pointSize, maxPointSize));
+      // Instanced quad expansion (matches point-shaders.ts approach).
+      vec2 offsetClip = aQuadCorner * (pointSize / uResolution) * projCenter.w;
+      gl_Position = projCenter + vec4(offsetClip, 0.0, 0.0);
+
+      vSpriteCoord = (aQuadCorner + 1.0) * 0.5;
 
       vNodeId = uNodeId;
-      vElementId = float(gl_VertexID);
+      // Under instanced rendering, gl_InstanceID is the per-point index
+      // (the old THREE.Points path used gl_VertexID which was equivalent).
+      vElementId = float(gl_InstanceID);
     }
 `;
 
@@ -82,6 +96,7 @@ export const POINT_PICK_FRAGMENT_SHADER = /* glsl */ `
 
     in highp float vRadius;
     in mediump float vSharpness;
+    in mediump vec2 vSpriteCoord;
     flat in highp float vNodeId;
     flat in highp float vElementId;
 
@@ -90,7 +105,7 @@ export const POINT_PICK_FRAGMENT_SHADER = /* glsl */ `
     void main() {
       if (vRadius < 0.0001) discard;
 
-      vec2 centered = gl_PointCoord - 0.5;
+      vec2 centered = vSpriteCoord - 0.5;
       float r2 = dot(centered, centered);
 
       // Full circle discard (gl_PointSize is already halved in vertex shader for tighter picking)

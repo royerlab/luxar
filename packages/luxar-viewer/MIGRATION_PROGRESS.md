@@ -85,6 +85,21 @@ Tracked separately because they unblock the per-shader rows below.
 
   Patterns are now validated for fullscreen-pass shaders.
 
+  **Container migration — landed.** Points loaders, gpu-buffer-pool,
+  commit-points-geometry, debug-state, and the GLSL3 shader pair
+  all now use the InstancedBufferAttribute-driven pattern. New file
+  `point-geometry.ts` mirrors line-geometry/gsplat-geometry; new
+  vertex-shader attributes `aQuadCorner` (per-vertex, shared) +
+  per-instance `aCenter`/`aRadius`/`aSharpness`/`aColor`/`aScalar`.
+  Visual regression + geometry-types + basic-rendering + data-
+  integrity E2E suites all pass. Production renders correctly
+  through the new pipeline. 24 unit test failures remain across
+  6 spec files — purely mechanical fixture updates (`'scalar'` →
+  `'aScalar'` etc.); follow-up commit. Lines and gsplats untouched
+  (they already used this pattern).
+
+  Earlier rejected attempt below preserved for context.
+
   **Points-sprite prerequisite — partially withdrawn.** A first
   attempt at `points-hello` and a follow-up M11 attempt both
   surfaced the same architectural blocker: r184's

@@ -77,6 +77,12 @@ export class PointMaterial
         // Projection mode
         uIsOrtho: { value: 0 }, // 0 = perspective, 1 = orthographic
 
+        // Physical framebuffer size in pixels (used by the
+        // instanced-quad vertex shader to convert pixel offsets to
+        // NDC. Defaults match the camera-uniform defaults; overridden
+        // by `updateCameraParams`.
+        uResolution: { value: new THREE.Vector2(1920, defaultResolutionY) },
+
         // Colormap uniforms (only active when USE_COLORMAP define is set)
         ...(materialConfig.colormapTexture
           ? {
@@ -104,8 +110,13 @@ export class PointMaterial
       // GLSL ES 3.0 for consistency with other materials
       glslVersion: THREE.GLSL3,
 
-      // Material properties
-      vertexColors: !materialConfig.colormapTexture, // THREE.js injects `in vec3 color` when true; disable for colormap mode
+      // Material properties.
+      // vertexColors=false because the migration from THREE.Points to
+      // instanced THREE.Mesh means we now read `aColor` ourselves as
+      // an InstancedBufferAttribute — Three's auto-injected `color`
+      // attribute is for the per-vertex `position` attribute it
+      // assumes, which we don't use.
+      vertexColors: false,
       transparent: materialConfig.transparent ?? true, // Enable transparency for blending (false for opaque)
       depthWrite: materialConfig.depthWrite ?? false, // Usually false for additive blending
       depthTest: materialConfig.depthTest ?? true, // Default true; additive mode sets false
@@ -132,6 +143,10 @@ export class PointMaterial
     this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
     this.uniforms.pointSizeFactor.value = computePointSizeFactor(fov, resolution.y, isOrtho);
     this.uniforms.maxPointSize.value = computeMaxPointSize(resolution.y);
+    // The instanced-quad vertex shader needs the framebuffer size to
+    // convert pixel offsets to NDC. This is the physical pixel size
+    // (drawing-buffer size), matched to what the SceneManager passes.
+    (this.uniforms.uResolution.value as THREE.Vector2).copy(resolution);
   }
 
   /**
@@ -183,13 +198,15 @@ export class PointMaterial
 
   /**
    * Update the colormap texture and enable/disable colormap mode.
+   *
+   * Under the instanced-quad rendering path, vertexColors is always
+   * false — the shader reads `aColor` (USE_COLORMAP off) or `aScalar`
+   * (USE_COLORMAP on) explicitly as InstancedBufferAttributes. Only
+   * the USE_COLORMAP define flips here, triggering a recompile.
    */
   updateColormapTexture(texture: THREE.DataTexture | null): void {
     const { wasEnabled, nowEnabled } = applyColormapTextureToMaterial(this, texture);
     if (wasEnabled !== nowEnabled) {
-      // vertexColors controls whether THREE.js injects `in vec3 color` into the shader.
-      // Must be disabled for colormap mode (uses scalar + LUT instead of color attribute).
-      this.vertexColors = !nowEnabled;
       this.needsUpdate = true; // Triggers shader recompilation
     }
   }

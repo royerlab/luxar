@@ -17,6 +17,7 @@ import { getColormapTexture } from './colormap-textures';
 import { supportsScalarColormap } from './material-colormap-helpers';
 import { createInstancedLinesMesh, type InstancedLinesMeshConfig } from './line-geometry';
 import { createInstancedGSplatsMesh, type InstancedGSplatsMeshConfig } from './gsplat-geometry';
+import { createPointQuadGeometry } from './point-geometry';
 import { GSplatMaterial } from './gsplat-material';
 import type { LoadedPointsData, DataLoader } from '../data/data-loader-types';
 import type { PointsMetadata, PointsUserData } from '../types/points';
@@ -53,7 +54,7 @@ export class NodeFactory {
       const nodeType = obj.userData?.nodeType as string | undefined;
       if (!nodeType || obj.userData.pickId != null) return; // skip non-data or already registered
 
-      if (nodeType === 'points' && obj instanceof THREE.Points) {
+      if (nodeType === 'points' && obj instanceof THREE.Mesh) {
         const pickId = this.pickingSystem!.allocatePickId();
         obj.userData.pickId = pickId;
         const radiusScale = obj.geometry?.userData?.radiusScale ?? 1.0;
@@ -64,7 +65,8 @@ export class NodeFactory {
           sharpnessScale,
         });
         materialManager.register(pickMaterial);
-        const pickNode = new THREE.Points(obj.geometry, pickMaterial);
+        const pickNode = new THREE.Mesh(obj.geometry, pickMaterial);
+        pickNode.frustumCulled = false;
         pickNode.matrixWorld.copy(obj.matrixWorld);
         this.pickingSystem!.registerNode(obj, pickNode, pickId);
       } else if (nodeType === 'lines' && obj instanceof THREE.Mesh) {
@@ -122,15 +124,23 @@ export class NodeFactory {
   // ============================================================================
 
   /**
-   * Create a THREE.Points object from loaded point data.
-   * Handles geometry creation, material selection, userData, and transforms.
+   * Create a THREE.Mesh object from loaded point data.
+   *
+   * Each point is rendered as an instanced quad sprite, matching the
+   * line + gsplat geometry pattern. The mesh's geometry is built by
+   * `createPointsGeometry`, which attaches per-instance attributes
+   * (aCenter, aRadius, aSharpness, aColor, optional aScalar) to a
+   * shared unit-quad base.
+   *
+   * Handles geometry creation, material selection, userData, and
+   * transforms.
    */
   createPointsNode(
     path: string,
     attrs: PointsMetadata,
     data: LoadedPointsData,
     loader: DataLoader
-  ): THREE.Points {
+  ): THREE.Mesh {
     const maxRadius = attrs.max_radius ?? 1.0;
     const maxSharpness = attrs.max_sharpness ?? 31.0;
     const geometry = this.createPointsGeometry(data, maxRadius, maxSharpness);
@@ -139,8 +149,13 @@ export class NodeFactory {
     const sharpnessScale = geometry.userData.sharpnessScale ?? 1.0;
     const material = this.createPointsMaterial(attrs, radiusScale, sharpnessScale, geometry, path);
 
-    const points = new THREE.Points(geometry, material);
+    const points = new THREE.Mesh(geometry, material);
     points.name = path;
+    // Three's per-mesh frustum culling tests the bounding sphere of
+    // the base quad geometry, not the spread of instances. Disable so
+    // we don't lose all points because the unit-sized base quad sits
+    // outside the camera frustum.
+    points.frustumCulled = false;
 
     points.userData = {
       nodeType: 'points',
@@ -164,7 +179,8 @@ export class NodeFactory {
         sharpnessScale,
       });
       materialManager.register(pickMaterial);
-      const pickNode = new THREE.Points(geometry, pickMaterial);
+      const pickNode = new THREE.Mesh(geometry, pickMaterial);
+      pickNode.frustumCulled = false;
       pickNode.matrixWorld.copy(points.matrixWorld);
       this.pickingSystem.registerNode(points, pickNode, pickId);
     }
@@ -359,7 +375,7 @@ export class NodeFactory {
    * the two paths (`ndim`, `dtypes`) are overwritten on the first
    * successful commit.
    */
-  createEmptyPointsNode(path: string, attrs: PointsMetadata, loader: DataLoader): THREE.Points {
+  createEmptyPointsNode(path: string, attrs: PointsMetadata, loader: DataLoader): THREE.Mesh {
     const emptyData: LoadedPointsData = {
       positions: new Float32Array(0) as LoadedPointsData['positions'],
       pointCount: 0,
@@ -593,112 +609,130 @@ export class NodeFactory {
     maxRadius: number = 1.0,
     maxSharpness: number = 31.0
   ): THREE.BufferGeometry {
-    const geometry = new THREE.BufferGeometry();
+    // Start from the shared unit-quad base. Each Points node gets
+    // its own BufferGeometry instance with cloned base + per-point
+    // InstancedBufferAttributes.
+    const geometry = createPointQuadGeometry();
 
     this.validateLoadedPointsData(data);
 
-    // Set positions (handle Float16Array conversion if needed)
+    const pointCount = data.positions.length / 3;
+
+    // Per-instance centre positions. Float16 datasets are widened to
+    // Float32 because InstancedBufferAttribute doesn't accept Float16
+    // typed arrays directly.
+    let centersTyped: Float32Array;
     if (
       typeof globalThis.Float16Array !== 'undefined' &&
       data.positions instanceof globalThis.Float16Array
     ) {
-      const float32Positions = new Float32Array(data.positions);
-      geometry.setAttribute('position', new THREE.BufferAttribute(float32Positions, 3));
+      centersTyped = new Float32Array(data.positions);
     } else {
-      geometry.setAttribute(
-        'position',
-        new THREE.BufferAttribute(data.positions as Float32Array, 3)
-      );
+      centersTyped = data.positions as Float32Array;
     }
+    geometry.setAttribute('aCenter', new THREE.InstancedBufferAttribute(centersTyped, 3));
 
-    // Set colors if available
+    // Per-instance colours. Always present in the new path — if the
+    // loader didn't supply colours, fill with white. The material
+    // toggles between aColor and aScalar via the USE_COLORMAP define;
+    // both attributes can coexist.
     if (data.colors) {
       this.validateColorMode(data.colors, data.metadata);
       const needsNormalization =
         data.colors instanceof Uint8Array || data.colors instanceof Uint16Array;
-      geometry.setAttribute('color', new THREE.BufferAttribute(data.colors, 3, needsNormalization));
+      geometry.setAttribute(
+        'aColor',
+        new THREE.InstancedBufferAttribute(data.colors, 3, needsNormalization)
+      );
+    } else {
+      const defaultColors = new Float32Array(pointCount * 3).fill(1.0);
+      geometry.setAttribute('aColor', new THREE.InstancedBufferAttribute(defaultColors, 3));
     }
 
-    // Set radii if available, or use default
+    // Per-instance radii. Same dtype-handling rules as before; the
+    // resulting `radiusScale` is consumed by the material uniform.
     let radiusScale = 1.0;
-
     if (data.radii) {
       if (
         typeof globalThis.Float16Array !== 'undefined' &&
         data.radii instanceof globalThis.Float16Array
       ) {
-        const float32Radii = new Float32Array(data.radii);
-        geometry.setAttribute('radius', new THREE.BufferAttribute(float32Radii, 1));
+        geometry.setAttribute(
+          'aRadius',
+          new THREE.InstancedBufferAttribute(new Float32Array(data.radii), 1)
+        );
         radiusScale = 1.0;
       } else if (data.radii instanceof Uint8Array) {
-        geometry.setAttribute('radius', new THREE.BufferAttribute(data.radii, 1, true));
+        geometry.setAttribute('aRadius', new THREE.InstancedBufferAttribute(data.radii, 1, true));
         radiusScale = maxRadius;
       } else {
         geometry.setAttribute(
-          'radius',
-          new THREE.BufferAttribute(data.radii as Float32Array, 1, false)
+          'aRadius',
+          new THREE.InstancedBufferAttribute(data.radii as Float32Array, 1, false)
         );
         radiusScale = 1.0;
       }
     } else {
-      const numPoints = data.positions.length / 3;
-      const defaultRadii = new Float32Array(numPoints).fill(0.5);
-      geometry.setAttribute('radius', new THREE.BufferAttribute(defaultRadii, 1));
-      radiusScale = 1.0;
+      const defaultRadii = new Float32Array(pointCount).fill(0.5);
+      geometry.setAttribute('aRadius', new THREE.InstancedBufferAttribute(defaultRadii, 1));
     }
 
-    // Set sharpness if available, or use default
+    // Per-instance sharpness.
     let sharpnessScale = 1.0;
-
     if (data.sharpness) {
       if (
         typeof globalThis.Float16Array !== 'undefined' &&
         data.sharpness instanceof globalThis.Float16Array
       ) {
-        const float32Sharpness = new Float32Array(data.sharpness);
-        geometry.setAttribute('sharpness', new THREE.BufferAttribute(float32Sharpness, 1));
+        geometry.setAttribute(
+          'aSharpness',
+          new THREE.InstancedBufferAttribute(new Float32Array(data.sharpness), 1)
+        );
         sharpnessScale = 1.0;
       } else if (data.sharpness instanceof Uint8Array) {
-        geometry.setAttribute('sharpness', new THREE.BufferAttribute(data.sharpness, 1, true));
+        geometry.setAttribute(
+          'aSharpness',
+          new THREE.InstancedBufferAttribute(data.sharpness, 1, true)
+        );
         sharpnessScale = maxSharpness;
       } else {
         geometry.setAttribute(
-          'sharpness',
-          new THREE.BufferAttribute(data.sharpness as Float32Array, 1, false)
+          'aSharpness',
+          new THREE.InstancedBufferAttribute(data.sharpness as Float32Array, 1, false)
         );
         sharpnessScale = 1.0;
       }
     } else {
-      const numPoints = data.positions.length / 3;
-      const defaultSharpness = new Float32Array(numPoints).fill(2.0);
-      geometry.setAttribute('sharpness', new THREE.BufferAttribute(defaultSharpness, 1));
-      sharpnessScale = 1.0;
+      const defaultSharpness = new Float32Array(pointCount).fill(2.0);
+      geometry.setAttribute('aSharpness', new THREE.InstancedBufferAttribute(defaultSharpness, 1));
     }
 
-    // Bind per-point `scalar` attribute when present so the shader's
-    // USE_COLORMAP path can sample the LUT. Without this attribute,
-    // `createPointsMaterial` suppresses colormap activation.
+    // Per-instance scalar (USE_COLORMAP only). Attached as `aScalar`
+    // so the shader can read it via `in float aScalar` under the
+    // USE_COLORMAP define.
     if (data.scalars) {
       const scalarsTyped = data.scalars;
       if (
         typeof globalThis.Float16Array !== 'undefined' &&
         scalarsTyped instanceof globalThis.Float16Array
       ) {
-        const float32Scalars = new Float32Array(scalarsTyped);
-        geometry.setAttribute('scalar', new THREE.BufferAttribute(float32Scalars, 1));
+        geometry.setAttribute(
+          'aScalar',
+          new THREE.InstancedBufferAttribute(new Float32Array(scalarsTyped), 1)
+        );
       } else if (scalarsTyped instanceof Uint8Array) {
-        // Normalize Uint8 scalars to [0,1]; user metadata's
-        // `scalar_data_range` already maps that to original units.
-        geometry.setAttribute('scalar', new THREE.BufferAttribute(scalarsTyped, 1, true));
+        geometry.setAttribute('aScalar', new THREE.InstancedBufferAttribute(scalarsTyped, 1, true));
       } else {
         geometry.setAttribute(
-          'scalar',
-          new THREE.BufferAttribute(scalarsTyped as Float32Array, 1, false)
+          'aScalar',
+          new THREE.InstancedBufferAttribute(scalarsTyped as Float32Array, 1, false)
         );
       }
     }
 
-    // Compute bounding box
+    // Bounding box of the per-instance positions (used by spatial
+    // queries / nD-slicing code paths). The base-quad bounding box
+    // is left as-is; frustum culling is disabled on the mesh.
     geometry.boundingBox = data.metadata.bounds.clone();
 
     // Store radius and sharpness scales as user data for material creation
@@ -707,6 +741,7 @@ export class NodeFactory {
     }
     geometry.userData.radiusScale = radiusScale;
     geometry.userData.sharpnessScale = sharpnessScale;
+    geometry.userData.pointCount = pointCount;
 
     return geometry;
   }
