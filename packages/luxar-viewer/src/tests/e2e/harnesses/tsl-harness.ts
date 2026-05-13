@@ -23,8 +23,8 @@
  */
 
 import * as THREE from 'three';
-import { attribute, vec2, vec4, uv, Fn, Discard, length, float } from 'three/tsl';
-import { NodeMaterial, PointsNodeMaterial } from 'three/webgpu';
+import { vec4 } from 'three/tsl';
+import { NodeMaterial } from 'three/webgpu';
 import { FXAA_SOURCE } from '../../../rendering/post-processing/fxaa-shaders';
 import { BLOOM_THRESHOLD_SOURCE } from '../../../rendering/post-processing/bloom-shaders';
 import { MEGA_SOURCE } from '../../../rendering/post-processing/mega-shader.glsl';
@@ -61,6 +61,14 @@ interface RegistryEntry {
    * that need `THREE.Points(...)`.
    */
   readonly buildMesh?: (material: THREE.Material) => THREE.Object3D;
+  /**
+   * Set on the GLSL3 `ShaderMaterial`. Needed by shaders like
+   * `point` that read the auto-injected `in vec3 color` attribute —
+   * Three only emits the attribute declaration when this is true.
+   * TSL reads the same attribute via `attribute<'vec3'>('color',
+   * 'vec3')` and doesn't need a parallel flag.
+   */
+  readonly vertexColors?: boolean;
 }
 
 /**
@@ -132,105 +140,6 @@ const CONST_SHADER: ShaderSource = {
   },
 };
 
-/**
- * Points-sprite hello-world. Validates the TSL patterns that
- * the M11-M16 scene-material ports depend on:
- *
- *  - Typed attribute reads: `attribute('radius', 'float')` →
- *    `Node<'float'>` with full `.mul()` / `.add()` dispatch.
- *  - `PointsNodeMaterial.sizeNode` accepting a scalar attribute
- *    (broadcast to vec2 internally).
- *  - Sprite UV = `uv()`, which maps 1:1 onto GLSL's
- *    `gl_PointCoord` when used inside the colorNode.
- *  - `Discard(boolNode)` inside a fragment-stage `Fn`.
- *
- * Both backends render a single point at world-space origin with
- * a known pixel radius. The GLSL3 path uses `gl_PointSize` +
- * `gl_PointCoord`; the TSL path uses sprite-instanced quads
- * driven by `PointsNodeMaterial.sizeNode`. The two rendering
- * pipelines are mechanically different but the fragment output —
- * a soft red disk — must be pixel-identical.
- */
-const POINTS_HELLO_VERTEX_SHADER = /* glsl */ `
-  in float radius;
-  out float vRadius;
-
-  void main() {
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-    gl_PointSize = radius;
-    vRadius = radius;
-  }
-`;
-
-const POINTS_HELLO_FRAGMENT_SHADER = /* glsl */ `
-  precision highp float;
-  in float vRadius;
-  out vec4 fragColor;
-
-  void main() {
-    vec2 d = gl_PointCoord - 0.5;
-    float r = length(d);
-    if (r > 0.5) discard;
-    // Soft red disk: brightest at the centre, fades to 0 at radius 0.5.
-    float falloff = 1.0 - r * 2.0;
-    fragColor = vec4(falloff, 0.0, 0.0, 1.0);
-  }
-`;
-
-function pointsHelloTSLFactory(): THREE.Material {
-  const mat = new PointsNodeMaterial();
-
-  // Typed attribute read. The string-literal `'float'` is what gives
-  // TypeScript enough info to dispatch `.mul()` on the returned node
-  // via the `NumExtensions<'float'>` mixin.
-  const radiusAttr = attribute('radius', 'float');
-
-  // sizeNode accepts a scalar; PointsNodeMaterial wraps in `vec2(...)`
-  // internally so the sprite quad is symmetric. See r184
-  // `PointsNodeMaterial.js` line 107: `let pointSize = sizeNode !== null
-  // ? vec2( sizeNode ) : materialPointSize;`.
-  mat.sizeNode = radiusAttr;
-
-  // Fragment: identical math to the GLSL `gl_PointCoord` path. The
-  // sprite UV maps `(0,0)` to bottom-left and `(1,1)` to top-right
-  // — same convention as `gl_PointCoord` under WebGL2.
-  mat.colorNode = Fn(() => {
-    const coord = uv();
-    const d = vec2(coord.sub(0.5));
-    const r = length(d);
-    Discard(r.greaterThan(0.5));
-    const falloff = float(1.0).sub(r.mul(2.0));
-    return vec4(falloff, 0.0, 0.0, 1.0);
-  })();
-
-  mat.toneMapped = false;
-  mat.transparent = false;
-  mat.depthTest = false;
-  mat.depthWrite = false;
-  return mat;
-}
-
-const POINTS_HELLO_SOURCE: ShaderSource = {
-  name: 'points-hello',
-  webgl: {
-    vertex: POINTS_HELLO_VERTEX_SHADER,
-    fragment: POINTS_HELLO_FRAGMENT_SHADER,
-  },
-  webgpu: () => pointsHelloTSLFactory(),
-};
-
-/**
- * One-point geometry centred at world-space origin. The `radius`
- * attribute is 16 — the sprite covers a 16×16 px region of the 64×64
- * harness target, sized so the GLSL `gl_PointSize` and TSL sizeNode
- * dispatch can be compared with room to spare.
- */
-function buildPointsHelloMesh(material: THREE.Material): THREE.Object3D {
-  const geom = new THREE.BufferGeometry();
-  geom.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0], 3));
-  geom.setAttribute('radius', new THREE.Float32BufferAttribute([16.0], 1));
-  return new THREE.Points(geom, material);
-}
 
 const SHADER_REGISTRY: Record<string, RegistryEntry> = {
   'const-rgb': {
@@ -297,11 +206,6 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
         useBloom: true,
       }) as unknown as THREE.Material,
   },
-  'points-hello': {
-    source: POINTS_HELLO_SOURCE,
-    buildUniforms: () => ({}),
-    buildMesh: buildPointsHelloMesh,
-  },
   // Mega + vignette: validates the `USE_VIGNETTE` JS-side branch.
   'mega-vignette': {
     source: MEGA_SOURCE,
@@ -349,6 +253,9 @@ function renderGLSL(shaderName: string): Uint8Array {
   };
   if (entry.buildDefines) {
     materialParams.defines = entry.buildDefines();
+  }
+  if (entry.vertexColors) {
+    materialParams.vertexColors = true;
   }
   const material = new THREE.ShaderMaterial(materialParams);
 

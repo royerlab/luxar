@@ -85,35 +85,45 @@ Tracked separately because they unblock the per-shader rows below.
 
   Patterns are now validated for fullscreen-pass shaders.
 
-  **Points-sprite prerequisite — landed.** The `points-hello`
-  entry in `tsl-shader-parity.spec.ts` exercises every TSL
-  primitive M11+ needs:
-  - `attribute('radius', 'float')` — typed scalar attribute that
-    correctly dispatches `.mul()` etc. via `NumExtensions<'float'>`.
-  - `PointsNodeMaterial.sizeNode = scalarNode` — accepts the raw
-    attribute; PointsNodeMaterial wraps in `vec2(...)` internally.
-  - `uv()` inside a fragment-stage `Fn` — maps 1:1 onto WebGL's
-    `gl_PointCoord` under `forceWebGL`. (Three logs a benign
-    "Vertex attribute 'uv' not found on geometry" warning; the
-    PointsNodeMaterial path supplies sprite-internal UVs at
-    runtime, so the warning is cosmetic and the pixel output is
-    correct.)
-  - `Discard(boolNode)` inside the `Fn` — TSL's structured
-    equivalent of `if (cond) discard;`. Works.
-  - `length(vec2)` for radial distance.
-  Both backends produce pixel-identical disks at the configured
-  sprite size. M11-M16 can now resume as mechanical translations.
+  **Points-sprite prerequisite — partially withdrawn.** A first
+  attempt at `points-hello` and a follow-up M11 attempt both
+  surfaced the same architectural blocker: r184's
+  `GLSLNodeBuilder.js:1416` hardcodes `gl_PointSize = 1.0;` in the
+  generated TSL vertex shader template. The `PointsNodeMaterial`
+  source confirms why — `setupVertex(builder)` branches on
+  `builder.object.isPoints`:
 
-  **Production-deployment caveat.** PointsNodeMaterial's `sizeNode`
-  only has effect under `THREE.Points` when the backend is WebGL2
-  (including `forceWebGL: true`). On real WebGPU, `THREE.Points`
-  is restricted to 1-pixel point primitives — the sized-sprite
-  path needs `THREE.Sprite` with instancing (per the r184 docs in
-  `PointsNodeMaterial.d.ts`). For M18 we'll either keep
-  forceWebGL on indefinitely, or migrate the geometry container
-  from `THREE.Points` to `THREE.InstancedMesh` / `THREE.Sprite`.
-  The M11+ ports should target the `PointsNodeMaterial.sizeNode`
-  contract and leave the container question to M18.
+  ```js
+  setupVertex( builder ) {
+      if ( builder.object.isPoints ) {
+          return super.setupVertex( builder );        // ← never sets size
+      } else {
+          return this.setupVertexSprite( builder );   // ← uses sizeNode
+      }
+  }
+  ```
+
+  Under `THREE.Points + PointsNodeMaterial` the `sizeNode` slot is
+  *silently ignored*. The points-hello test "passed" because both
+  backends produced low-pixel-count output that averaged below the
+  2/255 mean-abs-diff tolerance by accident — TSL rendered nothing
+  (gl_PointSize = 1, single fragment discarded by `r > 0.5`), GLSL
+  rendered a small soft disk. Diagnostic dumps in the spec exposed
+  the GLSL pixels at `(255, 0, 0)` while TSL pixels were all
+  `(0, 0, 0)`; the diff fell below tolerance only because the
+  difference was contained to a small disk region averaged across
+  the full 64×64 viewport.
+
+  **What M11-M16 actually need.** Switch the geometry container
+  from `THREE.Points(...)` to `THREE.Sprite` or
+  `THREE.InstancedMesh(planeQuad, material, count)` — both
+  exercise `setupVertexSprite` so `sizeNode` is honoured. This is
+  a structural change touching the loaders (points-spatial-index-
+  loader.ts etc.) that build `THREE.Points` today, plus per-
+  instance attribute setup (`InstancedBufferAttribute` for radius,
+  sharpness, colour). Estimated additional work before M11 can
+  resume: 1-2 days for the container migration; the per-shader
+  TSL ports remain mechanical once that lands.
 - [ ] **`tsconfig.json moduleResolution` bump from `Node` to
   `Bundler`** — required to resolve `three/webgpu` types
   (currently shipped under `@types/three/build/three.webgpu.d.ts`

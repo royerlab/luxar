@@ -84,6 +84,7 @@ function previewPixels(pixels: number[], count = 4): string {
   return lines.join('\n');
 }
 
+
 test.describe('TSL ↔ GLSL shader parity', () => {
   test('const-rgb diagnostic: solid-colour fragment matches between backends', async ({
     page,
@@ -170,22 +171,16 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     ).toBeLessThan(2.0);
   });
 
-  test('points-hello: TSL PointsNodeMaterial matches gl_PointSize/gl_PointCoord path', async ({
-    page,
-  }) => {
-    await bootHarness(page);
-
-    const glslPixels = await runGLSL(page, 'points-hello');
-    const tslResult = await runTSL(page, 'points-hello');
-
-    const diff = meanAbsDiff(glslPixels, tslResult.pixels);
-    expect(
-      diff,
-      `Points-hello parity: mean abs diff ${diff.toFixed(2)} on 0-255 scale.\n` +
-        `GLSL first 4 pixels:\n${previewPixels(glslPixels)}\n` +
-        `TSL first 4 pixels:\n${previewPixels(tslResult.pixels)}`
-    ).toBeLessThan(2.0);
-  });
+  // The points-hello test was *removed* after diagnostic dumps showed
+  // it passed by accident — the TSL path's output is all zeros because
+  // `gl_PointSize = 1.0` is hardcoded in r184's `GLSLNodeBuilder`
+  // (`renderers/webgl-fallback/nodes/GLSLNodeBuilder.js:1416`). The
+  // GLSL3 path produced a small disk; the TSL path produced nothing;
+  // the mean-abs-diff fell below the 2.0 tolerance through accidental
+  // averaging. See MIGRATION_PROGRESS.md for the corrected approach:
+  // M11-M16 must switch the geometry container from `THREE.Points` to
+  // `THREE.Sprite` / `THREE.InstancedMesh` so the TSL setupVertexSprite
+  // path (which respects `sizeNode`) actually fires.
 
   test('mega with USE_VIGNETTE matches across backends', async ({ page }) => {
     await bootHarness(page);
