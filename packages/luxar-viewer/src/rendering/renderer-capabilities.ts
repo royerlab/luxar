@@ -144,11 +144,28 @@ export function createRendererCapabilities(renderer: Renderer): RendererCapabili
     maxMSAASamples: 4, // WebGPU adapters guarantee at least 4× MSAA
     pointSizeRange: [1, 1024],
     readBackbufferPixels() {
-      // M17 will implement this against WebGPU's offscreen target +
-      // readRenderTargetPixelsAsync. Until then, the WebGPU path
-      // doesn't reach the screenshot/EXR capture code.
+      // WebGPU backbuffer readback. WebGPURenderer doesn't have a
+      // `gl.readPixels(canvas, …)` equivalent — the canvas is owned
+      // by the browser compositor and not directly mappable.
+      //
+      // The clean fix is to render the post-processing pipeline
+      // into an offscreen `THREE.WebGLRenderTarget` (the base class
+      // works under both backends) and call
+      // `renderer.readRenderTargetPixelsAsync(target, …)` on that.
+      // That changes the `renderToImageData` upstream contract
+      // (caller-side rather than renderer-capabilities-side), which
+      // is the wider refactor M17-bis tracks in MIGRATION_PROGRESS.md.
+      //
+      // Until then, the screenshot/EXR pipeline is unreachable
+      // under the WebGPU branch. The plan keeps the WebGL2 path
+      // as the default (M18 flips it) so this code is only hit by
+      // developers running with `VITE_LUXAR_USE_WEBGPU_RENDERER=1`
+      // who attempt a screenshot — they get a clear error.
       return Promise.reject(
-        new Error('readBackbufferPixels: WebGPU body not yet implemented (M17)')
+        new Error(
+          'readBackbufferPixels under WebGPU requires renderToImageData to render ' +
+            'into an offscreen target. See MIGRATION_PROGRESS.md M17-bis follow-up.'
+        )
       );
     },
   };
