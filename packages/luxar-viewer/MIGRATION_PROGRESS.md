@@ -51,6 +51,21 @@ Each blocker is an external dependency or design call.
 
 Tracked separately because they unblock the per-shader rows below.
 
+- [ ] **TSL strict-typing playbook for scene materials** — TSL's
+  type system requires explicit attribute generic types (e.g.
+  `attribute('radius', 'float')` returns `AttributeNode<string>`,
+  not the typed `Node<'float'>` I assumed; the right form may be
+  `float(attribute('radius'))` or a different overload). M11
+  attempted a speculative port of `point` and surfaced ~8 type
+  errors in the first pass. Resolving them properly needs
+  reference to the actual TSL examples in Three.js's
+  `examples/jsm/nodes/` tree, not just type-inference guessing.
+  Before M11-M16 resume, write a small TSL "hello world" in a
+  test file that exercises: typed attribute reads, vec3↔float
+  conversions via `.toVar()`, runtime if-branches via TSL
+  `If`/`select`, and the gl_PointSize / gl_PointCoord
+  equivalents. Once the patterns are confirmed, the per-shader
+  ports become mechanical translations.
 - [ ] **`tsconfig.json moduleResolution` bump from `Node` to
   `Bundler`** — required to resolve `three/webgpu` types
   (currently shipped under `@types/three/build/three.webgpu.d.ts`
