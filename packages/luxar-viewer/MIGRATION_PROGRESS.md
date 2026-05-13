@@ -53,19 +53,40 @@ Tracked separately because they unblock the per-shader rows below.
 
 - [ ] **TSL strict-typing playbook for scene materials** — TSL's
   type system requires explicit attribute generic types (e.g.
-  `attribute('radius', 'float')` returns `AttributeNode<string>`,
-  not the typed `Node<'float'>` I assumed; the right form may be
-  `float(attribute('radius'))` or a different overload). M11
-  attempted a speculative port of `point` and surfaced ~8 type
-  errors in the first pass. Resolving them properly needs
-  reference to the actual TSL examples in Three.js's
-  `examples/jsm/nodes/` tree, not just type-inference guessing.
-  Before M11-M16 resume, write a small TSL "hello world" in a
-  test file that exercises: typed attribute reads, vec3↔float
-  conversions via `.toVar()`, runtime if-branches via TSL
-  `If`/`select`, and the gl_PointSize / gl_PointCoord
-  equivalents. Once the patterns are confirmed, the per-shader
-  ports become mechanical translations.
+  `attribute('radius', 'float')` returns `AttributeNode<'float'>`
+  which then dispatches to `NumExtensions<'float'>` and gains
+  `.mul()`, `.add()` etc.). The dispatch keys off literal string
+  generics — `attribute('radius')` with no `nodeType` yields
+  `AttributeNode<unknown>` with no operators. M11 attempted a
+  speculative port of `point` and surfaced this gap.
+
+  Discovered separately (May 2026) while building the
+  `tsl-shader-parity` harness (`src/tests/e2e/tsl-shader-parity.spec.ts`):
+  - **`PointsNodeMaterial` is sprite-based in r184**, not
+    `gl_PointSize`-driven. The TSL counterpart of our existing
+    `THREE.Points + ShaderMaterial` setup is `THREE.Points +
+    PointsNodeMaterial` with `material.sizeNode` (pixels) and
+    `material.colorNode`. `gl_PointCoord` becomes the sprite's
+    `uv` attribute. M11-M16 ports need to accept this
+    architectural shift, not translate `gl_PointSize` literally.
+  - **`screenUV` is Y-flipped under `WebGPURenderer({ forceWebGL:
+    true })`** — it follows the WebGPU convention
+    (`vec2(x, size.y - y) / size`). Fullscreen passes that want to
+    match a GLSL `vUv = position.xy * 0.5 + 0.5` convention must
+    use `uv()` (the geometry-attribute reader) instead. Fxaa + the
+    three bloom factories were updated to use `uv()` after the
+    harness caught the flip.
+  - **`uniform(float(value))` creates a const, not a live
+    uniform.** The TSL `float(...)` wrap builds a `VarNode<float,
+    ConstNode>` which `uniform()` then bundles as an inlined
+    constant — writes to `uniforms.X.value` no longer reach the
+    shader. Pass the raw JS value (or `IUniform.value`) straight
+    to `uniform()`. Bloom factories were updated.
+
+  Patterns are now validated for fullscreen-pass shaders. The
+  Points-sprite path remains the next prerequisite before M11
+  resumes — needs a hello-world that exercises typed attribute
+  reads against a real `THREE.Points` mesh.
 - [ ] **`tsconfig.json moduleResolution` bump from `Node` to
   `Bundler`** — required to resolve `three/webgpu` types
   (currently shipped under `@types/three/build/three.webgpu.d.ts`

@@ -14,7 +14,7 @@
  */
 
 import * as THREE from 'three';
-import { Fn, uniform, vec2, vec3, vec4, texture, screenUV, float, smoothstep, dot } from 'three/tsl';
+import { Fn, uniform, uv, vec2, vec3, vec4, texture, smoothstep, dot } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
 
 // Rec.709 relative luma weights (same as the GLSL `thresholdKnee`).
@@ -30,16 +30,26 @@ export function bloomThresholdWebGPUFactory(
   const uTexelSize = uniform(
     (uniforms.uTexelSize.value as THREE.Vector2) ?? new THREE.Vector2(1, 1)
   );
-  const uThreshold = uniform(float((uniforms.uThreshold.value as number) ?? 0.0));
-  const uSmoothing = uniform(float((uniforms.uSmoothing.value as number) ?? 0.0));
+  // Use the JS-value uniform() overload directly. Wrapping the value
+  // in `float()` first builds a VarNode<'float', ConstNode> — i.e. a
+  // *const* that gets inlined at compile time, so the uniform never
+  // updates when the host writes uniforms.X.value. Tested with the
+  // tsl-shader-parity harness (`bloom-threshold` parity test).
+  const uThreshold = uniform((uniforms.uThreshold.value as number) ?? 0.0);
+  const uSmoothing = uniform((uniforms.uSmoothing.value as number) ?? 0.0);
 
   const fragmentNode = Fn(() => {
     const d = uTexelSize.mul(0.5);
-    const uv = screenUV;
-    const s0 = uInput.sample(uv.add(d.mul(vec2(-1.0, -1.0)))).rgb;
-    const s1 = uInput.sample(uv.add(d.mul(vec2(1.0, -1.0)))).rgb;
-    const s2 = uInput.sample(uv.add(d.mul(vec2(-1.0, 1.0)))).rgb;
-    const s3 = uInput.sample(uv.add(d.mul(vec2(1.0, 1.0)))).rgb;
+    // Read the geometry's `uv` attribute rather than `screenUV` —
+    // screenUV uses WebGPU-flipped Y under `forceWebGL`, which would
+    // sample the texture upside-down relative to the GLSL3 path
+    // (where vUv = position.xy * 0.5 + 0.5 is bottom-up). The
+    // fullscreen-pass mesh provides matching geometry uv.
+    const coord = uv();
+    const s0 = uInput.sample(coord.add(d.mul(vec2(-1.0, -1.0)))).rgb;
+    const s1 = uInput.sample(coord.add(d.mul(vec2(1.0, -1.0)))).rgb;
+    const s2 = uInput.sample(coord.add(d.mul(vec2(-1.0, 1.0)))).rgb;
+    const s3 = uInput.sample(coord.add(d.mul(vec2(1.0, 1.0)))).rgb;
     const avg = s0.add(s1).add(s2).add(s3).mul(0.25);
 
     // Soft-knee threshold: smoothstep around uThreshold on luma,
@@ -72,11 +82,16 @@ export function bloomDownsampleWebGPUFactory(
 
   const fragmentNode = Fn(() => {
     const d = uTexelSize.mul(0.5);
-    const uv = screenUV;
-    const s0 = uInput.sample(uv.add(d.mul(vec2(-1.0, -1.0)))).rgb;
-    const s1 = uInput.sample(uv.add(d.mul(vec2(1.0, -1.0)))).rgb;
-    const s2 = uInput.sample(uv.add(d.mul(vec2(-1.0, 1.0)))).rgb;
-    const s3 = uInput.sample(uv.add(d.mul(vec2(1.0, 1.0)))).rgb;
+    // Read the geometry's `uv` attribute rather than `screenUV` —
+    // screenUV uses WebGPU-flipped Y under `forceWebGL`, which would
+    // sample the texture upside-down relative to the GLSL3 path
+    // (where vUv = position.xy * 0.5 + 0.5 is bottom-up). The
+    // fullscreen-pass mesh provides matching geometry uv.
+    const coord = uv();
+    const s0 = uInput.sample(coord.add(d.mul(vec2(-1.0, -1.0)))).rgb;
+    const s1 = uInput.sample(coord.add(d.mul(vec2(1.0, -1.0)))).rgb;
+    const s2 = uInput.sample(coord.add(d.mul(vec2(-1.0, 1.0)))).rgb;
+    const s3 = uInput.sample(coord.add(d.mul(vec2(1.0, 1.0)))).rgb;
     return vec4(s0.add(s1).add(s2).add(s3).mul(0.25), 1.0);
   });
 
@@ -101,16 +116,21 @@ export function bloomUpsampleWebGPUFactory(
   const uTexelSize = uniform(
     (uniforms.uTexelSize.value as THREE.Vector2) ?? new THREE.Vector2(1, 1)
   );
-  const uRadius = uniform(float((uniforms.uRadius.value as number) ?? 1.0));
+  const uRadius = uniform((uniforms.uRadius.value as number) ?? 1.0);
 
   const fragmentNode = Fn(() => {
     const r = uTexelSize.mul(uRadius);
-    const uv = screenUV;
-    const s0 = uInput.sample(uv.add(r.mul(vec2(-1.0, 0.0)))).rgb;
-    const s1 = uInput.sample(uv.add(r.mul(vec2(1.0, 0.0)))).rgb;
-    const s2 = uInput.sample(uv.add(r.mul(vec2(0.0, -1.0)))).rgb;
-    const s3 = uInput.sample(uv.add(r.mul(vec2(0.0, 1.0)))).rgb;
-    const c = uInput.sample(uv).rgb;
+    // Read the geometry's `uv` attribute rather than `screenUV` —
+    // screenUV uses WebGPU-flipped Y under `forceWebGL`, which would
+    // sample the texture upside-down relative to the GLSL3 path
+    // (where vUv = position.xy * 0.5 + 0.5 is bottom-up). The
+    // fullscreen-pass mesh provides matching geometry uv.
+    const coord = uv();
+    const s0 = uInput.sample(coord.add(r.mul(vec2(-1.0, 0.0)))).rgb;
+    const s1 = uInput.sample(coord.add(r.mul(vec2(1.0, 0.0)))).rgb;
+    const s2 = uInput.sample(coord.add(r.mul(vec2(0.0, -1.0)))).rgb;
+    const s3 = uInput.sample(coord.add(r.mul(vec2(0.0, 1.0)))).rgb;
+    const c = uInput.sample(coord).rgb;
     // Center × 0.5 + 4 taps × 0.125 = tent filter normalized to 1.0
     return vec4(c.mul(0.5).add(s0.add(s1).add(s2).add(s3).mul(0.125)), 1.0);
   });

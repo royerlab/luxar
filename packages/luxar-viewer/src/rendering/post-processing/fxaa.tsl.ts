@@ -17,11 +17,11 @@ import * as THREE from 'three';
 import {
   Fn,
   uniform,
+  uv,
   vec2,
   vec3,
   vec4,
   texture,
-  screenUV,
   float,
   If,
   max,
@@ -59,13 +59,17 @@ export function fxaaWebGPUFactory(uniforms: Record<string, THREE.IUniform>): Nod
 
   const fragmentNode = Fn(() => {
     const inv = vec2(1.0).div(uResolution);
-    const uv = screenUV;
+    // Read the geometry's `uv` attribute. `screenUV` would be wrong
+    // here: under `WebGPURenderer({ forceWebGL: true })` it returns
+    // Y-flipped coordinates (WebGPU convention), so sampling the
+    // input texture would invert it relative to the GLSL3 path.
+    const coord = uv();
 
-    const cM = uInput.sample(uv).rgb;
-    const cN = uInput.sample(uv.add(vec2(float(0), inv.y.negate()))).rgb;
-    const cS = uInput.sample(uv.add(vec2(float(0), inv.y))).rgb;
-    const cE = uInput.sample(uv.add(vec2(inv.x, float(0)))).rgb;
-    const cW = uInput.sample(uv.add(vec2(inv.x.negate(), float(0)))).rgb;
+    const cM = uInput.sample(coord).rgb;
+    const cN = uInput.sample(coord.add(vec2(float(0), inv.y.negate()))).rgb;
+    const cS = uInput.sample(coord.add(vec2(float(0), inv.y))).rgb;
+    const cE = uInput.sample(coord.add(vec2(inv.x, float(0)))).rgb;
+    const cW = uInput.sample(coord.add(vec2(inv.x.negate(), float(0)))).rgb;
 
     // Inline luma computation. Factored as a TSL `Fn` it required
     // a `VarNode` parameter that doesn't match the type returned
@@ -87,10 +91,10 @@ export function fxaaWebGPUFactory(uniforms: Record<string, THREE.IUniform>): Nod
     // adaptive threshold. Returning early in TSL requires structured
     // `If`; we instead branch the assignment.
     If(range.greaterThanEqual(max(FXAA_EDGE_THRESHOLD_MIN, lMax.mul(FXAA_EDGE_THRESHOLD))), () => {
-      const cNW = uInput.sample(uv.add(vec2(inv.x.negate(), inv.y.negate()))).rgb;
-      const cNE = uInput.sample(uv.add(vec2(inv.x, inv.y.negate()))).rgb;
-      const cSW = uInput.sample(uv.add(vec2(inv.x.negate(), inv.y))).rgb;
-      const cSE = uInput.sample(uv.add(vec2(inv.x, inv.y))).rgb;
+      const cNW = uInput.sample(coord.add(vec2(inv.x.negate(), inv.y.negate()))).rgb;
+      const cNE = uInput.sample(coord.add(vec2(inv.x, inv.y.negate()))).rgb;
+      const cSW = uInput.sample(coord.add(vec2(inv.x.negate(), inv.y))).rgb;
+      const cSE = uInput.sample(coord.add(vec2(inv.x, inv.y))).rgb;
 
       const lNW = dot(cNW, lumaWeights);
       const lNE = dot(cNE, lumaWeights);
@@ -119,7 +123,7 @@ export function fxaaWebGPUFactory(uniforms: Record<string, THREE.IUniform>): Nod
       const stepRaw = horizontal.select(stepH, stepV);
       const stepSigned = stepUpLeft.select(stepRaw.negate(), stepRaw);
 
-      const cBlend = uInput.sample(uv.add(stepSigned.mul(0.5))).rgb;
+      const cBlend = uInput.sample(coord.add(stepSigned.mul(0.5))).rgb;
       result.assign(mix(cM, cBlend, subPixel));
     });
 
