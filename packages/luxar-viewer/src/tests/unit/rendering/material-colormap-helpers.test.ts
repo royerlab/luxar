@@ -64,10 +64,12 @@ describe('supportsScalarColormap', () => {
     expect(supportsScalarColormap('points', g)).toBe(false);
   });
 
-  it('returns true for points with a `scalar` attribute', () => {
+  it('returns true for points with an `aScalar` attribute', () => {
+    // Post-migration: per-instance scalar attribute is named `aScalar`
+    // and lives on an InstancedBufferAttribute.
     const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(3, 3));
-    g.setAttribute('scalar', new THREE.Float32BufferAttribute(1, 1));
+    g.setAttribute('aCenter', new THREE.InstancedBufferAttribute(new Float32Array(3), 3));
+    g.setAttribute('aScalar', new THREE.InstancedBufferAttribute(new Float32Array(1), 1));
     expect(supportsScalarColormap('points', g)).toBe(true);
   });
 

@@ -2,7 +2,7 @@
  * tests that scalar attributes are bound on geometries when
  * `data.scalars` / `processed.startScalars`/`endScalars` are supplied.
  *
- * The C1 fail-closed guard checks `geometry.hasAttribute('scalar')` for
+ * The C1 fail-closed guard checks `geometry.hasAttribute('aScalar')` for
  * Points and `aStartScalar`/`aEndScalar` for Lines — without C4's
  * binding, that guard would always trip. These tests demonstrate the
  * unblocking path.
@@ -32,8 +32,8 @@ describe('scalar attribute binding', () => {
         },
       };
       const geometry = factory.createPointsGeometry(data);
-      expect(geometry.hasAttribute('scalar')).toBe(true);
-      const scalarAttr = geometry.getAttribute('scalar') as THREE.BufferAttribute;
+      expect(geometry.hasAttribute('aScalar')).toBe(true);
+      const scalarAttr = geometry.getAttribute('aScalar') as THREE.BufferAttribute;
       expect(scalarAttr.itemSize).toBe(1);
       expect(scalarAttr.count).toBe(3);
       // Colormap guard passes when scalar data is bound.
@@ -54,7 +54,7 @@ describe('scalar attribute binding', () => {
         },
       };
       const geometry = factory.createPointsGeometry(data);
-      expect(geometry.hasAttribute('scalar')).toBe(false);
+      expect(geometry.hasAttribute('aScalar')).toBe(false);
       // Colormap guard fails closed when scalar data is absent.
       expect(supportsScalarColormap('points', geometry)).toBe(false);
     });

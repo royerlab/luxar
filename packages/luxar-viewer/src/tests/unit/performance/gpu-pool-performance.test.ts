@@ -197,8 +197,8 @@ describe('GPU Buffer Pool Performance Regression Tests', () => {
       const geom2 = pool.acquirePointsGeometry('node2', dataUint8, 1000);
 
       // Verify correct types in attributes
-      const col1 = geom1.getAttribute('color') as THREE.BufferAttribute;
-      const col2 = geom2.getAttribute('color') as THREE.BufferAttribute;
+      const col1 = geom1.getAttribute('aColor') as THREE.BufferAttribute;
+      const col2 = geom2.getAttribute('aColor') as THREE.BufferAttribute;
 
       expect(col1.array).toBeInstanceOf(Float32Array);
       expect(col2.array).toBeInstanceOf(Uint8Array);
@@ -220,8 +220,8 @@ describe('GPU Buffer Pool Performance Regression Tests', () => {
         1000
       );
 
-      const colUint8 = geomUint8.getAttribute('color') as THREE.BufferAttribute;
-      const colFloat = geomFloat.getAttribute('color') as THREE.BufferAttribute;
+      const colUint8 = geomUint8.getAttribute('aColor') as THREE.BufferAttribute;
+      const colFloat = geomFloat.getAttribute('aColor') as THREE.BufferAttribute;
 
       // Uint8 should use 1/4 the memory of Float32
       expect(colUint8.array.byteLength).toBe(colFloat.array.byteLength / 4);

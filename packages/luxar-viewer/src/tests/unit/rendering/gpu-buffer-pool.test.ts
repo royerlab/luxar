@@ -47,10 +47,10 @@ describe('GPUBufferPool', () => {
       const data = createMockLoadedPointsData(1000);
       const geom = pool.acquirePointsGeometry('node1', data, 1000);
       expect(geom).toBeInstanceOf(THREE.BufferGeometry);
-      expect(geom.getAttribute('position')).toBeDefined();
-      expect(geom.getAttribute('color')).toBeDefined();
-      expect(geom.getAttribute('radius')).toBeDefined();
-      expect(geom.getAttribute('sharpness')).toBeDefined();
+      expect(geom.getAttribute('aCenter')).toBeDefined();
+      expect(geom.getAttribute('aColor')).toBeDefined();
+      expect(geom.getAttribute('aRadius')).toBeDefined();
+      expect(geom.getAttribute('aSharpness')).toBeDefined();
 
       const stats = pool.getStats();
       expect(stats.allocations).toBe(1);
@@ -117,9 +117,9 @@ describe('GPUBufferPool', () => {
       const geom = pool.acquirePointsGeometry('p1', positionsOnly, 3);
       pool.updatePointsGeometry(geom, positionsOnly, 3);
 
-      const radAttr = geom.getAttribute('radius') as THREE.BufferAttribute;
-      const sharpAttr = geom.getAttribute('sharpness') as THREE.BufferAttribute;
-      const colAttr = geom.getAttribute('color') as THREE.BufferAttribute;
+      const radAttr = geom.getAttribute('aRadius') as THREE.BufferAttribute;
+      const sharpAttr = geom.getAttribute('aSharpness') as THREE.BufferAttribute;
+      const colAttr = geom.getAttribute('aColor') as THREE.BufferAttribute;
 
       // Active range filled with defaults — not zeros
       for (let i = 0; i < 3; i++) {
@@ -154,8 +154,8 @@ describe('GPUBufferPool', () => {
       };
       pool.updatePointsGeometry(geom, sparse, 4);
 
-      const radAttr = geom.getAttribute('radius') as THREE.BufferAttribute;
-      const colAttr = geom.getAttribute('color') as THREE.BufferAttribute;
+      const radAttr = geom.getAttribute('aRadius') as THREE.BufferAttribute;
+      const colAttr = geom.getAttribute('aColor') as THREE.BufferAttribute;
       // Defaults overwrite values left in the reused buffer from `full`.
       for (let i = 0; i < 4; i++) {
         expect((radAttr.array as Float32Array)[i]).toBeCloseTo(0.5);
@@ -264,7 +264,7 @@ describe('GPUBufferPool', () => {
       // releases to trigger eviction, then asserts the next acquire
       // returns a valid, undisposed geometry. A dispose-during-pool-
       // churn bug would surface as either a thrown error inside
-      // acquire or as an already-disposed `attributes.position`.
+      // acquire or as an already-disposed `attributes.aCenter`.
       const tinyPool = new GPUBufferPool(2, 0); // maxPoolSize=2, evictionFrames=0
       const dataA = createMockLoadedPointsData(1000);
       const dataB = createMockLoadedPointsData(2000);
@@ -281,7 +281,7 @@ describe('GPUBufferPool', () => {
       const geomC = tinyPool.acquirePointsGeometry('nodeC', dataC, 100000);
 
       expect(geomC).toBeDefined();
-      expect(geomC.attributes.position).toBeDefined();
+      expect(geomC.attributes.aCenter).toBeDefined();
       expect(() => tinyPool.releasePointsGeometry('nodeC')).not.toThrow();
     });
   });
@@ -345,7 +345,7 @@ describe('GPUBufferPool', () => {
       const data = createMockLoadedPointsData(1000, 'Uint8Array');
       const geom = pool.acquirePointsGeometry('node1', data, 1000);
 
-      const colorAttr = geom.getAttribute('color') as THREE.BufferAttribute;
+      const colorAttr = geom.getAttribute('aColor') as THREE.BufferAttribute;
       expect(colorAttr.array).toBeInstanceOf(Uint8Array);
       expect(colorAttr.normalized).toBe(true); // Should be normalized
     });
@@ -354,7 +354,7 @@ describe('GPUBufferPool', () => {
       const data = createMockLoadedPointsData(1000, 'Uint16Array');
       const geom = pool.acquirePointsGeometry('node1', data, 1000);
 
-      const colorAttr = geom.getAttribute('color') as THREE.BufferAttribute;
+      const colorAttr = geom.getAttribute('aColor') as THREE.BufferAttribute;
       expect(colorAttr.array).toBeInstanceOf(Uint16Array);
       expect(colorAttr.normalized).toBe(true); // Should be normalized
     });

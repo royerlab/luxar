@@ -25,11 +25,14 @@ function makeData(pointCount: number, withRadii = false): LoadedPointsData {
   } as unknown as LoadedPointsData;
 }
 
-function makePoints(name: string): THREE.Points {
+function makePoints(name: string): THREE.Mesh {
+  // After the container migration, points are THREE.Mesh with
+  // instanced quad geometry. Per-instance attribute is `aCenter`
+  // (InstancedBufferAttribute).
   const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(0), 3));
-  const material = new THREE.PointsMaterial();
-  const points = new THREE.Points(geometry, material);
+  geometry.setAttribute('aCenter', new THREE.InstancedBufferAttribute(new Float32Array(0), 3));
+  const material = new THREE.MeshBasicMaterial();
+  const points = new THREE.Mesh(geometry, material);
   points.name = name;
   points.userData = { nodeType: 'points', visiblePointCount: 0 };
   return points;
@@ -37,7 +40,7 @@ function makePoints(name: string): THREE.Points {
 
 const mockCreatePointsGeometry = vi.fn(() => {
   const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(9), 3));
+  g.setAttribute('aCenter', new THREE.InstancedBufferAttribute(new Float32Array(9), 3));
   return g;
 });
 const mockNodeFactory = {
@@ -103,12 +106,12 @@ describe('commitPointsGeometry', () => {
 
   it('updates attributes in place when pool disabled and counts match', () => {
     const root = new THREE.Group();
-    const points = new THREE.Points();
+    const points = new THREE.Mesh();
     points.name = '/p';
     points.userData = { nodeType: 'points', visiblePointCount: 0 };
     // 3-point geometry to match the 3-point data.
     const geom = new THREE.BufferGeometry();
-    geom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(9), 3));
+    geom.setAttribute('aCenter', new THREE.InstancedBufferAttribute(new Float32Array(9), 3));
     points.geometry = geom;
     root.add(points);
 
