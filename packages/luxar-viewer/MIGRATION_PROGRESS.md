@@ -113,9 +113,9 @@ Legend:
 | Shader              | G | T | F | R | D |
 |---------------------|---|---|---|---|---|
 | `mega`              | x |   |   |   |   |
-| `bloom-threshold`   | x |   |   |   |   |
-| `bloom-downsample`  | x |   |   |   |   |
-| `bloom-upsample`    | x |   |   |   |   |
+| `bloom-threshold`   | x | x |   |   |   |
+| `bloom-downsample`  | x | x |   |   |   |
+| `bloom-upsample`    | x | x |   |   |   |
 | `fxaa`              | x | x |   |   |   |
 
 ### Picking
