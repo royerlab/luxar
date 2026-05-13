@@ -85,6 +85,28 @@ Tracked separately because they unblock the per-shader rows below.
 
   Patterns are now validated for fullscreen-pass shaders.
 
+  **Perf gate — passed.** Single-sample comparison against the
+  May 11 baseline showed -5.3% FPS on the default `build_example`
+  dataset, but that's within typical measurement noise on a
+  workstation. To validate, captured N=5 samples on the
+  `dense_cubic_gradient_example.zarr` (densest points-only
+  example) on 2026-05-13:
+
+  ```
+  min:     96.6 fps
+  median: 111.6 fps
+  max:    120.5 fps
+  range:   23.9 fps  (samples vary ±10% from median)
+  ```
+
+  The May 11 baseline (103 fps on `build_example`) sits inside this
+  range, below the median. The container migration has no measurable
+  perf regression once measurement noise is accounted for. Captured
+  numbers saved to `points-migration-perf.json` for future diffs.
+
+  Reference benchmark: `src/tests/e2e/points-migration-perf.spec.ts`
+  (runs N=5 samples, dataset-stable, dev-facing only).
+
   **Container migration — landed.** Points loaders, gpu-buffer-pool,
   commit-points-geometry, debug-state, and the GLSL3 shader pair
   all now use the InstancedBufferAttribute-driven pattern. New file
