@@ -54,25 +54,22 @@ import {
   Discard,
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type TSLNode = any;
+import { sanitizeNonNegative, sanitizePositive, type TSLNode } from './tsl-helpers';
+import { applyBlendingStateToMaterial, getCompleteBlendingState } from './blending-state';
+import type { BlendingMode } from './material-manager';
 
 export interface LineTSLConfig {
   readonly useColormap?: boolean;
+  /**
+   * When undefined, derived from `blendingMode === 'max'`. Explicit
+   * config still wins.
+   */
   readonly useMaxRGBContribution?: boolean;
-}
-
-function sanitizePositive(value: TSLNode, fallback: TSLNode): TSLNode {
-  const isFinite = value.lessThan(1e30).and(value.greaterThan(-1e30));
-  const isPositive = value.greaterThan(0.0);
-  return isFinite.and(isPositive).select(value, fallback);
-}
-
-function sanitizeNonNegative(value: TSLNode, fallback: TSLNode): TSLNode {
-  const isFinite = value.lessThan(1e30).and(value.greaterThan(-1e30));
-  const isNonNeg = value.greaterThanEqual(0.0);
-  return isFinite.and(isNonNeg).select(value, fallback);
+  /**
+   * Luxar blending mode. Defaults to `'additive'` to match the
+   * GLSL wrapper class.
+   */
+  readonly blendingMode?: BlendingMode;
 }
 
 /**
@@ -136,6 +133,15 @@ export function lineWebGPUFactory(
     config.useColormap && uniforms.uScalarScale
       ? uniform((uniforms.uScalarScale.value as number) ?? 1.0)
       : null;
+
+  // RGB premultiplication is driven by the blending mode: `max` mode
+  // routes through CustomBlending + MaxEquation which needs RGB to
+  // already include the soft-kernel contribution. Explicit
+  // `useMaxRGBContribution` still wins.
+  const premultiplyRGB =
+    config.useMaxRGBContribution !== undefined
+      ? config.useMaxRGBContribution
+      : config.blendingMode === 'max';
 
   // ---- Vertex computation ----
 
@@ -310,7 +316,7 @@ export function lineWebGPUFactory(
     const gammaColor: TSLNode = adjusted.pow(vec3(uInvGamma));
 
     const alpha: TSLNode = intensity.mul(uOpacity);
-    if (config.useMaxRGBContribution) {
+    if (premultiplyRGB) {
       return vec4(gammaColor.mul(alpha), alpha);
     }
     return vec4(gammaColor, alpha);
@@ -319,9 +325,11 @@ export function lineWebGPUFactory(
   const material = new NodeMaterial();
   material.vertexNode = clipPos;
   material.colorNode = colorNode();
-  material.transparent = true;
   material.toneMapped = false;
-  material.depthTest = true;
-  material.depthWrite = false;
+
+  const blendingMode: BlendingMode = config.blendingMode ?? 'additive';
+  const opacityValue = (uniforms.uOpacity?.value as number | undefined) ?? 1.0;
+  const blendingState = getCompleteBlendingState(blendingMode, opacityValue);
+  applyBlendingStateToMaterial(material, blendingState);
   return material;
 }

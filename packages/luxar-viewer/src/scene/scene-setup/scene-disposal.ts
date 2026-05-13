@@ -25,8 +25,8 @@ import * as THREE from 'three';
 /**
  * Recursively dispose `obj` and every descendant, removing each child
  * from its parent as it walks. Disposes geometry and material(s) on
- * `Mesh`, `Points`, and `InstancedMesh` instances; non-renderable
- * Object3Ds (Group / Object3D / Light) are walked through but contribute
+ * `Mesh` and `InstancedMesh` instances; non-renderable Object3Ds
+ * (Group / Object3D / Light) are walked through but contribute
  * nothing to dispose themselves.
  *
  * The walk is depth-first by always disposing `children[0]` until the
@@ -34,11 +34,7 @@ import * as THREE from 'three';
  * inline. This avoids re-indexing after each removal.
  */
 export function disposeObjectTree(obj: THREE.Object3D): void {
-  if (
-    obj instanceof THREE.Mesh ||
-    obj instanceof THREE.Points ||
-    obj instanceof THREE.InstancedMesh
-  ) {
+  if (obj instanceof THREE.Mesh || obj instanceof THREE.InstancedMesh) {
     if (obj.geometry) obj.geometry.dispose();
     if (obj.material) {
       if (Array.isArray(obj.material)) {

@@ -24,15 +24,18 @@ function makeMesh(): {
 }
 
 function makePoints(): {
-  points: THREE.Points;
+  points: THREE.Mesh;
   geometryDispose: ReturnType<typeof vi.fn>;
   materialDispose: ReturnType<typeof vi.fn>;
 } {
-  const geometry = new THREE.BufferGeometry();
-  const material = new THREE.PointsMaterial();
+  // Points are now THREE.Mesh after the container migration; the
+  // disposal helper treats Mesh and InstancedMesh uniformly.
+  const geometry = new THREE.InstancedBufferGeometry();
+  const material = new THREE.MeshBasicMaterial();
   const geometryDispose = vi.spyOn(geometry, 'dispose');
   const materialDispose = vi.spyOn(material, 'dispose');
-  const points = new THREE.Points(geometry, material);
+  const points = new THREE.Mesh(geometry, material);
+  points.userData.nodeType = 'points';
   return { points, geometryDispose, materialDispose };
 }
 
@@ -56,7 +59,7 @@ describe('disposeObjectTree', () => {
     expect(d2).toHaveBeenCalledTimes(1);
   });
 
-  it('disposes Points objects (geometry + material)', () => {
+  it('disposes points-mesh objects (geometry + material)', () => {
     const { points, geometryDispose, materialDispose } = makePoints();
     disposeObjectTree(points);
     expect(geometryDispose).toHaveBeenCalledTimes(1);

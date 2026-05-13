@@ -151,8 +151,17 @@ export function commitPointsGeometry(
         sharpAttr.needsUpdate = true;
       }
 
-      oldGeometry.computeBoundingBox();
-      oldGeometry.computeBoundingSphere();
+      // After the points-instanced-mesh migration the 'position'
+      // attribute holds the unit quad template, not the per-point
+      // world positions — so THREE's computeBoundingBox()/Sphere()
+      // would compute the quad's [-1,1]² bounds, not the actual
+      // scene extent. Source the bounds from the loader metadata
+      // instead (same pattern as the pool-enabled path above).
+      if (data.metadata.bounds) {
+        oldGeometry.boundingBox = data.metadata.bounds.clone();
+        oldGeometry.boundingSphere = new THREE.Sphere();
+        oldGeometry.boundingBox.getBoundingSphere(oldGeometry.boundingSphere);
+      }
       // in-place reuse — re-sync material scales in case dtype-
       // aware geometry userData changed since the last commit.
       syncPointMaterialWithGeometry(points);

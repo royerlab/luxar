@@ -83,7 +83,7 @@ export interface WebGLContextRecoveryDeps {
 
 /**
  * Walk the scene graph and flip `needsUpdate` on every attribute and
- * material reachable from a Mesh / Points / InstancedMesh. Three.js
+ * material reachable from a Mesh / InstancedMesh. Three.js
  * re-creates buffers/programs lazily, but the explicit dirty flag is
  * the one knob that makes recovery deterministic for our custom
  * shader materials, instanced geometry, and pooled buffer attributes.
@@ -93,11 +93,7 @@ export interface WebGLContextRecoveryDeps {
  */
 export function markSceneResourcesDirtyForContextRestore(scene: THREE.Scene): void {
   scene.traverse((obj) => {
-    if (
-      obj instanceof THREE.Mesh ||
-      obj instanceof THREE.Points ||
-      obj instanceof THREE.InstancedMesh
-    ) {
+    if (obj instanceof THREE.Mesh || obj instanceof THREE.InstancedMesh) {
       const geometry = obj.geometry;
       if (geometry) {
         const attributes = geometry.attributes as Record<
@@ -172,7 +168,7 @@ export class WebGLContextRecovery {
         // is preserved across the rebuild so PickingSystem,
         // AnimationController, and RenderingControls keep their cached
         // references valid; user settings (bloom, exposure, tone mapping,
-        // DOF, etc.) are preserved end-to-end.
+        // detector noise, etc.) are preserved end-to-end.
         const postProcessing = this.deps.getPostProcessing();
         if (postProcessing) {
           postProcessing.rebuildAfterContextRestore();

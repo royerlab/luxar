@@ -2,24 +2,30 @@
  * Unit tests for `computeSceneStats`.
  *
  * Pure traversal extracted from `zarr-loader.ts::logSceneStats`. Uses real
- * THREE objects (Group, Points, Mesh, BufferGeometry, BufferAttribute) —
+ * THREE objects (Group, Mesh, BufferGeometry, InstancedBufferAttribute) —
  * none of these need a WebGL context, so tests run without any mocks.
+ *
+ * After the container migration, points render as `THREE.Mesh` with
+ * `userData.nodeType === 'points'` and per-instance `aCenter` storage,
+ * mirroring lines and gsplats.
  */
 
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { computeSceneStats } from '../../../../data/utils/scene-stats';
 
-function makePoints(count: number, opts: { spatialIndex?: boolean } = {}): THREE.Points {
+function makePoints(count: number, opts: { spatialIndex?: boolean } = {}): THREE.Mesh {
   const geom = new THREE.BufferGeometry();
-  // BufferAttribute.count is array.length / itemSize, so 3*count floats with
-  // itemSize 3 → count entries.
-  geom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(count * 3), 3));
-  const points = new THREE.Points(geom);
-  if (opts.spatialIndex) {
-    points.userData = { attrs: { has_spatial_index: true } };
-  }
-  return points;
+  geom.setAttribute(
+    'aCenter',
+    new THREE.InstancedBufferAttribute(new Float32Array(count * 3), 3)
+  );
+  const mesh = new THREE.Mesh(geom);
+  mesh.userData = {
+    nodeType: 'points',
+    ...(opts.spatialIndex ? { attrs: { has_spatial_index: true } } : {}),
+  };
+  return mesh;
 }
 
 function makeGSplatsMesh(splatCount: number, opts: { spatialIndex?: boolean } = {}): THREE.Mesh {
@@ -51,7 +57,7 @@ describe('computeSceneStats', () => {
     });
   });
 
-  it('counts THREE.Points and sums position attribute counts', () => {
+  it('counts points meshes and sums aCenter instance counts', () => {
     const scene = new THREE.Group();
     scene.add(makePoints(100));
     scene.add(makePoints(250));
@@ -61,10 +67,11 @@ describe('computeSceneStats', () => {
     expect(stats.totalPoints).toBe(350);
   });
 
-  it('skips THREE.Points without a position attribute', () => {
+  it('counts a points mesh without an aCenter attribute (count contributes 0)', () => {
     const scene = new THREE.Group();
-    const orphan = new THREE.Points(new THREE.BufferGeometry()); // no position
-    scene.add(orphan);
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry());
+    mesh.userData = { nodeType: 'points' };
+    scene.add(mesh);
 
     const stats = computeSceneStats(scene)!;
     expect(stats.pointsObjects).toBe(1);

@@ -64,9 +64,9 @@ import {
   screenCoordinate,
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type TSLNode = any;
+import { type TSLNode } from './tsl-helpers';
+import { applyBlendingStateToMaterial, getCompleteBlendingState } from './blending-state';
+import type { BlendingMode } from './material-manager';
 
 // Type-erased constructor aliases. TSL's typed `vec2`/`vec3`/`vec4`/`mat3`
 // overloads reject many valid combinations of intermediate `Node<…>`
@@ -82,6 +82,13 @@ const mat3: (a?: TSLNode, b?: TSLNode, c?: TSLNode) => TSLNode = _mat3 as TSLNod
 
 export interface GSplatTSLConfig {
   readonly useColormap?: boolean;
+  /**
+   * Luxar blending mode. GSplats premultiply intensity into RGB
+   * unconditionally so the shader-output style does not need to flip
+   * with the mode — only the THREE blending state changes. Defaults
+   * to `'additive'` to match the GLSL wrapper class.
+   */
+  readonly blendingMode?: BlendingMode;
 }
 
 /**
@@ -400,8 +407,10 @@ export function gsplatWebGPUFactory(
   material.vertexNode = clipPos;
   material.colorNode = fragmentNode();
   material.toneMapped = false;
-  material.transparent = true;
-  material.depthTest = true;
-  material.depthWrite = false;
+
+  const blendingMode: BlendingMode = config.blendingMode ?? 'additive';
+  const opacityValue = (uniforms.uOpacity?.value as number | undefined) ?? 1.0;
+  const blendingState = getCompleteBlendingState(blendingMode, opacityValue);
+  applyBlendingStateToMaterial(material, blendingState);
   return material;
 }

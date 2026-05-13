@@ -80,14 +80,31 @@ describe('computeSceneBoundingBox', () => {
     expect(result.primitiveCount).toBe(0);
   });
 
-  it('aggregates Points bounds and counts position attribute as primitives', () => {
+  it('aggregates Points bounds and counts instances as primitives', () => {
     const scene = new THREE.Scene();
-    const geometry = new THREE.BufferGeometry();
-    const positions = new Float32Array([0, 0, 0, 1, 1, 1, -1, 0, 2]);
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    const material = new THREE.PointsMaterial();
-    const points = new THREE.Points(geometry, material);
-    scene.add(points);
+    const geometry = new THREE.InstancedBufferGeometry();
+    // Quad template — the geometry's bounding box reflects the
+    // per-point world extents the loader stamps in via
+    // commit-points-geometry. We stamp them manually here.
+    geometry.setAttribute(
+      'position',
+      new THREE.BufferAttribute(new Float32Array([-1, -1, 0, 1, -1, 0, -1, 1, 0, 1, 1, 0]), 3)
+    );
+    geometry.setAttribute(
+      'aCenter',
+      new THREE.InstancedBufferAttribute(
+        new Float32Array([0, 0, 0, 1, 1, 1, -1, 0, 2]),
+        3
+      )
+    );
+    geometry.instanceCount = 3;
+    geometry.boundingBox = new THREE.Box3(
+      new THREE.Vector3(-1, 0, 0),
+      new THREE.Vector3(1, 1, 2)
+    );
+    const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
+    mesh.userData.nodeType = 'points';
+    scene.add(mesh);
     scene.updateMatrixWorld(true);
 
     const result = computeSceneBoundingBox(scene);
@@ -144,12 +161,17 @@ describe('computeSceneBoundingBox', () => {
     expect(result.primitiveCount).toBe(11);
   });
 
-  it('skips zero-count Points (no positions to bound)', () => {
+  it('skips zero-count Points (no instances to bound)', () => {
     const scene = new THREE.Scene();
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(0), 3));
-    const points = new THREE.Points(geometry, new THREE.PointsMaterial());
-    scene.add(points);
+    const geometry = new THREE.InstancedBufferGeometry();
+    geometry.setAttribute(
+      'position',
+      new THREE.BufferAttribute(new Float32Array([-1, -1, 0, 1, 1, 0]), 3)
+    );
+    geometry.instanceCount = 0;
+    const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
+    mesh.userData.nodeType = 'points';
+    scene.add(mesh);
 
     const result = computeSceneBoundingBox(scene);
     expect(result.box.isEmpty()).toBe(true);
@@ -158,10 +180,21 @@ describe('computeSceneBoundingBox', () => {
 
   it('combines bounds from multiple primitives in the same scene', () => {
     const scene = new THREE.Scene();
-    // Points at origin
-    const g1 = new THREE.BufferGeometry();
-    g1.setAttribute('position', new THREE.BufferAttribute(new Float32Array([0, 0, 0]), 3));
-    scene.add(new THREE.Points(g1, new THREE.PointsMaterial()));
+    // Points mesh near origin
+    const g1 = new THREE.InstancedBufferGeometry();
+    g1.setAttribute(
+      'position',
+      new THREE.BufferAttribute(new Float32Array([-1, -1, 0, 1, 1, 0]), 3)
+    );
+    g1.setAttribute('aCenter', new THREE.InstancedBufferAttribute(new Float32Array([0, 0, 0]), 3));
+    g1.instanceCount = 1;
+    g1.boundingBox = new THREE.Box3(
+      new THREE.Vector3(-1, -1, 0),
+      new THREE.Vector3(1, 1, 0)
+    );
+    const pointsMesh = new THREE.Mesh(g1, new THREE.MeshBasicMaterial());
+    pointsMesh.userData.nodeType = 'points';
+    scene.add(pointsMesh);
     // InstancedMesh far away
     const g2 = new THREE.BoxGeometry(1, 1, 1);
     const im = new THREE.InstancedMesh(g2, new THREE.MeshBasicMaterial(), 1);

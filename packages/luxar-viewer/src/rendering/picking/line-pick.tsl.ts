@@ -39,21 +39,7 @@ import {
   Discard,
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type TSLNode = any;
-
-function sanitizePositive(value: TSLNode, fallback: TSLNode): TSLNode {
-  const isFinite = value.lessThan(1e30).and(value.greaterThan(-1e30));
-  const isPositive = value.greaterThan(0.0);
-  return isFinite.and(isPositive).select(value, fallback);
-}
-
-function sanitizeNonNegative(value: TSLNode, fallback: TSLNode): TSLNode {
-  const isFinite = value.lessThan(1e30).and(value.greaterThan(-1e30));
-  const isNonNeg = value.greaterThanEqual(0.0);
-  return isFinite.and(isNonNeg).select(value, fallback);
-}
+import { sanitizeNonNegative, sanitizePositive, type TSLNode } from '../tsl-helpers';
 
 /**
  * Line picking material TSL factory. `uniforms` must include uFOV,

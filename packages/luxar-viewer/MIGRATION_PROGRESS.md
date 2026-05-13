@@ -290,3 +290,44 @@ removes the GLSL3 strings from `*-shaders.ts` / `*.glsl.ts` and
 the `webgl` field becomes optional on the corresponding
 `ShaderSource`. When every row has `D` checked, the `webgl` field
 can be removed from `ShaderSource` entirely.
+
+## Wrapper-layer wiring (blocks M18 default-flip)
+
+The TSL factories live as standalone NodeMaterial constructors —
+`point.tsl.ts::pointWebGPUFactory`, `line.tsl.ts::lineWebGPUFactory`,
+`gsplat.tsl.ts::gsplatWebGPUFactory`, and the three matching picking
+factories. Each accepts `uniforms` + a small `*TSLConfig` object and
+returns a configured `NodeMaterial` with the right blending state
+(via the shared `blending-state.ts` helper).
+
+In production the wrapper classes — `PointMaterial`, `LineMaterial`,
+`GSplatMaterial`, and the three picking equivalents — still `extends
+THREE.ShaderMaterial`. `MaterialManager.getPointMaterial /
+getLineMaterial / getGSplatMaterial` unconditionally construct these
+GLSL wrapper instances regardless of `caps.api`. The TSL factories
+are therefore **not yet on the production rendering path**; they are
+exercised today only by `tsl-shader-parity.spec.ts` (fragment
+parity) and the unit-level factory-construction tests.
+
+Bridging the gap (work for M18):
+
+1. Thread `RendererCapabilities` into `MaterialManager` (constructor
+   injection from `SceneManager`, or per-call argument on
+   `getXxxMaterial`).
+2. Either rewrite each wrapper class to compose-and-delegate instead
+   of `extends THREE.ShaderMaterial`, or introduce parallel
+   `*NodeMaterial` wrapper classes that mirror the existing surface
+   (`applyBlendingMode`, `updateOpacity`, `updateGamma`,
+   `updateIntensity`, `updateOffset`, `updateCameraParams`,
+   `updateColormapTexture`, `clone()`). The TSL path needs all of
+   the same hooks the GLSL path exposes, but expressed via TSL
+   uniform-node reassignment instead of `material.uniforms.X.value`.
+3. Replicate the picking-material variants
+   (`PointPickingMaterial`, etc.) symmetrically.
+4. Run `tsl-shader-parity.spec.ts` + the full visual-regression
+   suite under both backends to confirm parity end-to-end.
+
+Until that work lands, `VITE_LUXAR_USE_WEBGPU_RENDERER=1` produces a
+`WebGPURenderer({ forceWebGL: true })` that still dispatches the
+GLSL3 wrapper materials — exactly the WebGL2 codepath, just behind
+a WebGPU-typed renderer.
