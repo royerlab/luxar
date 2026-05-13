@@ -27,6 +27,8 @@ import { vec4 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
 import { FXAA_SOURCE } from '../../../rendering/post-processing/fxaa-shaders';
 import { BLOOM_THRESHOLD_SOURCE } from '../../../rendering/post-processing/bloom-shaders';
+import { MEGA_SOURCE } from '../../../rendering/post-processing/mega-shader.glsl';
+import { megaWebGPUFactory } from '../../../rendering/post-processing/mega.tsl';
 import type { ShaderSource } from '../../../rendering/shaders/shader-source';
 
 /**
@@ -38,6 +40,20 @@ interface RegistryEntry {
   readonly source: ShaderSource;
   /** Default uniforms for this shader's parity test. */
   readonly buildUniforms: () => Record<string, THREE.IUniform>;
+  /**
+   * GLSL3 `defines` to set on the `THREE.ShaderMaterial`. Needed for
+   * shaders like `mega` that use `#define` gates for feature toggles
+   * + an `LUXAR_TONE_MAPPING_MODE` numeric. Optional; defaults to
+   * empty (no defines).
+   */
+  readonly buildDefines?: () => Record<string, string>;
+  /**
+   * Override for the TSL material constructor. When provided, the
+   * harness calls this directly instead of `source.webgpu(uniforms)`.
+   * Used to pass shader-specific factory configs (e.g.
+   * `megaWebGPUFactory(uniforms, { toneMappingMode: 1 })`).
+   */
+  readonly buildTSLMaterial?: (uniforms: Record<string, THREE.IUniform>) => THREE.Material;
 }
 
 /**
@@ -130,6 +146,70 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
       uSmoothing: { value: 0.5 },
     }),
   },
+  // Mega-shader: default configuration only (no bloom, no lens
+  // distortion, no vignette, no detector noise, mode=Linear). The
+  // tone-mapping mode is pinned to Linear (mode=1) because that's
+  // the simplest path through THREE's toneMapping chunk and
+  // matches TSL's linearToneMapping output.
+  mega: {
+    source: MEGA_SOURCE,
+    buildUniforms: () => ({
+      uHdrScene: { value: buildTestTexture() },
+      uResolution: { value: new THREE.Vector2(8, 8) },
+      uExposure: { value: 0.0 },
+      uGlobalOffset: { value: 0.0 },
+      uGlobalGamma: { value: 1.0 },
+      // THREE's tone-mapping chunk reads this; pin to 1.0 so the
+      // GLSL3 ShaderMaterial doesn't double-multiply our exposure.
+      toneMappingExposure: { value: 1.0 },
+    }),
+    buildDefines: () => ({ LUXAR_TONE_MAPPING_MODE: '1' }),
+    buildTSLMaterial: (uniforms) =>
+      megaWebGPUFactory(uniforms, { toneMappingMode: 1 }) as unknown as THREE.Material,
+  },
+  // Mega + bloom enabled: validates the `USE_BLOOM` JS-side conditional
+  // branch in the TSL factory matches the GLSL `#ifdef USE_BLOOM` path.
+  'mega-bloom': {
+    source: MEGA_SOURCE,
+    buildUniforms: () => ({
+      uHdrScene: { value: buildTestTexture() },
+      uResolution: { value: new THREE.Vector2(8, 8) },
+      uExposure: { value: 0.0 },
+      uGlobalOffset: { value: 0.0 },
+      uGlobalGamma: { value: 1.0 },
+      toneMappingExposure: { value: 1.0 },
+      // A second texture for bloom — uniform contents differ from the
+      // HDR scene so the test fails if the shader reads the wrong one.
+      uBloomTexture: { value: buildTestTexture() },
+      uBloomIntensity: { value: 0.5 },
+    }),
+    buildDefines: () => ({ LUXAR_TONE_MAPPING_MODE: '1', USE_BLOOM: '' }),
+    buildTSLMaterial: (uniforms) =>
+      megaWebGPUFactory(uniforms, {
+        toneMappingMode: 1,
+        useBloom: true,
+      }) as unknown as THREE.Material,
+  },
+  // Mega + vignette: validates the `USE_VIGNETTE` JS-side branch.
+  'mega-vignette': {
+    source: MEGA_SOURCE,
+    buildUniforms: () => ({
+      uHdrScene: { value: buildTestTexture() },
+      uResolution: { value: new THREE.Vector2(8, 8) },
+      uExposure: { value: 0.0 },
+      uGlobalOffset: { value: 0.0 },
+      uGlobalGamma: { value: 1.0 },
+      toneMappingExposure: { value: 1.0 },
+      uVignetteDarkness: { value: 0.7 },
+      uVignetteOffset: { value: 0.5 },
+    }),
+    buildDefines: () => ({ LUXAR_TONE_MAPPING_MODE: '1', USE_VIGNETTE: '' }),
+    buildTSLMaterial: (uniforms) =>
+      megaWebGPUFactory(uniforms, {
+        toneMappingMode: 1,
+        useVignette: true,
+      }) as unknown as THREE.Material,
+  },
 };
 
 const HARNESS_SIZE = 64;
@@ -143,7 +223,10 @@ function renderGLSL(shaderName: string): Uint8Array {
   if (!entry) throw new Error(`Unknown shader: ${shaderName}`);
 
   const uniforms = entry.buildUniforms();
-  const material = new THREE.ShaderMaterial({
+  // Build the ShaderMaterial. We pass `defines` only when the
+  // registry entry supplies it — Three.js warns "parameter 'defines'
+  // has value of undefined" otherwise.
+  const materialParams: THREE.ShaderMaterialParameters = {
     vertexShader: entry.source.webgl.vertex,
     fragmentShader: entry.source.webgl.fragment,
     uniforms,
@@ -151,7 +234,11 @@ function renderGLSL(shaderName: string): Uint8Array {
     depthTest: false,
     depthWrite: false,
     transparent: false,
-  });
+  };
+  if (entry.buildDefines) {
+    materialParams.defines = entry.buildDefines();
+  }
+  const material = new THREE.ShaderMaterial(materialParams);
 
   const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false });
   renderer.setPixelRatio(1);
@@ -205,8 +292,9 @@ async function renderTSL(
   }
 
   const uniforms = entry.buildUniforms();
-  const factory = entry.source.webgpu;
-  const material = factory(uniforms) as THREE.Material;
+  const material = entry.buildTSLMaterial
+    ? entry.buildTSLMaterial(uniforms)
+    : (entry.source.webgpu(uniforms) as THREE.Material);
 
   const { WebGPURenderer } = await import('three/webgpu');
   const renderer = new WebGPURenderer({ antialias: false, alpha: false, forceWebGL: true });
