@@ -199,6 +199,33 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     ).toBeLessThan(2.0);
   });
 
+  test('point: PointMaterial sprite expansion + GOG + Gaussian falloff', async ({
+    page,
+  }) => {
+    await bootHarness(page);
+
+    const glslPixels = await runGLSL(page, 'point');
+    const tslResult = await runTSL(page, 'point');
+
+    const diff = meanAbsDiff(glslPixels, tslResult.pixels);
+    // Sample sprite-area pixels. 64x64 viewport, sprite centred at (32, 32).
+    const samplePx = (px: number[], x: number, y: number) => {
+      const o = (y * 64 + x) * 4;
+      return `${px[o]},${px[o + 1]},${px[o + 2]},${px[o + 3]}`;
+    };
+    const offsets = [32, 30, 28, 26, 24, 20];
+    const samples = offsets
+      .map(
+        (xo) =>
+          `  (${xo},32) GLSL=${samplePx(glslPixels, xo, 32)} TSL=${samplePx(tslResult.pixels, xo, 32)}`
+      )
+      .join('\n');
+    expect(
+      diff,
+      `Point parity: mean abs diff ${diff.toFixed(2)} on 0-255 scale.\nSprite samples:\n${samples}`
+    ).toBeLessThan(2.0);
+  });
+
   test('mega with USE_VIGNETTE matches across backends', async ({ page }) => {
     await bootHarness(page);
 
