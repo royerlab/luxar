@@ -62,6 +62,11 @@ function fakeRenderer(probes: Probes = {}): THREE.WebGLRenderer {
   };
 
   return {
+    // `isWebGLRenderer` is the canonical discriminator
+    // `createRendererCapabilities` reads to pick the WebGL2 vs
+    // WebGPU branch. The real `THREE.WebGLRenderer` constructor
+    // sets this on `this`; mocks must opt-in explicitly.
+    isWebGLRenderer: true,
     getContext: () => fakeGL,
     setRenderTarget: vi.fn(),
   } as unknown as THREE.WebGLRenderer;
