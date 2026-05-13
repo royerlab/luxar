@@ -25,6 +25,8 @@ import {
   BLOOM_DOWNSAMPLE_SOURCE,
   BLOOM_UPSAMPLE_SOURCE,
 } from './bloom-shaders';
+import { buildMaterial } from '../material-builder';
+import type { RendererCapabilities } from '../renderer-capabilities';
 
 export interface BloomChainConfig {
   /** Number of mip levels (1..12). Higher = wider, softer bloom. */
@@ -38,6 +40,8 @@ export interface BloomChainConfig {
   /** Initial canvas size in pixels (pre-downsample). */
   width: number;
   height: number;
+  /** Renderer capabilities; threaded through to the buildMaterial branch. */
+  caps: RendererCapabilities;
 }
 
 interface MipLevel {
@@ -59,9 +63,29 @@ export class BloomChain {
 
   private mips: MipLevel[] = [];
 
-  private readonly thresholdMat: THREE.ShaderMaterial;
-  private readonly downsampleMat: THREE.ShaderMaterial;
-  private readonly upsampleMat: THREE.ShaderMaterial;
+  private readonly thresholdMat: THREE.Material;
+  private readonly downsampleMat: THREE.Material;
+  private readonly upsampleMat: THREE.Material;
+
+  // Uniforms held by reference so render() can mutate them under
+  // either ShaderMaterial (WebGL2) or NodeMaterial (WebGPU). With
+  // NodeMaterial there is no `.uniforms` on the material itself —
+  // the TSL `uniform()` nodes hold the IUniform refs we pass in.
+  private readonly thresholdUniforms: {
+    uInput: THREE.IUniform<THREE.Texture | null>;
+    uTexelSize: THREE.IUniform<THREE.Vector2>;
+    uThreshold: THREE.IUniform<number>;
+    uSmoothing: THREE.IUniform<number>;
+  };
+  private readonly downsampleUniforms: {
+    uInput: THREE.IUniform<THREE.Texture | null>;
+    uTexelSize: THREE.IUniform<THREE.Vector2>;
+  };
+  private readonly upsampleUniforms: {
+    uInput: THREE.IUniform<THREE.Texture | null>;
+    uTexelSize: THREE.IUniform<THREE.Vector2>;
+    uRadius: THREE.IUniform<number>;
+  };
 
   private readonly fullscreenScene: THREE.Scene;
   private readonly fullscreenMesh: THREE.Mesh;
@@ -73,35 +97,44 @@ export class BloomChain {
     this.smoothing = cfg.smoothing ?? 0.01;
     this.radius = cfg.radius ?? 1.0;
 
-    // Bloom pyramid uses HalfFloat for HDR preservation.
-    const buildMaterial = (
-      source: typeof BLOOM_THRESHOLD_SOURCE,
-      blending: THREE.Blending = THREE.NoBlending
-    ) => {
-      return new THREE.ShaderMaterial({
-        vertexShader: source.webgl.vertex,
-        fragmentShader: source.webgl.fragment,
-        glslVersion: THREE.GLSL3,
-        depthTest: false,
-        depthWrite: false,
-        // Bypass renderer-level tone mapping injection on custom
-        // post-processing materials; we manage HDR/LDR explicitly.
-        toneMapped: false,
-        blending,
-        uniforms: {
-          uInput: { value: null as THREE.Texture | null },
-          uTexelSize: { value: new THREE.Vector2(1, 1) },
-          uThreshold: { value: this.threshold },
-          uSmoothing: { value: this.smoothing },
-          uRadius: { value: this.radius },
-        },
-      });
+    this.thresholdUniforms = {
+      uInput: { value: null },
+      uTexelSize: { value: new THREE.Vector2(1, 1) },
+      uThreshold: { value: this.threshold },
+      uSmoothing: { value: this.smoothing },
+    };
+    this.downsampleUniforms = {
+      uInput: { value: null },
+      uTexelSize: { value: new THREE.Vector2(1, 1) },
+    };
+    this.upsampleUniforms = {
+      uInput: { value: null },
+      uTexelSize: { value: new THREE.Vector2(1, 1) },
+      uRadius: { value: this.radius },
     };
 
-    this.thresholdMat = buildMaterial(BLOOM_THRESHOLD_SOURCE);
-    this.downsampleMat = buildMaterial(BLOOM_DOWNSAMPLE_SOURCE);
-    // Upsample blends additively onto the previous (larger) mip.
-    this.upsampleMat = buildMaterial(BLOOM_UPSAMPLE_SOURCE, THREE.AdditiveBlending);
+    this.thresholdMat = buildMaterial(
+      BLOOM_THRESHOLD_SOURCE,
+      { uniforms: this.thresholdUniforms, depthTest: false, depthWrite: false, toneMapped: false },
+      cfg.caps
+    );
+    this.downsampleMat = buildMaterial(
+      BLOOM_DOWNSAMPLE_SOURCE,
+      { uniforms: this.downsampleUniforms, depthTest: false, depthWrite: false, toneMapped: false },
+      cfg.caps
+    );
+    this.upsampleMat = buildMaterial(
+      BLOOM_UPSAMPLE_SOURCE,
+      {
+        uniforms: this.upsampleUniforms,
+        depthTest: false,
+        depthWrite: false,
+        toneMapped: false,
+        // Upsample blends additively onto the previous (larger) mip.
+        blending: THREE.AdditiveBlending,
+      },
+      cfg.caps
+    );
 
     // Fullscreen triangle (NDC positions {-1,-1}, {3,-1}, {-1,3}).
     // One triangle covers the screen with no clipping waste.
@@ -149,12 +182,12 @@ export class BloomChain {
 
   setThreshold(t: number): void {
     this.threshold = t;
-    this.thresholdMat.uniforms.uThreshold.value = t;
+    this.thresholdUniforms.uThreshold.value = t;
   }
 
   setRadius(r: number): void {
     this.radius = r;
-    this.upsampleMat.uniforms.uRadius.value = r;
+    this.upsampleUniforms.uRadius.value = r;
   }
 
   setSize(width: number, height: number): void {
@@ -177,8 +210,8 @@ export class BloomChain {
 
     // Pass 0: threshold + downsample sceneTexture → mip[0]
     this.fullscreenMesh.material = this.thresholdMat;
-    this.thresholdMat.uniforms.uInput.value = sceneTexture;
-    this.thresholdMat.uniforms.uTexelSize.value.set(
+    this.thresholdUniforms.uInput.value = sceneTexture;
+    this.thresholdUniforms.uTexelSize.value.set(
       1 / this.mips[0].width,
       1 / this.mips[0].height
     );
@@ -194,8 +227,8 @@ export class BloomChain {
     for (let i = 0; i < actualLevels - 1; i++) {
       const src = this.mips[i];
       const dst = this.mips[i + 1];
-      this.downsampleMat.uniforms.uInput.value = src.target.texture;
-      this.downsampleMat.uniforms.uTexelSize.value.set(1 / dst.width, 1 / dst.height);
+      this.downsampleUniforms.uInput.value = src.target.texture;
+      this.downsampleUniforms.uTexelSize.value.set(1 / dst.width, 1 / dst.height);
       renderer.setRenderTarget(dst.target);
       renderer.render(this.fullscreenScene, this.camera);
     }
@@ -207,8 +240,8 @@ export class BloomChain {
     for (let i = actualLevels - 2; i >= 0; i--) {
       const src = this.mips[i + 1];
       const dst = this.mips[i];
-      this.upsampleMat.uniforms.uInput.value = src.target.texture;
-      this.upsampleMat.uniforms.uTexelSize.value.set(1 / src.width, 1 / src.height);
+      this.upsampleUniforms.uInput.value = src.target.texture;
+      this.upsampleUniforms.uTexelSize.value.set(1 / src.width, 1 / src.height);
       renderer.setRenderTarget(dst.target);
       // Skip autoclear so additive blend writes onto existing mip[i]
       renderer.autoClear = false;

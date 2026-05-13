@@ -234,6 +234,7 @@ export class PostProcessingManager {
       radius: this.bloomRadius,
       width,
       height,
+      caps: this.capabilities,
     });
     this.megaShader.toggleBloom(true);
     this.megaShader.setBloom(this.bloomIntensity, this.bloomChain.outputTexture);
