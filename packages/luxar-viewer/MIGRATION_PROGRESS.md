@@ -105,6 +105,25 @@ Tracked separately because they unblock the per-shader rows below.
   widening the helper signature to accept `zarr.Readable` or
   narrowing the caller sites' array types. Estimated half-day.
   Must complete before M2 lands.
+- [ ] **`MegaShaderMaterial` consumer delegation** — the mega TSL
+  factory (`mega.tsl.ts`) lands in M9 with parity-tested coverage
+  for default, USE_BLOOM, and USE_VIGNETTE configurations, but the
+  consumer-side material (`mega-shader-material.ts`) still
+  `extends THREE.ShaderMaterial`. Switching it to compose-via-
+  `buildMaterial` is invasive because the existing setters
+  (`toggleVignette`, `setToneMapping`, etc.) flip GLSL `defines`,
+  which TSL doesn't have a runtime analog for — the TSL path has
+  to re-call the factory on each toggle. Defer until the M18
+  default-flip needs it; production stays on the WebGL2 path
+  until then.
+- [ ] **Mega detector-noise TSL port (M9-bis)** — the GLSL3
+  `applyDetectorNoise` uses a Bob Jenkins hash chain + Anscombe
+  variance-stabilising transform to approximate Poisson shot
+  noise. TSL has the primitives (`bitcast`, `floatBitsToUint`,
+  `shiftLeft`, `bitXor`) but the port is non-mechanical because
+  the hash is a long sequence of `uint`-only ops. The mega TSL
+  factory throws if `config.useDetectorNoise` is true so callers
+  see a loud failure rather than a silent missing effect.
 - [ ] **`setupRenderer` becomes async** — `scene-manager.ts`. Branches
   on `import.meta.env.VITE_LUXAR_USE_WEBGPU_RENDERER` to construct
   either `WebGLRenderer` or `WebGPURenderer({forceWebGL: true})`.
@@ -155,7 +174,7 @@ Legend:
 
 | Shader              | G | T | F | R | D |
 |---------------------|---|---|---|---|---|
-| `mega`              | x |   |   |   |   |
+| `mega`              | x | x | x |   |   |
 | `bloom-threshold`   | x | x |   |   |   |
 | `bloom-downsample`  | x | x |   |   |   |
 | `bloom-upsample`    | x | x |   |   |   |

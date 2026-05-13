@@ -138,4 +138,50 @@ test.describe('TSL ↔ GLSL shader parity', () => {
         `TSL first 4 pixels:\n${previewPixels(tslResult.pixels)}`
     ).toBeLessThan(2.0);
   });
+
+  test('mega (default config, Linear tone mapping) renders identically', async ({ page }) => {
+    await bootHarness(page);
+
+    const glslPixels = await runGLSL(page, 'mega');
+    const tslResult = await runTSL(page, 'mega');
+
+    expect(tslResult.pixels.length).toBe(glslPixels.length);
+    const diff = meanAbsDiff(glslPixels, tslResult.pixels);
+    expect(
+      diff,
+      `Mega parity: mean abs diff ${diff.toFixed(2)} on 0-255 scale.\n` +
+        `GLSL first 4 pixels:\n${previewPixels(glslPixels)}\n` +
+        `TSL first 4 pixels:\n${previewPixels(tslResult.pixels)}`
+    ).toBeLessThan(2.0);
+  });
+
+  test('mega with USE_BLOOM matches across backends', async ({ page }) => {
+    await bootHarness(page);
+
+    const glslPixels = await runGLSL(page, 'mega-bloom');
+    const tslResult = await runTSL(page, 'mega-bloom');
+
+    const diff = meanAbsDiff(glslPixels, tslResult.pixels);
+    expect(
+      diff,
+      `Mega+bloom parity: mean abs diff ${diff.toFixed(2)} on 0-255 scale.\n` +
+        `GLSL first 4 pixels:\n${previewPixels(glslPixels)}\n` +
+        `TSL first 4 pixels:\n${previewPixels(tslResult.pixels)}`
+    ).toBeLessThan(2.0);
+  });
+
+  test('mega with USE_VIGNETTE matches across backends', async ({ page }) => {
+    await bootHarness(page);
+
+    const glslPixels = await runGLSL(page, 'mega-vignette');
+    const tslResult = await runTSL(page, 'mega-vignette');
+
+    const diff = meanAbsDiff(glslPixels, tslResult.pixels);
+    expect(
+      diff,
+      `Mega+vignette parity: mean abs diff ${diff.toFixed(2)} on 0-255 scale.\n` +
+        `GLSL first 4 pixels:\n${previewPixels(glslPixels)}\n` +
+        `TSL first 4 pixels:\n${previewPixels(tslResult.pixels)}`
+    ).toBeLessThan(2.0);
+  });
 });
