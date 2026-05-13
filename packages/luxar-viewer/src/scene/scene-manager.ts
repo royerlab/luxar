@@ -21,7 +21,6 @@ import { disposeColormapTextures } from '../rendering/colormap-textures';
 import {
   createRendererCapabilities,
   type RendererCapabilities,
-  type Renderer,
 } from '../rendering/renderer-capabilities';
 import { configureHDRRenderer, logHDRCapabilities } from '../utils/hdr-detection';
 import {
@@ -89,11 +88,16 @@ export class SceneManager extends THREE.EventDispatcher<{
   'webgl-context-restored': {};
 }> {
   /**
-   * The graphics-API renderer. Typed as the `Renderer` union from
-   * `renderer-capabilities.ts` so the WebGPU port widens this in
-   * one place. Today the union has a single arm (WebGLRenderer).
+   * The graphics-API renderer. Typed concretely as
+   * `THREE.WebGLRenderer` today; the `Renderer` union in
+   * `renderer-capabilities.ts` includes `WebGPURenderer`, but the
+   * downstream consumers (PostProcessingManager, picking, …) all
+   * still call WebGLRenderer-specific methods. Widening this
+   * field's type to `Renderer` happens piecemeal during the per-
+   * shader TSL ports (M11-M16). The WebGPU branch in
+   * `setupWebGPURenderer` casts at the boundary until then.
    */
-  public renderer!: Renderer;
+  public renderer!: THREE.WebGLRenderer;
 
   /**
    * Capabilities snapshot for the active renderer. Hides raw-GL queries
@@ -231,7 +235,7 @@ export class SceneManager extends THREE.EventDispatcher<{
   async init(options: { canvas: HTMLCanvasElement; debug?: boolean }): Promise<void> {
     this.canvasElement = options.canvas;
     this.debug = options.debug ?? false;
-    this.setupRenderer();
+    await this.setupRenderer();
     this.setupContextLossHandling(); // Setup context loss recovery
     this.setupScene();
     this.setupCamera();
@@ -254,7 +258,21 @@ export class SceneManager extends THREE.EventDispatcher<{
    * - Accessibility attributes for screen readers
    * - Fullscreen immersive experience
    */
-  private setupRenderer(): void {
+  private async setupRenderer(): Promise<void> {
+    // Migration toggle: when `VITE_LUXAR_USE_WEBGPU_RENDERER=1`,
+    // construct a `WebGPURenderer` (with `forceWebGL: true` until
+    // the TSL ports complete) instead of `WebGLRenderer`. The
+    // WebGPU build is dynamically imported so the default bundle
+    // doesn't pull in `three/webgpu` for users on the WebGL2 path.
+    const useWebGPU = import.meta.env.VITE_LUXAR_USE_WEBGPU_RENDERER === '1';
+    if (useWebGPU) {
+      await this.setupWebGPURenderer();
+      return;
+    }
+    await this.setupWebGLRenderer();
+  }
+
+  private async setupWebGLRenderer(): Promise<void> {
     // Try to get HDR canvas context first using config values.
     //
     // Allow-list rule: a `getContext` call is permitted ONLY if it
@@ -339,6 +357,49 @@ export class SceneManager extends THREE.EventDispatcher<{
 
     // Immediately clear to the scene background color to avoid a white flash
     // before the first frame renders (alpha:false makes the canvas opaque white by default)
+    this.renderer.setClearColor(config.scene.backgroundColor);
+    this.renderer.clear();
+  }
+
+  /**
+   * Migration-time WebGPU renderer construction. Behind the
+   * `VITE_LUXAR_USE_WEBGPU_RENDERER=1` env flag. Constructs a
+   * `WebGPURenderer` with `forceWebGL: true` until the TSL ports
+   * complete (per `BROWSER_SUPPORT_POLICY.md`: `ShaderMaterial`
+   * isn't supported under `WebGPURenderer` without `forceWebGL`).
+   *
+   * Once the TSL ports land (M11-M16), the `forceWebGL: true`
+   * flag drops and this path becomes the default in M18.
+   */
+  private async setupWebGPURenderer(): Promise<void> {
+    log.info(Modules.SCENE_MANAGER, 'Constructing WebGPURenderer (forceWebGL: true)…');
+    // Dynamic import so the WebGPU build doesn't pull into the
+    // default bundle for users on the WebGL2 path.
+    const { WebGPURenderer } = await import('three/webgpu');
+    const gpuRenderer = new WebGPURenderer({
+      canvas: this.canvasElement,
+      antialias: config.webgl.context.antialias,
+      alpha: config.webgl.context.alpha,
+      forceWebGL: true,
+    });
+    await gpuRenderer.init();
+    // Cast to WebGLRenderer at the boundary. Downstream consumers
+    // (PostProcessingManager, picking-system, …) still call
+    // WebGLRenderer-specific methods. Per-shader TSL ports widen
+    // these consumers incrementally; M18 flips the default and
+    // M19 removes the cast.
+    this.renderer = gpuRenderer as unknown as THREE.WebGLRenderer;
+
+    this.capabilities = createRendererCapabilities(this.renderer);
+    log.info(Modules.RENDERER, `Rendering API: ${this.capabilities.api}`);
+
+    this.updateRendererSize();
+
+    const hdrCapabilities = this.capabilities.hdr;
+    logHDRCapabilities(hdrCapabilities);
+
+    configureHDRRenderer(this.renderer, hdrCapabilities);
+
     this.renderer.setClearColor(config.scene.backgroundColor);
     this.renderer.clear();
   }
