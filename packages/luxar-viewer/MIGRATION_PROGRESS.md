@@ -80,7 +80,14 @@ Tracked separately because they unblock the per-shader rows below.
   port.
 - [ ] **`readBackbufferPixels` body** swaps WebGL2 `gl.readPixels`
   for the WebGPU `buffer.mapAsync` equivalent
-  (`renderer-capabilities.ts`).
+  (`renderer-capabilities.ts`). M17 deferred to M17-bis: needs
+  `renderToImageData` (post-processing-manager) to render the
+  full pipeline into an offscreen `WebGLRenderTarget` first,
+  then `readRenderTargetPixelsAsync(target, …)`. WebGPURenderer
+  doesn't expose the canvas backbuffer for direct readback. M17
+  today documents the error path under WebGPU; the wider
+  refactor lands when M18 flips the default (since today the
+  WebGL2 path covers this case fine).
 - [ ] **`readbackAndVote` becomes async** — per `PICKING_DESIGN.md`.
   `performPick` already gates on `_dirty`; the only edit is adding
   `async` to both methods and `await` at the readback call.
