@@ -34,6 +34,9 @@ import { pointWebGPUFactory } from '../../../rendering/point.tsl';
 import { POINT_PICK_SOURCE } from '../../../rendering/picking/picking-shaders';
 import { pointPickWebGPUFactory } from '../../../rendering/picking/point-pick.tsl';
 import { createPointQuadGeometry } from '../../../rendering/point-geometry';
+import { LINE_SOURCE } from '../../../rendering/shaders/line-shaders';
+import { lineWebGPUFactory } from '../../../rendering/line.tsl';
+import { createLineQuadGeometry } from '../../../rendering/line-geometry';
 import type { ShaderSource } from '../../../rendering/shaders/shader-source';
 
 /**
@@ -162,6 +165,62 @@ function buildPointInstancedMesh(material: THREE.Material): THREE.Object3D {
   geom.setAttribute(
     'aColor',
     new THREE.InstancedBufferAttribute(new Float32Array([1.0, 0.5, 0.25]), 3)
+  );
+  const mesh = new THREE.Mesh(geom, material);
+  mesh.frustumCulled = false;
+  return mesh;
+}
+
+/**
+ * Build a single-segment line mesh for parity testing. Horizontal
+ * segment across the viewport in NDC, generous width so it covers
+ * many pixels and exposes both the perpendicular falloff and edge AA.
+ */
+function buildLineInstancedMesh(material: THREE.Material): THREE.Object3D {
+  const geom = createLineQuadGeometry();
+  geom.setAttribute(
+    'aStartPos',
+    new THREE.InstancedBufferAttribute(new Float32Array([-0.5, 0, 0]), 3)
+  );
+  geom.setAttribute(
+    'aEndPos',
+    new THREE.InstancedBufferAttribute(new Float32Array([0.5, 0, 0]), 3)
+  );
+  geom.setAttribute(
+    'aStartColor',
+    new THREE.InstancedBufferAttribute(new Float32Array([1.0, 0.5, 0.25]), 3)
+  );
+  geom.setAttribute(
+    'aEndColor',
+    new THREE.InstancedBufferAttribute(new Float32Array([1.0, 0.5, 0.25]), 3)
+  );
+  geom.setAttribute(
+    'aStartWidth',
+    new THREE.InstancedBufferAttribute(new Float32Array([0.1]), 1)
+  );
+  geom.setAttribute(
+    'aEndWidth',
+    new THREE.InstancedBufferAttribute(new Float32Array([0.1]), 1)
+  );
+  geom.setAttribute(
+    'aStartSharpness',
+    new THREE.InstancedBufferAttribute(new Float32Array([2.0]), 1)
+  );
+  geom.setAttribute(
+    'aEndSharpness',
+    new THREE.InstancedBufferAttribute(new Float32Array([2.0]), 1)
+  );
+  geom.setAttribute(
+    'aSegmentLength',
+    new THREE.InstancedBufferAttribute(new Float32Array([1.0]), 1)
+  );
+  geom.setAttribute(
+    'aStartClipped',
+    new THREE.InstancedBufferAttribute(new Float32Array([0.0]), 1)
+  );
+  geom.setAttribute(
+    'aEndClipped',
+    new THREE.InstancedBufferAttribute(new Float32Array([0.0]), 1)
   );
   const mesh = new THREE.Mesh(geom, material);
   mesh.frustumCulled = false;
@@ -306,6 +365,29 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
       return m;
     },
     buildMesh: buildPointInstancedMesh,
+  },
+  // M13 line parity: instanced quad line with width, sharpness, GOG.
+  // Ortho camera so screen-space conversion is deterministic.
+  line: {
+    source: LINE_SOURCE,
+    buildUniforms: () => ({
+      uFOV: { value: 2.0 }, // ortho frustum height
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      uIsOrtho: { value: 1 },
+      uNearCull: { value: 0.01 },
+      uMaxLinePixelWidth: { value: 32.0 },
+      uOpacity: { value: 1.0 },
+      uInvGamma: { value: 1.0 / 2.2 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+    }),
+    buildTSLMaterial: (uniforms) => {
+      const m = lineWebGPUFactory(uniforms, {}) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: buildLineInstancedMesh,
   },
   // M12 point-pick parity: identical sprite layout to `point` but
   // the fragment outputs (nodeId, elementId, brightness, 1.0) and

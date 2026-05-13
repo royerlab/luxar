@@ -226,6 +226,32 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     ).toBeLessThan(2.0);
   });
 
+  test('line: instanced quad line with width / sharpness / GOG', async ({ page }) => {
+    await bootHarness(page);
+
+    const glslPixels = await runGLSL(page, 'line');
+    const tslResult = await runTSL(page, 'line');
+
+    const diff = meanAbsDiff(glslPixels, tslResult.pixels);
+    // Line should run horizontally across y=32 in the 64×64 viewport.
+    // Sample along the line (varying x at y=32) and across the line
+    // (varying y at x=32, the centre).
+    const samplePx = (px: number[], x: number, y: number) =>
+      `${px[(y * 64 + x) * 4]},${px[(y * 64 + x) * 4 + 1]},${px[(y * 64 + x) * 4 + 2]},${px[(y * 64 + x) * 4 + 3]}`;
+    const samples = [
+      `  (16,32) GLSL=${samplePx(glslPixels, 16, 32)} TSL=${samplePx(tslResult.pixels, 16, 32)}`,
+      `  (32,32) GLSL=${samplePx(glslPixels, 32, 32)} TSL=${samplePx(tslResult.pixels, 32, 32)}`,
+      `  (48,32) GLSL=${samplePx(glslPixels, 48, 32)} TSL=${samplePx(tslResult.pixels, 48, 32)}`,
+      `  (32,28) GLSL=${samplePx(glslPixels, 32, 28)} TSL=${samplePx(tslResult.pixels, 32, 28)}`,
+      `  (32,30) GLSL=${samplePx(glslPixels, 32, 30)} TSL=${samplePx(tslResult.pixels, 32, 30)}`,
+      `  (32,34) GLSL=${samplePx(glslPixels, 32, 34)} TSL=${samplePx(tslResult.pixels, 32, 34)}`,
+    ].join('\n');
+    expect(
+      diff,
+      `Line parity: mean abs diff ${diff.toFixed(2)} on 0-255 scale.\nLine samples:\n${samples}`
+    ).toBeLessThan(2.0);
+  });
+
   test('point-pick: tight sprite with nodeId / elementId / brightness output', async ({
     page,
   }) => {
