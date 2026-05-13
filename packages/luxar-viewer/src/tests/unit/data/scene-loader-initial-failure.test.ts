@@ -73,7 +73,7 @@ vi.mock('../../../rendering/colormap-textures', () => ({
 }));
 
 describe('NodeFactory.createEmptyPointsNode', () => {
-  it('produces a THREE.Points with empty geometry and correct userData', () => {
+  it('produces a THREE.Mesh with empty geometry and correct userData', () => {
     const factory = new NodeFactory();
     const attrs: PointsMetadata = {
       n_points: 100,
@@ -84,18 +84,20 @@ describe('NodeFactory.createEmptyPointsNode', () => {
 
     const placeholder = factory.createEmptyPointsNode('/empty-points', attrs, loader);
 
-    expect(placeholder).toBeInstanceOf(THREE.Points);
+    // After the container migration, points are THREE.Mesh with
+    // instanced quad geometry — aCenter is the per-instance position.
+    expect(placeholder).toBeInstanceOf(THREE.Mesh);
     expect(placeholder.name).toBe('/empty-points');
     expect(placeholder.userData.nodeType).toBe('points');
     expect(placeholder.userData.attrs).toBe(attrs);
     expect(placeholder.userData.loader).toBe(loader);
     expect(placeholder.userData.visiblePointCount).toBe(0);
 
-    // Geometry exists but has zero points.
+    // Geometry exists but has zero per-instance positions.
     expect(placeholder.geometry).toBeDefined();
-    const positionAttr = placeholder.geometry.getAttribute('position') as THREE.BufferAttribute;
-    expect(positionAttr).toBeDefined();
-    expect(positionAttr.count).toBe(0);
+    const centerAttr = placeholder.geometry.getAttribute('aCenter') as THREE.InstancedBufferAttribute;
+    expect(centerAttr).toBeDefined();
+    expect(centerAttr.count).toBe(0);
   });
 });
 

@@ -48,7 +48,9 @@ describe('PointMaterial', () => {
       expect(material.uniforms.pointSizeFactor.value).toBeCloseTo(expectedPointSizeFactor, 5);
       expect(material.uniforms.maxPointSize.value).toBe(1080 * 0.5);
 
-      expect(material.vertexColors).toBe(true);
+      // After the container migration, vertexColors is unconditionally
+      // false — the shader reads aColor as an explicit InstancedBufferAttribute.
+      expect(material.vertexColors).toBe(false);
       expect(material.transparent).toBe(true);
       expect(material.depthWrite).toBe(false);
       expect(material.toneMapped).toBe(false);
@@ -77,8 +79,10 @@ describe('PointMaterial', () => {
 
       // E.2: radius normalization now flows through sanitizeNonNegative
       // from glsl-lib (replaces the inline isnan/isinf/<0 check).
+      // After the container migration, the input attribute is the
+      // per-instance `aRadius` (was per-vertex `radius`).
       expect(material.vertexShader).toContain(
-        'float normalizedRadius = sanitizeNonNegative(radius * radiusScale'
+        'float normalizedRadius = sanitizeNonNegative(aRadius * radiusScale'
       );
 
       // OPTIMIZATION: Check for inversesqrt with ortho branching
@@ -90,10 +94,11 @@ describe('PointMaterial', () => {
         'float basePointSize = normalizedRadius * pointSizeFactor * invDistance'
       );
 
-      // Check that gl_PointSize uses pre-computed maxPointSize
+      // Check pointSize clamp + sprite expansion (replaces gl_PointSize).
       expect(material.vertexShader).toContain('uniform float maxPointSize');
+      expect(material.vertexShader).toContain('pointSize = max(1.0, min(pointSize, maxPointSize))');
       expect(material.vertexShader).toContain(
-        'gl_PointSize = max(1.0, min(pointSize, maxPointSize))'
+        'vec2 offsetClip = aQuadCorner * (pointSize / uResolution) * projCenter.w'
       );
 
       // Check that sharpness compensation IS applied
@@ -104,18 +109,22 @@ describe('PointMaterial', () => {
         'float pointSize = basePointSize * sharpnessCompensation'
       );
 
-      // Check for attributes (GLSL ES 3.0 uses "in" instead of "attribute")
-      expect(material.vertexShader).toContain('in float radius');
-      expect(material.vertexShader).toContain('in float sharpness');
+      // Per-instance attributes (post-migration). aQuadCorner is per-vertex.
+      expect(material.vertexShader).toContain('in vec2 aQuadCorner');
+      expect(material.vertexShader).toContain('in vec3 aCenter');
+      expect(material.vertexShader).toContain('in float aRadius');
+      expect(material.vertexShader).toContain('in float aSharpness');
+      expect(material.vertexShader).toContain('in vec3 aColor');
 
       // Check for optimized uniforms
       expect(material.vertexShader).toContain('uniform float radiusScale');
       expect(material.vertexShader).toContain('uniform float sharpnessScale');
+      expect(material.vertexShader).toContain('uniform vec2 uResolution');
 
       // E.2: sharpness normalization now flows through sanitizePositive
       // from glsl-lib (replaces the inline isnan/isinf/<=0 check).
       expect(material.vertexShader).toContain(
-        'float normalizedSharpness = sanitizePositive(sharpness * sharpnessScale'
+        'float normalizedSharpness = sanitizePositive(aSharpness * sharpnessScale'
       );
       expect(material.vertexShader).toContain('vSharpness = normalizedSharpness');
 
@@ -129,13 +138,16 @@ describe('PointMaterial', () => {
       // Check for mediump precision on varyings (reduces register pressure)
       expect(material.vertexShader).toContain('out mediump vec3 vColor');
       expect(material.vertexShader).toContain('out mediump float vSharpness');
+      // Sprite UV varying (replaces gl_PointCoord).
+      expect(material.vertexShader).toContain('out mediump vec2 vSpriteCoord');
     });
 
     it('should have correct fragment shader with HDR handling and optimizations', () => {
       const material = new PointMaterial();
 
-      // Check for optimizations in the shader
-      expect(material.fragmentShader).toContain('vec2 centered = gl_PointCoord - 0.5');
+      // After the container migration, the fragment reads the sprite
+      // UV from a varying (was `gl_PointCoord`).
+      expect(material.fragmentShader).toContain('vec2 centered = vSpriteCoord - 0.5');
       expect(material.fragmentShader).toContain('float r2 = dot(centered, centered)');
 
       // OPTIMIZATION: sqrt(4.0 * r2) combines sqrt and multiply
@@ -228,10 +240,9 @@ describe('PointMaterial', () => {
     it('should clamp point size to avoid undefined behavior', () => {
       const material = new PointMaterial();
 
-      // Check gl_PointSize has minimum of 1.0, uses pre-computed maxPointSize
-      expect(material.vertexShader).toContain(
-        'gl_PointSize = max(1.0, min(pointSize, maxPointSize))'
-      );
+      // Point size clamps to [1, maxPointSize]; the sprite is then
+      // expanded in NDC via aQuadCorner.
+      expect(material.vertexShader).toContain('pointSize = max(1.0, min(pointSize, maxPointSize))');
 
       // Check comment about zero-radius filtering
       expect(material.vertexShader).toContain('Zero-radius filtering happens in fragment shader');

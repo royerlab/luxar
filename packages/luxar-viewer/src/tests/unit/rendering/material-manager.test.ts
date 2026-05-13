@@ -99,9 +99,11 @@ describe('MaterialManager', () => {
       // Verify it's a real PointMaterial instance
       expect(material).toBeInstanceOf(PointMaterial);
 
-      // Test REAL vertex shader content (GLSL ES 3.0 uses "in" instead of "attribute")
-      expect(material.vertexShader).toContain('in float radius');
-      expect(material.vertexShader).toContain('in float sharpness');
+      // Test REAL vertex shader content (post-migration: per-instance
+      // attributes prefixed `a*`, plus the per-vertex `aQuadCorner`).
+      expect(material.vertexShader).toContain('in float aRadius');
+      expect(material.vertexShader).toContain('in float aSharpness');
+      expect(material.vertexShader).toContain('in vec2 aQuadCorner');
       expect(material.vertexShader).toContain('uniform float pointSizeFactor');
       expect(material.vertexShader).toContain('uniform float maxPointSize');
       expect(material.vertexShader).toContain('out mediump vec3 vColor');

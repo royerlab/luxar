@@ -220,7 +220,7 @@ describe('GPUBufferPool scalar attribute', () => {
       },
     };
     const g = pool.acquirePointsGeometry('p1', data, 1);
-    expect(g.hasAttribute('scalar')).toBe(false);
+    expect(g.hasAttribute('aScalar')).toBe(false);
   });
 
   it('detectAttributeTypes emits Float16Array tag for Float16 input', () => {
@@ -247,9 +247,9 @@ describe('GPUBufferPool scalar attribute', () => {
     // Geometry storage is Float32 (THREE.js doesn't accept Float16) and
     // values get widened at upload — but the dtype tag is what governs
     // pool reuse vs re-allocation.
-    expect(g1.hasAttribute('scalar')).toBe(true);
+    expect(g1.hasAttribute('aScalar')).toBe(true);
     pool.updatePointsGeometry(g1, data16, 2);
-    const attr = g1.getAttribute('scalar') as THREE.BufferAttribute;
+    const attr = g1.getAttribute('aScalar') as THREE.BufferAttribute;
     expect((attr.array as Float32Array)[0]).toBeCloseTo(0.25, 2);
     expect((attr.array as Float32Array)[1]).toBeCloseTo(0.75, 2);
 
@@ -277,8 +277,8 @@ describe('GPUBufferPool scalar attribute', () => {
     };
     const g = pool.acquirePointsGeometry('p2', data, 2);
     pool.updatePointsGeometry(g, data, 2);
-    expect(g.hasAttribute('scalar')).toBe(true);
-    const attr = g.getAttribute('scalar') as THREE.BufferAttribute;
+    expect(g.hasAttribute('aScalar')).toBe(true);
+    const attr = g.getAttribute('aScalar') as THREE.BufferAttribute;
     expect(attr.itemSize).toBe(1);
     expect((attr.array as Float32Array)[0]).toBeCloseTo(0.3);
     expect((attr.array as Float32Array)[1]).toBeCloseTo(0.7);
@@ -300,7 +300,7 @@ describe('GPUBufferPool scalar attribute', () => {
     };
     const g = pool.acquirePointsGeometry('p3', data, 1);
     pool.updatePointsGeometry(g, data, 1);
-    const attr = g.getAttribute('scalar') as THREE.BufferAttribute;
+    const attr = g.getAttribute('aScalar') as THREE.BufferAttribute;
     expect(attr.array).toBeInstanceOf(Uint8Array);
     expect(attr.normalized).toBe(true);
     expect((attr.array as Uint8Array)[0]).toBe(128);
@@ -357,8 +357,8 @@ describe('GPUBufferPool scalar attribute', () => {
     };
     const g = pool.acquirePointsGeometry('p5', initial, 10);
     pool.acquirePointsGeometry('p5', big, 100); // forces growth
-    expect(g.hasAttribute('scalar')).toBe(true);
-    const attr = g.getAttribute('scalar') as THREE.BufferAttribute;
+    expect(g.hasAttribute('aScalar')).toBe(true);
+    const attr = g.getAttribute('aScalar') as THREE.BufferAttribute;
     expect(attr.array.length).toBeGreaterThanOrEqual(100);
   });
 
@@ -385,7 +385,7 @@ describe('GPUBufferPool scalar attribute', () => {
     const noScalars: LoadedPointsData = { ...withScalars, scalars: undefined };
     const g2 = pool.acquirePointsGeometry('p6', noScalars, 1);
     // Type changed: no scalar attribute on the new geometry.
-    expect(g2.hasAttribute('scalar')).toBe(false);
+    expect(g2.hasAttribute('aScalar')).toBe(false);
   });
 });
 
@@ -405,7 +405,7 @@ describe('end-to-end: NodeFactory + LayersPanel guard', () => {
       },
     };
     const g = factory.createPointsGeometry(data);
-    expect(g.hasAttribute('scalar')).toBe(true);
+    expect(g.hasAttribute('aScalar')).toBe(true);
     expect(supportsScalarColormap('points', g)).toBe(true);
   });
 
