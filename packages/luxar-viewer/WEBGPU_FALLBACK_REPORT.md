@@ -98,16 +98,61 @@ determines which prep item the fix belongs in:
 
 ## Findings
 
-_(To be filled in after the run.)_
+### Run conditions
+
+The experiment attempted in M3 (commit after M2 `1de5ece0`)
+surfaced a Playwright-config gotcha: `playwright.config.ts` sets
+`reuseExistingServer: !process.env.CI`, so when a dev server is
+already running on port 5173 from another session, Playwright
+reuses it instead of spawning one with the test's env vars.
+Result: setting `VITE_LUXAR_USE_WEBGPU_RENDERER=1` in the
+Playwright invocation has **no effect on the reused server**.
+All "WebGPU fallback" runs end up testing the default
+WebGLRenderer path.
+
+To run M3 cleanly, do **one** of:
+
+1. Kill the existing dev server before launching Playwright, so
+   the test's env var reaches the freshly-spawned process.
+2. Add a `webServer.env` block to `playwright.config.ts` that
+   forwards `VITE_LUXAR_USE_WEBGPU_RENDERER` to the spawned
+   server. This is the right long-term fix — see M3-bis below.
+3. Build the viewer with the env var (`VITE_LUXAR_USE_WEBGPU_RENDERER=1
+   pnpm build:vite`) and serve the static build for Playwright.
+
+### Decision (M3)
+
+Rather than block on the dev-server-conflict workaround, we
+proceed directly to M4 (the FXAA TSL port). The experiment's
+value is the per-shader signal it produces; that signal is much
+sharper *after* at least one shader has a TSL factory to test
+against (since today every `ShaderMaterial` would either crash
+under real WebGPU or pass-through under `forceWebGL: true` —
+neither is informative).
+
+M5 reruns the fallback experiment **scoped to FXAA only**,
+which is the first meaningful per-shader datapoint. The
+broader fallback run lands as a separate sweep after Phase 3
+(post-processing ports complete) and again after Phase 5
+(scene materials complete) — see `MIGRATION_PROGRESS.md`'s `F`
+column.
+
+### Follow-up: M3-bis (deferred)
+
+Add `webServer.env: { VITE_LUXAR_USE_WEBGPU_RENDERER:
+process.env.VITE_LUXAR_USE_WEBGPU_RENDERER ?? '' }` to
+`playwright.config.ts` so future invocations propagate the
+flag through to the spawned dev server. Small change; lands
+alongside the first M5-scoped fallback run.
 
 ### Targeted specs
 
 | Spec | Result | Notes |
 |---|---|---|
-| `basic-rendering.spec.ts` | _pending_ | |
-| `visual-regression.spec.ts` | _pending_ | |
-| `geometry-types.spec.ts` | _pending_ | |
-| `post-processing-pipeline.spec.ts` | _pending_ | |
+| `basic-rendering.spec.ts` | _deferred to M5_ | run was inconclusive (env var didn't propagate to reused server) |
+| `visual-regression.spec.ts` | _deferred to M5_ | |
+| `geometry-types.spec.ts` | _deferred to M5_ | |
+| `post-processing-pipeline.spec.ts` | _deferred to M5_ | |
 
 ### Full suite
 
