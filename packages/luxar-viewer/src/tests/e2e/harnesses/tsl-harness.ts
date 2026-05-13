@@ -41,6 +41,8 @@ import { linePickWebGPUFactory } from '../../../rendering/picking/line-pick.tsl'
 import { createLineQuadGeometry } from '../../../rendering/line-geometry';
 import { GSPLAT_SOURCE } from '../../../rendering/shaders/gsplat-shaders';
 import { gsplatWebGPUFactory } from '../../../rendering/gsplat.tsl';
+import { GSPLAT_PICK_SOURCE } from '../../../rendering/picking/picking-shaders';
+import { gsplatPickWebGPUFactory } from '../../../rendering/picking/gsplat-pick.tsl';
 import { createGSplatQuadGeometry } from '../../../rendering/gsplat-geometry';
 import type { ShaderSource } from '../../../rendering/shaders/shader-source';
 
@@ -446,6 +448,28 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
       m.blending = THREE.NoBlending;
       return m;
     },
+    buildMesh: buildGSplatInstancedMesh,
+  },
+  // M16 gsplat-pick parity: same covariance projection as `gsplat`
+  // but fragment outputs (nodeId, elementId, brightness, 1.0) and
+  // depth = 1 - brightness. No GOG, no ray-integration boost.
+  'gsplat-pick': {
+    source: GSPLAT_PICK_SOURCE,
+    buildUniforms: () => ({
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      uFx: { value: 32.0 },
+      uFy: { value: 32.0 },
+      uTruncate: { value: 1.5 }, // tighter for picking (vs 3.0 visual)
+      uTruncateSq: { value: 2.25 },
+      uIsOrtho: { value: 1 },
+      uNearCull: { value: 0.01 },
+      uMaxExtentFactor: { value: 1.0 },
+      uNodeId: { value: 42 },
+      uShiftC: { value: Math.exp(-0.5 * 2.25) },
+      uInvOneMinusC: { value: 1.0 / (1.0 - Math.exp(-0.5 * 2.25)) },
+    }),
+    buildTSLMaterial: (uniforms) =>
+      gsplatPickWebGPUFactory(uniforms) as unknown as THREE.Material,
     buildMesh: buildGSplatInstancedMesh,
   },
   // M14 line-pick parity: same quad-expansion math as `line` but
