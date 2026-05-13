@@ -152,4 +152,10 @@ export const POINT_FRAGMENT_SHADER = /* glsl */ `
 export const POINT_SOURCE: ShaderSource = {
   name: 'point',
   webgl: { vertex: POINT_VERTEX_SHADER, fragment: POINT_FRAGMENT_SHADER },
+  // webgpu factory deferred — TSL strict typing requires careful
+  // attribute() generic params + select() type unification that
+  // exceeds the migration plan's "one shader at a time" cadence.
+  // M11 attempted a port; the type errors documented the gap.
+  // See MIGRATION_PROGRESS.md "non-shader migration tasks" for
+  // the TSL-typing playbook this needs.
 };
