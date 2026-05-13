@@ -239,7 +239,7 @@ Legend:
 | Shader            | G | T | F | R | D |
 |-------------------|---|---|---|---|---|
 | `point`           | x | x | x |   |   |
-| `line`            | x |   |   |   |   |
+| `line`            | x | x | x |   |   |
 | `gsplat`          | x |   |   |   |   |
 
 ### Post-processing
