@@ -12,6 +12,7 @@
  */
 
 import type { ShaderSource } from '../shaders/shader-source';
+import { fxaaWebGPUFactory } from './fxaa.tsl';
 
 // THREE's ShaderMaterial auto-declares `in vec3 position;` in the
 // GLSL3 prefix — do not redeclare it here.
@@ -117,4 +118,6 @@ export const FXAA_FRAGMENT_SHADER = /* glsl */ `
 export const FXAA_SOURCE: ShaderSource = {
   name: 'fxaa',
   webgl: { vertex: FXAA_VERTEX_SHADER, fragment: FXAA_FRAGMENT_SHADER },
+  webgpu: (uniforms: Record<string, unknown>) =>
+    fxaaWebGPUFactory(uniforms as Record<string, import('three').IUniform>),
 };
