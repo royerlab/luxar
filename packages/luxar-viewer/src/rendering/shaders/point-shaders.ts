@@ -20,6 +20,7 @@
  */
 import { GLSL_SANITIZE_FUNCTIONS } from './glsl-lib';
 import type { ShaderSource } from './shader-source';
+import { pointWebGPUFactory } from '../point.tsl';
 
 export const POINT_VERTEX_SHADER = /* glsl */ `
     precision highp float;
@@ -187,10 +188,10 @@ export const POINT_FRAGMENT_SHADER = /* glsl */ `
 export const POINT_SOURCE: ShaderSource = {
   name: 'point',
   webgl: { vertex: POINT_VERTEX_SHADER, fragment: POINT_FRAGMENT_SHADER },
-  // webgpu factory deferred — TSL strict typing requires careful
-  // attribute() generic params + select() type unification that
-  // exceeds the migration plan's "one shader at a time" cadence.
-  // M11 attempted a port; the type errors documented the gap.
-  // See MIGRATION_PROGRESS.md "non-shader migration tasks" for
-  // the TSL-typing playbook this needs.
+  // M11: TSL NodeMaterial that owns vertexNode (sprite expansion)
+  // and colorNode (Gaussian falloff + GOG). Default config — no
+  // toggles. Consumers needing USE_COLORMAP / LUXAR_MAX_RGB_CONTRIBUTION
+  // call `pointWebGPUFactory(uniforms, { ...flags })` directly.
+  webgpu: (uniforms: Record<string, unknown>) =>
+    pointWebGPUFactory(uniforms as Record<string, import('three').IUniform>),
 };

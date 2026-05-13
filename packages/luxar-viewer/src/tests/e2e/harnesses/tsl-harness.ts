@@ -29,6 +29,9 @@ import { FXAA_SOURCE } from '../../../rendering/post-processing/fxaa-shaders';
 import { BLOOM_THRESHOLD_SOURCE } from '../../../rendering/post-processing/bloom-shaders';
 import { MEGA_SOURCE } from '../../../rendering/post-processing/mega-shader.glsl';
 import { megaWebGPUFactory } from '../../../rendering/post-processing/mega.tsl';
+import { POINT_SOURCE } from '../../../rendering/shaders/point-shaders';
+import { pointWebGPUFactory } from '../../../rendering/point.tsl';
+import { createPointQuadGeometry } from '../../../rendering/point-geometry';
 import type { ShaderSource } from '../../../rendering/shaders/shader-source';
 
 /**
@@ -141,6 +144,28 @@ const CONST_SHADER: ShaderSource = {
 };
 
 
+/**
+ * Build a real instanced-points mesh for the M11 point parity test.
+ * One point at world origin with realistic attributes; 4-vertex quad
+ * base + InstancedBufferAttribute per-instance data (aCenter etc.).
+ */
+function buildPointInstancedMesh(material: THREE.Material): THREE.Object3D {
+  const geom = createPointQuadGeometry();
+  geom.setAttribute('aCenter', new THREE.InstancedBufferAttribute(new Float32Array([0, 0, 0]), 3));
+  geom.setAttribute('aRadius', new THREE.InstancedBufferAttribute(new Float32Array([0.5]), 1));
+  geom.setAttribute(
+    'aSharpness',
+    new THREE.InstancedBufferAttribute(new Float32Array([2.0]), 1)
+  );
+  geom.setAttribute(
+    'aColor',
+    new THREE.InstancedBufferAttribute(new Float32Array([1.0, 0.5, 0.25]), 3)
+  );
+  const mesh = new THREE.Mesh(geom, material);
+  mesh.frustumCulled = false;
+  return mesh;
+}
+
 const SHADER_REGISTRY: Record<string, RegistryEntry> = {
   'const-rgb': {
     source: CONST_SHADER,
@@ -250,6 +275,35 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
         toneMappingMode: 1,
         useVignette: true,
       }) as unknown as THREE.Material,
+  },
+  // M11 point parity: full PointMaterial sprite + GOG + Gaussian falloff.
+  // Uniforms mirror the production PointMaterial constructor; ortho mode
+  // keeps `invDistance = 1` so the test is deterministic across cameras.
+  point: {
+    source: POINT_SOURCE,
+    buildUniforms: () => ({
+      pointSizeFactor: { value: 32.0 },
+      maxPointSize: { value: 32.0 },
+      radiusScale: { value: 1.0 },
+      sharpnessScale: { value: 1.0 },
+      uIsOrtho: { value: 1 },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      opacity: { value: 1.0 },
+      invGamma: { value: 1.0 / 2.2 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+    }),
+    buildTSLMaterial: (uniforms) => {
+      const m = pointWebGPUFactory(uniforms, {}) as unknown as THREE.Material;
+      // Disable blending for raw-pixel parity against the harness's
+      // ShaderMaterial path (which uses transparent: false). Production
+      // sets AdditiveBlending; the parity test only checks fragment
+      // output, not blending semantics.
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: buildPointInstancedMesh,
   },
 };
 
