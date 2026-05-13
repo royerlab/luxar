@@ -28,8 +28,12 @@ import * as THREE from 'three';
  * `radiusScale` / `sharpnessScale` factors.
  */
 export interface InstancedPointsMeshConfig {
-  /** Per-instance world-space centre positions (pointCount × 3). */
-  positions: Float32Array;
+  /**
+   * Per-instance world-space centre positions (pointCount × 3).
+   * Named `centers` to match `InstancedGSplatsMeshConfig.centers` —
+   * the attribute is exposed to the vertex shader as `aCenter`.
+   */
+  centers: Float32Array;
   /** Per-instance radii (pointCount). Float32 or normalised Uint8. */
   radii: THREE.TypedArray;
   /** Whether `radii` should be `normalized: true` on the buffer attribute. */
@@ -53,31 +57,29 @@ export interface InstancedPointsMeshConfig {
 /**
  * Build the base quad geometry for instanced point rendering.
  *
- * Four corner vertices in unit quad space (`(-0.5, -0.5)`...
- * `(0.5, 0.5)`) plus a 2-triangle index list. The vertex shader
- * expands these into a screen-space sprite of the per-instance size,
- * mapping the corner's normalised position to the inscribed-circle
- * sprite UV (`aQuadCorner + 0.5` ∈ [0, 1]², which replaces the old
- * `gl_PointCoord`).
+ * Four corner vertices in unit quad space (`(-1, -1)` ... `(1, 1)`)
+ * plus a 2-triangle index list. The vertex shader expands these into
+ * a screen-space sprite of the per-instance size; the sprite UV
+ * (replacing the old `gl_PointCoord`) is `(aQuadCorner + 1.0) * 0.5`
+ * which lands in `[0, 1]²`.
  *
- * Returned geometry is meant to be shared across multiple
- * `THREE.Mesh` instances — `setupInstancedPointsMesh` adds the
- * per-instance attributes onto a *clone* of the base geometry so
- * each points node gets its own attribute set.
+ * Range and attribute name match `createLineQuadGeometry` and
+ * `createGSplatQuadGeometry` exactly so the three geometry types
+ * share one vertex-shader idiom for sprite expansion.
  */
 export function createPointQuadGeometry(): THREE.BufferGeometry {
   const geometry = new THREE.BufferGeometry();
 
   const quadCorners = new Float32Array([
-    -0.5, -0.5, // bottom-left
-    0.5, -0.5, // bottom-right
-    -0.5, 0.5, // top-left
-    0.5, 0.5, // top-right
+    -1, -1, // Bottom-left
+    1, -1, // Bottom-right
+    -1, 1, // Top-left
+    1, 1, // Top-right
   ]);
 
   const indices = new Uint16Array([
-    0, 1, 2, // first triangle
-    2, 1, 3, // second triangle
+    0, 1, 2, // First triangle
+    2, 1, 3, // Second triangle
   ]);
 
   geometry.setAttribute('aQuadCorner', new THREE.BufferAttribute(quadCorners, 2));
@@ -101,8 +103,8 @@ export function setupInstancedPointsMesh(
   config: InstancedPointsMeshConfig
 ): void {
   geometry.setAttribute(
-    'aPosition',
-    new THREE.InstancedBufferAttribute(config.positions, 3)
+    'aCenter',
+    new THREE.InstancedBufferAttribute(config.centers, 3)
   );
   geometry.setAttribute(
     'aRadius',
