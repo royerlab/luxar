@@ -148,23 +148,25 @@ export function createRendererCapabilities(renderer: Renderer): RendererCapabili
       // `gl.readPixels(canvas, …)` equivalent — the canvas is owned
       // by the browser compositor and not directly mappable.
       //
-      // The clean fix is to render the post-processing pipeline
-      // into an offscreen `THREE.WebGLRenderTarget` (the base class
-      // works under both backends) and call
-      // `renderer.readRenderTargetPixelsAsync(target, …)` on that.
-      // That changes the `renderToImageData` upstream contract
-      // (caller-side rather than renderer-capabilities-side), which
-      // is the wider refactor M17-bis tracks in MIGRATION_PROGRESS.md.
+      // After M17-bis, the canonical capture path is
+      // `PostProcessingManager.renderToImageData()`, which renders
+      // into an offscreen `WebGLRenderTarget` and reads it via the
+      // backend-agnostic `readRenderTargetPixelsAsync`. Direct
+      // backbuffer readback (this method) has no production caller
+      // post-M17-bis but is retained on the interface for tests
+      // and any future direct readers under WebGL2.
       //
-      // Until then, the screenshot/EXR pipeline is unreachable
-      // under the WebGPU branch. The plan keeps the WebGL2 path
-      // as the default (M18 flips it) so this code is only hit by
-      // developers running with `VITE_LUXAR_USE_WEBGPU_RENDERER=1`
-      // who attempt a screenshot — they get a clear error.
+      // Under WebGPU we deliberately fail loud rather than fake a
+      // success: this method has no scene/render context to capture
+      // (the caller would already have rendered), and any "render
+      // an empty target" stub here would silently produce a black
+      // pixel buffer in place of the intended capture. Direct
+      // backbuffer readback is not something WebGPU supports;
+      // callers must route through renderToImageData.
       return Promise.reject(
         new Error(
-          'readBackbufferPixels under WebGPU requires renderToImageData to render ' +
-            'into an offscreen target. See MIGRATION_PROGRESS.md M17-bis follow-up.'
+          'readBackbufferPixels is not supported under the WebGPU backend. ' +
+            'Use PostProcessingManager.renderToImageData() for the capture path.'
         )
       );
     },
