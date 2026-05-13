@@ -10,7 +10,9 @@ import * as THREE from 'three';
 import { PointMaterial } from './point-material';
 import { LineMaterial } from './line-material';
 import { GSplatMaterial } from './gsplat-material';
+import { PointTSLMaterial } from './point-material-tsl';
 import type { CameraAwareMaterial } from './camera-aware-material';
+import type { RendererCapabilities } from './renderer-capabilities';
 import { log, Modules } from '../utils/log';
 import { clamp } from '../utils/clamp';
 import { config } from '../config';
@@ -111,11 +113,30 @@ function getCommonMaterialBuckets(props: {
  * `config.dataLoading.performance.materialCacheMaxSize` (default 200).
  * `0` disables eviction.
  */
+/**
+ * Point material returned by `MaterialManager.getPointMaterial`. The
+ * concrete class is either the GLSL `PointMaterial` (WebGL2 path) or
+ * the TSL `PointTSLMaterial` (WebGPU / fallback-via-WebGPURenderer
+ * path). Both classes expose the same surface — `updateOpacity`,
+ * `updateCameraParams`, `applyBlendingMode`, `clone()`, etc. — so
+ * call sites treat the return type as a single LuxarPointMaterial.
+ */
+export type LuxarPointMaterial = PointMaterial | PointTSLMaterial;
+
 export class MaterialManager {
-  private pointMaterialCache = new Map<string, PointMaterial>();
+  private pointMaterialCache = new Map<string, LuxarPointMaterial>();
   private lineMaterialCache = new Map<string, LineMaterial>();
   private gsplatMaterialCache = new Map<string, GSplatMaterial>();
   private registeredMaterials = new Set<THREE.Material & CameraAwareMaterial>();
+  /**
+   * Renderer capabilities — drives the GLSL vs. TSL dispatch in
+   * `getPointMaterial` and (future) `getLineMaterial` /
+   * `getGSplatMaterial`. `SceneManager.setupRenderer` calls
+   * {@link setCaps} once the renderer is alive; before that hook
+   * fires, the manager defaults to the WebGL2 path so unit tests
+   * that touch material creation don't need to know about caps.
+   */
+  private caps: RendererCapabilities | null = null;
   /**
    * Materials whose `dispose` event we have already wired a listener for.
    * Separate from `registeredMaterials` because `register()` /
@@ -237,7 +258,7 @@ export class MaterialManager {
     this.registeredMaterials.delete(material);
     this.ownedMaterials.delete(material);
 
-    if (material instanceof PointMaterial) {
+    if (material instanceof PointMaterial || material instanceof PointTSLMaterial) {
       for (const [key, cachedMaterial] of this.pointMaterialCache.entries()) {
         if (cachedMaterial === material) {
           this.pointMaterialCache.delete(key);
@@ -262,9 +283,39 @@ export class MaterialManager {
   }
 
   /**
-   * Get or create a point material with caching
+   * Set the renderer capabilities. Called once by SceneManager after
+   * the renderer is alive. Determines which backend the dispatch in
+   * `getPointMaterial` (and future Line/GSplat equivalents) picks.
+   *
+   * Switching caps after materials have been cached invalidates the
+   * cache because cached entries are class-specific (PointMaterial vs
+   * PointTSLMaterial). We clear all three caches defensively — the
+   * existing materials remain in `registeredMaterials` so global
+   * camera updates still reach them until their owning mesh disposes
+   * them.
    */
-  getPointMaterial(props: PointMaterialProperties): PointMaterial {
+  setCaps(caps: RendererCapabilities): void {
+    if (this.caps && this.caps.api !== caps.api) {
+      // Backend changed mid-session — drop the allocation caches so
+      // the next request reaches the new dispatch branch. Same
+      // pattern as `rebuildAfterContextRestore`.
+      this.pointMaterialCache.clear();
+      this.lineMaterialCache.clear();
+      this.gsplatMaterialCache.clear();
+    }
+    this.caps = caps;
+  }
+
+  /**
+   * Get or create a point material with caching.
+   *
+   * Dispatches to `PointTSLMaterial` (NodeMaterial / TSL) when the
+   * active renderer reports `caps.api === 'webgpu'`, otherwise to the
+   * GLSL `PointMaterial`. Both classes expose the same update surface
+   * (see {@link LuxarPointMaterial}), so callers in node-factory and
+   * the layers panel don't need to branch.
+   */
+  getPointMaterial(props: PointMaterialProperties): LuxarPointMaterial {
     // Create cache key using integer bucketing for predictable caching behavior
     // This prevents floating-point precision issues while still grouping similar values
     // Clamp values to valid ranges to handle edge cases gracefully
@@ -279,7 +330,8 @@ export class MaterialManager {
 
     const isOpaque = this.isOpaqueMode(props.blendingMode);
     const transparent = !isOpaque;
-    const key = `point_${props.blendingMode}_o${opacityBucket}_g${gammaBucket}_i${intensityBucket}_f${offsetBucket}_r${radiusBucket}_s${sharpnessBucket}_t${transparent ? 1 : 0}`;
+    const useTSL = this.caps?.api === 'webgpu';
+    const key = `point_${useTSL ? 'tsl' : 'glsl'}_${props.blendingMode}_o${opacityBucket}_g${gammaBucket}_i${intensityBucket}_f${offsetBucket}_r${radiusBucket}_s${sharpnessBucket}_t${transparent ? 1 : 0}`;
 
     // Check cache first (LRU-promoting)
     let material = this.lruGet(this.pointMaterialCache, key);
@@ -287,7 +339,7 @@ export class MaterialManager {
       return material;
     }
 
-    // Create new PointMaterial instance with neutral blending defaults;
+    // Create new material instance with neutral blending defaults;
     // the canonical state for `props.blendingMode` is then applied via
     // `applyBlendingMode()` so creation-time and runtime transitions
     // share one code path. Without this, the LayersPanel runtime path
@@ -295,7 +347,7 @@ export class MaterialManager {
     // OneFactor/OneFactor blend factors AND the
     // LUXAR_MAX_RGB_CONTRIBUTION shader define).
     const createStart = performance.now();
-    material = new PointMaterial({
+    const constructorConfig = {
       opacity: props.opacity,
       gamma: props.gamma,
       intensity: props.intensity,
@@ -305,7 +357,10 @@ export class MaterialManager {
       transparent: !isOpaque,
       radiusScale: props.radiusScale,
       sharpnessScale: props.sharpnessScale,
-    });
+    };
+    material = useTSL
+      ? new PointTSLMaterial(constructorConfig)
+      : new PointMaterial(constructorConfig);
     material.applyBlendingMode(props.blendingMode);
     this.totalCreateMs += performance.now() - createStart;
     this.createCount++;

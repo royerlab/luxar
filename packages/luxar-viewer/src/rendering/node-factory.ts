@@ -12,7 +12,11 @@
  */
 
 import * as THREE from 'three';
-import { materialManager, type BlendingMode } from './material-manager';
+import {
+  materialManager,
+  type BlendingMode,
+  type LuxarPointMaterial,
+} from './material-manager';
 import { getColormapTexture } from './colormap-textures';
 import { supportsScalarColormap } from './material-colormap-helpers';
 import { createInstancedLinesMesh, type InstancedLinesMeshConfig } from './line-geometry';
@@ -759,7 +763,7 @@ export class NodeFactory {
     sharpnessScale: number = 1.0,
     geometry?: THREE.BufferGeometry,
     path?: string
-  ): THREE.ShaderMaterial {
+  ): LuxarPointMaterial {
     let material = materialManager.getPointMaterial({
       opacity: attrs.opacity ?? 1.0,
       gamma: attrs.gamma ?? 1.0,
