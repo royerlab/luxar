@@ -36,6 +36,8 @@ import { pointPickWebGPUFactory } from '../../../rendering/picking/point-pick.ts
 import { createPointQuadGeometry } from '../../../rendering/point-geometry';
 import { LINE_SOURCE } from '../../../rendering/shaders/line-shaders';
 import { lineWebGPUFactory } from '../../../rendering/line.tsl';
+import { LINE_PICK_SOURCE } from '../../../rendering/picking/picking-shaders';
+import { linePickWebGPUFactory } from '../../../rendering/picking/line-pick.tsl';
 import { createLineQuadGeometry } from '../../../rendering/line-geometry';
 import type { ShaderSource } from '../../../rendering/shaders/shader-source';
 
@@ -387,6 +389,23 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
       m.blending = THREE.NoBlending;
       return m;
     },
+    buildMesh: buildLineInstancedMesh,
+  },
+  // M14 line-pick parity: same quad-expansion math as `line` but
+  // fragment outputs (nodeId, elementId, brightness, 1.0) and
+  // depth = 1 - brightness. No edgeAA, no GOG.
+  'line-pick': {
+    source: LINE_PICK_SOURCE,
+    buildUniforms: () => ({
+      uFOV: { value: 2.0 },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      uIsOrtho: { value: 1 },
+      uNodeId: { value: 42 },
+      uNearCull: { value: 0.01 },
+      uMaxLinePixelWidth: { value: 32.0 },
+    }),
+    buildTSLMaterial: (uniforms) =>
+      linePickWebGPUFactory(uniforms) as unknown as THREE.Material,
     buildMesh: buildLineInstancedMesh,
   },
   // M12 point-pick parity: identical sprite layout to `point` but
