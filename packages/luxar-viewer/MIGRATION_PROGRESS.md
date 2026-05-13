@@ -40,8 +40,12 @@ Each blocker is an external dependency or design call.
   (`material-colormap-helpers.ts` delegates to `ColormapAwareMaterial`
   setters; see same section in `BROWSER_SUPPORT_POLICY.md`).
 - [x] **Blending-mode port reference drafted** (`BLENDING_PORT_NOTES.md`).
-- [ ] **WebGPU fallback E2E experiment run** (Phase 1 of port-PR-1;
-  see `WEBGPU_FALLBACK_REPORT.md` runbook).
+- [x] **WebGPU fallback E2E experiment run** — initial attempt
+  in M3 surfaced a playwright-config blocker (existing dev
+  server reused, env var didn't propagate). Documented as
+  deferred-to-M5 in `WEBGPU_FALLBACK_REPORT.md` — first
+  meaningful per-shader data lands when FXAA's TSL factory is
+  testable.
 
 ## Non-shader migration tasks
 
