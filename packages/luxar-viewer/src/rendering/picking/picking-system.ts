@@ -335,7 +335,7 @@ export class PickingSystem {
    * ALL registered nodes to the cached buffer first. Otherwise just reads
    * from the cached buffer — zero GPU cost on hover.
    */
-  private performPick(screenX: number, screenY: number): void {
+  private async performPick(screenX: number, screenY: number): Promise<void> {
     const canvas = this.renderer.domElement;
     const width = canvas.clientWidth;
     const height = canvas.clientHeight;
@@ -408,8 +408,12 @@ export class PickingSystem {
       return;
     }
 
-    // Readback 5×5 pixels at cursor from cached buffer and vote
-    const result = this.readbackAndVote();
+    // Readback 5×5 pixels at cursor from cached buffer and vote.
+    // The async readback path uses `readRenderTargetPixelsAsync`,
+    // available on both WebGLRenderer and WebGPURenderer in r184 —
+    // a uniform API that works on both backends. See
+    // PICKING_DESIGN.md for the 1-frame-latency rationale.
+    const result = await this.readbackAndVote();
     this.onPickResult(result);
   }
 
@@ -515,9 +519,13 @@ export class PickingSystem {
   /**
    * Read back the 5x5 pick buffer and perform brightness-weighted majority voting.
    * Returns the winning PickResult or null if all pixels are background.
+   *
+   * Async readback (`readRenderTargetPixelsAsync`) works on both
+   * WebGLRenderer and WebGPURenderer in r184. The 1-frame latency
+   * on hover is documented in `PICKING_DESIGN.md`.
    */
-  private readbackAndVote(): PickResult | null {
-    this.renderer.readRenderTargetPixels(
+  private async readbackAndVote(): Promise<PickResult | null> {
+    await this.renderer.readRenderTargetPixelsAsync(
       this.pickTarget,
       this._lastReadX,
       this._lastReadY,
