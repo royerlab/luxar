@@ -83,7 +83,8 @@ export interface LineTSLConfig {
  */
 export function lineWebGPUFactory(
   uniforms: Record<string, THREE.IUniform>,
-  config: LineTSLConfig = {}
+  config: LineTSLConfig = {},
+  outMaterial?: NodeMaterial
 ): NodeMaterial {
   // Per-vertex.
   const aQuadCorner: TSLNode = attribute<'vec2'>('aQuadCorner', 'vec2');
@@ -107,31 +108,61 @@ export function lineWebGPUFactory(
     ? attribute<'float'>('aEndScalar', 'float')
     : null;
 
-  // Uniforms.
-  const uFOV = uniform((uniforms.uFOV.value as number) ?? 1.0);
+  // Uniforms — each primitive bound via `.onUpdate(() => iuniform.value)`
+  // so a wrapper class's mutations to `this.uniforms.X.value`
+  // propagate to the GPU. Vector2 / Texture uniforms share the same
+  // host object by reference, so they don't need onUpdate.
+  const uFOV = uniform((uniforms.uFOV.value as number) ?? 1.0).onUpdate(
+    () => (uniforms.uFOV.value as number) ?? 1.0,
+    'render'
+  );
   const uResolution = uniform(
     (uniforms.uResolution.value as THREE.Vector2) ?? new THREE.Vector2(1, 1)
   );
-  const uIsOrtho = uniform((uniforms.uIsOrtho.value as number) ?? 0);
-  const uNearCull = uniform((uniforms.uNearCull.value as number) ?? 1e-4);
+  const uIsOrtho = uniform((uniforms.uIsOrtho.value as number) ?? 0).onUpdate(
+    () => (uniforms.uIsOrtho.value as number) ?? 0,
+    'render'
+  );
+  const uNearCull = uniform((uniforms.uNearCull.value as number) ?? 1e-4).onUpdate(
+    () => (uniforms.uNearCull.value as number) ?? 1e-4,
+    'render'
+  );
   const uMaxLinePixelWidth = uniform(
     (uniforms.uMaxLinePixelWidth.value as number) ?? 1.0
+  ).onUpdate(() => (uniforms.uMaxLinePixelWidth.value as number) ?? 1.0, 'render');
+  const uOpacity = uniform((uniforms.uOpacity.value as number) ?? 1.0).onUpdate(
+    () => (uniforms.uOpacity.value as number) ?? 1.0,
+    'render'
   );
-  const uOpacity = uniform((uniforms.uOpacity.value as number) ?? 1.0);
-  const uInvGamma = uniform((uniforms.uInvGamma.value as number) ?? 1.0);
-  const uIntensity = uniform((uniforms.uIntensity.value as number) ?? 1.0);
-  const uOffset = uniform((uniforms.uOffset.value as number) ?? 0.0);
+  const uInvGamma = uniform((uniforms.uInvGamma.value as number) ?? 1.0).onUpdate(
+    () => (uniforms.uInvGamma.value as number) ?? 1.0,
+    'render'
+  );
+  const uIntensity = uniform((uniforms.uIntensity.value as number) ?? 1.0).onUpdate(
+    () => (uniforms.uIntensity.value as number) ?? 1.0,
+    'render'
+  );
+  const uOffset = uniform((uniforms.uOffset.value as number) ?? 0.0).onUpdate(
+    () => (uniforms.uOffset.value as number) ?? 0.0,
+    'render'
+  );
   const uColormapTex =
     config.useColormap && uniforms.uColormapTex
       ? texture((uniforms.uColormapTex.value as THREE.Texture | null) ?? new THREE.Texture())
       : null;
   const uScalarMin =
     config.useColormap && uniforms.uScalarMin
-      ? uniform((uniforms.uScalarMin.value as number) ?? 0.0)
+      ? uniform((uniforms.uScalarMin.value as number) ?? 0.0).onUpdate(
+          () => (uniforms.uScalarMin?.value as number) ?? 0.0,
+          'render'
+        )
       : null;
   const uScalarScale =
     config.useColormap && uniforms.uScalarScale
-      ? uniform((uniforms.uScalarScale.value as number) ?? 1.0)
+      ? uniform((uniforms.uScalarScale.value as number) ?? 1.0).onUpdate(
+          () => (uniforms.uScalarScale?.value as number) ?? 1.0,
+          'render'
+        )
       : null;
 
   // RGB premultiplication is driven by the blending mode: `max` mode
@@ -322,7 +353,7 @@ export function lineWebGPUFactory(
     return vec4(gammaColor, alpha);
   });
 
-  const material = new NodeMaterial();
+  const material = outMaterial ?? new NodeMaterial();
   material.vertexNode = clipPos;
   material.colorNode = colorNode();
   material.toneMapped = false;
