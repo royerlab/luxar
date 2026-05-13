@@ -47,6 +47,73 @@ v2.0 layout (`splats/substitutive_0/additive_<i>/`). The TypeScript viewer's
 `format_version`, `n_substitutive`, `default_substitutive`,
 `n_additive_sublods_default` (the legacy `n_lods` field is dropped).
 
+#### Changed — WebGPU migration: TSL ports + container refactor (2026-05-13)
+
+Infrastructure step toward the WebGPU rendering backend. The
+production rendering path is unchanged today — the viewer still
+constructs `WebGLRenderer` by default and the
+`MaterialManager.getXxxMaterial` functions continue to return GLSL3
+`ShaderMaterial` wrapper instances. What landed:
+
+- **All 12 shaders ported to TSL / NodeMaterial**: scene materials
+  (`point`, `line`, `gsplat`), picking variants (`point-pick`,
+  `line-pick`, `gsplat-pick`), and post-processing (`fxaa`,
+  `bloom-{threshold,downsample,upsample}`, `mega` including
+  detector noise). Each lives in a `*.tsl.ts` file alongside the
+  GLSL3 source, sharing the same `ShaderSource` registry and
+  blending-state helper. Pixel parity vs. GLSL3 verified by
+  `tsl-shader-parity.spec.ts` under
+  `WebGPURenderer({ forceWebGL: true })`.
+- **Container migration**: points are now rendered as a
+  `THREE.Mesh + InstancedBufferGeometry` (matching the existing
+  line/gsplat container shape) instead of `THREE.Points`. Required
+  because r184's `GLSLNodeBuilder` hardcodes `gl_PointSize = 1.0`
+  for `THREE.Points`, blocking the TSL point port. Per-instance
+  attributes renamed to a shared convention (`aCenter`, `aRadius`,
+  `aSharpness`, `aColor`, `aScalar`).
+- **Async picking readback**: `picking-system.ts::readbackAndVote`
+  is now `async` and uses `readRenderTargetPixelsAsync` (works on
+  both WebGLRenderer and WebGPURenderer in r184). Stale-tooltip
+  suppression added in `core/app.ts` so an in-flight readback
+  doesn't blank the tooltip prematurely.
+- **`renderToImageData` refactor**: capture now renders through an
+  offscreen `WebGLRenderTarget` and reads via
+  `readRenderTargetPixelsAsync`. Backbuffer readback fallback is
+  retained on `RendererCapabilities` for WebGL2-only tests.
+- **Renderer union widening**: `RendererCapabilities.Renderer` is
+  now `WebGLRenderer | WebGPURenderer`; `setupRenderer` is
+  `async` and selects between the two via
+  `VITE_LUXAR_USE_WEBGPU_RENDERER=1`.
+- **Shared TSL helpers**: new `tsl-helpers.ts` deduplicates the
+  `sanitizePositive` / `sanitizeNonNegative` / `TSLNode` definitions
+  that the per-shader files had each carried locally. Each visual
+  TSL factory now accepts a `blendingMode` config field and applies
+  the matching THREE blending state via the existing
+  `blending-state.ts` helper.
+
+Remaining work (M18 onward): rewire `MaterialManager` to dispatch
+to TSL `NodeMaterial` wrappers on `caps.api === 'webgpu'`, run the
+real-WebGPU smoke pass on Chrome stable, and flip the default
+renderer once both backends are green. See
+`packages/luxar-viewer/MIGRATION_PROGRESS.md` for the full
+ledger including the "Wrapper-layer wiring" gap notes.
+
+#### Changed — Three.js r184 and custom post-processing pipeline (2026-05-12)
+
+- **Breaking viewer dependency change**: the TypeScript viewer now targets
+  `three@~0.184.x` and removes the `postprocessing` package dependency.
+- Replaced the old pmndrs `EffectComposer` chain with Luxar's custom
+  post-processing pipeline: scene → HDR half-float target → BloomChain →
+  fused mega-shader → optional FXAA.
+- Preserved core effects in the new pipeline: bloom, global exposure/offset/gamma,
+  tone mapping, detector noise, vignette, chromatic lens distortion, FXAA, MSAA,
+  and SSAA.
+- Removed SMAA, Depth of Field, and SSAO controls. SMAA's 3-pass algorithm does
+  not fit the fused pipeline; DoF needs depth-aware multi-pass blur; SSAO requires
+  surface normals that Luxar's point/line/gsplat primitives do not provide.
+- Restored HDR/EXR capture semantics with explicit modes (`hdr-effects-pre-tone`,
+  `visible-ldr`, and `raw-scene-hdr`) and browser shader smoke coverage.
+
 #### Changed — Cache final polish after S1–S7 (2026-05-10)
 
 - Added browser screenshot artifact coverage for the Cache tab's status

@@ -30,9 +30,16 @@ Three.js's `WebGPURenderer` does **not** support `THREE.ShaderMaterial` or
 >
 > — *Three.js manual, "Using WebGPURenderer"*
 
-Every one of Luxar's materials today is `THREE.ShaderMaterial({
-glslVersion: GLSL3 })`. There are roughly 34 such instances across
-the scene materials, post-processing materials, and picking materials.
+Status (post TSL-port phase): every scene-material, picking-material,
+and post-processing-shader pair now has a TSL / NodeMaterial
+counterpart living in `*.tsl.ts` files alongside the GLSL3 originals
+in `*-shaders.ts` / `*.glsl.ts`. Pixel parity is verified by
+`tsl-shader-parity.spec.ts` under `WebGPURenderer({ forceWebGL: true })`.
+Production wrapper classes (`PointMaterial`, `LineMaterial`,
+`GSplatMaterial`, and the three picking equivalents) still `extends
+THREE.ShaderMaterial`; `MaterialManager.getXxxMaterial` does not yet
+branch on `caps.api`. See `MIGRATION_PROGRESS.md` § "Wrapper-layer
+wiring" for what remains before WebGPU can be the production default.
 
 `{ forceWebGL: true }` does not rescue this: it instructs
 `WebGPURenderer` to dispatch through its WebGL2 backend, but the
@@ -40,9 +47,10 @@ materials it accepts are still `NodeMaterial`-based. A
 `ShaderMaterial` handed to `WebGPURenderer` (with or without
 `forceWebGL`) will not render.
 
-Consequence: until the TSL ports land — which **are** the migration —
-`WebGPURenderer` is not usable. The migration is the TSL ports, not
-a renderer swap.
+Consequence: WebGPU becomes the production default only once
+`MaterialManager` dispatches the TSL wrappers instead of the GLSL
+ShaderMaterial wrappers. The migration is the TSL ports *and* the
+dispatcher rewire, not a renderer swap.
 
 ## Userbase
 
@@ -61,17 +69,42 @@ This document records the policy decision for which of these
 populations Luxar Viewer targets *after* the migration completes,
 and what we run *today*.
 
-## Today
+## Historical — before TSL ports landed
 
-Until TSL ports land:
+The original framing of this section:
 
-- We run `THREE.WebGLRenderer`. There is no alternative.
+- We ran `THREE.WebGLRenderer` exclusively. There was no alternative
+  because every Luxar material was a `THREE.ShaderMaterial({
+  glslVersion: GLSL3 })`.
 - Equivalent to "Option A" in spirit, but framed by force rather
   than choice.
 - The runtime-detection helper at `src/utils/webgpu-availability.ts`
-  exists and is honest about what it reports — it can identify a
-  WebGPU-capable browser, but knowing this changes nothing about
-  what renderer we hand to a user today.
+  could identify a WebGPU-capable browser, but knowing this
+  changed nothing about what renderer we handed to a user.
+
+This is no longer the only path — see "Today" below.
+
+## Today — TSL ports landed, wrapper-layer wiring in flight
+
+- Both renderer constructions exist:
+  - Default: `THREE.WebGLRenderer` (legacy GLSL3 path).
+  - Opt-in via `VITE_LUXAR_USE_WEBGPU_RENDERER=1`:
+    `WebGPURenderer({ forceWebGL: true })` is constructed at
+    init. Under `forceWebGL` the WebGPU renderer dispatches to a
+    WebGL2 backend, so the existing `ShaderMaterial`-based wrappers
+    keep rendering. This path exercises the renderer-construction
+    + render-loop integration but does **not** yet exercise TSL
+    on the production scene-material path.
+- TSL factories for all 12 shaders are implemented and
+  parity-tested against the GLSL3 originals. `MaterialManager`
+  still constructs the GLSL `ShaderMaterial` wrappers
+  unconditionally; the TSL factories are reachable today only
+  through the `tsl-shader-parity.spec.ts` harness and factory-level
+  unit tests.
+- `RendererCapabilities.api` honestly reports which backend the
+  renderer dispatched to (`'webgl2'` in both default and
+  `forceWebGL:true` paths today; `'webgpu'` once `forceWebGL` is
+  removed and a real WebGPU adapter is initialised).
 
 ## Target end-state (post-TSL-ports)
 
