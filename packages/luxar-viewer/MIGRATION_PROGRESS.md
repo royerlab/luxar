@@ -285,11 +285,19 @@ Smallest to largest, to surface design issues early and bound risk:
 ## Sign-off
 
 A row's `D` box flips only when *both* `F` (fallback path) and
-`R` (real WebGPU) are green. Once `D` is checked, a follow-up PR
-removes the GLSL3 strings from `*-shaders.ts` / `*.glsl.ts` and
-the `webgl` field becomes optional on the corresponding
-`ShaderSource`. When every row has `D` checked, the `webgl` field
-can be removed from `ShaderSource` entirely.
+`R` (real WebGPU) are green. Once `D` is checked, the
+`ShaderSource.webgl` field may become *optional* on the
+corresponding `ShaderSource` so future shaders can ship TSL-only.
+
+**Do not delete the existing GLSL3 sources.** Per user directive
+(2026-05-13), the GLSL3 strings stay in `*-shaders.ts` /
+`*.glsl.ts` indefinitely as the reference implementation that
+`tsl-shader-parity.spec.ts` compares against. The parity harness
+is a long-lived regression suite, not migration scaffolding; new
+shader work that adds a TSL factory should also add a parity
+entry. The original M19 plan called for stripping GLSL3 strings
+after both backends went green — that step is now scoped to
+type-level changes only (`webgl?: …`), not file removal.
 
 ## Wrapper-layer wiring (blocks M18 default-flip)
 
