@@ -47,33 +47,25 @@ import {
   cameraProjectionMatrix,
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-
-/**
- * Loosely-typed TSL node alias. TSL's typed overloads return many
- * mutually-incompatible inner constructor types — relaxing at helper
- * boundaries lets the runtime TSL builder do the real type checking
- * when it compiles to GLSL/WGSL.
- */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type TSLNode = any;
+import { sanitizeNonNegative, sanitizePositive, type TSLNode } from './tsl-helpers';
+import { applyBlendingStateToMaterial, getCompleteBlendingState } from './blending-state';
+import type { BlendingMode } from './material-manager';
 
 export interface PointTSLConfig {
   readonly useColormap?: boolean;
+  /**
+   * When undefined, derived from `blendingMode === 'max'`. Explicit
+   * config still wins so callers can decouple shader output from
+   * framebuffer blending (rare but supported).
+   */
   readonly useMaxRGBContribution?: boolean;
-}
-
-/** Sanitise a positive scalar. Mirrors GLSL `sanitizePositive`. */
-function sanitizePositive(value: TSLNode, fallback: TSLNode): TSLNode {
-  const isFinite = value.lessThan(1e30).and(value.greaterThan(-1e30));
-  const isPositive = value.greaterThan(0.0);
-  return isFinite.and(isPositive).select(value, fallback);
-}
-
-/** Sanitise a non-negative scalar. Mirrors GLSL `sanitizeNonNegative`. */
-function sanitizeNonNegative(value: TSLNode, fallback: TSLNode): TSLNode {
-  const isFinite = value.lessThan(1e30).and(value.greaterThan(-1e30));
-  const isNonNeg = value.greaterThanEqual(0.0);
-  return isFinite.and(isNonNeg).select(value, fallback);
+  /**
+   * Luxar blending mode. The factory configures the matching THREE
+   * state via {@link getCompleteBlendingState} +
+   * {@link applyBlendingStateToMaterial}. Defaults to `'additive'` to
+   * match the GLSL wrapper class.
+   */
+  readonly blendingMode?: BlendingMode;
 }
 
 /**
@@ -127,6 +119,16 @@ export function pointWebGPUFactory(
   const uInvGamma = uniform((uniforms.invGamma.value as number) ?? 1.0);
   const uIntensity = uniform((uniforms.uIntensity.value as number) ?? 1.0);
   const uOffset = uniform((uniforms.uOffset.value as number) ?? 0.0);
+
+  // RGB premultiplication is driven by the blending mode: `max` mode
+  // routes through CustomBlending + MaxEquation which needs RGB to
+  // already include the soft-kernel contribution. Explicit
+  // `useMaxRGBContribution` still wins for callers that want to
+  // decouple shader output from framebuffer blending.
+  const premultiplyRGB =
+    config.useMaxRGBContribution !== undefined
+      ? config.useMaxRGBContribution
+      : config.blendingMode === 'max';
 
   // ---- Vertex computation ----
 
@@ -212,7 +214,7 @@ export function pointWebGPUFactory(
 
     const alpha: TSLNode = falloff.mul(uOpacity);
 
-    if (config.useMaxRGBContribution) {
+    if (premultiplyRGB) {
       // RGB premultiplied by alpha — CustomBlending + MaxEquation.
       return vec4(finalColor.mul(alpha), alpha);
     }
@@ -225,9 +227,14 @@ export function pointWebGPUFactory(
   // modelViewProjection chain.
   material.vertexNode = clipPos;
   material.colorNode = colorNode();
-  material.transparent = true;
   material.toneMapped = false;
-  material.depthTest = true;
-  material.depthWrite = false;
+
+  // Wire blending state from the shared helper. The shader-output
+  // shape (premultiplied RGB vs alpha-weighted) is derived from the
+  // blending mode unless the caller passed an explicit override.
+  const blendingMode: BlendingMode = config.blendingMode ?? 'additive';
+  const opacityValue = (uniforms.opacity?.value as number | undefined) ?? 1.0;
+  const blendingState = getCompleteBlendingState(blendingMode, opacityValue);
+  applyBlendingStateToMaterial(material, blendingState);
   return material;
 }

@@ -41,21 +41,23 @@ export const ZOOM_RANGE_FACTOR = 100;
 export interface SceneBoundingBoxResult {
   /** Combined world-space bounding box. Empty if no primitives were found. */
   box: THREE.Box3;
-  /** Total primitive count seen during traversal (Points position counts + InstancedMesh / instanced-geometry instance counts). */
+  /** Total primitive count seen during traversal (instance counts for instanced-mesh geometry). */
   primitiveCount: number;
 }
 
 /**
  * Walk `scene` and aggregate the world-space bounding box of every
- * renderable primitive. Handles three rendering shapes:
+ * renderable primitive. After the container migration all three
+ * geometry types (Points / Lines / GSplats) render as
+ * `THREE.Mesh + InstancedBufferGeometry`, so a single shape covers
+ * them:
  *
- *   - `THREE.Points` — bounding box from the position attribute.
+ *   - `THREE.Mesh` with `InstancedBufferGeometry` and
+ *     `userData.nodeType` in {'points', 'lines', 'gsplats'} —
+ *     bounding box from the geometry, `instanceCount` for the
+ *     primitive count.
  *   - `THREE.InstancedMesh` — bounding box from the geometry, plus
  *     the count from `mesh.count` for the primitive count.
- *   - `THREE.Mesh` with `InstancedBufferGeometry` (used by Lines and
- *     GSplats so they don't exceed WebGL's 16 attribute-location
- *     limit) — bounding box from the geometry, plus the
- *     `instanceCount` from the geometry for the primitive count.
  *
  * Other Object3D types contribute nothing to bounds. Empty
  * geometries / zero-count primitives are skipped so a returned
@@ -71,56 +73,34 @@ export function computeSceneBoundingBox(scene: THREE.Scene): SceneBoundingBoxRes
   let primitiveCount = 0;
 
   scene.traverse((object) => {
-    // Handle Points objects (point clouds)
-    if (object instanceof THREE.Points) {
-      const geometry = object.geometry;
-      const positions = geometry.attributes.position;
-      if (positions && positions.count > 0) {
-        primitiveCount += positions.count;
+    const isInstancedMesh = object instanceof THREE.InstancedMesh;
+    const nodeType =
+      object instanceof THREE.Mesh
+        ? (object.userData as { nodeType?: string })?.nodeType
+        : undefined;
+    const isLuxarInstancedMesh =
+      object instanceof THREE.Mesh &&
+      object.geometry instanceof THREE.InstancedBufferGeometry &&
+      (nodeType === 'points' || nodeType === 'lines' || nodeType === 'gsplats');
 
-        if (!geometry.boundingBox) {
-          geometry.computeBoundingBox();
-        }
-        if (geometry.boundingBox) {
-          const tempBox = geometry.boundingBox.clone();
-          tempBox.applyMatrix4(object.matrixWorld);
-          if (!tempBox.isEmpty()) {
-            box.union(tempBox);
-          }
-        }
-      }
+    if (!isInstancedMesh && !isLuxarInstancedMesh) return;
+
+    const geometry = object.geometry;
+    if (!geometry.boundingBox) {
+      geometry.computeBoundingBox();
     }
+    if (!geometry.boundingBox) return;
 
-    // Handle THREE.InstancedMesh AND Mesh + InstancedBufferGeometry
-    // (Lines and GSplats use the second form to dodge the 16-attribute
-    // location limit).
-    const isLineMesh =
-      object instanceof THREE.Mesh &&
-      object.userData?.nodeType === 'lines' &&
-      object.geometry instanceof THREE.InstancedBufferGeometry;
-    const isGSplatMesh =
-      object instanceof THREE.Mesh &&
-      object.userData?.nodeType === 'gsplats' &&
-      object.geometry instanceof THREE.InstancedBufferGeometry;
+    const instanceCount = isInstancedMesh
+      ? object.count
+      : ((geometry as THREE.InstancedBufferGeometry).instanceCount ?? 0);
+    if (instanceCount <= 0) return;
+    primitiveCount += instanceCount;
 
-    if (object instanceof THREE.InstancedMesh || isLineMesh || isGSplatMesh) {
-      const geometry = object.geometry;
-      if (!geometry.boundingBox) {
-        geometry.computeBoundingBox();
-      }
-      if (geometry.boundingBox) {
-        const instanceCount =
-          object instanceof THREE.InstancedMesh
-            ? object.count
-            : ((geometry as THREE.InstancedBufferGeometry).instanceCount ?? 0);
-        primitiveCount += instanceCount;
-
-        const tempBox = geometry.boundingBox.clone();
-        tempBox.applyMatrix4(object.matrixWorld);
-        if (!tempBox.isEmpty()) {
-          box.union(tempBox);
-        }
-      }
+    const tempBox = geometry.boundingBox.clone();
+    tempBox.applyMatrix4(object.matrixWorld);
+    if (!tempBox.isEmpty()) {
+      box.union(tempBox);
     }
   });
 

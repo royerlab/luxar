@@ -40,9 +40,7 @@ import {
   cameraProjectionMatrix,
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type TSLNode = any;
+import { type TSLNode } from '../tsl-helpers';
 
 /**
  * Point picking material TSL factory.

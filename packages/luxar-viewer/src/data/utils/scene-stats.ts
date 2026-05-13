@@ -8,8 +8,10 @@
  * helper and emits one info line per stat.
  *
  * Counts mirror the legacy logSceneStats output:
- * - `pointsObjects` / `totalPoints`: every `THREE.Points` in the tree;
- *   the position attribute's `count` is summed when present.
+ * - `pointsObjects` / `totalPoints`: `THREE.Mesh` nodes tagged with
+ *   `userData.nodeType === 'points'`. After the container migration
+ *   points are instanced quad meshes; the per-instance `aCenter`
+ *   attribute's `count` is the source of truth for visible points.
  * - `gsplatsObjects` / `totalGSplats`: `THREE.Mesh` nodes tagged with
  *   `userData.nodeType === 'gsplats'`. `userData.visibleSplatCount`
  *   contributes to the running total (default 0 if absent).
@@ -40,16 +42,19 @@ export function computeSceneStats(scene: THREE.Object3D | null | undefined): Sce
   let spatialIndexed = 0;
 
   scene.traverse((obj) => {
-    if (obj instanceof THREE.Points) {
+    if (!(obj instanceof THREE.Mesh)) return;
+    const nodeType = (obj.userData as { nodeType?: string })?.nodeType;
+
+    if (nodeType === 'points') {
       pointsObjects++;
-      const positions = obj.geometry.getAttribute('position');
-      if (positions) {
-        totalPoints += positions.count;
+      const centers = obj.geometry?.getAttribute?.('aCenter');
+      if (centers) {
+        totalPoints += centers.count;
       }
       if (obj.userData.attrs?.has_spatial_index) {
         spatialIndexed++;
       }
-    } else if (obj instanceof THREE.Mesh && obj.userData?.nodeType === 'gsplats') {
+    } else if (nodeType === 'gsplats') {
       gsplatsObjects++;
       totalGSplats += obj.userData.visibleSplatCount ?? 0;
       if (obj.userData.attrs?.has_spatial_index) {
