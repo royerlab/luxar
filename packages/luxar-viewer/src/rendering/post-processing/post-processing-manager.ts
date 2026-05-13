@@ -978,22 +978,76 @@ export class PostProcessingManager {
   }
 
   /**
-   * Run a full render and read the backbuffer back as an ImageData
-   * (used by screenshot/video export paths).
+   * Run a full render and return the result as an ImageData (used by
+   * screenshot/video export paths).
+   *
+   * The pipeline renders into an offscreen `WebGLRenderTarget` rather
+   * than the canvas backbuffer, then reads back via
+   * `readRenderTargetPixelsAsync`. Render targets are addressable on
+   * both `WebGLRenderer` (with the async-readback wrapper from r184)
+   * and `WebGPURenderer` — uniform API across backends. Reading the
+   * raw canvas backbuffer under WebGPU is unsupported because the
+   * compositor owns the canvas surface; offscreen targets sidestep
+   * that limitation entirely.
+   *
+   * Detector-noise time advance, advanceTime accounting, and FXAA
+   * routing are identical to {@link render}; only the final write
+   * destination differs.
    */
   async renderToImageData(): Promise<ImageData> {
-    this.render();
-    // RendererCapabilities owns the binding + readback (it knows to
-    // bind the canvas backbuffer before reading). Under WebGL2 the
-    // Promise resolves immediately; under WebGPU it awaits the
-    // GPU-buffer map.
-    const { pixels, width, height } = await this.capabilities.readBackbufferPixels();
-    const flipped = flipPixelsVerticallyRGBA(
-      pixels,
-      width,
-      height
-    ) as Uint8ClampedArray<ArrayBuffer>;
-    return new ImageData(flipped, width, height);
+    // Mirror `render()`'s detector-noise time advance — the capture
+    // is conceptually a frame in its own right.
+    const now = performance.now();
+    const dt =
+      this._previousRenderTimestamp === 0 ? 0 : (now - this._previousRenderTimestamp) / 1000;
+    this._previousRenderTimestamp = now;
+    if (this.megaShader.isDetectorNoiseEnabled()) {
+      this.megaShader.advanceTime(dt);
+    }
+
+    const { width, height } = this.getPhysicalSize();
+    const captureTarget = new THREE.WebGLRenderTarget(width, height, {
+      type: THREE.UnsignedByteType,
+      format: THREE.RGBAFormat,
+      minFilter: THREE.NearestFilter,
+      magFilter: THREE.NearestFilter,
+      depthBuffer: false,
+      stencilBuffer: false,
+    });
+    captureTarget.texture.name = 'PostProcessing.captureTarget';
+
+    try {
+      this.runPipeline({ applyFxaa: this.fxaaPass !== null, finalTarget: captureTarget });
+      // `readRenderTargetPixelsAsync` exists on both WebGLRenderer
+      // (r184+) and WebGPURenderer, but with subtly different
+      // signatures: WebGLRenderer wants the destination buffer as
+      // the 7th argument and returns it via the Promise; WebGPURenderer
+      // returns its own buffer (no destination slot). We pass a
+      // destination buffer either way — WebGPURenderer ignores it,
+      // and we use the Promise's return value as the canonical
+      // source-of-truth.
+      const destBuffer = new Uint8Array(width * height * 4);
+      const raw = await this.renderer.readRenderTargetPixelsAsync(
+        captureTarget,
+        0,
+        0,
+        width,
+        height,
+        destBuffer
+      );
+      // Copy into a fresh Uint8Array so the ImageData wraps a
+      // plain ArrayBuffer regardless of which backend returned the
+      // typed array.
+      const pixels = new Uint8Array(raw.buffer.slice(0));
+      const flipped = flipPixelsVerticallyRGBA(
+        pixels,
+        width,
+        height
+      ) as Uint8ClampedArray<ArrayBuffer>;
+      return new ImageData(flipped, width, height);
+    } finally {
+      captureTarget.dispose();
+    }
   }
 
   // ================================================================
