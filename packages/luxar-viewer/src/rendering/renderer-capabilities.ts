@@ -8,6 +8,13 @@
  * port lands, only this file changes.
  */
 import * as THREE from 'three';
+// Type-only re-export of `WebGPURenderer` doubles as a smoke
+// check that the `three/webgpu` subpath resolves cleanly under
+// the `~0.184.0` pin (requires `tsconfig.moduleResolution:
+// "Bundler"`). M2 lands the actual `Renderer` union arm + runtime
+// branch in `scene-manager.ts:setupRenderer`. Zero runtime cost
+// today — the import is erased at build time.
+export type { WebGPURenderer } from 'three/webgpu';
 
 import { detectDisplayCapabilities, type HDRCapabilities } from '../utils/hdr-detection';
 

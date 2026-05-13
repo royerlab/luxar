@@ -972,7 +972,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
     // The synthetic array_ref attrs has no usable .arrays handle of its own —
     // pass the same Float32Array-shaped placeholder the original code did
     // and let the helper switch into ref-resolution.
-    const placeholder = {} as zarr.Array<zarr.DataType, zarr.FetchStore>;
+    const placeholder = {} as zarr.Array<zarr.DataType, zarr.Readable>;
     const storeToUse = this.zarrStore || this.zarrLocation.store;
     return this.rangeLoader.loadRangesResolvingRef(
       placeholder,

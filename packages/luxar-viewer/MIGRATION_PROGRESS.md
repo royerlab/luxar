@@ -47,6 +47,24 @@ Each blocker is an external dependency or design call.
 
 Tracked separately because they unblock the per-shader rows below.
 
+- [ ] **`tsconfig.json moduleResolution` bump from `Node` to
+  `Bundler`** — required to resolve `three/webgpu` types
+  (currently shipped under `@types/three/build/three.webgpu.d.ts`
+  which the legacy Node resolver can't find via the `exports`
+  field). Discovered in M1 (Phase 0 pre-flight) attempting the
+  type-only smoke import: `tsc` complained "Cannot find module
+  'three/webgpu'". Flipping to `Bundler` resolves the WebGPU
+  types but surfaces a zarrita typing mismatch in
+  `lines-spatial-index-loader.ts:865`,
+  `points-spatial-index-loader.ts:{1085, 1212}` — the
+  `loadColorRanges` signature accepts
+  `zarr.Array<zarr.DataType, zarr.FetchStore>` but callers pass
+  `zarr.Array<zarr.DataType, zarr.Readable>`. Under Node
+  resolution these widen to compatible types; under Bundler
+  they're precise and incompatible. Resolution requires either
+  widening the helper signature to accept `zarr.Readable` or
+  narrowing the caller sites' array types. Estimated half-day.
+  Must complete before M2 lands.
 - [ ] **`setupRenderer` becomes async** — `scene-manager.ts`. Branches
   on `import.meta.env.VITE_LUXAR_USE_WEBGPU_RENDERER` to construct
   either `WebGLRenderer` or `WebGPURenderer({forceWebGL: true})`.
