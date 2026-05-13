@@ -257,7 +257,7 @@ Legend:
 | Shader        | G | T | F | R | D |
 |---------------|---|---|---|---|---|
 | `point-pick`  | x | x | x |   |   |
-| `line-pick`   | x |   |   |   |   |
+| `line-pick`   | x | x | x |   |   |
 | `gsplat-pick` | x |   |   |   |   |
 
 ## Recommended port order
