@@ -100,39 +100,39 @@ describe('NodeFactory', () => {
       const geometry = factory.createPointsGeometry(data);
 
       expect(geometry).toBeInstanceOf(THREE.BufferGeometry);
-      expect(geometry.getAttribute('position')).toBeDefined();
-      expect(geometry.getAttribute('position').count).toBe(50);
+      expect(geometry.getAttribute('aCenter')).toBeDefined();
+      expect(geometry.getAttribute('aCenter').count).toBe(50);
     });
 
     it('should create geometry with colors', () => {
       const data = createMockPointsData({ pointCount: 50, hasColors: true });
       const geometry = factory.createPointsGeometry(data);
 
-      expect(geometry.getAttribute('color')).toBeDefined();
-      expect(geometry.getAttribute('color').count).toBe(50);
+      expect(geometry.getAttribute('aColor')).toBeDefined();
+      expect(geometry.getAttribute('aColor').count).toBe(50);
     });
 
     it('should create geometry with radii', () => {
       const data = createMockPointsData({ pointCount: 50, hasRadii: true });
       const geometry = factory.createPointsGeometry(data);
 
-      expect(geometry.getAttribute('radius')).toBeDefined();
-      expect(geometry.getAttribute('radius').count).toBe(50);
+      expect(geometry.getAttribute('aRadius')).toBeDefined();
+      expect(geometry.getAttribute('aRadius').count).toBe(50);
     });
 
     it('should create geometry with sharpness', () => {
       const data = createMockPointsData({ pointCount: 50, hasSharpness: true });
       const geometry = factory.createPointsGeometry(data);
 
-      expect(geometry.getAttribute('sharpness')).toBeDefined();
-      expect(geometry.getAttribute('sharpness').count).toBe(50);
+      expect(geometry.getAttribute('aSharpness')).toBeDefined();
+      expect(geometry.getAttribute('aSharpness').count).toBe(50);
     });
 
     it('should set default radius when not provided', () => {
       const data = createMockPointsData({ pointCount: 50 });
       const geometry = factory.createPointsGeometry(data);
 
-      const radiusAttr = geometry.getAttribute('radius');
+      const radiusAttr = geometry.getAttribute('aRadius');
       expect(radiusAttr).toBeDefined();
       expect(radiusAttr.count).toBe(50);
       // Default radius is 0.5
@@ -143,7 +143,7 @@ describe('NodeFactory', () => {
       const data = createMockPointsData({ pointCount: 50 });
       const geometry = factory.createPointsGeometry(data);
 
-      const sharpnessAttr = geometry.getAttribute('sharpness');
+      const sharpnessAttr = geometry.getAttribute('aSharpness');
       expect(sharpnessAttr).toBeDefined();
       expect(sharpnessAttr.count).toBe(50);
       // Default sharpness is 2.0
@@ -158,7 +158,7 @@ describe('NodeFactory', () => {
       });
       const geometry = factory.createPointsGeometry(data);
 
-      const colorAttr = geometry.getAttribute('color');
+      const colorAttr = geometry.getAttribute('aColor');
       expect(colorAttr).toBeDefined();
       expect(colorAttr.normalized).toBe(true);
     });
@@ -171,7 +171,7 @@ describe('NodeFactory', () => {
       });
       const geometry = factory.createPointsGeometry(data, 2.0);
 
-      const radiusAttr = geometry.getAttribute('radius');
+      const radiusAttr = geometry.getAttribute('aRadius');
       expect(radiusAttr).toBeDefined();
       expect(radiusAttr.normalized).toBe(true);
       expect(geometry.userData.radiusScale).toBe(2.0);

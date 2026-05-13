@@ -29,7 +29,7 @@ import { PointPickingMaterial } from './picking/point-picking-material';
  * Reads `geometry.userData.{radiusScale, sharpnessScale}` and propagates
  * the values to both the render and pick materials. Idempotent.
  */
-export function syncPointMaterialWithGeometry(points: THREE.Points): void {
+export function syncPointMaterialWithGeometry(points: THREE.Mesh): void {
   const geometry = points.geometry;
   if (!geometry) return;
   const radiusScale = (geometry.userData?.radiusScale as number | undefined) ?? 1.0;

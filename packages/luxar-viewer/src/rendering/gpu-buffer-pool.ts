@@ -418,72 +418,109 @@ export class GPUBufferPool {
   }
 
   /**
-   * Create Points geometry with type-specific attributes
+   * Create Points geometry with type-specific instanced attributes.
+   *
+   * Layout matches the line + gsplat pattern: a shared unit-quad
+   * base geometry (4 vertices + 2-triangle index) plus per-instance
+   * `InstancedBufferAttribute`s for centre/colour/radius/sharpness/
+   * scalar. The base is allocated unconditionally; per-instance
+   * attributes are sized to `capacity`.
    */
   private createPointsGeometry(
     capacity: number,
     types: PointsAttributeTypes
   ): THREE.BufferGeometry {
+    // Start from the shared unit-quad base — same shape that
+    // `point-geometry.ts::createPointQuadGeometry` produces, but
+    // inlined here to keep the pool self-contained.
     const geometry = new THREE.BufferGeometry();
+    const quadCorners = new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]);
+    const indices = new Uint16Array([0, 1, 2, 2, 1, 3]);
+    geometry.setAttribute('aQuadCorner', new THREE.BufferAttribute(quadCorners, 2));
+    geometry.setIndex(new THREE.BufferAttribute(indices, 1));
 
-    // Position: Always Float32Array
-    geometry.setAttribute('position', new THREE.Float32BufferAttribute(capacity * 3, 3));
+    // Per-instance centre: always Float32Array.
+    geometry.setAttribute(
+      'aCenter',
+      new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3), 3)
+    );
 
-    // Color: Type-specific with normalization for Uint8/Uint16
+    // Per-instance colour, type-specific with normalisation for Uint8/Uint16.
     const colorNormalized = types.color !== 'Float32Array';
     if (types.color === 'Uint8Array') {
-      const attr = new THREE.BufferAttribute(new Uint8Array(capacity * 3), 3, colorNormalized);
+      const attr = new THREE.InstancedBufferAttribute(
+        new Uint8Array(capacity * 3),
+        3,
+        colorNormalized
+      );
       attr.setUsage(THREE.DynamicDrawUsage);
-      geometry.setAttribute('color', attr);
+      geometry.setAttribute('aColor', attr);
     } else if (types.color === 'Uint16Array') {
-      const attr = new THREE.BufferAttribute(new Uint16Array(capacity * 3), 3, colorNormalized);
+      const attr = new THREE.InstancedBufferAttribute(
+        new Uint16Array(capacity * 3),
+        3,
+        colorNormalized
+      );
       attr.setUsage(THREE.DynamicDrawUsage);
-      geometry.setAttribute('color', attr);
+      geometry.setAttribute('aColor', attr);
     } else {
-      geometry.setAttribute('color', new THREE.Float32BufferAttribute(capacity * 3, 3));
+      geometry.setAttribute(
+        'aColor',
+        new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3), 3)
+      );
     }
 
-    // Radius: Type-specific with normalization for Uint8
-    const radiusNormalized = types.radius === 'Uint8Array';
+    // Per-instance radius, type-specific.
     if (types.radius === 'Uint8Array') {
-      const attr = new THREE.BufferAttribute(new Uint8Array(capacity), 1, radiusNormalized);
+      const attr = new THREE.InstancedBufferAttribute(new Uint8Array(capacity), 1, true);
       attr.setUsage(THREE.DynamicDrawUsage);
-      geometry.setAttribute('radius', attr);
+      geometry.setAttribute('aRadius', attr);
     } else {
-      geometry.setAttribute('radius', new THREE.Float32BufferAttribute(capacity, 1));
+      geometry.setAttribute(
+        'aRadius',
+        new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1)
+      );
     }
 
-    // Sharpness: Type-specific with normalization for Uint8
-    const sharpnessNormalized = types.sharpness === 'Uint8Array';
+    // Per-instance sharpness, type-specific.
     if (types.sharpness === 'Uint8Array') {
-      const attr = new THREE.BufferAttribute(new Uint8Array(capacity), 1, sharpnessNormalized);
+      const attr = new THREE.InstancedBufferAttribute(new Uint8Array(capacity), 1, true);
       attr.setUsage(THREE.DynamicDrawUsage);
-      geometry.setAttribute('sharpness', attr);
+      geometry.setAttribute('aSharpness', attr);
     } else {
-      geometry.setAttribute('sharpness', new THREE.Float32BufferAttribute(capacity, 1));
+      geometry.setAttribute(
+        'aSharpness',
+        new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1)
+      );
     }
 
-    // scalar attribute — only created when scalars are present.
-    // The shader reads `scalar` only under USE_COLORMAP, so omitting the
-    // attribute when types.scalar is undefined avoids carrying a 4 B/point
-    // empty buffer for every non-colormap dataset.
+    // Per-instance scalar — only created when scalars are present.
+    // Shader reads `aScalar` only under USE_COLORMAP, so omitting the
+    // attribute when types.scalar is undefined avoids carrying empty
+    // buffers for every non-colormap dataset.
     if (types.scalar === 'Uint8Array') {
-      const attr = new THREE.BufferAttribute(new Uint8Array(capacity), 1, /*normalized*/ true);
+      const attr = new THREE.InstancedBufferAttribute(
+        new Uint8Array(capacity),
+        1,
+        /*normalized*/ true
+      );
       attr.setUsage(THREE.DynamicDrawUsage);
-      geometry.setAttribute('scalar', attr);
-    } else if (types.scalar === 'Float16Array') {
+      geometry.setAttribute('aScalar', attr);
+    } else if (types.scalar === 'Float16Array' || types.scalar === 'Float32Array') {
       // Float16Array isn't an accepted THREE.js BufferAttribute storage,
       // so the shader receives Float32 — we widen at upload time. The
-      // distinction is preserved in types for accurate reuse matching.
-      geometry.setAttribute('scalar', new THREE.Float32BufferAttribute(capacity, 1));
-    } else if (types.scalar === 'Float32Array') {
-      geometry.setAttribute('scalar', new THREE.Float32BufferAttribute(capacity, 1));
+      // distinction is preserved in `types` for accurate reuse matching.
+      geometry.setAttribute(
+        'aScalar',
+        new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1)
+      );
     }
 
-    // Set dynamic usage for Float32 attributes
+    // Mark all Float32-backed per-instance attributes as DynamicDrawUsage
+    // so subsequent in-place updates skip a full re-upload.
     for (const key in geometry.attributes) {
       const attr = geometry.attributes[key];
-      if (attr instanceof THREE.Float32BufferAttribute) {
+      if (attr.array instanceof Float32Array && attr instanceof THREE.InstancedBufferAttribute) {
         attr.setUsage(THREE.DynamicDrawUsage);
       }
     }
@@ -492,7 +529,10 @@ export class GPUBufferPool {
   }
 
   /**
-   * Grow Points geometry to new capacity (reallocates attributes with same types).
+   * Grow Points geometry to new capacity (reallocates attributes
+   * with same types). Preserves the unit-quad base attribute and
+   * index — only the per-instance `InstancedBufferAttribute`s
+   * reallocate.
    */
   private growPointsGeometry(
     geometry: THREE.BufferGeometry,
@@ -506,90 +546,88 @@ export class GPUBufferPool {
     // attribute swap.
     invalidateCachedByteSize(geometry);
 
-    // Position: Always Float32Array
-    const oldPos = geometry.getAttribute('position') as THREE.BufferAttribute;
-    const newPos = new THREE.Float32BufferAttribute(newCapacity * 3, 3);
+    // Per-instance centre — always Float32Array.
+    const oldPos = geometry.getAttribute('aCenter') as THREE.InstancedBufferAttribute;
+    const newPos = new THREE.InstancedBufferAttribute(new Float32Array(newCapacity * 3), 3);
     (newPos.array as Float32Array).set(oldPos.array as Float32Array);
     newPos.setUsage(THREE.DynamicDrawUsage);
-    geometry.setAttribute('position', newPos);
+    geometry.setAttribute('aCenter', newPos);
 
-    // Color: Type-preserving growth
-    const oldCol = geometry.getAttribute('color') as THREE.BufferAttribute;
+    // Per-instance colour — type-preserving growth.
+    const oldCol = geometry.getAttribute('aColor') as THREE.InstancedBufferAttribute;
     const colorNormalized = types.color !== 'Float32Array';
     if (types.color === 'Uint8Array') {
-      const newCol = new THREE.BufferAttribute(new Uint8Array(newCapacity * 3), 3, colorNormalized);
+      const newCol = new THREE.InstancedBufferAttribute(
+        new Uint8Array(newCapacity * 3),
+        3,
+        colorNormalized
+      );
       (newCol.array as Uint8Array).set(oldCol.array as Uint8Array);
       newCol.setUsage(THREE.DynamicDrawUsage);
-      geometry.setAttribute('color', newCol);
+      geometry.setAttribute('aColor', newCol);
     } else if (types.color === 'Uint16Array') {
-      const newCol = new THREE.BufferAttribute(
+      const newCol = new THREE.InstancedBufferAttribute(
         new Uint16Array(newCapacity * 3),
         3,
         colorNormalized
       );
       (newCol.array as Uint16Array).set(oldCol.array as Uint16Array);
       newCol.setUsage(THREE.DynamicDrawUsage);
-      geometry.setAttribute('color', newCol);
+      geometry.setAttribute('aColor', newCol);
     } else {
-      const newCol = new THREE.Float32BufferAttribute(newCapacity * 3, 3);
+      const newCol = new THREE.InstancedBufferAttribute(new Float32Array(newCapacity * 3), 3);
       (newCol.array as Float32Array).set(oldCol.array as Float32Array);
       newCol.setUsage(THREE.DynamicDrawUsage);
-      geometry.setAttribute('color', newCol);
+      geometry.setAttribute('aColor', newCol);
     }
 
-    // Radius: Type-preserving growth
-    const oldRad = geometry.getAttribute('radius') as THREE.BufferAttribute;
-    const radiusNormalized = types.radius === 'Uint8Array';
+    // Per-instance radius — type-preserving growth.
+    const oldRad = geometry.getAttribute('aRadius') as THREE.InstancedBufferAttribute;
     if (types.radius === 'Uint8Array') {
-      const newRad = new THREE.BufferAttribute(new Uint8Array(newCapacity), 1, radiusNormalized);
+      const newRad = new THREE.InstancedBufferAttribute(new Uint8Array(newCapacity), 1, true);
       (newRad.array as Uint8Array).set(oldRad.array as Uint8Array);
       newRad.setUsage(THREE.DynamicDrawUsage);
-      geometry.setAttribute('radius', newRad);
+      geometry.setAttribute('aRadius', newRad);
     } else {
-      const newRad = new THREE.Float32BufferAttribute(newCapacity, 1);
+      const newRad = new THREE.InstancedBufferAttribute(new Float32Array(newCapacity), 1);
       (newRad.array as Float32Array).set(oldRad.array as Float32Array);
       newRad.setUsage(THREE.DynamicDrawUsage);
-      geometry.setAttribute('radius', newRad);
+      geometry.setAttribute('aRadius', newRad);
     }
 
-    // Sharpness: Type-preserving growth
-    const oldSharp = geometry.getAttribute('sharpness') as THREE.BufferAttribute;
-    const sharpnessNormalized = types.sharpness === 'Uint8Array';
+    // Per-instance sharpness — type-preserving growth.
+    const oldSharp = geometry.getAttribute('aSharpness') as THREE.InstancedBufferAttribute;
     if (types.sharpness === 'Uint8Array') {
-      const newSharp = new THREE.BufferAttribute(
-        new Uint8Array(newCapacity),
-        1,
-        sharpnessNormalized
-      );
+      const newSharp = new THREE.InstancedBufferAttribute(new Uint8Array(newCapacity), 1, true);
       (newSharp.array as Uint8Array).set(oldSharp.array as Uint8Array);
       newSharp.setUsage(THREE.DynamicDrawUsage);
-      geometry.setAttribute('sharpness', newSharp);
+      geometry.setAttribute('aSharpness', newSharp);
     } else {
-      const newSharp = new THREE.Float32BufferAttribute(newCapacity, 1);
+      const newSharp = new THREE.InstancedBufferAttribute(new Float32Array(newCapacity), 1);
       (newSharp.array as Float32Array).set(oldSharp.array as Float32Array);
       newSharp.setUsage(THREE.DynamicDrawUsage);
-      geometry.setAttribute('sharpness', newSharp);
+      geometry.setAttribute('aSharpness', newSharp);
     }
 
-    // Scalar — type-preserving growth, only when present.
+    // Per-instance scalar — type-preserving growth, only when present.
     if (types.scalar) {
-      const oldScalar = geometry.getAttribute('scalar') as THREE.BufferAttribute | undefined;
+      const oldScalar = geometry.getAttribute('aScalar') as THREE.InstancedBufferAttribute | undefined;
       if (types.scalar === 'Uint8Array') {
-        const newScalar = new THREE.BufferAttribute(
+        const newScalar = new THREE.InstancedBufferAttribute(
           new Uint8Array(newCapacity),
           1,
           /*normalized*/ true
         );
         if (oldScalar) (newScalar.array as Uint8Array).set(oldScalar.array as Uint8Array);
         newScalar.setUsage(THREE.DynamicDrawUsage);
-        geometry.setAttribute('scalar', newScalar);
+        geometry.setAttribute('aScalar', newScalar);
       } else {
         // Float16Array and Float32Array both stage into a Float32 GPU
         // attribute — the type tag preserves dtype for reuse matching.
-        const newScalar = new THREE.Float32BufferAttribute(newCapacity, 1);
+        const newScalar = new THREE.InstancedBufferAttribute(new Float32Array(newCapacity), 1);
         if (oldScalar) (newScalar.array as Float32Array).set(oldScalar.array as Float32Array);
         newScalar.setUsage(THREE.DynamicDrawUsage);
-        geometry.setAttribute('scalar', newScalar);
+        geometry.setAttribute('aScalar', newScalar);
       }
     }
   }
@@ -617,7 +655,7 @@ export class GPUBufferPool {
     count: number
   ): void {
     // Update positions (always Float32Array)
-    const posAttr = geometry.getAttribute('position') as THREE.BufferAttribute;
+    const posAttr = geometry.getAttribute('aCenter') as THREE.InstancedBufferAttribute;
     (posAttr.array as Float32Array).set(data.positions.subarray(0, count * 3) as Float32Array);
     posAttr.needsUpdate = true;
 
@@ -630,7 +668,7 @@ export class GPUBufferPool {
     // is undefined — see `detectAttributeTypes`), fill 1.0; for typed
     // integer buffers we still write 0xFF to be defensive against type
     // changes during reuse.
-    const colAttr = geometry.getAttribute('color') as THREE.BufferAttribute;
+    const colAttr = geometry.getAttribute('aColor') as THREE.InstancedBufferAttribute;
     if (data.colors) {
       // TypedArray.set() works correctly when source and destination have same type
       // The geometry was created with matching type, so this is safe
@@ -657,7 +695,7 @@ export class GPUBufferPool {
     // NodeFactory.createPointsGeometry). When the type is Uint8
     // (normalized via radiusScale = max_radius), 0.5 maps to byte 128;
     // when Float32, write 0.5 directly.
-    const radAttr = geometry.getAttribute('radius') as THREE.BufferAttribute;
+    const radAttr = geometry.getAttribute('aRadius') as THREE.InstancedBufferAttribute;
     if (data.radii) {
       if (data.radii instanceof Uint8Array) {
         (radAttr.array as Uint8Array).set(data.radii.subarray(0, count) as Uint8Array);
@@ -678,7 +716,7 @@ export class GPUBufferPool {
     // fill default 2.0 when `data.sharpness` is absent. Float32 path
     // writes 2.0 directly; Uint8 path uses 64 (≈2.0/8 * 255 — assumes
     // typical max_sharpness ~31 means scaled value falls in usable range).
-    const sharpAttr = geometry.getAttribute('sharpness') as THREE.BufferAttribute;
+    const sharpAttr = geometry.getAttribute('aSharpness') as THREE.InstancedBufferAttribute;
     if (data.sharpness) {
       if (data.sharpness instanceof Uint8Array) {
         (sharpAttr.array as Uint8Array).set(data.sharpness.subarray(0, count) as Uint8Array);
@@ -698,7 +736,7 @@ export class GPUBufferPool {
     // detectAttributeTypes saw scalars at acquire time. When the data
     // dropped scalars on a later commit (rare — types would mismatch
     // and the pool would re-allocate), nothing to do here.
-    const scalarAttr = geometry.getAttribute('scalar') as THREE.BufferAttribute | undefined;
+    const scalarAttr = geometry.getAttribute('aScalar') as THREE.InstancedBufferAttribute | undefined;
     if (scalarAttr) {
       if (data.scalars) {
         if (data.scalars instanceof Uint8Array) {

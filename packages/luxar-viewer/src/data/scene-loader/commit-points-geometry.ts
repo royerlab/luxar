@@ -66,7 +66,7 @@ export function commitPointsGeometry(
 ): void {
   if (!rootGroup) return;
 
-  const points = rootGroup.getObjectByName(path) as THREE.Points;
+  const points = rootGroup.getObjectByName(path) as THREE.Mesh;
   // Parity with lines/gsplats commit helpers — verify the named
   // object actually IS a Points node (not e.g. a stray Group with the
   // same name). Guards against bugs where a placeholder of the wrong
@@ -115,16 +115,19 @@ export function commitPointsGeometry(
 
     // Pool disabled: try in-place reuse if the count matches; otherwise
     // dispose and recreate. Recreation handles all the dtype logic via
-    // NodeFactory.
+    // NodeFactory. After the points-instanced-mesh migration the
+    // attribute names are a* and the storage is InstancedBufferAttribute.
     const oldGeometry = points.geometry;
-    const oldPositionAttr = oldGeometry?.getAttribute('position') as THREE.BufferAttribute | null;
-    const oldCount = oldPositionAttr ? oldPositionAttr.count : 0;
+    const oldCenterAttr = oldGeometry?.getAttribute('aCenter') as
+      | THREE.InstancedBufferAttribute
+      | null;
+    const oldCount = oldCenterAttr ? oldCenterAttr.count : 0;
 
     if (oldCount === data.pointCount && data.pointCount > 0) {
-      (oldPositionAttr!.array as Float32Array).set(data.positions as Float32Array);
-      oldPositionAttr!.needsUpdate = true;
+      (oldCenterAttr!.array as Float32Array).set(data.positions as Float32Array);
+      oldCenterAttr!.needsUpdate = true;
 
-      const colorAttr = oldGeometry.getAttribute('color') as THREE.BufferAttribute;
+      const colorAttr = oldGeometry.getAttribute('aColor') as THREE.InstancedBufferAttribute;
       if (colorAttr && data.colors) {
         (colorAttr.array as ArrayLike<number> & { set: (a: ArrayLike<number>) => void }).set(
           data.colors
@@ -132,7 +135,7 @@ export function commitPointsGeometry(
         colorAttr.needsUpdate = true;
       }
 
-      const radiiAttr = oldGeometry.getAttribute('radius') as THREE.BufferAttribute;
+      const radiiAttr = oldGeometry.getAttribute('aRadius') as THREE.InstancedBufferAttribute;
       if (radiiAttr && data.radii) {
         (radiiAttr.array as ArrayLike<number> & { set: (a: ArrayLike<number>) => void }).set(
           data.radii
@@ -140,7 +143,7 @@ export function commitPointsGeometry(
         radiiAttr.needsUpdate = true;
       }
 
-      const sharpAttr = oldGeometry.getAttribute('sharpness') as THREE.BufferAttribute;
+      const sharpAttr = oldGeometry.getAttribute('aSharpness') as THREE.InstancedBufferAttribute;
       if (sharpAttr && data.sharpness) {
         (sharpAttr.array as ArrayLike<number> & { set: (a: ArrayLike<number>) => void }).set(
           data.sharpness

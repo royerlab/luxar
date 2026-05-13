@@ -67,8 +67,8 @@ test.describe('Data Integrity - Attribute Alignment', () => {
       const issues: string[] = [];
 
       debug.scene.traverse((obj: any) => {
-        if (obj.type !== 'Points' || !obj.geometry?.attributes?.color) return;
-        const col = obj.geometry.attributes.color;
+        if (obj.userData?.nodeType !== 'points' || !obj.geometry?.attributes?.aColor) return;
+        const col = obj.geometry.attributes.aColor;
         const count = Math.min(col.count * col.itemSize, 3000);
         for (let i = 0; i < count; i++) {
           const v = col.array[i];
@@ -93,8 +93,8 @@ test.describe('Data Integrity - Attribute Alignment', () => {
       const issues: string[] = [];
 
       debug.scene.traverse((obj: any) => {
-        if (obj.type !== 'Points' || !obj.geometry?.attributes?.radius) return;
-        const rad = obj.geometry.attributes.radius;
+        if (obj.userData?.nodeType !== 'points' || !obj.geometry?.attributes?.aRadius) return;
+        const rad = obj.geometry.attributes.aRadius;
         const dr = obj.geometry.drawRange;
         const count = dr.count < Infinity ? Math.min(dr.count, rad.count) : rad.count;
         for (let i = 0; i < count; i++) {

@@ -117,10 +117,16 @@ export function computeDebugState(ctx: DebugStateContext): DebugState {
   const lineMeshes: LineMeshInfo[] = [];
 
   ctx.scene.traverse((object) => {
-    if (object instanceof THREE.Points) {
+    // Points: now THREE.Mesh + InstancedBufferAttribute after the
+    // container migration. The per-instance `aCenter` attribute's
+    // count is the source of truth for visible-point count.
+    if (
+      object instanceof THREE.Mesh &&
+      (object.userData as { nodeType?: string })?.nodeType === 'points'
+    ) {
       const geometry = object.geometry;
       const drawRangeCount = geometry?.drawRange?.count;
-      const bufferCount = geometry?.attributes?.position?.count || 0;
+      const bufferCount = geometry?.attributes?.aCenter?.count || 0;
       // Infinity means "draw all" — fall back to the buffer count.
       const pointCount =
         drawRangeCount !== undefined && drawRangeCount !== Infinity
@@ -131,9 +137,9 @@ export function computeDebugState(ctx: DebugStateContext): DebugState {
         name: object.name || 'unnamed',
         pointCount,
         visible: object.visible,
-        hasColors: !!geometry?.attributes?.color,
-        hasRadii: !!geometry?.attributes?.radius,
-        hasSharpness: !!geometry?.attributes?.sharpness,
+        hasColors: !!geometry?.attributes?.aColor,
+        hasRadii: !!geometry?.attributes?.aRadius,
+        hasSharpness: !!geometry?.attributes?.aSharpness,
       });
     }
 

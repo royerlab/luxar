@@ -19,7 +19,7 @@ describe('syncPointMaterialWithGeometry', () => {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0], 3));
     geometry.userData = { radiusScale: 4.0, sharpnessScale: 31.0 };
-    const points = new THREE.Points(geometry, mat);
+    const points = new THREE.Mesh(geometry, mat);
 
     syncPointMaterialWithGeometry(points);
 
@@ -34,7 +34,7 @@ describe('syncPointMaterialWithGeometry', () => {
     mat.uniforms.sharpnessScale.value = 99;
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0], 3));
-    const points = new THREE.Points(geometry, mat);
+    const points = new THREE.Mesh(geometry, mat);
     syncPointMaterialWithGeometry(points);
     expect(mat.uniforms.radiusScale.value).toBe(1.0);
     expect(mat.uniforms.sharpnessScale.value).toBe(1.0);
@@ -46,8 +46,8 @@ describe('syncPointMaterialWithGeometry', () => {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0], 3));
     geometry.userData = { radiusScale: 8.0, sharpnessScale: 16.0 };
-    const points = new THREE.Points(geometry, mat);
-    const pickNode = new THREE.Points(geometry, pickMat);
+    const points = new THREE.Mesh(geometry, mat);
+    const pickNode = new THREE.Mesh(geometry, pickMat);
     points.userData.pickNode = pickNode;
 
     syncPointMaterialWithGeometry(points);
@@ -63,7 +63,7 @@ describe('syncPointMaterialWithGeometry', () => {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0], 3));
     geometry.userData = { radiusScale: 2.0 };
-    const points = new THREE.Points(geometry, otherMat as unknown as THREE.ShaderMaterial);
+    const points = new THREE.Mesh(geometry, otherMat as unknown as THREE.ShaderMaterial);
     expect(() => syncPointMaterialWithGeometry(points)).not.toThrow();
   });
 });

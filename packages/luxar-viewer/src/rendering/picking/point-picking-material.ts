@@ -33,6 +33,9 @@ export class PointPickingMaterial extends THREE.ShaderMaterial implements Camera
         sharpnessScale: { value: config.sharpnessScale ?? 1.0 },
         uIsOrtho: { value: 0 },
         uNodeId: { value: config.nodeId },
+        // Resolution needed for instanced-quad expansion (matches
+        // PointMaterial). Defaults overwritten by updateCameraParams.
+        uResolution: { value: new THREE.Vector2(1920, defaultResolutionY) },
       },
       vertexShader: POINT_PICK_SOURCE.webgl.vertex,
       fragmentShader: POINT_PICK_SOURCE.webgl.fragment,
@@ -55,6 +58,7 @@ export class PointPickingMaterial extends THREE.ShaderMaterial implements Camera
     this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
     this.uniforms.pointSizeFactor.value = computePointSizeFactor(fov, resolution.y, isOrtho);
     this.uniforms.maxPointSize.value = computeMaxPointSize(resolution.y);
+    (this.uniforms.uResolution.value as THREE.Vector2).copy(resolution);
   }
 
   /**

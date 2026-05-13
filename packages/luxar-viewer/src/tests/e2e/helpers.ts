@@ -1169,12 +1169,15 @@ export async function validateSceneAttributes(page: Page): Promise<
 
     const results: any[] = [];
     debug.scene.traverse((obj: any) => {
-      if (obj.type !== 'Points' || !obj.geometry?.attributes?.position) return;
+      // After the container migration, points are THREE.Mesh with
+      // instanced quad geometry. Per-instance attributes are prefixed
+      // with `a` (aCenter, aColor, etc.).
+      if (obj.userData?.nodeType !== 'points' || !obj.geometry?.attributes?.aCenter) return;
 
-      const pos = obj.geometry.attributes.position;
-      const col = obj.geometry.attributes.color;
-      const rad = obj.geometry.attributes.radius;
-      const shp = obj.geometry.attributes.sharpness;
+      const pos = obj.geometry.attributes.aCenter;
+      const col = obj.geometry.attributes.aColor;
+      const rad = obj.geometry.attributes.aRadius;
+      const shp = obj.geometry.attributes.aSharpness;
       const dr = obj.geometry.drawRange;
 
       const posCount = pos.count;
@@ -1241,41 +1244,154 @@ export async function assertNoShaderErrors(page: Page): Promise<void> {
   }
 }
 
+export interface SampledPixel {
+  r: number;
+  g: number;
+  b: number;
+  a: number;
+}
+
+export interface ElementPixelStats {
+  width: number;
+  height: number;
+  threshold: number;
+  nonBlackPixels: number;
+  brightest: SampledPixel;
+}
+
 /**
- * Read a single pixel from a canvas selector at fractional
- * coordinates `(fx, fy)` in `[0,1]`. Returns the RGBA byte values.
+ * Read pixels from a rendered element at fractional coordinates in
+ * `[0,1]`. Returns RGBA byte values from the *visible screenshot*.
  *
- * Useful for "non-black" or "specific color" assertions on rendered
- * output without needing a full screenshot diff. Reads from the visible
- * 2D drawing buffer, so SSAA-upscaled framebuffers are downsampled
- * automatically.
+ * Do not read WebGL canvases by drawing the canvas into a 2D canvas:
+ * with `preserveDrawingBuffer: false` Chromium is allowed to clear the
+ * WebGL drawing buffer after compositing, which produced all-zero pixels
+ * in shader smoke tests even when the screenshot was visibly rendered.
+ * Capturing the element screenshot samples the composited output instead
+ * and is therefore the right primitive for E2E visual smoke tests.
+ */
+async function captureElementScreenshotDataUrl(page: Page, selector: string): Promise<string> {
+  const element = page.locator(selector).first();
+  await element.waitFor({ state: 'visible' });
+  const png = await element.screenshot({ animations: 'disabled' });
+  return `data:image/png;base64,${png.toString('base64')}`;
+}
+
+export async function samplePixelsAt(
+  page: Page,
+  selector: string,
+  offsets: Array<[number, number]>
+): Promise<SampledPixel[]> {
+  if (offsets.length === 0) return [];
+
+  const dataUrl = await captureElementScreenshotDataUrl(page, selector);
+
+  return await page.evaluate(
+    async ({ url, points }) => {
+      const img = new Image();
+      img.decoding = 'sync';
+      const loaded = new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = () => reject(new Error('samplePixelsAt: failed to decode screenshot'));
+      });
+      img.src = url;
+      await loaded;
+
+      const width = img.naturalWidth;
+      const height = img.naturalHeight;
+      if (width <= 0 || height <= 0) {
+        throw new Error(`samplePixelsAt: empty screenshot ${width}x${height}`);
+      }
+
+      const off = document.createElement('canvas');
+      off.width = width;
+      off.height = height;
+      const ctx = off.getContext('2d', { willReadFrequently: true });
+      if (!ctx) throw new Error('samplePixelsAt: 2D context unavailable');
+      ctx.drawImage(img, 0, 0);
+
+      return points.map(([x, y]) => {
+        const px = Math.max(0, Math.min(width - 1, Math.round(x * (width - 1))));
+        const py = Math.max(0, Math.min(height - 1, Math.round(y * (height - 1))));
+        const data = ctx.getImageData(px, py, 1, 1).data;
+        return { r: data[0], g: data[1], b: data[2], a: data[3] };
+      });
+    },
+    { url: dataUrl, points: offsets }
+  );
+}
+
+/**
+ * Compute simple visible-output stats for an element screenshot. This is
+ * more robust than sparse-grid sampling for thin lines / small splat
+ * clusters while still staying platform-invariant.
+ */
+export async function getElementPixelStats(
+  page: Page,
+  selector: string,
+  threshold = 10
+): Promise<ElementPixelStats> {
+  const dataUrl = await captureElementScreenshotDataUrl(page, selector);
+
+  return await page.evaluate(
+    async ({ url, cutoff }) => {
+      const img = new Image();
+      img.decoding = 'sync';
+      const loaded = new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = () => reject(new Error('getElementPixelStats: failed to decode screenshot'));
+      });
+      img.src = url;
+      await loaded;
+
+      const width = img.naturalWidth;
+      const height = img.naturalHeight;
+      if (width <= 0 || height <= 0) {
+        throw new Error(`getElementPixelStats: empty screenshot ${width}x${height}`);
+      }
+
+      const off = document.createElement('canvas');
+      off.width = width;
+      off.height = height;
+      const ctx = off.getContext('2d', { willReadFrequently: true });
+      if (!ctx) throw new Error('getElementPixelStats: 2D context unavailable');
+      ctx.drawImage(img, 0, 0);
+
+      const pixels = ctx.getImageData(0, 0, width, height).data;
+      let nonBlackPixels = 0;
+      let brightest = { r: 0, g: 0, b: 0, a: 0 };
+      let brightestSum = -1;
+
+      for (let i = 0; i < pixels.length; i += 4) {
+        const r = pixels[i];
+        const g = pixels[i + 1];
+        const b = pixels[i + 2];
+        const a = pixels[i + 3];
+        const sum = r + g + b;
+        if (sum > cutoff) nonBlackPixels++;
+        if (sum > brightestSum) {
+          brightestSum = sum;
+          brightest = { r, g, b, a };
+        }
+      }
+
+      return { width, height, threshold: cutoff, nonBlackPixels, brightest };
+    },
+    { url: dataUrl, cutoff: threshold }
+  );
+}
+
+/**
+ * Read a single pixel from a selector at fractional coordinates.
+ * Prefer `samplePixelsAt` when taking multiple samples from the same
+ * frame so only one screenshot has to be decoded.
  */
 export async function samplePixelAt(
   page: Page,
   selector: string,
   fx: number,
   fy: number
-): Promise<{ r: number; g: number; b: number; a: number }> {
-  return await page.evaluate(
-    ({ sel, x, y }) => {
-      const canvas = document.querySelector(sel) as HTMLCanvasElement | null;
-      if (!canvas) throw new Error(`samplePixelAt: no canvas at ${sel}`);
-      const bbox = canvas.getBoundingClientRect();
-      const px = Math.max(0, Math.min(canvas.width - 1, Math.round(x * canvas.width)));
-      const py = Math.max(0, Math.min(canvas.height - 1, Math.round(y * canvas.height)));
-      void bbox;
-      // Use a 2D offscreen canvas to drawImage and read pixels — this works
-      // regardless of preserveDrawingBuffer because we're reading from a
-      // copied bitmap, not the live framebuffer.
-      const off = document.createElement('canvas');
-      off.width = canvas.width;
-      off.height = canvas.height;
-      const ctx = off.getContext('2d');
-      if (!ctx) throw new Error('samplePixelAt: 2D context unavailable');
-      ctx.drawImage(canvas, 0, 0);
-      const data = ctx.getImageData(px, py, 1, 1).data;
-      return { r: data[0], g: data[1], b: data[2], a: data[3] };
-    },
-    { sel: selector, x: fx, y: fy }
-  );
+): Promise<SampledPixel> {
+  const [pixel] = await samplePixelsAt(page, selector, [[fx, fy]]);
+  return pixel;
 }

@@ -2,7 +2,21 @@
  * Shared vertex shader for point rendering.
  *
  * Used by both PointMaterial (main rendering) and PointPickingMaterial (GPU picking).
- * Contains world-space sizing, sharpness compensation, nD slicing, and projection logic.
+ * Renders one screen-space-sized soft sprite per point using instanced
+ * quad expansion (matching the line + gsplat rendering pattern).
+ *
+ * Per-vertex attribute (4 entries, shared by ALL points):
+ *   - aQuadCorner (vec2, ±1)  — unit-quad corner, vertex shader
+ *     expands to a sprite of size `pointSize` pixels in screen space.
+ *
+ * Per-instance attributes (one entry per point, supplied by
+ * `setupInstancedPointsMesh` in `point-geometry.ts`):
+ *   - aCenter    (vec3) — world-space centre position
+ *   - aRadius    (float)
+ *   - aSharpness (float)
+ *   - aColor     (vec3) — always present (replaces the legacy
+ *     vertexColors=true auto-injected `color` attribute)
+ *   - aScalar    (float, USE_COLORMAP only)
  */
 import { GLSL_SANITIZE_FUNCTIONS } from './glsl-lib';
 import type { ShaderSource } from './shader-source';
@@ -12,47 +26,55 @@ export const POINT_VERTEX_SHADER = /* glsl */ `
 
     ${GLSL_SANITIZE_FUNCTIONS}
 
-    in float radius;
-    in float sharpness;
-    // NOTE: "in vec3 color" is auto-injected by THREE.js when vertexColors=true (see constructor).
-    // In colormap mode, vertexColors=false so "color" is not available — use scalar + LUT instead.
+    // Per-vertex (4 corners): -1..1 normalised quad coordinates.
+    in vec2 aQuadCorner;
+
+    // Per-instance (one per point) — all read once per instance, cached
+    // by the GPU across the 4 quad corners of the same instance.
+    in vec3 aCenter;
+    in float aRadius;
+    in float aSharpness;
+    in vec3 aColor;
     #ifdef USE_COLORMAP
-    in float scalar;              // Per-point scalar for colormap lookup
-    uniform sampler2D uColormapTex;   // 256x1 LUT texture
-    uniform float uScalarMin;         // Scalar range minimum
-    uniform float uScalarScale;       // 1.0 / (max - min)
+    in float aScalar;                  // Per-point scalar for colormap lookup
+    uniform sampler2D uColormapTex;    // 256x1 LUT texture
+    uniform float uScalarMin;          // Scalar range minimum
+    uniform float uScalarScale;        // 1.0 / (max - min)
     #endif
+
     uniform float pointSizeFactor; // Pre-computed: 2.0 * resolution.y / tanHalfFov (or 4.0 * resolution.y / frustumHeight for ortho)
     uniform float maxPointSize;    // Pre-computed: resolution.y * 0.5
     uniform float radiusScale;
     uniform float sharpnessScale;
     uniform int uIsOrtho;          // 0 = perspective, 1 = orthographic
+    uniform vec2 uResolution;      // Physical framebuffer size in pixels
 
     out mediump vec3 vColor;
     out mediump float vSharpness;
-    out highp float vRadius; // Pass radius to fragment for zero-check (needs precision)
+    out highp float vRadius;       // Pass radius to fragment for zero-check (needs precision)
+    out mediump vec2 vSpriteCoord; // [0, 1] sprite UV, replaces gl_PointCoord
 
     void main() {
       // Pass vertex color — either from attribute or colormap LUT
       #ifdef USE_COLORMAP
-      float t = clamp((scalar - uScalarMin) * uScalarScale, 0.0, 1.0);
+      float t = clamp((aScalar - uScalarMin) * uScalarScale, 0.0, 1.0);
       vColor = texture(uColormapTex, vec2(t, 0.5)).rgb;
       #else
-      vColor = color;
+      vColor = aColor;
       #endif
 
       // Apply sharpness scale for dtype normalization and use 2.0 as default.
-      // Guard NaN/Inf from malformed data so pow() below cannot poison gl_PointSize.
-      float normalizedSharpness = sanitizePositive(sharpness * sharpnessScale, 2.0);
+      // Guard NaN/Inf from malformed data so pow() below cannot poison pointSize.
+      float normalizedSharpness = sanitizePositive(aSharpness * sharpnessScale, 2.0);
       vSharpness = normalizedSharpness;
 
-      // Transform vertex position from world space to view space
-      vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-      gl_Position = projectionMatrix * mvPosition;
-
       // Apply radius scale for dtype normalization (e.g., uint8 needs 1/255 scale)
-      float normalizedRadius = sanitizeNonNegative(radius * radiusScale, 0.0);
+      float normalizedRadius = sanitizeNonNegative(aRadius * radiusScale, 0.0);
       vRadius = normalizedRadius; // Pass to fragment shader
+
+      // Transform per-instance centre from world space to view + clip space.
+      vec4 mvPosition = modelViewMatrix * vec4(aCenter, 1.0);
+      vec4 projCenter = projectionMatrix * mvPosition;
 
       // OPTIMIZED world-space point sizing:
       // - inversesqrt is a native GPU instruction (faster than sqrt + divide)
@@ -69,9 +91,21 @@ export const POINT_VERTEX_SHADER = /* glsl */ `
       float sharpnessCompensation = isInvalidFloat(sharpnessCompensationRaw) ? 1.0 : sharpnessCompensationRaw;
       float pointSize = basePointSize * sharpnessCompensation;
 
-      // Clamp to hardware limits, with minimum of 1.0 to avoid undefined behavior
-      // Zero-radius filtering happens in fragment shader
-      gl_PointSize = max(1.0, min(pointSize, maxPointSize));
+      // Clamp: minimum 1.0 (avoids degenerate quads) and maxPointSize cap.
+      // Zero-radius filtering happens in fragment shader.
+      pointSize = max(1.0, min(pointSize, maxPointSize));
+
+      // Expand the unit quad to a screen-space sprite. aQuadCorner is
+      // in [-1, 1] per axis, so aQuadCorner * (pointSize / uResolution)
+      // is the half-extent in NDC space. Multiply by projCenter.w to
+      // convert NDC delta to clip-space delta (compensating for the
+      // upcoming perspective divide).
+      vec2 offsetClip = aQuadCorner * (pointSize / uResolution) * projCenter.w;
+      gl_Position = projCenter + vec4(offsetClip, 0.0, 0.0);
+
+      // Sprite UV in [0, 1]² — fragment shader uses this in place of
+      // gl_PointCoord (which is unavailable under THREE.Mesh).
+      vSpriteCoord = (aQuadCorner + 1.0) * 0.5;
     }
   `;
 
@@ -92,6 +126,7 @@ export const POINT_FRAGMENT_SHADER = /* glsl */ `
     in mediump vec3 vColor;
     in mediump float vSharpness;
     in highp float vRadius; // Radius from vertex shader (needs precision for zero-check)
+    in mediump vec2 vSpriteCoord; // [0,1] sprite UV (replaces gl_PointCoord)
 
     out vec4 fragColor;
 
@@ -102,7 +137,7 @@ export const POINT_FRAGMENT_SHADER = /* glsl */ `
       }
 
       // OPTIMIZATION: Use dot product for squared distance calculation
-      vec2 centered = gl_PointCoord - 0.5;
+      vec2 centered = vSpriteCoord - 0.5;
       float r2 = dot(centered, centered);
 
       // OPTIMIZATION: Compare squared distances to avoid sqrt in discard check
