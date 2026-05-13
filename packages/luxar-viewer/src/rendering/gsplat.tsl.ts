@@ -101,7 +101,8 @@ export interface GSplatTSLConfig {
  */
 export function gsplatWebGPUFactory(
   uniforms: Record<string, THREE.IUniform>,
-  config: GSplatTSLConfig = {}
+  config: GSplatTSLConfig = {},
+  outMaterial?: NodeMaterial
 ): NodeMaterial {
   // Per-vertex / per-instance attributes.
   const aQuadCorner: TSLNode = attribute<'vec2'>('aQuadCorner', 'vec2');
@@ -112,22 +113,41 @@ export function gsplatWebGPUFactory(
   const aAmplitude: TSLNode = attribute<'float'>('aAmplitude', 'float');
   const aColor: TSLNode = attribute<'vec3'>('aColor', 'vec3');
 
-  // Uniforms — vertex.
+  // Uniforms — vertex. Each primitive is bound via `.onUpdate(() =>
+  // iuniform.value)` so a wrapper class's mutations propagate to the
+  // GPU; Vector2 / Texture references share the host object directly.
   const uResolution = uniform(
     (uniforms.uResolution.value as THREE.Vector2) ?? new THREE.Vector2(1, 1)
   );
-  const uFx = uniform((uniforms.uFx.value as number) ?? 1.0);
-  const uFy = uniform((uniforms.uFy.value as number) ?? 1.0);
-  const uTruncate = uniform((uniforms.uTruncate.value as number) ?? 3.0);
+  const uFx = uniform((uniforms.uFx.value as number) ?? 1.0).onUpdate(
+    () => (uniforms.uFx.value as number) ?? 1.0,
+    'render'
+  );
+  const uFy = uniform((uniforms.uFy.value as number) ?? 1.0).onUpdate(
+    () => (uniforms.uFy.value as number) ?? 1.0,
+    'render'
+  );
+  const uTruncate = uniform((uniforms.uTruncate.value as number) ?? 3.0).onUpdate(
+    () => (uniforms.uTruncate.value as number) ?? 3.0,
+    'render'
+  );
   const uRayIntegralFactor = uniform(
     (uniforms.uRayIntegralFactor.value as number) ?? 1.0
+  ).onUpdate(() => (uniforms.uRayIntegralFactor.value as number) ?? 1.0, 'render');
+  const uProjectionMode = uniform(
+    (uniforms.uProjectionMode.value as number) ?? 0
+  ).onUpdate(() => (uniforms.uProjectionMode.value as number) ?? 0, 'render');
+  const uIsOrtho = uniform((uniforms.uIsOrtho.value as number) ?? 0).onUpdate(
+    () => (uniforms.uIsOrtho.value as number) ?? 0,
+    'render'
   );
-  const uProjectionMode = uniform((uniforms.uProjectionMode.value as number) ?? 0);
-  const uIsOrtho = uniform((uniforms.uIsOrtho.value as number) ?? 0);
-  const uNearCull = uniform((uniforms.uNearCull.value as number) ?? 1e-4);
+  const uNearCull = uniform((uniforms.uNearCull.value as number) ?? 1e-4).onUpdate(
+    () => (uniforms.uNearCull.value as number) ?? 1e-4,
+    'render'
+  );
   const uMaxExtentFactor = uniform(
     (uniforms.uMaxExtentFactor.value as number) ?? 1.0
-  );
+  ).onUpdate(() => (uniforms.uMaxExtentFactor.value as number) ?? 1.0, 'render');
 
   // Colormap (optional).
   const uColormapTex =
@@ -136,21 +156,48 @@ export function gsplatWebGPUFactory(
       : null;
   const uScalarMin =
     config.useColormap && uniforms.uScalarMin
-      ? uniform((uniforms.uScalarMin.value as number) ?? 0.0)
+      ? uniform((uniforms.uScalarMin.value as number) ?? 0.0).onUpdate(
+          () => (uniforms.uScalarMin?.value as number) ?? 0.0,
+          'render'
+        )
       : null;
   const uScalarScale =
     config.useColormap && uniforms.uScalarScale
-      ? uniform((uniforms.uScalarScale.value as number) ?? 1.0)
+      ? uniform((uniforms.uScalarScale.value as number) ?? 1.0).onUpdate(
+          () => (uniforms.uScalarScale?.value as number) ?? 1.0,
+          'render'
+        )
       : null;
 
   // Uniforms — fragment.
-  const uOpacity = uniform((uniforms.uOpacity.value as number) ?? 1.0);
-  const uInvGamma = uniform((uniforms.uInvGamma.value as number) ?? 1.0);
-  const uIntensity = uniform((uniforms.uIntensity.value as number) ?? 1.0);
-  const uOffset = uniform((uniforms.uOffset.value as number) ?? 0.0);
-  const uShiftC = uniform((uniforms.uShiftC.value as number) ?? 0.0);
-  const uInvOneMinusC = uniform((uniforms.uInvOneMinusC.value as number) ?? 1.0);
-  const uTruncateSq = uniform((uniforms.uTruncateSq.value as number) ?? 9.0);
+  const uOpacity = uniform((uniforms.uOpacity.value as number) ?? 1.0).onUpdate(
+    () => (uniforms.uOpacity.value as number) ?? 1.0,
+    'render'
+  );
+  const uInvGamma = uniform((uniforms.uInvGamma.value as number) ?? 1.0).onUpdate(
+    () => (uniforms.uInvGamma.value as number) ?? 1.0,
+    'render'
+  );
+  const uIntensity = uniform((uniforms.uIntensity.value as number) ?? 1.0).onUpdate(
+    () => (uniforms.uIntensity.value as number) ?? 1.0,
+    'render'
+  );
+  const uOffset = uniform((uniforms.uOffset.value as number) ?? 0.0).onUpdate(
+    () => (uniforms.uOffset.value as number) ?? 0.0,
+    'render'
+  );
+  const uShiftC = uniform((uniforms.uShiftC.value as number) ?? 0.0).onUpdate(
+    () => (uniforms.uShiftC.value as number) ?? 0.0,
+    'render'
+  );
+  const uInvOneMinusC = uniform((uniforms.uInvOneMinusC.value as number) ?? 1.0).onUpdate(
+    () => (uniforms.uInvOneMinusC.value as number) ?? 1.0,
+    'render'
+  );
+  const uTruncateSq = uniform((uniforms.uTruncateSq.value as number) ?? 9.0).onUpdate(
+    () => (uniforms.uTruncateSq.value as number) ?? 9.0,
+    'render'
+  );
 
   // ---- Vertex computation ----
 
@@ -403,7 +450,7 @@ export function gsplatWebGPUFactory(
     return vec4(finalColor, float(1.0));
   });
 
-  const material = new NodeMaterial();
+  const material = outMaterial ?? new NodeMaterial();
   material.vertexNode = clipPos;
   material.colorNode = fragmentNode();
   material.toneMapped = false;
