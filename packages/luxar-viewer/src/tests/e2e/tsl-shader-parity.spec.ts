@@ -182,6 +182,23 @@ test.describe('TSL ↔ GLSL shader parity', () => {
   // `THREE.Sprite` / `THREE.InstancedMesh` so the TSL setupVertexSprite
   // path (which respects `sizeNode`) actually fires.
 
+  test('mega with USE_DETECTOR_NOISE matches across backends', async ({ page }) => {
+    await bootHarness(page);
+
+    const glslPixels = await runGLSL(page, 'mega-detector-noise');
+    const tslResult = await runTSL(page, 'mega-detector-noise');
+
+    const diff = meanAbsDiff(glslPixels, tslResult.pixels);
+    expect(
+      diff,
+      'Mega+detector-noise parity: mean abs diff ' +
+        diff.toFixed(2) +
+        ' on 0-255 scale.\n' +
+        `GLSL first 4 pixels:\n${previewPixels(glslPixels)}\n` +
+        `TSL first 4 pixels:\n${previewPixels(tslResult.pixels)}`
+    ).toBeLessThan(2.0);
+  });
+
   test('mega with USE_VIGNETTE matches across backends', async ({ page }) => {
     await bootHarness(page);
 

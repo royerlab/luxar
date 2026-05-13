@@ -153,14 +153,14 @@ Tracked separately because they unblock the per-shader rows below.
   to re-call the factory on each toggle. Defer until the M18
   default-flip needs it; production stays on the WebGL2 path
   until then.
-- [ ] **Mega detector-noise TSL port (M9-bis)** — the GLSL3
-  `applyDetectorNoise` uses a Bob Jenkins hash chain + Anscombe
-  variance-stabilising transform to approximate Poisson shot
-  noise. TSL has the primitives (`bitcast`, `floatBitsToUint`,
-  `shiftLeft`, `bitXor`) but the port is non-mechanical because
-  the hash is a long sequence of `uint`-only ops. The mega TSL
-  factory throws if `config.useDetectorNoise` is true so callers
-  see a loud failure rather than a silent missing effect.
+- [x] **Mega detector-noise TSL port (M9-bis)** — landed. The
+  Bob Jenkins hash chain, Anscombe forward/inverse, clamped
+  logistic Gaussian, and full `applyDetectorNoise` are all ported
+  to TSL using `floatBitsToUint` + `.shiftLeft()` / `.bitXor()` /
+  `.add()` on uint nodes. Parity test
+  (`mega-detector-noise` in `tsl-shader-parity.spec.ts`) passes
+  at <2/255 mean-abs-diff against the GLSL3 path. The TSL factory
+  no longer throws when `config.useDetectorNoise = true`.
 - [ ] **`setupRenderer` becomes async** — `scene-manager.ts`. Branches
   on `import.meta.env.VITE_LUXAR_USE_WEBGPU_RENDERER` to construct
   either `WebGLRenderer` or `WebGPURenderer({forceWebGL: true})`.

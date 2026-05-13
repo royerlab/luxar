@@ -8,7 +8,7 @@
  *
  *   1. Sample HDR scene (+ optional bloom)
  *   2. Lens distortion (chromatic + radial), per-channel sampling
- *   3. Detector noise   ← NOT YET PORTED — see "Deferred" below.
+ *   3. Detector noise (Bob Jenkins hash + Anscombe Poisson + Gaussian)
  *   4. EOG (Exposure → Offset → Gamma)
  *   5. Tone mapping (mode-switched on `config.toneMappingMode`)
  *   6. Vignette
@@ -27,18 +27,6 @@
  * Luxar's internal IDs (1..6) to TSL functions is in
  * {@link applyToneMapping}.
  *
- * ## Deferred — detector noise
- *
- * The GLSL detector-noise path uses a Bob Jenkins hash + Anscombe
- * variance-stabilising transform to approximate Poisson shot noise.
- * Porting this faithfully needs `floatBitsToUint` + bitwise ops in
- * TSL — those primitives exist (`bitcast`, `shiftLeft`, `bitXor`)
- * but the port is non-mechanical because the hash is a long chain of
- * uint-only ops. Until that lands the TSL factory throws if
- * `config.useDetectorNoise` is true, so callers see a loud failure
- * rather than a silent missing effect. Tracked in
- * `MIGRATION_PROGRESS.md` (M9-bis).
- *
  * @module rendering/post-processing/mega.tsl
  */
 
@@ -53,12 +41,18 @@ import {
   texture,
   mat3,
   float,
+  uint,
+  floatBitsToUint,
   dot,
   max,
   exp2,
+  log,
+  sqrt,
+  clamp,
   smoothstep,
   mix,
   step,
+  mod,
   linearToneMapping,
   reinhardToneMapping,
   cineonToneMapping,
@@ -97,10 +91,6 @@ export type LuxarToneMappingMode = 1 | 2 | 3 | 4 | 5 | 6;
 export interface MegaTSLConfig {
   readonly useLensDistortion?: boolean;
   readonly useBloom?: boolean;
-  /**
-   * Detector noise is not yet ported (see module header). Setting
-   * this to `true` throws.
-   */
   readonly useDetectorNoise?: boolean;
   readonly useVignette?: boolean;
   readonly toneMappingMode?: LuxarToneMappingMode;
@@ -147,6 +137,168 @@ function applyToneMapping(color: TSLNode, mode: LuxarToneMappingMode): TSLNode {
  *  - safe = max(c, 0)
  *  - mix(1.055 · safe^(1/2.4) - 0.055,  safe · 12.92,  step(safe, 0.0031308))
  */
+/**
+ * Bob Jenkins integer hash. Mirrors the GLSL3 implementation
+ * bit-for-bit; the shift / xor / add / hex-constant sequence is what
+ * makes the cascade avalanche-stable.
+ *
+ * TSL doesn't expose direct `uint(...)` literal hex syntax inline, so
+ * we wrap the constants via `uint(0x...)` calls. Operator method
+ * dispatch on uint nodes goes through `IntegerExtensions<'uint'>`
+ * which exposes `.add()`, `.shiftLeft()`, `.bitXor()`, `.shiftRight()`.
+ */
+function bobJenkinsHash(a: TSLNode): TSLNode {
+  let h = a;
+  // a = (a + 0x7ed55d16u) + (a << 12u)
+  h = h.add(uint(0x7ed55d16)).add(h.shiftLeft(uint(12)));
+  // a = (a ^ 0xc761c23cu) ^ (a >> 19u)
+  h = h.bitXor(uint(0xc761c23c)).bitXor(h.shiftRight(uint(19)));
+  // a = (a + 0x165667b1u) + (a << 5u)
+  h = h.add(uint(0x165667b1)).add(h.shiftLeft(uint(5)));
+  // a = (a + 0xd3a2646cu) ^ (a << 9u)
+  h = h.add(uint(0xd3a2646c)).bitXor(h.shiftLeft(uint(9)));
+  // a = (a + 0xfd7046c5u) + (a << 3u)
+  h = h.add(uint(0xfd7046c5)).add(h.shiftLeft(uint(3)));
+  // a = (a ^ 0xb55a4f09u) ^ (a >> 16u)
+  h = h.bitXor(uint(0xb55a4f09)).bitXor(h.shiftRight(uint(16)));
+  return h;
+}
+
+/** Mix two float seeds through bobJenkinsHash → single uint. */
+function rngUint2(x: TSLNode, y: TSLNode): TSLNode {
+  const a = bobJenkinsHash(floatBitsToUint(x));
+  const b = bobJenkinsHash(floatBitsToUint(y));
+  return bobJenkinsHash(a.bitXor(b));
+}
+
+/** Three-input variant of {@link rngUint2}. */
+function rngUint3(x: TSLNode, y: TSLNode, z: TSLNode): TSLNode {
+  const ab = rngUint2(x, y);
+  const c = bobJenkinsHash(floatBitsToUint(z));
+  return bobJenkinsHash(ab.bitXor(c));
+}
+
+/** Hash → uniform float in [0, 1). 2^32 = 4294967296. */
+function rngFloat2(x: TSLNode, y: TSLNode): TSLNode {
+  // Convert uint to float by reinterpreting + normalising. The `vec3`
+  // overload through float() handles the uint→float conversion.
+  return float(rngUint2(x, y)).div(4294967296.0);
+}
+function rngFloat3(x: TSLNode, y: TSLNode, z: TSLNode): TSLNode {
+  return float(rngUint3(x, y, z)).div(4294967296.0);
+}
+
+/**
+ * Clamped logistic ≈ Gaussian. The 0.5513 coefficient normalises to
+ * roughly unit variance after the [-4, 4] clamp on the logit. Cheap
+ * Gaussian approximation that avoids Box-Muller's two-RNG cost.
+ */
+function clampedLogistic(u: TSLNode): TSLNode {
+  const f = clamp(u, 0.0001, 0.9999);
+  const logit = log(f.div(float(1.0).sub(f)));
+  return clamp(logit, -4.0, 4.0).mul(0.5513);
+}
+
+/** vec3 of clampedLogistic-driven RNG, seeded from a temporal vec3. */
+function normal3Temporal(sx: TSLNode, sy: TSLNode, sz: TSLNode): TSLNode {
+  return vec3(
+    clampedLogistic(rngFloat3(sx, sy, sz)),
+    clampedLogistic(rngFloat3(sx.add(13.37), sy.add(7.31), sz.add(19.93))),
+    clampedLogistic(rngFloat3(sx.add(31.17), sy.add(41.23), sz.add(53.59)))
+  );
+}
+
+/** vec3 of clampedLogistic-driven RNG, seeded from a fixed (no-time) vec2. */
+function normal3Fixed(sx: TSLNode, sy: TSLNode): TSLNode {
+  return vec3(
+    clampedLogistic(rngFloat2(sx, sy)),
+    clampedLogistic(rngFloat2(sx.add(13.37), sy.add(7.31))),
+    clampedLogistic(rngFloat2(sx.add(31.17), sy.add(41.23)))
+  );
+}
+
+/**
+ * Anscombe variance-stabilising transform: maps Poisson(λ) to
+ * approximately N(2√λ + ..., 1). Used to approximate Poisson shot
+ * noise via a Gaussian step in transformed space.
+ */
+function anscombeForward(x: TSLNode): TSLNode {
+  return sqrt(max(x.add(0.375), float(0.0))).mul(2.0);
+}
+function anscombeInverse(y: TSLNode): TSLNode {
+  const yHalf: TSLNode = y.mul(0.5);
+  return max(yHalf.mul(yHalf).sub(0.375), float(0.0));
+}
+
+/** Apply Poisson-distributed noise to a per-channel intensity vec3. */
+function poissonNoise(
+  sx: TSLNode,
+  sy: TSLNode,
+  sz: TSLNode,
+  lambda: TSLNode
+): TSLNode {
+  const yChan: TSLNode = vec3(
+    anscombeForward(lambda.r),
+    anscombeForward(lambda.g),
+    anscombeForward(lambda.b)
+  );
+  const noisy: TSLNode = yChan.add(normal3Temporal(sx, sy, sz));
+  return vec3(
+    anscombeInverse(noisy.r),
+    anscombeInverse(noisy.g),
+    anscombeInverse(noisy.b)
+  );
+}
+
+/**
+ * Apply the full detector-noise stack to a vec3 intensity. Mirrors
+ * the GLSL `applyDetectorNoise` operation order:
+ *
+ *   shot noise → fade-zero-pixels → readout noise → fixed-pattern noise
+ */
+function applyDetectorNoise(
+  intensity: TSLNode,
+  coord: TSLNode,
+  uTimeNode: TSLNode,
+  uReadoutSigmaNode: TSLNode,
+  uPhotonGainNode: TSLNode,
+  uFpnSigmaNode: TSLNode
+): TSLNode {
+  // Wrap time to prevent precision collapse over long sessions.
+  const wrappedTime = mod(uTimeNode, float(1000.0));
+  const seedX: TSLNode = coord.x.mul(1000.0);
+  const seedY: TSLNode = coord.y.mul(1000.0);
+
+  // 1. Shot noise.
+  const photonCount: TSLNode = intensity.div(max(uPhotonGainNode, float(0.0001)));
+  const noisyPhotons: TSLNode = poissonNoise(seedX, seedY, wrappedTime, photonCount);
+  const afterShotRaw: TSLNode = noisyPhotons.mul(uPhotonGainNode);
+
+  // Anscombe forward-then-inverse adds a 3/8 bias that lifts pure-zero
+  // pixels. Smoothstep gate fades shot-noise contribution out for
+  // pixels near zero — visually identical to the GLSL helper.
+  // The TSL `smoothstep` overload requires scalar edge args; we
+  // compute the gate per-channel via three scalar calls and rejoin.
+  const shotW: TSLNode = vec3(
+    smoothstep(float(0.0), float(0.01), intensity.r),
+    smoothstep(float(0.0), float(0.01), intensity.g),
+    smoothstep(float(0.0), float(0.01), intensity.b)
+  );
+  const afterShot: TSLNode = mix(intensity, afterShotRaw, shotW);
+
+  // 2. Readout noise — temporal Gaussian, intensity-independent.
+  const readout: TSLNode = normal3Temporal(
+    seedX.add(100.0),
+    seedY.add(100.0),
+    wrappedTime.add(100.0)
+  ).mul(uReadoutSigmaNode);
+
+  // 3. Fixed-pattern noise — Gaussian, static per-pixel.
+  const fpn: TSLNode = normal3Fixed(seedX, seedY).mul(uFpnSigmaNode);
+
+  return max(afterShot.add(readout).add(fpn), vec3(0.0));
+}
+
 function linearToSRGB(c: TSLNode): TSLNode {
   // Pre-cast every vec3 const to TSLNode at the call site. TSL's
   // `step` / `pow` exports only declare scalar overloads in the
@@ -177,14 +329,6 @@ export function megaWebGPUFactory(
   uniforms: Record<string, THREE.IUniform>,
   config: MegaTSLConfig = {}
 ): NodeMaterial {
-  if (config.useDetectorNoise) {
-    throw new Error(
-      'megaWebGPUFactory: useDetectorNoise=true is not yet supported (M9-bis). ' +
-        'Use the GLSL3 path for detector-noise rendering until the Poisson + ' +
-        'Bob Jenkins hash port lands.'
-    );
-  }
-
   const toneMappingMode: LuxarToneMappingMode = config.toneMappingMode ?? 6;
 
   // Common inputs
@@ -235,6 +379,25 @@ export function megaWebGPUFactory(
   const uVignetteOffset =
     config.useVignette && uniforms.uVignetteOffset
       ? uniform((uniforms.uVignetteOffset.value as number) ?? 0.5)
+      : null;
+
+  // Detector-noise uniforms. Pulled at factory build time so an
+  // unused branch doesn't end up in the compiled shader.
+  const uTime =
+    config.useDetectorNoise && uniforms.uTime
+      ? uniform((uniforms.uTime.value as number) ?? 0.0)
+      : null;
+  const uReadoutSigma =
+    config.useDetectorNoise && uniforms.uReadoutSigma
+      ? uniform((uniforms.uReadoutSigma.value as number) ?? 0.0)
+      : null;
+  const uPhotonGain =
+    config.useDetectorNoise && uniforms.uPhotonGain
+      ? uniform((uniforms.uPhotonGain.value as number) ?? 0.0001)
+      : null;
+  const uFpnSigma =
+    config.useDetectorNoise && uniforms.uFpnSigma
+      ? uniform((uniforms.uFpnSigma.value as number) ?? 0.0)
       : null;
 
   const fragmentNode = Fn(() => {
@@ -316,8 +479,16 @@ export function megaWebGPUFactory(
       return vec4(color, 1.0);
     }
 
-    // (3) Detector noise — deferred; the factory throws upstream if
-    //     config.useDetectorNoise is true.
+    // (3) Detector noise — physics-based detector simulation.
+    // Three independent components composed additively:
+    //   - Poisson shot noise (intensity-dependent) via Anscombe forward/inverse
+    //   - Gaussian readout noise (temporal, intensity-independent)
+    //   - Gaussian fixed-pattern noise (per-pixel, time-invariant)
+    // Hash-driven RNG (Bob Jenkins integer-bit-mix) gives deterministic
+    // noise per pixel/frame at zero state cost.
+    if (config.useDetectorNoise && uTime && uReadoutSigma && uPhotonGain && uFpnSigma) {
+      color.assign(applyDetectorNoise(color, coord, uTime, uReadoutSigma, uPhotonGain, uFpnSigma));
+    }
 
     // (4) EOG: Exposure → Offset → Gamma. Each step routes through
     // TSLNode at the cast boundary because `color.toVar()` is typed
