@@ -21,6 +21,7 @@
  */
 
 import type { ShaderSource } from '../shaders/shader-source';
+import { pointPickWebGPUFactory } from './point-pick.tsl';
 
 // ---------------------------------------------------------------------
 // Points
@@ -125,6 +126,8 @@ export const POINT_PICK_FRAGMENT_SHADER = /* glsl */ `
 export const POINT_PICK_SOURCE: ShaderSource = {
   name: 'point-pick',
   webgl: { vertex: POINT_PICK_VERTEX_SHADER, fragment: POINT_PICK_FRAGMENT_SHADER },
+  webgpu: (uniforms: Record<string, unknown>) =>
+    pointPickWebGPUFactory(uniforms as Record<string, import('three').IUniform>),
 };
 
 // ---------------------------------------------------------------------
