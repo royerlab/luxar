@@ -94,9 +94,10 @@ describe('MaterialManager', () => {
         offset: 0.0,
       };
 
-      const material = manager.getPointMaterial(props);
+      const material = manager.getPointMaterial(props) as PointMaterial;
 
-      // Verify it's a real PointMaterial instance
+      // Verify it's a real PointMaterial instance (WebGL2 default path —
+      // caps is unset in this test, so the dispatch picks GLSL).
       expect(material).toBeInstanceOf(PointMaterial);
 
       // Test REAL vertex shader content (post-migration: per-instance
@@ -712,6 +713,12 @@ describe('MaterialManager', () => {
   // =========================================================================
 
   describe('Shader Content Verification', () => {
+    // These tests probe GLSL3 shader strings, which only the
+    // `PointMaterial` (ShaderMaterial-backed) path exposes. The TSL
+    // wrapper compiles its graph through Three.js's NodeBuilder and
+    // doesn't surface a `vertexShader` / `fragmentShader` string — so
+    // each test casts to the GLSL class, relying on the dispatch
+    // default (caps unset → GLSL) inside the manager.
     it('should generate shaders with optimized world-space sizing', () => {
       const material = manager.getPointMaterial({
         blendingMode: 'additive',
@@ -719,7 +726,7 @@ describe('MaterialManager', () => {
         gamma: 1.0,
         intensity: 1.0,
         offset: 0.0,
-      });
+      }) as PointMaterial;
 
       // Verify optimized world-space sizing formula using inversesqrt and pre-computed pointSizeFactor
       expect(material.vertexShader).toContain('normalizedRadius * pointSizeFactor * invDistance');
@@ -733,7 +740,7 @@ describe('MaterialManager', () => {
         gamma: 1.0,
         intensity: 1.0,
         offset: 0.0,
-      });
+      }) as PointMaterial;
 
       // Verify sharpness compensation exists
       expect(material.vertexShader).toContain('sharpnessCompensation');
@@ -747,7 +754,7 @@ describe('MaterialManager', () => {
         gamma: 2.2,
         intensity: 1.0,
         offset: 0.0,
-      });
+      }) as PointMaterial;
 
       // Verify GOG model in fragment shader
       expect(material.fragmentShader).toContain('vColor * uIntensity + uOffset');

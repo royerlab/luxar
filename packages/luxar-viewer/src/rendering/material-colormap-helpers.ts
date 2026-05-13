@@ -43,10 +43,10 @@ import {
  * @public
  */
 export function applyColormapTextureToMaterial(
-  material: THREE.ShaderMaterial,
+  material: THREE.Material,
   texture: THREE.DataTexture | null
 ): { wasEnabled: boolean; nowEnabled: boolean } {
-  const wasEnabled = 'USE_COLORMAP' in material.defines;
+  const wasEnabled = !!material.defines && 'USE_COLORMAP' in material.defines;
   const nowEnabled = !!texture;
 
   if (isColormapAwareMaterial(material)) {
@@ -76,7 +76,7 @@ export function applyColormapTextureToMaterial(
  * @public
  */
 export function applyScalarRangeToMaterial(
-  material: THREE.ShaderMaterial,
+  material: THREE.Material,
   min: number,
   max: number
 ): void {

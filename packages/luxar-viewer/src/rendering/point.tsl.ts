@@ -74,10 +74,18 @@ export interface PointTSLConfig {
  * The `uniforms` table must include the full set the GLSL3 shader
  * reads. Missing fields are tolerated only on optional branches
  * (colormap uniforms when `useColormap === false`).
+ *
+ * Pass `outMaterial` to configure an existing NodeMaterial subclass
+ * (e.g. `PointTSLMaterial`) rather than allocating a new one — the
+ * subclass owns the IUniforms table, so the factory just attaches
+ * `vertexNode` / `colorNode` / blending state. When omitted, a
+ * fresh NodeMaterial is allocated (the common standalone case used
+ * by `tsl-shader-parity.spec.ts`).
  */
 export function pointWebGPUFactory(
   uniforms: Record<string, THREE.IUniform>,
-  config: PointTSLConfig = {}
+  config: PointTSLConfig = {},
+  outMaterial?: NodeMaterial
 ): NodeMaterial {
   // Per-vertex (4 corners, ±1).
   const aQuadCorner: TSLNode = attribute<'vec2'>('aQuadCorner', 'vec2');
@@ -90,35 +98,83 @@ export function pointWebGPUFactory(
     ? attribute<'float'>('aScalar', 'float')
     : null;
 
-  // Uniforms — vertex stage.
-  const uPointSizeFactor = uniform((uniforms.pointSizeFactor.value as number) ?? 1.0);
-  const uMaxPointSize = uniform((uniforms.maxPointSize.value as number) ?? 1.0);
-  const uRadiusScale = uniform((uniforms.radiusScale.value as number) ?? 1.0);
-  const uSharpnessScale = uniform((uniforms.sharpnessScale.value as number) ?? 1.0);
-  const uIsOrtho = uniform((uniforms.uIsOrtho.value as number) ?? 0);
+  // Uniforms — vertex stage. Each uniform binds via `.onUpdate(() =>
+  // iuniform.value)` so the TSL node tracks the host's IUniform table
+  // by reference. This is the property that lets a wrapper class
+  // (PointTSLMaterial) mutate `this.uniforms.X.value` and have the
+  // change propagate to the shader — exactly the same pattern the
+  // GLSL ShaderMaterial wrapper relies on. The initial value handed
+  // to `uniform(...)` matches the IUniform's first read so the
+  // generated shader's constant-folding is identical to the GLSL3
+  // path.
+  const uPointSizeFactor = uniform((uniforms.pointSizeFactor.value as number) ?? 1.0).onUpdate(
+    () => (uniforms.pointSizeFactor.value as number) ?? 1.0,
+    'render'
+  );
+  const uMaxPointSize = uniform((uniforms.maxPointSize.value as number) ?? 1.0).onUpdate(
+    () => (uniforms.maxPointSize.value as number) ?? 1.0,
+    'render'
+  );
+  const uRadiusScale = uniform((uniforms.radiusScale.value as number) ?? 1.0).onUpdate(
+    () => (uniforms.radiusScale.value as number) ?? 1.0,
+    'render'
+  );
+  const uSharpnessScale = uniform((uniforms.sharpnessScale.value as number) ?? 1.0).onUpdate(
+    () => (uniforms.sharpnessScale.value as number) ?? 1.0,
+    'render'
+  );
+  const uIsOrtho = uniform((uniforms.uIsOrtho.value as number) ?? 0).onUpdate(
+    () => (uniforms.uIsOrtho.value as number) ?? 0,
+    'render'
+  );
+  // Vector2 is passed by reference — the wrapper mutates the same
+  // Vector2 (via .set) and the TSL node picks up the change without
+  // needing onUpdate. The fallback below only fires when the IUniform
+  // value is missing at graph-build time.
   const uResolution = uniform(
     (uniforms.uResolution.value as THREE.Vector2) ?? new THREE.Vector2(1, 1)
   );
 
-  // Colormap (optional).
+  // Colormap (optional). Texture references propagate via the same
+  // shared-reference rule as Vector2; if `uColormapTex.value` is
+  // reassigned to a different Texture, we need `onUpdate` to swap
+  // it (texture nodes hold the THREE.Texture by reference).
   const uColormapTex =
     config.useColormap && uniforms.uColormapTex
       ? texture((uniforms.uColormapTex.value as THREE.Texture | null) ?? new THREE.Texture())
       : null;
   const uScalarMin =
     config.useColormap && uniforms.uScalarMin
-      ? uniform((uniforms.uScalarMin.value as number) ?? 0.0)
+      ? uniform((uniforms.uScalarMin.value as number) ?? 0.0).onUpdate(
+          () => (uniforms.uScalarMin?.value as number) ?? 0.0,
+          'render'
+        )
       : null;
   const uScalarScale =
     config.useColormap && uniforms.uScalarScale
-      ? uniform((uniforms.uScalarScale.value as number) ?? 1.0)
+      ? uniform((uniforms.uScalarScale.value as number) ?? 1.0).onUpdate(
+          () => (uniforms.uScalarScale?.value as number) ?? 1.0,
+          'render'
+        )
       : null;
 
   // Uniforms — fragment stage.
-  const uOpacity = uniform((uniforms.opacity.value as number) ?? 1.0);
-  const uInvGamma = uniform((uniforms.invGamma.value as number) ?? 1.0);
-  const uIntensity = uniform((uniforms.uIntensity.value as number) ?? 1.0);
-  const uOffset = uniform((uniforms.uOffset.value as number) ?? 0.0);
+  const uOpacity = uniform((uniforms.opacity.value as number) ?? 1.0).onUpdate(
+    () => (uniforms.opacity.value as number) ?? 1.0,
+    'render'
+  );
+  const uInvGamma = uniform((uniforms.invGamma.value as number) ?? 1.0).onUpdate(
+    () => (uniforms.invGamma.value as number) ?? 1.0,
+    'render'
+  );
+  const uIntensity = uniform((uniforms.uIntensity.value as number) ?? 1.0).onUpdate(
+    () => (uniforms.uIntensity.value as number) ?? 1.0,
+    'render'
+  );
+  const uOffset = uniform((uniforms.uOffset.value as number) ?? 0.0).onUpdate(
+    () => (uniforms.uOffset.value as number) ?? 0.0,
+    'render'
+  );
 
   // RGB premultiplication is driven by the blending mode: `max` mode
   // routes through CustomBlending + MaxEquation which needs RGB to
@@ -221,7 +277,7 @@ export function pointWebGPUFactory(
     return vec4(finalColor, alpha);
   });
 
-  const material = new NodeMaterial();
+  const material = outMaterial ?? new NodeMaterial();
   // Override the vertex output entirely — we project + expand the
   // sprite ourselves. NodeMaterial.vertexNode replaces the default
   // modelViewProjection chain.

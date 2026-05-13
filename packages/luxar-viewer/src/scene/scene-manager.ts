@@ -335,6 +335,13 @@ export class SceneManager extends THREE.EventDispatcher<{
     // from `renderer.getContext()`.
     this.capabilities = createRendererCapabilities(this.renderer);
 
+    // Hand the capabilities to the material manager so its
+    // `getPointMaterial / getLineMaterial / getGSplatMaterial`
+    // dispatch can pick the GLSL or TSL backend. Done immediately
+    // after constructing capabilities — must precede any node-factory
+    // material requests downstream.
+    materialManager.setCaps(this.capabilities);
+
     // Log the active graphics API. Doubles as a live consumer of
     // `capabilities.api` so the discriminator field can't silently
     // rot before the WebGPU port adds the second arm.
