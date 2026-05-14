@@ -65,6 +65,21 @@ export function buildMaterial(
   }
 
   // WebGL2 (or WebGPU fallback when no TSL factory exists yet).
+  if (!source.webgl) {
+    // Both backends are optional in the type (see shader-source.ts);
+    // the invariant is that at least one must be present for the
+    // active code path. Triggering this means a shader shipped a
+    // `webgpu` factory but no `webgl` reference, AND the renderer
+    // is dispatching via the WebGL path. Surface it explicitly so
+    // the gap is easy to diagnose instead of a confusing
+    // `Cannot read properties of undefined (reading 'vertex')`.
+    throw new Error(
+      `buildMaterial: ShaderSource '${source.name}' has no WebGL fallback ` +
+        'but the active renderer dispatches via the WebGL path ' +
+        `(caps.api='${caps.api}'). Add a 'webgl' source or run with the ` +
+        'default WebGPU renderer.'
+    );
+  }
   return new THREE.ShaderMaterial({
     vertexShader: source.webgl.vertex,
     fragmentShader: source.webgl.fragment,
