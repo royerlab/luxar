@@ -156,7 +156,7 @@ test.describe('ALL Examples - Systematic Smoke Tests', () => {
           let count = 0;
           debug.scene.traverse((obj: any) => {
             const nodeType = obj?.userData?.nodeType;
-            if (obj.type === 'Points' || nodeType === 'lines' || nodeType === 'gsplats') {
+            if (obj.userData?.nodeType === 'points' || nodeType === 'lines' || nodeType === 'gsplats') {
               count += 1;
             }
           });

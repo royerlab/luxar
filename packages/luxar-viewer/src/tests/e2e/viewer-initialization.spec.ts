@@ -62,15 +62,15 @@ test.describe('Viewer Initialization', () => {
 
       const clouds: any[] = [];
       debug.scene.traverse((obj: any) => {
-        if (obj.type === 'Points') {
+        if (obj.userData?.nodeType === 'points') {
           const geom = obj.geometry;
           clouds.push({
             name: obj.name,
-            pointCount: geom.attributes.position?.count || 0,
-            hasPosition: !!geom.attributes.position,
-            hasColor: !!geom.attributes.color,
-            hasRadius: !!geom.attributes.radius,
-            hasSharpness: !!geom.attributes.sharpness,
+            pointCount: geom.attributes.aCenter?.count || 0,
+            hasPosition: !!geom.attributes.aCenter,
+            hasColor: !!geom.attributes.aColor,
+            hasRadius: !!geom.attributes.aRadius,
+            hasSharpness: !!geom.attributes.aSharpness,
             visible: obj.visible,
             material: obj.material?.type,
           });

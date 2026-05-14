@@ -349,8 +349,8 @@ test.describe('Error Recovery - Data Validation', () => {
       let allValid = true;
 
       debug.scene.traverse((obj: any) => {
-        if (obj.type === 'Points') {
-          const positions = obj.geometry.attributes.position;
+        if (obj.userData?.nodeType === 'points') {
+          const positions = obj.geometry.attributes.aCenter;
           if (positions) {
             const array = positions.array;
             for (let i = 0; i < Math.min(100, array.length); i++) {

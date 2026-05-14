@@ -51,17 +51,17 @@ test.describe('Test Fixture Rendering', () => {
       const debug = (window as any).__luxarDebug;
       let points: any = null;
       debug.scene.traverse((obj: any) => {
-        if (obj.type === 'Points' && !points) {
+        if (obj.userData?.nodeType === 'points' && !points) {
           points = obj;
         }
       });
 
-      if (!points || !points.geometry.attributes.sharpness) {
+      if (!points || !points.geometry.attributes.aSharpness) {
         return null;
       }
 
       const geometry = points.geometry;
-      const sharpnessAttr = geometry.attributes.sharpness;
+      const sharpnessAttr = geometry.attributes.aSharpness;
       // Use drawRange to get actual point count (buffer may be larger due to reuse)
       const drawRangeCount = geometry.drawRange?.count;
       const actualCount =
@@ -118,18 +118,18 @@ test.describe('Test Fixture Rendering', () => {
       const debug = (window as any).__luxarDebug;
       let points: any = null;
       debug.scene.traverse((obj: any) => {
-        if (obj.type === 'Points' && !points) {
+        if (obj.userData?.nodeType === 'points' && !points) {
           points = obj;
         }
       });
 
-      if (!points || !points.geometry.attributes.color) {
+      if (!points || !points.geometry.attributes.aColor) {
         return null;
       }
 
       const geometry = points.geometry;
-      const colorAttr = geometry.attributes.color;
-      const posAttr = geometry.attributes.position;
+      const colorAttr = geometry.attributes.aColor;
+      const posAttr = geometry.attributes.aCenter;
       // Use drawRange to get actual point count (buffer may be larger due to reuse)
       const drawRangeCount = geometry.drawRange?.count;
       const actualCount =
@@ -319,17 +319,17 @@ test.describe('Test Fixture Rendering', () => {
       const debug = (window as any).__luxarDebug;
       let points: any = null;
       debug.scene.traverse((obj: any) => {
-        if (obj.type === 'Points' && !points) {
+        if (obj.userData?.nodeType === 'points' && !points) {
           points = obj;
         }
       });
 
-      if (!points || !points.geometry.attributes.color) {
+      if (!points || !points.geometry.attributes.aColor) {
         return null;
       }
 
       const geometry = points.geometry;
-      const colorAttr = geometry.attributes.color;
+      const colorAttr = geometry.attributes.aColor;
       // Use drawRange to get actual point count (buffer may be larger due to reuse)
       const drawRangeCount = geometry.drawRange?.count;
       const actualCount =
@@ -390,17 +390,17 @@ test.describe('Test Fixture Rendering', () => {
       const debug = (window as any).__luxarDebug;
       let points: any = null;
       debug.scene.traverse((obj: any) => {
-        if (obj.type === 'Points' && !points) {
+        if (obj.userData?.nodeType === 'points' && !points) {
           points = obj;
         }
       });
 
-      if (!points || !points.geometry.attributes.color) {
+      if (!points || !points.geometry.attributes.aColor) {
         return null;
       }
 
       const geometry = points.geometry;
-      const colorAttr = geometry.attributes.color;
+      const colorAttr = geometry.attributes.aColor;
       // Use drawRange to get actual point count (buffer may be larger due to reuse)
       const drawRangeCount = geometry.drawRange?.count;
       const actualCount =

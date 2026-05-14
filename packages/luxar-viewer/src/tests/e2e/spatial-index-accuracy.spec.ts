@@ -163,8 +163,8 @@ test.describe('Spatial Index Query Accuracy', () => {
       }[] = [];
 
       debug.scene.traverse((object: any) => {
-        if (object.type === 'Points' && object.geometry?.attributes?.radius) {
-          const radiusAttr = object.geometry.attributes.radius;
+        if (object.type === 'Points' && object.geometry?.attributes?.aRadius) {
+          const radiusAttr = object.geometry.attributes.aRadius;
           const arr = radiusAttr.array;
           // Use drawRange to only check active points (buffer may be oversized)
           const drawCount = object.geometry.drawRange.count;

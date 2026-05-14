@@ -24,7 +24,6 @@ import { supportsScalarColormap } from './material-colormap-helpers';
 import { createInstancedLinesMesh, type InstancedLinesMeshConfig } from './line-geometry';
 import { createInstancedGSplatsMesh, type InstancedGSplatsMeshConfig } from './gsplat-geometry';
 import { createPointQuadGeometry } from './point-geometry';
-import { GSplatMaterial } from './gsplat-material';
 import type { LoadedPointsData, DataLoader } from '../data/data-loader-types';
 import type { PointsMetadata, PointsUserData } from '../types/points';
 import type { LinesMetadata, LinesUserData, LinesDataLoader } from '../types/lines';
@@ -315,7 +314,12 @@ export class NodeFactory {
         // B.1: detach pooled material from global updates before cloning.
         // See lines/points clone sites for the rationale.
         materialManager.detachFromGlobalUpdates(material);
-        material = material.clone() as GSplatMaterial;
+        // Both clones (GSplatMaterial.clone() → GSplatMaterial,
+        // GSplatTSLMaterial.clone() → GSplatTSLMaterial) satisfy the
+        // LuxarGSplatMaterial union — `as typeof material` keeps the
+        // backend-agnostic type and avoids narrowing to the WebGL2
+        // class.
+        material = material.clone() as typeof material;
         materialManager.register(material);
         gsplatMaterialCloned = true;
         material.updateColormapTexture(gsColormapTex);
@@ -736,10 +740,18 @@ export class NodeFactory {
       }
     }
 
-    // Bounding box of the per-instance positions (used by spatial
-    // queries / nD-slicing code paths). The base-quad bounding box
-    // is left as-is; frustum culling is disabled on the mesh.
+    // WebGLRenderer only issues an instanced draw for InstancedBufferGeometry
+    // when instanceCount is set. The base quad has 6 indices; instanceCount
+    // is the number of point sprites to draw.
+    geometry.instanceCount = pointCount;
+
+    // Bounding box/sphere of the per-instance positions (used by spatial
+    // queries / debug/camera paths). The base-quad bounds are irrelevant;
+    // frustum culling is disabled on the mesh because the sprites expand
+    // in screen space.
     geometry.boundingBox = data.metadata.bounds.clone();
+    geometry.boundingSphere = new THREE.Sphere();
+    geometry.boundingBox.getBoundingSphere(geometry.boundingSphere);
 
     // Store radius and sharpness scales as user data for material creation
     if (!geometry.userData) {
