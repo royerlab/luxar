@@ -616,7 +616,7 @@ export class LuxarApp {
   /**
    * Apply zarr viewer_config state that isn't handled by RenderingControls.
    *
-   * RenderingControls handles the 47 rendering settings (bloom, AO, AA, etc.).
+   * RenderingControls handles rendering settings (bloom, AA, tone mapping, etc.).
    * This method handles everything else: UI panel visibility, theme,
    * dimension navigation state, and animation state.
    *

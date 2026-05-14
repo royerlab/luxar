@@ -32,8 +32,8 @@ ui/
 │   ├── navigation-setup.ts      # Navigation controls (orbit, fly, ortho)
 │   ├── camera-setup.ts          # Camera settings (FOV, clipping)
 │   ├── hdr-setup.ts             # HDR intensity & tone mapping
-│   ├── anti-aliasing-setup.ts   # AA techniques (FXAA, SMAA, MSAA, SSAA)
-│   ├── post-processing-setup.ts # Effects (bloom, noise, DoF, etc.)
+│   ├── anti-aliasing-setup.ts   # AA techniques (FXAA, MSAA, SSAA)
+│   ├── post-processing-setup.ts # Effects (bloom, noise, vignette, lens distortion)
 │   └── rendering-controls-utils.ts  # Settings validation, serialization, merging
 ├── recording-panel.ts           # Screenshot and video capture panel (paired with recording/)
 ├── recording/                   # Decomposed sub-modules of recording-panel
@@ -211,9 +211,9 @@ Comprehensive controls for adjusting rendering parameters in real-time.
 
 **Control Categories:**
 
-- **Visual Effects**: Bloom, tone mapping, detector noise, DOF, vignette, chromatic lens distortion, ambient occlusion
+- **Visual Effects**: Bloom, tone mapping, detector noise, vignette, chromatic lens distortion
 - **HDR**: Exposure (log2 stops, -5 to +5), offset, gamma, and tone mapping
-- **Anti-Aliasing**: FXAA, SMAA (HIGH preset), MSAA, SSAA toggles
+- **Anti-Aliasing**: FXAA, MSAA, SSAA toggles
 - **Performance**: Quality presets, FPS targets
 - **Camera**: FOV presets (28mm-135mm equivalents), manual FOV control, clipping plane adjustments
 - **Materials**: Opacity, gamma, blending modes
@@ -256,7 +256,6 @@ Rendering Controls
 ├── Anti-Aliasing
 │   ├── SSAA □ (with resolution multiplier)
 │   ├── FXAA □
-│   ├── SMAA □ (toggle only - preset-based)
 │   └── MSAA □ (with samples)
 └── Post-Processing Effects
     ├── Bloom
@@ -269,19 +268,12 @@ Rendering Controls
     │   ├── Readout Sigma (slider)
     │   ├── Photon Gain (slider)
     │   └── FPN Sigma (slider)
-    ├── Depth of Field
-    │   ├── Enabled □
-    │   ├── Focus Distance (slider)
-    │   └── Strength (slider)
     ├── Chromatic Lens Distortion
     │   ├── Enabled □
     │   ├── Distortion X/Y (sliders)
     │   ├── Principal Point (sliders)
     │   ├── Focal Length (sliders)
     │   └── Skew (slider)
-    ├── Ambient Occlusion
-    │   ├── Enabled □
-    │   └── Quality (selector)
     └── Vignette
         ├── Enabled □
         ├── Darkness (slider)

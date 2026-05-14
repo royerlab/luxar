@@ -28,9 +28,6 @@ const VALID_TONE_MAPPINGS = ['None', 'Linear', 'Reinhard', 'Cineon', 'ACES', 'Ag
 /** Valid control types */
 const VALID_CONTROL_TYPES = ['orbit', 'fly', 'ortho'];
 
-/** Valid AO quality levels */
-// (VALID_AO_QUALITIES removed with AO; mega-shader refactor dropped SSAO entirely.)
-
 /**
  * Validates rendering settings and applies defaults for missing/invalid values.
  * Guards against corrupted localStorage by range-checking numeric values

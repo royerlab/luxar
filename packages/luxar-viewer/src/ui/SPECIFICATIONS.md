@@ -390,7 +390,7 @@ Comprehensive UI for controlling all rendering parameters in real-time using a c
 
 **Features**:
 
-- All effect controls (bloom, DOF, AO, tone mapping, AA, vignette, chromatic aberration, lens distortion, detector noise)
+- All active effect controls (bloom, tone mapping, AA, vignette, chromatic lens distortion, detector noise)
 - Cinematic mode presets with intelligent toggle
 - Settings persistence per-scene using localStorage
 - FOV presets with realistic lens distortion
@@ -426,8 +426,8 @@ The `RenderingControls` class delegates GUI creation to specialized setup module
 1. **navigation-setup.ts**: Control type selector + orbit/fly mode settings
 2. **camera-setup.ts**: FOV presets + manual FOV slider + clipping planes
 3. **hdr-setup.ts**: Intensity (logarithmic slider) + tone mapping type
-4. **anti-aliasing-setup.ts**: SSAA, FXAA, MSAA, SMAA with settings
-5. **post-processing-setup.ts**: Bloom, noise, DoF, chromatic aberration, vignette, lens distortion, AO
+4. **anti-aliasing-setup.ts**: SSAA, FXAA, MSAA with settings
+5. **post-processing-setup.ts**: Bloom, detector noise, chromatic lens distortion, vignette
 
 Each setup function takes a `SetupContext` (dependencies + callbacks) and returns a `SetupResult` (controller references). This reduces the main file from 2,514 to 1,350 lines while maintaining identical functionality. See [`./rendering-controls/README.md`](./rendering-controls/README.md) and [`./rendering-controls/SPECIFICATIONS.md`](./rendering-controls/SPECIFICATIONS.md) for details.
 
@@ -436,8 +436,8 @@ Each setup function takes a `SetupContext` (dependencies + callbacks) and return
 1. **Navigation Folder**: Control type selector + mode-specific settings
 2. **Camera Folder**: FOV presets + manual FOV slider + clipping planes
 3. **HDR Folder**: Intensity (logarithmic slider) + tone mapping type
-4. **Anti-Aliasing Folder**: SSAA, FXAA, MSAA, SMAA with settings
-5. **Post-Processing Effects Folder**: Bloom, noise, DOF, chromatic aberration, vignette, lens distortion, AO
+4. **Anti-Aliasing Folder**: SSAA, FXAA, MSAA with settings
+5. **Post-Processing Effects Folder**: Bloom, detector noise, chromatic lens distortion, vignette
 
 ### 5.2a Logarithmic Slider Pattern
 
@@ -2132,10 +2132,6 @@ interface RenderingSettings {
   detectorNoisePhotonGain: number;
   detectorNoiseFpnSigma: number;
 
-  dofEnabled: boolean;
-  dofFocus: number;
-  dofStrength: number;
-
   vignetteEnabled: boolean;
   vignetteDarkness: number;
   vignetteOffset: number;
@@ -2149,9 +2145,6 @@ interface RenderingSettings {
   chromaticLensFocalLengthX: number;
   chromaticLensFocalLengthY: number;
   chromaticLensSkew: number;
-
-  aoEnabled: boolean;
-  aoQuality: 'low' | 'medium' | 'high' | 'ultra';
 }
 ```
 

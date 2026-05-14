@@ -136,7 +136,7 @@ Orthographic projection for 2D viewing. The camera looks straight down one axis.
 
 | Key | Action |
 |-----|--------|
-| C | Toggle cinematic mode (film grain, vignette, depth of field) |
+| C | Toggle cinematic mode (detector noise, vignette, chromatic lens distortion) |
 | I | Toggle inertial mode (fly controls momentum) |
 
 ### nD Dimension Navigation
@@ -190,9 +190,8 @@ Adjust visual parameters in real time:
 
 - **Tone mapping** -- algorithm and exposure
 - **Bloom** -- glow effect strength, radius, and threshold
-- **Ambient occlusion** -- quality preset (low / medium / high / ultra)
-- **Cinematic effects** -- vignette, depth of field, film grain
-- **Anti-aliasing** -- FXAA, SMAA, MSAA, or SSAA
+- **Cinematic effects** -- vignette, detector noise, and chromatic lens distortion
+- **Anti-aliasing** -- FXAA, MSAA, or SSAA
 - **Detector noise** -- physics-based Poisson + Gaussian + FPN simulation
 
 Changes persist to `localStorage` for the current scene.
@@ -375,10 +374,9 @@ Settings are resolved with the following priority (highest first):
 | Tone mapping | `tone_mapping`, `exposure`, `global_offset`, `global_gamma` |
 | Bloom | `bloom_enabled`, `bloom_strength`, `bloom_radius`, `bloom_threshold` |
 | Controls | `control_type`, `auto_rotate`, `auto_rotate_speed` |
-| Cinematic | `cinematic_mode`, `vignette_enabled`, `dof_enabled`, `dof_focus` |
-| Ambient occlusion | `ao_enabled`, `ao_quality` |
+| Cinematic | `cinematic_mode`, `vignette_enabled`, `chromatic_lens_distortion_enabled` |
 | Detector noise | `detector_noise_enabled`, `detector_noise_readout_sigma`, `detector_noise_photon_gain` |
-| Anti-aliasing | `fxaa_enabled`, `smaa_enabled`, `msaa_enabled`, `ssaa_enabled` |
+| Anti-aliasing | `fxaa_enabled`, `msaa_enabled`, `ssaa_enabled` |
 | Fly controls | `fly_movement_speed`, `fly_rotation_speed`, `fly_inertial_mode`, `fly_damping` |
 | UI visibility | `ui.show_help`, `ui.show_rendering_controls`, `ui.show_dimensions`, `ui.show_performance_monitor`, `ui.show_scale_bar`, `ui.show_layers` |
 | Dimensions | `dimensions.current_step`, `dimensions.selected_dimension` |
@@ -399,7 +397,7 @@ valid ranges.
 **Performance is poor with large datasets**
 - Press **P** to check FPS and identify bottlenecks.
 - Reduce anti-aliasing quality (disable SSAA, switch to FXAA).
-- Disable bloom and ambient occlusion in the rendering panel.
+- Disable bloom and lower anti-aliasing quality in the rendering panel.
 - Adaptive resolution automatically lowers pixel density during interaction.
 
 **Camera feels stuck or wrong**

@@ -365,16 +365,10 @@ function setupPostProcessingControls(
     - Threshold (0-1), Strength (0-2), Radius (0-1), Mipmap Levels (1-12)
   - **Detector Noise** subfolder (closed)
     - Enabled, Readout Sigma, Photon Gain, FPN Sigma
-  - **Depth of Field** subfolder (closed)
-    - Enabled, Focus distance, Strength
-  - **Chromatic Aberration** subfolder (closed)
-    - Enabled, Strength
-  - **Ambient Occlusion** subfolder (closed)
-    - Enabled, Quality (low, medium, high, ultra)
+  - **Chromatic Lens Distortion** subfolder (closed)
+    - Enabled, Brown-Conrady distortion, principal point, focal length, skew, dispersion
   - **Vignette** subfolder (closed)
     - Enabled, Darkness, Offset
-  - **Lens Distortion** subfolder (closed)
-    - Enabled, Distortion X/Y, Principal Point X/Y, Focal Length X/Y, Skew
 
 **Returns**:
 
