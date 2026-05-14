@@ -16,7 +16,7 @@ import {
   waitForLuxarReady,
   waitForRenderStable,
   assertNoShaderErrors,
-  samplePixelAt,
+  samplePixelsAt,
 } from './helpers';
 
 const FIXTURES_BASE = 'http://localhost:9000/packages/luxar-viewer/tests/fixtures';
@@ -38,12 +38,13 @@ test.describe('Lines visual correctness', () => {
     await waitForLuxarReady(page);
     await waitForRenderStable(page);
 
-    const samples: Array<{ r: number; g: number; b: number; a: number }> = [];
+    const offsets: Array<[number, number]> = [];
     for (let i = 0; i < 9; i++) {
       const x = 0.4 + (i % 3) * 0.1;
       const y = 0.4 + Math.floor(i / 3) * 0.1;
-      samples.push(await samplePixelAt(page, 'canvas', x, y));
+      offsets.push([x, y]);
     }
+    const samples = await samplePixelsAt(page, 'canvas', offsets);
     const anyVisible = samples.some((p) => p.r + p.g + p.b > 10);
     expect(anyVisible).toBe(true);
   });
@@ -75,12 +76,12 @@ test.describe('Lines visual correctness', () => {
     // Sample 4 corners of the canvas. If a single near-line painted the
     // whole frame, all four corners would have ~identical colour and
     // each would be heavily saturated. Verify variance / not-all-saturated.
-    const samples = [
-      await samplePixelAt(page, 'canvas', 0.05, 0.05),
-      await samplePixelAt(page, 'canvas', 0.95, 0.05),
-      await samplePixelAt(page, 'canvas', 0.05, 0.95),
-      await samplePixelAt(page, 'canvas', 0.95, 0.95),
-    ];
+    const samples = await samplePixelsAt(page, 'canvas', [
+      [0.05, 0.05],
+      [0.95, 0.05],
+      [0.05, 0.95],
+      [0.95, 0.95],
+    ]);
     const allSaturated = samples.every((p) => p.r > 240 && p.g > 240 && p.b > 240);
     expect(allSaturated).toBe(false);
   });

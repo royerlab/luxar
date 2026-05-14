@@ -109,7 +109,7 @@ test.describe('Post-Processing Pipeline', () => {
     expect(afterDisable.chromaticLensDistortionEnabled).toBe(false);
   });
 
-  test('should change exposure via renderingControls API', async ({ page }) => {
+  test('should change exposure via post-processing API and mirror UI settings', async ({ page }) => {
     // Read initial exposure
     const initialExposure = await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
@@ -117,66 +117,72 @@ test.describe('Post-Processing Pipeline', () => {
     });
     expect(typeof initialExposure).toBe('number');
 
-    // Set exposure to 2.0 via the API
-    await page.evaluate(() => {
+    // Set exposure through the real post-processing API; mirror the
+    // rendering-controls setting so UI state and shader state stay in sync.
+    const applied = await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
-      const rc = debug.renderingControls;
-      if (rc.updateExposure) {
-        rc.updateExposure(2.0);
-      } else {
-        rc.settings.exposure = 2.0;
-      }
+      const pp = debug.postProcessing;
+      const settings = debug.renderingControls?.settings;
+      if (!pp || typeof pp.updateExposure !== 'function') return false;
+      pp.updateExposure(2.0);
+      if (settings) settings.exposure = 2.0;
+      return typeof pp.getExposure === 'function' && pp.getExposure() === 2.0;
     });
+    expect(applied).toBe(true);
 
     await waitForNextRender(page);
 
-    // Read back exposure
+    // Read back exposure from both UI settings and shader state.
     const newExposure = await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
-      return debug.renderingControls?.settings?.exposure;
+      return {
+        setting: debug.renderingControls?.settings?.exposure,
+        shader: debug.postProcessing?.getExposure?.(),
+      };
     });
 
-    expect(newExposure).toBe(2.0);
-    expect(newExposure).not.toBe(initialExposure);
+    expect(newExposure.setting).toBe(2.0);
+    expect(newExposure.shader).toBe(2.0);
+    expect(newExposure.setting).not.toBe(initialExposure);
   });
 
   test('should render without WebGL errors after effect toggles', async ({ page }) => {
-    // Toggle bloom off/on
+    // Toggle bloom off/on through the real manager API.
     await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
+      debug.postProcessing?.setBloomEnabled?.(false);
       const settings = debug.renderingControls?.settings;
-      if (settings) {
-        settings.bloomStrength = 0;
-      }
+      if (settings) settings.bloomEnabled = false;
     });
     await waitForNextRender(page);
 
     await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
+      debug.postProcessing?.setBloomEnabled?.(true, 0.5);
       const settings = debug.renderingControls?.settings;
       if (settings) {
+        settings.bloomEnabled = true;
         settings.bloomStrength = 0.5;
       }
     });
     await waitForNextRender(page);
 
-    // Toggle FXAA off/on (SMAA was dropped in the mega-shader refactor;
-    // FXAA is the remaining inline AA path)
+    // Toggle FXAA off/on through the real manager API.
     await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
       const settings = debug.renderingControls?.settings;
-      if (settings && 'fxaaEnabled' in settings) {
-        settings.fxaaEnabled = !settings.fxaaEnabled;
-      }
+      const next = !(settings?.fxaaEnabled ?? false);
+      debug.postProcessing?.setFXAAEnabled?.(next);
+      if (settings && 'fxaaEnabled' in settings) settings.fxaaEnabled = next;
     });
     await waitForNextRender(page);
 
     await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
       const settings = debug.renderingControls?.settings;
-      if (settings && 'fxaaEnabled' in settings) {
-        settings.fxaaEnabled = !settings.fxaaEnabled;
-      }
+      const next = !(settings?.fxaaEnabled ?? false);
+      debug.postProcessing?.setFXAAEnabled?.(next);
+      if (settings && 'fxaaEnabled' in settings) settings.fxaaEnabled = next;
     });
     await waitForNextRender(page);
 
