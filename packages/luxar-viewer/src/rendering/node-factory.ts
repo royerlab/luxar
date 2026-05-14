@@ -16,6 +16,8 @@ import {
   materialManager,
   type BlendingMode,
   type LuxarPointMaterial,
+  type LuxarLineMaterial,
+  type LuxarGSplatMaterial,
 } from './material-manager';
 import { getColormapTexture } from './colormap-textures';
 import { supportsScalarColormap } from './material-colormap-helpers';
@@ -29,9 +31,9 @@ import type { LinesMetadata, LinesUserData, LinesDataLoader } from '../types/lin
 import type { GSplatsMetadata, GSplatsUserData, GSplatsDataLoader } from '../types/gsplats';
 import { log, Modules } from '../utils/log';
 import type { PickingSystem } from './picking/picking-system';
-import { PointPickingMaterial } from './picking/point-picking-material';
-import { LinePickingMaterial } from './picking/line-picking-material';
-import { GSplatPickingMaterial } from './picking/gsplat-picking-material';
+// Picking materials are constructed via `materialManager.create*PickingMaterial`
+// helpers so the GLSL vs. TSL dispatch on `caps.api` lives in one place. The
+// concrete types are still imported elsewhere (e.g. material-sync-helpers).
 
 export class NodeFactory {
   private pickingSystem: PickingSystem | null = null;
@@ -63,7 +65,7 @@ export class NodeFactory {
         obj.userData.pickId = pickId;
         const radiusScale = obj.geometry?.userData?.radiusScale ?? 1.0;
         const sharpnessScale = obj.geometry?.userData?.sharpnessScale ?? 1.0;
-        const pickMaterial = new PointPickingMaterial({
+        const pickMaterial = materialManager.createPointPickingMaterial({
           nodeId: pickId,
           radiusScale,
           sharpnessScale,
@@ -76,7 +78,7 @@ export class NodeFactory {
       } else if (nodeType === 'lines' && obj instanceof THREE.Mesh) {
         const pickId = this.pickingSystem!.allocatePickId();
         obj.userData.pickId = pickId;
-        const pickMaterial = new LinePickingMaterial({ nodeId: pickId });
+        const pickMaterial = materialManager.createLinePickingMaterial({ nodeId: pickId });
         materialManager.register(pickMaterial);
         const pickNode = new THREE.Mesh(obj.geometry, pickMaterial);
         pickNode.matrixWorld.copy(obj.matrixWorld);
@@ -84,7 +86,7 @@ export class NodeFactory {
       } else if (nodeType === 'gsplats' && obj instanceof THREE.Mesh) {
         const pickId = this.pickingSystem!.allocatePickId();
         obj.userData.pickId = pickId;
-        const pickMaterial = new GSplatPickingMaterial({ nodeId: pickId });
+        const pickMaterial = materialManager.createGSplatPickingMaterial({ nodeId: pickId });
         materialManager.register(pickMaterial);
         const pickNode = new THREE.Mesh(obj.geometry, pickMaterial);
         pickNode.matrixWorld.copy(obj.matrixWorld);
@@ -177,7 +179,7 @@ export class NodeFactory {
     if (this.pickingSystem) {
       const pickId = this.pickingSystem.allocatePickId();
       points.userData.pickId = pickId;
-      const pickMaterial = new PointPickingMaterial({
+      const pickMaterial = materialManager.createPointPickingMaterial({
         nodeId: pickId,
         radiusScale,
         sharpnessScale,
@@ -206,7 +208,7 @@ export class NodeFactory {
     processed: InstancedLinesMeshConfig,
     loader: LinesDataLoader
   ): THREE.Mesh {
-    let material = materialManager.getLineMaterial({
+    let material: LuxarLineMaterial = materialManager.getLineMaterial({
       opacity: (attrs.opacity as number | undefined) ?? 1.0,
       gamma: (attrs.gamma as number | undefined) ?? 1.0,
       intensity: (attrs.intensity as number | undefined) ?? 1.0,
@@ -263,7 +265,7 @@ export class NodeFactory {
     if (this.pickingSystem) {
       const pickId = this.pickingSystem.allocatePickId();
       mesh.userData.pickId = pickId;
-      const pickMaterial = new LinePickingMaterial({ nodeId: pickId });
+      const pickMaterial = materialManager.createLinePickingMaterial({ nodeId: pickId });
       materialManager.register(pickMaterial);
       // Share the same InstancedBufferGeometry — only material differs
       const pickNode = new THREE.Mesh(mesh.geometry, pickMaterial);
@@ -289,7 +291,7 @@ export class NodeFactory {
     meshConfig: InstancedGSplatsMeshConfig,
     loader: GSplatsDataLoader
   ): THREE.Mesh {
-    let material: GSplatMaterial = materialManager.getGSplatMaterial({
+    let material: LuxarGSplatMaterial = materialManager.getGSplatMaterial({
       opacity: (attrs.opacity as number | undefined) ?? 1.0,
       gamma: (attrs.gamma as number | undefined) ?? 1.0,
       intensity: (attrs.intensity as number | undefined) ?? 1.0,
@@ -342,7 +344,7 @@ export class NodeFactory {
     if (this.pickingSystem) {
       const pickId = this.pickingSystem.allocatePickId();
       mesh.userData.pickId = pickId;
-      const pickMaterial = new GSplatPickingMaterial({ nodeId: pickId });
+      const pickMaterial = materialManager.createGSplatPickingMaterial({ nodeId: pickId });
       materialManager.register(pickMaterial);
       // Share the same InstancedBufferGeometry — only material differs
       const pickNode = new THREE.Mesh(mesh.geometry, pickMaterial);

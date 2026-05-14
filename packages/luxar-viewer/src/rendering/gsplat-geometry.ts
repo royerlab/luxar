@@ -8,7 +8,6 @@
  */
 
 import * as THREE from 'three';
-import type { GSplatMaterial } from './gsplat-material';
 
 /**
  * Create the base quad geometry for gsplat instances.
@@ -157,7 +156,7 @@ function computeMaxCholeskyRowNorm(meshConfig: InstancedGSplatsMeshConfig): numb
  */
 export function createInstancedGSplatsMesh(
   meshConfig: InstancedGSplatsMeshConfig,
-  material: GSplatMaterial
+  material: THREE.Material
 ): THREE.Mesh {
   const baseGeometry = createGSplatQuadGeometry();
 
@@ -194,9 +193,14 @@ export function createInstancedGSplatsMesh(
     box.expandByPoint(v);
   }
 
-  // Expand bounding box by max splat extent for correct frustum culling
+  // Expand bounding box by max splat extent for correct frustum culling.
+  // `material` is either GSplatMaterial or GSplatTSLMaterial; both expose
+  // `uniforms.uTruncate` in identical shape.
   const maxRowNorm = computeMaxCholeskyRowNorm(meshConfig);
-  const truncationRadius = material.uniforms.uTruncate.value;
+  const matWithUniforms = material as THREE.Material & {
+    uniforms?: { uTruncate?: { value: number } };
+  };
+  const truncationRadius = matWithUniforms.uniforms?.uTruncate?.value ?? 3.0;
   box.expandByScalar(maxRowNorm * truncationRadius);
 
   geometry.boundingBox = box;
@@ -292,8 +296,12 @@ export function updateInstancedGSplatsMesh(
 
   // Expand by max splat extent (Cholesky row norm × truncation radius)
   const maxRowNorm = computeMaxCholeskyRowNorm(meshConfig);
-  const material = mesh.material as GSplatMaterial;
-  const truncationRadius = material.uniforms.uTruncate?.value ?? 3.0;
+  // Either GSplatMaterial (ShaderMaterial-backed) or GSplatTSLMaterial
+  // (NodeMaterial-backed) — both expose the same `uniforms.uTruncate`.
+  const material = mesh.material as THREE.Material & {
+    uniforms?: { uTruncate?: { value: number } };
+  };
+  const truncationRadius = material.uniforms?.uTruncate?.value ?? 3.0;
   box.expandByScalar(maxRowNorm * truncationRadius);
 
   geometry.boundingBox = box;
