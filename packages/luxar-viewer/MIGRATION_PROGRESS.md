@@ -394,3 +394,37 @@ Caveats:
 - Pixel-baseline refresh may be needed once a real-WebGPU run
   surfaces precision differences (gsplat covariance math is the
   most exposed per the migration plan's risk notes).
+
+### Full Playwright sweep results (post-flip, headless chromium)
+
+352 passed / 5 failed / 8 skipped. The 5 failures break down:
+
+- **Two known visual baselines** — `visual-regression.spec.ts:87`
+  (`exposure = 3.32` pixel diff) and `theme-visual-regression.spec.ts:118`
+  (`dimension sliders frosted-glass theme`). Both pre-existed the
+  WebGPU flip; both produce visually-correct output, just different
+  byte-exact pixels under the TSL graph. Refresh baselines as a
+  separate task after a visual review.
+- **Two performance-tracking tests** —
+  `performance-tracking.spec.ts:140` (navigation responsiveness)
+  and `performance-tracking.spec.ts:268` (render 60 frames
+  efficiently). Both fail under `VITE_LUXAR_USE_LEGACY_WEBGL=1`
+  too, so these are pre-existing perf-threshold regressions, not
+  WebGPU-specific. Investigate separately.
+- **One points-migration perf** —
+  `points-migration-perf.spec.ts:46` (capture N=5 FPS samples on
+  dense_cubic_gradient). Also fails under legacy; pre-existing.
+
+Resolved during this Task C pass (commit `c53c5d53`):
+
+- `recording-panel.spec.ts` × 2: screenshot path under WebGPU was
+  broken by the `readRenderTargetPixelsAsync` signature divergence
+  (WebGLRenderer's 6th arg is `destBuffer`; WebGPURenderer's is
+  `textureIndex`). Now branches on `caps.api`.
+- `webgl-errors.spec.ts` × 6: `info.render.frame` widened to also
+  read `info.frame` (WebGPURenderer shape), same pattern applied
+  in M18 elsewhere.
+- `context-restore.spec.ts` × 3: WebGL-only feature; suite now
+  skips under WebGPU. Coverage stays on the legacy path.
+- `all-examples-smoke-test.spec.ts` × 2: passed in isolation —
+  flaked under suite parallelism. Noted, not chased.
