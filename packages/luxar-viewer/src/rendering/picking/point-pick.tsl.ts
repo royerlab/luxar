@@ -169,5 +169,9 @@ export function pointPickWebGPUFactory(
   material.depthTest = true;
   material.depthWrite = true;
   material.transparent = false;
+  // Picking output is an opaque ID buffer; any blending would
+  // smear nodeId / elementId values across overlapping picks and
+  // produce nonsense readbacks. Matches the GLSL picking material.
+  material.blending = THREE.NoBlending;
   return material;
 }

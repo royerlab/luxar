@@ -26,6 +26,7 @@ import {
   BLOOM_UPSAMPLE_SOURCE,
 } from './bloom-shaders';
 import { buildMaterial } from '../material-builder';
+import { createFullscreenTriangleGeometry } from './fullscreen-geometry';
 import type { RendererCapabilities } from '../renderer-capabilities';
 
 export interface BloomChainConfig {
@@ -136,13 +137,10 @@ export class BloomChain {
       cfg.caps
     );
 
-    // Fullscreen triangle (NDC positions {-1,-1}, {3,-1}, {-1,3}).
-    // One triangle covers the screen with no clipping waste.
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute(
-      'position',
-      new THREE.Float32BufferAttribute(new Float32Array([-1, -1, 0, 3, -1, 0, -1, 3, 0]), 3)
-    );
+    // Fullscreen triangle (NDC positions {-1,-1}, {3,-1}, {-1,3} with
+    // matching uvs {(0,0),(2,0),(0,2)}). See
+    // `createFullscreenTriangleGeometry` for the uv contract.
+    const geo = createFullscreenTriangleGeometry();
     this.fullscreenMesh = new THREE.Mesh(geo, this.thresholdMat);
     this.fullscreenMesh.frustumCulled = false;
     this.fullscreenScene = new THREE.Scene();

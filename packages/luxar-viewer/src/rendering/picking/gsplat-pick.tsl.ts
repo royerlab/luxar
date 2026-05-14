@@ -305,5 +305,9 @@ export function gsplatPickWebGPUFactory(
   material.depthTest = true;
   material.depthWrite = true;
   material.transparent = false;
+  // Picking output is an opaque ID buffer; any blending would smear
+  // nodeId / elementId across overlapping picks. Matches the GLSL
+  // picking material.
+  material.blending = THREE.NoBlending;
   return material;
 }

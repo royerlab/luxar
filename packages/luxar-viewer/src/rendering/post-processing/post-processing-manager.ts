@@ -22,6 +22,7 @@ import { config } from '../../config';
 import { materialManager, type LuxarMegaShaderMaterial } from '../material-manager';
 import { BloomChain } from './bloom-chain';
 import { FxaaPass } from './fxaa-pass';
+import { createFullscreenTriangleGeometry } from './fullscreen-geometry';
 import { computeEffectiveRenderSize } from './render-target-sizing';
 import type { RendererCapabilities } from '../renderer-capabilities';
 import {
@@ -192,15 +193,12 @@ export class PostProcessingManager {
     });
     this.megaShader.setResolution(width, height);
 
-    // Fullscreen triangle (NDC positions {-1,-1}, {3,-1}, {-1,3}).
-    // The mega-shader vertex shader reads `position` directly; we use
-    // an explicit attribute (not gl_VertexID) so THREE's WebGLRenderer
-    // wires the VAO correctly.
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute(
-      'position',
-      new THREE.Float32BufferAttribute(new Float32Array([-1, -1, 0, 3, -1, 0, -1, 3, 0]), 3)
-    );
+    // Fullscreen triangle with matching uv attribute (see
+    // `createFullscreenTriangleGeometry`). The TSL mega factory reads
+    // `uv()` directly, and the GLSL3 vertex shader's
+    // `vUv = position.xy * 0.5 + 0.5` produces the same mapping —
+    // both backends now share the geometry contract.
+    const geo = createFullscreenTriangleGeometry();
     this.megaMesh = new THREE.Mesh(geo, this.megaShader);
     this.megaMesh.frustumCulled = false;
     this.megaScene = new THREE.Scene();
