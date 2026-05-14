@@ -251,22 +251,24 @@ test.describe('Real Dataset Loading', () => {
     await waitForLuxarReady(page);
     await waitForPointsLoaded(page, 100, 60000); // Increased timeout to 60s
 
-    // Wait for at least one frame to render
+    // Wait for at least one frame to render. WebGLRenderer exposes
+    // `info.render.frame`; WebGPURenderer exposes `info.frame`. Probe
+    // both so this works on either backend.
     await page.waitForFunction(
       () => {
-        const debug = (window as any).__luxarDebug;
-        return debug?.renderer?.info?.render?.frame > 0;
+        const info = (window as any).__luxarDebug?.renderer?.info;
+        return (info?.render?.frame ?? info?.frame ?? 0) > 0;
       },
       { timeout: 10000 }
     );
 
     // Verify renderer stats
     const renderInfo = await page.evaluate(() => {
-      const debug = (window as any).__luxarDebug;
+      const info = (window as any).__luxarDebug.renderer.info;
       return {
-        frames: debug.renderer.info.render.frame,
-        points: debug.renderer.info.render.points,
-        calls: debug.renderer.info.render.calls,
+        frames: info.render?.frame ?? info.frame ?? 0,
+        points: info.render?.points ?? 0,
+        calls: info.render?.calls ?? 0,
       };
     });
 

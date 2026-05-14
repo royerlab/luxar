@@ -84,27 +84,30 @@ The original framing of this section:
 
 This is no longer the only path — see "Today" below.
 
-## Today — TSL ports landed, wrapper-layer wiring in flight
+## Today — WebGPU default, GLSL kept as a runnable reference
 
 - Both renderer constructions exist:
-  - Default: `THREE.WebGLRenderer` (legacy GLSL3 path).
-  - Opt-in via `VITE_LUXAR_USE_WEBGPU_RENDERER=1`:
-    `WebGPURenderer({ forceWebGL: true })` is constructed at
-    init. Under `forceWebGL` the WebGPU renderer dispatches to a
-    WebGL2 backend, so the existing `ShaderMaterial`-based wrappers
-    keep rendering. This path exercises the renderer-construction
-    + render-loop integration but does **not** yet exercise TSL
-    on the production scene-material path.
-- TSL factories for all 12 shaders are implemented and
-  parity-tested against the GLSL3 originals. `MaterialManager`
-  still constructs the GLSL `ShaderMaterial` wrappers
-  unconditionally; the TSL factories are reachable today only
-  through the `tsl-shader-parity.spec.ts` harness and factory-level
-  unit tests.
+  - **Default: `WebGPURenderer({ forceWebGL: true })`**. TSL
+    `NodeMaterial` wrappers are dispatched by `MaterialManager`
+    when `caps.api === 'webgpu'`. `forceWebGL: true` keeps the
+    WebGL2 backend underneath until the real-WebGPU smoke matrix
+    lands — the same TSL graphs target both backends, so flipping
+    `forceWebGL: false` is a separate, isolated milestone.
+  - Opt-in legacy path via `VITE_LUXAR_USE_LEGACY_WEBGL=1`:
+    constructs `THREE.WebGLRenderer` with the GLSL `ShaderMaterial`
+    wrappers. Retained so the TSL↔GLSL parity harness, baseline
+    pixel comparisons, and the per-shader GLSL3 sources stay
+    runnable as a reference — never deleted, per project policy.
+- TSL factories for all 12 shaders ship with TSL `NodeMaterial`
+  wrappers (`{Point,Line,GSplat}TSLMaterial`,
+  `{Point,Line,GSplat}PickingTSLMaterial`, `MegaShaderTSLMaterial`)
+  one-for-one with the GLSL wrappers. `MaterialManager.setCaps`
+  is wired from both `SceneManager.setupRenderer` arms so dispatch
+  is consistent across paths.
 - `RendererCapabilities.api` honestly reports which backend the
-  renderer dispatched to (`'webgl2'` in both default and
-  `forceWebGL:true` paths today; `'webgpu'` once `forceWebGL` is
-  removed and a real WebGPU adapter is initialised).
+  renderer dispatched to (`'webgl2'` in both the legacy path and
+  the default `forceWebGL: true` path today; `'webgpu'` once
+  `forceWebGL: false` lands).
 
 ## Target end-state (post-TSL-ports)
 

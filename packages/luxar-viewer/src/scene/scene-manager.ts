@@ -259,17 +259,25 @@ export class SceneManager extends THREE.EventDispatcher<{
    * - Fullscreen immersive experience
    */
   private async setupRenderer(): Promise<void> {
-    // Migration toggle: when `VITE_LUXAR_USE_WEBGPU_RENDERER=1`,
-    // construct a `WebGPURenderer` (with `forceWebGL: true` until
-    // the TSL ports complete) instead of `WebGLRenderer`. The
-    // WebGPU build is dynamically imported so the default bundle
-    // doesn't pull in `three/webgpu` for users on the WebGL2 path.
-    const useWebGPU = import.meta.env.VITE_LUXAR_USE_WEBGPU_RENDERER === '1';
-    if (useWebGPU) {
-      await this.setupWebGPURenderer();
+    // Default renderer is `WebGPURenderer` (with `forceWebGL: true`
+    // until real-WebGPU smoke tests are green across the matrix;
+    // Three.js's internal NodeBuilder dispatches the same TSL graphs
+    // to the WebGL2 backend). The GLSL `ShaderMaterial` path stays
+    // wired up behind `VITE_LUXAR_USE_LEGACY_WEBGL=1` so the parity
+    // harness, baseline comparisons, and the per-shader GLSL3 sources
+    // remain a live, runnable reference (per the project directive
+    // to keep GLSL as a reference, not delete it).
+    //
+    // The transient `VITE_LUXAR_USE_WEBGPU_RENDERER=1` flag from the
+    // migration window is retained as an alias for the default —
+    // existing CI invocations and developer muscle-memory keep
+    // working — but the default no longer depends on it.
+    const useLegacyWebGL = import.meta.env.VITE_LUXAR_USE_LEGACY_WEBGL === '1';
+    if (useLegacyWebGL) {
+      await this.setupWebGLRenderer();
       return;
     }
-    await this.setupWebGLRenderer();
+    await this.setupWebGPURenderer();
   }
 
   private async setupWebGLRenderer(): Promise<void> {
@@ -369,14 +377,16 @@ export class SceneManager extends THREE.EventDispatcher<{
   }
 
   /**
-   * Migration-time WebGPU renderer construction. Behind the
-   * `VITE_LUXAR_USE_WEBGPU_RENDERER=1` env flag. Constructs a
-   * `WebGPURenderer` with `forceWebGL: true` until the TSL ports
-   * complete (per `BROWSER_SUPPORT_POLICY.md`: `ShaderMaterial`
-   * isn't supported under `WebGPURenderer` without `forceWebGL`).
+   * Default renderer setup. Constructs a `WebGPURenderer` and runs
+   * its async `init()`. `forceWebGL: true` keeps the WebGL2 backend
+   * underneath until the real-WebGPU smoke matrix lands; the TSL
+   * graphs are identical either way — Three.js's NodeBuilder targets
+   * both backends from one source.
    *
-   * Once the TSL ports land (M11-M16), the `forceWebGL: true`
-   * flag drops and this path becomes the default in M18.
+   * The legacy GLSL `ShaderMaterial` path stays available behind
+   * `VITE_LUXAR_USE_LEGACY_WEBGL=1` (see {@link setupRenderer}) so
+   * the per-shader GLSL3 sources and the TSL↔GLSL parity harness
+   * remain a runnable reference.
    */
   private async setupWebGPURenderer(): Promise<void> {
     log.info(Modules.SCENE_MANAGER, 'Constructing WebGPURenderer (forceWebGL: true)…');
