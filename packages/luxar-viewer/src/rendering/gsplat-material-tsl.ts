@@ -134,15 +134,23 @@ export class GSplatTSLMaterial
    * presence is not the source of truth — see PointTSLMaterial for
    * the in-depth note).
    *
-   * IMPORTANT: the factory tail applies blending state via
-   * `getCompleteBlendingState(mode)`, which for additive/luminous
-   * returns `THREE.AdditiveBlending + SrcAlphaFactor` — that's
-   * correct for points/lines but WRONG for gsplats. GSplats need
-   * `CustomBlending + OneFactor` for additive/luminous so the sum
-   * projection composes linearly (SrcAlpha squares intensity, see
-   * the rationale in `GSplatMaterial`). Re-apply the GSplat-specific
-   * mode here after the factory finishes so the override sticks
-   * across colormap toggles or other graph rebuilds.
+   * Blending state is applied by the factory tail via
+   * `getCompleteBlendingState(mode)`. For the TSL path that produces
+   * the right result without a GSplat-specific override: the gsplat
+   * shader always outputs `alpha = 1.0`, so the difference between
+   * `AdditiveBlending` (`SrcAlpha + One`) and the GLSL-side
+   * `CustomBlending + OneFactor` collapses to identity — both reduce
+   * to `srcColor + dstColor`. The GLSL wrapper's `CustomBlending`
+   * dance is vestigial; reproducing it under WebGPURenderer's WebGL2
+   * backend also triggers a `gl.getError()` flag (separate
+   * `blendEquationAlpha` state propagation is not perfectly tracked
+   * across the WebGPU↔WebGL2 bridge), so the cleanest path is to
+   * let `getCompleteBlendingState` drive the state.
+   *
+   * (`max` mode goes through the same factory path and gets
+   * `CustomBlending + MaxEquation + OneFactor` straight from
+   * `getCompleteBlendingState` — that's what gsplat actually
+   * needs for max projection.)
    */
   private rebuildGraph(): void {
     gsplatWebGPUFactory(
@@ -153,10 +161,6 @@ export class GSplatTSLMaterial
       },
       this
     );
-    const mode = this.userData.blendingMode as BlendingMode | undefined;
-    if (mode) {
-      this.applyBlendingMode(mode);
-    }
     this.needsUpdate = true;
   }
 
