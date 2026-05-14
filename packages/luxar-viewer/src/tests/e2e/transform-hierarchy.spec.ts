@@ -32,7 +32,7 @@ test.describe('Transform Hierarchy - Basic Composition', () => {
       const results: Array<{ name: string; localPos: number[]; worldPos: number[] }> = [];
 
       debug.scene.traverse((obj: any) => {
-        if (obj.type === 'Points' || obj.type === 'Group') {
+        if (obj.userData?.nodeType === 'points' || obj.type === 'Group') {
           const localPos = obj.position.toArray();
 
           // Get world position by cloning position and using getWorldPosition
@@ -84,7 +84,7 @@ test.describe('Transform Hierarchy - Basic Composition', () => {
       const levels: Array<{ name: string; depth: number }> = [];
 
       function traverse(obj: any, depth: number) {
-        if (obj.type === 'Points' || obj.type === 'Group') {
+        if (obj.userData?.nodeType === 'points' || obj.type === 'Group') {
           levels.push({ name: obj.name, depth });
         }
         obj.children.forEach((child: any) => traverse(child, depth + 1));
@@ -209,7 +209,7 @@ test.describe('Transform Hierarchy - Matrix Correctness', () => {
       const matrices: Array<{ name: string; elements: number[]; isValid: boolean }> = [];
 
       debug.scene.traverse((obj: any) => {
-        if (obj.type === 'Points' || obj.type === 'Group') {
+        if (obj.userData?.nodeType === 'points' || obj.type === 'Group') {
           const elements = obj.matrix.elements;
           // Check if matrix is valid (not all zeros)
           const isValid = elements.some((v: number) => Math.abs(v) > 0.01);
@@ -246,7 +246,7 @@ test.describe('Transform Hierarchy - Matrix Correctness', () => {
         const positions: Array<{ name: string; pos: number[] }> = [];
 
         debug.scene.traverse((obj: any) => {
-          if (obj.type === 'Points') {
+          if (obj.userData?.nodeType === 'points') {
             // Get world position using THREE.js object method
             const worldPos = obj.getWorldPosition(obj.position.clone());
             positions.push({
@@ -292,7 +292,7 @@ test.describe('Transform Hierarchy - Edge Cases', () => {
       const results: Array<{ name: string; hasIdentity: boolean }> = [];
 
       debug.scene.traverse((obj: any) => {
-        if (obj.type === 'Points' || obj.type === 'Group') {
+        if (obj.userData?.nodeType === 'points' || obj.type === 'Group') {
           // Check if local position, rotation, scale are all identity
           const hasIdentity =
             obj.position.length() < 0.01 &&

@@ -65,19 +65,19 @@ test.describe('Real Dataset Loading', () => {
 
       const pointClouds: any[] = [];
       debug.scene.traverse((obj: any) => {
-        if (obj.type === 'Points') {
+        if (obj.userData?.nodeType === 'points') {
           const geom = obj.geometry;
           pointClouds.push({
             name: obj.name,
-            pointCount: geom.attributes.position?.count || 0,
-            hasPosition: !!geom.attributes.position,
-            hasColor: !!geom.attributes.color,
-            hasRadius: !!geom.attributes.radius,
-            hasSharpness: !!geom.attributes.sharpness,
-            positionCount: geom.attributes.position?.count || 0,
-            colorCount: geom.attributes.color?.count || 0,
-            radiusCount: geom.attributes.radius?.count || 0,
-            sharpnessCount: geom.attributes.sharpness?.count || 0,
+            pointCount: geom.attributes.aCenter?.count || 0,
+            hasPosition: !!geom.attributes.aCenter,
+            hasColor: !!geom.attributes.aColor,
+            hasRadius: !!geom.attributes.aRadius,
+            hasSharpness: !!geom.attributes.aSharpness,
+            positionCount: geom.attributes.aCenter?.count || 0,
+            colorCount: geom.attributes.aColor?.count || 0,
+            radiusCount: geom.attributes.aRadius?.count || 0,
+            sharpnessCount: geom.attributes.aSharpness?.count || 0,
           });
         }
       });
@@ -156,7 +156,7 @@ test.describe('Real Dataset Loading', () => {
       const groups: string[] = [];
 
       debug.scene.traverse((obj: any) => {
-        if (obj.type === 'Points') {
+        if (obj.userData?.nodeType === 'points') {
           pointClouds.push(obj.name || 'unnamed');
         } else if (obj.type === 'Group' && obj !== debug.scene) {
           groups.push(obj.name || 'unnamed');
@@ -232,7 +232,7 @@ test.describe('Real Dataset Loading', () => {
       let hasRadii = false;
 
       debug.scene.traverse((obj: any) => {
-        if (obj.type === 'Points' && obj.geometry) {
+        if (obj.userData?.nodeType === 'points' && obj.geometry) {
           const attrs = obj.geometry.attributes;
           if (attrs.color) hasColors = true;
           if (attrs.radius) hasRadii = true;

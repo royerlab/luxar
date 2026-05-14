@@ -40,9 +40,9 @@ test.describe('Data Loading Monitor Metrics', () => {
       const debug = (window as any).__luxarDebug;
       let count = 0;
       debug.scene?.traverse((obj: any) => {
-        if (obj.type === 'Points' && obj.geometry?.attributes?.position) {
+        if (obj.userData?.nodeType === 'points' && obj.geometry?.attributes?.aCenter) {
           const drawRange = obj.geometry.drawRange;
-          const attrCount = obj.geometry.attributes.position.count;
+          const attrCount = obj.geometry.attributes.aCenter.count;
           count += drawRange.count < Infinity ? Math.min(drawRange.count, attrCount) : attrCount;
         }
       });
@@ -126,9 +126,9 @@ test.describe('Data Loading Monitor Metrics', () => {
       const debug = (window as any).__luxarDebug;
       let count = 0;
       debug.scene?.traverse((obj: any) => {
-        if (obj.type === 'Points' && obj.geometry?.attributes?.position) {
+        if (obj.userData?.nodeType === 'points' && obj.geometry?.attributes?.aCenter) {
           const drawRange = obj.geometry.drawRange;
-          const attrCount = obj.geometry.attributes.position.count;
+          const attrCount = obj.geometry.attributes.aCenter.count;
           count += drawRange.count < Infinity ? Math.min(drawRange.count, attrCount) : attrCount;
         }
       });
