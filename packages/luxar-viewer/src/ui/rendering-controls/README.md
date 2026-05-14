@@ -14,8 +14,8 @@ rendering-controls/
 ├── navigation-setup.ts         # Navigation controls (orbit, fly, ortho)
 ├── camera-setup.ts             # Camera settings (FOV, clipping)
 ├── hdr-setup.ts                # HDR intensity & tone mapping
-├── anti-aliasing-setup.ts      # AA techniques (FXAA, SMAA, MSAA, SSAA)
-└── post-processing-setup.ts    # Effects (bloom, noise, DoF, etc.)
+├── anti-aliasing-setup.ts      # AA techniques (FXAA, MSAA, SSAA)
+└── post-processing-setup.ts    # Effects (bloom, noise, vignette, lens distortion)
 ```
 
 Each module exports a setup function that:

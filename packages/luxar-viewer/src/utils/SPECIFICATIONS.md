@@ -606,7 +606,7 @@ interface HDRCapabilities {
 - **v1.1.0** (2025-12-08): Correct HDR function documentation
   - **CORRECTED**: `configureHDRRenderer()` documentation - function only logs capabilities, does NOT configure renderer
   - **CLARIFIED**: Actual HDR configuration handled by PostProcessingManager (rendering/ package)
-  - **ADDED**: Explanation of why function is a no-op (avoids pmndrs library conflicts)
+  - **ADDED**: Explanation of why function is a no-op (avoids color-management conflicts with the post-processing pipeline)
   - **NOTED**: Function name is legacy, kept for backward compatibility
   - No functional changes - only documentation corrections
 

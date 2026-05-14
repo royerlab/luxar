@@ -141,7 +141,7 @@ Controls are placed under **Anti-Aliasing > Temporal Jitter (TAA)** in lil-gui:
 
 ```
 Anti-Aliasing/
-  ...existing SSAA, FXAA, SMAA controls...
+  ...existing SSAA, FXAA, MSAA controls...
   Temporal Jitter (TAA)/          ← subfolder, hidden when disabled
     Jitter Enabled     [checkbox]
     Jitter Amount (px) [slider 0–2.0, step 0.01]

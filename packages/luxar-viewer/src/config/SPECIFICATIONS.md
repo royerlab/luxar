@@ -1294,7 +1294,7 @@ if (!isValid) {
   - **NEW**: Data Loading configuration (spatial, network, memory, monitoring)
   - **NEW**: WebGL configuration (context, renderer, render target, profiles)
   - **NEW**: Cache configuration (L1/L2 sizes, debug flags)
-  - **NEW**: Rendering Controls configuration (bloom, DOF, AO, vignette, detector noise, lens distortion)
+  - **NEW**: Rendering Controls configuration (bloom, vignette, detector noise, chromatic lens distortion)
   - **UPDATED**: Expanded camera configuration with lens distortion presets
   - **UPDATED**: Expanded controls configuration with detailed fly and orbit settings
   - **UPDATED**: Added comprehensive validation rules for all sections
