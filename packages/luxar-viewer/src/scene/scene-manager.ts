@@ -20,6 +20,7 @@ import { materialManager } from '../rendering';
 import { disposeColormapTextures } from '../rendering/colormap-textures';
 import {
   createRendererCapabilities,
+  type Renderer,
   type RendererCapabilities,
 } from '../rendering/renderer-capabilities';
 import { configureHDRRenderer, logHDRCapabilities } from '../utils/hdr-detection';
@@ -88,16 +89,21 @@ export class SceneManager extends THREE.EventDispatcher<{
   'webgl-context-restored': {};
 }> {
   /**
-   * The graphics-API renderer. Typed concretely as
-   * `THREE.WebGLRenderer` today; the `Renderer` union in
-   * `renderer-capabilities.ts` includes `WebGPURenderer`, but the
-   * downstream consumers (PostProcessingManager, picking, …) all
-   * still call WebGLRenderer-specific methods. Widening this
-   * field's type to `Renderer` happens piecemeal during the per-
-   * shader TSL ports (M11-M16). The WebGPU branch in
-   * `setupWebGPURenderer` casts at the boundary until then.
+   * The graphics-API renderer. Holds the `Renderer` union honestly:
+   * a `THREE.WebGLRenderer` under `VITE_LUXAR_USE_LEGACY_WEBGL=1`,
+   * a `WebGPURenderer` on the default path (which itself may
+   * dispatch to a real WebGPU adapter or transparently fall back to
+   * its internal WebGL2 backend depending on browser support).
+   *
+   * Every method called on this field across the codebase
+   * (`PostProcessingManager`, `picking-system`, `BloomChain`,
+   * `FxaaPass`, UI panels) is part of the common `Renderer` surface
+   * in Three r184 — no `WebGLRenderer`-only API is used
+   * unconditionally. The discriminator for callers that genuinely
+   * must branch is `this.capabilities.api` (see
+   * `RendererCapabilities`).
    */
-  public renderer!: THREE.WebGLRenderer;
+  public renderer!: Renderer;
 
   /**
    * Capabilities snapshot for the active renderer. Hides raw-GL queries
@@ -401,12 +407,7 @@ export class SceneManager extends THREE.EventDispatcher<{
       alpha: config.webgl.context.alpha,
     });
     await gpuRenderer.init();
-    // Cast to WebGLRenderer at the boundary. Downstream consumers
-    // (PostProcessingManager, picking-system, …) still call
-    // WebGLRenderer-specific methods. Per-shader TSL ports widen
-    // these consumers incrementally; M18 flips the default and
-    // M19 removes the cast.
-    this.renderer = gpuRenderer as unknown as THREE.WebGLRenderer;
+    this.renderer = gpuRenderer;
 
     this.capabilities = createRendererCapabilities(this.renderer);
 
@@ -437,15 +438,26 @@ export class SceneManager extends THREE.EventDispatcher<{
    * canvas listeners. Thin delegate over scene-setup/webgl-context-recovery.
    * The recovery instance owns the loss/restored handlers, the
    * `isContextLost` flag, and the deterministic rebuild order.
+   *
+   * Only meaningful under the WebGL2 backend — the
+   * `webglcontextlost` / `webglcontextrestored` canvas events that
+   * the recovery hooks fire only on WebGL contexts. Under the
+   * WebGPU backend the analog is the `device.lost` Promise, which
+   * Three's `WebGPURenderer` handles internally; nothing for the
+   * recovery layer to do, so we skip wiring it up. `contextRecovery`
+   * stays `null` and every call site already null-checks.
    */
   private setupContextLossHandling(): void {
+    if (this.capabilities.api !== 'webgl2') {
+      return;
+    }
     this.contextRecovery = new WebGLContextRecovery({
       canvas: this.canvasElement,
       // Lazy lookup — `setupContextLossHandling` runs before
       // `setupScene` in init() order; capturing `this.scene` at
       // construction would freeze in `undefined`.
       getScene: () => this.scene,
-      renderer: this.renderer,
+      renderer: this.renderer as THREE.WebGLRenderer,
       getPostProcessing: () => this.postProcessing ?? null,
       updateRendererSize: () => this.updateRendererSize(),
       onContextRestored: () => this.dispatchEvent({ type: 'webgl-context-restored' }),

@@ -12,7 +12,7 @@ import * as THREE from 'three';
 import { FXAA_SOURCE } from './fxaa-shaders';
 import { buildMaterial } from '../material-builder';
 import { createFullscreenTriangleGeometry } from './fullscreen-geometry';
-import type { RendererCapabilities } from '../renderer-capabilities';
+import type { Renderer, RendererCapabilities } from '../renderer-capabilities';
 
 /**
  * Runs FXAA on an LDR input texture, writing to the renderer's
@@ -67,7 +67,7 @@ export class FxaaPass {
    * Render FXAA from `inputTexture` to the renderer's current target
    * (use `renderer.setRenderTarget(null)` for the backbuffer).
    */
-  render(renderer: THREE.WebGLRenderer, inputTexture: THREE.Texture): void {
+  render(renderer: Renderer, inputTexture: THREE.Texture): void {
     this.uniforms.uInput.value = inputTexture;
     renderer.render(this.scene, this.camera);
   }

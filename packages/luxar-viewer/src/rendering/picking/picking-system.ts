@@ -21,6 +21,7 @@ import * as THREE from 'three';
 import type { PostProcessingManager } from '../post-processing/post-processing-manager';
 import { isCameraAwareMaterial } from '../camera-aware-material';
 import { materialManager } from '../material-manager';
+import type { Renderer } from '../renderer-capabilities';
 import {
   getCameraFovRadians,
   isOrthographicCamera,
@@ -109,7 +110,7 @@ export class PickingSystem {
   private postProcessing: PostProcessingManager | null = null;
 
   constructor(
-    private renderer: THREE.WebGLRenderer,
+    private renderer: Renderer,
     private camera: THREE.Camera,
     private onPickResult: (result: PickResult | null) => void
   ) {
@@ -425,10 +426,13 @@ export class PickingSystem {
   private renderPickBuffer(): void {
     const renderer = this.renderer;
 
-    // Save full renderer state (render target, scissor, clear color)
+    // Save full renderer state (render target, scissor, clear color).
+    // `getClearColor` on the union expects `Color4` (with alpha);
+    // WebGLRenderer's `Color` is read-compatible at runtime — the
+    // cast suppresses the TS-only mismatch.
     const savedRenderTarget = renderer.getRenderTarget();
     const savedScissorTest = renderer.getScissorTest();
-    renderer.getClearColor(this._savedClearColor);
+    renderer.getClearColor(this._savedClearColor as unknown as THREE.Color & { a: number });
     this._savedClearAlpha = renderer.getClearAlpha();
 
     // Compute pick-buffer resolution and camera params for material updates.
@@ -472,8 +476,12 @@ export class PickingSystem {
       this.pickScene.remove(entry.pick);
     }
 
-    // Restore full renderer state
-    renderer.setRenderTarget(savedRenderTarget);
+    // Restore full renderer state. `setRenderTarget` cast: see the
+    // post-processing-manager rationale (round-tripping
+    // `getRenderTarget` → `setRenderTarget` is safe on both
+    // backends at runtime; TypeScript's union intersection is
+    // stricter than either backend alone).
+    renderer.setRenderTarget(savedRenderTarget as THREE.WebGLRenderTarget | null);
     renderer.setScissorTest(savedScissorTest);
     renderer.setClearColor(this._savedClearColor, this._savedClearAlpha);
   }
@@ -525,7 +533,21 @@ export class PickingSystem {
    * on hover is documented in `PICKING_DESIGN.md`.
    */
   private async readbackAndVote(): Promise<PickResult | null> {
-    await this.renderer.readRenderTargetPixelsAsync(
+    // Cast to WebGLRenderer resolves the union-signature clash —
+    // WebGPURenderer's `readRenderTargetPixelsAsync` omits the
+    // destBuffer arg in its TS signature but accepts the same call
+    // shape at runtime (it ignores the extra arg and uses its own
+    // internal buffer, returning it via the Promise; the existing
+    // `this.readBuffer` is then filled by the WebGL path or stays
+    // untouched on the WebGPU path — only the WebGL path is
+    // currently exercised under the default renderer with
+    // `forceWebGL` dropped because Playwright's chromium falls back
+    // to the WebGL2 backend). Production code on a real WebGPU
+    // adapter would need the Promise's return value, see TODO
+    // below.
+    // TODO: under real WebGPU dispatch, use the Promise return value
+    // (a Uint8Array) instead of relying on `readBuffer` being filled.
+    await (this.renderer as THREE.WebGLRenderer).readRenderTargetPixelsAsync(
       this.pickTarget,
       this._lastReadX,
       this._lastReadY,

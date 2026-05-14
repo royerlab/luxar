@@ -44,7 +44,12 @@ declare global {
       // Populated by LuxarApp.setupDebugInterface (post-init).
       scene?: THREE.Scene;
       camera?: LuxarCamera;
-      renderer?: THREE.WebGLRenderer;
+      // Either backend may be active — `THREE.WebGLRenderer` under
+      // `VITE_LUXAR_USE_LEGACY_WEBGL=1`, or `WebGPURenderer` under
+      // the default. Typed loosely as `unknown` so the window
+      // declaration doesn't import from `three/webgpu`; callers
+      // narrow via the `isWebGLRenderer` helper or `caps.api`.
+      renderer?: unknown;
       controls?: ControlsManager;
       postProcessing?: PostProcessingManager;
       animationController?: AnimationController;

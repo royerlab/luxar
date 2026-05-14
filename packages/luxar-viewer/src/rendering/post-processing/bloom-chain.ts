@@ -27,7 +27,7 @@ import {
 } from './bloom-shaders';
 import { buildMaterial } from '../material-builder';
 import { createFullscreenTriangleGeometry } from './fullscreen-geometry';
-import type { RendererCapabilities } from '../renderer-capabilities';
+import type { Renderer, RendererCapabilities } from '../renderer-capabilities';
 
 export interface BloomChainConfig {
   /** Number of mip levels (1..12). Higher = wider, softer bloom. */
@@ -201,7 +201,7 @@ export class BloomChain {
    * target's texture). After this returns, `outputTexture` holds the
    * bloom result.
    */
-  render(renderer: THREE.WebGLRenderer, sceneTexture: THREE.Texture): void {
+  render(renderer: Renderer, sceneTexture: THREE.Texture): void {
     const prevTarget = renderer.getRenderTarget();
     const prevAutoClear = renderer.autoClear;
     renderer.autoClear = true;
@@ -247,7 +247,10 @@ export class BloomChain {
       renderer.autoClear = true;
     }
 
-    renderer.setRenderTarget(prevTarget);
+    // Cast: see post-processing-manager.ts for the union-signature
+    // rationale (round-tripping getRenderTarget → setRenderTarget is
+    // safe at runtime on either backend).
+    renderer.setRenderTarget(prevTarget as THREE.WebGLRenderTarget | null);
     renderer.autoClear = prevAutoClear;
   }
 
