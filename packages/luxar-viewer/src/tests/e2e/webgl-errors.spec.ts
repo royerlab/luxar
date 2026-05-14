@@ -50,7 +50,10 @@ test.describe('WebGL Error Detection - Critical', () => {
 
     // Wait for initial render
     await page.waitForFunction(
-      () => (window as any).__luxarDebug?.renderer?.info?.render?.frame > 2,
+      () => {
+        const info = (window as any).__luxarDebug?.renderer?.info;
+        return (info?.render?.frame ?? info?.frame ?? 0) > 2;
+      },
       {
         timeout: 10000,
       }
@@ -89,7 +92,10 @@ test.describe('WebGL Error Detection - Critical', () => {
       await waitForLuxarReady(page);
 
       await page.waitForFunction(
-        () => (window as any).__luxarDebug?.renderer?.info?.render?.frame > 1,
+        () => {
+          const info = (window as any).__luxarDebug?.renderer?.info;
+          return (info?.render?.frame ?? info?.frame ?? 0) > 1;
+        },
         { timeout: 10000 }
       );
 
@@ -284,7 +290,10 @@ test.describe('WebGL Error Detection - All Datasets', () => {
       await waitForLuxarReady(page);
 
       await page.waitForFunction(
-        () => (window as any).__luxarDebug?.renderer?.info?.render?.frame > 2,
+        () => {
+        const info = (window as any).__luxarDebug?.renderer?.info;
+        return (info?.render?.frame ?? info?.frame ?? 0) > 2;
+      },
         { timeout: 10000 }
       );
 
