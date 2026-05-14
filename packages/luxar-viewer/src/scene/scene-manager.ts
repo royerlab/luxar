@@ -378,10 +378,12 @@ export class SceneManager extends THREE.EventDispatcher<{
 
   /**
    * Default renderer setup. Constructs a `WebGPURenderer` and runs
-   * its async `init()`. `forceWebGL: true` keeps the WebGL2 backend
-   * underneath until the real-WebGPU smoke matrix lands; the TSL
-   * graphs are identical either way — Three.js's NodeBuilder targets
-   * both backends from one source.
+   * its async `init()`. On browsers with WebGPU support, the renderer
+   * acquires a WebGPU adapter and dispatches TSL graphs to WGSL.
+   * On browsers without WebGPU (Firefox today, older Safari), Three's
+   * WebGPURenderer transparently falls back to a WebGL2 backend —
+   * the TSL graphs target both from one source, so the Luxar viewer
+   * is identical to the caller either way.
    *
    * The legacy GLSL `ShaderMaterial` path stays available behind
    * `VITE_LUXAR_USE_LEGACY_WEBGL=1` (see {@link setupRenderer}) so
@@ -389,15 +391,14 @@ export class SceneManager extends THREE.EventDispatcher<{
    * remain a runnable reference.
    */
   private async setupWebGPURenderer(): Promise<void> {
-    log.info(Modules.SCENE_MANAGER, 'Constructing WebGPURenderer (forceWebGL: true)…');
+    log.info(Modules.SCENE_MANAGER, 'Constructing WebGPURenderer…');
     // Dynamic import so the WebGPU build doesn't pull into the
-    // default bundle for users on the WebGL2 path.
+    // default bundle for users on the legacy WebGL2 path.
     const { WebGPURenderer } = await import('three/webgpu');
     const gpuRenderer = new WebGPURenderer({
       canvas: this.canvasElement,
       antialias: config.webgl.context.antialias,
       alpha: config.webgl.context.alpha,
-      forceWebGL: true,
     });
     await gpuRenderer.init();
     // Cast to WebGLRenderer at the boundary. Downstream consumers

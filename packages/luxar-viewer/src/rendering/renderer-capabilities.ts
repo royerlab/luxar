@@ -17,11 +17,11 @@ export type { WebGPURenderer } from 'three/webgpu';
 /**
  * The graphics-API renderer Luxar uses.
  *
- * `THREE.WebGLRenderer` is the WebGL2 path; `WebGPURenderer` (with
- * `forceWebGL: true` until the TSL ports complete) is the WebGPU
- * path. Consumers hold renderer references typed as `Renderer` so
- * future widening (post-port: drop the WebGLRenderer arm entirely)
- * is a one-line change here.
+ * `THREE.WebGLRenderer` is the legacy GLSL path (behind
+ * `VITE_LUXAR_USE_LEGACY_WEBGL=1`); `WebGPURenderer` is the default
+ * production path — dispatches TSL graphs to either a real WebGPU
+ * adapter or the internal WebGL2 backend based on browser support.
+ * Consumers hold renderer references typed as `Renderer`.
  */
 export type Renderer = THREE.WebGLRenderer | WebGPURenderer;
 
@@ -37,9 +37,9 @@ export type Renderer = THREE.WebGLRenderer | WebGPURenderer;
  * `THREE.WebGLRenderer`'s constructor sets on `this`. A negative
  * check (`!isWebGPURenderer`) would mis-identify any future
  * renderer type that doesn't carry the WebGPU flag. Probing for
- * `.getContext` would mis-identify `WebGPURenderer({ forceWebGL:
- * true })` as a WebGLRenderer because that path's `getContext()`
- * delegates to the backend's WebGL2 context.
+ * `.getContext` would mis-identify a `WebGPURenderer` running on
+ * its internal WebGL2 fallback because that path's `getContext()`
+ * also delegates to a WebGL2 context.
  */
 function isWebGLRenderer(renderer: Renderer): renderer is THREE.WebGLRenderer {
   return (renderer as { isWebGLRenderer?: boolean }).isWebGLRenderer === true;
