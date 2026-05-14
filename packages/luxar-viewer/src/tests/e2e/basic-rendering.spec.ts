@@ -131,9 +131,17 @@ test.describe('Luxar Basic Rendering', () => {
     await page.goto('/?debug');
     await waitForLuxarReady(page);
 
-    // Wait for initial render to complete
+    // Wait for initial render to complete. WebGLRenderer reports the
+    // frame counter at `info.render.frame`; the unified Renderer base
+    // (the WebGPURenderer path) reports it at `info.frame`. Check
+    // both so the test is renderer-agnostic.
     await page.waitForFunction(
-      () => (window as any).__luxarDebug?.renderer?.info?.render?.frame > 0,
+      () => {
+        const info = (window as any).__luxarDebug?.renderer?.info;
+        if (!info) return false;
+        const frame = info.render?.frame ?? info.frame ?? 0;
+        return frame > 0;
+      },
       { timeout: 10000 }
     );
 

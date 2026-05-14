@@ -11,6 +11,7 @@
 import * as THREE from 'three';
 import { FXAA_SOURCE } from './fxaa-shaders';
 import { buildMaterial } from '../material-builder';
+import { createFullscreenTriangleGeometry } from './fullscreen-geometry';
 import type { RendererCapabilities } from '../renderer-capabilities';
 
 /**
@@ -48,12 +49,9 @@ export class FxaaPass {
       caps
     ) as THREE.Material & { uniforms: Record<string, THREE.IUniform> };
 
-    // Fullscreen triangle (NDC positions {-1,-1}, {3,-1}, {-1,3}).
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute(
-      'position',
-      new THREE.Float32BufferAttribute(new Float32Array([-1, -1, 0, 3, -1, 0, -1, 3, 0]), 3)
-    );
+    // Fullscreen triangle with matching uv attribute (see
+    // `createFullscreenTriangleGeometry` for the uv contract).
+    const geo = createFullscreenTriangleGeometry();
     this.mesh = new THREE.Mesh(geo, this.material);
     this.mesh.frustumCulled = false;
     this.scene = new THREE.Scene();
