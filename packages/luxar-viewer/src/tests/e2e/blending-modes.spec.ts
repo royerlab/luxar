@@ -32,7 +32,7 @@ test.describe('Blending Modes', () => {
         [];
 
       debug.scene.traverse((obj: any) => {
-        if ((obj.type === 'Points' || obj.type === 'Mesh') && obj.material) {
+        if ((obj.userData?.nodeType === 'points' || obj.type === 'Mesh') && obj.material) {
           states.push({
             name: obj.name || 'unnamed',
             blending: obj.material.blending,

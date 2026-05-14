@@ -92,6 +92,8 @@ export function commitPointsGeometry(
 
       if (data.metadata.bounds) {
         geometry.boundingBox = data.metadata.bounds.clone();
+        geometry.boundingSphere = new THREE.Sphere();
+        geometry.boundingBox.getBoundingSphere(geometry.boundingSphere);
       }
 
       // propagate dtype-aware radius/sharpness scales onto
@@ -162,6 +164,12 @@ export function commitPointsGeometry(
         oldGeometry.boundingSphere = new THREE.Sphere();
         oldGeometry.boundingBox.getBoundingSphere(oldGeometry.boundingSphere);
       }
+      // Same-size in-place update: no setAttribute calls happened, so
+      // Three's _maxInstanceCount cache does not need invalidation.
+      const instanced = oldGeometry as THREE.InstancedBufferGeometry;
+      instanced.instanceCount = data.pointCount;
+      instanced.setDrawRange(0, 6);
+
       // in-place reuse — re-sync material scales in case dtype-
       // aware geometry userData changed since the last commit.
       syncPointMaterialWithGeometry(points);

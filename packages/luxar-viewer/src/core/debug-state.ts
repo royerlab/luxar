@@ -99,9 +99,9 @@ export interface DebugStateContext {
 /**
  * Walk the scene graph and report cumulative point/gsplat counts plus
  * per-mesh detail. The traversal:
- *   - Counts every `THREE.Points` mesh; uses `geometry.drawRange.count`
- *     when set (the GPU buffer pool uses drawRange to limit rendering
- *     after relocation), falling back to the position-attribute count.
+ *   - Counts every points mesh (`userData.nodeType === 'points'`); uses
+ *     `InstancedBufferGeometry.instanceCount` because pooled attributes are
+ *     over-allocated and drawRange only covers the 6-index base quad.
  *   - Counts every `THREE.Mesh` with `userData.nodeType === 'gsplats'`
  *     and an `InstancedBufferGeometry`; uses `instanceCount` directly.
  *
@@ -117,21 +117,23 @@ export function computeDebugState(ctx: DebugStateContext): DebugState {
   const lineMeshes: LineMeshInfo[] = [];
 
   ctx.scene.traverse((object) => {
-    // Points: now THREE.Mesh + InstancedBufferAttribute after the
-    // container migration. The per-instance `aCenter` attribute's
-    // count is the source of truth for visible-point count.
+    // Points: now THREE.Mesh + InstancedBufferGeometry after the
+    // container migration. `instanceCount` is the source of truth for
+    // visible-point count; attribute count can be pooled capacity.
     if (
       object instanceof THREE.Mesh &&
       (object.userData as { nodeType?: string })?.nodeType === 'points'
     ) {
-      const geometry = object.geometry;
-      const drawRangeCount = geometry?.drawRange?.count;
+      const geometry = object.geometry as THREE.InstancedBufferGeometry;
       const bufferCount = geometry?.attributes?.aCenter?.count || 0;
-      // Infinity means "draw all" — fall back to the buffer count.
+      const visiblePointCount = (object.userData as { visiblePointCount?: number })
+        ?.visiblePointCount;
       const pointCount =
-        drawRangeCount !== undefined && drawRangeCount !== Infinity
-          ? Math.min(drawRangeCount, bufferCount)
-          : bufferCount;
+        geometry?.isInstancedBufferGeometry && Number.isFinite(geometry.instanceCount)
+          ? geometry.instanceCount
+          : visiblePointCount != null
+            ? visiblePointCount
+            : bufferCount;
       totalPoints += pointCount;
       pointClouds.push({
         name: object.name || 'unnamed',

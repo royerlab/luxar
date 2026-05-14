@@ -744,6 +744,7 @@ export class NodeFactory {
     // when instanceCount is set. The base quad has 6 indices; instanceCount
     // is the number of point sprites to draw.
     geometry.instanceCount = pointCount;
+    geometry.setDrawRange(0, 6);
 
     // Bounding box/sphere of the per-instance positions (used by spatial
     // queries / debug/camera paths). The base-quad bounds are irrelevant;

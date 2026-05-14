@@ -70,7 +70,9 @@ export function buildMaterial(
     fragmentShader: source.webgl.fragment,
     glslVersion: THREE.GLSL3,
     uniforms: config.uniforms,
-    defines: config.defines as Record<string, string> | undefined,
+    // Avoid passing `defines: undefined` through to Three's material
+    // parameter validation while preserving numeric/boolean define values.
+    defines: (config.defines ?? {}) as Record<string, unknown>,
     blending: config.blending ?? THREE.NormalBlending,
     depthTest: config.depthTest ?? true,
     depthWrite: config.depthWrite ?? true,
