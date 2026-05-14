@@ -247,10 +247,10 @@ Legend:
 | Shader              | G | T | F | R | D |
 |---------------------|---|---|---|---|---|
 | `mega`              | x | x | x |   |   |
-| `bloom-threshold`   | x | x |   |   |   |
-| `bloom-downsample`  | x | x |   |   |   |
-| `bloom-upsample`    | x | x |   |   |   |
-| `fxaa`              | x | x |   |   |   |
+| `bloom-threshold`   | x | x | x |   |   |
+| `bloom-downsample`  | x | x | x |   |   |
+| `bloom-upsample`    | x | x | x |   |   |
+| `fxaa`              | x | x | x |   |   |
 
 ### Picking
 
@@ -299,43 +299,71 @@ entry. The original M19 plan called for stripping GLSL3 strings
 after both backends went green — that step is now scoped to
 type-level changes only (`webgl?: …`), not file removal.
 
-## Wrapper-layer wiring (blocks M18 default-flip)
+## Wrapper-layer wiring (complete; landed 2026-05-13)
 
-The TSL factories live as standalone NodeMaterial constructors —
-`point.tsl.ts::pointWebGPUFactory`, `line.tsl.ts::lineWebGPUFactory`,
-`gsplat.tsl.ts::gsplatWebGPUFactory`, and the three matching picking
-factories. Each accepts `uniforms` + a small `*TSLConfig` object and
-returns a configured `NodeMaterial` with the right blending state
-(via the shared `blending-state.ts` helper).
+Each TSL factory pairs with a NodeMaterial wrapper class that
+mirrors the GLSL `THREE.ShaderMaterial` wrapper one-for-one:
 
-In production the wrapper classes — `PointMaterial`, `LineMaterial`,
-`GSplatMaterial`, and the three picking equivalents — still `extends
-THREE.ShaderMaterial`. `MaterialManager.getPointMaterial /
-getLineMaterial / getGSplatMaterial` unconditionally construct these
-GLSL wrapper instances regardless of `caps.api`. The TSL factories
-are therefore **not yet on the production rendering path**; they are
-exercised today only by `tsl-shader-parity.spec.ts` (fragment
-parity) and the unit-level factory-construction tests.
+| GLSL wrapper            | TSL wrapper                | TSL factory                  |
+|-------------------------|----------------------------|------------------------------|
+| `PointMaterial`         | `PointTSLMaterial`         | `pointWebGPUFactory`         |
+| `LineMaterial`          | `LineTSLMaterial`          | `lineWebGPUFactory`          |
+| `GSplatMaterial`        | `GSplatTSLMaterial`        | `gsplatWebGPUFactory`        |
+| `PointPickingMaterial`  | `PointPickingTSLMaterial`  | `pointPickWebGPUFactory`     |
+| `LinePickingMaterial`   | `LinePickingTSLMaterial`   | `linePickWebGPUFactory`      |
+| `GSplatPickingMaterial` | `GSplatPickingTSLMaterial` | `gsplatPickWebGPUFactory`    |
+| `MegaShaderMaterial`    | `MegaShaderTSLMaterial`    | `megaWebGPUFactory`          |
 
-Bridging the gap (work for M18):
+Both wrappers in each pair expose the same constructor +
+update/clone/dispose surface; consumers (NodeFactory,
+LayersPanel, PostProcessingManager, picking-system) treat the
+return type as a single Luxar union
+(`LuxarPointMaterial = PointMaterial | PointTSLMaterial`, etc.).
 
-1. Thread `RendererCapabilities` into `MaterialManager` (constructor
-   injection from `SceneManager`, or per-call argument on
-   `getXxxMaterial`).
-2. Either rewrite each wrapper class to compose-and-delegate instead
-   of `extends THREE.ShaderMaterial`, or introduce parallel
-   `*NodeMaterial` wrapper classes that mirror the existing surface
-   (`applyBlendingMode`, `updateOpacity`, `updateGamma`,
-   `updateIntensity`, `updateOffset`, `updateCameraParams`,
-   `updateColormapTexture`, `clone()`). The TSL path needs all of
-   the same hooks the GLSL path exposes, but expressed via TSL
-   uniform-node reassignment instead of `material.uniforms.X.value`.
-3. Replicate the picking-material variants
-   (`PointPickingMaterial`, etc.) symmetrically.
-4. Run `tsl-shader-parity.spec.ts` + the full visual-regression
-   suite under both backends to confirm parity end-to-end.
+`MaterialManager` owns the GLSL ↔ TSL dispatch:
 
-Until that work lands, `VITE_LUXAR_USE_WEBGPU_RENDERER=1` produces a
-`WebGPURenderer({ forceWebGL: true })` that still dispatches the
-GLSL3 wrapper materials — exactly the WebGL2 codepath, just behind
-a WebGPU-typed renderer.
+- `setCaps(caps)` is called once by `SceneManager.setupWebGLRenderer`
+  and once by `SceneManager.setupWebGPURenderer` immediately after
+  `createRendererCapabilities(renderer)`. The cached caps drive
+  the dispatch on every subsequent get/create.
+- `getPointMaterial / getLineMaterial / getGSplatMaterial` branch
+  on `caps.api === 'webgpu'`. Cache keys include the backend tag
+  so a mid-session backend switch can't return a cross-backend
+  cached material.
+- `createPointPickingMaterial / createLinePickingMaterial /
+  createGSplatPickingMaterial` are per-mesh factories (no cache;
+  picking materials have per-mesh lifetimes).
+- `createMegaShaderMaterial` is the single-instance dispatch used
+  by `PostProcessingManager`.
+
+The mechanics that make the TSL wrappers work like the GLSL ones:
+
+- **IUniforms by reference.** Both wrappers hold a
+  `uniforms: Record<string, THREE.IUniform>` table with the same
+  shape. The TSL factory binds each primitive uniform via
+  `.onUpdate(() => iuniform.value, 'render')`; the TSL uniform
+  node reads the IUniform's current `.value` once per render, so
+  setter mutations propagate without re-running the factory.
+  Vector2 / Texture uniforms share host references and don't need
+  `onUpdate`.
+- **Graph rebuild on shape change.** Toggles
+  (colormap on/off, blending-mode max ↔ non-max, mega-shader
+  feature flags, texture identity swap) flip JS-side `if`
+  branches inside the factory, so the TSL graph itself changes
+  shape. Each wrapper's `rebuildGraph()` re-runs the factory with
+  the new flags and sets `needsUpdate = true`, matching the GLSL
+  wrapper's `defines` flip + recompile pattern.
+- **Optional `outMaterial` factory arg.** Each TSL factory
+  accepts an `outMaterial?: NodeMaterial` so a wrapper subclass
+  can configure itself rather than allocating a fresh
+  NodeMaterial. The standalone parity tests still pass uniforms
+  only.
+
+Verification: `tsl-shader-parity.spec.ts` confirms pixel parity
+between GLSL3 and TSL outputs across all 12 shaders, run under
+`WebGPURenderer({ forceWebGL: true })`. End-to-end E2E
+(`basic-rendering`, `geometry-types`, `blending-modes`) passes
+under `VITE_LUXAR_USE_WEBGPU_RENDERER=1` (forceWebGL = true).
+Real-WebGPU smoke (column `R`) — running with `forceWebGL: false`
+on Chrome / Edge stable — is the next milestone (M18 default
+flip can be evaluated against it).
