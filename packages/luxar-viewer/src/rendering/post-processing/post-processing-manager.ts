@@ -945,23 +945,64 @@ export class PostProcessingManager {
     const pixelCount = width * height * 4;
     const isHalfFloat = target.texture.type === THREE.HalfFloatType;
 
-    // Use the async readback API — it exists on both WebGLRenderer
-    // (r184+) and WebGPURenderer. The cast to `WebGLRenderer`
-    // resolves the union-signature clash (WebGPURenderer's
-    // signature omits the destBuffer arg and returns its own
-    // buffer); both backends accept this call shape at runtime,
-    // WebGPURenderer silently ignoring the extra arg and writing
-    // into its own buffer that it returns. We copy into the
-    // pre-allocated buffer either way for a stable return type.
-    const r = this.renderer as THREE.WebGLRenderer;
+    // Async readback. Signature differs between backends:
+    //   WebGLRenderer: (target, x, y, w, h, dstBuffer) → Promise<dstBuffer>
+    //   WebGPURenderer: (target, x, y, w, h) → Promise<buffer>
+    // (WebGPU's 6th positional arg is `textureIndex`, not a buffer,
+    // so passing a TypedArray there mis-binds it.) Branch on caps.
+    const isWebGL2 = this.capabilities.api === 'webgl2';
     let pixels: Float32Array;
     if (isHalfFloat) {
       const halfData = new Uint16Array(pixelCount);
-      await r.readRenderTargetPixelsAsync(target, 0, 0, width, height, halfData);
+      if (isWebGL2) {
+        await (this.renderer as THREE.WebGLRenderer).readRenderTargetPixelsAsync(
+          target,
+          0,
+          0,
+          width,
+          height,
+          halfData
+        );
+      } else {
+        const raw = (await (
+          this.renderer as unknown as {
+            readRenderTargetPixelsAsync: (
+              t: THREE.WebGLRenderTarget,
+              x: number,
+              y: number,
+              w: number,
+              h: number
+            ) => Promise<Uint16Array>;
+          }
+        ).readRenderTargetPixelsAsync(target, 0, 0, width, height)) as Uint16Array;
+        halfData.set(raw);
+      }
       pixels = halfFloatToFloat32(halfData);
     } else {
       pixels = new Float32Array(pixelCount);
-      await r.readRenderTargetPixelsAsync(target, 0, 0, width, height, pixels);
+      if (isWebGL2) {
+        await (this.renderer as THREE.WebGLRenderer).readRenderTargetPixelsAsync(
+          target,
+          0,
+          0,
+          width,
+          height,
+          pixels
+        );
+      } else {
+        const raw = (await (
+          this.renderer as unknown as {
+            readRenderTargetPixelsAsync: (
+              t: THREE.WebGLRenderTarget,
+              x: number,
+              y: number,
+              w: number,
+              h: number
+            ) => Promise<Float32Array>;
+          }
+        ).readRenderTargetPixelsAsync(target, 0, 0, width, height)) as Float32Array;
+        pixels.set(raw);
+      }
     }
     return { pixels, width, height };
   }
@@ -1036,25 +1077,38 @@ export class PostProcessingManager {
 
     try {
       this.runPipeline({ applyFxaa: this.fxaaPass !== null, finalTarget: captureTarget });
-      // `readRenderTargetPixelsAsync` exists on both WebGLRenderer
-      // (r184+) and WebGPURenderer, but with subtly different
-      // signatures: WebGLRenderer wants the destination buffer as
-      // the 7th argument and returns it via the Promise; WebGPURenderer
-      // returns its own buffer (no destination slot). We pass a
-      // destination buffer either way — WebGPURenderer ignores it,
-      // and we use the Promise's return value as the canonical
-      // source-of-truth. Cast to WebGLRenderer resolves the
-      // union-signature clash; WebGPURenderer accepts the same call
-      // shape at runtime.
+      // `readRenderTargetPixelsAsync` exists on both backends but
+      // with different signatures. WebGLRenderer:
+      //   (target, x, y, w, h, dstBuffer) → Promise<dstBuffer>.
+      // WebGPURenderer:
+      //   (target, x, y, w, h, textureIndex?=0, faceIndex?=0) → Promise<buffer>.
+      // Passing the Uint8Array as a 7th positional arg on the WebGPU
+      // path mis-binds it to `textureIndex` (it becomes NaN), so we
+      // must branch on the active backend.
       const destBuffer = new Uint8Array(width * height * 4);
-      const raw = await (this.renderer as THREE.WebGLRenderer).readRenderTargetPixelsAsync(
-        captureTarget,
-        0,
-        0,
-        width,
-        height,
-        destBuffer
-      );
+      let raw: Uint8Array;
+      if (this.capabilities.api === 'webgl2') {
+        raw = (await (this.renderer as THREE.WebGLRenderer).readRenderTargetPixelsAsync(
+          captureTarget,
+          0,
+          0,
+          width,
+          height,
+          destBuffer
+        )) as Uint8Array;
+      } else {
+        raw = (await (
+          this.renderer as unknown as {
+            readRenderTargetPixelsAsync: (
+              t: THREE.WebGLRenderTarget,
+              x: number,
+              y: number,
+              w: number,
+              h: number
+            ) => Promise<Uint8Array>;
+          }
+        ).readRenderTargetPixelsAsync(captureTarget, 0, 0, width, height)) as Uint8Array;
+      }
       // Copy into a fresh Uint8Array so the ImageData wraps a
       // plain ArrayBuffer regardless of which backend returned the
       // typed array.

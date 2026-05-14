@@ -533,28 +533,43 @@ export class PickingSystem {
    * on hover is documented in `PICKING_DESIGN.md`.
    */
   private async readbackAndVote(): Promise<PickResult | null> {
-    // Cast to WebGLRenderer resolves the union-signature clash —
-    // WebGPURenderer's `readRenderTargetPixelsAsync` omits the
-    // destBuffer arg in its TS signature but accepts the same call
-    // shape at runtime (it ignores the extra arg and uses its own
-    // internal buffer, returning it via the Promise; the existing
-    // `this.readBuffer` is then filled by the WebGL path or stays
-    // untouched on the WebGPU path — only the WebGL path is
-    // currently exercised under the default renderer with
-    // `forceWebGL` dropped because Playwright's chromium falls back
-    // to the WebGL2 backend). Production code on a real WebGPU
-    // adapter would need the Promise's return value, see TODO
-    // below.
-    // TODO: under real WebGPU dispatch, use the Promise return value
-    // (a Uint8Array) instead of relying on `readBuffer` being filled.
-    await (this.renderer as THREE.WebGLRenderer).readRenderTargetPixelsAsync(
-      this.pickTarget,
-      this._lastReadX,
-      this._lastReadY,
-      PICK_SIZE,
-      PICK_SIZE,
-      this.readBuffer
-    );
+    // Async readback. Signature differs between backends:
+    //   WebGLRenderer: (target, x, y, w, h, dstBuffer) → Promise<dstBuffer>
+    //   WebGPURenderer: (target, x, y, w, h) → Promise<buffer>
+    // (WebGPU's 6th positional arg is `textureIndex`, not a buffer;
+    // passing a TypedArray there mis-binds it.) Branch on caps.api
+    // and copy into `this.readBuffer` on the WebGPU path so the
+    // downstream voting loop sees the data in the same place either
+    // way.
+    if ((this.renderer as { isWebGLRenderer?: boolean }).isWebGLRenderer === true) {
+      await (this.renderer as THREE.WebGLRenderer).readRenderTargetPixelsAsync(
+        this.pickTarget,
+        this._lastReadX,
+        this._lastReadY,
+        PICK_SIZE,
+        PICK_SIZE,
+        this.readBuffer
+      );
+    } else {
+      const raw = (await (
+        this.renderer as unknown as {
+          readRenderTargetPixelsAsync: (
+            t: THREE.WebGLRenderTarget,
+            x: number,
+            y: number,
+            w: number,
+            h: number
+          ) => Promise<Float32Array>;
+        }
+      ).readRenderTargetPixelsAsync(
+        this.pickTarget,
+        this._lastReadX,
+        this._lastReadY,
+        PICK_SIZE,
+        PICK_SIZE
+      )) as Float32Array;
+      this.readBuffer.set(raw);
+    }
 
     // Brightness-weighted majority voting
     // Use numeric key (nodeId * 2^24 + elementId) to avoid string allocation per pixel.
