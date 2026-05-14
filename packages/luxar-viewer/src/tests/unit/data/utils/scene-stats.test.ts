@@ -2,11 +2,11 @@
  * Unit tests for `computeSceneStats`.
  *
  * Pure traversal extracted from `zarr-loader.ts::logSceneStats`. Uses real
- * THREE objects (Group, Mesh, BufferGeometry, InstancedBufferAttribute) —
+ * THREE objects (Group, Mesh, InstancedBufferGeometry, InstancedBufferAttribute) —
  * none of these need a WebGL context, so tests run without any mocks.
  *
  * After the container migration, points render as `THREE.Mesh` with
- * `userData.nodeType === 'points'` and per-instance `aCenter` storage,
+ * `userData.nodeType === 'points'` and `InstancedBufferGeometry.instanceCount`,
  * mirroring lines and gsplats.
  */
 
@@ -14,8 +14,12 @@ import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { computeSceneStats } from '../../../../data/utils/scene-stats';
 
-function makePoints(count: number, opts: { spatialIndex?: boolean } = {}): THREE.Mesh {
-  const geom = new THREE.BufferGeometry();
+function makePoints(
+  count: number,
+  opts: { spatialIndex?: boolean; instanceCount?: number } = {}
+): THREE.Mesh {
+  const geom = new THREE.InstancedBufferGeometry();
+  geom.instanceCount = opts.instanceCount ?? count;
   geom.setAttribute(
     'aCenter',
     new THREE.InstancedBufferAttribute(new Float32Array(count * 3), 3)
@@ -57,14 +61,16 @@ describe('computeSceneStats', () => {
     });
   });
 
-  it('counts points meshes and sums aCenter instance counts', () => {
+  it('counts points meshes and sums visible instance counts', () => {
     const scene = new THREE.Group();
     scene.add(makePoints(100));
-    scene.add(makePoints(250));
+    // Simulate pooled geometry: aCenter has capacity for 250, but only 75
+    // instances are visible/drawn.
+    scene.add(makePoints(250, { instanceCount: 75 }));
 
     const stats = computeSceneStats(scene)!;
     expect(stats.pointsObjects).toBe(2);
-    expect(stats.totalPoints).toBe(350);
+    expect(stats.totalPoints).toBe(175);
   });
 
   it('counts a points mesh without an aCenter attribute (count contributes 0)', () => {

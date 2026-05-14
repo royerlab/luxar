@@ -10,8 +10,9 @@
  * Counts mirror the legacy logSceneStats output:
  * - `pointsObjects` / `totalPoints`: `THREE.Mesh` nodes tagged with
  *   `userData.nodeType === 'points'`. After the container migration
- *   points are instanced quad meshes; the per-instance `aCenter`
- *   attribute's `count` is the source of truth for visible points.
+ *   points are instanced quad meshes; `geometry.instanceCount` is the
+ *   source of truth for visible points because pooled attributes may be
+ *   over-allocated beyond the visible count.
  * - `gsplatsObjects` / `totalGSplats`: `THREE.Mesh` nodes tagged with
  *   `userData.nodeType === 'gsplats'`. `userData.visibleSplatCount`
  *   contributes to the running total (default 0 if absent).
@@ -47,8 +48,13 @@ export function computeSceneStats(scene: THREE.Object3D | null | undefined): Sce
 
     if (nodeType === 'points') {
       pointsObjects++;
-      const centers = obj.geometry?.getAttribute?.('aCenter');
-      if (centers) {
+      const geometry = obj.geometry as THREE.InstancedBufferGeometry | undefined;
+      const centers = geometry?.getAttribute?.('aCenter');
+      if (geometry?.isInstancedBufferGeometry && Number.isFinite(geometry.instanceCount)) {
+        totalPoints += geometry.instanceCount;
+      } else if (obj.userData.visiblePointCount != null) {
+        totalPoints += obj.userData.visiblePointCount;
+      } else if (centers) {
         totalPoints += centers.count;
       }
       if (obj.userData.attrs?.has_spatial_index) {

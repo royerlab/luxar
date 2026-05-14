@@ -99,9 +99,11 @@ describe('NodeFactory', () => {
       const data = createMockPointsData({ pointCount: 50 });
       const geometry = factory.createPointsGeometry(data);
 
-      expect(geometry).toBeInstanceOf(THREE.BufferGeometry);
+      expect(geometry).toBeInstanceOf(THREE.InstancedBufferGeometry);
       expect(geometry.getAttribute('aCenter')).toBeDefined();
       expect(geometry.getAttribute('aCenter').count).toBe(50);
+      expect((geometry as THREE.InstancedBufferGeometry).instanceCount).toBe(50);
+      expect(geometry.drawRange.count).toBe(6);
     });
 
     it('should create geometry with colors', () => {

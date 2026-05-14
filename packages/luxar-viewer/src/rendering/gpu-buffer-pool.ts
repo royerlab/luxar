@@ -303,7 +303,7 @@ export class GPUBufferPool {
           active.lastUsedFrame = this.frameCount;
           this.stats.reuses++;
           this.typeStats.points.reuses++;
-          return active.geometry as THREE.BufferGeometry;
+          return this.preparePointsGeometryForDraw(active.geometry, pointCount);
         } else {
           // Need to grow - reallocate attributes with same types
           this.growPointsGeometry(
@@ -314,7 +314,7 @@ export class GPUBufferPool {
           active.capacity = Math.ceil(pointCount * 1.5);
           active.lastUsedFrame = this.frameCount;
           this.stats.capacityGrowths++;
-          return active.geometry as THREE.BufferGeometry;
+          return this.preparePointsGeometryForDraw(active.geometry, pointCount);
         }
       } else {
         // Types changed! Release old geometry and create new
@@ -338,7 +338,7 @@ export class GPUBufferPool {
           this.activeBuffers.set(nodeId, candidate);
           this.stats.reuses++;
           this.typeStats.points.reuses++;
-          return candidate.geometry as THREE.BufferGeometry;
+          return this.preparePointsGeometryForDraw(candidate.geometry, pointCount);
         }
       }
     }
@@ -360,7 +360,7 @@ export class GPUBufferPool {
     this.stats.allocations++;
     this.typeStats.points.allocations++;
 
-    return geometry;
+    return this.preparePointsGeometryForDraw(geometry, pointCount);
   }
 
   /**
@@ -382,6 +382,25 @@ export class GPUBufferPool {
 
     // Evict old buffers if pool too large
     this.evictUnused();
+  }
+
+  /**
+   * Prepare pooled point geometry for the visible point count.
+   *
+   * Points render as instanced unit quads, so the indexed draw range is
+   * always the 2-triangle base quad (6 indices) while `instanceCount`
+   * carries the number of point sprites. Using drawRange for point count
+   * would still render only one non-instanced quad on r184 if the geometry
+   * were not explicitly instanced.
+   */
+  private preparePointsGeometryForDraw(
+    geometry: THREE.BufferGeometry,
+    pointCount: number
+  ): THREE.InstancedBufferGeometry {
+    const instanced = geometry as THREE.InstancedBufferGeometry;
+    instanced.instanceCount = pointCount;
+    instanced.setDrawRange(0, 6);
+    return instanced;
   }
 
   /**
@@ -429,15 +448,20 @@ export class GPUBufferPool {
   private createPointsGeometry(
     capacity: number,
     types: PointsAttributeTypes
-  ): THREE.BufferGeometry {
+  ): THREE.InstancedBufferGeometry {
     // Start from the shared unit-quad base — same shape that
     // `point-geometry.ts::createPointQuadGeometry` produces, but
     // inlined here to keep the pool self-contained.
-    const geometry = new THREE.BufferGeometry();
+    const geometry = new THREE.InstancedBufferGeometry();
     const quadCorners = new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]);
     const indices = new Uint16Array([0, 1, 2, 2, 1, 3]);
     geometry.setAttribute('aQuadCorner', new THREE.BufferAttribute(quadCorners, 2));
     geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+    // Safe no-draw state until acquire/update sets the visible count via
+    // preparePointsGeometryForDraw(). The draw range always stays on the
+    // 2-triangle base quad.
+    geometry.instanceCount = 0;
+    geometry.setDrawRange(0, 6);
 
     // Per-instance centre: always Float32Array.
     geometry.setAttribute(
@@ -630,6 +654,14 @@ export class GPUBufferPool {
         geometry.setAttribute('aScalar', newScalar);
       }
     }
+
+    // CRITICAL: Force THREE.js r184 to recalculate _maxInstanceCount
+    // after replacing instanced attributes. If a pooled points geometry
+    // was previously observed with fewer/zero instances, the renderer can
+    // keep drawing min(instanceCount, staleMax). Deleting the private cache
+    // mirrors the established lines/gsplats workaround until Three exposes
+    // a public invalidation hook.
+    delete (geometry as unknown as { _maxInstanceCount?: number })._maxInstanceCount;
   }
 
   /**
@@ -765,13 +797,26 @@ export class GPUBufferPool {
       scalarAttr.needsUpdate = true;
     }
 
-    // Update draw range
-    geometry.setDrawRange(0, count);
-
-    // CRITICAL: Recompute bounding box after position updates
-    // Same issue as Lines/GSplats - positions change per time slice, bounding box must update
-    geometry.computeBoundingBox();
-    geometry.computeBoundingSphere();
+    // Points render as instanced unit quads: keep the indexed draw range
+    // on the 2-triangle base quad and put the visible point count in
+    // instanceCount. `computeBoundingBox()` would inspect only the base
+    // quad (there is no `position` attribute), so source bounds from the
+    // loader metadata instead.
+    const instanced = this.preparePointsGeometryForDraw(geometry, count);
+    if (data.metadata.bounds) {
+      instanced.boundingBox = data.metadata.bounds.clone();
+    } else {
+      const box = new THREE.Box3();
+      const v = new THREE.Vector3();
+      const centers = posAttr.array as Float32Array;
+      for (let i = 0; i < count; i++) {
+        v.set(centers[i * 3], centers[i * 3 + 1], centers[i * 3 + 2]);
+        box.expandByPoint(v);
+      }
+      instanced.boundingBox = box;
+    }
+    instanced.boundingSphere = new THREE.Sphere();
+    instanced.boundingBox.getBoundingSphere(instanced.boundingSphere);
   }
 
   // =========================================================================

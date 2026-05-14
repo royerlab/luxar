@@ -46,7 +46,9 @@ describe('GPUBufferPool', () => {
     it('should allocate new geometry on first request', () => {
       const data = createMockLoadedPointsData(1000);
       const geom = pool.acquirePointsGeometry('node1', data, 1000);
-      expect(geom).toBeInstanceOf(THREE.BufferGeometry);
+      expect(geom).toBeInstanceOf(THREE.InstancedBufferGeometry);
+      expect((geom as THREE.InstancedBufferGeometry).instanceCount).toBe(1000);
+      expect(geom.drawRange.count).toBe(6);
       expect(geom.getAttribute('aCenter')).toBeDefined();
       expect(geom.getAttribute('aColor')).toBeDefined();
       expect(geom.getAttribute('aRadius')).toBeDefined();

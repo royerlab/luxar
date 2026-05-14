@@ -18,6 +18,7 @@ function makePointCloud(
     name?: string;
     visible?: boolean;
     drawRange?: number;
+    instanceCount?: number;
     hasColors?: boolean;
     hasRadii?: boolean;
     hasSharpness?: boolean;
@@ -26,7 +27,8 @@ function makePointCloud(
   // After the container migration, point clouds are THREE.Mesh with
   // instanced quad geometry and per-instance attributes prefixed `a*`.
   // `computeDebugState` selects on `userData.nodeType === 'points'`.
-  const geometry = new THREE.BufferGeometry();
+  const geometry = new THREE.InstancedBufferGeometry();
+  geometry.instanceCount = options.instanceCount ?? count;
   geometry.setAttribute(
     'aCenter',
     new THREE.InstancedBufferAttribute(new Float32Array(count * 3), 3)
@@ -105,7 +107,7 @@ describe('computeDebugState', () => {
   });
 
   describe('point cloud counting', () => {
-    it('counts a single point cloud by buffer position count', () => {
+    it('counts a single point cloud by instance count', () => {
       const scene = new THREE.Scene();
       scene.add(makePointCloud(100, { name: 'a' }));
 
@@ -116,15 +118,15 @@ describe('computeDebugState', () => {
       expect(state.pointClouds[0].pointCount).toBe(100);
     });
 
-    it('honours geometry.drawRange.count when set', () => {
+    it('honours geometry.instanceCount when pooled buffers are over-allocated', () => {
       const scene = new THREE.Scene();
-      scene.add(makePointCloud(1000, { drawRange: 250 }));
+      scene.add(makePointCloud(1000, { instanceCount: 250 }));
 
       const state = computeDebugState(makeContext(scene));
       expect(state.totalPoints).toBe(250);
     });
 
-    it('falls back to buffer count when drawRange.count is Infinity', () => {
+    it('uses instanceCount even when drawRange is Infinity', () => {
       const scene = new THREE.Scene();
       const points = makePointCloud(500);
       // Three.js default drawRange is { start: 0, count: Infinity } — keep that.
@@ -135,12 +137,11 @@ describe('computeDebugState', () => {
       expect(state.totalPoints).toBe(500);
     });
 
-    it('caps drawRange.count by buffer count when drawRange exceeds it', () => {
+    it('does not mistake base-quad drawRange.count for point count', () => {
       const scene = new THREE.Scene();
-      scene.add(makePointCloud(100, { drawRange: 1000 }));
+      scene.add(makePointCloud(100, { drawRange: 6 }));
 
       const state = computeDebugState(makeContext(scene));
-      // Math.min(drawRange, bufferCount) = min(1000, 100) = 100.
       expect(state.totalPoints).toBe(100);
     });
 

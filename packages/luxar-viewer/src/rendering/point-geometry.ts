@@ -67,8 +67,8 @@ export interface InstancedPointsMeshConfig {
  * `createGSplatQuadGeometry` exactly so the three geometry types
  * share one vertex-shader idiom for sprite expansion.
  */
-export function createPointQuadGeometry(): THREE.BufferGeometry {
-  const geometry = new THREE.BufferGeometry();
+export function createPointQuadGeometry(): THREE.InstancedBufferGeometry {
+  const geometry = new THREE.InstancedBufferGeometry();
 
   const quadCorners = new Float32Array([
     -1, -1, // Bottom-left
@@ -93,13 +93,12 @@ export function createPointQuadGeometry(): THREE.BufferGeometry {
  * the corner-quad base.
  *
  * Sets `instanceCount` on the geometry to drive Three's instanced-
- * draw path. The mesh's `frustumCulled` flag is the caller's
- * responsibility — typically false for instanced renderers because
- * Three's culling tests the base geometry bounds, not the per-
- * instance positions.
+ * draw path. The caller must set `mesh.frustumCulled = false` because
+ * Three's culling tests the base geometry bounds, not the per-instance
+ * positions.
  */
 export function setupInstancedPointsMesh(
-  geometry: THREE.BufferGeometry,
+  geometry: THREE.InstancedBufferGeometry,
   config: InstancedPointsMeshConfig
 ): void {
   geometry.setAttribute(
@@ -128,9 +127,9 @@ export function setupInstancedPointsMesh(
       )
     );
   }
-  // Three derives the instance count from the smallest `count` field
-  // on any `InstancedBufferAttribute` — no explicit `instanceCount`
-  // property exists on `BufferGeometry`. The caller has already
-  // sized the attribute arrays to `pointCount * stride`, so the
-  // derived count is correct.
+  // WebGLRenderer only issues an instanced draw for InstancedBufferGeometry
+  // and uses this explicit visible-instance count. Without this, r184 falls
+  // back to a single non-instanced draw of the base quad.
+  geometry.instanceCount = config.pointCount;
+  geometry.setDrawRange(0, 6);
 }
