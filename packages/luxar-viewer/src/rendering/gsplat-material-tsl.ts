@@ -40,11 +40,10 @@ import {
   applyScalarRangeToMaterial,
 } from './material-colormap-helpers';
 import {
-  isAdditiveMode,
-  isLuminousMode,
+  applyBlendingStateToMaterial,
+  getCompleteBlendingState,
   isMaxMode,
-  isNormalMode,
-  isOpaqueMode,
+  type CompleteBlendingState,
 } from './blending-state';
 import type { BlendingMode } from './material-manager';
 
@@ -228,58 +227,38 @@ export class GSplatTSLMaterial
   }
 
   /**
-   * GSplat-specific blending mode application. Mirrors the GLSL
-   * wrapper's body (CustomBlending + OneFactor for additive /
-   * luminous / max — NOT THREE.AdditiveBlending, which would square
-   * intensity). Also toggles `uProjectionMode` (0 = sum, 1 = max).
+   * Apply a Luxar blending mode at runtime. Drives the THREE blending
+   * state through the shared `getCompleteBlendingState` helper — same
+   * source of truth used by the factory tail in `rebuildGraph`, so
+   * subsequent rebuilds (e.g. colormap toggles) don't strand the
+   * material in a divergent state.
+   *
+   * Diverges from the GLSL wrapper (which uses `CustomBlending +
+   * OneFactor` for additive / luminous): the gsplat shader emits
+   * `alpha = 1.0` so `AdditiveBlending` (`SrcAlpha + One`) produces
+   * identical pixels, and `CustomBlending` here would also trip a
+   * `gl.getError()` flag under WebGPURenderer's WebGL2 backend (the
+   * separate alpha-equation state propagation isn't tracked through
+   * the bridge). `max` mode still gets `CustomBlending + MaxEquation
+   * + OneFactor` straight from `getCompleteBlendingState`.
+   *
+   * Also toggles `uProjectionMode` (0 = sum, 1 = max) so the shader
+   * picks the right projection branch.
    */
   applyBlendingMode(mode: BlendingMode): void {
     const previousMode = this.userData.blendingMode as BlendingMode | undefined;
-    const isOpaque = isOpaqueMode(mode);
-    const isAdditive = isAdditiveMode(mode);
-    const isMax = isMaxMode(mode);
     const opacity = (this.uniforms.uOpacity?.value as number | undefined) ?? 1.0;
-
-    if (isOpaque || isNormalMode(mode)) {
-      this.blending = THREE.NormalBlending;
-    } else {
-      this.blending = THREE.CustomBlending;
-    }
-
-    this.transparent = !isOpaque;
-    this.depthWrite = isOpaque || (isNormalMode(mode) && opacity >= 0.99);
-    this.depthTest = !isAdditive;
+    const state: CompleteBlendingState = getCompleteBlendingState(mode, opacity);
+    const stateChanged = applyBlendingStateToMaterial(this, state);
 
     if (this.uniforms.uProjectionMode) {
-      this.uniforms.uProjectionMode.value = isMax ? 1 : 0;
-    }
-
-    if (isAdditive || isLuminousMode(mode)) {
-      this.blendEquation = THREE.AddEquation;
-      this.blendSrc = THREE.OneFactor;
-      this.blendDst = THREE.OneFactor;
-      this.blendEquationAlpha = THREE.MaxEquation;
-      this.blendSrcAlpha = THREE.OneFactor;
-      this.blendDstAlpha = THREE.OneFactor;
-    } else if (isMax) {
-      this.blendEquation = THREE.MaxEquation;
-      this.blendSrc = THREE.OneFactor;
-      this.blendDst = THREE.OneFactor;
-      this.blendEquationAlpha = null;
-      this.blendSrcAlpha = null;
-      this.blendDstAlpha = null;
-    } else {
-      this.blendEquation = THREE.AddEquation;
-      this.blendSrc = THREE.SrcAlphaFactor;
-      this.blendDst = THREE.OneMinusSrcAlphaFactor;
-      this.blendEquationAlpha = null;
-      this.blendSrcAlpha = null;
-      this.blendDstAlpha = null;
+      this.uniforms.uProjectionMode.value = isMaxMode(mode) ? 1 : 0;
     }
 
     this.userData.blendingMode = mode;
-    this.userData.depthTest = this.depthTest;
-    if (previousMode !== mode) {
+    this.userData.depthTest = state.depthTest;
+
+    if (previousMode !== mode && stateChanged) {
       this.needsUpdate = true;
     }
   }

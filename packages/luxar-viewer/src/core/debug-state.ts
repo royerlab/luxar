@@ -167,7 +167,12 @@ export function computeDebugState(ctx: DebugStateContext): DebugState {
     ) {
       const segmentCount = (object.geometry as THREE.InstancedBufferGeometry).instanceCount;
       totalLines += segmentCount;
-      const mat = object.material as THREE.ShaderMaterial | THREE.ShaderMaterial[] | undefined;
+      // ShaderMaterial (GLSL) and NodeMaterial (TSL) both expose
+      // `defines` — read structurally so this works on either backend.
+      const mat = object.material as
+        | (THREE.Material & { defines?: Record<string, unknown> })
+        | (THREE.Material & { defines?: Record<string, unknown> })[]
+        | undefined;
       const firstMat = Array.isArray(mat) ? mat[0] : mat;
       const hasColormap = !!firstMat?.defines?.USE_COLORMAP;
       lineMeshes.push({
