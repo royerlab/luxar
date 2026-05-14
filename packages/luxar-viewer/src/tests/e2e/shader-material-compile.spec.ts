@@ -18,8 +18,9 @@
 import { test, expect } from './fixtures';
 import {
   waitForLuxarReady,
+  waitForDataLoaded,
   assertNoShaderErrors,
-  samplePixelAt,
+  getElementPixelStats,
   waitForRenderStable,
 } from './helpers';
 
@@ -48,47 +49,29 @@ const VARIANTS: Variant[] = [
   { name: 'GSplat direct color', src: 'test_gsplats.zarr', expectColored: true },
 ];
 
-// Sample a denser grid across most of the canvas — at Neutral tone
-// mapping the scene background (`0x111111` ≈ 0.0057 linear) gets
-// darkened to ~0, so we need to actually land on dataset content to
-// see non-black output. Datasets aren't guaranteed to be centered;
-// the previous 3×3 grid at [0.4..0.6] occasionally missed thin
-// strips of points/lines.
-const SAMPLE_OFFSETS: Array<[number, number]> = [];
-for (let yi = 0; yi < 6; yi++) {
-  for (let xi = 0; xi < 6; xi++) {
-    SAMPLE_OFFSETS.push([0.15 + (xi * 0.7) / 5, 0.15 + (yi * 0.7) / 5]);
-  }
-}
+const VISIBLE_PIXEL_THRESHOLD = 10;
 
 test.describe('browser-real shader compile + pixel smoke', () => {
   for (const v of VARIANTS) {
     test(`${v.name}: compiles + renders non-black pixels`, async ({ page }) => {
       await page.goto(`/?src=${FIXTURES_BASE}/${v.src}&debug`);
       await waitForLuxarReady(page);
+      await waitForDataLoaded(page);
       await waitForRenderStable(page);
 
       // (1) No shader/GLSL/attribute/uniform errors.
       await assertNoShaderErrors(page);
 
-      // (2) Some pixel on the canvas has rendered output. We sample a
-      //     6×6 grid across the middle 70% of the canvas — denser than
-      //     the previous 3×3 — so sparse-data fixtures (a single line
-      //     strip, a thin gsplat cluster) reliably land on at least
-      //     one non-black pixel.
+      // (2) Some pixel on the canvas has rendered output. Use whole-canvas
+      //     screenshot stats instead of sparse grid sampling: thin lines and
+      //     small splat clusters can easily fall between fixed sample points.
       if (v.expectColored) {
-        const samples = await Promise.all(
-          SAMPLE_OFFSETS.map(([x, y]) => samplePixelAt(page, 'canvas', x, y))
-        );
-        const anyColored = samples.some((p) => p.r + p.g + p.b > 10);
-        const brightest = samples.reduce(
-          (best, p) => (p.r + p.g + p.b > best.r + best.g + best.b ? p : best),
-          { r: 0, g: 0, b: 0, a: 0 }
-        );
+        const stats = await getElementPixelStats(page, 'canvas', VISIBLE_PIXEL_THRESHOLD);
         expect(
-          anyColored,
-          `Variant '${v.name}': all ${SAMPLE_OFFSETS.length} sampled pixels were near-black — ` +
-            `shader output may have been discarded. Brightest sample: ${JSON.stringify(brightest)}`
+          stats.nonBlackPixels > 0,
+          `Variant '${v.name}': no canvas pixels exceeded RGB-sum threshold ` +
+            `${VISIBLE_PIXEL_THRESHOLD} — shader output may have been discarded. ` +
+            `Stats: ${JSON.stringify(stats)}`
         ).toBe(true);
       }
     });

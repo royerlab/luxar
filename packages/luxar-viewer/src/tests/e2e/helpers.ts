@@ -1227,14 +1227,15 @@ export async function validateSceneAttributes(page: Page): Promise<
  * canonical way to detect them after a render.
  *
  * The patterns match strings emitted by Chromium's WebGL implementation
- * for compile/link failures and missing-attribute warnings, plus
- * Luxar's internal `[❌] [Shader]`/`[Material]` log emoji.
+ * for compile/link failures and missing-attribute warnings. We only scan
+ * errors/warnings (not normal info logs) so routine material names such as
+ * `point_glsl_additive...` don't become false positives.
  */
 export async function assertNoShaderErrors(page: Page): Promise<void> {
   const messages = await getConsoleMessages(page);
-  const all = [...messages.errors, ...messages.warnings, ...messages.all];
+  const all = [...messages.errors, ...messages.warnings];
   const shaderErrPattern =
-    /shader|GLSL|attribute.*not\s*found|uniform.*not\s*found|fragment\s*shader|vertex\s*shader|program\s*link|invalid_operation/i;
+    /ERROR:\s*0:|THREE\.WebGLProgram|shader\s*error|GLSL\s*(error|failure|failed)|attribute.*not\s*found|uniform.*not\s*found|fragment\s*shader.*not\s*compiled|vertex\s*shader.*not\s*compiled|program\s*link|invalid_operation/i;
   const offending = all.filter((m) => shaderErrPattern.test(m));
   if (offending.length > 0) {
     throw new Error(

@@ -1451,15 +1451,19 @@ def generate_gsplats_test():
         # Amplitudes (brightness)
         amplitudes = np.linspace(0.5, 2.0, num_splats).astype(np.float32)
 
-        # Cholesky factors (lower-triangular of precision matrix)
-        # For 3D: 6 elements per splat (L11, L21, L22, L31, L32, L33)
+        # Cholesky factors (lower-triangular covariance factors).
+        # For 3D: 6 elements per splat (L11, L21, L22, L31, L32, L33).
+        # IMPORTANT: Luxar stores covariance Cholesky factors, not precision
+        # factors. Using 1/sigma here makes projected splats enormous; the
+        # viewer's screen-coverage safety fade then legitimately culls the
+        # entire fixture, so browser smoke tests see a black canvas.
         cholesky = np.zeros((num_splats, 6), dtype=np.float32)
         for i in range(num_splats):
-            # Diagonal: 1/sigma (isotropic-ish with slight variation)
+            # Diagonal covariance factor: sigma (isotropic-ish with slight variation)
             sigma = 0.3 + 0.1 * (i / num_splats)
-            cholesky[i, 0] = 1.0 / sigma  # L11
-            cholesky[i, 2] = 1.0 / sigma  # L22
-            cholesky[i, 5] = 1.0 / sigma  # L33
+            cholesky[i, 0] = sigma  # L11
+            cholesky[i, 2] = sigma  # L22
+            cholesky[i, 5] = sigma  # L33
 
         # Colors (rainbow gradient)
         colors = np.zeros((num_splats, 3), dtype=np.float32)
