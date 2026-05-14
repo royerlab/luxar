@@ -117,6 +117,13 @@ export class GSplatTSLMaterial
     this.userData.depthTest = materialConfig.depthTest ?? true;
     this.userData.scalarRange = materialConfig.scalarRange;
 
+    // Apply the requested blending mode FIRST so `rebuildGraph`'s
+    // post-factory `applyBlendingMode` override picks it up (the
+    // mode is stored on userData and read on every rebuild). Mirrors
+    // the GLSL `GSplatMaterial` constructor body where
+    // `this.applyBlendingMode(blendingMode)` runs after `super()`.
+    this.applyBlendingMode(materialConfig.blendingMode ?? 'additive');
+
     this.rebuildGraph();
   }
 
@@ -125,6 +132,16 @@ export class GSplatTSLMaterial
    * from `defines.USE_COLORMAP` (mirrors GLSL behaviour; uniform
    * presence is not the source of truth — see PointTSLMaterial for
    * the in-depth note).
+   *
+   * IMPORTANT: the factory tail applies blending state via
+   * `getCompleteBlendingState(mode)`, which for additive/luminous
+   * returns `THREE.AdditiveBlending + SrcAlphaFactor` — that's
+   * correct for points/lines but WRONG for gsplats. GSplats need
+   * `CustomBlending + OneFactor` for additive/luminous so the sum
+   * projection composes linearly (SrcAlpha squares intensity, see
+   * the rationale in `GSplatMaterial`). Re-apply the GSplat-specific
+   * mode here after the factory finishes so the override sticks
+   * across colormap toggles or other graph rebuilds.
    */
   private rebuildGraph(): void {
     gsplatWebGPUFactory(
@@ -135,6 +152,10 @@ export class GSplatTSLMaterial
       },
       this
     );
+    const mode = this.userData.blendingMode as BlendingMode | undefined;
+    if (mode) {
+      this.applyBlendingMode(mode);
+    }
     this.needsUpdate = true;
   }
 
