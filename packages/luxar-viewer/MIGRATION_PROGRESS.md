@@ -360,16 +360,13 @@ The mechanics that make the TSL wrappers work like the GLSL ones:
   only.
 
 Verification: `tsl-shader-parity.spec.ts` confirms pixel parity
-between GLSL3 and TSL outputs across all 12 shaders, run under
-`WebGPURenderer({ forceWebGL: true })`. End-to-end E2E
+between GLSL3 and TSL outputs across all 12 shaders. End-to-end E2E
 (`basic-rendering`, `geometry-types`, `blending-modes`,
 `viewer-initialization`, `dimension-*`) passes with the default
-renderer (`WebGPURenderer({ forceWebGL: true })`) as of M18.
-The GLSL `ShaderMaterial` path remains live behind
-`VITE_LUXAR_USE_LEGACY_WEBGL=1` — same suite passes there too,
-so the TSL/GLSL parity harness keeps both backends covered.
-Real-WebGPU smoke (column `R`) — running with `forceWebGL: false`
-on Chrome / Edge stable — is the remaining open milestone.
+renderer (`WebGPURenderer`) as of M18. The GLSL `ShaderMaterial`
+path remains live behind `VITE_LUXAR_USE_LEGACY_WEBGL=1` — same
+suite passes there too, so the TSL/GLSL parity harness keeps both
+backends covered.
 
 ### M18 — default flip (DONE)
 
@@ -378,3 +375,22 @@ defaults to `setupWebGPURenderer()`; legacy GLSL is reached via
 `VITE_LUXAR_USE_LEGACY_WEBGL=1`. `VITE_LUXAR_USE_WEBGPU_RENDERER`
 is now a no-op alias (kept harmless so existing CI scripts that
 still set it keep working).
+
+### Real-WebGPU dispatch — `forceWebGL: true` dropped (DONE)
+
+`setupWebGPURenderer` no longer sets `forceWebGL: true`. On
+browsers that have a working WebGPU adapter (Chrome / Edge stable,
+Safari 18+), the renderer now acquires a real WebGPU adapter and
+dispatches TSL graphs to WGSL. On browsers without WebGPU (or
+under headless Playwright chromium with no GPU), Three.js's
+`WebGPURenderer` transparently falls back to its internal WebGL2
+backend — same dispatch as the prior `forceWebGL: true` mode.
+
+Caveats:
+- Playwright's bundled chromium reports `"WebGPU is not available,
+  running under WebGL2 backend"` and falls back. Real-WebGPU smoke
+  (column `R`) requires an interactive run on Chrome stable with a
+  working GPU; can't be exercised from headless CI today.
+- Pixel-baseline refresh may be needed once a real-WebGPU run
+  surfaces precision differences (gsplat covariance math is the
+  most exposed per the migration plan's risk notes).
