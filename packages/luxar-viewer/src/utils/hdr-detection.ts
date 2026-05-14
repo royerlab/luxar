@@ -82,10 +82,16 @@ export function detectDisplayCapabilities(): HDRCapabilities {
 }
 
 /**
- * Configure Three.js renderer for HDR output
+ * Configure Three.js renderer for HDR output.
+ *
+ * Param `_renderer` is kept for the (future) case where the
+ * function needs to read renderer-specific HDR capability fields;
+ * today it consults the capabilities snapshot only. Typed loosely
+ * as `unknown` to avoid coupling the signature to either
+ * `WebGLRenderer` or `WebGPURenderer`.
  */
 export function configureHDRRenderer(
-  _renderer: THREE.WebGLRenderer,
+  _renderer: unknown,
   capabilities: HDRCapabilities
 ): void {
   // Do NOT set renderer.outputColorSpace or renderer.toneMapping here.

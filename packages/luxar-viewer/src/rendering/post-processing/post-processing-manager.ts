@@ -24,7 +24,7 @@ import { BloomChain } from './bloom-chain';
 import { FxaaPass } from './fxaa-pass';
 import { createFullscreenTriangleGeometry } from './fullscreen-geometry';
 import { computeEffectiveRenderSize } from './render-target-sizing';
-import type { RendererCapabilities } from '../renderer-capabilities';
+import type { Renderer, RendererCapabilities } from '../renderer-capabilities';
 import {
   halfFloatToFloat32,
   float32ToHalfFloat,
@@ -101,7 +101,7 @@ export class PostProcessingManager {
    *   next window resize.
    */
   constructor(
-    private renderer: THREE.WebGLRenderer,
+    private renderer: Renderer,
     private capabilities: RendererCapabilities,
     private scene: THREE.Scene,
     private camera: THREE.Camera,
@@ -774,7 +774,13 @@ export class PostProcessingManager {
         this.renderer.render(this.megaScene, this.megaCamera);
       }
     } finally {
-      this.renderer.setRenderTarget(prevTarget);
+      // Cast is a TypeScript-only narrowing: `setRenderTarget` on
+      // the `Renderer` union is typed against `WebGLRenderTarget`
+      // (the intersection of WebGLRenderer's and WebGPURenderer's
+      // signatures), while `getRenderTarget` returns the looser
+      // `RenderTarget`. Round-tripping at runtime is safe on either
+      // backend.
+      this.renderer.setRenderTarget(prevTarget as THREE.WebGLRenderTarget | null);
       this.renderer.autoClear = prevAutoClear;
     }
   }
@@ -882,9 +888,11 @@ export class PostProcessingManager {
         this.renderer.setRenderTarget(this.hdrTarget);
         this.renderer.clear();
         this.renderer.render(this.scene, this.camera);
-        return this.readTarget(this.hdrTarget);
+        return await this.readTarget(this.hdrTarget);
       } finally {
-        this.renderer.setRenderTarget(prevTarget);
+        // See note above the matching `setRenderTarget` call in
+        // `runPipeline` for the cast rationale.
+        this.renderer.setRenderTarget(prevTarget as THREE.WebGLRenderTarget | null);
         this.renderer.autoClear = prevAutoClear;
       }
     }
@@ -906,7 +914,7 @@ export class PostProcessingManager {
 
       try {
         this.runPipeline({ applyFxaa: false, finalTarget: this.ldrTarget });
-        return this.readTarget(this.ldrTarget);
+        return await this.readTarget(this.ldrTarget);
       } finally {
         this.megaShader.toggleRawHdrCapture(false);
         if (wasNoise) this.megaShader.toggleDetectorNoise(true);
@@ -921,30 +929,39 @@ export class PostProcessingManager {
     this.megaShader.toggleLinearLdrCapture(true);
     try {
       this.runPipeline({ applyFxaa: false, finalTarget: this.ldrTarget });
-      return this.readTarget(this.ldrTarget);
+      return await this.readTarget(this.ldrTarget);
     } finally {
       this.megaShader.toggleLinearLdrCapture(false);
     }
   }
 
-  private readTarget(target: THREE.WebGLRenderTarget): {
+  private async readTarget(target: THREE.WebGLRenderTarget): Promise<{
     pixels: Float32Array;
     width: number;
     height: number;
-  } {
+  }> {
     const width = target.width;
     const height = target.height;
     const pixelCount = width * height * 4;
     const isHalfFloat = target.texture.type === THREE.HalfFloatType;
 
+    // Use the async readback API — it exists on both WebGLRenderer
+    // (r184+) and WebGPURenderer. The cast to `WebGLRenderer`
+    // resolves the union-signature clash (WebGPURenderer's
+    // signature omits the destBuffer arg and returns its own
+    // buffer); both backends accept this call shape at runtime,
+    // WebGPURenderer silently ignoring the extra arg and writing
+    // into its own buffer that it returns. We copy into the
+    // pre-allocated buffer either way for a stable return type.
+    const r = this.renderer as THREE.WebGLRenderer;
     let pixels: Float32Array;
     if (isHalfFloat) {
       const halfData = new Uint16Array(pixelCount);
-      this.renderer.readRenderTargetPixels(target, 0, 0, width, height, halfData);
+      await r.readRenderTargetPixelsAsync(target, 0, 0, width, height, halfData);
       pixels = halfFloatToFloat32(halfData);
     } else {
       pixels = new Float32Array(pixelCount);
-      this.renderer.readRenderTargetPixels(target, 0, 0, width, height, pixels);
+      await r.readRenderTargetPixelsAsync(target, 0, 0, width, height, pixels);
     }
     return { pixels, width, height };
   }
@@ -1026,9 +1043,11 @@ export class PostProcessingManager {
       // returns its own buffer (no destination slot). We pass a
       // destination buffer either way — WebGPURenderer ignores it,
       // and we use the Promise's return value as the canonical
-      // source-of-truth.
+      // source-of-truth. Cast to WebGLRenderer resolves the
+      // union-signature clash; WebGPURenderer accepts the same call
+      // shape at runtime.
       const destBuffer = new Uint8Array(width * height * 4);
-      const raw = await this.renderer.readRenderTargetPixelsAsync(
+      const raw = await (this.renderer as THREE.WebGLRenderer).readRenderTargetPixelsAsync(
         captureTarget,
         0,
         0,

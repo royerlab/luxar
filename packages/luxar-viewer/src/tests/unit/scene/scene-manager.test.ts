@@ -13,6 +13,13 @@ vi.mock('three', async () => {
   const actual = await vi.importActual<typeof import('three')>('three');
 
   class MockWebGLRenderer {
+    // Positive flag that the real `THREE.WebGLRenderer` sets on
+    // `this`. `renderer-capabilities.ts::isWebGLRenderer` reads it
+    // to pick the WebGL2 vs WebGPU branch for the `api` field;
+    // without this, the api detection mis-classifies the mock as
+    // WebGPU and the legacy-path code (`setupContextLossHandling`,
+    // raw-GL probes) silently skips.
+    isWebGLRenderer = true;
     domElement = (() => {
       const canvas = document.createElement('canvas') as any;
       // Ensure canvas has required methods for OrbitControls
