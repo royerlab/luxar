@@ -50,19 +50,41 @@ import { type TSLNode } from '../tsl-helpers';
  * uIsOrtho, uNodeId, uResolution).
  */
 export function pointPickWebGPUFactory(
-  uniforms: Record<string, THREE.IUniform>
+  uniforms: Record<string, THREE.IUniform>,
+  outMaterial?: NodeMaterial
 ): NodeMaterial {
   const aQuadCorner: TSLNode = attribute<'vec2'>('aQuadCorner', 'vec2');
   const aCenter: TSLNode = attribute<'vec3'>('aCenter', 'vec3');
   const aRadius: TSLNode = attribute<'float'>('aRadius', 'float');
   const aSharpness: TSLNode = attribute<'float'>('aSharpness', 'float');
 
-  const uPointSizeFactor = uniform((uniforms.pointSizeFactor.value as number) ?? 1.0);
-  const uMaxPointSize = uniform((uniforms.maxPointSize.value as number) ?? 1.0);
-  const uRadiusScale = uniform((uniforms.radiusScale.value as number) ?? 1.0);
-  const uSharpnessScale = uniform((uniforms.sharpnessScale.value as number) ?? 1.0);
-  const uIsOrtho = uniform((uniforms.uIsOrtho.value as number) ?? 0);
-  const uNodeId = uniform((uniforms.uNodeId.value as number) ?? 0);
+  // Primitive uniforms bind via `.onUpdate(() => iuniform.value)` so a
+  // wrapper class's mutations to `this.uniforms.X.value` propagate.
+  // Vector2 uniforms share the host object by reference (no onUpdate).
+  const uPointSizeFactor = uniform((uniforms.pointSizeFactor.value as number) ?? 1.0).onUpdate(
+    () => (uniforms.pointSizeFactor.value as number) ?? 1.0,
+    'render'
+  );
+  const uMaxPointSize = uniform((uniforms.maxPointSize.value as number) ?? 1.0).onUpdate(
+    () => (uniforms.maxPointSize.value as number) ?? 1.0,
+    'render'
+  );
+  const uRadiusScale = uniform((uniforms.radiusScale.value as number) ?? 1.0).onUpdate(
+    () => (uniforms.radiusScale.value as number) ?? 1.0,
+    'render'
+  );
+  const uSharpnessScale = uniform((uniforms.sharpnessScale.value as number) ?? 1.0).onUpdate(
+    () => (uniforms.sharpnessScale.value as number) ?? 1.0,
+    'render'
+  );
+  const uIsOrtho = uniform((uniforms.uIsOrtho.value as number) ?? 0).onUpdate(
+    () => (uniforms.uIsOrtho.value as number) ?? 0,
+    'render'
+  );
+  const uNodeId = uniform((uniforms.uNodeId.value as number) ?? 0).onUpdate(
+    () => (uniforms.uNodeId.value as number) ?? 0,
+    'render'
+  );
   const uResolution = uniform(
     (uniforms.uResolution.value as THREE.Vector2) ?? new THREE.Vector2(1, 1)
   );
@@ -139,7 +161,7 @@ export function pointPickWebGPUFactory(
     return float(1.0).sub(clamp(falloff, 0.0, 1.0));
   });
 
-  const material = new NodeMaterial();
+  const material = outMaterial ?? new NodeMaterial();
   material.vertexNode = clipPos;
   material.colorNode = colorNode();
   material.depthNode = depthNode();

@@ -8,7 +8,6 @@
  */
 
 import * as THREE from 'three';
-import type { LineMaterial } from './line-material';
 
 /**
  * Create the base quad geometry for line instances.
@@ -166,7 +165,7 @@ function computeLineBounds(
  */
 export function createInstancedLinesMesh(
   meshConfig: InstancedLinesMeshConfig,
-  material: LineMaterial
+  material: THREE.Material
 ): THREE.Mesh {
   const baseGeometry = createLineQuadGeometry();
 

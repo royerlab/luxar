@@ -57,7 +57,8 @@ const mat3: (a?: TSLNode, b?: TSLNode, c?: TSLNode) => TSLNode = _mat3 as TSLNod
  * uMaxExtentFactor, uNodeId, uShiftC, uInvOneMinusC.
  */
 export function gsplatPickWebGPUFactory(
-  uniforms: Record<string, THREE.IUniform>
+  uniforms: Record<string, THREE.IUniform>,
+  outMaterial?: NodeMaterial
 ): NodeMaterial {
   const aQuadCorner: TSLNode = attribute<'vec2'>('aQuadCorner', 'vec2');
   const aCenter: TSLNode = attribute<'vec3'>('aCenter', 'vec3');
@@ -66,21 +67,51 @@ export function gsplatPickWebGPUFactory(
   const aCholesky45: TSLNode = attribute<'vec2'>('aCholesky45', 'vec2');
   const aAmplitude: TSLNode = attribute<'float'>('aAmplitude', 'float');
 
+  // Primitive uniforms bind via `.onUpdate(() => iuniform.value)` so
+  // a wrapper's mutations propagate. Vector2 / Texture uniforms share
+  // the host object by reference (no onUpdate needed).
   const uResolution = uniform(
     (uniforms.uResolution.value as THREE.Vector2) ?? new THREE.Vector2(1, 1)
   );
-  const uFx = uniform((uniforms.uFx.value as number) ?? 1.0);
-  const uFy = uniform((uniforms.uFy.value as number) ?? 1.0);
-  const uTruncate = uniform((uniforms.uTruncate.value as number) ?? 1.5);
-  const uIsOrtho = uniform((uniforms.uIsOrtho.value as number) ?? 0);
-  const uNearCull = uniform((uniforms.uNearCull.value as number) ?? 1e-4);
+  const uFx = uniform((uniforms.uFx.value as number) ?? 1.0).onUpdate(
+    () => (uniforms.uFx.value as number) ?? 1.0,
+    'render'
+  );
+  const uFy = uniform((uniforms.uFy.value as number) ?? 1.0).onUpdate(
+    () => (uniforms.uFy.value as number) ?? 1.0,
+    'render'
+  );
+  const uTruncate = uniform((uniforms.uTruncate.value as number) ?? 1.5).onUpdate(
+    () => (uniforms.uTruncate.value as number) ?? 1.5,
+    'render'
+  );
+  const uIsOrtho = uniform((uniforms.uIsOrtho.value as number) ?? 0).onUpdate(
+    () => (uniforms.uIsOrtho.value as number) ?? 0,
+    'render'
+  );
+  const uNearCull = uniform((uniforms.uNearCull.value as number) ?? 1e-4).onUpdate(
+    () => (uniforms.uNearCull.value as number) ?? 1e-4,
+    'render'
+  );
   const uMaxExtentFactor = uniform(
     (uniforms.uMaxExtentFactor.value as number) ?? 1.0
+  ).onUpdate(() => (uniforms.uMaxExtentFactor.value as number) ?? 1.0, 'render');
+  const uNodeId = uniform((uniforms.uNodeId.value as number) ?? 0).onUpdate(
+    () => (uniforms.uNodeId.value as number) ?? 0,
+    'render'
   );
-  const uNodeId = uniform((uniforms.uNodeId.value as number) ?? 0);
-  const uShiftC = uniform((uniforms.uShiftC.value as number) ?? 0.0);
-  const uInvOneMinusC = uniform((uniforms.uInvOneMinusC.value as number) ?? 1.0);
-  const uTruncateSq = uniform((uniforms.uTruncateSq.value as number) ?? 9.0);
+  const uShiftC = uniform((uniforms.uShiftC.value as number) ?? 0.0).onUpdate(
+    () => (uniforms.uShiftC.value as number) ?? 0.0,
+    'render'
+  );
+  const uInvOneMinusC = uniform((uniforms.uInvOneMinusC.value as number) ?? 1.0).onUpdate(
+    () => (uniforms.uInvOneMinusC.value as number) ?? 1.0,
+    'render'
+  );
+  const uTruncateSq = uniform((uniforms.uTruncateSq.value as number) ?? 9.0).onUpdate(
+    () => (uniforms.uTruncateSq.value as number) ?? 9.0,
+    'render'
+  );
 
   // ---- Vertex ----
 
@@ -266,7 +297,7 @@ export function gsplatPickWebGPUFactory(
 
   const depthNode = Fn(() => float(1.0).sub(brightnessNode()));
 
-  const material = new NodeMaterial();
+  const material = outMaterial ?? new NodeMaterial();
   material.vertexNode = clipPos;
   material.colorNode = colorNode();
   material.depthNode = depthNode();

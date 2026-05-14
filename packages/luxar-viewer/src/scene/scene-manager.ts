@@ -398,6 +398,16 @@ export class SceneManager extends THREE.EventDispatcher<{
     this.renderer = gpuRenderer as unknown as THREE.WebGLRenderer;
 
     this.capabilities = createRendererCapabilities(this.renderer);
+
+    // Hand the capabilities to the material manager so its
+    // `getPointMaterial / getLineMaterial / getGSplatMaterial`
+    // dispatch can pick the TSL backend. Must precede any
+    // node-factory or post-processing material requests downstream.
+    // Without this, the WebGPU path silently dispatches GLSL
+    // ShaderMaterial and the WebGPURenderer's NodeBuilder rejects
+    // it with "Material 'ShaderMaterial' is not compatible."
+    materialManager.setCaps(this.capabilities);
+
     log.info(Modules.RENDERER, `Rendering API: ${this.capabilities.api}`);
 
     this.updateRendererSize();

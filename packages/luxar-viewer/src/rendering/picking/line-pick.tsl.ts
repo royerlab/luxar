@@ -46,7 +46,8 @@ import { sanitizeNonNegative, sanitizePositive, type TSLNode } from '../tsl-help
  * uResolution, uIsOrtho, uNodeId, uNearCull, uMaxLinePixelWidth.
  */
 export function linePickWebGPUFactory(
-  uniforms: Record<string, THREE.IUniform>
+  uniforms: Record<string, THREE.IUniform>,
+  outMaterial?: NodeMaterial
 ): NodeMaterial {
   const aQuadCorner: TSLNode = attribute<'vec2'>('aQuadCorner', 'vec2');
   const aStartPos: TSLNode = attribute<'vec3'>('aStartPos', 'vec3');
@@ -59,16 +60,30 @@ export function linePickWebGPUFactory(
   const aStartClipped: TSLNode = attribute<'float'>('aStartClipped', 'float');
   const aEndClipped: TSLNode = attribute<'float'>('aEndClipped', 'float');
 
-  const uFOV = uniform((uniforms.uFOV.value as number) ?? 1.0);
+  // Primitive uniforms bind via `.onUpdate(() => iuniform.value)` so a
+  // wrapper class's mutations to `this.uniforms.X.value` propagate.
+  const uFOV = uniform((uniforms.uFOV.value as number) ?? 1.0).onUpdate(
+    () => (uniforms.uFOV.value as number) ?? 1.0,
+    'render'
+  );
   const uResolution = uniform(
     (uniforms.uResolution.value as THREE.Vector2) ?? new THREE.Vector2(1, 1)
   );
-  const uIsOrtho = uniform((uniforms.uIsOrtho.value as number) ?? 0);
-  const uNodeId = uniform((uniforms.uNodeId.value as number) ?? 0);
-  const uNearCull = uniform((uniforms.uNearCull.value as number) ?? 1e-4);
+  const uIsOrtho = uniform((uniforms.uIsOrtho.value as number) ?? 0).onUpdate(
+    () => (uniforms.uIsOrtho.value as number) ?? 0,
+    'render'
+  );
+  const uNodeId = uniform((uniforms.uNodeId.value as number) ?? 0).onUpdate(
+    () => (uniforms.uNodeId.value as number) ?? 0,
+    'render'
+  );
+  const uNearCull = uniform((uniforms.uNearCull.value as number) ?? 1e-4).onUpdate(
+    () => (uniforms.uNearCull.value as number) ?? 1e-4,
+    'render'
+  );
   const uMaxLinePixelWidth = uniform(
     (uniforms.uMaxLinePixelWidth.value as number) ?? 1.0
-  );
+  ).onUpdate(() => (uniforms.uMaxLinePixelWidth.value as number) ?? 1.0, 'render');
 
   // ---- Vertex computation (mirrors line.tsl exactly) ----
 
@@ -184,7 +199,7 @@ export function linePickWebGPUFactory(
     return float(1.0).sub(clamp(brightness, 0.0, 1.0));
   });
 
-  const material = new NodeMaterial();
+  const material = outMaterial ?? new NodeMaterial();
   material.vertexNode = clipPos;
   material.colorNode = colorNode();
   material.depthNode = depthNode();

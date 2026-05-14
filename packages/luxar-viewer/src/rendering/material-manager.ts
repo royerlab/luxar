@@ -11,6 +11,20 @@ import { PointMaterial } from './point-material';
 import { LineMaterial } from './line-material';
 import { GSplatMaterial } from './gsplat-material';
 import { PointTSLMaterial } from './point-material-tsl';
+import { LineTSLMaterial } from './line-material-tsl';
+import { GSplatTSLMaterial } from './gsplat-material-tsl';
+import { PointPickingMaterial } from './picking/point-picking-material';
+import { LinePickingMaterial } from './picking/line-picking-material';
+import { GSplatPickingMaterial } from './picking/gsplat-picking-material';
+import { PointPickingTSLMaterial } from './picking/point-picking-material-tsl';
+import { LinePickingTSLMaterial } from './picking/line-picking-material-tsl';
+import { GSplatPickingTSLMaterial } from './picking/gsplat-picking-material-tsl';
+import { MegaShaderMaterial } from './post-processing/mega-shader-material';
+import { MegaShaderTSLMaterial } from './post-processing/mega-shader-material-tsl';
+import type { PointPickingMaterialConfig } from './picking/point-picking-material';
+import type { LinePickingMaterialConfig } from './picking/line-picking-material';
+import type { GSplatPickingMaterialConfig } from './picking/gsplat-picking-material';
+import type { MegaShaderConfig } from './post-processing/mega-shader-material';
 import type { CameraAwareMaterial } from './camera-aware-material';
 import type { RendererCapabilities } from './renderer-capabilities';
 import { log, Modules } from '../utils/log';
@@ -99,14 +113,37 @@ function getCommonMaterialBuckets(props: {
 }
 
 /**
- * Point material returned by `MaterialManager.getPointMaterial`. The
- * concrete class is either the GLSL `PointMaterial` (WebGL2 path) or
- * the TSL `PointTSLMaterial` (WebGPU / fallback-via-WebGPURenderer
- * path). Both classes expose the same surface — `updateOpacity`,
+ * Per-geometry-type material returned by
+ * `MaterialManager.get{Point,Line,GSplat}Material`. The concrete
+ * class is either the GLSL `*Material` (WebGL2 path) or the TSL
+ * `*TSLMaterial` (WebGPU / fallback-via-WebGPURenderer path). Both
+ * classes expose the same surface — `updateOpacity`,
  * `updateCameraParams`, `applyBlendingMode`, `clone()`, etc. — so
- * call sites treat the return type as a single LuxarPointMaterial.
+ * call sites treat the return type as a single union.
  */
 export type LuxarPointMaterial = PointMaterial | PointTSLMaterial;
+export type LuxarLineMaterial = LineMaterial | LineTSLMaterial;
+export type LuxarGSplatMaterial = GSplatMaterial | GSplatTSLMaterial;
+
+/**
+ * Per-geometry-type picking material returned by
+ * `MaterialManager.create{Point,Line,GSplat}PickingMaterial`. The
+ * concrete class is either the GLSL `*PickingMaterial` (WebGL2 path)
+ * or the TSL `*PickingTSLMaterial` (WebGPU path). Picking materials
+ * have a per-mesh lifetime (not cached); the dispatch hangs off
+ * `caps.api` like the visual-material counterparts.
+ */
+export type LuxarPointPickingMaterial = PointPickingMaterial | PointPickingTSLMaterial;
+export type LuxarLinePickingMaterial = LinePickingMaterial | LinePickingTSLMaterial;
+export type LuxarGSplatPickingMaterial = GSplatPickingMaterial | GSplatPickingTSLMaterial;
+
+/**
+ * The single post-processing mega-shader material managed by
+ * `PostProcessingManager`. The concrete class is either the GLSL
+ * `MegaShaderMaterial` or the TSL `MegaShaderTSLMaterial`; both
+ * expose the same setter / toggle / getter surface.
+ */
+export type LuxarMegaShaderMaterial = MegaShaderMaterial | MegaShaderTSLMaterial;
 
 /**
  * Manages all materials in the scene with caching and global updates.
@@ -125,8 +162,8 @@ export type LuxarPointMaterial = PointMaterial | PointTSLMaterial;
  */
 export class MaterialManager {
   private pointMaterialCache = new Map<string, LuxarPointMaterial>();
-  private lineMaterialCache = new Map<string, LineMaterial>();
-  private gsplatMaterialCache = new Map<string, GSplatMaterial>();
+  private lineMaterialCache = new Map<string, LuxarLineMaterial>();
+  private gsplatMaterialCache = new Map<string, LuxarGSplatMaterial>();
   private registeredMaterials = new Set<THREE.Material & CameraAwareMaterial>();
   /**
    * Renderer capabilities — drives the GLSL vs. TSL dispatch in
@@ -265,14 +302,14 @@ export class MaterialManager {
           break;
         }
       }
-    } else if (material instanceof LineMaterial) {
+    } else if (material instanceof LineMaterial || material instanceof LineTSLMaterial) {
       for (const [key, cachedMaterial] of this.lineMaterialCache.entries()) {
         if (cachedMaterial === material) {
           this.lineMaterialCache.delete(key);
           break;
         }
       }
-    } else if (material instanceof GSplatMaterial) {
+    } else if (material instanceof GSplatMaterial || material instanceof GSplatTSLMaterial) {
       for (const [key, cachedMaterial] of this.gsplatMaterialCache.entries()) {
         if (cachedMaterial === material) {
           this.gsplatMaterialCache.delete(key);
@@ -387,15 +424,21 @@ export class MaterialManager {
   }
 
   /**
-   * Get or create a line material with caching
+   * Get or create a line material with caching.
+   *
+   * Dispatches to `LineTSLMaterial` (NodeMaterial / TSL) when the
+   * active renderer reports `caps.api === 'webgpu'`, otherwise to the
+   * GLSL `LineMaterial`. Both classes expose the same update surface
+   * via {@link LuxarLineMaterial}.
    */
-  getLineMaterial(props: LineMaterialProperties): LineMaterial {
+  getLineMaterial(props: LineMaterialProperties): LuxarLineMaterial {
     // Create cache key using integer bucketing for predictable caching behavior
     const { opacityBucket, gammaBucket, intensityBucket, offsetBucket } =
       getCommonMaterialBuckets(props);
 
     const lineTransparent = props.blendingMode !== 'opaque';
-    const key = `line_${props.blendingMode}_o${opacityBucket}_g${gammaBucket}_i${intensityBucket}_f${offsetBucket}_t${lineTransparent ? 1 : 0}`;
+    const useTSL = this.caps?.api === 'webgpu';
+    const key = `line_${useTSL ? 'tsl' : 'glsl'}_${props.blendingMode}_o${opacityBucket}_g${gammaBucket}_i${intensityBucket}_f${offsetBucket}_t${lineTransparent ? 1 : 0}`;
 
     // Check cache first (LRU-promoting)
     let material = this.lruGet(this.lineMaterialCache, key);
@@ -403,15 +446,18 @@ export class MaterialManager {
       return material;
     }
 
-    // Create new LineMaterial instance
+    // Create new material instance
     const createStart = performance.now();
-    material = new LineMaterial({
+    const constructorConfig = {
       opacity: props.opacity,
       gamma: props.gamma,
       intensity: props.intensity,
       offset: props.offset,
       blendingMode: props.blendingMode,
-    });
+    };
+    material = useTSL
+      ? new LineTSLMaterial(constructorConfig)
+      : new LineMaterial(constructorConfig);
     this.totalCreateMs += performance.now() - createStart;
     this.createCount++;
 
@@ -430,16 +476,22 @@ export class MaterialManager {
   }
 
   /**
-   * Get or create a gsplat material with caching
+   * Get or create a gsplat material with caching.
+   *
+   * Dispatches to `GSplatTSLMaterial` (NodeMaterial / TSL) when the
+   * active renderer reports `caps.api === 'webgpu'`, otherwise to the
+   * GLSL `GSplatMaterial`. Both classes expose the same update
+   * surface via {@link LuxarGSplatMaterial}.
    */
-  getGSplatMaterial(props: GSplatMaterialProperties): GSplatMaterial {
+  getGSplatMaterial(props: GSplatMaterialProperties): LuxarGSplatMaterial {
     // Create cache key using integer bucketing for predictable caching behavior
     const { opacityBucket, gammaBucket, intensityBucket, offsetBucket } =
       getCommonMaterialBuckets(props);
     const truncBucket = Math.round((props.truncationRadius ?? 3.0) * 10);
 
     const gsplatTransparent = props.blendingMode !== 'opaque';
-    const key = `gsplat_${props.blendingMode}_o${opacityBucket}_g${gammaBucket}_i${intensityBucket}_f${offsetBucket}_tr${truncBucket}_t${gsplatTransparent ? 1 : 0}`;
+    const useTSL = this.caps?.api === 'webgpu';
+    const key = `gsplat_${useTSL ? 'tsl' : 'glsl'}_${props.blendingMode}_o${opacityBucket}_g${gammaBucket}_i${intensityBucket}_f${offsetBucket}_tr${truncBucket}_t${gsplatTransparent ? 1 : 0}`;
 
     // Check cache first (LRU-promoting)
     let material = this.lruGet(this.gsplatMaterialCache, key);
@@ -447,16 +499,19 @@ export class MaterialManager {
       return material;
     }
 
-    // Create new GSplatMaterial instance
+    // Create new material instance
     const createStart = performance.now();
-    material = new GSplatMaterial({
+    const constructorConfig = {
       opacity: props.opacity,
       gamma: props.gamma,
       intensity: props.intensity,
       offset: props.offset,
       blendingMode: props.blendingMode,
       truncationRadius: props.truncationRadius ?? 3.0,
-    });
+    };
+    material = useTSL
+      ? new GSplatTSLMaterial(constructorConfig)
+      : new GSplatMaterial(constructorConfig);
     this.totalCreateMs += performance.now() - createStart;
     this.createCount++;
 
@@ -479,6 +534,49 @@ export class MaterialManager {
    */
   private isOpaqueMode(mode: BlendingMode): boolean {
     return mode === 'opaque';
+  }
+
+  /**
+   * Create a per-mesh point picking material, dispatching on
+   * `caps.api`. The returned material is NOT cached — picking
+   * materials have per-mesh lifetimes; the NodeFactory disposes
+   * them when the mesh disposes. Camera updates flow through
+   * `register()` like any other camera-aware material.
+   *
+   * Same dispatch rationale as `getPointMaterial`: under
+   * `WebGPURenderer`, a `THREE.ShaderMaterial`-derived picking
+   * material would crash the NodeBuilder.
+   */
+  createPointPickingMaterial(config: PointPickingMaterialConfig): LuxarPointPickingMaterial {
+    return this.caps?.api === 'webgpu'
+      ? new PointPickingTSLMaterial(config)
+      : new PointPickingMaterial(config);
+  }
+
+  /** Same shape as `createPointPickingMaterial`, for lines. */
+  createLinePickingMaterial(config: LinePickingMaterialConfig): LuxarLinePickingMaterial {
+    return this.caps?.api === 'webgpu'
+      ? new LinePickingTSLMaterial(config)
+      : new LinePickingMaterial(config);
+  }
+
+  /** Same shape as `createPointPickingMaterial`, for gsplats. */
+  createGSplatPickingMaterial(config: GSplatPickingMaterialConfig): LuxarGSplatPickingMaterial {
+    return this.caps?.api === 'webgpu'
+      ? new GSplatPickingTSLMaterial(config)
+      : new GSplatPickingMaterial(config);
+  }
+
+  /**
+   * Create the post-processing mega-shader material, dispatching on
+   * `caps.api`. PostProcessingManager owns the single instance; this
+   * is the seam between `THREE.ShaderMaterial`-derived
+   * `MegaShaderMaterial` and the TSL `MegaShaderTSLMaterial`.
+   */
+  createMegaShaderMaterial(cfg: MegaShaderConfig): LuxarMegaShaderMaterial {
+    return this.caps?.api === 'webgpu'
+      ? new MegaShaderTSLMaterial(cfg)
+      : new MegaShaderMaterial(cfg);
   }
 
   /**

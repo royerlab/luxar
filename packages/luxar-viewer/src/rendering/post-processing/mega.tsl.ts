@@ -327,17 +327,31 @@ function linearToSRGB(c: TSLNode): TSLNode {
  */
 export function megaWebGPUFactory(
   uniforms: Record<string, THREE.IUniform>,
-  config: MegaTSLConfig = {}
+  config: MegaTSLConfig = {},
+  outMaterial?: NodeMaterial
 ): NodeMaterial {
   const toneMappingMode: LuxarToneMappingMode = config.toneMappingMode ?? 6;
 
-  // Common inputs
+  // Common inputs. Primitive uniforms bind via `.onUpdate(() =>
+  // iuniform.value)` so a wrapper class's mutations to
+  // `this.uniforms.X.value` propagate to the TSL uniform node each
+  // render. Vector2 / Texture uniforms share the host object by
+  // reference, no onUpdate needed.
   const uHdrScene = texture(
     (uniforms.uHdrScene.value as THREE.Texture | null) ?? new THREE.Texture()
   );
-  const uExposure = uniform((uniforms.uExposure.value as number) ?? 0.0);
-  const uGlobalOffset = uniform((uniforms.uGlobalOffset.value as number) ?? 0.0);
-  const uGlobalGamma = uniform((uniforms.uGlobalGamma.value as number) ?? 1.0);
+  const uExposure = uniform((uniforms.uExposure.value as number) ?? 0.0).onUpdate(
+    () => (uniforms.uExposure.value as number) ?? 0.0,
+    'render'
+  );
+  const uGlobalOffset = uniform((uniforms.uGlobalOffset.value as number) ?? 0.0).onUpdate(
+    () => (uniforms.uGlobalOffset.value as number) ?? 0.0,
+    'render'
+  );
+  const uGlobalGamma = uniform((uniforms.uGlobalGamma.value as number) ?? 1.0).onUpdate(
+    () => (uniforms.uGlobalGamma.value as number) ?? 1.0,
+    'render'
+  );
 
   // Optional inputs — declared at factory time only when the feature
   // is enabled, so unused uniforms don't end up in the compiled
@@ -348,7 +362,10 @@ export function megaWebGPUFactory(
       : null;
   const uBloomIntensity =
     config.useBloom && uniforms.uBloomIntensity
-      ? uniform((uniforms.uBloomIntensity.value as number) ?? 0.0)
+      ? uniform((uniforms.uBloomIntensity.value as number) ?? 0.0).onUpdate(
+          () => (uniforms.uBloomIntensity?.value as number) ?? 0.0,
+          'render'
+        )
       : null;
 
   const uDistortion =
@@ -365,39 +382,63 @@ export function megaWebGPUFactory(
       : null;
   const uSkew =
     config.useLensDistortion && uniforms.uSkew
-      ? uniform((uniforms.uSkew.value as number) ?? 0.0)
+      ? uniform((uniforms.uSkew.value as number) ?? 0.0).onUpdate(
+          () => (uniforms.uSkew?.value as number) ?? 0.0,
+          'render'
+        )
       : null;
   const uDispersion =
     config.useLensDistortion && uniforms.uDispersion
-      ? uniform((uniforms.uDispersion.value as number) ?? 0.0)
+      ? uniform((uniforms.uDispersion.value as number) ?? 0.0).onUpdate(
+          () => (uniforms.uDispersion?.value as number) ?? 0.0,
+          'render'
+        )
       : null;
 
   const uVignetteDarkness =
     config.useVignette && uniforms.uVignetteDarkness
-      ? uniform((uniforms.uVignetteDarkness.value as number) ?? 0.5)
+      ? uniform((uniforms.uVignetteDarkness.value as number) ?? 0.5).onUpdate(
+          () => (uniforms.uVignetteDarkness?.value as number) ?? 0.5,
+          'render'
+        )
       : null;
   const uVignetteOffset =
     config.useVignette && uniforms.uVignetteOffset
-      ? uniform((uniforms.uVignetteOffset.value as number) ?? 0.5)
+      ? uniform((uniforms.uVignetteOffset.value as number) ?? 0.5).onUpdate(
+          () => (uniforms.uVignetteOffset?.value as number) ?? 0.5,
+          'render'
+        )
       : null;
 
   // Detector-noise uniforms. Pulled at factory build time so an
   // unused branch doesn't end up in the compiled shader.
   const uTime =
     config.useDetectorNoise && uniforms.uTime
-      ? uniform((uniforms.uTime.value as number) ?? 0.0)
+      ? uniform((uniforms.uTime.value as number) ?? 0.0).onUpdate(
+          () => (uniforms.uTime?.value as number) ?? 0.0,
+          'render'
+        )
       : null;
   const uReadoutSigma =
     config.useDetectorNoise && uniforms.uReadoutSigma
-      ? uniform((uniforms.uReadoutSigma.value as number) ?? 0.0)
+      ? uniform((uniforms.uReadoutSigma.value as number) ?? 0.0).onUpdate(
+          () => (uniforms.uReadoutSigma?.value as number) ?? 0.0,
+          'render'
+        )
       : null;
   const uPhotonGain =
     config.useDetectorNoise && uniforms.uPhotonGain
-      ? uniform((uniforms.uPhotonGain.value as number) ?? 0.0001)
+      ? uniform((uniforms.uPhotonGain.value as number) ?? 0.0001).onUpdate(
+          () => (uniforms.uPhotonGain?.value as number) ?? 0.0001,
+          'render'
+        )
       : null;
   const uFpnSigma =
     config.useDetectorNoise && uniforms.uFpnSigma
-      ? uniform((uniforms.uFpnSigma.value as number) ?? 0.0)
+      ? uniform((uniforms.uFpnSigma.value as number) ?? 0.0).onUpdate(
+          () => (uniforms.uFpnSigma?.value as number) ?? 0.0,
+          'render'
+        )
       : null;
 
   const fragmentNode = Fn(() => {
@@ -518,7 +559,7 @@ export function megaWebGPUFactory(
     return vec4(color, 1.0);
   });
 
-  const material = new NodeMaterial();
+  const material = outMaterial ?? new NodeMaterial();
   material.fragmentNode = fragmentNode();
   // We bypass renderer-injected tone mapping; our shader does it
   // explicitly per `toneMappingMode`.

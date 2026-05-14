@@ -19,7 +19,7 @@ import * as THREE from 'three';
 import { EXRExporter, ZIP_COMPRESSION } from 'three/examples/jsm/exporters/EXRExporter.js';
 import { log, Modules } from '../../utils/log';
 import { config } from '../../config';
-import { MegaShaderMaterial } from './mega-shader-material';
+import { materialManager, type LuxarMegaShaderMaterial } from '../material-manager';
 import { BloomChain } from './bloom-chain';
 import { FxaaPass } from './fxaa-pass';
 import { computeEffectiveRenderSize } from './render-target-sizing';
@@ -47,7 +47,7 @@ export class PostProcessingManager {
   private hdrTarget!: THREE.WebGLRenderTarget;
   private ldrTarget!: THREE.WebGLRenderTarget;
   private bloomChain: BloomChain | null = null;
-  private megaShader!: MegaShaderMaterial;
+  private megaShader!: LuxarMegaShaderMaterial;
   private megaMesh!: THREE.Mesh;
   private megaScene!: THREE.Scene;
   private megaCamera!: THREE.OrthographicCamera;
@@ -180,8 +180,11 @@ export class PostProcessingManager {
     });
     this.ldrTarget.texture.name = 'PostProcessing.ldrTarget';
 
-    // Mega-shader + fullscreen mesh + ortho camera.
-    this.megaShader = new MegaShaderMaterial({
+    // Mega-shader + fullscreen mesh + ortho camera. Dispatch on
+    // `caps.api` through MaterialManager so the WebGPU path returns
+    // the TSL/NodeMaterial counterpart instead of the GLSL
+    // ShaderMaterial.
+    this.megaShader = materialManager.createMegaShaderMaterial({
       exposure: config.renderingControls.defaults.exposure,
       globalOffset: config.renderingControls.defaults.globalOffset,
       globalGamma: config.renderingControls.defaults.globalGamma,
