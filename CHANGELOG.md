@@ -47,13 +47,36 @@ v2.0 layout (`splats/substitutive_0/additive_<i>/`). The TypeScript viewer's
 `format_version`, `n_substitutive`, `default_substitutive`,
 `n_additive_sublods_default` (the legacy `n_lods` field is dropped).
 
+#### Changed — WebGPU migration: default renderer flipped to WebGPU (2026-05-14)
+
+The viewer's production rendering path now defaults to
+`WebGPURenderer({ forceWebGL: true })`; the legacy `WebGLRenderer`
++ GLSL `ShaderMaterial` path stays live behind
+`VITE_LUXAR_USE_LEGACY_WEBGL=1` as a runnable reference (parity
+harness, baseline pixel comparisons, fallback for hosts where
+WebGPU isn't an option). `VITE_LUXAR_USE_WEBGPU_RENDERER` becomes
+a no-op alias so existing CI invocations keep working harmlessly.
+
+Wrapper-layer wiring completed since 2026-05-13:
+
+- **TSL `NodeMaterial` wrappers shipped one-for-one with the GLSL
+  ones**: `{Point,Line,GSplat}TSLMaterial`,
+  `{Point,Line,GSplat}PickingTSLMaterial`, `MegaShaderTSLMaterial`.
+  Same surface (`updateCameraParams`, `applyBlendingMode`, `clone`,
+  `dispose`), same uniforms table, same userData fields. Dispatch
+  inside `MaterialManager.getXxxMaterial` / `createXxxPickingMaterial`
+  branches on `caps.api === 'webgpu'`.
+- **`ShaderSource.webgl` relaxed to optional**: TSL is now the
+  source of truth for every Luxar shader; GLSL3 strings are an
+  optional reference. New `requireWebGLSources` helper fails fast
+  at module load for the GLSL-only sites (picking-material
+  wrappers, parity harness) when a source ships WebGPU-only.
+
 #### Changed — WebGPU migration: TSL ports + container refactor (2026-05-13)
 
-Infrastructure step toward the WebGPU rendering backend. The
-production rendering path is unchanged today — the viewer still
-constructs `WebGLRenderer` by default and the
-`MaterialManager.getXxxMaterial` functions continue to return GLSL3
-`ShaderMaterial` wrapper instances. What landed:
+Infrastructure step toward the WebGPU rendering backend. What
+landed at this commit (production rendering path was still on
+`WebGLRenderer` here; the flip is in the 2026-05-14 entry above):
 
 - **All 12 shaders ported to TSL / NodeMaterial**: scene materials
   (`point`, `line`, `gsplat`), picking variants (`point-pick`,
@@ -91,12 +114,10 @@ constructs `WebGLRenderer` by default and the
   the matching THREE blending state via the existing
   `blending-state.ts` helper.
 
-Remaining work (M18 onward): rewire `MaterialManager` to dispatch
-to TSL `NodeMaterial` wrappers on `caps.api === 'webgpu'`, run the
-real-WebGPU smoke pass on Chrome stable, and flip the default
-renderer once both backends are green. See
-`packages/luxar-viewer/MIGRATION_PROGRESS.md` for the full
-ledger including the "Wrapper-layer wiring" gap notes.
+Remaining work: real-WebGPU smoke pass on Chrome stable
+(`forceWebGL: false`), then the matching pixel-baseline refresh.
+See `packages/luxar-viewer/MIGRATION_PROGRESS.md` for the full
+ledger.
 
 #### Changed — Three.js r184 and custom post-processing pipeline (2026-05-12)
 
