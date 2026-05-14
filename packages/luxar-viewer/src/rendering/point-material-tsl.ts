@@ -259,6 +259,19 @@ export class PointTSLMaterial
       scalarRange: this.userData.scalarRange ?? undefined,
     });
 
+    // Carry over the Luxar blending mode. PointMaterialConfig only
+    // accepts the THREE-side `blending` field — the Luxar mode +
+    // shader-output shape (`LUXAR_MAX_RGB_CONTRIBUTION` define,
+    // `premultiplyRGB` graph branch) is set via `applyBlendingMode`.
+    // Without this call, a clone of a `max`-mode source would inherit
+    // CustomBlending + MaxEquation from the framebuffer-state copy
+    // below but the TSL graph would stay wired for non-premultiplied
+    // output — a real visual divergence.
+    const mode = this.userData.blendingMode as BlendingMode | undefined;
+    if (mode) {
+      cloned.applyBlendingMode(mode);
+    }
+
     if (this.blending === THREE.CustomBlending) {
       cloned.blendEquation = this.blendEquation;
       cloned.blendSrc = this.blendSrc;
