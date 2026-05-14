@@ -110,7 +110,7 @@ test.describe('Data Integrity - Attribute Alignment', () => {
     expect(radiusCheck).toEqual([]);
   });
 
-  test('should have drawRange.count <= attribute.count for all geometry', async ({ page }) => {
+  test('should have visible instance count <= attribute count for all points geometry', async ({ page }) => {
     await page.goto(`/?src=${DATASET}&debug`);
     await waitForLuxarReady(page);
     await waitForPointsLoaded(page, 10);
@@ -119,6 +119,7 @@ test.describe('Data Integrity - Attribute Alignment', () => {
     expect(results.length).toBeGreaterThan(0);
 
     for (const cloud of results) {
+      expect(cloud.visibleInstanceCount).toBeLessThanOrEqual(cloud.positionCount);
       expect(cloud.drawRangeCount).toBeLessThanOrEqual(cloud.positionCount);
     }
   });
@@ -149,6 +150,7 @@ test.describe('Data Integrity - Attribute Alignment', () => {
     for (const cloud of after) {
       expect(cloud.aligned).toBe(true);
       expect(cloud.hasNaN).toBe(false);
+      expect(cloud.visibleInstanceCount).toBeLessThanOrEqual(cloud.positionCount);
       expect(cloud.drawRangeCount).toBeLessThanOrEqual(cloud.positionCount);
     }
   });

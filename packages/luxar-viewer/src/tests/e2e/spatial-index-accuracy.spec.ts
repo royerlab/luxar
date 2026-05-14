@@ -163,13 +163,15 @@ test.describe('Spatial Index Query Accuracy', () => {
       }[] = [];
 
       debug.scene.traverse((object: any) => {
-        if (object.type === 'Points' && object.geometry?.attributes?.aRadius) {
+        if (object.userData?.nodeType === 'points' && object.geometry?.attributes?.aRadius) {
           const radiusAttr = object.geometry.attributes.aRadius;
           const arr = radiusAttr.array;
-          // Use drawRange to only check active points (buffer may be oversized)
-          const drawCount = object.geometry.drawRange.count;
-          const count =
-            drawCount < Infinity ? Math.min(drawCount, radiusAttr.count) : radiusAttr.count;
+          // Points render as instanced quads: drawRange is the 6-index base
+          // quad, while instanceCount is the visible point count.
+          const instanceCount = object.geometry.isInstancedBufferGeometry
+            ? object.geometry.instanceCount
+            : radiusAttr.count;
+          const count = Math.min(instanceCount, radiusAttr.count);
           if (count === 0) return;
 
           let min = Infinity;

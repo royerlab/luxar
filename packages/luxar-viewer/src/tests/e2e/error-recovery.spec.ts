@@ -62,13 +62,17 @@ test.describe('Error Recovery - Invalid Datasets', () => {
     expect(hasError || hasBrowser).toBe(true);
   });
 
-  test('should handle corrupted .zmetadata gracefully', async ({ page }) => {
+  test('should handle corrupted metadata gracefully', async ({ page }) => {
     const DATASET = 'http://localhost:9000/datasets/examples/build_example_structured.zarr';
     const errors: string[] = [];
     page.on('pageerror', (err) => errors.push(err.message));
 
-    // Intercept .zmetadata requests and return corrupted JSON
-    await page.route('**/.zmetadata', (route) => {
+    // Intercept the root metadata formats the loader may try (Zarr v2
+    // consolidated metadata, Zarr v3 metadata, and fallback attrs) and
+    // return corrupted JSON. Older versions only intercepted
+    // `.zmetadata`, which let v3 datasets load successfully and made the
+    // test assert an error UI for a non-error path.
+    await page.route(/\/(\.zmetadata|zarr\.json|\.zattrs)(\?.*)?$/, (route) => {
       route.fulfill({
         status: 200,
         contentType: 'application/json',

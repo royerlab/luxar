@@ -62,13 +62,14 @@ test.describe('Test Fixture Rendering', () => {
 
       const geometry = points.geometry;
       const sharpnessAttr = geometry.attributes.aSharpness;
-      // Use drawRange to get actual point count (buffer may be larger due to reuse)
-      const drawRangeCount = geometry.drawRange?.count;
-      const actualCount =
-        drawRangeCount !== undefined && drawRangeCount !== Infinity
-          ? Math.min(drawRangeCount, sharpnessAttr.count)
-          : sharpnessAttr.count;
-      // Only sample values within the draw range
+      // Points render as instanced quads: drawRange is the 6-index base
+      // quad, while instanceCount is the visible point count. Attribute
+      // buffers may be over-allocated by the GPU pool.
+      const instanceCount = geometry.isInstancedBufferGeometry
+        ? geometry.instanceCount
+        : sharpnessAttr.count;
+      const actualCount = Math.min(instanceCount, sharpnessAttr.count);
+      // Only sample values within the visible instance range.
       const array = Array.from(sharpnessAttr.array.subarray(0, actualCount)) as number[];
       return {
         count: actualCount,
@@ -130,12 +131,13 @@ test.describe('Test Fixture Rendering', () => {
       const geometry = points.geometry;
       const colorAttr = geometry.attributes.aColor;
       const posAttr = geometry.attributes.aCenter;
-      // Use drawRange to get actual point count (buffer may be larger due to reuse)
-      const drawRangeCount = geometry.drawRange?.count;
-      const actualCount =
-        drawRangeCount !== undefined && drawRangeCount !== Infinity
-          ? Math.min(drawRangeCount, colorAttr.count)
-          : colorAttr.count;
+      // Points render as instanced quads: drawRange is the 6-index base
+      // quad, while instanceCount is the visible point count. Attribute
+      // buffers may be over-allocated by the GPU pool.
+      const instanceCount = geometry.isInstancedBufferGeometry
+        ? geometry.instanceCount
+        : colorAttr.count;
+      const actualCount = Math.min(instanceCount, colorAttr.count);
       const colorArr = Array.from(colorAttr.array.subarray(0, actualCount * 3)) as number[];
       // The fixture stores points along the X axis with index == x-position, so
       // sort by x to recover the input ordering (the loader/spatial index does
@@ -330,13 +332,14 @@ test.describe('Test Fixture Rendering', () => {
 
       const geometry = points.geometry;
       const colorAttr = geometry.attributes.aColor;
-      // Use drawRange to get actual point count (buffer may be larger due to reuse)
-      const drawRangeCount = geometry.drawRange?.count;
-      const actualCount =
-        drawRangeCount !== undefined && drawRangeCount !== Infinity
-          ? Math.min(drawRangeCount, colorAttr.count)
-          : colorAttr.count;
-      // Only sample color values within the draw range
+      // Points render as instanced quads: drawRange is the 6-index base
+      // quad, while instanceCount is the visible point count. Attribute
+      // buffers may be over-allocated by the GPU pool.
+      const instanceCount = geometry.isInstancedBufferGeometry
+        ? geometry.instanceCount
+        : colorAttr.count;
+      const actualCount = Math.min(instanceCount, colorAttr.count);
+      // Only sample color values within the visible instance range.
       const colors = colorAttr.array.subarray(0, actualCount * 3);
       const firstColor = [colors[0], colors[1], colors[2]];
 
@@ -401,13 +404,14 @@ test.describe('Test Fixture Rendering', () => {
 
       const geometry = points.geometry;
       const colorAttr = geometry.attributes.aColor;
-      // Use drawRange to get actual point count (buffer may be larger due to reuse)
-      const drawRangeCount = geometry.drawRange?.count;
-      const actualCount =
-        drawRangeCount !== undefined && drawRangeCount !== Infinity
-          ? Math.min(drawRangeCount, colorAttr.count)
-          : colorAttr.count;
-      // Only sample color values within the draw range
+      // Points render as instanced quads: drawRange is the 6-index base
+      // quad, while instanceCount is the visible point count. Attribute
+      // buffers may be over-allocated by the GPU pool.
+      const instanceCount = geometry.isInstancedBufferGeometry
+        ? geometry.instanceCount
+        : colorAttr.count;
+      const actualCount = Math.min(instanceCount, colorAttr.count);
+      // Only sample color values within the visible instance range.
       const colors = colorAttr.array.subarray(0, actualCount * 3);
       const uniqueColors = new Set<string>();
 
