@@ -117,12 +117,13 @@ export class GSplatTSLMaterial
     this.userData.depthTest = materialConfig.depthTest ?? true;
     this.userData.scalarRange = materialConfig.scalarRange;
 
-    // Apply the requested blending mode FIRST so `rebuildGraph`'s
-    // post-factory `applyBlendingMode` override picks it up (the
-    // mode is stored on userData and read on every rebuild). Mirrors
+    // Stamp the requested mode on userData BEFORE rebuildGraph so
+    // the factory + the post-factory `applyBlendingMode` override
+    // both pick it up. Without this, `userData.blendingMode` is
+    // undefined and the factory defaults to 'additive'. Mirrors
     // the GLSL `GSplatMaterial` constructor body where
     // `this.applyBlendingMode(blendingMode)` runs after `super()`.
-    this.applyBlendingMode(materialConfig.blendingMode ?? 'additive');
+    this.userData.blendingMode = materialConfig.blendingMode ?? 'additive';
 
     this.rebuildGraph();
   }

@@ -77,6 +77,15 @@ export class LineTSLMaterial
     this.userData.depthTest = materialConfig.depthTest ?? true;
     this.userData.scalarRange = materialConfig.scalarRange;
 
+    // Stamp the requested mode on userData BEFORE rebuildGraph so the
+    // factory reads the correct value through
+    // `userData.blendingMode` — otherwise the factory defaults to
+    // 'additive', wires `premultiplyRGB=false`, and `max` mode
+    // rendering is wrong. Mirrors the GLSL `LineMaterial`
+    // constructor body where `this.applyBlendingMode(blendingMode)`
+    // runs after `super()`.
+    this.userData.blendingMode = materialConfig.blendingMode ?? 'additive';
+
     this.rebuildGraph();
   }
 
