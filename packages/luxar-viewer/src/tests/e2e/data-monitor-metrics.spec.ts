@@ -35,15 +35,17 @@ test.describe('Data Loading Monitor Metrics', () => {
     const state = await getLuxarState(page);
     expect(state.totalPoints).toBeGreaterThan(0);
 
-    // Count actual points in the scene to verify consistency
+    // Count actual visible point instances in the scene to verify consistency.
     const scenePointCount = await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
       let count = 0;
       debug.scene?.traverse((obj: any) => {
         if (obj.userData?.nodeType === 'points' && obj.geometry?.attributes?.aCenter) {
-          const drawRange = obj.geometry.drawRange;
           const attrCount = obj.geometry.attributes.aCenter.count;
-          count += drawRange.count < Infinity ? Math.min(drawRange.count, attrCount) : attrCount;
+          const instanceCount = obj.geometry.isInstancedBufferGeometry
+            ? obj.geometry.instanceCount
+            : attrCount;
+          count += Math.min(instanceCount, attrCount);
         }
       });
       return count;
@@ -121,15 +123,17 @@ test.describe('Data Loading Monitor Metrics', () => {
     const state = await getLuxarState(page);
     expect(state.totalPoints).toBeGreaterThan(0);
 
-    // Count actual points in the Three.js scene (using drawRange for accuracy)
+    // Count actual visible point instances in the Three.js scene.
     const scenePointCount = await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
       let count = 0;
       debug.scene?.traverse((obj: any) => {
         if (obj.userData?.nodeType === 'points' && obj.geometry?.attributes?.aCenter) {
-          const drawRange = obj.geometry.drawRange;
           const attrCount = obj.geometry.attributes.aCenter.count;
-          count += drawRange.count < Infinity ? Math.min(drawRange.count, attrCount) : attrCount;
+          const instanceCount = obj.geometry.isInstancedBufferGeometry
+            ? obj.geometry.instanceCount
+            : attrCount;
+          count += Math.min(instanceCount, attrCount);
         }
       });
       return count;
