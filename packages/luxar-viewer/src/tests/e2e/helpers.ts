@@ -645,9 +645,12 @@ export async function waitForRenderStable(
   // paints. Screenshot tests captured pre-action state.
   const start = await page.evaluate(() => {
     const debug = (window as any).__luxarDebug;
-    return typeof debug?.renderer?.info?.render?.frame === 'number'
-      ? debug.renderer.info.render.frame
-      : null;
+    // WebGLRenderer exposes `info.render.frame`; WebGPURenderer
+    // exposes `info.frame`. Probe both so the helper works on
+    // either backend.
+    const info = debug?.renderer?.info;
+    const frame = info?.render?.frame ?? info?.frame;
+    return typeof frame === 'number' ? frame : null;
   });
 
   if (start !== null) {
@@ -664,7 +667,8 @@ export async function waitForRenderStable(
       await page.waitForFunction(
         (t: number) => {
           const debug = (window as any).__luxarDebug;
-          const frame = debug?.renderer?.info?.render?.frame;
+          const info = debug?.renderer?.info;
+          const frame = info?.render?.frame ?? info?.frame;
           return typeof frame === 'number' && frame >= t;
         },
         target,
@@ -709,9 +713,12 @@ export async function waitForNextRender(page: Page, frames = 2, timeout = 5000):
   // Try to read the current frame counter
   const currentFrame = await page.evaluate(() => {
     const debug = (window as any).__luxarDebug;
-    return typeof debug?.renderer?.info?.render?.frame === 'number'
-      ? debug.renderer.info.render.frame
-      : null;
+    // WebGLRenderer exposes `info.render.frame`; WebGPURenderer
+    // exposes `info.frame`. Probe both so the helper works on
+    // either backend.
+    const info = debug?.renderer?.info;
+    const frame = info?.render?.frame ?? info?.frame;
+    return typeof frame === 'number' ? frame : null;
   });
 
   if (currentFrame !== null) {
@@ -730,7 +737,8 @@ export async function waitForNextRender(page: Page, frames = 2, timeout = 5000):
       await page.waitForFunction(
         (target: number) => {
           const debug = (window as any).__luxarDebug;
-          const frame = debug?.renderer?.info?.render?.frame;
+          const info = debug?.renderer?.info;
+          const frame = info?.render?.frame ?? info?.frame;
           return typeof frame === 'number' && frame >= target;
         },
         targetFrame,
@@ -1158,6 +1166,7 @@ export async function validateSceneAttributes(page: Page): Promise<
     radiusCount: number;
     sharpnessCount: number;
     drawRangeCount: number;
+    visibleInstanceCount: number;
     aligned: boolean;
     hasNaN: boolean;
     hasInfinity: boolean;
@@ -1185,6 +1194,9 @@ export async function validateSceneAttributes(page: Page): Promise<
       const radCount = rad ? rad.count : -1;
       const shpCount = shp ? shp.count : -1;
       const drawCount = dr.count < Infinity ? Math.min(dr.count, posCount) : posCount;
+      const visibleInstanceCount = obj.geometry.isInstancedBufferGeometry
+        ? Math.min(obj.geometry.instanceCount, posCount)
+        : drawCount;
 
       // Check for NaN/Infinity in positions (sample first 1000)
       let hasNaN = false;
@@ -1210,6 +1222,7 @@ export async function validateSceneAttributes(page: Page): Promise<
         radiusCount: radCount,
         sharpnessCount: shpCount,
         drawRangeCount: drawCount,
+        visibleInstanceCount,
         aligned,
         hasNaN,
         hasInfinity,

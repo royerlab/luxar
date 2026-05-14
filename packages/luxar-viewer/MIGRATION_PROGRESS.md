@@ -362,8 +362,19 @@ The mechanics that make the TSL wrappers work like the GLSL ones:
 Verification: `tsl-shader-parity.spec.ts` confirms pixel parity
 between GLSL3 and TSL outputs across all 12 shaders, run under
 `WebGPURenderer({ forceWebGL: true })`. End-to-end E2E
-(`basic-rendering`, `geometry-types`, `blending-modes`) passes
-under `VITE_LUXAR_USE_WEBGPU_RENDERER=1` (forceWebGL = true).
+(`basic-rendering`, `geometry-types`, `blending-modes`,
+`viewer-initialization`, `dimension-*`) passes with the default
+renderer (`WebGPURenderer({ forceWebGL: true })`) as of M18.
+The GLSL `ShaderMaterial` path remains live behind
+`VITE_LUXAR_USE_LEGACY_WEBGL=1` — same suite passes there too,
+so the TSL/GLSL parity harness keeps both backends covered.
 Real-WebGPU smoke (column `R`) — running with `forceWebGL: false`
-on Chrome / Edge stable — is the next milestone (M18 default
-flip can be evaluated against it).
+on Chrome / Edge stable — is the remaining open milestone.
+
+### M18 — default flip (DONE)
+
+The migration toggle is now inverted. `SceneManager.setupRenderer`
+defaults to `setupWebGPURenderer()`; legacy GLSL is reached via
+`VITE_LUXAR_USE_LEGACY_WEBGL=1`. `VITE_LUXAR_USE_WEBGPU_RENDERER`
+is now a no-op alias (kept harmless so existing CI scripts that
+still set it keep working).
