@@ -44,7 +44,7 @@ import { gsplatWebGPUFactory } from '../../../rendering/gsplat.tsl';
 import { GSPLAT_PICK_SOURCE } from '../../../rendering/picking/picking-shaders';
 import { gsplatPickWebGPUFactory } from '../../../rendering/picking/gsplat-pick.tsl';
 import { createGSplatQuadGeometry } from '../../../rendering/gsplat-geometry';
-import type { ShaderSource } from '../../../rendering/shaders/shader-source';
+import { requireWebGLSources, type ShaderSource } from '../../../rendering/shaders/shader-source';
 
 /**
  * Shape of an entry in the shader registry exposed to Playwright.
@@ -526,13 +526,18 @@ function renderGLSL(shaderName: string): Uint8Array {
   const entry = SHADER_REGISTRY[shaderName];
   if (!entry) throw new Error(`Unknown shader: ${shaderName}`);
 
+  // GLSL parity render — the harness can only check parity when the
+  // registry entry ships a GLSL fallback. `requireWebGLSources`
+  // throws with a clear diagnostic if it doesn't (shouldn't happen
+  // for any shader currently in the registry).
+  const glsl = requireWebGLSources(entry.source);
   const uniforms = entry.buildUniforms();
   // Build the ShaderMaterial. We pass `defines` only when the
   // registry entry supplies it — Three.js warns "parameter 'defines'
   // has value of undefined" otherwise.
   const materialParams: THREE.ShaderMaterialParameters = {
-    vertexShader: entry.source.webgl.vertex,
-    fragmentShader: entry.source.webgl.fragment,
+    vertexShader: glsl.vertex,
+    fragmentShader: glsl.fragment,
     uniforms,
     glslVersion: THREE.GLSL3,
     depthTest: false,

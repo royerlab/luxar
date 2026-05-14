@@ -12,6 +12,10 @@ import type { CameraAwareMaterial } from '../camera-aware-material';
 import { computeFocalLength } from '../camera-uniforms';
 import { materialManager } from '../material-manager';
 import { GSPLAT_PICK_SOURCE } from './picking-shaders';
+import { requireWebGLSources } from '../shaders/shader-source';
+
+// Module-load assertion: the GLSL wrapper requires the GLSL source.
+const GSPLAT_PICK_GLSL = requireWebGLSources(GSPLAT_PICK_SOURCE);
 
 export interface GSplatPickingMaterialConfig {
   nodeId: number;
@@ -54,8 +58,8 @@ export class GSplatPickingMaterial extends THREE.ShaderMaterial implements Camer
         uMaxExtentFactor: { value: 0.33 },
         uNodeId: { value: config.nodeId },
       },
-      vertexShader: GSPLAT_PICK_SOURCE.webgl.vertex,
-      fragmentShader: GSPLAT_PICK_SOURCE.webgl.fragment,
+      vertexShader: GSPLAT_PICK_GLSL.vertex,
+      fragmentShader: GSPLAT_PICK_GLSL.fragment,
       glslVersion: THREE.GLSL3,
       transparent: false,
       depthTest: true,

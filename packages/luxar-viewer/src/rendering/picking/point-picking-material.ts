@@ -12,6 +12,11 @@ import type { CameraAwareMaterial } from '../camera-aware-material';
 import { computePointSizeFactor, computeMaxPointSize } from '../camera-uniforms';
 import { materialManager } from '../material-manager';
 import { POINT_PICK_SOURCE } from './picking-shaders';
+import { requireWebGLSources } from '../shaders/shader-source';
+
+// Module-load assertion: the GLSL wrapper requires the GLSL source.
+// Captured once so the constructor can splice the strings into super().
+const POINT_PICK_GLSL = requireWebGLSources(POINT_PICK_SOURCE);
 
 export interface PointPickingMaterialConfig {
   nodeId: number;
@@ -37,8 +42,8 @@ export class PointPickingMaterial extends THREE.ShaderMaterial implements Camera
         // PointMaterial). Defaults overwritten by updateCameraParams.
         uResolution: { value: new THREE.Vector2(1920, defaultResolutionY) },
       },
-      vertexShader: POINT_PICK_SOURCE.webgl.vertex,
-      fragmentShader: POINT_PICK_SOURCE.webgl.fragment,
+      vertexShader: POINT_PICK_GLSL.vertex,
+      fragmentShader: POINT_PICK_GLSL.fragment,
       glslVersion: THREE.GLSL3,
       // Picking settings: opaque, depth test, no blending
       transparent: false,
