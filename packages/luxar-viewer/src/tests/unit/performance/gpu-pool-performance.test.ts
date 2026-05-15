@@ -188,27 +188,32 @@ describe('GPU Buffer Pool Performance Regression Tests', () => {
   });
 
   describe('Type-Aware Performance', () => {
-    it('should handle mixed types efficiently', () => {
+    it('handles Float32 and Uint8 source dtypes uniformly via Float32 interleaved storage', () => {
+      // Post-interleaving, pooled storage is uniformly Float32 in one
+      // shared `InstancedInterleavedBuffer` (so multiple attributes
+      // collapse to one vertex-buffer slot under WebGPU). Uint8 source
+      // data is widened (÷255) at upload time to preserve the shader-
+      // visible [0, 1] range.
       const dataFloat = createMockData(1000, 'Float32Array');
       const dataUint8 = createMockData(1000, 'Uint8Array');
 
-      // Acquire both types
       const geom1 = pool.acquirePointsGeometry('node1', dataFloat, 1000);
       const geom2 = pool.acquirePointsGeometry('node2', dataUint8, 1000);
 
-      // Verify correct types in attributes
-      const col1 = geom1.getAttribute('aColor') as THREE.BufferAttribute;
-      const col2 = geom2.getAttribute('aColor') as THREE.BufferAttribute;
+      const col1 = geom1.getAttribute('aColor') as THREE.InterleavedBufferAttribute;
+      const col2 = geom2.getAttribute('aColor') as THREE.InterleavedBufferAttribute;
 
-      expect(col1.array).toBeInstanceOf(Float32Array);
-      expect(col2.array).toBeInstanceOf(Uint8Array);
-      expect(col2.normalized).toBe(true); // Uint8 should be normalized
+      // Both back ends to the same Float32 interleaved layout.
+      expect(col1.data.array).toBeInstanceOf(Float32Array);
+      expect(col2.data.array).toBeInstanceOf(Float32Array);
     });
 
-    it('should preserve memory efficiency with mixed types', () => {
-      // 1000 points with Uint8 colors = 3KB
-      // 1000 points with Float32 colors = 12KB
-
+    it('memory accounting reflects the widen-to-Float32 trade-off', () => {
+      // Post-interleaving cost: Uint8 source widens to Float32 in
+      // the pooled buffer (4× the per-instance bytes for that
+      // attribute), bought against the WebGPU buffer-count win
+      // (one vertex-buffer slot instead of N). The shader sees the
+      // same [0, 1] range as before.
       const geomUint8 = pool.acquirePointsGeometry(
         'node1',
         createMockData(1000, 'Uint8Array'),
@@ -220,11 +225,12 @@ describe('GPU Buffer Pool Performance Regression Tests', () => {
         1000
       );
 
-      const colUint8 = geomUint8.getAttribute('aColor') as THREE.BufferAttribute;
-      const colFloat = geomFloat.getAttribute('aColor') as THREE.BufferAttribute;
+      const colUint8 = geomUint8.getAttribute('aColor') as THREE.InterleavedBufferAttribute;
+      const colFloat = geomFloat.getAttribute('aColor') as THREE.InterleavedBufferAttribute;
 
-      // Uint8 should use 1/4 the memory of Float32
-      expect(colUint8.array.byteLength).toBe(colFloat.array.byteLength / 4);
+      // Both share the same Float32 stride layout (per-buffer storage
+      // size depends only on `capacity × stride`, not on source dtype).
+      expect(colUint8.data.array.byteLength).toBe(colFloat.data.array.byteLength);
     });
   });
 

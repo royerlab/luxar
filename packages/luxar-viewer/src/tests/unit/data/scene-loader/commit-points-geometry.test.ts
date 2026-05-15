@@ -109,9 +109,18 @@ describe('commitPointsGeometry', () => {
     const points = new THREE.Mesh();
     points.name = '/p';
     points.userData = { nodeType: 'points', visiblePointCount: 0 };
-    // 3-point geometry to match the 3-point data.
-    const geom = new THREE.BufferGeometry();
-    geom.setAttribute('aCenter', new THREE.InstancedBufferAttribute(new Float32Array(9), 3));
+    // 3-point geometry: production points geometries pack per-instance
+    // attributes into one `InstancedInterleavedBuffer` with views per
+    // attribute. The in-place commit path writes through these views,
+    // so the test fixture must mirror that shape.
+    const geom = new THREE.InstancedBufferGeometry();
+    const stride = 3; // aCenter only — minimal layout for this test.
+    const interleaved = new THREE.InstancedInterleavedBuffer(
+      new Float32Array(3 * stride),
+      stride,
+      1
+    );
+    geom.setAttribute('aCenter', new THREE.InterleavedBufferAttribute(interleaved, 3, 0));
     points.geometry = geom;
     root.add(points);
 

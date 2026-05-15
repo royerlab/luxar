@@ -511,41 +511,34 @@ export class SceneManager extends THREE.EventDispatcher<{
       }
     }
 
-    // Luxar's line material binds 12 instance attributes (14 with
-    // colormap). Each becomes its own vertex buffer under WebGPU.
-    // If the adapter can't supply this many buffers, the line
-    // pipeline cannot be created.
-    const LUXAR_LINE_BUFFERS_REQUIRED = 14;
+    // Defensive backstop: every Luxar geometry now packs its
+    // per-instance attributes into a single
+    // `InstancedInterleavedBuffer` (one vertex-buffer slot per
+    // geometry, regardless of how many attributes it carries), so
+    // the line material no longer trips Chrome's compat-mode
+    // `maxVertexBuffers=8` ceiling. We still check for an
+    // implausibly low limit (< the WebGPU spec minimum of 8) and
+    // fall back to the legacy WebGL path if it ever triggers —
+    // that would indicate a fundamentally broken adapter.
+    const LUXAR_MIN_VERTEX_BUFFERS_REQUIRED = 8;
 
     let device: unknown;
     let adapterMax: number | undefined;
     if (adapter) {
       adapterMax = adapter.limits?.maxVertexBuffers;
 
-      // Auto-fall back to the legacy WebGL path when the adapter
-      // genuinely can't support the line material's buffer count.
-      // (Reached when the user's Chrome silently ignores
-      // `featureLevel: 'core'` and returns the spec-minimum-8
-      // compat-mode adapter, which has happened in the field.) The
-      // legacy `WebGLRenderer` has higher buffer limits and is
-      // verified to render the full demo correctly.
-      //
-      // If the user explicitly chose `?renderer=webgpu`, respect
-      // that — log loudly and continue, so they can debug the
-      // pipeline-failed errors with the WebGPU path active.
+      // Auto-fallback only when even the spec minimum isn't met.
+      // Respect explicit `?renderer=webgpu` even in that case.
       if (
         typeof adapterMax === 'number' &&
-        adapterMax < LUXAR_LINE_BUFFERS_REQUIRED &&
+        adapterMax < LUXAR_MIN_VERTEX_BUFFERS_REQUIRED &&
         this.rendererOverride !== 'webgpu'
       ) {
         log.warning(
           Modules.RENDERER,
-          `WebGPU adapter only advertises maxVertexBuffers=${adapterMax} ` +
-            `(Luxar line material needs ${LUXAR_LINE_BUFFERS_REQUIRED}). ` +
-            'This is Chrome\'s compat-mode adapter; the line pipeline cannot ' +
-            'be created and lines would silently drop out of the render. ' +
-            'Auto-falling back to WebGLRenderer + GLSL path. Override with ' +
-            '`?renderer=webgpu` to force WebGPU anyway (for debugging).'
+          `WebGPU adapter advertises maxVertexBuffers=${adapterMax}, below the WebGPU spec minimum ` +
+            `of ${LUXAR_MIN_VERTEX_BUFFERS_REQUIRED}. Auto-falling back to the legacy WebGLRenderer ` +
+            'path. Override with `?renderer=webgpu` to force WebGPU anyway (for debugging).'
         );
         await this.setupWebGLRenderer();
         return;

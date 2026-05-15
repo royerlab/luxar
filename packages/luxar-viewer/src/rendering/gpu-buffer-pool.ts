@@ -31,6 +31,215 @@ import { log, Modules } from '../utils/log';
 import { estimateGeometryBytes, invalidateCachedByteSize } from '../utils/geometry-utils';
 import type { LoadedPointsData } from '../data/data-loader-types';
 import type { ProcessedLinesData } from '../types/lines';
+import {
+  packInterleavedAttributes,
+  widenToFloat32,
+  writeInterleavedAttribute,
+  type InterleavedAttributeSpec,
+} from './interleaved-attributes';
+
+/**
+ * Canonical per-segment attribute layout for pooled line geometries.
+ * The pool pre-allocates a single `InstancedInterleavedBuffer` over
+ * these specs (Float32 throughout — Uint8 clipped flags get widened
+ * at upload time). Optional scalar attributes (aStartScalar /
+ * aEndScalar) are added via a spec-set rebuild when colormap data
+ * first arrives, mirroring the line-geometry.ts pattern.
+ *
+ * Declaration order matters only for stride bookkeeping; the shader
+ * reads attributes by name through the views.
+ */
+const LINES_BASE_ATTRIBUTE_SPECS: ReadonlyArray<{
+  name: string;
+  itemSize: 1 | 2 | 3 | 4;
+}> = [
+  { name: 'aStartPos', itemSize: 3 },
+  { name: 'aEndPos', itemSize: 3 },
+  { name: 'aStartColor', itemSize: 3 },
+  { name: 'aEndColor', itemSize: 3 },
+  { name: 'aStartWidth', itemSize: 1 },
+  { name: 'aEndWidth', itemSize: 1 },
+  { name: 'aStartSharpness', itemSize: 1 },
+  { name: 'aEndSharpness', itemSize: 1 },
+  { name: 'aSegmentLength', itemSize: 1 },
+  { name: 'aStartClipped', itemSize: 1 },
+  { name: 'aEndClipped', itemSize: 1 },
+];
+
+const LINES_SCALAR_ATTRIBUTE_SPECS: ReadonlyArray<{
+  name: string;
+  itemSize: 1 | 2 | 3 | 4;
+}> = [
+  { name: 'aStartScalar', itemSize: 1 },
+  { name: 'aEndScalar', itemSize: 1 },
+];
+
+/** Canonical per-splat attribute layout for pooled gsplat geometries. */
+const GSPLATS_ATTRIBUTE_SPECS: ReadonlyArray<{
+  name: string;
+  itemSize: 1 | 2 | 3 | 4;
+}> = [
+  { name: 'aCenter', itemSize: 3 },
+  { name: 'aCholesky01', itemSize: 2 },
+  { name: 'aCholesky23', itemSize: 2 },
+  { name: 'aCholesky45', itemSize: 2 },
+  { name: 'aAmplitude', itemSize: 1 },
+  { name: 'aColor', itemSize: 3 },
+];
+
+/** Base per-instance attribute layout for pooled points geometries. */
+const POINTS_BASE_ATTRIBUTE_SPECS: ReadonlyArray<{
+  name: string;
+  itemSize: 1 | 2 | 3 | 4;
+}> = [
+  { name: 'aCenter', itemSize: 3 },
+  { name: 'aColor', itemSize: 3 },
+  { name: 'aRadius', itemSize: 1 },
+  { name: 'aSharpness', itemSize: 1 },
+];
+
+const POINTS_SCALAR_ATTRIBUTE_SPEC: { name: string; itemSize: 1 | 2 | 3 | 4 } = {
+  name: 'aScalar',
+  itemSize: 1,
+};
+
+/**
+ * Resolve the per-instance attribute layout for a points geometry,
+ * including the optional `aScalar` slot iff the type snapshot has it.
+ */
+function pointAttributeSpecs(
+  types: PointsAttributeTypes
+): Array<{ name: string; itemSize: 1 | 2 | 3 | 4 }> {
+  const specs: Array<{ name: string; itemSize: 1 | 2 | 3 | 4 }> = [
+    ...POINTS_BASE_ATTRIBUTE_SPECS,
+  ];
+  if (types.scalar) {
+    specs.push(POINTS_SCALAR_ATTRIBUTE_SPEC);
+  }
+  return specs;
+}
+
+/**
+ * Pick a normalization divisor for widening Uint8 / Uint16 source
+ * data to Float32 while preserving the GPU-shader-visible [0, 1]
+ * range that the previous per-attribute `normalized: true` flag
+ * produced. See `interleaved-attributes.ts` for context.
+ */
+function pointsNormalizationDivisor(
+  source: ArrayLike<number> | undefined,
+  normalized: boolean
+): number | undefined {
+  if (!source || !normalized) return undefined;
+  if (source instanceof Uint8Array) return 255;
+  if (source instanceof Uint16Array) return 65535;
+  return undefined;
+}
+
+/**
+ * Rebuild the interleaved buffer on a geometry with new capacity
+ * and/or a new spec-set (e.g. lazily adding scalar attributes).
+ * Copies as much of the old buffer as fits into the new layout.
+ *
+ * Returns the new buffer so the caller can stash it / wire usage.
+ */
+function rebuildInterleavedBuffer(
+  geometry: THREE.InstancedBufferGeometry,
+  newCapacity: number,
+  newSpecs: ReadonlyArray<{ name: string; itemSize: 1 | 2 | 3 | 4 }>
+): THREE.InstancedInterleavedBuffer {
+  // Snapshot the old buffer + per-attribute float offsets *before*
+  // we replace anything. Used to copy still-present attribute data
+  // across.
+  const oldByName = new Map<
+    string,
+    { buffer: THREE.InstancedInterleavedBuffer; offset: number; itemSize: number }
+  >();
+  for (const spec of newSpecs) {
+    const oldView = geometry.getAttribute(spec.name) as THREE.InterleavedBufferAttribute | undefined;
+    if (oldView && oldView.data) {
+      oldByName.set(spec.name, {
+        buffer: oldView.data as THREE.InstancedInterleavedBuffer,
+        offset: oldView.offset,
+        itemSize: oldView.itemSize,
+      });
+    }
+  }
+
+  const specsWithData: InterleavedAttributeSpec[] = newSpecs.map((spec) => ({
+    name: spec.name,
+    itemSize: spec.itemSize,
+    data: new Float32Array(newCapacity * spec.itemSize),
+  }));
+  const { buffer: newBuffer, views: newViews } = packInterleavedAttributes(
+    specsWithData,
+    newCapacity
+  );
+  newBuffer.setUsage(THREE.DynamicDrawUsage);
+
+  // Carry forward each old attribute's data into the new strided
+  // layout. We deinterlace from the old buffer and reinterlace into
+  // the new — the new offsets are determined by `newSpecs` order.
+  for (const spec of newSpecs) {
+    const old = oldByName.get(spec.name);
+    if (!old) continue;
+    const oldArray = old.buffer.array as Float32Array;
+    const oldStride = old.buffer.stride;
+    const oldCapacity = Math.floor(oldArray.length / oldStride);
+    const carry = Math.min(oldCapacity, newCapacity);
+    const newView = newViews[spec.name];
+    const newOffset = newView.offset;
+    const newStride = newBuffer.stride;
+    const newArray = newBuffer.array as Float32Array;
+    for (let i = 0; i < carry; i++) {
+      const oldStart = i * oldStride + old.offset;
+      const newStart = i * newStride + newOffset;
+      for (let k = 0; k < spec.itemSize; k++) {
+        newArray[newStart + k] = oldArray[oldStart + k];
+      }
+    }
+    geometry.setAttribute(spec.name, newView);
+  }
+  // Attributes new to the spec-set (e.g. aStartScalar on a colormap
+  // toggle) still need to be bound — the loop above only handles
+  // names that already existed. Bind any that didn't carry forward.
+  for (const spec of newSpecs) {
+    if (!oldByName.has(spec.name)) {
+      geometry.setAttribute(spec.name, newViews[spec.name]);
+    }
+  }
+  // If the old buffer had attributes the new spec-set drops, remove
+  // them so the geometry doesn't dangle stale views.
+  for (const name of Object.keys(geometry.attributes)) {
+    if (name === 'aQuadCorner') continue;
+    if (!newSpecs.find((s) => s.name === name)) {
+      geometry.deleteAttribute(name);
+    }
+  }
+
+  // CRITICAL: r184 caches `_maxInstanceCount` on the geometry; replacing
+  // the buffer doesn't invalidate it. Mirrors the standalone-geometry
+  // workaround in line-geometry.ts / gsplat-geometry.ts.
+  delete (geometry as unknown as { _maxInstanceCount?: number })._maxInstanceCount;
+
+  return newBuffer;
+}
+
+/**
+ * Write a packed per-attribute source array into the geometry's
+ * interleaved buffer at the right strided offset. Internal helper —
+ * the pool uses this from updateXxxGeometry instead of poking
+ * `attr.set(...)` per-attribute.
+ */
+function writePooledAttribute(
+  geometry: THREE.InstancedBufferGeometry,
+  name: string,
+  src: Float32Array,
+  count: number
+): void {
+  const view = geometry.getAttribute(name) as THREE.InterleavedBufferAttribute;
+  const buffer = view.data as THREE.InstancedInterleavedBuffer;
+  writeInterleavedAttribute(buffer, view.offset, view.itemSize, src.subarray(0, count * view.itemSize) as Float32Array, count);
+}
 
 // D.4: re-export so existing consumers that import these from
 // `rendering/gpu-buffer-pool` keep working.
@@ -463,90 +672,20 @@ export class GPUBufferPool {
     geometry.instanceCount = 0;
     geometry.setDrawRange(0, 6);
 
-    // Per-instance centre: always Float32Array.
-    geometry.setAttribute(
-      'aCenter',
-      new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3), 3)
-    );
-
-    // Per-instance colour, type-specific with normalisation for Uint8/Uint16.
-    const colorNormalized = types.color !== 'Float32Array';
-    if (types.color === 'Uint8Array') {
-      const attr = new THREE.InstancedBufferAttribute(
-        new Uint8Array(capacity * 3),
-        3,
-        colorNormalized
-      );
-      attr.setUsage(THREE.DynamicDrawUsage);
-      geometry.setAttribute('aColor', attr);
-    } else if (types.color === 'Uint16Array') {
-      const attr = new THREE.InstancedBufferAttribute(
-        new Uint16Array(capacity * 3),
-        3,
-        colorNormalized
-      );
-      attr.setUsage(THREE.DynamicDrawUsage);
-      geometry.setAttribute('aColor', attr);
-    } else {
-      geometry.setAttribute(
-        'aColor',
-        new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3), 3)
-      );
-    }
-
-    // Per-instance radius, type-specific.
-    if (types.radius === 'Uint8Array') {
-      const attr = new THREE.InstancedBufferAttribute(new Uint8Array(capacity), 1, true);
-      attr.setUsage(THREE.DynamicDrawUsage);
-      geometry.setAttribute('aRadius', attr);
-    } else {
-      geometry.setAttribute(
-        'aRadius',
-        new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1)
-      );
-    }
-
-    // Per-instance sharpness, type-specific.
-    if (types.sharpness === 'Uint8Array') {
-      const attr = new THREE.InstancedBufferAttribute(new Uint8Array(capacity), 1, true);
-      attr.setUsage(THREE.DynamicDrawUsage);
-      geometry.setAttribute('aSharpness', attr);
-    } else {
-      geometry.setAttribute(
-        'aSharpness',
-        new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1)
-      );
-    }
-
-    // Per-instance scalar — only created when scalars are present.
-    // Shader reads `aScalar` only under USE_COLORMAP, so omitting the
-    // attribute when types.scalar is undefined avoids carrying empty
-    // buffers for every non-colormap dataset.
-    if (types.scalar === 'Uint8Array') {
-      const attr = new THREE.InstancedBufferAttribute(
-        new Uint8Array(capacity),
-        1,
-        /*normalized*/ true
-      );
-      attr.setUsage(THREE.DynamicDrawUsage);
-      geometry.setAttribute('aScalar', attr);
-    } else if (types.scalar === 'Float16Array' || types.scalar === 'Float32Array') {
-      // Float16Array isn't an accepted THREE.js BufferAttribute storage,
-      // so the shader receives Float32 — we widen at upload time. The
-      // distinction is preserved in `types` for accurate reuse matching.
-      geometry.setAttribute(
-        'aScalar',
-        new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1)
-      );
-    }
-
-    // Mark all Float32-backed per-instance attributes as DynamicDrawUsage
-    // so subsequent in-place updates skip a full re-upload.
-    for (const key in geometry.attributes) {
-      const attr = geometry.attributes[key];
-      if (attr.array instanceof Float32Array && attr instanceof THREE.InstancedBufferAttribute) {
-        attr.setUsage(THREE.DynamicDrawUsage);
-      }
+    // Pre-allocate the per-instance interleaved buffer at `capacity`.
+    // All attributes are Float32 in the interleaved storage; Uint8 /
+    // Uint16 source data is widened (and divided by the appropriate
+    // normalization divisor) at upload time in `updatePointsGeometry`.
+    // The `types` snapshot is still tracked on `PooledBuffer` for
+    // reuse-matching, but no longer drives the buffer layout.
+    const specs = pointAttributeSpecs(types).map((spec) => ({
+      ...spec,
+      data: new Float32Array(capacity * spec.itemSize),
+    }));
+    const { buffer, views } = packInterleavedAttributes(specs, capacity);
+    buffer.setUsage(THREE.DynamicDrawUsage);
+    for (const spec of specs) {
+      geometry.setAttribute(spec.name, views[spec.name]);
     }
 
     return geometry;
@@ -570,98 +709,13 @@ export class GPUBufferPool {
     // attribute swap.
     invalidateCachedByteSize(geometry);
 
-    // Per-instance centre — always Float32Array.
-    const oldPos = geometry.getAttribute('aCenter') as THREE.InstancedBufferAttribute;
-    const newPos = new THREE.InstancedBufferAttribute(new Float32Array(newCapacity * 3), 3);
-    (newPos.array as Float32Array).set(oldPos.array as Float32Array);
-    newPos.setUsage(THREE.DynamicDrawUsage);
-    geometry.setAttribute('aCenter', newPos);
-
-    // Per-instance colour — type-preserving growth.
-    const oldCol = geometry.getAttribute('aColor') as THREE.InstancedBufferAttribute;
-    const colorNormalized = types.color !== 'Float32Array';
-    if (types.color === 'Uint8Array') {
-      const newCol = new THREE.InstancedBufferAttribute(
-        new Uint8Array(newCapacity * 3),
-        3,
-        colorNormalized
-      );
-      (newCol.array as Uint8Array).set(oldCol.array as Uint8Array);
-      newCol.setUsage(THREE.DynamicDrawUsage);
-      geometry.setAttribute('aColor', newCol);
-    } else if (types.color === 'Uint16Array') {
-      const newCol = new THREE.InstancedBufferAttribute(
-        new Uint16Array(newCapacity * 3),
-        3,
-        colorNormalized
-      );
-      (newCol.array as Uint16Array).set(oldCol.array as Uint16Array);
-      newCol.setUsage(THREE.DynamicDrawUsage);
-      geometry.setAttribute('aColor', newCol);
-    } else {
-      const newCol = new THREE.InstancedBufferAttribute(new Float32Array(newCapacity * 3), 3);
-      (newCol.array as Float32Array).set(oldCol.array as Float32Array);
-      newCol.setUsage(THREE.DynamicDrawUsage);
-      geometry.setAttribute('aColor', newCol);
-    }
-
-    // Per-instance radius — type-preserving growth.
-    const oldRad = geometry.getAttribute('aRadius') as THREE.InstancedBufferAttribute;
-    if (types.radius === 'Uint8Array') {
-      const newRad = new THREE.InstancedBufferAttribute(new Uint8Array(newCapacity), 1, true);
-      (newRad.array as Uint8Array).set(oldRad.array as Uint8Array);
-      newRad.setUsage(THREE.DynamicDrawUsage);
-      geometry.setAttribute('aRadius', newRad);
-    } else {
-      const newRad = new THREE.InstancedBufferAttribute(new Float32Array(newCapacity), 1);
-      (newRad.array as Float32Array).set(oldRad.array as Float32Array);
-      newRad.setUsage(THREE.DynamicDrawUsage);
-      geometry.setAttribute('aRadius', newRad);
-    }
-
-    // Per-instance sharpness — type-preserving growth.
-    const oldSharp = geometry.getAttribute('aSharpness') as THREE.InstancedBufferAttribute;
-    if (types.sharpness === 'Uint8Array') {
-      const newSharp = new THREE.InstancedBufferAttribute(new Uint8Array(newCapacity), 1, true);
-      (newSharp.array as Uint8Array).set(oldSharp.array as Uint8Array);
-      newSharp.setUsage(THREE.DynamicDrawUsage);
-      geometry.setAttribute('aSharpness', newSharp);
-    } else {
-      const newSharp = new THREE.InstancedBufferAttribute(new Float32Array(newCapacity), 1);
-      (newSharp.array as Float32Array).set(oldSharp.array as Float32Array);
-      newSharp.setUsage(THREE.DynamicDrawUsage);
-      geometry.setAttribute('aSharpness', newSharp);
-    }
-
-    // Per-instance scalar — type-preserving growth, only when present.
-    if (types.scalar) {
-      const oldScalar = geometry.getAttribute('aScalar') as THREE.InstancedBufferAttribute | undefined;
-      if (types.scalar === 'Uint8Array') {
-        const newScalar = new THREE.InstancedBufferAttribute(
-          new Uint8Array(newCapacity),
-          1,
-          /*normalized*/ true
-        );
-        if (oldScalar) (newScalar.array as Uint8Array).set(oldScalar.array as Uint8Array);
-        newScalar.setUsage(THREE.DynamicDrawUsage);
-        geometry.setAttribute('aScalar', newScalar);
-      } else {
-        // Float16Array and Float32Array both stage into a Float32 GPU
-        // attribute — the type tag preserves dtype for reuse matching.
-        const newScalar = new THREE.InstancedBufferAttribute(new Float32Array(newCapacity), 1);
-        if (oldScalar) (newScalar.array as Float32Array).set(oldScalar.array as Float32Array);
-        newScalar.setUsage(THREE.DynamicDrawUsage);
-        geometry.setAttribute('aScalar', newScalar);
-      }
-    }
-
-    // CRITICAL: Force THREE.js r184 to recalculate _maxInstanceCount
-    // after replacing instanced attributes. If a pooled points geometry
-    // was previously observed with fewer/zero instances, the renderer can
-    // keep drawing min(instanceCount, staleMax). Deleting the private cache
-    // mirrors the established lines/gsplats workaround until Three exposes
-    // a public invalidation hook.
-    delete (geometry as unknown as { _maxInstanceCount?: number })._maxInstanceCount;
+    // Reallocate the interleaved buffer at the new capacity. Spec-set
+    // (with/without `aScalar`) follows `types.scalar`.
+    rebuildInterleavedBuffer(
+      geometry as THREE.InstancedBufferGeometry,
+      newCapacity,
+      pointAttributeSpecs(types)
+    );
   }
 
   /**
@@ -686,131 +740,98 @@ export class GPUBufferPool {
     data: LoadedPointsData,
     count: number
   ): void {
-    // Update positions (always Float32Array)
-    const posAttr = geometry.getAttribute('aCenter') as THREE.InstancedBufferAttribute;
-    (posAttr.array as Float32Array).set(data.positions.subarray(0, count * 3) as Float32Array);
-    posAttr.needsUpdate = true;
+    const instanced = geometry as THREE.InstancedBufferGeometry;
 
-    // Update colors (type-matched: Uint8Array, Uint16Array, or Float32Array).
-    //
-    // fill with white defaults when `data.colors` is absent. Without
-    // this, the buffer's initial zeros render as black points (the shader
-    // discards near-zero adjusted color, so positions-only Points become
-    // invisible). When the type is Float32 (the default when `data.colors`
-    // is undefined — see `detectAttributeTypes`), fill 1.0; for typed
-    // integer buffers we still write 0xFF to be defensive against type
-    // changes during reuse.
-    const colAttr = geometry.getAttribute('aColor') as THREE.InstancedBufferAttribute;
+    // Positions: typically Float32 but `PositionArray` permits
+    // Float16. Widen if needed; no normalization divisor (positions
+    // are world-space, not normalized).
+    const positionsF32 =
+      data.positions instanceof Float32Array
+        ? data.positions
+        : widenToFloat32(data.positions as ArrayLike<number>);
+    writePooledAttribute(instanced, 'aCenter', positionsF32, count);
+
+    // Colors: widen + normalize per the source dtype + the historical
+    // "normalized: true" semantics for Uint8 / Uint16 source. Missing
+    // colors → write a `1.0` fill so points render white instead of
+    // black (which would be discarded by the shader's near-zero check).
+    const colorView = instanced.getAttribute('aColor') as THREE.InterleavedBufferAttribute;
+    const colorBuffer = colorView.data as THREE.InstancedInterleavedBuffer;
     if (data.colors) {
-      // TypedArray.set() works correctly when source and destination have same type
-      // The geometry was created with matching type, so this is safe
-      if (data.colors instanceof Uint8Array) {
-        (colAttr.array as Uint8Array).set(data.colors.subarray(0, count * 3) as Uint8Array);
-      } else if (data.colors instanceof Uint16Array) {
-        (colAttr.array as Uint16Array).set(data.colors.subarray(0, count * 3) as Uint16Array);
-      } else {
-        (colAttr.array as Float32Array).set(data.colors.subarray(0, count * 3) as Float32Array);
-      }
+      const widened = widenToFloat32(
+        data.colors.subarray(0, count * 3) as ArrayLike<number>,
+        pointsNormalizationDivisor(data.colors, /*normalized=*/ true)
+      );
+      writeInterleavedAttribute(colorBuffer, colorView.offset, 3, widened, count);
     } else {
-      const colArr = colAttr.array;
-      const fill =
-        colArr instanceof Uint8Array ? 0xff : colArr instanceof Uint16Array ? 0xffff : 1.0;
-      for (let i = 0; i < count * 3; i++) {
-        colArr[i] = fill;
-      }
+      const fill = new Float32Array(count * 3);
+      fill.fill(1.0);
+      writeInterleavedAttribute(colorBuffer, colorView.offset, 3, fill, count);
     }
-    colAttr.needsUpdate = true;
 
-    // Update radii (type-matched: Uint8Array or Float32Array).
-    //
-    // fill default 0.5 when `data.radii` is absent (matches
-    // NodeFactory.createPointsGeometry). When the type is Uint8
-    // (normalized via radiusScale = max_radius), 0.5 maps to byte 128;
-    // when Float32, write 0.5 directly.
-    const radAttr = geometry.getAttribute('aRadius') as THREE.InstancedBufferAttribute;
+    // Radii: widen + normalize. Missing → 0.5 default (matches
+    // NodeFactory.createPointsGeometry).
+    const radView = instanced.getAttribute('aRadius') as THREE.InterleavedBufferAttribute;
+    const radBuffer = radView.data as THREE.InstancedInterleavedBuffer;
     if (data.radii) {
-      if (data.radii instanceof Uint8Array) {
-        (radAttr.array as Uint8Array).set(data.radii.subarray(0, count) as Uint8Array);
-      } else {
-        (radAttr.array as Float32Array).set(data.radii.subarray(0, count) as Float32Array);
-      }
+      const widened = widenToFloat32(
+        data.radii.subarray(0, count) as ArrayLike<number>,
+        pointsNormalizationDivisor(data.radii, /*normalized=*/ true)
+      );
+      writeInterleavedAttribute(radBuffer, radView.offset, 1, widened, count);
     } else {
-      const radArr = radAttr.array;
-      const fill = radArr instanceof Uint8Array ? 128 : 0.5;
-      for (let i = 0; i < count; i++) {
-        radArr[i] = fill;
-      }
+      const fill = new Float32Array(count);
+      fill.fill(0.5);
+      writeInterleavedAttribute(radBuffer, radView.offset, 1, fill, count);
     }
-    radAttr.needsUpdate = true;
 
-    // Update sharpness (type-matched: Uint8Array or Float32Array).
-    //
-    // fill default 2.0 when `data.sharpness` is absent. Float32 path
-    // writes 2.0 directly; Uint8 path uses 64 (≈2.0/8 * 255 — assumes
-    // typical max_sharpness ~31 means scaled value falls in usable range).
-    const sharpAttr = geometry.getAttribute('aSharpness') as THREE.InstancedBufferAttribute;
+    // Sharpness: widen + normalize. Missing → 2.0 default.
+    const sharpView = instanced.getAttribute('aSharpness') as THREE.InterleavedBufferAttribute;
+    const sharpBuffer = sharpView.data as THREE.InstancedInterleavedBuffer;
     if (data.sharpness) {
-      if (data.sharpness instanceof Uint8Array) {
-        (sharpAttr.array as Uint8Array).set(data.sharpness.subarray(0, count) as Uint8Array);
-      } else {
-        (sharpAttr.array as Float32Array).set(data.sharpness.subarray(0, count) as Float32Array);
-      }
+      const widened = widenToFloat32(
+        data.sharpness.subarray(0, count) as ArrayLike<number>,
+        pointsNormalizationDivisor(data.sharpness, /*normalized=*/ true)
+      );
+      writeInterleavedAttribute(sharpBuffer, sharpView.offset, 1, widened, count);
     } else {
-      const sharpArr = sharpAttr.array;
-      const fill = sharpArr instanceof Uint8Array ? 64 : 2.0;
-      for (let i = 0; i < count; i++) {
-        sharpArr[i] = fill;
-      }
+      const fill = new Float32Array(count);
+      fill.fill(2.0);
+      writeInterleavedAttribute(sharpBuffer, sharpView.offset, 1, fill, count);
     }
-    sharpAttr.needsUpdate = true;
 
-    // scalar attribute. The geometry only carries `scalar` when
-    // detectAttributeTypes saw scalars at acquire time. When the data
-    // dropped scalars on a later commit (rare — types would mismatch
-    // and the pool would re-allocate), nothing to do here.
-    const scalarAttr = geometry.getAttribute('aScalar') as THREE.InstancedBufferAttribute | undefined;
-    if (scalarAttr) {
+    // Optional scalar — only present when `pointAttributeSpecs` was
+    // built with `types.scalar` set. Widen Uint8 / Float16 sources.
+    const scalarView = instanced.getAttribute('aScalar') as THREE.InterleavedBufferAttribute | undefined;
+    if (scalarView) {
+      const scalarBuffer = scalarView.data as THREE.InstancedInterleavedBuffer;
       if (data.scalars) {
-        if (data.scalars instanceof Uint8Array) {
-          (scalarAttr.array as Uint8Array).set(data.scalars.subarray(0, count) as Uint8Array);
-        } else if (
-          typeof globalThis.Float16Array !== 'undefined' &&
-          data.scalars instanceof globalThis.Float16Array
-        ) {
-          // widen Float16 → Float32 elementwise since TypedArray.set
-          // doesn't accept Float16Array as a source for Float32 attribute
-          // storage in current JS engines.
-          const src = data.scalars as Float16Array;
-          const dst = scalarAttr.array as Float32Array;
-          const n = Math.min(count, src.length);
-          for (let i = 0; i < n; i++) dst[i] = src[i];
-        } else {
-          (scalarAttr.array as Float32Array).set(data.scalars.subarray(0, count) as Float32Array);
-        }
+        const widened = widenToFloat32(
+          data.scalars.subarray(0, count) as ArrayLike<number>,
+          pointsNormalizationDivisor(data.scalars, /*normalized=*/ true)
+        );
+        writeInterleavedAttribute(scalarBuffer, scalarView.offset, 1, widened, count);
       } else {
         // No source scalars but the buffer exists — fill zero so a
         // colormap LUT lookup at scalar=0 returns the LUT's first
         // entry (equivalent to disabling colormap visually).
-        const arr = scalarAttr.array;
-        for (let i = 0; i < count; i++) arr[i] = 0;
+        const fill = new Float32Array(count);
+        writeInterleavedAttribute(scalarBuffer, scalarView.offset, 1, fill, count);
       }
-      scalarAttr.needsUpdate = true;
     }
 
     // Points render as instanced unit quads: keep the indexed draw range
     // on the 2-triangle base quad and put the visible point count in
-    // instanceCount. `computeBoundingBox()` would inspect only the base
-    // quad (there is no `position` attribute), so source bounds from the
-    // loader metadata instead.
-    const instanced = this.preparePointsGeometryForDraw(geometry, count);
+    // instanceCount.
+    this.preparePointsGeometryForDraw(geometry, count);
     if (data.metadata.bounds) {
       instanced.boundingBox = data.metadata.bounds.clone();
     } else {
       const box = new THREE.Box3();
       const v = new THREE.Vector3();
-      const centers = posAttr.array as Float32Array;
+      const positions = data.positions;
       for (let i = 0; i < count; i++) {
-        v.set(centers[i * 3], centers[i * 3 + 1], centers[i * 3 + 2]);
+        v.set(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]);
         box.expandByPoint(v);
       }
       instanced.boundingBox = box;
@@ -908,28 +929,20 @@ export class GPUBufferPool {
     geometry.setAttribute('aQuadCorner', new THREE.Float32BufferAttribute(quadPositions, 2));
     geometry.setIndex([0, 1, 2, 2, 1, 3]);
 
-    // Per-segment instanced attributes (ProcessedLinesData format)
-    const attrs = [
-      ['aStartPos', 3],
-      ['aEndPos', 3],
-      ['aStartColor', 3],
-      ['aEndColor', 3],
-      ['aStartWidth', 1],
-      ['aEndWidth', 1],
-      ['aStartSharpness', 1],
-      ['aEndSharpness', 1],
-      ['aSegmentLength', 1],
-      ['aStartClipped', 1],
-      ['aEndClipped', 1],
-    ] as const;
-
-    for (const [name, size] of attrs) {
-      const attr = new THREE.InstancedBufferAttribute(
-        new Float32Array(segmentCapacity * size),
-        size
-      );
-      attr.setUsage(THREE.DynamicDrawUsage);
-      geometry.setAttribute(name, attr);
+    // Pre-allocate the per-segment interleaved buffer at `segmentCapacity`.
+    // Scalar attributes (aStartScalar / aEndScalar) are NOT included in
+    // the initial stride — they're added on first scalar commit via a
+    // spec-set rebuild (see `updateLinesGeometry`). All attributes are
+    // Float32 in the interleaved storage (clipped flags widened at
+    // upload time in the geometry layer).
+    const baseSpecs = LINES_BASE_ATTRIBUTE_SPECS.map((spec) => ({
+      ...spec,
+      data: new Float32Array(segmentCapacity * spec.itemSize),
+    }));
+    const { buffer, views } = packInterleavedAttributes(baseSpecs, segmentCapacity);
+    buffer.setUsage(THREE.DynamicDrawUsage);
+    for (const spec of baseSpecs) {
+      geometry.setAttribute(spec.name, views[spec.name]);
     }
 
     return geometry;
@@ -949,43 +962,14 @@ export class GPUBufferPool {
     // D.3: invalidate cached byte estimate before re-allocating any attribute.
     invalidateCachedByteSize(geometry);
 
-    const attrNames = [
-      'aStartPos',
-      'aEndPos',
-      'aStartColor',
-      'aEndColor',
-      'aStartWidth',
-      'aEndWidth',
-      'aStartSharpness',
-      'aEndSharpness',
-      'aSegmentLength',
-      'aStartClipped',
-      'aEndClipped',
-    ];
-
-    for (const name of attrNames) {
-      const oldAttr = geometry.getAttribute(name) as THREE.InstancedBufferAttribute;
-      const size = oldAttr.itemSize;
-      const newAttr = new THREE.InstancedBufferAttribute(
-        new Float32Array(newCapacity * size),
-        size
-      );
-      (newAttr.array as Float32Array).set(oldAttr.array as Float32Array);
-      newAttr.setUsage(THREE.DynamicDrawUsage);
-      geometry.setAttribute(name, newAttr);
-    }
-
-    // Scalar attributes are optional (allocated lazily on first scalar
-    // commit). When they exist, grow them to match the rest of the
-    // per-segment attributes.
-    for (const name of ['aStartScalar', 'aEndScalar']) {
-      const oldAttr = geometry.getAttribute(name) as THREE.InstancedBufferAttribute | undefined;
-      if (!oldAttr) continue;
-      const newAttr = new THREE.InstancedBufferAttribute(new Float32Array(newCapacity), 1);
-      (newAttr.array as Float32Array).set(oldAttr.array as Float32Array);
-      newAttr.setUsage(THREE.DynamicDrawUsage);
-      geometry.setAttribute(name, newAttr);
-    }
+    // Reallocate the interleaved buffer at the new capacity. The
+    // spec-set is the same one currently bound on the geometry —
+    // carry scalar attributes forward iff they were already present.
+    const hasScalars = geometry.getAttribute('aStartScalar') !== undefined;
+    const specs = hasScalars
+      ? [...LINES_BASE_ATTRIBUTE_SPECS, ...LINES_SCALAR_ATTRIBUTE_SPECS]
+      : LINES_BASE_ATTRIBUTE_SPECS;
+    rebuildInterleavedBuffer(geometry, newCapacity, specs);
   }
 
   /**
@@ -996,74 +980,54 @@ export class GPUBufferPool {
     data: ProcessedLinesData,
     count: number
   ): void {
-    const attrs = [
-      ['aStartPos', data.startPositions, 3],
-      ['aEndPos', data.endPositions, 3],
-      ['aStartColor', data.startColors, 3],
-      ['aEndColor', data.endColors, 3],
-      ['aStartWidth', data.startWidths, 1],
-      ['aEndWidth', data.endWidths, 1],
-      ['aStartSharpness', data.startSharpness, 1],
-      ['aEndSharpness', data.endSharpness, 1],
-      ['aSegmentLength', data.segmentLengths, 1],
-      ['aStartClipped', data.startClipped, 1],
-      ['aEndClipped', data.endClipped, 1],
-    ] as const;
-
-    for (const [name, sourceData, size] of attrs) {
-      const attr = geometry.getAttribute(name) as THREE.InstancedBufferAttribute;
-      (attr.array as Float32Array).set(sourceData.subarray(0, count * size));
-      attr.needsUpdate = true;
+    // Lazy scalar-spec promotion: if data carries scalars but the
+    // interleaved buffer wasn't allocated with the scalar slots,
+    // rebuild with the larger stride. Carries existing data across.
+    const hasScalarsInData = !!(data.startScalars && data.endScalars);
+    const hasScalarsInBuffer = geometry.getAttribute('aStartScalar') !== undefined;
+    if (hasScalarsInData && !hasScalarsInBuffer) {
+      const startView = geometry.getAttribute('aStartPos') as THREE.InterleavedBufferAttribute;
+      const capacity = Math.floor(
+        (startView.data.array as Float32Array).length / startView.data.stride
+      );
+      rebuildInterleavedBuffer(geometry, capacity, [
+        ...LINES_BASE_ATTRIBUTE_SPECS,
+        ...LINES_SCALAR_ATTRIBUTE_SPECS,
+      ]);
     }
 
-    // Lazily allocate aStartScalar/aEndScalar when the source has
-    // scalars. Grow attributes on first commit and update in place
-    // afterward (capacity tracked from aStartPos, which is always there).
-    if (data.startScalars && data.endScalars) {
-      const startPosAttr = geometry.getAttribute('aStartPos') as THREE.InstancedBufferAttribute;
-      const capacity = (startPosAttr.array as Float32Array).length / 3;
-      let startScalarAttr = geometry.getAttribute('aStartScalar') as
-        | THREE.InstancedBufferAttribute
-        | undefined;
-      let endScalarAttr = geometry.getAttribute('aEndScalar') as
-        | THREE.InstancedBufferAttribute
-        | undefined;
-      if (!startScalarAttr) {
-        startScalarAttr = new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1);
-        startScalarAttr.setUsage(THREE.DynamicDrawUsage);
-        geometry.setAttribute('aStartScalar', startScalarAttr);
-      }
-      if (!endScalarAttr) {
-        endScalarAttr = new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1);
-        endScalarAttr.setUsage(THREE.DynamicDrawUsage);
-        geometry.setAttribute('aEndScalar', endScalarAttr);
-      }
-      // Grow lazily if the pre-existing attribute is too small (rare —
-      // happens when a scalar dataset is committed after a non-scalar
-      // commit grew aStartPos beyond the scalar buffer).
-      if ((startScalarAttr.array as Float32Array).length < capacity) {
-        const grown = new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1);
-        grown.setUsage(THREE.DynamicDrawUsage);
-        geometry.setAttribute('aStartScalar', grown);
-        startScalarAttr = grown;
-      }
-      if ((endScalarAttr.array as Float32Array).length < capacity) {
-        const grown = new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1);
-        grown.setUsage(THREE.DynamicDrawUsage);
-        geometry.setAttribute('aEndScalar', grown);
-        endScalarAttr = grown;
-      }
-      (startScalarAttr.array as Float32Array).set(data.startScalars.subarray(0, count));
-      startScalarAttr.needsUpdate = true;
-      (endScalarAttr.array as Float32Array).set(data.endScalars.subarray(0, count));
-      endScalarAttr.needsUpdate = true;
+    // Clipped flags arrive as Uint8 (per ProcessedLinesData); widen
+    // to Float32 for the interleaved buffer.
+    const startClippedF32 = widenToFloat32(data.startClipped);
+    const endClippedF32 = widenToFloat32(data.endClipped);
+
+    // Write each base attribute into its strided slot.
+    const baseUpdates: Array<[string, Float32Array]> = [
+      ['aStartPos', data.startPositions],
+      ['aEndPos', data.endPositions],
+      ['aStartColor', data.startColors],
+      ['aEndColor', data.endColors],
+      ['aStartWidth', data.startWidths],
+      ['aEndWidth', data.endWidths],
+      ['aStartSharpness', data.startSharpness],
+      ['aEndSharpness', data.endSharpness],
+      ['aSegmentLength', data.segmentLengths],
+      ['aStartClipped', startClippedF32],
+      ['aEndClipped', endClippedF32],
+    ];
+    for (const [name, source] of baseUpdates) {
+      writePooledAttribute(geometry, name, source, count);
+    }
+
+    if (hasScalarsInData) {
+      writePooledAttribute(geometry, 'aStartScalar', data.startScalars as Float32Array, count);
+      writePooledAttribute(geometry, 'aEndScalar', data.endScalars as Float32Array, count);
     }
 
     // Update instance count
     geometry.instanceCount = count;
 
     // CRITICAL: Force THREE.js to recalculate _maxInstanceCount.
-
     delete (geometry as unknown as { _maxInstanceCount?: number })._maxInstanceCount;
 
     // CRITICAL: Recompute bounding box after position updates
@@ -1189,20 +1153,15 @@ export class GPUBufferPool {
     geometry.setAttribute('aQuadCorner', new THREE.Float32BufferAttribute(quadPositions, 2));
     geometry.setIndex([0, 1, 2, 2, 1, 3]);
 
-    // Per-splat instance attributes
-    const attrs = [
-      ['aCenter', 3],
-      ['aCholesky01', 2],
-      ['aCholesky23', 2],
-      ['aCholesky45', 2],
-      ['aAmplitude', 1],
-      ['aColor', 3],
-    ] as const;
-
-    for (const [name, size] of attrs) {
-      const attr = new THREE.InstancedBufferAttribute(new Float32Array(splatCapacity * size), size);
-      attr.setUsage(THREE.DynamicDrawUsage);
-      geometry.setAttribute(name, attr);
+    // Pre-allocate the per-splat interleaved buffer at `splatCapacity`.
+    const specsWithData: InterleavedAttributeSpec[] = GSPLATS_ATTRIBUTE_SPECS.map((spec) => ({
+      ...spec,
+      data: new Float32Array(splatCapacity * spec.itemSize),
+    }));
+    const { buffer, views } = packInterleavedAttributes(specsWithData, splatCapacity);
+    buffer.setUsage(THREE.DynamicDrawUsage);
+    for (const spec of specsWithData) {
+      geometry.setAttribute(spec.name, views[spec.name]);
     }
 
     return geometry;
@@ -1217,26 +1176,7 @@ export class GPUBufferPool {
     // D.3: invalidate cached byte estimate before re-allocating any attribute.
     invalidateCachedByteSize(geometry);
 
-    const attrNames = [
-      'aCenter',
-      'aCholesky01',
-      'aCholesky23',
-      'aCholesky45',
-      'aAmplitude',
-      'aColor',
-    ];
-
-    for (const name of attrNames) {
-      const oldAttr = geometry.getAttribute(name) as THREE.InstancedBufferAttribute;
-      const size = oldAttr.itemSize;
-      const newAttr = new THREE.InstancedBufferAttribute(
-        new Float32Array(newCapacity * size),
-        size
-      );
-      (newAttr.array as Float32Array).set(oldAttr.array as Float32Array);
-      newAttr.setUsage(THREE.DynamicDrawUsage);
-      geometry.setAttribute(name, newAttr);
-    }
+    rebuildInterleavedBuffer(geometry, newCapacity, GSPLATS_ATTRIBUTE_SPECS);
   }
 
   /**
@@ -1251,19 +1191,16 @@ export class GPUBufferPool {
     count: number,
     truncationRadius: number = 3.0
   ): void {
-    const attrs = [
-      ['aCenter', data.centers3D, 3],
-      ['aCholesky01', data.cholesky01, 2],
-      ['aCholesky23', data.cholesky23, 2],
-      ['aCholesky45', data.cholesky45, 2],
-      ['aAmplitude', data.amplitudes, 1],
-      ['aColor', data.colors, 3],
-    ] as const;
-
-    for (const [name, sourceData, size] of attrs) {
-      const attr = geometry.getAttribute(name) as THREE.InstancedBufferAttribute;
-      (attr.array as Float32Array).set(sourceData.subarray(0, count * size));
-      attr.needsUpdate = true;
+    const updates: Array<[string, Float32Array]> = [
+      ['aCenter', data.centers3D],
+      ['aCholesky01', data.cholesky01],
+      ['aCholesky23', data.cholesky23],
+      ['aCholesky45', data.cholesky45],
+      ['aAmplitude', data.amplitudes],
+      ['aColor', data.colors],
+    ];
+    for (const [name, source] of updates) {
+      writePooledAttribute(geometry, name, source, count);
     }
 
     geometry.instanceCount = count;
@@ -1271,7 +1208,6 @@ export class GPUBufferPool {
     // CRITICAL: Force THREE.js to recalculate _maxInstanceCount.
     // Without this, geometries initially created with 0 instances cache _maxInstanceCount=0,
     // causing the renderer to draw min(instanceCount, 0) = 0 instances even after updating.
-
     delete (geometry as unknown as { _maxInstanceCount?: number })._maxInstanceCount;
 
     // CRITICAL: Recompute bounding box from updated center positions

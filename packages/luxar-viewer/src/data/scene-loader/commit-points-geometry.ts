@@ -33,6 +33,10 @@
 
 import * as THREE from 'three';
 import type { LoadedPointsData } from '../data-loader-types';
+import {
+  widenToFloat32,
+  writeInterleavedAttribute,
+} from '../../rendering/interleaved-attributes';
 import { isPointsUserData } from '../../types/points';
 import { log, Modules } from '../../utils/log';
 import type { UpdateSession } from '../../profiling/update-profiler';
@@ -120,37 +124,64 @@ export function commitPointsGeometry(
     // NodeFactory. After the points-instanced-mesh migration the
     // attribute names are a* and the storage is InstancedBufferAttribute.
     const oldGeometry = points.geometry;
+    // Post-interleaving, the per-instance attributes on a points
+    // geometry are `InterleavedBufferAttribute` views sharing one
+    // `InstancedInterleavedBuffer`. `getAttribute(...).count` returns
+    // the per-instance count from the underlying buffer's
+    // `stride * arrayLength`, which is what we want either way.
     const oldCenterAttr = oldGeometry?.getAttribute('aCenter') as
-      | THREE.InstancedBufferAttribute
+      | THREE.InterleavedBufferAttribute
       | null;
     const oldCount = oldCenterAttr ? oldCenterAttr.count : 0;
 
     if (oldCount === data.pointCount && data.pointCount > 0) {
-      (oldCenterAttr!.array as Float32Array).set(data.positions as Float32Array);
-      oldCenterAttr!.needsUpdate = true;
+      // Recover the shared interleaved buffer from any view; every
+      // per-instance attribute on a pooled points geometry points at
+      // the same buffer.
+      const buffer = oldCenterAttr!.data as THREE.InstancedInterleavedBuffer;
+      const positionsF32 =
+        data.positions instanceof Float32Array
+          ? data.positions
+          : widenToFloat32(data.positions as ArrayLike<number>);
+      writeInterleavedAttribute(
+        buffer,
+        oldCenterAttr!.offset,
+        3,
+        positionsF32,
+        data.pointCount
+      );
 
-      const colorAttr = oldGeometry.getAttribute('aColor') as THREE.InstancedBufferAttribute;
+      const colorAttr = oldGeometry.getAttribute('aColor') as
+        | THREE.InterleavedBufferAttribute
+        | undefined;
       if (colorAttr && data.colors) {
-        (colorAttr.array as ArrayLike<number> & { set: (a: ArrayLike<number>) => void }).set(
-          data.colors
-        );
-        colorAttr.needsUpdate = true;
+        const widened =
+          data.colors instanceof Float32Array
+            ? data.colors
+            : widenToFloat32(data.colors as ArrayLike<number>, 255);
+        writeInterleavedAttribute(buffer, colorAttr.offset, 3, widened, data.pointCount);
       }
 
-      const radiiAttr = oldGeometry.getAttribute('aRadius') as THREE.InstancedBufferAttribute;
+      const radiiAttr = oldGeometry.getAttribute('aRadius') as
+        | THREE.InterleavedBufferAttribute
+        | undefined;
       if (radiiAttr && data.radii) {
-        (radiiAttr.array as ArrayLike<number> & { set: (a: ArrayLike<number>) => void }).set(
-          data.radii
-        );
-        radiiAttr.needsUpdate = true;
+        const widened =
+          data.radii instanceof Float32Array
+            ? data.radii
+            : widenToFloat32(data.radii as ArrayLike<number>, 255);
+        writeInterleavedAttribute(buffer, radiiAttr.offset, 1, widened, data.pointCount);
       }
 
-      const sharpAttr = oldGeometry.getAttribute('aSharpness') as THREE.InstancedBufferAttribute;
+      const sharpAttr = oldGeometry.getAttribute('aSharpness') as
+        | THREE.InterleavedBufferAttribute
+        | undefined;
       if (sharpAttr && data.sharpness) {
-        (sharpAttr.array as ArrayLike<number> & { set: (a: ArrayLike<number>) => void }).set(
-          data.sharpness
-        );
-        sharpAttr.needsUpdate = true;
+        const widened =
+          data.sharpness instanceof Float32Array
+            ? data.sharpness
+            : widenToFloat32(data.sharpness as ArrayLike<number>, 255);
+        writeInterleavedAttribute(buffer, sharpAttr.offset, 1, widened, data.pointCount);
       }
 
       // After the points-instanced-mesh migration the 'position'
