@@ -444,10 +444,62 @@ export class SceneManager extends THREE.EventDispatcher<{
     // Dynamic import so the WebGPU build doesn't pull into the
     // default bundle for users on the legacy WebGL2 path.
     const { WebGPURenderer } = await import('three/webgpu');
+
+    // Pre-flight the adapter to discover the actual hardware
+    // limits, then request `maxVertexBuffers` up to what the device
+    // can provide.
+    //
+    // Why this matters: Luxar's line material binds 12 per-instance
+    // attributes (14 with colormap) — aStartPos/aEndPos,
+    // aStartColor/aEndColor, aStartWidth/aEndWidth,
+    // aStartSharpness/aEndSharpness, aStartClipped/aEndClipped,
+    // aSegmentLength, aQuadCorner, optionally aStartScalar/aEndScalar.
+    // Under WebGPU, each attribute is its own vertex buffer.
+    // The spec-mandated minimum `maxVertexBuffers` is 8; without
+    // raising it explicitly, pipeline creation fails every frame
+    // for line materials with `Vertex buffer count (12) exceeds the
+    // maximum number of vertex buffers (8)`, lines silently drop
+    // out of the render, and the renderer churns recreating
+    // pipelines on every frame (perf hit + apparent dimming).
+    //
+    // Modern desktop GPUs advertise `maxVertexBuffers >= 16`
+    // (Apple Silicon Metal: 30, NVIDIA / AMD desktop Vulkan: 16+,
+    // recent Intel: 16). We cap our request at 16 — enough for
+    // every existing Luxar material, with headroom for future
+    // attribute growth. If a constrained adapter advertises less,
+    // we request whatever it offers; downstream pipeline creation
+    // will still fail loud for line materials on hardware below
+    // 14, which is unsupported territory.
+    //
+    // `navigator.gpu?.requestAdapter()` may return null when the
+    // browser has no WebGPU adapter (e.g., Firefox today, headless
+    // chromium without GPU). In that case `WebGPURenderer` falls
+    // back to its internal WebGL2 backend, which has higher buffer
+    // limits — no need to request anything.
+    // `navigator.gpu` is the standard entry point but lacks built-in
+    // TypeScript types in the @types/three version we pin against;
+    // narrow defensively via an `unknown` cast.
+    const gpu = (navigator as unknown as { gpu?: { requestAdapter?: () => Promise<unknown> } }).gpu;
+    const adapter = (await gpu?.requestAdapter?.().catch(() => null)) as
+      | { limits?: { maxVertexBuffers?: number } }
+      | null
+      | undefined;
+    const adapterMax = adapter?.limits?.maxVertexBuffers;
+    const requestedMax = typeof adapterMax === 'number' ? Math.min(adapterMax, 16) : undefined;
+    if (requestedMax !== undefined) {
+      log.info(
+        Modules.RENDERER,
+        `WebGPU adapter advertises maxVertexBuffers=${adapterMax}, requesting ${requestedMax}`
+      );
+    }
+
     const gpuRenderer = new WebGPURenderer({
       canvas: this.canvasElement,
       antialias: config.webgl.context.antialias,
       alpha: config.webgl.context.alpha,
+      ...(requestedMax !== undefined
+        ? { requiredLimits: { maxVertexBuffers: requestedMax } }
+        : {}),
     });
     await gpuRenderer.init();
     this.renderer = gpuRenderer;
