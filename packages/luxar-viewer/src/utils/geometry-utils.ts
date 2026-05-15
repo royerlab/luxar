@@ -28,9 +28,25 @@ export function estimateGeometryBytes(geometry: THREE.BufferGeometry): number {
     return userData.cachedByteSize;
   }
   let total = 0;
+  // Multiple `InterleavedBufferAttribute` views can share one
+  // underlying `InterleavedBuffer` (this is how per-instance
+  // attributes are packed post-WebGPU-migration). Counting
+  // `attr.array.byteLength` for each view would multi-count the
+  // shared backing array; dedupe by visited-buffer identity.
+  const seenInterleavedBuffers = new WeakSet<THREE.InterleavedBuffer>();
   for (const name in geometry.attributes) {
-    const attr = geometry.attributes[name] as THREE.BufferAttribute;
-    const arr = attr.array as ArrayBufferView | undefined;
+    const attr = geometry.attributes[name];
+    const interleaved = (attr as THREE.InterleavedBufferAttribute).data;
+    if (interleaved !== undefined) {
+      if (seenInterleavedBuffers.has(interleaved)) continue;
+      seenInterleavedBuffers.add(interleaved);
+      const arr = interleaved.array as ArrayBufferView | undefined;
+      if (arr && typeof arr.byteLength === 'number') {
+        total += arr.byteLength;
+      }
+      continue;
+    }
+    const arr = (attr as THREE.BufferAttribute).array as ArrayBufferView | undefined;
     if (arr && typeof arr.byteLength === 'number') {
       total += arr.byteLength;
     }

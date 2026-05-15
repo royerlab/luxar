@@ -4,8 +4,16 @@
  * Builds the instanced-quad geometry used by `PointMaterial` and
  * `PointPickingMaterial`. Each point is rendered as an axis-aligned
  * quad with 4 vertices; per-point data (position, radius, sharpness,
- * colour, optional scalar) lives in `InstancedBufferAttribute`s so a
- * single draw call expands one quad per instance.
+ * colour, optional scalar) is packed into a single shared
+ * `InstancedInterleavedBuffer` (with `InterleavedBufferAttribute`
+ * views per attribute), matching the line / gsplat shape.
+ *
+ * Interleaving collapses N per-attribute vertex buffers into one
+ * vertex-buffer slot under WebGPU. With `maxVertexBuffers=8` (Chrome's
+ * compat-mode adapter), this matters for materials with many attrs;
+ * for points it's a smaller win (only 4–5 attrs) but the three
+ * geometry types stay symmetric, and interleaved storage gives
+ * better cache locality on both backends.
  *
  * Mirrors the line-geometry.ts / gsplat-geometry.ts pattern so the
  * three geometry types share one mental model. Migrating away from
@@ -17,15 +25,24 @@
  */
 
 import * as THREE from 'three';
+import {
+  packInterleavedAttributes,
+  widenToFloat32,
+  type InterleavedAttributeSpec,
+} from './interleaved-attributes';
 
 /**
  * Per-instance buffer-attribute payloads for the points mesh.
  *
- * Every field has length `pointCount`. Storage typed-array kinds are
- * deliberately permissive (Float32Array, Uint8Array with `normalized:
- * true`, etc.) so dtype-normalised data can stay packed end-to-end —
- * the per-point material consumes raw normalised values plus uniform
- * `radiusScale` / `sharpnessScale` factors.
+ * Every field has length `pointCount` (or `pointCount × itemSize`).
+ * Source typed-arrays may be `Float32Array`, `Uint8Array`, or
+ * `Uint16Array`; the geometry layer widens to `Float32` at pack
+ * time (honouring the per-attribute `normalized` flag with the
+ * appropriate divisor) so the interleaved storage is uniformly
+ * Float32. The per-point material's `radiusScale` / `sharpnessScale`
+ * uniforms continue to scale the shader-visible values exactly as
+ * before — the widening preserves the [0, 1]-or-raw range that
+ * those uniforms expect.
  */
 export interface InstancedPointsMeshConfig {
   /**
@@ -89,8 +106,78 @@ export function createPointQuadGeometry(): THREE.InstancedBufferGeometry {
 }
 
 /**
+ * Pick the float divisor to preserve the shader-visible range when
+ * widening a typed array. For `normalized` integer sources, WebGPU /
+ * WebGL2 would have divided by the type's max — we replicate that
+ * divisor at pack time so the Float32 interleaved buffer feeds the
+ * shader the same [0, 1] values.
+ */
+function normalizationDivisor(
+  source: THREE.TypedArray,
+  normalized: boolean
+): number | undefined {
+  if (!normalized) return undefined;
+  if (source instanceof Uint8Array) return 255;
+  if (source instanceof Uint16Array) return 65535;
+  // Other types (Float32, signed) don't auto-normalise in WebGPU
+  // even when the `normalized` flag is set — no divisor needed.
+  return undefined;
+}
+
+/**
+ * Build the per-instance attribute specs in canonical declaration
+ * order. Source arrays may not be Float32; widen as needed and apply
+ * the appropriate normalization divisor.
+ */
+function buildPointAttributeSpecs(
+  config: InstancedPointsMeshConfig
+): InterleavedAttributeSpec[] {
+  const specs: InterleavedAttributeSpec[] = [
+    { name: 'aCenter', data: config.centers, itemSize: 3 },
+    {
+      name: 'aRadius',
+      data: widenToFloat32(config.radii, normalizationDivisor(config.radii, config.radiiNormalized)),
+      itemSize: 1,
+    },
+    {
+      name: 'aSharpness',
+      data: widenToFloat32(
+        config.sharpness,
+        normalizationDivisor(config.sharpness, config.sharpnessNormalized)
+      ),
+      itemSize: 1,
+    },
+    {
+      name: 'aColor',
+      data: widenToFloat32(
+        config.colors,
+        normalizationDivisor(config.colors, config.colorsNormalized)
+      ),
+      itemSize: 3,
+    },
+  ];
+  if (config.scalars) {
+    specs.push({
+      name: 'aScalar',
+      data: widenToFloat32(
+        config.scalars,
+        normalizationDivisor(config.scalars, config.scalarsNormalized ?? false)
+      ),
+      itemSize: 1,
+    });
+  }
+  return specs;
+}
+
+/**
  * Attach per-instance attributes to a points geometry built around
  * the corner-quad base.
+ *
+ * Packs all per-instance attributes (`aCenter`, `aRadius`,
+ * `aSharpness`, `aColor`, optional `aScalar`) into one shared
+ * `InstancedInterleavedBuffer`. The shader sees the same attribute
+ * names and types via `attribute(...)`; the interleaving is
+ * transparent.
  *
  * Sets `instanceCount` on the geometry to drive Three's instanced-
  * draw path. The caller must set `mesh.frustumCulled = false` because
@@ -101,31 +188,10 @@ export function setupInstancedPointsMesh(
   geometry: THREE.InstancedBufferGeometry,
   config: InstancedPointsMeshConfig
 ): void {
-  geometry.setAttribute(
-    'aCenter',
-    new THREE.InstancedBufferAttribute(config.centers, 3)
-  );
-  geometry.setAttribute(
-    'aRadius',
-    new THREE.InstancedBufferAttribute(config.radii, 1, config.radiiNormalized)
-  );
-  geometry.setAttribute(
-    'aSharpness',
-    new THREE.InstancedBufferAttribute(config.sharpness, 1, config.sharpnessNormalized)
-  );
-  geometry.setAttribute(
-    'aColor',
-    new THREE.InstancedBufferAttribute(config.colors, 3, config.colorsNormalized)
-  );
-  if (config.scalars) {
-    geometry.setAttribute(
-      'aScalar',
-      new THREE.InstancedBufferAttribute(
-        config.scalars,
-        1,
-        config.scalarsNormalized ?? false
-      )
-    );
+  const specs = buildPointAttributeSpecs(config);
+  const { views } = packInterleavedAttributes(specs, config.pointCount);
+  for (const spec of specs) {
+    geometry.setAttribute(spec.name, views[spec.name]);
   }
   // WebGLRenderer only issues an instanced draw for InstancedBufferGeometry
   // and uses this explicit visible-instance count. Without this, r184 falls
