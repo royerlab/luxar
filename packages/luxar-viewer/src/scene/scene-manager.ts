@@ -548,6 +548,26 @@ export class SceneManager extends THREE.EventDispatcher<{
       // for every Luxar material, with headroom for future growth).
       const requestedMax =
         typeof adapterMax === 'number' ? Math.min(adapterMax, 16) : undefined;
+
+      // Lift the buffer-size limit too. Compat mode caps
+      // `maxBufferSize` at the WebGPU spec minimum 256 MB, but Luxar
+      // scenes can need much more (the Zebrahub demo's interleaved
+      // line buffer is ~295 MB at 2.6 M segments × 11 floats × 4
+      // bytes). The user-reported failure was:
+      //
+      //   Buffer size (295323764) exceeds the max buffer size limit
+      //   (268435456). This adapter supports a higher maxBufferSize
+      //   of 4294967292.
+      //
+      // Apple Silicon Metal exposes ~4 GB, desktop Vulkan typically
+      // similar. We request the adapter's actual ceiling — there's
+      // no downside; WebGPU lazily allocates so the limit just
+      // means "we promise not to fail later if we ask for more
+      // than this." (`maxStorageBufferBindingSize` is the matching
+      // ceiling for storage buffers, lifted in the same way.)
+      const adapterMaxBufferSize = adapter.limits?.maxBufferSize;
+      const adapterMaxStorageBuffer = adapter.limits?.maxStorageBufferBindingSize;
+
       const requiredFeatures: string[] = [];
       // Enumerate the adapter's features so the device gets the
       // full WebGPU surface (mirrors Three's internal path).
@@ -558,9 +578,20 @@ export class SceneManager extends THREE.EventDispatcher<{
       if (requestedMax !== undefined) {
         requiredLimits.maxVertexBuffers = requestedMax;
       }
+      if (typeof adapterMaxBufferSize === 'number') {
+        requiredLimits.maxBufferSize = adapterMaxBufferSize;
+      }
+      if (typeof adapterMaxStorageBuffer === 'number') {
+        requiredLimits.maxStorageBufferBindingSize = adapterMaxStorageBuffer;
+      }
       log.info(
         Modules.RENDERER,
-        `WebGPU adapter advertises maxVertexBuffers=${adapterMax}, requesting ${requestedMax}`
+        `WebGPU adapter advertises maxVertexBuffers=${adapterMax}, ` +
+          `maxBufferSize=${adapterMaxBufferSize}, ` +
+          `maxStorageBufferBindingSize=${adapterMaxStorageBuffer}; ` +
+          `requesting maxVertexBuffers=${requestedMax}, ` +
+          `maxBufferSize=${requiredLimits.maxBufferSize ?? 'default'}, ` +
+          `maxStorageBufferBindingSize=${requiredLimits.maxStorageBufferBindingSize ?? 'default'}`
       );
       try {
         device = await adapter.requestDevice({
