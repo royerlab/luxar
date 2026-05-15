@@ -445,62 +445,117 @@ export class SceneManager extends THREE.EventDispatcher<{
     // default bundle for users on the legacy WebGL2 path.
     const { WebGPURenderer } = await import('three/webgpu');
 
-    // Pre-flight the adapter to discover the actual hardware
-    // limits, then request `maxVertexBuffers` up to what the device
-    // can provide.
+    // ============================================================
+    // Bypass Three.js's `featureLevel: 'compatibility'` default.
     //
-    // Why this matters: Luxar's line material binds 12 per-instance
-    // attributes (14 with colormap) — aStartPos/aEndPos,
-    // aStartColor/aEndColor, aStartWidth/aEndWidth,
-    // aStartSharpness/aEndSharpness, aStartClipped/aEndClipped,
-    // aSegmentLength, aQuadCorner, optionally aStartScalar/aEndScalar.
-    // Under WebGPU, each attribute is its own vertex buffer.
-    // The spec-mandated minimum `maxVertexBuffers` is 8; without
-    // raising it explicitly, pipeline creation fails every frame
-    // for line materials with `Vertex buffer count (12) exceeds the
-    // maximum number of vertex buffers (8)`, lines silently drop
-    // out of the render, and the renderer churns recreating
-    // pipelines on every frame (perf hit + apparent dimming).
+    // r184's WebGPURenderer hard-codes
+    // `featureLevel: 'compatibility'` when it calls
+    // `requestAdapter`. Compat-mode adapters report the WebGPU
+    // spec-minimum limits — most importantly `maxVertexBuffers=8`
+    // — even on hardware that natively supports many more (Apple
+    // Silicon Metal exposes 30 under `featureLevel: 'core'`).
     //
-    // Modern desktop GPUs advertise `maxVertexBuffers >= 16`
-    // (Apple Silicon Metal: 30, NVIDIA / AMD desktop Vulkan: 16+,
-    // recent Intel: 16). We cap our request at 16 — enough for
-    // every existing Luxar material, with headroom for future
-    // attribute growth. If a constrained adapter advertises less,
-    // we request whatever it offers; downstream pipeline creation
-    // will still fail loud for line materials on hardware below
-    // 14, which is unsupported territory.
+    // Luxar's line material binds 12 vertex attributes (14 with
+    // colormap): aStartPos/aEndPos, aStartColor/aEndColor,
+    // aStartWidth/aEndWidth, aStartSharpness/aEndSharpness,
+    // aStartClipped/aEndClipped, aSegmentLength, aQuadCorner,
+    // optionally aStartScalar/aEndScalar. Each attribute is its
+    // own vertex buffer under WebGPU. Under compat mode, the line
+    // pipeline fails to create on every frame with
+    // `Vertex buffer count (12) exceeds the maximum number of
+    // vertex buffers (8)`, lines silently drop out, and the
+    // renderer churns recreating the broken pipeline (perf hit +
+    // apparent dimming).
     //
-    // `navigator.gpu?.requestAdapter()` may return null when the
-    // browser has no WebGPU adapter (e.g., Firefox today, headless
-    // chromium without GPU). In that case `WebGPURenderer` falls
-    // back to its internal WebGL2 backend, which has higher buffer
-    // limits — no need to request anything.
-    // `navigator.gpu` is the standard entry point but lacks built-in
-    // TypeScript types in the @types/three version we pin against;
-    // narrow defensively via an `unknown` cast.
-    const gpu = (navigator as unknown as { gpu?: { requestAdapter?: () => Promise<unknown> } }).gpu;
-    const adapter = (await gpu?.requestAdapter?.().catch(() => null)) as
-      | { limits?: { maxVertexBuffers?: number } }
-      | null
-      | undefined;
-    const adapterMax = adapter?.limits?.maxVertexBuffers;
-    const requestedMax = typeof adapterMax === 'number' ? Math.min(adapterMax, 16) : undefined;
-    if (requestedMax !== undefined) {
+    // Workaround: construct our own core adapter + device with
+    // higher limits, then hand the device to WebGPURenderer via
+    // its `device` parameter (which bypasses the internal
+    // requestAdapter call entirely).
+    //
+    // Fallback chain:
+    //   1. `requestAdapter({ featureLevel: 'core' })`
+    //   2. If null/error: `requestAdapter()` (compat default).
+    //   3. If still null: pass no device, let Three's internal
+    //      compat path run (and warn — line materials won't fit).
+    // ============================================================
+    type GPUAdapterLike = {
+      readonly features: ReadonlySet<string>;
+      readonly limits: Record<string, number | undefined>;
+      requestDevice: (descriptor: {
+        requiredFeatures?: string[];
+        requiredLimits?: Record<string, number>;
+      }) => Promise<unknown>;
+    };
+    type NavigatorWithGPU = Navigator & {
+      gpu?: {
+        requestAdapter?: (options?: {
+          featureLevel?: 'core' | 'compatibility';
+          powerPreference?: 'low-power' | 'high-performance';
+        }) => Promise<GPUAdapterLike | null>;
+      };
+    };
+    const gpu = (navigator as NavigatorWithGPU).gpu;
+    let adapter: GPUAdapterLike | null = null;
+    if (gpu?.requestAdapter) {
+      try {
+        adapter = await gpu.requestAdapter({
+          featureLevel: 'core',
+          powerPreference: 'high-performance',
+        });
+      } catch {
+        // Older browsers reject the `featureLevel` option — fall
+        // through to the no-options path below.
+      }
+      if (!adapter) {
+        adapter = await gpu.requestAdapter().catch(() => null);
+      }
+    }
+
+    let device: unknown;
+    let adapterMax: number | undefined;
+    if (adapter) {
+      adapterMax = adapter.limits?.maxVertexBuffers;
+      // Request what the hardware exposes, capped at 16 (enough
+      // for every Luxar material, with headroom for future growth).
+      const requestedMax =
+        typeof adapterMax === 'number' ? Math.min(adapterMax, 16) : undefined;
+      const requiredFeatures: string[] = [];
+      // Enumerate the adapter's features so the device gets the
+      // full WebGPU surface (mirrors Three's internal path).
+      for (const name of adapter.features) {
+        requiredFeatures.push(name);
+      }
+      const requiredLimits: Record<string, number> = {};
+      if (requestedMax !== undefined) {
+        requiredLimits.maxVertexBuffers = requestedMax;
+      }
       log.info(
         Modules.RENDERER,
         `WebGPU adapter advertises maxVertexBuffers=${adapterMax}, requesting ${requestedMax}`
       );
+      try {
+        device = await adapter.requestDevice({
+          requiredFeatures,
+          requiredLimits,
+        });
+      } catch (err) {
+        log.warning(
+          Modules.RENDERER,
+          `WebGPU requestDevice failed (${err}); falling through to Three's internal compat-mode init.`
+        );
+      }
     }
 
     const gpuRenderer = new WebGPURenderer({
       canvas: this.canvasElement,
       antialias: config.webgl.context.antialias,
       alpha: config.webgl.context.alpha,
-      ...(requestedMax !== undefined
-        ? { requiredLimits: { maxVertexBuffers: requestedMax } }
-        : {}),
-    });
+      // Pass a pre-built device when available so Three.js's
+      // hard-coded `featureLevel: 'compatibility'` request doesn't
+      // override our core adapter. When `device` is undefined,
+      // Three.js falls back to its internal compat-mode init.
+      ...(device !== undefined ? { device } : {}),
+    } as ConstructorParameters<typeof WebGPURenderer>[0]);
     await gpuRenderer.init();
     this.renderer = gpuRenderer;
 
