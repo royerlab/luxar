@@ -34,6 +34,25 @@ function makeStubRenderer(): THREE.WebGLRenderer {
   } as unknown as THREE.WebGLRenderer;
 }
 
+function makeStubCapabilities(): import('../../../../rendering/renderer-capabilities').RendererCapabilities {
+  // Minimal capabilities for unit tests — only `api` is read by
+  // the picking-system body (to discriminate readback signatures).
+  return {
+    api: 'webgl2',
+    hdr: {
+      hdr: false,
+      p3Gamut: false,
+      rec2020Gamut: false,
+      recommendedColorSpace: THREE.SRGBColorSpace,
+      floatTextures: true,
+      colorDepth: { red: 8, green: 8, blue: 8 },
+    },
+    maxMSAASamples: 0,
+    pointSizeRange: [1, 64] as const,
+    readBackbufferPixels: vi.fn(),
+  } as unknown as import('../../../../rendering/renderer-capabilities').RendererCapabilities;
+}
+
 function makeCamera(): THREE.PerspectiveCamera {
   return new THREE.PerspectiveCamera(60, 1.0, 0.1, 1000);
 }
@@ -73,7 +92,7 @@ describe('PickingSystem — registration', () => {
   const onPickResult = vi.fn();
 
   beforeEach(() => {
-    system = new PickingSystem(makeStubRenderer(), makeCamera(), onPickResult);
+    system = new PickingSystem(makeStubRenderer(), makeStubCapabilities(), makeCamera(), onPickResult);
     onPickResult.mockClear();
   });
 
@@ -146,7 +165,7 @@ describe('PickingSystem — context-restore registration drop', () => {
   let system: PickingSystem;
 
   beforeEach(() => {
-    system = new PickingSystem(makeStubRenderer(), makeCamera(), vi.fn());
+    system = new PickingSystem(makeStubRenderer(), makeStubCapabilities(), makeCamera(), vi.fn());
   });
 
   it('clearRegistrationsForRebuild empties the node map without disposing materials', () => {
@@ -239,7 +258,7 @@ describe('PickingSystem — camera + suppression', () => {
   let system: PickingSystem;
 
   beforeEach(() => {
-    system = new PickingSystem(makeStubRenderer(), makeCamera(), vi.fn());
+    system = new PickingSystem(makeStubRenderer(), makeStubCapabilities(), makeCamera(), vi.fn());
   });
 
   it('setCamera replaces the camera reference (no throw)', () => {
@@ -262,12 +281,12 @@ describe('PickingSystem — camera + suppression', () => {
 
 describe('PickingSystem.dispose', () => {
   it('disposes the underlying pick render target', () => {
-    const system = new PickingSystem(makeStubRenderer(), makeCamera(), vi.fn());
+    const system = new PickingSystem(makeStubRenderer(), makeStubCapabilities(), makeCamera(), vi.fn());
     expect(() => system.dispose()).not.toThrow();
   });
 
   it('double dispose is safe', () => {
-    const system = new PickingSystem(makeStubRenderer(), makeCamera(), vi.fn());
+    const system = new PickingSystem(makeStubRenderer(), makeStubCapabilities(), makeCamera(), vi.fn());
     system.dispose();
     expect(() => system.dispose()).not.toThrow();
   });
