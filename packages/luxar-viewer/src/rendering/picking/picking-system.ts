@@ -21,7 +21,7 @@ import * as THREE from 'three';
 import type { PostProcessingManager } from '../post-processing/post-processing-manager';
 import { isCameraAwareMaterial } from '../camera-aware-material';
 import { materialManager } from '../material-manager';
-import type { Renderer } from '../renderer-capabilities';
+import type { Renderer, RendererCapabilities } from '../renderer-capabilities';
 import {
   getCameraFovRadians,
   isOrthographicCamera,
@@ -111,6 +111,7 @@ export class PickingSystem {
 
   constructor(
     private renderer: Renderer,
+    private capabilities: RendererCapabilities,
     private camera: THREE.Camera,
     private onPickResult: (result: PickResult | null) => void
   ) {
@@ -394,7 +395,7 @@ export class PickingSystem {
 
     let nearAnyNode = false;
     for (const entry of this.nodeMap.values()) {
-      const geom = (entry.main as THREE.Mesh).geometry ?? (entry.main as THREE.Points).geometry;
+      const geom = (entry.main as THREE.Mesh).geometry;
       if (!geom || !geom.boundingBox) continue;
       this._box.copy(geom.boundingBox);
       this._box.applyMatrix4(entry.main.matrixWorld);
@@ -448,7 +449,7 @@ export class PickingSystem {
     // Sync and add ALL registered nodes to pick scene
     for (const entry of this.nodeMap.values()) {
       // Sync geometry (main node's geometry may have been replaced by view updates)
-      const mainGeom = (entry.main as THREE.Mesh).geometry ?? (entry.main as THREE.Points).geometry;
+      const mainGeom = (entry.main as THREE.Mesh).geometry;
       if (mainGeom) {
         (entry.pick as THREE.Mesh).geometry = mainGeom;
       }
@@ -537,11 +538,10 @@ export class PickingSystem {
     //   WebGLRenderer: (target, x, y, w, h, dstBuffer) → Promise<dstBuffer>
     //   WebGPURenderer: (target, x, y, w, h) → Promise<buffer>
     // (WebGPU's 6th positional arg is `textureIndex`, not a buffer;
-    // passing a TypedArray there mis-binds it.) Branch on caps.api
-    // and copy into `this.readBuffer` on the WebGPU path so the
-    // downstream voting loop sees the data in the same place either
-    // way.
-    if ((this.renderer as { isWebGLRenderer?: boolean }).isWebGLRenderer === true) {
+    // passing a TypedArray there mis-binds it.) Branch on
+    // `capabilities.api` — same canonical discriminator used by
+    // PostProcessingManager and SceneManager.
+    if (this.capabilities.api === 'webgl2') {
       await (this.renderer as THREE.WebGLRenderer).readRenderTargetPixelsAsync(
         this.pickTarget,
         this._lastReadX,

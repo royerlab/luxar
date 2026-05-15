@@ -781,6 +781,7 @@ export class LuxarApp {
     // Create picking system with result callback
     this.pickingSystem = new PickingSystem(
       this.sceneManager.renderer,
+      this.sceneManager.capabilities,
       this.sceneManager.camera,
       async (result: PickResult | null) => {
         try {
