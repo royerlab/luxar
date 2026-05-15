@@ -61,15 +61,16 @@ describe('PointMaterial', () => {
       const material = new PointMaterial({
         opacity: 0.5,
         gamma: 2.2,
-        blending: 'NormalBlending' as any,
-        depthWrite: true,
+        blendingMode: 'normal',
       });
 
       expect(material.uniforms.opacity.value).toBe(0.5);
       expect(material.userData.gamma).toBe(2.2); // gamma stored in userData
       expect(material.uniforms.invGamma.value).toBeCloseTo(1.0 / 2.2);
       expect(material.blending).toBe('NormalBlending');
-      expect(material.depthWrite).toBe(true);
+      // depthWrite is mode-derived (normal + opacity<0.99 → false),
+      // matching the Line/GSplat canonical pattern.
+      expect(material.depthWrite).toBe(false);
     });
   });
 
@@ -281,15 +282,27 @@ describe('PointMaterial', () => {
   });
 
   describe('depth test configuration', () => {
-    it('should have depthTest true by default', () => {
+    it('should have depthTest false for default additive mode', () => {
+      // Default blendingMode is 'additive'; applyBlendingMode sets
+      // depthTest=false for additive (renders on top, ignores depth).
+      // Same canonical mode-derived state as Line/GSplat.
       const material = new PointMaterial();
 
-      // Default depthTest is true
-      expect(material.userData.depthTest).toBe(true);
+      expect(material.userData.depthTest).toBe(false);
     });
 
-    it('should allow disabling depthTest via config', () => {
-      const material = new PointMaterial({ depthTest: false });
+    it('should have depthTest true for non-additive modes', () => {
+      const luminous = new PointMaterial({ blendingMode: 'luminous' });
+      expect(luminous.userData.depthTest).toBe(true);
+
+      const normal = new PointMaterial({ blendingMode: 'normal' });
+      expect(normal.userData.depthTest).toBe(true);
+    });
+
+    it('should allow explicit depthTest override via config', () => {
+      // Explicit `depthTest` in config wins over mode-derived value
+      // (mirrors the same override path in LineMaterial).
+      const material = new PointMaterial({ blendingMode: 'normal', depthTest: false });
 
       expect(material.userData.depthTest).toBe(false);
     });
@@ -312,11 +325,10 @@ describe('PointMaterial', () => {
       expect(cloned.userData.depthTest).toBe(false);
     });
 
-    it('should respect transparent config for opaque mode', () => {
-      const opaqueMaterial = new PointMaterial({
-        transparent: false,
-        depthWrite: true,
-      });
+    it('should configure opaque mode correctly', () => {
+      // Opaque mode: applyBlendingMode sets transparent=false +
+      // depthWrite=true. Mirrors GSplatMaterial / LineMaterial.
+      const opaqueMaterial = new PointMaterial({ blendingMode: 'opaque' });
 
       expect(opaqueMaterial.transparent).toBe(false);
       expect(opaqueMaterial.depthWrite).toBe(true);

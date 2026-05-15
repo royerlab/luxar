@@ -29,7 +29,14 @@ export interface PointMaterialConfig {
   gamma?: number;
   intensity?: number; // Linear color multiplier (gain), default 1.0
   offset?: number; // Additive brightness shift (black level), default 0.0
-  blending?: THREE.Blending;
+  /**
+   * Luxar blending mode. Same shape as `LineMaterialConfig.blendingMode`
+   * and `GSplatMaterialConfig.blendingMode` (three-geometry symmetry —
+   * Points/Lines/GSplats expose the same surface). Default `'additive'`.
+   * Drives both the THREE blending state and the shader's
+   * `LUXAR_MAX_RGB_CONTRIBUTION` define via `applyBlendingMode`.
+   */
+  blendingMode?: BlendingMode;
   depthWrite?: boolean;
   depthTest?: boolean; // Whether to test against depth buffer (default true)
   transparent?: boolean; // Whether material is transparent (default true)
@@ -48,14 +55,36 @@ export class PointMaterial
   implements CameraAwareMaterial, ColormapAwareMaterial
 {
   /**
-   * Create a new PointMaterial with the specified configuration
+   * Create a new PointMaterial with the specified configuration.
+   * Mirrors the constructor pattern in `LineMaterial` and
+   * `GSplatMaterial`: derive an initial THREE blending state from
+   * the Luxar `blendingMode`, hand it to `super({...})`, then call
+   * `applyBlendingMode` to apply the canonical state (defines,
+   * depthTest, custom blend factors). One code path drives both
+   * creation and runtime mode changes from the layers panel.
    */
   constructor(materialConfig: PointMaterialConfig = {}) {
+    const blendingMode: BlendingMode = materialConfig.blendingMode ?? 'additive';
+    const isOpaque = blendingMode === 'opaque';
+    const isAdditive = blendingMode === 'additive';
     const gammaValue = Math.max(0.001, materialConfig.gamma ?? 1.0); // Prevent division by zero
     // Default values for initial computation
     const defaultFov = (60 * Math.PI) / 180;
     const defaultResolutionY = 1080;
     const defaultTanHalfFov = Math.tan(defaultFov / 2);
+
+    // Initial THREE.Blending for `super`. `applyBlendingMode` below
+    // overrides this with the canonical mode-derived state — the
+    // value here only matters during the brief window between
+    // `super({...})` returning and `applyBlendingMode` running.
+    let initialBlending: THREE.Blending;
+    if (isOpaque || blendingMode === 'normal') {
+      initialBlending = THREE.NormalBlending;
+    } else if (isAdditive || blendingMode === 'luminous') {
+      initialBlending = THREE.AdditiveBlending;
+    } else {
+      initialBlending = THREE.CustomBlending; // max
+    }
 
     super({
       uniforms: {
@@ -117,16 +146,32 @@ export class PointMaterial
       // attribute is for the per-vertex `position` attribute it
       // assumes, which we don't use.
       vertexColors: false,
-      transparent: materialConfig.transparent ?? true, // Enable transparency for blending (false for opaque)
+      transparent: materialConfig.transparent ?? !isOpaque,
       depthWrite: materialConfig.depthWrite ?? false, // Usually false for additive blending
-      depthTest: materialConfig.depthTest ?? true, // Default true; additive mode sets false
+      depthTest: materialConfig.depthTest ?? !isAdditive,
       toneMapped: false, // HDR values pass through to post-processing
-      blending: materialConfig.blending ?? THREE.AdditiveBlending,
+      blending: initialBlending,
     });
 
-    // Store in userData for clone() method
+    // Apply mode-specific blending state via the canonical method —
+    // same path used by live mode updates from the layers panel.
+    // Sets `userData.blendingMode`, the `LUXAR_MAX_RGB_CONTRIBUTION`
+    // define for max mode, and the THREE custom-blend factors.
+    this.applyBlendingMode(blendingMode);
+
+    // Honor explicit overrides from config after mode-derived defaults.
+    if (materialConfig.transparent !== undefined) {
+      this.transparent = materialConfig.transparent;
+    }
+    if (materialConfig.depthTest !== undefined) {
+      this.depthTest = materialConfig.depthTest;
+    }
+
+    // gamma + scalarRange in userData for clone(). blendingMode is
+    // already set by applyBlendingMode; depthTest stamped here so
+    // the explicit-override path above carries into clone state.
     this.userData.gamma = gammaValue;
-    this.userData.depthTest = materialConfig.depthTest ?? true;
+    this.userData.depthTest = materialConfig.depthTest ?? !isAdditive;
     this.userData.scalarRange = materialConfig.scalarRange;
   }
 
@@ -282,7 +327,7 @@ export class PointMaterial
       gamma: this.userData.gamma ?? 1.0, // gamma stored in userData, not uniforms
       intensity: this.uniforms.uIntensity.value,
       offset: this.uniforms.uOffset.value,
-      blending: this.blending,
+      blendingMode: (this.userData.blendingMode as BlendingMode | undefined) ?? 'additive',
       depthWrite: this.depthWrite,
       depthTest: this.userData.depthTest ?? true, // depthTest stored in userData
       transparent: this.transparent,
@@ -290,7 +335,9 @@ export class PointMaterial
       scalarRange: this.userData.scalarRange ?? undefined,
     });
 
-    // Copy blend equation settings for custom blending (max mode)
+    // Copy custom blend factors for max mode (the constructor's
+    // applyBlendingMode already set them, but copy verbatim so any
+    // post-construction overrides on the source carry through).
     if (this.blending === THREE.CustomBlending) {
       cloned.blendEquation = this.blendEquation;
       cloned.blendSrc = this.blendSrc;
