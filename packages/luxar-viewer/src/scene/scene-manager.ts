@@ -230,6 +230,13 @@ export class SceneManager extends THREE.EventDispatcher<{
   private debug: boolean = false;
 
   /**
+   * Optional per-instance backend override. When set, `setupRenderer`
+   * uses it instead of consulting the env var. Threaded from the
+   * `?renderer=webgl|webgpu` URL parameter through `LuxarAppOptions`.
+   */
+  private rendererOverride: 'webgl' | 'webgpu' | undefined;
+
+  /**
    * Initialize the renderer pipeline.
    *
    * @param options.canvas - The HTMLCanvasElement to render into. Callers
@@ -238,9 +245,20 @@ export class SceneManager extends THREE.EventDispatcher<{
    *   SceneManager performs no DOM lookups of its own.
    * @param options.debug - Verbose hardware/runtime logging.
    */
-  async init(options: { canvas: HTMLCanvasElement; debug?: boolean }): Promise<void> {
+  async init(options: {
+    canvas: HTMLCanvasElement;
+    debug?: boolean;
+    /**
+     * Optional backend override. When provided, wins over the
+     * `VITE_LUXAR_USE_LEGACY_WEBGL` env var and the WebGPU default.
+     * Threaded from `LuxarAppOptions.renderer`, ultimately from the
+     * `?renderer=webgl|webgpu` URL parameter.
+     */
+    renderer?: 'webgl' | 'webgpu';
+  }): Promise<void> {
     this.canvasElement = options.canvas;
     this.debug = options.debug ?? false;
+    this.rendererOverride = options.renderer;
     await this.setupRenderer();
     this.setupContextLossHandling(); // Setup context loss recovery
     this.setupScene();
@@ -265,20 +283,45 @@ export class SceneManager extends THREE.EventDispatcher<{
    * - Fullscreen immersive experience
    */
   private async setupRenderer(): Promise<void> {
-    // Default renderer is `WebGPURenderer` (with `forceWebGL: true`
-    // until real-WebGPU smoke tests are green across the matrix;
-    // Three.js's internal NodeBuilder dispatches the same TSL graphs
-    // to the WebGL2 backend). The GLSL `ShaderMaterial` path stays
-    // wired up behind `VITE_LUXAR_USE_LEGACY_WEBGL=1` so the parity
-    // harness, baseline comparisons, and the per-shader GLSL3 sources
-    // remain a live, runnable reference (per the project directive
-    // to keep GLSL as a reference, not delete it).
+    // Backend selection — precedence (highest to lowest):
+    //
+    //   1. Per-instance override (`this.rendererOverride`), threaded
+    //      in via `init({ renderer })` — ultimately from the
+    //      `?renderer=webgl|webgpu` URL parameter. Useful for
+    //      per-load A/B comparisons during the WebGPU migration.
+    //   2. Build-time env: `VITE_LUXAR_USE_LEGACY_WEBGL=1` selects
+    //      the legacy `WebGLRenderer` + GLSL `ShaderMaterial` path.
+    //   3. Default: `WebGPURenderer` (internally dispatches to a
+    //      real WebGPU adapter when available, falls back to its
+    //      WebGL2 backend otherwise).
+    //
+    // The GLSL `ShaderMaterial` path is kept live as the parity
+    // reference (harness, baseline comparisons, per-shader GLSL3
+    // sources) — per project directive, never deleted.
     //
     // The transient `VITE_LUXAR_USE_WEBGPU_RENDERER=1` flag from the
-    // migration window is retained as an alias for the default —
-    // existing CI invocations and developer muscle-memory keep
-    // working — but the default no longer depends on it.
-    const useLegacyWebGL = import.meta.env.VITE_LUXAR_USE_LEGACY_WEBGL === '1';
+    // migration window is retained as a no-op alias so existing CI
+    // invocations keep working harmlessly.
+    let useLegacyWebGL: boolean;
+    let source: 'url-param' | 'env-var' | 'default';
+    if (this.rendererOverride === 'webgl') {
+      useLegacyWebGL = true;
+      source = 'url-param';
+    } else if (this.rendererOverride === 'webgpu') {
+      useLegacyWebGL = false;
+      source = 'url-param';
+    } else if (import.meta.env.VITE_LUXAR_USE_LEGACY_WEBGL === '1') {
+      useLegacyWebGL = true;
+      source = 'env-var';
+    } else {
+      useLegacyWebGL = false;
+      source = 'default';
+    }
+    log.info(
+      Modules.RENDERER,
+      `Backend selection: ${useLegacyWebGL ? 'WebGLRenderer (legacy GLSL)' : 'WebGPURenderer'} ` +
+        `[source: ${source}]`
+    );
     if (useLegacyWebGL) {
       await this.setupWebGLRenderer();
       return;

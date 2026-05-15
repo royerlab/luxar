@@ -114,6 +114,20 @@ export interface LuxarAppOptions {
    * See `app-factories.ts`.
    */
   factories?: AppFactories;
+
+  /**
+   * Force a specific rendering backend, overriding the default
+   * resolution. Mirrors `UrlParams.renderer` — the standalone
+   * bootstrap reads `?renderer=webgl|webgpu` and threads it here
+   * so per-load A/B testing doesn't need a dev-server restart.
+   *
+   * - `'webgl'`: legacy `THREE.WebGLRenderer` + GLSL `ShaderMaterial`.
+   * - `'webgpu'`: `WebGPURenderer` + TSL `NodeMaterial` (default;
+   *   internally falls back to WebGL2 when no WebGPU adapter).
+   * - Undefined: fall back to `VITE_LUXAR_USE_LEGACY_WEBGL` env or
+   *   the WebGPU default.
+   */
+  renderer?: 'webgl' | 'webgpu';
 }
 
 export class LuxarApp {
@@ -275,6 +289,7 @@ export class LuxarApp {
       await this.sceneManager.init({
         canvas: this.options.canvas,
         debug: this.options.debug,
+        renderer: this.options.renderer,
       });
 
       // Initialize animation controller with HDR post-processing.

@@ -179,6 +179,11 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
       noPrefetch: urlParams.noPrefetch,
       prefetchDebug: urlParams.prefetchDebug,
     },
+    // `?renderer=webgl|webgpu` forces a backend regardless of the
+    // build-time env. Undefined → SceneManager falls back to the env
+    // var, then the WebGPU default. See `setupRenderer` for the
+    // precedence chain.
+    renderer: urlParams.renderer ?? undefined,
   };
 
   const app = new LuxarApp();
