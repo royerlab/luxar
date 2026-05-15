@@ -30,26 +30,25 @@ Three.js's `WebGPURenderer` does **not** support `THREE.ShaderMaterial` or
 >
 > — *Three.js manual, "Using WebGPURenderer"*
 
-Status (post TSL-port phase): every scene-material, picking-material,
-and post-processing-shader pair now has a TSL / NodeMaterial
-counterpart living in `*.tsl.ts` files alongside the GLSL3 originals
-in `*-shaders.ts` / `*.glsl.ts`. Pixel parity is verified by
-`tsl-shader-parity.spec.ts` under `WebGPURenderer({ forceWebGL: true })`.
-Production wrapper classes (`PointMaterial`, `LineMaterial`,
-`GSplatMaterial`, and the three picking equivalents) still `extends
-THREE.ShaderMaterial`; `MaterialManager.getXxxMaterial` does not yet
-branch on `caps.api`. See `MIGRATION_PROGRESS.md` § "Wrapper-layer
-wiring" for what remains before WebGPU can be the production default.
+Status (post wrapper-layer wiring): every scene-material,
+picking-material, and post-processing-shader pair has a TSL /
+NodeMaterial counterpart living in `*.tsl.ts` files alongside the
+GLSL3 originals in `*-shaders.ts` / `*.glsl.ts`. Pixel parity is
+verified by `tsl-shader-parity.spec.ts`. Production wrapper classes
+(`PointTSLMaterial`, `LineTSLMaterial`, `GSplatTSLMaterial`, and
+the three picking equivalents) extend `NodeMaterial` and ship
+one-for-one with their GLSL `ShaderMaterial` counterparts;
+`MaterialManager.getXxxMaterial` dispatches on `caps.api ===
+'webgpu'`. The GLSL wrappers are kept live behind
+`VITE_LUXAR_USE_LEGACY_WEBGL=1` as the parity reference (per
+project policy — GLSL is never deleted), not as a fallback for
+production users.
 
-`{ forceWebGL: true }` does not rescue this: it instructs
-`WebGPURenderer` to dispatch through its WebGL2 backend, but the
-materials it accepts are still `NodeMaterial`-based. A
-`ShaderMaterial` handed to `WebGPURenderer` (with or without
-`forceWebGL`) will not render.
-
-Consequence: WebGPU becomes the production default only once
-`MaterialManager` dispatches the TSL wrappers instead of the GLSL
-ShaderMaterial wrappers. The migration is the TSL ports *and* the
+Historical note: `{ forceWebGL: true }` does not rescue a
+`ShaderMaterial` pipeline. `WebGPURenderer`'s WebGL2 backend
+dispatches `NodeMaterial`, not `ShaderMaterial`. A `ShaderMaterial`
+handed to `WebGPURenderer` (with or without `forceWebGL`) will not
+render. The migration was therefore the TSL ports *and* the
 dispatcher rewire, not a renderer swap.
 
 ## Userbase
@@ -87,17 +86,52 @@ This is no longer the only path — see "Today" below.
 ## Today — WebGPU default, GLSL kept as a runnable reference
 
 - Both renderer constructions exist:
-  - **Default: `WebGPURenderer({ forceWebGL: true })`**. TSL
-    `NodeMaterial` wrappers are dispatched by `MaterialManager`
-    when `caps.api === 'webgpu'`. `forceWebGL: true` keeps the
-    WebGL2 backend underneath until the real-WebGPU smoke matrix
-    lands — the same TSL graphs target both backends, so flipping
-    `forceWebGL: false` is a separate, isolated milestone.
+  - **Default: `WebGPURenderer` (no `forceWebGL`)**. The renderer
+    acquires a real WebGPU adapter when the browser provides one
+    and transparently falls back to its internal WebGL2 backend
+    otherwise — the same TSL graphs target both backends from one
+    source. TSL `NodeMaterial` wrappers are dispatched by
+    `MaterialManager` when `caps.api === 'webgpu'`. (Playwright's
+    headless chromium falls back to WebGL2; real-WebGPU smoke
+    needs an interactive run on Chrome stable with a working GPU.)
   - Opt-in legacy path via `VITE_LUXAR_USE_LEGACY_WEBGL=1`:
     constructs `THREE.WebGLRenderer` with the GLSL `ShaderMaterial`
     wrappers. Retained so the TSL↔GLSL parity harness, baseline
     pixel comparisons, and the per-shader GLSL3 sources stay
     runnable as a reference — never deleted, per project policy.
+
+### Backend selection — precedence
+
+`SceneManager.setupRenderer` resolves the active backend through
+three levels, highest precedence first:
+
+1. **`?renderer=webgl` / `?renderer=webgpu` URL parameter.**
+   Per-load override threaded from `UrlParams.renderer` →
+   `LuxarAppOptions.renderer` → `SceneManager.init({ renderer })`.
+   Useful for A/B diagnostics during the migration: reload the
+   same page with `?renderer=webgl` to compare against the
+   default WebGPU dispatch without restarting the dev server or
+   rebuilding the bundle. Case-insensitive; `webgl2` is accepted
+   as an alias for `webgl`; any other value falls through.
+2. **`VITE_LUXAR_USE_LEGACY_WEBGL=1` env var.** Build / dev-server-
+   time toggle. Useful for running the whole E2E suite or the
+   parity harness against the legacy path. Set to anything other
+   than `'1'` (or unset) → next level.
+3. **Default: `webgpu`.**
+
+The legacy `VITE_LUXAR_USE_WEBGPU_RENDERER` env var from the
+migration window is now a no-op alias — kept harmless so existing
+CI scripts that set it keep working.
+
+#### Common URL invocations
+
+```
+http://localhost:5173/?renderer=webgl    # force legacy GLSL path
+http://localhost:5173/?renderer=webgpu   # force WebGPU dispatch
+http://localhost:5173/                    # default (webgpu)
+http://localhost:5173/?src=...&renderer=webgl&debug
+                                          # combines with other URL flags
+```
 - TSL factories for all 12 shaders ship with TSL `NodeMaterial`
   wrappers (`{Point,Line,GSplat}TSLMaterial`,
   `{Point,Line,GSplat}PickingTSLMaterial`, `MegaShaderTSLMaterial`)
@@ -105,9 +139,9 @@ This is no longer the only path — see "Today" below.
   is wired from both `SceneManager.setupRenderer` arms so dispatch
   is consistent across paths.
 - `RendererCapabilities.api` honestly reports which backend the
-  renderer dispatched to (`'webgl2'` in both the legacy path and
-  the default `forceWebGL: true` path today; `'webgpu'` once
-  `forceWebGL: false` lands).
+  renderer actually dispatched to: `'webgl2'` under the legacy
+  path or when `WebGPURenderer` fell back to its WebGL2 backend;
+  `'webgpu'` when a real WebGPU adapter was acquired.
 
 ## Target end-state (post-TSL-ports)
 
