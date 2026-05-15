@@ -376,29 +376,24 @@ export class MaterialManager {
       return material;
     }
 
-    // Create new material instance with neutral blending defaults;
-    // the canonical state for `props.blendingMode` is then applied via
-    // `applyBlendingMode()` so creation-time and runtime transitions
-    // share one code path. Without this, the LayersPanel runtime path
-    // would diverge from creation (notably max mode, which needs
-    // OneFactor/OneFactor blend factors AND the
-    // LUXAR_MAX_RGB_CONTRIBUTION shader define).
+    // Pass `blendingMode` through the constructor — the wrapper's
+    // own constructor calls `applyBlendingMode` internally so
+    // creation-time and runtime transitions share one code path.
+    // Matches the Line + GSplat factories exactly (three-geometry
+    // symmetry).
     const createStart = performance.now();
     const constructorConfig = {
       opacity: props.opacity,
       gamma: props.gamma,
       intensity: props.intensity,
       offset: props.offset,
-      // Pass `transparent` and a neutral default; applyBlendingMode
-      // will overwrite blending/depth fields immediately below.
-      transparent: !isOpaque,
+      blendingMode: props.blendingMode,
       radiusScale: props.radiusScale,
       sharpnessScale: props.sharpnessScale,
     };
     material = useTSL
       ? new PointTSLMaterial(constructorConfig)
       : new PointMaterial(constructorConfig);
-    material.applyBlendingMode(props.blendingMode);
     this.totalCreateMs += performance.now() - createStart;
     this.createCount++;
 

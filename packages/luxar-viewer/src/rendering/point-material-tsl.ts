@@ -106,6 +106,24 @@ export class PointTSLMaterial
     this.userData.depthTest = materialConfig.depthTest ?? true;
     this.userData.scalarRange = materialConfig.scalarRange;
 
+    // Stamp the requested Luxar blending mode on userData BEFORE
+    // `rebuildGraph` so the factory reads the correct mode through
+    // `userData.blendingMode` on its first build. Without this the
+    // factory defaults to `'additive'` and a follow-up
+    // `applyBlendingMode('max')` call would have to rebuild the graph
+    // a second time (the max-mode path toggles
+    // `LUXAR_MAX_RGB_CONTRIBUTION`). Mirrors the Line/GSplat
+    // constructor pattern — three-geometry symmetry.
+    this.userData.blendingMode = materialConfig.blendingMode ?? 'additive';
+
+    // For max mode, the shader needs the LUXAR_MAX_RGB_CONTRIBUTION
+    // define from the very first compile. Apply it before rebuild
+    // so the factory sees the right define set. (Other modes don't
+    // touch defines, so they're no-ops here.)
+    if (this.userData.blendingMode === 'max') {
+      this.defines.LUXAR_MAX_RGB_CONTRIBUTION = '';
+    }
+
     // Build the TSL graph and attach to ourselves. The factory wires
     // every primitive uniform via `.onUpdate(() => iuniform.value)`,
     // so mutating `this.uniforms.X.value` flows through to the GPU.
@@ -251,7 +269,7 @@ export class PointTSLMaterial
       gamma: this.userData.gamma ?? 1.0,
       intensity: this.uniforms.uIntensity.value,
       offset: this.uniforms.uOffset.value,
-      blending: this.blending,
+      blendingMode: (this.userData.blendingMode as BlendingMode | undefined) ?? 'additive',
       depthWrite: this.depthWrite,
       depthTest: this.userData.depthTest ?? true,
       transparent: this.transparent,
@@ -259,19 +277,11 @@ export class PointTSLMaterial
       scalarRange: this.userData.scalarRange ?? undefined,
     });
 
-    // Carry over the Luxar blending mode. PointMaterialConfig only
-    // accepts the THREE-side `blending` field — the Luxar mode +
-    // shader-output shape (`LUXAR_MAX_RGB_CONTRIBUTION` define,
-    // `premultiplyRGB` graph branch) is set via `applyBlendingMode`.
-    // Without this call, a clone of a `max`-mode source would inherit
-    // CustomBlending + MaxEquation from the framebuffer-state copy
-    // below but the TSL graph would stay wired for non-premultiplied
-    // output — a real visual divergence.
-    const mode = this.userData.blendingMode as BlendingMode | undefined;
-    if (mode) {
-      cloned.applyBlendingMode(mode);
-    }
-
+    // Mirrors Line/GSplat clone: the constructor's
+    // `applyBlendingMode` (driven by `blendingMode`) sets the TSL
+    // graph + framebuffer state correctly. Copy custom blend
+    // factors verbatim for max mode so any post-construction
+    // overrides on the source carry through.
     if (this.blending === THREE.CustomBlending) {
       cloned.blendEquation = this.blendEquation;
       cloned.blendSrc = this.blendSrc;
