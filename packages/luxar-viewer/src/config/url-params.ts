@@ -104,6 +104,25 @@ export interface UrlParams {
    * having to find the monitor's keyboard shortcut first.
    */
   cacheStats: boolean;
+  /**
+   * Force a specific rendering backend regardless of the default
+   * resolution. Useful for per-load A/B comparisons during the
+   * WebGPU migration and for diagnosing TSL-vs-GLSL divergences
+   * without restarting the dev server.
+   *
+   * - `?renderer=webgl` — opt into `THREE.WebGLRenderer` + GLSL
+   *   `ShaderMaterial` (the legacy reference path).
+   * - `?renderer=webgpu` — opt into `WebGPURenderer` + TSL
+   *   `NodeMaterial` (the production default; the renderer
+   *   internally dispatches to a real WebGPU adapter when available
+   *   or falls back to its WebGL2 backend otherwise).
+   * - Unset (`null`) — fall back to the build-time
+   *   `VITE_LUXAR_USE_LEGACY_WEBGL` env var; if that is also unset,
+   *   the default is `webgpu`.
+   *
+   * Any other value is normalized to `null` (defer to env / default).
+   */
+  renderer: 'webgl' | 'webgpu' | null;
 }
 
 /**
@@ -127,7 +146,21 @@ export function readUrlParams(search?: string): UrlParams {
     noPrefetch: params.has('no-prefetch'),
     prefetchDebug: params.has('prefetch-debug'),
     cacheStats: params.has('cache-stats'),
+    renderer: normalizeRendererParam(params.get('renderer')),
   };
+}
+
+/**
+ * Validate the `?renderer=` query value. Accept `webgl` and `webgpu`
+ * case-insensitively; everything else (including the empty
+ * `?renderer` flag-only form) is treated as "no override".
+ */
+function normalizeRendererParam(raw: string | null): 'webgl' | 'webgpu' | null {
+  if (raw === null) return null;
+  const v = raw.trim().toLowerCase();
+  if (v === 'webgl' || v === 'webgl2') return 'webgl';
+  if (v === 'webgpu') return 'webgpu';
+  return null;
 }
 
 export interface BrowserUrlLocation {
