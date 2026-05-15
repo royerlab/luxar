@@ -511,10 +511,46 @@ export class SceneManager extends THREE.EventDispatcher<{
       }
     }
 
+    // Luxar's line material binds 12 instance attributes (14 with
+    // colormap). Each becomes its own vertex buffer under WebGPU.
+    // If the adapter can't supply this many buffers, the line
+    // pipeline cannot be created.
+    const LUXAR_LINE_BUFFERS_REQUIRED = 14;
+
     let device: unknown;
     let adapterMax: number | undefined;
     if (adapter) {
       adapterMax = adapter.limits?.maxVertexBuffers;
+
+      // Auto-fall back to the legacy WebGL path when the adapter
+      // genuinely can't support the line material's buffer count.
+      // (Reached when the user's Chrome silently ignores
+      // `featureLevel: 'core'` and returns the spec-minimum-8
+      // compat-mode adapter, which has happened in the field.) The
+      // legacy `WebGLRenderer` has higher buffer limits and is
+      // verified to render the full demo correctly.
+      //
+      // If the user explicitly chose `?renderer=webgpu`, respect
+      // that — log loudly and continue, so they can debug the
+      // pipeline-failed errors with the WebGPU path active.
+      if (
+        typeof adapterMax === 'number' &&
+        adapterMax < LUXAR_LINE_BUFFERS_REQUIRED &&
+        this.rendererOverride !== 'webgpu'
+      ) {
+        log.warning(
+          Modules.RENDERER,
+          `WebGPU adapter only advertises maxVertexBuffers=${adapterMax} ` +
+            `(Luxar line material needs ${LUXAR_LINE_BUFFERS_REQUIRED}). ` +
+            'This is Chrome\'s compat-mode adapter; the line pipeline cannot ' +
+            'be created and lines would silently drop out of the render. ' +
+            'Auto-falling back to WebGLRenderer + GLSL path. Override with ' +
+            '`?renderer=webgpu` to force WebGPU anyway (for debugging).'
+        );
+        await this.setupWebGLRenderer();
+        return;
+      }
+
       // Request what the hardware exposes, capped at 16 (enough
       // for every Luxar material, with headroom for future growth).
       const requestedMax =
