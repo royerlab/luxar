@@ -29,8 +29,9 @@
  */
 
 import * as THREE from 'three';
+import { texture, uniform } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-import { gsplatWebGPUFactory } from './gsplat.tsl';
+import { gsplatWebGPUFactory, type GSplatTSLNodes } from './gsplat.tsl';
 import type { GSplatMaterialConfig } from './gsplat-material';
 import type { CameraAwareMaterial } from './camera-aware-material';
 import type { ColormapAwareMaterial } from './colormap-aware-material';
@@ -45,6 +46,7 @@ import {
   isMaxMode,
   type CompleteBlendingState,
 } from './blending-state';
+import { proxyIUniform, type TSLNode } from './tsl-helpers';
 import type { BlendingMode } from './material-manager';
 
 function computeRayIntegralFactor(truncate: number): number {
@@ -66,8 +68,39 @@ export class GSplatTSLMaterial
   extends NodeMaterial
   implements CameraAwareMaterial, ColormapAwareMaterial
 {
-  /** Public uniforms table, same shape as `GSplatMaterial.uniforms`. */
+  /**
+   * Public uniforms table, same shape as `GSplatMaterial.uniforms`.
+   * Each entry is a getter/setter that forwards to the underlying
+   * `UniformNode.value` (see module preamble + `proxyIUniform`).
+   */
   uniforms: Record<string, THREE.IUniform>;
+
+  /**
+   * Persistent TSL leaf nodes — single source of truth for the
+   * shader's primitive/vec inputs. Kept across `rebuildGraph()` so
+   * mutations stay live after a defines change.
+   */
+  private tslNodes: {
+    uResolution: TSLNode;
+    uFx: TSLNode;
+    uFy: TSLNode;
+    uTruncate: TSLNode;
+    uTruncateSq: TSLNode;
+    uShiftC: TSLNode;
+    uInvOneMinusC: TSLNode;
+    uRayIntegralFactor: TSLNode;
+    uOpacity: TSLNode;
+    uProjectionMode: TSLNode;
+    uInvGamma: TSLNode;
+    uIntensity: TSLNode;
+    uOffset: TSLNode;
+    uIsOrtho: TSLNode;
+    uNearCull: TSLNode;
+    uMaxExtentFactor: TSLNode;
+    uColormapTex?: TSLNode;
+    uScalarMin?: TSLNode;
+    uScalarScale?: TSLNode;
+  };
 
   constructor(materialConfig: GSplatMaterialConfig = {}) {
     super();
@@ -77,36 +110,35 @@ export class GSplatTSLMaterial
     const shiftC = Math.exp(-0.5 * truncate * truncate);
     const invOneMinusC = 1.0 / (1.0 - shiftC);
 
-    this.uniforms = {
-      uResolution: { value: new THREE.Vector2(1, 1) },
-      uFx: { value: 500 },
-      uFy: { value: 500 },
-      uTruncate: { value: truncate },
-      uTruncateSq: { value: truncate * truncate },
-      uShiftC: { value: shiftC },
-      uInvOneMinusC: { value: invOneMinusC },
-      uRayIntegralFactor: { value: computeRayIntegralFactor(truncate) },
-      uOpacity: { value: materialConfig.opacity ?? 1.0 },
-      uProjectionMode: { value: materialConfig.blendingMode === 'max' ? 1 : 0 },
-      uInvGamma: { value: 1.0 / gammaValue },
-      uIntensity: { value: materialConfig.intensity ?? 1.0 },
-      uOffset: { value: materialConfig.offset ?? 0.0 },
-      uIsOrtho: { value: 0 },
-      uNearCull: { value: 0.1 },
-      uMaxExtentFactor: { value: materialConfig.maxExtentFactor ?? 0.33 },
-      ...(materialConfig.colormapTexture
-        ? {
-            uColormapTex: { value: materialConfig.colormapTexture },
-            uScalarMin: { value: materialConfig.scalarRange?.[0] ?? 0.0 },
-            uScalarScale: {
-              value: materialConfig.scalarRange
-                ? 1.0 /
-                  Math.max(1e-10, materialConfig.scalarRange[1] - materialConfig.scalarRange[0])
-                : 1.0,
-            },
-          }
-        : {}),
+    this.tslNodes = {
+      uResolution: uniform(new THREE.Vector2(1, 1)),
+      uFx: uniform(500),
+      uFy: uniform(500),
+      uTruncate: uniform(truncate),
+      uTruncateSq: uniform(truncate * truncate),
+      uShiftC: uniform(shiftC),
+      uInvOneMinusC: uniform(invOneMinusC),
+      uRayIntegralFactor: uniform(computeRayIntegralFactor(truncate)),
+      uOpacity: uniform(materialConfig.opacity ?? 1.0),
+      uProjectionMode: uniform(materialConfig.blendingMode === 'max' ? 1 : 0),
+      uInvGamma: uniform(1.0 / gammaValue),
+      uIntensity: uniform(materialConfig.intensity ?? 1.0),
+      uOffset: uniform(materialConfig.offset ?? 0.0),
+      uIsOrtho: uniform(0),
+      uNearCull: uniform(0.1),
+      uMaxExtentFactor: uniform(materialConfig.maxExtentFactor ?? 0.33),
     };
+    if (materialConfig.colormapTexture) {
+      this.tslNodes.uColormapTex = texture(materialConfig.colormapTexture);
+      this.tslNodes.uScalarMin = uniform(materialConfig.scalarRange?.[0] ?? 0.0);
+      this.tslNodes.uScalarScale = uniform(
+        materialConfig.scalarRange
+          ? 1.0 / Math.max(1e-10, materialConfig.scalarRange[1] - materialConfig.scalarRange[0])
+          : 1.0
+      );
+    }
+
+    this.uniforms = this.buildUniformProxies();
 
     this.defines = materialConfig.colormapTexture ? { USE_COLORMAP: '' } : {};
     this.toneMapped = false;
@@ -125,6 +157,42 @@ export class GSplatTSLMaterial
     this.userData.blendingMode = materialConfig.blendingMode ?? 'additive';
 
     this.rebuildGraph();
+  }
+
+  /**
+   * Construct the IUniform-shaped getter/setter proxies over the
+   * current `tslNodes` set. Called from the constructor and from any
+   * setter that adds/removes a colormap node.
+   */
+  private buildUniformProxies(): Record<string, THREE.IUniform> {
+    const u: Record<string, THREE.IUniform> = {
+      uResolution: proxyIUniform(this.tslNodes.uResolution),
+      uFx: proxyIUniform(this.tslNodes.uFx),
+      uFy: proxyIUniform(this.tslNodes.uFy),
+      uTruncate: proxyIUniform(this.tslNodes.uTruncate),
+      uTruncateSq: proxyIUniform(this.tslNodes.uTruncateSq),
+      uShiftC: proxyIUniform(this.tslNodes.uShiftC),
+      uInvOneMinusC: proxyIUniform(this.tslNodes.uInvOneMinusC),
+      uRayIntegralFactor: proxyIUniform(this.tslNodes.uRayIntegralFactor),
+      uOpacity: proxyIUniform(this.tslNodes.uOpacity),
+      uProjectionMode: proxyIUniform(this.tslNodes.uProjectionMode),
+      uInvGamma: proxyIUniform(this.tslNodes.uInvGamma),
+      uIntensity: proxyIUniform(this.tslNodes.uIntensity),
+      uOffset: proxyIUniform(this.tslNodes.uOffset),
+      uIsOrtho: proxyIUniform(this.tslNodes.uIsOrtho),
+      uNearCull: proxyIUniform(this.tslNodes.uNearCull),
+      uMaxExtentFactor: proxyIUniform(this.tslNodes.uMaxExtentFactor),
+    };
+    if (this.tslNodes.uColormapTex) {
+      u.uColormapTex = proxyIUniform(this.tslNodes.uColormapTex);
+    }
+    if (this.tslNodes.uScalarMin) {
+      u.uScalarMin = proxyIUniform(this.tslNodes.uScalarMin);
+    }
+    if (this.tslNodes.uScalarScale) {
+      u.uScalarScale = proxyIUniform(this.tslNodes.uScalarScale);
+    }
+    return u;
   }
 
   /**
@@ -153,7 +221,7 @@ export class GSplatTSLMaterial
    */
   private rebuildGraph(): void {
     gsplatWebGPUFactory(
-      this.uniforms,
+      this.tslNodes as GSplatTSLNodes,
       {
         useColormap: !!this.defines && 'USE_COLORMAP' in this.defines,
         blendingMode: (this.userData.blendingMode as BlendingMode | undefined) ?? 'additive',
@@ -212,11 +280,11 @@ export class GSplatTSLMaterial
     this.uniforms.uOffset.value = offset;
   }
 
-  updateColormapTexture(texture: THREE.DataTexture | null): void {
-    const oldTexture = (this.uniforms.uColormapTex?.value as THREE.Texture | null | undefined) ??
-      null;
-    const { wasEnabled, nowEnabled } = applyColormapTextureToMaterial(this, texture);
-    const textureChanged = oldTexture !== texture;
+  updateColormapTexture(tex: THREE.DataTexture | null): void {
+    const oldTexture =
+      (this.uniforms.uColormapTex?.value as THREE.Texture | null | undefined) ?? null;
+    const { wasEnabled, nowEnabled } = applyColormapTextureToMaterial(this, tex);
+    const textureChanged = oldTexture !== tex;
     if (wasEnabled !== nowEnabled || textureChanged) {
       this.rebuildGraph();
     }
@@ -258,7 +326,16 @@ export class GSplatTSLMaterial
     this.userData.blendingMode = mode;
     this.userData.depthTest = state.depthTest;
 
-    if (previousMode !== mode && stateChanged) {
+    // Cross the sum↔max boundary? The TSL factory JS-conditionally
+    // emits the cofactor / ray-integration block only in sum mode, so
+    // crossing the boundary requires a graph rebuild (same pattern
+    // bloom / vignette toggles use). Cheaper than computing the
+    // cofactors unconditionally on every vertex in max mode.
+    const projectionChanged =
+      previousMode === undefined || isMaxMode(previousMode) !== isMaxMode(mode);
+    if (projectionChanged) {
+      this.rebuildGraph();
+    } else if (previousMode !== mode && stateChanged) {
       this.needsUpdate = true;
     }
   }
@@ -297,22 +374,27 @@ export class GSplatTSLMaterial
     return cloned as this;
   }
 
-  setColormapTexture(texture: THREE.DataTexture | null): void {
+  setColormapTexture(tex: THREE.DataTexture | null): void {
     if (!this.defines) this.defines = {};
-    if (texture) {
+    if (tex) {
       this.defines.USE_COLORMAP = '';
-      if (!this.uniforms.uColormapTex) {
-        this.uniforms.uColormapTex = { value: texture };
-        this.uniforms.uScalarMin = { value: 0.0 };
-        this.uniforms.uScalarScale = { value: 1.0 };
-      } else {
-        this.uniforms.uColormapTex.value = texture;
+      // TSL `texture()` snapshots at factory time → the node identity
+      // must change when the host swaps textures. Build a fresh
+      // texture node and (if missing) the matching scalar uniforms.
+      this.tslNodes.uColormapTex = texture(tex);
+      if (!this.tslNodes.uScalarMin) {
+        this.tslNodes.uScalarMin = uniform(0.0);
       }
+      if (!this.tslNodes.uScalarScale) {
+        this.tslNodes.uScalarScale = uniform(1.0);
+      }
+      this.uniforms = this.buildUniformProxies();
     } else {
       delete this.defines.USE_COLORMAP;
-      if (this.uniforms.uColormapTex) this.uniforms.uColormapTex.value = null;
-      if (this.uniforms.uScalarMin) this.uniforms.uScalarMin.value = 0.0;
-      if (this.uniforms.uScalarScale) this.uniforms.uScalarScale.value = 1.0;
+      this.tslNodes.uColormapTex = undefined;
+      this.tslNodes.uScalarMin = undefined;
+      this.tslNodes.uScalarScale = undefined;
+      this.uniforms = this.buildUniformProxies();
     }
   }
 

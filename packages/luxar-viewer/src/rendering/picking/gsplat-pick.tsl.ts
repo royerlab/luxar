@@ -271,35 +271,35 @@ export function gsplatPickWebGPUFactory(
   const vElementId: TSLNode = varying(float(instanceIndex));
 
   // ---- Fragment ----
-
-  const brightnessNode = () => {
-    const d: TSLNode = vec2(screenCoordinate.xy.sub(vCenterScreen));
-    const y0: TSLNode = d.x.mul(vL2D.x);
-    const y1: TSLNode = d.y.sub(vL2D.y.mul(y0)).mul(vL2D.z);
-    const mahalSq: TSLNode = y0.mul(y0).add(y1.mul(y1));
-    const intensity: TSLNode = vAmplitude2D
-      .mul(uInvOneMinusC)
-      .mul(max(exp(mahalSq.mul(-0.5)).sub(uShiftC), float(0.0)));
-    return clamp(intensity, 0.0, 1.0);
-  };
+  //
+  // Compute the Mahalanobis brightness ONCE, materialised via
+  // `.toVar()` so both color and depth fragment outputs reference the
+  // same computation instead of each rebuilding the
+  // forward-substitution + exp + clamp chain. TSL doesn't expose a
+  // multi-output fragment Fn in r184 (separate `colorNode` and
+  // `depthNode` are independent stage entry points); the `.toVar()`
+  // is the closest available "compile once, reference twice" pattern.
+  // Worst case (no common-subexpression elimination by the TSL
+  // builder) the cost is equivalent to today's duplicated graph;
+  // best case it halves the per-fragment picking cost on
+  // splat-heavy scenes.
+  const d: TSLNode = vec2(screenCoordinate.xy.sub(vCenterScreen));
+  const y0: TSLNode = d.x.mul(vL2D.x).toVar();
+  const y1: TSLNode = d.y.sub(vL2D.y.mul(y0)).mul(vL2D.z).toVar();
+  const mahalSq: TSLNode = y0.mul(y0).add(y1.mul(y1)).toVar();
+  const intensity: TSLNode = vAmplitude2D
+    .mul(uInvOneMinusC)
+    .mul(max(exp(mahalSq.mul(-0.5)).sub(uShiftC), float(0.0)))
+    .toVar();
+  const brightness: TSLNode = clamp(intensity, 0.0, 1.0).toVar();
 
   const colorNode = Fn(() => {
-    const d: TSLNode = vec2(screenCoordinate.xy.sub(vCenterScreen));
-    const y0: TSLNode = d.x.mul(vL2D.x);
-    const y1: TSLNode = d.y.sub(vL2D.y.mul(y0)).mul(vL2D.z);
-    const mahalSq: TSLNode = y0.mul(y0).add(y1.mul(y1));
     Discard(mahalSq.greaterThan(uTruncateSq));
-
-    const intensity: TSLNode = vAmplitude2D
-      .mul(uInvOneMinusC)
-      .mul(max(exp(mahalSq.mul(-0.5)).sub(uShiftC), float(0.0)));
     Discard(intensity.lessThan(1e-4));
-
-    const brightness: TSLNode = clamp(intensity, 0.0, 1.0);
     return vec4(vNodeId, vElementId, brightness, 1.0);
   });
 
-  const depthNode = Fn(() => float(1.0).sub(brightnessNode()));
+  const depthNode = Fn(() => float(1.0).sub(brightness));
 
   const material = outMaterial ?? new NodeMaterial();
   material.vertexNode = clipPos;
