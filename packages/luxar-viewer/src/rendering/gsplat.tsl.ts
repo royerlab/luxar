@@ -67,6 +67,7 @@ import { NodeMaterial } from 'three/webgpu';
 import { invalidFloatTSL, type TSLNode } from './tsl-helpers';
 import { applyBlendingStateToMaterial, getCompleteBlendingState } from './blending-state';
 import type { BlendingMode } from './material-manager';
+import { isMaxMode } from './blending-state';
 
 // Type-erased constructor aliases. TSL's typed `vec2`/`vec3`/`vec4`/`mat3`
 // overloads reject many valid combinations of intermediate `Node<…>`
@@ -279,45 +280,54 @@ export function gsplatWebGPUFactory(
   const invLf11: TSLNode = float(1.0).div(Lf11);
   const vL2DVal: TSLNode = vec3(invLf00, Lf10, invLf11);
 
-  // Sum vs max projection amplitude.
-  // For sum: σ_ray = 1/√(rᵀ Σ⁻¹ r); rayIntegrationBoost = σ_ray · uRayIntegralFactor.
-  // Compute Σ_cam⁻¹ via 3×3 cofactor expansion.
-  const a = S00;
-  const b = S01;
-  const c = S02;
-  const d = S11;
-  const e = S12;
-  const f = S22;
-  const detSigma: TSLNode = a
-    .mul(d.mul(f).sub(e.mul(e)))
-    .sub(b.mul(b.mul(f).sub(c.mul(e))))
-    .add(c.mul(b.mul(e).sub(c.mul(d))));
-  const invDet: TSLNode = float(1.0).div(max(detSigma, float(1e-12)));
-  const i00: TSLNode = d.mul(f).sub(e.mul(e)).mul(invDet);
-  const i11: TSLNode = a.mul(f).sub(c.mul(c)).mul(invDet);
-  const i22: TSLNode = a.mul(d).sub(b.mul(b)).mul(invDet);
-  const i01: TSLNode = b.mul(f).sub(c.mul(e)).negate().mul(invDet);
-  const i02: TSLNode = b.mul(e).sub(c.mul(d)).mul(invDet);
-  const i12: TSLNode = a.mul(e).sub(b.mul(c)).negate().mul(invDet);
+  // Sum vs max projection amplitude. The cofactor / ray-integration
+  // block is expensive (≈20-30 ops/vertex) and is only used in sum
+  // mode. The GLSL path branches at runtime on `uProjectionMode`,
+  // which the GPU handles efficiently because the uniform is warp-
+  // coherent. TSL's `.select()` does NOT short-circuit — both
+  // branches would otherwise materialise — so we JS-conditionally
+  // emit only the path that the active blending mode uses, mirroring
+  // the GLSL preprocessor's compile-time `if`. The wrapper class
+  // calls `rebuildGraph()` whenever the sum/max boundary is crossed.
+  const useSumProjection = !isMaxMode(config.blendingMode ?? 'additive');
+  void uProjectionMode; // kept as a uniform for runtime telemetry / clone parity, even when not consumed by the graph.
+  let vAmplitude2DVal: TSLNode;
+  if (useSumProjection) {
+    const a = S00;
+    const b = S01;
+    const c = S02;
+    const d = S11;
+    const e = S12;
+    const f = S22;
+    const detSigma: TSLNode = a
+      .mul(d.mul(f).sub(e.mul(e)))
+      .sub(b.mul(b.mul(f).sub(c.mul(e))))
+      .add(c.mul(b.mul(e).sub(c.mul(d))));
+    const invDet: TSLNode = float(1.0).div(max(detSigma, float(1e-12)));
+    const i00: TSLNode = d.mul(f).sub(e.mul(e)).mul(invDet);
+    const i11: TSLNode = a.mul(f).sub(c.mul(c)).mul(invDet);
+    const i22: TSLNode = a.mul(d).sub(b.mul(b)).mul(invDet);
+    const i01: TSLNode = b.mul(f).sub(c.mul(e)).negate().mul(invDet);
+    const i02: TSLNode = b.mul(e).sub(c.mul(d)).mul(invDet);
+    const i12: TSLNode = a.mul(e).sub(b.mul(c)).negate().mul(invDet);
 
-  // Ray direction: ortho = (0, 0, -1); perspective = normalize(centerCam).
-  const rayDirOrtho: TSLNode = vec3(0.0, 0.0, -1.0);
-  const rayDirPersp: TSLNode = normalize(centerCam);
-  const rayDir: TSLNode = isOrtho.select(rayDirOrtho.toVar(), rayDirPersp.toVar());
-  const prx: TSLNode = i00.mul(rayDir.x).add(i01.mul(rayDir.y)).add(i02.mul(rayDir.z));
-  const pry: TSLNode = i01.mul(rayDir.x).add(i11.mul(rayDir.y)).add(i12.mul(rayDir.z));
-  const prz: TSLNode = i02.mul(rayDir.x).add(i12.mul(rayDir.y)).add(i22.mul(rayDir.z));
-  const quad: TSLNode = max(
-    rayDir.x.mul(prx).add(rayDir.y.mul(pry)).add(rayDir.z.mul(prz)),
-    float(1e-8)
-  );
-  const sigmaRay: TSLNode = float(1.0).div(sqrt(quad));
-  const rayIntegrationBoost: TSLNode = sigmaRay.mul(uRayIntegralFactor);
-  const ampSum: TSLNode = aAmplitude.mul(rayIntegrationBoost).mul(nearFade);
-  const ampMax: TSLNode = aAmplitude.mul(nearFade);
-  const vAmplitude2DVal: TSLNode = int(uProjectionMode)
-    .equal(int(0))
-    .select(ampSum.toVar(), ampMax.toVar());
+    // Ray direction: ortho = (0, 0, -1); perspective = normalize(centerCam).
+    const rayDirOrtho: TSLNode = vec3(0.0, 0.0, -1.0);
+    const rayDirPersp: TSLNode = normalize(centerCam);
+    const rayDir: TSLNode = isOrtho.select(rayDirOrtho.toVar(), rayDirPersp.toVar());
+    const prx: TSLNode = i00.mul(rayDir.x).add(i01.mul(rayDir.y)).add(i02.mul(rayDir.z));
+    const pry: TSLNode = i01.mul(rayDir.x).add(i11.mul(rayDir.y)).add(i12.mul(rayDir.z));
+    const prz: TSLNode = i02.mul(rayDir.x).add(i12.mul(rayDir.y)).add(i22.mul(rayDir.z));
+    const quad: TSLNode = max(
+      rayDir.x.mul(prx).add(rayDir.y.mul(pry)).add(rayDir.z.mul(prz)),
+      float(1e-8)
+    );
+    const sigmaRay: TSLNode = float(1.0).div(sqrt(quad));
+    const rayIntegrationBoost: TSLNode = sigmaRay.mul(uRayIntegralFactor);
+    vAmplitude2DVal = aAmplitude.mul(rayIntegrationBoost).mul(nearFade);
+  } else {
+    vAmplitude2DVal = aAmplitude.mul(nearFade);
+  }
 
   // Eigendecomposition of Σ_2D (symmetric 2×2).
   const trace: TSLNode = Sigma2D00.add(Sigma2D11);
