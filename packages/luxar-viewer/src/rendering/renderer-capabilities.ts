@@ -41,8 +41,20 @@ export type Renderer = THREE.WebGLRenderer | WebGPURenderer;
  * its internal WebGL2 fallback because that path's `getContext()`
  * also delegates to a WebGL2 context.
  */
-function isWebGLRenderer(renderer: Renderer): renderer is THREE.WebGLRenderer {
+export function isWebGLRenderer(renderer: Renderer): renderer is THREE.WebGLRenderer {
   return (renderer as { isWebGLRenderer?: boolean }).isWebGLRenderer === true;
+}
+
+/**
+ * Symmetric counterpart to `isWebGLRenderer`. Returns true when the
+ * `Renderer` is a `WebGPURenderer` (or any subclass carrying the
+ * positive `isWebGPURenderer` flag THREE sets on the WebGPU base
+ * class). Useful for branches that need to call WebGPU-specific
+ * surface (e.g. `renderer.backend.device.lost`) without forcing a
+ * `three/webgpu` runtime import for an `instanceof` check.
+ */
+export function isWebGPURenderer(renderer: Renderer): renderer is WebGPURenderer {
+  return (renderer as { isWebGPURenderer?: boolean }).isWebGPURenderer === true;
 }
 
 /**
@@ -50,7 +62,23 @@ function isWebGLRenderer(renderer: Renderer): renderer is THREE.WebGLRenderer {
  * stack. All static fields are captured once at construction.
  */
 export interface RendererCapabilities {
-  /** Underlying graphics API. Discriminator for callers that must branch. */
+  /**
+   * The renderer API **surface** in use — discriminator for callers
+   * that must branch on method signatures (readback shapes, render
+   * target wiring, etc.).
+   *
+   * - `'webgl2'` → active renderer is `THREE.WebGLRenderer`.
+   * - `'webgpu'` → active renderer is `WebGPURenderer`, **even when**
+   *   WebGPURenderer's internal backend has fallen back to WebGL2.
+   *   The callable surface still follows the WebGPURenderer API
+   *   (e.g. `readRenderTargetPixelsAsync` returns its result instead
+   *   of writing into a destination buffer, padding rules apply).
+   *
+   * Treat this as "which method-signature contract should I follow?",
+   * not as "which physical GPU backend is running?". Probing the
+   * physical backend requires inspecting `renderer.backend` and is
+   * intentionally not exposed here.
+   */
   readonly api: 'webgl2' | 'webgpu';
   /** HDR / wide-gamut / float-texture detection. */
   readonly hdr: HDRCapabilities;

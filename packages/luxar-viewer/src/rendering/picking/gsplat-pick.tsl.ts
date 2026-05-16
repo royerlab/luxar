@@ -43,7 +43,7 @@ import {
   screenCoordinate,
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-import { type TSLNode } from '../tsl-helpers';
+import { invalidFloatTSL, type TSLNode } from '../tsl-helpers';
 
 const vec2: (a?: TSLNode, b?: TSLNode) => TSLNode = _vec2 as TSLNode;
 const vec3: (a?: TSLNode, b?: TSLNode, c?: TSLNode) => TSLNode = _vec3 as TSLNode;
@@ -244,9 +244,21 @@ export function gsplatPickWebGPUFactory(
   const centerClip: TSLNode = cameraProjectionMatrix.mul(centerCam4);
   const ndcZ: TSLNode = centerClip.z.div(centerClip.w);
 
+  // Match the GLSL `invalidCov2D || invalidFloat(aAmplitude)` guard
+  // (picking-shaders.ts gsplat section). Without this, NaN/Inf upstream
+  // values propagate through Cholesky / eigendecomposition and can
+  // make a splat unpickable in unpredictable ways.
+  const invalidAmp: TSLNode = invalidFloatTSL(aAmplitude);
+  const invalidCov: TSLNode = invalidFloatTSL(Sigma2D00)
+    .or(invalidFloatTSL(Sigma2D10))
+    .or(invalidFloatTSL(Sigma2D11));
   const validClipPos: TSLNode = vec4(ndcXY, ndcZ, float(1.0));
   const rejectClipPos: TSLNode = vec4(float(0.0), float(0.0), float(-2.0), float(1.0));
-  const rejected: TSLNode = behindCamera.or(depthFadeReject).or(coverageFadeReject);
+  const rejected: TSLNode = behindCamera
+    .or(depthFadeReject)
+    .or(coverageFadeReject)
+    .or(invalidAmp)
+    .or(invalidCov);
   const clipPos: TSLNode = rejected.select(rejectClipPos.toVar(), validClipPos.toVar());
 
   // Pickability always uses max projection — amplitude = aAmplitude · nearFade.

@@ -40,17 +40,33 @@ import {
   cameraProjectionMatrix,
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-import { type TSLNode } from '../tsl-helpers';
+import { sanitizePositive, sanitizeNonNegative, type TSLNode } from '../tsl-helpers';
+
+/**
+ * Pre-created TSL leaf nodes supplied by the wrapper class. See
+ * `LineTSLNodes` / `PointTSLNodes` / `GSplatTSLNodes` for the
+ * rationale: avoids `.onUpdate('render')` callback churn by using
+ * the wrapper-owned `UniformNode` references directly.
+ */
+export interface PointPickTSLNodes {
+  readonly pointSizeFactor: TSLNode;
+  readonly maxPointSize: TSLNode;
+  readonly radiusScale: TSLNode;
+  readonly sharpnessScale: TSLNode;
+  readonly uIsOrtho: TSLNode;
+  readonly uNodeId: TSLNode;
+  readonly uResolution: TSLNode;
+}
 
 /**
  * Point picking material TSL factory.
  *
- * `uniforms` must include the full set the GLSL3 picking shader
- * reads (pointSizeFactor, maxPointSize, radiusScale, sharpnessScale,
- * uIsOrtho, uNodeId, uResolution).
+ * Consumes pre-created `UniformNode` references; the wrapper
+ * (`PointPickingTSLMaterial`) owns those nodes and exposes them via
+ * `material.uniforms` as `IUniform`-shaped getter/setter proxies.
  */
 export function pointPickWebGPUFactory(
-  uniforms: Record<string, THREE.IUniform>,
+  nodes: PointPickTSLNodes,
   outMaterial?: NodeMaterial
 ): NodeMaterial {
   const aQuadCorner: TSLNode = attribute<'vec2'>('aQuadCorner', 'vec2');
@@ -58,45 +74,23 @@ export function pointPickWebGPUFactory(
   const aRadius: TSLNode = attribute<'float'>('aRadius', 'float');
   const aSharpness: TSLNode = attribute<'float'>('aSharpness', 'float');
 
-  // Primitive uniforms bind via `.onUpdate(() => iuniform.value)` so a
-  // wrapper class's mutations to `this.uniforms.X.value` propagate.
-  // Vector2 uniforms share the host object by reference (no onUpdate).
-  const uPointSizeFactor = uniform((uniforms.pointSizeFactor.value as number) ?? 1.0).onUpdate(
-    () => (uniforms.pointSizeFactor.value as number) ?? 1.0,
-    'render'
-  );
-  const uMaxPointSize = uniform((uniforms.maxPointSize.value as number) ?? 1.0).onUpdate(
-    () => (uniforms.maxPointSize.value as number) ?? 1.0,
-    'render'
-  );
-  const uRadiusScale = uniform((uniforms.radiusScale.value as number) ?? 1.0).onUpdate(
-    () => (uniforms.radiusScale.value as number) ?? 1.0,
-    'render'
-  );
-  const uSharpnessScale = uniform((uniforms.sharpnessScale.value as number) ?? 1.0).onUpdate(
-    () => (uniforms.sharpnessScale.value as number) ?? 1.0,
-    'render'
-  );
-  const uIsOrtho = uniform((uniforms.uIsOrtho.value as number) ?? 0).onUpdate(
-    () => (uniforms.uIsOrtho.value as number) ?? 0,
-    'render'
-  );
-  const uNodeId = uniform((uniforms.uNodeId.value as number) ?? 0).onUpdate(
-    () => (uniforms.uNodeId.value as number) ?? 0,
-    'render'
-  );
-  const uResolution = uniform(
-    (uniforms.uResolution.value as THREE.Vector2) ?? new THREE.Vector2(1, 1)
-  );
+  const uPointSizeFactor = nodes.pointSizeFactor;
+  const uMaxPointSize = nodes.maxPointSize;
+  const uRadiusScale = nodes.radiusScale;
+  const uSharpnessScale = nodes.sharpnessScale;
+  const uIsOrtho = nodes.uIsOrtho;
+  const uNodeId = nodes.uNodeId;
+  const uResolution = nodes.uResolution;
 
-  // Per-instance sanitisation. Picking does NOT use the full
-  // sanitizePositive helper — the GLSL path uses a simpler
-  // `> 0.0 ? x : 2.0` check. Mirror that exactly for parity.
-  const normalizedSharpnessRaw: TSLNode = aSharpness.mul(uSharpnessScale);
-  const normalizedSharpness: TSLNode = normalizedSharpnessRaw
-    .greaterThan(0.0)
-    .select(normalizedSharpnessRaw, float(2.0));
-  const normalizedRadius: TSLNode = aRadius.mul(uRadiusScale);
+  // Per-instance sanitisation — mirrors visual point.tsl.ts:158-162
+  // and the GLSL picking shader after the parity-fix update. A NaN/Inf
+  // sharpness or negative radius would otherwise let the pick
+  // footprint diverge from the visible footprint.
+  const normalizedSharpness: TSLNode = sanitizePositive(
+    aSharpness.mul(uSharpnessScale),
+    float(2.0)
+  );
+  const normalizedRadius: TSLNode = sanitizeNonNegative(aRadius.mul(uRadiusScale), float(0.0));
 
   // Vertex transform.
   const mvPos: TSLNode = modelViewMatrix.mul(vec4(aCenter, 1.0));
@@ -107,18 +101,23 @@ export function pointPickWebGPUFactory(
     .select(float(1.0), length(mvPos.xyz).reciprocal());
   const basePointSize: TSLNode = normalizedRadius.mul(uPointSizeFactor).mul(invDistance);
 
-  // Tighter picking: × 0.5 vs the visual material.
-  const sharpnessComp: TSLNode = float(1.0).div(
+  // Tighter picking: × 0.5 vs the visual material. Guard the
+  // sharpness-compensation expression against Inf/NaN the same way
+  // point.tsl.ts:188-191 does — degenerate sharpness must not poison
+  // the quad expansion.
+  const sharpnessCompRaw: TSLNode = float(1.0).div(
     float(1.0).sub(pow(float(0.01), float(1.0).div(max(normalizedSharpness, float(0.01)))))
   );
+  const sharpnessCompFinite = sharpnessCompRaw
+    .lessThan(1e30)
+    .and(sharpnessCompRaw.greaterThan(-1e30));
+  const sharpnessComp: TSLNode = sharpnessCompFinite.select(sharpnessCompRaw, float(1.0));
   const pickPointSize: TSLNode = max(
     float(1.0),
     clamp(basePointSize.mul(sharpnessComp).mul(0.5), float(1.0), uMaxPointSize)
   );
 
-  const offsetClip: TSLNode = aQuadCorner
-    .mul(pickPointSize.div(uResolution))
-    .mul(projCenter.w);
+  const offsetClip: TSLNode = aQuadCorner.mul(pickPointSize.div(uResolution)).mul(projCenter.w);
   const clipPos: TSLNode = projCenter.add(vec4(offsetClip, 0.0, 0.0));
 
   // Varyings.
@@ -174,4 +173,26 @@ export function pointPickWebGPUFactory(
   // produce nonsense readbacks. Matches the GLSL picking material.
   material.blending = THREE.NoBlending;
   return material;
+}
+
+/**
+ * Snapshot adapter: build a `PointPickTSLNodes` set from a flat
+ * `IUniform` record. Used by legacy callers that don't own
+ * persistent nodes. See `buildLineTSLNodesFromUniforms` for the
+ * rationale.
+ */
+export function buildPointPickTSLNodesFromUniforms(
+  uniforms: Record<string, THREE.IUniform>
+): PointPickTSLNodes {
+  return {
+    pointSizeFactor: uniform((uniforms.pointSizeFactor?.value as number) ?? 1.0),
+    maxPointSize: uniform((uniforms.maxPointSize?.value as number) ?? 1.0),
+    radiusScale: uniform((uniforms.radiusScale?.value as number) ?? 1.0),
+    sharpnessScale: uniform((uniforms.sharpnessScale?.value as number) ?? 1.0),
+    uIsOrtho: uniform((uniforms.uIsOrtho?.value as number) ?? 0),
+    uNodeId: uniform((uniforms.uNodeId?.value as number) ?? 0),
+    uResolution: uniform(
+      (uniforms.uResolution?.value as THREE.Vector2 | undefined) ?? new THREE.Vector2(1, 1)
+    ),
+  };
 }

@@ -64,7 +64,7 @@ import {
   screenCoordinate,
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-import { type TSLNode } from './tsl-helpers';
+import { invalidFloatTSL, type TSLNode } from './tsl-helpers';
 import { applyBlendingStateToMaterial, getCompleteBlendingState } from './blending-state';
 import type { BlendingMode } from './material-manager';
 
@@ -76,8 +76,7 @@ import type { BlendingMode } from './material-manager';
 // this file without affecting the generated GLSL/WGSL.
 const vec2: (a?: TSLNode, b?: TSLNode) => TSLNode = _vec2 as TSLNode;
 const vec3: (a?: TSLNode, b?: TSLNode, c?: TSLNode) => TSLNode = _vec3 as TSLNode;
-const vec4: (a?: TSLNode, b?: TSLNode, c?: TSLNode, d?: TSLNode) => TSLNode =
-  _vec4 as TSLNode;
+const vec4: (a?: TSLNode, b?: TSLNode, c?: TSLNode, d?: TSLNode) => TSLNode = _vec4 as TSLNode;
 const mat3: (a?: TSLNode, b?: TSLNode, c?: TSLNode) => TSLNode = _mat3 as TSLNode;
 
 export interface GSplatTSLConfig {
@@ -92,15 +91,54 @@ export interface GSplatTSLConfig {
 }
 
 /**
- * GSplat material TSL factory. `uniforms` must include:
- * `uResolution`, `uFx`, `uFy`, `uTruncate`, `uTruncateSq`,
- * `uRayIntegralFactor`, `uProjectionMode`, `uIsOrtho`, `uNearCull`,
- * `uMaxExtentFactor`, `uOpacity`, `uInvGamma`, `uIntensity`,
- * `uOffset`, `uShiftC`, `uInvOneMinusC`. Colormap uniforms are
- * required only when `config.useColormap === true`.
+ * Pre-created TSL leaf nodes supplied by the wrapper class. The
+ * factory consumes them directly in the shader graph instead of
+ * snapshotting `IUniform.value` and bridging back via
+ * `.onUpdate('render')`. The wrapper owns lifetime; `rebuildGraph()`
+ * reuses the same leaves so mutations remain visible after a
+ * defines change.
+ *
+ * The colormap texture node is factory-time bound (TSL
+ * `texture(...)` captures the THREE.Texture at call time); the
+ * wrapper rebuilds the graph when the texture identity changes
+ * (see `setColormapTexture` in the wrapper).
+ */
+export interface GSplatTSLNodes {
+  readonly uResolution: TSLNode;
+  readonly uFx: TSLNode;
+  readonly uFy: TSLNode;
+  readonly uTruncate: TSLNode;
+  readonly uTruncateSq: TSLNode;
+  readonly uRayIntegralFactor: TSLNode;
+  readonly uProjectionMode: TSLNode;
+  readonly uIsOrtho: TSLNode;
+  readonly uNearCull: TSLNode;
+  readonly uMaxExtentFactor: TSLNode;
+  readonly uOpacity: TSLNode;
+  readonly uInvGamma: TSLNode;
+  readonly uIntensity: TSLNode;
+  readonly uOffset: TSLNode;
+  readonly uShiftC: TSLNode;
+  readonly uInvOneMinusC: TSLNode;
+  readonly uColormapTex?: TSLNode;
+  readonly uScalarMin?: TSLNode;
+  readonly uScalarScale?: TSLNode;
+}
+
+/**
+ * GSplat material TSL factory.
+ *
+ * Consumes pre-created TSL `UniformNode` references via `nodes`; the
+ * wrapper class (`GSplatTSLMaterial`) owns those nodes and exposes
+ * them through `material.uniforms` as `IUniform`-shaped
+ * getter/setter proxies (see `proxyIUniform` in `tsl-helpers.ts`).
+ * Mutations to `material.uniforms.uX.value` land directly on the
+ * node with no per-render JS callback.
+ *
+ * Colormap nodes are required only when `config.useColormap === true`.
  */
 export function gsplatWebGPUFactory(
-  uniforms: Record<string, THREE.IUniform>,
+  nodes: GSplatTSLNodes,
   config: GSplatTSLConfig = {},
   outMaterial?: NodeMaterial
 ): NodeMaterial {
@@ -113,91 +151,28 @@ export function gsplatWebGPUFactory(
   const aAmplitude: TSLNode = attribute<'float'>('aAmplitude', 'float');
   const aColor: TSLNode = attribute<'vec3'>('aColor', 'vec3');
 
-  // Uniforms — vertex. Each primitive is bound via `.onUpdate(() =>
-  // iuniform.value)` so a wrapper class's mutations propagate to the
-  // GPU; Vector2 / Texture references share the host object directly.
-  const uResolution = uniform(
-    (uniforms.uResolution.value as THREE.Vector2) ?? new THREE.Vector2(1, 1)
-  );
-  const uFx = uniform((uniforms.uFx.value as number) ?? 1.0).onUpdate(
-    () => (uniforms.uFx.value as number) ?? 1.0,
-    'render'
-  );
-  const uFy = uniform((uniforms.uFy.value as number) ?? 1.0).onUpdate(
-    () => (uniforms.uFy.value as number) ?? 1.0,
-    'render'
-  );
-  const uTruncate = uniform((uniforms.uTruncate.value as number) ?? 3.0).onUpdate(
-    () => (uniforms.uTruncate.value as number) ?? 3.0,
-    'render'
-  );
-  const uRayIntegralFactor = uniform(
-    (uniforms.uRayIntegralFactor.value as number) ?? 1.0
-  ).onUpdate(() => (uniforms.uRayIntegralFactor.value as number) ?? 1.0, 'render');
-  const uProjectionMode = uniform(
-    (uniforms.uProjectionMode.value as number) ?? 0
-  ).onUpdate(() => (uniforms.uProjectionMode.value as number) ?? 0, 'render');
-  const uIsOrtho = uniform((uniforms.uIsOrtho.value as number) ?? 0).onUpdate(
-    () => (uniforms.uIsOrtho.value as number) ?? 0,
-    'render'
-  );
-  const uNearCull = uniform((uniforms.uNearCull.value as number) ?? 1e-4).onUpdate(
-    () => (uniforms.uNearCull.value as number) ?? 1e-4,
-    'render'
-  );
-  const uMaxExtentFactor = uniform(
-    (uniforms.uMaxExtentFactor.value as number) ?? 1.0
-  ).onUpdate(() => (uniforms.uMaxExtentFactor.value as number) ?? 1.0, 'render');
-
-  // Colormap (optional).
-  const uColormapTex =
-    config.useColormap && uniforms.uColormapTex
-      ? texture((uniforms.uColormapTex.value as THREE.Texture | null) ?? new THREE.Texture())
-      : null;
-  const uScalarMin =
-    config.useColormap && uniforms.uScalarMin
-      ? uniform((uniforms.uScalarMin.value as number) ?? 0.0).onUpdate(
-          () => (uniforms.uScalarMin?.value as number) ?? 0.0,
-          'render'
-        )
-      : null;
-  const uScalarScale =
-    config.useColormap && uniforms.uScalarScale
-      ? uniform((uniforms.uScalarScale.value as number) ?? 1.0).onUpdate(
-          () => (uniforms.uScalarScale?.value as number) ?? 1.0,
-          'render'
-        )
-      : null;
-
-  // Uniforms — fragment.
-  const uOpacity = uniform((uniforms.uOpacity.value as number) ?? 1.0).onUpdate(
-    () => (uniforms.uOpacity.value as number) ?? 1.0,
-    'render'
-  );
-  const uInvGamma = uniform((uniforms.uInvGamma.value as number) ?? 1.0).onUpdate(
-    () => (uniforms.uInvGamma.value as number) ?? 1.0,
-    'render'
-  );
-  const uIntensity = uniform((uniforms.uIntensity.value as number) ?? 1.0).onUpdate(
-    () => (uniforms.uIntensity.value as number) ?? 1.0,
-    'render'
-  );
-  const uOffset = uniform((uniforms.uOffset.value as number) ?? 0.0).onUpdate(
-    () => (uniforms.uOffset.value as number) ?? 0.0,
-    'render'
-  );
-  const uShiftC = uniform((uniforms.uShiftC.value as number) ?? 0.0).onUpdate(
-    () => (uniforms.uShiftC.value as number) ?? 0.0,
-    'render'
-  );
-  const uInvOneMinusC = uniform((uniforms.uInvOneMinusC.value as number) ?? 1.0).onUpdate(
-    () => (uniforms.uInvOneMinusC.value as number) ?? 1.0,
-    'render'
-  );
-  const uTruncateSq = uniform((uniforms.uTruncateSq.value as number) ?? 9.0).onUpdate(
-    () => (uniforms.uTruncateSq.value as number) ?? 9.0,
-    'render'
-  );
+  // Uniform leaves come from the wrapper. No per-render callbacks:
+  // mutations to `material.uniforms.X.value` already route to
+  // `node.value` via `proxyIUniform`.
+  const uResolution = nodes.uResolution;
+  const uFx = nodes.uFx;
+  const uFy = nodes.uFy;
+  const uTruncate = nodes.uTruncate;
+  const uRayIntegralFactor = nodes.uRayIntegralFactor;
+  const uProjectionMode = nodes.uProjectionMode;
+  const uIsOrtho = nodes.uIsOrtho;
+  const uNearCull = nodes.uNearCull;
+  const uMaxExtentFactor = nodes.uMaxExtentFactor;
+  const uColormapTex = config.useColormap ? nodes.uColormapTex : null;
+  const uScalarMin = config.useColormap ? nodes.uScalarMin : null;
+  const uScalarScale = config.useColormap ? nodes.uScalarScale : null;
+  const uOpacity = nodes.uOpacity;
+  const uInvGamma = nodes.uInvGamma;
+  const uIntensity = nodes.uIntensity;
+  const uOffset = nodes.uOffset;
+  const uShiftC = nodes.uShiftC;
+  const uInvOneMinusC = nodes.uInvOneMinusC;
+  const uTruncateSq = nodes.uTruncateSq;
 
   // ---- Vertex computation ----
 
@@ -234,10 +209,7 @@ export function gsplatWebGPUFactory(
   // Near-plane depth fade (perspective only).
   const depthFade: TSLNode = int(uIsOrtho)
     .equal(int(0))
-    .select(
-      smoothstep(uNearCull, uNearCull.mul(2.0), zDepth).toVar(),
-      float(1.0)
-    );
+    .select(smoothstep(uNearCull, uNearCull.mul(2.0), zDepth).toVar(), float(1.0));
   const depthFadeReject: TSLNode = depthFade.lessThan(0.01);
 
   // Coverage fade — perspective only, gated on the max diagonal
@@ -246,7 +218,10 @@ export function gsplatWebGPUFactory(
     SigmaCam.element(int(0)).element(int(0)),
     max(SigmaCam.element(int(1)).element(int(1)), SigmaCam.element(int(2)).element(int(2)))
   );
-  const projectedExtent: TSLNode = uFx.mul(sqrt(max(maxLateralVar, float(1e-8)))).mul(uTruncate).div(max(zDepth, float(1e-8)));
+  const projectedExtent: TSLNode = uFx
+    .mul(sqrt(max(maxLateralVar, float(1e-8))))
+    .mul(uTruncate)
+    .div(max(zDepth, float(1e-8)));
   const maxExtent: TSLNode = max(uResolution.x, uResolution.y).mul(uMaxExtentFactor);
   const coverageFadeRaw: TSLNode = float(1.0).sub(
     smoothstep(maxExtent.mul(0.5), maxExtent, projectedExtent)
@@ -357,9 +332,10 @@ export function gsplatWebGPUFactory(
   // variance is larger.
   const offDiagSig: TSLNode = abs(Sigma2D10).greaterThan(1e-6);
   const majorOff: TSLNode = normalize(vec2(lambda1.sub(Sigma2D11), Sigma2D10));
-  const majorDiag: TSLNode = Sigma2D00
-    .greaterThanEqual(Sigma2D11)
-    .select(vec2(1.0, 0.0).toVar(), vec2(0.0, 1.0).toVar());
+  const majorDiag: TSLNode = Sigma2D00.greaterThanEqual(Sigma2D11).select(
+    vec2(1.0, 0.0).toVar(),
+    vec2(0.0, 1.0).toVar()
+  );
   const majorAxis: TSLNode = offDiagSig.select(majorOff.toVar(), majorDiag.toVar());
   const minorAxis: TSLNode = vec2(majorAxis.y.negate(), majorAxis.x);
 
@@ -401,9 +377,21 @@ export function gsplatWebGPUFactory(
   const ndcZ: TSLNode = centerClip.z.div(centerClip.w);
 
   // Final clipPos — with rejects routing to behind-camera (z = -2).
+  // Mirror the GLSL `invalidCov2D(Sigma2D) || invalidFloat(aAmplitude)`
+  // guard at gsplat-shaders.ts:183-186 so NaN/Inf upstream values can't
+  // propagate through the Cholesky / eigendecomposition and produce
+  // garbage splats or backend-specific shader behaviour.
+  const invalidAmp: TSLNode = invalidFloatTSL(aAmplitude);
+  const invalidCov: TSLNode = invalidFloatTSL(Sigma2D00)
+    .or(invalidFloatTSL(Sigma2D10))
+    .or(invalidFloatTSL(Sigma2D11));
   const validClipPos: TSLNode = vec4(ndcXY, ndcZ, float(1.0));
   const rejectClipPos: TSLNode = vec4(float(0.0), float(0.0), float(-2.0), float(1.0));
-  const rejected: TSLNode = behindCamera.or(depthFadeReject).or(coverageFadeReject);
+  const rejected: TSLNode = behindCamera
+    .or(depthFadeReject)
+    .or(coverageFadeReject)
+    .or(invalidAmp)
+    .or(invalidCov);
   const clipPos: TSLNode = rejected.select(rejectClipPos.toVar(), validClipPos.toVar());
 
   // Per-instance colour (LUT or attribute). aAmplitude doubles as
@@ -456,8 +444,51 @@ export function gsplatWebGPUFactory(
   material.toneMapped = false;
 
   const blendingMode: BlendingMode = config.blendingMode ?? 'additive';
-  const opacityValue = (uniforms.uOpacity?.value as number | undefined) ?? 1.0;
+  const opacityValue = (nodes.uOpacity.value as number | undefined) ?? 1.0;
   const blendingState = getCompleteBlendingState(blendingMode, opacityValue);
   applyBlendingStateToMaterial(material, blendingState);
   return material;
+}
+
+/**
+ * Snapshot adapter: build a `GSplatTSLNodes` set from a flat
+ * `IUniform` record. Used by legacy callers that don't own
+ * persistent nodes (the `GSPLAT_SOURCE.webgpu` `buildMaterial` entry
+ * point and the TSL parity harness). See `buildLineTSLNodesFromUniforms`
+ * for the rationale + lifecycle contract.
+ */
+export function buildGSplatTSLNodesFromUniforms(
+  uniforms: Record<string, THREE.IUniform>
+): GSplatTSLNodes {
+  const nodes: GSplatTSLNodes = {
+    uResolution: uniform(
+      (uniforms.uResolution?.value as THREE.Vector2 | undefined) ?? new THREE.Vector2(1, 1)
+    ),
+    uFx: uniform((uniforms.uFx?.value as number) ?? 1.0),
+    uFy: uniform((uniforms.uFy?.value as number) ?? 1.0),
+    uTruncate: uniform((uniforms.uTruncate?.value as number) ?? 3.0),
+    uTruncateSq: uniform((uniforms.uTruncateSq?.value as number) ?? 9.0),
+    uRayIntegralFactor: uniform((uniforms.uRayIntegralFactor?.value as number) ?? 1.0),
+    uProjectionMode: uniform((uniforms.uProjectionMode?.value as number) ?? 0),
+    uIsOrtho: uniform((uniforms.uIsOrtho?.value as number) ?? 0),
+    uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 1e-4),
+    uMaxExtentFactor: uniform((uniforms.uMaxExtentFactor?.value as number) ?? 1.0),
+    uOpacity: uniform((uniforms.uOpacity?.value as number) ?? 1.0),
+    uInvGamma: uniform((uniforms.uInvGamma?.value as number) ?? 1.0),
+    uIntensity: uniform((uniforms.uIntensity?.value as number) ?? 1.0),
+    uOffset: uniform((uniforms.uOffset?.value as number) ?? 0.0),
+    uShiftC: uniform((uniforms.uShiftC?.value as number) ?? 0.0),
+    uInvOneMinusC: uniform((uniforms.uInvOneMinusC?.value as number) ?? 1.0),
+  };
+  if (uniforms.uColormapTex) {
+    return {
+      ...nodes,
+      uColormapTex: texture(
+        (uniforms.uColormapTex.value as THREE.Texture | null) ?? new THREE.Texture()
+      ),
+      uScalarMin: uniform((uniforms.uScalarMin?.value as number) ?? 0.0),
+      uScalarScale: uniform((uniforms.uScalarScale?.value as number) ?? 1.0),
+    };
+  }
+  return nodes;
 }
