@@ -47,11 +47,93 @@ v2.0 layout (`splats/substitutive_0/additive_<i>/`). The TypeScript viewer's
 `format_version`, `n_substitutive`, `default_substitutive`,
 `n_additive_sublods_default` (the legacy `n_lods` field is dropped).
 
+#### Fixed — Multi-agent review fixes for the WebGPU/r184 migration (2026-05-16)
+
+Landed a batch of correctness, performance, and architecture fixes
+surfaced by a multi-agent review of the dual-stack rendering branch.
+Each phase ships with full unit/lint/type/layer checks green.
+
+- **WebGPU readback row padding.** Added
+  `compactWebGPUReadbackRows` to `hdr-pixel-utils.ts` and wired it
+  into `PostProcessingManager.readTarget` (RGBA16F + RGBA32F),
+  `PostProcessingManager.renderToImageData` (RGBA8), and
+  `PickingSystem.readbackAndVote`. Previously the post-processing
+  capture and screenshot paths assumed compact rows under WebGPU
+  and produced corrupt / slanted output whenever
+  `width × bytesPerTexel` wasn't a multiple of 256 (the WebGPU
+  spec-mandated `bytesPerRow` alignment).
+- **TSL HDR/LDR capture toggles.** `MegaShaderTSLMaterial.toggleRawHdrCapture`
+  / `toggleLinearLdrCapture` now flip state and rebuild the TSL
+  graph, threading `captureRawHDR` / `captureLinearLDR` flags into
+  `megaWebGPUFactory` (which already had the early-exit support).
+  EXR exports under WebGPU now produce the documented
+  `hdr-effects-pre-tone` and `visible-ldr` outputs instead of
+  silently falling through to the full pipeline.
+- **GSplat picking `nearFade`.** Changed from
+  `depthFade.mul(coverageFade)` to `min(depthFade, coverageFade)`
+  in `gsplat-pick.tsl.ts` — matches visual TSL/GLSL gsplat and
+  GLSL gsplat picking. Restores correct splat picking near
+  coverage limits.
+- **`material-manager.ts` ↔ picking-material cycles.** Removed the
+  back-import of the `materialManager` singleton from all six
+  picking-material classes and the manual `unregister(this)` calls
+  in their `dispose()` methods. Cleanup now flows through the
+  existing `subscribeToDispose` listener that `MaterialManager.register`
+  attaches. `pnpm run check:layers` now reports 0 violations (was 6).
+- **Picking sharpness/radius sanitization parity.** Point picking
+  shaders (GLSL + TSL) now use the same `sanitizePositive` /
+  `sanitizeNonNegative` helpers as the visual path, so malformed
+  NaN/Inf sharpness can no longer make the pick footprint diverge
+  from the visible footprint.
+- **GSplat TSL invalid-value guards.** `gsplat.tsl.ts` and
+  `gsplat-pick.tsl.ts` now reject NaN/Inf 2D covariance elements
+  and amplitudes before the Cholesky / eigendecomposition,
+  matching the GLSL `invalidCov2D || invalidFloat` guard. New
+  `invalidFloatTSL` helper in `tsl-helpers.ts`.
+- **`RendererCapabilities.api` semantics clarified.** JSDoc now
+  states explicitly that `api` reports the **renderer API surface**
+  (which signatures to call), not the physical GPU backend.
+  Exported `isWebGLRenderer` and added a symmetric `isWebGPURenderer`
+  type guard. `BROWSER_SUPPORT_POLICY.md` rewrites the
+  previously-contradicting "honestly reports the backend"
+  paragraph.
+- **WebGPU device-loss signal.** `SceneManager.setupContextLossHandling`
+  now observes `renderer.backend.device.lost` and dispatches a
+  `webgpu-device-lost` event so host applications can prompt for
+  a reload. WebGPU device loss is treated as **unrecoverable** in
+  this release; a full rebuild path mirroring WebGL2's
+  `WebGLContextRecovery` is deferred until there's
+  WebGPU-native test infrastructure.
+- **GSplat TSL cofactor gating.** `gsplatWebGPUFactory` now
+  JS-conditionally emits the Σ_cam⁻¹ cofactor / ray-integration
+  block only in sum-projection mode. TSL `.select()` does not
+  short-circuit, so the previous factory paid the ~25-op cofactor
+  expansion on every vertex even in max projection. The wrapper
+  rebuilds the graph on sum↔max boundary crossings (same one-time
+  cost as a bloom/vignette toggle).
+- **GSplat picking Mahalanobis dedup.** Materialised the per-fragment
+  Mahalanobis forward-substitution + intensity via `.toVar()`
+  outside both `colorNode` and `depthNode` Fn bodies so the TSL
+  builder can fold the shared subexpression into a single local
+  if it supports CSE. Worst case is equivalent to before.
+- **Docs refresh.** `rendering/README.md`, `rendering/SPECIFICATIONS.md`,
+  `picking/PICKING_DESIGN.md`, and `MEGA_SHADER_DESIGN.md` updated
+  to describe the actually-shipped dual-stack pipeline. New
+  "Dual-stack Architecture (WebGPU / WebGL2)" section in
+  rendering/SPECIFICATIONS.md covering renderer dispatch, readback
+  signatures, WebGPU row-padding, interleaved attributes, and
+  the device-loss policy. Line cap-factor pseudocode rewritten to
+  match the fragment-shader implementation (the original
+  vertex-side `vCapFactor` design didn't survive the
+  4-vertex-quad layout).
+
 #### Changed — WebGPU migration: default renderer flipped to WebGPU (2026-05-14)
 
 The viewer's production rendering path now defaults to
-`WebGPURenderer({ forceWebGL: true })`; the legacy `WebGLRenderer`
-+ GLSL `ShaderMaterial` path stays live behind
+`WebGPURenderer` (no `forceWebGL` — the renderer dispatches to a
+real WebGPU adapter when the browser provides one and transparently
+falls back to its internal WebGL2 backend otherwise); the legacy
+`WebGLRenderer` + GLSL `ShaderMaterial` path stays live behind
 `VITE_LUXAR_USE_LEGACY_WEBGL=1` as a runnable reference (parity
 harness, baseline pixel comparisons, fallback for hosts where
 WebGPU isn't an option). `VITE_LUXAR_USE_WEBGPU_RENDERER` becomes
@@ -114,10 +196,10 @@ landed at this commit (production rendering path was still on
   the matching THREE blending state via the existing
   `blending-state.ts` helper.
 
-Remaining work: real-WebGPU smoke pass on Chrome stable
-(`forceWebGL: false`), then the matching pixel-baseline refresh.
-See `packages/luxar-viewer/MIGRATION_PROGRESS.md` for the full
-ledger.
+Remaining work: real-WebGPU smoke pass on Chrome stable with a
+working GPU (Playwright's headless chromium falls back to WebGL2),
+then the matching pixel-baseline refresh. See
+`packages/luxar-viewer/MIGRATION_PROGRESS.md` for the full ledger.
 
 #### Changed — Three.js r184 and custom post-processing pipeline (2026-05-12)
 

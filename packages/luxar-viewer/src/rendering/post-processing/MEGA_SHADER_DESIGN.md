@@ -1,11 +1,13 @@
-# Mega-shader post-processing — design doc
+# Mega-shader post-processing — design doc (historical)
 
-**Status:** design under review, no production code written yet.
-**Scope:** Phase 0 of the WebGPU migration plan. Decouples the viewer
-from `pmndrs/postprocessing` while staying on WebGL. Strict improvement
-that pays off on WebGL today and shortens the eventual WebGPU port.
+**Status:** ✅ SHIPPED (2026-05-12). The mega-shader is the active post-processing pipeline; it replaced `pmndrs/postprocessing` and runs under both the WebGL2 (`MegaShaderMaterial`, `mega-shader.glsl.ts`) and WebGPU (`MegaShaderTSLMaterial`, `mega.tsl.ts`) backends.
+
+This document is retained as the **architectural reference** that motivated the implementation. The "Confirmed scope decisions" below are the ones that actually shipped; the open questions in later sections have all been resolved (search `SPECIFICATIONS.md` and `post-processing-manager.ts` for current behaviour).
+
+**Scope:** Phase 0 of the WebGPU migration plan. Decoupled the viewer from `pmndrs/postprocessing` while staying on WebGL. Strict improvement that paid off on WebGL2 and shortened the WebGPU port.
 
 **Confirmed scope decisions (from user):**
+
 - Drop SMAA (keep FXAA as final pass)
 - Drop SSAO entirely
 - Drop DoF entirely
@@ -84,12 +86,12 @@ SceneRenderer ──→ HDR HalfFloat target  ┐
 
 ### Pass count comparison
 
-| Scene state | Today (pmndrs) | After (mega-shader) |
-|---|---|---|
-| Bloom + tone + vignette + FXAA (typical) | ~9 | 5–7 |
-| All effects on (chromatic + noise + bloom + ...) | ~12 | 5–7 |
-| Bare scene (no post FX) | 2 | 2 |
-| Tone + EOG only (minimum) | 3 | 2 |
+| Scene state                                      | Today (pmndrs) | After (mega-shader) |
+| ------------------------------------------------ | -------------- | ------------------- |
+| Bloom + tone + vignette + FXAA (typical)         | ~9             | 5–7                 |
+| All effects on (chromatic + noise + bloom + ...) | ~12            | 5–7                 |
+| Bare scene (no post FX)                          | 2              | 2                   |
+| Tone + EOG only (minimum)                        | 3              | 2                   |
 
 ---
 
@@ -109,7 +111,7 @@ combining passes:
 3. **Detector noise** → procedural per-pixel. Hash-based PRNG +
    Anscombe Poisson approx + Gaussian readout + fixed-pattern offset.
 4. **EOG** → `color *= 2^uExposure; color = max(color + uOffset, 0);
-   color = pow(color, 1/uGamma)`.
+color = pow(color, 1/uGamma)`.
 5. **Tone mapping** → switch on `TONE_MAPPING_MODE` define. Linear /
    Reinhard / Cineon / ACES Filmic / **AgX (default)** / Neutral /
    Reinhard2 / Uncharted2.
@@ -146,11 +148,13 @@ export interface MegaShaderConfig {
 export class MegaShaderMaterial extends THREE.ShaderMaterial {
   constructor(cfg: MegaShaderConfig = {}) {
     super({
-      uniforms: { /* see uniform list below */ },
-      vertexShader: MEGA_VERTEX,  // trivial fullscreen triangle
+      uniforms: {
+        /* see uniform list below */
+      },
+      vertexShader: MEGA_VERTEX, // trivial fullscreen triangle
       fragmentShader: MEGA_FRAGMENT,
       defines: {
-        TONE_MAPPING_MODE: '5',  // AgX default
+        TONE_MAPPING_MODE: '5', // AgX default
         // USE_LENS_DISTORTION, USE_BLOOM, USE_DETECTOR_NOISE,
         // USE_VIGNETTE — gated dynamically via setters below
       },
@@ -159,11 +163,11 @@ export class MegaShaderMaterial extends THREE.ShaderMaterial {
   }
 
   // === Tone mapping + EOG ===
-  setToneMapping(mode: THREE.ToneMapping): void
-  setExposure(v: number): void
-  setGlobalOffset(v: number): void
-  setGlobalGamma(v: number): void
-  setReinhard2Params(white: number, mid: number, avgLum: number): void
+  setToneMapping(mode: THREE.ToneMapping): void;
+  setExposure(v: number): void;
+  setGlobalOffset(v: number): void;
+  setGlobalGamma(v: number): void;
+  setReinhard2Params(white: number, mid: number, avgLum: number): void;
 
   // === Chromatic lens distortion ===
   setLensDistortion(p: {
@@ -172,30 +176,26 @@ export class MegaShaderMaterial extends THREE.ShaderMaterial {
     focalLength?: THREE.Vector2;
     skew?: number;
     dispersion?: number;
-  }): void
-  toggleLensDistortion(enabled: boolean): void
+  }): void;
+  toggleLensDistortion(enabled: boolean): void;
 
   // === Detector noise ===
-  setDetectorNoise(p: {
-    readoutSigma: number;
-    photonGain: number;
-    fpnSigma: number;
-  }): void
-  toggleDetectorNoise(enabled: boolean): void
-  advanceTime(deltaTime: number): void
+  setDetectorNoise(p: { readoutSigma: number; photonGain: number; fpnSigma: number }): void;
+  toggleDetectorNoise(enabled: boolean): void;
+  advanceTime(deltaTime: number): void;
 
   // === Vignette ===
-  setVignette(darkness: number, offset: number): void
-  toggleVignette(enabled: boolean): void
+  setVignette(darkness: number, offset: number): void;
+  toggleVignette(enabled: boolean): void;
 
   // === Bloom ===
-  setBloom(intensity: number, texture: THREE.Texture | null): void
-  toggleBloom(enabled: boolean): void
+  setBloom(intensity: number, texture: THREE.Texture | null): void;
+  toggleBloom(enabled: boolean): void;
 
   // === Common ===
-  setResolution(w: number, h: number): void
+  setResolution(w: number, h: number): void;
 
-  dispose(): void
+  dispose(): void;
 }
 ```
 
@@ -352,27 +352,28 @@ downsample + dual-filter upsample.
 
 ```ts
 export interface BloomChainConfig {
-  levels: number;      // 1-8, default 5
-  threshold: number;   // default 0.85
-  smoothing: number;   // default 0.01 (for soft threshold)
-  radius: number;      // default 0.85 — mixed in upsample blend
+  levels: number; // 1-8, default 5
+  threshold: number; // default 0.85
+  smoothing: number; // default 0.01 (for soft threshold)
+  radius: number; // default 0.85 — mixed in upsample blend
 }
 
 export class BloomChain {
-  constructor(renderer: THREE.WebGLRenderer, cfg: BloomChainConfig)
+  constructor(renderer: THREE.WebGLRenderer, cfg: BloomChainConfig);
 
   /** Returns the bloom texture (will reuse internally allocated target). */
-  render(sceneHdrTarget: THREE.WebGLRenderTarget): THREE.Texture
+  render(sceneHdrTarget: THREE.WebGLRenderTarget): THREE.Texture;
 
-  setLevels(n: number): void
-  setRadius(r: number): void
-  setThreshold(t: number): void
-  setSize(w: number, h: number): void
-  dispose(): void
+  setLevels(n: number): void;
+  setRadius(r: number): void;
+  setThreshold(t: number): void;
+  setSize(w: number, h: number): void;
+  dispose(): void;
 }
 ```
 
 Implementation:
+
 - Initial pass: threshold-soft + downsample by 2x → mip[0]
 - Downsample chain: each mip[i] → mip[i+1] at half resolution
 - Upsample chain: blend mip[i+1] back onto mip[i] with bilateral-ish
@@ -390,10 +391,10 @@ writes to backbuffer.
 
 ```ts
 export class FxaaPass {
-  constructor(renderer: THREE.WebGLRenderer)
-  render(ldrTexture: THREE.Texture, target: THREE.WebGLRenderTarget | null): void
-  setSize(w: number, h: number): void
-  dispose(): void
+  constructor(renderer: THREE.WebGLRenderer);
+  render(ldrTexture: THREE.Texture, target: THREE.WebGLRenderTarget | null): void;
+  setSize(w: number, h: number): void;
+  dispose(): void;
 }
 ```
 
@@ -442,10 +443,12 @@ the dropped methods.
 ```
 
 Public methods to **delete** (matching the SMAA/SSAO/DoF drop):
+
 - `setSMAAEnabled`, `updateSMAASettings`, `setDOF`, `updateDOF`,
   `setAOEnabled`, `setAOQuality`
 
 Public methods to **keep with identical signatures**:
+
 - `setBloomEnabled`, `updateBloomSettings`, `setBloomLevels`,
   `getBloomLevels`, `isBloomEnabled`
 - `setToneMapping`, `getToneMapping`
@@ -470,6 +473,7 @@ post-processing) rather than the composer's result buffer. Cleaner —
 the export now captures actual HDR values, not post-processed LDR.
 
 ### `src/rendering/post-processing/tone-mapping-handler.ts`,
+
 ### `src/rendering/post-processing/tone-mapping-mode-names.ts`
 
 Stay; their pure helpers are still useful. Tone-mapping-handler will
@@ -514,6 +518,7 @@ Plus their `*.test.ts` partners under `src/tests/unit/rendering/`.
 ## Test strategy
 
 ### Unit
+
 - `mega-shader-material.test.ts` — uniform plumbing, define toggles, mode switching
 - `bloom-chain.test.ts` — level adjustment, render target sizing, dispose
 - `fxaa-pass.test.ts` — enable/disable, size
@@ -521,6 +526,7 @@ Plus their `*.test.ts` partners under `src/tests/unit/rendering/`.
 - **Delete** unit tests for removed effects (SMAA/SSAO/DoF + the 4 vendored ones)
 
 ### E2E
+
 - Re-baseline `visual-regression.spec.ts`, `theme-visual-regression.spec.ts`,
   `post-processing-pipeline.spec.ts`, `blending-modes.spec.ts`
 - Diff the re-baselines against current — expect subpixel differences
@@ -528,6 +534,7 @@ Plus their `*.test.ts` partners under `src/tests/unit/rendering/`.
 - Skip the SMAA/SSAO/DoF-specific specs (delete or mark obsolete)
 
 ### Performance
+
 - Re-run benchmarks; compare fullscreen-pass count and frame time
   against `performance-baselines.json`
 - Expected: ~30-50% fewer fullscreen passes, ~10-20% frame-time
