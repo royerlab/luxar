@@ -9,7 +9,6 @@
 
 import * as THREE from 'three';
 import type { CameraAwareMaterial } from '../camera-aware-material';
-import { materialManager } from '../material-manager';
 import { LINE_PICK_SOURCE } from './picking-shaders';
 import { requireWebGLSources } from '../shaders/shader-source';
 
@@ -56,10 +55,5 @@ export class LinePickingMaterial extends THREE.ShaderMaterial implements CameraA
       this.uniforms.uNearCull.value = nearCull;
     }
     this.uniforms.uMaxLinePixelWidth.value = Math.max(2, resolution.y * 0.5);
-  }
-
-  dispose(): void {
-    materialManager.unregister(this);
-    super.dispose();
   }
 }

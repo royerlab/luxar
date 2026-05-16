@@ -22,6 +22,7 @@ import type { PostProcessingManager } from '../post-processing/post-processing-m
 import { isCameraAwareMaterial } from '../camera-aware-material';
 import { materialManager } from '../material-manager';
 import type { Renderer, RendererCapabilities } from '../renderer-capabilities';
+import { compactWebGPUReadbackRows } from '../post-processing/hdr-pixel-utils';
 import {
   getCameraFovRadians,
   isOrthographicCamera,
@@ -568,35 +569,12 @@ export class PickingSystem {
         PICK_SIZE,
         PICK_SIZE
       )) as Float32Array;
-      // WebGPU's `copyTextureToBuffer` requires `bytesPerRow` to
-      // be a multiple of 256 bytes (spec-mandated alignment). For
-      // a 5×5 RGBA32F readback, 5 px × 16 B/px = 80 B/row → padded
-      // to 256 B/row. The returned typed array is sized for the
-      // padded layout (≈ 276 floats for PICK_SIZE=5) while
-      // `this.readBuffer` is sized for the compact 5×5×4 = 100
-      // floats. Deinterlace row-by-row, dropping the padding.
-      //
-      // Reference: Three.js WebGPU TextureUtils.copyTextureToBuffer
-      // pads to 256 (three.webgpu.js line 73549).
-      const bytesPerTexel = 16; // RGBA32F
-      const floatsPerTexel = 4;
-      const bytesPerRowReal = PICK_SIZE * bytesPerTexel;
-      const bytesPerRowPadded = Math.ceil(bytesPerRowReal / 256) * 256;
-      const floatsPerRowPadded = bytesPerRowPadded / 4;
-      const floatsPerRowReal = PICK_SIZE * floatsPerTexel;
-      if (raw.length === this.readBuffer.length) {
-        // No padding (PICK_SIZE happens to align; current PICK_SIZE
-        // doesn't, but this guards future tweaks).
-        this.readBuffer.set(raw);
-      } else {
-        // Padded layout — deinterlace row-by-row into the compact
-        // destination.
-        for (let row = 0; row < PICK_SIZE; row++) {
-          const srcStart = row * floatsPerRowPadded;
-          const dstStart = row * floatsPerRowReal;
-          this.readBuffer.set(raw.subarray(srcStart, srcStart + floatsPerRowReal), dstStart);
-        }
-      }
+      // WebGPU's `copyTextureToBuffer` pads `bytesPerRow` to a
+      // multiple of 256 (spec § Texture & buffer copy alignment). For
+      // a 5×5 RGBA32F readback, 80 B/row → 256 B/row, leaving 44
+      // floats of trailing junk per row. `compactWebGPUReadbackRows`
+      // drops the padding when present and is a no-op otherwise.
+      this.readBuffer.set(compactWebGPUReadbackRows(raw, PICK_SIZE, PICK_SIZE, 16));
     }
 
     // Brightness-weighted majority voting

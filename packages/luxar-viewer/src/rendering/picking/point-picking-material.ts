@@ -10,7 +10,6 @@
 import * as THREE from 'three';
 import type { CameraAwareMaterial } from '../camera-aware-material';
 import { computePointSizeFactor, computeMaxPointSize } from '../camera-uniforms';
-import { materialManager } from '../material-manager';
 import { POINT_PICK_SOURCE } from './picking-shaders';
 import { requireWebGLSources } from '../shaders/shader-source';
 
@@ -77,10 +76,5 @@ export class PointPickingMaterial extends THREE.ShaderMaterial implements Camera
   }
   updateSharpnessScale(scale: number): void {
     this.uniforms.sharpnessScale.value = scale;
-  }
-
-  dispose(): void {
-    materialManager.unregister(this);
-    super.dispose();
   }
 }
