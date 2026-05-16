@@ -87,6 +87,14 @@ export class SceneManager extends THREE.EventDispatcher<{
    * post-processing + material cache before dispatching.
    */
   'webgl-context-restored': {};
+  /**
+   * Fired when the WebGPU device.lost Promise resolves. Treated as
+   * **unrecoverable** in this release — Luxar does not rebuild GPU
+   * resources after WebGPU device loss; the host application is
+   * expected to prompt for a reload. See
+   * `setupContextLossHandling` for the rationale.
+   */
+  'webgpu-device-lost': {};
 }> {
   /**
    * The graphics-API renderer. Holds the `Renderer` union honestly:
@@ -546,8 +554,7 @@ export class SceneManager extends THREE.EventDispatcher<{
 
       // Request what the hardware exposes, capped at 16 (enough
       // for every Luxar material, with headroom for future growth).
-      const requestedMax =
-        typeof adapterMax === 'number' ? Math.min(adapterMax, 16) : undefined;
+      const requestedMax = typeof adapterMax === 'number' ? Math.min(adapterMax, 16) : undefined;
 
       // Lift the buffer-size limit too. Compat mode caps
       // `maxBufferSize` at the WebGPU spec minimum 256 MB, but Luxar
@@ -645,35 +652,67 @@ export class SceneManager extends THREE.EventDispatcher<{
 
   /**
    * Construct the WebGLContextRecovery concern and attach its
-   * canvas listeners. Thin delegate over scene-setup/webgl-context-recovery.
-   * The recovery instance owns the loss/restored handlers, the
-   * `isContextLost` flag, and the deterministic rebuild order.
+   * canvas listeners (WebGL2 path), OR attach a `device.lost`
+   * observer that surfaces the failure as an event (WebGPU path).
    *
-   * Only meaningful under the WebGL2 backend — the
-   * `webglcontextlost` / `webglcontextrestored` canvas events that
-   * the recovery hooks fire only on WebGL contexts. Under the
-   * WebGPU backend the analog is the `device.lost` Promise, which
-   * Three's `WebGPURenderer` handles internally; nothing for the
-   * recovery layer to do, so we skip wiring it up. `contextRecovery`
-   * stays `null` and every call site already null-checks.
+   * **WebGL2 path.** The recovery instance owns the loss/restored
+   * handlers, the `isContextLost` flag, and the deterministic
+   * rebuild order. Bound here because `webglcontextlost` /
+   * `webglcontextrestored` canvas events fire only on WebGL
+   * contexts.
+   *
+   * **WebGPU path.** Three's `WebGPURenderer` recreates its own
+   * GPU device internally when `device.lost` resolves, but it does
+   * **not** rebuild Luxar-owned resources (post-processing render
+   * targets, picking buffers, material caches, interleaved geometry
+   * buffers). A full rebuild path mirroring WebGL2 is non-trivial
+   * and untested in CI today, so for now we treat WebGPU device
+   * loss as **unrecoverable**: log it loudly and dispatch a
+   * `webgpu-device-lost` event so the host application can prompt
+   * for a reload. The event payload carries the device-loss reason
+   * for diagnostics.
    */
   private setupContextLossHandling(): void {
-    if (this.capabilities.api !== 'webgl2') {
+    if (this.capabilities.api === 'webgl2') {
+      this.contextRecovery = new WebGLContextRecovery({
+        canvas: this.canvasElement,
+        // Lazy lookup — `setupContextLossHandling` runs before
+        // `setupScene` in init() order; capturing `this.scene` at
+        // construction would freeze in `undefined`.
+        getScene: () => this.scene,
+        renderer: this.renderer as THREE.WebGLRenderer,
+        getPostProcessing: () => this.postProcessing ?? null,
+        updateRendererSize: () => this.updateRendererSize(),
+        onContextRestored: () => this.dispatchEvent({ type: 'webgl-context-restored' }),
+        triggerChange: () => this.dispatchEvent({ type: 'change' }),
+      });
+      this.contextRecovery.attach();
       return;
     }
-    this.contextRecovery = new WebGLContextRecovery({
-      canvas: this.canvasElement,
-      // Lazy lookup — `setupContextLossHandling` runs before
-      // `setupScene` in init() order; capturing `this.scene` at
-      // construction would freeze in `undefined`.
-      getScene: () => this.scene,
-      renderer: this.renderer as THREE.WebGLRenderer,
-      getPostProcessing: () => this.postProcessing ?? null,
-      updateRendererSize: () => this.updateRendererSize(),
-      onContextRestored: () => this.dispatchEvent({ type: 'webgl-context-restored' }),
-      triggerChange: () => this.dispatchEvent({ type: 'change' }),
+
+    // WebGPU: attach a best-effort device.lost observer. The
+    // backend's `device` is created during `gpuRenderer.init()`,
+    // so by the time `setupContextLossHandling` runs the device is
+    // either present or we accept "device.lost reporting unavailable
+    // on this Three.js build" silently. Structural typing avoids the
+    // @webgpu/types dependency on consumers that don't enable WebGPU
+    // in TypeScript's lib.
+    type DeviceLostInfo = { reason?: string; message?: string };
+    type GpuDeviceLike = { lost: Promise<DeviceLostInfo> };
+    const backend = (this.renderer as { backend?: { device?: GpuDeviceLike } }).backend;
+    const device = backend?.device;
+    if (!device || typeof device.lost !== 'object') {
+      return;
+    }
+    void device.lost.then((info: DeviceLostInfo) => {
+      log.error(
+        Modules.RENDERER,
+        `WebGPU device lost (reason=${info.reason ?? 'unknown'}). ` +
+          'Luxar does not auto-recover WebGPU device loss in this release — ' +
+          `please reload the page. Message: ${info.message ?? '(none)'}`
+      );
+      this.dispatchEvent({ type: 'webgpu-device-lost' });
     });
-    this.contextRecovery.attach();
   }
 
   /**

@@ -21,9 +21,10 @@
  */
 
 import type { ShaderSource } from '../shaders/shader-source';
-import { pointPickWebGPUFactory } from './point-pick.tsl';
-import { linePickWebGPUFactory } from './line-pick.tsl';
-import { gsplatPickWebGPUFactory } from './gsplat-pick.tsl';
+import { GLSL_SANITIZE_FUNCTIONS } from '../shaders/glsl-lib';
+import { pointPickWebGPUFactory, buildPointPickTSLNodesFromUniforms } from './point-pick.tsl';
+import { linePickWebGPUFactory, buildLinePickTSLNodesFromUniforms } from './line-pick.tsl';
+import { gsplatPickWebGPUFactory, buildGSplatPickTSLNodesFromUniforms } from './gsplat-pick.tsl';
 
 // ---------------------------------------------------------------------
 // Points
@@ -35,6 +36,8 @@ import { gsplatPickWebGPUFactory } from './gsplat-pick.tsl';
  */
 export const POINT_PICK_VERTEX_SHADER = /* glsl */ `
     precision highp float;
+
+    ${GLSL_SANITIZE_FUNCTIONS}
 
     // Per-vertex (4 corners shared across all instances)
     in vec2 aQuadCorner;
@@ -59,10 +62,13 @@ export const POINT_PICK_VERTEX_SHADER = /* glsl */ `
     flat out highp float vElementId;
 
     void main() {
-      float normalizedSharpness = aSharpness * sharpnessScale;
-      vSharpness = normalizedSharpness > 0.0 ? normalizedSharpness : 2.0;
+      // Mirror visual point shader sanitization (point-shaders.ts:69)
+      // so a NaN/Inf sharpness or negative radius can't cause the pick
+      // footprint to diverge from the visible footprint.
+      float normalizedSharpness = sanitizePositive(aSharpness * sharpnessScale, 2.0);
+      vSharpness = normalizedSharpness;
 
-      float normalizedRadius = aRadius * radiusScale;
+      float normalizedRadius = sanitizeNonNegative(aRadius * radiusScale, 0.0);
       vRadius = normalizedRadius;
 
       vec4 mvPosition = modelViewMatrix * vec4(aCenter, 1.0);
@@ -72,8 +78,11 @@ export const POINT_PICK_VERTEX_SHADER = /* glsl */ `
       float basePointSize = normalizedRadius * pointSizeFactor * invDistance;
 
       // Tighter truncation for picking: 50% of visual radius
-      // Use sharpness compensation * 0.5 so we only pick the bright core
-      float sharpnessCompensation = 1.0 / (1.0 - pow(0.01, 1.0 / max(vSharpness, 0.01)));
+      // Use sharpness compensation * 0.5 so we only pick the bright core.
+      // Mirror visual point shader's invalid-result guard so a degenerate
+      // vSharpness (e.g. ≪0.01 after clamp) can't poison pointSize.
+      float sharpnessCompensationRaw = 1.0 / (1.0 - pow(0.01, 1.0 / max(vSharpness, 0.01)));
+      float sharpnessCompensation = isInvalidFloat(sharpnessCompensationRaw) ? 1.0 : sharpnessCompensationRaw;
       float pointSize = basePointSize * sharpnessCompensation * 0.5;
       pointSize = max(1.0, min(pointSize, maxPointSize));
 
@@ -128,8 +137,10 @@ export const POINT_PICK_FRAGMENT_SHADER = /* glsl */ `
 export const POINT_PICK_SOURCE: ShaderSource = {
   name: 'point-pick',
   webgl: { vertex: POINT_PICK_VERTEX_SHADER, fragment: POINT_PICK_FRAGMENT_SHADER },
-  webgpu: (uniforms: Record<string, unknown>) =>
-    pointPickWebGPUFactory(uniforms as Record<string, import('three').IUniform>),
+  webgpu: (uniforms: Record<string, unknown>) => {
+    const u = uniforms as Record<string, import('three').IUniform>;
+    return pointPickWebGPUFactory(buildPointPickTSLNodesFromUniforms(u));
+  },
 };
 
 // ---------------------------------------------------------------------
@@ -322,8 +333,10 @@ export const LINE_PICK_FRAGMENT_SHADER = /* glsl */ `
 export const LINE_PICK_SOURCE: ShaderSource = {
   name: 'line-pick',
   webgl: { vertex: LINE_PICK_VERTEX_SHADER, fragment: LINE_PICK_FRAGMENT_SHADER },
-  webgpu: (uniforms: Record<string, unknown>) =>
-    linePickWebGPUFactory(uniforms as Record<string, import('three').IUniform>),
+  webgpu: (uniforms: Record<string, unknown>) => {
+    const u = uniforms as Record<string, import('three').IUniform>;
+    return linePickWebGPUFactory(buildLinePickTSLNodesFromUniforms(u));
+  },
 };
 
 // ---------------------------------------------------------------------
@@ -350,8 +363,6 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
     uniform float uFx, uFy;
     uniform float uTruncate;
     uniform float uTruncateSq;
-    uniform float uRayIntegralFactor;
-    uniform int uProjectionMode;
     uniform int uIsOrtho;
     uniform float uNearCull;
     uniform float uMaxExtentFactor;
@@ -546,6 +557,8 @@ export const GSPLAT_PICK_FRAGMENT_SHADER = /* glsl */ `
 export const GSPLAT_PICK_SOURCE: ShaderSource = {
   name: 'gsplat-pick',
   webgl: { vertex: GSPLAT_PICK_VERTEX_SHADER, fragment: GSPLAT_PICK_FRAGMENT_SHADER },
-  webgpu: (uniforms: Record<string, unknown>) =>
-    gsplatPickWebGPUFactory(uniforms as Record<string, import('three').IUniform>),
+  webgpu: (uniforms: Record<string, unknown>) => {
+    const u = uniforms as Record<string, import('three').IUniform>;
+    return gsplatPickWebGPUFactory(buildGSplatPickTSLNodesFromUniforms(u));
+  },
 };

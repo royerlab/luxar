@@ -138,10 +138,15 @@ http://localhost:5173/?src=...&renderer=webgl&debug
   one-for-one with the GLSL wrappers. `MaterialManager.setCaps`
   is wired from both `SceneManager.setupRenderer` arms so dispatch
   is consistent across paths.
-- `RendererCapabilities.api` honestly reports which backend the
-  renderer actually dispatched to: `'webgl2'` under the legacy
-  path or when `WebGPURenderer` fell back to its WebGL2 backend;
-  `'webgpu'` when a real WebGPU adapter was acquired.
+- `RendererCapabilities.api` reports which **renderer surface** is in
+  use, not the physical backend: `'webgl2'` when Luxar instantiated
+  `THREE.WebGLRenderer` (the legacy path); `'webgpu'` whenever Luxar
+  instantiated `WebGPURenderer` — **including** runs where
+  WebGPURenderer falls back to its internal WebGL2 backend, because
+  the callable API surface (readback signatures, render-target
+  wiring, row-padding rules) still follows the WebGPURenderer
+  contract. Callers branching on `caps.api` are picking which
+  signature contract to follow, not probing the GPU backend.
 
 ## Target end-state (post-TSL-ports)
 
