@@ -29,6 +29,74 @@ The `luxar-viewer.rendering` package provides advanced WebGL rendering capabilit
 8. [GSplat Material System](#gsplat-material-system)
 9. [GPU Buffer Pool](#gpu-buffer-pool)
 10. [Adaptive Resolution System](#adaptive-resolution-system)
+11. [Dual-stack Architecture (WebGPU / WebGL2)](#dual-stack-architecture-webgpu--webgl2)
+
+---
+
+## 11. Dual-stack Architecture (WebGPU / WebGL2)
+
+Luxar's rendering pipeline targets both Three.js renderer backends:
+
+- **WebGPURenderer** — the default production path. Materials are TSL `NodeMaterial` instances built by a per-shader factory (`*.tsl.ts`). WebGPURenderer transparently falls back to its internal WebGL2 backend when no WebGPU adapter is available; the same TSL factories drive both.
+- **WebGLRenderer** — the legacy GLSL `ShaderMaterial` reference path, gated behind `?renderer=webgl` URL flag or `VITE_LUXAR_USE_LEGACY_WEBGL=1` env var. Kept as the parity baseline; every TSL shader is regression-tested against its GLSL counterpart by `tsl-shader-parity.spec.ts`.
+
+### Shader pairing
+
+Each production shader exists as a `ShaderSource` value (`{ name, webgl: { vertex, fragment }, webgpu?: (uniforms, config?) => NodeMaterial }`). The 12 production shaders are:
+
+| Geometry  | Visual GLSL/TSL                             | Picking GLSL/TSL                                              |
+| --------- | ------------------------------------------- | ------------------------------------------------------------- |
+| Points    | `shaders/point-shaders.ts` / `point.tsl.ts` | `picking/picking-shaders.ts` / `picking/point-pick.tsl.ts`    |
+| Lines     | `shaders/line-shaders.ts`  / `line.tsl.ts`  | `picking/picking-shaders.ts` / `picking/line-pick.tsl.ts`     |
+| GSplats   | `shaders/gsplat-shaders.ts`/ `gsplat.tsl.ts`| `picking/picking-shaders.ts` / `picking/gsplat-pick.tsl.ts`   |
+
+Post-processing: `post-processing/mega-shader.glsl.ts` ↔ `post-processing/mega.tsl.ts`, plus `fxaa.*` and `bloom-threshold.*` pairs.
+
+### `RendererCapabilities.api` semantics
+
+`RendererCapabilities.api` reports the **renderer API surface** in use — i.e. which method signatures callers should follow — not the physical GPU backend. Specifically:
+
+- `'webgl2'` — the active renderer is `THREE.WebGLRenderer`.
+- `'webgpu'` — the active renderer is `WebGPURenderer`, including when WebGPURenderer has fallen back to its internal WebGL2 backend.
+
+Callers branch on `caps.api` to pick the right method signature (e.g. WebGPURenderer's `readRenderTargetPixelsAsync` returns the buffer instead of writing into a caller-supplied one). To probe the physical backend, inspect `renderer.backend` directly.
+
+`MaterialManager` dispatches material classes on this discriminator:
+
+- `caps.api === 'webgpu'` → `PointTSLMaterial`, `LineTSLMaterial`, `GSplatTSLMaterial`, `MegaShaderTSLMaterial`, picking TSL counterparts.
+- `caps.api === 'webgl2'` → `PointMaterial`, `LineMaterial`, `GSplatMaterial`, `MegaShaderMaterial`, picking GLSL counterparts.
+
+### Readback signatures
+
+WebGL2 and WebGPU return readback data differently:
+
+```ts
+// WebGLRenderer (caps.api === 'webgl2')
+await renderer.readRenderTargetPixelsAsync(target, x, y, w, h, destBuffer);
+// → resolves to destBuffer, populated in place.
+
+// WebGPURenderer (caps.api === 'webgpu')
+const raw = await renderer.readRenderTargetPixelsAsync(target, x, y, w, h);
+// → resolves to a freshly-allocated typed array. NO destination buffer.
+// Each row is padded to a multiple of 256 bytes per WebGPU spec.
+```
+
+The WebGPU return is sized for the **padded** layout. Compact it row-by-row before downstream use via `compactWebGPUReadbackRows` (`hdr-pixel-utils.ts`). The helper is a no-op when `width * bytesPerTexel` is already a multiple of 256. Used by `PickingSystem.readbackAndVote` and `PostProcessingManager.readTarget` / `renderToImageData`.
+
+### Interleaved vertex attributes
+
+WebGPU's `maxVertexBuffers` defaults to 8 under Chrome's compat-mode adapter. To stay below that ceiling and keep WebGL2 attribute-location headroom, all per-instance attributes for Points / Lines / GSplats are packed into a single `InstancedInterleavedBuffer` per geometry. Luxar additionally requests the adapter's real higher limits at `gpuRenderer.init()`; see `scene-manager.ts::setupWebGPURenderer`.
+
+### Context loss / device loss policy
+
+- **WebGL2 context loss** — full deterministic recovery via `WebGLContextRecovery` (`scene/scene-setup/webgl-context-recovery.ts`). Rebuilds the renderer, post-processing chain, picking buffers, and material caches, then dispatches `webgl-context-restored` for `NodeFactory` to re-register scene nodes.
+- **WebGPU device loss** — treated as **unrecoverable** in this release. `SceneManager.setupContextLossHandling` attaches a `device.lost` observer that logs the failure and dispatches a `webgpu-device-lost` event so the host application can prompt for a page reload. Three's WebGPURenderer recreates its own GPU device internally, but Luxar-owned resources (post-processing targets, picking buffers, interleaved geometry buffers) are not rebuilt.
+
+### See also
+
+- `BROWSER_SUPPORT_POLICY.md` — target browser matrix and backend selection precedence.
+- `rendering/post-processing/SPECIFICATIONS.md` — mega-shader / bloom / FXAA pipeline details.
+- `rendering/picking/PICKING_DESIGN.md` — GPU picking strategy and the WebGPU row-padding deinterlace.
 
 ---
 
@@ -971,11 +1039,17 @@ uniform mat4 projectionMatrix;
 uniform vec2 uResolution;
 uniform float uFOV;
 
-varying vec3 vColor;
-varying float vSharpness;
-varying float vPerpNorm;   // Signed: -1 at bottom edge, +1 at top edge (GPU interpolates)
-varying float vCapFactor;  // 0.5 at endpoints, 1.0 in body (or 1.0 if clipped)
-varying float vPixelWidth; // Line width in pixels (for anti-aliasing)
+out vec3 vColor;
+out float vSharpness;
+out float vPerpNorm;        // Signed: -1 at bottom edge, +1 at top edge (GPU interpolates)
+// Cap-factor inputs (computed per-fragment, not per-vertex — see note below the fragment shader).
+out float vT;               // 0..1 along segment
+out float vSegmentLength;   // Segment length (constant across the quad)
+out float vWidthAtT;        // Interpolated world-space width
+flat out float vClippedStart;
+flat out float vClippedEnd;
+out float vPixelWidth;      // Line width in pixels (for anti-aliasing)
+out float vWidthFade;       // (0, 1]: pathological-near-segment intensity fade
 
 void main() {
     // Determine position along segment: t=0 at start, t=1 at end
@@ -1025,40 +1099,51 @@ void main() {
 
     gl_Position = clipPos;
 
-    // --- Cap Factor Calculation with Clipping Awareness ---
-    // Normal: 0.5 at true endpoints, 1.0 in body
-    // Clipped endpoints: force 1.0 (the "real" endpoint is outside the slice)
-    float distFromStart = t * aSegmentLength;
-    float distFromEnd = (1.0 - t) * aSegmentLength;
+    // --- Pass the inputs the FRAGMENT shader needs to compute cap factor ---
+    // The original design computed `vCapFactor` here. With the
+    // instanced-quad layout each vertex only knows t ∈ {0, 1}, so the
+    // vertex-side `distToNearest` evaluated to 0 or segmentLength at
+    // every corner — producing capRamp=1.0 everywhere and defeating
+    // the cap. We pass the inputs and let the fragment shader compute
+    // the per-fragment cap factor where `vT` interpolates smoothly.
+    vT = t;
+    vSegmentLength = aSegmentLength;
+    vWidthAtT = width;
+    vClippedStart = aStartClipped;  // flat-interpolated to fragment
+    vClippedEnd = aEndClipped;      // flat-interpolated to fragment
 
-    // Base cap factor from distance to nearest endpoint
-    float distToNearest = min(distFromStart, distFromEnd);
-    float baseCap = (distToNearest >= width) ? 1.0 : 0.5 + 0.5 * (distToNearest / width);
-
-    // Override if the nearest endpoint was clipped
-    float nearestIsStart = step(distFromEnd, distFromStart);  // 1 if closer to start
-    float nearestClipped = mix(aEndClipped, aStartClipped, nearestIsStart);
-
-    // If nearest endpoint was clipped, use full intensity (1.0)
-    vCapFactor = mix(baseCap, 1.0, nearestClipped);
+    // Width-fade for pathologically near-camera segments. When
+    // rawPixelWidth exceeds the per-shader clamp `uMaxLinePixelWidth`,
+    // the quad gets clamped at the visible-width level (so it doesn't
+    // explode in screen-space) but we fade the fragment intensity by
+    // `clamp / raw` so the overall line stays perceptually consistent
+    // with smaller quads.
+    vWidthFade = (rawPixelWidth > uMaxLinePixelWidth) ? uMaxLinePixelWidth / rawPixelWidth : 1.0;
 }
 ```
 
 ### 7.5 Line Fragment Shader
 
-**Purpose**: Render line with parabolic intensity profile, cap factor for seamless joints, and edge anti-aliasing.
+**Purpose**: Render line with parabolic intensity profile, fragment-computed cap factor for seamless joints, edge anti-aliasing, and width-fade for pathologically near segments.
 
 ```glsl
-// Line Fragment Shader with Semicircle Kernel Convolution Profile and Edge AA
+// Line Fragment Shader with Semicircle Kernel Convolution Profile,
+// Cap Factor (computed here, not in the vertex shader — see note above),
+// Edge AA, and Width-Fade.
 uniform float uIntensity;
 uniform float uOffset;
 uniform float uOpacity;
 
-varying vec3 vColor;
-varying float vSharpness;        // Per-vertex sharpness (interpolated from vertex shader)
-varying float vPerpNorm;         // Interpolated: 0 at centerline, ±1 at edges
-varying float vCapFactor;        // 0.5 at endpoints, 1.0 in body
-varying float vPixelWidth;       // Raw line width in pixels (before minimum clamping)
+in vec3 vColor;
+in float vSharpness;            // Per-vertex sharpness (interpolated from vertex shader)
+in float vPerpNorm;             // Interpolated: 0 at centerline, ±1 at edges
+in float vT;                    // Interpolated 0..1 along segment
+in float vSegmentLength;        // Segment length (constant per segment)
+in float vWidthAtT;             // Interpolated world-space width at this fragment
+flat in float vClippedStart;    // 1.0 if start endpoint was clipped by nD slicing
+flat in float vClippedEnd;      // 1.0 if end endpoint was clipped by nD slicing
+in float vPixelWidth;           // Raw line width in pixels (before minimum clamping)
+in float vWidthFade;            // (0, 1]: fade intensity when quad was width-clamped
 
 void main() {
     // Compute distance from centerline (0 to 1)
@@ -1073,6 +1158,18 @@ void main() {
     float p2 = p * p;
     float perpFalloff = pow(1.0 - p2, vSharpness);
 
+    // --- Fragment-computed cap factor ---
+    // distToNearest interpolates smoothly across the quad (unlike the
+    // vertex-side version which only sees t ∈ {0, 1}).
+    float distFromStart = vT * vSegmentLength;
+    float distFromEnd = (1.0 - vT) * vSegmentLength;
+    float distToNearest = min(distFromStart, distFromEnd);
+    float capRamp = vWidthAtT > 1e-4 ? clamp(distToNearest / vWidthAtT, 0.0, 1.0) : 1.0;
+    float baseCap = 0.5 + 0.5 * capRamp;
+    float nearestIsStart = step(distFromStart, distFromEnd);
+    float nearestClipped = mix(vClippedEnd, vClippedStart, nearestIsStart);
+    float capFactor = mix(baseCap, 1.0, nearestClipped);
+
     // Anti-aliasing: smooth falloff at edges
     // The AA region is ~1 pixel wide in the rendered quad
     float minPixelWidth = 1.5;
@@ -1084,8 +1181,10 @@ void main() {
     // When a line is rendered wider than intended, reduce intensity proportionally
     float widthScale = min(vPixelWidth / minPixelWidth, 1.0);
 
-    // Apply cap factor for correct joint intensity
-    float intensity = vCapFactor * perpFalloff * edgeAA * widthScale;
+    // Final intensity. `vWidthFade` is 1.0 for normal segments; it
+    // engages only when the vertex shader had to clamp pathological
+    // near-camera widths.
+    float intensity = capFactor * perpFalloff * edgeAA * widthScale * vWidthFade;
 
     // Per-node GOG (Gain-Offset-Gamma) model
     vec3 finalColor = vColor * uIntensity + uOffset;
@@ -1096,6 +1195,8 @@ void main() {
     gl_FragColor = vec4(finalColor, intensity * uOpacity);
 }
 ```
+
+**Historical note**: an earlier design computed `vCapFactor` in the vertex shader and interpolated it as a `varying`. With the instanced-quad layout each of the 4 corners of a segment only knows `t ∈ {0, 1}`, so `distToNearest` evaluated to either 0 (start corner) or segmentLength (end corner) and `capRamp = 1.0` for every quad vertex — defeating the cap entirely. Moving cap factor to the fragment shader lets `vT` interpolate smoothly across the quad and gives the documented "0.5 at endpoints, 1.0 in body" profile. See `shaders/line-shaders.ts:287-308` and `line.tsl.ts:314-338` for the production source.
 
 ### 7.5a Anti-Aliasing for Thin Lines
 
@@ -1132,7 +1233,7 @@ float edgeAA = 1.0 - smoothstep(1.0 - aaWidth, 1.0, p);
 // Intensity scaling: reduce brightness for lines rendered wider than intended
 float widthScale = min(vPixelWidth / minPixelWidth, 1.0);
 
-float intensity = vCapFactor * perpFalloff * edgeAA * widthScale;
+float intensity = capFactor * perpFalloff * edgeAA * widthScale * vWidthFade;
 ```
 
 **Behavior**:

@@ -1,10 +1,12 @@
 # Luxar Rendering Package
 
-> Advanced WebGL rendering pipeline using a custom mega-shader for high-quality nD scientific visualization
+> Dual-stack WebGPU/WebGL2 rendering pipeline (TSL `NodeMaterial` default, legacy GLSL `ShaderMaterial` reference path) with a custom mega-shader for high-quality nD scientific visualization
 
 ## Overview
 
-The Luxar Rendering package provides a high-performance rendering pipeline built on Three.js r184. Post-processing runs through a hand-written **mega-shader** that fuses all per-pixel effects into a single fullscreen fragment pass — bloom is a separate pre-pass (needs neighbor reads) and FXAA is a separate post-pass (edge detection on the LDR output).
+The Luxar Rendering package provides a high-performance rendering pipeline built on Three.js r184. Each of the 12 production shaders (3 geometry visual × {GLSL, TSL} + 3 geometry picking × {GLSL, TSL} + mega-shader, FXAA, bloom-threshold × {GLSL, TSL}) ships as a `ShaderSource` pair: a `WebGLRenderer`-targeted GLSL3 string and a `WebGPURenderer`-targeted TSL factory. `MaterialManager` dispatches on `RendererCapabilities.api` so the same scene graph renders identically through either backend. Post-processing runs through a hand-written **mega-shader** that fuses all per-pixel effects into a single fullscreen fragment pass — bloom is a separate pre-pass (needs neighbor reads) and FXAA is a separate post-pass (edge detection on the LDR output).
+
+The default backend is `WebGPURenderer` (with internal WebGL2 fallback when WebGPU is unavailable). The legacy `WebGLRenderer` GLSL path is selectable via `?renderer=webgl` or `VITE_LUXAR_USE_LEGACY_WEBGL=1` and is kept as the parity reference — every TSL shader is validated against its GLSL counterpart through `tsl-shader-parity.spec.ts`.
 
 ### Key Features
 
@@ -106,25 +108,16 @@ The `PostProcessingManager` runs the mega-shader pipeline: a custom fragment sha
 
 - One fused fullscreen pass for per-pixel effects: fewer rasterizations, fewer texture binds, no ping-pong target pair
 - No third-party post-processing dependency
-- Easier path to a future WebGPU/TSL port
+- A single GLSL/TSL shader pair (`mega-shader.glsl.ts` + `mega.tsl.ts`) backs both the WebGL2 and WebGPU backends
 
 **Core API:**
 
 ```typescript
 // Initialize with HDR support
-const postProcessing = new PostProcessingManager(
-  renderer,
-  scene,
-  camera,
-  { width, height }
-);
+const postProcessing = new PostProcessingManager(renderer, scene, camera, { width, height });
 
 // Configure bloom
-postProcessing.updateBloomSettings(
-  /* strength */ 0.3,
-  /* radius */ 0.85,
-  /* threshold */ 0.01
-);
+postProcessing.updateBloomSettings(/* strength */ 0.3, /* radius */ 0.85, /* threshold */ 0.01);
 
 // Set tone mapping
 postProcessing.setToneMapping(THREE.ACESFilmicToneMapping);
@@ -166,7 +159,7 @@ Specialized shader material for thick lines using instanced quad geometry.
 - **Aspect-Ratio Correct**: Perpendicular direction computed in pixel space for correct line width
 - **Anti-Aliasing for Thin Lines**: Minimum pixel width (1.5px) prevents sub-pixel rendering gaps; intensity scaling preserves visual weight of thin lines; smooth edge falloff using smoothstep
 
-**Architecture Note:** Lines use `THREE.Mesh` with `InstancedBufferGeometry` (not `THREE.InstancedMesh`) to avoid exceeding WebGL's 16 attribute location limit.
+**Architecture Note:** Lines use `THREE.Mesh` with `InstancedBufferGeometry` (not `THREE.InstancedMesh`). All per-instance attributes are packed into a single `InstancedInterleavedBuffer` so the geometry reports one vertex buffer slot — this both fits within WebGL2's 16-attribute-location limit and stays under WebGPU's `maxVertexBuffers` ceiling on compat-mode adapters (Luxar requests the adapter's higher real limits at init; see `scene-manager.ts::setupWebGPURenderer`).
 
 ### 4. GSplat Material
 
@@ -412,7 +405,8 @@ postProcessing.updateDetectorNoiseSettings({
 #### MSAA Not Working
 
 - Check console for GPU support warnings
-- MSAA requires WebGL2 with float buffer extensions
+- Under WebGL2, MSAA requires float-buffer extensions on the active context; check `RendererCapabilities.maxMSAASamples > 0`
+- Under WebGPU, MSAA is native (no extension required); the same `maxMSAASamples` query reports the adapter's supported sample counts
 - Will not show effect with additive blending
 - Try switching to normal blending mode to verify
 
@@ -535,12 +529,12 @@ function animate() {
 
 ### Performance Impact (1M points, 1080p, indicative)
 
-| Effect                                       | Performance Cost |
-| -------------------------------------------- | ---------------- |
-| Base Rendering                               | ~5ms             |
-| Bloom (BloomChain)                           | ~2ms             |
-| Mega-shader fused pass (everything per-pixel)| ~0.5-1ms         |
-| FXAA                                         | ~0.5ms           |
+| Effect                                        | Performance Cost |
+| --------------------------------------------- | ---------------- |
+| Base Rendering                                | ~5ms             |
+| Bloom (BloomChain)                            | ~2ms             |
+| Mega-shader fused pass (everything per-pixel) | ~0.5-1ms         |
+| FXAA                                          | ~0.5ms           |
 
 ---
 
@@ -550,8 +544,8 @@ function animate() {
 
 **Problem: Black screen after enabling effects**
 
-- Check browser console for WebGL errors
-- Verify HDR buffer support: `renderer.capabilities.isWebGL2`
+- Check browser console for WebGL/WebGPU errors (the message prefix tells you which backend is active)
+- Verify HDR buffer support via the backend-agnostic `RendererCapabilities.hdr.floatTextures` (don't probe `renderer.capabilities.isWebGL2` — that's WebGL-only and silently undefined under WebGPU)
 - Try disabling effects one by one to isolate the issue
 - Verify tone mapping mode is set (required for HDR pipeline)
 - See `post-processing/README.md` Troubleshooting for known causes (e.g. missing `toneMapped: false` on a custom material)
@@ -616,30 +610,30 @@ function animate() {
 
 ### PostProcessingManager
 
-| Method                                                    | Description                                          |
-| --------------------------------------------------------- | ---------------------------------------------------- |
-| `render()`                                                | Execute rendering pipeline                           |
-| `setBloomEnabled(enabled, strength?, radius?, threshold?)`| Enable/disable bloom (and update settings)           |
-| `updateBloomSettings(strength?, radius?, threshold?)`     | Update bloom settings                                |
-| `setBloomLevels(levels)`                                  | Set bloom mip pyramid depth (1-12)                   |
-| `setToneMapping(mode)`                                    | Set tone mapping operator (THREE.ToneMapping)        |
-| `updateExposure(value)` / `getExposure()`                 | EOG exposure (log2 stops)                            |
-| `updateGlobalOffset(value)` / `updateGlobalGamma(value)`  | EOG offset and gamma                                 |
-| `setFXAAEnabled(enabled)`                                 | Toggle FXAA post-pass                                |
-| `setMSAAEnabled(enabled)` / `setMSAASamples(n)`           | Toggle MSAA on the HDR target / set sample count     |
-| `setSSAAEnabled(enabled)` / `setSSAAMultiplier(value)`    | Toggle SSAA / set supersampling factor               |
-| `setDetectorNoiseEnabled(enabled, sigma?, gain?, fpnSigma?)` | Configure physics-based detector noise            |
-| `updateDetectorNoiseSettings(params)`                     | Update detector noise parameters                     |
-| `setVignetteEnabled(enabled, darkness?, offset?)`         | Configure vignette                                   |
-| `setChromaticLensDistortionEnabled(enabled, ...params)`   | Configure chromatic lens distortion                  |
-| `updateChromaticLensDistortion(params)`                   | Update chromatic lens distortion params              |
-| `getLensDistortionParams()`                               | Read distortion uniforms (cloned, for picking)       |
-| `captureHDRPixels(mode?)` / `captureHDRAsEXR(opts?)`      | Read HDR/LDR pixels for EXR export                   |
-| `renderToImageData()`                                     | Render once and read back as ImageData (sRGB)        |
-| `rebuildAfterContextRestore()`                            | Rebuild GPU resources after a WebGL context loss     |
-| `setDPRScale(value)`                                      | Apply an adaptive DPR scale                          |
-| `startDeferRebuild()` / `endDeferRebuild()`               | Defer rebuilds during bulk changes (no-op in mega-shader pipeline) |
-| `dispose()`                                               | Clean up resources                                   |
+| Method                                                       | Description                                                        |
+| ------------------------------------------------------------ | ------------------------------------------------------------------ |
+| `render()`                                                   | Execute rendering pipeline                                         |
+| `setBloomEnabled(enabled, strength?, radius?, threshold?)`   | Enable/disable bloom (and update settings)                         |
+| `updateBloomSettings(strength?, radius?, threshold?)`        | Update bloom settings                                              |
+| `setBloomLevels(levels)`                                     | Set bloom mip pyramid depth (1-12)                                 |
+| `setToneMapping(mode)`                                       | Set tone mapping operator (THREE.ToneMapping)                      |
+| `updateExposure(value)` / `getExposure()`                    | EOG exposure (log2 stops)                                          |
+| `updateGlobalOffset(value)` / `updateGlobalGamma(value)`     | EOG offset and gamma                                               |
+| `setFXAAEnabled(enabled)`                                    | Toggle FXAA post-pass                                              |
+| `setMSAAEnabled(enabled)` / `setMSAASamples(n)`              | Toggle MSAA on the HDR target / set sample count                   |
+| `setSSAAEnabled(enabled)` / `setSSAAMultiplier(value)`       | Toggle SSAA / set supersampling factor                             |
+| `setDetectorNoiseEnabled(enabled, sigma?, gain?, fpnSigma?)` | Configure physics-based detector noise                             |
+| `updateDetectorNoiseSettings(params)`                        | Update detector noise parameters                                   |
+| `setVignetteEnabled(enabled, darkness?, offset?)`            | Configure vignette                                                 |
+| `setChromaticLensDistortionEnabled(enabled, ...params)`      | Configure chromatic lens distortion                                |
+| `updateChromaticLensDistortion(params)`                      | Update chromatic lens distortion params                            |
+| `getLensDistortionParams()`                                  | Read distortion uniforms (cloned, for picking)                     |
+| `captureHDRPixels(mode?)` / `captureHDRAsEXR(opts?)`         | Read HDR/LDR pixels for EXR export                                 |
+| `renderToImageData()`                                        | Render once and read back as ImageData (sRGB)                      |
+| `rebuildAfterContextRestore()`                               | Rebuild GPU resources after a WebGL2 `webglcontextrestored` event. WebGPU device loss uses a different model (`device.lost` promise) and is currently treated as unrecoverable — see `scene-manager.ts::setupContextLossHandling` |
+| `setDPRScale(value)`                                         | Apply an adaptive DPR scale                                        |
+| `startDeferRebuild()` / `endDeferRebuild()`                  | Defer rebuilds during bulk changes (no-op in mega-shader pipeline) |
+| `dispose()`                                                  | Clean up resources                                                 |
 
 ---
 
