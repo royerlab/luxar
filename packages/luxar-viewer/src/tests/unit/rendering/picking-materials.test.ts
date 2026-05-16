@@ -109,9 +109,12 @@ describe('GSplatPickingMaterial', () => {
     material.dispose();
   });
 
-  it('uses max projection mode for picking', () => {
+  it('uses max projection mode for picking (no uProjectionMode uniform; shader hard-codes max)', () => {
+    // The picking shader hard-codes max projection — it has no
+    // sum-projection ray-integral path — so neither the GLSL nor the
+    // TSL picking materials bind a `uProjectionMode` uniform.
     const material = new GSplatPickingMaterial({ nodeId: 1 });
-    expect(material.uniforms.uProjectionMode.value).toBe(1); // Max mode
+    expect(material.uniforms.uProjectionMode).toBeUndefined();
     material.dispose();
   });
 
