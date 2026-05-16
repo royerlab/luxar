@@ -29,6 +29,7 @@ import {
   halfFloatToFloat32,
   float32ToHalfFloat,
   flipPixelsVerticallyRGBA,
+  compactWebGPUReadbackRows,
 } from './hdr-pixel-utils';
 import { formatHDRExrLogLine } from './hdr-capture';
 import { clamp } from '../../utils/clamp';
@@ -108,7 +109,29 @@ export class PostProcessingManager {
     size: { width: number; height: number },
     private onResize?: () => void
   ) {
-    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    // Keep the renderer's output color space at the working space
+    // (linear) so it doesn't auto-encode our output. Both the
+    // mega-shader (linearToSRGB at the end of its fragment) and the
+    // FXAA-out path treat the framebuffer texels as already-encoded
+    // sRGB bytes; the canvas display expects exactly that.
+    //
+    // Why this matters: Three's `WebGPURenderer` runs an unconditional
+    // "Output Color Transform" quad-pass whenever
+    // `currentColorSpace !== workingColorSpace` (Renderer.js
+    // `needsFrameBufferTarget` getter) and applies
+    // `workingToColorSpace(outputColorSpace)`. Setting
+    // outputColorSpace=sRGB here would double-encode every pixel that
+    // already went through `linearToSRGB` in the mega-shader. The
+    // `WebGLRenderer` doesn't double-encode only because its
+    // chunk-injection path keys on `gl_FragColor` and our GLSL3 `out
+    // vec4 fragColor` declaration causes the chunk to no-op; that
+    // bypass is not available on the WebGPU path.
+    //
+    // `material.toneMapped = false` (set on the mega-shader and FXAA)
+    // disables only the tone-mapping branch of `RenderOutputNode`;
+    // the color-space branch is independent and still fires when
+    // outputColorSpace differs from workingColorSpace.
+    this.renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
     this.renderer.toneMapping = THREE.NoToneMapping; // We tone-map in mega-shader.
 
     this.renderSize = { ...size };
@@ -154,7 +177,9 @@ export class PostProcessingManager {
     };
   }
 
-  private initializeTransientResources(opts: { applyDefaults: boolean } = { applyDefaults: true }): void {
+  private initializeTransientResources(
+    opts: { applyDefaults: boolean } = { applyDefaults: true }
+  ): void {
     const { width, height } = this.getPhysicalSize();
 
     // HDR target: scene renders here (linear, HalfFloat, optional MSAA).
@@ -975,7 +1000,10 @@ export class PostProcessingManager {
             ) => Promise<Uint16Array>;
           }
         ).readRenderTargetPixelsAsync(target, 0, 0, width, height)) as Uint16Array;
-        halfData.set(raw);
+        // WebGPU pads each row to a multiple of 256 bytes; for RGBA16F
+        // (8 B/texel) any width not divisible by 32 carries trailing
+        // junk per row. Drop the padding (no-op if already compact).
+        halfData.set(compactWebGPUReadbackRows(raw, width, height, 8));
       }
       pixels = halfFloatToFloat32(halfData);
     } else {
@@ -1001,7 +1029,9 @@ export class PostProcessingManager {
             ) => Promise<Float32Array>;
           }
         ).readRenderTargetPixelsAsync(target, 0, 0, width, height)) as Float32Array;
-        pixels.set(raw);
+        // RGBA32F = 16 B/texel; widths not divisible by 16 carry per-row
+        // padding under WebGPU. Drop it (no-op if already compact).
+        pixels.set(compactWebGPUReadbackRows(raw, width, height, 16));
       }
     }
     return { pixels, width, height };
@@ -1108,11 +1138,15 @@ export class PostProcessingManager {
             ) => Promise<Uint8Array>;
           }
         ).readRenderTargetPixelsAsync(captureTarget, 0, 0, width, height)) as Uint8Array;
+        // RGBA8 = 4 B/texel; widths not divisible by 64 carry per-row
+        // padding under WebGPU. Drop it so the downstream ImageData
+        // wraps a compact, slant-free pixel buffer.
+        raw = compactWebGPUReadbackRows(raw, width, height, 4);
       }
       // Copy into a fresh Uint8Array so the ImageData wraps a
       // plain ArrayBuffer regardless of which backend returned the
       // typed array.
-      const pixels = new Uint8Array(raw.buffer.slice(0));
+      const pixels = new Uint8Array(raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength));
       const flipped = flipPixelsVerticallyRGBA(
         pixels,
         width,

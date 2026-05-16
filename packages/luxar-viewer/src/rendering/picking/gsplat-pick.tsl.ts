@@ -30,6 +30,7 @@ import {
   float,
   int,
   max,
+  min,
   abs,
   sqrt,
   exp,
@@ -46,18 +47,38 @@ import { type TSLNode } from '../tsl-helpers';
 
 const vec2: (a?: TSLNode, b?: TSLNode) => TSLNode = _vec2 as TSLNode;
 const vec3: (a?: TSLNode, b?: TSLNode, c?: TSLNode) => TSLNode = _vec3 as TSLNode;
-const vec4: (a?: TSLNode, b?: TSLNode, c?: TSLNode, d?: TSLNode) => TSLNode =
-  _vec4 as TSLNode;
+const vec4: (a?: TSLNode, b?: TSLNode, c?: TSLNode, d?: TSLNode) => TSLNode = _vec4 as TSLNode;
 const mat3: (a?: TSLNode, b?: TSLNode, c?: TSLNode) => TSLNode = _mat3 as TSLNode;
 
 /**
- * GSplat picking material TSL factory. `uniforms` must include the
- * full set from `GSPLAT_PICK_SOURCE`:
- * uResolution, uFx, uFy, uTruncate, uTruncateSq, uIsOrtho, uNearCull,
- * uMaxExtentFactor, uNodeId, uShiftC, uInvOneMinusC.
+ * Pre-created TSL leaf nodes supplied by the wrapper class. See
+ * `GSplatTSLNodes` for the rationale (avoids `.onUpdate('render')`
+ * callback churn by consuming wrapper-owned `UniformNode`
+ * references directly).
+ */
+export interface GSplatPickTSLNodes {
+  readonly uResolution: TSLNode;
+  readonly uFx: TSLNode;
+  readonly uFy: TSLNode;
+  readonly uTruncate: TSLNode;
+  readonly uTruncateSq: TSLNode;
+  readonly uIsOrtho: TSLNode;
+  readonly uNearCull: TSLNode;
+  readonly uMaxExtentFactor: TSLNode;
+  readonly uNodeId: TSLNode;
+  readonly uShiftC: TSLNode;
+  readonly uInvOneMinusC: TSLNode;
+}
+
+/**
+ * GSplat picking material TSL factory.
+ *
+ * Consumes pre-created `UniformNode` references; the wrapper
+ * (`GSplatPickingTSLMaterial`) owns those nodes and exposes them via
+ * `material.uniforms` as `IUniform`-shaped getter/setter proxies.
  */
 export function gsplatPickWebGPUFactory(
-  uniforms: Record<string, THREE.IUniform>,
+  nodes: GSplatPickTSLNodes,
   outMaterial?: NodeMaterial
 ): NodeMaterial {
   const aQuadCorner: TSLNode = attribute<'vec2'>('aQuadCorner', 'vec2');
@@ -67,51 +88,17 @@ export function gsplatPickWebGPUFactory(
   const aCholesky45: TSLNode = attribute<'vec2'>('aCholesky45', 'vec2');
   const aAmplitude: TSLNode = attribute<'float'>('aAmplitude', 'float');
 
-  // Primitive uniforms bind via `.onUpdate(() => iuniform.value)` so
-  // a wrapper's mutations propagate. Vector2 / Texture uniforms share
-  // the host object by reference (no onUpdate needed).
-  const uResolution = uniform(
-    (uniforms.uResolution.value as THREE.Vector2) ?? new THREE.Vector2(1, 1)
-  );
-  const uFx = uniform((uniforms.uFx.value as number) ?? 1.0).onUpdate(
-    () => (uniforms.uFx.value as number) ?? 1.0,
-    'render'
-  );
-  const uFy = uniform((uniforms.uFy.value as number) ?? 1.0).onUpdate(
-    () => (uniforms.uFy.value as number) ?? 1.0,
-    'render'
-  );
-  const uTruncate = uniform((uniforms.uTruncate.value as number) ?? 1.5).onUpdate(
-    () => (uniforms.uTruncate.value as number) ?? 1.5,
-    'render'
-  );
-  const uIsOrtho = uniform((uniforms.uIsOrtho.value as number) ?? 0).onUpdate(
-    () => (uniforms.uIsOrtho.value as number) ?? 0,
-    'render'
-  );
-  const uNearCull = uniform((uniforms.uNearCull.value as number) ?? 1e-4).onUpdate(
-    () => (uniforms.uNearCull.value as number) ?? 1e-4,
-    'render'
-  );
-  const uMaxExtentFactor = uniform(
-    (uniforms.uMaxExtentFactor.value as number) ?? 1.0
-  ).onUpdate(() => (uniforms.uMaxExtentFactor.value as number) ?? 1.0, 'render');
-  const uNodeId = uniform((uniforms.uNodeId.value as number) ?? 0).onUpdate(
-    () => (uniforms.uNodeId.value as number) ?? 0,
-    'render'
-  );
-  const uShiftC = uniform((uniforms.uShiftC.value as number) ?? 0.0).onUpdate(
-    () => (uniforms.uShiftC.value as number) ?? 0.0,
-    'render'
-  );
-  const uInvOneMinusC = uniform((uniforms.uInvOneMinusC.value as number) ?? 1.0).onUpdate(
-    () => (uniforms.uInvOneMinusC.value as number) ?? 1.0,
-    'render'
-  );
-  const uTruncateSq = uniform((uniforms.uTruncateSq.value as number) ?? 9.0).onUpdate(
-    () => (uniforms.uTruncateSq.value as number) ?? 9.0,
-    'render'
-  );
+  const uResolution = nodes.uResolution;
+  const uFx = nodes.uFx;
+  const uFy = nodes.uFy;
+  const uTruncate = nodes.uTruncate;
+  const uIsOrtho = nodes.uIsOrtho;
+  const uNearCull = nodes.uNearCull;
+  const uMaxExtentFactor = nodes.uMaxExtentFactor;
+  const uNodeId = nodes.uNodeId;
+  const uShiftC = nodes.uShiftC;
+  const uInvOneMinusC = nodes.uInvOneMinusC;
+  const uTruncateSq = nodes.uTruncateSq;
 
   // ---- Vertex ----
 
@@ -158,8 +145,12 @@ export function gsplatPickWebGPUFactory(
     .and(maxLateralVar.greaterThan(0.01))
     .select(coverageFadeRaw.toVar(), float(1.0));
   const coverageFadeReject: TSLNode = coverageFade.lessThan(0.01);
-  // Reuse depthFade × coverageFade for amplitude.
-  const nearFade: TSLNode = depthFade.mul(coverageFade).min(float(1.0));
+  // Use min(depthFade, coverageFade) for amplitude so picking matches
+  // GLSL picking (picking-shaders.ts:424) and visual TSL/GLSL gsplat
+  // (gsplat.tsl.ts:235, gsplat-shaders.ts:145). Multiplication was
+  // strictly less than the visual path and made splats near coverage
+  // limits harder to pick than they appear.
+  const nearFade: TSLNode = min(depthFade, coverageFade);
 
   // Projection Jacobian.
   const invZ: TSLNode = float(1.0).div(max(zDepth, float(1e-8)));
@@ -213,9 +204,10 @@ export function gsplatPickWebGPUFactory(
 
   const offDiagSig: TSLNode = abs(Sigma2D10).greaterThan(1e-6);
   const majorOff: TSLNode = normalize(vec2(lambda1.sub(Sigma2D11), Sigma2D10));
-  const majorDiag: TSLNode = Sigma2D00
-    .greaterThanEqual(Sigma2D11)
-    .select(vec2(1.0, 0.0).toVar(), vec2(0.0, 1.0).toVar());
+  const majorDiag: TSLNode = Sigma2D00.greaterThanEqual(Sigma2D11).select(
+    vec2(1.0, 0.0).toVar(),
+    vec2(0.0, 1.0).toVar()
+  );
   const majorAxis: TSLNode = offDiagSig.select(majorOff.toVar(), majorDiag.toVar());
   const minorAxis: TSLNode = vec2(majorAxis.y.negate(), majorAxis.x);
 
@@ -310,4 +302,29 @@ export function gsplatPickWebGPUFactory(
   // picking material.
   material.blending = THREE.NoBlending;
   return material;
+}
+
+/**
+ * Snapshot adapter: build a `GSplatPickTSLNodes` set from a flat
+ * `IUniform` record. See `buildLineTSLNodesFromUniforms` for the
+ * rationale.
+ */
+export function buildGSplatPickTSLNodesFromUniforms(
+  uniforms: Record<string, THREE.IUniform>
+): GSplatPickTSLNodes {
+  return {
+    uResolution: uniform(
+      (uniforms.uResolution?.value as THREE.Vector2 | undefined) ?? new THREE.Vector2(1, 1)
+    ),
+    uFx: uniform((uniforms.uFx?.value as number) ?? 1.0),
+    uFy: uniform((uniforms.uFy?.value as number) ?? 1.0),
+    uTruncate: uniform((uniforms.uTruncate?.value as number) ?? 1.5),
+    uTruncateSq: uniform((uniforms.uTruncateSq?.value as number) ?? 9.0),
+    uIsOrtho: uniform((uniforms.uIsOrtho?.value as number) ?? 0),
+    uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 1e-4),
+    uMaxExtentFactor: uniform((uniforms.uMaxExtentFactor?.value as number) ?? 1.0),
+    uNodeId: uniform((uniforms.uNodeId?.value as number) ?? 0),
+    uShiftC: uniform((uniforms.uShiftC?.value as number) ?? 0.0),
+    uInvOneMinusC: uniform((uniforms.uInvOneMinusC?.value as number) ?? 1.0),
+  };
 }

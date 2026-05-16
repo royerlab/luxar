@@ -5,35 +5,61 @@
  * constructor signature, same `updateCameraParams` / `dispose`
  * surface, same `CameraAwareMaterial` contract.
  *
+ * **Uniform plumbing.** This class owns one `UniformNode` per shader
+ * input. The public `uniforms` record exposes each node as an
+ * `IUniform`-shaped getter/setter proxy (see `proxyIUniform` in
+ * `tsl-helpers.ts`). Mutations to `material.uniforms.uX.value`
+ * therefore land directly on `node.value` — no per-render
+ * `.onUpdate` callback bridge.
+ *
  * @module rendering/picking/line-picking-material-tsl
  */
 
 import * as THREE from 'three';
+import { uniform } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-import { linePickWebGPUFactory } from './line-pick.tsl';
+import { linePickWebGPUFactory, type LinePickTSLNodes } from './line-pick.tsl';
 import type { CameraAwareMaterial } from '../camera-aware-material';
-import { materialManager } from '../material-manager';
+import { proxyIUniform, type TSLNode } from '../tsl-helpers';
 import type { LinePickingMaterialConfig } from './line-picking-material';
 
 export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareMaterial {
   uniforms: Record<string, THREE.IUniform>;
 
+  private tslNodes: {
+    uFOV: TSLNode;
+    uResolution: TSLNode;
+    uIsOrtho: TSLNode;
+    uNearCull: TSLNode;
+    uMaxLinePixelWidth: TSLNode;
+    uNodeId: TSLNode;
+  };
+
   constructor(config: LinePickingMaterialConfig) {
     super();
 
+    this.tslNodes = {
+      uFOV: uniform((60 * Math.PI) / 180),
+      uResolution: uniform(new THREE.Vector2(1, 1)),
+      uIsOrtho: uniform(0),
+      uNearCull: uniform(0.05),
+      uMaxLinePixelWidth: uniform(540),
+      uNodeId: uniform(config.nodeId),
+    };
+
     this.uniforms = {
-      uFOV: { value: (60 * Math.PI) / 180 },
-      uResolution: { value: new THREE.Vector2(1, 1) },
-      uIsOrtho: { value: 0 },
-      uNearCull: { value: 0.05 },
-      uMaxLinePixelWidth: { value: 540 },
-      uNodeId: { value: config.nodeId },
+      uFOV: proxyIUniform(this.tslNodes.uFOV),
+      uResolution: proxyIUniform(this.tslNodes.uResolution),
+      uIsOrtho: proxyIUniform(this.tslNodes.uIsOrtho),
+      uNearCull: proxyIUniform(this.tslNodes.uNearCull),
+      uMaxLinePixelWidth: proxyIUniform(this.tslNodes.uMaxLinePixelWidth),
+      uNodeId: proxyIUniform(this.tslNodes.uNodeId),
     };
 
     this.toneMapped = false;
     this.side = THREE.DoubleSide;
 
-    linePickWebGPUFactory(this.uniforms, this);
+    linePickWebGPUFactory(this.tslNodes as LinePickTSLNodes, this);
   }
 
   updateCameraParams(
@@ -49,10 +75,5 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
       this.uniforms.uNearCull.value = nearCull;
     }
     this.uniforms.uMaxLinePixelWidth.value = Math.max(2, resolution.y * 0.5);
-  }
-
-  dispose(): void {
-    materialManager.unregister(this);
-    super.dispose();
   }
 }

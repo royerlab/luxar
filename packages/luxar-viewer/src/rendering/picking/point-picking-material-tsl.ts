@@ -8,19 +8,38 @@
  * NodeFactory creates one per points node and registers it with
  * `materialManager` for camera updates).
  *
+ * **Uniform plumbing.** This class owns one `UniformNode` per shader
+ * input. The public `uniforms` record exposes each node as an
+ * `IUniform`-shaped getter/setter proxy (see `proxyIUniform` in
+ * `tsl-helpers.ts`). Mutations to `material.uniforms.uX.value`
+ * therefore land directly on `node.value` — no per-render
+ * `.onUpdate` callback bridge. Three-geometry symmetry with the
+ * core PointTSLMaterial.
+ *
  * @module rendering/picking/point-picking-material-tsl
  */
 
 import * as THREE from 'three';
+import { uniform } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-import { pointPickWebGPUFactory } from './point-pick.tsl';
+import { pointPickWebGPUFactory, type PointPickTSLNodes } from './point-pick.tsl';
 import type { CameraAwareMaterial } from '../camera-aware-material';
 import { computePointSizeFactor, computeMaxPointSize } from '../camera-uniforms';
-import { materialManager } from '../material-manager';
+import { proxyIUniform, type TSLNode } from '../tsl-helpers';
 import type { PointPickingMaterialConfig } from './point-picking-material';
 
 export class PointPickingTSLMaterial extends NodeMaterial implements CameraAwareMaterial {
   uniforms: Record<string, THREE.IUniform>;
+
+  private tslNodes: {
+    pointSizeFactor: TSLNode;
+    maxPointSize: TSLNode;
+    radiusScale: TSLNode;
+    sharpnessScale: TSLNode;
+    uIsOrtho: TSLNode;
+    uNodeId: TSLNode;
+    uResolution: TSLNode;
+  };
 
   constructor(config: PointPickingMaterialConfig) {
     super();
@@ -29,19 +48,29 @@ export class PointPickingTSLMaterial extends NodeMaterial implements CameraAware
     const defaultResolutionY = 1080;
     const defaultTanHalfFov = Math.tan(defaultFov / 2);
 
+    this.tslNodes = {
+      pointSizeFactor: uniform((2.0 * defaultResolutionY) / defaultTanHalfFov),
+      maxPointSize: uniform(defaultResolutionY * 0.5),
+      radiusScale: uniform(config.radiusScale ?? 1.0),
+      sharpnessScale: uniform(config.sharpnessScale ?? 1.0),
+      uIsOrtho: uniform(0),
+      uNodeId: uniform(config.nodeId),
+      uResolution: uniform(new THREE.Vector2(1920, defaultResolutionY)),
+    };
+
     this.uniforms = {
-      pointSizeFactor: { value: (2.0 * defaultResolutionY) / defaultTanHalfFov },
-      maxPointSize: { value: defaultResolutionY * 0.5 },
-      radiusScale: { value: config.radiusScale ?? 1.0 },
-      sharpnessScale: { value: config.sharpnessScale ?? 1.0 },
-      uIsOrtho: { value: 0 },
-      uNodeId: { value: config.nodeId },
-      uResolution: { value: new THREE.Vector2(1920, defaultResolutionY) },
+      pointSizeFactor: proxyIUniform(this.tslNodes.pointSizeFactor),
+      maxPointSize: proxyIUniform(this.tslNodes.maxPointSize),
+      radiusScale: proxyIUniform(this.tslNodes.radiusScale),
+      sharpnessScale: proxyIUniform(this.tslNodes.sharpnessScale),
+      uIsOrtho: proxyIUniform(this.tslNodes.uIsOrtho),
+      uNodeId: proxyIUniform(this.tslNodes.uNodeId),
+      uResolution: proxyIUniform(this.tslNodes.uResolution),
     };
 
     this.toneMapped = false;
 
-    pointPickWebGPUFactory(this.uniforms, this);
+    pointPickWebGPUFactory(this.tslNodes as PointPickTSLNodes, this);
   }
 
   updateCameraParams(
@@ -62,10 +91,5 @@ export class PointPickingTSLMaterial extends NodeMaterial implements CameraAware
 
   updateSharpnessScale(scale: number): void {
     this.uniforms.sharpnessScale.value = scale;
-  }
-
-  dispose(): void {
-    materialManager.unregister(this);
-    super.dispose();
   }
 }

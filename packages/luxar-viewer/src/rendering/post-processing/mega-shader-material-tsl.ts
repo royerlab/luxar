@@ -22,11 +22,10 @@
  *     `#ifdef`-driven recompiles).
  *
  *   - `toggleRawHdrCapture` / `toggleLinearLdrCapture` are EXR/HDR
- *     export-only paths that haven't been ported to TSL yet. Toggling
- *     them logs a one-time warning and otherwise no-ops; the GLSL
- *     `MegaShaderMaterial` remains the supported path for capture
- *     workflows under WebGL2. See `MIGRATION_PROGRESS.md` for the
- *     remaining work.
+ *     export shortcuts. Each one sets a config flag and rebuilds the
+ *     TSL graph; the factory then routes around tone mapping / sRGB
+ *     encoding to mirror the GLSL `LUXAR_CAPTURE_RAW_HDR` /
+ *     `LUXAR_CAPTURE_LINEAR_LDR` defines.
  *
  * @module rendering/post-processing/mega-shader-material-tsl
  */
@@ -35,7 +34,6 @@ import * as THREE from 'three';
 import { NodeMaterial } from 'three/webgpu';
 import { megaWebGPUFactory, type LuxarToneMappingMode } from './mega.tsl';
 import type { MegaShaderConfig } from './mega-shader-material';
-import { log, Modules } from '../../utils/log';
 
 /**
  * Map THREE.ToneMapping → the compact Luxar mode index used by the
@@ -102,8 +100,8 @@ export class MegaShaderTSLMaterial extends NodeMaterial {
   private useDetectorNoise = false;
   private useVignette = false;
   private toneMappingMode: LuxarToneMappingMode = 6;
-  private rawHdrCaptureWarned = false;
-  private linearLdrCaptureWarned = false;
+  private captureRawHDR = false;
+  private captureLinearLDR = false;
 
   constructor(cfg: MegaShaderConfig = {}) {
     super();
@@ -176,6 +174,8 @@ export class MegaShaderTSLMaterial extends NodeMaterial {
         useDetectorNoise: this.useDetectorNoise,
         useVignette: this.useVignette,
         toneMappingMode: this.toneMappingMode,
+        captureRawHDR: this.captureRawHDR,
+        captureLinearLDR: this.captureLinearLDR,
       },
       this
     );
@@ -338,26 +338,34 @@ export class MegaShaderTSLMaterial extends NodeMaterial {
   }
 
   // ----------------------------------------------------------------
-  // EXR / HDR capture modes (not yet ported to TSL)
+  // EXR / HDR capture modes
   // ----------------------------------------------------------------
 
+  /**
+   * Enable/disable the RAW-HDR capture short-circuit. When on, the
+   * fragment graph returns the post-bloom linear-HDR sample and skips
+   * detector noise, EOG, tone mapping, vignette, and sRGB encoding —
+   * matching the GLSL `LUXAR_CAPTURE_RAW_HDR` define exactly.
+   *
+   * Toggling forces a TSL graph rebuild because the factory branches
+   * on this flag (see {@link mega.tsl.ts}). Cost is identical to
+   * toggling any other feature flag (bloom, vignette, …).
+   */
   toggleRawHdrCapture(enabled: boolean): void {
-    if (enabled && !this.rawHdrCaptureWarned) {
-      log.warning(
-        Modules.RENDERER,
-        'MegaShaderTSLMaterial: toggleRawHdrCapture is not yet implemented on the TSL path. Capture mode `hdr-effects-pre-tone` falls back to normal-pipeline output under WebGPU; use WebGL2 for that capture mode.'
-      );
-      this.rawHdrCaptureWarned = true;
-    }
+    if (this.captureRawHDR === enabled) return;
+    this.captureRawHDR = enabled;
+    this.rebuildGraph();
   }
 
+  /**
+   * Enable/disable the linear-LDR capture short-circuit. When on, the
+   * pipeline runs every enabled effect, EOG, and tone mapping but
+   * skips the final `linearToSRGB` encoding — matches the GLSL
+   * `LUXAR_CAPTURE_LINEAR_LDR` define exactly.
+   */
   toggleLinearLdrCapture(enabled: boolean): void {
-    if (enabled && !this.linearLdrCaptureWarned) {
-      log.warning(
-        Modules.RENDERER,
-        'MegaShaderTSLMaterial: toggleLinearLdrCapture is not yet implemented on the TSL path. Capture mode `visible-ldr` falls back to normal-pipeline output under WebGPU; use WebGL2 for that capture mode.'
-      );
-      this.linearLdrCaptureWarned = true;
-    }
+    if (this.captureLinearLDR === enabled) return;
+    this.captureLinearLDR = enabled;
+    this.rebuildGraph();
   }
 }

@@ -6,19 +6,41 @@
  * surface, same `CameraAwareMaterial` contract. Always uses the
  * 1.5σ truncation + max-projection mode the GLSL path defaults to.
  *
+ * **Uniform plumbing.** This class owns one `UniformNode` per shader
+ * input. The public `uniforms` record exposes each node as an
+ * `IUniform`-shaped getter/setter proxy (see `proxyIUniform` in
+ * `tsl-helpers.ts`). Mutations to `material.uniforms.uX.value`
+ * therefore land directly on `node.value` — no per-render
+ * `.onUpdate` callback bridge.
+ *
  * @module rendering/picking/gsplat-picking-material-tsl
  */
 
 import * as THREE from 'three';
+import { uniform } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-import { gsplatPickWebGPUFactory } from './gsplat-pick.tsl';
+import { gsplatPickWebGPUFactory, type GSplatPickTSLNodes } from './gsplat-pick.tsl';
 import type { CameraAwareMaterial } from '../camera-aware-material';
 import { computeFocalLength } from '../camera-uniforms';
-import { materialManager } from '../material-manager';
+import { proxyIUniform, type TSLNode } from '../tsl-helpers';
 import type { GSplatPickingMaterialConfig } from './gsplat-picking-material';
 
 export class GSplatPickingTSLMaterial extends NodeMaterial implements CameraAwareMaterial {
   uniforms: Record<string, THREE.IUniform>;
+
+  private tslNodes: {
+    uResolution: TSLNode;
+    uFx: TSLNode;
+    uFy: TSLNode;
+    uTruncate: TSLNode;
+    uTruncateSq: TSLNode;
+    uShiftC: TSLNode;
+    uInvOneMinusC: TSLNode;
+    uIsOrtho: TSLNode;
+    uNearCull: TSLNode;
+    uMaxExtentFactor: TSLNode;
+    uNodeId: TSLNode;
+  };
 
   constructor(config: GSplatPickingMaterialConfig) {
     super();
@@ -28,40 +50,38 @@ export class GSplatPickingTSLMaterial extends NodeMaterial implements CameraAwar
     const shiftC = Math.exp(-0.5 * truncate * truncate);
     const invOneMinusC = 1.0 / (1.0 - shiftC);
 
-    // Abramowitz & Stegun erf approximation (max error 1.5e-7) for
-    // ray-integral factor at 1.5σ.
-    const SQRT_2PI = Math.sqrt(2 * Math.PI);
-    const x = truncate / Math.SQRT2;
-    const t = 1.0 / (1.0 + 0.3275911 * Math.abs(x));
-    const erfVal =
-      1.0 -
-      t *
-        (0.254829592 +
-          t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429)))) *
-        Math.exp(-x * x);
-    const erf = x >= 0 ? erfVal : -erfVal;
-    const rayIntegralFactor = SQRT_2PI * erf - 2 * truncate * Math.exp(-0.5 * truncate * truncate);
+    this.tslNodes = {
+      uResolution: uniform(new THREE.Vector2(1, 1)),
+      uFx: uniform(500),
+      uFy: uniform(500),
+      uTruncate: uniform(truncate),
+      uTruncateSq: uniform(truncate * truncate),
+      uShiftC: uniform(shiftC),
+      uInvOneMinusC: uniform(invOneMinusC),
+      uIsOrtho: uniform(0),
+      uNearCull: uniform(0.1),
+      uMaxExtentFactor: uniform(0.33),
+      uNodeId: uniform(config.nodeId),
+    };
 
     this.uniforms = {
-      uResolution: { value: new THREE.Vector2(1, 1) },
-      uFx: { value: 500 },
-      uFy: { value: 500 },
-      uTruncate: { value: truncate },
-      uTruncateSq: { value: truncate * truncate },
-      uShiftC: { value: shiftC },
-      uInvOneMinusC: { value: invOneMinusC },
-      uRayIntegralFactor: { value: rayIntegralFactor },
-      uProjectionMode: { value: 1 }, // Max projection for picking.
-      uIsOrtho: { value: 0 },
-      uNearCull: { value: 0.1 },
-      uMaxExtentFactor: { value: 0.33 },
-      uNodeId: { value: config.nodeId },
+      uResolution: proxyIUniform(this.tslNodes.uResolution),
+      uFx: proxyIUniform(this.tslNodes.uFx),
+      uFy: proxyIUniform(this.tslNodes.uFy),
+      uTruncate: proxyIUniform(this.tslNodes.uTruncate),
+      uTruncateSq: proxyIUniform(this.tslNodes.uTruncateSq),
+      uShiftC: proxyIUniform(this.tslNodes.uShiftC),
+      uInvOneMinusC: proxyIUniform(this.tslNodes.uInvOneMinusC),
+      uIsOrtho: proxyIUniform(this.tslNodes.uIsOrtho),
+      uNearCull: proxyIUniform(this.tslNodes.uNearCull),
+      uMaxExtentFactor: proxyIUniform(this.tslNodes.uMaxExtentFactor),
+      uNodeId: proxyIUniform(this.tslNodes.uNodeId),
     };
 
     this.toneMapped = false;
     this.side = THREE.DoubleSide;
 
-    gsplatPickWebGPUFactory(this.uniforms, this);
+    gsplatPickWebGPUFactory(this.tslNodes as GSplatPickTSLNodes, this);
   }
 
   updateCameraParams(
@@ -80,10 +100,5 @@ export class GSplatPickingTSLMaterial extends NodeMaterial implements CameraAwar
     if (nearCull !== undefined) {
       this.uniforms.uNearCull.value = nearCull;
     }
-  }
-
-  dispose(): void {
-    materialManager.unregister(this);
-    super.dispose();
   }
 }
