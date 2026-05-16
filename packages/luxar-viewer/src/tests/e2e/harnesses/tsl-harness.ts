@@ -32,17 +32,29 @@ import { megaWebGPUFactory } from '../../../rendering/post-processing/mega.tsl';
 import { POINT_SOURCE } from '../../../rendering/shaders/point-shaders';
 import { pointWebGPUFactory } from '../../../rendering/point.tsl';
 import { POINT_PICK_SOURCE } from '../../../rendering/picking/picking-shaders';
-import { pointPickWebGPUFactory } from '../../../rendering/picking/point-pick.tsl';
+import {
+  pointPickWebGPUFactory,
+  buildPointPickTSLNodesFromUniforms,
+} from '../../../rendering/picking/point-pick.tsl';
 import { createPointQuadGeometry } from '../../../rendering/point-geometry';
 import { LINE_SOURCE } from '../../../rendering/shaders/line-shaders';
 import { lineWebGPUFactory } from '../../../rendering/line.tsl';
 import { LINE_PICK_SOURCE } from '../../../rendering/picking/picking-shaders';
-import { linePickWebGPUFactory } from '../../../rendering/picking/line-pick.tsl';
+import {
+  linePickWebGPUFactory,
+  buildLinePickTSLNodesFromUniforms,
+} from '../../../rendering/picking/line-pick.tsl';
 import { createLineQuadGeometry } from '../../../rendering/line-geometry';
 import { GSPLAT_SOURCE } from '../../../rendering/shaders/gsplat-shaders';
-import { gsplatWebGPUFactory } from '../../../rendering/gsplat.tsl';
+import {
+  gsplatWebGPUFactory,
+  buildGSplatTSLNodesFromUniforms,
+} from '../../../rendering/gsplat.tsl';
 import { GSPLAT_PICK_SOURCE } from '../../../rendering/picking/picking-shaders';
-import { gsplatPickWebGPUFactory } from '../../../rendering/picking/gsplat-pick.tsl';
+import {
+  gsplatPickWebGPUFactory,
+  buildGSplatPickTSLNodesFromUniforms,
+} from '../../../rendering/picking/gsplat-pick.tsl';
 import { createGSplatQuadGeometry } from '../../../rendering/gsplat-geometry';
 import { requireWebGLSources, type ShaderSource } from '../../../rendering/shaders/shader-source';
 
@@ -450,7 +462,10 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
       uInvOneMinusC: { value: 1.0 / (1.0 - Math.exp(-0.5 * 9)) },
     }),
     buildTSLMaterial: (uniforms) => {
-      const m = gsplatWebGPUFactory(uniforms, {}) as unknown as THREE.Material;
+      const m = gsplatWebGPUFactory(
+        buildGSplatTSLNodesFromUniforms(uniforms),
+        {}
+      ) as unknown as THREE.Material;
       m.transparent = false;
       m.blending = THREE.NoBlending;
       return m;
@@ -476,7 +491,9 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
       uInvOneMinusC: { value: 1.0 / (1.0 - Math.exp(-0.5 * 2.25)) },
     }),
     buildTSLMaterial: (uniforms) =>
-      gsplatPickWebGPUFactory(uniforms) as unknown as THREE.Material,
+      gsplatPickWebGPUFactory(
+        buildGSplatPickTSLNodesFromUniforms(uniforms)
+      ) as unknown as THREE.Material,
     buildMesh: buildGSplatInstancedMesh,
   },
   // M14 line-pick parity: same quad-expansion math as `line` but
@@ -493,7 +510,9 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
       uMaxLinePixelWidth: { value: 32.0 },
     }),
     buildTSLMaterial: (uniforms) =>
-      linePickWebGPUFactory(uniforms) as unknown as THREE.Material,
+      linePickWebGPUFactory(
+        buildLinePickTSLNodesFromUniforms(uniforms)
+      ) as unknown as THREE.Material,
     buildMesh: buildLineInstancedMesh,
   },
   // M12 point-pick parity: identical sprite layout to `point` but
@@ -511,7 +530,9 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
       uResolution: { value: new THREE.Vector2(64, 64) },
     }),
     buildTSLMaterial: (uniforms) =>
-      pointPickWebGPUFactory(uniforms) as unknown as THREE.Material,
+      pointPickWebGPUFactory(
+        buildPointPickTSLNodesFromUniforms(uniforms)
+      ) as unknown as THREE.Material,
     buildMesh: buildPointInstancedMesh,
   },
 };

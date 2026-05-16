@@ -7,7 +7,7 @@
  */
 import { GLSL_SANITIZE_FUNCTIONS } from './glsl-lib';
 import type { ShaderSource } from './shader-source';
-import { gsplatWebGPUFactory } from '../gsplat.tsl';
+import { gsplatWebGPUFactory, buildGSplatTSLNodesFromUniforms } from '../gsplat.tsl';
 
 export const GSPLAT_VERTEX_SHADER = /* glsl */ `
     precision highp float;
@@ -402,5 +402,7 @@ export const GSPLAT_SOURCE: ShaderSource = {
   name: 'gsplat',
   webgl: { vertex: GSPLAT_VERTEX_SHADER, fragment: GSPLAT_FRAGMENT_SHADER },
   webgpu: (uniforms: Record<string, unknown>) =>
-    gsplatWebGPUFactory(uniforms as Record<string, import('three').IUniform>),
+    gsplatWebGPUFactory(
+      buildGSplatTSLNodesFromUniforms(uniforms as Record<string, import('three').IUniform>)
+    ),
 };

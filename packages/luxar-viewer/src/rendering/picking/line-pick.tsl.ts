@@ -42,11 +42,32 @@ import { NodeMaterial } from 'three/webgpu';
 import { sanitizeNonNegative, sanitizePositive, type TSLNode } from '../tsl-helpers';
 
 /**
- * Line picking material TSL factory. `uniforms` must include uFOV,
- * uResolution, uIsOrtho, uNodeId, uNearCull, uMaxLinePixelWidth.
+ * Pre-created TSL leaf nodes supplied by the wrapper class. Same
+ * pattern as `PointPickTSLNodes` / `GSplatPickTSLNodes`: consumers
+ * own the `UniformNode`s and the factory references them directly,
+ * avoiding the `.onUpdate('render')` callback churn.
+ */
+export interface LinePickTSLNodes {
+  readonly uFOV: TSLNode;
+  readonly uResolution: TSLNode;
+  readonly uIsOrtho: TSLNode;
+  readonly uNodeId: TSLNode;
+  readonly uNearCull: TSLNode;
+  readonly uMaxLinePixelWidth: TSLNode;
+}
+
+/**
+ * Line picking material TSL factory.
+ *
+ * Consumes pre-created `UniformNode` references via `nodes`; the
+ * wrapper class (`LinePickingTSLMaterial`) owns those nodes and
+ * exposes them through `material.uniforms` as `IUniform`-shaped
+ * getter/setter proxies. The harness / picking-shaders ShaderSource
+ * registry constructs the nodes from a plain `uniforms` record via
+ * {@link buildLinePickTSLNodesFromUniforms}.
  */
 export function linePickWebGPUFactory(
-  uniforms: Record<string, THREE.IUniform>,
+  nodes: LinePickTSLNodes,
   outMaterial?: NodeMaterial
 ): NodeMaterial {
   const aQuadCorner: TSLNode = attribute<'vec2'>('aQuadCorner', 'vec2');
@@ -60,30 +81,12 @@ export function linePickWebGPUFactory(
   const aStartClipped: TSLNode = attribute<'float'>('aStartClipped', 'float');
   const aEndClipped: TSLNode = attribute<'float'>('aEndClipped', 'float');
 
-  // Primitive uniforms bind via `.onUpdate(() => iuniform.value)` so a
-  // wrapper class's mutations to `this.uniforms.X.value` propagate.
-  const uFOV = uniform((uniforms.uFOV.value as number) ?? 1.0).onUpdate(
-    () => (uniforms.uFOV.value as number) ?? 1.0,
-    'render'
-  );
-  const uResolution = uniform(
-    (uniforms.uResolution.value as THREE.Vector2) ?? new THREE.Vector2(1, 1)
-  );
-  const uIsOrtho = uniform((uniforms.uIsOrtho.value as number) ?? 0).onUpdate(
-    () => (uniforms.uIsOrtho.value as number) ?? 0,
-    'render'
-  );
-  const uNodeId = uniform((uniforms.uNodeId.value as number) ?? 0).onUpdate(
-    () => (uniforms.uNodeId.value as number) ?? 0,
-    'render'
-  );
-  const uNearCull = uniform((uniforms.uNearCull.value as number) ?? 1e-4).onUpdate(
-    () => (uniforms.uNearCull.value as number) ?? 1e-4,
-    'render'
-  );
-  const uMaxLinePixelWidth = uniform(
-    (uniforms.uMaxLinePixelWidth.value as number) ?? 1.0
-  ).onUpdate(() => (uniforms.uMaxLinePixelWidth.value as number) ?? 1.0, 'render');
+  const uFOV = nodes.uFOV;
+  const uResolution = nodes.uResolution;
+  const uIsOrtho = nodes.uIsOrtho;
+  const uNodeId = nodes.uNodeId;
+  const uNearCull = nodes.uNearCull;
+  const uMaxLinePixelWidth = nodes.uMaxLinePixelWidth;
 
   // ---- Vertex computation (mirrors line.tsl exactly) ----
 
@@ -212,4 +215,27 @@ export function linePickWebGPUFactory(
   // picking material.
   material.blending = THREE.NoBlending;
   return material;
+}
+
+/**
+ * Build a `LinePickTSLNodes` set from a plain `IUniform` record. Used
+ * by the harness and the `LINE_PICK_SOURCE` ShaderSource factory in
+ * `picking-shaders.ts` — callers that don't own persistent
+ * wrapper-side `UniformNode`s. Symmetric with
+ * `buildPointPickTSLNodesFromUniforms` /
+ * `buildGSplatPickTSLNodesFromUniforms`.
+ */
+export function buildLinePickTSLNodesFromUniforms(
+  uniforms: Record<string, THREE.IUniform>
+): LinePickTSLNodes {
+  return {
+    uFOV: uniform((uniforms.uFOV?.value as number) ?? 1.0),
+    uResolution: uniform(
+      (uniforms.uResolution?.value as THREE.Vector2 | undefined) ?? new THREE.Vector2(1, 1)
+    ),
+    uIsOrtho: uniform((uniforms.uIsOrtho?.value as number) ?? 0),
+    uNodeId: uniform((uniforms.uNodeId?.value as number) ?? 0),
+    uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 1e-4),
+    uMaxLinePixelWidth: uniform((uniforms.uMaxLinePixelWidth?.value as number) ?? 1.0),
+  };
 }
