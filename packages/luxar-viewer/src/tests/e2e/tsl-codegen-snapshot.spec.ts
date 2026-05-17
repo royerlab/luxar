@@ -95,7 +95,7 @@ function assertSnapshot(shader: string, kind: 'vertex' | 'fragment', actual: str
   if (!fs.existsSync(file) || isUpdate) {
     fs.mkdirSync(SNAPSHOT_DIR, { recursive: true });
     fs.writeFileSync(file, actual);
-    // eslint-disable-next-line no-console
+     
     console.log(
       `  ${isUpdate ? 'updated' : 'created'} snapshot: ${path.relative(__dirname, file)}`
     );
@@ -133,11 +133,11 @@ test.describe('TSL → generated-shader snapshots', () => {
         `Empty fragment shader for "${shader}" — NodeManager capture patch may have broken.`
       ).toBeGreaterThan(0);
 
-      // eslint-disable-next-line no-console
+       
       console.log(`\n${shader}:`);
-      // eslint-disable-next-line no-console
+       
       console.log(`  ${counters('vertex  ', result.vertexShader)}`);
-      // eslint-disable-next-line no-console
+       
       console.log(`  ${counters('fragment', result.fragmentShader)}`);
 
       assertSnapshot(shader, 'vertex', result.vertexShader);
