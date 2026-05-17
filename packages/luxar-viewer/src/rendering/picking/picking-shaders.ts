@@ -190,7 +190,8 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
     flat out highp float vElementId;
 
     void main() {
-      float t = aQuadCorner.x > 0.0 ? 1.0 : 0.0;
+      // Branchless: aQuadCorner.x ∈ {-1, +1} by construction.
+      float t = aQuadCorner.x * 0.5 + 0.5;
       vT = t;
       vSegmentLength = aSegmentLength;
       vClippedStart = aStartClipped;

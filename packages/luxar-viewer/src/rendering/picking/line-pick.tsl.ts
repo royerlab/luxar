@@ -90,7 +90,8 @@ export function linePickWebGPUFactory(
 
   // ---- Vertex computation (mirrors line.tsl exactly) ----
 
-  const t: TSLNode = aQuadCorner.x.greaterThan(0.0).select(float(1.0), float(0.0));
+  // Branchless: aQuadCorner.x ∈ {-1, +1} by construction.
+  const t: TSLNode = aQuadCorner.x.mul(0.5).add(0.5);
   const startW: TSLNode = sanitizeNonNegative(aStartWidth, float(0.0));
   const endW: TSLNode = sanitizeNonNegative(aEndWidth, float(0.0));
   const startS: TSLNode = sanitizePositive(aStartSharpness, float(2.0));

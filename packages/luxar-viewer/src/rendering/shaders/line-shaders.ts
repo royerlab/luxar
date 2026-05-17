@@ -89,8 +89,9 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
     flat out float vClippedEnd;
 
     void main() {
-      // Position along segment: 0 = start, 1 = end
-      float t = aQuadCorner.x > 0.0 ? 1.0 : 0.0;
+      // Position along segment: 0 = start, 1 = end. Branchless because
+      // aQuadCorner.x ∈ {-1, +1} by construction.
+      float t = aQuadCorner.x * 0.5 + 0.5;
       vT = t;
       vSegmentLength = aSegmentLength;
       vClippedStart = aStartClipped;

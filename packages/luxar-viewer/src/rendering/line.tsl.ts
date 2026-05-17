@@ -176,8 +176,9 @@ export function lineWebGPUFactory(
 
   // ---- Vertex computation ----
 
-  // t = aQuadCorner.x > 0 ? 1 : 0 — position along the segment.
-  const t: TSLNode = aQuadCorner.x.greaterThan(0.0).select(float(1.0), float(0.0));
+  // t ∈ {0, 1} — position along the segment. Branchless because
+  // aQuadCorner.x ∈ {-1, +1} by construction.
+  const t: TSLNode = aQuadCorner.x.mul(0.5).add(0.5);
 
   // Per-endpoint colour or LUT lookup.
   let perPointColor: TSLNode;
