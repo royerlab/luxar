@@ -424,6 +424,11 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
       uIsOrtho: { value: 1 },
       uNearCull: { value: 0.01 },
       uMaxLinePixelWidth: { value: 32.0 },
+      // Pre-baked pixel-width scales for this ortho config:
+      //   uOrthoLineScale = 2 * 64 / 2 = 64 (matches old 2*resY/uFOV)
+      //   uPerspectiveLineScale is unused (uIsOrtho=1) — benign 1.0.
+      uPerspectiveLineScale: { value: 1.0 },
+      uOrthoLineScale: { value: 64.0 },
       uOpacity: { value: 1.0 },
       uInvGamma: { value: 1.0 / 2.2 },
       uIntensity: { value: 1.0 },
@@ -508,6 +513,9 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
       uNodeId: { value: 42 },
       uNearCull: { value: 0.01 },
       uMaxLinePixelWidth: { value: 32.0 },
+      // Pre-baked pixel-width scales (mirror `line` parity entry).
+      uPerspectiveLineScale: { value: 1.0 },
+      uOrthoLineScale: { value: 64.0 },
     }),
     buildTSLMaterial: (uniforms) =>
       linePickWebGPUFactory(

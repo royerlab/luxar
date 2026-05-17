@@ -33,7 +33,6 @@ import {
   mix,
   length,
   step,
-  tan,
   modelViewMatrix,
   cameraProjectionMatrix,
   Discard,
@@ -48,12 +47,21 @@ import { sanitizeNonNegative, sanitizePositive, type TSLNode } from '../tsl-help
  * avoiding the `.onUpdate('render')` callback churn.
  */
 export interface LinePickTSLNodes {
+  /**
+   * uFOV is unused by the shader after the pixel-scale precomputation
+   * but is kept here so the wrapper class's uniform table remains
+   * structurally identical to the visual material's.
+   */
   readonly uFOV: TSLNode;
   readonly uResolution: TSLNode;
   readonly uIsOrtho: TSLNode;
   readonly uNodeId: TSLNode;
   readonly uNearCull: TSLNode;
   readonly uMaxLinePixelWidth: TSLNode;
+  /** = resolution.y / tan(fov * 0.5), precomputed by the wrapper. */
+  readonly uPerspectiveLineScale: TSLNode;
+  /** = 2 * resolution.y / frustumHeight, precomputed by the wrapper. */
+  readonly uOrthoLineScale: TSLNode;
 }
 
 /**
@@ -81,12 +89,15 @@ export function linePickWebGPUFactory(
   const aStartClipped: TSLNode = attribute<'float'>('aStartClipped', 'float');
   const aEndClipped: TSLNode = attribute<'float'>('aEndClipped', 'float');
 
-  const uFOV = nodes.uFOV;
+  // uFOV intentionally not bound: pixel-width math now consumes the
+  // CPU-precomputed uPerspectiveLineScale / uOrthoLineScale instead.
   const uResolution = nodes.uResolution;
   const uIsOrtho = nodes.uIsOrtho;
   const uNodeId = nodes.uNodeId;
   const uNearCull = nodes.uNearCull;
   const uMaxLinePixelWidth = nodes.uMaxLinePixelWidth;
+  const uPerspectiveLineScale = nodes.uPerspectiveLineScale;
+  const uOrthoLineScale = nodes.uOrthoLineScale;
 
   // ---- Vertex computation (mirrors line.tsl exactly) ----
 
@@ -127,10 +138,11 @@ export function linePickWebGPUFactory(
     .select(vec2(pixelDir.div(pixelLen)).toVar(), vec2(1.0, 0.0));
   const perpendicular: TSLNode = vec2(lineDir.y.negate(), lineDir.x);
 
-  const tanHalfFov: TSLNode = tan(uFOV.mul(0.5));
+  // Both pixel-width branches consume CPU-precomputed scales — no
+  // per-vertex tan() or division by uFOV. Visual-shader parity.
   const distView: TSLNode = max(length(mvPos.xyz), nearCull);
-  const rawPixelWidthOrtho: TSLNode = width.mul(2.0).mul(uResolution.y).div(uFOV);
-  const rawPixelWidthPersp: TSLNode = width.mul(uResolution.y).div(distView.mul(tanHalfFov));
+  const rawPixelWidthOrtho: TSLNode = width.mul(uOrthoLineScale);
+  const rawPixelWidthPersp: TSLNode = width.mul(uPerspectiveLineScale).div(distView);
   const rawPixelWidth: TSLNode = int(uIsOrtho)
     .equal(int(1))
     .select(rawPixelWidthOrtho.toVar(), rawPixelWidthPersp.toVar());
@@ -238,5 +250,9 @@ export function buildLinePickTSLNodesFromUniforms(
     uNodeId: uniform((uniforms.uNodeId?.value as number) ?? 0),
     uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 1e-4),
     uMaxLinePixelWidth: uniform((uniforms.uMaxLinePixelWidth?.value as number) ?? 1.0),
+    uPerspectiveLineScale: uniform(
+      (uniforms.uPerspectiveLineScale?.value as number) ?? 1.0
+    ),
+    uOrthoLineScale: uniform((uniforms.uOrthoLineScale?.value as number) ?? 1.0),
   };
 }

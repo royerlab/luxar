@@ -29,6 +29,9 @@ export class LinePickingMaterial extends THREE.ShaderMaterial implements CameraA
         uNearCull: { value: 0.05 },
         uMaxLinePixelWidth: { value: 540 },
         uNodeId: { value: config.nodeId },
+        // CPU-precomputed pixel-width scales — see LineMaterial.
+        uPerspectiveLineScale: { value: 1.0 },
+        uOrthoLineScale: { value: 1.0 },
       },
       vertexShader: LINE_PICK_GLSL.vertex,
       fragmentShader: LINE_PICK_GLSL.fragment,
@@ -55,5 +58,13 @@ export class LinePickingMaterial extends THREE.ShaderMaterial implements CameraA
       this.uniforms.uNearCull.value = nearCull;
     }
     this.uniforms.uMaxLinePixelWidth.value = Math.max(2, resolution.y * 0.5);
+    // Precomputed pixel-width scales — see LineMaterial.updateCameraParams.
+    const safeFov = Math.max(fov, 1e-4);
+    if (isOrtho) {
+      this.uniforms.uOrthoLineScale.value = (2.0 * resolution.y) / safeFov;
+    } else {
+      this.uniforms.uPerspectiveLineScale.value =
+        resolution.y / Math.max(Math.tan(safeFov * 0.5), 1e-4);
+    }
   }
 }

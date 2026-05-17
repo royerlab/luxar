@@ -33,6 +33,8 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
     uNearCull: TSLNode;
     uMaxLinePixelWidth: TSLNode;
     uNodeId: TSLNode;
+    uPerspectiveLineScale: TSLNode;
+    uOrthoLineScale: TSLNode;
   };
 
   constructor(config: LinePickingMaterialConfig) {
@@ -45,6 +47,8 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
       uNearCull: uniform(0.05),
       uMaxLinePixelWidth: uniform(540),
       uNodeId: uniform(config.nodeId),
+      uPerspectiveLineScale: uniform(1.0),
+      uOrthoLineScale: uniform(1.0),
     };
 
     this.uniforms = {
@@ -54,6 +58,8 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
       uNearCull: proxyIUniform(this.tslNodes.uNearCull),
       uMaxLinePixelWidth: proxyIUniform(this.tslNodes.uMaxLinePixelWidth),
       uNodeId: proxyIUniform(this.tslNodes.uNodeId),
+      uPerspectiveLineScale: proxyIUniform(this.tslNodes.uPerspectiveLineScale),
+      uOrthoLineScale: proxyIUniform(this.tslNodes.uOrthoLineScale),
     };
 
     this.toneMapped = false;
@@ -75,5 +81,13 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
       this.uniforms.uNearCull.value = nearCull;
     }
     this.uniforms.uMaxLinePixelWidth.value = Math.max(2, resolution.y * 0.5);
+    // Precomputed pixel-width scales — see LineMaterial.updateCameraParams.
+    const safeFov = Math.max(fov, 1e-4);
+    if (isOrtho) {
+      this.uniforms.uOrthoLineScale.value = (2.0 * resolution.y) / safeFov;
+    } else {
+      this.uniforms.uPerspectiveLineScale.value =
+        resolution.y / Math.max(Math.tan(safeFov * 0.5), 1e-4);
+    }
   }
 }

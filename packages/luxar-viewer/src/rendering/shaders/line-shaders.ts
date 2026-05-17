@@ -68,6 +68,10 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
     uniform int uIsOrtho;  // 0 = perspective, 1 = orthographic
     uniform float uNearCull;          // near-plane safety distance (view-space, +z toward camera)
     uniform float uMaxLinePixelWidth; // clamp for screen-space width
+    // Precomputed CPU-side line-width scales — kill the per-vertex tan()
+    // and one division. See updateCameraParams in line-material.ts.
+    uniform float uPerspectiveLineScale; // = resolution.y / tan(fov * 0.5)
+    uniform float uOrthoLineScale;       // = 2 * resolution.y / frustumHeight
 
     // Colormap uniforms (only active when USE_COLORMAP is defined)
     #ifdef USE_COLORMAP
@@ -165,17 +169,16 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
       vec2 lineDir = pixelLen > 0.0001 ? pixelDir / pixelLen : vec2(1.0, 0.0);
       vec2 perpendicular = vec2(-lineDir.y, lineDir.x);  // Unit vector in pixel space
 
-      // World-space to pixel conversion
+      // World-space to pixel conversion. Both branches consume a scale
+      // precomputed on the CPU once per camera/resolution change so
+      // the shader avoids per-vertex tan() and divisions by uFOV.
       float rawPixelWidth;
       if (uIsOrtho == 1) {
-        // Orthographic: constant screen size regardless of distance
-        // uFOV stores frustumHeight in ortho mode
-        // Factor of 2 matches the perspective formula (which has implicit 2x from 1/tanHalfFov)
-        rawPixelWidth = width * 2.0 * uResolution.y / uFOV;
+        // Orthographic: constant screen size regardless of distance.
+        rawPixelWidth = width * uOrthoLineScale;
       } else {
         float dist = max(length(mvPos.xyz), nearCull); // clamp dist to avoid 1/near-zero blow-up
-        float tanHalfFov = tan(uFOV * 0.5);
-        rawPixelWidth = width * uResolution.y / (dist * tanHalfFov);
+        rawPixelWidth = width * uPerspectiveLineScale / dist;
       }
 
       // Enforce minimum pixel width to prevent sub-pixel rendering artifacts

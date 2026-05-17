@@ -176,6 +176,9 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
     uniform float uNodeId;
     uniform float uNearCull;          // visual-shader parity
     uniform float uMaxLinePixelWidth; // visual-shader parity
+    // CPU-precomputed pixel-width scales — visual-shader parity.
+    uniform float uPerspectiveLineScale; // = resolution.y / tan(fov * 0.5)
+    uniform float uOrthoLineScale;       // = 2 * resolution.y / frustumHeight
 
     out float vSharpness;
     out float vPerpNorm;
@@ -244,11 +247,10 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
 
       float rawPixelWidth;
       if (uIsOrtho == 1) {
-        rawPixelWidth = width * 2.0 * uResolution.y / uFOV;
+        rawPixelWidth = width * uOrthoLineScale;
       } else {
         float dist = max(length(mvPos.xyz), nearCull);
-        float tanHalfFov = tan(uFOV * 0.5);
-        rawPixelWidth = width * uResolution.y / (dist * tanHalfFov);
+        rawPixelWidth = width * uPerspectiveLineScale / dist;
       }
 
       float minPixelWidth = 1.5;

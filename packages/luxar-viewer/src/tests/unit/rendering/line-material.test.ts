@@ -128,8 +128,10 @@ describe('LineMaterial', () => {
       // pixel width is now `clampedPixelWidth`/`rawPixelWidth`/`vPixelWidth`
       // because the vertex shader applies a max-pixel-width clamp.
       expect(material.vertexShader).toContain('clampedPixelWidth');
-      expect(material.vertexShader).toContain('pixelStart');
-      expect(material.vertexShader).toContain('pixelEnd');
+      // `pixelDir` is computed directly from NDC endpoints — `pixelStart`
+      // / `pixelEnd` no longer exist (the +0.5 bias cancels under
+      // subtraction).
+      expect(material.vertexShader).toContain('pixelDir');
       expect(material.vertexShader).toContain('minPixelWidth');
 
       // Vertex shader passes segment metadata for fragment-side cap math.
@@ -247,9 +249,11 @@ describe('LineMaterial', () => {
     it('should use world-space to pixel conversion', () => {
       const material = new LineMaterial();
 
-      // Check for perspective-correct pixel width calculation
-      expect(material.vertexShader).toContain('tanHalfFov');
-      expect(material.vertexShader).toContain('uResolution.y');
+      // Check for perspective-correct pixel width calculation. tan() is
+      // no longer evaluated per-vertex — `uPerspectiveLineScale` is
+      // precomputed CPU-side as resolution.y / tan(fov*0.5).
+      expect(material.vertexShader).toContain('uPerspectiveLineScale');
+      expect(material.vertexShader).toContain('uOrthoLineScale');
     });
   });
 
