@@ -69,6 +69,12 @@ export interface LineTSLConfig {
    * GLSL wrapper class.
    */
   readonly blendingMode?: BlendingMode;
+  /**
+   * Fast path: skip the `pow(adjusted, vec3(uInvGamma))` call when
+   * the wrapper knows gamma == 1.0. Saves 3 fragment-stage pow()
+   * calls in the default-gamma case (the common case).
+   */
+  readonly gammaOne?: boolean;
 }
 
 /**
@@ -352,7 +358,12 @@ export function lineWebGPUFactory(
     // GOG.
     const adjusted: TSLNode = max(vColor.mul(uIntensity).add(uOffset), vec3(0.0));
     Discard(max(adjusted.r, max(adjusted.g, adjusted.b)).lessThan(1e-4));
-    const gammaColor: TSLNode = adjusted.pow(vec3(uInvGamma));
+    // Gamma fast path: when the wrapper knows gamma==1.0 the pow() is
+    // identity. JS-level branch so the generated WGSL/GLSL omits the
+    // pow entirely when not needed.
+    const gammaColor: TSLNode = config.gammaOne
+      ? adjusted
+      : adjusted.pow(vec3(uInvGamma));
 
     const alpha: TSLNode = intensity.mul(uOpacity);
     if (premultiplyRGB) {

@@ -32,6 +32,17 @@ import {
 } from './blending-state';
 
 /**
+ * Gamma == 1.0 (with ±1e-4 epsilon for float-equality safety) lets
+ * the fragment shader skip three per-fragment pow() calls. Shared by
+ * both `LineMaterial` and `LineTSLMaterial` so the threshold is
+ * identical across the two backends.
+ */
+function isGammaOne(gamma: number): boolean {
+  return Math.abs(gamma - 1.0) < 1e-4;
+}
+export { isGammaOne };
+
+/**
  * Configuration for line material creation
  */
 export interface LineMaterialConfig {
@@ -142,9 +153,13 @@ export class LineMaterial
       vertexShader: LINE_VERTEX_SHADER,
       fragmentShader: LINE_FRAGMENT_SHADER,
 
-      // Preprocessor defines
+      // Preprocessor defines. Variant `#define`s (e.g.
+      // `LUXAR_GAMMA_ONE`) gate fragment-stage fast paths and are
+      // toggled by the wrapper's update methods when the underlying
+      // value crosses the relevant threshold.
       defines: {
         ...(materialConfig.colormapTexture ? { USE_COLORMAP: '' } : {}),
+        ...(isGammaOne(gammaValue) ? { LUXAR_GAMMA_ONE: '' } : {}),
       },
 
       // GLSL ES 3.0 for consistency with other materials
@@ -230,12 +245,28 @@ export class LineMaterial
 
   /**
    * Update gamma correction.
-   * Only invGamma is used in shader; gamma value stored in userData for clone()
+   * Only invGamma is used in shader; gamma value stored in userData for clone().
+   *
+   * When `gamma` crosses the 1.0 threshold (with epsilon), toggle the
+   * `LUXAR_GAMMA_ONE` define so the fragment shader's pow() path is
+   * recompiled in/out. The Three.js shader-program cache rebuilds the
+   * program on `needsUpdate = true`.
    */
   updateGamma(gamma: number): void {
     const safeGamma = clampGamma(gamma);
     this.userData.gamma = safeGamma;
     this.uniforms.uInvGamma.value = 1.0 / safeGamma;
+
+    if (!this.defines) this.defines = {};
+    const wantGammaOne = isGammaOne(safeGamma);
+    const hadGammaOne = 'LUXAR_GAMMA_ONE' in this.defines;
+    if (wantGammaOne && !hadGammaOne) {
+      this.defines.LUXAR_GAMMA_ONE = '';
+      this.needsUpdate = true;
+    } else if (!wantGammaOne && hadGammaOne) {
+      delete this.defines.LUXAR_GAMMA_ONE;
+      this.needsUpdate = true;
+    }
   }
 
   /**

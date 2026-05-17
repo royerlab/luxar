@@ -445,6 +445,39 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
     },
     buildMesh: buildLineInstancedMesh,
   },
+  // M13b — line with the gamma==1 fast path enabled. Same geometry +
+  // uniforms as `line`, but the TSL factory is built with
+  // `gammaOne: true` so the fragment-stage pow() is replaced with an
+  // identity. The codegen snapshot for this variant pins the
+  // pow-free fast path; the parity test compares against a GLSL
+  // shader that has `LUXAR_GAMMA_ONE` defined.
+  'line-gamma-one': {
+    source: LINE_SOURCE,
+    buildUniforms: () => ({
+      uFOV: { value: 2.0 },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      uIsOrtho: { value: 1 },
+      uNearCull: { value: 0.01 },
+      uMaxLinePixelWidth: { value: 32.0 },
+      uPerspectiveLineScale: { value: 1.0 },
+      uOrthoLineScale: { value: 64.0 },
+      uOpacity: { value: 1.0 },
+      uInvGamma: { value: 1.0 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+    }),
+    buildDefines: () => ({ LUXAR_GAMMA_ONE: '' }),
+    buildTSLMaterial: (uniforms) => {
+      const m = lineWebGPUFactory(
+        buildLineTSLNodesFromUniforms(uniforms, {}),
+        { gammaOne: true }
+      ) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: buildLineInstancedMesh,
+  },
   // M15 gsplat parity: isotropic Gaussian splat at world origin with
   // identity Cholesky factor. Ortho camera for deterministic projection.
   // Tests the 3D→2D covariance Jacobian, Cholesky factorisation,
