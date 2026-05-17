@@ -34,23 +34,40 @@ test.describe('WebGPU native smoke (best-effort, skips on fallback)', () => {
     await waitForPointsLoaded(page);
   });
 
-  test('reports caps.apiSurface === "webgpu" under real WebGPU; skips otherwise', async ({ page }) => {
+  test('reports caps.apiSurface === "webgpu" under real WebGPU; skips otherwise', async ({
+    page,
+  }) => {
     const api = await page.evaluate(
-      () =>
-         
-        (window as any).__luxarDebug.app.sceneManager.capabilities.apiSurface
+      () => (window as any).__luxarDebug.app.sceneManager.capabilities.apiSurface
     );
     test.skip(api !== 'webgpu', SKIP_REASON);
     expect(api).toBe('webgpu');
+  });
+
+  test('caps.framebufferYDown is true under real WebGPU (top-down framebuffer)', async ({
+    page,
+  }) => {
+    const probe = await page.evaluate(() => {
+      const dbg = (window as any).__luxarDebug;
+      return {
+        api: dbg.app.sceneManager.capabilities.apiSurface,
+        framebufferYDown: dbg.app.sceneManager.capabilities.framebufferYDown,
+        isWebGLBackend: dbg.renderer?.backend?.isWebGLBackend === true,
+      };
+    });
+    test.skip(probe.api !== 'webgpu', SKIP_REASON);
+    // Skip if the underlying backend is the WebGL2 fallback — that
+    // path is exercised by the separate `webgpu-force-webgl` spec
+    // path; here we want a real native WebGPU adapter.
+    test.skip(probe.isWebGLBackend, SKIP_REASON);
+    expect(probe.framebufferYDown).toBe(true);
   });
 
   test('screenshot at an unaligned canvas width returns a non-empty, compact buffer', async ({
     page,
   }) => {
     const api = await page.evaluate(
-      () =>
-         
-        (window as any).__luxarDebug.app.sceneManager.capabilities.apiSurface
+      () => (window as any).__luxarDebug.app.sceneManager.capabilities.apiSurface
     );
     test.skip(api !== 'webgpu', SKIP_REASON);
 
@@ -60,14 +77,12 @@ test.describe('WebGPU native smoke (best-effort, skips on fallback)', () => {
     // ImageData wraps a compact, slant-free buffer.
     await page.setViewportSize({ width: 853, height: 480 });
     await page.waitForFunction(
-       
       () => (window as any).__luxarDebug?.renderer?.domElement?.width === 853,
       null,
       { timeout: 5000 }
     );
 
     const { width, height, length } = await page.evaluate(async () => {
-       
       const dbg = (window as any).__luxarDebug;
       const img: ImageData = await dbg.postProcessing.renderToImageData();
       return { width: img.width, height: img.height, length: img.data.length };
@@ -80,15 +95,12 @@ test.describe('WebGPU native smoke (best-effort, skips on fallback)', () => {
     page,
   }) => {
     const api = await page.evaluate(
-      () =>
-         
-        (window as any).__luxarDebug.app.sceneManager.capabilities.apiSurface
+      () => (window as any).__luxarDebug.app.sceneManager.capabilities.apiSurface
     );
     test.skip(api !== 'webgpu', SKIP_REASON);
 
     for (const mode of ['visible-ldr', 'hdr-effects-pre-tone'] as const) {
       const { width, height, length } = await page.evaluate(async (m) => {
-         
         const dbg = (window as any).__luxarDebug;
         const out = await dbg.postProcessing.captureHDRPixels(m);
         return { width: out.width, height: out.height, length: out.pixels.length };

@@ -44,7 +44,17 @@ export function fxaaWebGPUFactory(uniforms: Record<string, THREE.IUniform>): Nod
   // `uniform()` helper accepts a value or a callback; passing a
   // callback that reads from the IUniform keeps the node live-bound
   // to whatever the host writes to `.value`.
-  const uInput = texture((uniforms.uInput.value as THREE.Texture | null) ?? new THREE.Texture());
+  //
+  // `texture()` captures the THREE.Texture passed at build time. The
+  // host (FxaaPass) builds the material with `uInput.value === null`
+  // and assigns the real `ldrTarget.texture` per render. Without an
+  // `.onUpdate()` swap, the TextureNode would sample the placeholder
+  // forever and FXAA would output an empty image under WebGPU.
+  const fallback = new THREE.Texture();
+  const uInput = texture((uniforms.uInput.value as THREE.Texture | null) ?? fallback).onUpdate(
+    () => (uniforms.uInput.value as THREE.Texture | null) ?? fallback,
+    'render'
+  );
   const uResolution = uniform(
     (uniforms.uResolution.value as THREE.Vector2) ?? new THREE.Vector2(1, 1)
   );
@@ -59,10 +69,9 @@ export function fxaaWebGPUFactory(uniforms: Record<string, THREE.IUniform>): Nod
 
   const fragmentNode = Fn(() => {
     const inv = vec2(1.0).div(uResolution);
-    // Read the geometry's `uv` attribute. `screenUV` would be wrong
-    // here: under `WebGPURenderer({ forceWebGL: true })` it returns
-    // Y-flipped coordinates (WebGPU convention), so sampling the
-    // input texture would invert it relative to the GLSL3 path.
+    // Read the geometry's caps-aware `uv` attribute. The fullscreen-
+    // triangle factory encodes WebGL2/WebGPU framebuffer-Y correction
+    // there so we never have to branch on the renderer backend here.
     const coord = uv();
 
     const cM = uInput.sample(coord).rgb;

@@ -1,12 +1,12 @@
 # Luxar Rendering Package
 
-> Dual-stack WebGPU/WebGL2 rendering pipeline (TSL `NodeMaterial` default, legacy GLSL `ShaderMaterial` reference path) with a custom mega-shader for high-quality nD scientific visualization
+> Dual-stack WebGL2/WebGPU rendering pipeline (GLSL `ShaderMaterial` default, TSL `NodeMaterial` opt-in via `?renderer=webgpu`) with a custom mega-shader for high-quality nD scientific visualization
 
 ## Overview
 
 The Luxar Rendering package provides a high-performance rendering pipeline built on Three.js r184. Each of the 12 production shaders (3 geometry visual × {GLSL, TSL} + 3 geometry picking × {GLSL, TSL} + mega-shader, FXAA, bloom-threshold × {GLSL, TSL}) ships as a `ShaderSource` pair: a `WebGLRenderer`-targeted GLSL3 string and a `WebGPURenderer`-targeted TSL factory. `MaterialManager` dispatches on `RendererCapabilities.apiSurface` so the same scene graph renders identically through either backend. Post-processing runs through a hand-written **mega-shader** that fuses all per-pixel effects into a single fullscreen fragment pass — bloom is a separate pre-pass (needs neighbor reads) and FXAA is a separate post-pass (edge detection on the LDR output).
 
-The default backend is `WebGPURenderer` (with internal WebGL2 fallback when WebGPU is unavailable). The legacy `WebGLRenderer` GLSL path is selectable via `?renderer=webgl` or `VITE_LUXAR_USE_LEGACY_WEBGL=1` and is kept as the parity reference — every TSL shader is validated against its GLSL counterpart through `tsl-shader-parity.spec.ts`.
+The default backend is `THREE.WebGLRenderer` (GLSL `ShaderMaterial`). `WebGPURenderer` (TSL `NodeMaterial`) is selectable via `?renderer=webgpu` or `VITE_LUXAR_USE_WEBGPU=1`; it falls back to its internal WebGL2 backend when no WebGPU adapter is available. Every TSL shader is validated against its GLSL counterpart through `tsl-shader-parity.spec.ts`. For diagnostics, `?renderer=webgpu&webgpu-force-webgl` constructs `WebGPURenderer({ forceWebGL: true })`: Luxar still uses TSL `NodeMaterial` shaders and the WebGPURenderer API surface, but Three.js routes rendering through its internal WebGL2 backend instead of native WebGPU.
 
 ### Key Features
 
@@ -610,30 +610,30 @@ function animate() {
 
 ### PostProcessingManager
 
-| Method                                                       | Description                                                        |
-| ------------------------------------------------------------ | ------------------------------------------------------------------ |
-| `render()`                                                   | Execute rendering pipeline                                         |
-| `setBloomEnabled(enabled, strength?, radius?, threshold?)`   | Enable/disable bloom (and update settings)                         |
-| `updateBloomSettings(strength?, radius?, threshold?)`        | Update bloom settings                                              |
-| `setBloomLevels(levels)`                                     | Set bloom mip pyramid depth (1-12)                                 |
-| `setToneMapping(mode)`                                       | Set tone mapping operator (THREE.ToneMapping)                      |
-| `updateExposure(value)` / `getExposure()`                    | EOG exposure (log2 stops)                                          |
-| `updateGlobalOffset(value)` / `updateGlobalGamma(value)`     | EOG offset and gamma                                               |
-| `setFXAAEnabled(enabled)`                                    | Toggle FXAA post-pass                                              |
-| `setMSAAEnabled(enabled)` / `setMSAASamples(n)`              | Toggle MSAA on the HDR target / set sample count                   |
-| `setSSAAEnabled(enabled)` / `setSSAAMultiplier(value)`       | Toggle SSAA / set supersampling factor                             |
-| `setDetectorNoiseEnabled(enabled, sigma?, gain?, fpnSigma?)` | Configure physics-based detector noise                             |
-| `updateDetectorNoiseSettings(params)`                        | Update detector noise parameters                                   |
-| `setVignetteEnabled(enabled, darkness?, offset?)`            | Configure vignette                                                 |
-| `setChromaticLensDistortionEnabled(enabled, ...params)`      | Configure chromatic lens distortion                                |
-| `updateChromaticLensDistortion(params)`                      | Update chromatic lens distortion params                            |
-| `getLensDistortionParams()`                                  | Read distortion uniforms (cloned, for picking)                     |
-| `captureHDRPixels(mode?)` / `captureHDRAsEXR(opts?)`         | Read HDR/LDR pixels for EXR export                                 |
-| `renderToImageData()`                                        | Render once and read back as ImageData (sRGB)                      |
+| Method                                                       | Description                                                                                                                                                                                                                       |
+| ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `render()`                                                   | Execute rendering pipeline                                                                                                                                                                                                        |
+| `setBloomEnabled(enabled, strength?, radius?, threshold?)`   | Enable/disable bloom (and update settings)                                                                                                                                                                                        |
+| `updateBloomSettings(strength?, radius?, threshold?)`        | Update bloom settings                                                                                                                                                                                                             |
+| `setBloomLevels(levels)`                                     | Set bloom mip pyramid depth (1-12)                                                                                                                                                                                                |
+| `setToneMapping(mode)`                                       | Set tone mapping operator (THREE.ToneMapping)                                                                                                                                                                                     |
+| `updateExposure(value)` / `getExposure()`                    | EOG exposure (log2 stops)                                                                                                                                                                                                         |
+| `updateGlobalOffset(value)` / `updateGlobalGamma(value)`     | EOG offset and gamma                                                                                                                                                                                                              |
+| `setFXAAEnabled(enabled)`                                    | Toggle FXAA post-pass                                                                                                                                                                                                             |
+| `setMSAAEnabled(enabled)` / `setMSAASamples(n)`              | Toggle MSAA on the HDR target / set sample count                                                                                                                                                                                  |
+| `setSSAAEnabled(enabled)` / `setSSAAMultiplier(value)`       | Toggle SSAA / set supersampling factor                                                                                                                                                                                            |
+| `setDetectorNoiseEnabled(enabled, sigma?, gain?, fpnSigma?)` | Configure physics-based detector noise                                                                                                                                                                                            |
+| `updateDetectorNoiseSettings(params)`                        | Update detector noise parameters                                                                                                                                                                                                  |
+| `setVignetteEnabled(enabled, darkness?, offset?)`            | Configure vignette                                                                                                                                                                                                                |
+| `setChromaticLensDistortionEnabled(enabled, ...params)`      | Configure chromatic lens distortion                                                                                                                                                                                               |
+| `updateChromaticLensDistortion(params)`                      | Update chromatic lens distortion params                                                                                                                                                                                           |
+| `getLensDistortionParams()`                                  | Read distortion uniforms (cloned, for picking)                                                                                                                                                                                    |
+| `captureHDRPixels(mode?)` / `captureHDRAsEXR(opts?)`         | Read HDR/LDR pixels for EXR export                                                                                                                                                                                                |
+| `renderToImageData()`                                        | Render once and read back as ImageData (sRGB)                                                                                                                                                                                     |
 | `rebuildAfterContextRestore()`                               | Rebuild GPU resources after a WebGL2 `webglcontextrestored` event. WebGPU device loss uses a different model (`device.lost` promise) and is currently treated as unrecoverable — see `scene-manager.ts::setupContextLossHandling` |
-| `setDPRScale(value)`                                         | Apply an adaptive DPR scale                                        |
-| `startDeferRebuild()` / `endDeferRebuild()`                  | Defer rebuilds during bulk changes (no-op in mega-shader pipeline) |
-| `dispose()`                                                  | Clean up resources                                                 |
+| `setDPRScale(value)`                                         | Apply an adaptive DPR scale                                                                                                                                                                                                       |
+| `startDeferRebuild()` / `endDeferRebuild()`                  | Defer rebuilds during bulk changes (no-op in mega-shader pipeline)                                                                                                                                                                |
+| `dispose()`                                                  | Clean up resources                                                                                                                                                                                                                |
 
 ---
 

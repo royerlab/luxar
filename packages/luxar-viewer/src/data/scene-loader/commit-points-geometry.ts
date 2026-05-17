@@ -33,16 +33,14 @@
 
 import * as THREE from 'three';
 import type { LoadedPointsData } from '../data-loader-types';
-import {
-  widenToFloat32,
-  writeInterleavedAttribute,
-} from '../../rendering/interleaved-attributes';
+import { widenToFloat32, writeInterleavedAttribute } from '../../rendering/interleaved-attributes';
 import { isPointsUserData } from '../../types/points';
 import { log, Modules } from '../../utils/log';
 import type { UpdateSession } from '../../profiling/update-profiler';
 import type { GPUBufferPool } from '../../rendering/gpu-buffer-pool';
 import type { NodeFactory } from '../../rendering/node-factory';
 import { syncPointMaterialWithGeometry } from '../../rendering/material-sync-helpers';
+import { invalidateRenderObjectFor } from './invalidate-render-object';
 
 // F.6: re-export so callers can continue to import this name from the
 // commit-points-geometry module. The implementation now lives in the
@@ -92,6 +90,12 @@ export function commitPointsGeometry(
     if (gpuBufferPool) {
       // Acquire geometry from pool (type-aware: matches capacity AND attribute types).
       const geometry = gpuBufferPool.acquirePointsGeometry(path, data, data.pointCount);
+      // Pool rebuilt the geometry's InstancedInterleavedBuffer (grow,
+      // pool swap, or fresh allocation). The mesh's cached RenderObject
+      // in Three's WebGPURenderer still references the old buffer; the
+      // helper dispatches a `dispose` event on the material to evict
+      // that cache. No-op under WebGL2 / pre-init / no cached entry.
+      const attributesRebuilt = gpuBufferPool.didLastAcquireRebuildAttributes();
       gpuBufferPool.updatePointsGeometry(geometry, data, data.pointCount);
 
       if (data.metadata.bounds) {
@@ -116,6 +120,7 @@ export function commitPointsGeometry(
 
       points.geometry = geometry;
       syncPointMaterialWithGeometry(points);
+      if (attributesRebuilt) invalidateRenderObjectFor(points);
       return;
     }
 
@@ -129,9 +134,9 @@ export function commitPointsGeometry(
     // `InstancedInterleavedBuffer`. `getAttribute(...).count` returns
     // the per-instance count from the underlying buffer's
     // `stride * arrayLength`, which is what we want either way.
-    const oldCenterAttr = oldGeometry?.getAttribute('aCenter') as
-      | THREE.InterleavedBufferAttribute
-      | null;
+    const oldCenterAttr = oldGeometry?.getAttribute(
+      'aCenter'
+    ) as THREE.InterleavedBufferAttribute | null;
     const oldCount = oldCenterAttr ? oldCenterAttr.count : 0;
 
     if (oldCount === data.pointCount && data.pointCount > 0) {
@@ -143,13 +148,7 @@ export function commitPointsGeometry(
         data.positions instanceof Float32Array
           ? data.positions
           : widenToFloat32(data.positions as ArrayLike<number>);
-      writeInterleavedAttribute(
-        buffer,
-        oldCenterAttr!.offset,
-        3,
-        positionsF32,
-        data.pointCount
-      );
+      writeInterleavedAttribute(buffer, oldCenterAttr!.offset, 3, positionsF32, data.pointCount);
 
       const colorAttr = oldGeometry.getAttribute('aColor') as
         | THREE.InterleavedBufferAttribute

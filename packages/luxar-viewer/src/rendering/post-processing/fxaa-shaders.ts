@@ -19,7 +19,9 @@ import { fxaaWebGPUFactory } from './fxaa.tsl';
 export const FXAA_VERTEX_SHADER = /* glsl */ `
   out vec2 vUv;
   void main() {
-    vUv = position.xy * 0.5 + 0.5;
+    // Caps-aware uv attribute encodes WebGL2/WebGPU Y-orientation
+    // correction. See createFullscreenTriangleGeometry.
+    vUv = uv;
     gl_Position = vec4(position.xy, 0.0, 1.0);
   }
 `;

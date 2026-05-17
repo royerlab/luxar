@@ -47,6 +47,33 @@ v2.0 layout (`splats/substitutive_0/additive_<i>/`). The TypeScript viewer's
 `format_version`, `n_substitutive`, `default_substitutive`,
 `n_additive_sublods_default` (the legacy `n_lods` field is dropped).
 
+#### Changed — Production default renderer flipped back to WebGL (2026-05-16)
+
+The viewer's production rendering path now defaults to
+`THREE.WebGLRenderer` (GLSL `ShaderMaterial`) again. Per-scene
+performance measurements on the WebGPU path landed below the WebGL
+baseline, so WebGL stays the safe choice until those gaps close.
+`WebGPURenderer` (TSL `NodeMaterial`) remains a fully-supported
+second backend behind `?renderer=webgpu` URL flag or
+`VITE_LUXAR_USE_WEBGPU=1` env var; the TSL ↔ GLSL parity harness
+keeps both stacks in sync and per-shader GLSL3 sources are retained
+as the reference. The previous default-flip-to-WebGPU entry
+(2026-05-14) is superseded by this change.
+
+The transitional `VITE_LUXAR_USE_LEGACY_WEBGL=1` env var is now a
+no-op alias (WebGL is the default), and
+`VITE_LUXAR_USE_WEBGPU_RENDERER=1` is accepted as a synonym for
+`VITE_LUXAR_USE_WEBGPU=1` so existing CI invocations keep working.
+
+#### Added — WebGPURenderer WebGL-backend diagnostic flag (2026-05-16)
+
+- Added `?webgpu-force-webgl` for line-rendering performance triage.
+  When combined with `?renderer=webgpu`, Luxar still constructs
+  Three.js `WebGPURenderer` and dispatches TSL `NodeMaterial` shaders,
+  but passes `{ forceWebGL: true }` so Three.js uses its internal
+  WebGL2 backend instead of a native WebGPU adapter. This isolates
+  TSL/generated-shader overhead from native WebGPU/Dawn/backend costs.
+
 #### Fixed — Multi-agent review fixes for the WebGPU/r184 migration (2026-05-16)
 
 Landed a batch of correctness, performance, and architecture fixes

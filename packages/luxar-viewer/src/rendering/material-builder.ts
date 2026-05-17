@@ -3,7 +3,7 @@
  *
  * Each material wrapper (FxaaPass, BloomChain, PointMaterial, …)
  * delegates inner construction here. The helper branches on
- * `RendererCapabilities.api`:
+ * `RendererCapabilities.apiSurface`:
  *
  * - WebGL2 path returns a configured `THREE.ShaderMaterial` from
  *   `source.webgl.{vertex,fragment}`.
@@ -76,8 +76,8 @@ export function buildMaterial(
     throw new Error(
       `buildMaterial: ShaderSource '${source.name}' has no WebGL fallback ` +
         'but the active renderer dispatches via the WebGL path ' +
-        `(caps.apiSurface='${caps.apiSurface}'). Add a 'webgl' source or run with the ` +
-        'default WebGPU renderer.'
+        `(caps.apiSurface='${caps.apiSurface}'). Add a 'webgl' source or opt into the ` +
+        'WebGPU renderer (?renderer=webgpu or VITE_LUXAR_USE_WEBGPU=1).'
     );
   }
   return new THREE.ShaderMaterial({

@@ -87,6 +87,7 @@ const EMPTY_PARAMS: UrlParams = {
   prefetchDebug: false,
   cacheStats: false,
   renderer: null,
+  webgpuForceWebGL: false,
 };
 
 describe('bootstrapStandalone', () => {
@@ -230,7 +231,7 @@ describe('bootstrapStandalone', () => {
       expect(mocks.init).toHaveBeenCalledTimes(1);
     });
 
-    it('forwards loader flags from urlParams into LuxarApp.init()', async () => {
+    it('forwards loader and renderer diagnostic flags from urlParams into LuxarApp.init()', async () => {
       await bootstrapStandalone({
         canvas: CANVAS,
         urlParams: {
@@ -238,12 +239,16 @@ describe('bootstrapStandalone', () => {
           src: 'https://example.com/data.zarr',
           noCache: true,
           cacheDebug: true,
+          renderer: 'webgpu',
+          webgpuForceWebGL: true,
         },
       });
       const arg = mocks.init.mock.calls.at(-1)?.[0];
       expect(arg.canvas).toBe(CANVAS);
       expect(arg.src).toBe('https://example.com/data.zarr');
       expect(arg.updateBrowserUrl).toBe(true);
+      expect(arg.renderer).toBe('webgpu');
+      expect(arg.webgpuForceWebGL).toBe(true);
       expect(arg.loaderConfig).toMatchObject({
         noCache: true,
         cacheDebug: true,

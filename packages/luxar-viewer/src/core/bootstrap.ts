@@ -181,9 +181,10 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     },
     // `?renderer=webgl|webgpu` forces a backend regardless of the
     // build-time env. Undefined → SceneManager falls back to the env
-    // var, then the WebGPU default. See `setupRenderer` for the
+    // var, then the WebGL default. See `setupRenderer` for the
     // precedence chain.
     renderer: urlParams.renderer ?? undefined,
+    webgpuForceWebGL: urlParams.webgpuForceWebGL,
   };
 
   const app = new LuxarApp();

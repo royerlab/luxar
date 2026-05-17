@@ -5,16 +5,17 @@
  * than as a pair of inline strings on its material. The registry
  * carries both backends side-by-side:
  *
- * - `webgpu` (TSL / NodeMaterial factory) — primary backend, used
- *   under the default `WebGPURenderer`.
- * - `webgl` (GLSL3 strings) — kept as a runnable reference: drives
- *   the legacy `THREE.WebGLRenderer` path behind
- *   `VITE_LUXAR_USE_LEGACY_WEBGL=1` and the TSL↔GLSL parity harness.
+ * - `webgl` (GLSL3 strings) — drives the production default
+ *   `THREE.WebGLRenderer` path.
+ * - `webgpu` (TSL / NodeMaterial factory) — drives the opt-in
+ *   `WebGPURenderer` path (via `?renderer=webgpu` or
+ *   `VITE_LUXAR_USE_WEBGPU=1`) and the TSL↔GLSL parity harness.
  *
- * Both fields are optional in the type so future shaders can ship
- * WebGPU-only if no reference is needed, but the invariant is that
- * at least one MUST be present. `buildMaterial` throws if a consumer
- * asks for a backend the source doesn't supply.
+ * Both fields are optional in the type so future shaders can ship a
+ * single-backend implementation if no parity counterpart is needed,
+ * but the invariant is that at least one MUST be present.
+ * `buildMaterial` throws if a consumer asks for a backend the source
+ * doesn't supply.
  */
 
 /**

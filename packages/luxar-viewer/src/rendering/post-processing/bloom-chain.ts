@@ -26,7 +26,7 @@ import {
   BLOOM_UPSAMPLE_SOURCE,
 } from './bloom-shaders';
 import { buildMaterial } from '../material-builder';
-import { createFullscreenTriangleGeometry } from './fullscreen-geometry';
+import { FullscreenPass } from './fullscreen-pass';
 import type { Renderer, RendererCapabilities } from '../renderer-capabilities';
 
 export interface BloomChainConfig {
@@ -88,9 +88,7 @@ export class BloomChain {
     uRadius: THREE.IUniform<number>;
   };
 
-  private readonly fullscreenScene: THREE.Scene;
-  private readonly fullscreenMesh: THREE.Mesh;
-  private readonly camera: THREE.OrthographicCamera;
+  private readonly pass: FullscreenPass;
 
   constructor(cfg: BloomChainConfig) {
     this.levels = clamp(Math.round(cfg.levels ?? 8), 1, 12);
@@ -137,15 +135,7 @@ export class BloomChain {
       cfg.caps
     );
 
-    // Fullscreen triangle (NDC positions {-1,-1}, {3,-1}, {-1,3} with
-    // matching uvs {(0,0),(2,0),(0,2)}). See
-    // `createFullscreenTriangleGeometry` for the uv contract.
-    const geo = createFullscreenTriangleGeometry();
-    this.fullscreenMesh = new THREE.Mesh(geo, this.thresholdMat);
-    this.fullscreenMesh.frustumCulled = false;
-    this.fullscreenScene = new THREE.Scene();
-    this.fullscreenScene.add(this.fullscreenMesh);
-    this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+    this.pass = new FullscreenPass(this.thresholdMat, cfg.caps);
 
     this.allocateMips(cfg.width, cfg.height);
   }
@@ -207,34 +197,31 @@ export class BloomChain {
     renderer.autoClear = true;
 
     // Pass 0: threshold + downsample sceneTexture → mip[0]
-    this.fullscreenMesh.material = this.thresholdMat;
+    this.pass.setMaterial(this.thresholdMat);
     this.thresholdUniforms.uInput.value = sceneTexture;
-    this.thresholdUniforms.uTexelSize.value.set(
-      1 / this.mips[0].width,
-      1 / this.mips[0].height
-    );
+    this.thresholdUniforms.uTexelSize.value.set(1 / this.mips[0].width, 1 / this.mips[0].height);
     renderer.setRenderTarget(this.mips[0].target);
-    renderer.render(this.fullscreenScene, this.camera);
+    this.pass.render(renderer);
 
     // Downsample chain: mip[i] → mip[i+1]. Iterate over actually-
     // allocated mips, not the user-requested `levels` — allocateMips
     // skips levels whose next mip would fall below MIN_MIP_DIM, so
     // `this.mips.length` may be smaller than `this.levels` at low DPR.
     const actualLevels = this.mips.length;
-    this.fullscreenMesh.material = this.downsampleMat;
+    this.pass.setMaterial(this.downsampleMat);
     for (let i = 0; i < actualLevels - 1; i++) {
       const src = this.mips[i];
       const dst = this.mips[i + 1];
       this.downsampleUniforms.uInput.value = src.target.texture;
       this.downsampleUniforms.uTexelSize.value.set(1 / dst.width, 1 / dst.height);
       renderer.setRenderTarget(dst.target);
-      renderer.render(this.fullscreenScene, this.camera);
+      this.pass.render(renderer);
     }
 
     // Upsample chain: additively blend mip[i+1] into mip[i].
     // Uses AdditiveBlending on the material so the destination's
     // existing pixels are preserved and the upsampled samples add on.
-    this.fullscreenMesh.material = this.upsampleMat;
+    this.pass.setMaterial(this.upsampleMat);
     for (let i = actualLevels - 2; i >= 0; i--) {
       const src = this.mips[i + 1];
       const dst = this.mips[i];
@@ -243,7 +230,7 @@ export class BloomChain {
       renderer.setRenderTarget(dst.target);
       // Skip autoclear so additive blend writes onto existing mip[i]
       renderer.autoClear = false;
-      renderer.render(this.fullscreenScene, this.camera);
+      this.pass.render(renderer);
       renderer.autoClear = true;
     }
 
@@ -259,7 +246,7 @@ export class BloomChain {
     this.thresholdMat.dispose();
     this.downsampleMat.dispose();
     this.upsampleMat.dispose();
-    this.fullscreenMesh.geometry.dispose();
+    this.pass.dispose();
   }
 
   // ----------------------------------------------------------------

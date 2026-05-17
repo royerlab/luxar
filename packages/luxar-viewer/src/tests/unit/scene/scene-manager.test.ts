@@ -359,14 +359,13 @@ describe('SceneManager', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    // Force the legacy WebGL path under unit tests: this file mocks
-    // `THREE.WebGLRenderer` but not the `three/webgpu` `WebGPURenderer`.
-    // Production defaults to WebGPU (see SceneManager.setupRenderer);
-    // these tests exercise scene composition / disposal / position
-    // bounds and are renderer-agnostic in intent, so pinning to the
-    // legacy path (which is the well-mocked one) keeps them
-    // hermetic. The legacy path also keeps regression coverage on
-    // the GLSL surface that lives behind the same flag in production.
+    // Pin the unit tests to the WebGL path. This is the production
+    // default — these tests exercise scene composition / disposal /
+    // position bounds and are renderer-agnostic in intent. Stubbing
+    // the env flag keeps the test hermetic against any future change
+    // that introduces a new opt-in to WebGPU, and the GLSL path is
+    // the well-mocked one (`THREE.WebGLRenderer` is stubbed in this
+    // file; the `three/webgpu` `WebGPURenderer` is not).
     vi.stubEnv('VITE_LUXAR_USE_LEGACY_WEBGL', '1');
     sceneManager = new SceneManager();
   });

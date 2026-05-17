@@ -10,7 +10,11 @@
 import * as THREE from 'three';
 import { describe, it, expect, vi } from 'vitest';
 
-import { createRendererCapabilities } from '../../../rendering/renderer-capabilities';
+import {
+  createRendererCapabilities,
+  detectFramebufferYDown,
+  type Renderer,
+} from '../../../rendering/renderer-capabilities';
 
 // MAX_SAMPLES and ALIASED_POINT_SIZE_RANGE constants
 const MAX_SAMPLES = 0x8d57;
@@ -78,6 +82,51 @@ describe('createRendererCapabilities', () => {
     expect(caps.apiSurface).toBe('webgl2');
   });
 
+  it('reports framebufferYDown=false under WebGL2 (FBO row 0 = bottom)', () => {
+    const caps = createRendererCapabilities(fakeRenderer());
+    expect(caps.framebufferYDown).toBe(false);
+  });
+
+  it('passes through an explicit framebufferYDown override (test-only seam)', () => {
+    const caps = createRendererCapabilities(fakeRenderer(), true);
+    expect(caps.framebufferYDown).toBe(true);
+  });
+});
+
+describe('detectFramebufferYDown', () => {
+  it('returns false for WebGLRenderer (bottom-up FBO)', () => {
+    expect(detectFramebufferYDown(fakeRenderer())).toBe(false);
+  });
+
+  it('returns true for WebGPURenderer on the real-WebGPU backend', () => {
+    const fake = {
+      isWebGPURenderer: true,
+      backend: { isWebGPUBackend: true },
+    } as unknown as Renderer;
+    expect(detectFramebufferYDown(fake)).toBe(true);
+  });
+
+  it('returns true for WebGPURenderer running on the WebGL2 compat backend', () => {
+    // Three.js's WebGPURenderer normalises Y internally so its
+    // forceWebGL / compat-fallback output matches real WebGPU.
+    // The discriminator is the renderer class, not the backend flag.
+    const fake = {
+      isWebGPURenderer: true,
+      backend: { isWebGLBackend: true },
+    } as unknown as Renderer;
+    expect(detectFramebufferYDown(fake)).toBe(true);
+  });
+
+  it('returns true for WebGPURenderer when backend introspection is unavailable', () => {
+    const fake = {
+      isWebGPURenderer: true,
+      backend: {},
+    } as unknown as Renderer;
+    expect(detectFramebufferYDown(fake)).toBe(true);
+  });
+});
+
+describe('createRendererCapabilities (GL probes)', () => {
   it('forwards MAX_SAMPLES from the GL context', () => {
     const caps = createRendererCapabilities(fakeRenderer({ maxSamples: 16 }));
     expect(caps.maxMSAASamples).toBe(16);

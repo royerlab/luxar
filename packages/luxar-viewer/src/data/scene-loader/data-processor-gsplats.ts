@@ -27,6 +27,7 @@ import { log, Modules } from '../../utils/log';
 import { getWorkerPool } from '../../workers/worker-pool';
 import type { UpdateSession } from '../../profiling/update-profiler';
 import type { GPUBufferPool } from '../../rendering/gpu-buffer-pool';
+import { invalidateRenderObjectFor } from './invalidate-render-object';
 
 /** Default truncation radius if the mesh material doesn't expose one. */
 const DEFAULT_TRUNCATE = 3.0;
@@ -250,6 +251,7 @@ export function commitGSplatsGeometry(
   try {
     if (gpuBufferPool) {
       const geometry = gpuBufferPool.acquireGSplatsGeometry(staged.path, processed.splatCount);
+      const attributesRebuilt = gpuBufferPool.didLastAcquireRebuildAttributes();
       const truncationRadius = readTruncate(mesh);
       gpuBufferPool.updateGSplatsGeometry(
         geometry,
@@ -266,6 +268,10 @@ export function commitGSplatsGeometry(
         truncationRadius
       );
       mesh.geometry = geometry;
+      // Pool rebuilt the geometry's InstancedInterleavedBuffer; evict
+      // Three's cached RenderObject so its `vertexBuffers` set is
+      // rebuilt against the new buffer next draw.
+      if (attributesRebuilt) invalidateRenderObjectFor(mesh);
     } else {
       updateInstancedGSplatsMesh(mesh, {
         centers: processed.centers3D,

@@ -38,7 +38,7 @@ verified by `tsl-shader-parity.spec.ts`. Production wrapper classes
 (`PointTSLMaterial`, `LineTSLMaterial`, `GSplatTSLMaterial`, and
 the three picking equivalents) extend `NodeMaterial` and ship
 one-for-one with their GLSL `ShaderMaterial` counterparts;
-`MaterialManager.getXxxMaterial` dispatches on `caps.api ===
+`MaterialManager.getXxxMaterial` dispatches on `caps.apiSurface ===
 'webgpu'`. The GLSL wrappers are kept live behind
 `VITE_LUXAR_USE_LEGACY_WEBGL=1` as the parity reference (per
 project policy — GLSL is never deleted), not as a fallback for
@@ -83,22 +83,22 @@ The original framing of this section:
 
 This is no longer the only path — see "Today" below.
 
-## Today — WebGPU default, GLSL kept as a runnable reference
+## Today — WebGL default, WebGPU as the opt-in second path
 
 - Both renderer constructions exist:
-  - **Default: `WebGPURenderer` (no `forceWebGL`)**. The renderer
-    acquires a real WebGPU adapter when the browser provides one
-    and transparently falls back to its internal WebGL2 backend
-    otherwise — the same TSL graphs target both backends from one
-    source. TSL `NodeMaterial` wrappers are dispatched by
-    `MaterialManager` when `caps.api === 'webgpu'`. (Playwright's
-    headless chromium falls back to WebGL2; real-WebGPU smoke
-    needs an interactive run on Chrome stable with a working GPU.)
-  - Opt-in legacy path via `VITE_LUXAR_USE_LEGACY_WEBGL=1`:
-    constructs `THREE.WebGLRenderer` with the GLSL `ShaderMaterial`
-    wrappers. Retained so the TSL↔GLSL parity harness, baseline
-    pixel comparisons, and the per-shader GLSL3 sources stay
-    runnable as a reference — never deleted, per project policy.
+  - **Default: `THREE.WebGLRenderer` (GLSL `ShaderMaterial`).** Constructed
+    when no URL flag / env var opts in to WebGPU. This is the production
+    default because per-scene performance measurements were below the
+    WebGL baseline on the WebGPU path; WebGL stays the safe choice until
+    those gaps close.
+  - Opt-in WebGPU path via `?renderer=webgpu` or `VITE_LUXAR_USE_WEBGPU=1`:
+    constructs `WebGPURenderer`, which acquires a real WebGPU adapter
+    when the browser provides one and transparently falls back to its
+    internal WebGL2 backend otherwise — the same TSL graphs target both
+    backends from one source. TSL `NodeMaterial` wrappers are dispatched
+    by `MaterialManager` when `caps.apiSurface === 'webgpu'`. The TSL ↔ GLSL
+    parity harness keeps both stacks in sync; per-shader GLSL3 sources
+    are never deleted, per project policy.
 
 ### Backend selection — precedence
 
@@ -108,28 +108,35 @@ three levels, highest precedence first:
 1. **`?renderer=webgl` / `?renderer=webgpu` URL parameter.**
    Per-load override threaded from `UrlParams.renderer` →
    `LuxarAppOptions.renderer` → `SceneManager.init({ renderer })`.
-   Useful for A/B diagnostics during the migration: reload the
-   same page with `?renderer=webgl` to compare against the
-   default WebGPU dispatch without restarting the dev server or
-   rebuilding the bundle. Case-insensitive; `webgl2` is accepted
-   as an alias for `webgl`; any other value falls through.
-2. **`VITE_LUXAR_USE_LEGACY_WEBGL=1` env var.** Build / dev-server-
-   time toggle. Useful for running the whole E2E suite or the
-   parity harness against the legacy path. Set to anything other
-   than `'1'` (or unset) → next level.
-3. **Default: `webgpu`.**
+   Useful for A/B diagnostics: reload the same page with
+   `?renderer=webgpu` to compare against the default WebGL dispatch
+   without restarting the dev server or rebuilding the bundle.
+   Case-insensitive; `webgl2` is accepted as an alias for `webgl`;
+   any other value falls through. Add `?webgpu-force-webgl` alongside
+   `?renderer=webgpu` to construct `WebGPURenderer({ forceWebGL: true })`:
+   Luxar still uses the WebGPURenderer API surface and TSL `NodeMaterial`
+   shaders, but Three.js routes draw calls through its internal WebGL2
+   backend instead of requesting a native WebGPU adapter.
+2. **`VITE_LUXAR_USE_WEBGPU=1` env var.** Build / dev-server-time
+   opt-in to the WebGPU path. Useful for running the whole E2E suite
+   against WebGPU. Anything other than `'1'` (or unset) → next level.
+   The transitional `VITE_LUXAR_USE_WEBGPU_RENDERER` alias is honoured
+   for the same purpose.
+3. **Default: `webgl`.**
 
-The legacy `VITE_LUXAR_USE_WEBGPU_RENDERER` env var from the
-migration window is now a no-op alias — kept harmless so existing
-CI scripts that set it keep working.
+The legacy `VITE_LUXAR_USE_LEGACY_WEBGL=1` env var is a no-op alias
+now that WebGL is the default — kept harmless so existing CI scripts
+that set it keep working.
 
 #### Common URL invocations
 
 ```
-http://localhost:5173/?renderer=webgl    # force legacy GLSL path
-http://localhost:5173/?renderer=webgpu   # force WebGPU dispatch
-http://localhost:5173/                    # default (webgpu)
-http://localhost:5173/?src=...&renderer=webgl&debug
+http://localhost:5173/                    # default (webgl)
+http://localhost:5173/?renderer=webgl    # pin the WebGL path explicitly
+http://localhost:5173/?renderer=webgpu   # opt into WebGPURenderer + TSL path
+http://localhost:5173/?renderer=webgpu&webgpu-force-webgl
+                                          # WebGPURenderer + TSL, backed by WebGL2
+http://localhost:5173/?src=...&renderer=webgpu&debug
                                           # combines with other URL flags
 ```
 - TSL factories for all 12 shaders ship with TSL `NodeMaterial`
@@ -138,14 +145,14 @@ http://localhost:5173/?src=...&renderer=webgl&debug
   one-for-one with the GLSL wrappers. `MaterialManager.setCaps`
   is wired from both `SceneManager.setupRenderer` arms so dispatch
   is consistent across paths.
-- `RendererCapabilities.api` reports which **renderer surface** is in
+- `RendererCapabilities.apiSurface` reports which **renderer surface** is in
   use, not the physical backend: `'webgl2'` when Luxar instantiated
-  `THREE.WebGLRenderer` (the legacy path); `'webgpu'` whenever Luxar
-  instantiated `WebGPURenderer` — **including** runs where
+  `THREE.WebGLRenderer` (the production default); `'webgpu'` whenever
+  Luxar instantiated `WebGPURenderer` — **including** runs where
   WebGPURenderer falls back to its internal WebGL2 backend, because
   the callable API surface (readback signatures, render-target
   wiring, row-padding rules) still follows the WebGPURenderer
-  contract. Callers branching on `caps.api` are picking which
+  contract. Callers branching on `caps.apiSurface` are picking which
   signature contract to follow, not probing the GPU backend.
 
 ## Target end-state (post-TSL-ports)
@@ -234,7 +241,7 @@ URL parameter override during testing. They do **not** drive the
 renderer choice (Three.js's internal fallback handles that
 transparently, once we're on Option C).
 
-`RendererCapabilities.api` reports the API the renderer actually
+`RendererCapabilities.apiSurface` reports the API the renderer actually
 runs on, which may differ from the page-load probe if the user has
 flipped a flag mid-session (rare) or if `WebGPURenderer` decided to
 fall back at init (common on WebGPU-unsupported hardware).
@@ -258,7 +265,7 @@ by the existing pre-renderer error path in `scene-manager.ts`.
   test environments don't crash.
 - **WebGPU-only feature flags.** If a future Luxar feature is
   *only* possible on WebGPU (compute shaders for advanced picking,
-  for example), gate it behind `caps.api === 'webgpu'`. The flag
+  for example), gate it behind `caps.apiSurface === 'webgpu'`. The flag
   belongs to the feature, not to the renderer.
 
 ## Revisit if

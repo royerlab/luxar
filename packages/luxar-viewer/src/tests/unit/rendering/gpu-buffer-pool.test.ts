@@ -82,6 +82,30 @@ describe('GPUBufferPool', () => {
       expect(stats.capacityGrowths).toBe(1);
     });
 
+    it('didLastAcquireRebuildAttributes is false on in-place reuse, true on grow', () => {
+      const data1 = createMockLoadedPointsData(1000);
+      pool.acquirePointsGeometry('node1', data1, 1000);
+      expect(pool.didLastAcquireRebuildAttributes()).toBe(true); // First allocation
+
+      const data2 = createMockLoadedPointsData(900);
+      pool.acquirePointsGeometry('node1', data2, 900); // reuse, no grow
+      expect(pool.didLastAcquireRebuildAttributes()).toBe(false);
+
+      const data3 = createMockLoadedPointsData(2000);
+      pool.acquirePointsGeometry('node1', data3, 2000); // grow
+      expect(pool.didLastAcquireRebuildAttributes()).toBe(true);
+    });
+
+    it('didLastAcquireRebuildAttributes is true when pooled candidate is reclaimed for a new node', () => {
+      const data1 = createMockLoadedPointsData(1000);
+      pool.acquirePointsGeometry('node1', data1, 1000);
+      pool.releasePointsGeometry('node1'); // back into the pool
+
+      // Same data shape → matching attribute types; pool reclaims.
+      pool.acquirePointsGeometry('node2', data1, 1000);
+      expect(pool.didLastAcquireRebuildAttributes()).toBe(true);
+    });
+
     it('should release geometry back to pool', () => {
       const data = createMockLoadedPointsData(1000);
       pool.acquirePointsGeometry('node1', data, 1000);
