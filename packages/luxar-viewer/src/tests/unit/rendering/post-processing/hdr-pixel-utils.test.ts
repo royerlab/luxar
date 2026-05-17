@@ -440,19 +440,22 @@ describe('readPixelsCompactAsync', () => {
     });
   });
 
-  describe('WebGPU (top-down framebuffer)', () => {
-    // Under WebGPU, `readRenderTargetPixelsAsync` returns the raw
-    // readback as a typed array (no destination param), in top-down
-    // row order matching `copyTextureToBuffer`. The primitive must
-    // pass it through unflipped under the default top-down request.
+  describe('WebGPU (sampling: top-down; readback: bottom-up)', () => {
+    // Under WebGPURenderer, `readRenderTargetPixelsAsync` returns
+    // **bottom-up** rows on both its real-WebGPU and WebGL2 backends —
+    // verified empirically by the y-orientation E2E spec. (Sampling
+    // via TSL `texture(...).sample(uv)` uses top-down UVs, which
+    // `caps.framebufferYDown` describes — but the readback memory
+    // convention is independent of that and matches the GL contract.)
+    // The primitive flips bottom-up readback to top-down by default.
 
-    it('returns top-down rows by default (pass-through)', async () => {
+    it('returns top-down rows by default (flips bottom-up readback like WebGL2)', async () => {
       const height = 4;
       const target = makeTarget(1, height);
       const caps = makeCaps('webgpu', true);
-      const topDown = makeRowProbeBuffer(height); // R: [0, 1, 2, 3]
+      const bottomUp = makeRowProbeBuffer(height); // R: [0, 1, 2, 3] = bottom-up
       const renderer = {
-        readRenderTargetPixelsAsync: vi.fn().mockResolvedValue(topDown),
+        readRenderTargetPixelsAsync: vi.fn().mockResolvedValue(bottomUp),
       } as unknown as Renderer;
 
       const result = await readPixelsCompactAsync(renderer, caps, {
@@ -460,16 +463,17 @@ describe('readPixelsCompactAsync', () => {
         kind: 'rgba8',
       });
 
-      expect(extractRowIndices(result.pixels)).toEqual([0, 1, 2, 3]);
+      // Bottom-up [0,1,2,3] → flipped to top-down [3,2,1,0].
+      expect(extractRowIndices(result.pixels)).toEqual([3, 2, 1, 0]);
     });
 
-    it('flips to bottom-up rows when flipY=true', async () => {
+    it('passes through unflipped when flipY=true (raw is already bottom-up)', async () => {
       const height = 4;
       const target = makeTarget(1, height);
       const caps = makeCaps('webgpu', true);
-      const topDown = makeRowProbeBuffer(height);
+      const bottomUp = makeRowProbeBuffer(height);
       const renderer = {
-        readRenderTargetPixelsAsync: vi.fn().mockResolvedValue(topDown),
+        readRenderTargetPixelsAsync: vi.fn().mockResolvedValue(bottomUp),
       } as unknown as Renderer;
 
       const result = await readPixelsCompactAsync(renderer, caps, {
@@ -478,7 +482,9 @@ describe('readPixelsCompactAsync', () => {
         flipY: true,
       });
 
-      expect(extractRowIndices(result.pixels)).toEqual([3, 2, 1, 0]);
+      // flipY=true requests bottom-up output; raw is already bottom-up,
+      // so it passes through unflipped.
+      expect(extractRowIndices(result.pixels)).toEqual([0, 1, 2, 3]);
     });
 
     it('calls the WebGPU signature (no destination buffer arg)', async () => {
@@ -554,7 +560,11 @@ describe('readPixelsCompactAsync', () => {
       expect(args[4]).toBe(3); // height
     });
 
-    it('passes top-down y through unchanged on real WebGPU (framebufferYDown=true)', async () => {
+    it('translates top-down y to bottom-up on WebGPU readback (same as WebGL2)', async () => {
+      // WebGPURenderer's readRenderTargetPixelsAsync uses the same
+      // bottom-up addressing as gl.readPixels on both its real-WebGPU
+      // and WebGL2 backends. caps.framebufferYDown=true describes the
+      // shader-sampling convention, not the readback memory convention.
       const target = makeTarget(1, 10);
       const caps = makeCaps('webgpu', true);
       const readPixels = vi.fn().mockResolvedValue(new Uint8Array(12));
@@ -570,7 +580,8 @@ describe('readPixelsCompactAsync', () => {
       });
 
       const args = readPixels.mock.calls[0];
-      expect(args[2]).toBe(2); // y — pass-through; native top-down
+      // y = target.height - yTopDown - height = 10 - 2 - 3 = 5.
+      expect(args[2]).toBe(5);
     });
 
     it('translates y to bottom-up when caps.framebufferYDown=false regardless of api', async () => {
