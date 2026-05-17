@@ -101,6 +101,23 @@ declare global {
        * Playwright agent flows that want a stable reference across runs.
        */
       lastExportedState?: unknown;
+
+      /**
+       * Inject a synthetic line scene (debug / perf-bench only). Builds
+       * an `InstancedLinesMeshConfig` in JS via
+       * `scene/synthetic-scene.ts`, wires it through the existing
+       * material-manager + node-factory pipeline, and adds the resulting
+       * mesh to the scene. Returns `{type, segmentCount, mesh}` so the
+       * caller can capture the actual instance count it ran against.
+       *
+       * Not present in production bundles when `?debug` is unset.
+       */
+      injectSyntheticScene?: (spec: {
+        type: 'lines';
+        count: number;
+        bounds?: number;
+        seed?: number;
+      }) => Promise<{ type: 'lines'; segmentCount: number; mesh: THREE.Mesh }>;
     };
   }
 }

@@ -47,23 +47,50 @@ function currentCommitSha(): string {
 }
 
 /**
- * Each scenario points at an existing test dataset that produces a
- * meaningful number of visible line segments. `lines_basic_example`
- * is always bundled; the zebrahub streamlines sets are present when
- * `make demo` has been run (we skip them gracefully if missing).
+ * Each scenario is either a zarr URL (real-data path) or a synthetic
+ * spec (`type: 'synthetic-lines'`) generated entirely in JS. The
+ * synthetic path uses `__luxarDebug.injectSyntheticScene(...)` to
+ * push a 10 M-segment random-walk into the live scene — exercises
+ * the bandwidth-bound regime the production bench (lines_basic
+ * 305 segs, zebrahub-hifi 4.4 M segs) can't reach on its own.
  */
-const SCENARIOS = [
+type ScenarioSpec =
+  | {
+      type: 'zarr';
+      id: string;
+      label: string;
+      url: string;
+    }
+  | {
+      type: 'synthetic-lines';
+      id: string;
+      label: string;
+      /** Lightweight zarr URL used to bootstrap the viewer before injection. */
+      bootstrapUrl: string;
+      count: number;
+    };
+
+const SCENARIOS: ScenarioSpec[] = [
   {
+    type: 'zarr',
     id: 'lines-basic',
     label: 'lines_basic_example.zarr (small, always present)',
     url: 'http://localhost:9000/datasets/examples/lines_basic_example.zarr',
   },
   {
+    type: 'zarr',
     id: 'lines-zebrahub-hifi',
     label: 'zebrahub_velocity_streamlines_hifi.zarr (large)',
     url: 'http://localhost:9000/datasets/demos/zebrahub_velocity_streamlines_hifi.zarr',
   },
-] as const;
+  {
+    type: 'synthetic-lines',
+    id: 'synthetic-lines-10M',
+    label: 'synthetic random-walk lines, 10 M segments (bandwidth bound)',
+    bootstrapUrl: 'http://localhost:9000/datasets/examples/lines_basic_example.zarr',
+    count: 10_000_000,
+  },
+];
 
 const BACKENDS = ['webgl', 'webgpu'] as const;
 type Backend = (typeof BACKENDS)[number];
@@ -163,11 +190,11 @@ async function urlExists(url: string): Promise<boolean> {
  */
 async function measureScenario(
   page: Page,
-  scenarioId: string,
-  scenarioLabel: string,
-  url: string,
+  scn: ScenarioSpec,
   backend: Backend
 ): Promise<ScenarioResult> {
+  const scenarioId = scn.id;
+  const scenarioLabel = scn.label;
   const notes: string[] = [];
   // `?perf-timestamp` opts WebGPURenderer into `{trackTimestamp: true}`
   // so we can read per-frame GPU duration via
@@ -180,10 +207,39 @@ async function measureScenario(
   // navigation timeout when re-loading after a prior scenario. Raise
   // it generously — a real failure will still surface as the
   // measureScenario try/catch upstream.
-  await page.goto(`/?src=${url}&renderer=${backend}&debug&perf-timestamp`, {
-    timeout: 300_000,
-  });
+  const navUrl =
+    scn.type === 'zarr'
+      ? `/?src=${scn.url}&renderer=${backend}&debug&perf-timestamp`
+      : `/?src=${scn.bootstrapUrl}&renderer=${backend}&debug&perf-timestamp`;
+  await page.goto(navUrl, { timeout: 300_000 });
   await waitForLuxarReady(page, 120_000);
+
+  // Synthetic scenarios: after the bootstrap zarr finishes loading,
+  // inject a giant random-walk mesh via the debug API and wait for
+  // the first render to absorb it before sampling.
+  if (scn.type === 'synthetic-lines') {
+    await page.evaluate(async (count: number) => {
+      const dbg = (
+        window as unknown as {
+          __luxarDebug?: {
+            injectSyntheticScene?: (spec: {
+              type: 'lines';
+              count: number;
+            }) => Promise<unknown>;
+          };
+        }
+      ).__luxarDebug;
+      if (!dbg?.injectSyntheticScene) {
+        throw new Error(
+          'synthetic scenario requires __luxarDebug.injectSyntheticScene (added in F2)'
+        );
+      }
+      await dbg.injectSyntheticScene({ type: 'lines', count });
+      // Yield one rAF so the renderer has a chance to upload the
+      // attribute buffers before the bench's first measurement frame.
+      await new Promise<void>((r) => requestAnimationFrame(() => r()));
+    }, scn.count);
+  }
 
   // Probe the active backend and visible segment count up front so a
   // silent fallback (WebGPU → WebGL on unsupported hardware) or an
@@ -442,7 +498,10 @@ test('line perf bench — JS frame timing across backends', async ({ page }) => 
 
   const scenarios: ScenarioResult[] = [];
   for (const scn of SCENARIOS) {
-    const reachable = await urlExists(scn.url);
+    // Synthetic scenarios still need the bootstrap zarr to be
+    // reachable so the viewer can initialise before injection.
+    const probeUrl = scn.type === 'zarr' ? scn.url : scn.bootstrapUrl;
+    const reachable = await urlExists(probeUrl);
     if (!reachable) {
       for (const backend of BACKENDS) {
         scenarios.push({
@@ -455,7 +514,7 @@ test('line perf bench — JS frame timing across backends', async ({ page }) => 
           frameMs: null,
           firstRenderMs: null,
           gpu: { supported: false, count: 0, medianMs: null, p95Ms: null },
-          notes: [`dataset URL not reachable: ${scn.url}`],
+          notes: [`dataset URL not reachable: ${probeUrl}`],
           skipped: true,
           skipReason: 'dataset not reachable',
         });
@@ -470,7 +529,7 @@ test('line perf bench — JS frame timing across backends', async ({ page }) => 
       // skipped result on failure.
       let result: ScenarioResult;
       try {
-        result = await measureScenario(page, scn.id, scn.label, scn.url, backend);
+        result = await measureScenario(page, scn, backend);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         // Truncate the stack trace — long Playwright error messages

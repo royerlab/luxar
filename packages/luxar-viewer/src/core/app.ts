@@ -1054,6 +1054,54 @@ export class LuxarApp {
       // independently of the dialog's appearance).
       showError,
 
+      // Debug-only synthetic-scene injector for the perf bench. Builds
+      // a large `InstancedLinesMeshConfig` purely in JS, wires it
+      // through the existing material-manager + node-factory pipeline,
+      // and adds the resulting mesh to the scene. Returns `{type,
+      // segmentCount, mesh}` so the bench can capture the actual
+      // instance count it ran against. Importing `synthetic-scene.ts`
+      // dynamically keeps it out of the production bundle's main
+      // chunk; tree-shaking trims the entry when `__luxarDebug` isn't
+      // referenced.
+      injectSyntheticScene: async (spec: {
+        type: 'lines';
+        count: number;
+        bounds?: number;
+        seed?: number;
+      }) => {
+        const { generateSyntheticLines } = await import('../scene/synthetic-scene');
+        const { createInstancedLinesMesh, isAllSharpnessTwo } = await import(
+          '../rendering/line-geometry'
+        );
+        const { materialManager } = await import('../rendering/material-manager');
+        const cfg = generateSyntheticLines(spec);
+        // Build the visual material directly through the
+        // material-manager so the same blending / dispatch logic
+        // production uses applies. Picking material is intentionally
+        // skipped — the synthetic scenarios don't exercise picking.
+        const material = materialManager.getLineMaterial({
+          blendingMode: 'additive',
+          opacity: 1.0,
+          gamma: 1.0,
+          intensity: 1.0,
+          offset: 0.0,
+        });
+        material.setSharpnessAllTwo(isAllSharpnessTwo(cfg));
+        const mesh = createInstancedLinesMesh(cfg, material);
+        mesh.userData = {
+          nodeType: 'lines',
+          attrs: {},
+          maxWidth: 1.0,
+          visibleSegmentCount: cfg.segmentCount,
+          synthetic: true,
+        };
+        this.sceneManager.scene.add(mesh);
+        // Kick the renderer so the new mesh is uploaded before the
+        // bench's first measurement frame.
+        this.animationController.startAnimation();
+        return { type: spec.type, segmentCount: cfg.segmentCount, mesh };
+      },
+
       // Mark that runtime components are now available
       runtimeReady: true,
     };
