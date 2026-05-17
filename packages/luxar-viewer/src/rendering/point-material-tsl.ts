@@ -7,7 +7,7 @@
  * `clone` semantics, same `CameraAwareMaterial` /
  * `ColormapAwareMaterial` interfaces. The host code in
  * `MaterialManager.getPointMaterial` picks one or the other based on
- * `caps.api`, so callers (NodeFactory, LayersPanel, etc.) never see
+ * `caps.apiSurface`, so callers (NodeFactory, LayersPanel, etc.) never see
  * the divergence.
  *
  * Backend mechanics:

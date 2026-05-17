@@ -56,7 +56,7 @@ export function buildMaterial(
   config: BuildMaterialConfig,
   caps: RendererCapabilities
 ): THREE.Material {
-  if (caps.api === 'webgpu' && source.webgpu) {
+  if (caps.apiSurface === 'webgpu' && source.webgpu) {
     // TSL / NodeMaterial path. Cast through unknown — the factory's
     // return type is intentionally erased on `ShaderSource.webgpu`
     // (see shader-source.ts) so the type module doesn't depend on
@@ -76,7 +76,7 @@ export function buildMaterial(
     throw new Error(
       `buildMaterial: ShaderSource '${source.name}' has no WebGL fallback ` +
         'but the active renderer dispatches via the WebGL path ' +
-        `(caps.api='${caps.api}'). Add a 'webgl' source or run with the ` +
+        `(caps.apiSurface='${caps.apiSurface}'). Add a 'webgl' source or run with the ` +
         'default WebGPU renderer.'
     );
   }

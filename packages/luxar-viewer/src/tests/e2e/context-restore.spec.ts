@@ -54,19 +54,19 @@ test.describe('WebGL Context Restore (CR-1)', () => {
   // applies under the default `WebGPURenderer` — Three's WebGPU
   // backend handles `device.lost` internally and the scene-manager
   // skips constructing `WebGLContextRecovery` when
-  // `caps.api !== 'webgl2'`. Run these tests under
+  // `caps.apiSurface !== 'webgl2'`. Run these tests under
   // `VITE_LUXAR_USE_LEGACY_WEBGL=1` for coverage of the GLSL path.
   test.beforeEach(async ({ page }) => {
     await page.goto('/?debug');
     await waitForLuxarReady(page);
     const api = await page.evaluate(
       () =>
-        ((window as any).__luxarDebug?.app?.sceneManager?.capabilities?.api as string | undefined) ??
+        ((window as any).__luxarDebug?.app?.sceneManager?.capabilities?.apiSurface as string | undefined) ??
         'unknown'
     );
     test.skip(
       api !== 'webgl2',
-      `context-restore tests require the legacy WebGL path (caps.api=${api}); ` +
+      `context-restore tests require the legacy WebGL path (caps.apiSurface=${api}); ` +
         'run with VITE_LUXAR_USE_LEGACY_WEBGL=1 to exercise this suite.'
     );
   });

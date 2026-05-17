@@ -59,23 +59,23 @@ Post-processing: `post-processing/mega-shader.glsl.ts` ↔ `post-processing/mega
 - `'webgl2'` — the active renderer is `THREE.WebGLRenderer`.
 - `'webgpu'` — the active renderer is `WebGPURenderer`, including when WebGPURenderer has fallen back to its internal WebGL2 backend.
 
-Callers branch on `caps.api` to pick the right method signature (e.g. WebGPURenderer's `readRenderTargetPixelsAsync` returns the buffer instead of writing into a caller-supplied one). To probe the physical backend, inspect `renderer.backend` directly.
+Callers branch on `caps.apiSurface` to pick the right method signature (e.g. WebGPURenderer's `readRenderTargetPixelsAsync` returns the buffer instead of writing into a caller-supplied one). To probe the physical backend, inspect `renderer.backend` directly.
 
 `MaterialManager` dispatches material classes on this discriminator:
 
-- `caps.api === 'webgpu'` → `PointTSLMaterial`, `LineTSLMaterial`, `GSplatTSLMaterial`, `MegaShaderTSLMaterial`, picking TSL counterparts.
-- `caps.api === 'webgl2'` → `PointMaterial`, `LineMaterial`, `GSplatMaterial`, `MegaShaderMaterial`, picking GLSL counterparts.
+- `caps.apiSurface === 'webgpu'` → `PointTSLMaterial`, `LineTSLMaterial`, `GSplatTSLMaterial`, `MegaShaderTSLMaterial`, picking TSL counterparts.
+- `caps.apiSurface === 'webgl2'` → `PointMaterial`, `LineMaterial`, `GSplatMaterial`, `MegaShaderMaterial`, picking GLSL counterparts.
 
 ### Readback signatures
 
 WebGL2 and WebGPU return readback data differently:
 
 ```ts
-// WebGLRenderer (caps.api === 'webgl2')
+// WebGLRenderer (caps.apiSurface === 'webgl2')
 await renderer.readRenderTargetPixelsAsync(target, x, y, w, h, destBuffer);
 // → resolves to destBuffer, populated in place.
 
-// WebGPURenderer (caps.api === 'webgpu')
+// WebGPURenderer (caps.apiSurface === 'webgpu')
 const raw = await renderer.readRenderTargetPixelsAsync(target, x, y, w, h);
 // → resolves to a freshly-allocated typed array. NO destination buffer.
 // Each row is padded to a multiple of 256 bytes per WebGPU spec.

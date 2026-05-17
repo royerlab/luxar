@@ -75,7 +75,7 @@ function fakeRenderer(probes: Probes = {}): THREE.WebGLRenderer {
 describe('createRendererCapabilities', () => {
   it('captures api discriminator as webgl2', () => {
     const caps = createRendererCapabilities(fakeRenderer());
-    expect(caps.api).toBe('webgl2');
+    expect(caps.apiSurface).toBe('webgl2');
   });
 
   it('forwards MAX_SAMPLES from the GL context', () => {

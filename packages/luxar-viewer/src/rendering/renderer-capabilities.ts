@@ -79,7 +79,7 @@ export interface RendererCapabilities {
    * physical backend requires inspecting `renderer.backend` and is
    * intentionally not exposed here.
    */
-  readonly api: 'webgl2' | 'webgpu';
+  readonly apiSurface: 'webgl2' | 'webgpu';
   /** HDR / wide-gamut / float-texture detection. */
   readonly hdr: HDRCapabilities;
   /** Maximum MSAA sample count the GPU supports (0 if unsupported). */
@@ -141,7 +141,7 @@ export function createRendererCapabilities(renderer: Renderer): RendererCapabili
     const hdr: HDRCapabilities = { ...display, floatTextures, colorDepth };
 
     return {
-      api: 'webgl2',
+      apiSurface: 'webgl2',
       hdr,
       maxMSAASamples,
       pointSizeRange,
@@ -175,7 +175,7 @@ export function createRendererCapabilities(renderer: Renderer): RendererCapabili
   };
 
   return {
-    api: 'webgpu',
+    apiSurface: 'webgpu',
     hdr,
     maxMSAASamples: 4, // WebGPU adapters guarantee at least 4× MSAA
     pointSizeRange: [1, 1024],
