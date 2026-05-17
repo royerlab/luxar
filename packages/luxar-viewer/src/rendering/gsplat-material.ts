@@ -33,6 +33,7 @@ import { GSPLAT_VERTEX_SHADER, GSPLAT_FRAGMENT_SHADER } from './shaders/gsplat-s
 import type { CameraAwareMaterial } from './camera-aware-material';
 import type { ColormapAwareMaterial } from './colormap-aware-material';
 import { computeFocalLength } from './camera-uniforms';
+import { computeRayIntegralFactor } from './gsplat-math';
 import {
   applyColormapTextureToMaterial,
   applyScalarRangeToMaterial,
@@ -161,7 +162,7 @@ export class GSplatMaterial
         uShiftC: { value: shiftC },
         uInvOneMinusC: { value: invOneMinusC },
         uRayIntegralFactor: {
-          value: GSplatMaterial.computeRayIntegralFactor(truncate),
+          value: computeRayIntegralFactor(truncate),
         },
         uOpacity: { value: materialConfig.opacity ?? 1.0 },
         uProjectionMode: { value: blendingMode === 'max' ? 1 : 0 }, // 0=sum, 1=max
@@ -271,7 +272,7 @@ export class GSplatMaterial
     const shiftC = Math.exp(-0.5 * radius * radius);
     this.uniforms.uShiftC.value = shiftC;
     this.uniforms.uInvOneMinusC.value = 1.0 / (1.0 - shiftC);
-    this.uniforms.uRayIntegralFactor.value = GSplatMaterial.computeRayIntegralFactor(radius);
+    this.uniforms.uRayIntegralFactor.value = computeRayIntegralFactor(radius);
   }
 
   /**
@@ -327,28 +328,6 @@ export class GSplatMaterial
    */
   updateScalarRange(min: number, max: number): void {
     applyScalarRangeToMaterial(this, min, max);
-  }
-
-  /**
-   * Compute the ray integration factor for the shifted Gaussian.
-   *
-   * For the unshifted Gaussian, this is sqrt(2π) ≈ 2.507.
-   * For the shifted Gaussian: sqrt(2π)·erf(T/√2) - 2·T·exp(-0.5·T²)
-   * For T=3: ≈ 2.433
-   */
-  private static computeRayIntegralFactor(truncate: number): number {
-    const SQRT_2PI = Math.sqrt(2 * Math.PI);
-    // Abramowitz & Stegun erf approximation (max error 1.5e-7)
-    const x = truncate / Math.SQRT2;
-    const t = 1.0 / (1.0 + 0.3275911 * Math.abs(x));
-    const erfVal =
-      1.0 -
-      t *
-        (0.254829592 +
-          t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429)))) *
-        Math.exp(-x * x);
-    const erf = x >= 0 ? erfVal : -erfVal;
-    return SQRT_2PI * erf - 2 * truncate * Math.exp(-0.5 * truncate * truncate);
   }
 
   /**
