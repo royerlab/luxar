@@ -145,7 +145,7 @@ export function buildMaterial(
   config: BuildMaterialConfig,
   caps: RendererCapabilities
 ): THREE.Material {
-  if (caps.api === 'webgpu' && source.webgpu) {
+  if (caps.apiSurface === 'webgpu' && source.webgpu) {
     return source.webgpu(config.uniforms) as THREE.Material;
   }
   return new THREE.ShaderMaterial({
@@ -192,7 +192,7 @@ ever do want a fallback path at instance construction time.
 - `MIGRATION_PROGRESS.md` lists `buildMaterial` as a non-shader
   migration task and the rationale section above as its source.
 - `BROWSER_SUPPORT_POLICY.md` chooses single-renderer + Three.js
-  internal fallback. `buildMaterial`'s branching on `caps.api`
+  internal fallback. `buildMaterial`'s branching on `caps.apiSurface`
   agrees with that choice (the helper returns whichever material
   type the renderer prefers, not whichever the user requested).
 - `BLENDING_PORT_NOTES.md` confirms every blending state we use is

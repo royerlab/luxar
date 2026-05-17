@@ -327,7 +327,7 @@ return type as a single Luxar union
   `createRendererCapabilities(renderer)`. The cached caps drive
   the dispatch on every subsequent get/create.
 - `getPointMaterial / getLineMaterial / getGSplatMaterial` branch
-  on `caps.api === 'webgpu'`. Cache keys include the backend tag
+  on `caps.apiSurface === 'webgpu'`. Cache keys include the backend tag
   so a mid-session backend switch can't return a cross-backend
   cached material.
 - `createPointPickingMaterial / createLinePickingMaterial /
@@ -420,7 +420,7 @@ Resolved during this Task C pass (commit `c53c5d53`):
 - `recording-panel.spec.ts` × 2: screenshot path under WebGPU was
   broken by the `readRenderTargetPixelsAsync` signature divergence
   (WebGLRenderer's 6th arg is `destBuffer`; WebGPURenderer's is
-  `textureIndex`). Now branches on `caps.api`.
+  `textureIndex`). Now branches on `caps.apiSurface`.
 - `webgl-errors.spec.ts` × 6: `info.render.frame` widened to also
   read `info.frame` (WebGPURenderer shape), same pattern applied
   in M18 elsewhere.
