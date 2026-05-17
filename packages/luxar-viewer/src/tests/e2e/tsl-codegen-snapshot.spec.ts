@@ -111,16 +111,21 @@ function assertSnapshot(shader: string, kind: 'vertex' | 'fragment', actual: str
   ).toBe(expected);
 }
 
-// Shaders to snapshot. `line` and `line-pick` are the focus; other
-// entries can be added when we start snapshotting points / gsplats too.
-// `line-gamma-one` pins the fragment-stage pow-free fast path that
-// kicks in when the wrapper class knows gamma==1.
+// Shaders to snapshot. Lines + their fast-path variants are the
+// existing coverage; phase-3 adds `point` / `point-pick` / `gsplat`
+// / `gsplat-pick` so the three-geometry-symmetry rule has a
+// regression gate when attribute-packing changes (Float16 colours,
+// etc.) start landing across all three geometries.
 const SHADERS = [
   'line',
   'line-pick',
   'line-gamma-one',
   'line-no-gog',
   'line-sharpness-two',
+  'point',
+  'point-pick',
+  'gsplat',
+  'gsplat-pick',
 ] as const;
 
 test.describe('TSL → generated-shader snapshots', () => {

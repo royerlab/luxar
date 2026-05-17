@@ -1,0 +1,112 @@
+#version 300 es
+
+// Three.js r184 - Node System
+
+
+// extensions
+
+
+// precision
+
+precision highp float;
+precision highp int;
+precision highp sampler2D;
+precision highp sampler3D;
+precision highp samplerCube;
+precision highp sampler2DArray;
+
+precision highp usampler2D;
+precision highp usampler3D;
+precision highp usamplerCube;
+precision highp usampler2DArray;
+
+precision highp isampler2D;
+precision highp isampler3D;
+precision highp isamplerCube;
+precision highp isampler2DArray;
+
+precision highp sampler2DShadow;
+precision highp sampler2DArrayShadow;
+precision highp samplerCubeShadow;
+
+
+// structs
+
+layout( location = 0 ) out vec4 fragColor;
+
+
+
+// uniforms
+
+layout( std140 ) uniform object {
+	float nodeUniform0;
+	float nodeUniform1;
+	float nodeUniform2;
+	float nodeUniform3;
+	mat4 nodeUniform6;
+	float nodeUniform7;
+	float nodeUniform8;
+	float nodeUniform9;
+	vec2 nodeUniform10;
+};
+
+
+// varyings
+in float nodeVarying0;
+in vec2 nodeVarying1;
+in float nodeVarying2;
+in float nodeVarying3;
+in float nodeVarying4;
+
+
+// vars
+vec4 DiffuseColor;
+float nodeVar3;
+float nodeVar6;
+vec4 Output;
+vec4 nodeVar7;
+
+// codes
+
+
+void main() {
+
+	// flow
+	// code
+
+
+	if ( ( nodeVarying0 < 0.0001 ) ) {
+
+		discard;
+		
+
+	}
+
+	nodeVar3 = dot( ( nodeVarying1 - vec2( 0.5 ) ), ( nodeVarying1 - vec2( 0.5 ) ) );
+
+	if ( ( nodeVar3 > 0.25 ) ) {
+
+		discard;
+		
+
+	}
+
+	nodeVar6 = pow( max( ( 1.0 - sqrt( ( nodeVar3 * 4.0 ) ) ), 0.0 ), nodeVarying2 );
+
+	if ( ( nodeVar6 < 0.0001 ) ) {
+
+		discard;
+		
+
+	}
+
+	DiffuseColor = vec4( nodeVarying3, nodeVarying4, nodeVar6, 1.0 );
+	DiffuseColor.w = ( DiffuseColor.w * nodeUniform3 );
+	nodeVar7 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
+	Output = nodeVar7;
+	gl_FragDepth = ( 1.0 - clamp( pow( max( ( 1.0 - sqrt( ( dot( ( nodeVarying1 - vec2( 0.5 ) ), ( nodeVarying1 - vec2( 0.5 ) ) ) * 4.0 ) ) ), 0.0 ), nodeVarying2 ), 0.0, 1.0 ) );
+
+	// result
+	fragColor = nodeVar7;
+
+}
