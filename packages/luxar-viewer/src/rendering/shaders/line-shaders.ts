@@ -80,12 +80,12 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
     uniform float uScalarScale;
     #endif
 
-    // Varyings to fragment shader (smooth interpolation needed)
+    // Varyings to fragment shader
     out vec3 vColor;
     out float vSharpness;
     out float vPerpNorm;     // Signed: -1 at bottom edge, +1 at top edge
     out float vT;            // interpolated 0..1 along segment for fragment-side cap math
-    out float vSegmentLength; // world-space segment length (per-segment, but flat over quad)
+    flat out float vSegmentLength; // per-segment constant — same on all 4 quad verts
     out float vWidthAtT;      // interpolated world-space width (or half-width)
     out float vPixelWidth;   // Raw line width in pixels (for anti-aliasing)
     out float vWidthFade;    // in [0..1], fades intensity when pixel-width clamped
@@ -252,7 +252,7 @@ export const LINE_FRAGMENT_SHADER = /* glsl */ `
     in float vSharpness;
     in float vPerpNorm;     // Interpolated: 0 at centerline, ±1 at edges
     in float vT;            // interpolated 0..1 along segment
-    in float vSegmentLength; // world-space segment length
+    flat in float vSegmentLength; // per-segment constant
     in float vWidthAtT;     // interpolated world-space width
     in float vPixelWidth;   // Raw line width in pixels (before minimum clamping)
     in float vWidthFade;    // max-pixel-width clamp fade

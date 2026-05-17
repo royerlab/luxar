@@ -183,7 +183,7 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
     out float vSharpness;
     out float vPerpNorm;
     out float vT;             // fragment-side cap math (parity with visual)
-    out float vSegmentLength;
+    flat out float vSegmentLength; // per-segment constant — visual-shader parity
     out float vWidthAtT;
     out float vPixelWidth;
     out float vWidthFade;     // visual-shader parity
@@ -288,7 +288,7 @@ export const LINE_PICK_FRAGMENT_SHADER = /* glsl */ `
     in float vSharpness;
     in float vPerpNorm;
     in float vT;
-    in float vSegmentLength;
+    flat in float vSegmentLength; // per-segment constant
     in float vWidthAtT;
     in float vPixelWidth;
     in float vWidthFade;
