@@ -56,6 +56,9 @@ export class LineTSLMaterial
       uOffset: { value: materialConfig.offset ?? 0.0 },
       uNearCull: { value: 0.05 },
       uMaxLinePixelWidth: { value: 540 },
+      // CPU-precomputed pixel-width scales — see line-material.ts.
+      uPerspectiveLineScale: { value: 1.0 },
+      uOrthoLineScale: { value: 1.0 },
       ...(materialConfig.colormapTexture
         ? {
             uColormapTex: { value: materialConfig.colormapTexture },
@@ -120,6 +123,14 @@ export class LineTSLMaterial
       this.uniforms.uNearCull.value = nearCull;
     }
     this.uniforms.uMaxLinePixelWidth.value = Math.max(2, resolution.y * 0.5);
+    // Precomputed pixel-width scales — see LineMaterial.updateCameraParams.
+    const safeFov = Math.max(fov, 1e-4);
+    if (isOrtho) {
+      this.uniforms.uOrthoLineScale.value = (2.0 * resolution.y) / safeFov;
+    } else {
+      this.uniforms.uPerspectiveLineScale.value =
+        resolution.y / Math.max(Math.tan(safeFov * 0.5), 1e-4);
+    }
   }
 
   updateOpacity(opacity: number): void {
@@ -211,6 +222,8 @@ export class LineTSLMaterial
     cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
     cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
     cloned.uniforms.uMaxLinePixelWidth.value = this.uniforms.uMaxLinePixelWidth.value;
+    cloned.uniforms.uPerspectiveLineScale.value = this.uniforms.uPerspectiveLineScale.value;
+    cloned.uniforms.uOrthoLineScale.value = this.uniforms.uOrthoLineScale.value;
     cloned.uniforms.uInvGamma.value = this.uniforms.uInvGamma.value;
 
     return cloned as this;

@@ -120,6 +120,10 @@ export class LineMaterial
         // near-plane safety + max-pixel-width clamp uniforms.
         uNearCull: { value: 0.05 },
         uMaxLinePixelWidth: { value: 540 }, // ≈ resolution.y * 0.5 default; updated in updateCameraParams
+        // CPU-precomputed pixel-width scales so the shader avoids
+        // per-vertex tan() and one divide. Updated in updateCameraParams.
+        uPerspectiveLineScale: { value: 1.0 },
+        uOrthoLineScale: { value: 1.0 },
         // Colormap uniforms (only when USE_COLORMAP define is set)
         ...(materialConfig.colormapTexture
           ? {
@@ -197,6 +201,17 @@ export class LineMaterial
     // clamp screen-space line width to half the viewport height so a
     // near-camera segment can't paint the entire screen.
     this.uniforms.uMaxLinePixelWidth.value = Math.max(2, resolution.y * 0.5);
+    // Pre-compute pixel-width scales. Only the branch matching uIsOrtho
+    // is read in the shader, but writing both keeps the GPU values
+    // sane after a mode switch and avoids NaN from tan(frustumHeight/2)
+    // when fov stores frustumHeight in ortho mode.
+    const safeFov = Math.max(fov, 1e-4);
+    if (isOrtho) {
+      this.uniforms.uOrthoLineScale.value = (2.0 * resolution.y) / safeFov;
+    } else {
+      this.uniforms.uPerspectiveLineScale.value =
+        resolution.y / Math.max(Math.tan(safeFov * 0.5), 1e-4);
+    }
   }
 
   /**
@@ -272,11 +287,13 @@ export class LineMaterial
 
     cloned.uniforms.uFOV.value = this.uniforms.uFOV.value;
     cloned.uniforms.uResolution.value.copy(this.uniforms.uResolution.value);
-    // Preserve orthographic state and the near-plane / max-pixel-width
-    // clamp uniforms.
+    // Preserve orthographic state, near-plane / max-pixel-width clamp,
+    // and the precomputed pixel-width scales.
     cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
     cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
     cloned.uniforms.uMaxLinePixelWidth.value = this.uniforms.uMaxLinePixelWidth.value;
+    cloned.uniforms.uPerspectiveLineScale.value = this.uniforms.uPerspectiveLineScale.value;
+    cloned.uniforms.uOrthoLineScale.value = this.uniforms.uOrthoLineScale.value;
     cloned.uniforms.uInvGamma.value = this.uniforms.uInvGamma.value;
 
     return cloned as this;

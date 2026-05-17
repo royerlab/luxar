@@ -47,7 +47,6 @@ import {
   length,
   step,
   smoothstep,
-  tan,
   texture,
   modelViewMatrix,
   cameraProjectionMatrix,
@@ -112,10 +111,10 @@ export function lineWebGPUFactory(
   // so a wrapper class's mutations to `this.uniforms.X.value`
   // propagate to the GPU. Vector2 / Texture uniforms share the same
   // host object by reference, so they don't need onUpdate.
-  const uFOV = uniform((uniforms.uFOV.value as number) ?? 1.0).onUpdate(
-    () => (uniforms.uFOV.value as number) ?? 1.0,
-    'render'
-  );
+  // uFOV is no longer read by the TSL graph — the CPU precomputes the
+  // pixel-width scales (uPerspectiveLineScale / uOrthoLineScale) once
+  // per camera change. The wrapper class still owns `uniforms.uFOV`
+  // for downstream consumers (clone(), legacy reads).
   const uResolution = uniform(
     (uniforms.uResolution.value as THREE.Vector2) ?? new THREE.Vector2(1, 1)
   );
@@ -130,6 +129,14 @@ export function lineWebGPUFactory(
   const uMaxLinePixelWidth = uniform(
     (uniforms.uMaxLinePixelWidth.value as number) ?? 1.0
   ).onUpdate(() => (uniforms.uMaxLinePixelWidth.value as number) ?? 1.0, 'render');
+  // CPU-precomputed pixel-width scales — replaces per-vertex tan() +
+  // divide. Wrapper updates these in updateCameraParams.
+  const uPerspectiveLineScale = uniform(
+    (uniforms.uPerspectiveLineScale.value as number) ?? 1.0
+  ).onUpdate(() => (uniforms.uPerspectiveLineScale.value as number) ?? 1.0, 'render');
+  const uOrthoLineScale = uniform(
+    (uniforms.uOrthoLineScale.value as number) ?? 1.0
+  ).onUpdate(() => (uniforms.uOrthoLineScale.value as number) ?? 1.0, 'render');
   const uOpacity = uniform((uniforms.uOpacity.value as number) ?? 1.0).onUpdate(
     () => (uniforms.uOpacity.value as number) ?? 1.0,
     'render'
@@ -231,12 +238,12 @@ export function lineWebGPUFactory(
     .select(vec2(pixelDir.div(pixelLen)).toVar(), vec2(1.0, 0.0));
   const perpendicular: TSLNode = vec2(lineDir.y.negate(), lineDir.x);
 
-  // World-space → pixel conversion. Ortho mode uses uFOV as
-  // frustumHeight; perspective uses tan(fov/2) + view depth.
-  const tanHalfFov: TSLNode = tan(uFOV.mul(0.5));
+  // World-space → pixel conversion. Both branches consume a CPU-side
+  // precomputed scale (uOrthoLineScale / uPerspectiveLineScale) to
+  // avoid a per-vertex tan() and an extra divide.
   const distView: TSLNode = max(length(vec3(mvPos)), nearCull);
-  const rawPixelWidthOrtho: TSLNode = width.mul(2.0).mul(uResolution.y).div(uFOV);
-  const rawPixelWidthPersp: TSLNode = width.mul(uResolution.y).div(distView.mul(tanHalfFov));
+  const rawPixelWidthOrtho: TSLNode = width.mul(uOrthoLineScale);
+  const rawPixelWidthPersp: TSLNode = width.mul(uPerspectiveLineScale).div(distView);
   // TSL select() can return zero when both branches are chained
   // expressions rather than materialised values. Wrapping the
   // branches in `.toVar()` forces the builder to evaluate each side
