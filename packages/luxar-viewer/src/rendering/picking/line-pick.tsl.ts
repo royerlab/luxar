@@ -110,7 +110,8 @@ export function linePickWebGPUFactory(
 
   const clipStart: TSLNode = cameraProjectionMatrix.mul(mvStart);
   const clipEnd: TSLNode = cameraProjectionMatrix.mul(mvEnd);
-  const clipPosBase: TSLNode = cameraProjectionMatrix.mul(mvPos);
+  // projection is linear, so proj * mix(a,b,t) == mix(proj*a, proj*b, t).
+  const clipPosBase: TSLNode = mix(clipStart, clipEnd, t);
 
   const wStart: TSLNode = max(clipStart.w, float(1e-4));
   const wEnd: TSLNode = max(clipEnd.w, float(1e-4));

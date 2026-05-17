@@ -228,7 +228,8 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
 
       vec4 clipStart = projectionMatrix * mvStart;
       vec4 clipEnd = projectionMatrix * mvEnd;
-      vec4 clipPos = projectionMatrix * mvPos;
+      // projection is linear, so proj * mix(a,b,t) == mix(proj*a, proj*b, t).
+      vec4 clipPos = mix(clipStart, clipEnd, t);
 
       float wStart = max(clipStart.w, 1e-4);
       float wEnd = max(clipEnd.w, 1e-4);

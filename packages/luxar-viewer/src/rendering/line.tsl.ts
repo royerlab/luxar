@@ -211,7 +211,8 @@ export function lineWebGPUFactory(
 
   const clipStart: TSLNode = cameraProjectionMatrix.mul(mvStart);
   const clipEnd: TSLNode = cameraProjectionMatrix.mul(mvEnd);
-  const clipPosBase: TSLNode = cameraProjectionMatrix.mul(mvPos);
+  // projection is linear, so proj * mix(a,b,t) == mix(proj*a, proj*b, t).
+  const clipPosBase: TSLNode = mix(clipStart, clipEnd, t);
 
   // Convert clip endpoints to pixel space for aspect-correct
   // perpendicular expansion. Guard tiny .w (near-plane crossings).
