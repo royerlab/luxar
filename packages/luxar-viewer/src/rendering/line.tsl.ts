@@ -295,18 +295,20 @@ export function lineWebGPUFactory(
   const culled: TSLNode = bothBehind.or(pathological);
   const clipPos: TSLNode = culled.select(offscreen.toVar(), expandedClip.toVar());
 
-  // Varyings to the fragment stage.
+  // Varyings to the fragment stage. Per-segment-constant values use
+  // `flat` interpolation so the rasterizer skips the perspective
+  // divide — matches the GLSL3 `flat` qualifier on the same fields.
   const vColor: TSLNode = varying(perPointColor);
   const vSharpness: TSLNode = varying(vSharpnessVal);
   const vPerpNorm: TSLNode = varying(aQuadCorner.y);
   const vT: TSLNode = varying(t);
-  const vSegmentLength: TSLNode = varying(aSegmentLength);
+  const vSegmentLength: TSLNode = varying(aSegmentLength).setInterpolation('flat');
   const vWidthAtT: TSLNode = varying(width);
   const vPixelWidth: TSLNode = varying(rawPixelWidth);
   const vWidthFade: TSLNode = varying(vWidthFadeVal);
   // Clipped flags are per-instance — same across all 4 quad verts.
-  const vClippedStart: TSLNode = varying(aStartClipped);
-  const vClippedEnd: TSLNode = varying(aEndClipped);
+  const vClippedStart: TSLNode = varying(aStartClipped).setInterpolation('flat');
+  const vClippedEnd: TSLNode = varying(aEndClipped).setInterpolation('flat');
 
   // ---- Fragment computation ----
 

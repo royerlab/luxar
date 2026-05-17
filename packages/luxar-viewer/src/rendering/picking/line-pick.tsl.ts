@@ -165,18 +165,20 @@ export function linePickWebGPUFactory(
   const offscreen: TSLNode = vec4(2.0, 2.0, 2.0, 1.0);
   const clipPos: TSLNode = bothBehind.select(offscreen.toVar(), expandedClip.toVar());
 
-  // Varyings.
+  // Varyings. Per-segment-constant values (segment length, clipped
+  // flags, node id, element id) use `flat` interpolation — matches the
+  // GLSL3 `flat` qualifier on the same fields.
   const vSharpness: TSLNode = varying(vSharpnessVal);
   const vPerpNorm: TSLNode = varying(aQuadCorner.y);
   const vT: TSLNode = varying(t);
-  const vSegmentLength: TSLNode = varying(aSegmentLength);
+  const vSegmentLength: TSLNode = varying(aSegmentLength).setInterpolation('flat');
   const vWidthAtT: TSLNode = varying(width);
   const vPixelWidth: TSLNode = varying(rawPixelWidth);
   const vWidthFade: TSLNode = varying(vWidthFadeVal);
-  const vClippedStart: TSLNode = varying(aStartClipped);
-  const vClippedEnd: TSLNode = varying(aEndClipped);
-  const vNodeId: TSLNode = varying(uNodeId);
-  const vElementId: TSLNode = varying(float(instanceIndex));
+  const vClippedStart: TSLNode = varying(aStartClipped).setInterpolation('flat');
+  const vClippedEnd: TSLNode = varying(aEndClipped).setInterpolation('flat');
+  const vNodeId: TSLNode = varying(uNodeId).setInterpolation('flat');
+  const vElementId: TSLNode = varying(float(instanceIndex)).setInterpolation('flat');
 
   // ---- Fragment: brightness output + brightness-as-depth ----
 
