@@ -19,6 +19,7 @@
 import * as THREE from 'three';
 import {
   Fn,
+  If,
   uniform,
   attribute,
   varying,
@@ -194,9 +195,16 @@ export function linePickWebGPUFactory(
     clipPosBase.w
   );
 
-  const offscreen: TSLNode = vec4(2.0, 2.0, 2.0, 1.0);
+  // Real TSL control flow — see visual `line.tsl` for the rationale
+  // (one branch per draw instead of evaluating both via select()).
   const culled: TSLNode = bothBehind.or(pathological);
-  const clipPos: TSLNode = culled.select(offscreen.toVar(), expandedClip.toVar());
+  const clipPos: TSLNode = Fn(() => {
+    const out = vec4(2.0, 2.0, 2.0, 1.0).toVar('clipPos');
+    If(culled.not(), () => {
+      out.assign(expandedClip);
+    });
+    return out;
+  })();
 
   // Varyings. Per-segment-constant values (segment length, clipped
   // flags, node id, element id) use `flat` interpolation — matches the
