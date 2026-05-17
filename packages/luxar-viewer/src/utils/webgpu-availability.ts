@@ -72,9 +72,11 @@ async function detectRendererAPI(): Promise<RendererAPI> {
     try {
       // `requestAdapter` resolves to `null` when no adapter is
       // available (e.g. driver flag off, hardware unsupported).
-      const adapter = await (navigator as Navigator & {
-        gpu: { requestAdapter: () => Promise<unknown> };
-      }).gpu.requestAdapter();
+      const adapter = await (
+        navigator as Navigator & {
+          gpu: { requestAdapter: () => Promise<unknown> };
+        }
+      ).gpu.requestAdapter();
       if (adapter) return 'webgpu';
     } catch {
       // Older Safari / Firefox-on-some-platforms throws rather than
