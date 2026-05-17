@@ -69,18 +69,23 @@ class TestFullEncodingRoundtrip:
         np.testing.assert_allclose(decoded, data, rtol=1e-2)
 
     def test_positive_scalar_roundtrip(self, tmp_path) -> None:
-        """Radii in [0,0.5] should survive roundtrip within quantization tolerance."""
+        """Radii in [0,0.5] survive a float16 round-trip.
+
+        Phase-3 narrowed POSITIVE_SCALAR from uint8/uint16/float32
+        (dynamic-range-selected) to a flat float16 default. The
+        decoder no longer widens to float32; downstream consumers
+        (the TS viewer in C-ts-3) handle the float16 dtype directly.
+        """
         np.random.seed(3)
         data = np.random.rand(300).astype(np.float32) * 0.5
 
         decoded = self._roundtrip(tmp_path, data, SemanticType.POSITIVE_SCALAR)
 
         assert decoded.shape == data.shape
-        assert decoded.dtype == np.float32
-        # Quantized to uint8 or uint16 depending on dynamic range;
-        # tolerance is range / 255 for uint8 worst case
-        max_quant_error = 0.5 / 255 + 1e-6
-        np.testing.assert_allclose(decoded, data, atol=max_quant_error)
+        assert decoded.dtype == np.float16
+        # Float16 ULP at values around 0.25 is ~5e-4; loosen to 1e-3
+        # to cover the full range up to 0.5.
+        np.testing.assert_allclose(decoded.astype(np.float32), data, rtol=1e-3)
 
     def test_bounded_scalar_roundtrip(self, tmp_path) -> None:
         """Sharpness in [0,10] should survive roundtrip within quantization tolerance."""
