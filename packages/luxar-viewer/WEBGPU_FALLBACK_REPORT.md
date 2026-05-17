@@ -91,7 +91,7 @@ determines which prep item the fix belongs in:
 | Category | Symptom | Owns the fix |
 |---|---|---|
 | **A. Shader-compile error** | "ERROR: invalid #version directive" or similar from a `ShaderMaterial`. | Item 2 (shader registry) — the GLSL source needs adjustment for WebGPURenderer's stricter prefix. |
-| **B. Render-target-type mismatch** | Wrong colour space, blown highlights, all-black bloom. | Item 1 (capabilities) — `RendererCapabilities.api` probably needs to influence target type choice. |
+| **B. Render-target-type mismatch** | Wrong colour space, blown highlights, all-black bloom. | Item 1 (capabilities) — `RendererCapabilities.apiSurface` probably needs to influence target type choice. |
 | **C. API-shape error** | "renderer.X is not a function" thrown by post-processing or picking code. | New leak — file an issue and add the missing method to `RendererCapabilities`. |
 | **D. Semantic difference** | Same output but slightly off (e.g. point size 1 px smaller, line antialiasing softer). | Defer to port-PR — these are real WebGPU/WebGL semantic gaps and warrant per-shader investigation. |
 | **E. Test-only failure** | A spec checks a WebGL-specific internal (e.g. `renderer.info.programs.length`). | Update the spec — it's pinned to an implementation detail. |
