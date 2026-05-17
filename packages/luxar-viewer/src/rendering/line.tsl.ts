@@ -39,7 +39,6 @@ import {
   vec3,
   vec4,
   float,
-  int,
   max,
   min,
   clamp,
@@ -90,6 +89,15 @@ export interface LineTSLConfig {
    * dataset default). One per-fragment transcendental eliminated.
    */
   readonly sharpnessTwo?: boolean;
+  /**
+   * Camera projection mode at build time. When `true` (orthographic),
+   * the factory emits only the ortho pixel-width branch; when `false`
+   * or undefined (perspective), only the perspective branch is
+   * emitted. Eliminates the runtime `int(uIsOrtho).select(...)` and
+   * its `.toVar()` materialisation of the unused branch. Wrapper
+   * triggers `rebuildGraph()` whenever the camera mode flips.
+   */
+  readonly isOrtho?: boolean;
 }
 
 /**
@@ -166,8 +174,9 @@ export function lineWebGPUFactory(
   // `.onUpdate` callbacks needed.
   // uFOV is intentionally absent: the TSL graph reads the CPU-precomputed
   // `uPerspectiveLineScale` / `uOrthoLineScale` instead.
+  // uIsOrtho is also intentionally absent — projection mode is a
+  // JS-level config branch (`config.isOrtho`), not a runtime uniform.
   const uResolution = nodes.uResolution;
-  const uIsOrtho = nodes.uIsOrtho;
   const uNearCull = nodes.uNearCull;
   const uMaxLinePixelWidth = nodes.uMaxLinePixelWidth;
   const uPerspectiveLineScale = nodes.uPerspectiveLineScale;
@@ -253,22 +262,20 @@ export function lineWebGPUFactory(
     .select(vec2(pixelDir.div(pixelLen)).toVar(), vec2(1.0, 0.0));
   const perpendicular: TSLNode = vec2(lineDir.y.negate(), lineDir.x);
 
-  // World-space → pixel conversion. Both branches consume a CPU-side
-  // precomputed scale (uOrthoLineScale / uPerspectiveLineScale) to
-  // avoid a per-vertex tan() and an extra divide. Perspective branch
-  // uses view-space depth (-mvPos.z) instead of Euclidean distance —
-  // drops a sqrt and is more projection-correct (screen size scales
-  // with view-z, not distance-from-camera-position).
-  const distView: TSLNode = max(mvPos.z.negate(), nearCull);
-  const rawPixelWidthOrtho: TSLNode = width.mul(uOrthoLineScale);
-  const rawPixelWidthPersp: TSLNode = width.mul(uPerspectiveLineScale).div(distView);
-  // TSL select() can return zero when both branches are chained
-  // expressions rather than materialised values. Wrapping the
-  // branches in `.toVar()` forces the builder to evaluate each side
-  // explicitly so the select picks the right concrete result.
-  const rawPixelWidth: TSLNode = int(uIsOrtho)
-    .equal(int(1))
-    .select(rawPixelWidthOrtho.toVar(), rawPixelWidthPersp.toVar());
+  // World-space → pixel conversion. Each camera projection mode is a
+  // separate graph variant (`config.isOrtho`) so the unused branch
+  // never materialises into generated code. The wrapper calls
+  // `rebuildGraph()` whenever the camera mode flips. Perspective uses
+  // view-space depth (-mvPos.z) — drops a sqrt and is more
+  // projection-correct (screen size scales with view-z, not Euclidean
+  // distance from the camera position).
+  let rawPixelWidth: TSLNode;
+  if (config.isOrtho) {
+    rawPixelWidth = width.mul(uOrthoLineScale);
+  } else {
+    const distView: TSLNode = max(mvPos.z.negate(), nearCull);
+    rawPixelWidth = width.mul(uPerspectiveLineScale).div(distView);
+  }
 
   const minPixelWidth = float(1.5);
   const maxPW: TSLNode = max(uMaxLinePixelWidth, minPixelWidth.add(1.0));

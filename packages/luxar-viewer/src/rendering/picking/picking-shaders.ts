@@ -361,7 +361,8 @@ export const LINE_PICK_SOURCE: ShaderSource = {
   webgl: { vertex: LINE_PICK_VERTEX_SHADER, fragment: LINE_PICK_FRAGMENT_SHADER },
   webgpu: (uniforms: Record<string, unknown>) => {
     const u = uniforms as Record<string, import('three').IUniform>;
-    return linePickWebGPUFactory(buildLinePickTSLNodesFromUniforms(u));
+    const isOrtho = ((u.uIsOrtho?.value as number) ?? 0) === 1;
+    return linePickWebGPUFactory(buildLinePickTSLNodesFromUniforms(u), { isOrtho });
   },
 };
 

@@ -26,7 +26,6 @@ import {
   vec2,
   vec4,
   float,
-  int,
   max,
   min,
   clamp,
@@ -86,6 +85,12 @@ export interface LinePickTSLConfig {
    * values are 2.0 (the default for the line dataset).
    */
   readonly sharpnessTwo?: boolean;
+  /**
+   * Camera projection mode at build time — mirrors `LineTSLConfig`.
+   * When true, only the ortho pixel-width branch is emitted; when
+   * false or undefined, only the perspective branch.
+   */
+  readonly isOrtho?: boolean;
 }
 
 export function linePickWebGPUFactory(
@@ -106,8 +111,9 @@ export function linePickWebGPUFactory(
 
   // uFOV intentionally not bound: pixel-width math now consumes the
   // CPU-precomputed uPerspectiveLineScale / uOrthoLineScale instead.
+  // uIsOrtho also unbound — projection mode is a JS-level config
+  // branch (`config.isOrtho`), not a runtime uniform.
   const uResolution = nodes.uResolution;
-  const uIsOrtho = nodes.uIsOrtho;
   const uNodeId = nodes.uNodeId;
   const uNearCull = nodes.uNearCull;
   const uMaxLinePixelWidth = nodes.uMaxLinePixelWidth;
@@ -153,15 +159,16 @@ export function linePickWebGPUFactory(
     .select(vec2(pixelDir.div(pixelLen)).toVar(), vec2(1.0, 0.0));
   const perpendicular: TSLNode = vec2(lineDir.y.negate(), lineDir.x);
 
-  // Both pixel-width branches consume CPU-precomputed scales — no
-  // per-vertex tan() or division by uFOV. View-space depth instead of
-  // Euclidean distance, matching the visual shader.
-  const distView: TSLNode = max(mvPos.z.negate(), nearCull);
-  const rawPixelWidthOrtho: TSLNode = width.mul(uOrthoLineScale);
-  const rawPixelWidthPersp: TSLNode = width.mul(uPerspectiveLineScale).div(distView);
-  const rawPixelWidth: TSLNode = int(uIsOrtho)
-    .equal(int(1))
-    .select(rawPixelWidthOrtho.toVar(), rawPixelWidthPersp.toVar());
+  // Each camera projection mode is a separate graph variant so the
+  // unused branch never materialises. Wrapper rebuilds when isOrtho
+  // flips. View-space depth (-mvPos.z) matches the visual shader.
+  let rawPixelWidth: TSLNode;
+  if (config.isOrtho) {
+    rawPixelWidth = width.mul(uOrthoLineScale);
+  } else {
+    const distView: TSLNode = max(mvPos.z.negate(), nearCull);
+    rawPixelWidth = width.mul(uPerspectiveLineScale).div(distView);
+  }
 
   const minPixelWidth = float(1.5);
   const maxPW: TSLNode = max(uMaxLinePixelWidth, minPixelWidth.add(1.0));
