@@ -158,6 +158,13 @@ export class LineMaterial
       toneMapped: false, // HDR values pass through to post-processing
       blending: blending,
       side: THREE.DoubleSide, // Lines visible from both sides
+      // Line quads are screen-space billboards, not physically
+      // two-sided surfaces. The renderer's two-pass guard
+      // (`renderers/WebGLRenderer.js:1340`) trips only when
+      // `transparent && side===DoubleSide && forceSinglePass===false`,
+      // so forcing single-pass skips a redundant back-face render
+      // pass per line layer.
+      forceSinglePass: true,
     });
 
     // Apply mode-specific blending state via the canonical method —

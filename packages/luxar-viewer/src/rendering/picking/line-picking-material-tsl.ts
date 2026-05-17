@@ -64,6 +64,10 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
 
     this.toneMapped = false;
     this.side = THREE.DoubleSide;
+    // Picking is opaque so the transparent-and-DoubleSide two-pass
+    // guard never trips, but setting `forceSinglePass` explicitly
+    // matches the visual material and documents intent.
+    this.forceSinglePass = true;
 
     linePickWebGPUFactory(this.tslNodes as LinePickTSLNodes, this);
   }
