@@ -154,6 +154,15 @@ export function linePickWebGPUFactory(
     .lessThanEqual(maxPW)
     .select(float(1.0), maxPW.div(max(rawPixelWidth, float(1e-4))).toVar());
 
+  // Pathological-segment cull (visual-shader parity): both endpoints
+  // inside near-cull margin AND rawPixelWidth blows past the clamp by
+  // 2× → degenerate to off-screen. Otherwise picking still rasterizes
+  // the half-viewport quad the visual pass already culled.
+  const pathological: TSLNode = startDepth
+    .lessThan(nearCull.mul(2.0))
+    .and(endDepth.lessThan(nearCull.mul(2.0)))
+    .and(rawPixelWidth.greaterThan(maxPW.mul(2.0)));
+
   const pixelOffset: TSLNode = perpendicular.mul(aQuadCorner.y).mul(clampedPixelWidth);
   const ndcOffset: TSLNode = pixelOffset.div(uResolution).mul(2.0);
   const expandedClip: TSLNode = vec4(
@@ -163,7 +172,8 @@ export function linePickWebGPUFactory(
   );
 
   const offscreen: TSLNode = vec4(2.0, 2.0, 2.0, 1.0);
-  const clipPos: TSLNode = bothBehind.select(offscreen.toVar(), expandedClip.toVar());
+  const culled: TSLNode = bothBehind.or(pathological);
+  const clipPos: TSLNode = culled.select(offscreen.toVar(), expandedClip.toVar());
 
   // Varyings. Per-segment-constant values (segment length, clipped
   // flags, node id, element id) use `flat` interpolation — matches the

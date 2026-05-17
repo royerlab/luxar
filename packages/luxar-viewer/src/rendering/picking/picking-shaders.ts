@@ -255,6 +255,23 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
 
       float minPixelWidth = 1.5;
       float maxPW = max(uMaxLinePixelWidth, minPixelWidth + 1.0);
+      // Visual-shader parity: discard pathological near-camera segments
+      // (both endpoints inside near-cull margin AND rawPixelWidth blows
+      // past clamp by 2×). Without this, picking still rasterizes the
+      // half-viewport quad the visual pass already culled.
+      if (
+        startDepth < nearCull * 2.0 &&
+        endDepth < nearCull * 2.0 &&
+        rawPixelWidth > maxPW * 2.0
+      ) {
+        gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+        vPerpNorm = 0.0;
+        vPixelWidth = 0.0;
+        vWidthFade = 0.0;
+        vNodeId = uNodeId;
+        vElementId = float(gl_InstanceID);
+        return;
+      }
       float clampedPixelWidth = clamp(rawPixelWidth, minPixelWidth, maxPW);
       vWidthFade = (rawPixelWidth <= maxPW) ? 1.0 : (maxPW / max(rawPixelWidth, 1e-4));
       vPixelWidth = rawPixelWidth;
