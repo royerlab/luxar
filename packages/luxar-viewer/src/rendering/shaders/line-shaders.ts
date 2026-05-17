@@ -34,7 +34,7 @@
  *     intensity regardless of opacity, intensity, or fade.
  */
 import { GLSL_SANITIZE_FUNCTIONS } from './glsl-lib';
-import { lineWebGPUFactory } from '../line.tsl';
+import { lineWebGPUFactory, buildLineTSLNodesFromUniforms } from '../line.tsl';
 import type { ShaderSource } from './shader-source';
 
 export const LINE_VERTEX_SHADER = /* glsl */ `
@@ -339,6 +339,8 @@ export const LINE_FRAGMENT_SHADER = /* glsl */ `
 export const LINE_SOURCE: ShaderSource = {
   name: 'line',
   webgl: { vertex: LINE_VERTEX_SHADER, fragment: LINE_FRAGMENT_SHADER },
-  webgpu: (uniforms: Record<string, unknown>) =>
-    lineWebGPUFactory(uniforms as Record<string, import('three').IUniform>),
+  webgpu: (uniforms: Record<string, unknown>) => {
+    const u = uniforms as Record<string, import('three').IUniform>;
+    return lineWebGPUFactory(buildLineTSLNodesFromUniforms(u, {}), {});
+  },
 };

@@ -9,16 +9,22 @@
  * the other based on `caps.apiSurface`, so call sites never see the
  * divergence.
  *
- * Mechanics identical to `PointTSLMaterial` — see that module for
- * the in-depth explanation of `uniforms` ↔ TSL-uniform-node binding
- * via `.onUpdate` (set up inside `lineWebGPUFactory`).
+ * **Uniform plumbing.** This class owns one persistent `UniformNode`
+ * per shader input via the `tslNodes` table. The public `uniforms`
+ * record exposes each node as an `IUniform`-shaped getter/setter
+ * proxy (see `proxyIUniform` in `tsl-helpers.ts`), so mutations to
+ * `material.uniforms.uX.value` land directly on `node.value` — no
+ * per-render `.onUpdate('render')` callback bridge. Matches the
+ * pattern already in use by `LinePickingTSLMaterial`,
+ * `GSplatTSLMaterial`, and `PointPickingTSLMaterial`.
  *
  * @module rendering/line-material-tsl
  */
 
 import * as THREE from 'three';
+import { uniform, texture } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-import { lineWebGPUFactory } from './line.tsl';
+import { lineWebGPUFactory, type LineTSLNodes } from './line.tsl';
 import type { LineMaterialConfig } from './line-material';
 import type { CameraAwareMaterial } from './camera-aware-material';
 import type { ColormapAwareMaterial } from './colormap-aware-material';
@@ -33,6 +39,29 @@ import {
   type CompleteBlendingState,
 } from './blending-state';
 import type { BlendingMode } from './material-manager';
+import { proxyIUniform, type TSLNode } from './tsl-helpers';
+
+/**
+ * Persistent TSL node table owned by the wrapper. Colormap nodes are
+ * (re)created lazily inside `rebuildGraph()` when colormap mode
+ * toggles — the `LineTSLNodes` factory contract treats them as
+ * optional.
+ */
+interface LineMaterialTSLNodeTable {
+  uResolution: TSLNode;
+  uIsOrtho: TSLNode;
+  uNearCull: TSLNode;
+  uMaxLinePixelWidth: TSLNode;
+  uPerspectiveLineScale: TSLNode;
+  uOrthoLineScale: TSLNode;
+  uOpacity: TSLNode;
+  uInvGamma: TSLNode;
+  uIntensity: TSLNode;
+  uOffset: TSLNode;
+  uColormapTex?: TSLNode;
+  uScalarMin?: TSLNode;
+  uScalarScale?: TSLNode;
+}
 
 export class LineTSLMaterial
   extends NodeMaterial
@@ -41,37 +70,60 @@ export class LineTSLMaterial
   /** Public uniforms table, same shape as `LineMaterial.uniforms`. */
   uniforms: Record<string, THREE.IUniform>;
 
+  private tslNodes: LineMaterialTSLNodeTable;
+
   constructor(materialConfig: LineMaterialConfig = {}) {
     super();
 
     const gammaValue = clampGamma(materialConfig.gamma);
 
+    this.tslNodes = {
+      uResolution: uniform(new THREE.Vector2(1, 1)),
+      uIsOrtho: uniform(0),
+      uNearCull: uniform(0.05),
+      uMaxLinePixelWidth: uniform(540),
+      uPerspectiveLineScale: uniform(1.0),
+      uOrthoLineScale: uniform(1.0),
+      uOpacity: uniform(materialConfig.opacity ?? 1.0),
+      uInvGamma: uniform(1.0 / gammaValue),
+      uIntensity: uniform(materialConfig.intensity ?? 1.0),
+      uOffset: uniform(materialConfig.offset ?? 0.0),
+    };
+
+    // Build the public IUniform-proxy table. Mutations to
+    // `material.uniforms.X.value` land directly on the TSL node's
+    // value via `proxyIUniform`, so the GPU sees the new value on the
+    // next frame without any `.onUpdate('render')` callback.
+    //
+    // `uFOV` stays as a plain IUniform because the TSL graph no
+    // longer reads it (the CPU precomputes `uPerspectiveLineScale` /
+    // `uOrthoLineScale`); we keep the slot for downstream consumers
+    // (clone(), legacy reads).
     this.uniforms = {
       uFOV: { value: (60 * Math.PI) / 180 },
-      uResolution: { value: new THREE.Vector2(1, 1) },
-      uIsOrtho: { value: 0 },
-      uOpacity: { value: materialConfig.opacity ?? 1.0 },
-      uInvGamma: { value: 1.0 / gammaValue },
-      uIntensity: { value: materialConfig.intensity ?? 1.0 },
-      uOffset: { value: materialConfig.offset ?? 0.0 },
-      uNearCull: { value: 0.05 },
-      uMaxLinePixelWidth: { value: 540 },
-      // CPU-precomputed pixel-width scales — see line-material.ts.
-      uPerspectiveLineScale: { value: 1.0 },
-      uOrthoLineScale: { value: 1.0 },
-      ...(materialConfig.colormapTexture
-        ? {
-            uColormapTex: { value: materialConfig.colormapTexture },
-            uScalarMin: { value: materialConfig.scalarRange?.[0] ?? 0.0 },
-            uScalarScale: {
-              value: materialConfig.scalarRange
-                ? 1.0 /
-                  Math.max(1e-10, materialConfig.scalarRange[1] - materialConfig.scalarRange[0])
-                : 1.0,
-            },
-          }
-        : {}),
+      uResolution: proxyIUniform(this.tslNodes.uResolution),
+      uIsOrtho: proxyIUniform(this.tslNodes.uIsOrtho),
+      uNearCull: proxyIUniform(this.tslNodes.uNearCull),
+      uMaxLinePixelWidth: proxyIUniform(this.tslNodes.uMaxLinePixelWidth),
+      uPerspectiveLineScale: proxyIUniform(this.tslNodes.uPerspectiveLineScale),
+      uOrthoLineScale: proxyIUniform(this.tslNodes.uOrthoLineScale),
+      uOpacity: proxyIUniform(this.tslNodes.uOpacity),
+      uInvGamma: proxyIUniform(this.tslNodes.uInvGamma),
+      uIntensity: proxyIUniform(this.tslNodes.uIntensity),
+      uOffset: proxyIUniform(this.tslNodes.uOffset),
     };
+
+    // Colormap uniforms are added lazily — see `rebuildColormapNodes`.
+    if (materialConfig.colormapTexture) {
+      this.uniforms.uColormapTex = { value: materialConfig.colormapTexture };
+      this.uniforms.uScalarMin = { value: materialConfig.scalarRange?.[0] ?? 0.0 };
+      this.uniforms.uScalarScale = {
+        value: materialConfig.scalarRange
+          ? 1.0 /
+            Math.max(1e-10, materialConfig.scalarRange[1] - materialConfig.scalarRange[0])
+          : 1.0,
+      };
+    }
 
     this.defines = materialConfig.colormapTexture ? { USE_COLORMAP: '' } : {};
     this.toneMapped = false;
@@ -101,15 +153,51 @@ export class LineTSLMaterial
   }
 
   /**
+   * Refresh the colormap TSL nodes so they bind to the current
+   * `this.uniforms.uColormap*.value`. `TextureNode` is bound to a
+   * specific `Texture` instance at construction; a texture swap
+   * requires a fresh node, hence this lives in `rebuildGraph()`.
+   */
+  private rebuildColormapNodes(useColormap: boolean): void {
+    if (useColormap) {
+      const tex =
+        (this.uniforms.uColormapTex?.value as THREE.Texture | null | undefined) ??
+        new THREE.Texture();
+      this.tslNodes.uColormapTex = texture(tex);
+      this.tslNodes.uScalarMin = uniform(
+        (this.uniforms.uScalarMin?.value as number) ?? 0.0
+      );
+      this.tslNodes.uScalarScale = uniform(
+        (this.uniforms.uScalarScale?.value as number) ?? 1.0
+      );
+      // Re-point the IUniform proxies at the new nodes so updates
+      // flow through. (For the texture, we keep the plain IUniform
+      // because TextureNode value mutations don't propagate without a
+      // rebuild — `setColormapTexture` triggers rebuild explicitly.)
+      this.uniforms.uScalarMin = proxyIUniform(this.tslNodes.uScalarMin);
+      this.uniforms.uScalarScale = proxyIUniform(this.tslNodes.uScalarScale);
+      // Restore uColormapTex.value pointer to the texture we just bound.
+      this.uniforms.uColormapTex = { value: tex };
+    } else {
+      this.tslNodes.uColormapTex = undefined;
+      this.tslNodes.uScalarMin = undefined;
+      this.tslNodes.uScalarScale = undefined;
+    }
+  }
+
+  /**
    * Re-run the TSL factory and attach the resulting nodes + blending
    * state to ourselves. `useColormap` reads `defines.USE_COLORMAP`,
-   * not the IUniform presence (see PointTSLMaterial for rationale).
+   * not the IUniform presence (mirrors GSplatTSLMaterial /
+   * PointTSLMaterial).
    */
   private rebuildGraph(): void {
+    const useColormap = !!this.defines && 'USE_COLORMAP' in this.defines;
+    this.rebuildColormapNodes(useColormap);
     lineWebGPUFactory(
-      this.uniforms,
+      this.tslNodes as LineTSLNodes,
       {
-        useColormap: !!this.defines && 'USE_COLORMAP' in this.defines,
+        useColormap,
         blendingMode: (this.userData.blendingMode as BlendingMode | undefined) ?? 'additive',
       },
       this
@@ -158,11 +246,11 @@ export class LineTSLMaterial
     this.uniforms.uOffset.value = offset;
   }
 
-  updateColormapTexture(texture: THREE.DataTexture | null): void {
+  updateColormapTexture(tex: THREE.DataTexture | null): void {
     const oldTexture =
       (this.uniforms.uColormapTex?.value as THREE.Texture | null | undefined) ?? null;
-    const { wasEnabled, nowEnabled } = applyColormapTextureToMaterial(this, texture);
-    const textureChanged = oldTexture !== texture;
+    const { wasEnabled, nowEnabled } = applyColormapTextureToMaterial(this, tex);
+    const textureChanged = oldTexture !== tex;
     if (wasEnabled !== nowEnabled || textureChanged) {
       this.rebuildGraph();
     }
@@ -236,16 +324,16 @@ export class LineTSLMaterial
     return cloned as this;
   }
 
-  setColormapTexture(texture: THREE.DataTexture | null): void {
+  setColormapTexture(tex: THREE.DataTexture | null): void {
     if (!this.defines) this.defines = {};
-    if (texture) {
+    if (tex) {
       this.defines.USE_COLORMAP = '';
       if (!this.uniforms.uColormapTex) {
-        this.uniforms.uColormapTex = { value: texture };
+        this.uniforms.uColormapTex = { value: tex };
         this.uniforms.uScalarMin = { value: 0.0 };
         this.uniforms.uScalarScale = { value: 1.0 };
       } else {
-        this.uniforms.uColormapTex.value = texture;
+        this.uniforms.uColormapTex.value = tex;
       }
     } else {
       delete this.defines.USE_COLORMAP;
