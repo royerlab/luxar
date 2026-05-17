@@ -101,6 +101,48 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
       vClippedStart = aStartClipped;
       vClippedEnd = aEndClipped;
 
+      // Project endpoints to view space first — the bothBehind near-cull
+      // test reads view-space depth, and culling BEFORE the colormap
+      // sample / width sanitisation / colour interpolation skips that
+      // wasted work for off-screen segments. The pathological-cull
+      // (further down) reads rawPixelWidth which depends on width,
+      // so we still have to do the cheap parts of width sanitisation
+      // and interpolation; the colormap branch and the full mix /
+      // pow chain are the real wins.
+      vec4 mvStart = modelViewMatrix * vec4(aStartPos, 1.0);
+      vec4 mvEnd = modelViewMatrix * vec4(aEndPos, 1.0);
+
+      // near-plane / behind-camera safety. Three.js view space has
+      // -z pointing into the scene, so a positive viewDepth means the
+      // point is in front of the camera. Reject segments where BOTH
+      // endpoints fail the near-cull (degenerate the quad to clip).
+      // When only ONE endpoint is behind, we keep the full quad: the
+      // shader will produce extreme NDC for that endpoint, but the
+      // pixel-width clamp and vWidthFade keep the visible footprint
+      // bounded. Matches the GSplat near-fade pattern.
+      float nearCull = max(uNearCull, 1e-4);
+      float startDepth = -mvStart.z;
+      float endDepth = -mvEnd.z;
+      bool bothBehind = (startDepth < nearCull) && (endDepth < nearCull);
+      if (bothBehind) {
+        gl_Position = vec4(2.0, 2.0, 2.0, 1.0); // off-screen (NDC > 1) → no fragments
+        // Defensive: zero the remaining varyings the fragment-stage
+        // can read. The rasterizer drops this segment entirely so the
+        // values don't actually matter, but uninitialised out-vars can
+        // trip driver validators on some platforms.
+        vColor = vec3(0.0);
+        vSharpness = 2.0;
+        vWidthAtT = 0.0;
+        vPerpNorm = 0.0;
+        vPixelWidth = 0.0;
+        vWidthFade = 0.0;
+        return;
+      }
+
+      vec4 mvPos = mix(mvStart, mvEnd, t);
+
+      // === Below here only runs when the segment passed the cheap cull. ===
+
       // Interpolate attributes along segment
       #ifdef USE_COLORMAP
       float s = mix(aStartScalar, aEndScalar, t);
@@ -121,32 +163,6 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
       float width = mix(startW, endW, t);
       vSharpness = mix(startS, endS, t);
       vWidthAtT = width;
-
-      // Project to clip space (pre-multiply modelViewMatrix once per endpoint)
-      vec4 mvStart = modelViewMatrix * vec4(aStartPos, 1.0);
-      vec4 mvEnd = modelViewMatrix * vec4(aEndPos, 1.0);
-      vec4 mvPos = mix(mvStart, mvEnd, t);
-
-      // near-plane / behind-camera safety. Three.js view space has
-      // -z pointing into the scene, so a positive viewDepth means the
-      // point is in front of the camera. Reject segments where BOTH
-      // endpoints fail the near-cull (degenerate the quad to clip).
-      // When only ONE endpoint is behind, we keep the full quad: the
-      // shader will produce extreme NDC for that endpoint, but the
-      // pixel-width clamp and vWidthFade keep the visible footprint
-      // bounded. Matches the GSplat near-fade pattern.
-      float nearCull = max(uNearCull, 1e-4);
-      float startDepth = -mvStart.z;
-      float endDepth = -mvEnd.z;
-      bool bothBehind = (startDepth < nearCull) && (endDepth < nearCull);
-      if (bothBehind) {
-        gl_Position = vec4(2.0, 2.0, 2.0, 1.0); // off-screen (NDC > 1) → no fragments
-        vColor = vec3(0.0);
-        vPerpNorm = 0.0;
-        vPixelWidth = 0.0;
-        vWidthFade = 0.0;
-        return;
-      }
 
       vec4 clipStart = projectionMatrix * mvStart;
       vec4 clipEnd = projectionMatrix * mvEnd;
