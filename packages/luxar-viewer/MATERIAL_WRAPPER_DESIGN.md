@@ -54,7 +54,7 @@ becomes `mesh.material = pointMat.getThreeMaterial()`.
 
 Keep `extends THREE.ShaderMaterial` today. At port time, introduce
 a parallel `PointMaterialWebGPU extends NodeMaterial` and a factory
-that picks the right class based on `RendererCapabilities.api`.
+that picks the right class based on `RendererCapabilities.apiSurface`.
 Every existing material class becomes WebGL-specific.
 
 **Pros**:
