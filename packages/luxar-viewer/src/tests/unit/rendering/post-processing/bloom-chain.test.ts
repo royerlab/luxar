@@ -5,14 +5,15 @@
  * no-context contracts that can regress in ordinary TypeScript changes.
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import { BloomChain } from '../../../../rendering/post-processing/bloom-chain';
 import type { RendererCapabilities } from '../../../../rendering/renderer-capabilities';
 
 function mockCaps(): RendererCapabilities {
   return {
-    api: 'webgl2',
+    apiSurface: 'webgl2',
+    framebufferYDown: false,
     hdr: {
       p3Gamut: false,
       rec2020Gamut: false,
@@ -89,5 +90,114 @@ describe('BloomChain', () => {
     expect(chain.outputTexture).not.toBe(before);
 
     chain.dispose();
+  });
+});
+
+describe('bloom TSL factories — primitive uniform propagation', () => {
+  // Pins the `.onUpdate('render')` wiring on uThreshold / uSmoothing /
+  // uRadius. Before the fix, those were bare `uniform(number)` nodes
+  // that captured the JS value at factory-build time, so
+  // `BloomChain.setThreshold` / `.setRadius` writes to
+  // `IUniform.value` silently dropped under WebGPU. The deterministic
+  // side-effect of `.onUpdate(cb, 'render')` on a TSL UniformNode is:
+  //   1. `node.updateType === 'render'`
+  //   2. `node.update(frame)` runs `cb`; if it returns a non-undefined
+  //      value, that value is assigned to `node.value`.
+  // Driving `node.update()` simulates one render tick and lets us
+  // assert the IUniform → TSL-node read path without a renderer.
+  //
+  // Inner UniformNodes are closed over by the Fn body and not
+  // reachable from the returned NodeMaterial, so we hook them at the
+  // TSL `uniform()` factory instead.
+
+  type RenderUpdateNode = {
+    updateType: string;
+    update?: (frame: unknown) => void;
+    value: unknown;
+  };
+
+  async function loadFactoriesWithUniformSpy(): Promise<{
+    bloomThresholdWebGPUFactory: typeof import('../../../../rendering/post-processing/bloom.tsl').bloomThresholdWebGPUFactory;
+    bloomUpsampleWebGPUFactory: typeof import('../../../../rendering/post-processing/bloom.tsl').bloomUpsampleWebGPUFactory;
+    capturedNodes: RenderUpdateNode[];
+  }> {
+    // Re-import the bloom TSL module under a vi.doMock so a single
+    // shared `uniform` wrapper observes every node the factories
+    // create. Numeric-valued uniforms are the only ones we care
+    // about for this test (Vector2 has its own contract).
+    vi.resetModules();
+    const capturedNodes: RenderUpdateNode[] = [];
+    const tsl = (await import('three/tsl')) as typeof import('three/tsl');
+    const realUniform = tsl.uniform;
+    vi.doMock('three/tsl', () => ({
+      ...tsl,
+      uniform: ((value: unknown, ...rest: unknown[]) => {
+        const node = (realUniform as unknown as (v: unknown, ...rest: unknown[]) => unknown)(
+          value,
+          ...rest
+        );
+        if (typeof value === 'number') {
+          capturedNodes.push(node as RenderUpdateNode);
+        }
+        return node;
+      }) as unknown as typeof tsl.uniform,
+    }));
+    const mod = await import('../../../../rendering/post-processing/bloom.tsl');
+    return {
+      bloomThresholdWebGPUFactory: mod.bloomThresholdWebGPUFactory,
+      bloomUpsampleWebGPUFactory: mod.bloomUpsampleWebGPUFactory,
+      capturedNodes,
+    };
+  }
+
+  it('threshold factory wires uThreshold / uSmoothing to .onUpdate("render")', async () => {
+    const { bloomThresholdWebGPUFactory, capturedNodes } = await loadFactoriesWithUniformSpy();
+    const uniforms: Record<string, THREE.IUniform> = {
+      uInput: { value: new THREE.Texture() },
+      uTexelSize: { value: new THREE.Vector2(1 / 64, 1 / 64) },
+      uThreshold: { value: 0.2 },
+      uSmoothing: { value: 0.05 },
+    };
+    const mat = bloomThresholdWebGPUFactory(uniforms);
+
+    // Both numeric uniforms must have been registered for render-tick updates.
+    const renderUpdates = capturedNodes.filter((n) => n.updateType === 'render');
+    expect(renderUpdates).toHaveLength(2);
+
+    // Mutate the host IUniform — fix means the next render tick must
+    // read this new value into the TSL node.
+    uniforms.uThreshold.value = 0.42;
+    uniforms.uSmoothing.value = 0.13;
+    for (const n of renderUpdates) n.update?.({});
+
+    const numericValues = renderUpdates.map((n) => n.value);
+    expect(numericValues).toContain(0.42);
+    expect(numericValues).toContain(0.13);
+
+    mat.dispose();
+    (uniforms.uInput.value as THREE.Texture).dispose();
+    vi.doUnmock('three/tsl');
+  });
+
+  it('upsample factory wires uRadius to .onUpdate("render")', async () => {
+    const { bloomUpsampleWebGPUFactory, capturedNodes } = await loadFactoriesWithUniformSpy();
+    const uniforms: Record<string, THREE.IUniform> = {
+      uInput: { value: new THREE.Texture() },
+      uTexelSize: { value: new THREE.Vector2(1 / 64, 1 / 64) },
+      uRadius: { value: 1.0 },
+    };
+    const mat = bloomUpsampleWebGPUFactory(uniforms);
+
+    const renderUpdates = capturedNodes.filter((n) => n.updateType === 'render');
+    expect(renderUpdates).toHaveLength(1);
+
+    uniforms.uRadius.value = 3.5;
+    for (const n of renderUpdates) n.update?.({});
+
+    expect(renderUpdates[0].value).toBe(3.5);
+
+    mat.dispose();
+    (uniforms.uInput.value as THREE.Texture).dispose();
+    vi.doUnmock('three/tsl');
   });
 });

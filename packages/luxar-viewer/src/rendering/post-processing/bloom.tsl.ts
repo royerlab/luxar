@@ -26,25 +26,44 @@ const LUMA_REC709 = vec3(0.2126, 0.7152, 0.0722);
 export function bloomThresholdWebGPUFactory(
   uniforms: Record<string, THREE.IUniform>
 ): NodeMaterial {
-  const uInput = texture((uniforms.uInput.value as THREE.Texture | null) ?? new THREE.Texture());
+  // `texture()` captures the THREE.Texture passed to it at factory-
+  // build time. BloomChain mutates `uniforms.uInput.value` between
+  // renders (different mip source each pass), so we MUST re-resolve
+  // the texture on every render via `.onUpdate()`. Without this, the
+  // TextureNode samples the placeholder forever and bloom output is
+  // empty under WebGPU. The `fallback` identity is captured outside
+  // the closure so the TextureNode's initial binding has a stable
+  // reference; subsequent `.onUpdate()` calls swap in the live value.
+  const fallback = new THREE.Texture();
+  const uInput = texture((uniforms.uInput.value as THREE.Texture | null) ?? fallback).onUpdate(
+    () => (uniforms.uInput.value as THREE.Texture | null) ?? fallback,
+    'render'
+  );
   const uTexelSize = uniform(
     (uniforms.uTexelSize.value as THREE.Vector2) ?? new THREE.Vector2(1, 1)
   );
-  // Use the JS-value uniform() overload directly. Wrapping the value
-  // in `float()` first builds a VarNode<'float', ConstNode> — i.e. a
-  // *const* that gets inlined at compile time, so the uniform never
-  // updates when the host writes uniforms.X.value. Tested with the
-  // tsl-shader-parity harness (`bloom-threshold` parity test).
-  const uThreshold = uniform((uniforms.uThreshold.value as number) ?? 0.0);
-  const uSmoothing = uniform((uniforms.uSmoothing.value as number) ?? 0.0);
+  // Primitive uniforms must use `.onUpdate(() => iuniform.value,
+  // 'render')` so host setters (BloomChain.setThreshold, the
+  // construction-time `uSmoothing` value) reach the GPU on the next
+  // render. Without it, the TSL `uniform(number)` overload captures
+  // the JS value at factory-build time and silently ignores
+  // subsequent `iuniform.value = …` writes. Vector2/Texture inputs
+  // are mutated in place (`.set(...)` / wrapper-driven graph rebuilds)
+  // so they don't need the same wiring.
+  const uThreshold = uniform((uniforms.uThreshold.value as number) ?? 0.0).onUpdate(
+    () => (uniforms.uThreshold.value as number) ?? 0.0,
+    'render'
+  );
+  const uSmoothing = uniform((uniforms.uSmoothing.value as number) ?? 0.0).onUpdate(
+    () => (uniforms.uSmoothing.value as number) ?? 0.0,
+    'render'
+  );
 
   const fragmentNode = Fn(() => {
     const d = uTexelSize.mul(0.5);
-    // Read the geometry's `uv` attribute rather than `screenUV` —
-    // screenUV uses WebGPU-flipped Y under `forceWebGL`, which would
-    // sample the texture upside-down relative to the GLSL3 path
-    // (where vUv = position.xy * 0.5 + 0.5 is bottom-up). The
-    // fullscreen-pass mesh provides matching geometry uv.
+    // Read the geometry's caps-aware `uv` attribute. The fullscreen-
+    // triangle factory encodes WebGL2/WebGPU framebuffer-Y correction
+    // there so we never have to branch on the renderer backend here.
     const coord = uv();
     const s0 = uInput.sample(coord.add(d.mul(vec2(-1.0, -1.0)))).rgb;
     const s1 = uInput.sample(coord.add(d.mul(vec2(1.0, -1.0)))).rgb;
@@ -75,18 +94,24 @@ export function bloomThresholdWebGPUFactory(
 export function bloomDownsampleWebGPUFactory(
   uniforms: Record<string, THREE.IUniform>
 ): NodeMaterial {
-  const uInput = texture((uniforms.uInput.value as THREE.Texture | null) ?? new THREE.Texture());
+  // Live-bound texture node — see `bloomThresholdWebGPUFactory` for
+  // rationale. The downsample chain reads a different mip per pass,
+  // so the TextureNode must re-resolve `uniforms.uInput.value` each
+  // render rather than capture the placeholder at build time.
+  const fallback = new THREE.Texture();
+  const uInput = texture((uniforms.uInput.value as THREE.Texture | null) ?? fallback).onUpdate(
+    () => (uniforms.uInput.value as THREE.Texture | null) ?? fallback,
+    'render'
+  );
   const uTexelSize = uniform(
     (uniforms.uTexelSize.value as THREE.Vector2) ?? new THREE.Vector2(1, 1)
   );
 
   const fragmentNode = Fn(() => {
     const d = uTexelSize.mul(0.5);
-    // Read the geometry's `uv` attribute rather than `screenUV` —
-    // screenUV uses WebGPU-flipped Y under `forceWebGL`, which would
-    // sample the texture upside-down relative to the GLSL3 path
-    // (where vUv = position.xy * 0.5 + 0.5 is bottom-up). The
-    // fullscreen-pass mesh provides matching geometry uv.
+    // Read the geometry's caps-aware `uv` attribute. The fullscreen-
+    // triangle factory encodes WebGL2/WebGPU framebuffer-Y correction
+    // there so we never have to branch on the renderer backend here.
     const coord = uv();
     const s0 = uInput.sample(coord.add(d.mul(vec2(-1.0, -1.0)))).rgb;
     const s1 = uInput.sample(coord.add(d.mul(vec2(1.0, -1.0)))).rgb;
@@ -109,22 +134,30 @@ export function bloomDownsampleWebGPUFactory(
  * for accumulation onto the previous mip) is set by the host on the
  * returned material.
  */
-export function bloomUpsampleWebGPUFactory(
-  uniforms: Record<string, THREE.IUniform>
-): NodeMaterial {
-  const uInput = texture((uniforms.uInput.value as THREE.Texture | null) ?? new THREE.Texture());
+export function bloomUpsampleWebGPUFactory(uniforms: Record<string, THREE.IUniform>): NodeMaterial {
+  // Live-bound texture node — see `bloomThresholdWebGPUFactory` for
+  // rationale. The upsample chain reads a different mip per pass.
+  const fallback = new THREE.Texture();
+  const uInput = texture((uniforms.uInput.value as THREE.Texture | null) ?? fallback).onUpdate(
+    () => (uniforms.uInput.value as THREE.Texture | null) ?? fallback,
+    'render'
+  );
   const uTexelSize = uniform(
     (uniforms.uTexelSize.value as THREE.Vector2) ?? new THREE.Vector2(1, 1)
   );
-  const uRadius = uniform((uniforms.uRadius.value as number) ?? 1.0);
+  // `.onUpdate('render')` so `BloomChain.setRadius` (which writes
+  // `uniforms.uRadius.value`) reaches the GPU on subsequent renders.
+  // See the threshold-pass comment above for the rationale.
+  const uRadius = uniform((uniforms.uRadius.value as number) ?? 1.0).onUpdate(
+    () => (uniforms.uRadius.value as number) ?? 1.0,
+    'render'
+  );
 
   const fragmentNode = Fn(() => {
     const r = uTexelSize.mul(uRadius);
-    // Read the geometry's `uv` attribute rather than `screenUV` —
-    // screenUV uses WebGPU-flipped Y under `forceWebGL`, which would
-    // sample the texture upside-down relative to the GLSL3 path
-    // (where vUv = position.xy * 0.5 + 0.5 is bottom-up). The
-    // fullscreen-pass mesh provides matching geometry uv.
+    // Read the geometry's caps-aware `uv` attribute. The fullscreen-
+    // triangle factory encodes WebGL2/WebGPU framebuffer-Y correction
+    // there so we never have to branch on the renderer backend here.
     const coord = uv();
     const s0 = uInput.sample(coord.add(r.mul(vec2(-1.0, 0.0)))).rgb;
     const s1 = uInput.sample(coord.add(r.mul(vec2(1.0, 0.0)))).rgb;
