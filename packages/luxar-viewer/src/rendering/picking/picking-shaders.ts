@@ -249,7 +249,9 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
       if (uIsOrtho == 1) {
         rawPixelWidth = width * uOrthoLineScale;
       } else {
-        float dist = max(length(mvPos.xyz), nearCull);
+        // View-space depth: drops a sqrt, more projection-correct.
+        // Visual-shader parity — see line-shaders.ts.
+        float dist = max(-mvPos.z, nearCull);
         rawPixelWidth = width * uPerspectiveLineScale / dist;
       }
 

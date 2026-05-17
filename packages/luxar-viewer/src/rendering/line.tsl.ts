@@ -234,8 +234,11 @@ export function lineWebGPUFactory(
 
   // World-space → pixel conversion. Both branches consume a CPU-side
   // precomputed scale (uOrthoLineScale / uPerspectiveLineScale) to
-  // avoid a per-vertex tan() and an extra divide.
-  const distView: TSLNode = max(length(vec3(mvPos)), nearCull);
+  // avoid a per-vertex tan() and an extra divide. Perspective branch
+  // uses view-space depth (-mvPos.z) instead of Euclidean distance —
+  // drops a sqrt and is more projection-correct (screen size scales
+  // with view-z, not distance-from-camera-position).
+  const distView: TSLNode = max(mvPos.z.negate(), nearCull);
   const rawPixelWidthOrtho: TSLNode = width.mul(uOrthoLineScale);
   const rawPixelWidthPersp: TSLNode = width.mul(uPerspectiveLineScale).div(distView);
   // TSL select() can return zero when both branches are chained

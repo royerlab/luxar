@@ -193,7 +193,13 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
         // Orthographic: constant screen size regardless of distance.
         rawPixelWidth = width * uOrthoLineScale;
       } else {
-        float dist = max(length(mvPos.xyz), nearCull); // clamp dist to avoid 1/near-zero blow-up
+        // View-space depth instead of Euclidean distance — drops a
+        // sqrt per vertex and is more projection-correct (screen-space
+        // size scales with view-z, not distance from camera position).
+        // Off-axis segments will be slightly different in apparent
+        // width vs the old length(mvPos.xyz) form; this is the
+        // intended correctness improvement.
+        float dist = max(-mvPos.z, nearCull);
         rawPixelWidth = width * uPerspectiveLineScale / dist;
       }
 
