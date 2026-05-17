@@ -42,6 +42,10 @@ export class LinePickingMaterial extends THREE.ShaderMaterial implements CameraA
       blending: THREE.NoBlending,
       toneMapped: false,
       side: THREE.DoubleSide,
+      // Picking is opaque so the transparent-and-DoubleSide two-pass
+      // guard never trips, but setting `forceSinglePass` explicitly
+      // matches the visual material and documents intent.
+      forceSinglePass: true,
     });
   }
 

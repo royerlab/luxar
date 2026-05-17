@@ -76,6 +76,13 @@ export class LineTSLMaterial
     this.defines = materialConfig.colormapTexture ? { USE_COLORMAP: '' } : {};
     this.toneMapped = false;
     this.side = THREE.DoubleSide;
+    // Line quads are screen-space billboards, not physically two-sided
+    // surfaces. The renderer's two-pass guard
+    // (`renderers/common/Renderer.js:3452`) trips only when
+    // `transparent && side===DoubleSide && forceSinglePass===false`,
+    // so forcing single-pass skips a redundant back-face render pass
+    // per line layer.
+    this.forceSinglePass = true;
 
     this.userData.gamma = gammaValue;
     this.userData.depthTest = materialConfig.depthTest ?? true;
