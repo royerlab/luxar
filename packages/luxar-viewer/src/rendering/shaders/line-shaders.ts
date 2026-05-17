@@ -332,9 +332,16 @@ export const LINE_FRAGMENT_SHADER = /* glsl */ `
       // Apply cap factor for correct joint intensity
       float intensity = capFactor * perpFalloff * edgeAA * widthScale * vWidthFade;
 
-      // Per-node GOG (Gain-Offset-Gamma) color adjustment
+      // Per-node GOG (Gain-Offset-Gamma) color adjustment. When the
+      // wrapper knows intensity==1 && offset==0 (the default), the
+      // mul/add/clamp chain is identity for the common non-negative
+      // vColor range; the wrapper stamps LUXAR_NO_GOG to skip it.
+      #ifdef LUXAR_NO_GOG
+      vec3 adjusted = vColor;
+      #else
       vec3 adjusted = vColor * uIntensity + uOffset;
       adjusted = max(adjusted, vec3(0.0));
+      #endif
 
       // Early discard for zero-contribution fragments after offset
       if (max(adjusted.r, max(adjusted.g, adjusted.b)) < 1e-4) discard;

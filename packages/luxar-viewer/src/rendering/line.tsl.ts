@@ -75,6 +75,14 @@ export interface LineTSLConfig {
    * calls in the default-gamma case (the common case).
    */
   readonly gammaOne?: boolean;
+  /**
+   * Fast path: skip the `vColor * uIntensity + uOffset` GOG chain
+   * (and its `max(..., vec3(0))` clamp) when the wrapper knows
+   * intensity == 1 && offset == 0 — the default and most common
+   * configuration. Saves 1 vec3 multiply, 1 vec3 add, and 1 vec3
+   * max per fragment.
+   */
+  readonly noGOG?: boolean;
 }
 
 /**
@@ -355,8 +363,11 @@ export function lineWebGPUFactory(
       .mul(widthScale)
       .mul(vWidthFade);
 
-    // GOG.
-    const adjusted: TSLNode = max(vColor.mul(uIntensity).add(uOffset), vec3(0.0));
+    // GOG. Fast path: when the wrapper knows intensity==1 && offset==0,
+    // the mul/add/clamp chain is identity for non-negative vColor.
+    const adjusted: TSLNode = config.noGOG
+      ? vColor
+      : max(vColor.mul(uIntensity).add(uOffset), vec3(0.0));
     Discard(max(adjusted.r, max(adjusted.g, adjusted.b)).lessThan(1e-4));
     // Gamma fast path: when the wrapper knows gamma==1.0 the pow() is
     // identity. JS-level branch so the generated WGSL/GLSL omits the

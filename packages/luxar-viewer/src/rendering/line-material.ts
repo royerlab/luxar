@@ -40,7 +40,16 @@ import {
 function isGammaOne(gamma: number): boolean {
   return Math.abs(gamma - 1.0) < 1e-4;
 }
-export { isGammaOne };
+
+/**
+ * Intensity == 1 && offset == 0 (with ±1e-4 epsilon) lets the
+ * fragment shader skip the GOG `vColor * uIntensity + uOffset` chain
+ * and its `max(..., vec3(0))` clamp.
+ */
+function isNoGOG(intensity: number, offset: number): boolean {
+  return Math.abs(intensity - 1.0) < 1e-4 && Math.abs(offset) < 1e-4;
+}
+export { isGammaOne, isNoGOG };
 
 /**
  * Configuration for line material creation
@@ -160,6 +169,9 @@ export class LineMaterial
       defines: {
         ...(materialConfig.colormapTexture ? { USE_COLORMAP: '' } : {}),
         ...(isGammaOne(gammaValue) ? { LUXAR_GAMMA_ONE: '' } : {}),
+        ...(isNoGOG(materialConfig.intensity ?? 1.0, materialConfig.offset ?? 0.0)
+          ? { LUXAR_NO_GOG: '' }
+          : {}),
       },
 
       // GLSL ES 3.0 for consistency with other materials
@@ -270,10 +282,35 @@ export class LineMaterial
   }
 
   /**
+   * Toggle the `LUXAR_NO_GOG` define based on the live uniform values
+   * for intensity + offset. Called by both `updateIntensity` and
+   * `updateOffset` because the flag depends on both values jointly.
+   * Returns true if the define changed (caller may need a rebuild).
+   */
+  private _refreshNoGOGDefine(): boolean {
+    if (!this.defines) this.defines = {};
+    const wantNoGOG = isNoGOG(
+      this.uniforms.uIntensity.value as number,
+      this.uniforms.uOffset.value as number
+    );
+    const hadNoGOG = 'LUXAR_NO_GOG' in this.defines;
+    if (wantNoGOG && !hadNoGOG) {
+      this.defines.LUXAR_NO_GOG = '';
+      return true;
+    }
+    if (!wantNoGOG && hadNoGOG) {
+      delete this.defines.LUXAR_NO_GOG;
+      return true;
+    }
+    return false;
+  }
+
+  /**
    * Update intensity (linear color multiplier)
    */
   updateIntensity(intensity: number): void {
     this.uniforms.uIntensity.value = intensity;
+    if (this._refreshNoGOGDefine()) this.needsUpdate = true;
   }
 
   /**
@@ -281,6 +318,7 @@ export class LineMaterial
    */
   updateOffset(offset: number): void {
     this.uniforms.uOffset.value = offset;
+    if (this._refreshNoGOGDefine()) this.needsUpdate = true;
   }
 
   /**
