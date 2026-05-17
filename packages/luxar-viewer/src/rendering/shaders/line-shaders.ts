@@ -98,7 +98,6 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
       vClippedEnd = aEndClipped;
 
       // Interpolate attributes along segment
-      vec3 worldPos = mix(aStartPos, aEndPos, t);
       #ifdef USE_COLORMAP
       float s = mix(aStartScalar, aEndScalar, t);
       float st = clamp((s - uScalarMin) * uScalarScale, 0.0, 1.0);
