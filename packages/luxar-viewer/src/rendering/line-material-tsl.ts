@@ -396,12 +396,22 @@ export class LineTSLMaterial
     (cloned.uniforms.uResolution.value as THREE.Vector2).copy(
       this.uniforms.uResolution.value as THREE.Vector2
     );
+    // `uIsOrtho` is a graph-specialized config — the constructor's
+    // `rebuildGraph` ran against the default value 0 (perspective).
+    // If the source material is ortho, copy the uniform AND rebuild
+    // the clone's graph so the ortho variant compiles in; otherwise
+    // the clone would carry `uIsOrtho.value=1` against a perspective
+    // graph (wrong projection at draw time).
+    const sourceIsOrtho = (this.uniforms.uIsOrtho.value as number) === 1;
     cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
     cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
     cloned.uniforms.uMaxLinePixelWidth.value = this.uniforms.uMaxLinePixelWidth.value;
     cloned.uniforms.uPerspectiveLineScale.value = this.uniforms.uPerspectiveLineScale.value;
     cloned.uniforms.uOrthoLineScale.value = this.uniforms.uOrthoLineScale.value;
     cloned.uniforms.uInvGamma.value = this.uniforms.uInvGamma.value;
+    if (sourceIsOrtho) {
+      cloned.rebuildGraph();
+    }
 
     return cloned as this;
   }

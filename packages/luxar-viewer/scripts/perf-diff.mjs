@@ -79,7 +79,13 @@ for (const k of sortedKeys) {
   const ref = n ?? b;
   if (!ref) continue;
 
-  const api = n?.actualApi ?? b?.actualApi ?? '?';
+  // Surface the physical-backend flag alongside `apiSurface`. A
+  // WebGPURenderer run that fell back to its internal WebGL2 backend
+  // would otherwise look like a clean "webgpu" row, masking the
+  // distinction the perf-bench JSON deliberately captures.
+  const apiSurface = n?.actualApi ?? b?.actualApi ?? '?';
+  const isWebGLBackend = n?.isWebGLBackend ?? b?.isWebGLBackend ?? false;
+  const api = isWebGLBackend ? `${apiSurface} (webgl-bk)` : apiSurface;
   const segs = n?.visibleSegments ?? b?.visibleSegments ?? 0;
 
   if (n?.skipped && b?.skipped) {
