@@ -42,15 +42,20 @@ class TestFullEncodingRoundtrip:
         np.testing.assert_array_equal(decoded, data)
 
     def test_sdr_color_roundtrip(self, tmp_path) -> None:
-        """SDR colors [0,1] float32 quantized to uint8 should be within 2/255."""
+        """SDR colours [0,1] float32 narrow to float16 on disk, no widen on read.
+
+        Phase-3 bumped the SDR default from Uint8 (4e-3 ULP) to Float16
+        (~5e-4 ULP at colour-range magnitudes). Decoder keeps the
+        stored float16 dtype rather than widening to float32.
+        """
         np.random.seed(1)
         data = np.random.rand(200, 3).astype(np.float32)
 
         decoded = self._roundtrip(tmp_path, data, SemanticType.COLOR, color_mode="sdr")
 
         assert decoded.shape == data.shape
-        assert decoded.dtype == np.float32
-        np.testing.assert_allclose(decoded, data, atol=2.0 / 255)
+        assert decoded.dtype == np.float16
+        np.testing.assert_allclose(decoded, data, atol=1e-3)
 
     def test_hdr_color_roundtrip(self, tmp_path) -> None:
         """HDR colors [0,10] float32 should be preserved with rtol=1e-2."""

@@ -263,7 +263,14 @@ class TestColorEncoding:
     """Test COLOR semantic type encoding."""
 
     def test_color_sdr_auto_mode(self):
-        """Test SDR colors quantized to uint8 in AUTO mode."""
+        """SDR colours default to float16 in AUTO mode.
+
+        Bumped from uint8 in phase-3 attribute packing — 8-bit is too
+        coarse for HDR-adjacent rendering and banding is visible on
+        smooth colormap gradients. Float16's 11-bit mantissa is the
+        new floor across all three geometry types (Points / Lines /
+        GSplats).
+        """
         data = np.random.rand(1000, 3).astype(np.float32)
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -272,9 +279,9 @@ class TestColorEncoding:
             encoder.encode(data, group, "test", SemanticType.COLOR, color_mode="sdr")
 
             arr = group["test"]
-            assert arr.dtype == np.uint8
+            assert arr.dtype == np.float16
             enc = arr.attrs["encoding"]
-            assert enc["name"] == "rgb_uint8"
+            assert enc["name"] == "float16"
 
     def test_color_hdr_auto_mode(self):
         """Test HDR colors use float32 in AUTO mode."""

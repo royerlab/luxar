@@ -807,35 +807,47 @@ class ArrayEncoder:
             compressor: Optional compressor
         """
         original_dtype = str(data.dtype)
-        # Determine target dtype based on mode and color_mode
+        # Determine target dtype based on mode and color_mode.
+        #
+        # Defaults table (phase-3 attribute-packing pass):
+        #
+        #   mode \\ color_mode  |  sdr      |  hdr
+        #   PRECISION           |  float32  |  float32
+        #   AUTO  (default)     |  float16  |  float32
+        #   MEMORY              |  float16  |  float16
+        #
+        # Float16 is now the floor for COLOR. 8-bit colour quantization
+        # (the previous SDR default) is too coarse for HDR-adjacent
+        # rendering — banding is visible on smooth colormap gradients.
+        # `float16_allowed` is no longer consulted for COLOR; the gate
+        # remains in place for other semantic types (CHOLESKY) until
+        # their narrowing commit lands.
         if np.issubdtype(data.dtype, np.integer):
-            # Integer input: already quantized, keep as-is
+            # Integer input: already quantized on disk, keep as-is. New
+            # data should generally arrive as float (and be narrowed
+            # here), but pre-quantized Uint8/Uint16 inputs are still
+            # valid — the viewer handles widening at GPU upload.
             encoded_data = data
             encoder_name = str(data.dtype)
         elif color_mode == "hdr":
-            # HDR colors: use float
-            if mode == EncodingMode.PRECISION or mode == EncodingMode.AUTO:
-                encoded_data = data.astype(np.float32)
-                encoder_name = "float32"
-            elif mode == EncodingMode.MEMORY:
-                # Check if float16 is allowed, fallback to float32 if not
-                if self._float16_allowed:
-                    encoded_data = data.astype(np.float16)
-                    encoder_name = "float16"
-                else:
-                    encoded_data = data.astype(np.float32)
-                    encoder_name = "float32"
-            else:
-                raise ValueError("HDR colors require float dtype")
-        elif color_mode == "sdr":
-            # SDR colors: can quantize
             if mode == EncodingMode.PRECISION:
                 encoded_data = data.astype(np.float32)
                 encoder_name = "float32"
-            elif mode == EncodingMode.MEMORY or mode == EncodingMode.AUTO:
-                # Quantize to uint8: [0, 1] → [0, 255]
-                encoded_data = np.clip(data * 255.0, 0, 255).astype(np.uint8)
-                encoder_name = "rgb_uint8"
+            elif mode == EncodingMode.AUTO:
+                encoded_data = data.astype(np.float32)
+                encoder_name = "float32"
+            elif mode == EncodingMode.MEMORY:
+                encoded_data = data.astype(np.float16)
+                encoder_name = "float16"
+            else:
+                raise ValueError("HDR colors require float dtype")
+        elif color_mode == "sdr":
+            if mode == EncodingMode.PRECISION:
+                encoded_data = data.astype(np.float32)
+                encoder_name = "float32"
+            elif mode == EncodingMode.AUTO or mode == EncodingMode.MEMORY:
+                encoded_data = data.astype(np.float16)
+                encoder_name = "float16"
             else:
                 raise ValueError(f"Unexpected mode for SDR COLOR: {mode}")
         else:
