@@ -38,7 +38,7 @@ import {
 } from '../../../rendering/picking/point-pick.tsl';
 import { createPointQuadGeometry } from '../../../rendering/point-geometry';
 import { LINE_SOURCE } from '../../../rendering/shaders/line-shaders';
-import { lineWebGPUFactory } from '../../../rendering/line.tsl';
+import { lineWebGPUFactory, buildLineTSLNodesFromUniforms } from '../../../rendering/line.tsl';
 import { LINE_PICK_SOURCE } from '../../../rendering/picking/picking-shaders';
 import {
   linePickWebGPUFactory,
@@ -435,7 +435,10 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
       uOffset: { value: 0.0 },
     }),
     buildTSLMaterial: (uniforms) => {
-      const m = lineWebGPUFactory(uniforms, {}) as unknown as THREE.Material;
+      const m = lineWebGPUFactory(
+        buildLineTSLNodesFromUniforms(uniforms, {}),
+        {}
+      ) as unknown as THREE.Material;
       m.transparent = false;
       m.blending = THREE.NoBlending;
       return m;

@@ -72,16 +72,47 @@ export interface LineTSLConfig {
 }
 
 /**
+ * Pre-created TSL leaf nodes supplied by a wrapper class. Same
+ * pattern as `LinePickTSLNodes` / `PointPickTSLNodes`: consumers
+ * own the `UniformNode`s and the factory references them directly,
+ * which avoids the `.onUpdate('render')` callback bridge that the
+ * old uniform-record-based path used. Mutations on the wrapper's
+ * `material.uniforms.X.value` (proxied via `proxyIUniform`) land
+ * directly on `node.value`.
+ *
+ * Colormap nodes are optional and bound only when the consumer is
+ * built with `config.useColormap === true`. The factory throws if
+ * the config says yes but the colormap nodes are missing.
+ */
+export interface LineTSLNodes {
+  readonly uResolution: TSLNode;
+  readonly uIsOrtho: TSLNode;
+  readonly uNearCull: TSLNode;
+  readonly uMaxLinePixelWidth: TSLNode;
+  readonly uPerspectiveLineScale: TSLNode;
+  readonly uOrthoLineScale: TSLNode;
+  readonly uOpacity: TSLNode;
+  readonly uInvGamma: TSLNode;
+  readonly uIntensity: TSLNode;
+  readonly uOffset: TSLNode;
+  /** Set only when colormap mode is active. */
+  readonly uColormapTex?: TSLNode;
+  readonly uScalarMin?: TSLNode;
+  readonly uScalarScale?: TSLNode;
+}
+
+/**
  * Line-material TSL factory.
  *
- * The `uniforms` table must include the full set the GLSL3 shader
- * reads: `uFOV`, `uResolution`, `uIsOrtho`, `uNearCull`,
- * `uMaxLinePixelWidth`, `uOpacity`, `uInvGamma`, `uIntensity`,
- * `uOffset`. Colormap uniforms (`uColormapTex`, `uScalarMin`,
- * `uScalarScale`) are required only when `config.useColormap === true`.
+ * Consumes pre-created `UniformNode` references via `nodes`; the
+ * wrapper class (`LineTSLMaterial`) owns those nodes and exposes
+ * them through `material.uniforms` as `IUniform`-shaped
+ * getter/setter proxies. The harness / `LINE_SOURCE` ShaderSource
+ * registry constructs the nodes from a plain `uniforms` record via
+ * {@link buildLineTSLNodesFromUniforms}.
  */
 export function lineWebGPUFactory(
-  uniforms: Record<string, THREE.IUniform>,
+  nodes: LineTSLNodes,
   config: LineTSLConfig = {},
   outMaterial?: NodeMaterial
 ): NodeMaterial {
@@ -107,70 +138,33 @@ export function lineWebGPUFactory(
     ? attribute<'float'>('aEndScalar', 'float')
     : null;
 
-  // Uniforms — each primitive bound via `.onUpdate(() => iuniform.value)`
-  // so a wrapper class's mutations to `this.uniforms.X.value`
-  // propagate to the GPU. Vector2 / Texture uniforms share the same
-  // host object by reference, so they don't need onUpdate.
-  // uFOV is no longer read by the TSL graph — the CPU precomputes the
-  // pixel-width scales (uPerspectiveLineScale / uOrthoLineScale) once
-  // per camera change. The wrapper class still owns `uniforms.uFOV`
-  // for downstream consumers (clone(), legacy reads).
-  const uResolution = uniform(
-    (uniforms.uResolution.value as THREE.Vector2) ?? new THREE.Vector2(1, 1)
-  );
-  const uIsOrtho = uniform((uniforms.uIsOrtho.value as number) ?? 0).onUpdate(
-    () => (uniforms.uIsOrtho.value as number) ?? 0,
-    'render'
-  );
-  const uNearCull = uniform((uniforms.uNearCull.value as number) ?? 1e-4).onUpdate(
-    () => (uniforms.uNearCull.value as number) ?? 1e-4,
-    'render'
-  );
-  const uMaxLinePixelWidth = uniform(
-    (uniforms.uMaxLinePixelWidth.value as number) ?? 1.0
-  ).onUpdate(() => (uniforms.uMaxLinePixelWidth.value as number) ?? 1.0, 'render');
-  // CPU-precomputed pixel-width scales — replaces per-vertex tan() +
-  // divide. Wrapper updates these in updateCameraParams.
-  const uPerspectiveLineScale = uniform(
-    (uniforms.uPerspectiveLineScale.value as number) ?? 1.0
-  ).onUpdate(() => (uniforms.uPerspectiveLineScale.value as number) ?? 1.0, 'render');
-  const uOrthoLineScale = uniform(
-    (uniforms.uOrthoLineScale.value as number) ?? 1.0
-  ).onUpdate(() => (uniforms.uOrthoLineScale.value as number) ?? 1.0, 'render');
-  const uOpacity = uniform((uniforms.uOpacity.value as number) ?? 1.0).onUpdate(
-    () => (uniforms.uOpacity.value as number) ?? 1.0,
-    'render'
-  );
-  const uInvGamma = uniform((uniforms.uInvGamma.value as number) ?? 1.0).onUpdate(
-    () => (uniforms.uInvGamma.value as number) ?? 1.0,
-    'render'
-  );
-  const uIntensity = uniform((uniforms.uIntensity.value as number) ?? 1.0).onUpdate(
-    () => (uniforms.uIntensity.value as number) ?? 1.0,
-    'render'
-  );
-  const uOffset = uniform((uniforms.uOffset.value as number) ?? 0.0).onUpdate(
-    () => (uniforms.uOffset.value as number) ?? 0.0,
-    'render'
-  );
-  const uColormapTex =
-    config.useColormap && uniforms.uColormapTex
-      ? texture((uniforms.uColormapTex.value as THREE.Texture | null) ?? new THREE.Texture())
-      : null;
-  const uScalarMin =
-    config.useColormap && uniforms.uScalarMin
-      ? uniform((uniforms.uScalarMin.value as number) ?? 0.0).onUpdate(
-          () => (uniforms.uScalarMin?.value as number) ?? 0.0,
-          'render'
-        )
-      : null;
-  const uScalarScale =
-    config.useColormap && uniforms.uScalarScale
-      ? uniform((uniforms.uScalarScale.value as number) ?? 1.0).onUpdate(
-          () => (uniforms.uScalarScale?.value as number) ?? 1.0,
-          'render'
-        )
-      : null;
+  // Bind directly to the persistent `UniformNode`s owned by the
+  // wrapper class (or by `buildLineTSLNodesFromUniforms` for the
+  // harness path). Mutations on `material.uniforms.X.value` go via
+  // `proxyIUniform` straight to `node.value` — no per-render
+  // `.onUpdate` callbacks needed.
+  // uFOV is intentionally absent: the TSL graph reads the CPU-precomputed
+  // `uPerspectiveLineScale` / `uOrthoLineScale` instead.
+  const uResolution = nodes.uResolution;
+  const uIsOrtho = nodes.uIsOrtho;
+  const uNearCull = nodes.uNearCull;
+  const uMaxLinePixelWidth = nodes.uMaxLinePixelWidth;
+  const uPerspectiveLineScale = nodes.uPerspectiveLineScale;
+  const uOrthoLineScale = nodes.uOrthoLineScale;
+  const uOpacity = nodes.uOpacity;
+  const uInvGamma = nodes.uInvGamma;
+  const uIntensity = nodes.uIntensity;
+  const uOffset = nodes.uOffset;
+  if (config.useColormap) {
+    if (!nodes.uColormapTex || !nodes.uScalarMin || !nodes.uScalarScale) {
+      throw new Error(
+        'lineWebGPUFactory: config.useColormap=true but nodes.uColormapTex / uScalarMin / uScalarScale are not bound.'
+      );
+    }
+  }
+  const uColormapTex = config.useColormap ? nodes.uColormapTex! : null;
+  const uScalarMin = config.useColormap ? nodes.uScalarMin! : null;
+  const uScalarScale = config.useColormap ? nodes.uScalarScale! : null;
 
   // RGB premultiplication is driven by the blending mode: `max` mode
   // routes through CustomBlending + MaxEquation which needs RGB to
@@ -190,8 +184,8 @@ export function lineWebGPUFactory(
   // Per-endpoint colour or LUT lookup.
   let perPointColor: TSLNode;
   if (config.useColormap && aStartScalar && aEndScalar && uColormapTex && uScalarMin && uScalarScale) {
-    const s = mix(aStartScalar, aEndScalar, t);
-    const st = clamp(s.sub(uScalarMin).mul(uScalarScale), 0.0, 1.0);
+    const s: TSLNode = mix(aStartScalar, aEndScalar, t);
+    const st: TSLNode = clamp(s.sub(uScalarMin).mul(uScalarScale), 0.0, 1.0);
     perPointColor = uColormapTex.sample(vec2(st, 0.5)).rgb;
   } else {
     perPointColor = mix(aStartColor, aEndColor, t);
@@ -370,8 +364,52 @@ export function lineWebGPUFactory(
   material.toneMapped = false;
 
   const blendingMode: BlendingMode = config.blendingMode ?? 'additive';
-  const opacityValue = (uniforms.uOpacity?.value as number | undefined) ?? 1.0;
+  const opacityValue = (nodes.uOpacity.value as number | undefined) ?? 1.0;
   const blendingState = getCompleteBlendingState(blendingMode, opacityValue);
   applyBlendingStateToMaterial(material, blendingState);
   return material;
+}
+
+/**
+ * Build a `LineTSLNodes` set from a plain `IUniform` record. Used by
+ * the test harness and the `LINE_SOURCE` ShaderSource factory in
+ * `shaders/line-shaders.ts` — callers that don't own persistent
+ * wrapper-side `UniformNode`s. Mirrors
+ * `buildLinePickTSLNodesFromUniforms`.
+ *
+ * Note: the resulting nodes capture the current `iuniform.value` at
+ * build time. Mutations to the host `IUniform`'s `.value` after this
+ * function returns will NOT propagate — appropriate for the harness
+ * (which builds once and renders once) but not for live wrappers
+ * (which must use `proxyIUniform` against persistent nodes).
+ */
+export function buildLineTSLNodesFromUniforms(
+  uniforms: Record<string, THREE.IUniform>,
+  config: LineTSLConfig = {}
+): LineTSLNodes {
+  const base: LineTSLNodes = {
+    uResolution: uniform(
+      (uniforms.uResolution?.value as THREE.Vector2 | undefined) ?? new THREE.Vector2(1, 1)
+    ),
+    uIsOrtho: uniform((uniforms.uIsOrtho?.value as number) ?? 0),
+    uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 1e-4),
+    uMaxLinePixelWidth: uniform((uniforms.uMaxLinePixelWidth?.value as number) ?? 1.0),
+    uPerspectiveLineScale: uniform(
+      (uniforms.uPerspectiveLineScale?.value as number) ?? 1.0
+    ),
+    uOrthoLineScale: uniform((uniforms.uOrthoLineScale?.value as number) ?? 1.0),
+    uOpacity: uniform((uniforms.uOpacity?.value as number) ?? 1.0),
+    uInvGamma: uniform((uniforms.uInvGamma?.value as number) ?? 1.0),
+    uIntensity: uniform((uniforms.uIntensity?.value as number) ?? 1.0),
+    uOffset: uniform((uniforms.uOffset?.value as number) ?? 0.0),
+  };
+  if (!config.useColormap) return base;
+  return {
+    ...base,
+    uColormapTex: texture(
+      (uniforms.uColormapTex?.value as THREE.Texture | null) ?? new THREE.Texture()
+    ),
+    uScalarMin: uniform((uniforms.uScalarMin?.value as number) ?? 0.0),
+    uScalarScale: uniform((uniforms.uScalarScale?.value as number) ?? 1.0),
+  };
 }
