@@ -141,8 +141,8 @@ export class LineTSLMaterial
   }
 
   updateColormapTexture(texture: THREE.DataTexture | null): void {
-    const oldTexture = (this.uniforms.uColormapTex?.value as THREE.Texture | null | undefined) ??
-      null;
+    const oldTexture =
+      (this.uniforms.uColormapTex?.value as THREE.Texture | null | undefined) ?? null;
     const { wasEnabled, nowEnabled } = applyColormapTextureToMaterial(this, texture);
     const textureChanged = oldTexture !== texture;
     if (wasEnabled !== nowEnabled || textureChanged) {
@@ -190,7 +190,8 @@ export class LineTSLMaterial
       gamma: this.userData.gamma ?? 1.0,
       intensity: this.uniforms.uIntensity.value,
       offset: this.uniforms.uOffset.value,
-      blendingMode: (this.userData.blendingMode as LineMaterialConfig['blendingMode']) ?? 'additive',
+      blendingMode:
+        (this.userData.blendingMode as LineMaterialConfig['blendingMode']) ?? 'additive',
       depthTest: this.userData.depthTest ?? true,
       transparent: this.transparent,
       colormapTexture: this.uniforms.uColormapTex?.value ?? undefined,

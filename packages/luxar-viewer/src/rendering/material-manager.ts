@@ -49,9 +49,7 @@ import { config } from '../config';
  * properties or with userspace `userData` keys, and so it's invisible
  * to enumeration / serialization.
  */
-export const SOFT_DISPOSE_FLAG = Symbol.for(
-  'luxar.invalidateRenderObject.softDispose'
-);
+export const SOFT_DISPOSE_FLAG = Symbol.for('luxar.invalidateRenderObject.softDispose');
 
 /**
  * Supported blending modes for materials.

@@ -217,8 +217,8 @@ export class PointTSLMaterial
    * reference at render time.
    */
   updateColormapTexture(texture: THREE.DataTexture | null): void {
-    const oldTexture = (this.uniforms.uColormapTex?.value as THREE.Texture | null | undefined) ??
-      null;
+    const oldTexture =
+      (this.uniforms.uColormapTex?.value as THREE.Texture | null | undefined) ?? null;
     const { wasEnabled, nowEnabled } = applyColormapTextureToMaterial(this, texture);
     const textureChanged = oldTexture !== texture;
     if (wasEnabled !== nowEnabled || textureChanged) {
