@@ -234,10 +234,9 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
       float wEnd = max(clipEnd.w, 1e-4);
       vec2 ndcStart = clipStart.xy / wStart;
       vec2 ndcEnd = clipEnd.xy / wEnd;
-      vec2 pixelStart = (ndcStart * 0.5 + 0.5) * uResolution;
-      vec2 pixelEnd = (ndcEnd * 0.5 + 0.5) * uResolution;
 
-      vec2 pixelDir = pixelEnd - pixelStart;
+      // The +0.5 in (ndc*0.5+0.5)*resolution cancels under subtraction.
+      vec2 pixelDir = (ndcEnd - ndcStart) * (0.5 * uResolution);
       float pixelLen = length(pixelDir);
       vec2 lineDir = pixelLen > 0.0001 ? pixelDir / pixelLen : vec2(1.0, 0.0);
       vec2 perpendicular = vec2(-lineDir.y, lineDir.x);
