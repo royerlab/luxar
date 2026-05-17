@@ -650,6 +650,33 @@ async function renderTSL(
   renderer.setSize(HARNESS_SIZE, HARNESS_SIZE);
   await renderer.init();
 
+  // Capture the generated GLSL / WGSL strings by patching the renderer's
+  // NodeManager. `_createNodeBuilderState(nodeBuilder)` is called by
+  // both the sync and async build paths and receives a builder whose
+  // `.vertexShader` / `.fragmentShader` strings are fully populated.
+  // We hook it once per renderer instance and restore right after.
+  // (See node_modules/three/src/renderers/common/nodes/NodeManager.js:469.)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const nodesInstance = (renderer as unknown as { _nodes: any })._nodes;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const origCreateState = nodesInstance._createNodeBuilderState.bind(nodesInstance);
+  // Ref object so TS doesn't narrow `value` to `null` through the
+  // closure mutation below.
+  const capturedRef: { value: { vertex: string; fragment: string } | null } = {
+    value: null,
+  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  nodesInstance._createNodeBuilderState = function (nodeBuilder: any) {
+    if (!capturedRef.value && nodeBuilder?.material === material) {
+      capturedRef.value = {
+        vertex: typeof nodeBuilder.vertexShader === 'string' ? nodeBuilder.vertexShader : '',
+        fragment:
+          typeof nodeBuilder.fragmentShader === 'string' ? nodeBuilder.fragmentShader : '',
+      };
+    }
+    return origCreateState(nodeBuilder);
+  };
+
   const target = new THREE.WebGLRenderTarget(HARNESS_SIZE, HARNESS_SIZE, {
     type: THREE.UnsignedByteType,
     format: THREE.RGBAFormat,
@@ -672,6 +699,10 @@ async function renderTSL(
   await renderer.renderAsync(scene, camera);
   renderer.setRenderTarget(null);
 
+  // Restore the original NodeManager method now that the capture
+  // window is over.
+  nodesInstance._createNodeBuilderState = origCreateState;
+
   const readback = await renderer.readRenderTargetPixelsAsync(
     target,
     0,
@@ -683,14 +714,8 @@ async function renderTSL(
   // the rest of the harness treats both paths uniformly.
   const pixels = new Uint8Array(readback.buffer.slice(0));
 
-  // Generated-GLSL recovery is deferred. The TSL backend stores
-  // compiled programs on the internal `_objects` ChainMap keyed off
-  // a tuple (object, material, renderContext, lightsNode) that we
-  // don't reconstruct from out here. The path through that map will
-  // land in a follow-up alongside the snapshot-diff assertion. For
-  // now the spec relies on pixel-parity only.
-  const vertexShader = '';
-  const fragmentShader = '';
+  const vertexShader = capturedRef.value?.vertex ?? '';
+  const fragmentShader = capturedRef.value?.fragment ?? '';
 
   target.dispose();
   if ('geometry' in mesh) (mesh as THREE.Mesh | THREE.Points).geometry.dispose();
