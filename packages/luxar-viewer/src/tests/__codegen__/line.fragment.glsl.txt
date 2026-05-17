@@ -1,0 +1,179 @@
+#version 300 es
+
+// Three.js r184 - Node System
+
+
+// extensions
+
+
+// precision
+
+precision highp float;
+precision highp int;
+precision highp sampler2D;
+precision highp sampler3D;
+precision highp samplerCube;
+precision highp sampler2DArray;
+
+precision highp usampler2D;
+precision highp usampler3D;
+precision highp usamplerCube;
+precision highp usampler2DArray;
+
+precision highp isampler2D;
+precision highp isampler3D;
+precision highp isamplerCube;
+precision highp isampler2DArray;
+
+precision highp sampler2DShadow;
+precision highp sampler2DArrayShadow;
+precision highp samplerCubeShadow;
+
+
+// structs
+
+layout( location = 0 ) out vec4 fragColor;
+
+
+
+// uniforms
+
+layout( std140 ) uniform object {
+	float nodeUniform0;
+	float nodeUniform1;
+	mat4 nodeUniform3;
+	float nodeUniform4;
+	vec2 nodeUniform6;
+	float nodeUniform7;
+	float nodeUniform8;
+	float nodeUniform9;
+	float nodeUniform10;
+	float nodeUniform11;
+	float nodeUniform12;
+	float nodeUniform13;
+	float nodeUniform14;
+	float nodeUniform15;
+	mat4 nodeUniform17;
+	float nodeUniform18;
+};
+
+layout( std140 ) uniform render {
+	mat4 cameraViewMatrix;
+	mat4 cameraProjectionMatrix;
+};
+
+
+// varyings
+in float nodeVarying0;
+in float nodeVarying1;
+flat  in float nodeVarying2;
+in float nodeVarying3;
+in vec3 nodeVarying4;
+flat  in float nodeVarying5;
+flat  in float nodeVarying6;
+in float nodeVarying7;
+in float nodeVarying8;
+in float nodeVarying9;
+in float nodeVarying10;
+in float nodeVarying11;
+in vec2 nodeVarying12;
+in vec3 nodeVarying13;
+in vec3 nodeVarying14;
+
+
+// vars
+vec4 DiffuseColor;
+float nodeVar19;
+float nodeVar20;
+float nodeVar21;
+float nodeVar22;
+vec3 nodeVar23;
+float nodeVar24;
+vec4 Output;
+vec4 nodeVar29;
+float nodeVar30;
+float nodeVar31;
+float nodeVar32;
+float nodeVar33;
+float nodeVar34;
+mat4 modelViewMatrix;
+float nodeVar35;
+float nodeVar36;
+
+// codes
+
+
+void main() {
+
+	// flow
+	// code
+
+	nodeVar19 = abs( nodeVarying0 );
+
+	if ( ( nodeVar19 >= 1.0 ) ) {
+
+		discard;
+		
+
+	}
+
+	nodeVar20 = ( nodeVarying1 * nodeVarying2 );
+	nodeVar21 = ( ( 1.0 - nodeVarying1 ) * nodeVarying2 );
+	nodeVar22 = clamp( ( min( nodeVar20, nodeVar21 ) / nodeVarying3 ), 0.0, 1.0 );
+	nodeVar23 = max( ( ( nodeVarying4 * vec3( nodeUniform9 ) ) + vec3( nodeUniform10 ) ), vec3( 0.0, 0.0, 0.0 ) );
+
+	if ( ( max( nodeVar23.x, max( nodeVar23.y, nodeVar23.z ) ) < 0.0001 ) ) {
+
+		discard;
+		
+
+	}
+
+
+	if ( ( nodeVarying3 > 0.0001 ) ) {
+
+		nodeVar24 = nodeVar22;
+
+	} else {
+
+		nodeVar24 = 1.0;
+
+	}
+
+	DiffuseColor = vec4( pow( nodeVar23, vec3( nodeUniform11 ) ), ( ( ( ( ( mix( ( 0.5 + ( nodeVar24 * 0.5 ) ), 1.0, mix( nodeVarying5, nodeVarying6, step( nodeVar20, nodeVar21 ) ) ) * pow( max( ( 1.0 - ( nodeVar19 * nodeVar19 ) ), 0.0 ), max( nodeVarying7, 0.0001 ) ) ) * ( 1.0 - smoothstep( ( 1.0 - ( 1.0 / max( nodeVarying8, 1.5 ) ) ), 1.0, nodeVar19 ) ) ) * min( ( nodeVarying8 / 1.5 ), 1.0 ) ) * nodeVarying9 ) * nodeUniform12 ) );
+	DiffuseColor.w = ( DiffuseColor.w * nodeUniform13 );
+	nodeVar29 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
+	Output = nodeVar29;
+
+	if ( ( ( ( nodeVarying10 < 1e30 ) && ( nodeVarying10 > -1e30 ) ) && ( nodeVarying10 >= 0.0 ) ) ) {
+
+		nodeVar30 = nodeVarying10;
+
+	} else {
+
+		nodeVar30 = 0.0;
+
+	}
+
+
+	if ( ( ( ( nodeVarying11 < 1e30 ) && ( nodeVarying11 > -1e30 ) ) && ( nodeVarying11 >= 0.0 ) ) ) {
+
+		nodeVar31 = nodeVarying11;
+
+	} else {
+
+		nodeVar31 = 0.0;
+
+	}
+
+	nodeVar32 = ( ( nodeVarying12.x * 0.5 ) + 0.5 );
+	nodeVar33 = mix( nodeVar30, nodeVar31, nodeVar32 );
+	nodeVar34 = ( nodeVar33 * nodeUniform14 );
+	modelViewMatrix = ( cameraViewMatrix * nodeUniform17 );
+	nodeVar35 = max( nodeUniform18, 0.0001 );
+	nodeVar36 = ( ( nodeVar33 * nodeUniform15 ) / max( length( mix( ( modelViewMatrix * vec4( nodeVarying13, 1.0 ) ), ( modelViewMatrix * vec4( nodeVarying14, 1.0 ) ), nodeVar32 ).xyz ), nodeVar35 ) );
+
+	// result
+	fragColor = nodeVar29;
+
+}
