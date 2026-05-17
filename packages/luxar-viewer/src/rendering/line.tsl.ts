@@ -32,6 +32,7 @@
 import * as THREE from 'three';
 import {
   Fn,
+  If,
   uniform,
   attribute,
   varying,
@@ -308,17 +309,20 @@ export function lineWebGPUFactory(
     clipPosBase.w
   );
 
-  // Discard culled / pathological segments by routing to off-screen.
-  // vec4(2, 2, 2, 1) is outside NDC clip cube — rasterizer produces
-  // no fragments.
-  // Discard culled / pathological segments by routing to off-screen.
-  // vec4(2, 2, 2, 1) is outside NDC clip cube — rasterizer produces
-  // no fragments. Branches wrapped in `.toVar()` for the same reason
-  // as rawPixelWidth above: TSL's select() needs materialised values
-  // on each side to dispatch correctly.
-  const offscreen: TSLNode = vec4(2.0, 2.0, 2.0, 1.0);
+  // Route culled / pathological segments to off-screen via real
+  // TSL control flow. `If(predicate, () => { ... })` emits actual
+  // `if` blocks in the generated WGSL/GLSL so only one branch runs
+  // per vertex — unlike `select(...)` which evaluates both. Default
+  // value `vec4(2,2,2,1)` is outside the clip cube; the rasterizer
+  // drops the segment when the not-culled branch doesn't fire.
   const culled: TSLNode = bothBehind.or(pathological);
-  const clipPos: TSLNode = culled.select(offscreen.toVar(), expandedClip.toVar());
+  const clipPos: TSLNode = Fn(() => {
+    const out = vec4(2.0, 2.0, 2.0, 1.0).toVar('clipPos');
+    If(culled.not(), () => {
+      out.assign(expandedClip);
+    });
+    return out;
+  })();
 
   // Varyings to the fragment stage. Per-segment-constant values use
   // `flat` interpolation so the rasterizer skips the perspective

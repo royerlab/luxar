@@ -63,12 +63,12 @@ out float nodeVarying9;
 
 
 // attributes
-layout( location = 0 ) in vec3 aStartPos;
-layout( location = 1 ) in vec3 aEndPos;
+layout( location = 0 ) in vec3 aEndPos;
+layout( location = 1 ) in vec3 aStartPos;
 layout( location = 2 ) in vec2 aQuadCorner;
-layout( location = 3 ) in float aStartWidth;
-layout( location = 4 ) in float aEndWidth;
-layout( location = 5 ) in float aSegmentLength;
+layout( location = 3 ) in float aSegmentLength;
+layout( location = 4 ) in float aStartWidth;
+layout( location = 5 ) in float aEndWidth;
 layout( location = 6 ) in vec3 aStartColor;
 layout( location = 7 ) in vec3 aEndColor;
 layout( location = 8 ) in float aEndClipped;
@@ -78,32 +78,31 @@ layout( location = 11 ) in float aEndSharpness;
 
 
 // vars
-vec4 nodeVar0;
 mat4 modelViewMatrix;
+vec4 nodeVar0;
 vec4 nodeVar1;
 vec4 nodeVar2;
 vec4 nodeVar3;
-vec4 nodeVar4;
-float nodeVar5;
-vec4 nodeVar6;
-vec2 nodeVar7;
-float nodeVar8;
-vec2 nodeVar9;
+vec2 nodeVar4;
+float nodeVar6;
+float nodeVar9;
 float nodeVar10;
 float nodeVar11;
-float nodeVar12;
-float nodeVar13;
-float nodeVar14;
-vec4 nodeVar15;
-vec3 nodeVar20;
+vec3 nodeVar13;
+float nodeVar15;
+float nodeVar16;
+float nodeVar17;
+float nodeVar18;
+float nodeVar19;
+float nodeVar20;
+vec4 clipPos;
 float nodeVar22;
 float nodeVar23;
 float nodeVar24;
-float nodeVar25;
+vec4 nodeVar25;
+vec4 nodeVar26;
 vec4 nodeVar27;
-float nodeVar28;
-float nodeVar29;
-float nodeVar30;
+vec2 nodeVar28;
 
 // codes
 
@@ -116,31 +115,31 @@ void main() {
 	// flow
 	// code
 
-	nodeVar0 = vec4( 2.0, 2.0, 2.0, 1.0 );
 	modelViewMatrix = ( cameraViewMatrix * nodeUniform2 );
-	nodeVar1 = ( modelViewMatrix * vec4( aStartPos, 1.0 ) );
-	nodeVar2 = ( cameraProjectionMatrix * nodeVar1 );
-	nodeVar3 = ( modelViewMatrix * vec4( aEndPos, 1.0 ) );
-	nodeVar4 = ( cameraProjectionMatrix * nodeVar3 );
-	nodeVar5 = ( ( aQuadCorner.x * 0.5 ) + 0.5 );
-	nodeVar6 = mix( nodeVar2, nodeVar4, nodeVar5 );
-	nodeVar8 = length( ( ( ( nodeVar4.xy / vec2( max( nodeVar4.w, 0.0001 ) ) ) - ( nodeVar2.xy / vec2( max( nodeVar2.w, 0.0001 ) ) ) ) * ( nodeUniform3 * vec2( 0.5 ) ) ) );
+	nodeVar0 = ( modelViewMatrix * vec4( aEndPos, 1.0 ) );
+	nodeVar1 = ( cameraProjectionMatrix * nodeVar0 );
+	nodeVar2 = ( modelViewMatrix * vec4( aStartPos, 1.0 ) );
+	nodeVar3 = ( cameraProjectionMatrix * nodeVar2 );
+	nodeVar4 = ( ( ( ( nodeVar1.xy / vec2( max( nodeVar1.w, 0.0001 ) ) ) - ( nodeVar3.xy / vec2( max( nodeVar3.w, 0.0001 ) ) ) ) * ( nodeUniform3 * vec2( 0.5 ) ) ) / vec2( length( ( ( ( nodeVar1.xy / vec2( max( nodeVar1.w, 0.0001 ) ) ) - ( nodeVar3.xy / vec2( max( nodeVar3.w, 0.0001 ) ) ) ) * ( nodeUniform3 * vec2( 0.5 ) ) ) ) ) );
+	nodeVarying0 = aQuadCorner.y;
+	nodeVar6 = ( ( aQuadCorner.x * 0.5 ) + 0.5 );
+	nodeVarying1 = nodeVar6;
+	nodeVarying2 = aSegmentLength;
 
-	if ( ( nodeVar8 > 0.0001 ) ) {
+	if ( ( ( ( aStartWidth < 1e30 ) && ( aStartWidth > -1e30 ) ) && ( aStartWidth >= 0.0 ) ) ) {
 
-		nodeVar9 = ( ( ( ( nodeVar4.xy / vec2( max( nodeVar4.w, 0.0001 ) ) ) - ( nodeVar2.xy / vec2( max( nodeVar2.w, 0.0001 ) ) ) ) * ( nodeUniform3 * vec2( 0.5 ) ) ) / vec2( nodeVar8 ) );
-		nodeVar7 = nodeVar9;
+		nodeVar9 = aStartWidth;
 
 	} else {
 
-		nodeVar7 = vec2( 1.0, 0.0 );
+		nodeVar9 = 0.0;
 
 	}
 
 
-	if ( ( ( ( aStartWidth < 1e30 ) && ( aStartWidth > -1e30 ) ) && ( aStartWidth >= 0.0 ) ) ) {
+	if ( ( ( ( aEndWidth < 1e30 ) && ( aEndWidth > -1e30 ) ) && ( aEndWidth >= 0.0 ) ) ) {
 
-		nodeVar10 = aStartWidth;
+		nodeVar10 = aEndWidth;
 
 	} else {
 
@@ -148,83 +147,80 @@ void main() {
 
 	}
 
-
-	if ( ( ( ( aEndWidth < 1e30 ) && ( aEndWidth > -1e30 ) ) && ( aEndWidth >= 0.0 ) ) ) {
-
-		nodeVar11 = aEndWidth;
-
-	} else {
-
-		nodeVar11 = 0.0;
-
-	}
-
-	nodeVar12 = mix( nodeVar10, nodeVar11, nodeVar5 );
-	nodeVar13 = ( nodeVar12 * nodeUniform4 );
-	nodeVar14 = max( nodeUniform5, ( 1.5 + 1.0 ) );
-	nodeVar15 = vec4( ( nodeVar6.xy + ( ( ( ( ( vec2( ( - nodeVar7.y ), nodeVar7.x ) * vec2( aQuadCorner.y ) ) * vec2( clamp( nodeVar13, 1.5, nodeVar14 ) ) ) / nodeUniform3 ) * vec2( 2.0 ) ) * vec2( nodeVar6.w ) ) ), nodeVar6.z, nodeVar6.w );
-	nodeVarying0 = aQuadCorner.y;
-	nodeVarying1 = nodeVar5;
-	nodeVarying2 = aSegmentLength;
-	nodeVarying3 = nodeVar12;
-	nodeVar20 = mix( aStartColor, aEndColor, nodeVar5 );
-	nodeVarying4 = nodeVar20;
+	nodeVar11 = mix( nodeVar9, nodeVar10, nodeVar6 );
+	nodeVarying3 = nodeVar11;
+	nodeVar13 = mix( aStartColor, aEndColor, nodeVar6 );
+	nodeVarying4 = nodeVar13;
 	nodeVarying5 = aEndClipped;
 	nodeVarying6 = aStartClipped;
 
 	if ( ( ( ( aStartSharpness < 1e30 ) && ( aStartSharpness > -1e30 ) ) && ( aStartSharpness > 0.0 ) ) ) {
 
-		nodeVar22 = aStartSharpness;
+		nodeVar15 = aStartSharpness;
 
 	} else {
 
-		nodeVar22 = 2.0;
+		nodeVar15 = 2.0;
 
 	}
 
 
 	if ( ( ( ( aEndSharpness < 1e30 ) && ( aEndSharpness > -1e30 ) ) && ( aEndSharpness > 0.0 ) ) ) {
 
-		nodeVar23 = aEndSharpness;
+		nodeVar16 = aEndSharpness;
 
 	} else {
 
-		nodeVar23 = 2.0;
+		nodeVar16 = 2.0;
 
 	}
 
-	nodeVarying7 = mix( nodeVar22, nodeVar23, nodeVar5 );
-	nodeVarying8 = nodeVar13;
+	nodeVarying7 = mix( nodeVar15, nodeVar16, nodeVar6 );
+	nodeVar17 = ( nodeVar11 * nodeUniform5 );
+	nodeVarying8 = nodeVar17;
+	nodeVar19 = max( nodeUniform6, ( 1.5 + 1.0 ) );
 
-	if ( ( nodeVar13 <= nodeVar14 ) ) {
+	if ( ( nodeVar17 <= nodeVar19 ) ) {
 
-		nodeVar24 = 1.0;
+		nodeVar18 = 1.0;
 
 	} else {
 
-		nodeVar25 = ( nodeVar14 / max( nodeVar13, 0.0001 ) );
-		nodeVar24 = nodeVar25;
+		nodeVar20 = ( nodeVar19 / max( nodeVar17, 0.0001 ) );
+		nodeVar18 = nodeVar20;
 
 	}
 
-	nodeVarying9 = nodeVar24;
-	nodeVar28 = ( - nodeVar1.z );
-	nodeVar29 = max( nodeUniform9, 0.0001 );
-	nodeVar30 = ( - nodeVar3.z );
+	nodeVarying9 = nodeVar18;
+	clipPos = vec4( 2.0, 2.0, 2.0, 1.0 );
+	nodeVar22 = ( - nodeVar2.z );
+	nodeVar23 = max( nodeUniform9, 0.0001 );
+	nodeVar24 = ( - nodeVar0.z );
 
-	if ( ( ( ( nodeVar28 < nodeVar29 ) && ( nodeVar30 < nodeVar29 ) ) || ( ( ( nodeVar28 < ( nodeVar29 * 2.0 ) ) && ( nodeVar30 < ( nodeVar29 * 2.0 ) ) ) && ( nodeVar13 > ( nodeVar14 * 2.0 ) ) ) ) ) {
+	if ( (!( ( ( nodeVar22 < nodeVar23 ) && ( nodeVar24 < nodeVar23 ) ) || ( ( ( nodeVar22 < ( nodeVar23 * 2.0 ) ) && ( nodeVar24 < ( nodeVar23 * 2.0 ) ) ) && ( nodeVar17 > ( nodeVar19 * 2.0 ) ) ) )) ) {
 
-		nodeVar27 = nodeVar0;
+		nodeVar25 = ( cameraProjectionMatrix * nodeVar2 );
+		nodeVar26 = ( cameraProjectionMatrix * nodeVar0 );
+		nodeVar27 = mix( nodeVar25, nodeVar26, nodeVar6 );
 
-	} else {
+		if ( ( length( ( ( ( nodeVar26.xy / vec2( max( nodeVar26.w, 0.0001 ) ) ) - ( nodeVar25.xy / vec2( max( nodeVar25.w, 0.0001 ) ) ) ) * ( nodeUniform3 * vec2( 0.5 ) ) ) ) > 0.0001 ) ) {
 
-		nodeVar27 = nodeVar15;
+			nodeVar28 = nodeVar4;
+
+		} else {
+
+			nodeVar28 = vec2( 1.0, 0.0 );
+
+		}
+
+		clipPos = vec4( ( nodeVar27.xy + ( ( ( ( ( vec2( ( - nodeVar28.y ), nodeVar28.x ) * vec2( aQuadCorner.y ) ) * vec2( clamp( nodeVar17, 1.5, nodeVar19 ) ) ) / nodeUniform3 ) * vec2( 2.0 ) ) * vec2( nodeVar27.w ) ) ), nodeVar27.z, nodeVar27.w );
+		
 
 	}
 
 
 	// result
-	gl_Position = nodeVar27;
+	gl_Position = clipPos;
 
 	gl_PointSize = 1.0;
 
