@@ -11,8 +11,13 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { MaterialManager, type PointMaterialProperties } from '../../../rendering/material-manager';
+import {
+  MaterialManager,
+  resolveMaterialBackend,
+  type PointMaterialProperties,
+} from '../../../rendering/material-manager';
 import { PointMaterial } from '../../../rendering/point-material';
+import type { RendererCapabilities } from '../../../rendering/renderer-capabilities';
 import * as THREE from 'three';
 
 // Mock only THREE.js (dependency), NOT PointMaterial (system under test)
@@ -897,5 +902,21 @@ describe('MaterialManager', () => {
       expect(pooledDispose).not.toHaveBeenCalled();
       expect(cloneLike.dispose).toHaveBeenCalled();
     });
+  });
+});
+
+describe('resolveMaterialBackend', () => {
+  // Casts are stub-typed: only `api` is read by the helper; the rest of
+  // RendererCapabilities is irrelevant to this dispatch decision.
+  it('returns glsl when caps is null (pre-renderer default)', () => {
+    expect(resolveMaterialBackend(null)).toBe('glsl');
+  });
+
+  it('returns glsl when caps reports the WebGL2 surface', () => {
+    expect(resolveMaterialBackend({ api: 'webgl2' } as RendererCapabilities)).toBe('glsl');
+  });
+
+  it('returns tsl when caps reports the WebGPU surface', () => {
+    expect(resolveMaterialBackend({ api: 'webgpu' } as RendererCapabilities)).toBe('tsl');
   });
 });
