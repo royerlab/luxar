@@ -1,5 +1,6 @@
 /**
- * `buildMaterial` — central branching helper for the WebGPU migration.
+ * `buildMaterial` — central branching helper for the dual-stack
+ * renderer (`THREE.WebGLRenderer` + `WebGPURenderer`).
  *
  * Each material wrapper (FxaaPass, BloomChain, PointMaterial, …)
  * delegates inner construction here. The helper branches on
@@ -8,10 +9,17 @@
  * - WebGL2 path returns a configured `THREE.ShaderMaterial` from
  *   `source.webgl.{vertex,fragment}`.
  * - WebGPU path calls `source.webgpu(uniforms)` to get a
- *   `NodeMaterial`. If the source has no `webgpu` factory yet, the
- *   helper falls back to the WebGL path — this lets the migration
- *   land one shader at a time while keeping the rest of the pipeline
- *   green under both renderers.
+ *   `NodeMaterial`.
+ *
+ * Both `webgl` and `webgpu` fields on `ShaderSource` are optional in
+ * the type so future single-backend shaders can opt out cleanly, but
+ * the helper throws when the active backend's source is absent.
+ * Under WebGPU specifically we do NOT silently fall back to
+ * ShaderMaterial — `WebGPURenderer` cannot dispatch `ShaderMaterial`
+ * even when running on its internal WebGL2 backend (see
+ * `BROWSER_SUPPORT_POLICY.md`), so the silent fallback would render
+ * blank quads. Throwing surfaces the gap at construction time
+ * instead.
  *
  * See `MATERIAL_WRAPPER_DESIGN.md` for the design rationale.
  *
@@ -44,19 +52,34 @@ export interface BuildMaterialConfig {
 /**
  * Build a `THREE.Material` for the active backend.
  *
- * Returns a `THREE.ShaderMaterial` under WebGL2. Under WebGPU, calls
- * `source.webgpu(...)` if present and returns the resulting
- * `NodeMaterial`; otherwise falls back to ShaderMaterial. Three.js
- * runtime accepts both — `WebGPURenderer({ forceWebGL: true })` can
- * still render `ShaderMaterial`s (the `ShaderMaterial`-not-supported
- * restriction only applies to native WebGPU dispatch).
+ * Returns a `THREE.ShaderMaterial` under WebGL2 and a
+ * `NodeMaterial` under WebGPU. Throws if the active backend's
+ * source is missing — does **not** silently fall through to the
+ * other backend (under WebGPU, `ShaderMaterial` would not render at
+ * all; under WebGL2, a TSL `NodeMaterial` wouldn't dispatch).
  */
 export function buildMaterial(
   source: ShaderSource,
   config: BuildMaterialConfig,
   caps: RendererCapabilities
 ): THREE.Material {
-  if (caps.apiSurface === 'webgpu' && source.webgpu) {
+  if (caps.apiSurface === 'webgpu') {
+    if (!source.webgpu) {
+      // The active renderer is WebGPURenderer (or WebGPURenderer
+      // running on its internal WebGL2 backend, which still dispatches
+      // NodeMaterial — see BROWSER_SUPPORT_POLICY.md). A
+      // ShaderMaterial fallback would render blank quads, so refuse
+      // explicitly with a fix-it-here error.
+      throw new Error(
+        `buildMaterial: ShaderSource '${source.name}' has no 'webgpu' TSL ` +
+          'factory but the active renderer dispatches via the WebGPU ' +
+          'path (caps.apiSurface=\'webgpu\'). WebGPURenderer cannot ' +
+          'dispatch ShaderMaterial even in its WebGL2 fallback mode; ' +
+          "add a 'webgpu' factory to the ShaderSource or switch to the " +
+          'legacy WebGLRenderer path (default; remove ?renderer=webgpu / ' +
+          'VITE_LUXAR_USE_WEBGPU=1).'
+      );
+    }
     // TSL / NodeMaterial path. Cast through unknown — the factory's
     // return type is intentionally erased on `ShaderSource.webgpu`
     // (see shader-source.ts) so the type module doesn't depend on
@@ -64,20 +87,19 @@ export function buildMaterial(
     return source.webgpu(config.uniforms ?? {}) as THREE.Material;
   }
 
-  // WebGL2 (or WebGPU fallback when no TSL factory exists yet).
+  // WebGL2 path.
   if (!source.webgl) {
-    // Both backends are optional in the type (see shader-source.ts);
-    // the invariant is that at least one must be present for the
-    // active code path. Triggering this means a shader shipped a
-    // `webgpu` factory but no `webgl` reference, AND the renderer
-    // is dispatching via the WebGL path. Surface it explicitly so
-    // the gap is easy to diagnose instead of a confusing
-    // `Cannot read properties of undefined (reading 'vertex')`.
+    // Symmetric guard to the WebGPU branch above: triggering this
+    // means the shader shipped a `webgpu` factory but no `webgl`
+    // reference, AND the active renderer is WebGLRenderer. Surface
+    // the gap explicitly instead of `Cannot read properties of
+    // undefined (reading 'vertex')`.
     throw new Error(
-      `buildMaterial: ShaderSource '${source.name}' has no WebGL fallback ` +
-        'but the active renderer dispatches via the WebGL path ' +
-        `(caps.apiSurface='${caps.apiSurface}'). Add a 'webgl' source or opt into the ` +
-        'WebGPU renderer (?renderer=webgpu or VITE_LUXAR_USE_WEBGPU=1).'
+      `buildMaterial: ShaderSource '${source.name}' has no 'webgl' ` +
+        'reference but the active renderer dispatches via the WebGL ' +
+        `path (caps.apiSurface='${caps.apiSurface}'). Add a 'webgl' source ` +
+        'or opt into the WebGPU renderer (?renderer=webgpu or ' +
+        'VITE_LUXAR_USE_WEBGPU=1).'
     );
   }
   return new THREE.ShaderMaterial({
