@@ -8,7 +8,7 @@
  * the bench can use `timestamp-query` when the GPU supports it.
  *
  * Invoke via:
- *   pnpm test:perf
+ *   pnpm test:perf:e2e
  *
  * Defaults to headed mode so the user can observe what's being
  * measured. Set `LUXAR_PERF_HEADLESS=1` to flip to headless (e.g. CI).

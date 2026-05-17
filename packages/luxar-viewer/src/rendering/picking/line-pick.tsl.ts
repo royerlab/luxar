@@ -192,7 +192,14 @@ export function linePickWebGPUFactory(
 
   // ---- Fragment: brightness output + brightness-as-depth ----
 
-  const brightnessNode = () => {
+  // Compute brightness once and materialise it into a fragment-local
+  // variable via `.toVar()`. Both `colorNode` and `depthNode` then
+  // reference the same variable so the pow/cap/widthScale chain
+  // doesn't get inlined twice into the generated WGSL/GLSL. The
+  // `.once()` on the underlying `Fn(...)` ensures the function body
+  // is emitted exactly once even if multiple call sites elsewhere
+  // bind to it.
+  const brightnessShared = Fn(() => {
     const p: TSLNode = vPerpNorm.abs();
     const perpFalloff: TSLNode = max(float(1.0).sub(p.mul(p)), float(0.0)).pow(
       max(vSharpness, float(0.0001))
@@ -212,18 +219,17 @@ export function linePickWebGPUFactory(
     const capFactor: TSLNode = mix(baseCap, float(1.0), nearestClipped);
 
     return capFactor.mul(perpFalloff).mul(widthScale).mul(vWidthFade);
-  };
+  }).once();
+  const brightness: TSLNode = brightnessShared().toVar('lineBrightness');
 
   const colorNode = Fn(() => {
     const p: TSLNode = vPerpNorm.abs();
     Discard(p.greaterThanEqual(1.0));
-    const brightness: TSLNode = brightnessNode();
     Discard(brightness.lessThan(1e-4));
     return vec4(vNodeId, vElementId, brightness, 1.0);
   });
 
   const depthNode = Fn(() => {
-    const brightness: TSLNode = brightnessNode();
     return float(1.0).sub(clamp(brightness, 0.0, 1.0));
   });
 

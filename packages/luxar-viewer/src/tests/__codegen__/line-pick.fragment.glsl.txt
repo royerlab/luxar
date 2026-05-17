@@ -86,22 +86,17 @@ float nodeVar20;
 float nodeVar21;
 float nodeVar22;
 float nodeVar23;
-float nodeVar29;
+float lineBrightness;
 vec4 Output;
-vec4 nodeVar30;
+vec4 nodeVar28;
+float nodeVar29;
+float nodeVar30;
 float nodeVar31;
 float nodeVar32;
 float nodeVar33;
+mat4 modelViewMatrix;
 float nodeVar34;
 float nodeVar35;
-float nodeVar36;
-float nodeVar37;
-float nodeVar38;
-float nodeVar39;
-float nodeVar40;
-mat4 modelViewMatrix;
-float nodeVar41;
-float nodeVar42;
 
 // codes
 
@@ -134,65 +129,50 @@ void main() {
 	}
 
 	nodeVar23 = abs( nodeVarying0 );
-	nodeVar29 = ( ( ( mix( ( 0.5 + ( nodeVar22 * 0.5 ) ), 1.0, mix( nodeVarying4, nodeVarying5, step( nodeVar19, nodeVar20 ) ) ) * pow( max( ( 1.0 - ( nodeVar23 * nodeVar23 ) ), 0.0 ), max( nodeVarying6, 0.0001 ) ) ) * min( ( nodeVarying7 / 1.5 ), 1.0 ) ) * nodeVarying8 );
+	lineBrightness = ( ( ( mix( ( 0.5 + ( nodeVar22 * 0.5 ) ), 1.0, mix( nodeVarying4, nodeVarying5, step( nodeVar19, nodeVar20 ) ) ) * pow( max( ( 1.0 - ( nodeVar23 * nodeVar23 ) ), 0.0 ), max( nodeVarying6, 0.0001 ) ) ) * min( ( nodeVarying7 / 1.5 ), 1.0 ) ) * nodeVarying8 );
 
-	if ( ( nodeVar29 < 0.0001 ) ) {
+	if ( ( lineBrightness < 0.0001 ) ) {
 
 		discard;
 		
 
 	}
 
-	DiffuseColor = vec4( nodeVarying9, nodeVarying10, nodeVar29, 1.0 );
+	DiffuseColor = vec4( nodeVarying9, nodeVarying10, lineBrightness, 1.0 );
 	DiffuseColor.w = ( DiffuseColor.w * nodeUniform10 );
-	nodeVar30 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
-	Output = nodeVar30;
-	nodeVar31 = ( nodeVarying1 * nodeVarying2 );
-	nodeVar32 = ( ( 1.0 - nodeVarying1 ) * nodeVarying2 );
-	nodeVar33 = clamp( ( min( nodeVar31, nodeVar32 ) / nodeVarying3 ), 0.0, 1.0 );
-
-	if ( ( nodeVarying3 > 0.0001 ) ) {
-
-		nodeVar34 = nodeVar33;
-
-	} else {
-
-		nodeVar34 = 1.0;
-
-	}
-
-	nodeVar35 = abs( nodeVarying0 );
-	gl_FragDepth = ( 1.0 - clamp( ( ( ( mix( ( 0.5 + ( nodeVar34 * 0.5 ) ), 1.0, mix( nodeVarying4, nodeVarying5, step( nodeVar31, nodeVar32 ) ) ) * pow( max( ( 1.0 - ( nodeVar35 * nodeVar35 ) ), 0.0 ), max( nodeVarying6, 0.0001 ) ) ) * min( ( nodeVarying7 / 1.5 ), 1.0 ) ) * nodeVarying8 ), 0.0, 1.0 ) );
+	nodeVar28 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
+	Output = nodeVar28;
+	gl_FragDepth = ( 1.0 - clamp( lineBrightness, 0.0, 1.0 ) );
 
 	if ( ( ( ( nodeVarying11 < 1e30 ) && ( nodeVarying11 > -1e30 ) ) && ( nodeVarying11 >= 0.0 ) ) ) {
 
-		nodeVar36 = nodeVarying11;
+		nodeVar29 = nodeVarying11;
 
 	} else {
 
-		nodeVar36 = 0.0;
+		nodeVar29 = 0.0;
 
 	}
 
 
 	if ( ( ( ( nodeVarying12 < 1e30 ) && ( nodeVarying12 > -1e30 ) ) && ( nodeVarying12 >= 0.0 ) ) ) {
 
-		nodeVar37 = nodeVarying12;
+		nodeVar30 = nodeVarying12;
 
 	} else {
 
-		nodeVar37 = 0.0;
+		nodeVar30 = 0.0;
 
 	}
 
-	nodeVar38 = ( ( nodeVarying13.x * 0.5 ) + 0.5 );
-	nodeVar39 = mix( nodeVar36, nodeVar37, nodeVar38 );
-	nodeVar40 = ( nodeVar39 * nodeUniform11 );
+	nodeVar31 = ( ( nodeVarying13.x * 0.5 ) + 0.5 );
+	nodeVar32 = mix( nodeVar29, nodeVar30, nodeVar31 );
+	nodeVar33 = ( nodeVar32 * nodeUniform11 );
 	modelViewMatrix = ( cameraViewMatrix * nodeUniform14 );
-	nodeVar41 = max( nodeUniform15, 0.0001 );
-	nodeVar42 = ( ( nodeVar39 * nodeUniform12 ) / max( length( mix( ( modelViewMatrix * vec4( nodeVarying14, 1.0 ) ), ( modelViewMatrix * vec4( nodeVarying15, 1.0 ) ), nodeVar38 ).xyz ), nodeVar41 ) );
+	nodeVar34 = max( nodeUniform15, 0.0001 );
+	nodeVar35 = ( ( nodeVar32 * nodeUniform12 ) / max( length( mix( ( modelViewMatrix * vec4( nodeVarying14, 1.0 ) ), ( modelViewMatrix * vec4( nodeVarying15, 1.0 ) ), nodeVar31 ).xyz ), nodeVar34 ) );
 
 	// result
-	fragColor = nodeVar30;
+	fragColor = nodeVar28;
 
 }

@@ -111,10 +111,9 @@ float nodeVar24;
 float nodeVar25;
 float nodeVar26;
 float nodeVar27;
-float nodeVar28;
-vec4 nodeVar43;
-float nodeVar44;
-float nodeVar45;
+vec4 nodeVar36;
+float nodeVar37;
+float nodeVar38;
 
 // codes
 
@@ -215,22 +214,21 @@ void main() {
 
 	}
 
-	nodeVar26 = mix( nodeVar24, nodeVar25, nodeVar2 );
-	nodeVarying6 = nodeVar26;
+	nodeVarying6 = mix( nodeVar24, nodeVar25, nodeVar2 );
 	nodeVarying7 = nodeVar16;
 
 	if ( ( nodeVar16 <= nodeVar17 ) ) {
 
-		nodeVar27 = 1.0;
+		nodeVar26 = 1.0;
 
 	} else {
 
-		nodeVar28 = ( nodeVar17 / max( nodeVar16, 0.0001 ) );
-		nodeVar27 = nodeVar28;
+		nodeVar27 = ( nodeVar17 / max( nodeVar16, 0.0001 ) );
+		nodeVar26 = nodeVar27;
 
 	}
 
-	nodeVarying8 = nodeVar27;
+	nodeVarying8 = nodeVar26;
 	nodeVarying9 = nodeUniform9;
 	nodeVarying10 = float( uint( gl_InstanceID ) );
 	nodeVarying11 = aStartWidth;
@@ -238,22 +236,22 @@ void main() {
 	nodeVarying13 = aQuadCorner;
 	nodeVarying14 = aStartPos;
 	nodeVarying15 = aEndPos;
-	nodeVar44 = ( - nodeVar5.z );
-	nodeVar45 = ( - nodeVar6.z );
+	nodeVar37 = ( - nodeVar5.z );
+	nodeVar38 = ( - nodeVar6.z );
 
-	if ( ( ( ( nodeVar44 < nodeVar7 ) && ( nodeVar45 < nodeVar7 ) ) || ( ( ( nodeVar44 < ( nodeVar7 * 2.0 ) ) && ( nodeVar45 < ( nodeVar7 * 2.0 ) ) ) && ( nodeVar16 > ( nodeVar17 * 2.0 ) ) ) ) ) {
+	if ( ( ( ( nodeVar37 < nodeVar7 ) && ( nodeVar38 < nodeVar7 ) ) || ( ( ( nodeVar37 < ( nodeVar7 * 2.0 ) ) && ( nodeVar38 < ( nodeVar7 * 2.0 ) ) ) && ( nodeVar16 > ( nodeVar17 * 2.0 ) ) ) ) ) {
 
-		nodeVar43 = nodeVar9;
+		nodeVar36 = nodeVar9;
 
 	} else {
 
-		nodeVar43 = nodeVar18;
+		nodeVar36 = nodeVar18;
 
 	}
 
 
 	// result
-	gl_Position = nodeVar43;
+	gl_Position = nodeVar36;
 
 	gl_PointSize = 1.0;
 

@@ -97,7 +97,21 @@ interface ScenarioResult {
   scenarioId: string;
   scenarioLabel: string;
   backend: Backend;
+  /**
+   * The renderer *surface* in use. 'webgl2' = `THREE.WebGLRenderer`;
+   * 'webgpu' = `WebGPURenderer` (regardless of which backend it
+   * dispatches through). See {@link isWebGLBackend} to distinguish
+   * native WebGPU from WebGPURenderer's WebGL2 fallback.
+   */
   actualApi: string | null;
+  /**
+   * True when `apiSurface === 'webgpu'` but WebGPURenderer is
+   * dispatching through its internal WebGL2 backend — either because
+   * the host has no real WebGPU adapter or because
+   * `?webgpu-force-webgl` is set. Consumers benchmarking native
+   * WebGPU specifically should discount runs where this is true.
+   */
+  isWebGLBackend: boolean;
   visibleSegments: number;
   frameMs: FrameStats | null;
   firstRenderMs: number | null;
@@ -162,6 +176,13 @@ async function measureScenario(
   // silent fallback (WebGPU → WebGL on unsupported hardware) or an
   // empty scene (nD nav needed) shows up in the output rather than
   // silently corrupting numbers.
+  //
+  // `apiSurface` distinguishes the renderer *class* (WebGLRenderer vs
+  // WebGPURenderer), but a WebGPURenderer can be running its internal
+  // WebGL2 fallback backend (real WebGPU adapter unavailable, or
+  // `?webgpu-force-webgl`). For benchmarking native-WebGPU performance
+  // specifically, we also surface `isWebGLBackend` so a consumer can
+  // discount fallback runs.
   const probe = await page.evaluate(() => {
     const dbg = (
       window as unknown as {
@@ -172,10 +193,12 @@ async function measureScenario(
               scene?: unknown;
             };
           };
+          renderer?: { backend?: { isWebGLBackend?: boolean } };
         };
       }
     ).__luxarDebug;
     const api = dbg?.app?.sceneManager?.capabilities?.apiSurface ?? null;
+    const isWebGLBackend = dbg?.renderer?.backend?.isWebGLBackend === true;
     let visibleSegments = 0;
     const scene = dbg?.app?.sceneManager?.scene as
       | { traverse?: (cb: (o: unknown) => void) => void }
@@ -192,7 +215,7 @@ async function measureScenario(
         visibleSegments += o.geometry.instanceCount;
       }
     });
-    return { api, visibleSegments };
+    return { api, isWebGLBackend, visibleSegments };
   });
 
   if (probe.visibleSegments === 0) {
