@@ -21,7 +21,11 @@ import {
 } from './material-manager';
 import { getColormapTexture } from './colormap-textures';
 import { supportsScalarColormap } from './material-colormap-helpers';
-import { createInstancedLinesMesh, type InstancedLinesMeshConfig } from './line-geometry';
+import {
+  createInstancedLinesMesh,
+  isAllSharpnessTwo,
+  type InstancedLinesMeshConfig,
+} from './line-geometry';
 import { createInstancedGSplatsMesh, type InstancedGSplatsMeshConfig } from './gsplat-geometry';
 import { createPointQuadGeometry } from './point-geometry';
 import type { LoadedPointsData, DataLoader } from '../data/data-loader-types';
@@ -245,6 +249,14 @@ export class NodeFactory {
       }
     }
 
+    // Auto-detect the sharpness fast path: when every per-vertex
+    // sharpness in this geometry is 2.0 (the default), the wrapper
+    // toggles `LUXAR_SHARPNESS_TWO` so the fragment shader replaces
+    // its `pow(x, vSharpness)` with `x*x`. O(N) over segments, runs
+    // once at upload.
+    const sharpnessFastPath = isAllSharpnessTwo(processed);
+    material.setSharpnessAllTwo(sharpnessFastPath);
+
     const mesh = createInstancedLinesMesh(processed, material);
     mesh.name = path;
 
@@ -265,6 +277,9 @@ export class NodeFactory {
       const pickId = this.pickingSystem.allocatePickId();
       mesh.userData.pickId = pickId;
       const pickMaterial = materialManager.createLinePickingMaterial({ nodeId: pickId });
+      // Mirror the visual material's sharpness fast path on the
+      // picking material so the pick shader skips its `pow(...)` too.
+      pickMaterial.setSharpnessAllTwo(sharpnessFastPath);
       materialManager.register(pickMaterial);
       // Share the same InstancedBufferGeometry — only material differs
       const pickNode = new THREE.Mesh(mesh.geometry, pickMaterial);

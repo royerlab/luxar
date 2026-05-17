@@ -205,6 +205,7 @@ export class LineTSLMaterial
     const useColormap = !!this.defines && 'USE_COLORMAP' in this.defines;
     const gammaOne = !!this.defines && 'LUXAR_GAMMA_ONE' in this.defines;
     const noGOG = !!this.defines && 'LUXAR_NO_GOG' in this.defines;
+    const sharpnessTwo = !!this.defines && 'LUXAR_SHARPNESS_TWO' in this.defines;
     this.rebuildColormapNodes(useColormap);
     lineWebGPUFactory(
       this.tslNodes as LineTSLNodes,
@@ -212,11 +213,29 @@ export class LineTSLMaterial
         useColormap,
         gammaOne,
         noGOG,
+        sharpnessTwo,
         blendingMode: (this.userData.blendingMode as BlendingMode | undefined) ?? 'additive',
       },
       this
     );
     this.needsUpdate = true;
+  }
+
+  /**
+   * Toggle the sharpness-fast-path define + rebuild the TSL graph.
+   * Called by the line node-factory after inspecting the per-vertex
+   * sharpness arrays at upload time.
+   */
+  setSharpnessAllTwo(active: boolean): void {
+    if (!this.defines) this.defines = {};
+    const had = 'LUXAR_SHARPNESS_TWO' in this.defines;
+    if (active && !had) {
+      this.defines.LUXAR_SHARPNESS_TWO = '';
+      this.rebuildGraph();
+    } else if (!active && had) {
+      delete this.defines.LUXAR_SHARPNESS_TWO;
+      this.rebuildGraph();
+    }
   }
 
   /** Same toggle helper as `LineMaterial._refreshNoGOGDefine` — see there. */

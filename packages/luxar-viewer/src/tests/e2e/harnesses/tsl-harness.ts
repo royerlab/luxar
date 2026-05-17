@@ -478,6 +478,37 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
     },
     buildMesh: buildLineInstancedMesh,
   },
+  // M13d — line with the sharpness == 2 fast path. The factory uses
+  // `sharpnessTwo: true` so the fragment shader's
+  // `pow(x, max(vSharpness, 0.0001))` is replaced by `x * x`. The GLSL
+  // counterpart defines `LUXAR_SHARPNESS_TWO`.
+  'line-sharpness-two': {
+    source: LINE_SOURCE,
+    buildUniforms: () => ({
+      uFOV: { value: 2.0 },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      uIsOrtho: { value: 1 },
+      uNearCull: { value: 0.01 },
+      uMaxLinePixelWidth: { value: 32.0 },
+      uPerspectiveLineScale: { value: 1.0 },
+      uOrthoLineScale: { value: 64.0 },
+      uOpacity: { value: 1.0 },
+      uInvGamma: { value: 1.0 / 2.2 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+    }),
+    buildDefines: () => ({ LUXAR_SHARPNESS_TWO: '' }),
+    buildTSLMaterial: (uniforms) => {
+      const m = lineWebGPUFactory(
+        buildLineTSLNodesFromUniforms(uniforms, {}),
+        { sharpnessTwo: true }
+      ) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: buildLineInstancedMesh,
+  },
   // M13c — line with the no-GOG fast path. Same geometry as `line`,
   // but the TSL factory is built with `noGOG: true` so the
   // `vColor * uIntensity + uOffset` + `max(..., 0)` chain is replaced

@@ -293,7 +293,15 @@ export const LINE_FRAGMENT_SHADER = /* glsl */ `
       // Parabolic falloff from semicircle kernel convolution
       // Base: (1 - p²) where p = distance from centerline
       // With per-vertex sharpness: (1 - p²)^sharpness
-      float perpFalloff = pow(max(1.0 - p * p, 0.0), max(vSharpness, 0.0001));
+      // Sharpness fast path: LUXAR_SHARPNESS_TWO is stamped by the
+      // wrapper when the bound geometry's per-vertex sharpness is all
+      // 2.0 (the default), replacing the pow() with x*x.
+      float oneMinusPSq = max(1.0 - p * p, 0.0);
+      #ifdef LUXAR_SHARPNESS_TWO
+      float perpFalloff = oneMinusPSq * oneMinusPSq;
+      #else
+      float perpFalloff = pow(oneMinusPSq, max(vSharpness, 0.0001));
+      #endif
 
       // Anti-aliasing: smooth falloff at edges
       // The AA region is ~1 pixel wide in the rendered quad

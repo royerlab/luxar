@@ -74,8 +74,23 @@ export interface LinePickTSLNodes {
  * registry constructs the nodes from a plain `uniforms` record via
  * {@link buildLinePickTSLNodesFromUniforms}.
  */
+/**
+ * Per-build configuration for the line-pick factory. Currently
+ * exposes the `sharpnessTwo` fast path that mirrors the visual
+ * factory's; expect future variant flags to land here alongside.
+ */
+export interface LinePickTSLConfig {
+  /**
+   * Fast path: replace `pow(max(1-p², 0), max(vSharpness, 0.0001))`
+   * with `(max(1-p², 0))²` when the wrapper knows all sharpness
+   * values are 2.0 (the default for the line dataset).
+   */
+  readonly sharpnessTwo?: boolean;
+}
+
 export function linePickWebGPUFactory(
   nodes: LinePickTSLNodes,
+  config: LinePickTSLConfig = {},
   outMaterial?: NodeMaterial
 ): NodeMaterial {
   const aQuadCorner: TSLNode = attribute<'vec2'>('aQuadCorner', 'vec2');
@@ -202,9 +217,14 @@ export function linePickWebGPUFactory(
   // bind to it.
   const brightnessShared = Fn(() => {
     const p: TSLNode = vPerpNorm.abs();
-    const perpFalloff: TSLNode = max(float(1.0).sub(p.mul(p)), float(0.0)).pow(
-      max(vSharpness, float(0.0001))
-    );
+    // Sharpness fast path: when the wrapper knows every segment in
+    // the buffer has sharpness == 2.0 (the default), replace
+    // `pow(x, 2)` with `x * x` so the fragment shader avoids the
+    // transcendental.
+    const oneMinusPSq: TSLNode = max(float(1.0).sub(p.mul(p)), float(0.0));
+    const perpFalloff: TSLNode = config.sharpnessTwo
+      ? oneMinusPSq.mul(oneMinusPSq)
+      : oneMinusPSq.pow(max(vSharpness, float(0.0001)));
     const minPW = float(1.5);
     const widthScale: TSLNode = min(vPixelWidth.div(minPW), float(1.0));
 
