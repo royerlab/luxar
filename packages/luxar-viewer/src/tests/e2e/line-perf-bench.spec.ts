@@ -227,6 +227,7 @@ async function measureScenario(
       scenarioLabel,
       backend,
       actualApi: probe.api,
+      isWebGLBackend: probe.isWebGLBackend,
       visibleSegments: 0,
       frameMs: null,
       firstRenderMs: null,
@@ -327,6 +328,7 @@ async function measureScenario(
     scenarioLabel,
     backend,
     actualApi: probe.api,
+    isWebGLBackend: probe.isWebGLBackend,
     visibleSegments: probe.visibleSegments,
     frameMs,
     firstRenderMs,
@@ -353,6 +355,7 @@ test('line perf bench — JS frame timing across backends', async ({ page }) => 
           scenarioLabel: scn.label,
           backend,
           actualApi: null,
+          isWebGLBackend: false,
           visibleSegments: 0,
           frameMs: null,
           firstRenderMs: null,
@@ -374,9 +377,10 @@ test('line perf bench — JS frame timing across backends', async ({ page }) => 
         : fm
           ? `median=${fm.median.toFixed(2)}ms p95=${fm.p95.toFixed(2)}ms p99=${fm.p99.toFixed(2)}ms mean=${fm.mean.toFixed(2)}ms count=${fm.count}`
           : 'no samples';
-      // eslint-disable-next-line no-console
       console.log(
-        `  [${scn.id}/${backend} → ${result.actualApi ?? '?'}] segs=${result.visibleSegments} ${summary}`
+        `  [${scn.id}/${backend} → ${result.actualApi ?? '?'}${
+          result.isWebGLBackend ? ' (webgl-bk)' : ''
+        }] segs=${result.visibleSegments} ${summary}`
       );
     }
   }
@@ -392,6 +396,5 @@ test('line perf bench — JS frame timing across backends', async ({ page }) => 
   const outPath = path.join(outDir, 'results.json');
   fs.writeFileSync(outPath, JSON.stringify(output, null, 2));
 
-  // eslint-disable-next-line no-console
   console.log(`\n📊 perf-bench results written to ${outPath}`);
 });

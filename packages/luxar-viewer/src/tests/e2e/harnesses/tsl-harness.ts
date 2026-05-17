@@ -659,16 +659,16 @@ async function renderTSL(
   // `.vertexShader` / `.fragmentShader` strings are fully populated.
   // We hook it once per renderer instance and restore right after.
   // (See node_modules/three/src/renderers/common/nodes/NodeManager.js:469.)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   const nodesInstance = (renderer as unknown as { _nodes: any })._nodes;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   const origCreateState = nodesInstance._createNodeBuilderState.bind(nodesInstance);
   // Ref object so TS doesn't narrow `value` to `null` through the
   // closure mutation below.
   const capturedRef: { value: { vertex: string; fragment: string } | null } = {
     value: null,
   };
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   nodesInstance._createNodeBuilderState = function (nodeBuilder: any) {
     if (!capturedRef.value && nodeBuilder?.material === material) {
       capturedRef.value = {
