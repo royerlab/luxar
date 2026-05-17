@@ -130,6 +130,16 @@ export interface UrlParams {
    * native WebGPU adapter. Ignored when `renderer` resolves to `webgl`.
    */
   webgpuForceWebGL: boolean;
+  /**
+   * Opt-in to GPU timestamp queries (`?perf-timestamp`). Only honored
+   * under WebGPURenderer with a backend that exposes the
+   * `timestamp-query` feature. When set, the renderer is constructed
+   * with `{ trackTimestamp: true }` and the perf bench reads
+   * per-frame GPU time via `renderer.resolveTimestampsAsync('render')`.
+   * Has a small runtime cost so the perf bench is the only intended
+   * caller; never set on the production viewer URL.
+   */
+  perfTimestamp: boolean;
 }
 
 /**
@@ -155,6 +165,7 @@ export function readUrlParams(search?: string): UrlParams {
     cacheStats: params.has('cache-stats'),
     renderer: normalizeRendererParam(params.get('renderer')),
     webgpuForceWebGL: params.has('webgpu-force-webgl'),
+    perfTimestamp: params.has('perf-timestamp'),
   };
 }
 

@@ -70,6 +70,7 @@ md += `Baseline captured: ${base.capturedAt}\n`;
 md += `New captured: ${next.capturedAt}\n\n`;
 md += `Sample window: ${next.sampleWindowMs ?? '?'} ms, warmup: ${next.warmupFrames ?? '?'} frames.\n\n`;
 
+md += `## JS frame timing\n\n`;
 md += `| Scenario / backend | API | Segs | base median (ms) | new median (ms) | Δ median | base p95 | new p95 | Δ p95 |\n`;
 md += `|---|---|---:|---:|---:|---|---:|---:|---|\n`;
 
@@ -111,6 +112,44 @@ for (const k of sortedKeys) {
   const np = n.frameMs?.p95;
 
   md += `| ${k} | ${api} | ${segs} | ${fmt(bm)} | ${fmt(nm)} | ${delta(bm, nm)} | ${fmt(bp)} | ${fmt(np)} | ${delta(bp, np)} |\n`;
+}
+
+// GPU-time section. Only emitted when at least one row has a real
+// `gpu.medianMs` on either side — JS-only runs still show the JS
+// table above.
+const anyGpu = [...allKeys].some((k) => {
+  const b = baseByKey.get(k);
+  const n = nextByKey.get(k);
+  return b?.gpu?.supported || n?.gpu?.supported;
+});
+
+if (anyGpu) {
+  md += `\n## GPU pass time (timestamp-query)\n\n`;
+  md += `| Scenario / backend | API | Segs | base median (ms) | new median (ms) | Δ median | base p95 | new p95 | Δ p95 |\n`;
+  md += `|---|---|---:|---:|---:|---|---:|---:|---|\n`;
+
+  for (const k of sortedKeys) {
+    const b = baseByKey.get(k);
+    const n = nextByKey.get(k);
+    const ref = n ?? b;
+    if (!ref) continue;
+    const apiSurface = n?.actualApi ?? b?.actualApi ?? '?';
+    const isWebGLBackend = n?.isWebGLBackend ?? b?.isWebGLBackend ?? false;
+    const api = isWebGLBackend ? `${apiSurface} (webgl-bk)` : apiSurface;
+    const segs = n?.visibleSegments ?? b?.visibleSegments ?? 0;
+
+    const bSup = b?.gpu?.supported === true;
+    const nSup = n?.gpu?.supported === true;
+    if (!bSup && !nSup) {
+      md += `| ${k} | ${api} | ${segs} | n/a | n/a | — | n/a | n/a | — |\n`;
+      continue;
+    }
+    const bm = bSup ? b.gpu.medianMs : null;
+    const nm = nSup ? n.gpu.medianMs : null;
+    const bp = bSup ? b.gpu.p95Ms : null;
+    const np = nSup ? n.gpu.p95Ms : null;
+    md += `| ${k} | ${api} | ${segs} | ${fmt(bm)} | ${fmt(nm)} | ${delta(bm, nm)} | ${fmt(bp)} | ${fmt(np)} | ${delta(bp, np)} |\n`;
+  }
 }
 
 md += '\n';

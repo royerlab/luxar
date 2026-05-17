@@ -255,6 +255,12 @@ export class SceneManager extends THREE.EventDispatcher<{
   private webgpuForceWebGL = false;
 
   /**
+   * Opt-in to `WebGPURenderer({ trackTimestamp: true })` for the perf
+   * bench. Off by default; flipped via `?perf-timestamp` URL param.
+   */
+  private perfTimestamp = false;
+
+  /**
    * Initialize the renderer pipeline.
    *
    * @param options.canvas - The HTMLCanvasElement to render into. Callers
@@ -279,11 +285,18 @@ export class SceneManager extends THREE.EventDispatcher<{
      * the `?webgpu-force-webgl` URL parameter.
      */
     webgpuForceWebGL?: boolean;
+    /**
+     * Opt-in to GPU timestamp queries. Threaded from
+     * `LuxarAppOptions.perfTimestamp`, ultimately from the
+     * `?perf-timestamp` URL flag set by the perf bench.
+     */
+    perfTimestamp?: boolean;
   }): Promise<void> {
     this.canvasElement = options.canvas;
     this.debug = options.debug ?? false;
     this.rendererOverride = options.renderer;
     this.webgpuForceWebGL = options.webgpuForceWebGL ?? false;
+    this.perfTimestamp = options.perfTimestamp ?? false;
     await this.setupRenderer();
     this.setupContextLossHandling(); // Setup context loss recovery
     this.setupScene();
@@ -655,6 +668,11 @@ export class SceneManager extends THREE.EventDispatcher<{
       // backend instead of a native WebGPU adapter. It is mutually
       // exclusive with passing a pre-built GPUDevice.
       ...(forceWebGLBackend ? { forceWebGL: true } : device !== undefined ? { device } : {}),
+      // GPU timestamp queries (`?perf-timestamp`). Three.js gates the
+      // pool's allocation on `device.features.has('timestamp-query')`
+      // so it's safe to opt in unconditionally — drivers without the
+      // feature silently drop to no-op resolve() returning lastValue.
+      ...(this.perfTimestamp ? { trackTimestamp: true } : {}),
     } as ConstructorParameters<typeof WebGPURenderer>[0]);
     await gpuRenderer.init();
     this.renderer = gpuRenderer;
