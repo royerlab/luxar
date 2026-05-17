@@ -207,8 +207,6 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
       vSharpness = mix(startS, endS, t);
       vWidthAtT = width;
 
-      vec3 worldPos = mix(aStartPos, aEndPos, t);
-
       vec4 mvStart = modelViewMatrix * vec4(aStartPos, 1.0);
       vec4 mvEnd = modelViewMatrix * vec4(aEndPos, 1.0);
       vec4 mvPos = mix(mvStart, mvEnd, t);
