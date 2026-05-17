@@ -206,6 +206,12 @@ export class LineTSLMaterial
     const gammaOne = !!this.defines && 'LUXAR_GAMMA_ONE' in this.defines;
     const noGOG = !!this.defines && 'LUXAR_NO_GOG' in this.defines;
     const sharpnessTwo = !!this.defines && 'LUXAR_SHARPNESS_TWO' in this.defines;
+    // Camera mode lives on the uniform itself, not in defines: the
+    // factory reads `tslNodes.uIsOrtho.value` at build time so a fresh
+    // rebuild after `updateCameraParams` flips the flag picks up the
+    // change. (Defines are also TextureNode-trigger; uniform numeric
+    // value is the simpler source of truth here.)
+    const isOrtho = (this.tslNodes.uIsOrtho.value as number) === 1;
     this.rebuildColormapNodes(useColormap);
     lineWebGPUFactory(
       this.tslNodes as LineTSLNodes,
@@ -214,6 +220,7 @@ export class LineTSLMaterial
         gammaOne,
         noGOG,
         sharpnessTwo,
+        isOrtho,
         blendingMode: (this.userData.blendingMode as BlendingMode | undefined) ?? 'additive',
       },
       this
@@ -263,6 +270,7 @@ export class LineTSLMaterial
     isOrtho: boolean = false,
     nearCull?: number
   ): void {
+    const prevIsOrtho = (this.uniforms.uIsOrtho.value as number) === 1;
     this.uniforms.uFOV.value = fov;
     (this.uniforms.uResolution.value as THREE.Vector2).copy(resolution);
     this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
@@ -277,6 +285,12 @@ export class LineTSLMaterial
     } else {
       this.uniforms.uPerspectiveLineScale.value =
         resolution.y / Math.max(Math.tan(safeFov * 0.5), 1e-4);
+    }
+    // Each projection mode is a separate TSL graph variant. Rebuild
+    // when the mode flips so the unused branch is dropped from the
+    // generated WGSL/GLSL.
+    if (isOrtho !== prevIsOrtho) {
+      this.rebuildGraph();
     }
   }
 

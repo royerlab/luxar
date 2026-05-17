@@ -437,7 +437,7 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
     buildTSLMaterial: (uniforms) => {
       const m = lineWebGPUFactory(
         buildLineTSLNodesFromUniforms(uniforms, {}),
-        {}
+        { isOrtho: true }
       ) as unknown as THREE.Material;
       m.transparent = false;
       m.blending = THREE.NoBlending;
@@ -470,7 +470,7 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
     buildTSLMaterial: (uniforms) => {
       const m = lineWebGPUFactory(
         buildLineTSLNodesFromUniforms(uniforms, {}),
-        { gammaOne: true }
+        { gammaOne: true, isOrtho: true }
       ) as unknown as THREE.Material;
       m.transparent = false;
       m.blending = THREE.NoBlending;
@@ -501,7 +501,7 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
     buildTSLMaterial: (uniforms) => {
       const m = lineWebGPUFactory(
         buildLineTSLNodesFromUniforms(uniforms, {}),
-        { sharpnessTwo: true }
+        { sharpnessTwo: true, isOrtho: true }
       ) as unknown as THREE.Material;
       m.transparent = false;
       m.blending = THREE.NoBlending;
@@ -533,7 +533,7 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
     buildTSLMaterial: (uniforms) => {
       const m = lineWebGPUFactory(
         buildLineTSLNodesFromUniforms(uniforms, {}),
-        { noGOG: true }
+        { noGOG: true, isOrtho: true }
       ) as unknown as THREE.Material;
       m.transparent = false;
       m.blending = THREE.NoBlending;
@@ -618,7 +618,8 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
     }),
     buildTSLMaterial: (uniforms) =>
       linePickWebGPUFactory(
-        buildLinePickTSLNodesFromUniforms(uniforms)
+        buildLinePickTSLNodesFromUniforms(uniforms),
+        { isOrtho: true }
       ) as unknown as THREE.Material,
     buildMesh: buildLineInstancedMesh,
   },

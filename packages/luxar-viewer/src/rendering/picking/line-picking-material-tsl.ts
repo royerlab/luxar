@@ -71,9 +71,17 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
 
     linePickWebGPUFactory(
       this.tslNodes as LinePickTSLNodes,
-      { sharpnessTwo: !!this.defines?.LUXAR_SHARPNESS_TWO },
+      this._currentConfig(),
       this
     );
+  }
+
+  /** Build the per-rebuild factory config from current defines + uniforms. */
+  private _currentConfig(): { sharpnessTwo: boolean; isOrtho: boolean } {
+    return {
+      sharpnessTwo: !!this.defines?.LUXAR_SHARPNESS_TWO,
+      isOrtho: (this.tslNodes.uIsOrtho.value as number) === 1,
+    };
   }
 
   /**
@@ -94,7 +102,7 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
     // Rebuild graph so the factory picks up the new flag.
     linePickWebGPUFactory(
       this.tslNodes as LinePickTSLNodes,
-      { sharpnessTwo: !!this.defines.LUXAR_SHARPNESS_TWO },
+      this._currentConfig(),
       this
     );
     this.needsUpdate = true;
@@ -106,6 +114,7 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
     isOrtho: boolean = false,
     nearCull?: number
   ): void {
+    const prevIsOrtho = (this.tslNodes.uIsOrtho.value as number) === 1;
     this.uniforms.uFOV.value = fov;
     (this.uniforms.uResolution.value as THREE.Vector2).copy(resolution);
     this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
@@ -120,6 +129,15 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
     } else {
       this.uniforms.uPerspectiveLineScale.value =
         resolution.y / Math.max(Math.tan(safeFov * 0.5), 1e-4);
+    }
+    // Rebuild on projection-mode flip so the unused branch drops.
+    if (isOrtho !== prevIsOrtho) {
+      linePickWebGPUFactory(
+        this.tslNodes as LinePickTSLNodes,
+        this._currentConfig(),
+        this
+      );
+      this.needsUpdate = true;
     }
   }
 }

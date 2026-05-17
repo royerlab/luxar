@@ -386,6 +386,13 @@ export const LINE_SOURCE: ShaderSource = {
   webgl: { vertex: LINE_VERTEX_SHADER, fragment: LINE_FRAGMENT_SHADER },
   webgpu: (uniforms: Record<string, unknown>) => {
     const u = uniforms as Record<string, import('three').IUniform>;
-    return lineWebGPUFactory(buildLineTSLNodesFromUniforms(u, {}), {});
+    // Read `uIsOrtho` from the uniform record at build time so the
+    // projection-mode graph variant matches the camera the caller set
+    // up. Live ortho/perspective flips on a long-lived material go
+    // through `LineTSLMaterial.updateCameraParams`, which calls
+    // `rebuildGraph()` itself — this short-lived ShaderSource path
+    // just needs the right variant at construction.
+    const isOrtho = ((u.uIsOrtho?.value as number) ?? 0) === 1;
+    return lineWebGPUFactory(buildLineTSLNodesFromUniforms(u, {}), { isOrtho });
   },
 };
