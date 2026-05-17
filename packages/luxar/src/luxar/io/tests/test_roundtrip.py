@@ -87,7 +87,9 @@ class TestBasicRoundTrip:
 
         assert data["positions"].shape == positions.shape
         assert data["colors"].shape == colors.shape
-        assert data["colors"].dtype == np.float32
+        # SDR colours are stored as float16 by default after the
+        # phase-3 narrowing (was uint8 + Float32 widen on read).
+        assert data["colors"].dtype == np.float16
 
         # Verify actual values survive round-trip (sort to handle spatial reordering)
         sort_idx_orig = np.lexsort(positions.T)
@@ -444,8 +446,14 @@ class TestEncodingDecoding:
         # All radii should be approximately 0.5
         np.testing.assert_allclose(data["radii"], 0.5, atol=0.01)
 
-    def test_uint8_color_quantization(self, tmp_path) -> None:
-        """Test that SDR colors are quantized to uint8 and decoded correctly."""
+    def test_sdr_color_float16_quantization(self, tmp_path) -> None:
+        """SDR colours quantize to float16 on disk and round-trip accurately.
+
+        Phase-3 narrowed the SDR colour default from Uint8 to Float16
+        across all three geometry types. Float16's 11-bit mantissa
+        bounds the round-trip error well under the prior 8-bit
+        quantization step (≈4e-3); we tighten the tolerance accordingly.
+        """
         output_path = tmp_path / "test.zarr"
         n_points = 100
 
@@ -460,10 +468,12 @@ class TestEncodingDecoding:
         scene = LuxarScene.load(output_path)
         data = scene.get_points("points")
 
-        # Colors should be float32 after decoding
-        assert data["colors"].dtype == np.float32
-        # Allow for uint8 quantization error (1/256 ≈ 0.004)
-        np.testing.assert_allclose(data["colors"], colors, atol=0.01)
+        # Colours stay at their disk precision after decoding (no widen).
+        assert data["colors"].dtype == np.float16
+        # Float16 ULP at colour-range magnitudes is ~5e-4; allow a
+        # small margin for ordering changes that pair different
+        # values.
+        np.testing.assert_allclose(data["colors"], colors, atol=1e-3)
 
 
 class TestSceneAPI:
