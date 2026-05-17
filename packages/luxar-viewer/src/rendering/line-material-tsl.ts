@@ -25,7 +25,7 @@ import * as THREE from 'three';
 import { uniform, texture } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
 import { lineWebGPUFactory, type LineTSLNodes } from './line.tsl';
-import type { LineMaterialConfig } from './line-material';
+import { isGammaOne, type LineMaterialConfig } from './line-material';
 import type { CameraAwareMaterial } from './camera-aware-material';
 import type { ColormapAwareMaterial } from './colormap-aware-material';
 import { clampGamma } from './material-uniform-helpers';
@@ -125,7 +125,14 @@ export class LineTSLMaterial
       };
     }
 
-    this.defines = materialConfig.colormapTexture ? { USE_COLORMAP: '' } : {};
+    // Variant `defines` — same shape as the GLSL wrapper. Reading
+    // these in `rebuildGraph()` selects fragment-stage fast paths in
+    // the TSL factory (gamma==1 here; more flags arrive in subsequent
+    // commits).
+    this.defines = {
+      ...(materialConfig.colormapTexture ? { USE_COLORMAP: '' } : {}),
+      ...(isGammaOne(gammaValue) ? { LUXAR_GAMMA_ONE: '' } : {}),
+    };
     this.toneMapped = false;
     this.side = THREE.DoubleSide;
     // Line quads are screen-space billboards, not physically two-sided
@@ -193,11 +200,13 @@ export class LineTSLMaterial
    */
   private rebuildGraph(): void {
     const useColormap = !!this.defines && 'USE_COLORMAP' in this.defines;
+    const gammaOne = !!this.defines && 'LUXAR_GAMMA_ONE' in this.defines;
     this.rebuildColormapNodes(useColormap);
     lineWebGPUFactory(
       this.tslNodes as LineTSLNodes,
       {
         useColormap,
+        gammaOne,
         blendingMode: (this.userData.blendingMode as BlendingMode | undefined) ?? 'additive',
       },
       this
@@ -236,6 +245,20 @@ export class LineTSLMaterial
     const safeGamma = clampGamma(gamma);
     this.userData.gamma = safeGamma;
     this.uniforms.uInvGamma.value = 1.0 / safeGamma;
+
+    // Toggle `LUXAR_GAMMA_ONE` define when crossing the threshold and
+    // rebuild the TSL graph so the factory picks the new fast-path
+    // branch.
+    if (!this.defines) this.defines = {};
+    const wantGammaOne = isGammaOne(safeGamma);
+    const hadGammaOne = 'LUXAR_GAMMA_ONE' in this.defines;
+    if (wantGammaOne && !hadGammaOne) {
+      this.defines.LUXAR_GAMMA_ONE = '';
+      this.rebuildGraph();
+    } else if (!wantGammaOne && hadGammaOne) {
+      delete this.defines.LUXAR_GAMMA_ONE;
+      this.rebuildGraph();
+    }
   }
 
   updateIntensity(intensity: number): void {

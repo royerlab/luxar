@@ -339,7 +339,15 @@ export const LINE_FRAGMENT_SHADER = /* glsl */ `
       // Early discard for zero-contribution fragments after offset
       if (max(adjusted.r, max(adjusted.g, adjusted.b)) < 1e-4) discard;
 
+      // Gamma fast path: when gamma==1 (the default) the pow() is
+      // identity. The wrapper class stamps LUXAR_GAMMA_ONE on the
+      // material defines whenever gamma transitions to/from 1.0, so
+      // this skips three per-fragment pow() calls in the common case.
+      #ifdef LUXAR_GAMMA_ONE
+      vec3 gammaColor = adjusted;
+      #else
       vec3 gammaColor = pow(adjusted, vec3(uInvGamma));
+      #endif
 
       // max-mode RGB premultiplication. With CustomBlending +
       // MaxEquation + OneFactor/OneFactor the source RGB isn't

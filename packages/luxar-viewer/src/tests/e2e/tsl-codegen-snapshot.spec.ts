@@ -113,7 +113,9 @@ function assertSnapshot(shader: string, kind: 'vertex' | 'fragment', actual: str
 
 // Shaders to snapshot. `line` and `line-pick` are the focus; other
 // entries can be added when we start snapshotting points / gsplats too.
-const SHADERS = ['line', 'line-pick'] as const;
+// `line-gamma-one` pins the fragment-stage pow-free fast path that
+// kicks in when the wrapper class knows gamma==1.
+const SHADERS = ['line', 'line-pick', 'line-gamma-one'] as const;
 
 test.describe('TSL → generated-shader snapshots', () => {
   test('line + line-pick: generated GLSL matches checked-in snapshot', async ({ page }) => {
