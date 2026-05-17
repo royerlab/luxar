@@ -358,14 +358,18 @@ class TestBoundaryConditions:
             assert group["test"].dtype == np.uint32
 
     def test_cholesky_memory_mode(self):
-        """Test CHOLESKY in MEMORY mode uses float32 by default (TypeScript compatibility)."""
+        """CHOLESKY in MEMORY mode emits float16 (phase-3 attribute packing).
+
+        Previously this was gated on `float16_allowed` and defaulted
+        to float32 "for TypeScript compatibility"; the TS viewer
+        consumes float16 cholesky factors directly through the
+        attribute-packing path (C-ts-4).
+        """
         with tempfile.TemporaryDirectory() as tmpdir:
             group = zarr.open_group(tmpdir, mode="w")
-            encoder = ArrayEncoder()  # float16_allowed=False by default
+            encoder = ArrayEncoder()
 
-            # Cholesky factors for 2D (3 elements: L00, L10, L11)
             data = np.random.rand(100, 3).astype(np.float32)
-
             encoder.encode(
                 data,
                 group,
@@ -373,18 +377,15 @@ class TestBoundaryConditions:
                 SemanticType.CHOLESKY,
                 mode=EncodingMode.MEMORY,
             )
-
-            assert group["test"].dtype == np.float32  # Default is float32
+            assert group["test"].dtype == np.float16
 
     def test_cholesky_memory_mode_float16_enabled(self):
-        """Test CHOLESKY in MEMORY mode uses float16 when explicitly enabled."""
+        """`float16_allowed=True` is now redundant for CHOLESKY (still works)."""
         with tempfile.TemporaryDirectory() as tmpdir:
             group = zarr.open_group(tmpdir, mode="w")
-            encoder = ArrayEncoder(float16_allowed=True)  # Explicitly enable float16
+            encoder = ArrayEncoder(float16_allowed=True)
 
-            # Cholesky factors for 2D (3 elements: L00, L10, L11)
             data = np.random.rand(100, 3).astype(np.float32)
-
             encoder.encode(
                 data,
                 group,
@@ -392,7 +393,6 @@ class TestBoundaryConditions:
                 SemanticType.CHOLESKY,
                 mode=EncodingMode.MEMORY,
             )
-
             assert group["test"].dtype == np.float16
 
     def test_unit_vector_memory_mode(self):

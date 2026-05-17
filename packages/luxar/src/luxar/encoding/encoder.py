@@ -1080,14 +1080,19 @@ class ArrayEncoder:
         original_dtype = str(data.dtype)
 
         target_dtype: np.dtype[Any]
-        if mode == EncodingMode.PRECISION or mode == EncodingMode.AUTO:
+        # Phase-3 attribute packing: CHOLESKY defaults to float16 in
+        # AUTO and MEMORY (was float32 + float16-only-with-gate). The
+        # 6 Cholesky factors per splat are the dominant per-instance
+        # cost on GSplats; float16 halves the buffer while preserving
+        # enough precision for the 2x2 / 3x3 covariance reconstruction
+        # (worst-case ~5e-4 relative error on the lower-triangular
+        # factors). PRECISION still emits float32 for cases where the
+        # caller needs full Cholesky reconstruction fidelity (e.g.,
+        # downstream gradient-based fitting).
+        if mode == EncodingMode.PRECISION:
             target_dtype = np.dtype("float32")
-        elif mode == EncodingMode.MEMORY:
-            # Check if float16 is allowed, fallback to float32 if not
-            if self._float16_allowed:
-                target_dtype = np.dtype("float16")
-            else:
-                target_dtype = np.dtype("float32")
+        elif mode == EncodingMode.AUTO or mode == EncodingMode.MEMORY:
+            target_dtype = np.dtype("float16")
         else:
             raise ValueError(f"Unexpected mode for CHOLESKY: {mode}")
 
