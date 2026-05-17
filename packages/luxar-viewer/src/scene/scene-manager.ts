@@ -93,15 +93,19 @@ export class SceneManager extends THREE.EventDispatcher<{
    * resources after WebGPU device loss; the host application is
    * expected to prompt for a reload. See
    * `setupContextLossHandling` for the rationale.
+   *
+   * Payload carries the diagnostic reason / message returned by the
+   * browser's `GPUDevice.lost` info struct (both may be undefined
+   * when the browser doesn't supply them).
    */
-  'webgpu-device-lost': {};
+  'webgpu-device-lost': { reason?: string; message?: string };
 }> {
   /**
    * The graphics-API renderer. Holds the `Renderer` union honestly:
-   * a `THREE.WebGLRenderer` under `VITE_LUXAR_USE_LEGACY_WEBGL=1`,
-   * a `WebGPURenderer` on the default path (which itself may
-   * dispatch to a real WebGPU adapter or transparently fall back to
-   * its internal WebGL2 backend depending on browser support).
+   * a `THREE.WebGLRenderer` on the default path, or a `WebGPURenderer`
+   * when opted in via `?renderer=webgpu` / `VITE_LUXAR_USE_WEBGPU=1`
+   * (which itself may dispatch to a real WebGPU adapter or transparently
+   * fall back to its internal WebGL2 backend depending on browser support).
    *
    * Every method called on this field across the codebase
    * (`PostProcessingManager`, `picking-system`, `BloomChain`,
@@ -243,6 +247,12 @@ export class SceneManager extends THREE.EventDispatcher<{
    * `?renderer=webgl|webgpu` URL parameter through `LuxarAppOptions`.
    */
   private rendererOverride: 'webgl' | 'webgpu' | undefined;
+  /**
+   * Diagnostic WebGPURenderer mode. When true and the selected renderer is
+   * WebGPURenderer, pass `{ forceWebGL: true }` so Three.js uses its
+   * internal WebGL2 backend while Luxar still dispatches TSL materials.
+   */
+  private webgpuForceWebGL = false;
 
   /**
    * Initialize the renderer pipeline.
@@ -258,15 +268,22 @@ export class SceneManager extends THREE.EventDispatcher<{
     debug?: boolean;
     /**
      * Optional backend override. When provided, wins over the
-     * `VITE_LUXAR_USE_LEGACY_WEBGL` env var and the WebGPU default.
-     * Threaded from `LuxarAppOptions.renderer`, ultimately from the
-     * `?renderer=webgl|webgpu` URL parameter.
+     * `VITE_LUXAR_USE_WEBGPU` / `VITE_LUXAR_USE_LEGACY_WEBGL` env vars
+     * and the WebGL default. Threaded from `LuxarAppOptions.renderer`,
+     * ultimately from the `?renderer=webgl|webgpu` URL parameter.
      */
     renderer?: 'webgl' | 'webgpu';
+    /**
+     * Diagnostic flag for `WebGPURenderer({ forceWebGL: true })`.
+     * Threaded from `LuxarAppOptions.webgpuForceWebGL`, ultimately from
+     * the `?webgpu-force-webgl` URL parameter.
+     */
+    webgpuForceWebGL?: boolean;
   }): Promise<void> {
     this.canvasElement = options.canvas;
     this.debug = options.debug ?? false;
     this.rendererOverride = options.renderer;
+    this.webgpuForceWebGL = options.webgpuForceWebGL ?? false;
     await this.setupRenderer();
     this.setupContextLossHandling(); // Setup context loss recovery
     this.setupScene();
@@ -296,20 +313,24 @@ export class SceneManager extends THREE.EventDispatcher<{
     //   1. Per-instance override (`this.rendererOverride`), threaded
     //      in via `init({ renderer })` — ultimately from the
     //      `?renderer=webgl|webgpu` URL parameter. Useful for
-    //      per-load A/B comparisons during the WebGPU migration.
-    //   2. Build-time env: `VITE_LUXAR_USE_LEGACY_WEBGL=1` selects
-    //      the legacy `WebGLRenderer` + GLSL `ShaderMaterial` path.
-    //   3. Default: `WebGPURenderer` (internally dispatches to a
-    //      real WebGPU adapter when available, falls back to its
-    //      WebGL2 backend otherwise).
+    //      per-load A/B comparisons.
+    //   2. Build-time env: `VITE_LUXAR_USE_WEBGPU=1` opts in to the
+    //      WebGPURenderer / TSL `NodeMaterial` path.
+    //   3. Default: `THREE.WebGLRenderer` (GLSL `ShaderMaterial`).
+    //      WebGPU is available behind the URL flag / env var but is
+    //      not yet the default because per-scene perf measurements
+    //      were below the WebGL baseline.
     //
-    // The GLSL `ShaderMaterial` path is kept live as the parity
-    // reference (harness, baseline comparisons, per-shader GLSL3
-    // sources) — per project directive, never deleted.
+    // Both paths are kept live: WebGL is the production default,
+    // WebGPU is the second supported backend. The TSL graphs and
+    // WebGPU codepath are exercised by `?renderer=webgpu` URL
+    // overrides and the TSL/GLSL parity harness.
     //
-    // The transient `VITE_LUXAR_USE_WEBGPU_RENDERER=1` flag from the
-    // migration window is retained as a no-op alias so existing CI
-    // invocations keep working harmlessly.
+    // Transient migration-window flags `VITE_LUXAR_USE_LEGACY_WEBGL=1`
+    // and `VITE_LUXAR_USE_WEBGPU_RENDERER=1` are retained as no-op
+    // aliases so existing CI invocations keep working harmlessly. The
+    // former selects the (now default) WebGL path; the latter is
+    // equivalent to setting `VITE_LUXAR_USE_WEBGPU=1`.
     let useLegacyWebGL: boolean;
     let source: 'url-param' | 'env-var' | 'default';
     if (this.rendererOverride === 'webgl') {
@@ -318,17 +339,23 @@ export class SceneManager extends THREE.EventDispatcher<{
     } else if (this.rendererOverride === 'webgpu') {
       useLegacyWebGL = false;
       source = 'url-param';
+    } else if (
+      import.meta.env.VITE_LUXAR_USE_WEBGPU === '1' ||
+      import.meta.env.VITE_LUXAR_USE_WEBGPU_RENDERER === '1'
+    ) {
+      useLegacyWebGL = false;
+      source = 'env-var';
     } else if (import.meta.env.VITE_LUXAR_USE_LEGACY_WEBGL === '1') {
       useLegacyWebGL = true;
       source = 'env-var';
     } else {
-      useLegacyWebGL = false;
+      useLegacyWebGL = true;
       source = 'default';
     }
     log.info(
       Modules.RENDERER,
-      `Backend selection: ${useLegacyWebGL ? 'WebGLRenderer (legacy GLSL)' : 'WebGPURenderer'} ` +
-        `[source: ${source}]`
+      `Backend selection: ${useLegacyWebGL ? 'WebGLRenderer (GLSL)' : 'WebGPURenderer (TSL)'} ` +
+        `[source: ${source}${!useLegacyWebGL && this.webgpuForceWebGL ? ', forceWebGL backend' : ''}]`
     );
     if (useLegacyWebGL) {
       await this.setupWebGLRenderer();
@@ -434,24 +461,30 @@ export class SceneManager extends THREE.EventDispatcher<{
   }
 
   /**
-   * Default renderer setup. Constructs a `WebGPURenderer` and runs
-   * its async `init()`. On browsers with WebGPU support, the renderer
-   * acquires a WebGPU adapter and dispatches TSL graphs to WGSL.
-   * On browsers without WebGPU (Firefox today, older Safari), Three's
-   * WebGPURenderer transparently falls back to a WebGL2 backend —
-   * the TSL graphs target both from one source, so the Luxar viewer
-   * is identical to the caller either way.
+   * Opt-in renderer setup — selected via `?renderer=webgpu` URL flag
+   * or `VITE_LUXAR_USE_WEBGPU=1`. Constructs a `WebGPURenderer` and
+   * runs its async `init()`. On browsers with WebGPU support, the
+   * renderer acquires a WebGPU adapter and dispatches TSL graphs
+   * to WGSL. On browsers without WebGPU (Firefox today, older
+   * Safari), Three's WebGPURenderer transparently falls back to a
+   * WebGL2 backend — the TSL graphs target both from one source.
    *
-   * The legacy GLSL `ShaderMaterial` path stays available behind
-   * `VITE_LUXAR_USE_LEGACY_WEBGL=1` (see {@link setupRenderer}) so
-   * the per-shader GLSL3 sources and the TSL↔GLSL parity harness
-   * remain a runnable reference.
+   * NOTE: WebGL is the **production default**; this method is
+   * reached only when the user explicitly opts into WebGPU.
+   * See `BROWSER_SUPPORT_POLICY.md` for the policy.
    */
   private async setupWebGPURenderer(): Promise<void> {
     log.info(Modules.SCENE_MANAGER, 'Constructing WebGPURenderer…');
     // Dynamic import so the WebGPU build doesn't pull into the
     // default bundle for users on the legacy WebGL2 path.
     const { WebGPURenderer } = await import('three/webgpu');
+    const forceWebGLBackend = this.webgpuForceWebGL;
+    if (forceWebGLBackend) {
+      log.info(
+        Modules.RENDERER,
+        'WebGPURenderer forceWebGL enabled: using Three.js WebGL2 backend with TSL materials.'
+      );
+    }
 
     // ============================================================
     // Bypass Three.js's `featureLevel: 'compatibility'` default.
@@ -502,7 +535,7 @@ export class SceneManager extends THREE.EventDispatcher<{
         }) => Promise<GPUAdapterLike | null>;
       };
     };
-    const gpu = (navigator as NavigatorWithGPU).gpu;
+    const gpu = forceWebGLBackend ? undefined : (navigator as NavigatorWithGPU).gpu;
     let adapter: GPUAdapterLike | null = null;
     if (gpu?.requestAdapter) {
       try {
@@ -617,11 +650,11 @@ export class SceneManager extends THREE.EventDispatcher<{
       canvas: this.canvasElement,
       antialias: config.webgl.context.antialias,
       alpha: config.webgl.context.alpha,
-      // Pass a pre-built device when available so Three.js's
-      // hard-coded `featureLevel: 'compatibility'` request doesn't
-      // override our core adapter. When `device` is undefined,
-      // Three.js falls back to its internal compat-mode init.
-      ...(device !== undefined ? { device } : {}),
+      // `forceWebGL` is a diagnostic mode: keep WebGPURenderer + TSL
+      // NodeMaterial dispatch, but make Three use its internal WebGL2
+      // backend instead of a native WebGPU adapter. It is mutually
+      // exclusive with passing a pre-built GPUDevice.
+      ...(forceWebGLBackend ? { forceWebGL: true } : device !== undefined ? { device } : {}),
     } as ConstructorParameters<typeof WebGPURenderer>[0]);
     await gpuRenderer.init();
     this.renderer = gpuRenderer;
@@ -711,7 +744,11 @@ export class SceneManager extends THREE.EventDispatcher<{
           'Luxar does not auto-recover WebGPU device loss in this release — ' +
           `please reload the page. Message: ${info.message ?? '(none)'}`
       );
-      this.dispatchEvent({ type: 'webgpu-device-lost' });
+      this.dispatchEvent({
+        type: 'webgpu-device-lost',
+        reason: info.reason,
+        message: info.message,
+      });
     });
   }
 
