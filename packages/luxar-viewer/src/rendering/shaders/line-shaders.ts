@@ -146,7 +146,8 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
 
       vec4 clipStart = projectionMatrix * mvStart;
       vec4 clipEnd = projectionMatrix * mvEnd;
-      vec4 clipPos = projectionMatrix * mvPos;
+      // projection is linear, so proj * mix(a,b,t) == mix(proj*a, proj*b, t).
+      vec4 clipPos = mix(clipStart, clipEnd, t);
 
       // Convert clip-space endpoints to pixel coordinates for correct aspect ratio handling
       // Guard against tiny clipStart.w / clipEnd.w (near-plane crossing) so 1/w doesn't blow up
