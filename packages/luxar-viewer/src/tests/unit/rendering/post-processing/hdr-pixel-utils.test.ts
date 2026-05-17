@@ -5,14 +5,16 @@
  * known values and check round-trips and orientation.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
 import {
   halfFloatToFloat32,
   float32ToHalfFloat,
   flipPixelsVerticallyRGBA,
   compactWebGPUReadbackRows,
+  readPixelsCompactAsync,
 } from '../../../../rendering/post-processing/hdr-pixel-utils';
+import type { Renderer, RendererCapabilities } from '../../../../rendering/renderer-capabilities';
 
 describe('halfFloatToFloat32', () => {
   it('returns an empty Float32Array for empty input', () => {
@@ -167,8 +169,7 @@ describe('compactWebGPUReadbackRows', () => {
     // ordering after compaction. Padding columns get a sentinel.
     for (let row = 0; row < 5; row++) {
       for (let col = 0; col < elementsPerRowPadded; col++) {
-        raw[row * elementsPerRowPadded + col] =
-          col < elementsPerRowReal ? row * 100 + col : -999;
+        raw[row * elementsPerRowPadded + col] = col < elementsPerRowReal ? row * 100 + col : -999;
       }
     }
     const out = compactWebGPUReadbackRows(raw, 5, 5, 16);
@@ -264,5 +265,380 @@ describe('compactWebGPUReadbackRows', () => {
     const raw = new Float32Array(width * height * 4); // compact RGBA32F
     const out = compactWebGPUReadbackRows(raw, width, height, 16);
     expect(out).toBe(raw);
+  });
+});
+
+// =============================================================================
+// readPixelsCompactAsync
+// =============================================================================
+//
+// Hand-rolled fakes for renderer + caps. The primitive is pure-logic
+// glue around two `readRenderTargetPixelsAsync` signatures plus the
+// existing flip/compact helpers, so we exercise the dispatch matrix
+// without needing a real GL/GPU context.
+
+function makeCaps(
+  apiSurface: 'webgl2' | 'webgpu',
+  framebufferYDown: boolean
+): RendererCapabilities {
+  return {
+    apiSurface,
+    framebufferYDown,
+    hdr: {
+      p3Gamut: false,
+      rec2020Gamut: false,
+      hdr: false,
+      deepColor: false,
+      floatTextures: true,
+      colorDepth: { red: 8, green: 8, blue: 8 },
+      recommendedColorSpace: 'srgb',
+    },
+    maxMSAASamples: 4,
+    pointSizeRange: [1, 1024],
+    readBackbufferPixels: () => Promise.resolve({ pixels: new Uint8Array(), width: 0, height: 0 }),
+  };
+}
+
+function makeTarget(width: number, height: number): THREE.WebGLRenderTarget {
+  return { width, height } as unknown as THREE.WebGLRenderTarget;
+}
+
+/**
+ * Build a 1-wide × `height`-tall RGBA8 buffer with row `i` filled by
+ * `(i, 0, 0, 255)`. With row 0 = (0,0,0,255), row 1 = (1,0,0,255), etc.
+ * The R channel is a row-index probe — flipping rows is detectable by
+ * inspecting the R channel order in the output.
+ */
+function makeRowProbeBuffer(height: number): Uint8Array {
+  const buf = new Uint8Array(height * 4);
+  for (let row = 0; row < height; row++) {
+    buf[row * 4 + 0] = row;
+    buf[row * 4 + 3] = 255;
+  }
+  return buf;
+}
+
+function extractRowIndices(buf: Uint8Array): number[] {
+  const rows = buf.length / 4;
+  const out: number[] = [];
+  for (let i = 0; i < rows; i++) out.push(buf[i * 4]);
+  return out;
+}
+
+describe('readPixelsCompactAsync', () => {
+  describe('WebGL2 (bottom-up framebuffer)', () => {
+    // Under WebGL2, `readRenderTargetPixelsAsync` writes the raw
+    // readback into the destination buffer in bottom-up order: the
+    // first row of the buffer is the BOTTOM of the source target.
+    // Building a row-probe with R = row-index in *output* terms means
+    // we feed the mock a bottom-up pattern.
+
+    it('returns top-down rows by default (flips the bottom-up GL readback)', async () => {
+      const height = 4;
+      const target = makeTarget(1, height);
+      const caps = makeCaps('webgl2', false);
+      // WebGL semantics: row 0 of the buffer is the bottom of the
+      // image. To produce a result where R encodes top-down row index,
+      // the renderer must write the *reverse* into the buffer.
+      const bottomUp = new Uint8Array([3, 0, 0, 255, 2, 0, 0, 255, 1, 0, 0, 255, 0, 0, 0, 255]);
+      const renderer = {
+        readRenderTargetPixelsAsync: vi
+          .fn()
+          .mockImplementation(
+            (
+              _t: THREE.WebGLRenderTarget,
+              _x: number,
+              _y: number,
+              _w: number,
+              _h: number,
+              dst: Uint8Array
+            ) => {
+              dst.set(bottomUp);
+              return Promise.resolve();
+            }
+          ),
+      } as unknown as Renderer;
+
+      const result = await readPixelsCompactAsync(renderer, caps, {
+        target,
+        kind: 'rgba8',
+      });
+
+      // Top-down rows: row 0 of the output is the TOP of the source,
+      // which is what the test probe encodes as R=0.
+      expect(extractRowIndices(result.pixels)).toEqual([0, 1, 2, 3]);
+      expect(result.width).toBe(1);
+      expect(result.height).toBe(height);
+    });
+
+    it('returns bottom-up rows when flipY=true (skips the flip)', async () => {
+      const height = 4;
+      const target = makeTarget(1, height);
+      const caps = makeCaps('webgl2', false);
+      const bottomUp = new Uint8Array([3, 0, 0, 255, 2, 0, 0, 255, 1, 0, 0, 255, 0, 0, 0, 255]);
+      const renderer = {
+        readRenderTargetPixelsAsync: vi
+          .fn()
+          .mockImplementation(
+            (
+              _t: THREE.WebGLRenderTarget,
+              _x: number,
+              _y: number,
+              _w: number,
+              _h: number,
+              dst: Uint8Array
+            ) => {
+              dst.set(bottomUp);
+              return Promise.resolve();
+            }
+          ),
+      } as unknown as Renderer;
+
+      const result = await readPixelsCompactAsync(renderer, caps, {
+        target,
+        kind: 'rgba8',
+        flipY: true,
+      });
+
+      // No flip applied: rows arrive in raw GL bottom-up order.
+      expect(extractRowIndices(result.pixels)).toEqual([3, 2, 1, 0]);
+    });
+
+    it('allocates the destination buffer and forwards it to the WebGL2 signature', async () => {
+      const target = makeTarget(2, 2);
+      const caps = makeCaps('webgl2', false);
+      const readPixels = vi.fn().mockResolvedValue(undefined);
+      const renderer = { readRenderTargetPixelsAsync: readPixels } as unknown as Renderer;
+
+      await readPixelsCompactAsync(renderer, caps, { target, kind: 'rgba8' });
+
+      expect(readPixels).toHaveBeenCalledTimes(1);
+      const args = readPixels.mock.calls[0];
+      expect(args[0]).toBe(target);
+      expect(args[1]).toBe(0); // x
+      expect(args[2]).toBe(0); // y
+      expect(args[3]).toBe(2); // width
+      expect(args[4]).toBe(2); // height
+      expect(args[5]).toBeInstanceOf(Uint8Array); // destination buffer
+      expect((args[5] as Uint8Array).length).toBe(2 * 2 * 4);
+    });
+
+    it('returns Float32Array buffer for kind=rgba32f', async () => {
+      const target = makeTarget(1, 1);
+      const caps = makeCaps('webgl2', false);
+      const renderer = {
+        readRenderTargetPixelsAsync: vi.fn().mockResolvedValue(undefined),
+      } as unknown as Renderer;
+
+      const result = await readPixelsCompactAsync(renderer, caps, {
+        target,
+        kind: 'rgba32f',
+      });
+
+      expect(result.pixels).toBeInstanceOf(Float32Array);
+      expect(result.pixels.length).toBe(4);
+    });
+  });
+
+  describe('WebGPU (top-down framebuffer)', () => {
+    // Under WebGPU, `readRenderTargetPixelsAsync` returns the raw
+    // readback as a typed array (no destination param), in top-down
+    // row order matching `copyTextureToBuffer`. The primitive must
+    // pass it through unflipped under the default top-down request.
+
+    it('returns top-down rows by default (pass-through)', async () => {
+      const height = 4;
+      const target = makeTarget(1, height);
+      const caps = makeCaps('webgpu', true);
+      const topDown = makeRowProbeBuffer(height); // R: [0, 1, 2, 3]
+      const renderer = {
+        readRenderTargetPixelsAsync: vi.fn().mockResolvedValue(topDown),
+      } as unknown as Renderer;
+
+      const result = await readPixelsCompactAsync(renderer, caps, {
+        target,
+        kind: 'rgba8',
+      });
+
+      expect(extractRowIndices(result.pixels)).toEqual([0, 1, 2, 3]);
+    });
+
+    it('flips to bottom-up rows when flipY=true', async () => {
+      const height = 4;
+      const target = makeTarget(1, height);
+      const caps = makeCaps('webgpu', true);
+      const topDown = makeRowProbeBuffer(height);
+      const renderer = {
+        readRenderTargetPixelsAsync: vi.fn().mockResolvedValue(topDown),
+      } as unknown as Renderer;
+
+      const result = await readPixelsCompactAsync(renderer, caps, {
+        target,
+        kind: 'rgba8',
+        flipY: true,
+      });
+
+      expect(extractRowIndices(result.pixels)).toEqual([3, 2, 1, 0]);
+    });
+
+    it('calls the WebGPU signature (no destination buffer arg)', async () => {
+      const target = makeTarget(2, 2);
+      const caps = makeCaps('webgpu', true);
+      const readPixels = vi.fn().mockResolvedValue(new Uint8Array(16));
+      const renderer = { readRenderTargetPixelsAsync: readPixels } as unknown as Renderer;
+
+      await readPixelsCompactAsync(renderer, caps, { target, kind: 'rgba8' });
+
+      expect(readPixels).toHaveBeenCalledTimes(1);
+      const args = readPixels.mock.calls[0];
+      // WebGPU signature: 5 args (target + x + y + w + h). No destination.
+      expect(args.length).toBe(5);
+    });
+  });
+
+  describe('mixed caps (api=webgpu, framebufferYDown=false)', () => {
+    // Defensive: production no longer produces this combination
+    // because Three.js's WebGPURenderer normalises Y on both its real
+    // and compat backends (`detectFramebufferYDown` returns `true` for
+    // any WebGPURenderer). The primitive must still handle the
+    // combination correctly so a future Three.js change that breaks
+    // the assumption surfaces as a localised regression rather than a
+    // visual bug.
+
+    it('flips to top-down by default', async () => {
+      const height = 4;
+      const target = makeTarget(1, height);
+      const caps = makeCaps('webgpu', false);
+      const bottomUp = new Uint8Array([3, 0, 0, 255, 2, 0, 0, 255, 1, 0, 0, 255, 0, 0, 0, 255]);
+      const renderer = {
+        readRenderTargetPixelsAsync: vi.fn().mockResolvedValue(bottomUp),
+      } as unknown as Renderer;
+
+      const result = await readPixelsCompactAsync(renderer, caps, {
+        target,
+        kind: 'rgba8',
+      });
+
+      expect(extractRowIndices(result.pixels)).toEqual([0, 1, 2, 3]);
+    });
+  });
+
+  describe('top-down sub-region input coordinates', () => {
+    // The primitive treats `(x, y)` input as canonical top-down. Under
+    // WebGL2 (bottom-up framebuffer) it must translate to the
+    // gl.readPixels bottom-up origin so a top-down sub-region read
+    // hits the intended pixels. The picking 5×5 voter relies on this.
+
+    it('translates top-down y to bottom-up framebuffer y for WebGL2 sub-region reads', async () => {
+      // Target is 10 tall; request a 3-row read starting at top-down y=2.
+      // Expected GL `y` (bottom-up) = targetHeight - yTopDown - height =
+      // 10 - 2 - 3 = 5.
+      const target = makeTarget(1, 10);
+      const caps = makeCaps('webgl2', false);
+      const readPixels = vi.fn().mockResolvedValue(undefined);
+      const renderer = { readRenderTargetPixelsAsync: readPixels } as unknown as Renderer;
+
+      await readPixelsCompactAsync(renderer, caps, {
+        target,
+        kind: 'rgba8',
+        x: 0,
+        y: 2,
+        width: 1,
+        height: 3,
+      });
+
+      const args = readPixels.mock.calls[0];
+      expect(args[1]).toBe(0); // x — top-down x equals bottom-up x
+      expect(args[2]).toBe(5); // y — flipped to bottom-up
+      expect(args[3]).toBe(1); // width
+      expect(args[4]).toBe(3); // height
+    });
+
+    it('passes top-down y through unchanged on real WebGPU (framebufferYDown=true)', async () => {
+      const target = makeTarget(1, 10);
+      const caps = makeCaps('webgpu', true);
+      const readPixels = vi.fn().mockResolvedValue(new Uint8Array(12));
+      const renderer = { readRenderTargetPixelsAsync: readPixels } as unknown as Renderer;
+
+      await readPixelsCompactAsync(renderer, caps, {
+        target,
+        kind: 'rgba8',
+        x: 0,
+        y: 2,
+        width: 1,
+        height: 3,
+      });
+
+      const args = readPixels.mock.calls[0];
+      expect(args[2]).toBe(2); // y — pass-through; native top-down
+    });
+
+    it('translates y to bottom-up when caps.framebufferYDown=false regardless of api', async () => {
+      // Defensive: production no longer pairs `api='webgpu'` with
+      // `framebufferYDown=false` (see the matching describe block
+      // above), but the primitive must still honour the cap if it ever
+      // appears.
+      const target = makeTarget(1, 10);
+      const caps = makeCaps('webgpu', false);
+      const readPixels = vi.fn().mockResolvedValue(new Uint8Array(12));
+      const renderer = { readRenderTargetPixelsAsync: readPixels } as unknown as Renderer;
+
+      await readPixelsCompactAsync(renderer, caps, {
+        target,
+        kind: 'rgba8',
+        x: 0,
+        y: 2,
+        width: 1,
+        height: 3,
+      });
+
+      const args = readPixels.mock.calls[0];
+      expect(args[2]).toBe(5);
+    });
+
+    it('keeps the previous behaviour for full-target reads (y=0, h=H)', async () => {
+      // Default args: y=0, height=target.height → bottom-up y becomes
+      // H - 0 - H = 0. Identical to the pre-translation behaviour.
+      const target = makeTarget(1, 10);
+      const caps = makeCaps('webgl2', false);
+      const readPixels = vi.fn().mockResolvedValue(undefined);
+      const renderer = { readRenderTargetPixelsAsync: readPixels } as unknown as Renderer;
+
+      await readPixelsCompactAsync(renderer, caps, { target, kind: 'rgba8' });
+
+      const args = readPixels.mock.calls[0];
+      expect(args[2]).toBe(0);
+      expect(args[4]).toBe(10);
+    });
+  });
+
+  describe('WebGPU row-padding (compactWebGPUReadbackRows integration)', () => {
+    it('compacts a padded WebGPU readback before flipping', async () => {
+      // 1 row, 53-pixel-wide RGBA8 → 212-byte rows, padded to 256.
+      const width = 53;
+      const height = 1;
+      const target = makeTarget(width, height);
+      const caps = makeCaps('webgpu', true);
+
+      // Build padded buffer: row data fills the first 212 bytes; the
+      // remaining 44 bytes are padding (sentinel 0xff). After
+      // compaction, the result should be exactly 212 bytes long with
+      // none of the sentinel bytes leaking through.
+      const padded = new Uint8Array(256);
+      for (let i = 0; i < 212; i++) padded[i] = i % 256;
+      for (let i = 212; i < 256; i++) padded[i] = 0xff; // sentinel
+      const renderer = {
+        readRenderTargetPixelsAsync: vi.fn().mockResolvedValue(padded),
+      } as unknown as Renderer;
+
+      const result = await readPixelsCompactAsync(renderer, caps, {
+        target,
+        kind: 'rgba8',
+      });
+
+      expect(result.pixels.length).toBe(width * height * 4);
+      // No sentinel bytes — only the first 212 bytes of `padded`.
+      for (let i = 0; i < 212; i++) expect(result.pixels[i]).toBe(i % 256);
+    });
   });
 });

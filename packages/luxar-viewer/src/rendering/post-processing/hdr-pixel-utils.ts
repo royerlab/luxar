@@ -1,15 +1,19 @@
 /**
- * Pure helpers for HDR pixel buffer manipulation.
+ * Pure helpers for HDR pixel buffer manipulation, plus the unified
+ * render-target readback primitive `readPixelsCompactAsync`.
  *
- * Extracted from `post-processing-manager.ts`'s captureHDRPixels /
- * captureHDRAsEXR / renderToImageData paths so the typed-array
- * conversions and the WebGL → ImageData vertical flip are testable
- * without a renderer.
+ * The pure helpers (half-float ↔ float32, row flip, WebGPU row-padding
+ * compaction) are kept exported because tests cover them directly and
+ * because `readPixelsCompactAsync` composes them. New call sites should
+ * prefer `readPixelsCompactAsync`, which handles backend dispatch,
+ * WebGPU padding, and canonical Y orientation in one place.
  *
  * @module rendering/post-processing/hdr-pixel-utils
  */
 
 import * as THREE from 'three';
+
+import type { Renderer, RendererCapabilities } from '../renderer-capabilities';
 
 /**
  * Convert an array of half-float values (encoded as Uint16) into
@@ -143,4 +147,194 @@ export function compactWebGPUReadbackRows<T extends Uint8Array | Uint16Array | F
     out.set(raw.subarray(srcStart, srcStart + elementsPerRowReal), dstStart);
   }
   return out;
+}
+
+// =============================================================================
+// readPixelsCompactAsync — unified readback primitive
+// =============================================================================
+
+/**
+ * Flip an RGBA typed-array vertically by row swap. Generic over the
+ * three typed-array kinds the readback path produces. Same algorithm
+ * as {@link flipPixelsVerticallyRGBA} but preserves the input's
+ * concrete typed-array kind (the Uint8 variant returns
+ * Uint8ClampedArray for ImageData compatibility; this one returns the
+ * same kind as the input so it composes naturally with the readback).
+ */
+function flipRowsTyped<T extends Uint8Array | Uint16Array | Float32Array>(
+  pixels: T,
+  width: number,
+  height: number
+): T {
+  const elementsPerRow = width * 4;
+  const Ctor = pixels.constructor as new (length: number) => T;
+  const out = new Ctor(elementsPerRow * height);
+  for (let y = 0; y < height; y++) {
+    const srcOffset = y * elementsPerRow;
+    const dstOffset = (height - 1 - y) * elementsPerRow;
+    out.set(pixels.subarray(srcOffset, srcOffset + elementsPerRow), dstOffset);
+  }
+  return out;
+}
+
+/** Render-target texel formats the unified readback supports. */
+export type TexelKind = 'rgba8' | 'rgba16f' | 'rgba32f';
+
+const BYTES_PER_TEXEL: Record<TexelKind, number> = {
+  rgba8: 4,
+  rgba16f: 8,
+  rgba32f: 16,
+};
+
+type TexelArray<K extends TexelKind> = K extends 'rgba8'
+  ? Uint8Array
+  : K extends 'rgba16f'
+    ? Uint16Array
+    : K extends 'rgba32f'
+      ? Float32Array
+      : never;
+
+const TEXEL_CTOR: { [K in TexelKind]: new (length: number) => TexelArray<K> } = {
+  rgba8: Uint8Array,
+  rgba16f: Uint16Array,
+  rgba32f: Float32Array,
+} as const;
+
+/** Arguments to {@link readPixelsCompactAsync}. */
+export interface ReadPixelsOpts<K extends TexelKind = TexelKind> {
+  /** Source render target. */
+  target: THREE.WebGLRenderTarget;
+  /** Pixel-format discriminator. Determines the returned typed-array kind. */
+  kind: K;
+  /**
+   * X offset in pixels (top-down convention). Defaults to 0. Full-target
+   * reads (the common case) leave this at 0; sub-region readers (e.g. the
+   * picking 5×5 voter) supply canvas-space top-down coords and the
+   * primitive converts to the backend's framebuffer convention internally.
+   */
+  x?: number;
+  /**
+   * Y offset in pixels (canonical **top-down**, row 0 = top of source).
+   * The primitive flips this to the bottom-up framebuffer convention
+   * internally when `caps.framebufferYDown === false`. Defaults to 0.
+   */
+  y?: number;
+  /** Region width in pixels. Defaults to `target.width`. */
+  width?: number;
+  /** Region height in pixels. Defaults to `target.height`. */
+  height?: number;
+  /**
+   * Default `false`. The primitive's canonical return convention is
+   * rows in **top-down** order (row 0 = top of the source target).
+   * Pass `true` to receive bottom-up rows instead — used by callers
+   * whose downstream consumers expect the legacy scene-space layout
+   * (e.g. EXR export, or transitional picking code while migration is
+   * in flight).
+   */
+  flipY?: boolean;
+}
+
+/** Return value of {@link readPixelsCompactAsync}. */
+export interface ReadPixelsResult<K extends TexelKind = TexelKind> {
+  pixels: TexelArray<K>;
+  width: number;
+  height: number;
+}
+
+type WebGPUReadback = {
+  readRenderTargetPixelsAsync(
+    target: THREE.WebGLRenderTarget,
+    x: number,
+    y: number,
+    width: number,
+    height: number
+  ): Promise<Uint8Array | Uint16Array | Float32Array>;
+};
+
+/**
+ * Unified pixel readback. Hides three backend differences from callers:
+ *
+ * 1. **Method-signature dispatch** — WebGL2's `readRenderTargetPixelsAsync`
+ *    takes a destination buffer; WebGPU's returns the result.
+ * 2. **WebGPU row padding** — WebGPU's `copyTextureToBuffer` rounds
+ *    `bytesPerRow` up to 256; this primitive runs
+ *    {@link compactWebGPUReadbackRows} unconditionally (no-op for
+ *    aligned widths or under WebGL2).
+ * 3. **Framebuffer Y orientation** — under WebGL2 the raw readback is
+ *    bottom-up (`gl.readPixels` convention); under real WebGPU it's
+ *    top-down (`copyTextureToBuffer` convention). The primitive
+ *    canonicalises to **top-down** by default, regardless of backend.
+ *    Pass `flipY: true` to get bottom-up rows out instead — only the
+ *    EXR exporter does this today, to preserve the orientation external
+ *    tools (Nuke, Houdini, oiiotool) expect.
+ *
+ * After this primitive is in place, the only Y-aware site outside
+ * `hdr-pixel-utils.ts` and the {@link createFullscreenTriangleGeometry}
+ * factory is `RendererCapabilities.framebufferYDown` itself — every
+ * other module reads canonical top-down data.
+ */
+export async function readPixelsCompactAsync<K extends TexelKind>(
+  renderer: Renderer,
+  caps: RendererCapabilities,
+  opts: ReadPixelsOpts<K>
+): Promise<ReadPixelsResult<K>> {
+  const target = opts.target;
+  const xTopDown = opts.x ?? 0;
+  const yTopDown = opts.y ?? 0;
+  const width = opts.width ?? target.width;
+  const height = opts.height ?? target.height;
+  const flipY = opts.flipY ?? false;
+  const bytesPerTexel = BYTES_PER_TEXEL[opts.kind];
+  const Ctor = TEXEL_CTOR[opts.kind];
+  const compactLength = width * height * 4;
+
+  // Convert canonical top-down (x, y) input to the backend's framebuffer
+  // origin. The legacy `WebGLRenderer.readRenderTargetPixelsAsync` calls
+  // `gl.readPixels` whose Y is bottom-up; `WebGPURenderer` normalises
+  // Y to top-down on both its real-WebGPU and compat-WebGL backends.
+  // This mirrors `caps.framebufferYDown` exactly.
+  const x = xTopDown;
+  const y = caps.framebufferYDown ? yTopDown : target.height - yTopDown - height;
+
+  let pixels: TexelArray<K>;
+  if (caps.apiSurface === 'webgl2') {
+    // WebGL2 signature: pass destination, fill in-place. The returned
+    // buffer is always compact (no row-padding under WebGL).
+    pixels = new Ctor(compactLength) as TexelArray<K>;
+    await (renderer as THREE.WebGLRenderer).readRenderTargetPixelsAsync(
+      target,
+      x,
+      y,
+      width,
+      height,
+      pixels
+    );
+  } else {
+    // WebGPU signature: returns a typed array of the right kind, but
+    // possibly padded out to 256-byte rows. compactWebGPUReadbackRows
+    // is a no-op when the row stride is already aligned.
+    const raw = (await (renderer as unknown as WebGPUReadback).readRenderTargetPixelsAsync(
+      target,
+      x,
+      y,
+      width,
+      height
+    )) as TexelArray<K>;
+    pixels = compactWebGPUReadbackRows(raw, width, height, bytesPerTexel) as TexelArray<K>;
+  }
+
+  // Canonical out-orientation is top-down. The raw readback is
+  // top-down on WebGPURenderer (both backends) and bottom-up on the
+  // legacy WebGLRenderer — i.e. `caps.framebufferYDown` already
+  // captures the right axis. Flip whenever the raw direction doesn't
+  // match the requested direction. The XOR collapses cleanly:
+  // `rawTopDown === wantsTopDown` means "no flip needed".
+  // `wantsTopDown = !flipY`.
+  const rawTopDown = caps.framebufferYDown;
+  const wantsTopDown = !flipY;
+  if (rawTopDown !== wantsTopDown) {
+    pixels = flipRowsTyped(pixels, width, height);
+  }
+
+  return { pixels, width, height };
 }

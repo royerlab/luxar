@@ -231,23 +231,14 @@ function anscombeInverse(y: TSLNode): TSLNode {
 }
 
 /** Apply Poisson-distributed noise to a per-channel intensity vec3. */
-function poissonNoise(
-  sx: TSLNode,
-  sy: TSLNode,
-  sz: TSLNode,
-  lambda: TSLNode
-): TSLNode {
+function poissonNoise(sx: TSLNode, sy: TSLNode, sz: TSLNode, lambda: TSLNode): TSLNode {
   const yChan: TSLNode = vec3(
     anscombeForward(lambda.r),
     anscombeForward(lambda.g),
     anscombeForward(lambda.b)
   );
   const noisy: TSLNode = yChan.add(normal3Temporal(sx, sy, sz));
-  return vec3(
-    anscombeInverse(noisy.r),
-    anscombeInverse(noisy.g),
-    anscombeInverse(noisy.b)
-  );
+  return vec3(anscombeInverse(noisy.r), anscombeInverse(noisy.g), anscombeInverse(noisy.b));
 }
 
 /**
@@ -332,11 +323,31 @@ export function megaWebGPUFactory(
 ): NodeMaterial {
   const toneMappingMode: LuxarToneMappingMode = config.toneMappingMode ?? 6;
 
-  // Common inputs. Primitive uniforms bind via `.onUpdate(() =>
-  // iuniform.value)` so a wrapper class's mutations to
-  // `this.uniforms.X.value` propagate to the TSL uniform node each
-  // render. Vector2 / Texture uniforms share the host object by
-  // reference, no onUpdate needed.
+  // Common inputs. Three categories with different live-update contracts:
+  //
+  //   - **Primitive numeric uniforms** (uExposure, uGlobalOffset, …):
+  //     bind via `.onUpdate(() => iuniform.value, 'render')` so
+  //     wrapper-class writes to `this.uniforms.X.value` reach the GPU
+  //     each render. The raw `uniform(number)` overload captures the
+  //     JS value at factory-build time and silently drops subsequent
+  //     writes — same trap that bit `bloom.tsl.ts` (now fixed there).
+  //   - **Vector2 uniforms** (uResolution, uDistortion, …): the TSL
+  //     UniformNode holds the Vector2 by reference; the wrapper
+  //     mutates with `.set(x, y)` instead of replacing the object,
+  //     so reads stay live without `.onUpdate`.
+  //   - **Texture inputs** (`uHdrScene`, `uBloomTexture`): the TSL
+  //     `texture(...)` factory captures the THREE.Texture at
+  //     factory-call time, so a texture *identity swap* would NOT be
+  //     seen by the bound TextureNode. We do not wire `.onUpdate`
+  //     here because the wrapper class (`MegaShaderTSLMaterial`) is
+  //     designed around graph rebuilds: `setHdrSceneTexture` and
+  //     `setBloom(intensity, texture)` call `rebuildGraph()` whenever
+  //     the texture identity changes, which re-runs this factory
+  //     against the new texture. See
+  //     `mega-shader-material-tsl.ts::setHdrSceneTexture` /
+  //     `setBloom`. (Contrast with the bloom pyramid's
+  //     `bloom.tsl.ts`, where the input texture changes per pass and
+  //     the factory can't be re-run — that path needs `.onUpdate`.)
   const uHdrScene = texture(
     (uniforms.uHdrScene.value as THREE.Texture | null) ?? new THREE.Texture()
   );
@@ -442,9 +453,12 @@ export function megaWebGPUFactory(
       : null;
 
   const fragmentNode = Fn(() => {
-    // Use the geometry's `uv` attribute. screenUV is Y-flipped under
-    // forceWebGL, which would sample the HDR texture upside-down
-    // relative to the GLSL3 path (vUv = position.xy * 0.5 + 0.5).
+    // Read the geometry's caps-aware `uv` attribute. The fullscreen-
+    // triangle factory encodes WebGL2/WebGPU framebuffer-Y correction
+    // there so we never have to branch on the renderer backend here.
+    // screenUV would sample the wrong row of the HDR target under
+    // either backend (it tracks gl_FragCoord, which inherits the
+    // backend's framebuffer Y orientation).
     const coord = uv();
 
     // Sample (scene + bloom) at one UV — closure factored as a JS

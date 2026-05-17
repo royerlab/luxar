@@ -35,10 +35,13 @@ function makeStubRenderer(): THREE.WebGLRenderer {
 }
 
 function makeStubCapabilities(): import('../../../../rendering/renderer-capabilities').RendererCapabilities {
-  // Minimal capabilities for unit tests — only `api` is read by
-  // the picking-system body (to discriminate readback signatures).
+  // Minimal capabilities for unit tests — only `apiSurface` is read by
+  // the picking-system body (to discriminate readback signatures);
+  // `framebufferYDown` is added for completeness (the readback
+  // primitive consults it, but no readback path is exercised here).
   return {
-    api: 'webgl2',
+    apiSurface: 'webgl2',
+    framebufferYDown: false,
     hdr: {
       hdr: false,
       p3Gamut: false,
@@ -92,7 +95,12 @@ describe('PickingSystem — registration', () => {
   const onPickResult = vi.fn();
 
   beforeEach(() => {
-    system = new PickingSystem(makeStubRenderer(), makeStubCapabilities(), makeCamera(), onPickResult);
+    system = new PickingSystem(
+      makeStubRenderer(),
+      makeStubCapabilities(),
+      makeCamera(),
+      onPickResult
+    );
     onPickResult.mockClear();
   });
 
@@ -281,12 +289,22 @@ describe('PickingSystem — camera + suppression', () => {
 
 describe('PickingSystem.dispose', () => {
   it('disposes the underlying pick render target', () => {
-    const system = new PickingSystem(makeStubRenderer(), makeStubCapabilities(), makeCamera(), vi.fn());
+    const system = new PickingSystem(
+      makeStubRenderer(),
+      makeStubCapabilities(),
+      makeCamera(),
+      vi.fn()
+    );
     expect(() => system.dispose()).not.toThrow();
   });
 
   it('double dispose is safe', () => {
-    const system = new PickingSystem(makeStubRenderer(), makeStubCapabilities(), makeCamera(), vi.fn());
+    const system = new PickingSystem(
+      makeStubRenderer(),
+      makeStubCapabilities(),
+      makeCamera(),
+      vi.fn()
+    );
     system.dispose();
     expect(() => system.dispose()).not.toThrow();
   });

@@ -82,6 +82,7 @@ describe('commitPointsGeometry', () => {
     const gpuBufferPool = {
       acquirePointsGeometry: vi.fn(() => newGeometry),
       updatePointsGeometry: vi.fn(),
+      didLastAcquireRebuildAttributes: vi.fn(() => false),
     };
 
     commitPointsGeometry('/p', makeData(3), root, gpuBufferPool as never, mockNodeFactory);

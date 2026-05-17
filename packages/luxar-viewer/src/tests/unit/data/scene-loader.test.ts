@@ -44,6 +44,10 @@ vi.mock('../../../rendering/material-manager', () => ({
       updateCameraParams: vi.fn(),
     }),
   },
+  // `invalidate-render-object.ts` imports this symbol to tag soft-
+  // dispose events; supply a unique Symbol so the import resolves
+  // in jsdom even though MaterialManager itself is mocked away.
+  SOFT_DISPOSE_FLAG: Symbol.for('luxar.material.softDispose.test-mock'),
 }));
 
 // SceneLoader now uses `notifier.toast` for the >16D scene-dimensions
@@ -875,7 +879,9 @@ describe('SceneLoader', () => {
       // Whether commit takes the buffer-pool path or the in-place path
       // (depends on whether _gpuBufferPool is wired up in this fixture),
       // the live position attribute must reflect the new payload.
-      const afterPositions = points.geometry.getAttribute('aCenter') as THREE.InstancedBufferAttribute;
+      const afterPositions = points.geometry.getAttribute(
+        'aCenter'
+      ) as THREE.InstancedBufferAttribute;
       expect(Array.from(afterPositions.array as Float32Array).slice(0, 3)).toEqual([1, 2, 3]);
       expect(points.userData.visiblePointCount).toBe(1);
     });

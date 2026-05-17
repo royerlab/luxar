@@ -7,7 +7,8 @@ import type { RendererCapabilities } from '../../../../rendering/renderer-capabi
 
 function mockCaps(): RendererCapabilities {
   return {
-    api: 'webgl2',
+    apiSurface: 'webgl2',
+    framebufferYDown: false,
     hdr: {
       p3Gamut: false,
       rec2020Gamut: false,
@@ -23,13 +24,16 @@ function mockCaps(): RendererCapabilities {
   };
 }
 
+type FullscreenPassInternals = {
+  mesh: THREE.Mesh;
+};
 type FxaaInternals = {
   material: THREE.ShaderMaterial;
   uniforms: {
     uInput: THREE.IUniform;
     uResolution: THREE.IUniform<THREE.Vector2>;
   };
-  mesh: THREE.Mesh;
+  pass: FullscreenPassInternals;
 };
 
 describe('FxaaPass', () => {
@@ -40,8 +44,8 @@ describe('FxaaPass', () => {
     expect(internals.material.toneMapped).toBe(false);
     expect(internals.material.glslVersion).toBe(THREE.GLSL3);
     expect(internals.uniforms.uResolution.value.toArray()).toEqual([320, 180]);
-    expect(internals.mesh.frustumCulled).toBe(false);
-    expect(internals.mesh.geometry.getAttribute('position').count).toBe(3);
+    expect(internals.pass.mesh.frustumCulled).toBe(false);
+    expect(internals.pass.mesh.geometry.getAttribute('position').count).toBe(3);
 
     pass.dispose();
   });

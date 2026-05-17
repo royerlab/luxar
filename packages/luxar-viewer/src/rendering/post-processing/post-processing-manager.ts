@@ -22,15 +22,10 @@ import { config } from '../../config';
 import { materialManager, type LuxarMegaShaderMaterial } from '../material-manager';
 import { BloomChain } from './bloom-chain';
 import { FxaaPass } from './fxaa-pass';
-import { createFullscreenTriangleGeometry } from './fullscreen-geometry';
+import { FullscreenPass } from './fullscreen-pass';
 import { computeEffectiveRenderSize } from './render-target-sizing';
 import type { Renderer, RendererCapabilities } from '../renderer-capabilities';
-import {
-  halfFloatToFloat32,
-  float32ToHalfFloat,
-  flipPixelsVerticallyRGBA,
-  compactWebGPUReadbackRows,
-} from './hdr-pixel-utils';
+import { halfFloatToFloat32, float32ToHalfFloat, readPixelsCompactAsync } from './hdr-pixel-utils';
 import { formatHDRExrLogLine } from './hdr-capture';
 import { clamp } from '../../utils/clamp';
 
@@ -50,9 +45,7 @@ export class PostProcessingManager {
   private ldrTarget!: THREE.WebGLRenderTarget;
   private bloomChain: BloomChain | null = null;
   private megaShader!: LuxarMegaShaderMaterial;
-  private megaMesh!: THREE.Mesh;
-  private megaScene!: THREE.Scene;
-  private megaCamera!: THREE.OrthographicCamera;
+  private megaPass!: FullscreenPass;
   private fxaaPass: FxaaPass | null = null;
 
   // ----------------------------------------------------------------
@@ -218,17 +211,10 @@ export class PostProcessingManager {
     });
     this.megaShader.setResolution(width, height);
 
-    // Fullscreen triangle with matching uv attribute (see
-    // `createFullscreenTriangleGeometry`). The TSL mega factory reads
-    // `uv()` directly, and the GLSL3 vertex shader's
-    // `vUv = position.xy * 0.5 + 0.5` produces the same mapping —
-    // both backends now share the geometry contract.
-    const geo = createFullscreenTriangleGeometry();
-    this.megaMesh = new THREE.Mesh(geo, this.megaShader);
-    this.megaMesh.frustumCulled = false;
-    this.megaScene = new THREE.Scene();
-    this.megaScene.add(this.megaMesh);
-    this.megaCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+    // Fullscreen pass for the mega-shader. The FullscreenPass owns the
+    // caps-aware triangle geometry so we never have to think about
+    // framebuffer-Y orientation here.
+    this.megaPass = new FullscreenPass(this.megaShader, this.capabilities);
 
     // Bloom chain (built only when enabled; on by default per config).
     // Skip during context-restore rebuilds — the caller restores the
@@ -310,7 +296,7 @@ export class PostProcessingManager {
     this.fxaaPass?.dispose();
     this.fxaaPass = null;
     this.megaShader?.dispose();
-    this.megaMesh?.geometry?.dispose();
+    this.megaPass?.dispose();
   }
 
   // ================================================================
@@ -790,13 +776,13 @@ export class PostProcessingManager {
       if (opts.applyFxaa && this.fxaaPass) {
         // Mega → ldrTarget → FXAA → finalTarget
         this.renderer.setRenderTarget(this.ldrTarget);
-        this.renderer.render(this.megaScene, this.megaCamera);
+        this.megaPass.render(this.renderer);
         this.renderer.setRenderTarget(opts.finalTarget);
         this.fxaaPass.render(this.renderer, this.ldrTarget.texture);
       } else {
         // Mega → finalTarget directly (no FXAA)
         this.renderer.setRenderTarget(opts.finalTarget);
-        this.renderer.render(this.megaScene, this.megaCamera);
+        this.megaPass.render(this.renderer);
       }
     } finally {
       // Cast is a TypeScript-only narrowing: `setRenderTarget` on
@@ -897,9 +883,15 @@ export class PostProcessingManager {
    *     captured pixels are **linear LDR** floats.
    *   - `'raw-scene-hdr'`: bypass the mega-shader entirely — render
    *     the scene to hdrTarget and read it (no bloom, no effects).
+   *
+   * Returned rows are in canonical **top-down** order (row 0 = top of
+   * the source target) on both backends. Pass `opts.flipY = true` to
+   * receive bottom-up rows instead — only the EXR exporter does this,
+   * to preserve the orientation external tools expect.
    */
   async captureHDRPixels(
-    mode: 'visible-ldr' | 'hdr-effects-pre-tone' | 'raw-scene-hdr' = 'hdr-effects-pre-tone'
+    mode: 'visible-ldr' | 'hdr-effects-pre-tone' | 'raw-scene-hdr' = 'hdr-effects-pre-tone',
+    opts: { flipY?: boolean } = {}
   ): Promise<{ pixels: Float32Array; width: number; height: number }> {
     if (mode === 'raw-scene-hdr') {
       // Scene render only — no bloom, no mega-shader.
@@ -913,7 +905,7 @@ export class PostProcessingManager {
         this.renderer.setRenderTarget(this.hdrTarget);
         this.renderer.clear();
         this.renderer.render(this.scene, this.camera);
-        return await this.readTarget(this.hdrTarget);
+        return await this.readTarget(this.hdrTarget, opts);
       } finally {
         // See note above the matching `setRenderTarget` call in
         // `runPipeline` for the cast rationale.
@@ -939,7 +931,7 @@ export class PostProcessingManager {
 
       try {
         this.runPipeline({ applyFxaa: false, finalTarget: this.ldrTarget });
-        return await this.readTarget(this.ldrTarget);
+        return await this.readTarget(this.ldrTarget, opts);
       } finally {
         this.megaShader.toggleRawHdrCapture(false);
         if (wasNoise) this.megaShader.toggleDetectorNoise(true);
@@ -954,86 +946,41 @@ export class PostProcessingManager {
     this.megaShader.toggleLinearLdrCapture(true);
     try {
       this.runPipeline({ applyFxaa: false, finalTarget: this.ldrTarget });
-      return await this.readTarget(this.ldrTarget);
+      return await this.readTarget(this.ldrTarget, opts);
     } finally {
       this.megaShader.toggleLinearLdrCapture(false);
     }
   }
 
-  private async readTarget(target: THREE.WebGLRenderTarget): Promise<{
+  private async readTarget(
+    target: THREE.WebGLRenderTarget,
+    opts: { flipY?: boolean } = {}
+  ): Promise<{
     pixels: Float32Array;
     width: number;
     height: number;
   }> {
-    const width = target.width;
-    const height = target.height;
-    const pixelCount = width * height * 4;
+    const flipY = opts.flipY ?? false;
     const isHalfFloat = target.texture.type === THREE.HalfFloatType;
 
-    // Async readback. Signature differs between backends:
-    //   WebGLRenderer: (target, x, y, w, h, dstBuffer) → Promise<dstBuffer>
-    //   WebGPURenderer: (target, x, y, w, h) → Promise<buffer>
-    // (WebGPU's 6th positional arg is `textureIndex`, not a buffer,
-    // so passing a TypedArray there mis-binds it.) Branch on caps.
-    const isWebGL2 = this.capabilities.apiSurface === 'webgl2';
-    let pixels: Float32Array;
     if (isHalfFloat) {
-      const halfData = new Uint16Array(pixelCount);
-      if (isWebGL2) {
-        await (this.renderer as THREE.WebGLRenderer).readRenderTargetPixelsAsync(
-          target,
-          0,
-          0,
-          width,
-          height,
-          halfData
-        );
-      } else {
-        const raw = (await (
-          this.renderer as unknown as {
-            readRenderTargetPixelsAsync: (
-              t: THREE.WebGLRenderTarget,
-              x: number,
-              y: number,
-              w: number,
-              h: number
-            ) => Promise<Uint16Array>;
-          }
-        ).readRenderTargetPixelsAsync(target, 0, 0, width, height)) as Uint16Array;
-        // WebGPU pads each row to a multiple of 256 bytes; for RGBA16F
-        // (8 B/texel) any width not divisible by 32 carries trailing
-        // junk per row. Drop the padding (no-op if already compact).
-        halfData.set(compactWebGPUReadbackRows(raw, width, height, 8));
-      }
-      pixels = halfFloatToFloat32(halfData);
-    } else {
-      pixels = new Float32Array(pixelCount);
-      if (isWebGL2) {
-        await (this.renderer as THREE.WebGLRenderer).readRenderTargetPixelsAsync(
-          target,
-          0,
-          0,
-          width,
-          height,
-          pixels
-        );
-      } else {
-        const raw = (await (
-          this.renderer as unknown as {
-            readRenderTargetPixelsAsync: (
-              t: THREE.WebGLRenderTarget,
-              x: number,
-              y: number,
-              w: number,
-              h: number
-            ) => Promise<Float32Array>;
-          }
-        ).readRenderTargetPixelsAsync(target, 0, 0, width, height)) as Float32Array;
-        // RGBA32F = 16 B/texel; widths not divisible by 16 carry per-row
-        // padding under WebGPU. Drop it (no-op if already compact).
-        pixels.set(compactWebGPUReadbackRows(raw, width, height, 16));
-      }
+      const {
+        pixels: halfData,
+        width,
+        height,
+      } = await readPixelsCompactAsync(this.renderer, this.capabilities, {
+        target,
+        kind: 'rgba16f',
+        flipY,
+      });
+      return { pixels: halfFloatToFloat32(halfData), width, height };
     }
+
+    const { pixels, width, height } = await readPixelsCompactAsync(
+      this.renderer,
+      this.capabilities,
+      { target, kind: 'rgba32f', flipY }
+    );
     return { pixels, width, height };
   }
 
@@ -1042,7 +989,13 @@ export class PostProcessingManager {
     mode?: 'visible-ldr' | 'hdr-effects-pre-tone' | 'raw-scene-hdr';
   }): Promise<Uint8Array> {
     const exrType: THREE.TextureDataType = options?.type ?? THREE.HalfFloatType;
-    const { pixels, width, height } = await this.captureHDRPixels(options?.mode);
+    // EXR consumers (Nuke, Houdini, oiiotool) conventionally expect
+    // rows in scene-space bottom-up order. Override the default
+    // top-down convention here — this is the single documented
+    // exception to the viewer-wide top-down contract.
+    const { pixels, width, height } = await this.captureHDRPixels(options?.mode, {
+      flipY: true,
+    });
 
     const data: Float32Array | Uint16Array =
       exrType === THREE.HalfFloatType ? float32ToHalfFloat(pixels) : pixels;
@@ -1107,52 +1060,20 @@ export class PostProcessingManager {
 
     try {
       this.runPipeline({ applyFxaa: this.fxaaPass !== null, finalTarget: captureTarget });
-      // `readRenderTargetPixelsAsync` exists on both backends but
-      // with different signatures. WebGLRenderer:
-      //   (target, x, y, w, h, dstBuffer) → Promise<dstBuffer>.
-      // WebGPURenderer:
-      //   (target, x, y, w, h, textureIndex?=0, faceIndex?=0) → Promise<buffer>.
-      // Passing the Uint8Array as a 7th positional arg on the WebGPU
-      // path mis-binds it to `textureIndex` (it becomes NaN), so we
-      // must branch on the active backend.
-      const destBuffer = new Uint8Array(width * height * 4);
-      let raw: Uint8Array;
-      if (this.capabilities.apiSurface === 'webgl2') {
-        raw = (await (this.renderer as THREE.WebGLRenderer).readRenderTargetPixelsAsync(
-          captureTarget,
-          0,
-          0,
-          width,
-          height,
-          destBuffer
-        )) as Uint8Array;
-      } else {
-        raw = (await (
-          this.renderer as unknown as {
-            readRenderTargetPixelsAsync: (
-              t: THREE.WebGLRenderTarget,
-              x: number,
-              y: number,
-              w: number,
-              h: number
-            ) => Promise<Uint8Array>;
-          }
-        ).readRenderTargetPixelsAsync(captureTarget, 0, 0, width, height)) as Uint8Array;
-        // RGBA8 = 4 B/texel; widths not divisible by 64 carry per-row
-        // padding under WebGPU. Drop it so the downstream ImageData
-        // wraps a compact, slant-free pixel buffer.
-        raw = compactWebGPUReadbackRows(raw, width, height, 4);
-      }
-      // Copy into a fresh Uint8Array so the ImageData wraps a
-      // plain ArrayBuffer regardless of which backend returned the
-      // typed array.
-      const pixels = new Uint8Array(raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength));
-      const flipped = flipPixelsVerticallyRGBA(
-        pixels,
-        width,
-        height
-      ) as Uint8ClampedArray<ArrayBuffer>;
-      return new ImageData(flipped, width, height);
+      // Read pixels in canonical top-down order. The unified primitive
+      // hides the backend signature split, compacts WebGPU row padding,
+      // and flips WebGL2's bottom-up rows to top-down — i.e. exactly
+      // the layout ImageData wants. No further flip needed here.
+      const { pixels } = await readPixelsCompactAsync(this.renderer, this.capabilities, {
+        target: captureTarget,
+        kind: 'rgba8',
+      });
+      // ImageData requires Uint8ClampedArray over a plain ArrayBuffer
+      // (not SharedArrayBuffer). The primitive returns Uint8Array;
+      // build a clamped copy backed by a freshly-allocated ArrayBuffer.
+      const clamped = new Uint8ClampedArray(pixels.length);
+      clamped.set(pixels);
+      return new ImageData(clamped, width, height);
     } finally {
       captureTarget.dispose();
     }

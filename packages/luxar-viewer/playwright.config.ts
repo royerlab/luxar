@@ -121,14 +121,15 @@ export default defineConfig({
   webServer: [
     {
       // TypeScript viewer dev server.
-      // VITE_LUXAR_USE_LEGACY_WEBGL is forwarded so per-test runs
-      // (e.g. parity sweeps under
-      // `VITE_LUXAR_USE_LEGACY_WEBGL=1 pnpm playwright test`)
-      // can reach the dev server. Without this, Playwright spawns
-      // (or reuses) the server in its own env and the flag is lost.
-      // VITE_LUXAR_USE_WEBGPU_RENDERER is forwarded too — it's a
-      // dead flag now (WebGPU is the default), but existing CI
-      // invocations that still set it keep working harmlessly.
+      // VITE_LUXAR_USE_WEBGPU is forwarded so per-test runs
+      // (e.g. `VITE_LUXAR_USE_WEBGPU=1 pnpm playwright test`) can opt
+      // into the WebGPU path on the dev server. Without forwarding,
+      // Playwright spawns (or reuses) the server in its own env and
+      // the flag is lost. The legacy `VITE_LUXAR_USE_LEGACY_WEBGL`
+      // (now a no-op — WebGL is the default) and
+      // `VITE_LUXAR_USE_WEBGPU_RENDERER` (transitional alias for the
+      // WebGPU opt-in) are forwarded too so existing CI invocations
+      // keep working harmlessly.
       command: 'pnpm dev',
       url: 'http://localhost:5173',
       reuseExistingServer: !process.env.CI,
@@ -136,6 +137,7 @@ export default defineConfig({
       stdout: 'pipe',
       stderr: 'pipe',
       env: {
+        VITE_LUXAR_USE_WEBGPU: process.env.VITE_LUXAR_USE_WEBGPU ?? '',
         VITE_LUXAR_USE_LEGACY_WEBGL: process.env.VITE_LUXAR_USE_LEGACY_WEBGL ?? '',
         VITE_LUXAR_USE_WEBGPU_RENDERER: process.env.VITE_LUXAR_USE_WEBGPU_RENDERER ?? '',
       },

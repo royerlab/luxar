@@ -51,8 +51,11 @@ export const MEGA_VERTEX_SHADER = /* glsl */ `
   out vec2 vUv;
 
   void main() {
-    // Position is in NDC already; derive UV from it.
-    vUv = position.xy * 0.5 + 0.5;
+    // Position is in NDC. Read the caps-aware uv attribute from the
+    // fullscreen-triangle geometry — it encodes the backend-specific
+    // Y orientation correction so the fragment samples the right row
+    // of the source target on both WebGL2 and real WebGPU.
+    vUv = uv;
     gl_Position = vec4(position.xy, 0.0, 1.0);
   }
 `;

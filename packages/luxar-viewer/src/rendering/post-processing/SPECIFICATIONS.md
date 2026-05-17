@@ -77,6 +77,59 @@ texture(uBloomTexture, uv) * uBloomIntensity` — so a per-channel
 distorted sample picks up bloom at the same chromatically-aberrated
 UV, exactly as the old chain produced.
 
+## Y-orientation contract
+
+WebGL2 and WebGPU disagree about the framebuffer's memory layout. In
+WebGL2 framebuffer row 0 is the **bottom** of the viewport; in real
+WebGPU it is the **top**. Three.js's `WebGPURenderer` normalises Y on
+both its native-WebGPU backend and its WebGL2 compat backend (used
+by `forceWebGL: true` and the natural fallback) so it always presents
+a top-down framebuffer to user code. The legacy `THREE.WebGLRenderer`
+GLSL path is the only renderer that exposes a bottom-up framebuffer.
+`caps.framebufferYDown` is the canonical discriminator — `true` for
+every `WebGPURenderer`, `false` only for `WebGLRenderer`.
+
+The viewer canonicalises Y handling in two — and only two — seams:
+
+1. **`createFullscreenTriangleGeometry(caps)`** emits a UV attribute
+   that compensates the active backend so that a passthrough sample
+   `texture(src, uv)` at a fragment under NDC (-1, -1) reads the
+   _bottom-left_ texel of the source target on both backends. The
+   five fullscreen passes (mega-shader, bloom threshold / downsample
+   / upsample, FXAA) consume this attribute through the shared
+   `FullscreenPass` class. GLSL3 vertex shaders read `vUv = uv;` and
+   TSL fragment factories read `uv()` — both routes land on the same
+   caps-aware attribute, so neither path has a backend branch in its
+   body.
+
+2. **`readPixelsCompactAsync(renderer, caps, opts)`** is the only
+   render-target readback API in the viewer. It accepts `(x, y)` in
+   canonical **top-down** coordinates (row 0 = top of the source
+   target) and returns pixels in the same top-down row order — on
+   both backends. Under WebGL2 (and WebGPURenderer's WebGL2 fallback),
+   the primitive translates the input `y` to `gl.readPixels`'
+   bottom-up framebuffer convention internally, and inverts the
+   output rows on the way back to canonical top-down. The four
+   production readback paths — screenshot (`renderToImageData`), HDR
+   HalfFloat capture, HDR Float32 capture, and the picking 5×5 voter
+   — all consume the primitive and see identical input/output row
+   order regardless of backend. WebGPU's 256-byte `bytesPerRow`
+   padding is compacted inside the primitive too, so callers never
+   see it.
+
+**Exception:** `captureHDRAsEXR` passes `flipY: true` to
+`readPixelsCompactAsync` so the exported EXR keeps its
+scene-space bottom-up convention. External tooling (Nuke, Houdini,
+oiiotool) expects this orientation; matching it here means an EXR
+exported under WebGPU is byte-identical to one exported under
+WebGL2.
+
+After this contract, no module outside `fullscreen-geometry.ts`,
+`hdr-pixel-utils.ts`, and `renderer-capabilities.ts` branches on the
+renderer backend for Y orientation. New post-processing or capture
+code should plug into one of those two seams; never re-derive Y
+handling at the call site.
+
 ## Capture modes
 
 | Mode                   | Bypasses                            | Output                    | Used by               |

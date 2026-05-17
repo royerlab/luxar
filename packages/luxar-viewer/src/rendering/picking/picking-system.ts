@@ -22,7 +22,7 @@ import type { PostProcessingManager } from '../post-processing/post-processing-m
 import { isCameraAwareMaterial } from '../camera-aware-material';
 import { materialManager } from '../material-manager';
 import type { Renderer, RendererCapabilities } from '../renderer-capabilities';
-import { compactWebGPUReadbackRows } from '../post-processing/hdr-pixel-utils';
+import { readPixelsCompactAsync } from '../post-processing/hdr-pixel-utils';
 import {
   getCameraFovRadians,
   isOrthographicCamera,
@@ -378,11 +378,15 @@ export class PickingSystem {
       correctedY = uv.y * height;
     }
 
-    // Compute cursor position in pick buffer pixels (half res), Y-flipped for WebGL
+    // Compute cursor position in pick buffer pixels (half res). The
+    // readback primitive returns canonical top-down rows on both
+    // backends (see hdr-pixel-utils.ts), so the cursor maps to the
+    // pick buffer with no Y inversion — matches screen Y growing
+    // downward.
     const scaleX = pickW / width;
     const scaleY = pickH / height;
     const cursorX = Math.floor(correctedX * scaleX);
-    const cursorY = pickH - Math.floor(correctedY * scaleY);
+    const cursorY = Math.floor(correctedY * scaleY);
 
     const half = Math.floor(PICK_SIZE / 2);
     this._lastReadX = clamp(cursorX - half, 0, pickW - PICK_SIZE);
@@ -535,47 +539,22 @@ export class PickingSystem {
    * on hover is documented in `PICKING_DESIGN.md`.
    */
   private async readbackAndVote(): Promise<PickResult | null> {
-    // Async readback. Signature differs between backends:
-    //   WebGLRenderer: (target, x, y, w, h, dstBuffer) → Promise<dstBuffer>
-    //   WebGPURenderer: (target, x, y, w, h) → Promise<buffer>
-    // (WebGPU's 6th positional arg is `textureIndex`, not a buffer;
-    // passing a TypedArray there mis-binds it.) Branch on
-    // `capabilities.api` — same canonical discriminator used by
-    // PostProcessingManager and SceneManager.
-    if (this.capabilities.api === 'webgl2') {
-      await (this.renderer as THREE.WebGLRenderer).readRenderTargetPixelsAsync(
-        this.pickTarget,
-        this._lastReadX,
-        this._lastReadY,
-        PICK_SIZE,
-        PICK_SIZE,
-        this.readBuffer
-      );
-    } else {
-      const raw = (await (
-        this.renderer as unknown as {
-          readRenderTargetPixelsAsync: (
-            t: THREE.WebGLRenderTarget,
-            x: number,
-            y: number,
-            w: number,
-            h: number
-          ) => Promise<Float32Array>;
-        }
-      ).readRenderTargetPixelsAsync(
-        this.pickTarget,
-        this._lastReadX,
-        this._lastReadY,
-        PICK_SIZE,
-        PICK_SIZE
-      )) as Float32Array;
-      // WebGPU's `copyTextureToBuffer` pads `bytesPerRow` to a
-      // multiple of 256 (spec § Texture & buffer copy alignment). For
-      // a 5×5 RGBA32F readback, 80 B/row → 256 B/row, leaving 44
-      // floats of trailing junk per row. `compactWebGPUReadbackRows`
-      // drops the padding when present and is a no-op otherwise.
-      this.readBuffer.set(compactWebGPUReadbackRows(raw, PICK_SIZE, PICK_SIZE, 16));
-    }
+    // Unified readback. The primitive hides backend signature dispatch,
+    // WebGPU row-padding compaction, and Y-orientation flipping —
+    // accepting `(x, y)` in canonical **top-down** pick-buffer space and
+    // returning rows in the same top-down order. `_lastReadX/Y` are
+    // computed in top-down coordinates in `performPick`, so we pass
+    // them through unchanged; the primitive translates `y` to the
+    // backend's framebuffer convention internally.
+    const { pixels } = await readPixelsCompactAsync(this.renderer, this.capabilities, {
+      target: this.pickTarget,
+      x: this._lastReadX,
+      y: this._lastReadY,
+      width: PICK_SIZE,
+      height: PICK_SIZE,
+      kind: 'rgba32f',
+    });
+    this.readBuffer.set(pixels);
 
     // Brightness-weighted majority voting
     // Use numeric key (nodeId * 2^24 + elementId) to avoid string allocation per pixel.

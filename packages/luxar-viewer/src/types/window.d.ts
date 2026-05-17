@@ -45,10 +45,11 @@ declare global {
       scene?: THREE.Scene;
       camera?: LuxarCamera;
       // Either backend may be active — `THREE.WebGLRenderer` under
-      // `VITE_LUXAR_USE_LEGACY_WEBGL=1`, or `WebGPURenderer` under
-      // the default. Typed loosely as `unknown` so the window
-      // declaration doesn't import from `three/webgpu`; callers
-      // narrow via the `isWebGLRenderer` helper or `caps.apiSurface`.
+      // the production default, or `WebGPURenderer` when opted in via
+      // `?renderer=webgpu` / `VITE_LUXAR_USE_WEBGPU=1`. Typed loosely
+      // as `unknown` so the window declaration doesn't import from
+      // `three/webgpu`; callers narrow via the `isWebGLRenderer`
+      // helper or `caps.apiSurface`.
       renderer?: unknown;
       controls?: ControlsManager;
       postProcessing?: PostProcessingManager;

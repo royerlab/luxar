@@ -51,6 +51,8 @@ Append parameters to the viewer URL to control startup behavior.
 | `clear-cache` | flag | Clear all caches on startup. |
 | `no-prefetch` | flag | Disable adjacent-chunk prefetching. |
 | `prefetch-debug` | flag | Enable prefetch logging to the browser console. |
+| `renderer` | `webgl` \| `webgpu` | Select the default GLSL WebGLRenderer path or opt into the WebGPURenderer + TSL path. |
+| `webgpu-force-webgl` | flag | Diagnostic flag for `renderer=webgpu`: keep WebGPURenderer + TSL materials but force Three.js's internal WebGL2 backend. |
 
 Flag parameters do not take a value; their presence activates the feature.
 

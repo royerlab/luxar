@@ -1,6 +1,6 @@
 # Picking strategy — design + implementation reference
 
-**Status:** ✅ Implemented on both the WebGL2 reference path and the WebGPU default path. This document captures the original design decision plus the WebGPU-specific implementation notes that landed during the r184 dual-stack migration.
+**Status:** ✅ Implemented on both the WebGL2 (production default) and WebGPU (opt-in via `?renderer=webgpu`) paths. This document captures the original design decision plus the WebGPU-specific implementation notes that landed during the r184 dual-stack migration.
 
 ## Context
 
@@ -252,13 +252,14 @@ const raw = await renderer.readRenderTargetPixelsAsync(target, x, y, w, h);
 // Passing a TypedArray as the 6th arg mis-binds it to textureIndex (becomes NaN).
 ```
 
-`PickingSystem.readbackAndVote` branches on `RendererCapabilities.apiSurface` (`'webgl2'` vs `'webgpu'`) to call the correct overload.
+`PickingSystem.readbackAndVote` delegates to the unified `readPixelsCompactAsync` primitive (`post-processing/hdr-pixel-utils.ts`), which branches on `RendererCapabilities.apiSurface` (`'webgl2'` vs `'webgpu'`) internally to call the correct overload.
 
 ### 256-byte row padding
 
 WebGPU's `copyTextureToBuffer` (used internally by `WebGPURenderer.readRenderTargetPixelsAsync`) requires `bytesPerRow` to be a multiple of 256 (WebGPU spec § "Texture & buffer copy alignment").
 
 For the 5×5 RGBA32F pick buffer:
+
 - compact row = 5 px × 16 B/px = **80 B/row**
 - padded row = ⌈80 / 256⌉ × 256 = **256 B/row**
 

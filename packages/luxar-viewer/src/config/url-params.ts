@@ -110,19 +110,26 @@ export interface UrlParams {
    * WebGPU migration and for diagnosing TSL-vs-GLSL divergences
    * without restarting the dev server.
    *
-   * - `?renderer=webgl` — opt into `THREE.WebGLRenderer` + GLSL
-   *   `ShaderMaterial` (the legacy reference path).
+   * - `?renderer=webgl` — `THREE.WebGLRenderer` + GLSL `ShaderMaterial`
+   *   (the production default).
    * - `?renderer=webgpu` — opt into `WebGPURenderer` + TSL
-   *   `NodeMaterial` (the production default; the renderer
-   *   internally dispatches to a real WebGPU adapter when available
-   *   or falls back to its WebGL2 backend otherwise).
+   *   `NodeMaterial`. The renderer internally dispatches to a real
+   *   WebGPU adapter when available or falls back to its WebGL2
+   *   backend otherwise.
    * - Unset (`null`) — fall back to the build-time
-   *   `VITE_LUXAR_USE_LEGACY_WEBGL` env var; if that is also unset,
-   *   the default is `webgpu`.
+   *   `VITE_LUXAR_USE_WEBGPU` env var (opt-in to WebGPU); if that is
+   *   also unset, the default is `webgl`.
    *
    * Any other value is normalized to `null` (defer to env / default).
    */
   renderer: 'webgl' | 'webgpu' | null;
+  /**
+   * Diagnostic flag (`?webgpu-force-webgl`) that keeps the
+   * `WebGPURenderer` / TSL `NodeMaterial` pipeline selected but asks
+   * Three.js to back it with its internal WebGL2 backend instead of a
+   * native WebGPU adapter. Ignored when `renderer` resolves to `webgl`.
+   */
+  webgpuForceWebGL: boolean;
 }
 
 /**
@@ -147,6 +154,7 @@ export function readUrlParams(search?: string): UrlParams {
     prefetchDebug: params.has('prefetch-debug'),
     cacheStats: params.has('cache-stats'),
     renderer: normalizeRendererParam(params.get('renderer')),
+    webgpuForceWebGL: params.has('webgpu-force-webgl'),
   };
 }
 

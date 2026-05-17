@@ -35,6 +35,7 @@ import { getWorkerPool } from '../../workers/worker-pool';
 import type { UpdateSession } from '../../profiling/update-profiler';
 import type { GPUBufferPool } from '../../rendering/gpu-buffer-pool';
 import { updateInstancedLinesMesh } from '../../rendering/line-geometry';
+import { invalidateRenderObjectFor } from './invalidate-render-object';
 
 /** Staged data carried between async processing and the GPU commit. */
 export interface StagedLinesCommit {
@@ -238,8 +239,14 @@ export function commitLinesGeometry(
   try {
     if (gpuBufferPool) {
       const geometry = gpuBufferPool.acquireLinesGeometry(staged.path, processed.segmentCount);
+      // Capture the acquire's rebuild flag BEFORE updateLinesGeometry,
+      // which may itself trigger a spec-set rebuild (lazy scalar
+      // promotion) and OR onto the same flag.
+      const acquireRebuilt = gpuBufferPool.didLastAcquireRebuildAttributes();
       gpuBufferPool.updateLinesGeometry(geometry, processed, processed.segmentCount);
+      const updateRebuilt = gpuBufferPool.didLastAcquireRebuildAttributes();
       mesh.geometry = geometry;
+      if (acquireRebuilt || updateRebuilt) invalidateRenderObjectFor(mesh);
     } else {
       updateInstancedLinesMesh(mesh, processed);
     }

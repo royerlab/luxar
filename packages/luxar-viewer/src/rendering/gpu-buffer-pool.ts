@@ -110,9 +110,7 @@ const POINTS_SCALAR_ATTRIBUTE_SPEC: { name: string; itemSize: 1 | 2 | 3 | 4 } = 
 function pointAttributeSpecs(
   types: PointsAttributeTypes
 ): Array<{ name: string; itemSize: 1 | 2 | 3 | 4 }> {
-  const specs: Array<{ name: string; itemSize: 1 | 2 | 3 | 4 }> = [
-    ...POINTS_BASE_ATTRIBUTE_SPECS,
-  ];
+  const specs: Array<{ name: string; itemSize: 1 | 2 | 3 | 4 }> = [...POINTS_BASE_ATTRIBUTE_SPECS];
   if (types.scalar) {
     specs.push(POINTS_SCALAR_ATTRIBUTE_SPEC);
   }
@@ -155,7 +153,9 @@ function rebuildInterleavedBuffer(
     { buffer: THREE.InstancedInterleavedBuffer; offset: number; itemSize: number }
   >();
   for (const spec of newSpecs) {
-    const oldView = geometry.getAttribute(spec.name) as THREE.InterleavedBufferAttribute | undefined;
+    const oldView = geometry.getAttribute(spec.name) as
+      | THREE.InterleavedBufferAttribute
+      | undefined;
     if (oldView && oldView.data) {
       oldByName.set(spec.name, {
         buffer: oldView.data as THREE.InstancedInterleavedBuffer,
@@ -238,7 +238,13 @@ function writePooledAttribute(
 ): void {
   const view = geometry.getAttribute(name) as THREE.InterleavedBufferAttribute;
   const buffer = view.data as THREE.InstancedInterleavedBuffer;
-  writeInterleavedAttribute(buffer, view.offset, view.itemSize, src.subarray(0, count * view.itemSize) as Float32Array, count);
+  writeInterleavedAttribute(
+    buffer,
+    view.offset,
+    view.itemSize,
+    src.subarray(0, count * view.itemSize) as Float32Array,
+    count
+  );
 }
 
 // D.4: re-export so existing consumers that import these from
@@ -415,6 +421,22 @@ export class GPUBufferPool {
   };
 
   /**
+   * Set by acquire methods when the returned geometry's underlying
+   * `InstancedInterleavedBuffer` was re-allocated (grow path) or when
+   * the returned geometry is a fresh allocation / different pool
+   * candidate from the previous active one. Callers query this via
+   * {@link didLastAcquireRebuildAttributes} immediately after acquire
+   * and dispatch `invalidateRenderObjectFor(mesh)` when true so Three's
+   * WebGPURenderer drops its stale `RenderObject.vertexBuffers` cache.
+   *
+   * Reset to `false` on every entry into an acquire method, so this
+   * field reflects exclusively the *most recent* acquire result. The
+   * read-then-act pattern (acquire → didLastAcquireRebuildAttributes →
+   * invalidate) is synchronous in all production call paths.
+   */
+  private _lastAcquireRebuilt = false;
+
+  /**
    * One-shot guard: have we already logged the >100MB pooled-buffer
    * warning? Re-checked per `evictUnused` so the noise stays bounded.
    */
@@ -445,6 +467,30 @@ export class GPUBufferPool {
    */
   beginFrame(): void {
     this.frameCount++;
+  }
+
+  /**
+   * Whether the most recent `acquire*Geometry` call returned a
+   * geometry whose underlying `InstancedInterleavedBuffer` references
+   * differ from what was previously in use for that node — either
+   * because the buffer pool grew the existing geometry's capacity, or
+   * because the returned geometry is a fresh allocation / different
+   * pool candidate.
+   *
+   * Callers that hold a `THREE.Mesh` pointing at the previously-active
+   * geometry should call `invalidateRenderObjectFor(mesh)` (in
+   * `data/scene-loader/invalidate-render-object.ts`) when this returns
+   * `true`. That forces Three's WebGPURenderer to discard the cached
+   * `RenderObject.vertexBuffers` set; without it, WebGPU binds the old
+   * GPU buffer next draw and validation fails with "Instance range …
+   * requires a larger buffer than the bound buffer size".
+   *
+   * The flag is overwritten on every acquire call, so consume it
+   * immediately after `acquirePointsGeometry` / `acquireLinesGeometry`
+   * / `acquireGSplatsGeometry` returns.
+   */
+  didLastAcquireRebuildAttributes(): boolean {
+    return this._lastAcquireRebuilt;
   }
 
   // =========================================================================
@@ -499,6 +545,11 @@ export class GPUBufferPool {
     data: LoadedPointsData,
     pointCount: number
   ): THREE.BufferGeometry {
+    // Reset the rebuild flag for this acquire; the branches below set
+    // it back to `true` for the paths that change the geometry's
+    // attribute identities.
+    this._lastAcquireRebuilt = false;
+
     // Detect attribute types from data
     const types = this.detectAttributeTypes(data);
 
@@ -508,13 +559,16 @@ export class GPUBufferPool {
       // Check if types match
       if (this.attributeTypesMatch(active.attributeTypes, types)) {
         if (active.capacity >= pointCount) {
-          // Perfect! Reuse existing (same types, sufficient capacity)
+          // Perfect! Reuse existing (same types, sufficient capacity).
+          // No attribute rebuild — leave `_lastAcquireRebuilt = false`.
           active.lastUsedFrame = this.frameCount;
           this.stats.reuses++;
           this.typeStats.points.reuses++;
           return this.preparePointsGeometryForDraw(active.geometry, pointCount);
         } else {
-          // Need to grow - reallocate attributes with same types
+          // Need to grow - reallocate attributes with same types. The
+          // grow path replaces the InstancedInterleavedBuffer, so the
+          // mesh's RenderObject cache needs invalidation downstream.
           this.growPointsGeometry(
             active.geometry as THREE.BufferGeometry,
             pointCount,
@@ -523,6 +577,7 @@ export class GPUBufferPool {
           active.capacity = Math.ceil(pointCount * 1.5);
           active.lastUsedFrame = this.frameCount;
           this.stats.capacityGrowths++;
+          this._lastAcquireRebuilt = true;
           return this.preparePointsGeometryForDraw(active.geometry, pointCount);
         }
       } else {
@@ -540,19 +595,25 @@ export class GPUBufferPool {
           candidate.capacity >= pointCount &&
           this.attributeTypesMatch(candidate.attributeTypes, types)
         ) {
-          // Found suitable geometry with matching types!
+          // Found suitable geometry with matching types! Different
+          // geometry object than what the caller had — its mesh's
+          // RenderObject cache will be stale once mesh.geometry is
+          // reassigned. Signal the rebuild.
           pooled.splice(i, 1);
           candidate.inUse = true;
           candidate.lastUsedFrame = this.frameCount;
           this.activeBuffers.set(nodeId, candidate);
           this.stats.reuses++;
           this.typeStats.points.reuses++;
+          this._lastAcquireRebuilt = true;
           return this.preparePointsGeometryForDraw(candidate.geometry, pointCount);
         }
       }
     }
 
-    // Allocate new geometry with correct types
+    // Allocate new geometry with correct types — also a rebuild from
+    // the caller's perspective.
+    this._lastAcquireRebuilt = true;
     const capacity = Math.ceil(pointCount * 1.5);
     const geometry = this.createPointsGeometry(capacity, types);
 
@@ -802,7 +863,9 @@ export class GPUBufferPool {
 
     // Optional scalar — only present when `pointAttributeSpecs` was
     // built with `types.scalar` set. Widen Uint8 / Float16 sources.
-    const scalarView = instanced.getAttribute('aScalar') as THREE.InterleavedBufferAttribute | undefined;
+    const scalarView = instanced.getAttribute('aScalar') as
+      | THREE.InterleavedBufferAttribute
+      | undefined;
     if (scalarView) {
       const scalarBuffer = scalarView.data as THREE.InstancedInterleavedBuffer;
       if (data.scalars) {
@@ -848,6 +911,7 @@ export class GPUBufferPool {
    * Acquire geometry for Lines (instanced per-segment attributes).
    */
   acquireLinesGeometry(nodeId: string, segmentCount: number): THREE.InstancedBufferGeometry {
+    this._lastAcquireRebuilt = false;
     const active = this.activeBuffers.get(nodeId);
     if (active && active.type === 'lines') {
       if (active.capacity >= segmentCount) {
@@ -856,10 +920,12 @@ export class GPUBufferPool {
         this.typeStats.lines.reuses++;
         return active.geometry as THREE.InstancedBufferGeometry;
       } else {
+        // Grow rebuilds the InstancedInterleavedBuffer.
         this.growLinesGeometry(active.geometry as THREE.InstancedBufferGeometry, segmentCount);
         active.capacity = Math.ceil(segmentCount * 1.5);
         active.lastUsedFrame = this.frameCount;
         this.stats.capacityGrowths++;
+        this._lastAcquireRebuilt = true;
         return active.geometry as THREE.InstancedBufferGeometry;
       }
     }
@@ -869,18 +935,21 @@ export class GPUBufferPool {
       for (let i = pooled.length - 1; i >= 0; i--) {
         const candidate = pooled[i];
         if (candidate.capacity >= segmentCount) {
+          // Different geometry than what was active for this node.
           pooled.splice(i, 1);
           candidate.inUse = true;
           candidate.lastUsedFrame = this.frameCount;
           this.activeBuffers.set(nodeId, candidate);
           this.stats.reuses++;
           this.typeStats.lines.reuses++;
+          this._lastAcquireRebuilt = true;
           return candidate.geometry as THREE.InstancedBufferGeometry;
         }
       }
     }
 
-    // Allocate new
+    // Allocate new — fresh attribute identities.
+    this._lastAcquireRebuilt = true;
     const capacity = Math.ceil(segmentCount * 1.5);
     const geometry = this.createLinesGeometry(capacity);
 
@@ -994,6 +1063,9 @@ export class GPUBufferPool {
         ...LINES_BASE_ATTRIBUTE_SPECS,
         ...LINES_SCALAR_ATTRIBUTE_SPECS,
       ]);
+      // Attribute identities changed; downstream callers must
+      // invalidate the renderer's cached RenderObject.
+      this._lastAcquireRebuilt = true;
     }
 
     // Clipped flags arrive as Uint8 (per ProcessedLinesData); widen
@@ -1072,6 +1144,7 @@ export class GPUBufferPool {
    * Acquire geometry for GSplats (instanced per-splat attributes).
    */
   acquireGSplatsGeometry(nodeId: string, splatCount: number): THREE.InstancedBufferGeometry {
+    this._lastAcquireRebuilt = false;
     const active = this.activeBuffers.get(nodeId);
     if (active && active.type === 'gsplats') {
       if (active.capacity >= splatCount) {
@@ -1080,10 +1153,12 @@ export class GPUBufferPool {
         this.typeStats.gsplats.reuses++;
         return active.geometry as THREE.InstancedBufferGeometry;
       } else {
+        // Grow rebuilds the InstancedInterleavedBuffer.
         this.growGSplatsGeometry(active.geometry as THREE.InstancedBufferGeometry, splatCount);
         active.capacity = Math.ceil(splatCount * 1.5);
         active.lastUsedFrame = this.frameCount;
         this.stats.capacityGrowths++;
+        this._lastAcquireRebuilt = true;
         return active.geometry as THREE.InstancedBufferGeometry;
       }
     }
@@ -1093,18 +1168,21 @@ export class GPUBufferPool {
       for (let i = pooled.length - 1; i >= 0; i--) {
         const candidate = pooled[i];
         if (candidate.capacity >= splatCount) {
+          // Different geometry than what was active for this node.
           pooled.splice(i, 1);
           candidate.inUse = true;
           candidate.lastUsedFrame = this.frameCount;
           this.activeBuffers.set(nodeId, candidate);
           this.stats.reuses++;
           this.typeStats.gsplats.reuses++;
+          this._lastAcquireRebuilt = true;
           return candidate.geometry as THREE.InstancedBufferGeometry;
         }
       }
     }
 
-    // Allocate new
+    // Allocate new — fresh attribute identities.
+    this._lastAcquireRebuilt = true;
     const capacity = Math.ceil(splatCount * 1.5);
     const geometry = this.createGSplatsGeometry(capacity);
 

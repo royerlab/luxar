@@ -12,6 +12,7 @@ import { InputHandler } from '../input/input-handler';
 import { DimensionSliders } from '../ui/panels/dimension-sliders';
 import { RenderingControls } from '../ui/rendering-controls';
 import { cleanupUI, clearError, showError, showHelpOverlay } from '../ui/helpers';
+import { notifier } from '../utils/notifier';
 import { config } from '../config';
 import { DatasetBrowser } from '../ui/panels/dataset-browser';
 import { log, Modules } from '../utils/log';
@@ -121,13 +122,24 @@ export interface LuxarAppOptions {
    * bootstrap reads `?renderer=webgl|webgpu` and threads it here
    * so per-load A/B testing doesn't need a dev-server restart.
    *
-   * - `'webgl'`: legacy `THREE.WebGLRenderer` + GLSL `ShaderMaterial`.
-   * - `'webgpu'`: `WebGPURenderer` + TSL `NodeMaterial` (default;
-   *   internally falls back to WebGL2 when no WebGPU adapter).
-   * - Undefined: fall back to `VITE_LUXAR_USE_LEGACY_WEBGL` env or
-   *   the WebGPU default.
+   * - `'webgl'`: `THREE.WebGLRenderer` + GLSL `ShaderMaterial` (the
+   *   production default).
+   * - `'webgpu'`: `WebGPURenderer` + TSL `NodeMaterial`. Internally
+   *   falls back to WebGL2 when no WebGPU adapter.
+   * - Undefined: fall back to `VITE_LUXAR_USE_WEBGPU` (opt-in to
+   *   WebGPU) / `VITE_LUXAR_USE_LEGACY_WEBGL` (no-op, matches default)
+   *   env vars, then the WebGL default.
    */
   renderer?: 'webgl' | 'webgpu';
+
+  /**
+   * Diagnostic mode for `renderer: 'webgpu'`: construct
+   * `WebGPURenderer({ forceWebGL: true })` so Three.js still uses the
+   * WebGPURenderer API surface and TSL `NodeMaterial` shaders, but routes
+   * rendering through its internal WebGL2 backend. Mirrors the
+   * `?webgpu-force-webgl` URL flag.
+   */
+  webgpuForceWebGL?: boolean;
 }
 
 export class LuxarApp {
@@ -290,6 +302,7 @@ export class LuxarApp {
         canvas: this.options.canvas,
         debug: this.options.debug,
         renderer: this.options.renderer,
+        webgpuForceWebGL: this.options.webgpuForceWebGL,
       });
 
       // Initialize animation controller with HDR post-processing.
@@ -356,6 +369,24 @@ export class LuxarApp {
         this.sceneManager.addEventListener('webgl-context-restored', onContextRestored);
         this.events.add(() =>
           this.sceneManager.removeEventListener('webgl-context-restored', onContextRestored)
+        );
+
+        // WebGPU device-loss is unrecoverable in this release (see
+        // `scene-manager.setupContextLossHandling`). Surface it as a
+        // user-facing error dialog with reload guidance — the only
+        // remediation. Console diagnostics are already emitted by the
+        // scene-manager handler; this listener exists to make sure the
+        // user is told too.
+        const onWebGPUDeviceLost = (event: { reason?: string; message?: string }): void => {
+          const reason = event.reason ? ` (${event.reason})` : '';
+          const detail = event.message ? `: ${event.message}` : '';
+          notifier.error(
+            `WebGPU device lost${reason}${detail}. ` + 'Please reload the page to continue.'
+          );
+        };
+        this.sceneManager.addEventListener('webgpu-device-lost', onWebGPUDeviceLost);
+        this.events.add(() =>
+          this.sceneManager.removeEventListener('webgpu-device-lost', onWebGPUDeviceLost)
         );
       }
 

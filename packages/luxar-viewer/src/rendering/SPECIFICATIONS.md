@@ -37,27 +37,27 @@ The `luxar-viewer.rendering` package provides advanced WebGL rendering capabilit
 
 Luxar's rendering pipeline targets both Three.js renderer backends:
 
-- **WebGPURenderer** — the default production path. Materials are TSL `NodeMaterial` instances built by a per-shader factory (`*.tsl.ts`). WebGPURenderer transparently falls back to its internal WebGL2 backend when no WebGPU adapter is available; the same TSL factories drive both.
-- **WebGLRenderer** — the legacy GLSL `ShaderMaterial` reference path, gated behind `?renderer=webgl` URL flag or `VITE_LUXAR_USE_LEGACY_WEBGL=1` env var. Kept as the parity baseline; every TSL shader is regression-tested against its GLSL counterpart by `tsl-shader-parity.spec.ts`.
+- **WebGLRenderer** — the production default. Materials are GLSL `ShaderMaterial` instances built from the `webgl` half of each `ShaderSource`. Selected when no URL flag / env var opts in to WebGPU. Kept as the parity baseline; every TSL shader is regression-tested against its GLSL counterpart by `tsl-shader-parity.spec.ts`.
+- **WebGPURenderer** — opt-in via `?renderer=webgpu` URL flag or `VITE_LUXAR_USE_WEBGPU=1` env var. Materials are TSL `NodeMaterial` instances built by a per-shader factory (`*.tsl.ts`). WebGPURenderer transparently falls back to its internal WebGL2 backend when no WebGPU adapter is available; the same TSL factories drive both. `?renderer=webgpu&webgpu-force-webgl` forces that fallback path explicitly for diagnostics (`WebGPURenderer({ forceWebGL: true })`) without switching to GLSL.
 
 ### Shader pairing
 
 Each production shader exists as a `ShaderSource` value (`{ name, webgl: { vertex, fragment }, webgpu?: (uniforms, config?) => NodeMaterial }`). The 12 production shaders are:
 
-| Geometry  | Visual GLSL/TSL                             | Picking GLSL/TSL                                              |
-| --------- | ------------------------------------------- | ------------------------------------------------------------- |
-| Points    | `shaders/point-shaders.ts` / `point.tsl.ts` | `picking/picking-shaders.ts` / `picking/point-pick.tsl.ts`    |
-| Lines     | `shaders/line-shaders.ts`  / `line.tsl.ts`  | `picking/picking-shaders.ts` / `picking/line-pick.tsl.ts`     |
-| GSplats   | `shaders/gsplat-shaders.ts`/ `gsplat.tsl.ts`| `picking/picking-shaders.ts` / `picking/gsplat-pick.tsl.ts`   |
+| Geometry | Visual GLSL/TSL                              | Picking GLSL/TSL                                            |
+| -------- | -------------------------------------------- | ----------------------------------------------------------- |
+| Points   | `shaders/point-shaders.ts` / `point.tsl.ts`  | `picking/picking-shaders.ts` / `picking/point-pick.tsl.ts`  |
+| Lines    | `shaders/line-shaders.ts` / `line.tsl.ts`    | `picking/picking-shaders.ts` / `picking/line-pick.tsl.ts`   |
+| GSplats  | `shaders/gsplat-shaders.ts`/ `gsplat.tsl.ts` | `picking/picking-shaders.ts` / `picking/gsplat-pick.tsl.ts` |
 
 Post-processing: `post-processing/mega-shader.glsl.ts` ↔ `post-processing/mega.tsl.ts`, plus `fxaa.*` and `bloom-threshold.*` pairs.
 
-### `RendererCapabilities.api` semantics
+### `RendererCapabilities.apiSurface` semantics
 
-`RendererCapabilities.api` reports the **renderer API surface** in use — i.e. which method signatures callers should follow — not the physical GPU backend. Specifically:
+`RendererCapabilities.apiSurface` reports the **renderer API surface** in use — i.e. which method signatures callers should follow — not the physical GPU backend. Specifically:
 
 - `'webgl2'` — the active renderer is `THREE.WebGLRenderer`.
-- `'webgpu'` — the active renderer is `WebGPURenderer`, including when WebGPURenderer has fallen back to its internal WebGL2 backend.
+- `'webgpu'` — the active renderer is `WebGPURenderer`, including when WebGPURenderer has fallen back to its internal WebGL2 backend naturally or because `?webgpu-force-webgl` requested `forceWebGL: true`.
 
 Callers branch on `caps.apiSurface` to pick the right method signature (e.g. WebGPURenderer's `readRenderTargetPixelsAsync` returns the buffer instead of writing into a caller-supplied one). To probe the physical backend, inspect `renderer.backend` directly.
 

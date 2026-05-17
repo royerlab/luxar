@@ -17,11 +17,11 @@ export type { WebGPURenderer } from 'three/webgpu';
 /**
  * The graphics-API renderer Luxar uses.
  *
- * `THREE.WebGLRenderer` is the legacy GLSL path (behind
- * `VITE_LUXAR_USE_LEGACY_WEBGL=1`); `WebGPURenderer` is the default
- * production path — dispatches TSL graphs to either a real WebGPU
- * adapter or the internal WebGL2 backend based on browser support.
- * Consumers hold renderer references typed as `Renderer`.
+ * `THREE.WebGLRenderer` is the production default (GLSL `ShaderMaterial`).
+ * `WebGPURenderer` (TSL `NodeMaterial`) is selectable via
+ * `?renderer=webgpu` or `VITE_LUXAR_USE_WEBGPU=1`; it dispatches to a
+ * real WebGPU adapter when available or falls back to its internal
+ * WebGL2 backend. Consumers hold renderer references typed as `Renderer`.
  */
 export type Renderer = THREE.WebGLRenderer | WebGPURenderer;
 
@@ -80,6 +80,35 @@ export interface RendererCapabilities {
    * intentionally not exposed here.
    */
   readonly apiSurface: 'webgl2' | 'webgpu';
+  /**
+   * True when the effective framebuffer presented by the renderer has
+   * row 0 at the **top** of the viewport (real WebGPU; also
+   * WebGPURenderer running on its WebGL2 compat backend, which Three.js
+   * normalises to match real WebGPU). False when row 0 is at the
+   * **bottom** (the legacy `THREE.WebGLRenderer`).
+   *
+   * This is the canonical seam for every Y-orientation decision in the
+   * viewer:
+   *
+   * - `createFullscreenTriangleGeometry` emits V-inverted UVs when this
+   *   is `true` (so that screen-bottom-left at NDC (-1,-1) samples the
+   *   bottom row of the source target on top-down framebuffers). The
+   *   `false` branch emits the straight-V UVs used by WebGL2's
+   *   bottom-up framebuffer. Either way the resulting `vUv` resolves
+   *   to the canvas-relative UV at every fragment.
+   * - `readPixelsCompactAsync` returns rows in canonical top-down order;
+   *   when this is `false`, the primitive inverts rows on the way out.
+   *
+   * Disambiguates from `api`: in practice both fields move together
+   * today (every WebGPURenderer reports `framebufferYDown=true`), but
+   * they answer different questions. `api` is the *method-signature*
+   * contract (e.g. `readRenderTargetPixelsAsync`'s shape); this field
+   * is the *framebuffer memory layout*. Future Three.js versions could
+   * conceivably introduce a `WebGPURenderer` configuration whose
+   * effective Y differs, which is why we keep this as a separate
+   * capability rather than aliasing `api`.
+   */
+  readonly framebufferYDown: boolean;
   /** HDR / wide-gamut / float-texture detection. */
   readonly hdr: HDRCapabilities;
   /** Maximum MSAA sample count the GPU supports (0 if unsupported). */
@@ -103,11 +132,49 @@ export interface RendererCapabilities {
 }
 
 /**
+ * Detect the effective framebuffer Y orientation.
+ *
+ * `WebGLRenderer` always renders into a WebGL2 FBO whose memory row 0 is
+ * the bottom of the viewport → `false`.
+ *
+ * `WebGPURenderer` always presents a **top-down** framebuffer convention
+ * to user code regardless of whether the underlying backend is real
+ * WebGPU or Three.js's WebGL2 compat fallback (`forceWebGL: true` /
+ * natural compat). Three.js's WebGPURenderer normalises Y internally
+ * so TSL/NodeMaterial output is byte-identical across its two
+ * backends. The user-observed result: even under `forceWebGL`, a
+ * passthrough sample at NDC (-1, -1) reads the *top-left* texel of the
+ * source target, matching real WebGPU's UV (0, 0) convention.
+ *
+ * The discriminator is therefore the renderer class, NOT the backend
+ * flag. An earlier heuristic branched on `renderer.backend.isWebGLBackend`
+ * to distinguish real WebGPU from compat WebGL2, but that flag is about
+ * the *backing API*, not the *effective framebuffer Y orientation*.
+ * Branching on it left the image visibly flipped under
+ * `?webgpu-force-webgl` because the geometry factory assumed WebGL's
+ * bottom-up FBO while WebGPURenderer was producing top-down output.
+ *
+ * @internal — exported only so SceneManager can pass the result through
+ * `createRendererCapabilities`. Outside of capability construction,
+ * read `caps.framebufferYDown` instead.
+ */
+export function detectFramebufferYDown(renderer: Renderer): boolean {
+  return !isWebGLRenderer(renderer);
+}
+
+/**
  * Build a `RendererCapabilities` snapshot from a constructed
  * renderer. Call once after renderer init; pass the result to
  * consumers (PostProcessingManager, SceneManager, …).
+ *
+ * `framebufferYDown` is computed by {@link detectFramebufferYDown} when
+ * not supplied — that's the production path. Tests pass an explicit
+ * value to skip the renderer-backend probe.
  */
-export function createRendererCapabilities(renderer: Renderer): RendererCapabilities {
+export function createRendererCapabilities(
+  renderer: Renderer,
+  framebufferYDown: boolean = detectFramebufferYDown(renderer)
+): RendererCapabilities {
   const display = detectDisplayCapabilities();
 
   if (isWebGLRenderer(renderer)) {
@@ -142,6 +209,7 @@ export function createRendererCapabilities(renderer: Renderer): RendererCapabili
 
     return {
       apiSurface: 'webgl2',
+      framebufferYDown,
       hdr,
       maxMSAASamples,
       pointSizeRange,
@@ -176,6 +244,7 @@ export function createRendererCapabilities(renderer: Renderer): RendererCapabili
 
   return {
     apiSurface: 'webgpu',
+    framebufferYDown,
     hdr,
     maxMSAASamples: 4, // WebGPU adapters guarantee at least 4× MSAA
     pointSizeRange: [1, 1024],
