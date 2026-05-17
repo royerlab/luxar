@@ -260,18 +260,19 @@ type WebGPUReadback = {
  *    `bytesPerRow` up to 256; this primitive runs
  *    {@link compactWebGPUReadbackRows} unconditionally (no-op for
  *    aligned widths or under WebGL2).
- * 3. **Framebuffer Y orientation** — under WebGL2 the raw readback is
- *    bottom-up (`gl.readPixels` convention); under real WebGPU it's
- *    top-down (`copyTextureToBuffer` convention). The primitive
- *    canonicalises to **top-down** by default, regardless of backend.
- *    Pass `flipY: true` to get bottom-up rows out instead — only the
- *    EXR exporter does this today, to preserve the orientation external
- *    tools (Nuke, Houdini, oiiotool) expect.
- *
- * After this primitive is in place, the only Y-aware site outside
- * `hdr-pixel-utils.ts` and the {@link createFullscreenTriangleGeometry}
- * factory is `RendererCapabilities.framebufferYDown` itself — every
- * other module reads canonical top-down data.
+ * 3. **Framebuffer Y orientation** — both renderer surfaces return
+ *    **bottom-up** rows from `readRenderTargetPixelsAsync`:
+ *    WebGLRenderer is calling `gl.readPixels` underneath, and
+ *    WebGPURenderer's compat layer maintains the same contract on
+ *    both its real-WebGPU and WebGL2 backends. (`caps.framebufferYDown`
+ *    describes the *sampling* convention used by
+ *    {@link createFullscreenTriangleGeometry}, NOT the readback
+ *    memory layout — empirically the two have diverged on
+ *    WebGPURenderer.) The primitive canonicalises to **top-down**
+ *    by default. Pass `flipY: true` to get bottom-up rows out
+ *    instead — only the EXR exporter does this today, to preserve
+ *    the orientation external tools (Nuke, Houdini, oiiotool)
+ *    expect.
  */
 export async function readPixelsCompactAsync<K extends TexelKind>(
   renderer: Renderer,
@@ -288,13 +289,12 @@ export async function readPixelsCompactAsync<K extends TexelKind>(
   const Ctor = TEXEL_CTOR[opts.kind];
   const compactLength = width * height * 4;
 
-  // Convert canonical top-down (x, y) input to the backend's framebuffer
-  // origin. The legacy `WebGLRenderer.readRenderTargetPixelsAsync` calls
-  // `gl.readPixels` whose Y is bottom-up; `WebGPURenderer` normalises
-  // Y to top-down on both its real-WebGPU and compat-WebGL backends.
-  // This mirrors `caps.framebufferYDown` exactly.
+  // Both renderer surfaces use `gl.readPixels`-style bottom-up
+  // addressing for the input `(x, y)` argument. WebGPURenderer's
+  // compat layer maintains the legacy WebGL convention on both
+  // backends — verified by the y-orientation E2E spec.
   const x = xTopDown;
-  const y = caps.framebufferYDown ? yTopDown : target.height - yTopDown - height;
+  const y = target.height - yTopDown - height;
 
   let pixels: TexelArray<K>;
   if (caps.apiSurface === 'webgl2') {
@@ -323,16 +323,10 @@ export async function readPixelsCompactAsync<K extends TexelKind>(
     pixels = compactWebGPUReadbackRows(raw, width, height, bytesPerTexel) as TexelArray<K>;
   }
 
-  // Canonical out-orientation is top-down. The raw readback is
-  // top-down on WebGPURenderer (both backends) and bottom-up on the
-  // legacy WebGLRenderer — i.e. `caps.framebufferYDown` already
-  // captures the right axis. Flip whenever the raw direction doesn't
-  // match the requested direction. The XOR collapses cleanly:
-  // `rawTopDown === wantsTopDown` means "no flip needed".
-  // `wantsTopDown = !flipY`.
-  const rawTopDown = caps.framebufferYDown;
-  const wantsTopDown = !flipY;
-  if (rawTopDown !== wantsTopDown) {
+  // Raw readback is bottom-up on both backends. Canonical out-orientation
+  // is top-down (`wantsTopDown = !flipY`), so flip iff the caller wants
+  // top-down output. Bottom-up output (`flipY: true`) passes through.
+  if (!flipY) {
     pixels = flipRowsTyped(pixels, width, height);
   }
 
