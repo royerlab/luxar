@@ -22,6 +22,7 @@ import { lineWebGPUFactory } from './line.tsl';
 import type { LineMaterialConfig } from './line-material';
 import type { CameraAwareMaterial } from './camera-aware-material';
 import type { ColormapAwareMaterial } from './colormap-aware-material';
+import { clampGamma } from './material-uniform-helpers';
 import {
   applyColormapTextureToMaterial,
   applyScalarRangeToMaterial,
@@ -43,7 +44,7 @@ export class LineTSLMaterial
   constructor(materialConfig: LineMaterialConfig = {}) {
     super();
 
-    const gammaValue = Math.max(0.001, materialConfig.gamma ?? 1.0);
+    const gammaValue = clampGamma(materialConfig.gamma);
 
     this.uniforms = {
       uFOV: { value: (60 * Math.PI) / 180 },
@@ -126,7 +127,7 @@ export class LineTSLMaterial
   }
 
   updateGamma(gamma: number): void {
-    const safeGamma = Math.max(0.001, gamma);
+    const safeGamma = clampGamma(gamma);
     this.userData.gamma = safeGamma;
     this.uniforms.uInvGamma.value = 1.0 / safeGamma;
   }

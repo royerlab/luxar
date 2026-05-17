@@ -9,6 +9,7 @@ import * as THREE from 'three';
 import { POINT_VERTEX_SHADER, POINT_FRAGMENT_SHADER } from './shaders/point-shaders';
 import type { CameraAwareMaterial } from './camera-aware-material';
 import type { ColormapAwareMaterial } from './colormap-aware-material';
+import { clampGamma } from './material-uniform-helpers';
 import { computePointSizeFactor, computeMaxPointSize } from './camera-uniforms';
 import {
   applyColormapTextureToMaterial,
@@ -67,7 +68,7 @@ export class PointMaterial
     const blendingMode: BlendingMode = materialConfig.blendingMode ?? 'additive';
     const isOpaque = blendingMode === 'opaque';
     const isAdditive = blendingMode === 'additive';
-    const gammaValue = Math.max(0.001, materialConfig.gamma ?? 1.0); // Prevent division by zero
+    const gammaValue = clampGamma(materialConfig.gamma);
     // Default values for initial computation
     const defaultFov = (60 * Math.PI) / 180;
     const defaultResolutionY = 1080;
@@ -206,7 +207,7 @@ export class PointMaterial
    * Only invGamma is used in shader; gamma value stored in userData for clone()
    */
   updateGamma(gamma: number): void {
-    const safeGamma = Math.max(0.001, gamma); // Prevent division by zero
+    const safeGamma = clampGamma(gamma);
     this.userData.gamma = safeGamma; // Store for clone() method
     this.uniforms.invGamma.value = 1.0 / safeGamma;
   }

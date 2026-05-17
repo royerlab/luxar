@@ -35,6 +35,7 @@ import { gsplatWebGPUFactory, type GSplatTSLNodes } from './gsplat.tsl';
 import type { GSplatMaterialConfig } from './gsplat-material';
 import type { CameraAwareMaterial } from './camera-aware-material';
 import type { ColormapAwareMaterial } from './colormap-aware-material';
+import { clampGamma } from './material-uniform-helpers';
 import { computeFocalLength } from './camera-uniforms';
 import { computeRayIntegralFactor } from './gsplat-math';
 import {
@@ -91,7 +92,7 @@ export class GSplatTSLMaterial
   constructor(materialConfig: GSplatMaterialConfig = {}) {
     super();
 
-    const gammaValue = Math.max(0.001, materialConfig.gamma ?? 1.0);
+    const gammaValue = clampGamma(materialConfig.gamma);
     const truncate = materialConfig.truncationRadius ?? 3.0;
     const shiftC = Math.exp(-0.5 * truncate * truncate);
     const invOneMinusC = 1.0 / (1.0 - shiftC);
@@ -253,7 +254,7 @@ export class GSplatTSLMaterial
   }
 
   updateGamma(gamma: number): void {
-    const safeGamma = Math.max(0.001, gamma);
+    const safeGamma = clampGamma(gamma);
     this.userData.gamma = safeGamma;
     this.uniforms.uInvGamma.value = 1.0 / safeGamma;
   }

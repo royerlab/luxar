@@ -32,6 +32,7 @@ import * as THREE from 'three';
 import { GSPLAT_VERTEX_SHADER, GSPLAT_FRAGMENT_SHADER } from './shaders/gsplat-shaders';
 import type { CameraAwareMaterial } from './camera-aware-material';
 import type { ColormapAwareMaterial } from './colormap-aware-material';
+import { clampGamma } from './material-uniform-helpers';
 import { computeFocalLength } from './camera-uniforms';
 import { computeRayIntegralFactor } from './gsplat-math';
 import {
@@ -128,7 +129,7 @@ export class GSplatMaterial
     const blendingMode = materialConfig.blendingMode ?? 'additive';
     const isOpaque = blendingMode === 'opaque';
     const isAdditive = blendingMode === 'additive';
-    const gammaValue = Math.max(0.001, materialConfig.gamma ?? 1.0); // Prevent division by zero
+    const gammaValue = clampGamma(materialConfig.gamma);
 
     // Determine THREE.js blending mode
     // CRITICAL: For sum projection, we need LINEAR addition of intensities.
@@ -289,7 +290,7 @@ export class GSplatMaterial
    * Only invGamma is used in shader; gamma value stored in userData for clone()
    */
   updateGamma(gamma: number): void {
-    const safeGamma = Math.max(0.001, gamma); // Prevent division by zero
+    const safeGamma = clampGamma(gamma);
     this.userData.gamma = safeGamma;
     this.uniforms.uInvGamma.value = 1.0 / safeGamma;
   }
