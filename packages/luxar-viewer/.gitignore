@@ -10,3 +10,4 @@ docs/
 performance-baselines.json
 points-migration-perf.json
 line-renderer-compare-perf.json
+test-results-perf/
