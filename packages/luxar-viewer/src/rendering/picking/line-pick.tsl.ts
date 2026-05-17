@@ -116,10 +116,9 @@ export function linePickWebGPUFactory(
   const wEnd: TSLNode = max(clipEnd.w, float(1e-4));
   const ndcStart: TSLNode = vec2(clipStart.xy.div(wStart));
   const ndcEnd: TSLNode = vec2(clipEnd.xy.div(wEnd));
-  const pixelStart: TSLNode = ndcStart.mul(0.5).add(0.5).mul(uResolution);
-  const pixelEnd: TSLNode = ndcEnd.mul(0.5).add(0.5).mul(uResolution);
 
-  const pixelDir: TSLNode = vec2(pixelEnd.sub(pixelStart));
+  // The +0.5 in (ndc*0.5+0.5)*resolution cancels under subtraction.
+  const pixelDir: TSLNode = vec2(ndcEnd.sub(ndcStart).mul(uResolution.mul(0.5)));
   const pixelLen: TSLNode = length(pixelDir);
   // `.toVar()` on the chained branch — see M13 sharp-edge notes.
   const lineDir: TSLNode = pixelLen

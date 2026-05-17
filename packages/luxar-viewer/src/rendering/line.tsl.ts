@@ -219,11 +219,11 @@ export function lineWebGPUFactory(
   const wEnd: TSLNode = max(clipEnd.w, float(1e-4));
   const ndcStart: TSLNode = vec2(clipStart.xy.div(wStart));
   const ndcEnd: TSLNode = vec2(clipEnd.xy.div(wEnd));
-  const pixelStart: TSLNode = ndcStart.mul(0.5).add(0.5).mul(uResolution);
-  const pixelEnd: TSLNode = ndcEnd.mul(0.5).add(0.5).mul(uResolution);
 
-  // Direction + perpendicular (pixel space, aspect-correct).
-  const pixelDir: TSLNode = vec2(pixelEnd.sub(pixelStart));
+  // Direction + perpendicular (pixel space, aspect-correct). The +0.5
+  // in (ndc*0.5+0.5)*resolution cancels under subtraction, so the
+  // pixel-space direction is just (ndcEnd-ndcStart)*(0.5*resolution).
+  const pixelDir: TSLNode = vec2(ndcEnd.sub(ndcStart).mul(uResolution.mul(0.5)));
   const pixelLen: TSLNode = length(pixelDir);
   const lineDir: TSLNode = pixelLen
     .greaterThan(0.0001)

@@ -154,11 +154,10 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
       float wEnd = max(clipEnd.w, 1e-4);
       vec2 ndcStart = clipStart.xy / wStart;
       vec2 ndcEnd = clipEnd.xy / wEnd;
-      vec2 pixelStart = (ndcStart * 0.5 + 0.5) * uResolution;
-      vec2 pixelEnd = (ndcEnd * 0.5 + 0.5) * uResolution;
 
-      // Compute line direction and perpendicular in pixel space (aspect-ratio correct)
-      vec2 pixelDir = pixelEnd - pixelStart;
+      // Compute line direction in pixel space (aspect-ratio correct).
+      // The +0.5 in (ndc*0.5+0.5)*resolution cancels under subtraction.
+      vec2 pixelDir = (ndcEnd - ndcStart) * (0.5 * uResolution);
       float pixelLen = length(pixelDir);
 
       // Handle degenerate segments (zero length in screen space)
