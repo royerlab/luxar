@@ -33,6 +33,7 @@ import { pointWebGPUFactory } from './point.tsl';
 import type { PointMaterialConfig } from './point-material';
 import type { CameraAwareMaterial } from './camera-aware-material';
 import type { ColormapAwareMaterial } from './colormap-aware-material';
+import { clampGamma } from './material-uniform-helpers';
 import { computePointSizeFactor, computeMaxPointSize } from './camera-uniforms';
 import {
   applyColormapTextureToMaterial,
@@ -63,7 +64,7 @@ export class PointTSLMaterial
   constructor(materialConfig: PointMaterialConfig = {}) {
     super();
 
-    const gammaValue = Math.max(0.001, materialConfig.gamma ?? 1.0);
+    const gammaValue = clampGamma(materialConfig.gamma);
     const defaultFov = (60 * Math.PI) / 180;
     const defaultResolutionY = 1080;
     const defaultTanHalfFov = Math.tan(defaultFov / 2);
@@ -180,7 +181,7 @@ export class PointTSLMaterial
   }
 
   updateGamma(gamma: number): void {
-    const safeGamma = Math.max(0.001, gamma);
+    const safeGamma = clampGamma(gamma);
     this.userData.gamma = safeGamma;
     this.uniforms.invGamma.value = 1.0 / safeGamma;
   }
