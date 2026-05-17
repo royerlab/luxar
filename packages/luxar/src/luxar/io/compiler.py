@@ -747,33 +747,18 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         )
         aprint(f"  ✓ Wrote segments ({n_segments:,} pairs)")
 
-        # Write widths using ArrayEncoder (POSITIVE_SCALAR)
-        # Handle both scalar and array inputs
-        if isinstance(widths, (int, float)):
-            n_elems = n_vertices
-            chunks_1d = None  # Scalar doesn't need chunks
-        else:
-            if widths.shape[0] == 1:
-                n_elems = n_vertices
-                chunks_1d = None
-            else:
-                n_elems = None  # Array already has correct size
-                chunks_1d = _calculate_intelligent_chunks(
-                    (n_vertices,),
-                    spatial_index_data=ordering_data.get("vertex_ordering")
-                    if ordering_data
-                    else None,
-                )
-
-        self._encoder.encode(
+        # Write widths via the canonical POSITIVE_SCALAR helper (shared
+        # with Points "radii" and GSplats "amplitudes"). The helper
+        # picks the same default precision for every geometry.
+        self._write_positive_scalar_dataset(
+            group=group,
             data=widths,
-            zarr_group=group,
             name="widths",
-            semantic_type=SemanticType.POSITIVE_SCALAR,
-            mode=self._encoding_mode,
-            n_elements=n_elems,
-            chunks=chunks_1d,
-            compressor=self.compressor,
+            spatial_index_data=ordering_data.get("vertex_ordering")
+            if ordering_data
+            else None,
+            n_elements=n_vertices,
+            log_label_singular="width",
         )
 
         # Initialize metadata
@@ -789,91 +774,40 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
 
         # Write optional datasets
         if colors is not None:
-            # Handle both scalar/tuple and array inputs
-            color_mode: Optional[Literal["sdr", "hdr"]] = None
-            if isinstance(colors, (tuple, list)):
-                # Scalar color input - detect HDR vs SDR
-                max_val = max(colors)
-                color_mode = "hdr" if max_val > 1.0 else "sdr"
-                n_elems_color = n_vertices
-                chunks_colors = None
-            elif isinstance(colors, np.ndarray):
+            if isinstance(colors, np.ndarray):
                 validate_colors_for_writing(colors, n_vertices)
-                if colors.shape[0] == 1:
-                    n_elems_color = n_vertices
-                    chunks_colors = None
-                else:
-                    chunks_colors = _calculate_intelligent_chunks(
-                        colors.shape,
-                        spatial_index_data=ordering_data.get("vertex_ordering")
-                        if ordering_data
-                        else None,
-                        dtype=colors.dtype,
-                    )
-                    n_elems_color = None
-
-                # Detect color_mode for arrays
-                if np.issubdtype(colors.dtype, np.floating):
-                    color_mode = "hdr" if np.any(colors > 1.0) else "sdr"
-            else:
-                raise ValueError(f"Unsupported colors type: {type(colors)}")
-
-            self._encoder.encode(
-                data=colors,
-                zarr_group=group,
-                name="colors",
-                semantic_type=SemanticType.COLOR,
-                mode=self._encoding_mode,
-                color_mode=color_mode,
-                n_elements=n_elems_color,
-                chunks=chunks_colors,
-                compressor=self.compressor,
+            # Use the canonical COLOR helper (shared with Points / GSplats)
+            # so the default-precision and color_mode-detection logic is
+            # symmetric across all three geometry types.
+            self._write_colors_dataset(
+                group=group,
+                colors=colors,
+                spatial_index_data=ordering_data.get("vertex_ordering")
+                if ordering_data
+                else None,
+                n_elements=n_vertices,
             )
             metadata["has_colors"] = True
-
-            # Store color data range for layer controls
-            if isinstance(colors, np.ndarray) and colors.size > 0:
-                group.attrs["color_data_range"] = [
-                    float(colors.min()),
-                    float(colors.max()),
-                ]
-            elif isinstance(colors, (tuple, list)):
-                group.attrs["color_data_range"] = [
-                    float(min(colors)),
-                    float(max(colors)),
-                ]
 
         if sharpness is not None:
             from ..validation.base import validate_sharpness_for_writing
 
-            # Handle both scalar and array inputs
-            if isinstance(sharpness, (int, float)):
-                n_elems_sharp = n_vertices
-                chunks_sharp = None
-            else:
+            if isinstance(sharpness, np.ndarray):
                 validate_sharpness_for_writing(sharpness, n_vertices)
-                if sharpness.shape[0] == 1:
-                    n_elems_sharp = n_vertices
-                    chunks_sharp = None
-                else:
-                    n_elems_sharp = None
-                    chunks_sharp = _calculate_intelligent_chunks(
-                        (n_vertices,),
-                        spatial_index_data=ordering_data.get("vertex_ordering")
-                        if ordering_data
-                        else None,
-                    )
-
-            self._encoder.encode(
+            # Canonical BOUNDED_SCALAR helper (shared with Points
+            # "sharpnesses"). Same bounds tuple as Points so the
+            # encoder's Uint8-quantization step produces matching disk
+            # layouts.
+            self._write_bounded_scalar_dataset(
+                group=group,
                 data=sharpness,
-                zarr_group=group,
                 name="sharpnesses",
-                semantic_type=SemanticType.BOUNDED_SCALAR,
-                mode=self._encoding_mode,
                 bounds=(0.0, SHARPNESS_MAX),
-                n_elements=n_elems_sharp,
-                chunks=chunks_sharp,
-                compressor=self.compressor,
+                spatial_index_data=ordering_data.get("vertex_ordering")
+                if ordering_data
+                else None,
+                n_elements=n_vertices,
+                log_label_singular="sharpness",
             )
             metadata["has_sharpness"] = True
 
@@ -1150,30 +1084,28 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             compressor=self.compressor,
         )
 
-        # Write amplitudes
+        # Compute amplitude range up-front for the layer-control
+        # metadata block below. The helper recomputes max internally;
+        # we surface min here because the GSplat metadata dict needs
+        # both bounds.
         if isinstance(amplitudes, (int, float)):
             amplitude_min = amplitude_max = float(amplitudes)
-            n_elems_amp = n_splats
-            chunks_amp = None
         else:
             amplitude_min, amplitude_max = (
                 float(np.min(amplitudes)),
                 float(np.max(amplitudes)),
             )
-            n_elems_amp = None
-            chunks_amp = _calculate_intelligent_chunks(
-                (n_splats,), spatial_index_data=ordering_data
-            )
 
-        self._encoder.encode(
+        # Canonical POSITIVE_SCALAR helper — shared with Points "radii"
+        # and Lines "widths" so the default-precision selection is
+        # symmetric across all three geometries.
+        self._write_positive_scalar_dataset(
+            group=group,
             data=amplitudes,
-            zarr_group=group,
             name="amplitudes",
-            semantic_type=SemanticType.POSITIVE_SCALAR,
-            mode=self._encoding_mode,
-            n_elements=n_elems_amp,
-            chunks=chunks_amp,
-            compressor=self.compressor,
+            spatial_index_data=ordering_data,
+            n_elements=n_splats,
+            log_label_singular="amplitude",
         )
 
         if isinstance(amplitudes, np.ndarray) and amplitudes.size > 0:
@@ -1232,55 +1164,20 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         else:
             metadata["ordering"] = "none"
 
-        # Write colors
+        # Write colors via the canonical COLOR helper (shared with
+        # Points + Lines). The helper handles the tuple/list/ndarray
+        # branch, picks the right `color_mode`, and writes
+        # `color_data_range` attrs identically across geometries.
         if colors is not None:
-            color_mode: Optional[Literal["sdr", "hdr"]] = None
-            if isinstance(colors, (tuple, list)):
-                max_val = max(colors)
-                color_mode = "hdr" if max_val > 1.0 else "sdr"
-                n_elems_color = n_splats
-                chunks_colors = None
-            elif isinstance(colors, np.ndarray):
+            if isinstance(colors, np.ndarray):
                 validate_colors_for_writing(colors, n_splats)
-                if colors.shape[0] == 1:
-                    n_elems_color = n_splats
-                    chunks_colors = None
-                else:
-                    chunks_colors = _calculate_intelligent_chunks(
-                        colors.shape,
-                        spatial_index_data=ordering_data,
-                        dtype=colors.dtype,
-                    )
-                    n_elems_color = None
-
-                if np.issubdtype(colors.dtype, np.floating):
-                    color_mode = "hdr" if np.any(colors > 1.0) else "sdr"
-            else:
-                raise ValueError(f"Unsupported colors type: {type(colors)}")
-
-            self._encoder.encode(
-                data=colors,
-                zarr_group=group,
-                name="colors",
-                semantic_type=SemanticType.COLOR,
-                mode=self._encoding_mode,
-                color_mode=color_mode,
-                n_elements=n_elems_color,
-                chunks=chunks_colors,
-                compressor=self.compressor,
+            self._write_colors_dataset(
+                group=group,
+                colors=colors,
+                spatial_index_data=ordering_data,
+                n_elements=n_splats,
             )
             metadata["has_colors"] = True
-
-            if isinstance(colors, np.ndarray) and colors.size > 0:
-                group.attrs["color_data_range"] = [
-                    float(colors.min()),
-                    float(colors.max()),
-                ]
-            elif isinstance(colors, (tuple, list)):
-                group.attrs["color_data_range"] = [
-                    float(min(colors)),
-                    float(max(colors)),
-                ]
 
         # Write chunk_bounds
         if ordering_data is not None:
@@ -2077,18 +1974,25 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         group: zarr.Group,
         colors: Union[NDArray[np.float32], tuple, list],
         spatial_index_data: Optional[Dict[str, Any]],
-        n_points: int,
+        n_elements: int,
     ) -> None:
         """Write colors dataset to Zarr using ArrayEncoder.
+
+        Canonical writer for the ``COLOR`` semantic type across all three
+        geometry types (Points, Lines, GSplats). Lines previously
+        duplicated this logic inline in ``write_lines``; the shared helper
+        keeps the default-precision selection identical across geometries.
 
         Args:
             group: Zarr group to write to
             colors: Colors array or tuple/list
             spatial_index_data: Optional spatial index for chunk optimization
-            n_points: Logical point count. This must not be inferred from the
+            n_elements: Logical element count (points / vertices / splats).
+                This must not be inferred from the
                 positions zarr array because duplicate positions may be stored as
                 an array_ref with physical shape ``(0, D)``.
         """
+        n_points = n_elements  # local alias keeps the rest of the body unchanged
         # Handle scalar vs array
         color_mode: Optional[Literal["sdr", "hdr"]] = None
         if isinstance(colors, (tuple, list)):
@@ -2163,6 +2067,152 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 float(max(colors)),
             ]
 
+    def _write_positive_scalar_dataset(
+        self,
+        group: zarr.Group,
+        data: Union[NDArray[np.float32], float, int],
+        name: str,
+        spatial_index_data: Optional[Dict[str, Any]],
+        n_elements: int,
+        log_label_singular: Optional[str] = None,
+    ) -> float:
+        """Canonical writer for the ``POSITIVE_SCALAR`` semantic type.
+
+        Used by Points (``radii``), Lines (``widths``), and GSplats
+        (``amplitudes``). Returns the maximum value so callers that
+        cache it for layer-controls (e.g. radius/amplitude range
+        metadata) don't have to recompute.
+
+        ``log_label_singular`` controls the aprint output —
+        ``"radius"`` / ``"width"`` / ``"amplitude"``. Defaults to
+        ``name`` if not provided.
+
+        Args:
+            group: Zarr group to write to.
+            data: Array of positive scalars or a single broadcast value.
+            name: Dataset name in the zarr group (e.g. ``"radii"``,
+                ``"widths"``, ``"amplitudes"``).
+            spatial_index_data: Optional spatial-ordering metadata used
+                by ``_calculate_intelligent_chunks`` to pick chunk
+                boundaries that line up with the spatial index.
+            n_elements: Logical element count; must not be inferred from
+                the positions array because deduplicated positions can be
+                stored as an array_ref with physical shape ``(0, D)``.
+            log_label_singular: Optional singular form for the aprint
+                log line ("radius" / "width" / "amplitude"). Defaults to
+                the dataset name.
+
+        Returns:
+            Maximum value across ``data``.
+        """
+        label = log_label_singular or name
+
+        if isinstance(data, (int, float)):
+            max_value = float(data)
+            n_elems = n_elements
+            chunks = None
+        else:
+            max_value = float(np.max(data))
+            if data.shape[0] == 1:
+                n_elems = n_elements
+                chunks = None
+            else:
+                n_elems = None
+                chunks = _calculate_intelligent_chunks(
+                    data.shape, spatial_index_data=spatial_index_data
+                )
+
+        aprint(f"  ✓ Max {label}: {max_value:.3f}")
+
+        self._encoder.encode(
+            data=data,
+            zarr_group=group,
+            name=name,
+            semantic_type=SemanticType.POSITIVE_SCALAR,
+            mode=self._encoding_mode,
+            n_elements=n_elems,
+            chunks=chunks,
+            compressor=self.compressor,
+        )
+
+        enc = group[name].attrs.get("encoding", {})
+        enc_name = enc.get("name", "unknown")
+        if enc_name == "broadcasted":
+            aprint(f"  ✓ Wrote {name} (broadcasted - uniform)")
+        elif enc_name == "array_ref":
+            aprint(f"  ✓ Wrote {name} (reference to {enc['target']})")
+        elif enc_name.startswith("log_scalar"):
+            aprint(f"  ✓ Wrote {name} ({enc_name} - log encoding)")
+        else:
+            aprint(f"  ✓ Wrote {name} ({enc_name})")
+
+        return max_value
+
+    def _write_bounded_scalar_dataset(
+        self,
+        group: zarr.Group,
+        data: Union[NDArray[np.float32], float, int],
+        name: str,
+        bounds: Tuple[float, float],
+        spatial_index_data: Optional[Dict[str, Any]],
+        n_elements: int,
+        log_label_singular: Optional[str] = None,
+    ) -> float:
+        """Canonical writer for the ``BOUNDED_SCALAR`` semantic type.
+
+        Used by Points + Lines (``sharpnesses``). The ``bounds`` tuple
+        is forwarded to the encoder, which quantizes the data into
+        Uint8 normalised to that range when the encoding mode allows.
+
+        Returns the maximum value for callers that surface it on
+        layer-control metadata.
+        """
+        label = log_label_singular or name
+
+        if isinstance(data, (int, float)):
+            max_value = float(data)
+            n_elems = n_elements
+            chunks = None
+        else:
+            max_value = float(np.max(data))
+            if data.shape[0] == 1:
+                n_elems = n_elements
+                chunks = None
+            else:
+                n_elems = None
+                chunks = _calculate_intelligent_chunks(
+                    data.shape, spatial_index_data=spatial_index_data
+                )
+
+        aprint(f"  ✓ Max {label}: {max_value:.3f}")
+
+        self._encoder.encode(
+            data=data,
+            zarr_group=group,
+            name=name,
+            semantic_type=SemanticType.BOUNDED_SCALAR,
+            mode=self._encoding_mode,
+            bounds=bounds,
+            n_elements=n_elems,
+            chunks=chunks,
+            compressor=self.compressor,
+        )
+
+        enc = group[name].attrs.get("encoding", {})
+        enc_name = enc.get("name", "unknown")
+        if enc_name == "broadcasted":
+            aprint(f"  ✓ Wrote {name} (broadcasted - uniform)")
+        elif enc_name == "array_ref":
+            aprint(f"  ✓ Wrote {name} (reference to {enc['target']})")
+        elif enc_name == "bounded_scalar_uint8":
+            aprint(
+                f"  ✓ Wrote {name} (uint8, quantized to [{bounds[0]:g}, {bounds[1]:g}])"
+            )
+        else:
+            aprint(f"  ✓ Wrote {name} ({enc_name})")
+
+        return max_value
+
     def _write_radii_dataset(
         self,
         group: zarr.Group,
@@ -2170,62 +2220,21 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         spatial_index_data: Optional[Dict[str, Any]],
         n_points: int,
     ) -> float:
-        """Write radii dataset to Zarr using ArrayEncoder.
+        """Thin Points-specific wrapper over ``_write_positive_scalar_dataset``.
 
-        Args:
-            group: Zarr group to write to
-            radii: Radii array or scalar value
-            spatial_index_data: Optional spatial index for chunk optimization
-            n_points: Logical point count. This must not be inferred from the
-                positions zarr array because duplicate positions may be stored as
-                an array_ref with physical shape ``(0, D)``.
-
-        Returns:
-            Maximum radius value
+        Kept as a named helper because ``write_points`` reads more
+        clearly with the geometry-specific name. New geometries should
+        call ``_write_positive_scalar_dataset`` directly with their own
+        dataset name.
         """
-        # Handle scalar vs array
-        if isinstance(radii, (int, float)):
-            max_radius = float(radii)
-            n_elems = n_points
-            radii_chunks = None
-        else:
-            max_radius = float(np.max(radii))
-            if radii.shape[0] == 1:
-                n_elems = n_points
-                radii_chunks = None
-            else:
-                n_elems = None
-                radii_chunks = _calculate_intelligent_chunks(
-                    radii.shape, spatial_index_data=spatial_index_data
-                )
-
-        aprint(f"  ✓ Max radius: {max_radius:.3f}")
-
-        # Use ArrayEncoder for radii (POSITIVE_SCALAR semantic type)
-        self._encoder.encode(
+        return self._write_positive_scalar_dataset(
+            group=group,
             data=radii,
-            zarr_group=group,
             name="radii",
-            semantic_type=SemanticType.POSITIVE_SCALAR,
-            mode=self._encoding_mode,
-            n_elements=n_elems,
-            chunks=radii_chunks,
-            compressor=self.compressor,
+            spatial_index_data=spatial_index_data,
+            n_elements=n_points,
+            log_label_singular="radius",
         )
-
-        # Log encoding result
-        enc = group["radii"].attrs.get("encoding", {})
-        enc_name = enc.get("name", "unknown")
-        if enc_name == "broadcasted":
-            aprint("  ✓ Wrote radii (broadcasted - uniform)")
-        elif enc_name == "array_ref":
-            aprint(f"  ✓ Wrote radii (reference to {enc['target']})")
-        elif enc_name.startswith("log_scalar"):
-            aprint(f"  ✓ Wrote radii ({enc_name} - log encoding)")
-        else:
-            aprint(f"  ✓ Wrote radii ({enc_name})")
-
-        return max_radius
 
     def _write_sharpness_dataset(
         self,
@@ -2234,63 +2243,22 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         spatial_index_data: Optional[Dict[str, Any]],
         n_points: int,
     ) -> float:
-        """Write sharpness dataset to Zarr using ArrayEncoder.
+        """Thin Points-specific wrapper over ``_write_bounded_scalar_dataset``.
 
-        Args:
-            group: Zarr group to write to
-            sharpness: Sharpness array or scalar value
-            spatial_index_data: Optional spatial index for chunk optimization
-            n_points: Logical point count. This must not be inferred from the
-                positions zarr array because duplicate positions may be stored as
-                an array_ref with physical shape ``(0, D)``.
-
-        Returns:
-            Maximum sharpness value
+        Like ``_write_radii_dataset``, kept for readability in
+        ``write_points``. New geometries call
+        ``_write_bounded_scalar_dataset`` directly with the appropriate
+        bounds tuple.
         """
-        # Handle scalar vs array
-        if isinstance(sharpness, (int, float)):
-            max_sharpness = float(sharpness)
-            n_elems = n_points
-            sharp_chunks = None
-        else:
-            max_sharpness = float(np.max(sharpness))
-            if sharpness.shape[0] == 1:
-                n_elems = n_points
-                sharp_chunks = None
-            else:
-                n_elems = None
-                sharp_chunks = _calculate_intelligent_chunks(
-                    sharpness.shape, spatial_index_data=spatial_index_data
-                )
-
-        aprint(f"  ✓ Max sharpness: {max_sharpness:.3f}")
-
-        # Use ArrayEncoder for sharpness (BOUNDED_SCALAR with [0, 31] range)
-        self._encoder.encode(
+        return self._write_bounded_scalar_dataset(
+            group=group,
             data=sharpness,
-            zarr_group=group,
             name="sharpnesses",
-            semantic_type=SemanticType.BOUNDED_SCALAR,
-            mode=self._encoding_mode,
             bounds=(0.0, SHARPNESS_MAX),
-            n_elements=n_elems,
-            chunks=sharp_chunks,
-            compressor=self.compressor,
+            spatial_index_data=spatial_index_data,
+            n_elements=n_points,
+            log_label_singular="sharpness",
         )
-
-        # Log encoding result
-        enc = group["sharpnesses"].attrs.get("encoding", {})
-        enc_name = enc.get("name", "unknown")
-        if enc_name == "broadcasted":
-            aprint("  ✓ Wrote sharpness (broadcasted - uniform)")
-        elif enc_name == "array_ref":
-            aprint(f"  ✓ Wrote sharpness (reference to {enc['target']})")
-        elif enc_name == "bounded_scalar_uint8":
-            aprint("  ✓ Wrote sharpness (uint8, quantized to [0, 31])")
-        else:
-            aprint(f"  ✓ Wrote sharpness ({enc_name})")
-
-        return max_sharpness
 
     def _write_scalars_dataset(
         self,
