@@ -88,6 +88,7 @@ const EMPTY_PARAMS: UrlParams = {
   cacheStats: false,
   renderer: null,
   webgpuForceWebGL: false,
+  perfTimestamp: false,
 };
 
 describe('bootstrapStandalone', () => {

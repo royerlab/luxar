@@ -185,6 +185,7 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     // precedence chain.
     renderer: urlParams.renderer ?? undefined,
     webgpuForceWebGL: urlParams.webgpuForceWebGL,
+    perfTimestamp: urlParams.perfTimestamp,
   };
 
   const app = new LuxarApp();

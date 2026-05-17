@@ -21,6 +21,7 @@ describe('readUrlParams', () => {
       cacheStats: false,
       renderer: null,
       webgpuForceWebGL: false,
+      perfTimestamp: false,
     });
   });
 

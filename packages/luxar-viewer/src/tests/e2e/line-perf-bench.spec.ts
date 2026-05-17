@@ -169,8 +169,21 @@ async function measureScenario(
   backend: Backend
 ): Promise<ScenarioResult> {
   const notes: string[] = [];
-  await page.goto(`/?src=${url}&renderer=${backend}&debug`);
-  await waitForLuxarReady(page);
+  // `?perf-timestamp` opts WebGPURenderer into `{trackTimestamp: true}`
+  // so we can read per-frame GPU duration via
+  // `renderer.resolveTimestampsAsync('render')` below. On WebGL or on a
+  // WebGPU adapter without the `timestamp-query` feature, the renderer
+  // silently returns the last cached value (0 for the first frame),
+  // and the bench falls back to JS-only timing.
+  //
+  // Heavy datasets (millions of segments) can exceed the default 120s
+  // navigation timeout when re-loading after a prior scenario. Raise
+  // it generously — a real failure will still surface as the
+  // measureScenario try/catch upstream.
+  await page.goto(`/?src=${url}&renderer=${backend}&debug&perf-timestamp`, {
+    timeout: 300_000,
+  });
+  await waitForLuxarReady(page, 120_000);
 
   // Probe the active backend and visible segment count up front so a
   // silent fallback (WebGPU → WebGL on unsupported hardware) or an
@@ -253,6 +266,14 @@ async function measureScenario(
   // and a wall-clock cap so slow scenes still collect samples before
   // the watchdog. Watchdog generously sized so a slow first-frame
   // doesn't kill the run.
+  //
+  // GPU timestamps: every N frames we batch-resolve the WebGPU
+  // timestamp queries via `renderer.resolveTimestampsAsync('render')`.
+  // The pool accumulates per-render() durations between resolves; we
+  // divide by `framesSinceResolve` to recover an average per-frame
+  // GPU ms. WebGL renderers and WebGPU drivers without the
+  // `timestamp-query` feature return 0 / lastValue; the bench treats
+  // those as unsupported and falls back to JS-only timing.
   const timing = await page.evaluate(
     async (cfg: {
       windowMs: number;
@@ -260,22 +281,52 @@ async function measureScenario(
       warmupMaxMs: number;
       minFrames: number;
     }) => {
-      const debug = (window as unknown as { __luxarDebug: { renderOnce: () => void } })
-        .__luxarDebug;
+      const debug = (
+        window as unknown as {
+          __luxarDebug: {
+            renderOnce: () => void;
+            renderer?: {
+              resolveTimestampsAsync?: (type: string) => Promise<number>;
+              backend?: { trackTimestamp?: boolean };
+            };
+          };
+        }
+      ).__luxarDebug;
       const dts: number[] = [];
+      const gpuPerFrameMs: number[] = [];
       let frames = 0;
       let lastTime = performance.now();
       const start = lastTime;
       let collectingStart: number | null = null;
+      let framesSinceResolve = 0;
 
-      return new Promise<{ frameDtMs: number[]; totalMs: number }>((resolve) => {
+      // Resolve cadence: 16 frames per resolve. Frequent enough for
+      // good per-batch averages, infrequent enough that the
+      // resolveAsync overhead doesn't dominate the loop.
+      const GPU_RESOLVE_EVERY = 16;
+      const supportsTimestamp =
+        typeof debug.renderer?.resolveTimestampsAsync === 'function' &&
+        debug.renderer?.backend?.trackTimestamp === true;
+
+      return new Promise<{
+        frameDtMs: number[];
+        gpuPerFrameMs: number[];
+        totalMs: number;
+        supportsTimestamp: boolean;
+      }>((resolve) => {
         const watchdog = window.setTimeout(
-          () => resolve({ frameDtMs: dts, totalMs: performance.now() - start }),
+          () =>
+            resolve({
+              frameDtMs: dts,
+              gpuPerFrameMs,
+              totalMs: performance.now() - start,
+              supportsTimestamp,
+            }),
           // Cap at 30s even for very slow scenes; better to bail than
           // hang the run indefinitely.
           Math.max(cfg.windowMs * 3, 30_000)
         );
-        const tick = () => {
+        const tick = async () => {
           const now = performance.now();
           const elapsedSinceStart = now - start;
           const warmupDone =
@@ -283,20 +334,50 @@ async function measureScenario(
           if (warmupDone) {
             if (collectingStart === null) collectingStart = now;
             dts.push(now - lastTime);
+
+            // Resolve GPU timestamps every N frames. Three.js's pool
+            // returns the total duration since the last resolve; divide
+            // by the batch size to get an average per-frame GPU ms,
+            // pushed once per resolve.
+            framesSinceResolve++;
+            if (supportsTimestamp && framesSinceResolve >= GPU_RESOLVE_EVERY) {
+              try {
+                const gpuBatchMs = await debug.renderer!.resolveTimestampsAsync!(
+                  'render'
+                );
+                if (
+                  typeof gpuBatchMs === 'number' &&
+                  Number.isFinite(gpuBatchMs) &&
+                  gpuBatchMs > 0
+                ) {
+                  gpuPerFrameMs.push(gpuBatchMs / framesSinceResolve);
+                }
+              } catch {
+                // Drop the sample on transient failure; resolveAsync can
+                // race with frame submission. Falls through to the next
+                // batch.
+              }
+              framesSinceResolve = 0;
+            }
           }
           lastTime = now;
           frames++;
           const collectingElapsed = collectingStart === null ? 0 : now - collectingStart;
           if (collectingElapsed < cfg.windowMs || dts.length < cfg.minFrames) {
             debug.renderOnce();
-            requestAnimationFrame(tick);
+            requestAnimationFrame(() => void tick());
           } else {
             window.clearTimeout(watchdog);
-            resolve({ frameDtMs: dts, totalMs: elapsedSinceStart });
+            resolve({
+              frameDtMs: dts,
+              gpuPerFrameMs,
+              totalMs: elapsedSinceStart,
+              supportsTimestamp,
+            });
           }
         };
         debug.renderOnce();
-        requestAnimationFrame(tick);
+        requestAnimationFrame(() => void tick());
       });
     },
     {
@@ -309,19 +390,33 @@ async function measureScenario(
 
   const frameMs = statsOf(timing.frameDtMs);
 
-  // GPU timestamp-query support is best-effort and varies by driver.
-  // We probe for the feature; if the device wasn't requested with it,
-  // we can't measure GPU time from this side without renderer-level
-  // hooks. Mark unsupported for now — wired in later if needed.
-  const gpu: GpuStats = {
-    supported: false,
-    count: 0,
-    medianMs: null,
-    p95Ms: null,
-  };
-  notes.push(
-    'GPU timestamp-query not wired through renderer; JS frame time only'
-  );
+  // GPU timestamp-query support is best-effort: the renderer was
+  // constructed with `trackTimestamp: true` (via `?perf-timestamp`),
+  // but the feature only fires when the WebGPU adapter exposes
+  // `timestamp-query`. On WebGL2 / WebGL-backed WebGPURenderer / older
+  // GPUs the supportsTimestamp probe is false and we fall through to
+  // JS frame timing.
+  const gpuStatsInner = timing.supportsTimestamp ? statsOf(timing.gpuPerFrameMs) : null;
+  const gpu: GpuStats = gpuStatsInner
+    ? {
+        supported: true,
+        count: gpuStatsInner.count,
+        medianMs: gpuStatsInner.median,
+        p95Ms: gpuStatsInner.p95,
+      }
+    : {
+        supported: false,
+        count: 0,
+        medianMs: null,
+        p95Ms: null,
+      };
+  if (!timing.supportsTimestamp) {
+    notes.push('GPU timestamp-query unavailable (WebGL backend or missing feature)');
+  } else if (timing.gpuPerFrameMs.length === 0) {
+    notes.push(
+      'GPU timestamp-query enabled but no samples collected — driver may have rejected the queries'
+    );
+  }
 
   return {
     scenarioId,
@@ -368,7 +463,34 @@ test('line perf bench — JS frame timing across backends', async ({ page }) => 
       continue;
     }
     for (const backend of BACKENDS) {
-      const result = await measureScenario(page, scn.id, scn.label, scn.url, backend);
+      // Resilience: huge scenes can lose the WebGPU device or trip
+      // nav timeouts. A single failing scenario should not block the
+      // rest of the bench or, more importantly, the JSON write at the
+      // end. Wrap each measurement in try/catch and synthesize a
+      // skipped result on failure.
+      let result: ScenarioResult;
+      try {
+        result = await measureScenario(page, scn.id, scn.label, scn.url, backend);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        // Truncate the stack trace — long Playwright error messages
+        // make the JSON unwieldy.
+        const shortMsg = msg.split('\n').slice(0, 3).join(' | ');
+        result = {
+          scenarioId: scn.id,
+          scenarioLabel: scn.label,
+          backend,
+          actualApi: null,
+          isWebGLBackend: false,
+          visibleSegments: 0,
+          frameMs: null,
+          firstRenderMs: null,
+          gpu: { supported: false, count: 0, medianMs: null, p95Ms: null },
+          notes: [`measurement threw: ${shortMsg}`],
+          skipped: true,
+          skipReason: 'measurement error',
+        };
+      }
       scenarios.push(result);
 
       const fm = result.frameMs;
@@ -377,10 +499,14 @@ test('line perf bench — JS frame timing across backends', async ({ page }) => 
         : fm
           ? `median=${fm.median.toFixed(2)}ms p95=${fm.p95.toFixed(2)}ms p99=${fm.p99.toFixed(2)}ms mean=${fm.mean.toFixed(2)}ms count=${fm.count}`
           : 'no samples';
+      const gpuSummary =
+        result.gpu.supported && result.gpu.medianMs !== null
+          ? ` gpu_median=${result.gpu.medianMs.toFixed(2)}ms (n=${result.gpu.count})`
+          : '';
       console.log(
         `  [${scn.id}/${backend} → ${result.actualApi ?? '?'}${
           result.isWebGLBackend ? ' (webgl-bk)' : ''
-        }] segs=${result.visibleSegments} ${summary}`
+        }] segs=${result.visibleSegments} ${summary}${gpuSummary}`
       );
     }
   }

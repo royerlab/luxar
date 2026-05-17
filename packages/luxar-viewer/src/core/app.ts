@@ -140,6 +140,16 @@ export interface LuxarAppOptions {
    * `?webgpu-force-webgl` URL flag.
    */
   webgpuForceWebGL?: boolean;
+
+  /**
+   * Opt-in to WebGPU `timestamp-query` profiling. Construct
+   * `WebGPURenderer({ trackTimestamp: true })` so the perf bench can
+   * read per-frame GPU duration via
+   * `renderer.resolveTimestampsAsync('render')`. Tiny runtime cost
+   * (~1-2% per Three.js docs); intended only for the perf-bench spec
+   * (`?perf-timestamp` URL flag). Ignored under `WebGLRenderer`.
+   */
+  perfTimestamp?: boolean;
 }
 
 export class LuxarApp {
@@ -303,6 +313,7 @@ export class LuxarApp {
         debug: this.options.debug,
         renderer: this.options.renderer,
         webgpuForceWebGL: this.options.webgpuForceWebGL,
+        perfTimestamp: this.options.perfTimestamp,
       });
 
       // Initialize animation controller with HDR post-processing.
