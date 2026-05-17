@@ -69,7 +69,35 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
     // matches the visual material and documents intent.
     this.forceSinglePass = true;
 
-    linePickWebGPUFactory(this.tslNodes as LinePickTSLNodes, this);
+    linePickWebGPUFactory(
+      this.tslNodes as LinePickTSLNodes,
+      { sharpnessTwo: !!this.defines?.LUXAR_SHARPNESS_TWO },
+      this
+    );
+  }
+
+  /**
+   * Toggle the sharpness-fast-path define + rebuild the TSL graph.
+   * Called by the line node-factory after it inspects the per-vertex
+   * sharpness arrays at upload time.
+   */
+  setSharpnessAllTwo(active: boolean): void {
+    if (!this.defines) this.defines = {};
+    const had = 'LUXAR_SHARPNESS_TWO' in this.defines;
+    if (active && !had) {
+      this.defines.LUXAR_SHARPNESS_TWO = '';
+    } else if (!active && had) {
+      delete this.defines.LUXAR_SHARPNESS_TWO;
+    } else {
+      return;
+    }
+    // Rebuild graph so the factory picks up the new flag.
+    linePickWebGPUFactory(
+      this.tslNodes as LinePickTSLNodes,
+      { sharpnessTwo: !!this.defines.LUXAR_SHARPNESS_TWO },
+      this
+    );
+    this.needsUpdate = true;
   }
 
   updateCameraParams(

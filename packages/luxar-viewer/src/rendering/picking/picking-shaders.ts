@@ -324,7 +324,13 @@ export const LINE_PICK_FRAGMENT_SHADER = /* glsl */ `
       // Full width — lines are already narrow, no need for tighter truncation
       if (p >= 1.0) discard;
 
-      float perpFalloff = pow(max(1.0 - p * p, 0.0), max(vSharpness, 0.0001));
+      // Sharpness fast path — visual-shader parity. See line-shaders.ts.
+      float oneMinusPSq = max(1.0 - p * p, 0.0);
+      #ifdef LUXAR_SHARPNESS_TWO
+      float perpFalloff = oneMinusPSq * oneMinusPSq;
+      #else
+      float perpFalloff = pow(oneMinusPSq, max(vSharpness, 0.0001));
+      #endif
 
       float minPixelWidth = 1.5;
       float widthScale = min(vPixelWidth / minPixelWidth, 1.0);

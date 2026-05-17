@@ -83,6 +83,13 @@ export interface LineTSLConfig {
    * max per fragment.
    */
   readonly noGOG?: boolean;
+  /**
+   * Fast path: replace `pow(max(1-p², 0), max(vSharpness, 0.0001))`
+   * with the closed-form `(max(1-p², 0))²` when the wrapper knows
+   * every per-vertex sharpness in the bound geometry is 2.0 (the
+   * dataset default). One per-fragment transcendental eliminated.
+   */
+  readonly sharpnessTwo?: boolean;
 }
 
 /**
@@ -327,10 +334,13 @@ export function lineWebGPUFactory(
     const p: TSLNode = vPerpNorm.abs();
     Discard(p.greaterThanEqual(1.0));
 
-    // Parabolic falloff (1 - p²)^sharpness.
-    const perpFalloff: TSLNode = max(float(1.0).sub(p.mul(p)), float(0.0)).pow(
-      max(vSharpness, float(0.0001))
-    );
+    // Parabolic falloff (1 - p²)^sharpness. Sharpness fast path uses
+    // `x*x` instead of `pow(x, 2)` when the wrapper knows every
+    // segment in the buffer has sharpness == 2.0.
+    const oneMinusPSq: TSLNode = max(float(1.0).sub(p.mul(p)), float(0.0));
+    const perpFalloff: TSLNode = config.sharpnessTwo
+      ? oneMinusPSq.mul(oneMinusPSq)
+      : oneMinusPSq.pow(max(vSharpness, float(0.0001)));
 
     // Edge AA: smoothstep over ~1 pixel.
     const minPW = float(1.5);
