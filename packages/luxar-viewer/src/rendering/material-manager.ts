@@ -32,6 +32,28 @@ import { clamp } from '../utils/clamp';
 import { config } from '../config';
 
 /**
+ * Sentinel symbol that callers set transiently on a material when
+ * they dispatch a `'dispose'` event purely to evict Three's cached
+ * `RenderObject` — NOT because the material is actually being torn
+ * down. `subscribeToDispose`'s listener checks for this flag and
+ * skips registry / cache cleanup when it is present, so the material
+ * continues to receive global camera updates and stays cached.
+ *
+ * Used by `data/scene-loader/invalidate-render-object.ts`, which is
+ * fired when the GPU buffer pool rebuilds a geometry's underlying
+ * `InstancedInterleavedBuffer` and the mesh's cached `RenderObject`
+ * needs to drop its stale `vertexBuffers` set. Exported so the
+ * dispatcher and the listener stay name-coupled.
+ *
+ * Symbol-keyed so the flag can't collide with Three's internal
+ * properties or with userspace `userData` keys, and so it's invisible
+ * to enumeration / serialization.
+ */
+export const SOFT_DISPOSE_FLAG = Symbol.for(
+  'luxar.invalidateRenderObject.softDispose'
+);
+
+/**
  * Supported blending modes for materials.
  *
  * - 'normal': Standard alpha blending (semi-transparent). For
@@ -126,16 +148,67 @@ export type LuxarLineMaterial = LineMaterial | LineTSLMaterial;
 export type LuxarGSplatMaterial = GSplatMaterial | GSplatTSLMaterial;
 
 /**
+ * The material backend tag used in cache keys and as the index into
+ * the factory tables below. `'tsl'` selects the `NodeMaterial`-derived
+ * implementation built for WebGPURenderer; `'glsl'` selects the
+ * `ShaderMaterial`-derived implementation for `THREE.WebGLRenderer`.
+ */
+export type MaterialBackend = 'glsl' | 'tsl';
+
+/**
+ * Resolve the active material backend from a `RendererCapabilities`
+ * snapshot. Returns `'glsl'` when caps are unset so unit tests that
+ * touch material creation without configuring caps get the WebGL2
+ * dispatch — same default as before this helper existed.
+ *
+ * Exported so the rendering layer has a single source of truth for
+ * the GLSL/TSL decision: every `MaterialManager` factory routes its
+ * dispatch through here, and tests can assert the mapping directly
+ * without instantiating the manager.
+ */
+export function resolveMaterialBackend(caps: RendererCapabilities | null): MaterialBackend {
+  return caps?.api === 'webgpu' ? 'tsl' : 'glsl';
+}
+
+/**
+ * Constructor table for the visual material pair of each geometry
+ * type. `MaterialManager.get{Point,Line,GSplat}Material` looks up
+ * `VISUAL_FACTORIES[kind][backend]` to pick the class to instantiate,
+ * replacing what used to be inline `useTSL ? new XTSL(...) : new
+ * X(...)` ternaries. Each pair's two constructors share their
+ * `*MaterialConfig` shape (the type union behind `LuxarXMaterial`),
+ * so the indexed access is type-safe at the call site.
+ */
+const VISUAL_FACTORIES = {
+  point: { glsl: PointMaterial, tsl: PointTSLMaterial },
+  line: { glsl: LineMaterial, tsl: LineTSLMaterial },
+  gsplat: { glsl: GSplatMaterial, tsl: GSplatTSLMaterial },
+} as const;
+
+/**
  * Per-geometry-type picking material returned by
  * `MaterialManager.create{Point,Line,GSplat}PickingMaterial`. The
  * concrete class is either the GLSL `*PickingMaterial` (WebGL2 path)
  * or the TSL `*PickingTSLMaterial` (WebGPU path). Picking materials
- * have a per-mesh lifetime (not cached); the dispatch hangs off
- * `caps.api` like the visual-material counterparts.
+ * have a per-mesh lifetime (not cached); the dispatch routes through
+ * {@link resolveMaterialBackend} like the visual-material counterparts.
  */
 export type LuxarPointPickingMaterial = PointPickingMaterial | PointPickingTSLMaterial;
 export type LuxarLinePickingMaterial = LinePickingMaterial | LinePickingTSLMaterial;
 export type LuxarGSplatPickingMaterial = GSplatPickingMaterial | GSplatPickingTSLMaterial;
+
+/**
+ * Constructor table for the picking material pair of each geometry
+ * type. Mirror of {@link VISUAL_FACTORIES} for the picking pipeline;
+ * the `create*PickingMaterial` methods look up
+ * `PICKING_FACTORIES[kind][backend]` and instantiate it directly
+ * (picking materials are not cached).
+ */
+const PICKING_FACTORIES = {
+  point: { glsl: PointPickingMaterial, tsl: PointPickingTSLMaterial },
+  line: { glsl: LinePickingMaterial, tsl: LinePickingTSLMaterial },
+  gsplat: { glsl: GSplatPickingMaterial, tsl: GSplatPickingTSLMaterial },
+} as const;
 
 /**
  * The single post-processing mega-shader material managed by
@@ -144,6 +217,16 @@ export type LuxarGSplatPickingMaterial = GSplatPickingMaterial | GSplatPickingTS
  * expose the same setter / toggle / getter surface.
  */
 export type LuxarMegaShaderMaterial = MegaShaderMaterial | MegaShaderTSLMaterial;
+
+/**
+ * Constructor pair for the post-processing mega-shader. Looked up by
+ * `createMegaShaderMaterial`; one entry per backend, no per-geometry
+ * indirection (there is only one mega-shader).
+ */
+const MEGA_SHADER_FACTORIES = {
+  glsl: MegaShaderMaterial,
+  tsl: MegaShaderTSLMaterial,
+} as const;
 
 /**
  * Manages all materials in the scene with caching and global updates.
@@ -278,6 +361,15 @@ export class MaterialManager {
   private subscribeToDispose(material: THREE.Material & CameraAwareMaterial): void {
     if (this.subscribedMaterials.has(material)) return;
     const onDispose = (): void => {
+      // Soft-dispose: `data/scene-loader/invalidate-render-object.ts`
+      // dispatches a `'dispose'` event purely to evict Three's cached
+      // `RenderObject` when the GPU buffer pool rebuilds a geometry's
+      // underlying buffer. The material is NOT being torn down in
+      // that case — skip registry/cache cleanup so it keeps receiving
+      // global camera updates and stays in its allocation cache.
+      // See `SOFT_DISPOSE_FLAG`.
+      const tagged = material as unknown as Record<symbol, boolean | undefined>;
+      if (tagged[SOFT_DISPOSE_FLAG]) return;
       this.subscribedMaterials.delete(material);
       this.removeFromRegistries(material);
       material.removeEventListener('dispose', onDispose);
@@ -367,8 +459,8 @@ export class MaterialManager {
 
     const isOpaque = this.isOpaqueMode(props.blendingMode);
     const transparent = !isOpaque;
-    const useTSL = this.caps?.api === 'webgpu';
-    const key = `point_${useTSL ? 'tsl' : 'glsl'}_${props.blendingMode}_o${opacityBucket}_g${gammaBucket}_i${intensityBucket}_f${offsetBucket}_r${radiusBucket}_s${sharpnessBucket}_t${transparent ? 1 : 0}`;
+    const backend = resolveMaterialBackend(this.caps);
+    const key = `point_${backend}_${props.blendingMode}_o${opacityBucket}_g${gammaBucket}_i${intensityBucket}_f${offsetBucket}_r${radiusBucket}_s${sharpnessBucket}_t${transparent ? 1 : 0}`;
 
     // Check cache first (LRU-promoting)
     let material = this.lruGet(this.pointMaterialCache, key);
@@ -391,9 +483,7 @@ export class MaterialManager {
       radiusScale: props.radiusScale,
       sharpnessScale: props.sharpnessScale,
     };
-    material = useTSL
-      ? new PointTSLMaterial(constructorConfig)
-      : new PointMaterial(constructorConfig);
+    material = new VISUAL_FACTORIES.point[backend](constructorConfig);
     this.totalCreateMs += performance.now() - createStart;
     this.createCount++;
 
@@ -432,8 +522,8 @@ export class MaterialManager {
       getCommonMaterialBuckets(props);
 
     const lineTransparent = props.blendingMode !== 'opaque';
-    const useTSL = this.caps?.api === 'webgpu';
-    const key = `line_${useTSL ? 'tsl' : 'glsl'}_${props.blendingMode}_o${opacityBucket}_g${gammaBucket}_i${intensityBucket}_f${offsetBucket}_t${lineTransparent ? 1 : 0}`;
+    const backend = resolveMaterialBackend(this.caps);
+    const key = `line_${backend}_${props.blendingMode}_o${opacityBucket}_g${gammaBucket}_i${intensityBucket}_f${offsetBucket}_t${lineTransparent ? 1 : 0}`;
 
     // Check cache first (LRU-promoting)
     let material = this.lruGet(this.lineMaterialCache, key);
@@ -450,9 +540,7 @@ export class MaterialManager {
       offset: props.offset,
       blendingMode: props.blendingMode,
     };
-    material = useTSL
-      ? new LineTSLMaterial(constructorConfig)
-      : new LineMaterial(constructorConfig);
+    material = new VISUAL_FACTORIES.line[backend](constructorConfig);
     this.totalCreateMs += performance.now() - createStart;
     this.createCount++;
 
@@ -485,8 +573,8 @@ export class MaterialManager {
     const truncBucket = Math.round((props.truncationRadius ?? 3.0) * 10);
 
     const gsplatTransparent = props.blendingMode !== 'opaque';
-    const useTSL = this.caps?.api === 'webgpu';
-    const key = `gsplat_${useTSL ? 'tsl' : 'glsl'}_${props.blendingMode}_o${opacityBucket}_g${gammaBucket}_i${intensityBucket}_f${offsetBucket}_tr${truncBucket}_t${gsplatTransparent ? 1 : 0}`;
+    const backend = resolveMaterialBackend(this.caps);
+    const key = `gsplat_${backend}_${props.blendingMode}_o${opacityBucket}_g${gammaBucket}_i${intensityBucket}_f${offsetBucket}_tr${truncBucket}_t${gsplatTransparent ? 1 : 0}`;
 
     // Check cache first (LRU-promoting)
     let material = this.lruGet(this.gsplatMaterialCache, key);
@@ -504,9 +592,7 @@ export class MaterialManager {
       blendingMode: props.blendingMode,
       truncationRadius: props.truncationRadius ?? 3.0,
     };
-    material = useTSL
-      ? new GSplatTSLMaterial(constructorConfig)
-      : new GSplatMaterial(constructorConfig);
+    material = new VISUAL_FACTORIES.gsplat[backend](constructorConfig);
     this.totalCreateMs += performance.now() - createStart;
     this.createCount++;
 
@@ -543,23 +629,17 @@ export class MaterialManager {
    * material would crash the NodeBuilder.
    */
   createPointPickingMaterial(config: PointPickingMaterialConfig): LuxarPointPickingMaterial {
-    return this.caps?.api === 'webgpu'
-      ? new PointPickingTSLMaterial(config)
-      : new PointPickingMaterial(config);
+    return new PICKING_FACTORIES.point[resolveMaterialBackend(this.caps)](config);
   }
 
   /** Same shape as `createPointPickingMaterial`, for lines. */
   createLinePickingMaterial(config: LinePickingMaterialConfig): LuxarLinePickingMaterial {
-    return this.caps?.api === 'webgpu'
-      ? new LinePickingTSLMaterial(config)
-      : new LinePickingMaterial(config);
+    return new PICKING_FACTORIES.line[resolveMaterialBackend(this.caps)](config);
   }
 
   /** Same shape as `createPointPickingMaterial`, for gsplats. */
   createGSplatPickingMaterial(config: GSplatPickingMaterialConfig): LuxarGSplatPickingMaterial {
-    return this.caps?.api === 'webgpu'
-      ? new GSplatPickingTSLMaterial(config)
-      : new GSplatPickingMaterial(config);
+    return new PICKING_FACTORIES.gsplat[resolveMaterialBackend(this.caps)](config);
   }
 
   /**
@@ -569,9 +649,7 @@ export class MaterialManager {
    * `MegaShaderMaterial` and the TSL `MegaShaderTSLMaterial`.
    */
   createMegaShaderMaterial(cfg: MegaShaderConfig): LuxarMegaShaderMaterial {
-    return this.caps?.api === 'webgpu'
-      ? new MegaShaderTSLMaterial(cfg)
-      : new MegaShaderMaterial(cfg);
+    return new MEGA_SHADER_FACTORIES[resolveMaterialBackend(this.caps)](cfg);
   }
 
   /**
