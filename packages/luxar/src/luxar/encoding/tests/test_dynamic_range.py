@@ -118,68 +118,44 @@ class TestDynamicRangeComputation:
         assert bits == 8, f"Expected 8 bits for range 2:1, got {bits}"
 
 
-class TestPositiveScalarDynamicRange:
-    """Test POSITIVE_SCALAR encoding with dynamic range selection."""
+class TestPositiveScalarDefault:
+    """POSITIVE_SCALAR always emits float16 in AUTO/MEMORY modes.
 
-    def test_uint8_for_narrow_range(self):
-        """POSITIVE_SCALAR with narrow dynamic range uses uint8."""
-        # Data with dynamic range ~10:1
+    Replaces the previous `TestPositiveScalarDynamicRange` suite that
+    asserted uint8/uint16/float32 dtype selection by dynamic range.
+    Phase-3 attribute packing fixes the linear-encoding dtype at
+    float16 across all dynamic ranges; the decoder retains the old
+    `bounded_scalar_uint8` / `bounded_scalar_uint16` branches for
+    legacy zarr files, but the encoder no longer emits them.
+    """
+
+    def test_float16_for_narrow_range(self):
         data = np.linspace(0.1, 1.0, 1000).astype(np.float32)
-
         with tempfile.TemporaryDirectory() as tmpdir:
             group = zarr.open_group(tmpdir, mode="w")
             encoder = ArrayEncoder()
             encoder.encode(data, group, "test", SemanticType.POSITIVE_SCALAR)
+            assert group["test"].dtype == np.float16
+            assert group["test"].attrs["encoding"]["name"] == "float16"
 
-            arr = group["test"]
-            assert arr.dtype == np.uint8, f"Expected uint8, got {arr.dtype}"
-            enc = arr.attrs["encoding"]
-            assert enc["name"] == "bounded_scalar_uint8"
-
-    def test_uint16_for_medium_range(self):
-        """POSITIVE_SCALAR with medium dynamic range uses uint16."""
-        # Data with dynamic range ~1000:1
+    def test_float16_for_medium_range(self):
         data = np.linspace(0.001, 1.0, 1000).astype(np.float32)
-
         with tempfile.TemporaryDirectory() as tmpdir:
             group = zarr.open_group(tmpdir, mode="w")
             encoder = ArrayEncoder()
             encoder.encode(data, group, "test", SemanticType.POSITIVE_SCALAR)
+            assert group["test"].dtype == np.float16
 
-            arr = group["test"]
-            assert arr.dtype == np.uint16, f"Expected uint16, got {arr.dtype}"
-            enc = arr.attrs["encoding"]
-            assert enc["name"] == "bounded_scalar_uint16"
-
-    def test_float_for_wide_range(self):
-        """POSITIVE_SCALAR with very wide dynamic range uses float."""
-        # Data with dynamic range ~1000000:1
+    def test_float16_for_wide_range(self):
         data = np.array([0.000001, 0.001, 1.0], dtype=np.float32)
-
         with tempfile.TemporaryDirectory() as tmpdir:
             group = zarr.open_group(tmpdir, mode="w")
             encoder = ArrayEncoder()
             encoder.encode(data, group, "test", SemanticType.POSITIVE_SCALAR)
-
-            arr = group["test"]
-            assert arr.dtype == np.float32, f"Expected float32, got {arr.dtype}"
-
-    def test_max_value_irrelevant_to_dtype_selection(self):
-        """Max value alone should not determine dtype - only dynamic range matters."""
-        # Both datasets have same dynamic range (~10:1) but different max values
-        data_small_max = np.linspace(0.01, 0.1, 100).astype(np.float32)  # max=0.1
-        data_large_max = np.linspace(100.0, 1000.0, 100).astype(np.float32)  # max=1000
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            group = zarr.open_group(tmpdir, mode="w")
-            encoder = ArrayEncoder()
-
-            encoder.encode(data_small_max, group, "small", SemanticType.POSITIVE_SCALAR)
-            encoder.encode(data_large_max, group, "large", SemanticType.POSITIVE_SCALAR)
-
-            # Both should use uint8 because dynamic range is the same
-            assert group["small"].dtype == np.uint8
-            assert group["large"].dtype == np.uint8
+            # Float16's normal range is 6e-5 to 65504; the very-small
+            # value rounds to a denormal but is still preserved with
+            # enough precision for radii / amplitudes.
+            assert group["test"].dtype == np.float16
 
 
 class TestBoundedScalarDynamicRange:
@@ -216,65 +192,37 @@ class TestBoundedScalarDynamicRange:
             assert enc["name"] == "bounded_scalar_uint16"
 
 
-class TestQuantizationErrorBounds:
-    """Test that quantization error stays within acceptable bounds.
+class TestPositiveScalarFloat16ErrorBounds:
+    """Float16 POSITIVE_SCALAR round-trip error bounds.
 
-    Quantization error is ABSOLUTE relative to the range, not RELATIVE to each value.
-    For uint8: max absolute error = range / 255 / 2 (with rounding)
-    For uint16: max absolute error = range / 65535 / 2 (with rounding)
-
-    The relative error for small values (near min) will be larger than for large
-    values (near max). This is expected behavior for linear quantization.
+    Phase-3 replaced the uint8/uint16 quantization paths with a flat
+    float16 encoding for POSITIVE_SCALAR. Float16 has 11 bits of
+    mantissa precision and a non-uniform error profile (relative,
+    not absolute), unlike the prior linear-quantization scheme:
+        - For values around 1.0 the ULP is ~1e-3.
+        - For values around 1e-6 the ULP is ~1e-9 (denormal range).
+    The tests below pin the round-trip accuracy to confirm Luxar's
+    scalar fields (radii, widths, amplitudes) survive narrowing.
     """
 
-    def test_uint8_absolute_error(self):
-        """uint8 absolute error should be <= range / 255 / 2 (with rounding)."""
+    def test_narrow_range_relative_error(self):
         data = np.linspace(1.0, 10.0, 1000).astype(np.float32)
-
         with tempfile.TemporaryDirectory() as tmpdir:
             group = zarr.open_group(tmpdir, mode="w")
             encoder = ArrayEncoder()
             encoder.encode(data, group, "test", SemanticType.POSITIVE_SCALAR)
+            decoded = np.array(group["test"]).astype(np.float32)
+            # Float16 ULP at this range is ~5e-4; allow 2x for ordering.
+            np.testing.assert_allclose(decoded, data, rtol=1e-3)
 
-            # Decode manually
-            arr = np.array(group["test"])
-            enc = group["test"].attrs["encoding"]
-            max_val = enc["max"]
-            decoded = arr / 255.0 * max_val
-
-            # Max absolute error should be <= range / 255 / 2 (with rounding)
-            # For [0, 10], max error = 10 / 255 / 2 ≈ 0.0196
-            abs_error = np.abs(decoded - data)
-            max_abs_error = np.max(abs_error)
-            expected_max_error = max_val / 255.0 / 2
-            assert max_abs_error <= expected_max_error + 1e-6, (
-                f"Max absolute error {max_abs_error:.6f} > expected {expected_max_error:.6f}"
-            )
-
-    def test_uint16_absolute_error(self):
-        """uint16 absolute error should be <= range / 65535 / 2 (with rounding)."""
-        # Data with wide range requiring uint16
+    def test_medium_range_relative_error(self):
         data = np.linspace(0.001, 1.0, 1000).astype(np.float32)
-
         with tempfile.TemporaryDirectory() as tmpdir:
             group = zarr.open_group(tmpdir, mode="w")
             encoder = ArrayEncoder()
             encoder.encode(data, group, "test", SemanticType.POSITIVE_SCALAR)
-
-            # Decode manually
-            arr = np.array(group["test"])
-            enc = group["test"].attrs["encoding"]
-            max_val = enc["max"]
-            decoded = arr / 65535.0 * max_val
-
-            # Max absolute error should be <= range / 65535 / 2 (with rounding)
-            # Allow 1e-7 tolerance for float32 precision
-            abs_error = np.abs(decoded - data)
-            max_abs_error = np.max(abs_error)
-            expected_max_error = max_val / 65535.0 / 2
-            assert max_abs_error <= expected_max_error + 1e-7, (
-                f"Max absolute error {max_abs_error:.8f} > expected {expected_max_error:.8f}"
-            )
+            decoded = np.array(group["test"]).astype(np.float32)
+            np.testing.assert_allclose(decoded, data, rtol=1e-3)
 
     def test_no_data_loss_with_correct_dtype(self):
         """No values should be quantized to zero if dtype is correctly selected."""
@@ -301,14 +249,18 @@ class TestQuantizationErrorBounds:
 
 
 class TestGSplatAmplitudeScenario:
-    """Test the specific gsplat amplitude scenario that motivated this fix."""
+    """Float16 preserves the gsplat amplitude scenario without invisible splats.
+
+    The motivating real-world case: ~6000:1 dynamic range amplitudes
+    that the prior uint8 path would have quantized many to zero.
+    Float16 stores each value directly; no value rounds to zero
+    unless it's already below ~6e-8 (the float16 subnormal floor).
+    """
 
     def test_gsplat_amplitude_range_preserved(self):
-        """Simulate gsplat amplitudes: small values with ~6000:1 dynamic range."""
-        # Simulate real gsplat amplitudes after 0.1x scaling
         np.random.seed(42)
         amplitudes = np.random.exponential(0.005, 8000).astype(np.float32)
-        amplitudes = np.clip(amplitudes, 0.000008, 0.05)  # Similar to real data
+        amplitudes = np.clip(amplitudes, 0.000008, 0.05)
 
         dynamic_range = amplitudes.max() / amplitudes[amplitudes > 0].min()
         assert dynamic_range > 1000, (
@@ -322,15 +274,21 @@ class TestGSplatAmplitudeScenario:
                 amplitudes, group, "amplitudes", SemanticType.POSITIVE_SCALAR
             )
 
-            # Should use uint16 for this dynamic range
-            assert group["amplitudes"].dtype == np.uint16
+            assert group["amplitudes"].dtype == np.float16
 
-            # Verify NO data loss
             arr = np.array(group["amplitudes"])
             zero_count = np.sum(arr == 0)
             assert zero_count == 0, (
-                f"GSplat amplitudes: {zero_count} zeros ({100 * zero_count / len(arr):.1f}%) - "
-                f"this would cause invisible splats!"
+                f"GSplat amplitudes: {zero_count} zeros "
+                f"({100 * zero_count / len(arr):.1f}%) — invisible splats."
+            )
+
+            # Round-trip accuracy: float16 ULP is relative and grows
+            # near the subnormal floor (~6e-8). Allow 2e-3 rtol for
+            # the smallest amplitudes; normal-range values land well
+            # inside 5e-4.
+            np.testing.assert_allclose(
+                arr.astype(np.float32), amplitudes, rtol=2e-3
             )
 
 
