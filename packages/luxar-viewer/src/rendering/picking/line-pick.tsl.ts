@@ -139,8 +139,9 @@ export function linePickWebGPUFactory(
   const perpendicular: TSLNode = vec2(lineDir.y.negate(), lineDir.x);
 
   // Both pixel-width branches consume CPU-precomputed scales — no
-  // per-vertex tan() or division by uFOV. Visual-shader parity.
-  const distView: TSLNode = max(length(mvPos.xyz), nearCull);
+  // per-vertex tan() or division by uFOV. View-space depth instead of
+  // Euclidean distance, matching the visual shader.
+  const distView: TSLNode = max(mvPos.z.negate(), nearCull);
   const rawPixelWidthOrtho: TSLNode = width.mul(uOrthoLineScale);
   const rawPixelWidthPersp: TSLNode = width.mul(uPerspectiveLineScale).div(distView);
   const rawPixelWidth: TSLNode = int(uIsOrtho)

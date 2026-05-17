@@ -97,8 +97,10 @@ float nodeVar32;
 float nodeVar33;
 float nodeVar34;
 mat4 modelViewMatrix;
-float nodeVar35;
-float nodeVar36;
+vec4 nodeVar35;
+vec4 nodeVar36;
+float nodeVar37;
+float nodeVar38;
 
 // codes
 
@@ -170,8 +172,10 @@ void main() {
 	nodeVar33 = mix( nodeVar30, nodeVar31, nodeVar32 );
 	nodeVar34 = ( nodeVar33 * nodeUniform14 );
 	modelViewMatrix = ( cameraViewMatrix * nodeUniform17 );
-	nodeVar35 = max( nodeUniform18, 0.0001 );
-	nodeVar36 = ( ( nodeVar33 * nodeUniform15 ) / max( length( mix( ( modelViewMatrix * vec4( nodeVarying13, 1.0 ) ), ( modelViewMatrix * vec4( nodeVarying14, 1.0 ) ), nodeVar32 ).xyz ), nodeVar35 ) );
+	nodeVar35 = ( modelViewMatrix * vec4( nodeVarying13, 1.0 ) );
+	nodeVar36 = ( modelViewMatrix * vec4( nodeVarying14, 1.0 ) );
+	nodeVar37 = max( nodeUniform18, 0.0001 );
+	nodeVar38 = ( ( nodeVar33 * nodeUniform15 ) / max( ( - mix( nodeVar35, nodeVar36, nodeVar32 ).z ), nodeVar37 ) );
 
 	// result
 	fragColor = nodeVar29;

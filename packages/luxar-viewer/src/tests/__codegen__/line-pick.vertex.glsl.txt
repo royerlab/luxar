@@ -111,9 +111,9 @@ float nodeVar24;
 float nodeVar25;
 float nodeVar26;
 float nodeVar27;
-vec4 nodeVar36;
-float nodeVar37;
-float nodeVar38;
+vec4 nodeVar38;
+float nodeVar39;
+float nodeVar40;
 
 // codes
 
@@ -155,7 +155,7 @@ void main() {
 	nodeVar5 = ( modelViewMatrix * vec4( aStartPos, 1.0 ) );
 	nodeVar6 = ( modelViewMatrix * vec4( aEndPos, 1.0 ) );
 	nodeVar7 = max( nodeUniform4, 0.0001 );
-	nodeVar8 = ( ( nodeVar3 * nodeUniform1 ) / max( length( mix( nodeVar5, nodeVar6, nodeVar2 ).xyz ), nodeVar7 ) );
+	nodeVar8 = ( ( nodeVar3 * nodeUniform1 ) / max( ( - mix( nodeVar5, nodeVar6, nodeVar2 ).z ), nodeVar7 ) );
 	nodeVar9 = vec4( 2.0, 2.0, 2.0, 1.0 );
 	nodeVar10 = ( cameraProjectionMatrix * nodeVar5 );
 	nodeVar11 = ( cameraProjectionMatrix * nodeVar6 );
@@ -236,22 +236,22 @@ void main() {
 	nodeVarying13 = aQuadCorner;
 	nodeVarying14 = aStartPos;
 	nodeVarying15 = aEndPos;
-	nodeVar37 = ( - nodeVar5.z );
-	nodeVar38 = ( - nodeVar6.z );
+	nodeVar39 = ( - nodeVar5.z );
+	nodeVar40 = ( - nodeVar6.z );
 
-	if ( ( ( ( nodeVar37 < nodeVar7 ) && ( nodeVar38 < nodeVar7 ) ) || ( ( ( nodeVar37 < ( nodeVar7 * 2.0 ) ) && ( nodeVar38 < ( nodeVar7 * 2.0 ) ) ) && ( nodeVar16 > ( nodeVar17 * 2.0 ) ) ) ) ) {
+	if ( ( ( ( nodeVar39 < nodeVar7 ) && ( nodeVar40 < nodeVar7 ) ) || ( ( ( nodeVar39 < ( nodeVar7 * 2.0 ) ) && ( nodeVar40 < ( nodeVar7 * 2.0 ) ) ) && ( nodeVar16 > ( nodeVar17 * 2.0 ) ) ) ) ) {
 
-		nodeVar36 = nodeVar9;
+		nodeVar38 = nodeVar9;
 
 	} else {
 
-		nodeVar36 = nodeVar18;
+		nodeVar38 = nodeVar18;
 
 	}
 
 
 	// result
-	gl_Position = nodeVar36;
+	gl_Position = nodeVar38;
 
 	gl_PointSize = 1.0;
 
