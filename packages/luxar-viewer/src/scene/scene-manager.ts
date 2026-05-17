@@ -108,7 +108,7 @@ export class SceneManager extends THREE.EventDispatcher<{
    * `FxaaPass`, UI panels) is part of the common `Renderer` surface
    * in Three r184 — no `WebGLRenderer`-only API is used
    * unconditionally. The discriminator for callers that genuinely
-   * must branch is `this.capabilities.api` (see
+   * must branch is `this.capabilities.apiSurface` (see
    * `RendererCapabilities`).
    */
   public renderer!: Renderer;
@@ -408,9 +408,9 @@ export class SceneManager extends THREE.EventDispatcher<{
     materialManager.setCaps(this.capabilities);
 
     // Log the active graphics API. Doubles as a live consumer of
-    // `capabilities.api` so the discriminator field can't silently
+    // `capabilities.apiSurface` so the discriminator field can't silently
     // rot before the WebGPU port adds the second arm.
-    log.info(Modules.RENDERER, `Rendering API: ${this.capabilities.api}`);
+    log.info(Modules.RENDERER, `Rendering API: ${this.capabilities.apiSurface}`);
 
     // Report hardware point size limits when debug logging is requested.
     if (this.debug) {
@@ -637,7 +637,7 @@ export class SceneManager extends THREE.EventDispatcher<{
     // it with "Material 'ShaderMaterial' is not compatible."
     materialManager.setCaps(this.capabilities);
 
-    log.info(Modules.RENDERER, `Rendering API: ${this.capabilities.api}`);
+    log.info(Modules.RENDERER, `Rendering API: ${this.capabilities.apiSurface}`);
 
     this.updateRendererSize();
 
@@ -673,7 +673,7 @@ export class SceneManager extends THREE.EventDispatcher<{
    * for diagnostics.
    */
   private setupContextLossHandling(): void {
-    if (this.capabilities.api === 'webgl2') {
+    if (this.capabilities.apiSurface === 'webgl2') {
       this.contextRecovery = new WebGLContextRecovery({
         canvas: this.canvasElement,
         // Lazy lookup — `setupContextLossHandling` runs before

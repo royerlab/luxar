@@ -207,7 +207,7 @@ export class PostProcessingManager {
     this.ldrTarget.texture.name = 'PostProcessing.ldrTarget';
 
     // Mega-shader + fullscreen mesh + ortho camera. Dispatch on
-    // `caps.api` through MaterialManager so the WebGPU path returns
+    // `caps.apiSurface` through MaterialManager so the WebGPU path returns
     // the TSL/NodeMaterial counterpart instead of the GLSL
     // ShaderMaterial.
     this.megaShader = materialManager.createMegaShaderMaterial({
@@ -975,7 +975,7 @@ export class PostProcessingManager {
     //   WebGPURenderer: (target, x, y, w, h) → Promise<buffer>
     // (WebGPU's 6th positional arg is `textureIndex`, not a buffer,
     // so passing a TypedArray there mis-binds it.) Branch on caps.
-    const isWebGL2 = this.capabilities.api === 'webgl2';
+    const isWebGL2 = this.capabilities.apiSurface === 'webgl2';
     let pixels: Float32Array;
     if (isHalfFloat) {
       const halfData = new Uint16Array(pixelCount);
@@ -1117,7 +1117,7 @@ export class PostProcessingManager {
       // must branch on the active backend.
       const destBuffer = new Uint8Array(width * height * 4);
       let raw: Uint8Array;
-      if (this.capabilities.api === 'webgl2') {
+      if (this.capabilities.apiSurface === 'webgl2') {
         raw = (await (this.renderer as THREE.WebGLRenderer).readRenderTargetPixelsAsync(
           captureTarget,
           0,

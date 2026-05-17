@@ -913,10 +913,10 @@ describe('resolveMaterialBackend', () => {
   });
 
   it('returns glsl when caps reports the WebGL2 surface', () => {
-    expect(resolveMaterialBackend({ api: 'webgl2' } as RendererCapabilities)).toBe('glsl');
+    expect(resolveMaterialBackend({ apiSurface: 'webgl2' } as RendererCapabilities)).toBe('glsl');
   });
 
   it('returns tsl when caps reports the WebGPU surface', () => {
-    expect(resolveMaterialBackend({ api: 'webgpu' } as RendererCapabilities)).toBe('tsl');
+    expect(resolveMaterialBackend({ apiSurface: 'webgpu' } as RendererCapabilities)).toBe('tsl');
   });
 });

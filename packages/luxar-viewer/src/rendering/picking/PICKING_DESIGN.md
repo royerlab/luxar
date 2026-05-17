@@ -252,7 +252,7 @@ const raw = await renderer.readRenderTargetPixelsAsync(target, x, y, w, h);
 // Passing a TypedArray as the 6th arg mis-binds it to textureIndex (becomes NaN).
 ```
 
-`PickingSystem.readbackAndVote` branches on `RendererCapabilities.api` (`'webgl2'` vs `'webgpu'`) to call the correct overload.
+`PickingSystem.readbackAndVote` branches on `RendererCapabilities.apiSurface` (`'webgl2'` vs `'webgpu'`) to call the correct overload.
 
 ### 256-byte row padding
 

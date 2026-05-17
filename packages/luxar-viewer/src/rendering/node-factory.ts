@@ -31,7 +31,7 @@ import type { GSplatsMetadata, GSplatsUserData, GSplatsDataLoader } from '../typ
 import { log, Modules } from '../utils/log';
 import type { PickingSystem } from './picking/picking-system';
 // Picking materials are constructed via `materialManager.create*PickingMaterial`
-// helpers so the GLSL vs. TSL dispatch on `caps.api` lives in one place. The
+// helpers so the GLSL vs. TSL dispatch on `caps.apiSurface` lives in one place. The
 // concrete types are still imported elsewhere (e.g. material-sync-helpers).
 
 export class NodeFactory {

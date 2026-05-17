@@ -34,11 +34,11 @@ test.describe('WebGPU native smoke (best-effort, skips on fallback)', () => {
     await waitForPointsLoaded(page);
   });
 
-  test('reports caps.api === "webgpu" under real WebGPU; skips otherwise', async ({ page }) => {
+  test('reports caps.apiSurface === "webgpu" under real WebGPU; skips otherwise', async ({ page }) => {
     const api = await page.evaluate(
       () =>
          
-        (window as any).__luxarDebug.app.sceneManager.capabilities.api
+        (window as any).__luxarDebug.app.sceneManager.capabilities.apiSurface
     );
     test.skip(api !== 'webgpu', SKIP_REASON);
     expect(api).toBe('webgpu');
@@ -50,7 +50,7 @@ test.describe('WebGPU native smoke (best-effort, skips on fallback)', () => {
     const api = await page.evaluate(
       () =>
          
-        (window as any).__luxarDebug.app.sceneManager.capabilities.api
+        (window as any).__luxarDebug.app.sceneManager.capabilities.apiSurface
     );
     test.skip(api !== 'webgpu', SKIP_REASON);
 
@@ -82,7 +82,7 @@ test.describe('WebGPU native smoke (best-effort, skips on fallback)', () => {
     const api = await page.evaluate(
       () =>
          
-        (window as any).__luxarDebug.app.sceneManager.capabilities.api
+        (window as any).__luxarDebug.app.sceneManager.capabilities.apiSurface
     );
     test.skip(api !== 'webgpu', SKIP_REASON);
 

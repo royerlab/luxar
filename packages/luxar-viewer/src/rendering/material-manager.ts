@@ -167,7 +167,7 @@ export type MaterialBackend = 'glsl' | 'tsl';
  * without instantiating the manager.
  */
 export function resolveMaterialBackend(caps: RendererCapabilities | null): MaterialBackend {
-  return caps?.api === 'webgpu' ? 'tsl' : 'glsl';
+  return caps?.apiSurface === 'webgpu' ? 'tsl' : 'glsl';
 }
 
 /**
@@ -424,7 +424,7 @@ export class MaterialManager {
    * them.
    */
   setCaps(caps: RendererCapabilities): void {
-    if (this.caps && this.caps.api !== caps.api) {
+    if (this.caps && this.caps.apiSurface !== caps.apiSurface) {
       // Backend changed mid-session — drop the allocation caches so
       // the next request reaches the new dispatch branch. Same
       // pattern as `rebuildAfterContextRestore`.
@@ -439,7 +439,7 @@ export class MaterialManager {
    * Get or create a point material with caching.
    *
    * Dispatches to `PointTSLMaterial` (NodeMaterial / TSL) when the
-   * active renderer reports `caps.api === 'webgpu'`, otherwise to the
+   * active renderer reports `caps.apiSurface === 'webgpu'`, otherwise to the
    * GLSL `PointMaterial`. Both classes expose the same update surface
    * (see {@link LuxarPointMaterial}), so callers in node-factory and
    * the layers panel don't need to branch.
@@ -512,7 +512,7 @@ export class MaterialManager {
    * Get or create a line material with caching.
    *
    * Dispatches to `LineTSLMaterial` (NodeMaterial / TSL) when the
-   * active renderer reports `caps.api === 'webgpu'`, otherwise to the
+   * active renderer reports `caps.apiSurface === 'webgpu'`, otherwise to the
    * GLSL `LineMaterial`. Both classes expose the same update surface
    * via {@link LuxarLineMaterial}.
    */
@@ -562,7 +562,7 @@ export class MaterialManager {
    * Get or create a gsplat material with caching.
    *
    * Dispatches to `GSplatTSLMaterial` (NodeMaterial / TSL) when the
-   * active renderer reports `caps.api === 'webgpu'`, otherwise to the
+   * active renderer reports `caps.apiSurface === 'webgpu'`, otherwise to the
    * GLSL `GSplatMaterial`. Both classes expose the same update
    * surface via {@link LuxarGSplatMaterial}.
    */
@@ -619,7 +619,7 @@ export class MaterialManager {
 
   /**
    * Create a per-mesh point picking material, dispatching on
-   * `caps.api`. The returned material is NOT cached — picking
+   * `caps.apiSurface`. The returned material is NOT cached — picking
    * materials have per-mesh lifetimes; the NodeFactory disposes
    * them when the mesh disposes. Camera updates flow through
    * `register()` like any other camera-aware material.
@@ -644,7 +644,7 @@ export class MaterialManager {
 
   /**
    * Create the post-processing mega-shader material, dispatching on
-   * `caps.api`. PostProcessingManager owns the single instance; this
+   * `caps.apiSurface`. PostProcessingManager owns the single instance; this
    * is the seam between `THREE.ShaderMaterial`-derived
    * `MegaShaderMaterial` and the TSL `MegaShaderTSLMaterial`.
    */

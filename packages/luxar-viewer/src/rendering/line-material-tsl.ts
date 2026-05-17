@@ -6,7 +6,7 @@
  * same `applyBlendingMode` + `clone` semantics, same
  * `CameraAwareMaterial` / `ColormapAwareMaterial` interfaces. The
  * host dispatch in `MaterialManager.getLineMaterial` picks one or
- * the other based on `caps.api`, so call sites never see the
+ * the other based on `caps.apiSurface`, so call sites never see the
  * divergence.
  *
  * Mechanics identical to `PointTSLMaterial` — see that module for

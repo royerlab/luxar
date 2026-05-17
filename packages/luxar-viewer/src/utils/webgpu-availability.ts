@@ -7,7 +7,7 @@
  * gate.
  *
  * For the API the renderer *actually used*, read
- * `RendererCapabilities.api` instead — this helper answers a
+ * `RendererCapabilities.apiSurface` instead — this helper answers a
  * different question ("what's available?") than that one ("what
  * did we pick?").
  *
