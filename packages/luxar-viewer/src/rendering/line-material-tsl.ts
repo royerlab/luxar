@@ -25,7 +25,7 @@ import * as THREE from 'three';
 import { uniform, texture } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
 import { lineWebGPUFactory, type LineTSLNodes } from './line.tsl';
-import { isGammaOne, type LineMaterialConfig } from './line-material';
+import { isGammaOne, isNoGOG, type LineMaterialConfig } from './line-material';
 import type { CameraAwareMaterial } from './camera-aware-material';
 import type { ColormapAwareMaterial } from './colormap-aware-material';
 import { clampGamma } from './material-uniform-helpers';
@@ -132,6 +132,9 @@ export class LineTSLMaterial
     this.defines = {
       ...(materialConfig.colormapTexture ? { USE_COLORMAP: '' } : {}),
       ...(isGammaOne(gammaValue) ? { LUXAR_GAMMA_ONE: '' } : {}),
+      ...(isNoGOG(materialConfig.intensity ?? 1.0, materialConfig.offset ?? 0.0)
+        ? { LUXAR_NO_GOG: '' }
+        : {}),
     };
     this.toneMapped = false;
     this.side = THREE.DoubleSide;
@@ -201,17 +204,38 @@ export class LineTSLMaterial
   private rebuildGraph(): void {
     const useColormap = !!this.defines && 'USE_COLORMAP' in this.defines;
     const gammaOne = !!this.defines && 'LUXAR_GAMMA_ONE' in this.defines;
+    const noGOG = !!this.defines && 'LUXAR_NO_GOG' in this.defines;
     this.rebuildColormapNodes(useColormap);
     lineWebGPUFactory(
       this.tslNodes as LineTSLNodes,
       {
         useColormap,
         gammaOne,
+        noGOG,
         blendingMode: (this.userData.blendingMode as BlendingMode | undefined) ?? 'additive',
       },
       this
     );
     this.needsUpdate = true;
+  }
+
+  /** Same toggle helper as `LineMaterial._refreshNoGOGDefine` — see there. */
+  private _refreshNoGOGDefine(): boolean {
+    if (!this.defines) this.defines = {};
+    const wantNoGOG = isNoGOG(
+      this.uniforms.uIntensity.value as number,
+      this.uniforms.uOffset.value as number
+    );
+    const hadNoGOG = 'LUXAR_NO_GOG' in this.defines;
+    if (wantNoGOG && !hadNoGOG) {
+      this.defines.LUXAR_NO_GOG = '';
+      return true;
+    }
+    if (!wantNoGOG && hadNoGOG) {
+      delete this.defines.LUXAR_NO_GOG;
+      return true;
+    }
+    return false;
   }
 
   updateCameraParams(
@@ -263,10 +287,12 @@ export class LineTSLMaterial
 
   updateIntensity(intensity: number): void {
     this.uniforms.uIntensity.value = intensity;
+    if (this._refreshNoGOGDefine()) this.rebuildGraph();
   }
 
   updateOffset(offset: number): void {
     this.uniforms.uOffset.value = offset;
+    if (this._refreshNoGOGDefine()) this.rebuildGraph();
   }
 
   updateColormapTexture(tex: THREE.DataTexture | null): void {

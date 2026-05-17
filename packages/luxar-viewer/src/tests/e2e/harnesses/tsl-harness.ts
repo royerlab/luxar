@@ -478,6 +478,38 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
     },
     buildMesh: buildLineInstancedMesh,
   },
+  // M13c — line with the no-GOG fast path. Same geometry as `line`,
+  // but the TSL factory is built with `noGOG: true` so the
+  // `vColor * uIntensity + uOffset` + `max(..., 0)` chain is replaced
+  // with `adjusted = vColor`. The GLSL counterpart defines
+  // `LUXAR_NO_GOG`.
+  'line-no-gog': {
+    source: LINE_SOURCE,
+    buildUniforms: () => ({
+      uFOV: { value: 2.0 },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      uIsOrtho: { value: 1 },
+      uNearCull: { value: 0.01 },
+      uMaxLinePixelWidth: { value: 32.0 },
+      uPerspectiveLineScale: { value: 1.0 },
+      uOrthoLineScale: { value: 64.0 },
+      uOpacity: { value: 1.0 },
+      uInvGamma: { value: 1.0 / 2.2 }, // gamma kept slow path; only no-GOG is exercised
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+    }),
+    buildDefines: () => ({ LUXAR_NO_GOG: '' }),
+    buildTSLMaterial: (uniforms) => {
+      const m = lineWebGPUFactory(
+        buildLineTSLNodesFromUniforms(uniforms, {}),
+        { noGOG: true }
+      ) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: buildLineInstancedMesh,
+  },
   // M15 gsplat parity: isotropic Gaussian splat at world origin with
   // identity Cholesky factor. Ortho camera for deterministic projection.
   // Tests the 3D→2D covariance Jacobian, Cholesky factorisation,
