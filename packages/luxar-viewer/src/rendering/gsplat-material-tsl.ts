@@ -36,6 +36,7 @@ import type { GSplatMaterialConfig } from './gsplat-material';
 import type { CameraAwareMaterial } from './camera-aware-material';
 import type { ColormapAwareMaterial } from './colormap-aware-material';
 import { computeFocalLength } from './camera-uniforms';
+import { computeRayIntegralFactor } from './gsplat-math';
 import {
   applyColormapTextureToMaterial,
   applyScalarRangeToMaterial,
@@ -48,21 +49,6 @@ import {
 } from './blending-state';
 import { proxyIUniform, type TSLNode } from './tsl-helpers';
 import type { BlendingMode } from './material-manager';
-
-function computeRayIntegralFactor(truncate: number): number {
-  // Abramowitz & Stegun erf approximation (max error 1.5e-7).
-  const SQRT_2PI = Math.sqrt(2 * Math.PI);
-  const x = truncate / Math.SQRT2;
-  const t = 1.0 / (1.0 + 0.3275911 * Math.abs(x));
-  const erfVal =
-    1.0 -
-    t *
-      (0.254829592 +
-        t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429)))) *
-      Math.exp(-x * x);
-  const erf = x >= 0 ? erfVal : -erfVal;
-  return SQRT_2PI * erf - 2 * truncate * Math.exp(-0.5 * truncate * truncate);
-}
 
 export class GSplatTSLMaterial
   extends NodeMaterial
