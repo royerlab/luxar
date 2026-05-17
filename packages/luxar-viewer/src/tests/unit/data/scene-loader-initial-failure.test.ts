@@ -51,6 +51,11 @@ vi.mock('../../../rendering/material-manager', async () => {
         clone: vi.fn().mockReturnThis(),
         updateColormapTexture: vi.fn(),
         updateScalarRange: vi.fn(),
+        // Added by the line shader perf phase 2 (C9): node-factory
+        // calls `setSharpnessAllTwo` on every line material at upload
+        // time. The mock stubs it so production code-paths exercising
+        // an empty / placeholder geometry don't trip on missing API.
+        setSharpnessAllTwo: vi.fn(),
       })),
       getGSplatMaterial: vi.fn(() => ({
         uniforms: { uTruncate: { value: 3.0 } },
