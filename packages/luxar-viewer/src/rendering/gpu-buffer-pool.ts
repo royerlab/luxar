@@ -31,35 +31,17 @@ import { log, Modules } from '../utils/log';
 import { estimateGeometryBytes, invalidateCachedByteSize } from '../utils/geometry-utils';
 import type { LoadedPointsData } from '../data/data-loader-types';
 import type { ProcessedLinesData } from '../types/lines';
-import {
-  packInterleavedAttributes,
-  type InterleavedAttributeSpec,
-} from './interleaved-attributes';
 import type { PooledBuffer, PoolStats } from './gpu-buffer-pool/pool-stats';
 import { selectBuffersToEvict } from './gpu-buffer-pool/eviction-policy';
-import {
-  rebuildInterleavedBuffer,
-  writePooledAttribute,
-} from './gpu-buffer-pool/attribute-codec';
 import { PointsBufferAdapter } from './gpu-buffer-pool/points-adapter';
 import { LinesBufferAdapter } from './gpu-buffer-pool/lines-adapter';
+import {
+  GSplatsBufferAdapter,
+  type PackedGSplatsData,
+} from './gpu-buffer-pool/gsplats-adapter';
 
-// Lines-specific spec arrays moved to ./gpu-buffer-pool/lines-adapter.
-
-/** Canonical per-splat attribute layout for pooled gsplat geometries. */
-const GSPLATS_ATTRIBUTE_SPECS: ReadonlyArray<{
-  name: string;
-  itemSize: 1 | 2 | 3 | 4;
-}> = [
-  { name: 'aCenter', itemSize: 3 },
-  { name: 'aCholesky01', itemSize: 2 },
-  { name: 'aCholesky23', itemSize: 2 },
-  { name: 'aCholesky45', itemSize: 2 },
-  { name: 'aAmplitude', itemSize: 1 },
-  { name: 'aColor', itemSize: 3 },
-];
-
-// Points-specific spec arrays + helpers moved to ./gpu-buffer-pool/points-adapter.
+// Per-type spec arrays and helpers moved to their respective adapters
+// in ./gpu-buffer-pool/{points,lines,gsplats}-adapter.
 
 // rebuildInterleavedBuffer + writePooledAttribute moved to
 // ./gpu-buffer-pool/attribute-codec — geometry-agnostic helpers that
@@ -69,18 +51,8 @@ const GSPLATS_ATTRIBUTE_SPECS: ReadonlyArray<{
 // `rendering/gpu-buffer-pool` keep working.
 export { estimateGeometryBytes, invalidateCachedByteSize };
 
-/**
- * Packed GSplats data ready for GPU upload (from gsplats/projection.ts)
- */
-export interface PackedGSplatsData {
-  centers3D: Float32Array; // M * 3
-  amplitudes: Float32Array; // M
-  cholesky01: Float32Array; // M * 2 [L00, L10]
-  cholesky23: Float32Array; // M * 2 [L11, L20]
-  cholesky45: Float32Array; // M * 2 [L21, L22]
-  colors: Float32Array; // M * 3 (RGB)
-  splatCount: number;
-}
+// PackedGSplatsData moved to ./gpu-buffer-pool/gsplats-adapter; re-exported.
+export type { PackedGSplatsData } from './gpu-buffer-pool/gsplats-adapter';
 
 // Pool-stats types moved to ./gpu-buffer-pool/pool-stats. Re-exported so
 // existing consumers (importing from `rendering/gpu-buffer-pool`) keep
@@ -108,7 +80,8 @@ export class GPUBufferPool {
   readonly points: PointsBufferAdapter;
   /** @internal — lines-specific pool state and methods. */
   readonly lines: LinesBufferAdapter;
-  private gsplatBuffers = new Map<number, PooledBuffer[]>();
+  /** @internal — gsplats-specific pool state and methods. */
+  readonly gsplats: GSplatsBufferAdapter;
 
   /** @internal — shared with the per-type adapters. */
   activeBuffers = new Map<string, PooledBuffer>(); // nodeId → active geometry
@@ -188,6 +161,7 @@ export class GPUBufferPool {
     this.maxPoolBytes = Math.max(0, maxPoolBytes);
     this.points = new PointsBufferAdapter(this);
     this.lines = new LinesBufferAdapter(this);
+    this.gsplats = new GSplatsBufferAdapter(this);
   }
 
   /**
@@ -281,126 +255,18 @@ export class GPUBufferPool {
   // GSplats Geometry Management
   // =========================================================================
 
-  /**
-   * Acquire geometry for GSplats (instanced per-splat attributes).
-   */
+  /** Acquire geometry for GSplats (instanced per-splat attributes). */
   acquireGSplatsGeometry(nodeId: string, splatCount: number): THREE.InstancedBufferGeometry {
-    this._lastAcquireRebuilt = false;
-    const active = this.activeBuffers.get(nodeId);
-    if (active && active.type === 'gsplats') {
-      if (active.capacity >= splatCount) {
-        active.lastUsedFrame = this.frameCount;
-        this.stats.reuses++;
-        this.typeStats.gsplats.reuses++;
-        return active.geometry as THREE.InstancedBufferGeometry;
-      } else {
-        // Grow rebuilds the InstancedInterleavedBuffer.
-        this.growGSplatsGeometry(active.geometry as THREE.InstancedBufferGeometry, splatCount);
-        active.capacity = Math.ceil(splatCount * 1.5);
-        active.lastUsedFrame = this.frameCount;
-        this.stats.capacityGrowths++;
-        this._lastAcquireRebuilt = true;
-        return active.geometry as THREE.InstancedBufferGeometry;
-      }
-    }
-
-    // Try to find in pool (search across all buckets)
-    for (const pooled of this.gsplatBuffers.values()) {
-      for (let i = pooled.length - 1; i >= 0; i--) {
-        const candidate = pooled[i];
-        if (candidate.capacity >= splatCount) {
-          // Different geometry than what was active for this node.
-          pooled.splice(i, 1);
-          candidate.inUse = true;
-          candidate.lastUsedFrame = this.frameCount;
-          this.activeBuffers.set(nodeId, candidate);
-          this.stats.reuses++;
-          this.typeStats.gsplats.reuses++;
-          this._lastAcquireRebuilt = true;
-          return candidate.geometry as THREE.InstancedBufferGeometry;
-        }
-      }
-    }
-
-    // Allocate new — fresh attribute identities.
-    this._lastAcquireRebuilt = true;
-    const capacity = Math.ceil(splatCount * 1.5);
-    const geometry = this.createGSplatsGeometry(capacity);
-
-    const newBuffer: PooledBuffer = {
-      geometry,
-      capacity,
-      type: 'gsplats',
-      inUse: true,
-      lastUsedFrame: this.frameCount,
-    };
-
-    this.activeBuffers.set(nodeId, newBuffer);
-    this.stats.allocations++;
-    this.typeStats.gsplats.allocations++;
-
-    return geometry;
+    return this.gsplats.acquireGeometry(nodeId, splatCount);
   }
 
-  /**
-   * Release GSplats geometry back to pool.
-   */
+  /** Release GSplats geometry back to pool. */
   releaseGSplatsGeometry(nodeId: string): void {
-    const buffer = this.activeBuffers.get(nodeId);
-    if (!buffer || buffer.type !== 'gsplats') return;
-
-    this.activeBuffers.delete(nodeId);
-    buffer.inUse = false;
-
-    const bucket = this.getBucket(buffer.capacity);
-    if (!this.gsplatBuffers.has(bucket)) {
-      this.gsplatBuffers.set(bucket, []);
-    }
-    this.gsplatBuffers.get(bucket)!.push(buffer);
-
-    this.evictUnused();
-  }
-
-  /**
-   * Create GSplats geometry (InstancedBufferGeometry with per-splat attributes).
-   */
-  private createGSplatsGeometry(splatCapacity: number): THREE.InstancedBufferGeometry {
-    const geometry = new THREE.InstancedBufferGeometry();
-
-    // Base quad
-    const quadPositions = new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]);
-    geometry.setAttribute('aQuadCorner', new THREE.Float32BufferAttribute(quadPositions, 2));
-    geometry.setIndex([0, 1, 2, 2, 1, 3]);
-
-    // Pre-allocate the per-splat interleaved buffer at `splatCapacity`.
-    const specsWithData: InterleavedAttributeSpec[] = GSPLATS_ATTRIBUTE_SPECS.map((spec) => ({
-      ...spec,
-      data: new Float32Array(splatCapacity * spec.itemSize),
-    }));
-    const { buffer, views } = packInterleavedAttributes(specsWithData, splatCapacity);
-    buffer.setUsage(THREE.DynamicDrawUsage);
-    for (const spec of specsWithData) {
-      geometry.setAttribute(spec.name, views[spec.name]);
-    }
-
-    return geometry;
-  }
-
-  /**
-   * Grow GSplats geometry to new capacity.
-   */
-  private growGSplatsGeometry(geometry: THREE.InstancedBufferGeometry, neededCount: number): void {
-    const newCapacity = Math.ceil(neededCount * 1.5);
-
-    // D.3: invalidate cached byte estimate before re-allocating any attribute.
-    invalidateCachedByteSize(geometry);
-
-    rebuildInterleavedBuffer(geometry, newCapacity, GSPLATS_ATTRIBUTE_SPECS);
+    this.gsplats.releaseGeometry(nodeId);
   }
 
   /**
    * Update GSplats geometry in place.
-   *
    * @param truncationRadius - Truncation radius in sigmas (default 3.0).
    *   Must match the material's truncationRadius for correct frustum culling.
    */
@@ -410,67 +276,7 @@ export class GPUBufferPool {
     count: number,
     truncationRadius: number = 3.0
   ): void {
-    const updates: Array<[string, Float32Array]> = [
-      ['aCenter', data.centers3D],
-      ['aCholesky01', data.cholesky01],
-      ['aCholesky23', data.cholesky23],
-      ['aCholesky45', data.cholesky45],
-      ['aAmplitude', data.amplitudes],
-      ['aColor', data.colors],
-    ];
-    for (const [name, source] of updates) {
-      writePooledAttribute(geometry, name, source, count);
-    }
-
-    geometry.instanceCount = count;
-
-    // CRITICAL: Force THREE.js to recalculate _maxInstanceCount.
-    // Without this, geometries initially created with 0 instances cache _maxInstanceCount=0,
-    // causing the renderer to draw min(instanceCount, 0) = 0 instances even after updating.
-    delete (geometry as unknown as { _maxInstanceCount?: number })._maxInstanceCount;
-
-    // CRITICAL: Recompute bounding box from updated center positions
-    // GSplats use aCenter attribute for positions in frustum culling
-    const box = new THREE.Box3();
-    const v = new THREE.Vector3();
-    for (let i = 0; i < count; i++) {
-      v.set(data.centers3D[i * 3], data.centers3D[i * 3 + 1], data.centers3D[i * 3 + 2]);
-      box.expandByPoint(v);
-    }
-
-    // Expand bounding box by max splat extent for correct frustum culling.
-    // Without this, large splats whose center is outside the frustum but whose
-    // visible body extends into view would cause the entire mesh to be culled.
-    //
-    // For each splat, the per-axis extent is truncationRadius × σ_d, where
-    // σ_d = ||L[d,:]|| (the row norm of the Cholesky factor). We use the max
-    // row norm across all splats and axes as a conservative expansion.
-    //
-    // Cholesky layout (packed as attribute pairs):
-    //   cholesky01 = [L00, L10], cholesky23 = [L11, L20], cholesky45 = [L21, L22]
-    // Row norms: ||row0|| = |L00|, ||row1|| = sqrt(L10² + L11²),
-    //            ||row2|| = sqrt(L20² + L21² + L22²)
-    let maxRowNorm = 0;
-    for (let i = 0; i < count; i++) {
-      const L00 = data.cholesky01[i * 2];
-      const L10 = data.cholesky01[i * 2 + 1];
-      const L11 = data.cholesky23[i * 2];
-      const L20 = data.cholesky23[i * 2 + 1];
-      const L21 = data.cholesky45[i * 2];
-      const L22 = data.cholesky45[i * 2 + 1];
-
-      const row0 = Math.abs(L00);
-      const row1 = Math.sqrt(L10 * L10 + L11 * L11);
-      const row2 = Math.sqrt(L20 * L20 + L21 * L21 + L22 * L22);
-      maxRowNorm = Math.max(maxRowNorm, row0, row1, row2);
-    }
-    const expansion = maxRowNorm * truncationRadius;
-    box.expandByScalar(expansion);
-
-    geometry.boundingBox = box;
-    const sphere = new THREE.Sphere();
-    box.getBoundingSphere(sphere);
-    geometry.boundingSphere = sphere;
+    this.gsplats.updateGeometry(geometry, data, count, truncationRadius);
   }
 
   // =========================================================================
@@ -506,7 +312,7 @@ export class GPUBufferPool {
     const totalPooled =
       Array.from(this.points.pointBuffers.values()).reduce((sum, arr) => sum + arr.length, 0) +
       Array.from(this.lines.lineBuffers.values()).reduce((sum, arr) => sum + arr.length, 0) +
-      Array.from(this.gsplatBuffers.values()).reduce((sum, arr) => sum + arr.length, 0);
+      Array.from(this.gsplats.gsplatBuffers.values()).reduce((sum, arr) => sum + arr.length, 0);
 
     // If pool is over limit, evict aggressively
     const mustEvict = totalPooled > this.maxPoolSize;
@@ -564,7 +370,7 @@ export class GPUBufferPool {
     const remaining1 = batchCap === Number.POSITIVE_INFINITY ? batchCap : batchCap - pointsEvicted;
     const linesEvicted = evictFromPool(this.lines.lineBuffers, remaining1);
     const remaining2 = batchCap === Number.POSITIVE_INFINITY ? batchCap : remaining1 - linesEvicted;
-    const gsplatsEvicted = evictFromPool(this.gsplatBuffers, remaining2);
+    const gsplatsEvicted = evictFromPool(this.gsplats.gsplatBuffers, remaining2);
 
     evicted = pointsEvicted + linesEvicted + gsplatsEvicted;
     this.stats.evictions += evicted;
@@ -624,7 +430,7 @@ export class GPUBufferPool {
     };
     collect(this.points.pointBuffers);
     collect(this.lines.lineBuffers);
-    collect(this.gsplatBuffers);
+    collect(this.gsplats.gsplatBuffers);
 
     // One-shot warning when a pooled buffer crosses 100 MB. Such
     // buffers are usually correct (huge Lines/GSplats datasets), but
@@ -712,7 +518,7 @@ export class GPUBufferPool {
       (sum, arr) => sum + arr.length,
       0
     );
-    const gsplatsPooled = Array.from(this.gsplatBuffers.values()).reduce(
+    const gsplatsPooled = Array.from(this.gsplats.gsplatBuffers.values()).reduce(
       (sum, arr) => sum + arr.length,
       0
     );
@@ -757,7 +563,7 @@ export class GPUBufferPool {
         if (bytes > largestPooledBytes) largestPooledBytes = bytes;
       }
     }
-    for (const arr of this.gsplatBuffers.values()) {
+    for (const arr of this.gsplats.gsplatBuffers.values()) {
       for (const b of arr) {
         const bytes = estimateGeometryBytes(b.geometry);
         gsplatsPooledBytes += bytes;
@@ -830,7 +636,7 @@ export class GPUBufferPool {
 
     disposePool(this.points.pointBuffers);
     disposePool(this.lines.lineBuffers);
-    disposePool(this.gsplatBuffers);
+    disposePool(this.gsplats.gsplatBuffers);
 
     log.info(Modules.GPU_BUFFER_POOL, 'All pooled geometries disposed');
   }
