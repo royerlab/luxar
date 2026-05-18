@@ -28,22 +28,34 @@
  *   Avoids per-attribute manual stride alignment when 11+ attributes
  *   span heterogeneous dtypes.
  *
- * Phase 4 (C-ts-1) introduces the foundation: per-attribute
- * `semantic` and `dtype` annotations, layout dispatch, conversion
- * helpers. Behavior is unchanged today — every spec resolves to
- * `'float32'` via {@link defaultGpuDtypeForSemantic}, so both
- * layouts collapse to a single Float32 buffer.
+ * **Current state (post Float16 revert).** `defaultGpuDtypeForSemantic`
+ * returns `'float32'` for every semantic, so every spec — whether
+ * the caller passes an explicit `dtype` or relies on the default —
+ * resolves to `'float32'`, and `packMixedLayout`'s `allFloat32`
+ * fast path always fires. The `dtype` / `semantic` annotations and
+ * the `packSplitLayout` codepath are kept as scaffolding for a
+ * future narrowing attempt; calling either with a non-`'float32'`
+ * `effectiveDtype` throws via `convertToTargetType` today (see the
+ * footgun note below).
  *
  * A first attempt at narrowing (C-ts-2..5) set
- * `view.gpuType = THREE.HalfFloatType` on each `InterleavedBufferAttribute`,
- * but Three.js r184 ignores that field on interleaved attributes —
- * its WebGL path keys off `InterleavedBuffer.isFloat16BufferAttribute`
- * and its WebGPU path keys off the attribute's `constructor` /
- * `array.constructor`. Both backends fell through to integer
- * vertex formats, the parity spec compared two consistently-wrong
- * backends, and the bug shipped briefly. Reverted in `dd7c4478`.
- * A proper redesign (native `Float16Array` storage or non-interleaved
- * `Float16BufferAttribute` per narrowed attr) is a follow-up PR.
+ * `view.gpuType = THREE.HalfFloatType` on each
+ * `InterleavedBufferAttribute`, but Three.js r184 ignores that
+ * field on interleaved attributes — its WebGL path keys off
+ * `InterleavedBuffer.isFloat16BufferAttribute` and its WebGPU path
+ * keys off the attribute's `constructor` / `array.constructor`.
+ * Both backends fell through to integer vertex formats, the parity
+ * spec compared two consistently-wrong backends, and the bug
+ * shipped briefly. Reverted in `dd7c4478`.
+ *
+ * **Footgun for the next narrowing attempt.** Flipping a semantic's
+ * default from `'float32'` to e.g. `'float16'` will trip the
+ * unimplemented split/mixed conversion paths immediately — the
+ * packers need to be completed *in the same change* (native
+ * `Float16Array` storage or per-attribute
+ * `Float16BufferAttribute`). Don't drive that change purely from
+ * `defaultGpuDtypeForSemantic`; treat the conversion helpers as
+ * the integration point.
  *
  * @module rendering/interleaved-attributes
  */
@@ -293,8 +305,11 @@ export function packInterleavedAttributes(
 
 /**
  * Pack every spec into one shared `InstancedInterleavedBuffer`.
- * For all-Float32 specs (current state at C-ts-1) the buffer is a
- * single `Float32Array`. Heterogeneous-dtype support lands in C-ts-2+.
+ * Today every semantic defaults to `'float32'`, so the
+ * `allFloat32` fast path always fires and the buffer is a single
+ * `Float32Array`. The heterogeneous-dtype branch below is
+ * intentionally not wired — see the module header's "footgun"
+ * note for what flipping a default would require.
  */
 function packMixedLayout(
   specs: readonly InterleavedAttributeSpec[],

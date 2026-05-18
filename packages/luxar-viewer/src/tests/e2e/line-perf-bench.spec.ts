@@ -217,6 +217,14 @@ async function measureScenario(
   // Synthetic scenarios: after the bootstrap zarr finishes loading,
   // inject a giant random-walk mesh via the debug API and wait for
   // the first render to absorb it before sampling.
+  //
+  // Before injection, hide the bootstrap zarr's line nodes so they
+  // don't contribute to the rendered workload — the segment-count
+  // probe (further down) already filters by `userData.synthetic`,
+  // but without this `visible = false` pass the bootstrap geometry
+  // is still drawn each frame and skews the timing numbers. For the
+  // 10M scenario the bootstrap is small enough to be in the noise,
+  // but cheap to fix and makes smaller synthetic counts meaningful.
   if (scn.type === 'synthetic-lines') {
     await page.evaluate(async (count: number) => {
       const dbg = (
@@ -226,6 +234,13 @@ async function measureScenario(
               type: 'lines';
               count: number;
             }) => Promise<unknown>;
+            app?: {
+              sceneManager?: {
+                scene?: {
+                  traverse?: (cb: (o: unknown) => void) => void;
+                };
+              };
+            };
           };
         }
       ).__luxarDebug;
@@ -234,6 +249,20 @@ async function measureScenario(
           'synthetic scenario requires __luxarDebug.injectSyntheticScene (added in F2)'
         );
       }
+      // Hide every existing line node BEFORE injection so the
+      // synthetic mesh is the only line geometry rendered. Hiding
+      // (vs `scene.remove`) keeps the loader's bookkeeping intact —
+      // the bootstrap dataset still owns its uploaded buffers, just
+      // doesn't render.
+      dbg?.app?.sceneManager?.scene?.traverse?.((obj: unknown) => {
+        const o = obj as {
+          userData?: { nodeType?: string; synthetic?: boolean };
+          visible?: boolean;
+        };
+        if (o.userData?.nodeType === 'lines' && o.userData?.synthetic !== true) {
+          o.visible = false;
+        }
+      });
       await dbg.injectSyntheticScene({ type: 'lines', count });
       // Yield one rAF so the renderer has a chance to upload the
       // attribute buffers before the bench's first measurement frame.

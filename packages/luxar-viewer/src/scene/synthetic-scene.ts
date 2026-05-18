@@ -64,13 +64,16 @@ function mulberry32(seed: number): () => number {
  * Float32Array and Three's GPU upload double-buffers in driver
  * memory until the first frame submits.
  *
- *   source arrays:   count × (3+3+3+3+1+1+1+1+1+1+1) × 4 bytes
- *                  = count × 84 B  (9 Float32 + 2 Uint8 attrs)
- *   interleaved buf: count × stride × 4 bytes, stride matches the
- *                    same per-instance set + alignment padding
+ *   source arrays:   count × 17 Float32 (positions×2=6, colors×2=6,
+ *                       widths×2=2, sharpness×2=2, length×1=1) × 4 B
+ *                    + count × 2 Uint8  (clipped flags) × 1 B
+ *                  = count × 70 B
+ *   interleaved buf: count × stride × 4 B, stride matches the per-
+ *                    instance set above (widened to Float32) plus
+ *                    any alignment padding
  *   ≈ 2× the source-array figure as a working JS heap estimate.
  *
- * For 10 M segments: ~880 MB of source arrays → ~1.7 GB peak JS
+ * For 10 M segments: ~700 MB of source arrays → ~1.4 GB peak JS
  * heap during construction + packing. The bench machine needs the
  * RAM headroom; on developer laptops, prefer smaller counts (the
  * synthetic scenarios list in `line-perf-bench.spec.ts` is a good
