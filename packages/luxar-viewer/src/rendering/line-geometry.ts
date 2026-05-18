@@ -136,21 +136,21 @@ function buildLineAttributeSpecs(
   meshConfig: InstancedLinesMeshConfig
 ): InterleavedAttributeSpec[] {
   const specs: InterleavedAttributeSpec[] = [
-    { name: 'aStartPos', data: meshConfig.startPositions, itemSize: 3 },
-    { name: 'aEndPos', data: meshConfig.endPositions, itemSize: 3 },
-    { name: 'aStartColor', data: meshConfig.startColors, itemSize: 3 },
-    { name: 'aEndColor', data: meshConfig.endColors, itemSize: 3 },
-    { name: 'aStartWidth', data: meshConfig.startWidths, itemSize: 1 },
-    { name: 'aEndWidth', data: meshConfig.endWidths, itemSize: 1 },
-    { name: 'aStartSharpness', data: meshConfig.startSharpness, itemSize: 1 },
-    { name: 'aEndSharpness', data: meshConfig.endSharpness, itemSize: 1 },
-    { name: 'aSegmentLength', data: meshConfig.segmentLengths, itemSize: 1 },
-    { name: 'aStartClipped', data: new Float32Array(meshConfig.startClipped), itemSize: 1 },
-    { name: 'aEndClipped', data: new Float32Array(meshConfig.endClipped), itemSize: 1 },
+    { name: 'aStartPos', data: meshConfig.startPositions, itemSize: 3, semantic: 'coordinate' },
+    { name: 'aEndPos', data: meshConfig.endPositions, itemSize: 3, semantic: 'coordinate' },
+    { name: 'aStartColor', data: meshConfig.startColors, itemSize: 3, semantic: 'color' },
+    { name: 'aEndColor', data: meshConfig.endColors, itemSize: 3, semantic: 'color' },
+    { name: 'aStartWidth', data: meshConfig.startWidths, itemSize: 1, semantic: 'positive_scalar' },
+    { name: 'aEndWidth', data: meshConfig.endWidths, itemSize: 1, semantic: 'positive_scalar' },
+    { name: 'aStartSharpness', data: meshConfig.startSharpness, itemSize: 1, semantic: 'bounded_scalar' },
+    { name: 'aEndSharpness', data: meshConfig.endSharpness, itemSize: 1, semantic: 'bounded_scalar' },
+    { name: 'aSegmentLength', data: meshConfig.segmentLengths, itemSize: 1, semantic: 'positive_scalar' },
+    { name: 'aStartClipped', data: new Float32Array(meshConfig.startClipped), itemSize: 1, semantic: 'bounded_scalar' },
+    { name: 'aEndClipped', data: new Float32Array(meshConfig.endClipped), itemSize: 1, semantic: 'bounded_scalar' },
   ];
   if (meshConfig.startScalars && meshConfig.endScalars) {
-    specs.push({ name: 'aStartScalar', data: meshConfig.startScalars, itemSize: 1 });
-    specs.push({ name: 'aEndScalar', data: meshConfig.endScalars, itemSize: 1 });
+    specs.push({ name: 'aStartScalar', data: meshConfig.startScalars, itemSize: 1, semantic: 'bounded_scalar' });
+    specs.push({ name: 'aEndScalar', data: meshConfig.endScalars, itemSize: 1, semantic: 'bounded_scalar' });
   }
   return specs;
 }
@@ -221,7 +221,7 @@ function bindInterleavedAttributes(
   meshConfig: InstancedLinesMeshConfig
 ): void {
   const specs = buildLineAttributeSpecs(meshConfig);
-  const { views } = packInterleavedAttributes(specs, meshConfig.segmentCount);
+  const { views } = packInterleavedAttributes(specs, meshConfig.segmentCount, 'split');
   for (const spec of specs) {
     geometry.setAttribute(spec.name, views[spec.name]);
   }
@@ -333,11 +333,15 @@ export function updateInstancedLinesMesh(
     const specs = buildLineAttributeSpecs(meshConfig);
     let offset = 0;
     for (const spec of specs) {
+      // C-ts-1: spec.data is widened to Float32 | Uint16 | Uint8 at the
+      // type level, but Lines spec builder still emits Float32Array for
+      // every attribute. Narrow at callsite until C-ts-3 widens the
+      // update path to accept narrow dtypes.
       writeInterleavedAttribute(
         buffer,
         offset,
         spec.itemSize,
-        spec.data,
+        spec.data as Float32Array,
         meshConfig.segmentCount
       );
       offset += spec.itemSize;

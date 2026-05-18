@@ -133,12 +133,12 @@ function buildGSplatAttributeSpecs(
   meshConfig: InstancedGSplatsMeshConfig
 ): InterleavedAttributeSpec[] {
   return [
-    { name: 'aCenter', data: meshConfig.centers, itemSize: 3 },
-    { name: 'aCholesky01', data: meshConfig.cholesky01, itemSize: 2 },
-    { name: 'aCholesky23', data: meshConfig.cholesky23, itemSize: 2 },
-    { name: 'aCholesky45', data: meshConfig.cholesky45, itemSize: 2 },
-    { name: 'aAmplitude', data: meshConfig.amplitudes, itemSize: 1 },
-    { name: 'aColor', data: meshConfig.colors, itemSize: 3 },
+    { name: 'aCenter', data: meshConfig.centers, itemSize: 3, semantic: 'coordinate' },
+    { name: 'aCholesky01', data: meshConfig.cholesky01, itemSize: 2, semantic: 'cholesky' },
+    { name: 'aCholesky23', data: meshConfig.cholesky23, itemSize: 2, semantic: 'cholesky' },
+    { name: 'aCholesky45', data: meshConfig.cholesky45, itemSize: 2, semantic: 'cholesky' },
+    { name: 'aAmplitude', data: meshConfig.amplitudes, itemSize: 1, semantic: 'positive_scalar' },
+    { name: 'aColor', data: meshConfig.colors, itemSize: 3, semantic: 'color' },
   ];
 }
 
@@ -152,7 +152,7 @@ function bindInterleavedAttributes(
   meshConfig: InstancedGSplatsMeshConfig
 ): void {
   const specs = buildGSplatAttributeSpecs(meshConfig);
-  const { views } = packInterleavedAttributes(specs, meshConfig.splatCount);
+  const { views } = packInterleavedAttributes(specs, meshConfig.splatCount, 'mixed');
   for (const spec of specs) {
     geometry.setAttribute(spec.name, views[spec.name]);
   }
@@ -284,7 +284,17 @@ export function updateInstancedGSplatsMesh(
     const specs = buildGSplatAttributeSpecs(meshConfig);
     let offset = 0;
     for (const spec of specs) {
-      writeInterleavedAttribute(buffer, offset, spec.itemSize, spec.data, meshConfig.splatCount);
+      // C-ts-1: spec.data is widened to Float32 | Uint16 | Uint8 at the
+      // type level, but GSplats spec builder still emits Float32Array
+      // for every attribute. Narrow at callsite until C-ts-4 widens the
+      // update path to accept narrow dtypes.
+      writeInterleavedAttribute(
+        buffer,
+        offset,
+        spec.itemSize,
+        spec.data as Float32Array,
+        meshConfig.splatCount
+      );
       offset += spec.itemSize;
     }
   }
