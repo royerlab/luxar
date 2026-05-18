@@ -75,20 +75,40 @@ test.describe('WebGPU native smoke (best-effort, skips on fallback)', () => {
     // pads to 3584 = 14 × 256 under WebGPU's `bytesPerRow` rule. If
     // `compactWebGPUReadbackRows` is wired correctly the resulting
     // ImageData wraps a compact, slant-free buffer.
+    //
+    // We assert against the canvas *backing-store* width (`domElement.width`)
+    // because AdaptiveDPRManager can reduce DPR below 1 when FPS dips,
+    // scaling the backing store away from the 853 CSS-pixel target.
+    // Pinning to `width === 853` would race the adaptive controller; the
+    // actual buffer round-trip is what we want to verify.
     await page.setViewportSize({ width: 853, height: 480 });
+    // Wait for the CSS-pixel viewport (which DPR cannot change) to settle.
     await page.waitForFunction(
-      () => (window as any).__luxarDebug?.renderer?.domElement?.width === 853,
+      () => (window as any).__luxarDebug?.renderer?.domElement?.clientWidth === 853,
       null,
       { timeout: 5000 }
     );
 
-    const { width, height, length } = await page.evaluate(async () => {
+    const probe = await page.evaluate(async () => {
       const dbg = (window as any).__luxarDebug;
+      const canvas = dbg.renderer.domElement;
       const img: ImageData = await dbg.postProcessing.renderToImageData();
-      return { width: img.width, height: img.height, length: img.data.length };
+      return {
+        canvasWidth: canvas.width,
+        canvasHeight: canvas.height,
+        canvasClientWidth: canvas.clientWidth,
+        imgWidth: img.width,
+        imgHeight: img.height,
+        length: img.data.length,
+      };
     });
-    expect(width).toBe(853);
-    expect(length).toBe(width * height * 4);
+    expect(probe.canvasClientWidth).toBe(853);
+    // ImageData should match the actual backing-store dimensions; the
+    // capture path is what `compactWebGPUReadbackRows` operates on.
+    expect(probe.imgWidth).toBe(probe.canvasWidth);
+    expect(probe.imgHeight).toBe(probe.canvasHeight);
+    expect(probe.length).toBe(probe.imgWidth * probe.imgHeight * 4);
+    expect(probe.length).toBeGreaterThan(0);
   });
 
   test('captureHDRPixels round-trips for visible-ldr and hdr-effects-pre-tone modes', async ({
