@@ -252,7 +252,7 @@ async function measureScenario(
   // `?webgpu-force-webgl`). For benchmarking native-WebGPU performance
   // specifically, we also surface `isWebGLBackend` so a consumer can
   // discount fallback runs.
-  const probe = await page.evaluate(() => {
+  const probe = await page.evaluate((onlySynthetic: boolean) => {
     const dbg = (
       window as unknown as {
         __luxarDebug?: {
@@ -274,18 +274,23 @@ async function measureScenario(
       | undefined;
     scene?.traverse?.((obj: unknown) => {
       const o = obj as {
-        userData?: { nodeType?: string };
+        userData?: { nodeType?: string; synthetic?: boolean };
         geometry?: { instanceCount?: number };
       };
       if (
         o.userData?.nodeType === 'lines' &&
-        typeof o.geometry?.instanceCount === 'number'
+        typeof o.geometry?.instanceCount === 'number' &&
+        // For synthetic scenarios, only count the injected mesh
+        // (`userData.synthetic === true`) — the bootstrap zarr also
+        // contributes line nodes, and conflating them would
+        // overstate the workload size in the JSON.
+        (!onlySynthetic || o.userData.synthetic === true)
       ) {
         visibleSegments += o.geometry.instanceCount;
       }
     });
     return { api, isWebGLBackend, visibleSegments };
-  });
+  }, scn.type === 'synthetic-lines');
 
   if (probe.visibleSegments === 0) {
     notes.push(
@@ -590,4 +595,23 @@ test('line perf bench — JS frame timing across backends', async ({ page }) => 
   fs.writeFileSync(outPath, JSON.stringify(output, null, 2));
 
   console.log(`\n📊 perf-bench results written to ${outPath}`);
+
+  // Guard against silent total failure: per-scenario `measureScenario`
+  // catches errors and records them as skipped rows so the JSON
+  // preserves whatever partial work succeeded — but that also means a
+  // shader-compile failure, GPU device loss, OOM, or a broken
+  // synthetic injector could produce a "passing" test with zero
+  // useful rows. Fail explicitly if no scenario produced timing
+  // samples; surface the per-row skip reasons so the diagnoser
+  // doesn't have to crack open the JSON.
+  const successful = scenarios.filter((s) => !s.skipped && s.frameMs !== null);
+  if (successful.length === 0) {
+    const skipNotes = scenarios
+      .map((s) => `  - ${s.scenarioId}/${s.backend}: ${s.skipReason ?? 'unknown'}`)
+      .join('\n');
+    throw new Error(
+      `perf-bench produced zero successful measurements across ${scenarios.length} scenario/backend ` +
+        `combinations. JSON still written to ${outPath} for inspection. Per-row reasons:\n${skipNotes}`
+    );
+  }
 });
