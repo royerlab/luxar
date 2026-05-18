@@ -161,20 +161,28 @@ export function compactWebGPUReadbackRows<T extends Uint8Array | Uint16Array | F
  * Uint8ClampedArray for ImageData compatibility; this one returns the
  * same kind as the input so it composes naturally with the readback).
  */
+/**
+ * Flip rows of an RGBA typed array. When `out` is provided it MUST be
+ * a different buffer than `pixels` — the algorithm interleaves reads
+ * and writes across rows (row 0 → row N-1, etc.), so passing the same
+ * buffer would self-corrupt. Callers wanting an in-place flip should
+ * stage through a scratch buffer.
+ */
 function flipRowsTyped<T extends Uint8Array | Uint16Array | Float32Array>(
   pixels: T,
   width: number,
-  height: number
+  height: number,
+  out?: T
 ): T {
   const elementsPerRow = width * 4;
   const Ctor = pixels.constructor as new (length: number) => T;
-  const out = new Ctor(elementsPerRow * height);
+  const dst = out ?? new Ctor(elementsPerRow * height);
   for (let y = 0; y < height; y++) {
     const srcOffset = y * elementsPerRow;
     const dstOffset = (height - 1 - y) * elementsPerRow;
-    out.set(pixels.subarray(srcOffset, srcOffset + elementsPerRow), dstOffset);
+    dst.set(pixels.subarray(srcOffset, srcOffset + elementsPerRow), dstOffset);
   }
-  return out;
+  return dst;
 }
 
 /** Render-target texel formats the unified readback supports. */
@@ -232,6 +240,24 @@ export interface ReadPixelsOpts<K extends TexelKind = TexelKind> {
    * in flight).
    */
   flipY?: boolean;
+  /**
+   * Optional pre-allocated destination buffer for the raw readback. Must
+   * be exactly `width * height * 4` elements of the right typed-array
+   * kind for `kind`. When provided, no fresh allocation is made for the
+   * raw readback; ideal for hot paths (e.g. picking) that fire at
+   * mouse-event rates.
+   */
+  out?: TexelArray<K>;
+  /**
+   * Optional pre-allocated destination buffer for the row-flipped
+   * output (only consulted when `flipY` is the default `false`). Must
+   * be the same size and kind as `out`, and a different buffer than
+   * `out` (the row-flip interleaves reads/writes across rows and
+   * cannot operate in place). When provided, the row-flip writes into
+   * this buffer instead of allocating one. The returned `pixels` is
+   * this buffer (not the raw `out`).
+   */
+  flipOut?: TexelArray<K>;
 }
 
 /** Return value of {@link readPixelsCompactAsync}. */
@@ -300,7 +326,7 @@ export async function readPixelsCompactAsync<K extends TexelKind>(
   if (caps.apiSurface === 'webgl2') {
     // WebGL2 signature: pass destination, fill in-place. The returned
     // buffer is always compact (no row-padding under WebGL).
-    pixels = new Ctor(compactLength) as TexelArray<K>;
+    pixels = (opts.out ?? new Ctor(compactLength)) as TexelArray<K>;
     await (renderer as THREE.WebGLRenderer).readRenderTargetPixelsAsync(
       target,
       x,
@@ -312,7 +338,9 @@ export async function readPixelsCompactAsync<K extends TexelKind>(
   } else {
     // WebGPU signature: returns a typed array of the right kind, but
     // possibly padded out to 256-byte rows. compactWebGPUReadbackRows
-    // is a no-op when the row stride is already aligned.
+    // is a no-op when the row stride is already aligned. The
+    // WebGPU surface doesn't accept a destination buffer, so `opts.out`
+    // is honoured by copying the result into it after compaction.
     const raw = (await (renderer as unknown as WebGPUReadback).readRenderTargetPixelsAsync(
       target,
       x,
@@ -320,14 +348,20 @@ export async function readPixelsCompactAsync<K extends TexelKind>(
       width,
       height
     )) as TexelArray<K>;
-    pixels = compactWebGPUReadbackRows(raw, width, height, bytesPerTexel) as TexelArray<K>;
+    const compact = compactWebGPUReadbackRows(raw, width, height, bytesPerTexel) as TexelArray<K>;
+    if (opts.out) {
+      opts.out.set(compact as unknown as ArrayLike<number>);
+      pixels = opts.out;
+    } else {
+      pixels = compact;
+    }
   }
 
   // Raw readback is bottom-up on both backends. Canonical out-orientation
   // is top-down (`wantsTopDown = !flipY`), so flip iff the caller wants
   // top-down output. Bottom-up output (`flipY: true`) passes through.
   if (!flipY) {
-    pixels = flipRowsTyped(pixels, width, height);
+    pixels = flipRowsTyped(pixels, width, height, opts.flipOut);
   }
 
   return { pixels, width, height };

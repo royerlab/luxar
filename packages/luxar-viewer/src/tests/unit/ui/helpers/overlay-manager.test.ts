@@ -290,4 +290,36 @@ describe('OverlayManager.updateHoverContent', () => {
     expect(el.innerHTML).not.toBe(sentinel);
     expect(firstHtml).toBeDefined();
   });
+
+  it('shows a hover overlay configured with both visible_range and transition:"fade"', async () => {
+    // Regression: createOverlayElement previously added the
+    // luxar-overlay--hidden class for ANY overlay with visible_range +
+    // transition:"fade", including hover ones. That class has
+    // `opacity: 0 !important`, which overrode the inline opacity that
+    // updateHoverContent writes — trapping the tooltip permanently
+    // invisible. The fix gates the --hidden write on `!config.hover`.
+    await manager.loadOverlays(
+      [
+        makeTextOverlay({
+          name: 'hover-trap',
+          hover: true,
+          text: '{hover_label}',
+          opacity: 1.0,
+          transition: 'fade',
+          transition_duration: 0.15,
+          visible_range: { t: [0, 5] },
+        }),
+      ],
+      'http://example.com'
+    );
+
+    const el = document.querySelector('[data-overlay-name="hover-trap"]') as HTMLDivElement;
+    expect(el).toBeTruthy();
+    // The trap class must not be present at construction.
+    expect(el.classList.contains('luxar-overlay--hidden')).toBe(false);
+
+    manager.updateHoverContent({ label: 'visible', nodeName: '/n', elementIndex: 0 });
+    expect(el.classList.contains('luxar-overlay--hidden')).toBe(false);
+    expect(el.style.opacity).toBe('1');
+  });
 });

@@ -47,9 +47,16 @@ export class NodeFactory {
     this.pickingSystem = ps;
   }
 
-  /** Invalidate the cached pick buffer (call after geometry updates). */
+  /**
+   * Invalidate the cached pick buffer (call after geometry updates).
+   * Also invalidates the picking system's world-AABB cache, since
+   * geometry changes can move the bounding box. (Camera-only motion
+   * does NOT need to invalidate boxes and reaches `markDirty()` via
+   * the controls 'change' event, not this method.)
+   */
   markPickingDirty(): void {
     this.pickingSystem?.markDirty();
+    this.pickingSystem?.invalidateBoxes();
   }
 
   /**

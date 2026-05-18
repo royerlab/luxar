@@ -152,6 +152,16 @@ export class OverlayManager {
     this.updateVisibility();
   }
 
+  /**
+   * True if there is at least one hover overlay that could currently
+   * display a pick result. PickingSystem consults this via its
+   * `shouldPick` predicate to avoid paying picking cost when no
+   * tooltip would be displayed.
+   */
+  hasVisibleHoverOverlay(): boolean {
+    return !this.globallyHidden && this.hoverOverlays.size > 0;
+  }
+
   /** Show all overlays (subject to dimension filtering). */
   show(): void {
     this.globallyHidden = false;
@@ -328,8 +338,13 @@ export class OverlayManager {
       el.style.setProperty('--luxar-overlay-transition-duration', `${config.transition_duration}s`);
     }
 
-    // Start hidden — updateVisibility() will show the right ones
-    if (config.visible_range) {
+    // Start hidden — updateVisibility() will show the right ones.
+    // Hover overlays are managed by updateHoverContent (inline opacity);
+    // they must NOT receive --hidden, whose !important opacity:0 would
+    // override updateHoverContent's inline writes and trap the tooltip
+    // permanently invisible. visible_range is therefore ignored for hover
+    // overlays today — see updateVisibility's hover branch.
+    if (config.visible_range && !config.hover) {
       if (config.transition === 'fade') {
         el.classList.add('luxar-overlay--hidden');
       } else {

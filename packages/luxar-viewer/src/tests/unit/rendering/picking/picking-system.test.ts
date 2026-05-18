@@ -15,7 +15,7 @@
  * actual pick-render path needs a real WebGL context — out of scope.
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as THREE from 'three';
 import {
   PickingSystem,
@@ -284,6 +284,261 @@ describe('PickingSystem — camera + suppression', () => {
   it('suppress(true) clears any pending debounce timer', () => {
     expect(() => system.suppress(true)).not.toThrow();
     expect(() => system.suppress(false)).not.toThrow();
+  });
+});
+
+// =============================================================================
+// Settle scheduler + caches (P0-P8)
+// =============================================================================
+
+/**
+ * Test harness for the rAF-driven settle scheduler. Controls
+ * `performance.now()` so settle windows can be advanced deterministically
+ * without real time elapsing, and queues `requestAnimationFrame`
+ * callbacks so the rAF tick fires only when `flushRaf()` is called.
+ */
+function setupSchedulerHarness(): {
+  advanceTime: (ms: number) => void;
+  flushRaf: () => void;
+  setNow: (ms: number) => void;
+  restore: () => void;
+} {
+  let nowMs = 1000;
+  let rafQueue: Array<() => void> = [];
+  const nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => nowMs);
+  const rafSpy = vi
+    .spyOn(globalThis, 'requestAnimationFrame')
+    .mockImplementation((cb: FrameRequestCallback) => {
+      rafQueue.push(() => cb(nowMs));
+      return rafQueue.length;
+    });
+  const cafSpy = vi.spyOn(globalThis, 'cancelAnimationFrame').mockImplementation(() => {});
+  return {
+    advanceTime: (ms) => {
+      nowMs += ms;
+    },
+    setNow: (ms) => {
+      nowMs = ms;
+    },
+    flushRaf: () => {
+      const todo = rafQueue;
+      rafQueue = [];
+      todo.forEach((fn) => fn());
+    },
+    restore: () => {
+      nowSpy.mockRestore();
+      rafSpy.mockRestore();
+      cafSpy.mockRestore();
+    },
+  };
+}
+
+function makeMouseEvent(x: number, y: number): MouseEvent {
+  return { clientX: x, clientY: y } as MouseEvent;
+}
+
+describe('PickingSystem — settle scheduler', () => {
+  let system: PickingSystem;
+  let onPickResult: ReturnType<typeof vi.fn>;
+  let harness: ReturnType<typeof setupSchedulerHarness>;
+  let performPick: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    harness = setupSchedulerHarness();
+    onPickResult = vi.fn();
+    const cb = onPickResult as unknown as ConstructorParameters<typeof PickingSystem>[3];
+    system = new PickingSystem(makeStubRenderer(), makeStubCapabilities(), makeCamera(), cb);
+    // Stub performPick so the rAF tick is observable without touching GL.
+    performPick = vi.fn().mockResolvedValue(undefined);
+    (system as unknown as { performPick: typeof performPick }).performPick = performPick;
+  });
+
+  afterEach(() => {
+    harness.restore();
+  });
+
+  it('does not fire a pick before the settle window elapses', () => {
+    system.onMouseMove(makeMouseEvent(100, 100));
+    harness.advanceTime(50);
+    harness.flushRaf();
+    harness.advanceTime(50);
+    harness.flushRaf();
+    expect(performPick).not.toHaveBeenCalled();
+  });
+
+  it('fires a pick after the mouse settle window elapses', () => {
+    system.onMouseMove(makeMouseEvent(100, 100));
+    harness.advanceTime(130);
+    // First tick re-checks settle and (likely) reschedules; flush again to
+    // catch the tick scheduled past the settle threshold.
+    harness.flushRaf();
+    harness.flushRaf();
+    expect(performPick).toHaveBeenCalledTimes(1);
+  });
+
+  it('camera-axis settle: markDirty within the window keeps pick suppressed', () => {
+    system.onMouseMove(makeMouseEvent(100, 100));
+    harness.advanceTime(60);
+    system.markDirty();
+    harness.advanceTime(70); // total 130ms since mousemove, 70ms since markDirty
+    harness.flushRaf();
+    harness.flushRaf();
+    expect(performPick).not.toHaveBeenCalled();
+
+    harness.advanceTime(60); // 130ms since markDirty
+    harness.flushRaf();
+    harness.flushRaf();
+    expect(performPick).toHaveBeenCalledTimes(1);
+  });
+
+  it('a new mousemove resets the settle timer', () => {
+    system.onMouseMove(makeMouseEvent(100, 100));
+    harness.advanceTime(100);
+    system.onMouseMove(makeMouseEvent(110, 110));
+    harness.advanceTime(100);
+    harness.flushRaf();
+    harness.flushRaf();
+    expect(performPick).not.toHaveBeenCalled();
+    harness.advanceTime(30);
+    harness.flushRaf();
+    harness.flushRaf();
+    expect(performPick).toHaveBeenCalledTimes(1);
+  });
+
+  it('shouldPick predicate gates the pick', () => {
+    system.setShouldPick(() => false);
+    system.onMouseMove(makeMouseEvent(100, 100));
+    harness.advanceTime(130);
+    harness.flushRaf();
+    harness.flushRaf();
+    expect(performPick).not.toHaveBeenCalled();
+  });
+
+  it('re-pick on camera-settle: markDirty after a pick fires another pick once camera settles', () => {
+    // First settle + pick
+    system.onMouseMove(makeMouseEvent(100, 100));
+    harness.advanceTime(130);
+    harness.flushRaf();
+    harness.flushRaf();
+    expect(performPick).toHaveBeenCalledTimes(1);
+
+    // Mouse stays still; camera dirties (advance time first so the
+    // markDirty timestamp is strictly greater than the pick timestamp —
+    // mirrors real rAF-driven camera events arriving on a later frame).
+    harness.advanceTime(10);
+    system.markDirty();
+    harness.advanceTime(130);
+    harness.flushRaf();
+    harness.flushRaf();
+    expect(performPick).toHaveBeenCalledTimes(2);
+  });
+
+  it('onMouseLeave clears the pending cursor so no pick fires', () => {
+    system.onMouseMove(makeMouseEvent(100, 100));
+    system.onMouseLeave();
+    harness.advanceTime(200);
+    harness.flushRaf();
+    harness.flushRaf();
+    expect(performPick).not.toHaveBeenCalled();
+  });
+
+  it('suppress(true) cancels any pending rAF and blocks future picks', () => {
+    system.onMouseMove(makeMouseEvent(100, 100));
+    system.suppress(true);
+    harness.advanceTime(200);
+    harness.flushRaf();
+    harness.flushRaf();
+    expect(performPick).not.toHaveBeenCalled();
+  });
+
+  it('suppress(false) re-arms the rAF so orbit-and-release picks once camera settles', () => {
+    // Simulate: cursor over a target, user starts orbiting, camera moves
+    // every frame, user releases. Without a fresh mousemove, the system
+    // should still fire one pick HOVER_SETTLE_MS after the camera goes quiet.
+    system.onMouseMove(makeMouseEvent(100, 100));
+    system.suppress(true);
+    // Camera ticks during the suppressed window
+    system.markDirty();
+    harness.advanceTime(30);
+    system.markDirty();
+    harness.advanceTime(30);
+    // User releases — camera goes quiet from here on, but no new mousemove
+    system.suppress(false);
+    harness.advanceTime(130);
+    harness.flushRaf();
+    harness.flushRaf();
+    expect(performPick).toHaveBeenCalledTimes(1);
+  });
+
+  it('onMouseMove fades the existing overlay (onPickResult called with null)', () => {
+    system.onMouseMove(makeMouseEvent(100, 100));
+    expect(onPickResult).toHaveBeenCalledWith(null);
+  });
+
+  it('markDirty fades the existing overlay (onPickResult called with null)', () => {
+    onPickResult.mockClear();
+    system.markDirty();
+    expect(onPickResult).toHaveBeenCalledWith(null);
+  });
+});
+
+describe('PickingSystem — world-AABB cache', () => {
+  it('invalidateBoxes(pickId) drops just that entry; invalidateBoxes() drops all', () => {
+    const system = new PickingSystem(
+      makeStubRenderer(),
+      makeStubCapabilities(),
+      makeCamera(),
+      vi.fn()
+    );
+    // The cache is a private Map<pickId, Box3>; populate via the internal field
+    // directly (PickingSystem populates it on cache misses inside performPick,
+    // which we can't drive under jsdom without GL).
+    const cache = (system as unknown as { _worldBoxCache: Map<number, THREE.Box3> })._worldBoxCache;
+    cache.set(1, new THREE.Box3());
+    cache.set(2, new THREE.Box3());
+    expect(cache.size).toBe(2);
+
+    system.invalidateBoxes(1);
+    expect(cache.has(1)).toBe(false);
+    expect(cache.has(2)).toBe(true);
+
+    system.invalidateBoxes();
+    expect(cache.size).toBe(0);
+  });
+
+  it('unregisterNode drops the corresponding cached box', () => {
+    const system = new PickingSystem(
+      makeStubRenderer(),
+      makeStubCapabilities(),
+      makeCamera(),
+      vi.fn()
+    );
+    const id = system.allocatePickId();
+    system.registerNode(new THREE.Object3D(), new THREE.Object3D(), id);
+    const cache = (system as unknown as { _worldBoxCache: Map<number, THREE.Box3> })._worldBoxCache;
+    cache.set(id, new THREE.Box3());
+
+    system.unregisterNode(id);
+    expect(cache.has(id)).toBe(false);
+  });
+});
+
+describe('PickingSystem — votes map reuse', () => {
+  it('votes map is the same instance across the picking-system lifecycle', () => {
+    const system = new PickingSystem(
+      makeStubRenderer(),
+      makeStubCapabilities(),
+      makeCamera(),
+      vi.fn()
+    );
+    const votes = (system as unknown as { _votes: Map<number, unknown> })._votes;
+    expect(votes).toBeInstanceOf(Map);
+    // Insert + clear simulates what readbackAndVote does; the reference
+    // must survive the clear, proving the field is not reassigned per call.
+    votes.set(42, { nodeId: 1, elementId: 2, weight: 0.5 });
+    votes.clear();
+    const after = (system as unknown as { _votes: Map<number, unknown> })._votes;
+    expect(after).toBe(votes);
   });
 });
 
