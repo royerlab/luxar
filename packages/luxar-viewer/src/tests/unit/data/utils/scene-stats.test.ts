@@ -20,10 +20,7 @@ function makePoints(
 ): THREE.Mesh {
   const geom = new THREE.InstancedBufferGeometry();
   geom.instanceCount = opts.instanceCount ?? count;
-  geom.setAttribute(
-    'aCenter',
-    new THREE.InstancedBufferAttribute(new Float32Array(count * 3), 3)
-  );
+  geom.setAttribute('aCenter', new THREE.InstancedBufferAttribute(new Float32Array(count * 3), 3));
   const mesh = new THREE.Mesh(geom);
   mesh.userData = {
     nodeType: 'points',

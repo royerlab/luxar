@@ -291,9 +291,9 @@ test.describe('WebGL Error Detection - All Datasets', () => {
 
       await page.waitForFunction(
         () => {
-        const info = (window as any).__luxarDebug?.renderer?.info;
-        return (info?.render?.frame ?? info?.frame ?? 0) > 2;
-      },
+          const info = (window as any).__luxarDebug?.renderer?.info;
+          return (info?.render?.frame ?? info?.frame ?? 0) > 2;
+        },
         { timeout: 10000 }
       );
 

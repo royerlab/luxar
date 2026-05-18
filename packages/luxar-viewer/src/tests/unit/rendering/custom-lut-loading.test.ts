@@ -203,8 +203,14 @@ describe('custom LUT byte-loading', () => {
       // Build a stub geometry with `scalar` so the colormap guard passes.
       const geometry = new THREE.BufferGeometry();
       // Post-migration: per-instance attributes (aCenter, aScalar).
-      geometry.setAttribute('aCenter', new THREE.InstancedBufferAttribute(new Float32Array([0, 0, 0]), 3));
-      geometry.setAttribute('aScalar', new THREE.InstancedBufferAttribute(new Float32Array([0.5]), 1));
+      geometry.setAttribute(
+        'aCenter',
+        new THREE.InstancedBufferAttribute(new Float32Array([0, 0, 0]), 3)
+      );
+      geometry.setAttribute(
+        'aScalar',
+        new THREE.InstancedBufferAttribute(new Float32Array([0.5]), 1)
+      );
       const mat = factory.createPointsMaterial(
         {
           colormap: 'custom',
@@ -225,8 +231,14 @@ describe('custom LUT byte-loading', () => {
       const factory = new NodeFactory();
       const geometry = new THREE.BufferGeometry();
       // Post-migration: per-instance attributes (aCenter, aScalar).
-      geometry.setAttribute('aCenter', new THREE.InstancedBufferAttribute(new Float32Array([0, 0, 0]), 3));
-      geometry.setAttribute('aScalar', new THREE.InstancedBufferAttribute(new Float32Array([0.5]), 1));
+      geometry.setAttribute(
+        'aCenter',
+        new THREE.InstancedBufferAttribute(new Float32Array([0, 0, 0]), 3)
+      );
+      geometry.setAttribute(
+        'aScalar',
+        new THREE.InstancedBufferAttribute(new Float32Array([0.5]), 1)
+      );
       const mat = factory.createPointsMaterial(
         {
           colormap: 'custom',

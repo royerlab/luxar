@@ -24,24 +24,25 @@ function makeMockMaterial(): THREE.ShaderMaterial {
     uniforms: {},
     defines: {},
   });
-  (m as unknown as { setColormapTexture: (t: THREE.DataTexture | null) => void }).setColormapTexture =
-    function setColormapTexture(texture: THREE.DataTexture | null): void {
-      if (texture) {
-        m.defines.USE_COLORMAP = '';
-        if (!m.uniforms.uColormapTex) {
-          m.uniforms.uColormapTex = { value: texture };
-          m.uniforms.uScalarMin = { value: 0.0 };
-          m.uniforms.uScalarScale = { value: 1.0 };
-        } else {
-          m.uniforms.uColormapTex.value = texture;
-        }
+  (
+    m as unknown as { setColormapTexture: (t: THREE.DataTexture | null) => void }
+  ).setColormapTexture = function setColormapTexture(texture: THREE.DataTexture | null): void {
+    if (texture) {
+      m.defines.USE_COLORMAP = '';
+      if (!m.uniforms.uColormapTex) {
+        m.uniforms.uColormapTex = { value: texture };
+        m.uniforms.uScalarMin = { value: 0.0 };
+        m.uniforms.uScalarScale = { value: 1.0 };
       } else {
-        delete m.defines.USE_COLORMAP;
-        if (m.uniforms.uColormapTex) m.uniforms.uColormapTex.value = null;
-        if (m.uniforms.uScalarMin) m.uniforms.uScalarMin.value = 0.0;
-        if (m.uniforms.uScalarScale) m.uniforms.uScalarScale.value = 1.0;
+        m.uniforms.uColormapTex.value = texture;
       }
-    };
+    } else {
+      delete m.defines.USE_COLORMAP;
+      if (m.uniforms.uColormapTex) m.uniforms.uColormapTex.value = null;
+      if (m.uniforms.uScalarMin) m.uniforms.uScalarMin.value = 0.0;
+      if (m.uniforms.uScalarScale) m.uniforms.uScalarScale.value = 1.0;
+    }
+  };
   (m as unknown as { setScalarRange: (min: number, max: number) => void }).setScalarRange =
     function setScalarRange(min: number, max: number): void {
       if (m.uniforms.uScalarMin) m.uniforms.uScalarMin.value = min;

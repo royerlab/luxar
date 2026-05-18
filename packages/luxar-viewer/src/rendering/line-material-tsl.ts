@@ -119,8 +119,7 @@ export class LineTSLMaterial
       this.uniforms.uScalarMin = { value: materialConfig.scalarRange?.[0] ?? 0.0 };
       this.uniforms.uScalarScale = {
         value: materialConfig.scalarRange
-          ? 1.0 /
-            Math.max(1e-10, materialConfig.scalarRange[1] - materialConfig.scalarRange[0])
+          ? 1.0 / Math.max(1e-10, materialConfig.scalarRange[1] - materialConfig.scalarRange[0])
           : 1.0,
       };
     }
@@ -174,12 +173,8 @@ export class LineTSLMaterial
         (this.uniforms.uColormapTex?.value as THREE.Texture | null | undefined) ??
         new THREE.Texture();
       this.tslNodes.uColormapTex = texture(tex);
-      this.tslNodes.uScalarMin = uniform(
-        (this.uniforms.uScalarMin?.value as number) ?? 0.0
-      );
-      this.tslNodes.uScalarScale = uniform(
-        (this.uniforms.uScalarScale?.value as number) ?? 1.0
-      );
+      this.tslNodes.uScalarMin = uniform((this.uniforms.uScalarMin?.value as number) ?? 0.0);
+      this.tslNodes.uScalarScale = uniform((this.uniforms.uScalarScale?.value as number) ?? 1.0);
       // Re-point the IUniform proxies at the new nodes so updates
       // flow through. (For the texture, we keep the plain IUniform
       // because TextureNode value mutations don't propagate without a
@@ -407,8 +402,7 @@ export class LineTSLMaterial
     // if only ortho applies, do an explicit rebuild; if both, the
     // setter call subsumes the ortho rebuild.
     const sourceIsOrtho = (this.uniforms.uIsOrtho.value as number) === 1;
-    const sourceSharpnessTwo =
-      !!this.defines && 'LUXAR_SHARPNESS_TWO' in this.defines;
+    const sourceSharpnessTwo = !!this.defines && 'LUXAR_SHARPNESS_TWO' in this.defines;
     cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
     cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
     cloned.uniforms.uMaxLinePixelWidth.value = this.uniforms.uMaxLinePixelWidth.value;

@@ -167,7 +167,6 @@ const CONST_SHADER: ShaderSource = {
   },
 };
 
-
 /**
  * Build a real instanced-points mesh for the M11 point parity test.
  * One point at world origin with realistic attributes; 4-vertex quad
@@ -177,10 +176,7 @@ function buildPointInstancedMesh(material: THREE.Material): THREE.Object3D {
   const geom = createPointQuadGeometry();
   geom.setAttribute('aCenter', new THREE.InstancedBufferAttribute(new Float32Array([0, 0, 0]), 3));
   geom.setAttribute('aRadius', new THREE.InstancedBufferAttribute(new Float32Array([0.5]), 1));
-  geom.setAttribute(
-    'aSharpness',
-    new THREE.InstancedBufferAttribute(new Float32Array([2.0]), 1)
-  );
+  geom.setAttribute('aSharpness', new THREE.InstancedBufferAttribute(new Float32Array([2.0]), 1));
   geom.setAttribute(
     'aColor',
     new THREE.InstancedBufferAttribute(new Float32Array([1.0, 0.5, 0.25]), 3)
@@ -220,14 +216,8 @@ function buildLineInstancedMesh(material: THREE.Material): THREE.Object3D {
     'aEndColor',
     new THREE.InstancedBufferAttribute(new Float32Array([1.0, 0.5, 0.25]), 3)
   );
-  geom.setAttribute(
-    'aStartWidth',
-    new THREE.InstancedBufferAttribute(new Float32Array([0.1]), 1)
-  );
-  geom.setAttribute(
-    'aEndWidth',
-    new THREE.InstancedBufferAttribute(new Float32Array([0.1]), 1)
-  );
+  geom.setAttribute('aStartWidth', new THREE.InstancedBufferAttribute(new Float32Array([0.1]), 1));
+  geom.setAttribute('aEndWidth', new THREE.InstancedBufferAttribute(new Float32Array([0.1]), 1));
   geom.setAttribute(
     'aStartSharpness',
     new THREE.InstancedBufferAttribute(new Float32Array([2.0]), 1)
@@ -244,10 +234,7 @@ function buildLineInstancedMesh(material: THREE.Material): THREE.Object3D {
     'aStartClipped',
     new THREE.InstancedBufferAttribute(new Float32Array([0.0]), 1)
   );
-  geom.setAttribute(
-    'aEndClipped',
-    new THREE.InstancedBufferAttribute(new Float32Array([0.0]), 1)
-  );
+  geom.setAttribute('aEndClipped', new THREE.InstancedBufferAttribute(new Float32Array([0.0]), 1));
   const mesh = new THREE.Mesh(geom, material);
   mesh.frustumCulled = false;
   return mesh;
@@ -262,9 +249,18 @@ function buildGSplatInstancedMesh(material: THREE.Material): THREE.Object3D {
   const geom = createGSplatQuadGeometry();
   geom.setAttribute('aCenter', new THREE.InstancedBufferAttribute(new Float32Array([0, 0, 0]), 3));
   // Isotropic: L = 0.1 · I, so packed [L00, L10, L11, L20, L21, L22] = [0.1, 0, 0.1, 0, 0, 0.1].
-  geom.setAttribute('aCholesky01', new THREE.InstancedBufferAttribute(new Float32Array([0.1, 0]), 2));
-  geom.setAttribute('aCholesky23', new THREE.InstancedBufferAttribute(new Float32Array([0.1, 0]), 2));
-  geom.setAttribute('aCholesky45', new THREE.InstancedBufferAttribute(new Float32Array([0, 0.1]), 2));
+  geom.setAttribute(
+    'aCholesky01',
+    new THREE.InstancedBufferAttribute(new Float32Array([0.1, 0]), 2)
+  );
+  geom.setAttribute(
+    'aCholesky23',
+    new THREE.InstancedBufferAttribute(new Float32Array([0.1, 0]), 2)
+  );
+  geom.setAttribute(
+    'aCholesky45',
+    new THREE.InstancedBufferAttribute(new Float32Array([0, 0.1]), 2)
+  );
   geom.setAttribute('aAmplitude', new THREE.InstancedBufferAttribute(new Float32Array([1.0]), 1));
   geom.setAttribute(
     'aColor',
@@ -435,10 +431,9 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
       uOffset: { value: 0.0 },
     }),
     buildTSLMaterial: (uniforms) => {
-      const m = lineWebGPUFactory(
-        buildLineTSLNodesFromUniforms(uniforms, {}),
-        { isOrtho: true }
-      ) as unknown as THREE.Material;
+      const m = lineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        isOrtho: true,
+      }) as unknown as THREE.Material;
       m.transparent = false;
       m.blending = THREE.NoBlending;
       return m;
@@ -468,10 +463,10 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
     }),
     buildDefines: () => ({ LUXAR_GAMMA_ONE: '' }),
     buildTSLMaterial: (uniforms) => {
-      const m = lineWebGPUFactory(
-        buildLineTSLNodesFromUniforms(uniforms, {}),
-        { gammaOne: true, isOrtho: true }
-      ) as unknown as THREE.Material;
+      const m = lineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        gammaOne: true,
+        isOrtho: true,
+      }) as unknown as THREE.Material;
       m.transparent = false;
       m.blending = THREE.NoBlending;
       return m;
@@ -499,10 +494,10 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
     }),
     buildDefines: () => ({ LUXAR_SHARPNESS_TWO: '' }),
     buildTSLMaterial: (uniforms) => {
-      const m = lineWebGPUFactory(
-        buildLineTSLNodesFromUniforms(uniforms, {}),
-        { sharpnessTwo: true, isOrtho: true }
-      ) as unknown as THREE.Material;
+      const m = lineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        sharpnessTwo: true,
+        isOrtho: true,
+      }) as unknown as THREE.Material;
       m.transparent = false;
       m.blending = THREE.NoBlending;
       return m;
@@ -531,10 +526,10 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
     }),
     buildDefines: () => ({ LUXAR_NO_GOG: '' }),
     buildTSLMaterial: (uniforms) => {
-      const m = lineWebGPUFactory(
-        buildLineTSLNodesFromUniforms(uniforms, {}),
-        { noGOG: true, isOrtho: true }
-      ) as unknown as THREE.Material;
+      const m = lineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        noGOG: true,
+        isOrtho: true,
+      }) as unknown as THREE.Material;
       m.transparent = false;
       m.blending = THREE.NoBlending;
       return m;
@@ -617,10 +612,9 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
       uOrthoLineScale: { value: 64.0 },
     }),
     buildTSLMaterial: (uniforms) =>
-      linePickWebGPUFactory(
-        buildLinePickTSLNodesFromUniforms(uniforms),
-        { isOrtho: true }
-      ) as unknown as THREE.Material,
+      linePickWebGPUFactory(buildLinePickTSLNodesFromUniforms(uniforms), {
+        isOrtho: true,
+      }) as unknown as THREE.Material,
     buildMesh: buildLineInstancedMesh,
   },
   // M12 point-pick parity: identical sprite layout to `point` but
@@ -756,22 +750,21 @@ async function renderTSL(
   // `.vertexShader` / `.fragmentShader` strings are fully populated.
   // We hook it once per renderer instance and restore right after.
   // (See node_modules/three/src/renderers/common/nodes/NodeManager.js:469.)
-   
+
   const nodesInstance = (renderer as unknown as { _nodes: any })._nodes;
-   
+
   const origCreateState = nodesInstance._createNodeBuilderState.bind(nodesInstance);
   // Ref object so TS doesn't narrow `value` to `null` through the
   // closure mutation below.
   const capturedRef: { value: { vertex: string; fragment: string } | null } = {
     value: null,
   };
-   
+
   nodesInstance._createNodeBuilderState = function (nodeBuilder: any) {
     if (!capturedRef.value && nodeBuilder?.material === material) {
       capturedRef.value = {
         vertex: typeof nodeBuilder.vertexShader === 'string' ? nodeBuilder.vertexShader : '',
-        fragment:
-          typeof nodeBuilder.fragmentShader === 'string' ? nodeBuilder.fragmentShader : '',
+        fragment: typeof nodeBuilder.fragmentShader === 'string' ? nodeBuilder.fragmentShader : '',
       };
     }
     return origCreateState(nodeBuilder);

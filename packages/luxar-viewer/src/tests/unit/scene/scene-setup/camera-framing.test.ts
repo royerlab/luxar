@@ -92,16 +92,10 @@ describe('computeSceneBoundingBox', () => {
     );
     geometry.setAttribute(
       'aCenter',
-      new THREE.InstancedBufferAttribute(
-        new Float32Array([0, 0, 0, 1, 1, 1, -1, 0, 2]),
-        3
-      )
+      new THREE.InstancedBufferAttribute(new Float32Array([0, 0, 0, 1, 1, 1, -1, 0, 2]), 3)
     );
     geometry.instanceCount = 3;
-    geometry.boundingBox = new THREE.Box3(
-      new THREE.Vector3(-1, 0, 0),
-      new THREE.Vector3(1, 1, 2)
-    );
+    geometry.boundingBox = new THREE.Box3(new THREE.Vector3(-1, 0, 0), new THREE.Vector3(1, 1, 2));
     const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
     mesh.userData.nodeType = 'points';
     scene.add(mesh);
@@ -188,10 +182,7 @@ describe('computeSceneBoundingBox', () => {
     );
     g1.setAttribute('aCenter', new THREE.InstancedBufferAttribute(new Float32Array([0, 0, 0]), 3));
     g1.instanceCount = 1;
-    g1.boundingBox = new THREE.Box3(
-      new THREE.Vector3(-1, -1, 0),
-      new THREE.Vector3(1, 1, 0)
-    );
+    g1.boundingBox = new THREE.Box3(new THREE.Vector3(-1, -1, 0), new THREE.Vector3(1, 1, 0));
     const pointsMesh = new THREE.Mesh(g1, new THREE.MeshBasicMaterial());
     pointsMesh.userData.nodeType = 'points';
     scene.add(pointsMesh);

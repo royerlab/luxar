@@ -41,9 +41,7 @@ export interface ColormapAwareMaterial {
 }
 
 /** Type guard. */
-export function isColormapAwareMaterial(
-  material: unknown
-): material is ColormapAwareMaterial {
+export function isColormapAwareMaterial(material: unknown): material is ColormapAwareMaterial {
   if (typeof material !== 'object' || material === null) return false;
   const m = material as Record<string, unknown>;
   return typeof m.setColormapTexture === 'function' && typeof m.setScalarRange === 'function';

@@ -109,7 +109,9 @@ test.describe('Post-Processing Pipeline', () => {
     expect(afterDisable.chromaticLensDistortionEnabled).toBe(false);
   });
 
-  test('should change exposure via post-processing API and mirror UI settings', async ({ page }) => {
+  test('should change exposure via post-processing API and mirror UI settings', async ({
+    page,
+  }) => {
     // Read initial exposure
     const initialExposure = await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;

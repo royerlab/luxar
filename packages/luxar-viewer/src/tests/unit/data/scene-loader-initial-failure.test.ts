@@ -100,7 +100,9 @@ describe('NodeFactory.createEmptyPointsNode', () => {
 
     // Geometry exists but has zero per-instance positions.
     expect(placeholder.geometry).toBeDefined();
-    const centerAttr = placeholder.geometry.getAttribute('aCenter') as THREE.InstancedBufferAttribute;
+    const centerAttr = placeholder.geometry.getAttribute(
+      'aCenter'
+    ) as THREE.InstancedBufferAttribute;
     expect(centerAttr).toBeDefined();
     expect(centerAttr.count).toBe(0);
   });

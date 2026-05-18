@@ -73,7 +73,7 @@ export function buildMaterial(
       throw new Error(
         `buildMaterial: ShaderSource '${source.name}' has no 'webgpu' TSL ` +
           'factory but the active renderer dispatches via the WebGPU ' +
-          'path (caps.apiSurface=\'webgpu\'). WebGPURenderer cannot ' +
+          "path (caps.apiSurface='webgpu'). WebGPURenderer cannot " +
           'dispatch ShaderMaterial even in its WebGL2 fallback mode; ' +
           "add a 'webgpu' factory to the ShaderSource or switch to the " +
           'legacy WebGLRenderer path (default; remove ?renderer=webgpu / ' +

@@ -88,15 +88,23 @@ export function createPointQuadGeometry(): THREE.InstancedBufferGeometry {
   const geometry = new THREE.InstancedBufferGeometry();
 
   const quadCorners = new Float32Array([
-    -1, -1, // Bottom-left
-    1, -1, // Bottom-right
-    -1, 1, // Top-left
-    1, 1, // Top-right
+    -1,
+    -1, // Bottom-left
+    1,
+    -1, // Bottom-right
+    -1,
+    1, // Top-left
+    1,
+    1, // Top-right
   ]);
 
   const indices = new Uint16Array([
-    0, 1, 2, // First triangle
-    2, 1, 3, // Second triangle
+    0,
+    1,
+    2, // First triangle
+    2,
+    1,
+    3, // Second triangle
   ]);
 
   geometry.setAttribute('aQuadCorner', new THREE.BufferAttribute(quadCorners, 2));
@@ -112,10 +120,7 @@ export function createPointQuadGeometry(): THREE.InstancedBufferGeometry {
  * divisor at pack time so the Float32 interleaved buffer feeds the
  * shader the same [0, 1] values.
  */
-function normalizationDivisor(
-  source: THREE.TypedArray,
-  normalized: boolean
-): number | undefined {
+function normalizationDivisor(source: THREE.TypedArray, normalized: boolean): number | undefined {
   if (!normalized) return undefined;
   if (source instanceof Uint8Array) return 255;
   if (source instanceof Uint16Array) return 65535;
@@ -129,14 +134,15 @@ function normalizationDivisor(
  * order. Source arrays may not be Float32; widen as needed and apply
  * the appropriate normalization divisor.
  */
-function buildPointAttributeSpecs(
-  config: InstancedPointsMeshConfig
-): InterleavedAttributeSpec[] {
+function buildPointAttributeSpecs(config: InstancedPointsMeshConfig): InterleavedAttributeSpec[] {
   const specs: InterleavedAttributeSpec[] = [
     { name: 'aCenter', data: config.centers, itemSize: 3, semantic: 'coordinate' },
     {
       name: 'aRadius',
-      data: widenToFloat32(config.radii, normalizationDivisor(config.radii, config.radiiNormalized)),
+      data: widenToFloat32(
+        config.radii,
+        normalizationDivisor(config.radii, config.radiiNormalized)
+      ),
       itemSize: 1,
       semantic: 'positive_scalar',
     },

@@ -27,10 +27,7 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { PostProcessingManager } from '../../../../rendering/post-processing/post-processing-manager';
-import type {
-  Renderer,
-  RendererCapabilities,
-} from '../../../../rendering/renderer-capabilities';
+import type { Renderer, RendererCapabilities } from '../../../../rendering/renderer-capabilities';
 
 function mockCaps(apiSurface: 'webgl2' | 'webgpu' = 'webgl2'): RendererCapabilities {
   return {
@@ -47,8 +44,7 @@ function mockCaps(apiSurface: 'webgl2' | 'webgpu' = 'webgl2'): RendererCapabilit
     },
     maxMSAASamples: 4,
     pointSizeRange: [1, 1024],
-    readBackbufferPixels: () =>
-      Promise.resolve({ pixels: new Uint8Array(), width: 0, height: 0 }),
+    readBackbufferPixels: () => Promise.resolve({ pixels: new Uint8Array(), width: 0, height: 0 }),
   };
 }
 
@@ -139,8 +135,7 @@ describe('PostProcessingManager → Three needsFrameBufferTarget gate', () => {
     const useToneMapping = renderer.toneMapping !== THREE.NoToneMapping;
     // Three's working color space is LinearSRGB; matching keeps the
     // gate at false.
-    const useColorSpace =
-      renderer.outputColorSpace !== THREE.ColorManagement.workingColorSpace;
+    const useColorSpace = renderer.outputColorSpace !== THREE.ColorManagement.workingColorSpace;
 
     expect(useToneMapping || useColorSpace).toBe(false);
   });

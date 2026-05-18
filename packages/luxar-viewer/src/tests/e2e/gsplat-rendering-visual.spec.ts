@@ -40,7 +40,10 @@ test.describe('GSplats visual correctness', () => {
     // Whole-canvas stats are more robust than sparse grid sampling for
     // small splat clusters.
     const stats = await getElementPixelStats(page, 'canvas', 10);
-    expect(stats.nonBlackPixels, `Expected visible GSplat output; stats=${JSON.stringify(stats)}`).toBeGreaterThan(0);
+    expect(
+      stats.nonBlackPixels,
+      `Expected visible GSplat output; stats=${JSON.stringify(stats)}`
+    ).toBeGreaterThan(0);
   });
 
   test('Camera rotation does not produce shader errors (precision-based ray integral)', async ({
