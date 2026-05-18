@@ -65,7 +65,7 @@ tests/
 │   ├── keyboard-input-system.spec.ts   # Keyboard input handling
 │   ├── nd-navigation.spec.ts           # nD navigation
 │   ├── performance-benchmarks.spec.ts  # Performance measurement
-│   ├── performance-tracking.spec.ts    # Performance tracking
+│   ├── performance-tracking-perf-bench.spec.ts    # Perf tracking — opt-in via `pnpm test:perf:e2e`
 │   ├── position-bounds-clipping.spec.ts # Position bounds clipping
 │   ├── python-typescript-integration.spec.ts # Cross-language integration
 │   ├── real-dataset-loading.spec.ts    # Real dataset loading
