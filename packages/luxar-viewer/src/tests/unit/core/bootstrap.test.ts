@@ -242,6 +242,7 @@ describe('bootstrapStandalone', () => {
           cacheDebug: true,
           renderer: 'webgpu',
           webgpuForceWebGL: true,
+          perfTimestamp: true,
         },
       });
       const arg = mocks.init.mock.calls.at(-1)?.[0];
@@ -250,6 +251,7 @@ describe('bootstrapStandalone', () => {
       expect(arg.updateBrowserUrl).toBe(true);
       expect(arg.renderer).toBe('webgpu');
       expect(arg.webgpuForceWebGL).toBe(true);
+      expect(arg.perfTimestamp).toBe(true);
       expect(arg.loaderConfig).toMatchObject({
         noCache: true,
         cacheDebug: true,
@@ -257,6 +259,17 @@ describe('bootstrapStandalone', () => {
         noPrefetch: false,
         prefetchDebug: false,
       });
+    });
+
+    it('does not set perfTimestamp on the init() call when urlParams.perfTimestamp is false', async () => {
+      await bootstrapStandalone({
+        canvas: CANVAS,
+        urlParams: { ...EMPTY_PARAMS, perfTimestamp: false },
+      });
+      const arg = mocks.init.mock.calls.at(-1)?.[0];
+      // Field present but explicitly false so SceneManager doesn't
+      // probe WebGPURenderer.backend.trackTimestamp by accident.
+      expect(arg.perfTimestamp).toBe(false);
     });
 
     it('shows a top-level error UI and re-throws when init() fails', async () => {
