@@ -378,6 +378,8 @@ export const LINE_PICK_SOURCE: ShaderSource = {
 export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
     precision highp float;
 
+    ${GLSL_SANITIZE_FUNCTIONS}
+
     in vec2 aQuadCorner;
 
     in vec3 aCenter;
@@ -407,6 +409,14 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
             0.0,           aCholesky23.x, aCholesky45.x,
             0.0,           0.0,           aCholesky45.y
         );
+    }
+
+    // Parity with visual gsplat-shaders.ts invalidCov2D — reject Σ_2D
+    // entries that are NaN/Inf so a degenerate splat can't poison the
+    // eigendecomposition and produce undefined pick geometry.
+    bool invalidCov2D(mat2 S) {
+        return isInvalidFloat(S[0][0]) || isInvalidFloat(S[0][1])
+            || isInvalidFloat(S[1][0]) || isInvalidFloat(S[1][1]);
     }
 
     vec3 cholesky2x2(mat2 S) {
@@ -482,6 +492,15 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
         Sigma2D[1][0] = JS0.x * J[0].y + JS1.x * J[1].y + JS2.x * J[2].y;
         Sigma2D[0][1] = Sigma2D[1][0];
         Sigma2D[1][1] = JS0.y * J[0].y + JS1.y * J[1].y + JS2.y * J[2].y;
+
+        // Visual-shader parity (gsplat-shaders.ts) + TSL-side parity
+        // (gsplat-pick.tsl.ts): reject splats with NaN/Inf Σ_2D or
+        // amplitude so picking and rendering agree on which elements
+        // are pickable across WebGL and WebGPU backends.
+        if (invalidCov2D(Sigma2D) || isInvalidFloat(aAmplitude)) {
+            gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
+            return;
+        }
 
         // For picking, always use max projection (no ray integration needed)
         vAmplitude2D = aAmplitude * nearFade;
