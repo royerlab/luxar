@@ -37,6 +37,12 @@ import {
   writeInterleavedAttribute,
   type InterleavedAttributeSpec,
 } from './interleaved-attributes';
+import type {
+  PointsAttributeTypes,
+  PooledBuffer,
+  PoolStats,
+  PooledBufferRef,
+} from './gpu-buffer-pool/pool-stats';
 
 /**
  * Canonical per-segment attribute layout for pooled line geometries.
@@ -264,79 +270,16 @@ export interface PackedGSplatsData {
   splatCount: number;
 }
 
-/**
- * Attribute type information for Points geometry
- * Tracks the TypedArray type for each attribute to enable proper reuse
- */
-export interface PointsAttributeTypes {
-  position: 'Float32Array'; // Always Float32Array for positions
-  color: 'Float32Array' | 'Uint8Array' | 'Uint16Array';
-  radius: 'Float32Array' | 'Uint8Array';
-  sharpness: 'Float32Array' | 'Uint8Array';
-  /**
-   * scalar attribute dtype. Omitted (undefined) when the dataset
-   * has no scalars — `===` comparison handles undefined === undefined,
-   * so `attributeTypesMatch` works without a sentinel.
-   */
-  scalar?: 'Float32Array' | 'Float16Array' | 'Uint8Array';
-}
-
-export interface PooledBuffer {
-  geometry: THREE.BufferGeometry | THREE.InstancedBufferGeometry;
-  capacity: number;
-  type: 'points' | 'lines' | 'gsplats';
-  inUse: boolean;
-  lastUsedFrame: number;
-  // Attribute types (only for Points geometries)
-  attributeTypes?: PointsAttributeTypes;
-}
-
-/**
- * Per-type buffer pool statistics
- */
-export interface TypePoolStats {
-  allocations: number;
-  reuses: number;
-  evictions: number;
-  activeBuffers: number;
-  pooledBuffers: number;
-  /** per-type byte totals (sum of attribute byteLengths). */
-  activeBytes: number;
-  pooledBytes: number;
-}
-
-/**
- * Overall pool statistics with per-type breakdown
- */
-export interface PoolStats {
-  // Global totals
-  allocations: number;
-  reuses: number;
-  evictions: number;
-  capacityGrowths: number;
-  activeBuffers: number;
-  pooledBuffers: number;
-  /** cumulative byte counters across all types. */
-  activeBytes: number;
-  pooledBytes: number;
-  totalBytes: number;
-  largestPooledBytes: number;
-  /**
-   * Number of pooled buffers whose eviction was deferred past the
-   * current `evictUnused()` call because the per-call batch cap
-   * (`evictBatchSize`, default 5) was hit. Diagnostic only — these
-   * buffers will be picked up on the next frame's eviction sweep.
-   * Useful for spotting "user paused for 5 min then resumed and the
-   * eviction queue is stretching across many frames" scenarios.
-   */
-  deferredEvictions: number;
-  // Per-type breakdown
-  byType: {
-    points: TypePoolStats;
-    lines: TypePoolStats;
-    gsplats: TypePoolStats;
-  };
-}
+// Pool-stats types moved to ./gpu-buffer-pool/pool-stats. Re-exported so
+// existing consumers (importing from `rendering/gpu-buffer-pool`) keep
+// working unchanged.
+export type {
+  PointsAttributeTypes,
+  PooledBuffer,
+  TypePoolStats,
+  PoolStats,
+  PooledBufferRef,
+} from './gpu-buffer-pool/pool-stats';
 
 /**
  * Pure selector for byte-budget eviction.
@@ -347,13 +290,6 @@ export interface PoolStats {
  * under budget. Exported for unit testing — keeps the policy isolated
  * from the side-effecting eviction logic in the pool.
  */
-export interface PooledBufferRef<T = unknown> {
-  bytes: number;
-  // Caller-provided opaque payload used to splice the buffer out of
-  // its containing pool after the selection returns.
-  payload?: T;
-}
-
 export function selectBuffersToEvict<R extends PooledBufferRef>(
   refs: R[],
   maxBytes: number,
