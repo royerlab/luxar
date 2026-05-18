@@ -323,13 +323,18 @@ async function measureScenario(
   // the watchdog. Watchdog generously sized so a slow first-frame
   // doesn't kill the run.
   //
-  // GPU timestamps: every N frames we batch-resolve the WebGPU
-  // timestamp queries via `renderer.resolveTimestampsAsync('render')`.
-  // The pool accumulates per-render() durations between resolves; we
-  // divide by `framesSinceResolve` to recover an average per-frame
-  // GPU ms. WebGL renderers and WebGPU drivers without the
-  // `timestamp-query` feature return 0 / lastValue; the bench treats
-  // those as unsupported and falls back to JS-only timing.
+  // GPU timestamps: every N frames we call
+  // `renderer.resolveTimestampsAsync('render')`. Three's
+  // `*TimestampQueryPool.processQueries()` (`three/src/renderers/
+  // webgpu/utils/WebGPUTimestampQueryPool.js` and the WebGL2 fallback)
+  // returns the duration of the *most recent* frame in the pool's
+  // current batch, NOT the sum across `frames` since the last
+  // resolve — see the inline `// Return the total duration of the
+  // last frame` comment at line 211 of that file. So each resolve
+  // contributes a single per-frame sample, regardless of how many
+  // frames elapsed in between. WebGL renderers and WebGPU drivers
+  // without `timestamp-query` return 0 / lastValue; the bench
+  // treats those as unsupported and falls back to JS-only timing.
   const timing = await page.evaluate(
     async (cfg: {
       windowMs: number;
@@ -391,22 +396,25 @@ async function measureScenario(
             if (collectingStart === null) collectingStart = now;
             dts.push(now - lastTime);
 
-            // Resolve GPU timestamps every N frames. Three.js's pool
-            // returns the total duration since the last resolve; divide
-            // by the batch size to get an average per-frame GPU ms,
-            // pushed once per resolve.
+            // Resolve GPU timestamps every N frames. The pool returns
+            // the last-frame duration only (see header comment), so
+            // each resolve contributes exactly one per-frame sample —
+            // do NOT divide by the batch size. The 16-frame cadence is
+            // a cost/quality tradeoff: it keeps `resolveAsync` overhead
+            // out of the inner loop without thinning the GPU sample
+            // count below useful percentile resolution.
             framesSinceResolve++;
             if (supportsTimestamp && framesSinceResolve >= GPU_RESOLVE_EVERY) {
               try {
-                const gpuBatchMs = await debug.renderer!.resolveTimestampsAsync!(
+                const gpuFrameMs = await debug.renderer!.resolveTimestampsAsync!(
                   'render'
                 );
                 if (
-                  typeof gpuBatchMs === 'number' &&
-                  Number.isFinite(gpuBatchMs) &&
-                  gpuBatchMs > 0
+                  typeof gpuFrameMs === 'number' &&
+                  Number.isFinite(gpuFrameMs) &&
+                  gpuFrameMs > 0
                 ) {
-                  gpuPerFrameMs.push(gpuBatchMs / framesSinceResolve);
+                  gpuPerFrameMs.push(gpuFrameMs);
                 }
               } catch {
                 // Drop the sample on transient failure; resolveAsync can
