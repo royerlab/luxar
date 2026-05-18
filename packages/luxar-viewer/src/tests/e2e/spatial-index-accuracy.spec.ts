@@ -165,9 +165,9 @@ test.describe('Spatial Index Query Accuracy', () => {
       debug.scene.traverse((object: any) => {
         if (object.userData?.nodeType === 'points' && object.geometry?.attributes?.aRadius) {
           const radiusAttr = object.geometry.attributes.aRadius;
-          const arr = radiusAttr.array;
-          // Points render as instanced quads: drawRange is the 6-index base
-          // quad, while instanceCount is the visible point count.
+          // aRadius is an InterleavedBufferAttribute. .array would return
+          // the shared interleaved buffer; use getX(i) for the per-instance
+          // scalar radius.
           const instanceCount = object.geometry.isInstancedBufferGeometry
             ? object.geometry.instanceCount
             : radiusAttr.count;
@@ -178,7 +178,7 @@ test.describe('Spatial Index Query Accuracy', () => {
           let max = -Infinity;
           let allFinite = true;
           for (let i = 0; i < count; i++) {
-            const v = arr[i];
+            const v = radiusAttr.getX(i);
             if (!isFinite(v)) allFinite = false;
             if (v < min) min = v;
             if (v > max) max = v;

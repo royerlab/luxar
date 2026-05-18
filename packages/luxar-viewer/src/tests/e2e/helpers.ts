@@ -1198,14 +1198,24 @@ export async function validateSceneAttributes(page: Page): Promise<
         ? Math.min(obj.geometry.instanceCount, posCount)
         : drawCount;
 
-      // Check for NaN/Infinity in positions (sample first 1000)
+      // Check for NaN/Infinity in positions (sample first 1000 instances).
+      // aCenter is an InterleavedBufferAttribute, so .array is the shared
+      // interleaved backing buffer (not a dense position-only array).
+      // Use getX/getY/getZ to read per-instance components correctly.
       let hasNaN = false;
       let hasInfinity = false;
-      const checkCount = Math.min(posCount * 3, 3000);
-      for (let i = 0; i < checkCount; i++) {
-        const v = pos.array[i];
-        if (Number.isNaN(v)) hasNaN = true;
-        if (!Number.isNaN(v) && !Number.isFinite(v)) hasInfinity = true;
+      const sampleCount = Math.min(posCount, 1000);
+      for (let i = 0; i < sampleCount; i++) {
+        const x = pos.getX(i);
+        const y = pos.getY(i);
+        const z = pos.getZ(i);
+        if (Number.isNaN(x) || Number.isNaN(y) || Number.isNaN(z)) hasNaN = true;
+        if (
+          (!Number.isNaN(x) && !Number.isFinite(x)) ||
+          (!Number.isNaN(y) && !Number.isFinite(y)) ||
+          (!Number.isNaN(z) && !Number.isFinite(z))
+        )
+          hasInfinity = true;
       }
 
       // Check alignment: all present attributes should have same count
