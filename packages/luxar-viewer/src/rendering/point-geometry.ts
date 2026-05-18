@@ -133,11 +133,12 @@ function buildPointAttributeSpecs(
   config: InstancedPointsMeshConfig
 ): InterleavedAttributeSpec[] {
   const specs: InterleavedAttributeSpec[] = [
-    { name: 'aCenter', data: config.centers, itemSize: 3 },
+    { name: 'aCenter', data: config.centers, itemSize: 3, semantic: 'coordinate' },
     {
       name: 'aRadius',
       data: widenToFloat32(config.radii, normalizationDivisor(config.radii, config.radiiNormalized)),
       itemSize: 1,
+      semantic: 'positive_scalar',
     },
     {
       name: 'aSharpness',
@@ -146,6 +147,7 @@ function buildPointAttributeSpecs(
         normalizationDivisor(config.sharpness, config.sharpnessNormalized)
       ),
       itemSize: 1,
+      semantic: 'bounded_scalar',
     },
     {
       name: 'aColor',
@@ -154,6 +156,7 @@ function buildPointAttributeSpecs(
         normalizationDivisor(config.colors, config.colorsNormalized)
       ),
       itemSize: 3,
+      semantic: 'color',
     },
   ];
   if (config.scalars) {
@@ -164,6 +167,7 @@ function buildPointAttributeSpecs(
         normalizationDivisor(config.scalars, config.scalarsNormalized ?? false)
       ),
       itemSize: 1,
+      semantic: 'bounded_scalar',
     });
   }
   return specs;
@@ -189,7 +193,7 @@ export function setupInstancedPointsMesh(
   config: InstancedPointsMeshConfig
 ): void {
   const specs = buildPointAttributeSpecs(config);
-  const { views } = packInterleavedAttributes(specs, config.pointCount);
+  const { views } = packInterleavedAttributes(specs, config.pointCount, 'mixed');
   for (const spec of specs) {
     geometry.setAttribute(spec.name, views[spec.name]);
   }
