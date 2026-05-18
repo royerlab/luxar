@@ -30,11 +30,20 @@
  *
  * Phase 4 (C-ts-1) introduces the foundation: per-attribute
  * `semantic` and `dtype` annotations, layout dispatch, conversion
- * helpers. Behavior is unchanged at this commit — every caller still
- * passes `dtype: 'float32'` explicitly, so both layouts collapse to a
- * single Float32 buffer (current behavior). Narrowing activates in
- * C-ts-2..4 by dropping the explicit `dtype` override on individual
- * attributes so the semantic-default kicks in.
+ * helpers. Behavior is unchanged today — every spec resolves to
+ * `'float32'` via {@link defaultGpuDtypeForSemantic}, so both
+ * layouts collapse to a single Float32 buffer.
+ *
+ * A first attempt at narrowing (C-ts-2..5) set
+ * `view.gpuType = THREE.HalfFloatType` on each `InterleavedBufferAttribute`,
+ * but Three.js r184 ignores that field on interleaved attributes —
+ * its WebGL path keys off `InterleavedBuffer.isFloat16BufferAttribute`
+ * and its WebGPU path keys off the attribute's `constructor` /
+ * `array.constructor`. Both backends fell through to integer
+ * vertex formats, the parity spec compared two consistently-wrong
+ * backends, and the bug shipped briefly. Reverted in `dd7c4478`.
+ * A proper redesign (native `Float16Array` storage or non-interleaved
+ * `Float16BufferAttribute` per narrowed attr) is a follow-up PR.
  *
  * @module rendering/interleaved-attributes
  */
@@ -162,13 +171,13 @@ export function effectiveDtype(spec: InterleavedAttributeSpec): GpuDtype {
 /**
  * Default GPU dtype for each {@link SemanticType}. The map is the
  * single source of truth for "what does this kind of value want to
- * become on the GPU". Phase-4 commits flip individual entries:
+ * become on the GPU" once a proper narrowing path lands.
  *
- * - C-ts-2: `color: 'float16'`
- * - C-ts-3: `positive_scalar: 'float16'`, `bounded_scalar: 'uint8-norm'`
- * - C-ts-4: `cholesky: 'float16'`
- *
- * At C-ts-1 every entry is `'float32'` → behavior unchanged.
+ * Currently every entry is `'float32'` — see the module docstring
+ * for why the first narrowing attempt was reverted in `dd7c4478`.
+ * A follow-up PR will set individual entries (e.g., `color: 'float16'`
+ * or `bounded_scalar: 'uint8-norm'`) once the backend-attribute API
+ * is wired correctly for the Three.js r184 vertex-format path.
  */
 const DEFAULT_GPU_DTYPE_BY_SEMANTIC: Record<SemanticType, GpuDtype> = {
   coordinate: 'float32',
@@ -394,7 +403,7 @@ function packSplitLayout(
     if (dtype !== 'float32') {
       throw new Error(
         `packSplitLayout: group dtype '${dtype}' not yet implemented ` +
-          `(C-ts-1 supports float32 only)`
+          '(C-ts-1 supports float32 only)'
       );
     }
 
