@@ -183,12 +183,22 @@ const DEFAULT_GPU_DTYPE_BY_SEMANTIC: Record<SemanticType, GpuDtype> = {
   // No shader change: TSL/GLSL still read `float`. GPU widens at
   // attribute fetch.
   positive_scalar: 'float16',
-  // C-ts-3b (future): BOUNDED_SCALAR (sharpness, clipped flags)
-  // will narrow to Uint8-norm. Requires threading the encoder's
-  // bounds metadata (V_max) to the shader's `sharpnessScale` /
-  // `radiusScale` uniforms — non-trivial because bounds vary per
-  // dataset. Stays Float32 for now.
-  bounded_scalar: 'float32',
+  // C-ts-5: BOUNDED_SCALAR (sharpness, clipped flags, per-element
+  // scalars) narrowed to Float16 on GPU. Same pattern as the other
+  // semantic-flips — no shader change, no bounds-metadata threading.
+  //
+  // Float16's 11-bit mantissa gives ~5e-4 relative precision: for
+  // sharpness in [0, 31] that's ~1.5e-2 absolute error on the
+  // visible upper end and ~5e-5 on values around 1. Clipped flags
+  // are {0, 1} binary values and Float16 stores both exactly.
+  //
+  // A future C-ts-6 could go further and narrow to Uint8-norm
+  // (1 byte/attr, half again the saving) — requires threading the
+  // encoder's bounds metadata (V_max) to the shader's
+  // `sharpnessScale` / `radiusScale` uniforms, which is non-trivial
+  // because bounds vary per dataset. Deferred until there's a
+  // motivating bandwidth bottleneck.
+  bounded_scalar: 'float16',
   // C-ts-4: CHOLESKY (GSplats covariance) narrowed to Float16 on
   // GPU. Float16 mantissa (~5e-4 relative precision) is adequate
   // for typical splat aspect ratios up to ~1000:1. The shader
