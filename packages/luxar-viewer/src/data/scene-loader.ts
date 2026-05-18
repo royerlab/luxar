@@ -40,6 +40,7 @@ import {
 } from './scene-loader/loader-factory';
 import { commitPointsGeometry as commitPointsGeometryHelper } from './scene-loader/commit-points-geometry';
 import { ViewStateQueue } from './scene-loader/view-state-queue';
+import { runGSplatsRefinement } from './gsplats/lod-refinement';
 import {
   loadAndStage as pointsLoadAndStage,
   label as pointsLabel,
@@ -1029,97 +1030,36 @@ export class SceneLoader {
   /**
    * Schedule progressive GSplats LOD refinement.
    *
-   * Runs after the main updateView() commits LOD 0, loading additional LODs
-   * one pass at a time with a rAF yield between each pass (so each LOD level
-   * is painted as a separate frame, giving visible progressive refinement).
-   *
-   * Cancellation: if _pendingViewState is set (user navigated), the loop
-   * aborts and drains the pending state via the normal serialization path.
-   *
-   * IMPORTANT: This method does NOT go through the updateView() entry point
-   * (which has the serialization lock). It directly calls loader.updateView()
-   * + process + commit for GSplats loaders only.
+   * Thin wrapper around `runGSplatsRefinement` in
+   * `data/gsplats/lod-refinement.ts` (extracted in step 8 of the
+   * god-object refactor). The full timing semantics — rAF yield per
+   * pass, cancellation hand-off on pending view-state, lock release on
+   * normal completion — live in the extracted module.
    */
   private async scheduleGSplatsRefinement(): Promise<void> {
-    // Track whether cancellation has taken ownership of the lock
-    let lockHandedOff = false;
-    try {
-      while (true) {
-        // Yield to let browser paint the current LOD level
-        await new Promise<void>((resolve) => {
-          if (typeof requestAnimationFrame !== 'undefined') {
-            requestAnimationFrame(() => resolve());
-          } else {
-            resolve(); // Test environment: proceed immediately
-          }
-        });
-
-        // Check cancellation: did the user navigate?
-        const pendingState = this.viewStateQueue.takePending();
-        if (pendingState !== null) {
-
-          // Drain pending state via the normal path.
-          // The rAF branch keeps the lock until the callback fires,
-          // so we must not release it in finally.
-          lockHandedOff = true;
-          if (typeof requestAnimationFrame !== 'undefined') {
-            requestAnimationFrame(() => {
-              this._updateInProgress = false;
-              this.updateView(pendingState);
-            });
-          } else {
+    return runGSplatsRefinement({
+      rootGroup: this.rootGroup,
+      viewStateQueue: this.viewStateQueue,
+      gsplatLoaders: this.gsplatLoaders,
+      deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),
+      processGSplats: (path, data, viewState) => this.processGSplatsData(path, data, viewState),
+      commitGSplats: (staged) => this.commitGSplatsGeometry(staged),
+      updateVisibleCountsInMonitor: () => this.updateVisibleCountsInMonitor(),
+      releaseLock: () => {
+        this._updateInProgress = false;
+      },
+      retriggerUpdate: (pendingState) => {
+        if (typeof requestAnimationFrame !== 'undefined') {
+          requestAnimationFrame(() => {
             this._updateInProgress = false;
             this.updateView(pendingState);
-          }
-          return;
+          });
+        } else {
+          this._updateInProgress = false;
+          this.updateView(pendingState);
         }
-
-        // Load next LOD level for each progressive loader
-        for (const [path, loader] of this.gsplatLoaders) {
-          if (loader.hasMoreLODs !== true) continue;
-
-          try {
-            // GSplats refinement runs the same query-state derivation
-            // as main update / retry / initial-load — open-coding it here
-            // would have to repeat extend_to_all dim-name validation.
-            const mesh = this.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
-            const nodeAttrs = mesh?.userData?.attrs as GSplatsMetadata | undefined;
-            const refinedDerived = this.deriveNodeViewState(path, nodeAttrs, {
-              applyPartialExtendTolerance: true,
-            });
-            if (refinedDerived.skip) {
-              // Full extend_to_all coverage: nothing to refine for
-              // this loader. Skip ahead to the next.
-              continue;
-            }
-            const gsplatsViewState: GSplatsViewState = refinedDerived.viewState;
-
-            const data = await loader.updateView(gsplatsViewState);
-            if (data) {
-              const staged = await this.processGSplatsData(path, data, gsplatsViewState);
-              if (staged) this.commitGSplatsGeometry(staged);
-            }
-          } catch (error) {
-            log.error(
-              Modules.SCENE_LOADER,
-              `GSplats refinement failed for ${path}: ${(error as Error).message}`
-            );
-          }
-        }
-
-        // Update monitor after refinement commit
-        this.updateVisibleCountsInMonitor();
-
-        // Check if any progressive loaders still have more LODs after this pass
-        const anyMore = [...this.gsplatLoaders.values()].some((l) => l.hasMoreLODs === true);
-        if (!anyMore) break; // All LODs loaded
-      }
-    } finally {
-      // Release the lock unless cancellation handed it off to a rAF callback
-      if (!lockHandedOff) {
-        this._updateInProgress = false;
-      }
-    }
+      },
+    });
   }
 
   /**
