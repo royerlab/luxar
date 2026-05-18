@@ -171,28 +171,24 @@ class TestQuantizedDecoding:
             rel_error = np.abs(decoded - data) / (data + 1e-8)
             assert np.max(rel_error) < 0.05  # <5% relative error
 
-    def test_decode_color_float16(self):
-        """SDR colours round-trip via float16 (phase-3 narrowing).
-
-        Replaces the previous `test_decode_color_uint8`: SDR colours
-        default to float16 on disk and the decoder preserves that
-        dtype (no widen to float32). The decoder retains its `rgb_uint8`
-        / `rgb_uint16` paths so old pre-phase-3 zarr files still load.
-        """
+    def test_decode_color_uint8(self):
+        """Test decoding SDR color uint8."""
         with tempfile.TemporaryDirectory() as tmpdir:
             group = zarr.open_group(tmpdir, mode="w")
             encoder = ArrayEncoder()
             decoder = ArrayDecoder()
 
+            # Create SDR colors
             data = np.random.rand(100, 3).astype(np.float32)
+
             encoder.encode(data, group, "test", SemanticType.COLOR, color_mode="sdr")
 
+            # Decode and verify
             decoded = decoder.decode(group["test"])
             assert decoded.shape == (100, 3)
-            assert decoded.dtype == np.float16
-            # Float16 ULP at colour range is ~5e-4; pair the
-            # round-trip tolerance accordingly.
-            assert np.allclose(decoded, data, atol=1e-3)
+            assert decoded.dtype == np.float32
+            # Should be close to original (with quantization error)
+            assert np.allclose(decoded, data, atol=1 / 255)
 
 
 class TestArrayRefDecoding:
