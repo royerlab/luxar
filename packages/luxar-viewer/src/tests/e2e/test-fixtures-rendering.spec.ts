@@ -69,8 +69,13 @@ test.describe('Test Fixture Rendering', () => {
         ? geometry.instanceCount
         : sharpnessAttr.count;
       const actualCount = Math.min(instanceCount, sharpnessAttr.count);
-      // Only sample values within the visible instance range.
-      const array = Array.from(sharpnessAttr.array.subarray(0, actualCount)) as number[];
+      // aSharpness is an InterleavedBufferAttribute; .array would return
+      // the shared interleaved buffer. Use getX(i) to read the actual
+      // per-instance sharpness values.
+      const array: number[] = [];
+      for (let i = 0; i < actualCount; i++) {
+        array.push(sharpnessAttr.getX(i));
+      }
       return {
         count: actualCount,
         min: Math.min(...array),
@@ -138,17 +143,17 @@ test.describe('Test Fixture Rendering', () => {
         ? geometry.instanceCount
         : colorAttr.count;
       const actualCount = Math.min(instanceCount, colorAttr.count);
-      const colorArr = Array.from(colorAttr.array.subarray(0, actualCount * 3)) as number[];
-      // The fixture stores points along the X axis with index == x-position, so
-      // sort by x to recover the input ordering (the loader/spatial index does
-      // not preserve insertion order).
-      const itemsPerVertex = posAttr.itemSize ?? 3;
-      const posArr = Array.from(
-        posAttr.array.subarray(0, actualCount * itemsPerVertex)
-      ) as number[];
-      const indices = Array.from({ length: actualCount }, (_, i) => i);
-      indices.sort((a, b) => posArr[a * itemsPerVertex] - posArr[b * itemsPerVertex]);
-      const redChannels = indices.map((i) => colorArr[i * 3]);
+      // aColor/aCenter are InterleavedBufferAttribute views over a shared
+      // buffer; read per-instance components via getX/getY/getZ.
+      // The fixture stores points along the X axis with index == x-position,
+      // so sort by x to recover the input ordering (the loader/spatial
+      // index does not preserve insertion order).
+      const positions: { index: number; x: number }[] = [];
+      for (let i = 0; i < actualCount; i++) {
+        positions.push({ index: i, x: posAttr.getX(i) });
+      }
+      positions.sort((a, b) => a.x - b.x);
+      const redChannels = positions.map((p) => colorAttr.getX(p.index));
 
       return {
         count: actualCount,
@@ -339,17 +344,18 @@ test.describe('Test Fixture Rendering', () => {
         ? geometry.instanceCount
         : colorAttr.count;
       const actualCount = Math.min(instanceCount, colorAttr.count);
-      // Only sample color values within the visible instance range.
-      const colors = colorAttr.array.subarray(0, actualCount * 3);
-      const firstColor = [colors[0], colors[1], colors[2]];
+      // aColor is an InterleavedBufferAttribute view; .array would return
+      // the shared interleaved buffer mixing positions/radii/colors/etc.
+      // Use getX/getY/getZ to read the actual per-instance RGB triplet.
+      const firstColor = [colorAttr.getX(0), colorAttr.getY(0), colorAttr.getZ(0)];
 
       // Check if all colors match the first color
       let allSame = true;
-      for (let i = 0; i < colors.length; i += 3) {
+      for (let i = 0; i < actualCount; i++) {
         if (
-          Math.abs(colors[i] - firstColor[0]) > 0.01 ||
-          Math.abs(colors[i + 1] - firstColor[1]) > 0.01 ||
-          Math.abs(colors[i + 2] - firstColor[2]) > 0.01
+          Math.abs(colorAttr.getX(i) - firstColor[0]) > 0.01 ||
+          Math.abs(colorAttr.getY(i) - firstColor[1]) > 0.01 ||
+          Math.abs(colorAttr.getZ(i) - firstColor[2]) > 0.01
         ) {
           allSame = false;
           break;
@@ -411,13 +417,16 @@ test.describe('Test Fixture Rendering', () => {
         ? geometry.instanceCount
         : colorAttr.count;
       const actualCount = Math.min(instanceCount, colorAttr.count);
-      // Only sample color values within the visible instance range.
-      const colors = colorAttr.array.subarray(0, actualCount * 3);
+      // aColor is an InterleavedBufferAttribute view; iterate per instance
+      // via getX/getY/getZ to read the actual decoded LUT colors instead
+      // of mixed stride-misaligned values from the shared buffer.
       const uniqueColors = new Set<string>();
 
-      for (let i = 0; i < colors.length; i += 3) {
-        const colorKey = `${colors[i].toFixed(2)},${colors[i + 1].toFixed(2)},${colors[i + 2].toFixed(2)}`;
-        uniqueColors.add(colorKey);
+      for (let i = 0; i < actualCount; i++) {
+        const r = colorAttr.getX(i).toFixed(2);
+        const g = colorAttr.getY(i).toFixed(2);
+        const b = colorAttr.getZ(i).toFixed(2);
+        uniqueColors.add(`${r},${g},${b}`);
       }
 
       return {
