@@ -404,19 +404,10 @@ describe('line-geometry mesh creation/update', () => {
       endScalars: new Float32Array([0.75]),
     };
     updateInstancedLinesMesh(mesh, updated);
-    const startAttr = mesh.geometry.getAttribute(
-      'aStartScalar'
-    ) as THREE.InterleavedBufferAttribute;
-    // Standalone Lines geometry narrows BOUNDED_SCALAR (scalar) to
-    // Float16 on GPU since C-ts-5. `getX(i)` returns the raw
-    // Uint16 half-float bits; decode via DataUtils.fromHalfFloat
-    // to recover the Float32 value.
-    const raw = startAttr.getX(0);
-    const decoded =
-      (startAttr as unknown as { gpuType?: number }).gpuType === THREE.HalfFloatType
-        ? THREE.DataUtils.fromHalfFloat(raw)
-        : raw;
-    expect(decoded).toBeCloseTo(0.25);
+    const startAttr = mesh.geometry.getAttribute('aStartScalar');
+    // Pooled / standalone line attributes are now interleaved views —
+    // use `getX(i)` for semantic per-instance reads.
+    expect(startAttr.getX(0)).toBeCloseTo(0.25);
   });
 });
 
