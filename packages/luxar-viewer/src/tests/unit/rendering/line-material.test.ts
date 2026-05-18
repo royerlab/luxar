@@ -225,6 +225,26 @@ describe('LineMaterial', () => {
       // Ensure it's a new instance
       expect(cloned).not.toBe(original);
     });
+
+    it('should preserve the LUXAR_SHARPNESS_TWO fast-path define on clone', () => {
+      // The node-factory sets this post-construction after inspecting
+      // per-vertex sharpness arrays. A naïve clone reconstructs from
+      // config + uniforms only, losing the define and silently dropping
+      // the fragment-stage `x * x` fast path.
+      const original = new LineMaterial();
+      original.setSharpnessAllTwo(true);
+
+      const cloned = original.clone();
+
+      expect(cloned.defines).toBeDefined();
+      expect('LUXAR_SHARPNESS_TWO' in (cloned.defines as Record<string, unknown>)).toBe(true);
+    });
+
+    it('clone of a material without LUXAR_SHARPNESS_TWO does not introduce it', () => {
+      const original = new LineMaterial();
+      const cloned = original.clone();
+      expect('LUXAR_SHARPNESS_TWO' in (cloned.defines as Record<string, unknown>)).toBe(false);
+    });
   });
 
   describe('shader correctness', () => {

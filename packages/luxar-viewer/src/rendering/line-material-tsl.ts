@@ -398,18 +398,26 @@ export class LineTSLMaterial
     );
     // `uIsOrtho` is a graph-specialized config — the constructor's
     // `rebuildGraph` ran against the default value 0 (perspective).
-    // If the source material is ortho, copy the uniform AND rebuild
-    // the clone's graph so the ortho variant compiles in; otherwise
-    // the clone would carry `uIsOrtho.value=1` against a perspective
-    // graph (wrong projection at draw time).
+    // The `LUXAR_SHARPNESS_TWO` define is also graph-specialized
+    // (selects an `x*x` fragment fast path) and the constructor
+    // doesn't carry it either. Compute both source flags up front,
+    // copy uniforms, then re-apply the flags so the final rebuild
+    // picks up BOTH at once. If only sharpnessTwo applies, its
+    // setter rebuilds (which also sees the now-correct uIsOrtho);
+    // if only ortho applies, do an explicit rebuild; if both, the
+    // setter call subsumes the ortho rebuild.
     const sourceIsOrtho = (this.uniforms.uIsOrtho.value as number) === 1;
+    const sourceSharpnessTwo =
+      !!this.defines && 'LUXAR_SHARPNESS_TWO' in this.defines;
     cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
     cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
     cloned.uniforms.uMaxLinePixelWidth.value = this.uniforms.uMaxLinePixelWidth.value;
     cloned.uniforms.uPerspectiveLineScale.value = this.uniforms.uPerspectiveLineScale.value;
     cloned.uniforms.uOrthoLineScale.value = this.uniforms.uOrthoLineScale.value;
     cloned.uniforms.uInvGamma.value = this.uniforms.uInvGamma.value;
-    if (sourceIsOrtho) {
+    if (sourceSharpnessTwo) {
+      cloned.setSharpnessAllTwo(true);
+    } else if (sourceIsOrtho) {
       cloned.rebuildGraph();
     }
 

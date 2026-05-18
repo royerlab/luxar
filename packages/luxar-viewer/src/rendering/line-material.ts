@@ -390,6 +390,15 @@ export class LineMaterial
     cloned.uniforms.uOrthoLineScale.value = this.uniforms.uOrthoLineScale.value;
     cloned.uniforms.uInvGamma.value = this.uniforms.uInvGamma.value;
 
+    // Preserve post-construction fast-path defines. The constructor
+    // doesn't know about these (they're set by the node-factory after
+    // it inspects the geometry's per-vertex sharpness arrays), so a
+    // bare clone reverts to the slow `pow()` path. Re-set via the
+    // public method so `needsUpdate` is bumped on the clone.
+    if (this.defines && 'LUXAR_SHARPNESS_TWO' in this.defines) {
+      cloned.setSharpnessAllTwo(true);
+    }
+
     return cloned as this;
   }
 
