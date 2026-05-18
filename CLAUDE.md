@@ -538,7 +538,8 @@ npx playwright test custom-gui-library.spec.ts layers-panel.spec.ts recording-pa
 npx playwright test error-recovery.spec.ts webgl-errors.spec.ts
 
 # Performance & monitoring
-npx playwright test performance-tracking.spec.ts data-monitor-metrics.spec.ts
+# (performance-tracking now lives in the opt-in perf suite — see `pnpm test:perf:e2e`)
+npx playwright test data-monitor-metrics.spec.ts
 
 # Demos & first-time UX
 npx playwright test all-examples-smoke-test.spec.ts demo-validation.spec.ts first-time-ux.spec.ts

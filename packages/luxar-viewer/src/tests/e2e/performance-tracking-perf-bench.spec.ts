@@ -8,9 +8,29 @@
  * - Memory usage
  *
  * Metrics are stored in performance-baselines.json and tests fail if
- * performance degrades by more than 20% compared to baseline.
+ * performance degrades by more than 2× compared to the per-machine
+ * baseline (or, for the hard-coded "60 frames in N ms" gate, the
+ * absolute threshold).
  *
- * To reset baselines: delete performance-baselines.json and run tests
+ * **Suite routing.** The filename ends in `-perf-bench.spec.ts` so the
+ * default `playwright.config.ts` excludes this spec via its
+ * `testIgnore: /.*perf-bench\.spec\.ts$/` rule. The spec runs under
+ * the opt-in perf config instead:
+ *
+ *   pnpm test:perf:e2e
+ *
+ * (which uses `playwright.perf.config.ts`, serial workers, headed
+ * Chrome by default, headless with `LUXAR_PERF_HEADLESS=1`).
+ *
+ * Rationale: the perf-tracking thresholds are inherently env-sensitive
+ * — `pnpm test:e2e` runs in parallel on whatever machine load happens
+ * to be present, so a 2× threshold or a 2000ms hard cap will trip on
+ * a busy run and gate the merge for reasons unrelated to a real
+ * regression. Treating perf-tracking as an opt-in suite keeps the
+ * regression signal accessible without holding up the default merge
+ * gate.
+ *
+ * To reset baselines: delete performance-baselines.json and run tests.
  */
 
 import { test, expect } from './fixtures';

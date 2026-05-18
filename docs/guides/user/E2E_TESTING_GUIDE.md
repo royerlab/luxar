@@ -87,7 +87,7 @@ Key test suites include:
 | **keyboard-input-system.spec.ts** | Fly controls, shortcuts, modifiers |
 | **nd-navigation.spec.ts** | ⭐ Core nD feature! |
 | **nd-transforms.spec.ts** | nD transform inverse-query |
-| **performance-tracking.spec.ts** | ⭐ Regression detection + memory/FPS |
+| **performance-tracking-perf-bench.spec.ts** | ⭐ Regression detection + memory/FPS (opt-in: `pnpm test:perf:e2e`) |
 | **position-bounds-clipping.spec.ts** | Boundary testing |
 | **python-typescript-integration.spec.ts** | ⭐ Cross-language E2E |
 | **real-dataset-loading.spec.ts** | Real .zarr files + dataset switching |

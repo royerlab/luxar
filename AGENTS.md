@@ -235,7 +235,7 @@ npx playwright test data-integrity.spec.ts dataset-switching.spec.ts real-datase
 npx playwright test spatial-index-accuracy.spec.ts cache-system.spec.ts nd-transforms.spec.ts position-bounds-clipping.spec.ts
 npx playwright test custom-gui-library.spec.ts layers-panel.spec.ts recording-panel.spec.ts mouse-interactions.spec.ts
 npx playwright test error-recovery.spec.ts webgl-errors.spec.ts
-npx playwright test performance-tracking.spec.ts data-monitor-metrics.spec.ts
+npx playwright test data-monitor-metrics.spec.ts  # perf-tracking moved to `pnpm test:perf:e2e` opt-in suite
 npx playwright test all-examples-smoke-test.spec.ts demo-validation.spec.ts first-time-ux.spec.ts
 ```
 
