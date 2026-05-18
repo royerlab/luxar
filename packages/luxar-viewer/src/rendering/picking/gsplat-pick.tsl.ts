@@ -244,10 +244,12 @@ export function gsplatPickWebGPUFactory(
   const centerClip: TSLNode = cameraProjectionMatrix.mul(centerCam4);
   const ndcZ: TSLNode = centerClip.z.div(centerClip.w);
 
-  // Match the GLSL `invalidCov2D || invalidFloat(aAmplitude)` guard
-  // (picking-shaders.ts gsplat section). Without this, NaN/Inf upstream
-  // values propagate through Cholesky / eigendecomposition and can
-  // make a splat unpickable in unpredictable ways.
+  // Parity with the GLSL `invalidCov2D || isInvalidFloat(aAmplitude)`
+  // guard in picking-shaders.ts (GSPLAT_PICK_VERTEX_SHADER) and the
+  // visual `invalidCov2D || invalidFloat(aAmplitude)` guard in
+  // gsplat-shaders.ts. Without this, NaN/Inf upstream values
+  // propagate through Cholesky / eigendecomposition and can make a
+  // splat unpickable in unpredictable ways.
   const invalidAmp: TSLNode = invalidFloatTSL(aAmplitude);
   const invalidCov: TSLNode = invalidFloatTSL(Sigma2D00)
     .or(invalidFloatTSL(Sigma2D10))
