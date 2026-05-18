@@ -40,6 +40,21 @@ import {
 } from './scene-loader/loader-factory';
 import { commitPointsGeometry as commitPointsGeometryHelper } from './scene-loader/commit-points-geometry';
 import { ViewStateQueue } from './scene-loader/view-state-queue';
+import {
+  loadAndStage as pointsLoadAndStage,
+  label as pointsLabel,
+  type PointsHandlerCtx,
+} from './points/handler';
+import {
+  loadAndStage as linesLoadAndStage,
+  label as linesLabel,
+  type LinesHandlerCtx,
+} from './lines/handler';
+import {
+  loadAndStage as gsplatsLoadAndStage,
+  label as gsplatsLabel,
+  type GSplatsHandlerCtx,
+} from './gsplats/handler';
 
 export type { StagedLinesCommit } from './scene-loader/data-processor-lines';
 export type { StagedGSplatsCommit } from './scene-loader/data-processor-gsplats';
@@ -100,11 +115,9 @@ import {
 // to prevent flickering. These types hold processed data between the async
 // load/process stage and the synchronous commit stage.
 
-/** Staged points data ready for GPU commit */
-interface StagedPointsCommit {
-  path: string;
-  data: LoadedPointsData;
-}
+// StagedPointsCommit type moved to ./points/handler (step 7 of the
+// god-object refactor). Imported above; re-export skipped because the
+// type is internal to scene-loader + data-processor wiring.
 
 /**
  * Classification of a per-node load failure. The actual policy in
@@ -832,116 +845,52 @@ export class SceneLoader {
       // only the type-specific work.
       // ================================================================
 
-      // Points: no post-processing, data goes directly to staged commit.
-      // Note: skip path returns null WITHOUT delete (preserve any existing
-      // failure record); success path deletes regardless of data presence.
-      const pointsTask = this.runLoaderUpdates(
-        this.loaders,
-        'Points',
-        async (path, loader, session) => {
-          const pointsObj = this.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
-          const attrs = pointsObj?.userData?.attrs as { extend_to_all?: string[] } | undefined;
-          const derived = this.deriveNodeViewState(path, attrs, {
-            applyPartialExtendTolerance: true,
-            extendedToleranceCache,
-          });
-          if (derived.skip) {
-            log.info(
-              Modules.SCENE_LOADER,
-              `Skipping update for ${path} - all non-displayed dims are extended`
-            );
-            session.markSkipped(derived.skip);
-            // S6: drop the path from prev state so the next non-skip
-            // update re-baselines rather than extrapolating from a
-            // stale snapshot.
-            this.viewStateQueue.forgetPath(path);
-            return null;
-          }
-          const points = await loader.updateView(derived.viewState, session);
-          this.failedLoaders.delete(path);
-          if (!points) return null;
-          if (currentVersion <= 1) {
-            log.info(
-              Modules.SCENE_LOADER,
-              `[GEOM] v${currentVersion} points ${path}: ${points.pointCount} visible`
-            );
-          }
-          session.setMetadata({ points: points.metadata.loadedPoints });
-          // S6: per-loader predictive prefetch using the derived view-state.
-          this.viewStateQueue.dispatchPrefetch(path, derived.viewState, loader);
-          return { path, data: points } as StagedPointsCommit;
-        }
+      // The three inline branches collapse into thin wrappers around
+      // the per-type handlers in data/{points,lines,gsplats}/handler.ts
+      // (step 7 of the god-object refactor). Each handler owns the
+      // per-type variations — extend_to_all opts, processX call,
+      // metadata shape, version-gated log — so this orchestration site
+      // just builds the ctx and dispatches.
+      const pointsCtx: PointsHandlerCtx = {
+        rootGroup: this.rootGroup,
+        viewStateQueue: this.viewStateQueue,
+        clearFailure: (path) => this.failedLoaders.delete(path),
+        currentVersion,
+        extendedToleranceCache,
+        deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),
+      };
+      const linesCtx: LinesHandlerCtx = {
+        rootGroup: this.rootGroup,
+        viewStateQueue: this.viewStateQueue,
+        clearFailure: (path) => this.failedLoaders.delete(path),
+        currentVersion,
+        updateVersion: this._updateVersion,
+        deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),
+      };
+      const gsplatsCtx: GSplatsHandlerCtx = {
+        rootGroup: this.rootGroup,
+        viewStateQueue: this.viewStateQueue,
+        clearFailure: (path) => this.failedLoaders.delete(path),
+        currentVersion,
+        updateVersion: this._updateVersion,
+        extendedToleranceCache,
+        deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),
+      };
+
+      const pointsTask = this.runLoaderUpdates(this.loaders, pointsLabel, (path, loader, session) =>
+        pointsLoadAndStage(path, loader, session, pointsCtx)
       );
 
-      // Lines: includes async worker projection.
       const linesTask = this.runLoaderUpdates(
         this.linesLoaders,
-        'Lines',
-        async (path, loader, session) => {
-          const mesh = this.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
-          const attrs = mesh?.userData?.attrs as { extend_to_all?: string[] } | undefined;
-          const derived = this.deriveNodeViewState(path, attrs, {
-            applyPartialExtendTolerance: false,
-          });
-          if (derived.skip) {
-            log.info(
-              Modules.SCENE_LOADER,
-              `Skipping update for ${path} - all non-displayed dims are extended`
-            );
-            session.markSkipped(derived.skip);
-            // S6: see Points branch — drop prev to avoid stale extrap.
-            this.viewStateQueue.forgetPath(path);
-            return null;
-          }
-          const linesViewState = derived.viewState;
-          const data = await loader.updateView(linesViewState, session);
-          this.failedLoaders.delete(path);
-          if (!data) return null;
-          if (currentVersion <= 1) {
-            log.info(
-              Modules.SCENE_LOADER,
-              `[GEOM] v${currentVersion} lines ${path}: ${data.segmentCount} loaded`
-            );
-          }
-          const staged = await this.processLinesData(path, data, linesViewState, session);
-          session.setMetadata({ segments: data.segments ? data.segments.length / 2 : 0 });
-          // S6: per-loader predictive prefetch using the derived view-state.
-          this.viewStateQueue.dispatchPrefetch(path, linesViewState, loader);
-          return staged;
-        }
+        linesLabel,
+        (path, loader, session) => linesLoadAndStage(path, loader, session, linesCtx)
       );
 
-      // GSplats: includes async worker projection + Cholesky packing.
       const gsplatsTask = this.runLoaderUpdates(
         this.gsplatLoaders,
-        'GSplats',
-        async (path, loader, session) => {
-          const mesh = this.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
-          const attrs = mesh?.userData?.attrs as GSplatsMetadata | undefined;
-          const derived = this.deriveNodeViewState(path, attrs, {
-            applyPartialExtendTolerance: true,
-            extendedToleranceCache,
-          });
-          if (derived.skip) {
-            log.info(
-              Modules.SCENE_LOADER,
-              `Skipping gsplats update for ${path} - all non-displayed dims are extended`
-            );
-            session.markSkipped(derived.skip);
-            // S6: see Points branch — drop prev to avoid stale extrap.
-            this.viewStateQueue.forgetPath(path);
-            return null;
-          }
-          const gsplatsViewState: GSplatsViewState = derived.viewState;
-          const data = await loader.updateView(gsplatsViewState, session);
-          this.failedLoaders.delete(path);
-          if (!data) return null;
-          const staged = await this.processGSplatsData(path, data, gsplatsViewState, session);
-          session.setMetadata({ splats: data.splatCount });
-          // S6: per-loader predictive prefetch using the derived view-state.
-          this.viewStateQueue.dispatchPrefetch(path, gsplatsViewState, loader);
-          return staged;
-        }
+        gsplatsLabel,
+        (path, loader, session) => gsplatsLoadAndStage(path, loader, session, gsplatsCtx)
       );
 
       // Wait for ALL loaders to complete (load + process)
