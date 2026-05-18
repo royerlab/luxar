@@ -298,6 +298,53 @@ Production-grade download functionality for large datasets with automatic retry 
 
 ---
 
+## Spatial Hashing (spatial_hash.py)
+
+Spatial hash grids for fast nD proximity queries on point sets. Two complementary classes serve two distinct access patterns; both share the same theoretical guarantee that the 3^D neighbour-cell scan is exhaustive provided `cell_size >= radius`.
+
+### SpatialHashGrid (online, CPU)
+
+**Purpose**: Online proximity check used by Poisson-disk sampling. Each `insert(point)` may depend on previous `has_neighbor_within(point, distance)` queries — the algorithm is inherently sequential, so the GPU offers no advantage.
+
+**Storage**: `dict[tuple[int, ...], list[int]]` mapping cell key (per-axis `math.floor(x / cell_size)`) to point indices. Backing array of point coordinates grows by doubling.
+
+**API**:
+- `__init__(cell_size: float, ndim: int)`
+- `insert(point: np.ndarray) -> int` — append a point, return its index
+- `has_neighbor_within(point: np.ndarray, distance: float) -> bool` — scan the 3^ndim neighbour cells; return True if any stored point is strictly closer than `distance`
+- `points: np.ndarray` (property; returns a copy)
+- `__len__() -> int`
+
+**Correctness**: `cell_size >= distance` ensures the 3^ndim scan is exhaustive (proof: `||p - q|| < distance <= cell_size` implies `|p[d] - q[d]| < cell_size` per dimension, so `q` is in the same cell or an adjacent cell of `p`).
+
+**Use site**: `_poisson_disk_sample_weighted` in `luxar.gsplats.seeds`.
+
+### BatchedSpatialHashGrid (batched, NumPy + PyTorch)
+
+**Purpose**: Many radius / k-NN queries against a fixed point set. The dominant use case is the Lloyd cost-increment refinement in substitutive LOD: rebuild the grid each iteration on bin centres, then query top-k nearest bins for each splat.
+
+**Construction**: `from_points(points, cell_size, *, device='auto', fallback_to_cpu=True)`:
+1. Always build the NumPy state (sorted hash keys, per-cell start offsets) — used as the canonical fallback path.
+2. If `device != 'cpu'`, attempt to also build the PyTorch state on the requested accelerator.
+3. Fallback: only on `torch.cuda.OutOfMemoryError`, `RuntimeError` containing "out of memory", or device-unavailable conditions when `fallback_to_cpu=True`. Logs an Arbol warning and returns a NumPy-backend instance. Generic exceptions propagate (real bugs aren't masked).
+
+**Hash scheme**: `cell_key[d] = floor(x[d] / cell_size)`; pack into `int64` via `sum_d cell_key[d] * P_d` where `P_d` is a Müller-style prime per axis (`73856093`, `19349669`, `83492791`, …). Both backends use identical primes so results match modulo float-rounding.
+
+**Query API**:
+- `query_radius(query, radius) -> list[np.ndarray]` — per-query int64 indices of stored points strictly within `radius`. Requires `radius <= cell_size`. Output is jagged so always returned as a Python list of NumPy arrays.
+- `query_knn(query, k) -> (distances, indices)` — `(Q, k)` Euclidean distances (float32) and int64 indices, sorted ascending per row. If `k > N_stored`, trailing columns are `+inf` / `-1`.
+
+**k-NN shell expansion**: starts at radius 1; after each shell, gather candidates and check whether the kth-nearest candidate's distance is `<= shell_radius * cell_size` (the guaranteed-coverage radius — proof: any point outside the shell lies in a cell whose nearest edge is at L∞ distance ≥ `shell_radius * cell_size`). If not, expand. After `_KNN_MAX_SHELL = 3` shells, brute-force the entire stored set.
+
+**Torch-backend k-NN**: pad-and-prune kernel. NumPy gathers per-query candidate index arrays (cheap; only index arithmetic). The arrays are padded to a uniform width (capped at `_GPU_KNN_MAX_PAD = 4096`), shipped to GPU, and processed in one batched kernel: gather candidate point coordinates, compute Euclidean distances, mask padded entries to `+inf`, `torch.topk(largest=False)`, sort ascending. Queries whose candidate count exceeds the pad limit fall back to the per-query NumPy path for that subset only.
+
+**Use sites** (current):
+- `luxar.gsplats.lod.additive._build_sparse_gram` (radius query for sparse Gram pruning)
+- `luxar.gsplats.fitting.preprocessing` (k-NN for spatial-diversity NN distance log and grid-point filtering)
+- (planned) `luxar.gsplats.lod.substitutive` (k-NN for Lloyd top-k bin candidate pruning)
+
+---
+
 ## Error Handling
 
 **Validation Errors**:

@@ -33,10 +33,15 @@ from typing import Any, Literal, Sequence, Union
 import numpy as np
 from scipy import sparse
 from scipy.sparse.linalg import eigsh
-from scipy.spatial import cKDTree
 
 from luxar.gsplats.gsplat_data import GSplatData, GSplatLOD
+from luxar.gsplats.lod._kernels import (
+    gaussian_pair_inner_product_numpy,
+    gaussian_self_energy_numpy,
+    truncation_radii_numpy,
+)
 from luxar.gsplats.utils.trils import unpack_tril
+from luxar.utils.spatial_hash import BatchedSpatialHashGrid
 
 MethodName = Literal["greedy", "self_energy", "mass", "amplitude", "spectral", "random"]
 _VALID_METHODS = (
@@ -88,11 +93,7 @@ def _truncation_radii(data: GSplatData, sigmas: float = 3.0) -> np.ndarray:
     if data.n_splats == 0:
         return np.empty(0, dtype=np.float64)
     L = unpack_tril(np.asarray(data.cholesky_factors, dtype=np.float64), data.ndim)
-    Sigma = L @ L.transpose(0, 2, 1)
-    eigs = np.linalg.eigvalsh(Sigma)  # ascending eigenvalues, shape (N, d)
-    lam_max = np.maximum(eigs[:, -1], 0.0)
-    radii: np.ndarray = np.asarray(float(sigmas) * np.sqrt(lam_max), dtype=np.float64)
-    return radii
+    return truncation_radii_numpy(L, sigmas=sigmas)
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -122,52 +123,47 @@ def _build_sparse_gram(data: GSplatData, sigmas: float = 3.0) -> sparse.csr_matr
     radii = _truncation_radii(data, sigmas=sigmas)
     r_max = float(radii.max()) if N > 0 else 0.0
 
-    two_pi_half_D = (2.0 * np.pi) ** (D / 2.0)
-    pi_half_D = np.pi ** (D / 2.0)
-
     rows: list[int] = []
     cols: list[int] = []
     vals: list[float] = []
 
     # Diagonal: K_ii = a_i^2 * π^(D/2) * |Σ_i|^{1/2}
+    diag_vals = gaussian_self_energy_numpy(amps, sqrt_det_Sigma, ndim=D)
     for i in range(N):
-        K_ii = float(amps[i] ** 2 * pi_half_D * sqrt_det_Sigma[i])
         rows.append(i)
         cols.append(i)
-        vals.append(K_ii)
+        vals.append(float(diag_vals[i]))
 
     if N > 1 and r_max > 0.0:
-        tree = cKDTree(centers)
+        # All per-query radii ``radii[i] + r_max`` are <= ``2 * r_max``;
+        # build the spatial hash with that as cell size and run a single
+        # batched radius query. Per-pair tightening to
+        # ``radii[i] + radii[j]`` happens in the inner filter below.
+        coarse_radius = 2.0 * r_max
+        grid = BatchedSpatialHashGrid.from_points(
+            centers, cell_size=coarse_radius, device="auto"
+        )
+        candidates_per_i = grid.query_radius(centers, radius=coarse_radius)
         for i in range(N):
-            candidates = tree.query_ball_point(centers[i], r=float(radii[i] + r_max))
-            for j in candidates:
+            for j in candidates_per_i[i]:
+                j = int(j)
                 if j <= i:
                     continue
                 d = centers[i] - centers[j]
                 d_norm = float(np.linalg.norm(d))
                 if d_norm > radii[i] + radii[j]:
                     continue
-                S = Sigma[i] + Sigma[j]
-                try:
-                    sign, logdet_S = np.linalg.slogdet(S)
-                    if sign <= 0:
-                        continue
-                    sol = np.linalg.solve(S, d)
-                except np.linalg.LinAlgError:
-                    continue
-                quad = float(d @ sol)
-                # K_ij = a_i a_j (2π)^{D/2} sqrt(|Σ_i||Σ_j|/|S|) exp(-½ quad)
-                inv_sqrt_det_S = float(np.exp(-0.5 * logdet_S))
-                K_ij = float(
-                    amps[i]
-                    * amps[j]
-                    * two_pi_half_D
-                    * sqrt_det_Sigma[i]
-                    * sqrt_det_Sigma[j]
-                    * inv_sqrt_det_S
-                    * np.exp(-0.5 * quad)
+                K_ij = gaussian_pair_inner_product_numpy(
+                    centers[i],
+                    Sigma[i],
+                    float(amps[i]),
+                    centers[j],
+                    Sigma[j],
+                    float(amps[j]),
+                    sqrt_det_Sigma_i=float(sqrt_det_Sigma[i]),
+                    sqrt_det_Sigma_j=float(sqrt_det_Sigma[j]),
                 )
-                if K_ij <= 0.0 or not np.isfinite(K_ij):
+                if K_ij <= 0.0:
                     continue
                 rows.append(i)
                 cols.append(j)

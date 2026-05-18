@@ -3,17 +3,20 @@
 Shared utility functions for seed generation.
 
 This module contains common utilities used by multiple seed generation methods,
-including peak detection, spatial deduplication algorithms, Cholesky factor
-construction for Gaussian initialization, and spatial hash grid for fast
-proximity queries.
+including peak detection, spatial deduplication algorithms, and Cholesky
+factor construction for Gaussian initialization. The spatial hash grid for
+proximity queries lives in :mod:`luxar.utils.spatial_hash` and is re-exported
+here for backwards compatibility.
 """
 
-import itertools
-import math
 from typing import Optional, cast
 
 import numpy as np
 from scipy import ndimage as ndi
+
+from luxar.utils.spatial_hash import SpatialHashGrid
+
+__all__ = ["SpatialHashGrid", "SEED_AMPLITUDE_SCALE"]
 
 # Amplitude scaling factor for seed initialization.
 # Multiplying by 0.9 (90%) helps avoid initial over-prediction when splats overlap,
@@ -21,123 +24,6 @@ from scipy import ndimage as ndi
 # Starting slightly below the target intensity allows the optimizer to increase
 # amplitudes as needed rather than fighting against penalty gradients.
 SEED_AMPLITUDE_SCALE = 0.9
-
-
-class SpatialHashGrid:
-    """
-    Spatial hash grid for O(1) amortized proximity queries on nD points.
-
-    Points are hashed into cells of a given size. Proximity queries check
-    only the 3^ndim neighboring cells, giving O(1) amortized cost per query
-    (assuming bounded density per cell). This replaces KD-tree approaches
-    that require O(M log M) rebuilds.
-
-    Parameters
-    ----------
-    cell_size : float
-        Size of each grid cell. Must be >= the query distance used in
-        ``has_neighbor_within`` for correctness (the 3^ndim neighbor check
-        only guarantees finding all points within ``cell_size``).
-    ndim : int
-        Number of spatial dimensions.
-
-    Notes
-    -----
-    Correctness guarantee: if ``cell_size >= distance``, then for any query
-    point p and stored point q with ||p - q|| < distance, q is guaranteed
-    to be in the same cell or an adjacent cell (within 1 cell offset in
-    each dimension). Proof: ||p - q|| < distance <= cell_size implies
-    |p[d] - q[d]| < cell_size for each dimension d.
-    """
-
-    def __init__(self, cell_size: float, ndim: int):
-        self._cell_size = max(cell_size, 1e-10)
-        self._inv_cell_size = 1.0 / self._cell_size
-        self._ndim = ndim
-        self._grid: dict[tuple[int, ...], list[int]] = {}
-        # Pre-allocate with doubling growth
-        self._points = np.empty((64, ndim), dtype=np.float32)
-        self._n_points = 0
-        self._neighbor_offsets = list(itertools.product([-1, 0, 1], repeat=ndim))
-
-    def _cell_key(self, point: np.ndarray) -> tuple[int, ...]:
-        """Compute the grid cell key for a point.
-
-        Uses ``math.floor`` (not ``int()``) so that negative coordinates
-        are handled correctly.  ``int()`` truncates toward zero, which
-        would map e.g. -0.5 and +0.5 to the same cell 0.
-        """
-        return tuple(math.floor(x) for x in (point * self._inv_cell_size))
-
-    def insert(self, point: np.ndarray) -> int:
-        """
-        Insert a point into the grid.
-
-        Parameters
-        ----------
-        point : np.ndarray
-            Point coordinates, shape (ndim,).
-
-        Returns
-        -------
-        int
-            Index of the inserted point.
-        """
-        idx = self._n_points
-        # Grow backing array if needed (doubling strategy)
-        if idx >= len(self._points):
-            new_size = len(self._points) * 2
-            new_arr = np.empty((new_size, self._ndim), dtype=np.float32)
-            new_arr[:idx] = self._points[:idx]
-            self._points = new_arr
-        self._points[idx] = point
-        self._n_points += 1
-
-        key = self._cell_key(point)
-        if key in self._grid:
-            self._grid[key].append(idx)
-        else:
-            self._grid[key] = [idx]
-        return idx
-
-    def has_neighbor_within(self, point: np.ndarray, distance: float) -> bool:
-        """
-        Check if any stored point is within the given distance.
-
-        Parameters
-        ----------
-        point : np.ndarray
-            Query point coordinates, shape (ndim,).
-        distance : float
-            Maximum distance threshold. Must be <= cell_size for the
-            3^ndim neighbor check to be correct.
-
-        Returns
-        -------
-        bool
-            True if any stored point is strictly closer than ``distance``.
-        """
-        dist_sq = distance * distance
-        cell_key = self._cell_key(point)
-        for offset in self._neighbor_offsets:
-            key = tuple(cell_key[d] + offset[d] for d in range(self._ndim))
-            bucket = self._grid.get(key)
-            if bucket is not None:
-                for j in bucket:
-                    diff = self._points[j] - point
-                    if np.dot(diff, diff) < dist_sq:
-                        return True
-        return False
-
-    @property
-    def points(self) -> np.ndarray:
-        """Return a copy of all stored points, shape (n_points, ndim)."""
-        result: np.ndarray = self._points[: self._n_points].copy()
-        return result
-
-    def __len__(self) -> int:
-        """Return the number of stored points."""
-        return self._n_points
 
 
 def sigmas_to_cholesky_isotropic(

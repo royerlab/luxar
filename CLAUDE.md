@@ -280,6 +280,20 @@ luxar gsplat lod additive in.gsplats.zarr out.gsplats.zarr \
 luxar gsplat lod additive in.gsplats.zarr out.gsplats.zarr --method self_energy  # cheap O(N log N) fallback
 luxar gsplat lod additive in.gsplats.zarr out.gsplats.zarr -m mass -b counts:500,2000,10000
 
+# Build a substitutive LOD hierarchy (synthesised representative splats per level)
+# Each coarser level has ceil(N/K^L) splats that REPLACE the previous level. Output
+# is a directory of per-level .gsplats.zarr + manifest.json. The recommended workhorse
+# `kmeans_lloyd` (k-means warm-start + cost-increment Lloyd refinement) beats
+# amplitude culling at every K on real anisotropic 3D data per supp-doc Experiment C.
+# Greedy hierarchical is quality-leaning at small N but ~8x slower.
+luxar gsplat lod substitutive in.gsplats.zarr out_dir/                       # K=4, L=3 (default), kmeans_lloyd
+luxar gsplat lod substitutive in.gsplats.zarr out_dir/ --K 4 --L 3           # explicit K, L
+luxar gsplat lod substitutive in.gsplats.zarr out_dir/ \
+    --method kmeans-lloyd --lloyd-iters 5                                    # tune Lloyd refinement
+luxar gsplat lod substitutive in.gsplats.zarr out_dir/ --method greedy_lloyd # quality-leaning small N
+luxar gsplat lod substitutive in.gsplats.zarr out_dir/ --device cpu          # skip GPU
+# Each level zarr loadable independently: `luxar gsplat info out_dir/level_1.gsplats.zarr`
+
 # Split into parts
 luxar gsplat split splats.gsplats.zarr output_dir/ --parts 4
 luxar gsplat split splats.gsplats.zarr output_dir/ --indices "1000,5000"
