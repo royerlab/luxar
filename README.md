@@ -580,7 +580,7 @@ If you see "GPU fitting will use slower PyTorch fallback", fitting still works â
 | `?cache-debug` | Show cache hit/miss statistics |
 | `?clear-cache` | Clear the OPFS persistent cache on load |
 | `?no-prefetch` | Disable predictive chunk prefetching |
-| `?renderer=webgl\|webgpu` | Select the default GLSL WebGLRenderer or opt into the WebGPURenderer + TSL path |
+| `?renderer=webgl\|webgpu` | Select WebGLRenderer + GLSL (production default) or opt into WebGPURenderer + TSL |
 | `?webgpu-force-webgl` | With `?renderer=webgpu`, keep WebGPURenderer + TSL but force Three.js's internal WebGL2 backend for diagnostics |
 
 ---

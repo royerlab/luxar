@@ -154,7 +154,13 @@ Each phase ships with full unit/lint/type/layer checks green.
   vertex-side `vCapFactor` design didn't survive the
   4-vertex-quad layout).
 
-#### Changed — WebGPU migration: default renderer flipped to WebGPU (2026-05-14)
+#### Changed — WebGPU migration: default renderer flipped to WebGPU (2026-05-14) — SUPERSEDED
+
+> **Superseded by the 2026-05-16 entry above.** Per-scene performance
+> measurements on the WebGPU path landed below the WebGL baseline,
+> so WebGL was restored as the production default. The current
+> contract is "WebGL default, WebGPU opt-in via `?renderer=webgpu`".
+> This entry is preserved for historical record only.
 
 The viewer's production rendering path now defaults to
 `WebGPURenderer` (no `forceWebGL` — the renderer dispatches to a
