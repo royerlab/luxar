@@ -284,10 +284,13 @@ export function updateInstancedGSplatsMesh(
     const specs = buildGSplatAttributeSpecs(meshConfig);
     let offset = 0;
     for (const spec of specs) {
-      // C-ts-1: spec.data is widened to Float32 | Uint16 | Uint8 at the
-      // type level, but GSplats spec builder still emits Float32Array
-      // for every attribute. Narrow at callsite until C-ts-4 widens the
-      // update path to accept narrow dtypes.
+      // `spec.data` is typed as `Float32 | Uint16 | Uint8` at the
+      // interface level, but the GSplats spec builder always emits
+      // `Float32Array` today (every semantic resolves to `'float32'`
+      // post Float16 revert — see `interleaved-attributes.ts` module
+      // header). The cast is safe as long as that contract holds; a
+      // future narrowing redesign will widen the update path
+      // alongside flipping the semantic defaults.
       writeInterleavedAttribute(
         buffer,
         offset,

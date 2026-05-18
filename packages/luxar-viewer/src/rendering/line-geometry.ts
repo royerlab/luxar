@@ -132,9 +132,7 @@ export function isAllSharpnessTwo(meshConfig: InstancedLinesMeshConfig): boolean
  * Uint8 clipped flags are widened to Float32 here (one allocation
  * per update) so the interleaved buffer is uniformly Float32.
  */
-function buildLineAttributeSpecs(
-  meshConfig: InstancedLinesMeshConfig
-): InterleavedAttributeSpec[] {
+function buildLineAttributeSpecs(meshConfig: InstancedLinesMeshConfig): InterleavedAttributeSpec[] {
   const specs: InterleavedAttributeSpec[] = [
     { name: 'aStartPos', data: meshConfig.startPositions, itemSize: 3, semantic: 'coordinate' },
     { name: 'aEndPos', data: meshConfig.endPositions, itemSize: 3, semantic: 'coordinate' },
@@ -142,15 +140,50 @@ function buildLineAttributeSpecs(
     { name: 'aEndColor', data: meshConfig.endColors, itemSize: 3, semantic: 'color' },
     { name: 'aStartWidth', data: meshConfig.startWidths, itemSize: 1, semantic: 'positive_scalar' },
     { name: 'aEndWidth', data: meshConfig.endWidths, itemSize: 1, semantic: 'positive_scalar' },
-    { name: 'aStartSharpness', data: meshConfig.startSharpness, itemSize: 1, semantic: 'bounded_scalar' },
-    { name: 'aEndSharpness', data: meshConfig.endSharpness, itemSize: 1, semantic: 'bounded_scalar' },
-    { name: 'aSegmentLength', data: meshConfig.segmentLengths, itemSize: 1, semantic: 'positive_scalar' },
-    { name: 'aStartClipped', data: new Float32Array(meshConfig.startClipped), itemSize: 1, semantic: 'bounded_scalar' },
-    { name: 'aEndClipped', data: new Float32Array(meshConfig.endClipped), itemSize: 1, semantic: 'bounded_scalar' },
+    {
+      name: 'aStartSharpness',
+      data: meshConfig.startSharpness,
+      itemSize: 1,
+      semantic: 'bounded_scalar',
+    },
+    {
+      name: 'aEndSharpness',
+      data: meshConfig.endSharpness,
+      itemSize: 1,
+      semantic: 'bounded_scalar',
+    },
+    {
+      name: 'aSegmentLength',
+      data: meshConfig.segmentLengths,
+      itemSize: 1,
+      semantic: 'positive_scalar',
+    },
+    {
+      name: 'aStartClipped',
+      data: new Float32Array(meshConfig.startClipped),
+      itemSize: 1,
+      semantic: 'bounded_scalar',
+    },
+    {
+      name: 'aEndClipped',
+      data: new Float32Array(meshConfig.endClipped),
+      itemSize: 1,
+      semantic: 'bounded_scalar',
+    },
   ];
   if (meshConfig.startScalars && meshConfig.endScalars) {
-    specs.push({ name: 'aStartScalar', data: meshConfig.startScalars, itemSize: 1, semantic: 'bounded_scalar' });
-    specs.push({ name: 'aEndScalar', data: meshConfig.endScalars, itemSize: 1, semantic: 'bounded_scalar' });
+    specs.push({
+      name: 'aStartScalar',
+      data: meshConfig.startScalars,
+      itemSize: 1,
+      semantic: 'bounded_scalar',
+    });
+    specs.push({
+      name: 'aEndScalar',
+      data: meshConfig.endScalars,
+      itemSize: 1,
+      semantic: 'bounded_scalar',
+    });
   }
   return specs;
 }
@@ -333,10 +366,13 @@ export function updateInstancedLinesMesh(
     const specs = buildLineAttributeSpecs(meshConfig);
     let offset = 0;
     for (const spec of specs) {
-      // C-ts-1: spec.data is widened to Float32 | Uint16 | Uint8 at the
-      // type level, but Lines spec builder still emits Float32Array for
-      // every attribute. Narrow at callsite until C-ts-3 widens the
-      // update path to accept narrow dtypes.
+      // `spec.data` is typed as `Float32 | Uint16 | Uint8` at the
+      // interface level, but the Lines spec builder always emits
+      // `Float32Array` today (every semantic resolves to `'float32'`
+      // post Float16 revert — see `interleaved-attributes.ts` module
+      // header). The cast is safe as long as that contract holds; a
+      // future narrowing redesign will widen the update path
+      // alongside flipping the semantic defaults.
       writeInterleavedAttribute(
         buffer,
         offset,

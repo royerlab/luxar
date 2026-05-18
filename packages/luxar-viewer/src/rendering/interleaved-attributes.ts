@@ -35,8 +35,8 @@
  * fast path always fires. The `dtype` / `semantic` annotations and
  * the `packSplitLayout` codepath are kept as scaffolding for a
  * future narrowing attempt; calling either with a non-`'float32'`
- * `effectiveDtype` throws via `convertToTargetType` today (see the
- * footgun note below).
+ * `effectiveDtype` throws via {@link convertToGpuDtype} today (see
+ * the footgun note below).
  *
  * A first attempt at narrowing (C-ts-2..5) set
  * `view.gpuType = THREE.HalfFloatType` on each
@@ -207,9 +207,7 @@ const DEFAULT_GPU_DTYPE_BY_SEMANTIC: Record<SemanticType, GpuDtype> = {
  * Return the GPU dtype to use for an attribute whose `semantic` is
  * known but whose explicit `dtype` is not set.
  */
-export function defaultGpuDtypeForSemantic(
-  semantic: SemanticType | undefined
-): GpuDtype {
+export function defaultGpuDtypeForSemantic(semantic: SemanticType | undefined): GpuDtype {
   if (semantic === undefined) return 'float32';
   return DEFAULT_GPU_DTYPE_BY_SEMANTIC[semantic];
 }
@@ -243,8 +241,10 @@ export function alignTo4(byteOffset: number): number {
  * packer when narrowing a Float32 disk-decoded array to Float16 or
  * Uint8-norm for GPU upload.
  *
- * For C-ts-1 only the `'float32'` target is implemented — narrowing
- * targets activate in C-ts-2..4 as the corresponding semantic flips.
+ * Only the `'float32'` target is implemented today. The other
+ * branches are placeholders for a future narrowing redesign — see
+ * the "footgun" note in the module header for why flipping a
+ * `defaultGpuDtypeForSemantic` entry on its own is not enough.
  */
 export function convertToGpuDtype(
   src: ArrayLike<number>,
@@ -255,8 +255,10 @@ export function convertToGpuDtype(
     return widenToFloat32(src, divisorIfNormalized);
   }
   throw new Error(
-    `convertToGpuDtype: target '${target}' is not yet implemented ` +
-      `(activates in phase-4 C-ts-${target === 'float16' ? '2/3/4' : '3'})`
+    `convertToGpuDtype: target '${target}' is not yet implemented. ` +
+      'See interleaved-attributes.ts module-header "footgun" note — ' +
+      'a narrowing redesign must land the packers alongside the ' +
+      'semantic-default flip, not separately.'
   );
 }
 
@@ -266,9 +268,10 @@ export function convertToGpuDtype(
  * Dispatches to the requested layout — `'mixed'` (default) packs
  * every spec into one buffer; `'split'` groups by dtype.
  *
- * At C-ts-1 every spec must resolve to `'float32'` (the only
- * dtype with a packing implementation). Other dtypes throw via
- * {@link convertToGpuDtype}.
+ * Every spec must resolve to `'float32'` today (the only dtype
+ * with a packing implementation post Float16 revert). Specs that
+ * resolve otherwise throw via {@link convertToGpuDtype}; see the
+ * module-header footgun note for the narrowing-redesign contract.
  *
  * @throws if `instanceCount` is negative or any spec's
  *   `data.length !== instanceCount * itemSize`.
@@ -279,14 +282,10 @@ export function packInterleavedAttributes(
   layout: InterleavedLayout = 'mixed'
 ): InterleavedAttributesResult {
   if (instanceCount < 0) {
-    throw new Error(
-      `packInterleavedAttributes: instanceCount must be >= 0, got ${instanceCount}`
-    );
+    throw new Error(`packInterleavedAttributes: instanceCount must be >= 0, got ${instanceCount}`);
   }
   if (specs.length === 0) {
-    throw new Error(
-      'packInterleavedAttributes: at least one attribute spec is required'
-    );
+    throw new Error('packInterleavedAttributes: at least one attribute spec is required');
   }
   for (const spec of specs) {
     if (spec.data.length !== instanceCount * spec.itemSize) {
@@ -574,10 +573,7 @@ export function writeInterleavedAttribute(
  * shader-facing `[0, 1]` range previously achieved via per-attribute
  * `normalized: true`.
  */
-export function widenToFloat32(
-  src: ArrayLike<number>,
-  divisor?: number
-): Float32Array {
+export function widenToFloat32(src: ArrayLike<number>, divisor?: number): Float32Array {
   if (src instanceof Float32Array && divisor === undefined) {
     // No conversion needed — caller can keep the reference. Cloning
     // would just waste memory.
