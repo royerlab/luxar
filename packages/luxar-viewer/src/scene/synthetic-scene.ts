@@ -58,12 +58,23 @@ function mulberry32(seed: number): () => number {
  * widths and sharpness at the dataset defaults (1.0 and 2.0) so the
  * existing `LUXAR_SHARPNESS_TWO` fast path applies.
  *
- * Memory cost roughly:
- *   count × (3+3+3+3+1+1+1+1+1+1+1) × 4 bytes
- *   = count × 88 bytes
+ * Memory cost — these are *source* arrays only; the actual peak
+ * during a `?renderer=…` bench run is higher because
+ * `packInterleavedAttributes` allocates another `count * stride`
+ * Float32Array and Three's GPU upload double-buffers in driver
+ * memory until the first frame submits.
  *
- * For 10 M segments: ~880 MB of host arrays during construction.
- * The bench machine needs to have enough RAM headroom.
+ *   source arrays:   count × (3+3+3+3+1+1+1+1+1+1+1) × 4 bytes
+ *                  = count × 84 B  (9 Float32 + 2 Uint8 attrs)
+ *   interleaved buf: count × stride × 4 bytes, stride matches the
+ *                    same per-instance set + alignment padding
+ *   ≈ 2× the source-array figure as a working JS heap estimate.
+ *
+ * For 10 M segments: ~880 MB of source arrays → ~1.7 GB peak JS
+ * heap during construction + packing. The bench machine needs the
+ * RAM headroom; on developer laptops, prefer smaller counts (the
+ * synthetic scenarios list in `line-perf-bench.spec.ts` is a good
+ * starting point to scale down).
  */
 export function generateSyntheticLines(spec: SyntheticSceneSpec): InstancedLinesMeshConfig {
   const count = spec.count;

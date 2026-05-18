@@ -99,14 +99,15 @@ export interface RendererCapabilities {
    * - `readPixelsCompactAsync` returns rows in canonical top-down order;
    *   when this is `false`, the primitive inverts rows on the way out.
    *
-   * Disambiguates from `api`: in practice both fields move together
-   * today (every WebGPURenderer reports `framebufferYDown=true`), but
-   * they answer different questions. `api` is the *method-signature*
-   * contract (e.g. `readRenderTargetPixelsAsync`'s shape); this field
-   * is the *framebuffer memory layout*. Future Three.js versions could
+   * Disambiguates from `apiSurface`: in practice both fields move
+   * together today (every WebGPURenderer reports
+   * `framebufferYDown=true`), but they answer different questions.
+   * `apiSurface` is the *method-signature* contract (e.g.
+   * `readRenderTargetPixelsAsync`'s shape); this field is the
+   * *framebuffer memory layout*. Future Three.js versions could
    * conceivably introduce a `WebGPURenderer` configuration whose
    * effective Y differs, which is why we keep this as a separate
-   * capability rather than aliasing `api`.
+   * capability rather than aliasing `apiSurface`.
    */
   readonly framebufferYDown: boolean;
   /** HDR / wide-gamut / float-texture detection. */
