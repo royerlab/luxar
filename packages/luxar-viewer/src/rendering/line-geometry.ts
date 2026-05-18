@@ -254,7 +254,7 @@ function bindInterleavedAttributes(
   meshConfig: InstancedLinesMeshConfig
 ): void {
   const specs = buildLineAttributeSpecs(meshConfig);
-  const { views } = packInterleavedAttributes(specs, meshConfig.segmentCount, 'split');
+  const { views } = packInterleavedAttributes(specs, meshConfig.segmentCount);
   for (const spec of specs) {
     geometry.setAttribute(spec.name, views[spec.name]);
   }

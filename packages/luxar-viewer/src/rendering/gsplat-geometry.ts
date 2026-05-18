@@ -152,7 +152,7 @@ function bindInterleavedAttributes(
   meshConfig: InstancedGSplatsMeshConfig
 ): void {
   const specs = buildGSplatAttributeSpecs(meshConfig);
-  const { views } = packInterleavedAttributes(specs, meshConfig.splatCount, 'mixed');
+  const { views } = packInterleavedAttributes(specs, meshConfig.splatCount);
   for (const spec of specs) {
     geometry.setAttribute(spec.name, views[spec.name]);
   }
