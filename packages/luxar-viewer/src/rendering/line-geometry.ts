@@ -16,7 +16,7 @@
 import * as THREE from 'three';
 import {
   packInterleavedAttributes,
-  writeInterleavedAttribute,
+  writeInterleavedAttributeFromSpec,
   type InterleavedAttributeSpec,
 } from './interleaved-attributes';
 
@@ -325,26 +325,15 @@ export function updateInstancedLinesMesh(
     delete (geometry as unknown as { _maxInstanceCount?: number })._maxInstanceCount;
   } else {
     // Same size + same spec-set: write the new data into the
-    // existing interleaved buffer at the correct strided offsets.
-    // The buffer object is recovered from any one view (every view
-    // points at the same underlying buffer).
-    const sampleView = geometry.getAttribute('aStartPos') as THREE.InterleavedBufferAttribute;
-    const buffer = sampleView.data as THREE.InstancedInterleavedBuffer;
+    // existing interleaved buffer(s) at the correct strided
+    // offsets. After C-ts-2 some attributes (e.g., COLOR) live in
+    // their own Float16 buffer rather than the all-Float32 group;
+    // resolve each spec's backing buffer via
+    // `writeInterleavedAttributeFromSpec` instead of assuming a
+    // single shared buffer.
     const specs = buildLineAttributeSpecs(meshConfig);
-    let offset = 0;
     for (const spec of specs) {
-      // C-ts-1: spec.data is widened to Float32 | Uint16 | Uint8 at the
-      // type level, but Lines spec builder still emits Float32Array for
-      // every attribute. Narrow at callsite until C-ts-3 widens the
-      // update path to accept narrow dtypes.
-      writeInterleavedAttribute(
-        buffer,
-        offset,
-        spec.itemSize,
-        spec.data as Float32Array,
-        meshConfig.segmentCount
-      );
-      offset += spec.itemSize;
+      writeInterleavedAttributeFromSpec(geometry, spec, meshConfig.segmentCount);
     }
   }
 
