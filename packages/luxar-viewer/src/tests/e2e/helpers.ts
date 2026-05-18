@@ -423,39 +423,6 @@ export async function getWebGLErrors(page: Page): Promise<string[]> {
 }
 
 /**
- * Extract attribute values from a point cloud for validation
- *
- * Allows E2E tests to verify actual rendered data matches expected values.
- * CRITICAL for data integrity validation.
- *
- * @param page - Playwright page
- * @param cloudName - Name of the point cloud object
- * @param attribute - Which attribute to extract
- * @returns Array of attribute values
- */
-export async function extractAttributeValues(
-  page: Page,
-  cloudName: string,
-  attribute: 'position' | 'color' | 'radius' | 'sharpness'
-): Promise<number[]> {
-  return await page.evaluate(
-    ({ cloudName, attribute }) => {
-      const debug = (window as any).__luxarDebug;
-      if (!debug || !debug.scene) return [];
-
-      const cloud = debug.scene.getObjectByName(cloudName);
-      if (!cloud || !cloud.geometry || !cloud.geometry.attributes) return [];
-
-      const attr = cloud.geometry.attributes[attribute];
-      if (!attr || !attr.array) return [];
-
-      return Array.from(attr.array);
-    },
-    { cloudName, attribute }
-  );
-}
-
-/**
  * Assert console contains expected log pattern
  *
  * @param page - Playwright page
