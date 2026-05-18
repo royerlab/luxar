@@ -38,9 +38,7 @@ const VIEWER_ROOT = path.resolve(__dirname, '../../..');
 
 function currentCommitSha(): string {
   try {
-    return execSync('git rev-parse --short HEAD', { cwd: VIEWER_ROOT })
-      .toString()
-      .trim();
+    return execSync('git rev-parse --short HEAD', { cwd: VIEWER_ROOT }).toString().trim();
   } catch {
     return 'unknown';
   }
@@ -230,10 +228,7 @@ async function measureScenario(
       const dbg = (
         window as unknown as {
           __luxarDebug?: {
-            injectSyntheticScene?: (spec: {
-              type: 'lines';
-              count: number;
-            }) => Promise<unknown>;
+            injectSyntheticScene?: (spec: { type: 'lines'; count: number }) => Promise<unknown>;
             app?: {
               sceneManager?: {
                 scene?: {
@@ -322,9 +317,7 @@ async function measureScenario(
   }, scn.type === 'synthetic-lines');
 
   if (probe.visibleSegments === 0) {
-    notes.push(
-      'visibleSegments=0 — dataset may need nD navigation to a populated slice'
-    );
+    notes.push('visibleSegments=0 — dataset may need nD navigation to a populated slice');
     return {
       scenarioId,
       scenarioLabel,
@@ -344,8 +337,7 @@ async function measureScenario(
   // One-shot first-render measurement — useful for material-build /
   // pipeline-compile cost, separate from the steady-state frame loop.
   const firstRenderMs = await page.evaluate(async () => {
-    const debug = (window as unknown as { __luxarDebug: { renderOnce: () => void } })
-      .__luxarDebug;
+    const debug = (window as unknown as { __luxarDebug: { renderOnce: () => void } }).__luxarDebug;
     const t0 = performance.now();
     debug.renderOnce();
     await new Promise<void>((r) => requestAnimationFrame(() => r()));
@@ -424,8 +416,10 @@ async function measureScenario(
         const tick = async () => {
           const now = performance.now();
           const elapsedSinceStart = now - start;
+          // Frames start at 0; `>=` so `warmupFrames=5` skips exactly 5 warmup
+          // frames (frames 0..4) and the 6th frame is the first sampled.
           const warmupDone =
-            frames > cfg.warmupFrames || elapsedSinceStart > cfg.warmupMaxMs;
+            frames >= cfg.warmupFrames || elapsedSinceStart > cfg.warmupMaxMs;
           if (warmupDone) {
             if (collectingStart === null) collectingStart = now;
             dts.push(now - lastTime);
@@ -440,9 +434,7 @@ async function measureScenario(
             framesSinceResolve++;
             if (supportsTimestamp && framesSinceResolve >= GPU_RESOLVE_EVERY) {
               try {
-                const gpuFrameMs = await debug.renderer!.resolveTimestampsAsync!(
-                  'render'
-                );
+                const gpuFrameMs = await debug.renderer!.resolveTimestampsAsync!('render');
                 if (
                   typeof gpuFrameMs === 'number' &&
                   Number.isFinite(gpuFrameMs) &&
@@ -630,17 +622,36 @@ test('line perf bench — JS frame timing across backends', async ({ page }) => 
   // preserves whatever partial work succeeded — but that also means a
   // shader-compile failure, GPU device loss, OOM, or a broken
   // synthetic injector could produce a "passing" test with zero
-  // useful rows. Fail explicitly if no scenario produced timing
-  // samples; surface the per-row skip reasons so the diagnoser
-  // doesn't have to crack open the JSON.
-  const successful = scenarios.filter((s) => !s.skipped && s.frameMs !== null);
-  if (successful.length === 0) {
+  // useful rows for a critical scenario.
+  //
+  // Pass criteria: every *reachable* scenario must have AT LEAST one
+  // successful backend row. "Reachable" excludes scenarios whose
+  // dataset URL was unreachable up front (urlExists() failed) — those
+  // are environment skips, not failures. The stricter per-scenario
+  // gate (vs the older global-zero check) is what makes the dedicated
+  // perf suite meaningful: if `synthetic-lines-10M` is the
+  // bandwidth-bound scenario the suite exists to measure, the test
+  // must not pass when it fails on every backend.
+  const isUnreachable = (s: ScenarioResult): boolean =>
+    s.skipped && s.skipReason === 'dataset not reachable';
+  const successfulIds = new Set(
+    scenarios.filter((s) => !s.skipped && s.frameMs !== null).map((s) => s.scenarioId)
+  );
+  const failedScenarios = SCENARIOS.filter((scn) => {
+    if (successfulIds.has(scn.id)) return false;
+    // Every row for this scenario was unreachable → environment skip,
+    // not a failure.
+    return !scenarios.filter((s) => s.scenarioId === scn.id).every(isUnreachable);
+  });
+  if (failedScenarios.length > 0) {
     const skipNotes = scenarios
+      .filter((s) => failedScenarios.some((scn) => scn.id === s.scenarioId))
       .map((s) => `  - ${s.scenarioId}/${s.backend}: ${s.skipReason ?? 'unknown'}`)
       .join('\n');
     throw new Error(
-      `perf-bench produced zero successful measurements across ${scenarios.length} scenario/backend ` +
-        `combinations. JSON still written to ${outPath} for inspection. Per-row reasons:\n${skipNotes}`
+      `perf-bench: ${failedScenarios.length} scenario(s) produced no successful timing on any backend ` +
+        `(${failedScenarios.map((s) => s.id).join(', ')}). ` +
+        `JSON still written to ${outPath} for inspection. Per-row reasons:\n${skipNotes}`
     );
   }
 });
