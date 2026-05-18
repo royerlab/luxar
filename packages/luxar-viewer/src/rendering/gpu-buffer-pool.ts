@@ -41,8 +41,8 @@ import type {
   PointsAttributeTypes,
   PooledBuffer,
   PoolStats,
-  PooledBufferRef,
 } from './gpu-buffer-pool/pool-stats';
+import { selectBuffersToEvict } from './gpu-buffer-pool/eviction-policy';
 
 /**
  * Canonical per-segment attribute layout for pooled line geometries.
@@ -281,36 +281,9 @@ export type {
   PooledBufferRef,
 } from './gpu-buffer-pool/pool-stats';
 
-/**
- * Pure selector for byte-budget eviction.
- *
- * Given an array of pooled-buffer refs and a target budget, returns
- * the subset that should be evicted to bring total bytes ≤ maxBytes.
- * Strategy: sort largest-first and walk until the running total drops
- * under budget. Exported for unit testing — keeps the policy isolated
- * from the side-effecting eviction logic in the pool.
- */
-export function selectBuffersToEvict<R extends PooledBufferRef>(
-  refs: R[],
-  maxBytes: number,
-  precomputedTotal?: number
-): R[] {
-  const total =
-    precomputedTotal !== undefined ? precomputedTotal : refs.reduce((sum, r) => sum + r.bytes, 0);
-  if (total <= maxBytes) return [];
-  // Stable largest-first ordering. JS sort is stable in modern engines
-  // (V8, JSC, SpiderMonkey since 2019) so equal-size buffers retain
-  // their input order — important for deterministic test output.
-  const sorted = refs.slice().sort((a, b) => b.bytes - a.bytes);
-  const targets: R[] = [];
-  let running = total;
-  for (const ref of sorted) {
-    if (running <= maxBytes) break;
-    targets.push(ref);
-    running -= ref.bytes;
-  }
-  return targets;
-}
+// selectBuffersToEvict moved to ./gpu-buffer-pool/eviction-policy.
+// Re-exported here so existing consumers keep working unchanged.
+export { selectBuffersToEvict } from './gpu-buffer-pool/eviction-policy';
 
 /**
  * GPU buffer pool for reusing THREE.BufferGeometry objects.
