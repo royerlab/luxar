@@ -189,7 +189,15 @@ const DEFAULT_GPU_DTYPE_BY_SEMANTIC: Record<SemanticType, GpuDtype> = {
   // `radiusScale` uniforms — non-trivial because bounds vary per
   // dataset. Stays Float32 for now.
   bounded_scalar: 'float32',
-  cholesky: 'float32',
+  // C-ts-4: CHOLESKY (GSplats covariance) narrowed to Float16 on
+  // GPU. Float16 mantissa (~5e-4 relative precision) is adequate
+  // for typical splat aspect ratios up to ~1000:1. The shader
+  // reads cholesky as `float` and runs inversion in single
+  // precision, so the quantization is bounded to the storage step.
+  // Per-attribute override (`dtype: 'float32'` on specific
+  // gsplat specs) is available if parity regresses on extreme
+  // anisotropy.
+  cholesky: 'float16',
   // INDEX attributes don't flow through this packer (they're handled
   // by the geometry's element-array buffer); the value is here for
   // type-coverage only.
