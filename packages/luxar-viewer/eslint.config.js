@@ -29,6 +29,33 @@ export default [
       'quotes': ['error', 'single', { avoidEscape: true }],
       'indent': 'off', // Handled by prettier — eslint indent conflicts with prettier ternary formatting
       'no-undef': 'off', // TypeScript handles this
+      // Channel all logging through src/utils/log.ts. The two exceptions
+      // (utils/log.ts itself and console-interceptor.ts which monkey-patches
+      // console.*) opt out via the per-file override below.
+      'no-console': 'error',
+    },
+  },
+  {
+    // log.ts wraps console.*. console-interceptor.ts intentionally
+    // monkey-patches console.log/warn/error/info/debug for the debug-console
+    // overlay. Both are the legitimate exception sites.
+    files: ['src/utils/log.ts', 'src/utils/console-interceptor.ts'],
+    rules: {
+      'no-console': 'off',
+    },
+  },
+  {
+    // Tests, benchmarks, screenshot drivers and mocks are tooling — they
+    // legitimately use console.* for diagnostic output that doesn't need
+    // to flow through the in-app debug console.
+    files: [
+      'src/tests/**/*.ts',
+      'src/tests/**/*.tsx',
+      'src/**/*.test.ts',
+      'src/**/*.spec.ts',
+    ],
+    rules: {
+      'no-console': 'off',
     },
   },
   {

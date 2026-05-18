@@ -16,6 +16,7 @@
 import { config } from '../config';
 import type { AdaptiveDPRConfig } from '../config/types';
 import { log, Modules, LogEmoji } from '../utils/log';
+import { clamp } from '../utils/clamp';
 
 /**
  * Interface for the renderer manager that can set pixel ratio
@@ -332,7 +333,7 @@ export class AdaptiveDPRManager {
 
     // Clamp DPR to reasonable range
     const minDPR = 0.25;
-    const clampedDPR = Math.max(minDPR, Math.min(this.nativeDPR, dpr));
+    const clampedDPR = clamp(dpr, minDPR, this.nativeDPR);
     this.currentDPR = clampedDPR;
     this.applyDPR();
 

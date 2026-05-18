@@ -156,6 +156,13 @@ export class Folder {
    * @param arg3 - Step value (if arg1 and arg2 are min/max)
    * @returns Created controller
    */
+  // The DSL accepts arbitrary user-typed config objects (e.g., the
+  // strongly-typed RenderingSettings interface) that lack an index
+  // signature. Tightening to `Record<string, unknown>` would force every
+  // typed caller to add `as any`. The looser `any` here keeps the public
+  // surface ergonomic; internal Controller storage already moved to
+  // Record<string, unknown> so the unsafe surface is just this entry point.
+  /* eslint-disable @typescript-eslint/no-explicit-any */
   public add(
     object: Record<string, any>,
     property: string,
@@ -163,6 +170,7 @@ export class Folder {
     arg2?: number,
     arg3?: number
   ): Controller {
+    /* eslint-enable @typescript-eslint/no-explicit-any */
     const value = object[property];
     const valueType = typeof value;
 

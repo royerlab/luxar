@@ -48,17 +48,15 @@ def _make_anisotropic_3d(n: int, seed: int = 42) -> GSplatData:
         A_lower[2, 2] = abs(A_lower[2, 2]) + 0.3 + rng.rand() * 1.0
         L[i] = A_lower
     chol = pack_tril(L)
-    amps = (rng.rand(n).astype(np.float32) + 0.5)
+    amps = rng.rand(n).astype(np.float32) + 0.5
     return GSplatData(centers=centres, amplitudes=amps, cholesky_factors=chol)
 
 
 def _make_isotropic_3d(n: int, seed: int = 0) -> GSplatData:
     rng = np.random.RandomState(seed)
     centres = rng.randn(n, 3).astype(np.float32)
-    chol = np.tile(
-        np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (n, 1)
-    )
-    amps = (rng.rand(n).astype(np.float32) + 0.5)
+    chol = np.tile(np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (n, 1))
+    amps = rng.rand(n).astype(np.float32) + 0.5
     return GSplatData(centers=centres, amplitudes=amps, cholesky_factors=chol)
 
 
@@ -70,21 +68,33 @@ def _empty_3d() -> GSplatData:
     )
 
 
-def _gsplat_to_torch(data: GSplatData) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    centres = torch.from_numpy(np.asarray(data.centers, dtype=np.float32)).to(torch.float64)
-    L = torch.from_numpy(
-        unpack_tril(np.asarray(data.cholesky_factors, dtype=np.float32), data.ndim).astype(np.float64)
+def _gsplat_to_torch(
+    data: GSplatData,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    centres = torch.from_numpy(np.asarray(data.centers, dtype=np.float32)).to(
+        torch.float64
     )
-    amps = torch.from_numpy(np.asarray(data.amplitudes, dtype=np.float32)).to(torch.float64)
+    L = torch.from_numpy(
+        unpack_tril(
+            np.asarray(data.cholesky_factors, dtype=np.float32), data.ndim
+        ).astype(np.float64)
+    )
+    amps = torch.from_numpy(np.asarray(data.amplitudes, dtype=np.float32)).to(
+        torch.float64
+    )
     return centres, L, amps
 
 
 def _bin_residual(centres, L, amps) -> float:
     mu_bar, Sigma_bar, _ = kwise_moment_match_torch(centres, L, amps)
-    template_inner = bin_inner_product_with_template_torch(centres, L, amps, mu_bar, Sigma_bar)
+    template_inner = bin_inner_product_with_template_torch(
+        centres, L, amps, mu_bar, Sigma_bar
+    )
     template_norm_sq = template_squared_norm_torch(Sigma_bar)
     bin_norm_sq = bin_squared_norm_torch(centres, L, amps)
-    return float(bin_residual_energy_torch(bin_norm_sq, template_inner, template_norm_sq))
+    return float(
+        bin_residual_energy_torch(bin_norm_sq, template_inner, template_norm_sq)
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -112,8 +122,7 @@ class TestKWiseMomentMatch:
         intra = (expected_w[:, None, None] * Sigma).sum(dim=0)
         delta = centres - expected_mu[None, :]
         inter = (
-            expected_w[:, None, None]
-            * (delta.unsqueeze(2) @ delta.unsqueeze(1))
+            expected_w[:, None, None] * (delta.unsqueeze(2) @ delta.unsqueeze(1))
         ).sum(dim=0)
         expected_Sigma = intra + inter
         torch.testing.assert_close(Sigma_bar, expected_Sigma)
@@ -144,9 +153,11 @@ class TestKWiseMomentMatch:
 
         # Numerical gradient: grad = -2 ⟨f, Ḡ⟩ + 2a ‖Ḡ‖²
         def cost(a: float) -> float:
-            return float(bin_squared_norm_torch(centres, L, amps)) - 2 * a * float(
-                template_inner
-            ) + a * a * float(template_norm_sq)
+            return (
+                float(bin_squared_norm_torch(centres, L, amps))
+                - 2 * a * float(template_inner)
+                + a * a * float(template_norm_sq)
+            )
 
         eps = 1e-3
         grad = (cost(a_star + eps) - cost(a_star - eps)) / (2 * eps)
@@ -165,8 +176,14 @@ class TestHierarchy:
     def test_counts_K4_L2(self, method):
         data = _make_isotropic_3d(n=64, seed=1)
         levels = make_substitutive_lod(
-            data, compression_factor=4, levels=2, method=method,
-            lloyd_iterations=2, candidate_bins_k=4, device="cpu", seed=42
+            data,
+            compression_factor=4,
+            levels=2,
+            method=method,
+            lloyd_iterations=2,
+            candidate_bins_k=4,
+            device="cpu",
+            seed=42,
         )
         assert len(levels) == 3
         # Level 0 unchanged
@@ -182,8 +199,14 @@ class TestHierarchy:
     def test_levels_are_flat(self, method):
         data = _make_isotropic_3d(n=32, seed=1)
         levels = make_substitutive_lod(
-            data, compression_factor=4, levels=2, method=method,
-            lloyd_iterations=1, candidate_bins_k=4, device="cpu", seed=0
+            data,
+            compression_factor=4,
+            levels=2,
+            method=method,
+            lloyd_iterations=1,
+            candidate_bins_k=4,
+            device="cpu",
+            seed=0,
         )
         for lev in levels:
             assert lev.n_lods == 1, f"{method} produced multi-LOD level"
@@ -191,8 +214,14 @@ class TestHierarchy:
     def test_levels_eq_one(self):
         data = _make_isotropic_3d(n=20, seed=1)
         levels = make_substitutive_lod(
-            data, compression_factor=4, levels=1, method="kmeans_lloyd",
-            lloyd_iterations=1, candidate_bins_k=4, device="cpu", seed=0
+            data,
+            compression_factor=4,
+            levels=1,
+            method="kmeans_lloyd",
+            lloyd_iterations=1,
+            candidate_bins_k=4,
+            device="cpu",
+            seed=0,
         )
         assert len(levels) == 2
         assert levels[0].n_splats == 20
@@ -202,8 +231,14 @@ class TestHierarchy:
         """N=10, K=4, L=3: levels collapse but don't crash."""
         data = _make_isotropic_3d(n=10, seed=1)
         levels = make_substitutive_lod(
-            data, compression_factor=4, levels=3, method="kmeans_lloyd",
-            lloyd_iterations=1, candidate_bins_k=2, device="cpu", seed=0
+            data,
+            compression_factor=4,
+            levels=3,
+            method="kmeans_lloyd",
+            lloyd_iterations=1,
+            candidate_bins_k=2,
+            device="cpu",
+            seed=0,
         )
         # Should produce something for each level (some may be n=1 with stop reason)
         assert len(levels) >= 2
@@ -215,8 +250,12 @@ class TestHierarchy:
         # The current implementation hits the n_splats <= 1 short-circuit
         # which appends a stats-only level and stops.
         levels = make_substitutive_lod(
-            data, compression_factor=4, levels=2, method="kmeans_lloyd",
-            device="cpu", seed=0
+            data,
+            compression_factor=4,
+            levels=2,
+            method="kmeans_lloyd",
+            device="cpu",
+            seed=0,
         )
         assert levels[0].n_splats == 0
 
@@ -244,12 +283,24 @@ class TestLloyd:
         # final residual is <= the initial one.
         data = _make_anisotropic_3d(n=32, seed=42)
         out_kmeans = make_substitutive_lod(
-            data, compression_factor=4, levels=1, method="kmeans",
-            lloyd_iterations=0, candidate_bins_k=4, device="cpu", seed=7
+            data,
+            compression_factor=4,
+            levels=1,
+            method="kmeans",
+            lloyd_iterations=0,
+            candidate_bins_k=4,
+            device="cpu",
+            seed=7,
         )
         out_lloyd = make_substitutive_lod(
-            data, compression_factor=4, levels=1, method="kmeans_lloyd",
-            lloyd_iterations=5, candidate_bins_k=4, device="cpu", seed=7
+            data,
+            compression_factor=4,
+            levels=1,
+            method="kmeans_lloyd",
+            lloyd_iterations=5,
+            candidate_bins_k=4,
+            device="cpu",
+            seed=7,
         )
         # As an indirect monotonicity check: the level-1 dataset's
         # representative splats should fit the data at least as well as
@@ -276,8 +327,14 @@ class TestLloyd:
         """
         data = _make_anisotropic_3d(n=24, seed=11)
         out = make_substitutive_lod(
-            data, compression_factor=3, levels=1, method="kmeans_lloyd",
-            lloyd_iterations=5, candidate_bins_k=4, device="cpu", seed=11
+            data,
+            compression_factor=3,
+            levels=1,
+            method="kmeans_lloyd",
+            lloyd_iterations=5,
+            candidate_bins_k=4,
+            device="cpu",
+            seed=11,
         )
         assert out[1].n_splats >= 1
         # All representative amplitudes finite + non-negative.
@@ -337,16 +394,28 @@ class TestApiContract:
         """``device='auto'`` shouldn't crash regardless of GPU presence."""
         data = _make_isotropic_3d(n=16, seed=0)
         levels = make_substitutive_lod(
-            data, compression_factor=4, levels=1, method="kmeans_lloyd",
-            lloyd_iterations=1, candidate_bins_k=2, device="auto", seed=0
+            data,
+            compression_factor=4,
+            levels=1,
+            method="kmeans_lloyd",
+            lloyd_iterations=1,
+            candidate_bins_k=2,
+            device="auto",
+            seed=0,
         )
         assert len(levels) == 2
 
     def test_stats_recorded(self):
         data = _make_isotropic_3d(n=16, seed=0)
         levels = make_substitutive_lod(
-            data, compression_factor=4, levels=2, method="kmeans_lloyd",
-            lloyd_iterations=1, candidate_bins_k=2, device="cpu", seed=0
+            data,
+            compression_factor=4,
+            levels=2,
+            method="kmeans_lloyd",
+            lloyd_iterations=1,
+            candidate_bins_k=2,
+            device="cpu",
+            seed=0,
         )
         # Levels 1+ carry substitutive metadata.
         for lev in levels[1:]:
@@ -358,8 +427,14 @@ class TestApiContract:
         """Each level can be saved and loaded as a standalone zarr."""
         data = _make_isotropic_3d(n=16, seed=0)
         levels = make_substitutive_lod(
-            data, compression_factor=4, levels=1, method="kmeans_lloyd",
-            lloyd_iterations=1, candidate_bins_k=2, device="cpu", seed=0
+            data,
+            compression_factor=4,
+            levels=1,
+            method="kmeans_lloyd",
+            lloyd_iterations=1,
+            candidate_bins_k=2,
+            device="cpu",
+            seed=0,
         )
         path = tmp_path / "level_1.gsplats.zarr"
         levels[1].save(str(path), ordering="none")

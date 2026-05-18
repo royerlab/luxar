@@ -885,9 +885,7 @@ class TestFinalizeGuards:
             compiler.finalize()
 
             with pytest.raises(RuntimeError, match="finalized"):
-                compiler.write_points(
-                    "b", np.random.randn(5, 3).astype(np.float32)
-                )
+                compiler.write_points("b", np.random.randn(5, 3).astype(np.float32))
 
     def test_create_scene_after_finalize_raises(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

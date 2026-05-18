@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { SceneGraphBuilder, type StoreEntry } from '../../../data/scene-graph-builder';
+import { SceneGraphBuilder, type StoreEntry } from '../../../data/utils/scene-graph-builder';
 import type { SceneNode } from '../../../data/data-loader-types';
 
 // Helper to create mock store
@@ -171,6 +171,20 @@ describe('SceneGraphBuilder', () => {
     it('should handle relative path without leading slash', () => {
       const result = SceneGraphBuilder.normalizeURL('data/test');
       expect(result.endsWith('/data/test/')).toBe(true);
+    });
+
+    it('should treat mixed-case HTTPS:// as absolute', () => {
+      // Pre-fix, lowercase-only `startsWith` checks treated mixed-case
+      // schemes as relative paths and prepended window.location.origin.
+      expect(SceneGraphBuilder.normalizeURL('HTTPS://Example.com/data')).toBe(
+        'HTTPS://Example.com/data/'
+      );
+      expect(SceneGraphBuilder.normalizeURL('Https://example.com/data/')).toBe(
+        'Https://example.com/data/'
+      );
+      expect(SceneGraphBuilder.normalizeURL('HTTP://example.com/data')).toBe(
+        'HTTP://example.com/data/'
+      );
     });
   });
 

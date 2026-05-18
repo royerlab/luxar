@@ -25,7 +25,61 @@ pnpm test:with-fixtures       # Generate + run tests
 # Coverage
 pnpm run test:coverage        # Generate coverage report
 open coverage/typescript/index.html
+
+# Quality gates
+pnpm run check                # Fast dev-loop: typecheck + lint + unit tests
+pnpm run check:ci             # Merge gate: typecheck + lint + layers + coverage thresholds
 ```
+
+`check` keeps the iteration fast. `check:ci` is what `make check-all`
+runs and what should run in CI — it adds the dependency-cruiser
+layer rule check and enforces the ratcheted coverage thresholds
+declared in `vitest.config.ts`. A PR can pass `check` while
+violating layers or dropping coverage; that cannot happen with
+`check:ci`.
+
+### E2E console-error fixture (opt-in)
+
+`src/tests/e2e/fixtures.ts` exports a re-extended `test` that
+auto-runs `assertNoConsoleErrors(page)` after each test. Every E2E
+spec uses this fixture — there are no direct `@playwright/test`
+imports. New specs should follow:
+
+```ts
+import { test, expect } from './fixtures';
+```
+
+For specs that *intentionally* trigger console errors (e.g.
+`error-recovery.spec.ts`, `webgl-errors.spec.ts`), opt out per
+test via the `allow-console-errors` annotation:
+
+```ts
+import { test, ALLOW_CONSOLE_ERRORS } from './fixtures';
+
+test('handles network timeout gracefully', async ({ page }) => {
+  test.info().annotations.push({
+    type: ALLOW_CONSOLE_ERRORS,
+    description: 'Test exercises a deliberately broken URL.',
+  });
+  // ... test body ...
+});
+```
+
+All E2E specs import from `./fixtures` and get the post-test
+guard automatically. New specs default to `./fixtures`; only switch
+to direct `@playwright/test` if the spec has a specific reason to
+manage its own per-test console-error allow-list (none currently do).
+
+The fixture combines two signal sources before the assertion fires:
+- Luxar's debug-console interceptor (in-app, formatted, polled via
+  `assertNoConsoleErrors`)
+- Playwright's `page.on('console')` + `page.on('pageerror')`
+  (catches errors before the debug interceptor installs and
+  uncaught exceptions surfaced via the page-level error event)
+
+Both flows filter against `DEFAULT_ALLOWED_CONSOLE_ERRORS`
+(`/WebGL context lost/` plus the loader's optional-resource probe
+404/501s — see `src/tests/e2e/fixtures.ts` for the canonical list).
 
 ---
 
@@ -287,7 +341,7 @@ Tests for memory management and performance optimization.
   - Async file operations
   - Error handling
 
-- `two-level-caching-store.test.ts` - Memory + OPFS integration
+- `multi-level-caching-store.test.ts` - Memory + OPFS integration
   - Hot data in memory (fast)
   - Warm data in OPFS (persistent)
   - Automatic tier management
@@ -296,7 +350,7 @@ Tests for memory management and performance optimization.
 
 - **lru-cache**: Simple LRU for general use
 - **segmented-lru-cache**: Segmented LRU for better locality
-- **two-level-caching-store**: Hot data in memory, warm data in OPFS
+- **multi-level-caching-store**: Hot data in memory, warm data in OPFS
 
 ---
 

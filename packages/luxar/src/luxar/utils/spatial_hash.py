@@ -379,9 +379,7 @@ class BatchedSpatialHashGrid:
         else:
             points_np = np.ascontiguousarray(np.asarray(points), dtype=np.float32)
         if points_np.ndim != 2:
-            raise ValueError(
-                f"points must be 2-D (N, D); got shape {points_np.shape}"
-            )
+            raise ValueError(f"points must be 2-D (N, D); got shape {points_np.shape}")
         N, D = points_np.shape
         np_state = cls._build_numpy_state(points_np, cell_size)
 
@@ -401,9 +399,7 @@ class BatchedSpatialHashGrid:
 
         # Try the torch backend. Fall back only on resource issues.
         try:
-            torch_state = cls._build_torch_state(
-                points_np, cell_size, target_device
-            )
+            torch_state = cls._build_torch_state(points_np, cell_size, target_device)
         except Exception as exc:
             unavailable = (
                 target_device.type == "cuda" and not torch.cuda.is_available()
@@ -617,9 +613,7 @@ class BatchedSpatialHashGrid:
 
     # ── Internal helpers ───────────────────────────────────────────
 
-    def _normalise_query(
-        self, query: Union[np.ndarray, torch.Tensor]
-    ) -> np.ndarray:
+    def _normalise_query(self, query: Union[np.ndarray, torch.Tensor]) -> np.ndarray:
         if isinstance(query, torch.Tensor):
             query_np = query.detach().cpu().numpy().astype(np.float32, copy=False)
         else:
@@ -699,9 +693,7 @@ class BatchedSpatialHashGrid:
             self._fill_topk_row(out_dist[qi], out_idx[qi], cand, dist_sq, k)
         return out_dist, out_idx
 
-    def _gather_for_correct_knn(
-        self, q: np.ndarray, k: int, N: int
-    ) -> np.ndarray:
+    def _gather_for_correct_knn(self, q: np.ndarray, k: int, N: int) -> np.ndarray:
         """Gather candidates with shell expansion sized for *correct* kNN.
 
         Shell radius ``r`` guarantees finding all points within Euclidean

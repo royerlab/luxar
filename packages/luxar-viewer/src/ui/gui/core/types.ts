@@ -31,17 +31,27 @@ export interface ControllerOptions {
   /** Step size (number controllers only) */
   step?: number;
   /** Options array or object (option controllers only) */
-  options?: string[] | Record<string, any>;
+  options?: string[] | Record<string, unknown>;
 }
 
 /**
- * Change callback signature
+ * Change callback signature.
+ *
+ * Note: the default `T = any` is intentional. Callers pass narrower
+ * function types like `(value: number) => void`; with `T = unknown`,
+ * function-parameter contravariance would reject those at the call
+ * site. The looser default keeps the GUI builder ergonomic while
+ * concrete usages still get type-checked through the controller's
+ * declared `T`.
  */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type ChangeCallback<T = any> = (value: T) => void;
 
 /**
- * Finish change callback signature (fired on blur/mouseup)
+ * Finish change callback signature (fired on blur/mouseup). Same
+ * variance reasoning as `ChangeCallback`.
  */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type FinishChangeCallback<T = any> = (value: T) => void;
 
 /**

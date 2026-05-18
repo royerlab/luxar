@@ -13,6 +13,23 @@
 
 import { config } from '../config';
 import { log, Modules, LogEmoji } from '../utils/log';
+import {
+  isKeyAllowedInContext as isKeyAllowedInContextPure,
+  sortContextsByPriority,
+} from './context-routing-utils';
+
+/**
+ * Maximum recursion depth for {@link InputContextManager.handleKeyEvent}.
+ * A binding handler that (re-)dispatches a keyboard event through this
+ * manager would otherwise recurse forever; this cap limits the
+ * blast radius to a finite stack and surfaces the misconfiguration
+ * via a single `log.error`.
+ *
+ * 10 is comfortably above any realistic UI depth (the deepest
+ * documented passthrough chain is `TYPING → UI_INTERACTION →
+ * NAVIGATION`, depth 3).
+ */
+export const MAX_KEY_EVENT_DEPTH = 10;
 
 /**
  * Available input contexts
@@ -93,6 +110,14 @@ export class InputContextManager {
   private bindings = new Map<string, Map<string, KeyBinding>>();
   private contextConfigs = new Map<InputContext, ContextConfig>();
   private enabled = true;
+
+  /**
+   * Re-entrance depth for `handleKeyEvent`. A binding handler that
+   * (mis)configured itself to dispatch keyboard events back through
+   * the context manager could otherwise recurse infinitely; cap at
+   * {@link MAX_KEY_EVENT_DEPTH} and bail with a single error log.
+   */
+  private keyEventDepth = 0;
 
   /**
    * Create a new input context manager with default context configurations.
@@ -380,11 +405,37 @@ export class InputContextManager {
   public handleKeyEvent(event: KeyboardEvent, type: 'down' | 'up'): boolean {
     if (!this.enabled) return false;
 
+    // Re-entrance guard: a misbehaving binding handler that triggers
+    // another keyboard event through this manager could otherwise
+    // recurse indefinitely. Cap at MAX_KEY_EVENT_DEPTH and bail.
+    if (this.keyEventDepth >= MAX_KEY_EVENT_DEPTH) {
+      log.error(
+        Modules.INPUT,
+        `handleKeyEvent recursion limit (${MAX_KEY_EVENT_DEPTH}) reached for key '${event.key}'; ` +
+          'a binding handler is dispatching keyboard events back through the context manager.'
+      );
+      return false;
+    }
+    this.keyEventDepth++;
+    try {
+      return this.handleKeyEventInternal(event, type);
+    } finally {
+      this.keyEventDepth--;
+    }
+  }
+
+  private handleKeyEventInternal(event: KeyboardEvent, type: 'down' | 'up'): boolean {
     // Check if we're in a typing context
     if (this.isTypingContext()) {
-      // Allow Escape to exit typing contexts
+      // Escape from a typing context (e.g. focus inside the
+      // dataset-browser manual-path field, debug-console filter input)
+      // must still close the panel. Look up the Escape binding in the
+      // current context AND every other context, firing the first
+      // match. Going through the normal dispatch path would re-enter
+      // this branch, and `tryLowerContexts` alone would skip the
+      // current context where Escape is usually registered.
       if (event.key === 'Escape') {
-        return false; // Let it pass through to close dialogs
+        return this.dispatchEscapeFromTypingContext(event, type);
       }
       // Block all other keys while typing
       return true;
@@ -455,17 +506,7 @@ export class InputContextManager {
    * @private
    */
   private isKeyAllowedInContext(key: string, config: ContextConfig): boolean {
-    // Check blocked keys
-    if (config.blockedKeys && config.blockedKeys.includes(key)) {
-      return false;
-    }
-
-    // Check allowed keys
-    if (config.allowedKeys && !config.allowedKeys.includes(key)) {
-      return false;
-    }
-
-    return true;
+    return isKeyAllowedInContextPure(key, config);
   }
 
   /**
@@ -482,11 +523,49 @@ export class InputContextManager {
    * @returns true if any lower context handled the event, false otherwise
    * @private
    */
+  /**
+   * Dispatch Escape from a typing context.
+   *
+   * Walks all contexts in priority order (including the current one)
+   * and fires the first matching Escape binding. Mirrors the dispatch
+   * shape of {@link tryLowerContexts} but does not exclude the current
+   * context — Escape is most often registered in NAVIGATION (the
+   * default current context), so excluding the current context like
+   * `tryLowerContexts` does would skip it.
+   */
+  private dispatchEscapeFromTypingContext(
+    event: KeyboardEvent,
+    type: 'down' | 'up'
+  ): boolean {
+    const sortedContexts = Array.from(this.contextConfigs.entries()).sort(
+      (a, b) => (b[1].priority ?? 0) - (a[1].priority ?? 0)
+    );
+
+    for (const [context] of sortedContexts) {
+      const contextBindings = this.bindings.get(context);
+      if (!contextBindings) continue;
+      const bindingKey = this.getBindingKeyFromEvent(event);
+      const binding = contextBindings.get(bindingKey);
+      if (!binding) continue;
+
+      if (type === 'up') {
+        if (binding.keyupHandler) {
+          if (binding.preventDefault) event.preventDefault();
+          binding.keyupHandler(event);
+          return true;
+        }
+        return false;
+      }
+      if (binding.preventDefault) event.preventDefault();
+      binding.handler(event);
+      return true;
+    }
+
+    return false;
+  }
+
   private tryLowerContexts(event: KeyboardEvent, type: 'down' | 'up'): boolean {
-    // Sort contexts by priority
-    const sortedContexts = Array.from(this.contextConfigs.entries())
-      .filter(([ctx]) => ctx !== this.currentContext)
-      .sort((a, b) => (b[1].priority || 0) - (a[1].priority || 0));
+    const sortedContexts = sortContextsByPriority(this.contextConfigs, this.currentContext);
 
     for (const [context, config] of sortedContexts) {
       if (this.isKeyAllowedInContext(event.key, config)) {

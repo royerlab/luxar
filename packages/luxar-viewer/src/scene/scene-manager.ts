@@ -11,12 +11,13 @@ import * as THREE from 'three';
 import { ControlsManager } from '../controls/controls-manager';
 import { loadScene } from '../data';
 import type { LoaderConfig } from '../data/data-loader-types';
-import { showLoadingIndicator, hideLoadingIndicator, showError } from '../ui/helpers';
+import { notifier } from '../utils/notifier';
 import { config } from '../config';
-import { extractCameraOverrides, extractBackgroundColor } from '../config/viewer-config-utils';
+import { extractCameraOverrides } from '../config/viewer-config-utils';
 import type { ZarrViewerConfig } from '../types/zarr';
-import { PostProcessingManager } from '../rendering/post-processing-manager';
-import { materialManager } from '../rendering/material-manager';
+import { PostProcessingManager } from '../rendering/post-processing/post-processing-manager';
+import { materialManager } from '../rendering';
+import { disposeColormapTextures } from '../rendering/colormap-textures';
 import {
   detectHDRCapabilities,
   configureHDRRenderer,
@@ -24,18 +25,32 @@ import {
 } from '../utils/hdr-detection';
 import {
   validateFOV,
-  calculateCameraDistance,
   getBoundingBoxDiagonal,
   getBoundingBoxCenter,
   BoundingBox,
   BoundingSphere,
   boundingBoxToSphere,
   calculateClippingPlanesFromSphere,
+  projectBoundsToDisplayDims,
   SPHERE_SAFETY_EXPANSION,
   MIN_NEAR_PLANE,
 } from './scene-manager-utils';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { sceneDimsManager } from './scene-dims-manager';
+import {
+  clearLoadedSceneContent,
+  disposeSceneGraphResources,
+} from './scene-setup/scene-disposal';
+import {
+  applyZarrViewerConfig as applyZarrViewerConfigHelper,
+  createDefaultPerspectiveCamera,
+  resetCameraToInitialPosition,
+} from './scene-setup/camera-setup';
+import {
+  computeSceneBoundingBox,
+  fitCameraToBounds,
+} from './scene-setup/camera-framing';
+import { WebGLContextRecovery } from './scene-setup/webgl-context-recovery';
 import {
   type LuxarCamera,
   isPerspectiveCamera,
@@ -43,14 +58,8 @@ import {
   getCameraFovRadians,
   updateCameraAspect,
   getOrthoFrustumHeight,
-} from './camera-utils';
+} from '../utils/camera-utils';
 import type { ControlType } from '../controls/controls-manager';
-
-/**
- * How far the user can zoom in or out relative to the "scene fits in view" distance/zoom.
- * A value of 100 means 100x zoom-in and 100x zoom-out from the auto-framed view.
- */
-const ZOOM_RANGE_FACTOR = 100;
 
 /**
  * SceneManager orchestrates all Three.js components for 3D rendering
@@ -75,6 +84,14 @@ const ZOOM_RANGE_FACTOR = 100;
 export class SceneManager extends THREE.EventDispatcher<{
   change: {};
   'camera-changed': {};
+  /**
+   * Fired after a successful WebGL context restore. Subscribers (e.g.
+   * SceneLoader, which owns the NodeFactory and picking registrations)
+   * use this to re-register / rebuild any GPU-bound resources their
+   * objects depend on. SceneManager itself rebuilds the renderer +
+   * post-processing + material cache before dispatching.
+   */
+  'webgl-context-restored': {};
 }> {
   /** Three.js WebGL renderer - handles all GPU-accelerated rendering */
   public renderer!: THREE.WebGLRenderer;
@@ -104,10 +121,13 @@ export class SceneManager extends THREE.EventDispatcher<{
   private resizeRAF: number | null = null;
   private pendingResize: { width: number; height: number } | null = null;
 
-  /** WebGL context loss handling */
-  private isContextLost: boolean = false;
-  private contextLostHandler: ((event: Event) => void) | null = null;
-  private contextRestoredHandler: ((event: Event) => void) | null = null;
+  /**
+   * WebGL context-loss / restoration concern. Constructed lazily in
+   * setupContextLossHandling() once the canvas + renderer are wired
+   * up. The class owns the canvas listeners and the isContextLost
+   * flag — SceneManager just forwards events through it.
+   */
+  private contextRecovery: WebGLContextRecovery | null = null;
 
   /** When true, resize events are suppressed (used during recording to prevent resolution changes) */
   public resizeLocked: boolean = false;
@@ -234,14 +254,14 @@ export class SceneManager extends THREE.EventDispatcher<{
       }
     } catch (error) {
       log.error(Modules.SCENE_MANAGER, 'Error creating WebGL2 context:', error);
-      showError('Failed to create WebGL2 context. Your browser may not support WebGL2.');
+      notifier.error('Failed to create WebGL2 context. Your browser may not support WebGL2.');
     }
 
     // Create WebGL renderer using configuration values.
     // Shared attributes (antialias, powerPreference, etc.) come from webgl.context;
     // renderer-specific settings (precision, shadowMap, etc.) come from webgl.renderer.
     this.renderer = new THREE.WebGLRenderer({
-      canvas: this.canvasElement, // Use our pre-existing canvas element
+      canvas: this.canvasElement, // Use the scene manager's canvas element
       context: gl || undefined, // Use our HDR context if available
       // Shared attributes from context config
       alpha: config.webgl.context.alpha,
@@ -286,117 +306,34 @@ export class SceneManager extends THREE.EventDispatcher<{
   }
 
   /**
-   * Setup WebGL context loss and restoration handling
-   *
-   * WebGL context can be lost due to:
-   * - GPU driver crashes or resets
-   * - System sleep/hibernate
-   * - Too many contexts (browser limit)
-   * - Out of GPU memory
-   *
-   * This setup ensures the app can recover gracefully instead of crashing.
+   * Construct the WebGLContextRecovery concern and attach its
+   * canvas listeners. Thin delegate over scene-setup/webgl-context-recovery.
+   * The recovery instance owns the loss/restored handlers, the
+   * `isContextLost` flag, and the deterministic rebuild order.
    */
   private setupContextLossHandling(): void {
-    const canvas = this.canvasElement;
-
-    // Handle context loss - prevent default and prepare for restoration
-    this.contextLostHandler = (event: Event) => {
-      event.preventDefault(); // Required to allow context restoration
-      this.isContextLost = true;
-
-      log.error(
-        Modules.SCENE_MANAGER,
-        'WebGL context lost! This can happen due to GPU driver issues, system sleep, or memory pressure.'
-      );
-
-      showError(
-        'Graphics context lost - attempting to restore. This can happen if your GPU driver crashes or the system runs out of video memory. The app will try to recover automatically.'
-      );
-    };
-
-    // Handle context restoration - recreate all WebGL resources
-    this.contextRestoredHandler = async (_event: Event) => {
-      log.info(Modules.SCENE_MANAGER, 'WebGL context restored - recreating resources...');
-
-      try {
-        // Mark context as restored
-        this.isContextLost = false;
-
-        // Force renderer to recreate its internal state
-        this.renderer.resetState();
-
-        // Rebuild post-processing GPU-bound resources in place. The
-        // PostProcessingManager identity is preserved across the rebuild so
-        // PickingSystem, AnimationController, and RenderingControls keep
-        // their cached references valid; user settings (bloom, exposure,
-        // tone mapping, DOF, etc.) are preserved end-to-end.
-        if (this.postProcessing) {
-          this.postProcessing.rebuildAfterContextRestore();
-        }
-        this.markSceneResourcesDirtyForContextRestore();
-        this.updateRendererSize();
-
-        // Trigger a render to force Three.js material/program resource recreation.
-        this.dispatchEvent({ type: 'change' });
-
-        hideLoadingIndicator();
-        log.success(Modules.SCENE_MANAGER, 'WebGL context successfully restored');
-      } catch (error) {
-        log.error(Modules.SCENE_MANAGER, 'Failed to restore WebGL context:', error);
-        showError('Failed to restore graphics context. Please refresh the page to continue.');
-      }
-    };
-
-    // Add event listeners
-    canvas.addEventListener('webglcontextlost', this.contextLostHandler, false);
-    canvas.addEventListener('webglcontextrestored', this.contextRestoredHandler, false);
-
-    log.info(Modules.SCENE_MANAGER, 'WebGL context loss handling initialized');
-  }
-
-  /**
-   * Mark scene GPU resources dirty after WebGL context restoration.
-   *
-   * Three.js will recreate buffers/programs lazily, but explicitly marking
-   * attributes/materials dirty makes the recovery path deterministic for custom
-   * shader materials, instanced geometry, and pooled buffer attributes.
-   */
-  private markSceneResourcesDirtyForContextRestore(): void {
-    this.scene.traverse((obj) => {
-      if (
-        obj instanceof THREE.Mesh ||
-        obj instanceof THREE.Points ||
-        obj instanceof THREE.InstancedMesh
-      ) {
-        const geometry = obj.geometry;
-        if (geometry) {
-          const attributes = geometry.attributes as Record<
-            string,
-            THREE.BufferAttribute | THREE.InterleavedBufferAttribute
-          >;
-          for (const attribute of Object.values(attributes)) {
-            attribute.needsUpdate = true;
-          }
-          if (geometry.index) {
-            geometry.index.needsUpdate = true;
-          }
-        }
-
-        const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
-        for (const material of materials) {
-          if (material) {
-            material.needsUpdate = true;
-          }
-        }
-      }
+    this.contextRecovery = new WebGLContextRecovery({
+      canvas: this.canvasElement,
+      // Lazy lookup — `setupContextLossHandling` runs before
+      // `setupScene` in init() order; capturing `this.scene` at
+      // construction would freeze in `undefined`.
+      getScene: () => this.scene,
+      renderer: this.renderer,
+      getPostProcessing: () => this.postProcessing ?? null,
+      updateRendererSize: () => this.updateRendererSize(),
+      onContextRestored: () => this.dispatchEvent({ type: 'webgl-context-restored' }),
+      triggerChange: () => this.dispatchEvent({ type: 'change' }),
     });
+    this.contextRecovery.attach();
   }
 
   /**
-   * Check if WebGL context is currently lost
+   * Check if WebGL context is currently lost. Forwards to the
+   * recovery instance; returns `false` when recovery hasn't been
+   * wired up yet (pre-init / post-dispose).
    */
   public isWebGLContextLost(): boolean {
-    return this.isContextLost;
+    return this.contextRecovery?.getIsContextLost() ?? false;
   }
 
   /**
@@ -408,38 +345,12 @@ export class SceneManager extends THREE.EventDispatcher<{
   }
 
   /**
-   * Initialize perspective camera with optimal 3D viewing parameters
-   *
-   * Perspective camera provides realistic 3D projection with depth perception.
-   * Key parameters:
-   * - FOV: Field of view angle (wider = more visible, narrower = more focused)
-   * - Aspect ratio: Width/height ratio matching canvas dimensions
-   * - Near/far planes: Define visible depth range (Z-clipping)
-   * - Initial position: Starting camera location in 3D space
+   * Initialize the perspective camera. Thin delegate over
+   * `createDefaultPerspectiveCamera` in scene-setup/camera-setup so
+   * the FOV/clip/initial-position pose is unit-testable in isolation.
    */
   private setupCamera(): void {
-    // Get canvas dimensions for proper aspect ratio
-    const canvas = this.renderer.domElement;
-    const width = canvas.clientWidth || window.innerWidth;
-    const height = canvas.clientHeight || window.innerHeight;
-
-    // Create perspective camera with realistic 3D projection
-    // FOV of 60° provides natural human-like viewing angle
-    this.camera = new THREE.PerspectiveCamera(
-      config.renderingControls.defaults.fov, // Field of view (60 degrees)
-      width / height, // Aspect ratio (canvas width/height)
-      config.renderingControls.defaults.near, // Near clipping plane (0.1 units)
-      config.renderingControls.defaults.far // Far clipping plane (1000 units)
-    );
-
-    // Position camera at initial viewing location
-    // Z=8 provides good overview of typical points scenes
-    // X=0, Y=0 centers the view on the origin
-    this.camera.position.set(
-      config.camera.initialPosition.x, // X position (0 = centered)
-      config.camera.initialPosition.y, // Y position (0 = centered)
-      config.camera.initialPosition.z // Z position (8 = pulled back for overview)
-    );
+    this.camera = createDefaultPerspectiveCamera(this.renderer.domElement);
   }
 
   /**
@@ -478,30 +389,17 @@ export class SceneManager extends THREE.EventDispatcher<{
   }
 
   /**
-   * Reset controls to default state
-   * This is needed when loading a new dataset to prevent accumulated transformations
+   * Reset camera + controls to default state when loading a new
+   * dataset. Camera-side reset is delegated to
+   * `resetCameraToInitialPosition`; the controls-side state machine
+   * (reset → update → saveState) stays here because it's the
+   * controls manager's contract.
    */
   private resetControls(): void {
-    // Reset camera to default position
-    this.camera.position.set(
-      config.camera.initialPosition.x,
-      config.camera.initialPosition.y,
-      config.camera.initialPosition.z
-    );
-
-    // Reset camera rotation to look at origin
-    this.camera.lookAt(0, 0, 0);
-    this.camera.updateMatrixWorld(true);
-
-    // Reset controls to default state
+    resetCameraToInitialPosition(this.camera);
     this.controls.reset();
-
-    // Update controls to sync with camera
     this.controls.update();
-
-    // Save this configuration as the new default state
     this.controls.saveState();
-
     log.success(Modules.CONTROLS, 'Controls reset to default state');
   }
 
@@ -534,7 +432,7 @@ export class SceneManager extends THREE.EventDispatcher<{
    * parameters in main.ts).
    */
   async loadSceneData(src: string, loaderConfig?: LoaderConfig): Promise<void> {
-    showLoadingIndicator();
+    notifier.showLoading();
 
     try {
       // Clear existing scene content (keep lights and background)
@@ -549,7 +447,7 @@ export class SceneManager extends THREE.EventDispatcher<{
       }
 
       const root = await loadScene(src, loaderConfig);
-      hideLoadingIndicator();
+      notifier.hideLoading();
       this.scene.add(root);
       this.invalidateBoundsCache();
 
@@ -580,9 +478,9 @@ export class SceneManager extends THREE.EventDispatcher<{
 
       log.info(Modules.SCENE_MANAGER, 'Scene loaded. Press F to re-center camera on bounding box.');
     } catch (error) {
-      hideLoadingIndicator();
+      notifier.hideLoading();
       log.error(Modules.SCENE_MANAGER, 'Failed to load scene:', error);
-      showError(`Failed to load scene from "${src}". Please check the path and try again.`);
+      notifier.error(`Failed to load scene from "${src}". Please check the path and try again.`);
       throw error;
     }
   }
@@ -596,154 +494,24 @@ export class SceneManager extends THREE.EventDispatcher<{
   }
 
   /**
-   * Apply viewer config from zarr (camera position/target/up, background color).
-   * Camera config is applied on every load — it's the data author's intended "home" view.
+   * Apply viewer config from zarr (camera position/target/up, background
+   * color). Thin delegate over `applyZarrViewerConfig` in
+   * scene-setup/camera-setup; the helper returns whether an explicit
+   * camera position was applied so `loadSceneData` can suppress
+   * auto-framing. (Author target alone does NOT suppress auto-framing.)
    */
   private applyZarrViewerConfig(root: THREE.Group): void {
-    const viewerConfig = root.userData?.viewerConfig as ZarrViewerConfig | undefined;
-    if (!viewerConfig) return;
-
-    // Apply camera position/target/up
-    const camOverrides = extractCameraOverrides(viewerConfig);
-    if (camOverrides.position) {
-      this.camera.position.set(
-        camOverrides.position.x,
-        camOverrides.position.y,
-        camOverrides.position.z
-      );
-    }
-
-    // target_node takes precedence over explicit target coordinates.
-    // Use setTarget() (not lookAt()) to avoid an intermediate update() that
-    // would snap the camera back before reinitialize() derives the new orbit state.
-    if (camOverrides.targetNode) {
-      const resolved = this.resolveTargetNode(root, camOverrides.targetNode);
-      if (resolved) {
-        this.controls.setTarget(resolved);
-        log.info(
-          Modules.SCENE_MANAGER,
-          `Resolved target_node '${camOverrides.targetNode}' to (${resolved.x.toFixed(2)}, ${resolved.y.toFixed(2)}, ${resolved.z.toFixed(2)})`
-        );
-      } else {
-        log.warning(
-          Modules.SCENE_MANAGER,
-          `target_node '${camOverrides.targetNode}' not found in scene graph`
-        );
-      }
-    } else if (camOverrides.target) {
-      const targetVec = new THREE.Vector3(
-        camOverrides.target.x,
-        camOverrides.target.y,
-        camOverrides.target.z
-      );
-      this.controls.setTarget(targetVec);
-    }
-
-    if (camOverrides.up) {
-      this.camera.up.set(camOverrides.up.x, camOverrides.up.y, camOverrides.up.z);
-      // Sync camera.quaternion with the new up vector so that
-      // reinitialize() (which reads quaternion, not camera.up) picks up the
-      // author's roll.  Use the current orbit target as the look-at point.
-      this.camera.lookAt(this.controls.getFocusTarget());
-    }
-    if (
-      camOverrides.position ||
-      camOverrides.target ||
-      camOverrides.targetNode ||
-      camOverrides.up
-    ) {
-      this.camera.updateMatrixWorld(true);
-      this.controls.reinitialize();
-      this.controls.update();
-      log.info(Modules.SCENE_MANAGER, 'Applied camera config from zarr viewer_config');
-    }
-
-    // Apply background color
-    const bgColor = extractBackgroundColor(viewerConfig);
-    if (bgColor) {
-      this.scene.background = new THREE.Color(bgColor);
-      log.info(Modules.SCENE_MANAGER, `Applied background color from zarr: ${bgColor}`);
-    }
+    applyZarrViewerConfigHelper(root, this.camera, this.controls, this.scene);
   }
 
   /**
-   * Find a named node in the scene graph and return its bounding box center.
-   *
-   * @param root - Scene graph root to search
-   * @param nodeName - Name of the node to find
-   * @returns Bounding box center, or null if node not found
-   */
-  private resolveTargetNode(root: THREE.Group, nodeName: string): THREE.Vector3 | null {
-    let targetObject: THREE.Object3D | null = null;
-
-    root.traverse((obj) => {
-      if (obj.name === nodeName && !targetObject) {
-        targetObject = obj;
-      }
-    });
-
-    if (!targetObject) return null;
-
-    const box = new THREE.Box3().setFromObject(targetObject);
-    if (box.isEmpty()) return null;
-
-    const center = new THREE.Vector3();
-    box.getCenter(center);
-    return center;
-  }
-
-  /**
-   * Clear all loaded content from the scene, keeping lights and background
+   * Clear all loaded content from the scene, keeping lights and background.
+   * Thin delegate over `clearLoadedSceneContent` in scene-setup/scene-disposal.
    */
   private clearSceneContent(): void {
     this.invalidateBoundsCache();
-
-    // Helper function to recursively dispose of objects
-    const disposeObject = (obj: THREE.Object3D) => {
-      // Handle Mesh, Points, and InstancedMesh (used for lines)
-      if (
-        obj instanceof THREE.Mesh ||
-        obj instanceof THREE.Points ||
-        obj instanceof THREE.InstancedMesh
-      ) {
-        if (obj.geometry) obj.geometry.dispose();
-        if (obj.material) {
-          if (Array.isArray(obj.material)) {
-            obj.material.forEach((m) => m.dispose());
-          } else {
-            obj.material.dispose();
-          }
-        }
-      }
-
-      // Recursively dispose children
-      while (obj.children.length > 0) {
-        disposeObject(obj.children[0]);
-        obj.remove(obj.children[0]);
-      }
-    };
-
-    // Find all objects to remove (direct children of scene)
-    const objectsToRemove: THREE.Object3D[] = [];
-
-    for (let i = this.scene.children.length - 1; i >= 0; i--) {
-      const child = this.scene.children[i];
-
-      // Keep lights and any background/environment objects
-      if (child instanceof THREE.Light) continue;
-      if (child.userData?.isBackground) continue;
-
-      // Mark everything else for removal
-      objectsToRemove.push(child);
-    }
-
-    // Remove and dispose marked objects
-    for (const obj of objectsToRemove) {
-      disposeObject(obj);
-      this.scene.remove(obj);
-    }
-
-    log.info(Modules.SCENE_MANAGER, `Cleared ${objectsToRemove.length} objects from scene`);
+    const removed = clearLoadedSceneContent(this.scene);
+    log.info(Modules.SCENE_MANAGER, `Cleared ${removed} objects from scene`);
   }
 
   /**
@@ -765,163 +533,28 @@ export class SceneManager extends THREE.EventDispatcher<{
    * ```
    */
   public centerCameraOnScene(): void {
-    // Ensure world matrices are up to date before computing bounds
+    // Ensure world matrices are up to date before computing bounds.
     this.scene.updateMatrixWorld(true);
 
-    // Create a bounding box that encompasses all visible objects
-    const box = new THREE.Box3();
-    let totalPrimitiveCount = 0;
+    const { box, primitiveCount } = computeSceneBoundingBox(this.scene);
+    if (box.isEmpty() || primitiveCount === 0) {
+      log.warning(Modules.SCENE_MANAGER, 'No visible geometry found to center camera on');
+      return;
+    }
 
-    // Traverse the scene and expand the box to include all geometries
-    this.scene.traverse((object) => {
-      // Handle Points objects (point clouds)
-      if (object instanceof THREE.Points) {
-        const geometry = object.geometry;
+    const center = box.getCenter(new THREE.Vector3());
+    this.lastBoundingBoxCenter.copy(center);
 
-        // For points, compute bounding box from position attribute
-        const positions = geometry.attributes.position;
-        if (positions && positions.count > 0) {
-          totalPrimitiveCount += positions.count;
-
-          // First, compute the bounding box
-          if (!geometry.boundingBox) {
-            geometry.computeBoundingBox();
-          }
-
-          if (geometry.boundingBox) {
-            const tempBox = geometry.boundingBox.clone();
-
-            // Apply object's world transform
-            tempBox.applyMatrix4(object.matrixWorld);
-
-            // Only include if box has valid size (not empty)
-            if (!tempBox.isEmpty()) {
-              box.union(tempBox);
-            }
-          }
-        }
-      }
-
-      // Handle both THREE.InstancedMesh and Mesh + InstancedBufferGeometry objects
-      // Lines and GSplats use THREE.Mesh with InstancedBufferGeometry (not InstancedMesh)
-      // to avoid exceeding WebGL's 16 attribute location limit
-      const isLineMesh =
-        object instanceof THREE.Mesh &&
-        object.userData?.nodeType === 'lines' &&
-        object.geometry instanceof THREE.InstancedBufferGeometry;
-
-      const isGSplatMesh =
-        object instanceof THREE.Mesh &&
-        object.userData?.nodeType === 'gsplats' &&
-        object.geometry instanceof THREE.InstancedBufferGeometry;
-
-      if (object instanceof THREE.InstancedMesh || isLineMesh || isGSplatMesh) {
-        const geometry = object.geometry;
-
-        // For instanced meshes/geometries, use the precomputed bounding box
-        if (!geometry.boundingBox) {
-          geometry.computeBoundingBox();
-        }
-
-        if (geometry.boundingBox) {
-          // Get instance count (InstancedMesh has count, InstancedBufferGeometry has instanceCount)
-          const instanceCount =
-            object instanceof THREE.InstancedMesh
-              ? object.count
-              : ((geometry as THREE.InstancedBufferGeometry).instanceCount ?? 0);
-          totalPrimitiveCount += instanceCount;
-
-          const tempBox = geometry.boundingBox.clone();
-
-          // Apply object's world transform
-          tempBox.applyMatrix4(object.matrixWorld);
-
-          // Only include if box has valid size (not empty)
-          if (!tempBox.isEmpty()) {
-            box.union(tempBox);
-          }
-        }
-      }
-    });
-
-    // Only center camera if we have geometry
-    if (!box.isEmpty() && totalPrimitiveCount > 0) {
-      const size = box.getSize(new THREE.Vector3());
-
-      // Update scale-aware controls from geometry bounding box
-      const diagonal = size.length();
-      if (diagonal > 0) {
-        this.controls.setSceneScale(diagonal);
-      }
-
-      const center = box.getCenter(new THREE.Vector3());
-
-      // Store the center for later use
-      this.lastBoundingBoxCenter.copy(center);
-
-      // Compute optimal distance using FOV-aware calculation
-      const geoBounds: BoundingBox = {
+    fitCameraToBounds(
+      this.camera,
+      this.controls,
+      {
         min: { x: box.min.x, y: box.min.y, z: box.min.z },
         max: { x: box.max.x, y: box.max.y, z: box.max.z },
-      };
-
-      if (isPerspectiveCamera(this.camera)) {
-        const cameraConfig = {
-          fov: this.camera.fov,
-          aspect: this.camera.aspect,
-          near: this.camera.near,
-          far: this.camera.far,
-        };
-        const distance = calculateCameraDistance(geoBounds, cameraConfig);
-        this.camera.position.set(center.x, center.y, center.z + distance);
-
-        // Set distance limits relative to the scene-fitting distance
-        this.controls.setDistanceLimits(distance / ZOOM_RANGE_FACTOR, distance * ZOOM_RANGE_FACTOR);
-      } else if (isOrthographicCamera(this.camera)) {
-        const frustumHeight = this.camera.top - this.camera.bottom;
-        const frustumWidth = this.camera.right - this.camera.left;
-        const maxDim = Math.max(size.x, size.y, size.z);
-        if (maxDim > 0 && frustumHeight > 0 && frustumWidth > 0) {
-          const fitRatio = config.scene.defaultFitRatio;
-          const zoomH = frustumHeight / (maxDim / fitRatio);
-          const zoomW = frustumWidth / (maxDim / fitRatio);
-          this.camera.zoom = Math.min(zoomH, zoomW);
-          this.camera.updateProjectionMatrix();
-
-          // Set zoom limits relative to the scene-fitting zoom (100x in each direction)
-          this.controls.setZoomLimits(
-            this.camera.zoom / ZOOM_RANGE_FACTOR,
-            this.camera.zoom * ZOOM_RANGE_FACTOR
-          );
-        }
-        this.camera.position.set(center.x, center.y, center.z + diagonal);
-      }
-
-      // Point camera at the center
-      this.camera.lookAt(center);
-      this.camera.updateMatrixWorld(true);
-
-      // Sync orbit controls with the new camera state.
-      // CRITICAL: Set target first, then reinitialize() so the controls re-derive
-      // their internal distance from the camera position we just set.
-      this.controls.setTarget(center);
-      this.controls.reinitialize();
-      this.controls.update();
-
-      // Save the new centered state as the default
-      // NOTE: Do NOT call reset() before saveState() - that would undo the centering!
-      // reset() reverts to the previously saved state, defeating the purpose
-      this.controls.saveState();
-
-      log.success(Modules.CONTROLS, 'Controls target updated and state saved');
-
-      log.success(
-        Modules.SCENE_MANAGER,
-        `Camera centered on scene (center: [${center.x.toFixed(2)}, ${center.y.toFixed(2)}, ${center.z.toFixed(2)}])`
-      );
-    } else {
-      log.warning(Modules.SCENE_MANAGER, 'No visible geometry found to center camera on');
-    }
+      },
+      { lookAtTarget: center, logLabel: 'Camera centered on scene' }
+    );
+    log.success(Modules.CONTROLS, 'Controls target updated and state saved');
   }
 
   /**
@@ -1296,86 +929,25 @@ export class SceneManager extends THREE.EventDispatcher<{
       return;
     }
 
+    // Determine the look-at target: author's target if set, otherwise bounding box center.
     const center = getBoundingBoxCenter(bounds);
-    const diagonal = getBoundingBoxDiagonal(bounds);
-
-    if (diagonal <= 0) {
-      log.warning(Modules.SCENE_MANAGER, 'Scene bounds have zero extent, skipping auto-frame');
-      return;
-    }
-
-    // Adapt control speeds to scene scale
-    this.controls.setSceneScale(diagonal);
-
-    // Determine the look-at target: author's target if set, otherwise bounding box center
     const lookAtTarget = preserveTarget
       ? this.controls.getFocusTarget()
       : new THREE.Vector3(center.x, center.y, center.z);
 
-    if (isPerspectiveCamera(this.camera)) {
-      // Compute optimal distance using FOV, aspect ratio, and fitRatio
-      const cameraConfig = {
-        fov: this.camera.fov,
-        aspect: this.camera.aspect,
-        near: this.camera.near,
-        far: this.camera.far,
-      };
-      const distance = calculateCameraDistance(bounds, cameraConfig);
-
-      this.camera.position.set(lookAtTarget.x, lookAtTarget.y, lookAtTarget.z + distance);
-
-      // Set distance limits relative to the scene-fitting distance
-      this.controls.setDistanceLimits(distance / ZOOM_RANGE_FACTOR, distance * ZOOM_RANGE_FACTOR);
-    } else if (isOrthographicCamera(this.camera)) {
-      // For ortho, compute zoom to fit the scene in the frustum
-      const frustumHeight = this.camera.top - this.camera.bottom;
-      const frustumWidth = this.camera.right - this.camera.left;
-      const maxDim = Math.max(
-        bounds.max.x - bounds.min.x,
-        bounds.max.y - bounds.min.y,
-        bounds.max.z - bounds.min.z
-      );
-      if (maxDim > 0 && frustumHeight > 0 && frustumWidth > 0) {
-        const fitRatio = config.scene.defaultFitRatio;
-        const zoomH = frustumHeight / (maxDim / fitRatio);
-        const zoomW = frustumWidth / (maxDim / fitRatio);
-        this.camera.zoom = Math.min(zoomH, zoomW);
-        this.camera.updateProjectionMatrix();
-
-        // Set zoom limits relative to the scene-fitting zoom (100x in each direction)
-        this.controls.setZoomLimits(
-          this.camera.zoom / ZOOM_RANGE_FACTOR,
-          this.camera.zoom * ZOOM_RANGE_FACTOR
-        );
-      }
-      // Position along Z for correct depth ordering
-      this.camera.position.set(lookAtTarget.x, lookAtTarget.y, lookAtTarget.z + diagonal);
+    const diagonal = fitCameraToBounds(this.camera, this.controls, bounds, {
+      lookAtTarget,
+      preserveControlsTarget: preserveTarget,
+      logLabel: 'Auto-framed camera on scene',
+    });
+    if (diagonal === 0) {
+      log.warning(Modules.SCENE_MANAGER, 'Scene bounds have zero extent, skipping auto-frame');
+      return;
     }
-
-    // Point camera at the look-at target
-    this.camera.lookAt(lookAtTarget);
-    this.camera.updateMatrixWorld(true);
-
-    // Sync orbit controls with the new camera state.
-    // CRITICAL: We must set the target first, then reinitialize() so the controls
-    // re-derive their internal distance from the camera position we just set.
-    // Without reinitialize(), the next update() would snap the camera back to the
-    // old distance (e.g., the default 8 units from resetControls).
-    if (!preserveTarget) {
-      this.controls.setTarget(lookAtTarget);
-    }
-    this.controls.reinitialize();
-    this.controls.update();
-    this.controls.saveState();
 
     // Track centering state
     this.isCenteredOnBoundingBox = !preserveTarget;
     this.lastBoundingBoxCenter.set(center.x, center.y, center.z);
-
-    log.success(
-      Modules.SCENE_MANAGER,
-      `Auto-framed camera on scene (target: [${lookAtTarget.x.toFixed(2)}, ${lookAtTarget.y.toFixed(2)}, ${lookAtTarget.z.toFixed(2)}], diagonal: ${diagonal.toFixed(2)})`
-    );
   }
 
   /**
@@ -1459,38 +1031,13 @@ export class SceneManager extends THREE.EventDispatcher<{
    * @returns 3D bounding box or null if metadata bounds not available
    */
   private getSceneBoundsFromMetadata(): BoundingBox | null {
-    // Find the root group with position bounds
     const foundBounds = this.findPositionBoundsInScene();
+    if (!foundBounds) return null;
 
-    if (!foundBounds) {
-      return null;
-    }
-
-    // Get display dimensions from scene dimensions manager
     const dims = sceneDimsManager.getDims();
     const displayDims: number[] = dims?.displayed ?? [0, 1, 2];
 
-    // Project nD bounds to 3D using display dimensions
-    const minBounds = foundBounds.min;
-    const maxBounds = foundBounds.max;
-    const min3D = { x: 0, y: 0, z: 0 };
-    const max3D = { x: 0, y: 0, z: 0 };
-
-    // Map display dimensions to X, Y, Z
-    if (displayDims.length > 0 && displayDims[0] < minBounds.length) {
-      min3D.x = minBounds[displayDims[0]];
-      max3D.x = maxBounds[displayDims[0]];
-    }
-    if (displayDims.length > 1 && displayDims[1] < minBounds.length) {
-      min3D.y = minBounds[displayDims[1]];
-      max3D.y = maxBounds[displayDims[1]];
-    }
-    if (displayDims.length > 2 && displayDims[2] < minBounds.length) {
-      min3D.z = minBounds[displayDims[2]];
-      max3D.z = maxBounds[displayDims[2]];
-    }
-
-    return { min: min3D, max: max3D };
+    return projectBoundsToDisplayDims(foundBounds.min, foundBounds.max, displayDims);
   }
 
   /**
@@ -1562,14 +1109,10 @@ export class SceneManager extends THREE.EventDispatcher<{
     }
     this.pendingResize = null;
 
-    // Remove WebGL context loss event listeners
-    if (this.contextLostHandler) {
-      this.canvasElement.removeEventListener('webglcontextlost', this.contextLostHandler);
-      this.contextLostHandler = null;
-    }
-    if (this.contextRestoredHandler) {
-      this.canvasElement.removeEventListener('webglcontextrestored', this.contextRestoredHandler);
-      this.contextRestoredHandler = null;
+    // Tear down the WebGL context-recovery listeners.
+    if (this.contextRecovery) {
+      this.contextRecovery.dispose();
+      this.contextRecovery = null;
     }
 
     // Dispose post-processing resources first
@@ -1583,29 +1126,23 @@ export class SceneManager extends THREE.EventDispatcher<{
     // Dispose material manager - cleans up all cached materials
     materialManager.dispose();
 
+    // dispose shared colormap textures (built-in cache + custom-LUT
+    // cache) AFTER materials are released — material disposal doesn't
+    // touch shared LUT textures because they live in module-scope
+    // caches. Without this call, repeated app-construction cycles leak
+    // a 256×1 RGBA DataTexture per built-in colormap plus one per unique
+    // custom LUT.
+    disposeColormapTextures();
+
     // Dispose renderer - cleans up WebGL context and associated GPU resources
     // This frees vertex buffers, textures, and shader programs
     this.renderer.dispose();
 
     // Traverse scene graph and dispose all geometry and material resources
-    // This is critical because WebGL resources are not garbage collected
-    this.scene.traverse((object) => {
-      if ('geometry' in object && 'material' in object) {
-        const mesh = object as THREE.Mesh;
-
-        // Dispose geometry - frees vertex and index buffers on GPU
-        mesh.geometry.dispose();
-
-        // Handle both single materials and material arrays
-        if (mesh.material instanceof THREE.Material) {
-          // Single material - dispose textures and shader programs
-          mesh.material.dispose();
-        } else if (Array.isArray(mesh.material)) {
-          // Multiple materials - dispose each one individually
-          mesh.material.forEach((material) => material.dispose());
-        }
-      }
-    });
+    // (WebGL resources are not garbage collected). Delegated to
+    // scene-setup/scene-disposal so the same one-shot final-dispose pass
+    // is unit-testable in isolation.
+    disposeSceneGraphResources(this.scene);
   }
 
   /**
@@ -1627,6 +1164,20 @@ export class SceneManager extends THREE.EventDispatcher<{
    */
   setAutoRotateSpeed(speed: number): void {
     this.controls.setAutoRotateSpeed(speed);
+  }
+
+  /**
+   * Toggle "natural drag" — swap LEFT ↔ RIGHT mouse buttons in orbit mode so
+   * a one-finger touchpad drag rotates and right-drag pans. Applies to
+   * orbit (3D) only; ortho and fly modes ignore.
+   */
+  setNaturalDrag(enabled: boolean): void {
+    this.controls.setNaturalDrag(enabled);
+    log.custom(
+      LogEmoji.SCENE,
+      Modules.SCENE_MANAGER,
+      `Natural drag ${enabled ? 'enabled' : 'disabled'}`
+    );
   }
 
   /**
@@ -1701,7 +1252,7 @@ export class SceneManager extends THREE.EventDispatcher<{
     ortho.lookAt(focusTarget);
     ortho.updateMatrixWorld();
 
-    // Old camera not disposed — THREE.js cameras hold no GPU resources
+    // Prior camera is not disposed — THREE.js cameras hold no GPU resources.
     this.camera = ortho;
     this.lastOrthoZoom = ortho.zoom;
     this.postProcessing.setCamera(ortho);
@@ -1730,7 +1281,7 @@ export class SceneManager extends THREE.EventDispatcher<{
     persp.up.copy(this.camera.up);
     persp.updateMatrixWorld();
 
-    // Old camera not disposed — THREE.js cameras hold no GPU resources
+    // Prior camera is not disposed — THREE.js cameras hold no GPU resources.
     this.camera = persp;
     this.postProcessing.setCamera(persp);
   }

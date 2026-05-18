@@ -210,7 +210,7 @@ class TestSanitizeHtml:
         assert sanitize_html(html) == html
 
     def test_strips_script_tags(self):
-        result = sanitize_html('<p>OK</p><script>alert(1)</script>')
+        result = sanitize_html("<p>OK</p><script>alert(1)</script>")
         assert "<script>" not in result
         assert "alert" not in result
         assert "<p>OK</p>" in result
@@ -248,10 +248,10 @@ class TestSanitizeHtml:
             sanitize_html(123)
 
     def test_strips_style_tags(self):
-        result = sanitize_html('<style>body{display:none}</style><p>OK</p>')
+        result = sanitize_html("<style>body{display:none}</style><p>OK</p>")
         assert "<style>" not in result
 
     def test_case_insensitive_stripping(self):
-        result = sanitize_html('<SCRIPT>alert(1)</SCRIPT>')
+        result = sanitize_html("<SCRIPT>alert(1)</SCRIPT>")
         assert "SCRIPT" not in result
         assert "alert" not in result

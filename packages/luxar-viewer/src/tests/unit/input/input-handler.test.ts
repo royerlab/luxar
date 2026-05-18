@@ -22,6 +22,7 @@ import {
   shouldBlockShortcut,
   getNextDimensionIndex,
   formatDimensionValue,
+  generateNavigationHelp,
 } from '../../../input/input-handler-utils';
 
 // Helper to create SimpleDims test objects
@@ -297,9 +298,96 @@ describe('InputHandler Utilities', () => {
       expect(shouldBlockShortcut(event, [])).toBe(true);
     });
 
+    it('should block when typing in textarea', () => {
+      const textarea = document.createElement('textarea');
+      const event = new KeyboardEvent('keydown', { key: 'p' });
+      Object.defineProperty(event, 'target', { value: textarea });
+      expect(shouldBlockShortcut(event, [])).toBe(true);
+    });
+
     it('should not block in normal context', () => {
       const event = new KeyboardEvent('keydown', { key: 'p' });
       expect(shouldBlockShortcut(event, [])).toBe(false);
+    });
+
+    it('should not block browser shortcuts (Cmd/Meta + s/o/p)', () => {
+      // metaKey alone defers to the browser
+      const meta = new KeyboardEvent('keydown', { key: 's', metaKey: true });
+      expect(shouldBlockShortcut(meta, [])).toBe(false);
+
+      // Ctrl + s/o/p also defer
+      for (const k of ['s', 'o', 'p']) {
+        const ev = new KeyboardEvent('keydown', { key: k, ctrlKey: true });
+        expect(shouldBlockShortcut(ev, [])).toBe(false);
+      }
+    });
+
+    it('should not block ctrl-combos that are not s/o/p', () => {
+      const ev = new KeyboardEvent('keydown', { key: 'a', ctrlKey: true });
+      expect(shouldBlockShortcut(ev, [])).toBe(false);
+    });
+  });
+
+  describe('generateNavigationHelp', () => {
+    it('reports the all-displayed sentinel when no hidden dimensions exist', () => {
+      const dims = createDims(3, [0, 1, 2]);
+      expect(generateNavigationHelp(0, dims)).toEqual(['All dimensions are displayed (3D view)']);
+    });
+
+    it('reports the selected dimension and its formatted current value', () => {
+      const dims = createDims(
+        4,
+        [0, 1, 2],
+        [{ name: 'X' }, { name: 'Y' }, { name: 'Z' }, { name: 'time', step: 1, discrete: true }]
+      );
+      dims.currentStep[3] = 7;
+
+      const help = generateNavigationHelp(3, dims);
+      // Selected line is always first when there are hidden dims.
+      expect(help[0]).toBe('Selected: time = 7');
+      // Lists the available non-displayed dimensions section.
+      expect(help.some((line) => line === 'Non-displayed dimensions:')).toBe(true);
+      // Includes the [1] hotkey marker for the first non-displayed dim.
+      expect(help.some((line) => line.includes('[1] time'))).toBe(true);
+      // Marks the currently-selected dim with the arrow indicator.
+      expect(help.some((line) => line.includes('←'))).toBe(true);
+    });
+
+    it('falls back to "No dimension selected" for an out-of-range index', () => {
+      const dims = createDims(4, [0, 1, 2]);
+      const help = generateNavigationHelp(-1, dims);
+      expect(help[0]).toBe('No dimension selected');
+    });
+
+    it('uses fallback names ("Dim N") when metadata is missing', () => {
+      const dims: SimpleDims = {
+        ndim: 4,
+        displayed: [0, 1, 2],
+        currentStep: [0, 0, 0, 0],
+        metadata: undefined,
+      } as SimpleDims;
+      const help = generateNavigationHelp(3, dims);
+      // Fallbacks kick in for both the selected line and the list.
+      expect(help.some((line) => line.includes('Dimension 3'))).toBe(true);
+      expect(help.some((line) => line.includes('Dim 3'))).toBe(true);
+    });
+
+    it('emits the navigation instructions block at the end', () => {
+      const dims = createDims(4, [0, 1, 2]);
+      const help = generateNavigationHelp(3, dims);
+      expect(help).toContain('Navigation:');
+      expect(help).toContain('  [1-9] Select dimension');
+      expect(help).toContain('  [ ]   Navigate selected dimension');
+    });
+
+    it('uses blanks instead of [N] markers past the 9th non-displayed dim', () => {
+      // 14 dimensions, 3 displayed → 11 hidden, navIdx 9 and 10 use blank keys.
+      const dims = createDims(14, [0, 1, 2]);
+      const help = generateNavigationHelp(0, dims);
+      // The 10th hidden dim line (navIdx=9) should not contain "[10]".
+      const tenthLine = help.find((line) => line.includes(' dim12:') || line.includes(' Dim 12'));
+      expect(tenthLine).toBeDefined();
+      expect(tenthLine).not.toMatch(/\[10\]/);
     });
   });
 
@@ -338,16 +426,12 @@ describe('InputHandler Utilities', () => {
 });
 
 describe('InputHandler Type Definitions', () => {
-  it(
-    'should export InputHandler class',
-    { timeout: 15_000 },
-    async () => {
-      // Dynamic import to avoid triggering complex dependencies.
-      // The import pulls in the full dependency graph (THREE.js, scene managers,
-      // UI components), which normally takes ~600ms but can exceed 5s under load.
-      const module = await import('../../../input/input-handler');
-      expect(module.InputHandler).toBeDefined();
-      expect(typeof module.InputHandler).toBe('function');
-    }
-  );
+  it('should export InputHandler class', { timeout: 15_000 }, async () => {
+    // Dynamic import to avoid triggering complex dependencies.
+    // The import pulls in the full dependency graph (THREE.js, scene managers,
+    // UI components), which normally takes ~600ms but can exceed 5s under load.
+    const module = await import('../../../input/input-handler');
+    expect(module.InputHandler).toBeDefined();
+    expect(typeof module.InputHandler).toBe('function');
+  });
 });

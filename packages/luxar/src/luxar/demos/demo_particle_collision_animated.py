@@ -412,7 +412,6 @@ def generate_straight_track_with_times(
     return vertices, widths, colors, birth_times
 
 
-
 # =============================================================================
 # Detector Geometry
 # =============================================================================

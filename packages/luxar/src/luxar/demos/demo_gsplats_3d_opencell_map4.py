@@ -246,7 +246,7 @@ def fit_channel(
         device=DEVICE,
         verbose=True,
         enable_dynamic_ops=True,
-        cull_retention=0.99
+        cull_retention=0.99,
     )
 
     n_splats = len(result.amplitudes)
@@ -432,7 +432,9 @@ def show_roundtrip_comparison(
     try:
         import matplotlib.pyplot as plt
     except ImportError:
-        aprint("matplotlib is required for --show-roundtrip. Install with: pip install matplotlib")
+        aprint(
+            "matplotlib is required for --show-roundtrip. Install with: pip install matplotlib"
+        )
         return
 
     n_channels = len(volumes)

@@ -361,7 +361,9 @@ class TestSafeZipExtraction:
         assert extracted == cache_dir / "data.gsplats.zarr.zip"
         assert extracted.read_bytes() == b"payload"
 
-    def test_safe_extract_zip_member_rejects_unsafe_target(self, tmp_path: Path) -> None:
+    def test_safe_extract_zip_member_rejects_unsafe_target(
+        self, tmp_path: Path
+    ) -> None:
         """Even a safe archive member cannot be written outside the cache root."""
         bundle = tmp_path / "bundle.zip"
         with zipfile.ZipFile(bundle, "w") as zf:

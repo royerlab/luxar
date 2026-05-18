@@ -457,14 +457,16 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             # Validate arrays only (scalars validated by encoder)
             if isinstance(colors, np.ndarray):
                 validate_colors_for_writing(colors, n_points)
-            self._write_colors_dataset(group, colors, ordering_data)
+            self._write_colors_dataset(group, colors, ordering_data, n_points)
             metadata["has_colors"] = True
 
         if radii is not None:
             # Validate arrays only (scalars validated by encoder)
             if isinstance(radii, np.ndarray):
                 validate_radii_for_writing(radii, n_points)
-            max_radius = self._write_radii_dataset(group, radii, ordering_data)
+            max_radius = self._write_radii_dataset(
+                group, radii, ordering_data, n_points
+            )
             metadata["max_radius"] = max_radius
             metadata["has_radii"] = True
             group.attrs["max_radius"] = max_radius
@@ -474,14 +476,14 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             if isinstance(sharpness, np.ndarray):
                 validate_sharpness_for_writing(sharpness, n_points)
             max_sharpness = self._write_sharpness_dataset(
-                group, sharpness, ordering_data
+                group, sharpness, ordering_data, n_points
             )
             metadata["max_sharpness"] = max_sharpness
             metadata["has_sharpness"] = True
             group.attrs["max_sharpness"] = max_sharpness
 
         if scalars is not None:
-            self._write_scalars_dataset(group, scalars, ordering_data)
+            self._write_scalars_dataset(group, scalars, ordering_data, n_points)
             metadata["has_scalars"] = True
             group.attrs["has_scalars"] = True
 
@@ -876,7 +878,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             metadata["has_sharpness"] = True
 
         if scalars is not None:
-            self._write_scalars_dataset(group, scalars, ordering_data)
+            self._write_scalars_dataset(group, scalars, ordering_data, n_vertices)
             metadata["has_scalars"] = True
             group.attrs["has_scalars"] = True
 
@@ -1289,6 +1291,8 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                     data=chunk_bounds,
                     chunks=(chunk_bounds.shape[0], n_dims, 2),
                     dtype=np.float32,
+                    compressor=self.compressor,
+                    overwrite=True,
                 )
                 aprint(f"  ✓ Chunk bounds written: {len(chunk_bounds)} chunks")
 
@@ -2052,6 +2056,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         group: zarr.Group,
         colors: Union[NDArray[np.float32], tuple, list],
         spatial_index_data: Optional[Dict[str, Any]],
+        n_points: int,
     ) -> None:
         """Write colors dataset to Zarr using ArrayEncoder.
 
@@ -2059,6 +2064,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             group: Zarr group to write to
             colors: Colors array or tuple/list
             spatial_index_data: Optional spatial index for chunk optimization
+            n_points: Logical point count. This must not be inferred from the
+                positions zarr array because duplicate positions may be stored as
+                an array_ref with physical shape ``(0, D)``.
         """
         # Handle scalar vs array
         color_mode: Optional[Literal["sdr", "hdr"]] = None
@@ -2068,11 +2076,11 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             color_mode = "hdr" if max_val > 1.0 else "sdr"
             if color_mode == "hdr":
                 aprint("  ✓ Detected HDR colors (values > 1.0)")
-            n_elems = group["positions"].shape[0]
+            n_elems = n_points
             color_chunks = None
         else:
             if colors.shape[0] == 1:
-                n_elems = group["positions"].shape[0]
+                n_elems = n_points
                 color_chunks = None
             else:
                 n_elems = None
@@ -2139,6 +2147,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         group: zarr.Group,
         radii: Union[NDArray[np.float32], float, int],
         spatial_index_data: Optional[Dict[str, Any]],
+        n_points: int,
     ) -> float:
         """Write radii dataset to Zarr using ArrayEncoder.
 
@@ -2146,6 +2155,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             group: Zarr group to write to
             radii: Radii array or scalar value
             spatial_index_data: Optional spatial index for chunk optimization
+            n_points: Logical point count. This must not be inferred from the
+                positions zarr array because duplicate positions may be stored as
+                an array_ref with physical shape ``(0, D)``.
 
         Returns:
             Maximum radius value
@@ -2153,12 +2165,12 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         # Handle scalar vs array
         if isinstance(radii, (int, float)):
             max_radius = float(radii)
-            n_elems = group["positions"].shape[0]  # Get from positions
+            n_elems = n_points
             radii_chunks = None
         else:
             max_radius = float(np.max(radii))
             if radii.shape[0] == 1:
-                n_elems = group["positions"].shape[0]
+                n_elems = n_points
                 radii_chunks = None
             else:
                 n_elems = None
@@ -2199,6 +2211,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         group: zarr.Group,
         sharpness: Union[NDArray[np.float32], float, int],
         spatial_index_data: Optional[Dict[str, Any]],
+        n_points: int,
     ) -> float:
         """Write sharpness dataset to Zarr using ArrayEncoder.
 
@@ -2206,6 +2219,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             group: Zarr group to write to
             sharpness: Sharpness array or scalar value
             spatial_index_data: Optional spatial index for chunk optimization
+            n_points: Logical point count. This must not be inferred from the
+                positions zarr array because duplicate positions may be stored as
+                an array_ref with physical shape ``(0, D)``.
 
         Returns:
             Maximum sharpness value
@@ -2213,12 +2229,12 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         # Handle scalar vs array
         if isinstance(sharpness, (int, float)):
             max_sharpness = float(sharpness)
-            n_elems = group["positions"].shape[0]
+            n_elems = n_points
             sharp_chunks = None
         else:
             max_sharpness = float(np.max(sharpness))
             if sharpness.shape[0] == 1:
-                n_elems = group["positions"].shape[0]
+                n_elems = n_points
                 sharp_chunks = None
             else:
                 n_elems = None
@@ -2260,6 +2276,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         group: zarr.Group,
         scalars: Union[NDArray[np.float32], float, int],
         spatial_index_data: Optional[Dict[str, Any]],
+        n_elements: int,
     ) -> None:
         """Write scalars dataset to Zarr for colormap lookup.
 
@@ -2267,9 +2284,12 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             group: Zarr group to write to
             scalars: Scalar array or uniform value
             spatial_index_data: Optional spatial index for chunk optimization
+            n_elements: Logical element count. This must not be inferred from
+                the position zarr array because duplicate positions/vertices may
+                be stored as an array_ref with physical shape ``(0, D)``.
         """
-        # Determine positions key for element count
-        # Points use "positions", Lines use "vertices", GSplats use "centers"
+        # Validate that this is a geometry group. The logical element count is
+        # passed by the caller; physical zarr shape can be zero for array_ref.
         pos_key = next(
             (k for k in ("positions", "vertices", "centers") if k in group),
             None,
@@ -2281,7 +2301,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             )
 
         if isinstance(scalars, (int, float)):
-            n_elems = group[pos_key].shape[0]
+            n_elems = n_elements
             chunks = None
             scalar_min = float(scalars)
             scalar_max = float(scalars)
@@ -2290,7 +2310,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             scalar_min = float(np.min(scalars))
             scalar_max = float(np.max(scalars))
             if scalars.shape[0] == 1:
-                n_elems = group[pos_key].shape[0]
+                n_elems = n_elements
                 chunks = None
             else:
                 n_elems = None

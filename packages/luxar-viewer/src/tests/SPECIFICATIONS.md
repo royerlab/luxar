@@ -216,7 +216,7 @@ pnpm test:generate-fixtures
 
 - `unit/cache/lru-cache.test.ts` - LRU eviction strategy
 - `unit/cache/segmented-lru-cache.test.ts` - Segmented cache (large values)
-- `unit/cache/two-level-caching-store.test.ts` - OPFS persistent cache
+- `unit/cache/multi-level-caching-store.test.ts` - OPFS persistent cache
 
 **Cache Layers** (after L0 removal):
 

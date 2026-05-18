@@ -62,28 +62,36 @@ function validateCamera(config: AppConfig, errors: string[], warnings: string[])
   const { camera } = config;
   const defaults = config.renderingControls.defaults;
 
-  // FOV validation (lives in renderingControls.defaults)
-  if (defaults.fov < 1 || defaults.fov > 180) {
-    errors.push(`Invalid camera FOV: ${defaults.fov} (must be between 1 and 180)`);
+  // Each numeric check uses Number.isFinite() to reject NaN/Infinity.
+  // Bare `<` / `>` against NaN is always false, so naked range
+  // checks would let NaN pass silently.
+
+  if (!Number.isFinite(defaults.fov) || defaults.fov < 1 || defaults.fov > 180) {
+    errors.push(`Invalid camera FOV: ${defaults.fov} (must be a finite number 1..180)`);
   }
 
-  // Near/far plane validation (lives in renderingControls.defaults)
-  if (defaults.near <= 0) {
-    errors.push(`Invalid camera near plane: ${defaults.near} (must be > 0)`);
+  if (!Number.isFinite(defaults.near) || defaults.near <= 0) {
+    errors.push(`Invalid camera near plane: ${defaults.near} (must be a finite positive number)`);
   }
-  if (defaults.far <= defaults.near) {
+  if (!Number.isFinite(defaults.far) || defaults.far <= defaults.near) {
     errors.push(
-      `Invalid camera far plane: ${defaults.far} (must be > near plane ${defaults.near})`
+      `Invalid camera far plane: ${defaults.far} (must be a finite number > near plane ${defaults.near})`
     );
   }
 
-  // FOV min/max validation
-  if (camera.fovMin >= camera.fovMax) {
+  if (
+    !Number.isFinite(camera.fovMin) ||
+    !Number.isFinite(camera.fovMax) ||
+    camera.fovMin >= camera.fovMax
+  ) {
     errors.push(`Invalid FOV limits: min ${camera.fovMin} >= max ${camera.fovMax}`);
   }
 
-  // FOV sensitivity
-  if (camera.fovSensitivity <= 0 || camera.fovSensitivity > 1) {
+  if (
+    !Number.isFinite(camera.fovSensitivity) ||
+    camera.fovSensitivity <= 0 ||
+    camera.fovSensitivity > 1
+  ) {
     warnings.push(`Unusual FOV sensitivity: ${camera.fovSensitivity} (typical range 0.01-0.2)`);
   }
 }
@@ -94,39 +102,59 @@ function validateCamera(config: AppConfig, errors: string[], warnings: string[])
 function validateRendering(config: AppConfig, errors: string[], _warnings: string[]): void {
   const defaults = config.renderingControls.defaults;
 
-  // Global EOG validation (lives in renderingControls.defaults)
-  if (defaults.exposure < -5 || defaults.exposure > 5) {
-    errors.push(`Invalid exposure: ${defaults.exposure} (must be -5 to 5)`);
+  // NaN/Infinity hardening for the global EOG values.
+  if (!Number.isFinite(defaults.exposure) || defaults.exposure < -5 || defaults.exposure > 5) {
+    errors.push(`Invalid exposure: ${defaults.exposure} (must be a finite number -5..5)`);
   }
-  if (defaults.globalOffset < -1 || defaults.globalOffset > 1) {
-    errors.push(`Invalid globalOffset: ${defaults.globalOffset} (must be -1 to 1)`);
+  if (
+    !Number.isFinite(defaults.globalOffset) ||
+    defaults.globalOffset < -1 ||
+    defaults.globalOffset > 1
+  ) {
+    errors.push(`Invalid globalOffset: ${defaults.globalOffset} (must be a finite number -1..1)`);
   }
-  if (defaults.globalGamma < 0.1 || defaults.globalGamma > 10) {
-    errors.push(`Invalid globalGamma: ${defaults.globalGamma} (must be 0.1 to 10)`);
+  if (
+    !Number.isFinite(defaults.globalGamma) ||
+    defaults.globalGamma < 0.1 ||
+    defaults.globalGamma > 10
+  ) {
+    errors.push(`Invalid globalGamma: ${defaults.globalGamma} (must be a finite number 0.1..10)`);
   }
 }
 
 /**
- * Validate bloom configuration consistency
+ * Validate bloom configuration consistency.
+ *
+ * NaN passes bare numeric comparisons (NaN < 0 is false, NaN > 10 is
+ * false) so we use Number.isFinite explicitly. bloomLevels is also
+ * required to be a positive integer in [1, 12].
  */
-function validateBloomConsistency(config: AppConfig, _errors: string[], warnings: string[]): void {
+function validateBloomConsistency(config: AppConfig, errors: string[], warnings: string[]): void {
   const bloom = config.renderingControls.defaults;
 
-  // Check bloom value ranges
-  if (bloom.bloomStrength < 0 || bloom.bloomStrength > 10) {
+  if (!Number.isFinite(bloom.bloomStrength)) {
+    errors.push(`Invalid bloom.bloomStrength: ${bloom.bloomStrength} (must be finite)`);
+  } else if (bloom.bloomStrength < 0 || bloom.bloomStrength > 10) {
     warnings.push(`Unusual bloom.bloomStrength: ${bloom.bloomStrength} (typical range 0-2)`);
   }
-  if (bloom.bloomRadius < 0 || bloom.bloomRadius > 10) {
+
+  if (!Number.isFinite(bloom.bloomRadius)) {
+    errors.push(`Invalid bloom.bloomRadius: ${bloom.bloomRadius} (must be finite)`);
+  } else if (bloom.bloomRadius < 0 || bloom.bloomRadius > 10) {
     warnings.push(`Unusual bloom.bloomRadius: ${bloom.bloomRadius} (typical range 0-2)`);
   }
-  if (bloom.bloomThreshold < 0 || bloom.bloomThreshold > 1) {
-    warnings.push(`Invalid bloom.bloomThreshold: ${bloom.bloomThreshold} (must be 0-1)`);
-  }
-  if (bloom.bloomLevels < 1 || bloom.bloomLevels > 12) {
-    warnings.push(`Invalid bloom.bloomLevels: ${bloom.bloomLevels} (must be 1-12)`);
+
+  if (!Number.isFinite(bloom.bloomThreshold)) {
+    errors.push(`Invalid bloom.bloomThreshold: ${bloom.bloomThreshold} (must be finite)`);
+  } else if (bloom.bloomThreshold < 0 || bloom.bloomThreshold > 1) {
+    errors.push(`Invalid bloom.bloomThreshold: ${bloom.bloomThreshold} (must be 0-1)`);
   }
 
-  // No more duplication to check - single source of truth!
+  if (!Number.isInteger(bloom.bloomLevels) || bloom.bloomLevels < 1 || bloom.bloomLevels > 12) {
+    errors.push(
+      `Invalid bloom.bloomLevels: ${bloom.bloomLevels} (must be an integer in 1-12)`
+    );
+  }
 }
 
 /**
@@ -148,6 +176,18 @@ function validateControls(config: AppConfig, errors: string[], _warnings: string
   ];
 
   for (const { name, range } of ranges) {
+    // NaN check on every range field — without this, any of
+    // {min, max, default} could be NaN and silently pass.
+    if (
+      !Number.isFinite(range.min) ||
+      !Number.isFinite(range.max) ||
+      !Number.isFinite(range.default)
+    ) {
+      errors.push(
+        `Invalid controls.${name}: non-finite values (min=${range.min}, max=${range.max}, default=${range.default})`
+      );
+      continue;
+    }
     if (range.min >= range.max) {
       errors.push(`Invalid controls.${name}: min (${range.min}) >= max (${range.max})`);
     }
@@ -162,42 +202,162 @@ function validateControls(config: AppConfig, errors: string[], _warnings: string
 /**
  * Validate data loading configuration
  */
-function validateDataLoading(config: AppConfig, errors: string[], _warnings: string[]): void {
+function validateDataLoading(config: AppConfig, errors: string[], warnings: string[]): void {
   const { dataLoading } = config;
 
-  // Network validation
-  if (dataLoading.network.timeoutMs <= 0) {
-    errors.push(`Invalid network timeout: ${dataLoading.network.timeoutMs} ms (must be > 0)`);
-  }
-  if (dataLoading.network.maxConcurrent <= 0) {
+  // Network validation: reject NaN (comparisons with NaN are always
+  // false, so `<= 0` accepts it), Infinity, and non-integers where
+  // integer semantics are required.
+  if (
+    !Number.isFinite(dataLoading.network.timeoutMs) ||
+    dataLoading.network.timeoutMs <= 0
+  ) {
     errors.push(
-      `Invalid max concurrent requests: ${dataLoading.network.maxConcurrent} (must be > 0)`
+      `Invalid network timeout: ${dataLoading.network.timeoutMs} ms (must be a finite positive number)`
     );
   }
-  if (dataLoading.network.retryAttempts < 0) {
-    errors.push(`Invalid retry attempts: ${dataLoading.network.retryAttempts} (must be >= 0)`);
+  // validationTimeoutMs is the per-request total budget for cache
+  // validation in fetchWithRetry; 0 / negative / NaN / Infinity all
+  // produce surprising abort/retry behavior, so reject up front.
+  if (
+    !Number.isFinite(dataLoading.network.validationTimeoutMs) ||
+    dataLoading.network.validationTimeoutMs <= 0
+  ) {
+    errors.push(
+      `Invalid validation timeout: ${dataLoading.network.validationTimeoutMs} ms (must be a finite positive number)`
+    );
+  } else if (dataLoading.network.validationTimeoutMs < 3000) {
+    // Soft warning, not a hard error. The documented default (5 s) is
+    // a fail-fast budget tuned for broadband; values under 3 s are
+    // almost always too aggressive — every round-trip including DNS,
+    // TLS, and server processing must complete in that window or the
+    // validation aborts and forces a re-fetch of otherwise-valid
+    // cached data. For 3G / Edge / high-latency targets, raise to
+    // >=8000 instead. See
+    // `DataLoadingNetworkConfig.validationTimeoutMs` JSDoc.
+    warnings.push(
+      `Very low cache validation timeout: ${dataLoading.network.validationTimeoutMs} ms ` +
+        '(values <3000 ms cause spurious validation aborts; consider 5000 ms default ' +
+        'or >=8000 ms for 3G/Edge targets)'
+    );
+  }
+  if (
+    !Number.isInteger(dataLoading.network.maxConcurrent) ||
+    dataLoading.network.maxConcurrent <= 0
+  ) {
+    errors.push(
+      `Invalid max concurrent requests: ${dataLoading.network.maxConcurrent} (must be a positive integer)`
+    );
+  }
+  if (
+    !Number.isInteger(dataLoading.network.retryAttempts) ||
+    dataLoading.network.retryAttempts < 0
+  ) {
+    errors.push(
+      `Invalid retry attempts: ${dataLoading.network.retryAttempts} (must be a non-negative integer)`
+    );
   }
 
-  // Memory validation
-  if (dataLoading.memory.targetHeapUsage <= 0 || dataLoading.memory.targetHeapUsage > 1) {
-    errors.push(`Invalid target heap usage: ${dataLoading.memory.targetHeapUsage} (must be 0-1)`);
+  // Memory validation: reject NaN — `NaN <= 0` is always false, so a
+  // bare `<= 0 || > 1` check would let NaN through.
+  const targetHeap = dataLoading.memory.targetHeapUsage;
+  if (!Number.isFinite(targetHeap) || targetHeap <= 0 || targetHeap > 1) {
+    errors.push(
+      `Invalid target heap usage: ${targetHeap} (must be a finite number in (0, 1])`
+    );
   }
-  if (dataLoading.memory.minCacheMB <= 0) {
-    errors.push(`Invalid min cache size: ${dataLoading.memory.minCacheMB} MB (must be > 0)`);
+  const minCache = dataLoading.memory.minCacheMB;
+  if (!Number.isFinite(minCache) || minCache <= 0) {
+    errors.push(`Invalid min cache size: ${minCache} MB (must be a finite positive number)`);
   }
 
-  // Spatial validation (new)
+  // Spatial validation: same NaN hardening.
   if (dataLoading.spatial) {
-    if (dataLoading.spatial.defaultTolerance <= 0) {
+    const tol = dataLoading.spatial.defaultTolerance;
+    if (!Number.isFinite(tol) || tol <= 0) {
       errors.push(
-        `Invalid spatial default tolerance: ${dataLoading.spatial.defaultTolerance} (must be > 0)`
+        `Invalid spatial default tolerance: ${tol} (must be a finite positive number)`
       );
     }
-    if (dataLoading.spatial.defaultMaxRadius <= 0) {
+    const maxR = dataLoading.spatial.defaultMaxRadius;
+    if (!Number.isFinite(maxR) || maxR <= 0) {
       errors.push(
-        `Invalid spatial default max radius: ${dataLoading.spatial.defaultMaxRadius} (must be > 0)`
+        `Invalid spatial default max radius: ${maxR} (must be a finite positive number)`
       );
     }
+  }
+
+  // Cache size validation: NaN / Infinity / negative values would
+  // cascade into the cache layer sizing logic and surface as cryptic
+  // OOMs or zero-budget caches.
+  const cache = config.cache;
+  if (cache) {
+    const l0 = cache.l0MaxSizeMB;
+    if (!Number.isFinite(l0) || l0 <= 0) {
+      errors.push(`Invalid cache.l0MaxSizeMB: ${l0} (must be a finite positive number)`);
+    }
+    const l1 = cache.l1MaxSizeMB;
+    if (!Number.isFinite(l1) || l1 <= 0) {
+      errors.push(`Invalid cache.l1MaxSizeMB: ${l1} (must be a finite positive number)`);
+    } else if (l1 < 10) {
+      // SegmentedLRUCache reserves a 10MB metadata floor; below that
+      // the chunks segment becomes zero bytes and every chunk write
+      // is silently rejected. Reject the config rather than ship a
+      // cache that secretly stores nothing.
+      errors.push(
+        `Invalid cache.l1MaxSizeMB: ${l1} (must be ≥ 10 — SegmentedLRUCache's metadata floor)`
+      );
+    }
+    const l2 = cache.l2MaxSizeMB;
+    if (!Number.isFinite(l2) || l2 <= 0) {
+      errors.push(`Invalid cache.l2MaxSizeMB: ${l2} (must be a finite positive number)`);
+    }
+
+    // R1: opfsOperationTimeoutMs gates every OPFS read/write via withTimeout.
+    // 0 / negative / NaN cause immediate timeout on every op; Infinity disables
+    // the safety net entirely.
+    const opfsTimeout = cache.opfsOperationTimeoutMs;
+    if (!Number.isFinite(opfsTimeout) || opfsTimeout <= 0) {
+      errors.push(
+        `Invalid cache.opfsOperationTimeoutMs: ${opfsTimeout} (must be a finite positive number; 10000 = 10s recommended)`
+      );
+    }
+
+    // R1: externalDatasetTtlMs is allowed to be null (no TTL — content-hash
+    // validation only). Anything else must be a finite positive number.
+    // NaN passes `> 0` checks (always false), so reject it explicitly.
+    const externalTtl = cache.externalDatasetTtlMs;
+    if (externalTtl !== null && (!Number.isFinite(externalTtl) || externalTtl <= 0)) {
+      errors.push(
+        `Invalid cache.externalDatasetTtlMs: ${externalTtl} (must be null or a finite positive number)`
+      );
+    }
+  }
+
+  // Worker timeouts: 0 disables; otherwise must be a finite positive number
+  // (we don't restrict the upper bound — long-running fits can legitimately
+  // exceed any "sane" ceiling).
+  const visTimeout = dataLoading.performance.workerVisibilityTimeoutMs;
+  if (!Number.isFinite(visTimeout) || visTimeout < 0) {
+    errors.push(
+      `Invalid workerVisibilityTimeoutMs: ${visTimeout} (must be ≥ 0; 0 disables timeout)`
+    );
+  }
+  const projTimeout = dataLoading.performance.workerProjectionTimeoutMs;
+  if (!Number.isFinite(projTimeout) || projTimeout < 0) {
+    errors.push(
+      `Invalid workerProjectionTimeoutMs: ${projTimeout} (must be ≥ 0; 0 disables timeout)`
+    );
+  }
+  // Init timeout: must be a finite positive number; 0 disables, but the
+  // intent is the opposite of per-call timeouts — without an init guard
+  // a blocked worker chunk hangs the page indefinitely. We allow 0 only
+  // for tests that need to disable it.
+  const initTimeout = dataLoading.performance.workerInitTimeoutMs;
+  if (!Number.isFinite(initTimeout) || initTimeout < 0) {
+    errors.push(
+      `Invalid workerInitTimeoutMs: ${initTimeout} (must be ≥ 0; 0 disables, but the guard is recommended)`
+    );
   }
 }
 
@@ -207,24 +367,43 @@ function validateDataLoading(config: AppConfig, errors: string[], _warnings: str
 function validateScene(config: AppConfig, errors: string[], _warnings: string[]): void {
   const { scene } = config;
 
-  // Background color validation
-  if (scene.backgroundColor < 0 || scene.backgroundColor > 0xffffff) {
+  // `NaN < 0` is always false, so a bare range check would let NaN
+  // through. Also require an integer color value.
+  if (
+    !Number.isInteger(scene.backgroundColor) ||
+    scene.backgroundColor < 0 ||
+    scene.backgroundColor > 0xffffff
+  ) {
     errors.push(
-      `Invalid scene background color: ${scene.backgroundColor} (must be valid hex color)`
+      `Invalid scene background color: ${scene.backgroundColor} (must be an integer 0..0xffffff)`
     );
   }
 
-  // Fit ratio validation
-  if (scene.defaultFitRatio <= 0 || scene.defaultFitRatio > 1) {
-    errors.push(`Invalid scene fit ratio: ${scene.defaultFitRatio} (must be between 0 and 1)`);
+  // Fit ratio validation. Same NaN hardening.
+  if (
+    !Number.isFinite(scene.defaultFitRatio) ||
+    scene.defaultFitRatio <= 0 ||
+    scene.defaultFitRatio > 1
+  ) {
+    errors.push(
+      `Invalid scene fit ratio: ${scene.defaultFitRatio} (must be a finite number in (0, 1])`
+    );
   }
 }
 
 /**
  * Validate input configuration
  */
-function validateInput(config: AppConfig, _errors: string[], warnings: string[]): void {
+function validateInput(config: AppConfig, errors: string[], warnings: string[]): void {
   const { input } = config;
+
+  // NaN/Infinity hardening.
+  if (!Number.isFinite(input.defaultSensitivity)) {
+    errors.push(
+      `Invalid input.defaultSensitivity: ${input.defaultSensitivity} (must be a finite number)`
+    );
+    return;
+  }
 
   // Sensitivity validation
   if (input.defaultSensitivity <= 0 || input.defaultSensitivity > 1) {

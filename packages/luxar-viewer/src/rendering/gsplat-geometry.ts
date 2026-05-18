@@ -257,7 +257,7 @@ export function updateInstancedGSplatsMesh(
     // min(instanceCount, 0) = 0 instances. Deleting the cached value forces recalculation
     // on the next render frame. (THREE.js r163+ internal property)
 
-    delete (geometry as any)._maxInstanceCount;
+    delete (geometry as unknown as { _maxInstanceCount?: number })._maxInstanceCount;
   } else {
     // Same size, update in place
     const centerAttr = geometry.getAttribute('aCenter') as THREE.InstancedBufferAttribute;

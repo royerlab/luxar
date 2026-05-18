@@ -12,6 +12,7 @@
 
 import * as THREE from 'three';
 import type { CameraAwareMaterial } from '../camera-aware-material';
+import { computeFocalLength } from '../camera-uniforms';
 import { materialManager } from '../material-manager';
 
 export interface GSplatPickingMaterialConfig {
@@ -288,16 +289,9 @@ export class GSplatPickingMaterial extends THREE.ShaderMaterial implements Camer
     this.uniforms.uResolution.value.copy(resolution);
     this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
 
-    if (isOrtho) {
-      const fy = resolution.y / fov;
-      this.uniforms.uFx.value = fy;
-      this.uniforms.uFy.value = fy;
-    } else {
-      const tanHalfFov = Math.tan(fov / 2);
-      const fy = resolution.y / (2 * tanHalfFov);
-      this.uniforms.uFx.value = fy;
-      this.uniforms.uFy.value = fy;
-    }
+    const fy = computeFocalLength(fov, resolution.y, isOrtho);
+    this.uniforms.uFx.value = fy;
+    this.uniforms.uFy.value = fy;
 
     if (nearCull !== undefined) {
       this.uniforms.uNearCull.value = nearCull;

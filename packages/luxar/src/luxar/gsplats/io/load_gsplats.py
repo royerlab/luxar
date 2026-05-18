@@ -47,8 +47,7 @@ def _extract_compressed_zarr(compressed_path: Path) -> Path:
                     zip_member_path.relative_to(temp_dir_resolved)
                 except ValueError as exc:
                     raise ValueError(
-                        f"Zip member '{zip_member}' would escape extraction "
-                        "directory"
+                        f"Zip member '{zip_member}' would escape extraction directory"
                     ) from exc
             zip_ref.extractall(temp_dir)
     elif compressed_path.suffix == ".gz" or str(compressed_path).endswith(

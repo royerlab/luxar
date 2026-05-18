@@ -43,9 +43,7 @@ from luxar.gsplats.lod._kernels import (
 from luxar.gsplats.utils.trils import unpack_tril
 from luxar.utils.spatial_hash import BatchedSpatialHashGrid
 
-MethodName = Literal[
-    "greedy", "self_energy", "mass", "amplitude", "spectral", "random"
-]
+MethodName = Literal["greedy", "self_energy", "mass", "amplitude", "spectral", "random"]
 _VALID_METHODS = (
     "greedy",
     "self_energy",
@@ -76,9 +74,7 @@ def _self_energy_score(data: GSplatData) -> np.ndarray:
     The $\\pi^{D/2}$ constant is shared across all splats and drops out
     of the ordering.
     """
-    out: np.ndarray = (
-        np.asarray(data.amplitudes, dtype=np.float64) ** 2 * _det_L(data)
-    )
+    out: np.ndarray = np.asarray(data.amplitudes, dtype=np.float64) ** 2 * _det_L(data)
     return out
 
 
@@ -88,9 +84,7 @@ def _mass_score(data: GSplatData) -> np.ndarray:
     The $(2\\pi)^{D/2}$ constant is shared across all splats and drops
     out of the ordering.
     """
-    out: np.ndarray = (
-        np.asarray(data.amplitudes, dtype=np.float64) * _det_L(data)
-    )
+    out: np.ndarray = np.asarray(data.amplitudes, dtype=np.float64) * _det_L(data)
     return out
 
 
@@ -98,9 +92,7 @@ def _truncation_radii(data: GSplatData, sigmas: float = 3.0) -> np.ndarray:
     """Per-splat truncation radius $r_i = \\sigma\\,\\sqrt{\\lambda_{\\max}(\\Sigma_i)}$."""
     if data.n_splats == 0:
         return np.empty(0, dtype=np.float64)
-    L = unpack_tril(
-        np.asarray(data.cholesky_factors, dtype=np.float64), data.ndim
-    )
+    L = unpack_tril(np.asarray(data.cholesky_factors, dtype=np.float64), data.ndim)
     return truncation_radii_numpy(L, sigmas=sigmas)
 
 
@@ -109,9 +101,7 @@ def _truncation_radii(data: GSplatData, sigmas: float = 3.0) -> np.ndarray:
 # ─────────────────────────────────────────────────────────────────────
 
 
-def _build_sparse_gram(
-    data: GSplatData, sigmas: float = 3.0
-) -> sparse.csr_matrix:
+def _build_sparse_gram(data: GSplatData, sigmas: float = 3.0) -> sparse.csr_matrix:
     """Build a sparse symmetric Gram matrix via $3\\sigma$ pruning.
 
     Two splats whose $3\\sigma$ ellipsoids do not overlap have an
@@ -127,9 +117,7 @@ def _build_sparse_gram(
 
     centers = np.asarray(data.centers, dtype=np.float64)
     amps = np.asarray(data.amplitudes, dtype=np.float64)
-    L = unpack_tril(
-        np.asarray(data.cholesky_factors, dtype=np.float64), D
-    )
+    L = unpack_tril(np.asarray(data.cholesky_factors, dtype=np.float64), D)
     Sigma = L @ L.transpose(0, 2, 1)
     sqrt_det_Sigma = _det_L(data)  # |Σ_i|^{1/2}
     radii = _truncation_radii(data, sigmas=sigmas)
@@ -351,9 +339,7 @@ def compute_additive_order(
         ``order[k]`` is the original index of the splat at rank $k$.
     """
     if method not in _VALID_METHODS:
-        raise ValueError(
-            f"method must be one of {_VALID_METHODS}, got {method!r}"
-        )
+        raise ValueError(f"method must be one of {_VALID_METHODS}, got {method!r}")
 
     N = data.n_splats
     if N == 0:
@@ -433,21 +419,16 @@ def _resolve_breakpoints(
     # Distinguish int vs float by inspecting elements.
     all_int = all(isinstance(x, (int, np.integer)) for x in breakpoints)
     all_float = all(
-        isinstance(x, float) or (isinstance(x, np.floating))
-        for x in breakpoints
+        isinstance(x, float) or (isinstance(x, np.floating)) for x in breakpoints
     )
     if all_int:
         cuts = [int(c) for c in breakpoints]
         if any(c <= 0 for c in cuts):
             raise ValueError("explicit count breakpoints must be positive")
         if not all(cuts[i] < cuts[i + 1] for i in range(len(cuts) - 1)):
-            raise ValueError(
-                "explicit count breakpoints must be strictly increasing"
-            )
+            raise ValueError("explicit count breakpoints must be strictly increasing")
         if cuts[-1] > n:
-            raise ValueError(
-                f"largest breakpoint {cuts[-1]} exceeds N={n}"
-            )
+            raise ValueError(f"largest breakpoint {cuts[-1]} exceeds N={n}")
         if cuts[-1] < n:
             cuts.append(n)
         return cuts, "explicit-counts"
@@ -458,13 +439,9 @@ def _resolve_breakpoints(
         # ``make_additive_lod`` where the curve is available.
         fracs = [float(x) for x in breakpoints]
         if any(f <= 0.0 or f > 1.0 for f in fracs):
-            raise ValueError(
-                "energy-fraction breakpoints must lie in (0, 1]"
-            )
+            raise ValueError("energy-fraction breakpoints must lie in (0, 1]")
         if not all(fracs[i] < fracs[i + 1] for i in range(len(fracs) - 1)):
-            raise ValueError(
-                "energy-fraction breakpoints must be strictly increasing"
-            )
+            raise ValueError("energy-fraction breakpoints must be strictly increasing")
         return fracs, "energy-fractions"  # type: ignore[return-value]
 
     raise TypeError(
@@ -559,18 +536,14 @@ def make_additive_lod(
     if kind == "energy-fractions":
         # Need the Gram matrix to resolve fractions to counts.
         gram_csr = _build_sparse_gram(data, sigmas=truncation_sigmas)
-        cuts = _energy_fraction_cuts(
-            [float(x) for x in cuts_or_fracs], gram_csr, order
-        )
+        cuts = _energy_fraction_cuts([float(x) for x in cuts_or_fracs], gram_csr, order)
     else:
         cuts = [int(x) for x in cuts_or_fracs]
 
     centers_full = np.asarray(data.centers)[order]
     amps_full = np.asarray(data.amplitudes)[order]
     chol_full = np.asarray(data.cholesky_factors)[order]
-    colors_full = (
-        np.asarray(data.colors)[order] if data.colors is not None else None
-    )
+    colors_full = np.asarray(data.colors)[order] if data.colors is not None else None
 
     lods: list[GSplatLOD] = []
     prev = 0
@@ -589,12 +562,8 @@ def make_additive_lod(
             GSplatLOD(
                 centers=centers_full[prev:end].astype(np.float32, copy=False),
                 amplitudes=amps_full[prev:end].astype(np.float32, copy=False),
-                cholesky_factors=chol_full[prev:end].astype(
-                    np.float32, copy=False
-                ),
-                colors=(
-                    colors_full[prev:end] if colors_full is not None else None
-                ),
+                cholesky_factors=chol_full[prev:end].astype(np.float32, copy=False),
+                colors=(colors_full[prev:end] if colors_full is not None else None),
                 stats=lod_stats,
                 truncation_radius=data.truncation_radius,
             )

@@ -8,7 +8,7 @@
  * Update baselines with: pnpm test:e2e --update-snapshots
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { waitForLuxarReady, waitForRenderStable, waitForNextRender } from './helpers';
 
 // Dataset paths (served from Python HTTP server on port 9000)
@@ -18,7 +18,7 @@ const DATASETS = {
   build: 'http://localhost:9000/datasets/examples/build_example_structured.zarr',
 };
 
-test.describe('Visual Regression - Basic Rendering', () => {
+test.describe('@visual Visual Regression - Basic Rendering', () => {
   test('should render dimension_navigation dataset consistently', async ({ page }) => {
     await page.goto(`/?src=${DATASETS.nav}&debug`);
     await waitForLuxarReady(page);
@@ -47,15 +47,22 @@ test.describe('Visual Regression - Basic Rendering', () => {
   });
 });
 
-test.describe('Visual Regression - HDR & Tone Mapping', () => {
+test.describe('@visual Visual Regression - HDR & Tone Mapping', () => {
+  // Tests skip gracefully when the exposure API isn't available (see
+  // early return below). To regenerate snapshots after intentional
+  // changes: `playwright test visual-regression --update-snapshots
+  // --grep '@visual'`.
   test('should render with exposure = 0.0 (neutral)', async ({ page }) => {
     await page.goto(`/?src=${DATASETS.build}&debug`);
     await waitForLuxarReady(page);
 
-    // Check if exposure API is available, skip if not
+    // __luxarDebug exposes the post-processing manager directly
+    // (debug.postProcessing.updateExposure), not via a wrapping
+    // `sceneManager` field — checking the wrong path silently no-ops
+    // the test.
     const hasExposureAPI = await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
-      return debug.sceneManager && typeof debug.sceneManager.updateExposure === 'function';
+      return debug.postProcessing && typeof debug.postProcessing.updateExposure === 'function';
     });
 
     if (!hasExposureAPI) {
@@ -65,7 +72,7 @@ test.describe('Visual Regression - HDR & Tone Mapping', () => {
 
     // Set exposure to 0.0 (neutral)
     await page.evaluate(() => {
-      (window as any).__luxarDebug.sceneManager.updateExposure(0.0);
+      (window as any).__luxarDebug.postProcessing.updateExposure(0.0);
       (window as any).__luxarDebug.renderOnce();
     });
 
@@ -81,10 +88,10 @@ test.describe('Visual Regression - HDR & Tone Mapping', () => {
     await page.goto(`/?src=${DATASETS.build}&debug`);
     await waitForLuxarReady(page);
 
-    // Check if exposure API is available, skip if not
+    // See exposure-0.0 test for the API path rationale.
     const hasExposureAPI = await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
-      return debug.sceneManager && typeof debug.sceneManager.updateExposure === 'function';
+      return debug.postProcessing && typeof debug.postProcessing.updateExposure === 'function';
     });
 
     if (!hasExposureAPI) {
@@ -94,7 +101,7 @@ test.describe('Visual Regression - HDR & Tone Mapping', () => {
 
     // Set exposure to ~3.32 stops (equivalent to 10x brighter)
     await page.evaluate(() => {
-      (window as any).__luxarDebug.sceneManager.updateExposure(3.32);
+      (window as any).__luxarDebug.postProcessing.updateExposure(3.32);
       (window as any).__luxarDebug.renderOnce();
     });
 
@@ -135,7 +142,7 @@ test.describe('Visual Regression - HDR & Tone Mapping', () => {
   });
 });
 
-test.describe('Visual Regression - Camera Views', () => {
+test.describe('@visual Visual Regression - Camera Views', () => {
   test('should render with FOV = 47 (default 50mm)', async ({ page }) => {
     await page.goto(`/?src=${DATASETS.nav}&debug`);
     await waitForLuxarReady(page);
@@ -192,7 +199,7 @@ test.describe('Visual Regression - Camera Views', () => {
   });
 });
 
-test.describe('Visual Regression - Control Modes', () => {
+test.describe('@visual Visual Regression - Control Modes', () => {
   test('should render in orbit control mode', async ({ page }) => {
     await page.goto(`/?src=${DATASETS.nav}&debug`);
     await waitForLuxarReady(page);

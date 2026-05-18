@@ -18,7 +18,7 @@ vi.mock('../../../rendering/post-processing-manager', () => ({
   PostProcessingManager: vi.fn(),
 }));
 
-vi.mock('../../../ui/performance-monitor', () => {
+vi.mock('../../../ui/monitors/performance-monitor', () => {
   return {
     PerformanceMonitor: class MockPerformanceMonitor {
       begin = vi.fn();
@@ -221,6 +221,32 @@ describe('AnimationController', () => {
       expect(mockRAF).toHaveBeenCalledWith(expect.any(Function));
     });
 
+    // when WebGL context is lost, animation loop must
+    // skip postProcessing.render() to avoid issuing draw calls
+    // against a dead context. controls.update() and per-frame
+    // callbacks still run.
+    it('skips postProcessing.render() while context is lost', () => {
+      controller.setContextLostPredicate(() => true);
+      controller.startAnimation();
+
+      expect(mockControls.update).toHaveBeenCalledTimes(1);
+      expect(mockPostProcessing.render).not.toHaveBeenCalled();
+    });
+
+    it('renders normally when context-lost predicate returns false', () => {
+      controller.setContextLostPredicate(() => false);
+      controller.startAnimation();
+
+      expect(mockPostProcessing.render).toHaveBeenCalledTimes(1);
+    });
+
+    it('renders normally when no context-lost predicate is set (default)', () => {
+      // Predicate is null by default — backward-compat for tests/embed
+      // contexts that never lose the context.
+      controller.startAnimation();
+      expect(mockPostProcessing.render).toHaveBeenCalledTimes(1);
+    });
+
     it('should cancel animation frame on stop', () => {
       controller.startAnimation();
       controller.stopAnimation();
@@ -363,13 +389,24 @@ describe('AnimationController', () => {
       expect(controller.isActive).toBe(false);
     });
 
-    it('should return performance monitor via performanceStats', () => {
-      const stats = controller.performanceStats;
+    it('emits frame-start and frame-end on the event bus per frame', async () => {
+      const { eventBus } = await import('../../../utils/event-bus');
+      const startListener = vi.fn();
+      const endListener = vi.fn();
+      const offStart = eventBus.on('frame-start', startListener);
+      const offEnd = eventBus.on('frame-end', endListener);
 
-      expect(stats).toBeDefined();
-      expect(stats.begin).toBeDefined();
-      expect(stats.end).toBeDefined();
-      expect(stats.dispose).toBeDefined();
+      try {
+        controller.startAnimation();
+        // The mock requestAnimationFrame should have fired the loop body
+        // at least once already (see makeMockRAF in this file's setup).
+        expect(startListener).toHaveBeenCalled();
+        expect(endListener).toHaveBeenCalled();
+      } finally {
+        offStart();
+        offEnd();
+        controller.stopAnimation();
+      }
     });
   });
 });

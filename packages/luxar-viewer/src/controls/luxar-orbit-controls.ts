@@ -13,7 +13,8 @@
  */
 
 import * as THREE from 'three';
-import type { LuxarCamera } from '../scene/camera-utils';
+import type { LuxarCamera } from '../utils/camera-utils';
+import { clamp } from '../utils/clamp';
 
 export interface LuxarOrbitControlsConfig {
   enableDamping?: boolean;
@@ -368,9 +369,15 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
     this.domElement.removeEventListener('contextmenu', this.boundOnContextMenu);
 
     if (this.viewAxisRotationHandler) {
-      this.domElement.removeEventListener('wheel', this.viewAxisRotationHandler, {
-        capture: true,
-      } as any);
+      // The DOM removeEventListener overload that accepts an options
+      // object is typed `EventListenerOptions`; the `passive` flag in
+      // capture mode isn't part of that subset, so we cast to the
+      // structural shape we actually pass.
+      this.domElement.removeEventListener(
+        'wheel',
+        this.viewAxisRotationHandler,
+        { capture: true } as EventListenerOptions
+      );
       this.viewAxisRotationHandler = null;
     }
 
@@ -482,7 +489,7 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
       this.distance *= scale;
     } else {
       const cam = this.camera as THREE.OrthographicCamera;
-      cam.zoom = Math.max(this.minZoom, Math.min(this.maxZoom, cam.zoom / scale));
+      cam.zoom = clamp(cam.zoom / scale, this.minZoom, this.maxZoom);
       cam.updateProjectionMatrix();
     }
   }

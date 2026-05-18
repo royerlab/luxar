@@ -365,7 +365,7 @@ export class TransferableAccumulator<TBuffers extends TransferableBuffers> {
     }
 
     if (!this.buffers) {
-      throw new Error('Buffers not allocated');
+      throw new Error('[Accumulator] Buffers not allocated');
     }
 
     if (this.buffers[name]) {
@@ -455,6 +455,8 @@ export function createGSplatsAccumulator(
 
 /**
  * Request to worker with transferable buffers.
+ *
+ * @internal — preserved for future use; no current consumer.
  */
 export interface WorkerProjectionRequest<TParams, TBuffers> {
   /** Projection parameters */
@@ -466,6 +468,8 @@ export interface WorkerProjectionRequest<TParams, TBuffers> {
 
 /**
  * Response from worker with filled buffers.
+ *
+ * @internal — preserved for future use; no current consumer.
  */
 export interface WorkerProjectionResponse<TBuffers> {
   /** Number of items written */

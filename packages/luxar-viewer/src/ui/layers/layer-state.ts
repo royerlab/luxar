@@ -169,6 +169,18 @@ export class LayerStateManager {
           displayMax = recovered.max;
         }
 
+        // Slider bounds must encompass the current display range. The recovered
+        // [displayMin, displayMax] can extend beyond color_data_range when the
+        // node has authored intensity/offset (e.g., intensity=0.2 implies a
+        // display range of [0, 5] regardless of where the actual color values
+        // lie). If the slider's <input type="range"> min/max stayed at the
+        // narrower data range, the browser would silently clamp the thumb
+        // values on first render, and the first slider interaction would write
+        // the clamped values back — snapping intensity from the authored value
+        // to the slider-implied one and causing a sudden brightness jump.
+        const dataMin = Math.min(dataRange[0], displayMin);
+        const dataMax = Math.max(dataRange[1], displayMax);
+
         // Honor the authoring-time `visible` attr (default true). Allows
         // Python authors to start a layer hidden via add_points(..., visible=False).
         const initialVisible = node.attrs.visible !== false;
@@ -182,8 +194,8 @@ export class LayerStateManager {
           opacity: (node.attrs.opacity as number) ?? 1.0,
           displayMin,
           displayMax,
-          dataMin: dataRange[0],
-          dataMax: dataRange[1],
+          dataMin,
+          dataMax,
           gamma: (node.attrs.gamma as number) ?? 1.0,
           blendingMode: ((node.attrs.blending_mode as string) ?? 'additive') as BlendingMode,
           selected: false,

@@ -8,7 +8,7 @@
  * Tests use fixtures from packages/luxar-viewer/tests/fixtures/
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import {
   waitForLuxarReady,
   waitForPointsLoaded,
@@ -136,9 +136,7 @@ test.describe('Test Fixture Rendering', () => {
         drawRangeCount !== undefined && drawRangeCount !== Infinity
           ? Math.min(drawRangeCount, colorAttr.count)
           : colorAttr.count;
-      const colorArr = Array.from(
-        colorAttr.array.subarray(0, actualCount * 3)
-      ) as number[];
+      const colorArr = Array.from(colorAttr.array.subarray(0, actualCount * 3)) as number[];
       // The fixture stores points along the X axis with index == x-position, so
       // sort by x to recover the input ordering (the loader/spatial index does
       // not preserve insertion order).
@@ -457,9 +455,27 @@ test.describe('Console Error Detection', () => {
     // Test that our error detection actually works by loading a non-existent dataset
     await page.goto('/?src=http://localhost:9000/nonexistent.zarr&debug');
 
-    // Wait longer for errors to accumulate — the console interceptor may not be
-    // ready immediately, and network errors can take time to propagate
-    await page.waitForTimeout(5000);
+    // Poll for the first error/warning to be intercepted instead of
+    // waiting a fixed 5 s. Caps at 8 s so we still fail loudly if the
+    // interceptor is broken; in practice the first network error
+    // usually propagates within ~1 s.
+    await page
+      .waitForFunction(
+        () => {
+          const debug = (window as any).__luxarDebug;
+          if (!debug?.consoleInterceptor?.getBufferedMessages) return false;
+          const msgs = debug.consoleInterceptor.getBufferedMessages();
+          return msgs.some(
+            (m: { type?: string }) => m.type === 'error' || m.type === 'warning'
+          );
+        },
+        null,
+        { timeout: 8000 }
+      )
+      .catch(() => {
+        // Interceptor never reported — page-level errors may still have
+        // been captured by the captureConsoleMessages listener below.
+      });
 
     // Check both the in-app console interceptor and the Playwright-captured errors
     const consoleMessages = await getConsoleMessages(page);

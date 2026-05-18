@@ -537,7 +537,9 @@ def show_roundtrip_comparison(
     try:
         import matplotlib.pyplot as plt
     except ImportError:
-        aprint("matplotlib is required for --show-roundtrip. Install with: pip install matplotlib")
+        aprint(
+            "matplotlib is required for --show-roundtrip. Install with: pip install matplotlib"
+        )
         return
 
     n_channels = len(images)

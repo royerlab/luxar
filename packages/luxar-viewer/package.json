@@ -3,6 +3,29 @@
   "version": "2025.8.3",
   "description": "GPU-accelerated WebGL renderer for nD scientific datasets",
   "license": "BSD-3-Clause",
+  "author": "Loic A. Royer and Luxar Contributors",
+  "homepage": "https://github.com/royerlab/luxar/tree/main/packages/luxar-viewer",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/royerlab/luxar.git",
+    "directory": "packages/luxar-viewer"
+  },
+  "bugs": {
+    "url": "https://github.com/royerlab/luxar/issues"
+  },
+  "keywords": [
+    "webgl",
+    "zarr",
+    "scientific-visualization",
+    "3d-rendering",
+    "ndarray",
+    "gaussian-splats",
+    "microscopy",
+    "image-viewer",
+    "hdr",
+    "three",
+    "visualization"
+  ],
   "type": "module",
   "engines": {
     "node": ">=20.19.0",
@@ -40,14 +63,17 @@
     "test:wasm": "cd src/wasm/rust && cargo test",
     "bench:wasm": "npx tsx src/tests/benchmarks/wasm-benchmark.ts",
     "preview": "vite preview",
-    "test:generate-fixtures": "cd ../.. && hatch run python packages/luxar-viewer/tests/fixtures/generate_test_data.py",
+    "test:generate-fixtures": "cd ../.. && hatch run python packages/luxar-viewer/tests/fixtures/generate_test_data.py && hatch run python packages/luxar-viewer/tests/fixtures/generate_expectations.py",
     "test": "vitest",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest --coverage",
+    "test:perf": "vitest --run --config vitest.perf.config.ts",
     "test:watch": "vitest --watch",
     "test:with-fixtures": "pnpm test:generate-fixtures && pnpm test",
     "test:e2e": "playwright test",
-    "test:e2e:ci": "playwright test --grep-invert 'toHaveScreenshot' --retries 2",
+    "test:e2e:ci": "playwright test --grep-invert '@visual' --retries 2",
+    "test:e2e:smoke": "playwright test viewer-initialization.spec.ts url-parameters.spec.ts dataset-switching.spec.ts controls-interaction.spec.ts keyboard-input-system.spec.ts --retries 2 --timeout 60000",
+    "test:e2e:smoke:strict": "LUXAR_E2E_STRICT_CONSOLE=1 playwright test viewer-initialization.spec.ts url-parameters.spec.ts dataset-switching.spec.ts controls-interaction.spec.ts keyboard-input-system.spec.ts --retries 2 --timeout 60000",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:debug": "playwright test --debug",
     "test:e2e:report": "playwright show-report",
@@ -59,15 +85,20 @@
     "typedoc": "typedoc",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --ext .ts,.tsx",
+    "check:layers": "depcruise src --config .dependency-cruiser.cjs",
+    "check:knip": "knip --no-progress --no-config-hints",
+    "check:knip:ci": "knip --no-progress --no-config-hints --include files,dependencies",
     "format": "prettier --write src",
-    "check": "pnpm run typecheck && pnpm run lint && pnpm test --run"
+    "check": "pnpm run typecheck && pnpm run lint && pnpm test --run",
+    "check:ci": "pnpm run typecheck && pnpm run lint && pnpm run check:layers && pnpm run check:knip:ci && pnpm run test:coverage",
+    "ci:release": "pnpm run build:lib && pnpm run build:lib:check"
   },
   "dependencies": {
     "comlink": "^4.4.2",
     "fflate": "^0.8.2",
-    "mediabunny": "^1.40.1",
+    "mediabunny": "^1.44.2",
     "postprocessing": "^6.38.0",
-    "zarrita": "^0.5.4"
+    "zarrita": "^0.7.3"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
@@ -79,10 +110,12 @@
     "@typescript-eslint/parser": "^8.59.1",
     "@vitest/coverage-v8": "^4.1.5",
     "@vitest/ui": "^4.1.5",
-    "@zarrita/storage": "^0.1.3",
+    "@zarrita/storage": "^0.2.0",
+    "dependency-cruiser": "^16.10.4",
     "eslint": "^9.39.4",
     "globals": "^16.5.0",
     "jsdom": "^24.1.3",
+    "knip": "^6.12.1",
     "prettier": "^3.8.3",
     "stats.js": "^0.17.0",
     "ts-node": "^10.9.2",

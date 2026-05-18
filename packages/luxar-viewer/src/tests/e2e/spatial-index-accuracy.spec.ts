@@ -11,11 +11,11 @@
  * CRITICAL: Spatial indexing is core to performance - must be correct!
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import {
   waitForLuxarReady,
   getLuxarState,
-  waitForSpatialQuery,
+  waitForSpatialQueryOrThrow,
   waitForPointsLoaded,
   waitForNavigationComplete,
   waitForNextRender,
@@ -72,7 +72,11 @@ test.describe('Spatial Index Query Accuracy', () => {
     await page.keyboard.press('4');
     await waitForNextRender(page);
     await page.keyboard.press(']');
-    await waitForSpatialQuery(page);
+    await waitForSpatialQueryOrThrow(page);
+    // Silent navigation wait — the spatial-query throw above is the real
+    // signal. waitForNavigationCompleteOrThrow watches `state.isLoading`,
+    // which a cached spatial query may never toggle true, causing the
+    // throwing variant to time out for no functional reason.
     await waitForNavigationComplete(page);
 
     const afterState = await getLuxarState(page);
@@ -107,7 +111,7 @@ test.describe('Spatial Index Query Accuracy', () => {
     await page.keyboard.press('4');
     await waitForNextRender(page);
     await page.keyboard.press(']');
-    await waitForSpatialQuery(page);
+    await waitForSpatialQueryOrThrow(page);
 
     // Look for chunk query logs with pattern: "X chunks -> Y ranges -> Z points"
     const queryResult = queryLogs.find((log) => log.match(/\d+\s+chunks?\s+→\s+\d+\s+ranges?/));
@@ -143,7 +147,7 @@ test.describe('Spatial Index Query Accuracy', () => {
     await page.keyboard.press('4');
     await waitForNextRender(page);
     await page.keyboard.press(']');
-    await waitForSpatialQuery(page);
+    await waitForSpatialQueryOrThrow(page);
 
     // Query the actual radius attribute values from the geometry
     const radiusInfo = await page.evaluate(() => {
@@ -223,7 +227,11 @@ test.describe('Spatial Index Query Accuracy', () => {
     await page.keyboard.press(']');
     await page.keyboard.press(']');
     await page.keyboard.press(']');
-    await waitForSpatialQuery(page);
+    await waitForSpatialQueryOrThrow(page);
+    // Silent navigation wait — the spatial-query throw above is the real
+    // signal. waitForNavigationCompleteOrThrow watches `state.isLoading`,
+    // which a cached spatial query may never toggle true, causing the
+    // throwing variant to time out for no functional reason.
     await waitForNavigationComplete(page);
 
     const midSliceState = await getLuxarState(page);
@@ -259,9 +267,16 @@ test.describe('Spatial Index - Navigation Outside Bounds', () => {
 
     for (let i = 0; i < 25; i++) {
       await page.keyboard.press(']');
-      await page.waitForTimeout(100); // Rapid sequential navigation
+      // Intentional: rapid-sequential pacing simulates a user scrubbing
+      // through dimensions. The test exercises the loader's ability to
+      // handle in-flight queries being superseded.
+      await page.waitForTimeout(100);
     }
-    await waitForSpatialQuery(page);
+    await waitForSpatialQueryOrThrow(page);
+    // Silent navigation wait — the spatial-query throw above is the real
+    // signal. waitForNavigationCompleteOrThrow watches `state.isLoading`,
+    // which a cached spatial query may never toggle true, causing the
+    // throwing variant to time out for no functional reason.
     await waitForNavigationComplete(page);
 
     const farAwayState = await getLuxarState(page);
@@ -305,7 +320,7 @@ test.describe('Spatial Index - Cache Behavior', () => {
     await page.keyboard.press('4');
     await waitForNextRender(page);
     await page.keyboard.press(']');
-    await waitForSpatialQuery(page);
+    await waitForSpatialQueryOrThrow(page);
 
     // Should see cache logs (misses or loads) OR data loads successfully
     const state = await getLuxarState(page);
@@ -324,7 +339,11 @@ test.describe('Spatial Index - Cache Behavior', () => {
     await page.keyboard.press('4');
     await waitForNextRender(page);
     await page.keyboard.press(']');
-    await waitForSpatialQuery(page);
+    await waitForSpatialQueryOrThrow(page);
+    // Silent navigation wait — the spatial-query throw above is the real
+    // signal. waitForNavigationCompleteOrThrow watches `state.isLoading`,
+    // which a cached spatial query may never toggle true, causing the
+    // throwing variant to time out for no functional reason.
     await waitForNavigationComplete(page);
 
     const midState = await getLuxarState(page);
@@ -332,7 +351,11 @@ test.describe('Spatial Index - Cache Behavior', () => {
 
     // Navigate back - should hit cache or reload
     await page.keyboard.press('[');
-    await waitForSpatialQuery(page);
+    await waitForSpatialQueryOrThrow(page);
+    // Silent navigation wait — the spatial-query throw above is the real
+    // signal. waitForNavigationCompleteOrThrow watches `state.isLoading`,
+    // which a cached spatial query may never toggle true, causing the
+    // throwing variant to time out for no functional reason.
     await waitForNavigationComplete(page);
 
     const returnState = await getLuxarState(page);
@@ -358,7 +381,7 @@ test.describe('Spatial Index - Cache Behavior', () => {
 
     for (let i = 0; i < 3; i++) {
       await page.keyboard.press(']');
-      await waitForSpatialQuery(page);
+      await waitForSpatialQueryOrThrow(page);
     }
 
     // Get cache stats via scene loader
@@ -410,10 +433,16 @@ test.describe('Spatial Index - Error Handling', () => {
     // Navigate forward many times (will go well outside bounds)
     for (let i = 0; i < 20; i++) {
       await page.keyboard.press(']');
-      await page.waitForTimeout(200); // Rapid sequential navigation
+      // Same rapid-sequential pacing as the test above; 200 ms here
+      // matches the slightly slower step this test drives.
+      await page.waitForTimeout(200);
     }
 
-    await waitForSpatialQuery(page);
+    await waitForSpatialQueryOrThrow(page);
+    // Silent navigation wait — the spatial-query throw above is the real
+    // signal. waitForNavigationCompleteOrThrow watches `state.isLoading`,
+    // which a cached spatial query may never toggle true, causing the
+    // throwing variant to time out for no functional reason.
     await waitForNavigationComplete(page);
 
     const state = await getLuxarState(page);

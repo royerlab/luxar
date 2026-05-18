@@ -8,9 +8,9 @@
 
 import { ControlsManager } from '../controls/controls-manager';
 import { config } from '../config';
-import { PerformanceMonitor } from '../ui/performance-monitor';
-import { PostProcessingManager } from '../rendering/post-processing-manager';
+import { PostProcessingManager } from '../rendering/post-processing/post-processing-manager';
 import { AdaptiveDPRManager } from '../rendering/adaptive-dpr-manager';
+import { eventBus } from '../utils/event-bus';
 
 /**
  * AnimationController manages the main rendering loop and performance optimization
@@ -38,14 +38,22 @@ export class AnimationController {
   /** Timeout ID for auto-pause functionality */
   private idleTimeout: ReturnType<typeof setTimeout> | null = null;
 
-  /** Performance monitoring instance for FPS/timing metrics */
-  private performanceMonitor: PerformanceMonitor;
-
   /** Per-frame callbacks for additional updates (keyed by ID for safe add/remove) */
   private perFrameCallbacks: Map<string, { callback: () => void; continuous: boolean }> = new Map();
 
   /** Adaptive DPR manager for dynamic resolution scaling */
   private adaptiveDPRManager: AdaptiveDPRManager | null = null;
+
+  /**
+   * Predicate that returns true while the WebGL context is lost. When
+   * set, the animation loop skips `postProcessing.render()` (and any
+   * GPU-bound work) so we don't issue draw calls against a dead
+   * context — those produce noisy GL errors and waste frame work
+   * during the loss window. The renderer is rebuilt by SceneManager
+   * on `webgl-context-restored`; until then we keep ticking
+   * controls.update() and per-frame callbacks but skip rendering.
+   */
+  private isContextLost: (() => boolean) | null = null;
 
   /**
    * Create animation controller for rendering loop management.
@@ -68,10 +76,7 @@ export class AnimationController {
   constructor(
     private controls: ControlsManager,
     private postProcessing: PostProcessingManager
-  ) {
-    // Initialize performance monitoring for frame timing analysis
-    this.performanceMonitor = new PerformanceMonitor();
-  }
+  ) {}
 
   /**
    * Add a per-frame callback with a unique identifier.
@@ -151,6 +156,20 @@ export class AnimationController {
   }
 
   /**
+   * Inject a predicate the loop can poll to detect WebGL context
+   * loss. When the predicate returns true, the animation loop skips
+   * `postProcessing.render()` for that frame; controls and per-frame
+   * callbacks still run so user input stays responsive. SceneManager
+   * wires this to its own `isWebGLContextLost()`.
+   *
+   * Pass `null` to disable the guard (useful in tests / embed contexts
+   * that can't lose the context).
+   */
+  setContextLostPredicate(predicate: (() => boolean) | null): void {
+    this.isContextLost = predicate;
+  }
+
+  /**
    * Main animation loop function - the heart of HDR 3D rendering
    *
    * This function is called ~60 times per second (depending on display refresh rate)
@@ -169,9 +188,11 @@ export class AnimationController {
     // Early exit if animation is paused - prevents unnecessary GPU work
     if (!this.isAnimating) return;
 
-    // Begin frame timing measurement for performance analysis
-    // This records the start timestamp for FPS and frame time calculations
-    this.performanceMonitor.begin();
+    // Begin frame timing measurement for performance analysis.
+    // Emits on the event bus so subscribers (e.g., the
+    // PerformanceMonitor UI panel) can record the start timestamp
+    // without animation-controller importing UI code directly.
+    eventBus.emit('frame-start', {});
 
     // Record frame for adaptive DPR - tracks FPS and adjusts pixel ratio
     if (this.adaptiveDPRManager) {
@@ -191,14 +212,27 @@ export class AnimationController {
       entry.callback();
     }
 
+    // Skip GPU rendering while the WebGL context is lost. The
+    // post-processing render() would otherwise issue draw calls
+    // against a dead context (noisy GL errors, driver-specific
+    // exceptions on some platforms). Controls and per-frame callbacks
+    // already ran above so user input stays responsive while the
+    // browser drives recovery.
+    if (this.isContextLost?.()) {
+      eventBus.emit('frame-end', {});
+      return;
+    }
+
     // Render through HDR post-processing pipeline
     // This executes the complete chain: Scene → HDR buffer → Bloom → Tone mapping → Display
     // Includes vertex shaders, fragment shaders, HDR buffers, bloom blur, ACES tone mapping
     this.postProcessing.render();
 
-    // End frame timing measurement - calculates frame duration and updates FPS
-    // Now includes the cost of HDR post-processing in performance metrics
-    this.performanceMonitor.end();
+    // End frame timing — pair with the frame-start emit above. The
+    // PerformanceMonitor UI panel subscribes to both events when
+    // visible and feeds them into stats.js for FPS / frame-time
+    // readouts.
+    eventBus.emit('frame-end', {});
   };
 
   /**
@@ -315,26 +349,17 @@ export class AnimationController {
   /**
    * Get performance monitor for FPS and timing metrics.
    *
-   * Provides access to stats.js panel for toggling visibility (P key)
-   * and retrieving performance data.
-   *
-   * @returns PerformanceMonitor instance tracking FPS and frame time
-   */
-  get performanceStats(): PerformanceMonitor {
-    return this.performanceMonitor;
-  }
-
-  /**
    * Stop animation loop and clean up resources.
    *
-   * Stops rendering, cancels timers, and disposes performance monitor.
-   * Should be called during application teardown.
+   * Stops rendering and cancels timers. The PerformanceMonitor UI
+   * panel lives at LuxarApp; this controller emits `frame-start` /
+   * `frame-end` on the event bus per frame, which is what the panel
+   * listens to.
    *
    * After calling dispose(), the animation controller cannot be reused.
    */
   dispose(): void {
     this.stopAnimation();
     this.perFrameCallbacks.clear();
-    this.performanceMonitor.dispose();
   }
 }

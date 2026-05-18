@@ -96,7 +96,8 @@ def gaussian_pair_inner_product_numpy(
     inv_sqrt_det_S = float(np.exp(-0.5 * logdet_S))
     two_pi_half_D = (2.0 * np.pi) ** (D / 2.0)
     K_ij = float(
-        a_i * a_j
+        a_i
+        * a_j
         * two_pi_half_D
         * sqrt_det_Sigma_i
         * sqrt_det_Sigma_j
@@ -197,9 +198,7 @@ def kwise_moment_match_torch(
     if total <= 0:
         # Pathological bin (all-zero amplitudes / det). Fall back to
         # uniform weights so downstream code doesn't divide by zero.
-        weights = torch.full(
-            (K,), 1.0 / K, dtype=centres.dtype, device=centres.device
-        )
+        weights = torch.full((K,), 1.0 / K, dtype=centres.dtype, device=centres.device)
     else:
         weights = masses / total
 
@@ -211,9 +210,9 @@ def kwise_moment_match_torch(
 
     # Inter-bin spread: Σ_i w_i (μ_i - μ̄)(μ_i - μ̄)^T.
     delta = centres - mu_bar.unsqueeze(0)  # (K, D)
-    inter = (
-        weights.view(K, 1, 1) * (delta.unsqueeze(2) @ delta.unsqueeze(1))
-    ).sum(dim=0)  # (D, D)
+    inter = (weights.view(K, 1, 1) * (delta.unsqueeze(2) @ delta.unsqueeze(1))).sum(
+        dim=0
+    )  # (D, D)
 
     Sigma_bar = intra + inter
     return mu_bar, Sigma_bar, weights
@@ -250,9 +249,9 @@ def gaussian_pair_inner_product_torch(
     valid = info == 0  # (...,) — True where S is PD.
     # Solve S x = diff via the Cholesky factor; mask invalid entries.
     sol = torch.linalg.solve_triangular(L_S, diff.unsqueeze(-1), upper=False)
-    sol = torch.linalg.solve_triangular(
-        L_S.transpose(-1, -2), sol, upper=True
-    ).squeeze(-1)
+    sol = torch.linalg.solve_triangular(L_S.transpose(-1, -2), sol, upper=True).squeeze(
+        -1
+    )
     quad = (diff * sol).sum(dim=-1)  # (...,)
     # |Σ_i|^{1/2}, |Σ_j|^{1/2}, |S|^{1/2} via Cholesky.
     L_i, info_i = torch.linalg.cholesky_ex(Sigma_i, check_errors=False)
@@ -262,9 +261,11 @@ def gaussian_pair_inner_product_torch(
     sqrt_det_S = torch.abs(torch.prod(torch.diagonal(L_S, dim1=-2, dim2=-1), dim=-1))
     two_pi_half_D = (2.0 * math.pi) ** (D / 2.0)
     K = (
-        a_i * a_j
+        a_i
+        * a_j
         * two_pi_half_D
-        * sqrt_det_i * sqrt_det_j
+        * sqrt_det_i
+        * sqrt_det_j
         / sqrt_det_S
         * torch.exp(-0.5 * quad)
     )
@@ -318,12 +319,10 @@ def bin_squared_norm_torch(
     S = Sigma.unsqueeze(0) + Sigma.unsqueeze(1)  # (K, K, D, D)
     L_S, info_S = torch.linalg.cholesky_ex(S, check_errors=False)
     valid = info_S == 0
-    sol = torch.linalg.solve_triangular(
-        L_S, mu_diff.unsqueeze(-1), upper=False
+    sol = torch.linalg.solve_triangular(L_S, mu_diff.unsqueeze(-1), upper=False)
+    sol = torch.linalg.solve_triangular(L_S.transpose(-1, -2), sol, upper=True).squeeze(
+        -1
     )
-    sol = torch.linalg.solve_triangular(
-        L_S.transpose(-1, -2), sol, upper=True
-    ).squeeze(-1)
     quad = (mu_diff * sol).sum(dim=-1)  # (K, K)
     sqrt_det_S = torch.abs(
         torch.prod(torch.diagonal(L_S, dim1=-2, dim2=-1), dim=-1)
@@ -331,9 +330,7 @@ def bin_squared_norm_torch(
     sqrt_det_outer = sqrt_det.unsqueeze(0) * sqrt_det.unsqueeze(1)  # (K, K)
     amp_outer = amps.unsqueeze(0) * amps.unsqueeze(1)  # (K, K)
     K_ij = (
-        amp_outer * two_pi_half_D
-        * sqrt_det_outer / sqrt_det_S
-        * torch.exp(-0.5 * quad)
+        amp_outer * two_pi_half_D * sqrt_det_outer / sqrt_det_S * torch.exp(-0.5 * quad)
     )
     K_ij = torch.where(valid, K_ij, torch.zeros_like(K_ij))
     # Off-diagonal sum = total - diagonal = sum of K_ij - sum_i K_ii.
@@ -361,9 +358,7 @@ def bin_inner_product_with_template_torch(
     Sigma = L @ L.transpose(-1, -2)  # (K, D, D)
     Sigma_bar_b = Sigma_bar.unsqueeze(0).expand(K, -1, -1)  # (K, D, D)
     mu_bar_b = mu_bar.unsqueeze(0).expand(K, -1)  # (K, D)
-    a_template = torch.ones(
-        K, dtype=centres.dtype, device=centres.device
-    )
+    a_template = torch.ones(K, dtype=centres.dtype, device=centres.device)
     # inner product per bin member with the template
     K_i_template = gaussian_pair_inner_product_torch(
         centres, Sigma, amps, mu_bar_b, Sigma_bar_b, a_template
@@ -463,7 +458,5 @@ def merge_bin_to_representative_torch(
     template_norm_sq = template_squared_norm_torch(Sigma_bar)
     a_bar_star = l2_optimal_amplitude_torch(template_inner, template_norm_sq)
     bin_norm_sq = bin_squared_norm_torch(centres, L, amps)
-    residual = bin_residual_energy_torch(
-        bin_norm_sq, template_inner, template_norm_sq
-    )
+    residual = bin_residual_energy_torch(bin_norm_sq, template_inner, template_norm_sq)
     return mu_bar, Sigma_bar, a_bar_star, residual

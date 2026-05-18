@@ -10,21 +10,22 @@
 
 import * as THREE from 'three';
 import type { SceneNode } from '../../data/data-loader-types';
-import type { BlendingMode } from '../../rendering/material-manager';
-import type { CameraAwareMaterial } from '../../rendering/camera-aware-material';
+import type { BlendingMode, CameraAwareMaterial } from '../../rendering';
 import {
   LayerStateManager,
-  computeUniforms,
   type LayerInfo,
   type SelectionMode,
 } from './layer-state';
 import { RangeSlider } from './range-slider';
+import { LabeledSlider } from './labeled-slider';
 import { config } from '../../config';
-import { materialManager } from '../../rendering/material-manager';
+import { materialManager } from '../../rendering';
 import { log, Modules } from '../../utils/log';
+import { EventGroup } from '../../utils/event-group';
 import { showToast } from '../helpers';
 import type { AnimationController } from '../../scene/animation-controller';
 import { getColormapTexture } from '../../rendering/colormap-textures';
+import { supportsScalarColormap } from '../../rendering/material-colormap-helpers';
 import { COLORMAP_CATEGORIES } from '../../rendering/colormap-data';
 import {
   composeAttrs,
@@ -32,12 +33,13 @@ import {
   collectDataDescendants,
   type ComposableAttrs,
   type EffectiveAttrs,
-} from '../../data/attrs-composer';
-
-/** Clamp a gamma value to a safe range for the shader (prevents division by zero and extreme exponents) */
-function clampGamma(gamma: number): number {
-  return Math.max(0.2, Math.min(5.0, gamma));
-}
+} from '../../data/utils/attrs-composer';
+import {
+  clampGamma,
+  getBlendingState,
+  liveLayerAttrs as deriveLiveLayerAttrs,
+} from './layer-attrs-utils';
+import { clamp } from '../gui/utils/value-formatting';
 
 // Type guard: does this material have our update* methods?
 export interface LuxarMaterial extends THREE.Material, CameraAwareMaterial {
@@ -47,6 +49,17 @@ export interface LuxarMaterial extends THREE.Material, CameraAwareMaterial {
   updateOpacity(v: number): void;
   updateColormapTexture?(texture: THREE.DataTexture | null): void;
   updateScalarRange?(min: number, max: number): void;
+  /**
+   * Apply a blending mode to this material in-place.
+   *
+   * Optional because PointMaterial doesn't need it — its blending is
+   * mode-agnostic at the material level (no `uProjectionMode`, no
+   * intensity-squaring concern). For materials that DO need it
+   * (GSplatMaterial, LineMaterial), call this instead of writing
+   * `mat.blending`/`mat.blendEquation` directly so type-specific
+   * factors and uniforms stay in sync.
+   */
+  applyBlendingMode?(mode: BlendingMode): void;
 }
 
 function isLuxarMaterial(m: THREE.Material): m is LuxarMaterial {
@@ -74,13 +87,20 @@ export class LayersPanel {
   private listEl: HTMLElement | null = null;
   private controlsEl: HTMLElement | null = null;
   private rangeSlider: RangeSlider | null = null;
-  private gammaSlider: HTMLInputElement | null = null;
-  private gammaValueEl: HTMLElement | null = null;
-  private opacitySlider: HTMLInputElement | null = null;
-  private opacityValueEl: HTMLElement | null = null;
+  private gammaSlider: LabeledSlider | null = null;
+  private opacitySlider: LabeledSlider | null = null;
   private blendSelect: HTMLSelectElement | null = null;
   private colormapSelect: HTMLSelectElement | null = null;
   private visible = false;
+  /**
+   * Tracks every event listener attached during buildPanel/renderList
+   * so clear()/dispose() can tear them all down with a single call.
+   * Without this, listeners attached to detached DOM nodes hold
+   * closures referencing the panel until the GC reclaims the
+   * subtree — fragile, hard to test, and inconsistent with the rest
+   * of the viewer's listener-tracking pattern.
+   */
+  private events = new EventGroup();
 
   // Row elements keyed by layer path for targeted DOM updates
   private rowElements = new Map<string, HTMLElement>();
@@ -201,6 +221,11 @@ export class LayersPanel {
       this.unsubscribeState();
       this.unsubscribeState = null;
     }
+    // Tear down every listener attached during buildPanel/renderList.
+    // Re-instantiate so a subsequent show() / initFromScene() starts
+    // with a fresh group rather than a disposed one.
+    this.events.dispose();
+    this.events = new EventGroup();
     this.sceneGraph = null;
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
@@ -210,10 +235,10 @@ export class LayersPanel {
     if (wasVisible) this.repositionGUI();
     this.rangeSlider?.dispose();
     this.rangeSlider = null;
+    this.gammaSlider?.dispose();
     this.gammaSlider = null;
-    this.gammaValueEl = null;
+    this.opacitySlider?.dispose();
     this.opacitySlider = null;
-    this.opacityValueEl = null;
     this.blendSelect = null;
     this.rowElements.clear();
     this.panelEl?.remove();
@@ -241,17 +266,26 @@ export class LayersPanel {
     const closeBtn = document.createElement('button');
     closeBtn.className = 'luxar-layers-panel__close';
     closeBtn.textContent = '\u00d7';
-    closeBtn.title = 'Close (L)';
+    // Advertise Escape rather than L: the L key-binding early-returns
+    // when focus is inside the panel, so it doesn't actually close
+    // from keyboard while the panel has focus. Escape is handled by
+    // the global key dispatcher and works regardless of focus.
+    closeBtn.title = 'Close (Esc)';
     closeBtn.setAttribute('aria-label', 'Close layers panel');
-    closeBtn.setAttribute('aria-keyshortcuts', 'l');
-    closeBtn.addEventListener('click', () => this.hide());
+    closeBtn.setAttribute('aria-keyshortcuts', 'escape');
+    this.events.on(closeBtn, 'click', () => this.hide());
     header.appendChild(title);
     header.appendChild(closeBtn);
     panel.appendChild(header);
 
-    // Layer list (scrollable)
+    // Layer list (scrollable). ARIA listbox semantics so keyboard users can
+    // navigate rows with ArrowUp/ArrowDown and select with Enter/Space.
+    // Multi-select via Ctrl/Cmd/Shift is reflected with aria-multiselectable.
     const list = document.createElement('div');
     list.className = 'luxar-layers-panel__list';
+    list.setAttribute('role', 'listbox');
+    list.setAttribute('aria-label', 'Scene layers');
+    list.setAttribute('aria-multiselectable', 'true');
     this.listEl = list;
     panel.appendChild(list);
 
@@ -296,19 +330,40 @@ export class LayersPanel {
 
   /** Update selection highlights and visibility classes without rebuilding DOM */
   private updateRowHighlights(): void {
+    let hasFocusable = false;
     for (const layer of this.state.getLayers()) {
       const row = this.rowElements.get(layer.path);
       if (!row) continue;
 
       row.classList.toggle('luxar-layer-row--selected', layer.selected);
       row.classList.toggle('luxar-layer-row--hidden', !layer.visible);
+      row.setAttribute('aria-selected', layer.selected ? 'true' : 'false');
 
-      // Update eye button text
+      // First selected row is the keyboard tab stop; others get tabIndex -1
+      // (still focusable programmatically for ArrowUp/Down).
+      if (layer.selected && !hasFocusable) {
+        row.tabIndex = 0;
+        hasFocusable = true;
+      } else {
+        row.tabIndex = -1;
+      }
+
+      // Update eye button text + ARIA state
       const eyeBtn = row.querySelector('.luxar-layer-row__eye') as HTMLButtonElement | null;
       if (eyeBtn) {
         eyeBtn.textContent = layer.visible ? '\u{1F441}' : '\u{1F441}\u200D\u{1F5E8}';
-        eyeBtn.title = layer.visible ? 'Hide layer' : 'Show layer';
+        const tooltip = layer.visible ? 'Hide layer' : 'Show layer';
+        eyeBtn.title = tooltip;
+        eyeBtn.setAttribute('aria-label', `${tooltip}: ${layer.name}`);
+        eyeBtn.setAttribute('aria-pressed', layer.visible ? 'true' : 'false');
       }
+    }
+
+    // If nothing is selected, make the first row the tab stop so users can
+    // enter the listbox with the keyboard.
+    if (!hasFocusable) {
+      const first = this.rowElements.values().next().value as HTMLElement | undefined;
+      if (first) first.tabIndex = 0;
     }
   }
 
@@ -318,12 +373,35 @@ export class LayersPanel {
     if (layer.selected) row.classList.add('luxar-layer-row--selected');
     if (!layer.visible) row.classList.add('luxar-layer-row--hidden');
 
-    // Eye toggle — visibility is independent of selection
+    // ARIA option semantics — see listbox setup in buildPanel().
+    //
+    // Note: a listbox option ideally shouldn't contain nested
+    // interactive elements, but the eye toggle is a real <button>.
+    // The arrow-key navigation + Enter/Space selection on rows is
+    // the listbox idiom screen readers expect. The eye button is
+    // reachable via Tab as a separate focusable element. A move to
+    // role=tree+treeitem (which permits nested controls) would be
+    // cleaner but breaks the row-selection pattern. The escape
+    // valve is the explicit aria-label on the eye button so AT
+    // users hear "Hide layer: <name>" distinctly from "Layer
+    // <name> (<type>)".
+    row.setAttribute('role', 'option');
+    row.setAttribute('aria-selected', layer.selected ? 'true' : 'false');
+    row.setAttribute('aria-label', `${layer.name} (${layer.type})`);
+    row.tabIndex = -1; // updateRowHighlights() promotes the active one to 0
+
+    // Eye toggle — visibility is independent of selection. <button> already
+    // has role=button, is focusable, and triggers click on Space/Enter, so we
+    // only need aria-pressed + a descriptive aria-label for screen readers.
     const eyeBtn = document.createElement('button');
+    eyeBtn.type = 'button';
     eyeBtn.className = 'luxar-layer-row__eye';
     eyeBtn.textContent = layer.visible ? '\u{1F441}' : '\u{1F441}\u200D\u{1F5E8}';
-    eyeBtn.title = layer.visible ? 'Hide layer' : 'Show layer';
-    eyeBtn.addEventListener('click', (e) => {
+    const tooltip = layer.visible ? 'Hide layer' : 'Show layer';
+    eyeBtn.title = tooltip;
+    eyeBtn.setAttribute('aria-label', `${tooltip}: ${layer.name}`);
+    eyeBtn.setAttribute('aria-pressed', layer.visible ? 'true' : 'false');
+    this.events.on(eyeBtn, 'click', (e) => {
       e.stopPropagation(); // Don't trigger row selection
 
       // Capture the new visibility BEFORE mutating state
@@ -354,11 +432,40 @@ export class LayersPanel {
     badge.textContent = typeMap[layer.type] || layer.type;
 
     // Row click — selection
-    row.addEventListener('click', (e) => {
+    this.events.on(row, 'click', (e) => {
       let mode: SelectionMode = 'single';
       if (e.ctrlKey || e.metaKey) mode = 'add';
       else if (e.shiftKey) mode = 'range';
       this.state.select(layer.path, mode);
+    });
+
+    // Row keyboard navigation — listbox idiom: ArrowUp/Down moves focus
+    // (and selects on simple navigation), Enter/Space select with the
+    // current modifier.
+    this.events.on(row, 'keydown', (e) => {
+      const layers = this.state.getLayers();
+      const idx = layers.findIndex((l) => l.path === layer.path);
+      if (idx < 0) return;
+
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        const nextIdx =
+          e.key === 'ArrowDown'
+            ? Math.min(layers.length - 1, idx + 1)
+            : Math.max(0, idx - 1);
+        const next = layers[nextIdx];
+        const nextRow = this.rowElements.get(next.path);
+        if (nextRow) {
+          this.state.select(next.path, 'single');
+          nextRow.focus();
+        }
+      } else if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        let mode: SelectionMode = 'single';
+        if (e.ctrlKey || e.metaKey) mode = 'add';
+        else if (e.shiftKey) mode = 'range';
+        this.state.select(layer.path, mode);
+      }
     });
 
     row.appendChild(eyeBtn);
@@ -406,74 +513,45 @@ export class LayersPanel {
       },
     });
 
-    // Gamma
-    const gammaGroup = document.createElement('div');
-    gammaGroup.className = 'luxar-layers-panel__control-group';
-    const gammaLabel = document.createElement('div');
-    gammaLabel.className = 'luxar-layers-panel__control-label';
-
-    const gammaText = document.createElement('span');
-    gammaText.textContent = 'Gamma';
-    this.gammaValueEl = document.createElement('span');
-    this.gammaValueEl.className = 'luxar-layers-panel__control-value';
-    gammaLabel.appendChild(gammaText);
-    gammaLabel.appendChild(this.gammaValueEl);
-
-    this.gammaSlider = document.createElement('input');
-    this.gammaSlider.type = 'range';
-    this.gammaSlider.min = '0.2';
-    this.gammaSlider.max = '5.0';
-    this.gammaSlider.step = '0.01';
-    this.gammaSlider.className = 'luxar-layers-panel__slider';
-    this.gammaSlider.addEventListener('input', () => {
-      this.controlsInteracting = true;
-      const val = clampGamma(parseFloat(this.gammaSlider!.value));
-      this.gammaValueEl!.textContent = val.toFixed(2);
-      this.state.applyToSelected((l) => {
-        l.gamma = val;
-      });
-      for (const sel of this.state.getSelected()) {
-        this.applyGamma(sel);
-      }
-      this.controlsInteracting = false;
+    this.gammaSlider = new LabeledSlider({
+      container: this.controlsEl,
+      label: 'Gamma',
+      min: 0.2,
+      max: 5.0,
+      step: 0.01,
+      initialValue: 1.0,
+      constrain: clampGamma,
+      onChange: (val) => {
+        this.controlsInteracting = true;
+        this.state.applyToSelected((l) => {
+          l.gamma = val;
+        });
+        for (const sel of this.state.getSelected()) {
+          this.applyGamma(sel);
+        }
+        this.controlsInteracting = false;
+      },
     });
-    gammaGroup.appendChild(gammaLabel);
-    gammaGroup.appendChild(this.gammaSlider);
-    this.controlsEl.appendChild(gammaGroup);
 
-    // Opacity
-    const opacityGroup = document.createElement('div');
-    opacityGroup.className = 'luxar-layers-panel__control-group';
-    const opacityLabel = document.createElement('div');
-    opacityLabel.className = 'luxar-layers-panel__control-label';
-    const opacityText = document.createElement('span');
-    opacityText.textContent = 'Opacity';
-    this.opacityValueEl = document.createElement('span');
-    this.opacityValueEl.className = 'luxar-layers-panel__control-value';
-    opacityLabel.appendChild(opacityText);
-    opacityLabel.appendChild(this.opacityValueEl);
-
-    this.opacitySlider = document.createElement('input');
-    this.opacitySlider.type = 'range';
-    this.opacitySlider.min = '0';
-    this.opacitySlider.max = '1';
-    this.opacitySlider.step = '0.01';
-    this.opacitySlider.className = 'luxar-layers-panel__slider';
-    this.opacitySlider.addEventListener('input', () => {
-      this.controlsInteracting = true;
-      const val = Math.max(0, Math.min(1, parseFloat(this.opacitySlider!.value)));
-      this.opacityValueEl!.textContent = val.toFixed(2);
-      this.state.applyToSelected((l) => {
-        l.opacity = val;
-      });
-      for (const sel of this.state.getSelected()) {
-        this.applyOpacity(sel);
-      }
-      this.controlsInteracting = false;
+    this.opacitySlider = new LabeledSlider({
+      container: this.controlsEl,
+      label: 'Opacity',
+      min: 0,
+      max: 1,
+      step: 0.01,
+      initialValue: 1.0,
+      constrain: (v) => clamp(v, 0, 1),
+      onChange: (val) => {
+        this.controlsInteracting = true;
+        this.state.applyToSelected((l) => {
+          l.opacity = val;
+        });
+        for (const sel of this.state.getSelected()) {
+          this.applyOpacity(sel);
+        }
+        this.controlsInteracting = false;
+      },
     });
-    opacityGroup.appendChild(opacityLabel);
-    opacityGroup.appendChild(this.opacitySlider);
-    this.controlsEl.appendChild(opacityGroup);
 
     // Blending mode
     const blendGroup = document.createElement('div');
@@ -490,7 +568,7 @@ export class LayersPanel {
       opt.textContent = mode;
       this.blendSelect.appendChild(opt);
     }
-    this.blendSelect.addEventListener('change', () => {
+    this.events.on(this.blendSelect, 'change', () => {
       this.controlsInteracting = true;
       const mode = this.blendSelect!.value as BlendingMode;
       this.state.applyToSelected((l) => {
@@ -533,7 +611,7 @@ export class LayersPanel {
       this.colormapSelect.appendChild(optgroup);
     }
 
-    this.colormapSelect.addEventListener('change', () => {
+    this.events.on(this.colormapSelect, 'change', () => {
       this.controlsInteracting = true;
       const cmName = this.colormapSelect!.value || undefined;
       this.state.applyToSelected((l) => {
@@ -559,19 +637,8 @@ export class LayersPanel {
       this.rangeSlider.setValues(primary.displayMin, primary.displayMax);
     }
 
-    if (this.gammaSlider) {
-      this.gammaSlider.value = String(primary.gamma);
-    }
-    if (this.gammaValueEl) {
-      this.gammaValueEl.textContent = primary.gamma.toFixed(2);
-    }
-
-    if (this.opacitySlider) {
-      this.opacitySlider.value = String(primary.opacity);
-    }
-    if (this.opacityValueEl) {
-      this.opacityValueEl.textContent = primary.opacity.toFixed(2);
-    }
+    this.gammaSlider?.setValue(primary.gamma);
+    this.opacitySlider?.setValue(primary.opacity);
 
     if (this.blendSelect) {
       this.blendSelect.value = primary.blendingMode;
@@ -640,19 +707,12 @@ export class LayersPanel {
   }
 
   /**
-   * Compute the layer's current live composable attributes. For layers
-   * whose user hasn't touched a control, these match the authored zarr
-   * values — so composition stays a no-op for untouched scenes.
+   * Compute the layer's current live composable attributes. Thin wrapper
+   * around {@link liveLayerAttrs} so the four call sites in this file
+   * keep their compact `this.liveLayerAttrs(...)` shape.
    */
   private liveLayerAttrs(layer: LayerInfo): ComposableAttrs {
-    const { intensity, offset } = computeUniforms(layer.displayMin, layer.displayMax);
-    return {
-      opacity: layer.opacity,
-      gamma: clampGamma(layer.gamma),
-      intensity,
-      offset,
-      blending_mode: layer.blendingMode as string,
-    };
+    return deriveLiveLayerAttrs(layer);
   }
 
   /**
@@ -678,39 +738,33 @@ export class LayersPanel {
   }
 
   private applyBlendingStateToMaterial(mat: LuxarMaterial, mode: string): void {
-    switch (mode) {
-      case 'additive':
-        mat.blending = THREE.AdditiveBlending;
-        mat.depthTest = false;
-        mat.depthWrite = false;
-        mat.transparent = true;
-        break;
-      case 'normal':
-        mat.blending = THREE.NormalBlending;
-        mat.depthTest = true;
-        mat.depthWrite = false;
-        mat.transparent = true;
-        break;
-      case 'max':
-        mat.blending = THREE.CustomBlending;
-        mat.blendEquation = THREE.MaxEquation;
-        mat.depthTest = true;
-        mat.depthWrite = false;
-        mat.transparent = true;
-        break;
-      case 'opaque':
-        mat.blending = THREE.NormalBlending;
-        mat.depthTest = true;
-        mat.depthWrite = true;
-        mat.transparent = false;
-        break;
-      case 'luminous':
-        mat.blending = THREE.AdditiveBlending;
-        mat.depthTest = true;
-        mat.depthWrite = false;
-        mat.transparent = true;
-        break;
+    // All Luxar materials (Points, Lines, GSplats) now implement
+    // `applyBlendingMode`. That single source of truth handles type-
+    // specific concerns (GSplat `uProjectionMode`, Point
+    // `LUXAR_MAX_RGB_CONTRIBUTION` define, max-mode `OneFactor` blend
+    // factors) and is used by both creation (in MaterialManager) and
+    // runtime UI transitions. The generic fallback below remains for
+    // defensiveness against external/future materials that lack the
+    // method, and now applies the *complete* state (including
+    // blend factors) so it matches the canonical mapping.
+    if (typeof mat.applyBlendingMode === 'function') {
+      mat.applyBlendingMode(mode as BlendingMode);
+      return;
     }
+
+    const opacityUniform = (mat as unknown as {
+      uniforms?: { opacity?: { value?: number }; uOpacity?: { value?: number } };
+    }).uniforms;
+    const liveOpacity =
+      opacityUniform?.opacity?.value ?? opacityUniform?.uOpacity?.value ?? 1.0;
+    const state = getBlendingState(mode, liveOpacity);
+    mat.blending = state.blending;
+    mat.depthTest = state.depthTest;
+    mat.depthWrite = state.depthWrite;
+    mat.transparent = state.transparent;
+    mat.blendEquation = state.blendEquation;
+    if (state.blendSrc !== undefined) mat.blendSrc = state.blendSrc;
+    if (state.blendDst !== undefined) mat.blendDst = state.blendDst;
     mat.needsUpdate = true;
   }
 
@@ -779,6 +833,18 @@ export class LayersPanel {
       const mat = this.getLeafMaterial(obj);
       if (!mat || !mat.updateColormapTexture) continue;
       if (layer.colormap && tex) {
+        // C1 fail-closed guard: enabling USE_COLORMAP requires the right
+        // scalar attribute on geometry (`scalar` for points,
+        // `aStartScalar`/`aEndScalar` for lines, `aAmplitude` for gsplats).
+        const nodeType = leaf.type as 'points' | 'lines' | 'gsplats';
+        const geometry = (obj as THREE.Points | THREE.Mesh).geometry as THREE.BufferGeometry;
+        if (!supportsScalarColormap(nodeType, geometry)) {
+          log.warning(
+            Modules.UI,
+            `[LayersPanel][${leaf.path}] Scalar colormap suppressed: required attribute(s) not bound on geometry (pending C4 implementation).`
+          );
+          continue;
+        }
         mat.updateColormapTexture(tex);
         if (layer.scalarDataRange && mat.updateScalarRange) {
           mat.updateScalarRange(layer.scalarDataRange[0], layer.scalarDataRange[1]);
@@ -786,7 +852,13 @@ export class LayersPanel {
       } else {
         mat.updateColormapTexture(null);
       }
-      mat.needsUpdate = true;
+      // do NOT mark `mat.needsUpdate = true` here. Material methods
+      // (`updateColormapTexture`, `applyColormapTextureToMaterial`)
+      // already toggle `needsUpdate` when defines change. Setting it
+      // unconditionally for every per-leaf colormap apply caused
+      // shader recompilation on every UI tick during group-layer
+      // scalar-range drags, even when the colormap define hadn't
+      // toggled.
     }
     this.requestRender();
   }

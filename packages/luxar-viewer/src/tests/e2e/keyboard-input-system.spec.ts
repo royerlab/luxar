@@ -11,9 +11,17 @@
  *
  * This test suite provides critical coverage for the input system refactoring
  * that migrated from dual-track architecture to unified binding system.
+ *
+ * **A note on `page.waitForTimeout()`.** The fly-control tests below
+ * use the `keyboard.down(X) → waitForTimeout(N) → keyboard.up(X)`
+ * pattern intentionally: the camera moves at a fixed velocity per
+ * frame while the key is held, so the wait *is* the input — replacing
+ * it with an event-based signal would defeat the test. Same idea for
+ * the "wait and check if still moving" inertia-decay observations.
+ * These are the only fixed sleeps in this file by design.
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import {
   waitForLuxarReady,
   getLuxarState,
@@ -77,7 +85,10 @@ test.describe('Keyboard Input System - Fly Controls', () => {
     const final1 = await getLuxarState(page);
     const normalDistance = Math.abs(final1.camera.position.z - startZ1);
 
-    // Reset position for fair comparison
+    // Reset position for fair comparison.
+    // Silent wait variant: F is a camera recenter, not a data nav, so
+    // `isLoading` never toggles and the throwing variant would time out.
+    // The Shift+W assertion below is the real check.
     await page.keyboard.press('f'); // Recenter
     await waitForNavigationComplete(page);
 
@@ -387,7 +398,9 @@ test.describe('Keyboard Input System - Toggle Shortcuts', () => {
       return { x: q.x, y: q.y, z: q.z, w: q.w };
     });
 
-    // Press F to recenter (this changes where camera LOOKS, not position)
+    // Press F to recenter (this changes where camera LOOKS, not position).
+    // Silent wait variant: F doesn't toggle isLoading; throwing variant
+    // would time out. The quaternion/position check below is the real assertion.
     await page.keyboard.press('f');
     await waitForNavigationComplete(page);
 

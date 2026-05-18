@@ -90,9 +90,7 @@ def _amplitude_cull(data: GSplatData, target_n: int) -> GSplatData:
             np.float32
         ),
         colors=(
-            np.asarray(data.colors)[keep_sorted]
-            if data.colors is not None
-            else None
+            np.asarray(data.colors)[keep_sorted] if data.colors is not None else None
         ),
         truncation_radius=data.truncation_radius,
     )
@@ -138,7 +136,9 @@ def _load_dapi_volume() -> np.ndarray:
             center = [rng.uniform(8, TARGET_SIZE - 8) for _ in range(3)]
             sigma = rng.uniform(3.0, 6.0)
             amp = rng.uniform(60.0, 100.0)
-            grids = np.meshgrid(*[np.arange(TARGET_SIZE) for _ in range(3)], indexing="ij")
+            grids = np.meshgrid(
+                *[np.arange(TARGET_SIZE) for _ in range(3)], indexing="ij"
+            )
             dist_sq = sum((g - c) ** 2 for g, c in zip(grids, center))
             V += amp * np.exp(-dist_sq / (2 * sigma**2))
         return np.clip(V, 0, 100).astype(np.float32)
@@ -147,9 +147,7 @@ def _load_dapi_volume() -> np.ndarray:
 def _render_data(data: GSplatData, shape: tuple[int, ...]) -> np.ndarray:
     """Render a flat (or already-flat) GSplatData to a volume."""
     flat = data if data.n_lods == 1 else data.flattened()
-    return render_gaussians_numpy(shape, flat, truncate=TRUNCATE_SIG).astype(
-        np.float32
-    )
+    return render_gaussians_numpy(shape, flat, truncate=TRUNCATE_SIG).astype(np.float32)
 
 
 def main() -> None:
@@ -252,12 +250,8 @@ def main() -> None:
     viewer.add_image(
         V, name="DAPI input", colormap="gray", contrast_limits=[0, float(V.max())]
     )
-    sub_stack = np.stack(
-        [_render_data(lev, V.shape) for lev in hierarchy], axis=0
-    )
-    cull_stack = np.stack(
-        [_render_data(c, V.shape) for c in culled], axis=0
-    )
+    sub_stack = np.stack([_render_data(lev, V.shape) for lev in hierarchy], axis=0)
+    cull_stack = np.stack([_render_data(c, V.shape) for c in culled], axis=0)
     viewer.add_image(
         sub_stack,
         name="Substitutive LOD",

@@ -177,7 +177,18 @@ class TestBuildKGrid:
     def test_exp_default_matches_manuscript(self):
         # n=10, [1k, 512k] log-spaced → manuscript {1K, 2K, 4K, ..., 512K}
         grid = build_k_grid(n_points=10, k_min=1_000, k_max=512_000, progression="exp")
-        expected = [1_000, 2_000, 4_000, 8_000, 16_000, 32_000, 64_000, 128_000, 256_000, 512_000]
+        expected = [
+            1_000,
+            2_000,
+            4_000,
+            8_000,
+            16_000,
+            32_000,
+            64_000,
+            128_000,
+            256_000,
+            512_000,
+        ]
         # Allow off-by-one rounding tolerance per point
         assert len(grid) == len(expected)
         for got, want in zip(grid, expected):
@@ -368,7 +379,9 @@ class TestCalibrationResult:
             held_out_mse=[0.0],
             full_psnr_db=[float("inf")],
             full_ssim=[1.0],
-            held_out_peak=HeldOutPeak(k_star=10, type="signal_limited", confidence_db=0.0),
+            held_out_peak=HeldOutPeak(
+                k_star=10, type="signal_limited", confidence_db=0.0
+            ),
             noise_floor=NoiseFloor(
                 sigma_hat=0.0,
                 sigma_laplacian=0.0,

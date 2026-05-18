@@ -3,7 +3,6 @@
 Functional tests that verify the full round-trip: Python API -> zarr storage -> metadata.
 """
 
-
 import numpy as np
 import pytest
 import zarr
@@ -270,6 +269,7 @@ class TestAddImage:
             import io
 
             from PIL import Image as PILImage
+
             img = PILImage.new("RGB", (1, 1), (255, 0, 0))
             buf = io.BytesIO()
             img.save(buf, format="PNG")
@@ -277,10 +277,10 @@ class TestAddImage:
         except ImportError:
             # Fallback: raw PNG bytes for a 1x1 red pixel
             return (
-                b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01'
-                b'\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00'
-                b'\x00\x00\x0cIDATx\x9cc\xf8\xcf\xc0\x00\x00\x00\x03'
-                b'\x00\x01\x00\x05\xfe\xd4\x00\x00\x00\x00IEND\xaeB`\x82'
+                b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"
+                b"\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00"
+                b"\x00\x00\x0cIDATx\x9cc\xf8\xcf\xc0\x00\x00\x00\x03"
+                b"\x00\x01\x00\x05\xfe\xd4\x00\x00\x00\x00IEND\xaeB`\x82"
             )
 
 
@@ -636,7 +636,9 @@ class TestEdgeCases:
         """Unicode text (Greek, CJK, emoji) should work."""
         with LuxarZarrCompiler(tmp_path / "test.zarr") as c:
             scene = c.create_scene(dimensions=Dimensions.default_3d())
-            scene.add_text("10 \u03bcm scale bar \u2014 \u7ec6\u80de", position=(0.5, 0.5))
+            scene.add_text(
+                "10 \u03bcm scale bar \u2014 \u7ec6\u80de", position=(0.5, 0.5)
+            )
 
         store = zarr.open_group(tmp_path / "test.zarr", mode="r")
         text = store["overlays/overlay_0"].attrs["text"]
@@ -646,9 +648,15 @@ class TestEdgeCases:
     def test_all_nine_anchors(self, tmp_path) -> None:
         """All 9 anchor values should be accepted."""
         anchors = [
-            "top-left", "top-center", "top-right",
-            "center-left", "center", "center-right",
-            "bottom-left", "bottom-center", "bottom-right",
+            "top-left",
+            "top-center",
+            "top-right",
+            "center-left",
+            "center",
+            "center-right",
+            "bottom-left",
+            "bottom-center",
+            "bottom-right",
         ]
         with LuxarZarrCompiler(tmp_path / "test.zarr") as c:
             scene = c.create_scene(dimensions=Dimensions.default_3d())

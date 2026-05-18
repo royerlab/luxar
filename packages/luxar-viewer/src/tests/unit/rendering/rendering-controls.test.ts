@@ -106,6 +106,8 @@ describe('RenderingControls', () => {
       setControlType: vi.fn(),
       setAutoRotate: vi.fn(),
       setAutoRotateSpeed: vi.fn(),
+      setNaturalDrag: vi.fn(),
+      getNaturalDrag: vi.fn(() => false),
       setFlyMovementSpeed: vi.fn(),
       setFlyRotationSpeed: vi.fn(),
       setFlyInertialMode: vi.fn(),
@@ -140,6 +142,7 @@ describe('RenderingControls', () => {
       setControlType: vi.fn(),
       setAutoRotate: vi.fn(),
       setAutoRotateSpeed: vi.fn(),
+      setNaturalDrag: vi.fn(),
       setFlyMovementSpeed: vi.fn(),
       setFlyRotationSpeed: vi.fn(),
       setFlyInertialMode: vi.fn(),
@@ -207,15 +210,27 @@ describe('RenderingControls', () => {
     });
 
     it('should remove active click-outside handler on dispose', () => {
+      vi.useFakeTimers();
+      const addSpy = vi.spyOn(document, 'addEventListener');
       const removeSpy = vi.spyOn(document, 'removeEventListener');
 
-      (renderingControls as any).addClickOutsideHandler();
-      const handler = (renderingControls as any).clickOutsideHandler;
+      // show() defers the handler install by 100ms via setTimeout, so let
+      // it fire so the handler is actually attached.
+      renderingControls.show();
+      vi.advanceTimersByTime(150);
+
+      // Recover the actual handler reference the FocusManager installed.
+      const installCall = addSpy.mock.calls.find((c) => c[0] === 'mousedown');
+      expect(installCall).toBeDefined();
+      const handler = installCall![1];
+
       renderingControls.dispose();
 
       expect(removeSpy).toHaveBeenCalledWith('mousedown', handler, true);
 
+      addSpy.mockRestore();
       removeSpy.mockRestore();
+      vi.useRealTimers();
     });
   });
 

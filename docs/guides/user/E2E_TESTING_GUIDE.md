@@ -26,8 +26,11 @@ test('my test', async ({ page }) => {
 
 #### 2. Console Interceptor History
 ```typescript
+// The current API exposes a buffered getter. Call
+// `getBufferedMessages()` to obtain the chronological list of
+// intercepted log/warn/error/info messages.
 const messages = await page.evaluate(() => {
-  return window.__luxarDebug.consoleInterceptor.messages;
+  return window.__luxarDebug?.consoleInterceptor?.getBufferedMessages?.() ?? [];
 });
 ```
 
@@ -52,7 +55,7 @@ need `window.__luxarDebug`:
 
 Best practices:
 
-- Use `?src=<dataset>&debug`, not the old `?data=` parameter.
+- Use `?src=<dataset>&debug`, not `?data=`.
 - Do **not** put a trailing slash on the data-source URL. Zarr paths are formed
   by appending metadata and chunk paths; a trailing slash can produce malformed
   requests on stricter servers and can split cache keys for the same dataset.
@@ -177,9 +180,16 @@ pnpm agent:debug:visible  # Watch the browser
 
 ### Template:
 ```typescript
-import { test, expect } from '@playwright/test';
+// Import from `./fixtures` (NOT @playwright/test directly) so the
+// shared console-error / pageerror checks run automatically after
+// each test. Specs that need to allow specific console messages
+// can annotate at the test level.
+import { test, expect } from './fixtures';
 import { waitForLuxarReady, getLuxarState, waitForSpatialQuery } from './helpers';
 
+// Use `?src=` URL params (NOT `/data/...`) — that's the production
+// convention. Datasets live under `/datasets/examples/...` on the
+// dev server and are referenced via the src query parameter.
 const DATASET = 'http://localhost:9000/datasets/examples/my_dataset.zarr';
 
 test.describe('My Feature Tests', () => {

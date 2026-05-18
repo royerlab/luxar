@@ -1,5 +1,29 @@
-import type { OPFSMetadata } from './types';
+import type { OPFSMetadata, CacheValidationMode } from './types';
+import { OPFS_ENCODING_VERSION } from './types';
 import { log, Modules } from '../utils/log';
+import { config } from '../config';
+
+/**
+ * Race a promise against a timeout. Throws Error('OPFS timeout') if
+ * the timeout fires first. Used to bound individual OPFS I/O calls so
+ * a hung browser handle cannot stall the cache indefinitely.
+ */
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`OPFS timeout: ${label} exceeded ${timeoutMs}ms`)),
+          timeoutMs
+        );
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 type IterableFileSystemDirectoryHandle = FileSystemDirectoryHandle & {
   keys(): AsyncIterableIterator<string>;
@@ -38,10 +62,44 @@ export class OPFSStore {
   private datasetId: string;
   private baseUrl: string;
   private contentHash: string | null = null;
+  // External-dataset validation mode + last-validated timestamp.
+  // Persisted to OPFSMetadata so the next session can apply a TTL
+  // window across page loads.
+  private validationMode: CacheValidationMode = 'none';
+  private lastValidatedAt: number | null = null;
 
-  // Read/write tracking for monitoring
+  // Read/write tracking for monitoring. `readCount` is the L2 hit
+  // counter — only incremented when get() returns a value. `missCount`
+  // counts get() calls that returned undefined (file not present /
+  // size mismatch / I/O error). Together they let consumers compute
+  // an L2 hit rate without separate plumbing.
   private readCount = 0;
   private writeCount = 0;
+  private missCount = 0;
+
+  // Health counters surfaced via getStats().
+  // `oversizedWriteSkipped`: doSet() rejected an entry larger than
+  //   maxSize so it could not have been written without violating the
+  //   cache size invariant.
+  // `quotaWriteSkipped`: navigator.storage.estimate() reported
+  //   insufficient quota even after own-LRU eviction.
+  // `evictions`: number of own-LRU entries evicted to make room for
+  //   incoming writes.
+  // `writeFailures`: doSet() catch branch — file I/O threw after
+  //   retries.
+  // `corruptedEntries`: get() detected a size mismatch between index
+  //   and on-disk data and removed the bad file.
+  // `metadataParseFailures`: loadMetadata() could not JSON-parse
+  //   `_cache_meta.json` — recovery starts the cache fresh.
+  // `orphanedFilesRemoved`: cleanupOrphans() reclaimed files that
+  //   existed on disk but had no matching index entry.
+  private oversizedWriteSkipped = 0;
+  private quotaWriteSkipped = 0;
+  private evictions = 0;
+  private writeFailures = 0;
+  private corruptedEntries = 0;
+  private metadataParseFailures = 0;
+  private orphanedFilesRemoved = 0;
 
   // Bucket handle cache (256 possible buckets: 00-ff)
   private bucketHandles = new Map<string, FileSystemDirectoryHandle>();
@@ -52,6 +110,25 @@ export class OPFSStore {
 
   // Serialize concurrent writes to the same key to prevent race conditions
   private pendingWrites = new Map<string, Promise<void>>();
+
+  // Generation token: every clear() bumps this. doSet() captures the
+  // generation when it begins and discards its index/metadata mutation
+  // if the generation has advanced — preventing a slow write that
+  // started before clear() from repopulating the post-clear index.
+  // Plain bookkeeping for stale-write detection; not a public API.
+  private generation = 0;
+
+  // Lifecycle: set by dispose(). Synchronous early-return on
+  // get/set/touch so a disposed store cannot mutate state. Distinct
+  // from the no-OPFS path (`!this.opfsRoot`) — disposed means the
+  // owner explicitly tore the store down, OPFS-unavailable means the
+  // browser never gave us a directory.
+  private disposed = false;
+
+  // Tracks the in-flight metadata save fired by scheduleMetadataSave's
+  // setTimeout. dispose() awaits this so a save that started just
+  // before dispose() finishes before the final flush.
+  private metadataSaveInFlight: Promise<void> | null = null;
 
   constructor(datasetId: string, baseUrl: string, maxSize: number) {
     this.datasetId = datasetId;
@@ -77,18 +154,30 @@ export class OPFSStore {
    * Get a file from OPFS and update LRU order.
    */
   async get(key: string): Promise<Uint8Array | undefined> {
-    if (!this.opfsRoot) return undefined;
+    if (this.disposed || !this.opfsRoot) {
+      this.missCount++;
+      return undefined;
+    }
 
+    const timeoutMs = config.cache.opfsOperationTimeoutMs;
     try {
-      const fileHandle = await this.navigateToFile(key, false);
-      const file = await fileHandle.getFile();
-      const data = new Uint8Array(await file.arrayBuffer());
+      const data = await withTimeout(
+        (async () => {
+          const fileHandle = await this.navigateToFile(key, false);
+          const file = await fileHandle.getFile();
+          return new Uint8Array(await file.arrayBuffer());
+        })(),
+        timeoutMs,
+        `get(${key})`
+      );
 
       // Verify size matches metadata
       const entry = this.index.get(key);
       if (entry && entry.size !== data.byteLength) {
         log.warning(Modules.CACHE, `OPFSStore size mismatch for ${key}, removing corrupted entry`);
+        this.corruptedEntries++;
         await this.delete(key);
+        this.missCount++;
         return undefined;
       }
 
@@ -97,7 +186,15 @@ export class OPFSStore {
       this.readCount++;
 
       return data;
-    } catch {
+    } catch (error) {
+      // Timeouts and any other I/O failures degrade to a cache miss;
+      // production code never observes a throw here (zarrita's
+      // AsyncReadable.get must not throw).
+      const msg = error instanceof Error ? error.message : String(error);
+      if (msg.startsWith('OPFS timeout')) {
+        log.warning(Modules.CACHE, msg);
+      }
+      this.missCount++;
       return undefined;
     }
   }
@@ -106,7 +203,7 @@ export class OPFSStore {
    * Write a file to OPFS with LRU eviction.
    */
   async set(key: string, data: Uint8Array): Promise<void> {
-    if (!this.opfsRoot) return;
+    if (this.disposed || !this.opfsRoot) return;
 
     // Await any pending write for this key to prevent race conditions
     const pending = this.pendingWrites.get(key);
@@ -129,40 +226,87 @@ export class OPFSStore {
   private async doSet(key: string, data: Uint8Array): Promise<void> {
     if (!this.opfsRoot) return;
 
+    // Capture the generation at entry. If clear() (or dispose()) bumps
+    // the generation while the write is pending, the post-write index
+    // mutation must be skipped — otherwise a slow set() that began
+    // before clear() will repopulate the just-cleared cache.
+    const startGeneration = this.generation;
+
     const size = data.byteLength;
 
-    // Check quota before writing
-    if (!(await this.checkQuota(size))) {
-      log.warning(Modules.CACHE, 'OPFSStore insufficient storage quota, skipping write');
+    // Reject oversized entries up front. A single item larger than
+    // maxSize would otherwise evict every existing entry and still
+    // leave totalSize > maxSize after insertion, breaking the cache
+    // size invariant. Mirror of LRUCache.set()'s oversized guard.
+    if (size > this.maxSize) {
+      this.oversizedWriteSkipped++;
       return;
     }
 
-    // LRU eviction until we have space — O(1) per eviction via Map insertion order
+    // LRU eviction until we have space — O(1) per eviction via Map
+    // insertion order. Run BEFORE the quota check so the browser sees
+    // the freed space when we ask navigator.storage.estimate().
     while (this.totalSize + size > this.maxSize && this.index.size > 0) {
       const lruKey = this.index.keys().next().value;
       if (lruKey !== undefined) {
         // Note: delete() already decrements totalSize, don't double-decrement
         await this.delete(lruKey);
+        this.evictions++;
       } else {
         break;
       }
     }
 
-    // Write to OPFS (with one retry on stale bucket handle)
+    // Check quota only after own-LRU eviction. Otherwise a write that
+    // would have fit after evicting old L2 entries gets skipped.
+    if (!(await this.checkQuota(size))) {
+      this.quotaWriteSkipped++;
+      log.warning(Modules.CACHE, 'OPFSStore insufficient storage quota, skipping write');
+      return;
+    }
+
+    // Write to OPFS (with one retry on stale bucket handle). The
+    // entire navigate→createWritable→write→close chain is wrapped in
+    // withTimeout so a hung handle cannot stall the cache.
+    const timeoutMs = config.cache.opfsOperationTimeoutMs;
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        const fileHandle = await this.navigateToFile(key, true);
-        const writable = await fileHandle.createWritable();
-        // Slice the view's portion, NOT data.buffer directly. If the Uint8Array is
-        // a view on a larger ArrayBuffer (e.g., from a sub-slice), data.buffer would
-        // write the entire underlying buffer, corrupting the stored data. slice()
-        // copies only the relevant bytes. Cast is safe: network data is never SharedArrayBuffer.
-        const bytes = data.buffer.slice(
-          data.byteOffset,
-          data.byteOffset + data.byteLength
-        ) as ArrayBuffer;
-        await writable.write(bytes);
-        await writable.close();
+        await withTimeout(
+          (async () => {
+            const fileHandle = await this.navigateToFile(key, true);
+            const writable = await fileHandle.createWritable();
+            // Slice the view's portion, NOT data.buffer directly. If the Uint8Array is
+            // a view on a larger ArrayBuffer (e.g., from a sub-slice), data.buffer would
+            // write the entire underlying buffer, corrupting the stored data. slice()
+            // copies only the relevant bytes. Cast is safe: network data is never SharedArrayBuffer.
+            const bytes = data.buffer.slice(
+              data.byteOffset,
+              data.byteOffset + data.byteLength
+            ) as ArrayBuffer;
+            await writable.write(bytes);
+            await writable.close();
+          })(),
+          timeoutMs,
+          `set(${key})`
+        );
+
+        // Stale-write check: if clear()/dispose() ran while we were
+        // writing, the post-write index update must be skipped. Best-
+        // effort delete the file we just wrote so the directory matches
+        // the (now-empty) index.
+        if (this.generation !== startGeneration) {
+          try {
+            const bucket = this.getBucket(key);
+            const bucketHandle = await this.getBucketHandle(bucket, false);
+            if (bucketHandle) {
+              await bucketHandle.removeEntry(this.keyToFileName(key));
+            }
+          } catch {
+            // Best-effort; orphaned file is harmless and will be reclaimed
+            // by the next clear() / orphan cleanup pass.
+          }
+          return;
+        }
 
         // Update index — delete+re-insert to move to end (MRU position)
         const existingEntry = this.index.get(key);
@@ -191,6 +335,7 @@ export class OPFSStore {
           this.invalidateBucketHandle(bucket);
           continue;
         }
+        this.writeFailures++;
         log.warning(Modules.CACHE, `OPFSStore failed to write ${key}: ${errorMsg}`);
       }
     }
@@ -231,6 +376,18 @@ export class OPFSStore {
    * (e.g., quick-succession page refreshes with fire-and-forget L2 writes).
    */
   async clear(): Promise<void> {
+    // Bump generation FIRST so any in-flight doSet() that completes
+    // after this point sees the mismatch and skips its index update.
+    this.generation++;
+
+    // Drain pending same-key writes. Each set() pushes a promise into
+    // pendingWrites; awaiting them lets in-flight writes finish their
+    // file I/O — they will detect the generation mismatch and skip
+    // mutating the index.
+    if (this.pendingWrites.size > 0) {
+      await Promise.allSettled([...this.pendingWrites.values()]);
+    }
+
     // Clear all in-memory state first — ensures no stale handles are used
     // even if the filesystem operations below fail
     this.index = new Map();
@@ -238,8 +395,18 @@ export class OPFSStore {
     this.totalSize = 0;
     this.orderCounter = 0;
     this.contentHash = null;
+    this.validationMode = 'none';
+    this.lastValidatedAt = null;
     this.readCount = 0;
     this.writeCount = 0;
+    this.missCount = 0;
+    this.oversizedWriteSkipped = 0;
+    this.quotaWriteSkipped = 0;
+    this.evictions = 0;
+    this.writeFailures = 0;
+    this.corruptedEntries = 0;
+    this.metadataParseFailures = 0;
+    this.orphanedFilesRemoved = 0;
 
     if (this.opfsRoot) {
       try {
@@ -297,12 +464,42 @@ export class OPFSStore {
   /**
    * Get cache statistics.
    */
-  getStats(): { size: number; count: number; reads: number; writes: number } {
+  getStats(): {
+    size: number;
+    count: number;
+    reads: number;
+    writes: number;
+    misses: number;
+    oversizedWriteSkipped: number;
+    quotaWriteSkipped: number;
+    evictions: number;
+    writeFailures: number;
+    corruptedEntries: number;
+    metadataParseFailures: number;
+    orphanedFilesRemoved: number;
+    /**
+     * S2: `true` when OPFS was reachable on init and the store is
+     * still alive. `false` when init couldn't acquire a directory
+     * handle (browser without OPFS support, private mode in some
+     * configs) or after dispose(). Drives the `opfs-unavailable`
+     * status badge.
+     */
+    available: boolean;
+  } {
     return {
       size: this.totalSize,
       count: this.index.size,
       reads: this.readCount,
       writes: this.writeCount,
+      misses: this.missCount,
+      oversizedWriteSkipped: this.oversizedWriteSkipped,
+      quotaWriteSkipped: this.quotaWriteSkipped,
+      evictions: this.evictions,
+      writeFailures: this.writeFailures,
+      corruptedEntries: this.corruptedEntries,
+      metadataParseFailures: this.metadataParseFailures,
+      orphanedFilesRemoved: this.orphanedFilesRemoved,
+      available: this.opfsRoot !== null && !this.disposed,
     };
   }
 
@@ -310,6 +507,7 @@ export class OPFSStore {
    * Update LRU order for a key.
    */
   touch(key: string): void {
+    if (this.disposed) return;
     const entry = this.index.get(key);
     if (entry) {
       // Delete+re-insert to move to end (MRU position) — O(1) with Map
@@ -341,6 +539,25 @@ export class OPFSStore {
   }
 
   /**
+   * Record the validation mode used for this dataset. Persisted to
+   * `_cache_meta.json` so a follow-up session can re-evaluate (e.g.
+   * a TTL window).
+   */
+  setValidationMode(mode: CacheValidationMode): void {
+    this.validationMode = mode;
+    this.lastValidatedAt = Date.now();
+    this.scheduleMetadataSave();
+  }
+
+  /**
+   * Read the current validation mode and last-validated timestamp.
+   * Returned together so callers can apply a TTL check atomically.
+   */
+  getValidationState(): { mode: CacheValidationMode; lastValidatedAt: number | null } {
+    return { mode: this.validationMode, lastValidatedAt: this.lastValidatedAt };
+  }
+
+  /**
    * Renumber all order entries to prevent orderCounter overflow.
    * Called when orderCounter exceeds a safe threshold (1e12).
    */
@@ -355,14 +572,42 @@ export class OPFSStore {
   }
 
   /**
-   * Flush pending metadata writes and clear in-memory state.
+   * Tear down the store. Flushes pending metadata writes, awaits any
+   * in-flight saves, drains pending same-key writes, then marks the
+   * store disposed so subsequent set/get/touch are no-ops.
+   *
+   * Order matters:
+   * 1. Bump generation FIRST so any in-flight doSet that resolves
+   *    afterwards detects the mismatch and skips its index update.
+   * 2. Cancel the debounced timer (if pending) and run a final
+   *    saveMetadata so the on-disk index reflects what's in memory.
+   * 3. Await the in-flight saveMetadata triggered by the timer (if any).
+   * 4. Drain pendingWrites so file I/O for in-flight set() calls
+   *    finishes before we declare the store disposed.
+   * 5. Set disposed = true.
    */
   async dispose(): Promise<void> {
+    if (this.disposed) return;
+    this.generation++;
+
     if (this.metadataSaveTimeout) {
       clearTimeout(this.metadataSaveTimeout);
       this.metadataSaveTimeout = null;
       await this.saveMetadata();
     }
+    if (this.metadataSaveInFlight) {
+      try {
+        await this.metadataSaveInFlight;
+      } catch {
+        // Already-logged inside scheduleMetadataSave's catch.
+      }
+    }
+
+    if (this.pendingWrites.size > 0) {
+      await Promise.allSettled([...this.pendingWrites.values()]);
+    }
+
+    this.disposed = true;
   }
 
   // ========== Private Methods ==========
@@ -415,13 +660,26 @@ export class OPFSStore {
   }
 
   /**
-   * Convert cache key to OPFS-safe filename using base64 encoding.
+   * Convert cache key to OPFS-safe filename via UTF-8 → base64url.
+   *
+   * zarr keys can include non-ASCII group/array names, so the key is
+   * encoded to UTF-8 bytes before base64url conversion. The resulting
+   * filename is filesystem-safe without manual `+`/`/`/`=` substitution.
+   *
+   * Bumping {@link OPFS_ENCODING_VERSION} invalidates any directory
+   * persisted with a different output (handled in loadMetadata).
+   *
    * Example: "points/positions/0.0.0" → "cG9pbnRzL3Bvc2l0aW9ucy8wLjAuMA"
    */
   private keyToFileName(key: string): string {
-    const base64 = btoa(key);
-    // Replace base64 special chars with filesystem-safe alternatives
-    return base64.replace(/\//g, '_').replace(/=/g, '-').replace(/\+/g, '.');
+    const bytes = new TextEncoder().encode(key);
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    const base64 = btoa(binary);
+    // base64url: replace + with -, / with _, drop = padding (filesystem-safe).
+    return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
   }
 
   /**
@@ -443,12 +701,17 @@ export class OPFSStore {
       clearTimeout(this.metadataSaveTimeout);
     }
     this.metadataSaveTimeout = setTimeout(() => {
-      this.saveMetadata()
+      // Track the in-flight save so dispose() can await it before the
+      // final flush. Without this, dispose racing the timer-fired save
+      // produces interleaved writes to _cache_meta.json.
+      this.metadataSaveInFlight = this.saveMetadata()
         .catch((error) => {
+          this.writeFailures++;
           log.warning(Modules.CACHE, 'OPFSStore metadata save failed', error);
         })
         .finally(() => {
           this.metadataSaveTimeout = null;
+          this.metadataSaveInFlight = null;
         });
     }, OPFSStore.METADATA_SAVE_DELAY);
   }
@@ -461,19 +724,105 @@ export class OPFSStore {
       const file = await metaHandle.getFile();
       const meta: OPFSMetadata = JSON.parse(await file.text());
 
+      // Encoding-version mismatch ⇒ stale directory: previous cache
+      // entries used a different keyToFileName encoding and won't be
+      // findable. Treat as cold cache (no migration today; the cache
+      // is best-effort and rebuilds itself in seconds).
+      const persistedVersion = meta.encodingVersion ?? 1;
+      if (persistedVersion !== OPFS_ENCODING_VERSION) {
+        log.info(
+          Modules.CACHE,
+          `OPFSStore encoding version ${persistedVersion} != ${OPFS_ENCODING_VERSION}, starting fresh`
+        );
+        this.index = new Map();
+        this.totalSize = 0;
+        this.orderCounter = 0;
+        this.contentHash = null;
+        return;
+      }
+
       // Reconstruct Map sorted by ascending order so Map insertion order = LRU order
       const entries = (meta.entries || []).slice();
       entries.sort((a, b) => a[1].order - b[1].order);
       this.index = new Map(entries);
-      this.totalSize = meta.totalSize || 0;
-      this.orderCounter = meta.orderCounter || 0;
+      // R6e: defensive hardening against partial metadata corruption.
+      // `meta.totalSize` is whatever value the JSON contains; values
+      // like NaN, Infinity, or negatives are accepted by `|| 0` but
+      // surface as nonsensical stats downstream. Clamp to non-negative
+      // and recompute from the live entries when the persisted value
+      // disagrees by more than a trivial amount — entries[] is the
+      // source of truth for what's actually stored.
+      const persistedTotal =
+        Number.isFinite(meta.totalSize) && meta.totalSize >= 0 ? meta.totalSize : 0;
+      const computedTotal = entries.reduce(
+        (sum, [, e]) => sum + (Number.isFinite(e.size) && e.size > 0 ? e.size : 0),
+        0
+      );
+      this.totalSize =
+        Math.abs(persistedTotal - computedTotal) > 1 ? computedTotal : persistedTotal;
+      this.orderCounter =
+        Number.isFinite(meta.orderCounter) && meta.orderCounter >= 0 ? meta.orderCounter : 0;
       this.contentHash = meta.contentHash || null;
-    } catch {
-      // No metadata yet, start fresh
+      this.validationMode = meta.validationMode ?? 'none';
+      this.lastValidatedAt = meta.lastValidatedAt ?? null;
+    } catch (error) {
+      // Two cases reach here:
+      //  - getFileHandle threw "not found" → no metadata yet, cold start
+      //  - JSON.parse threw → metadata file is corrupt; treat as cold
+      //    start, count the failure, and run a best-effort orphan
+      //    cleanup so files left over from the corrupt run don't take
+      //    up quota indefinitely.
+      const wasParseFailure =
+        error instanceof SyntaxError ||
+        (error instanceof Error && /JSON|parse|Unexpected/i.test(error.message));
       this.index = new Map();
       this.totalSize = 0;
       this.orderCounter = 0;
       this.contentHash = null;
+      if (wasParseFailure) {
+        this.metadataParseFailures++;
+        log.warning(
+          Modules.CACHE,
+          'OPFSStore metadata corrupt, starting fresh and reclaiming orphans'
+        );
+        await this.cleanupOrphans().catch(() => {
+          // Best-effort; ignore reclaim failures.
+        });
+      }
+    }
+  }
+
+  /**
+   * Reclaim OPFS files that exist on disk but have no entry in
+   * `this.index`. Called from loadMetadata() when metadata parse
+   * failed; safe to skip otherwise (the cache rebuilds itself in
+   * seconds and orphans are bounded by quota anyway).
+   */
+  private async cleanupOrphans(): Promise<void> {
+    if (!this.opfsRoot) return;
+    const expected = new Set<string>();
+    for (const key of this.index.keys()) {
+      expected.add(this.keyToFileName(key));
+    }
+    const root = this.opfsRoot as IterableFileSystemDirectoryHandle;
+    for await (const bucketName of root.keys()) {
+      // Only iterate hex-buckets (00-ff); skip _cache_meta.json itself.
+      if (!/^[0-9a-f]{2}$/.test(bucketName)) continue;
+      try {
+        const bucketHandle = await this.opfsRoot.getDirectoryHandle(bucketName);
+        const iterableBucket = bucketHandle as IterableFileSystemDirectoryHandle;
+        for await (const fileName of iterableBucket.keys()) {
+          if (expected.has(fileName)) continue;
+          try {
+            await bucketHandle.removeEntry(fileName);
+            this.orphanedFilesRemoved++;
+          } catch {
+            // Skip file we can't remove; surface in stats but don't bail.
+          }
+        }
+      } catch {
+        // Bucket may have disappeared mid-scan; ignore.
+      }
     }
   }
 
@@ -491,6 +840,9 @@ export class OPFSStore {
         totalSize: this.totalSize,
         orderCounter: this.orderCounter,
         contentHash: this.contentHash,
+        encodingVersion: OPFS_ENCODING_VERSION,
+        validationMode: this.validationMode,
+        lastValidatedAt: this.lastValidatedAt ?? undefined,
       };
       await writable.write(JSON.stringify(metadata));
       await writable.close();

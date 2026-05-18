@@ -241,7 +241,6 @@ class TestDedupe:
         assert deduped.dtype == float
 
 
-
 class TestCombineSeeds:
     """Test combine_seeds function."""
 

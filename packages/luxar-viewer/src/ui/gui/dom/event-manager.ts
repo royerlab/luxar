@@ -54,10 +54,18 @@ export class EventManager {
     event: string,
     handler: EventListener
   ): void {
-    element.removeEventListener(event, handler);
+    // Look up the stored record so we pass the original `options` (notably
+    // `capture`) to removeEventListener — addEventListener's "useCapture"
+    // is part of the listener's identity, so capture-phase listeners
+    // registered with `{capture: true}` and removed without options
+    // would leak.
+    const record = this.listeners.find(
+      (r) => r.element === element && r.event === event && r.handler === handler
+    );
+    element.removeEventListener(event, handler, record?.options);
 
     this.listeners = this.listeners.filter(
-      (record) => record.element !== element || record.event !== event || record.handler !== handler
+      (r) => r.element !== element || r.event !== event || r.handler !== handler
     );
   }
 

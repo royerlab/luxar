@@ -78,46 +78,46 @@ export function formatLog(emoji: string, module: string, message: string): strin
  */
 export const log = {
   // Basic logging with module
-  info: (module: string, message: string, ...args: any[]) => {
+  info: (module: string, message: string, ...args: unknown[]) => {
     console.log(`[${LogEmoji.INFO}] [${module}] ${message}`, ...args);
   },
 
-  success: (module: string, message: string, ...args: any[]) => {
+  success: (module: string, message: string, ...args: unknown[]) => {
     console.log(`[${LogEmoji.SUCCESS}] [${module}] ${message}`, ...args);
   },
 
-  error: (module: string, message: string, ...args: any[]) => {
+  error: (module: string, message: string, ...args: unknown[]) => {
     console.error(`[${LogEmoji.ERROR}] [${module}] ${message}`, ...args);
   },
 
-  warning: (module: string, message: string, ...args: any[]) => {
+  warning: (module: string, message: string, ...args: unknown[]) => {
     console.warn(`[${LogEmoji.WARNING}] [${module}] ${message}`, ...args);
   },
 
   // Action-specific logging
-  load: (module: string, message: string, ...args: any[]) => {
+  load: (module: string, message: string, ...args: unknown[]) => {
     console.log(`[${LogEmoji.LOAD}] [${module}] ${message}`, ...args);
   },
 
-  update: (module: string, message: string, ...args: any[]) => {
+  update: (module: string, message: string, ...args: unknown[]) => {
     console.log(`[${LogEmoji.UPDATE}] [${module}] ${message}`, ...args);
   },
 
-  query: (module: string, message: string, ...args: any[]) => {
+  query: (module: string, message: string, ...args: unknown[]) => {
     console.log(`[${LogEmoji.QUERY}] [${module}] ${message}`, ...args);
   },
 
-  data: (module: string, message: string, ...args: any[]) => {
+  data: (module: string, message: string, ...args: unknown[]) => {
     console.log(`[${LogEmoji.DATA}] [${module}] ${message}`, ...args);
   },
 
   // Custom emoji logging
-  custom: (emoji: string, module: string, message: string, ...args: any[]) => {
+  custom: (emoji: string, module: string, message: string, ...args: unknown[]) => {
     console.log(`[${emoji}] [${module}] ${message}`, ...args);
   },
 
   // Raw console access (already formatted)
-  raw: (formattedMessage: string, ...args: any[]) => {
+  raw: (formattedMessage: string, ...args: unknown[]) => {
     console.log(formattedMessage, ...args);
   },
 };
@@ -133,7 +133,7 @@ export const Modules = {
 
   // Data Loading
   SCENE_LOADER: 'SceneLoader',
-  SPATIAL_INDEX_LOADER: 'PointSpatialIndexLoader',
+  SPATIAL_INDEX_LOADER: 'PointsSpatialIndexLoader',
   GSPLATS_SPATIAL_INDEX_LOADER: 'GSplatsSpatialIndexLoader',
   SPATIAL_INDEX: 'PointSpatialIndex',
   DATA_MONITOR: 'DataMonitor',
@@ -173,6 +173,7 @@ export const Modules = {
   PERFORMANCE: 'Performance',
   CONSOLE_INTERCEPTOR: 'ConsoleInterceptor',
   ADAPTIVE_DPR: 'AdaptiveDPR',
+  EVENT_GROUP: 'EventGroup',
 } as const;
 
 /**
@@ -180,16 +181,16 @@ export const Modules = {
  */
 export function createModuleLogger(module: string) {
   return {
-    log: (message: string, ...args: any[]) => log.info(module, message, ...args),
-    info: (message: string, ...args: any[]) => log.info(module, message, ...args),
-    success: (message: string, ...args: any[]) => log.success(module, message, ...args),
-    error: (message: string, ...args: any[]) => log.error(module, message, ...args),
-    warning: (message: string, ...args: any[]) => log.warning(module, message, ...args),
-    load: (message: string, ...args: any[]) => log.load(module, message, ...args),
-    update: (message: string, ...args: any[]) => log.update(module, message, ...args),
-    query: (message: string, ...args: any[]) => log.query(module, message, ...args),
-    data: (message: string, ...args: any[]) => log.data(module, message, ...args),
-    custom: (emoji: string, message: string, ...args: any[]) =>
+    log: (message: string, ...args: unknown[]) => log.info(module, message, ...args),
+    info: (message: string, ...args: unknown[]) => log.info(module, message, ...args),
+    success: (message: string, ...args: unknown[]) => log.success(module, message, ...args),
+    error: (message: string, ...args: unknown[]) => log.error(module, message, ...args),
+    warning: (message: string, ...args: unknown[]) => log.warning(module, message, ...args),
+    load: (message: string, ...args: unknown[]) => log.load(module, message, ...args),
+    update: (message: string, ...args: unknown[]) => log.update(module, message, ...args),
+    query: (message: string, ...args: unknown[]) => log.query(module, message, ...args),
+    data: (message: string, ...args: unknown[]) => log.data(module, message, ...args),
+    custom: (emoji: string, message: string, ...args: unknown[]) =>
       log.custom(emoji, module, message, ...args),
   };
 }

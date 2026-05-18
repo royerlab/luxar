@@ -5,14 +5,123 @@
  * handling of point data throughout the viewer.
  *
  * This module follows the same pattern as types/lines.ts and types/gsplats.ts
- * for consistency across all node types.
+ * for consistency across all node types — every node-type's loaded /
+ * processed / view-state / metadata interfaces, plus the point-specific
+ * array-element type aliases (Float16Array support is points-only),
+ * live in types/{node-type}.ts.
  *
  * @module types/points
  */
 
-import type { DimensionMetadata } from './dims';
-import type { LoadedPointsData } from '../data/data-loader-types';
-import type { UpdateSession } from '../profiling/update-profiler';
+import * as THREE from 'three';
+import type { ViewState, DataLoader } from '../data/data-loader-types';
+
+// ============================================================================
+// Element Array Types (Float16 is points-specific)
+// ============================================================================
+
+/** Position array variants. Float16 support is points-only. */
+export type PositionArray = Float32Array | Float16Array;
+
+/** Color array variants. Uint8 / Uint16 are dtype-preserved (255 vs 1.0 semantics). */
+export type ColorArray = Float32Array | Uint8Array | Uint16Array;
+
+/** Scalar attribute array variants (radii, sharpness). */
+export type ScalarArray = Float32Array | Float16Array | Uint8Array;
+
+// ============================================================================
+// Loaded / Range Types (post-spatial-index slice, ready for GPU upload)
+// ============================================================================
+
+/**
+ * Loaded points data ready for GPU rendering.
+ * All arrays are properly aligned with the same point ordering.
+ * Arrays can be in different data types for memory efficiency.
+ *
+ * Named with "Loaded" prefix for consistency with LoadedLinesData and
+ * LoadedGSplatsData.
+ */
+export interface LoadedPointsData {
+  /** 3D positions extracted from nD space (size: numPoints * 3) */
+  positions: PositionArray;
+
+  /** RGB colors (size: numPoints * 3, optional) */
+  colors?: ColorArray;
+
+  /** Point radii in world units (size: numPoints, optional) */
+  radii?: ScalarArray;
+
+  /** Point sharpness values (size: numPoints, optional) */
+  sharpness?: ScalarArray;
+
+  /**
+   * Per-point scalar values for colormap lookup (size: numPoints, optional).
+   *
+   * when present, the geometry binds a `scalar` attribute and the
+   * Point shader's USE_COLORMAP path samples the LUT at
+   * `(scalar - uScalarMin) * uScalarScale`. Without scalars, colormap
+   * mode falls back to vertex colours. The dtype matches the source
+   * zarr array (Float32 / Float16 / Uint8); the shader reads `radius`-
+   * style normalised attributes when the dtype is integer.
+   */
+  scalars?: ScalarArray;
+
+  /**
+   * Per-point original (node-global) element IDs (size: numPoints, optional).
+   *
+   * when picking labels are enabled, this carries the node-global
+   * element index that label/image-label loaders expect. Without this,
+   * `gl_VertexID` is used — but that's a visible-buffer-local index
+   * after spatial range loading or nD compaction, not a global index.
+   */
+  elementIds?: Uint32Array;
+
+  /** Number of points loaded (top-level for consistency with Lines/GSplats) */
+  pointCount: number;
+
+  /** Original nD dimensionality (top-level for consistency with Lines/GSplats) */
+  ndim: number;
+
+  /** Metadata about the loaded data */
+  metadata: {
+    /** Total points in the full dataset */
+    totalPoints: number;
+
+    /** Number of points actually loaded (also available as top-level pointCount) */
+    loadedPoints: number;
+
+    /** Bounding box of loaded points */
+    bounds: THREE.Box3;
+
+    /** Whether spatial index was used */
+    usedSpatialIndex: boolean;
+
+    /** Whether effective radius calculation was applied */
+    usedEffectiveRadius?: boolean;
+
+    /** Original data types from zarr (for proper conversion) */
+    dtypes?: {
+      positions?: string;
+      colors?: string;
+      radii?: string;
+      sharpness?: string;
+      scalars?: string;
+    };
+  };
+}
+
+/**
+ * Range of points to load (for spatial index queries). Mirrors
+ * `SegmentRange` in `types/lines.ts` and `SplatRange` in
+ * `types/gsplats.ts`.
+ */
+export interface PointRange {
+  /** Starting index (inclusive) */
+  start: number;
+
+  /** Ending index (exclusive) */
+  end: number;
+}
 
 // ============================================================================
 // Metadata Types (from zarr .zattrs)
@@ -37,8 +146,20 @@ export interface PointsMetadata {
   /** Maximum point radius in world units */
   max_radius?: number;
 
+  /** Maximum sharpness value (used to scale Uint8-quantised sharpness arrays back to [0, max_sharpness]). Default 31.0. */
+  max_sharpness?: number;
+
   /** Whether colors array is present */
   has_colors?: boolean;
+
+  /** Whether per-element scalar values are present (drives colormap). */
+  has_scalars?: boolean;
+
+  /** Colormap name applied to per-element scalars (e.g. 'viridis', 'plasma'). */
+  colormap?: string;
+
+  /** [min, max] of the scalar data range used to remap into the colormap LUT. */
+  scalar_data_range?: [number, number];
 
   /** Whether radii array is present */
   has_radii?: boolean;
@@ -96,6 +217,13 @@ export interface PointsMetadata {
    */
   extend_to_all?: string[];
 
+  /**
+   * bytes loaded from the node's `colormap_lut` zarr array when
+   * `colormap === 'custom'`. Populated at scene-graph build time;
+   * runtime-only field, not authored at the zarr level.
+   */
+  customLutBytes?: Uint8Array;
+
   /** Position array dtype (for proper conversion) */
   position_dtype?: string;
 
@@ -116,44 +244,26 @@ export interface PointsMetadata {
 /**
  * View state for points loading.
  *
- * Mirrors the pattern used by LinesViewState and GSplatsViewState.
- * Note: Uses DimensionMetadata[] for consistency with Lines/GSplats.
+ * Identical shape to the lines + gsplats ViewState — kept as a named
+ * alias for documentation (a function signature reading
+ * `viewState: PointsViewState` is more self-documenting than the
+ * generic `ViewState`).
+ *
+ * @internal — re-exported via types/index.ts for type-only consumers;
+ * no runtime caller depends on this alias.
  */
-export interface PointsViewState {
-  /** Which dimensions to display (max 3, indices into nD space) */
-  displayDims: number[];
-
-  /** Current position in nD space (one value per dimension) */
-  slicePosition: number[];
-
-  /** Tolerance for slicing in each dimension */
-  tolerance: number[];
-
-  /** Dimension metadata for the dataset */
-  dimensions?: DimensionMetadata[];
-}
+export type PointsViewState = ViewState;
 
 // ============================================================================
 // Scene Integration Types
 // ============================================================================
 
 /**
- * Data loader interface for Points nodes.
- *
- * Mirrors the pattern from LinesDataLoader and GSplatsDataLoader.
- * This is a standalone interface (doesn't extend DataLoader) to allow
- * PointsViewState to use DimensionMetadata[] for consistency with Lines/GSplats.
+ * Data loader interface for Points nodes. Identical shape to the
+ * `DataLoader` interface in `data/data-loader-types.ts`; aliased for
+ * naming symmetry with `LinesDataLoader` and `GSplatsDataLoader`.
  */
-export interface PointsDataLoader {
-  /** Load points data for the given view state */
-  loadPoints(viewState: PointsViewState, session?: UpdateSession): Promise<LoadedPointsData>;
-
-  /** Update existing data for a new view state */
-  updateView(viewState: PointsViewState, session?: UpdateSession): Promise<LoadedPointsData>;
-
-  /** Clean up resources */
-  dispose(): void;
-}
+export type PointsDataLoader = DataLoader;
 
 /**
  * User data attached to THREE.Points objects in the scene.

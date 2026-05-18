@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { LoadedPointsDataAccumulator } from '../../../data/data-accumulator';
+import { LoadedPointsDataAccumulator } from '../../../data/utils/data-accumulator';
 
 describe('Accumulator Integration Tests', () => {
   describe('Points Loader Integration', () => {
@@ -25,7 +25,7 @@ describe('Accumulator Integration Tests', () => {
         sharpness: new Float32Array(1000),
       };
 
-      // This is what point-spatial-index-loader does at line 429
+      // This is what points-spatial-index-loader does at line 429
       accumulator.ensureCapacity(1000);
 
       // Verify ensureCapacity was called

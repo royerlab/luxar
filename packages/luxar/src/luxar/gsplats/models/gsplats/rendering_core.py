@@ -351,7 +351,7 @@ def cached_base_and_offsets(
     return base, lin_offsets
 
 
-@torch.jit.ignore  # type: ignore[untyped-decorator]  # jit-able but optional; ignore keeps it simple if torch.compile() is used outside
+@torch.jit.ignore  # type: ignore  # jit-able but optional; ignore keeps it simple if torch.compile() is used outside
 def group_by_box_gpu(
     lo: torch.Tensor, hi: torch.Tensor
 ) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -709,7 +709,9 @@ def render_gaussians(
     Ls: torch.Tensor,  # (N, d, d) lower-tri
     amps: torch.Tensor,  # (N,)
     truncate: float = 3.0,
-    intensity_floor: Optional[float] = 1e-5,  # for amplitude-aware culling; None disables
+    intensity_floor: Optional[
+        float
+    ] = 1e-5,  # for amplitude-aware culling; None disables
     chunk_size: Optional[int] = None,  # P-dimension chunk size for memory control
 ) -> torch.Tensor:
     """

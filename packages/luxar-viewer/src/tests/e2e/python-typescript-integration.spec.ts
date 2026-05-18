@@ -15,7 +15,7 @@
  * Note: All-dataset smoke tests are in all-examples-smoke-test.spec.ts.
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { waitForLuxarReady, getLuxarState } from './helpers';
 
 const DATASETS = {

@@ -190,9 +190,8 @@ export interface InputConfig {
   };
 }
 
-// NOTE: UIColors, UITypography, UISpacing, UIEffects, and UIStyles interfaces
-// have been removed. All styling now uses CSS variables and classes in
-// src/styles/ (see theming system in src/themes/)
+// Styling uses CSS variables and classes in src/styles/ (see the
+// theming system in src/themes/).
 
 /**
  * Debug console configuration
@@ -293,7 +292,7 @@ export interface UIConfig {
     size: number;
     borderWidth: number;
   };
-  // NOTE: styles property removed - all styling now uses CSS variables
+  // Styling lives in CSS variables/classes rather than config objects.
   debugConsole: DebugConsoleConfig;
   components: UIComponentsConfig;
   scaleBar: {
@@ -311,6 +310,20 @@ export interface DataLoadingNetworkConfig {
    * Dedicated short budget for the L2 cache-validation HEAD probe. On flaky
    * networks the validation must NOT block scene loading for the full
    * `timeoutMs` — failing fast lets cached data render quickly.
+   *
+   * **Trade-off**: lower values fail faster (good — render from cached
+   * data while the network is slow). Higher values tolerate slower
+   * networks but block first-paint until the validation completes or
+   * times out. Default is `5000` (5 s).
+   *
+   * **3G / Edge / high-latency**: real-world 3G round-trip + server
+   * processing can exceed 5 s, which would cause spurious validation
+   * timeouts and force re-fetches of otherwise-valid cached data. If you
+   * target slow networks, raise this to `>=8000` (8 s).
+   *
+   * The validation layer logs a warning when this drops below 3 s (the
+   * "almost certainly broken" floor); 5 s is the broadband-tuned
+   * default and does not warn.
    */
   validationTimeoutMs: number;
   maxConcurrent: number;
@@ -398,26 +411,74 @@ export interface DataLoadingConfig {
 }
 
 /**
- * Performance optimization configuration (Phases 1-4)
+ * Performance optimization configuration: object pooling, web workers,
+ * WASM acceleration, GPU buffer pool.
  */
 export interface DataLoadingPerformanceConfig {
-  // Object pooling (Phase 1)
+  // Object pooling
   useAccumulators: boolean;
   initialAccumulatorCapacity: number;
   accumulatorGrowthFactor: number;
 
-  // Web Workers (Phase 2)
+  // Web Workers
   useWebWorkers: boolean;
   workerCount: number;
+  /**
+   * Soft timeout for visibility-class worker calls (computeNDVisibility*).
+   * Reject the awaiting promise after this many ms with a
+   * `WorkerTimeoutError` and remove the worker from the pool. 0 disables.
+   */
+  workerVisibilityTimeoutMs: number;
+  /**
+   * Soft timeout for projection-class worker calls (project*To3D).
+   * Same semantics as `workerVisibilityTimeoutMs` but typically larger
+   * since projection over millions of items takes longer than visibility.
+   */
+  workerProjectionTimeoutMs: number;
+  /**
+   * Hard timeout for the per-worker `api.initialize()` Comlink call
+   * during pool startup. Without this guard, a blocked / unreachable
+   * worker script (e.g. a dev environment that 404s the worker chunk)
+   * leaves Comlink waiting forever — the worker's `onerror` fires but
+   * pool init runs *before* the worker is in the pool, so the
+   * standard handleWorkerFailure path can't evict it. The guard
+   * rejects the init promise so the caller can fall back gracefully.
+   */
+  workerInitTimeoutMs: number;
 
-  // WASM acceleration (Phase 3)
+  // WASM acceleration
   useWASM: boolean;
   wasmModulePath: string;
 
-  // GPU buffer pool (Phase 4)
+  // GPU buffer pool
   useGPUBufferPool: boolean;
   gpuPoolMaxSize: number;
   gpuPoolEvictionFrames: number;
+  /**
+   * Per-call eviction-batch cap for the GPU buffer pool. When many
+   * pooled buffers cross the eviction threshold in the same frame
+   * (common after a long pause + viewport change), without this cap
+   * `evictUnused` would dispose every qualifying buffer synchronously,
+   * stuttering the frame. The cap defers excess evictions to the
+   * next frame. The pool-over-limit path bypasses the cap so memory
+   * still stays bounded.
+   */
+  gpuPoolEvictBatchSize: number;
+  /**
+   * byte-budget for the GPU buffer pool. When `pooledBytes` exceeds
+   * this value, `evictUnused()` disposes pooled buffers (largest first)
+   * until under budget — independent of the count cap. `0` disables
+   * the byte-budget pass (count-only behavior). Default ~512 MB.
+   */
+  gpuPoolMaxBytes: number;
+
+  /**
+   * Maximum number of cached materials per type (point, line, gsplat).
+   * Materials are bucketed by attribute (opacity / gamma / intensity / …);
+   * an unbounded cache leaks GPU shader programs over long sessions when
+   * users animate sliders. Set to 0 to disable LRU eviction.
+   */
+  materialCacheMaxSize: number;
 
   // Debugging
   enablePerformanceMonitoring: boolean;
@@ -456,7 +517,7 @@ export interface RenderingSettings {
   dofEnabled: boolean;
   dofFocus: number;
   dofStrength: number;
-  // New pmndrs effects
+  // pmndrs effect controls
   aoEnabled: boolean;
   aoQuality: 'low' | 'medium' | 'high' | 'ultra';
   vignetteEnabled: boolean;
@@ -467,7 +528,7 @@ export interface RenderingSettings {
   detectorNoiseReadoutSigma: number;
   detectorNoisePhotonGain: number;
   detectorNoiseFpnSigma: number;
-  // Chromatic lens distortion effect (replaces old separate lens distortion + chromatic aberration)
+  // Chromatic lens distortion effect
   chromaticLensDistortionEnabled: boolean;
   chromaticLensDistortionX: number;
   chromaticLensDistortionY: number;
@@ -481,6 +542,12 @@ export interface RenderingSettings {
   controlType: 'orbit' | 'fly' | 'ortho';
   autoRotate: boolean;
   autoRotateSpeed: number;
+  /**
+   * "Natural drag" — swap LEFT ↔ RIGHT mouse buttons in orbit mode so a
+   * one-finger touchpad drag rotates (and two-finger / right-drag pans).
+   * Defaults to true on macOS. Orbit (3D) only; ortho and fly modes ignore.
+   */
+  naturalDrag: boolean;
   // Fly controls - these are added at runtime from config.controls.fly
   flyMovementSpeed?: number;
   flyRotationSpeed?: number;
@@ -500,7 +567,7 @@ export interface RenderingControlsConfig {
   defaults: RenderingSettings;
 }
 
-// Note: RenderingConfig removed - all rendering settings moved to RenderingSettings for centralization
+// Rendering settings are centralized in RenderingSettings.
 
 /**
  * WebGL context attributes
@@ -565,6 +632,20 @@ export interface CacheConfig {
   l1MaxSizeMB: number;
   /** L2 OPFS cache size in MB (default: 2048) */
   l2MaxSizeMB: number;
+  /**
+   * Per-operation timeout for OPFS file I/O (read/write/delete) in ms.
+   * A hung browser OPFS handle would otherwise stall cache operations
+   * indefinitely; this bound degrades them to a cache miss / write skip.
+   * Default: 10_000 ms.
+   */
+  opfsOperationTimeoutMs: number;
+  /**
+   * TTL in ms for external datasets that lack Luxar's `content_hash`.
+   * When set, a cached external dataset older than this is invalidated
+   * on next init. `null` (default) means no TTL — the cache may be
+   * stale indefinitely until manually cleared.
+   */
+  externalDatasetTtlMs: number | null;
   /** Enable cache debug logging (default: false) */
   debug: boolean;
 }
