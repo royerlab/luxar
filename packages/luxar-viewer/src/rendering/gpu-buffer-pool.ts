@@ -33,7 +33,6 @@ import type { LoadedPointsData } from '../data/data-loader-types';
 import type { ProcessedLinesData } from '../types/lines';
 import {
   packInterleavedAttributes,
-  widenToFloat32,
   type InterleavedAttributeSpec,
 } from './interleaved-attributes';
 import type { PooledBuffer, PoolStats } from './gpu-buffer-pool/pool-stats';
@@ -43,42 +42,9 @@ import {
   writePooledAttribute,
 } from './gpu-buffer-pool/attribute-codec';
 import { PointsBufferAdapter } from './gpu-buffer-pool/points-adapter';
+import { LinesBufferAdapter } from './gpu-buffer-pool/lines-adapter';
 
-/**
- * Canonical per-segment attribute layout for pooled line geometries.
- * The pool pre-allocates a single `InstancedInterleavedBuffer` over
- * these specs (Float32 throughout — Uint8 clipped flags get widened
- * at upload time). Optional scalar attributes (aStartScalar /
- * aEndScalar) are added via a spec-set rebuild when colormap data
- * first arrives, mirroring the line-geometry.ts pattern.
- *
- * Declaration order matters only for stride bookkeeping; the shader
- * reads attributes by name through the views.
- */
-const LINES_BASE_ATTRIBUTE_SPECS: ReadonlyArray<{
-  name: string;
-  itemSize: 1 | 2 | 3 | 4;
-}> = [
-  { name: 'aStartPos', itemSize: 3 },
-  { name: 'aEndPos', itemSize: 3 },
-  { name: 'aStartColor', itemSize: 3 },
-  { name: 'aEndColor', itemSize: 3 },
-  { name: 'aStartWidth', itemSize: 1 },
-  { name: 'aEndWidth', itemSize: 1 },
-  { name: 'aStartSharpness', itemSize: 1 },
-  { name: 'aEndSharpness', itemSize: 1 },
-  { name: 'aSegmentLength', itemSize: 1 },
-  { name: 'aStartClipped', itemSize: 1 },
-  { name: 'aEndClipped', itemSize: 1 },
-];
-
-const LINES_SCALAR_ATTRIBUTE_SPECS: ReadonlyArray<{
-  name: string;
-  itemSize: 1 | 2 | 3 | 4;
-}> = [
-  { name: 'aStartScalar', itemSize: 1 },
-  { name: 'aEndScalar', itemSize: 1 },
-];
+// Lines-specific spec arrays moved to ./gpu-buffer-pool/lines-adapter.
 
 /** Canonical per-splat attribute layout for pooled gsplat geometries. */
 const GSPLATS_ATTRIBUTE_SPECS: ReadonlyArray<{
@@ -140,7 +106,8 @@ export { selectBuffersToEvict } from './gpu-buffer-pool/eviction-policy';
 export class GPUBufferPool {
   /** @internal — points-specific pool state and methods. */
   readonly points: PointsBufferAdapter;
-  private lineBuffers = new Map<number, PooledBuffer[]>();
+  /** @internal — lines-specific pool state and methods. */
+  readonly lines: LinesBufferAdapter;
   private gsplatBuffers = new Map<number, PooledBuffer[]>();
 
   /** @internal — shared with the per-type adapters. */
@@ -220,6 +187,7 @@ export class GPUBufferPool {
     this.evictBatchSize = Math.max(1, evictBatchSize);
     this.maxPoolBytes = Math.max(0, maxPoolBytes);
     this.points = new PointsBufferAdapter(this);
+    this.lines = new LinesBufferAdapter(this);
   }
 
   /**
@@ -290,233 +258,23 @@ export class GPUBufferPool {
   // Lines Geometry Management
   // =========================================================================
 
-  /**
-   * Acquire geometry for Lines (instanced per-segment attributes).
-   */
+  /** Acquire geometry for Lines (instanced per-segment attributes). */
   acquireLinesGeometry(nodeId: string, segmentCount: number): THREE.InstancedBufferGeometry {
-    this._lastAcquireRebuilt = false;
-    const active = this.activeBuffers.get(nodeId);
-    if (active && active.type === 'lines') {
-      if (active.capacity >= segmentCount) {
-        active.lastUsedFrame = this.frameCount;
-        this.stats.reuses++;
-        this.typeStats.lines.reuses++;
-        return active.geometry as THREE.InstancedBufferGeometry;
-      } else {
-        // Grow rebuilds the InstancedInterleavedBuffer.
-        this.growLinesGeometry(active.geometry as THREE.InstancedBufferGeometry, segmentCount);
-        active.capacity = Math.ceil(segmentCount * 1.5);
-        active.lastUsedFrame = this.frameCount;
-        this.stats.capacityGrowths++;
-        this._lastAcquireRebuilt = true;
-        return active.geometry as THREE.InstancedBufferGeometry;
-      }
-    }
-
-    // Try to find in pool (search across all buckets)
-    for (const pooled of this.lineBuffers.values()) {
-      for (let i = pooled.length - 1; i >= 0; i--) {
-        const candidate = pooled[i];
-        if (candidate.capacity >= segmentCount) {
-          // Different geometry than what was active for this node.
-          pooled.splice(i, 1);
-          candidate.inUse = true;
-          candidate.lastUsedFrame = this.frameCount;
-          this.activeBuffers.set(nodeId, candidate);
-          this.stats.reuses++;
-          this.typeStats.lines.reuses++;
-          this._lastAcquireRebuilt = true;
-          return candidate.geometry as THREE.InstancedBufferGeometry;
-        }
-      }
-    }
-
-    // Allocate new — fresh attribute identities.
-    this._lastAcquireRebuilt = true;
-    const capacity = Math.ceil(segmentCount * 1.5);
-    const geometry = this.createLinesGeometry(capacity);
-
-    const newBuffer: PooledBuffer = {
-      geometry,
-      capacity,
-      type: 'lines',
-      inUse: true,
-      lastUsedFrame: this.frameCount,
-    };
-
-    this.activeBuffers.set(nodeId, newBuffer);
-    this.stats.allocations++;
-    this.typeStats.lines.allocations++;
-
-    return geometry;
+    return this.lines.acquireGeometry(nodeId, segmentCount);
   }
 
-  /**
-   * Release Lines geometry back to pool.
-   */
+  /** Release Lines geometry back to pool. */
   releaseLinesGeometry(nodeId: string): void {
-    const buffer = this.activeBuffers.get(nodeId);
-    if (!buffer || buffer.type !== 'lines') return;
-
-    this.activeBuffers.delete(nodeId);
-    buffer.inUse = false;
-
-    const bucket = this.getBucket(buffer.capacity);
-    if (!this.lineBuffers.has(bucket)) {
-      this.lineBuffers.set(bucket, []);
-    }
-    this.lineBuffers.get(bucket)!.push(buffer);
-
-    this.evictUnused();
+    this.lines.releaseGeometry(nodeId);
   }
 
-  /**
-   * Create Lines geometry (InstancedBufferGeometry with per-segment attributes).
-   */
-  private createLinesGeometry(segmentCapacity: number): THREE.InstancedBufferGeometry {
-    const geometry = new THREE.InstancedBufferGeometry();
-
-    // Base quad geometry (shared across all instances)
-    const quadPositions = new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]);
-    geometry.setAttribute('aQuadCorner', new THREE.Float32BufferAttribute(quadPositions, 2));
-    geometry.setIndex([0, 1, 2, 2, 1, 3]);
-
-    // Pre-allocate the per-segment interleaved buffer at `segmentCapacity`.
-    // Scalar attributes (aStartScalar / aEndScalar) are NOT included in
-    // the initial stride — they're added on first scalar commit via a
-    // spec-set rebuild (see `updateLinesGeometry`). All attributes are
-    // Float32 in the interleaved storage (clipped flags widened at
-    // upload time in the geometry layer).
-    const baseSpecs = LINES_BASE_ATTRIBUTE_SPECS.map((spec) => ({
-      ...spec,
-      data: new Float32Array(segmentCapacity * spec.itemSize),
-    }));
-    const { buffer, views } = packInterleavedAttributes(baseSpecs, segmentCapacity);
-    buffer.setUsage(THREE.DynamicDrawUsage);
-    for (const spec of baseSpecs) {
-      geometry.setAttribute(spec.name, views[spec.name]);
-    }
-
-    return geometry;
-  }
-
-  /**
-   * Grow Lines geometry to new capacity.
-   *
-   * Also grows optional `aStartScalar` / `aEndScalar` instanced
-   * attributes when present. Line geometries allocate scalar attributes
-   * lazily on first scalar upload, so resizing must carry them forward
-   * alongside the always-present per-segment attributes.
-   */
-  private growLinesGeometry(geometry: THREE.InstancedBufferGeometry, neededCount: number): void {
-    const newCapacity = Math.ceil(neededCount * 1.5);
-
-    // D.3: invalidate cached byte estimate before re-allocating any attribute.
-    invalidateCachedByteSize(geometry);
-
-    // Reallocate the interleaved buffer at the new capacity. The
-    // spec-set is the same one currently bound on the geometry —
-    // carry scalar attributes forward iff they were already present.
-    const hasScalars = geometry.getAttribute('aStartScalar') !== undefined;
-    const specs = hasScalars
-      ? [...LINES_BASE_ATTRIBUTE_SPECS, ...LINES_SCALAR_ATTRIBUTE_SPECS]
-      : LINES_BASE_ATTRIBUTE_SPECS;
-    rebuildInterleavedBuffer(geometry, newCapacity, specs);
-  }
-
-  /**
-   * Update Lines geometry in place.
-   */
+  /** Update Lines geometry in place. */
   updateLinesGeometry(
     geometry: THREE.InstancedBufferGeometry,
     data: ProcessedLinesData,
     count: number
   ): void {
-    // Lazy scalar-spec promotion: if data carries scalars but the
-    // interleaved buffer wasn't allocated with the scalar slots,
-    // rebuild with the larger stride. Carries existing data across.
-    const hasScalarsInData = !!(data.startScalars && data.endScalars);
-    const hasScalarsInBuffer = geometry.getAttribute('aStartScalar') !== undefined;
-    if (hasScalarsInData && !hasScalarsInBuffer) {
-      const startView = geometry.getAttribute('aStartPos') as THREE.InterleavedBufferAttribute;
-      const capacity = Math.floor(
-        (startView.data.array as Float32Array).length / startView.data.stride
-      );
-      rebuildInterleavedBuffer(geometry, capacity, [
-        ...LINES_BASE_ATTRIBUTE_SPECS,
-        ...LINES_SCALAR_ATTRIBUTE_SPECS,
-      ]);
-      // Attribute identities changed; downstream callers must
-      // invalidate the renderer's cached RenderObject.
-      this._lastAcquireRebuilt = true;
-    }
-
-    // Clipped flags arrive as Uint8 (per ProcessedLinesData); widen
-    // to Float32 for the interleaved buffer.
-    const startClippedF32 = widenToFloat32(data.startClipped);
-    const endClippedF32 = widenToFloat32(data.endClipped);
-
-    // Write each base attribute into its strided slot.
-    const baseUpdates: Array<[string, Float32Array]> = [
-      ['aStartPos', data.startPositions],
-      ['aEndPos', data.endPositions],
-      ['aStartColor', data.startColors],
-      ['aEndColor', data.endColors],
-      ['aStartWidth', data.startWidths],
-      ['aEndWidth', data.endWidths],
-      ['aStartSharpness', data.startSharpness],
-      ['aEndSharpness', data.endSharpness],
-      ['aSegmentLength', data.segmentLengths],
-      ['aStartClipped', startClippedF32],
-      ['aEndClipped', endClippedF32],
-    ];
-    for (const [name, source] of baseUpdates) {
-      writePooledAttribute(geometry, name, source, count);
-    }
-
-    if (hasScalarsInData) {
-      writePooledAttribute(geometry, 'aStartScalar', data.startScalars as Float32Array, count);
-      writePooledAttribute(geometry, 'aEndScalar', data.endScalars as Float32Array, count);
-    }
-
-    // Update instance count
-    geometry.instanceCount = count;
-
-    // CRITICAL: Force THREE.js to recalculate _maxInstanceCount.
-    delete (geometry as unknown as { _maxInstanceCount?: number })._maxInstanceCount;
-
-    // CRITICAL: Recompute bounding box after position updates
-    // Without this, frustum culling uses stale bounds from previous frame/time slice
-    // This causes geometry to disappear when zooming close (small frustum excludes stale box)
-    // Performance: O(n) in segment count, but only runs when geometry updates (not every frame)
-    // also track max width to expand bounds by rendered footprint
-    // (mirrors `computeLineBounds` in line-geometry.ts).
-    const box = new THREE.Box3();
-    const v = new THREE.Vector3();
-    let maxWidth = 0;
-    for (let i = 0; i < count; i++) {
-      v.set(
-        data.startPositions[i * 3],
-        data.startPositions[i * 3 + 1],
-        data.startPositions[i * 3 + 2]
-      );
-      box.expandByPoint(v);
-      v.set(data.endPositions[i * 3], data.endPositions[i * 3 + 1], data.endPositions[i * 3 + 2]);
-      box.expandByPoint(v);
-
-      const sw = data.startWidths[i];
-      const ew = data.endWidths[i];
-      if (Number.isFinite(sw) && sw > maxWidth) maxWidth = sw;
-      if (Number.isFinite(ew) && ew > maxWidth) maxWidth = ew;
-    }
-    if (count > 0 && maxWidth > 0) {
-      box.expandByScalar(maxWidth);
-    }
-
-    geometry.boundingBox = box;
-    const sphere = new THREE.Sphere();
-    box.getBoundingSphere(sphere);
-    geometry.boundingSphere = sphere;
+    this.lines.updateGeometry(geometry, data, count);
   }
 
   // =========================================================================
@@ -747,7 +505,7 @@ export class GPUBufferPool {
     // Check total pool size
     const totalPooled =
       Array.from(this.points.pointBuffers.values()).reduce((sum, arr) => sum + arr.length, 0) +
-      Array.from(this.lineBuffers.values()).reduce((sum, arr) => sum + arr.length, 0) +
+      Array.from(this.lines.lineBuffers.values()).reduce((sum, arr) => sum + arr.length, 0) +
       Array.from(this.gsplatBuffers.values()).reduce((sum, arr) => sum + arr.length, 0);
 
     // If pool is over limit, evict aggressively
@@ -804,7 +562,7 @@ export class GPUBufferPool {
 
     const pointsEvicted = evictFromPool(this.points.pointBuffers, batchCap);
     const remaining1 = batchCap === Number.POSITIVE_INFINITY ? batchCap : batchCap - pointsEvicted;
-    const linesEvicted = evictFromPool(this.lineBuffers, remaining1);
+    const linesEvicted = evictFromPool(this.lines.lineBuffers, remaining1);
     const remaining2 = batchCap === Number.POSITIVE_INFINITY ? batchCap : remaining1 - linesEvicted;
     const gsplatsEvicted = evictFromPool(this.gsplatBuffers, remaining2);
 
@@ -865,7 +623,7 @@ export class GPUBufferPool {
       }
     };
     collect(this.points.pointBuffers);
-    collect(this.lineBuffers);
+    collect(this.lines.lineBuffers);
     collect(this.gsplatBuffers);
 
     // One-shot warning when a pooled buffer crosses 100 MB. Such
@@ -950,7 +708,7 @@ export class GPUBufferPool {
       (sum, arr) => sum + arr.length,
       0
     );
-    const linesPooled = Array.from(this.lineBuffers.values()).reduce(
+    const linesPooled = Array.from(this.lines.lineBuffers.values()).reduce(
       (sum, arr) => sum + arr.length,
       0
     );
@@ -992,7 +750,7 @@ export class GPUBufferPool {
         if (bytes > largestPooledBytes) largestPooledBytes = bytes;
       }
     }
-    for (const arr of this.lineBuffers.values()) {
+    for (const arr of this.lines.lineBuffers.values()) {
       for (const b of arr) {
         const bytes = estimateGeometryBytes(b.geometry);
         linesPooledBytes += bytes;
@@ -1071,7 +829,7 @@ export class GPUBufferPool {
     };
 
     disposePool(this.points.pointBuffers);
-    disposePool(this.lineBuffers);
+    disposePool(this.lines.lineBuffers);
     disposePool(this.gsplatBuffers);
 
     log.info(Modules.GPU_BUFFER_POOL, 'All pooled geometries disposed');
