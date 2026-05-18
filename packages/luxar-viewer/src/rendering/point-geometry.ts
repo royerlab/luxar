@@ -199,7 +199,7 @@ export function setupInstancedPointsMesh(
   config: InstancedPointsMeshConfig
 ): void {
   const specs = buildPointAttributeSpecs(config);
-  const { views } = packInterleavedAttributes(specs, config.pointCount, 'mixed');
+  const { views } = packInterleavedAttributes(specs, config.pointCount);
   for (const spec of specs) {
     geometry.setAttribute(spec.name, views[spec.name]);
   }
