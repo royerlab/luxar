@@ -44,6 +44,11 @@ function median(values: number[]): number {
 }
 
 test('points migration: capture N=5 FPS samples on dense_cubic_gradient', async ({ page }) => {
+  test.skip(
+    process.env.LUXAR_RUN_BENCHMARKS !== '1',
+    'Developer-facing benchmark; set LUXAR_RUN_BENCHMARKS=1 to run. ' +
+      'Mirrors the gate on line-renderer-compare-perf.spec.ts.'
+  );
   test.setTimeout(120_000);
 
   await page.goto(`/?src=${DATASET}&debug`);
