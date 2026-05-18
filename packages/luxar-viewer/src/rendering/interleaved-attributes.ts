@@ -172,7 +172,10 @@ export function effectiveDtype(spec: InterleavedAttributeSpec): GpuDtype {
  */
 const DEFAULT_GPU_DTYPE_BY_SEMANTIC: Record<SemanticType, GpuDtype> = {
   coordinate: 'float32',
-  color: 'float32',
+  // C-ts-2: COLOR narrowed to Float16 on GPU. 11-bit mantissa gives
+  // ~5e-4 absolute error on SDR colours in [0,1] — well below the
+  // parity-spec mean-abs-diff threshold on 0-255 scale.
+  color: 'float16',
   positive_scalar: 'float32',
   bounded_scalar: 'float32',
   cholesky: 'float32',
@@ -222,8 +225,12 @@ export function alignTo4(byteOffset: number): number {
  * packer when narrowing a Float32 disk-decoded array to Float16 or
  * Uint8-norm for GPU upload.
  *
- * For C-ts-1 only the `'float32'` target is implemented — narrowing
- * targets activate in C-ts-2..4 as the corresponding semantic flips.
+ * For `float16` target: returns a `Uint16Array` carrying half-float
+ * bits per `THREE.DataUtils.toHalfFloat` — Three.js's WebGPU/WebGL
+ * backends treat a `Uint16Array` attribute with `gpuType =
+ * THREE.HalfFloatType` as a half-precision float.
+ *
+ * For `uint8-norm`: not yet implemented (lands in C-ts-3).
  */
 export function convertToGpuDtype(
   src: ArrayLike<number>,
@@ -233,9 +240,23 @@ export function convertToGpuDtype(
   if (target === 'float32') {
     return widenToFloat32(src, divisorIfNormalized);
   }
+  if (target === 'float16') {
+    const out = new Uint16Array(src.length);
+    if (divisorIfNormalized !== undefined) {
+      const inv = 1.0 / divisorIfNormalized;
+      for (let i = 0; i < src.length; i++) {
+        out[i] = THREE.DataUtils.toHalfFloat(src[i] * inv);
+      }
+    } else {
+      for (let i = 0; i < src.length; i++) {
+        out[i] = THREE.DataUtils.toHalfFloat(src[i]);
+      }
+    }
+    return out;
+  }
   throw new Error(
     `convertToGpuDtype: target '${target}' is not yet implemented ` +
-      `(activates in phase-4 C-ts-${target === 'float16' ? '2/3/4' : '3'})`
+      '(activates in phase-4 C-ts-3)'
   );
 }
 
@@ -283,91 +304,48 @@ export function packInterleavedAttributes(
 }
 
 /**
- * Pack every spec into one shared `InstancedInterleavedBuffer`.
- * For all-Float32 specs (current state at C-ts-1) the buffer is a
- * single `Float32Array`. Heterogeneous-dtype support lands in C-ts-2+.
+ * Pack every spec into one or more `InstancedInterleavedBuffer`s,
+ * one per dtype group. `'mixed'` and `'split'` both group by dtype —
+ * the distinction is documentation-only since Three.js's
+ * `InterleavedBuffer.array` is a single TypedArray. The two layouts
+ * diverge if/when WebGPU vertex-pulling makes "one ArrayBuffer with
+ * mixed-dtype views" viable; today they share an implementation.
+ *
+ * For all-Float32 specs (most current geometries when no semantic
+ * has flipped yet) the result is one Float32 buffer — byte-for-byte
+ * identical to pre-phase-4 behavior.
  */
 function packMixedLayout(
   specs: readonly InterleavedAttributeSpec[],
   instanceCount: number
 ): InterleavedAttributesResult {
-  const allFloat32 = specs.every((s) => effectiveDtype(s) === 'float32');
-  if (!allFloat32) {
-    // Future commits (C-ts-2..4) will implement the mixed-dtype path
-    // here. At C-ts-1 every caller still passes `dtype: 'float32'`.
-    throw new Error(
-      'packMixedLayout: mixed-dtype packing not yet implemented (C-ts-1 supports float32 only)'
-    );
-  }
-
-  // Compute stride and per-attribute float-offsets in declaration order.
-  let stride = 0;
-  const offsets: Record<string, number> = {};
-  for (const spec of specs) {
-    offsets[spec.name] = stride;
-    stride += spec.itemSize;
-  }
-
-  // Allocate the shared buffer + interleave the source arrays into it.
-  const packed = new Float32Array(stride * instanceCount);
-  for (const spec of specs) {
-    const offset = offsets[spec.name];
-    const src = spec.data as ArrayLike<number>;
-    const itemSize = spec.itemSize;
-    for (let i = 0; i < instanceCount; i++) {
-      const srcStart = i * itemSize;
-      const dstStart = i * stride + offset;
-      // Manual loop unroll for the common itemSize=1/2/3/4 paths beats
-      // `set(src.subarray(...))` because src.subarray allocates a new
-      // view per instance (millions of allocs on large datasets).
-      switch (itemSize) {
-        case 1:
-          packed[dstStart] = src[srcStart];
-          break;
-        case 2:
-          packed[dstStart] = src[srcStart];
-          packed[dstStart + 1] = src[srcStart + 1];
-          break;
-        case 3:
-          packed[dstStart] = src[srcStart];
-          packed[dstStart + 1] = src[srcStart + 1];
-          packed[dstStart + 2] = src[srcStart + 2];
-          break;
-        case 4:
-          packed[dstStart] = src[srcStart];
-          packed[dstStart + 1] = src[srcStart + 1];
-          packed[dstStart + 2] = src[srcStart + 2];
-          packed[dstStart + 3] = src[srcStart + 3];
-          break;
-      }
-    }
-  }
-
-  const buffer = new THREE.InstancedInterleavedBuffer(packed, stride, 1);
-  const views: Record<string, THREE.InterleavedBufferAttribute> = {};
-  for (const spec of specs) {
-    views[spec.name] = new THREE.InterleavedBufferAttribute(
-      buffer,
-      spec.itemSize,
-      offsets[spec.name],
-      spec.normalized ?? false
-    );
-  }
-  return { buffer, buffers: [buffer], views, stride, offsets };
+  return packByDtypeGroups(specs, instanceCount);
 }
 
 /**
- * Pack specs by grouping on their effective dtype. Each group gets
- * its own `InstancedInterleavedBuffer`. At C-ts-1 the only dtype is
- * `'float32'`, so this collapses to one group whose output matches
- * {@link packMixedLayout} byte-for-byte.
- *
- * Result invariant: the primary buffer (`.buffer` field) is the
- * *first* group's buffer in attribute declaration order, so a
- * Lines geometry that starts with `aStartPos` (Float32) keeps
- * `result.buffer` pointing at the Float32 group.
+ * Split layout — currently identical to mixed (see {@link packMixedLayout}).
+ * Kept as a separate entry point so per-geometry tuning can diverge
+ * later without churning every caller.
  */
 function packSplitLayout(
+  specs: readonly InterleavedAttributeSpec[],
+  instanceCount: number
+): InterleavedAttributesResult {
+  return packByDtypeGroups(specs, instanceCount);
+}
+
+/**
+ * Shared dtype-grouped packer. Groups specs by their effective GPU
+ * dtype preserving first-occurrence order, then for each group:
+ * - Allocates a TypedArray of the right type.
+ * - Interleaves the source arrays into it (narrowing via
+ *   {@link convertToGpuDtype} where needed).
+ * - Builds an `InstancedInterleavedBuffer` + per-attribute views.
+ *
+ * The primary buffer (returned in `.buffer`) is the first group's
+ * buffer in attribute declaration order.
+ */
+function packByDtypeGroups(
   specs: readonly InterleavedAttributeSpec[],
   instanceCount: number
 ): InterleavedAttributesResult {
@@ -391,14 +369,7 @@ function packSplitLayout(
 
   for (const dtype of dtypeOrder) {
     const groupSpecs = groups.get(dtype)!;
-    if (dtype !== 'float32') {
-      throw new Error(
-        `packSplitLayout: group dtype '${dtype}' not yet implemented ` +
-          `(C-ts-1 supports float32 only)`
-      );
-    }
 
-    // Float32 group — same packing as mixed layout, scoped to this group.
     let groupStride = 0;
     const groupOffsets: Record<string, number> = {};
     for (const spec of groupSpecs) {
@@ -407,14 +378,84 @@ function packSplitLayout(
       groupStride += spec.itemSize;
     }
 
-    const packed = new Float32Array(groupStride * instanceCount);
+    // Allocate the typed buffer + pack
+    const packed = packGroup(dtype, groupSpecs, groupStride, instanceCount, groupOffsets);
+    const buffer = new THREE.InstancedInterleavedBuffer(packed, groupStride, 1);
+    buffers.push(buffer);
+    if (primaryStride === 0) {
+      primaryStride = groupStride;
+    }
+
+    for (const spec of groupSpecs) {
+      const view = new THREE.InterleavedBufferAttribute(
+        buffer,
+        spec.itemSize,
+        groupOffsets[spec.name],
+        // For uint8-norm dtype force normalize=true so the shader
+        // sees [0,1]. Activated in C-ts-3.
+        dtype === 'uint8-norm' ? true : spec.normalized ?? false
+      );
+      // Three.js needs gpuType=HalfFloatType to interpret a Uint16
+      // attribute as half-float (rather than as a Uint16 vertex
+      // input). InterleavedBufferAttribute inherits gpuType from
+      // BufferAttribute in r152+.
+      if (dtype === 'float16') {
+        (view as unknown as { gpuType: number }).gpuType = THREE.HalfFloatType;
+      }
+      views[spec.name] = view;
+    }
+  }
+
+  return {
+    buffer: buffers[0],
+    buffers,
+    views,
+    stride: primaryStride,
+    offsets,
+  };
+}
+
+/**
+ * Allocate the typed array for one dtype group and interleave the
+ * source data into it, narrowing per-attribute via
+ * {@link convertToGpuDtype} when the source is not already at the
+ * target dtype.
+ *
+ * For the Float32 group on Float32 sources this is a tight memcpy
+ * loop with the itemSize=1/2/3/4 unrolls. For the Float16 group on
+ * Float32 sources, each value goes through `toHalfFloat` — slightly
+ * slower per element but the buffer is half the size on the GPU.
+ */
+function packGroup(
+  dtype: GpuDtype,
+  groupSpecs: readonly InterleavedAttributeSpec[],
+  stride: number,
+  instanceCount: number,
+  groupOffsets: Record<string, number>
+): Float32Array | Uint16Array | Uint8Array {
+  const totalElements = stride * instanceCount;
+  let packed: Float32Array | Uint16Array | Uint8Array;
+  switch (dtype) {
+    case 'float32':
+      packed = new Float32Array(totalElements);
+      break;
+    case 'float16':
+      packed = new Uint16Array(totalElements);
+      break;
+    case 'uint8-norm':
+      packed = new Uint8Array(totalElements);
+      break;
+  }
+
+  // Float32 fast path — direct memcpy, no narrowing.
+  if (dtype === 'float32') {
     for (const spec of groupSpecs) {
       const offset = groupOffsets[spec.name];
       const src = spec.data as ArrayLike<number>;
       const itemSize = spec.itemSize;
       for (let i = 0; i < instanceCount; i++) {
         const srcStart = i * itemSize;
-        const dstStart = i * groupStride + offset;
+        const dstStart = i * stride + offset;
         switch (itemSize) {
           case 1:
             packed[dstStart] = src[srcStart];
@@ -437,30 +478,46 @@ function packSplitLayout(
         }
       }
     }
-
-    const buffer = new THREE.InstancedInterleavedBuffer(packed, groupStride, 1);
-    buffers.push(buffer);
-    if (primaryStride === 0) {
-      primaryStride = groupStride;
-    }
-
-    for (const spec of groupSpecs) {
-      views[spec.name] = new THREE.InterleavedBufferAttribute(
-        buffer,
-        spec.itemSize,
-        groupOffsets[spec.name],
-        spec.normalized ?? false
-      );
-    }
+    return packed;
   }
 
-  return {
-    buffer: buffers[0],
-    buffers,
-    views,
-    stride: primaryStride,
-    offsets,
-  };
+  // Float16 / Uint8-norm: narrow via `convertToGpuDtype` (per spec).
+  // For each spec we allocate a narrowed view of its source, then
+  // interleave that into the group buffer. The narrowed view is a
+  // single allocation per spec, not per instance — millions of
+  // instances do not multiply the alloc count.
+  for (const spec of groupSpecs) {
+    const offset = groupOffsets[spec.name];
+    const narrowed = convertToGpuDtype(spec.data, dtype) as
+      | Uint16Array
+      | Uint8Array;
+    const itemSize = spec.itemSize;
+    for (let i = 0; i < instanceCount; i++) {
+      const srcStart = i * itemSize;
+      const dstStart = i * stride + offset;
+      switch (itemSize) {
+        case 1:
+          packed[dstStart] = narrowed[srcStart];
+          break;
+        case 2:
+          packed[dstStart] = narrowed[srcStart];
+          packed[dstStart + 1] = narrowed[srcStart + 1];
+          break;
+        case 3:
+          packed[dstStart] = narrowed[srcStart];
+          packed[dstStart + 1] = narrowed[srcStart + 1];
+          packed[dstStart + 2] = narrowed[srcStart + 2];
+          break;
+        case 4:
+          packed[dstStart] = narrowed[srcStart];
+          packed[dstStart + 1] = narrowed[srcStart + 1];
+          packed[dstStart + 2] = narrowed[srcStart + 2];
+          packed[dstStart + 3] = narrowed[srcStart + 3];
+          break;
+      }
+    }
+  }
+  return packed;
 }
 
 /**
@@ -473,14 +530,19 @@ function packSplitLayout(
  * without the colors changing); this helper writes them into
  * the strided slot inside the shared buffer.
  *
- * @throws if `src.length !== instanceCount * itemSize` or if the
- *   target range overflows the buffer.
+ * `src` must already match the buffer's underlying TypedArray dtype.
+ * For narrowing writes (Float32 source → Float16 destination), call
+ * {@link convertToGpuDtype} first to produce the right typed array.
+ *
+ * @throws if `src.length !== instanceCount * itemSize`, the target
+ *   range overflows the buffer, or the src and buffer TypedArrays
+ *   don't match.
  */
 export function writeInterleavedAttribute(
   buffer: THREE.InstancedInterleavedBuffer,
   offset: number,
   itemSize: number,
-  src: Float32Array,
+  src: Float32Array | Uint16Array | Uint8Array,
   instanceCount: number
 ): void {
   if (src.length !== instanceCount * itemSize) {
@@ -502,42 +564,88 @@ export function writeInterleavedAttribute(
         `exceeds buffer.array.length=${buffer.array.length}`
     );
   }
+  if (src.constructor !== buffer.array.constructor) {
+    throw new Error(
+      `writeInterleavedAttribute: src is ${src.constructor.name} but buffer.array ` +
+        `is ${buffer.array.constructor.name} — narrow via convertToGpuDtype first`
+    );
+  }
 
-  // The underlying array is a Float32Array (we always allocate one
-  // in `packInterleavedAttributes`). InstancedInterleavedBuffer
-  // types `.array` as the broader BufferAttribute's TypedArray
-  // union; narrow here for the indexed write.
-  const dst = buffer.array as Float32Array;
+  // After the constructor check above, `dst` shares the indexable
+  // number-array shape with `src`. Cast both to a common indexable
+  // type so the unrolled writes stay tight.
+  const dst = buffer.array as unknown as { [k: number]: number; length: number };
+  const s = src as unknown as { [k: number]: number };
   for (let i = 0; i < instanceCount; i++) {
     const srcStart = i * itemSize;
     const dstStart = i * stride + offset;
     switch (itemSize) {
       case 1:
-        dst[dstStart] = src[srcStart];
+        dst[dstStart] = s[srcStart];
         break;
       case 2:
-        dst[dstStart] = src[srcStart];
-        dst[dstStart + 1] = src[srcStart + 1];
+        dst[dstStart] = s[srcStart];
+        dst[dstStart + 1] = s[srcStart + 1];
         break;
       case 3:
-        dst[dstStart] = src[srcStart];
-        dst[dstStart + 1] = src[srcStart + 1];
-        dst[dstStart + 2] = src[srcStart + 2];
+        dst[dstStart] = s[srcStart];
+        dst[dstStart + 1] = s[srcStart + 1];
+        dst[dstStart + 2] = s[srcStart + 2];
         break;
       case 4:
-        dst[dstStart] = src[srcStart];
-        dst[dstStart + 1] = src[srcStart + 1];
-        dst[dstStart + 2] = src[srcStart + 2];
-        dst[dstStart + 3] = src[srcStart + 3];
+        dst[dstStart] = s[srcStart];
+        dst[dstStart + 1] = s[srcStart + 1];
+        dst[dstStart + 2] = s[srcStart + 2];
+        dst[dstStart + 3] = s[srcStart + 3];
         break;
       default:
         for (let k = 0; k < itemSize; k++) {
-          dst[dstStart + k] = src[srcStart + k];
+          dst[dstStart + k] = s[srcStart + k];
         }
         break;
     }
   }
   buffer.needsUpdate = true;
+}
+
+/**
+ * Write an attribute's data column from a spec into the geometry's
+ * existing interleaved storage, narrowing if needed. Resolves the
+ * spec's view + buffer + offset by name from the geometry.
+ *
+ * Used by in-place size-unchanged updates that re-emit ALL specs:
+ * the spec list may span multiple buffers after dtype groups split
+ * (e.g., COLOR moves to its own Float16 group in C-ts-2). This
+ * helper resolves each attribute's storage independently rather
+ * than assuming a single shared buffer.
+ *
+ * @throws if `geometry` doesn't have an attribute named `spec.name`
+ *   bound as an `InterleavedBufferAttribute`.
+ */
+export function writeInterleavedAttributeFromSpec(
+  geometry: THREE.InstancedBufferGeometry,
+  spec: InterleavedAttributeSpec,
+  instanceCount: number
+): void {
+  const view = geometry.getAttribute(spec.name) as
+    | THREE.InterleavedBufferAttribute
+    | undefined;
+  if (!view || !(view as { isInterleavedBufferAttribute?: boolean }).isInterleavedBufferAttribute) {
+    throw new Error(
+      `writeInterleavedAttributeFromSpec: '${spec.name}' is not bound as an ` +
+        'InterleavedBufferAttribute on this geometry'
+    );
+  }
+  const buffer = view.data as THREE.InstancedInterleavedBuffer;
+  const dtype = effectiveDtype(spec);
+  // Narrow only if the buffer's TypedArray doesn't already match the
+  // source's. For all-Float32 (most paths today) this is a no-op
+  // alias when the source is already Float32.
+  const src =
+    dtype === 'float32'
+      ? widenToFloat32(spec.data as ArrayLike<number>)
+      : convertToGpuDtype(spec.data as ArrayLike<number>, dtype);
+  writeInterleavedAttribute(buffer, view.offset, spec.itemSize, src, instanceCount);
 }
 
 /**
