@@ -362,17 +362,19 @@ describe('SceneLoader.retryFailedLoader — derived.skip fallback', () => {
     expect(internals.registry.failedLoaders.has('/p')).toBe(true);
   });
 
-  it('updateView called during in-flight retry queues + drains via _pendingViewState', async () => {
+  it('updateView called during in-flight retry queues + drains via viewStateQueue', async () => {
     // Reproduces the lock race:
     //   1. retry starts on a path while _updateInProgress is false.
     //   2. retry takes the lock (_updateInProgress=true) at entry.
-    //   3. updateView() called during retry → sees lock=true, sets
-    //      _pendingViewState and returns immediately.
-    //   4. retry releases lock; the drain helper fires the queued
-    //      updateView async (so retry's promise resolves first).
+    //   3. updateView() called during retry → sees lock=true, queues
+    //      onto viewStateQueue and returns immediately.
+    //   4. retry releases lock; the queue's drain helper fires the
+    //      queued updateView async (so retry's promise resolves first).
+    // Pending state lives on viewStateQueue (extracted in step 5 of the
+    // god-object refactor); inspect via hasPending().
     type Internals = LoaderInternals & {
       _updateInProgress: boolean;
-      _pendingViewState: unknown;
+      viewStateQueue: { hasPending(): boolean };
     };
     const internals = loader as unknown as Internals;
     const factory = new NodeFactory();
@@ -407,23 +409,23 @@ describe('SceneLoader.retryFailedLoader — derived.skip fallback', () => {
     expect(retryUpdateView).toHaveBeenCalledTimes(1);
 
     // Step 2: user dim/slider change → updateView() called during
-    // retry. Should see the lock and queue _pendingViewState.
+    // retry. Should see the lock and queue onto viewStateQueue.
     const newViewState = {
       slicePosition: [1, 2, 3, 4],
     };
     void loader.updateView(newViewState);
-    expect(internals._pendingViewState).toBeTruthy();
+    expect(internals.viewStateQueue.hasPending()).toBe(true);
 
     // Step 3: release retry's loader call. Retry finishes.
     releaseRetry?.(null);
     const retryResult = await retryPromise;
     expect(retryResult).toBe(true);
 
-    // Step 4: lock released; the drain helper consumed
-    // _pendingViewState and scheduled the queued updateView async.
-    // The drained updateView is now in flight (or about to be).
-    // The primary contract: pending state was processed, not lost.
-    expect(internals._pendingViewState).toBeNull();
+    // Step 4: lock released; the drain helper consumed the queued
+    // pending state and scheduled the queued updateView async. The
+    // drained updateView is now in flight (or about to be). The
+    // primary contract: pending state was processed, not lost.
+    expect(internals.viewStateQueue.hasPending()).toBe(false);
   });
 
   it('GSplats retry on derived.skip falls back to a viewState built from this.viewState', async () => {

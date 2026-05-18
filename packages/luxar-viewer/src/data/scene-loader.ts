@@ -39,10 +39,7 @@ import {
   type LoaderFactoryDeps,
 } from './scene-loader/loader-factory';
 import { commitPointsGeometry as commitPointsGeometryHelper } from './scene-loader/commit-points-geometry';
-import {
-  dispatchPredictivePrefetch,
-  type PrefetchableLoader,
-} from './scene-loader/predicted-view-state';
+import { ViewStateQueue } from './scene-loader/view-state-queue';
 
 export type { StagedLinesCommit } from './scene-loader/data-processor-lines';
 export type { StagedGSplatsCommit } from './scene-loader/data-processor-gsplats';
@@ -236,19 +233,22 @@ export class SceneLoader {
   // Serialized update queue: prevents concurrent updateView calls from corrupting shared buffers
   // When a new update arrives while one is in progress, we store the latest and process it after
   private _updateInProgress = false;
-  private _pendingViewState: Partial<ViewState> | null = null;
   private _updateVersion = 0; // For logging/debugging
   private _sceneGraph: SceneNode | null = null;
 
-  // R4 + S6: per-loader previous view state for predictive prefetch.
-  // Indexed by node path so each loader's prefetch uses its own
-  // `derived.viewState` (which has per-node tolerance extension and
-  // `extend_to_all` skip semantics applied) rather than a single
-  // global view-state shared across all loaders. The Map is reset on
-  // dataset switch (loadScene) and dispose. Skipped paths are
-  // deleted from the Map so the next non-skip update re-baselines
-  // instead of extrapolating from a stale snapshot.
-  private _prevPerNodeViewState: Map<string, ViewState> = new Map();
+  /**
+   * View-state queue: owns `_pendingViewState` (set/take/has + drain)
+   * and the per-loader previous view-state map used by predictive
+   * prefetch (S6). Extracted in step 5 of the god-object refactor —
+   * see ./scene-loader/view-state-queue.ts.
+   *
+   * The pending-state slot is overwritten on every queued update, so a
+   * burst of view changes during an in-flight retry collapses to a
+   * single drained call (latest-wins). The per-node prev-state map is
+   * reset on dataset switch (loadScene) and dispose; skipped paths
+   * forget their snapshot so the next non-skip update re-baselines.
+   */
+  private viewStateQueue = new ViewStateQueue();
 
   /**
    * Per-dataset AbortController. Created on every `loadScene` and
@@ -473,7 +473,7 @@ export class SceneLoader {
     // the first updateView on a new dataset would extrapolate from
     // the prior dataset's slicePosition, producing wild prefetch
     // targets.
-    this._prevPerNodeViewState.clear();
+    this.viewStateQueue.clearPrev();
 
     const cacheResult = await setupCaches(this.normalizeURL(url), {
       noCache: this.config.noCache,
@@ -737,7 +737,7 @@ export class SceneLoader {
         // fails, discard that baseline so the next success
         // re-baselines instead of extrapolating across a stale/error
         // gap and warming irrelevant chunks.
-        this._prevPerNodeViewState.delete(path);
+        this.viewStateQueue.forgetPath(path);
 
         const errorInfo = this.failedLoaders.get(path);
         const retryCount = errorInfo ? errorInfo.retryCount + 1 : 0;
@@ -772,8 +772,8 @@ export class SceneLoader {
       // G.3: log the supersede when a previous pending was already queued so
       // rapid slider drags surface as "v5 superseded v4, in flight v3"
       // rather than three identical "Update queued" lines.
-      const supersededPrevious = this._pendingViewState !== null;
-      this._pendingViewState = viewState;
+      const supersededPrevious = this.viewStateQueue.hasPending();
+      this.viewStateQueue.setPending(viewState);
       const newVersion = this._updateVersion + 1;
       if (supersededPrevious) {
         log.info(
@@ -854,7 +854,7 @@ export class SceneLoader {
             // S6: drop the path from prev state so the next non-skip
             // update re-baselines rather than extrapolating from a
             // stale snapshot.
-            this._prevPerNodeViewState.delete(path);
+            this.viewStateQueue.forgetPath(path);
             return null;
           }
           const points = await loader.updateView(derived.viewState, session);
@@ -868,7 +868,7 @@ export class SceneLoader {
           }
           session.setMetadata({ points: points.metadata.loadedPoints });
           // S6: per-loader predictive prefetch using the derived view-state.
-          this._dispatchPerLoaderPrefetch(path, derived.viewState, loader);
+          this.viewStateQueue.dispatchPrefetch(path, derived.viewState, loader);
           return { path, data: points } as StagedPointsCommit;
         }
       );
@@ -890,7 +890,7 @@ export class SceneLoader {
             );
             session.markSkipped(derived.skip);
             // S6: see Points branch — drop prev to avoid stale extrap.
-            this._prevPerNodeViewState.delete(path);
+            this.viewStateQueue.forgetPath(path);
             return null;
           }
           const linesViewState = derived.viewState;
@@ -906,7 +906,7 @@ export class SceneLoader {
           const staged = await this.processLinesData(path, data, linesViewState, session);
           session.setMetadata({ segments: data.segments ? data.segments.length / 2 : 0 });
           // S6: per-loader predictive prefetch using the derived view-state.
-          this._dispatchPerLoaderPrefetch(path, linesViewState, loader);
+          this.viewStateQueue.dispatchPrefetch(path, linesViewState, loader);
           return staged;
         }
       );
@@ -929,7 +929,7 @@ export class SceneLoader {
             );
             session.markSkipped(derived.skip);
             // S6: see Points branch — drop prev to avoid stale extrap.
-            this._prevPerNodeViewState.delete(path);
+            this.viewStateQueue.forgetPath(path);
             return null;
           }
           const gsplatsViewState: GSplatsViewState = derived.viewState;
@@ -939,7 +939,7 @@ export class SceneLoader {
           const staged = await this.processGSplatsData(path, data, gsplatsViewState, session);
           session.setMetadata({ splats: data.splatCount });
           // S6: per-loader predictive prefetch using the derived view-state.
-          this._dispatchPerLoaderPrefetch(path, gsplatsViewState, loader);
+          this.viewStateQueue.dispatchPrefetch(path, gsplatsViewState, loader);
           return staged;
         }
       );
@@ -1038,9 +1038,8 @@ export class SceneLoader {
       // SERIALIZATION: Process pending update if one was queued
       // CRITICAL: Keep _updateInProgress = true until the rAF callback fires!
       // This prevents new slider events from starting updates during the yield.
-      if (this._pendingViewState !== null) {
-        const pendingState = this._pendingViewState;
-        this._pendingViewState = null;
+      const pendingState = this.viewStateQueue.takePending();
+      if (pendingState !== null) {
 
         // Yield to render loop: ensure at least one frame is painted before next update
         // This prevents the "updates faster than renders" problem that causes black screen
@@ -1107,9 +1106,8 @@ export class SceneLoader {
         });
 
         // Check cancellation: did the user navigate?
-        if (this._pendingViewState !== null) {
-          const pendingState = this._pendingViewState;
-          this._pendingViewState = null;
+        const pendingState = this.viewStateQueue.takePending();
+        if (pendingState !== null) {
 
           // Drain pending state via the normal path.
           // The rAF branch keeps the lock until the callback fires,
@@ -1959,7 +1957,7 @@ export class SceneLoader {
       return await this._retryFailedLoaderUnlocked(path);
     } finally {
       this._updateInProgress = false;
-      this._drainPendingViewState();
+      this.viewStateQueue.drain((state) => this.updateView(state));
     }
   }
 
@@ -2143,67 +2141,12 @@ export class SceneLoader {
       return { succeeded, failed };
     } finally {
       this._updateInProgress = false;
-      this._drainPendingViewState();
+      this.viewStateQueue.drain((state) => this.updateView(state));
     }
   }
 
-  /**
-   * Process any `_pendingViewState` queued during a retry. The retry
-   * path sets `_updateInProgress = true`, which causes a concurrent
-   * `updateView()` call to queue its state rather than start. After
-   * retry releases the lock, this helper drains that queued state via a
-   * fresh `updateView()` call. Fired asynchronously so the retry's own
-   * promise resolves first.
-   */
-  private _drainPendingViewState(): void {
-    if (this._pendingViewState === null) return;
-    const pendingState = this._pendingViewState;
-    this._pendingViewState = null;
-    Promise.resolve().then(() => {
-      this.updateView(pendingState).catch((err) => {
-        log.warning(
-          Modules.SCENE_LOADER,
-          `Drained updateView after retry failed: ${(err as Error).message}`
-        );
-      });
-    });
-  }
-
-  /**
-   * S6: per-loader predictive prefetch. Extrapolates the next-frame
-   * view state from the path's previous `derived.viewState` to its
-   * current one and fires `prefetchChunks(predicted)` on the loader.
-   * Honors per-node tolerance extension + extend_to_all skip
-   * semantics by using the *derived* view-state rather than the
-   * global one — extended/skipped nodes don't get over-prefetched.
-   *
-   * Called from each loader-task branch after the demand load
-   * completes; fire-and-forget in a microtask so a slow prefetch
-   * cannot delay the commit path.
-   */
-  private _dispatchPerLoaderPrefetch(path: string, current: ViewState, loader: unknown): void {
-    const prev = this._prevPerNodeViewState.get(path) ?? null;
-    // Snapshot current — keeps the saved value immune to later
-    // in-place mutation by downstream loader work.
-    const snapshot: ViewState = {
-      displayDims: [...current.displayDims],
-      slicePosition: [...current.slicePosition],
-      tolerance: [...current.tolerance],
-      dimensions: current.dimensions,
-    };
-    this._prevPerNodeViewState.set(path, snapshot);
-
-    // First call for this path (no prev) — there's nothing to
-    // extrapolate, the dispatcher would return `false`. Skip the
-    // microtask so we don't pay queue overhead for a guaranteed no-op.
-    // The next updateView observes this snapshot as `prev` and the
-    // user's first scrub-direction delta is captured then.
-    if (prev === null) return;
-
-    queueMicrotask(() => {
-      dispatchPredictivePrefetch(prev, snapshot, [loader as PrefetchableLoader]);
-    });
-  }
+  // _drainPendingViewState + _dispatchPerLoaderPrefetch moved to
+  // ./scene-loader/view-state-queue (step 5 of the god-object refactor).
 
   /**
    * Dispose of all resources.
@@ -2287,7 +2230,7 @@ export class SceneLoader {
 
     // S6: clear per-loader prefetch predictor state on dispose so a
     // reused SceneLoader doesn't extrapolate from a prior dataset.
-    this._prevPerNodeViewState.clear();
+    this.viewStateQueue.clearPrev();
 
     // Dispose dataset-scoped custom colormap LUTs. The custom-LUT cache
     // is keyed by content hash and shared across all scenes, but entries
