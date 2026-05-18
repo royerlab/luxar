@@ -82,8 +82,14 @@ const DATASETS_ALLOW_ZERO_POINTS = [
 ];
 
 test.describe('ALL Examples - Systematic Smoke Tests', () => {
-  // Configure for parallel execution to speed up testing
-  test.describe.configure({ mode: 'parallel', timeout: 90000 });
+  // Configure for parallel execution to speed up testing.
+  // 120s (was 90s) absorbs HTTP-server contention when several
+  // worker-pool tabs decode mid-size datasets like
+  // dense_cubic_gradient_example.zarr concurrently — page.evaluate
+  // calls inside getLuxarState() consistently bumped against the
+  // 90s ceiling under load. Truly oversized fixtures are still
+  // routed through KNOWN_FLAKY_LARGE_DATASETS.
+  test.describe.configure({ mode: 'parallel', timeout: 120000 });
 
   for (const example of ALL_EXAMPLES) {
     // Skip known-flaky large datasets
