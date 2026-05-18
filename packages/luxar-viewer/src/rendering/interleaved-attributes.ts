@@ -176,7 +176,18 @@ const DEFAULT_GPU_DTYPE_BY_SEMANTIC: Record<SemanticType, GpuDtype> = {
   // ~5e-4 absolute error on SDR colours in [0,1] — well below the
   // parity-spec mean-abs-diff threshold on 0-255 scale.
   color: 'float16',
-  positive_scalar: 'float32',
+  // C-ts-3: POSITIVE_SCALAR (radii, widths, amplitudes) narrowed to
+  // Float16 on GPU. These hold scene-unit magnitudes; Float16 covers
+  // up to ±65504 with ~5e-4 relative precision — overkill for scene
+  // distances and far more headroom than needed for typical scenes.
+  // No shader change: TSL/GLSL still read `float`. GPU widens at
+  // attribute fetch.
+  positive_scalar: 'float16',
+  // C-ts-3b (future): BOUNDED_SCALAR (sharpness, clipped flags)
+  // will narrow to Uint8-norm. Requires threading the encoder's
+  // bounds metadata (V_max) to the shader's `sharpnessScale` /
+  // `radiusScale` uniforms — non-trivial because bounds vary per
+  // dataset. Stays Float32 for now.
   bounded_scalar: 'float32',
   cholesky: 'float32',
   // INDEX attributes don't flow through this packer (they're handled
