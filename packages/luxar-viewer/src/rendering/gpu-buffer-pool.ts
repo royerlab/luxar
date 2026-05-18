@@ -34,19 +34,15 @@ import type { ProcessedLinesData } from '../types/lines';
 import {
   packInterleavedAttributes,
   widenToFloat32,
-  writeInterleavedAttribute,
   type InterleavedAttributeSpec,
 } from './interleaved-attributes';
-import type {
-  PointsAttributeTypes,
-  PooledBuffer,
-  PoolStats,
-} from './gpu-buffer-pool/pool-stats';
+import type { PooledBuffer, PoolStats } from './gpu-buffer-pool/pool-stats';
 import { selectBuffersToEvict } from './gpu-buffer-pool/eviction-policy';
 import {
   rebuildInterleavedBuffer,
   writePooledAttribute,
 } from './gpu-buffer-pool/attribute-codec';
+import { PointsBufferAdapter } from './gpu-buffer-pool/points-adapter';
 
 /**
  * Canonical per-segment attribute layout for pooled line geometries.
@@ -97,51 +93,7 @@ const GSPLATS_ATTRIBUTE_SPECS: ReadonlyArray<{
   { name: 'aColor', itemSize: 3 },
 ];
 
-/** Base per-instance attribute layout for pooled points geometries. */
-const POINTS_BASE_ATTRIBUTE_SPECS: ReadonlyArray<{
-  name: string;
-  itemSize: 1 | 2 | 3 | 4;
-}> = [
-  { name: 'aCenter', itemSize: 3 },
-  { name: 'aColor', itemSize: 3 },
-  { name: 'aRadius', itemSize: 1 },
-  { name: 'aSharpness', itemSize: 1 },
-];
-
-const POINTS_SCALAR_ATTRIBUTE_SPEC: { name: string; itemSize: 1 | 2 | 3 | 4 } = {
-  name: 'aScalar',
-  itemSize: 1,
-};
-
-/**
- * Resolve the per-instance attribute layout for a points geometry,
- * including the optional `aScalar` slot iff the type snapshot has it.
- */
-function pointAttributeSpecs(
-  types: PointsAttributeTypes
-): Array<{ name: string; itemSize: 1 | 2 | 3 | 4 }> {
-  const specs: Array<{ name: string; itemSize: 1 | 2 | 3 | 4 }> = [...POINTS_BASE_ATTRIBUTE_SPECS];
-  if (types.scalar) {
-    specs.push(POINTS_SCALAR_ATTRIBUTE_SPEC);
-  }
-  return specs;
-}
-
-/**
- * Pick a normalization divisor for widening Uint8 / Uint16 source
- * data to Float32 while preserving the GPU-shader-visible [0, 1]
- * range that the previous per-attribute `normalized: true` flag
- * produced. See `interleaved-attributes.ts` for context.
- */
-function pointsNormalizationDivisor(
-  source: ArrayLike<number> | undefined,
-  normalized: boolean
-): number | undefined {
-  if (!source || !normalized) return undefined;
-  if (source instanceof Uint8Array) return 255;
-  if (source instanceof Uint16Array) return 65535;
-  return undefined;
-}
+// Points-specific spec arrays + helpers moved to ./gpu-buffer-pool/points-adapter.
 
 // rebuildInterleavedBuffer + writePooledAttribute moved to
 // ./gpu-buffer-pool/attribute-codec — geometry-agnostic helpers that
@@ -186,12 +138,15 @@ export { selectBuffersToEvict } from './gpu-buffer-pool/eviction-policy';
  * each with different attribute layouts and update patterns.
  */
 export class GPUBufferPool {
-  private pointBuffers = new Map<number, PooledBuffer[]>(); // Bucket by capacity
+  /** @internal — points-specific pool state and methods. */
+  readonly points: PointsBufferAdapter;
   private lineBuffers = new Map<number, PooledBuffer[]>();
   private gsplatBuffers = new Map<number, PooledBuffer[]>();
 
-  private activeBuffers = new Map<string, PooledBuffer>(); // nodeId → active geometry
-  private frameCount = 0;
+  /** @internal — shared with the per-type adapters. */
+  activeBuffers = new Map<string, PooledBuffer>(); // nodeId → active geometry
+  /** @internal — shared with the per-type adapters; increments via beginFrame(). */
+  frameCount = 0;
 
   private maxPoolSize: number;
   private evictionFrames: number;
@@ -214,7 +169,8 @@ export class GPUBufferPool {
    */
   private maxPoolBytes: number;
 
-  private stats = {
+  /** @internal — shared mutable stats; adapters bump fields here. */
+  stats = {
     allocations: 0,
     reuses: 0,
     evictions: 0,
@@ -237,7 +193,8 @@ export class GPUBufferPool {
    * read-then-act pattern (acquire → didLastAcquireRebuildAttributes →
    * invalidate) is synchronous in all production call paths.
    */
-  private _lastAcquireRebuilt = false;
+  /** @internal — written by adapters from acquire paths. */
+  _lastAcquireRebuilt = false;
 
   /**
    * One-shot guard: have we already logged the >100MB pooled-buffer
@@ -245,8 +202,8 @@ export class GPUBufferPool {
    */
   private largePoolWarningEmitted = false;
 
-  // Per-type stats tracking
-  private typeStats = {
+  // Per-type stats tracking. @internal — shared with adapters.
+  typeStats = {
     points: { allocations: 0, reuses: 0, evictions: 0 },
     lines: { allocations: 0, reuses: 0, evictions: 0 },
     gsplats: { allocations: 0, reuses: 0, evictions: 0 },
@@ -262,6 +219,7 @@ export class GPUBufferPool {
     this.evictionFrames = evictionFrames;
     this.evictBatchSize = Math.max(1, evictBatchSize);
     this.maxPoolBytes = Math.max(0, maxPoolBytes);
+    this.points = new PointsBufferAdapter(this);
   }
 
   /**
@@ -301,409 +259,31 @@ export class GPUBufferPool {
   // =========================================================================
 
   /**
-   * Helper to check if two attribute type sets match
-   */
-  private attributeTypesMatch(a: PointsAttributeTypes, b: PointsAttributeTypes): boolean {
-    return (
-      a.position === b.position &&
-      a.color === b.color &&
-      a.radius === b.radius &&
-      a.sharpness === b.sharpness &&
-      a.scalar === b.scalar
-    );
-  }
-
-  /**
-   * Acquire Points geometry from pool (type-aware, capacity-aware)
-   *
-   * Returns existing geometry if node already has one with matching types and sufficient capacity.
-   * Otherwise searches pool for reusable geometry, or creates new with correct types.
-   *
-   * @param nodeId - Unique identifier for this geometry (typically scene node path)
-   * @param data - Point data to detect attribute types from
-   * @param pointCount - Number of points needed
-   * @returns BufferGeometry with typed attributes matching data
-   *
-   * @example
-   * ```typescript
-   * // First acquisition: Creates new geometry with Uint8 colors
-   * const geom1 = pool.acquirePointsGeometry('/node1', {
-   *   positions: new Float32Array(...),
-   *   colors: new Uint8Array(...)  // Detects Uint8
-   * }, 1000);
-   *
-   * // Later: Reuses same geometry (types match, capacity ok)
-   * const geom2 = pool.acquirePointsGeometry('/node1', sameTypeData, 900);
-   * // geom2 === geom1 (reused!)
-   *
-   * // Different type: Creates new geometry
-   * const geom3 = pool.acquirePointsGeometry('/node2', {
-   *   colors: new Float32Array(...)  // Different type
-   * }, 1000);
-   * // geom3 !== geom1 (different types, can't reuse)
-   * ```
+   * Acquire Points geometry from pool (type-aware, capacity-aware).
+   * See `PointsBufferAdapter.acquireGeometry` for implementation.
    */
   acquirePointsGeometry(
     nodeId: string,
     data: LoadedPointsData,
     pointCount: number
   ): THREE.BufferGeometry {
-    // Reset the rebuild flag for this acquire; the branches below set
-    // it back to `true` for the paths that change the geometry's
-    // attribute identities.
-    this._lastAcquireRebuilt = false;
-
-    // Detect attribute types from data
-    const types = this.detectAttributeTypes(data);
-
-    // Check if this node already has an active geometry
-    const active = this.activeBuffers.get(nodeId);
-    if (active && active.type === 'points' && active.attributeTypes) {
-      // Check if types match
-      if (this.attributeTypesMatch(active.attributeTypes, types)) {
-        if (active.capacity >= pointCount) {
-          // Perfect! Reuse existing (same types, sufficient capacity).
-          // No attribute rebuild — leave `_lastAcquireRebuilt = false`.
-          active.lastUsedFrame = this.frameCount;
-          this.stats.reuses++;
-          this.typeStats.points.reuses++;
-          return this.preparePointsGeometryForDraw(active.geometry, pointCount);
-        } else {
-          // Need to grow - reallocate attributes with same types. The
-          // grow path replaces the InstancedInterleavedBuffer, so the
-          // mesh's RenderObject cache needs invalidation downstream.
-          this.growPointsGeometry(
-            active.geometry as THREE.BufferGeometry,
-            pointCount,
-            active.attributeTypes
-          );
-          active.capacity = Math.ceil(pointCount * 1.5);
-          active.lastUsedFrame = this.frameCount;
-          this.stats.capacityGrowths++;
-          this._lastAcquireRebuilt = true;
-          return this.preparePointsGeometryForDraw(active.geometry, pointCount);
-        }
-      } else {
-        // Types changed! Release old geometry and create new
-        this.releasePointsGeometry(nodeId);
-      }
-    }
-
-    // Try to find in pool (search across all buckets for suitable capacity AND matching types)
-    for (const pooled of this.pointBuffers.values()) {
-      for (let i = pooled.length - 1; i >= 0; i--) {
-        const candidate = pooled[i];
-        if (
-          candidate.attributeTypes &&
-          candidate.capacity >= pointCount &&
-          this.attributeTypesMatch(candidate.attributeTypes, types)
-        ) {
-          // Found suitable geometry with matching types! Different
-          // geometry object than what the caller had — its mesh's
-          // RenderObject cache will be stale once mesh.geometry is
-          // reassigned. Signal the rebuild.
-          pooled.splice(i, 1);
-          candidate.inUse = true;
-          candidate.lastUsedFrame = this.frameCount;
-          this.activeBuffers.set(nodeId, candidate);
-          this.stats.reuses++;
-          this.typeStats.points.reuses++;
-          this._lastAcquireRebuilt = true;
-          return this.preparePointsGeometryForDraw(candidate.geometry, pointCount);
-        }
-      }
-    }
-
-    // Allocate new geometry with correct types — also a rebuild from
-    // the caller's perspective.
-    this._lastAcquireRebuilt = true;
-    const capacity = Math.ceil(pointCount * 1.5);
-    const geometry = this.createPointsGeometry(capacity, types);
-
-    const newBuffer: PooledBuffer = {
-      geometry,
-      capacity,
-      type: 'points',
-      inUse: true,
-      lastUsedFrame: this.frameCount,
-      attributeTypes: types,
-    };
-
-    this.activeBuffers.set(nodeId, newBuffer);
-    this.stats.allocations++;
-    this.typeStats.points.allocations++;
-
-    return this.preparePointsGeometryForDraw(geometry, pointCount);
+    return this.points.acquireGeometry(nodeId, data, pointCount);
   }
 
-  /**
-   * Release Points geometry back to pool.
-   */
+  /** Release Points geometry back to pool. */
   releasePointsGeometry(nodeId: string): void {
-    const buffer = this.activeBuffers.get(nodeId);
-    if (!buffer || buffer.type !== 'points') return;
-
-    this.activeBuffers.delete(nodeId);
-    buffer.inUse = false;
-
-    // Add to pool (size-bucketed)
-    const bucket = this.getBucket(buffer.capacity);
-    if (!this.pointBuffers.has(bucket)) {
-      this.pointBuffers.set(bucket, []);
-    }
-    this.pointBuffers.get(bucket)!.push(buffer);
-
-    // Evict old buffers if pool too large
-    this.evictUnused();
+    this.points.releaseGeometry(nodeId);
   }
 
   /**
-   * Prepare pooled point geometry for the visible point count.
-   *
-   * Points render as instanced unit quads, so the indexed draw range is
-   * always the 2-triangle base quad (6 indices) while `instanceCount`
-   * carries the number of point sprites. Using drawRange for point count
-   * would still render only one non-instanced quad on r184 if the geometry
-   * were not explicitly instanced.
-   */
-  private preparePointsGeometryForDraw(
-    geometry: THREE.BufferGeometry,
-    pointCount: number
-  ): THREE.InstancedBufferGeometry {
-    const instanced = geometry as THREE.InstancedBufferGeometry;
-    instanced.instanceCount = pointCount;
-    instanced.setDrawRange(0, 6);
-    return instanced;
-  }
-
-  /**
-   * Detect attribute types from LoadedPointsData
-   */
-  private detectAttributeTypes(data: LoadedPointsData): PointsAttributeTypes {
-    const types: PointsAttributeTypes = {
-      position: 'Float32Array', // Always Float32Array
-      color:
-        data.colors instanceof Uint8Array
-          ? 'Uint8Array'
-          : data.colors instanceof Uint16Array
-            ? 'Uint16Array'
-            : 'Float32Array',
-      radius: data.radii instanceof Uint8Array ? 'Uint8Array' : 'Float32Array',
-      sharpness: data.sharpness instanceof Uint8Array ? 'Uint8Array' : 'Float32Array',
-    };
-    // scalar dtype — omitted when the dataset has no scalars (the
-    // common case). When present, we honor the source dtype so Uint8
-    // normalised LUT lookups work alongside Float32/Float16 raw values.
-    if (data.scalars) {
-      if (data.scalars instanceof Uint8Array) {
-        types.scalar = 'Uint8Array';
-      } else if (
-        typeof globalThis.Float16Array !== 'undefined' &&
-        data.scalars instanceof globalThis.Float16Array
-      ) {
-        types.scalar = 'Float16Array';
-      } else {
-        types.scalar = 'Float32Array';
-      }
-    }
-    return types;
-  }
-
-  /**
-   * Create Points geometry with type-specific instanced attributes.
-   *
-   * Layout matches the line + gsplat pattern: a shared unit-quad
-   * base geometry (4 vertices + 2-triangle index) plus per-instance
-   * `InstancedBufferAttribute`s for centre/colour/radius/sharpness/
-   * scalar. The base is allocated unconditionally; per-instance
-   * attributes are sized to `capacity`.
-   */
-  private createPointsGeometry(
-    capacity: number,
-    types: PointsAttributeTypes
-  ): THREE.InstancedBufferGeometry {
-    // Start from the shared unit-quad base — same shape that
-    // `point-geometry.ts::createPointQuadGeometry` produces, but
-    // inlined here to keep the pool self-contained.
-    const geometry = new THREE.InstancedBufferGeometry();
-    const quadCorners = new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]);
-    const indices = new Uint16Array([0, 1, 2, 2, 1, 3]);
-    geometry.setAttribute('aQuadCorner', new THREE.BufferAttribute(quadCorners, 2));
-    geometry.setIndex(new THREE.BufferAttribute(indices, 1));
-    // Safe no-draw state until acquire/update sets the visible count via
-    // preparePointsGeometryForDraw(). The draw range always stays on the
-    // 2-triangle base quad.
-    geometry.instanceCount = 0;
-    geometry.setDrawRange(0, 6);
-
-    // Pre-allocate the per-instance interleaved buffer at `capacity`.
-    // All attributes are Float32 in the interleaved storage; Uint8 /
-    // Uint16 source data is widened (and divided by the appropriate
-    // normalization divisor) at upload time in `updatePointsGeometry`.
-    // The `types` snapshot is still tracked on `PooledBuffer` for
-    // reuse-matching, but no longer drives the buffer layout.
-    const specs = pointAttributeSpecs(types).map((spec) => ({
-      ...spec,
-      data: new Float32Array(capacity * spec.itemSize),
-    }));
-    const { buffer, views } = packInterleavedAttributes(specs, capacity);
-    buffer.setUsage(THREE.DynamicDrawUsage);
-    for (const spec of specs) {
-      geometry.setAttribute(spec.name, views[spec.name]);
-    }
-
-    return geometry;
-  }
-
-  /**
-   * Grow Points geometry to new capacity (reallocates attributes
-   * with same types). Preserves the unit-quad base attribute and
-   * index — only the per-instance `InstancedBufferAttribute`s
-   * reallocate.
-   */
-  private growPointsGeometry(
-    geometry: THREE.BufferGeometry,
-    neededCount: number,
-    types: PointsAttributeTypes
-  ): void {
-    const newCapacity = Math.ceil(neededCount * 1.5);
-
-    // D.3: any attribute we're about to replace invalidates the cached
-    // byte estimate. Clear it once up front rather than after each
-    // attribute swap.
-    invalidateCachedByteSize(geometry);
-
-    // Reallocate the interleaved buffer at the new capacity. Spec-set
-    // (with/without `aScalar`) follows `types.scalar`.
-    rebuildInterleavedBuffer(
-      geometry as THREE.InstancedBufferGeometry,
-      newCapacity,
-      pointAttributeSpecs(types)
-    );
-  }
-
-  /**
-   * Update Points geometry attributes in-place (zero GPU allocations)
-   *
-   * Updates all attributes using TypedArray.set() for efficient copying.
-   * Sets needsUpdate flags to trigger GPU upload. Preserves native types.
-   *
-   * @param geometry - Geometry to update (from acquirePointsGeometry)
-   * @param data - Point data with new attribute values
-   * @param count - Number of points in data
-   *
-   * @example
-   * ```typescript
-   * const geometry = pool.acquirePointsGeometry('/node1', data, 1000);
-   * pool.updatePointsGeometry(geometry, newData, 1000);  // In-place update
-   * mesh.geometry = geometry;  // Assign to mesh (might be same geometry, reused!)
-   * ```
+   * Update Points geometry attributes in-place (zero GPU allocations).
    */
   updatePointsGeometry(
     geometry: THREE.BufferGeometry,
     data: LoadedPointsData,
     count: number
   ): void {
-    const instanced = geometry as THREE.InstancedBufferGeometry;
-
-    // Positions: typically Float32 but `PositionArray` permits
-    // Float16. Widen if needed; no normalization divisor (positions
-    // are world-space, not normalized).
-    const positionsF32 =
-      data.positions instanceof Float32Array
-        ? data.positions
-        : widenToFloat32(data.positions as ArrayLike<number>);
-    writePooledAttribute(instanced, 'aCenter', positionsF32, count);
-
-    // Colors: widen + normalize per the source dtype + the historical
-    // "normalized: true" semantics for Uint8 / Uint16 source. Missing
-    // colors → write a `1.0` fill so points render white instead of
-    // black (which would be discarded by the shader's near-zero check).
-    const colorView = instanced.getAttribute('aColor') as THREE.InterleavedBufferAttribute;
-    const colorBuffer = colorView.data as THREE.InstancedInterleavedBuffer;
-    if (data.colors) {
-      const widened = widenToFloat32(
-        data.colors.subarray(0, count * 3) as ArrayLike<number>,
-        pointsNormalizationDivisor(data.colors, /*normalized=*/ true)
-      );
-      writeInterleavedAttribute(colorBuffer, colorView.offset, 3, widened, count);
-    } else {
-      const fill = new Float32Array(count * 3);
-      fill.fill(1.0);
-      writeInterleavedAttribute(colorBuffer, colorView.offset, 3, fill, count);
-    }
-
-    // Radii: widen + normalize. Missing → 0.5 default (matches
-    // NodeFactory.createPointsGeometry).
-    const radView = instanced.getAttribute('aRadius') as THREE.InterleavedBufferAttribute;
-    const radBuffer = radView.data as THREE.InstancedInterleavedBuffer;
-    if (data.radii) {
-      const widened = widenToFloat32(
-        data.radii.subarray(0, count) as ArrayLike<number>,
-        pointsNormalizationDivisor(data.radii, /*normalized=*/ true)
-      );
-      writeInterleavedAttribute(radBuffer, radView.offset, 1, widened, count);
-    } else {
-      const fill = new Float32Array(count);
-      fill.fill(0.5);
-      writeInterleavedAttribute(radBuffer, radView.offset, 1, fill, count);
-    }
-
-    // Sharpness: widen + normalize. Missing → 2.0 default.
-    const sharpView = instanced.getAttribute('aSharpness') as THREE.InterleavedBufferAttribute;
-    const sharpBuffer = sharpView.data as THREE.InstancedInterleavedBuffer;
-    if (data.sharpness) {
-      const widened = widenToFloat32(
-        data.sharpness.subarray(0, count) as ArrayLike<number>,
-        pointsNormalizationDivisor(data.sharpness, /*normalized=*/ true)
-      );
-      writeInterleavedAttribute(sharpBuffer, sharpView.offset, 1, widened, count);
-    } else {
-      const fill = new Float32Array(count);
-      fill.fill(2.0);
-      writeInterleavedAttribute(sharpBuffer, sharpView.offset, 1, fill, count);
-    }
-
-    // Optional scalar — only present when `pointAttributeSpecs` was
-    // built with `types.scalar` set. Widen Uint8 / Float16 sources.
-    const scalarView = instanced.getAttribute('aScalar') as
-      | THREE.InterleavedBufferAttribute
-      | undefined;
-    if (scalarView) {
-      const scalarBuffer = scalarView.data as THREE.InstancedInterleavedBuffer;
-      if (data.scalars) {
-        const widened = widenToFloat32(
-          data.scalars.subarray(0, count) as ArrayLike<number>,
-          pointsNormalizationDivisor(data.scalars, /*normalized=*/ true)
-        );
-        writeInterleavedAttribute(scalarBuffer, scalarView.offset, 1, widened, count);
-      } else {
-        // No source scalars but the buffer exists — fill zero so a
-        // colormap LUT lookup at scalar=0 returns the LUT's first
-        // entry (equivalent to disabling colormap visually).
-        const fill = new Float32Array(count);
-        writeInterleavedAttribute(scalarBuffer, scalarView.offset, 1, fill, count);
-      }
-    }
-
-    // Points render as instanced unit quads: keep the indexed draw range
-    // on the 2-triangle base quad and put the visible point count in
-    // instanceCount.
-    this.preparePointsGeometryForDraw(geometry, count);
-    if (data.metadata.bounds) {
-      instanced.boundingBox = data.metadata.bounds.clone();
-    } else {
-      const box = new THREE.Box3();
-      const v = new THREE.Vector3();
-      const positions = data.positions;
-      for (let i = 0; i < count; i++) {
-        v.set(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]);
-        box.expandByPoint(v);
-      }
-      instanced.boundingBox = box;
-    }
-    instanced.boundingSphere = new THREE.Sphere();
-    instanced.boundingBox.getBoundingSphere(instanced.boundingSphere);
+    this.points.updateGeometry(geometry, data, count);
   }
 
   // =========================================================================
@@ -1141,9 +721,10 @@ export class GPUBufferPool {
 
   /**
    * Get size bucket for capacity-based pooling.
-   * Buckets: 1K, 5K, 10K, 50K, 100K, 500K, 1M
+   * Buckets: 1K, 5K, 10K, 50K, 100K, 500K, 1M.
+   * @internal — called by adapters; public to satisfy PointsAdapterHost.
    */
-  private getBucket(count: number): number {
+  getBucket(count: number): number {
     if (count <= 1000) return 1000;
     if (count <= 5000) return 5000;
     if (count <= 10000) return 10000;
@@ -1165,7 +746,7 @@ export class GPUBufferPool {
 
     // Check total pool size
     const totalPooled =
-      Array.from(this.pointBuffers.values()).reduce((sum, arr) => sum + arr.length, 0) +
+      Array.from(this.points.pointBuffers.values()).reduce((sum, arr) => sum + arr.length, 0) +
       Array.from(this.lineBuffers.values()).reduce((sum, arr) => sum + arr.length, 0) +
       Array.from(this.gsplatBuffers.values()).reduce((sum, arr) => sum + arr.length, 0);
 
@@ -1221,7 +802,7 @@ export class GPUBufferPool {
       return poolEvicted;
     };
 
-    const pointsEvicted = evictFromPool(this.pointBuffers, batchCap);
+    const pointsEvicted = evictFromPool(this.points.pointBuffers, batchCap);
     const remaining1 = batchCap === Number.POSITIVE_INFINITY ? batchCap : batchCap - pointsEvicted;
     const linesEvicted = evictFromPool(this.lineBuffers, remaining1);
     const remaining2 = batchCap === Number.POSITIVE_INFINITY ? batchCap : remaining1 - linesEvicted;
@@ -1283,7 +864,7 @@ export class GPUBufferPool {
         }
       }
     };
-    collect(this.pointBuffers);
+    collect(this.points.pointBuffers);
     collect(this.lineBuffers);
     collect(this.gsplatBuffers);
 
@@ -1365,7 +946,7 @@ export class GPUBufferPool {
    */
   getStats(): PoolStats {
     // Calculate per-type pooled buffers
-    const pointsPooled = Array.from(this.pointBuffers.values()).reduce(
+    const pointsPooled = Array.from(this.points.pointBuffers.values()).reduce(
       (sum, arr) => sum + arr.length,
       0
     );
@@ -1404,7 +985,7 @@ export class GPUBufferPool {
     let linesPooledBytes = 0;
     let gsplatsPooledBytes = 0;
     let largestPooledBytes = 0;
-    for (const arr of this.pointBuffers.values()) {
+    for (const arr of this.points.pointBuffers.values()) {
       for (const b of arr) {
         const bytes = estimateGeometryBytes(b.geometry);
         pointsPooledBytes += bytes;
@@ -1489,7 +1070,7 @@ export class GPUBufferPool {
       pool.clear();
     };
 
-    disposePool(this.pointBuffers);
+    disposePool(this.points.pointBuffers);
     disposePool(this.lineBuffers);
     disposePool(this.gsplatBuffers);
 
