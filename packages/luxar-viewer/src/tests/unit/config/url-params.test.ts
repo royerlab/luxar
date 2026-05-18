@@ -131,6 +131,21 @@ describe('readUrlParams', () => {
     });
   });
 
+  describe('?perf-timestamp', () => {
+    it('parses the GPU timestamp-query opt-in flag', () => {
+      expect(readUrlParams('').perfTimestamp).toBe(false);
+      expect(readUrlParams('?perf-timestamp').perfTimestamp).toBe(true);
+      expect(readUrlParams('?renderer=webgpu&perf-timestamp').perfTimestamp).toBe(true);
+    });
+
+    it('does not affect other flags when present alone', () => {
+      const params = readUrlParams('?perf-timestamp');
+      expect(params.perfTimestamp).toBe(true);
+      expect(params.debug).toBe(false);
+      expect(params.webgpuForceWebGL).toBe(false);
+    });
+  });
+
   describe('?renderer=', () => {
     it('returns null when absent', () => {
       expect(readUrlParams('').renderer).toBeNull();
