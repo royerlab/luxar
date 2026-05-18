@@ -8,7 +8,7 @@
  * - Render basic demo datasets
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { waitForLuxarReady } from './helpers';
 
 test.describe('Luxar Basic Rendering', () => {
@@ -43,6 +43,10 @@ test.describe('Luxar Basic Rendering', () => {
   });
 
   test('should handle missing dataset gracefully', async ({ page }) => {
+    test.info().annotations.push({
+      type: 'allow-console-errors',
+      description: 'Bad-URL recovery path intentionally produces 404/502 responses.',
+    });
     // Navigate with non-existent dataset
     await page.goto('/?src=/data/nonexistent.zarr&debug');
 
@@ -123,7 +127,7 @@ test.describe('Luxar Basic Rendering', () => {
     expect(dimensions.height).toBeGreaterThan(0);
   });
 
-  test('should take screenshot without crashing', async ({ page }) => {
+  test('@visual should take screenshot without crashing', async ({ page }) => {
     await page.goto('/?debug');
     await waitForLuxarReady(page);
 

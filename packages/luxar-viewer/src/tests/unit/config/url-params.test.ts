@@ -18,6 +18,7 @@ describe('readUrlParams', () => {
       clearCache: false,
       noPrefetch: false,
       prefetchDebug: false,
+      cacheStats: false,
     });
   });
 
@@ -71,9 +72,25 @@ describe('readUrlParams', () => {
     expect(normalizeDataSourceUrl('/')).toBeNull();
   });
 
+  // Mixed-case schemes are valid HTTP(S) per RFC 3986 §3.1.
+  // normalize-data-source-url canonicalizes via url.href so every
+  // downstream helper sees the same lowercase scheme form.
+  it('canonicalizes mixed-case HTTP(S) schemes via URL.href', () => {
+    expect(normalizeDataSourceUrl('HTTPS://Example.com/data.zarr')).toBe(
+      'https://example.com/data.zarr'
+    );
+    expect(normalizeDataSourceUrl('Http://example.com/data.zarr')).toBe(
+      'http://example.com/data.zarr'
+    );
+    // Trailing slashes still trimmed after canonicalization.
+    expect(normalizeDataSourceUrl('HTTPS://example.com/foo.zarr/')).toBe(
+      'https://example.com/foo.zarr'
+    );
+  });
+
   it('treats valueless flags as boolean true', () => {
     const params = readUrlParams(
-      '?debug&no-cache&cache-debug&clear-cache&no-prefetch&prefetch-debug'
+      '?debug&no-cache&cache-debug&clear-cache&no-prefetch&prefetch-debug&cache-stats'
     );
     expect(params.debug).toBe(true);
     expect(params.noCache).toBe(true);
@@ -81,6 +98,14 @@ describe('readUrlParams', () => {
     expect(params.clearCache).toBe(true);
     expect(params.noPrefetch).toBe(true);
     expect(params.prefetchDebug).toBe(true);
+    expect(params.cacheStats).toBe(true);
+  });
+
+  it('cache-stats is independent of cache-debug (different concerns)', () => {
+    expect(readUrlParams('?cache-stats').cacheStats).toBe(true);
+    expect(readUrlParams('?cache-stats').cacheDebug).toBe(false);
+    expect(readUrlParams('?cache-debug').cacheStats).toBe(false);
+    expect(readUrlParams('?cache-debug').cacheDebug).toBe(true);
   });
 
   it('accepts a leading question mark or omits it', () => {
@@ -165,10 +190,6 @@ describe('replaceBrowserDataSourceUrl', () => {
       history: { replaceState },
     });
 
-    expect(replaceState).toHaveBeenCalledWith(
-      {},
-      '',
-      '/viewer?src=http%3A%2F%2Fexample.com'
-    );
+    expect(replaceState).toHaveBeenCalledWith({}, '', '/viewer?src=http%3A%2F%2Fexample.com');
   });
 });

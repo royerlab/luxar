@@ -7,7 +7,12 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { DecompressedChunkCache } from '../../../cache/decompressed-chunk-cache';
-import { wrapWithCache, isCachedArray, unwrapCachedArray } from '../../../cache/cached-zarr-array';
+import {
+  wrapWithCache,
+  isCachedArray,
+  unwrapCachedArray,
+  cloneArrayBufferView,
+} from '../../../cache/cached-zarr-array';
 
 // Mock zarr types for testing
 type MockChunk = {
@@ -51,8 +56,10 @@ describe('cached-zarr-array', () => {
       // Call getChunk
       const result = await wrapped.getChunk([0, 1, 2]);
 
-      // Should have called original getChunk
-      expect(mockArray.getChunk).toHaveBeenCalledWith([0, 1, 2], undefined);
+      // Should have called original getChunk. The proxy forwards args
+      // via rest-spread (`target.getChunk(...args)`), so a no-options
+      // call shows up as a single positional arg, not `(coords, undefined)`.
+      expect(mockArray.getChunk).toHaveBeenCalledWith([0, 1, 2]);
 
       // Should return the chunk data
       expect(result.data).toBeInstanceOf(Float32Array);
@@ -193,6 +200,101 @@ describe('cached-zarr-array', () => {
       const stats = cache.getStats();
       expect(stats.misses).toBe(2);
       expect(stats.count).toBe(2);
+    });
+  });
+
+  describe('cloneArrayBufferView (commit 5.3)', () => {
+    it('clones a Float32Array into a fresh buffer', () => {
+      const src = new Float32Array([1.5, 2.5, 3.5]);
+      const cloned = cloneArrayBufferView(src) as Float32Array;
+      expect(cloned).toBeInstanceOf(Float32Array);
+      expect(Array.from(cloned)).toEqual([1.5, 2.5, 3.5]);
+      // Mutating the clone must not affect the source.
+      cloned[0] = 99;
+      expect(src[0]).toBe(1.5);
+    });
+
+    it('clones a Uint8Array into a fresh buffer', () => {
+      const src = new Uint8Array([10, 20, 30]);
+      const cloned = cloneArrayBufferView(src) as Uint8Array;
+      expect(cloned).toBeInstanceOf(Uint8Array);
+      expect(Array.from(cloned)).toEqual([10, 20, 30]);
+      cloned[0] = 200;
+      expect(src[0]).toBe(10);
+    });
+
+    it('clones a Uint16Array into a fresh buffer', () => {
+      const src = new Uint16Array([1000, 2000]);
+      const cloned = cloneArrayBufferView(src) as Uint16Array;
+      expect(cloned).toBeInstanceOf(Uint16Array);
+      expect(Array.from(cloned)).toEqual([1000, 2000]);
+      cloned[1] = 60_000;
+      expect(src[1]).toBe(2000);
+    });
+
+    it('clones a DataView into a fresh buffer', () => {
+      const buffer = new ArrayBuffer(8);
+      const src = new DataView(buffer);
+      src.setUint32(0, 0xdeadbeef, true);
+      const cloned = cloneArrayBufferView(src) as DataView;
+      expect(cloned).toBeInstanceOf(DataView);
+      expect(cloned.getUint32(0, true)).toBe(0xdeadbeef);
+      // Mutating the clone must not affect the source.
+      cloned.setUint32(0, 0x00000000, true);
+      expect(src.getUint32(0, true)).toBe(0xdeadbeef);
+    });
+  });
+
+  describe('Decode coalescing (commit 5.2)', () => {
+    it('two concurrent same-key getChunk calls invoke underlying decode once', async () => {
+      let resolveDecode: (chunk: MockChunk) => void = () => {};
+      const decodeFn = vi.fn(
+        () =>
+          new Promise<MockChunk>((resolve) => {
+            resolveDecode = resolve;
+          })
+      );
+      const slow = createMockZarrArray(decodeFn as any);
+      const wrapped = wrapWithCache(slow, cache, '/points/positions');
+
+      const p1 = wrapped.getChunk([0]);
+      const p2 = wrapped.getChunk([0]);
+      // Yield once so both callers reach the pending-chunk check.
+      await new Promise((r) => setTimeout(r, 0));
+      // Underlying getChunk has been called at most once at this point.
+      expect(decodeFn.mock.calls.length).toBe(1);
+
+      resolveDecode({
+        data: new Float32Array([1, 2, 3]),
+        shape: [3],
+        stride: [1],
+      });
+      const [r1, r2] = await Promise.all([p1, p2]);
+      // Both callers see the same data; underlying decode ran exactly once.
+      expect(r1.data).toBe(r2.data);
+      expect(decodeFn.mock.calls.length).toBe(1);
+    });
+
+    it('errors clear the pending entry; subsequent call retries', async () => {
+      let firstAttempt = true;
+      const failingThenOk = createMockZarrArray(async () => {
+        if (firstAttempt) {
+          firstAttempt = false;
+          throw new Error('transient decode error');
+        }
+        return {
+          data: new Float32Array([9, 9, 9]),
+          shape: [3],
+          stride: [1],
+        };
+      });
+      const wrapped = wrapWithCache(failingThenOk, cache, '/points/values');
+
+      await expect(wrapped.getChunk([0])).rejects.toThrow('transient decode error');
+      // Subsequent call must NOT see the rejected pending entry — it
+      // should re-call target.getChunk and succeed.
+      const result = await wrapped.getChunk([0]);
+      expect(Array.from(result.data)).toEqual([9, 9, 9]);
     });
   });
 

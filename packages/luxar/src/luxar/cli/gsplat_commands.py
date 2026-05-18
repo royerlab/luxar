@@ -589,8 +589,8 @@ def quick_view(
                         actual_port,
                         None,  # bandwidth_mbps
                         None,  # latency_ms
-                        0.0,   # jitter_percent
-                        0.0,   # packet_loss_rate
+                        0.0,  # jitter_percent
+                        0.0,  # packet_loss_rate
                         False,  # allow_sensitive_path
                         cors_origin,
                     ),
@@ -982,7 +982,9 @@ def filter_dataset(
     ),
     # Truncation
     truncate: Optional[float] = typer.Option(
-        None, "--truncate", help="Sigma truncation for volume computation. Defaults to dataset's stored value."
+        None,
+        "--truncate",
+        help="Sigma truncation for volume computation. Defaults to dataset's stored value.",
     ),
     # Output options
     encoding_mode: Literal["auto", "precision", "memory"] = typer.Option(
@@ -1116,7 +1118,9 @@ def filter_dataset(
                     aprint(f"Saved filtered dataset: {output_path}")
 
                     if output_path.exists():
-                        aprint(f"  Size: {format_memory_size(output_path.stat().st_size)}")
+                        aprint(
+                            f"  Size: {format_memory_size(output_path.stat().st_size)}"
+                        )
 
     except typer.Exit:
         raise
@@ -1365,7 +1369,9 @@ def slice_dataset(
                     aprint(f"Saved sliced dataset: {output_path}")
 
                     if output_path.exists():
-                        aprint(f"  Size: {format_memory_size(output_path.stat().st_size)}")
+                        aprint(
+                            f"  Size: {format_memory_size(output_path.stat().st_size)}"
+                        )
 
     except typer.Exit:
         raise
@@ -1979,7 +1985,11 @@ def fit_volume(
                         norm_vol, _, _ = normalize_volume(volume)
                         t_vol = torch.from_numpy(norm_vol)
                         # Auto-select CUDA > MPS > CPU when --device is omitted.
-                        dev = resolve_torch_device(device) if device else resolve_torch_device()
+                        dev = (
+                            resolve_torch_device(device)
+                            if device
+                            else resolve_torch_device()
+                        )
                         _denoise_effective_h = calibrate_nlm_h(
                             t_vol,
                             patch_size=denoise_patch_size,
@@ -2225,7 +2235,9 @@ def fit_volume(
                 n_splats = result.n_splats
                 aprint(f"Saved {n_splats:,} splats")
                 if output_path.exists():
-                    aprint(f"File size: {format_memory_size(output_path.stat().st_size)}")
+                    aprint(
+                        f"File size: {format_memory_size(output_path.stat().st_size)}"
+                    )
 
         time_s = result.stats.get("time_seconds", 0)
         aprint(f"\nDone: {n_splats:,} splats in {time_s:.1f}s")
@@ -2339,7 +2351,10 @@ def render_to_file(
         None, "--device", "-d", help="Device: auto/cpu/cuda/mps"
     ),
     truncate: Optional[float] = typer.Option(
-        None, "--truncate", "-t", help="Truncation radius in sigma. Defaults to dataset's stored value."
+        None,
+        "--truncate",
+        "-t",
+        help="Truncation radius in sigma. Defaults to dataset's stored value.",
     ),
 ) -> None:
     """Render Gaussian splats back to a volume.
@@ -2406,7 +2421,9 @@ def render_to_file(
                     np.save(str(output_path), volume)
 
                 if output_path.exists():
-                    aprint(f"File size: {format_memory_size(output_path.stat().st_size)}")
+                    aprint(
+                        f"File size: {format_memory_size(output_path.stat().st_size)}"
+                    )
 
         aprint(f"\nSaved: {output_path}")
 
@@ -2442,7 +2459,10 @@ def compare_quality(
         None, "--device", "-d", help="Device: auto/cpu/cuda/mps"
     ),
     truncate: Optional[float] = typer.Option(
-        None, "--truncate", "-t", help="Truncation radius in sigma. Defaults to dataset's stored value."
+        None,
+        "--truncate",
+        "-t",
+        help="Truncation radius in sigma. Defaults to dataset's stored value.",
     ),
     channel: Optional[int] = typer.Option(
         None, "--channel", "-c", help="Channel index for OME-Zarr reference"
@@ -2638,10 +2658,14 @@ def calibrate_command(
         help="Spacing of the K grid: 'exp' (geometric/log-spaced) or 'power' (polynomial)",
     ),
     power: int = typer.Option(
-        2, "--power", help="Exponent when --progression power (1=linear, 2=quadratic, ...)"
+        2,
+        "--power",
+        help="Exponent when --progression power (1=linear, 2=quadratic, ...)",
     ),
     # CV mask
-    mask_seed: int = typer.Option(42, "--mask-seed", help="RNG seed for the held-out mask"),
+    mask_seed: int = typer.Option(
+        42, "--mask-seed", help="RNG seed for the held-out mask"
+    ),
     mask_fraction: float = typer.Option(
         0.05, "--mask-fraction", help="Fraction of voxels to hold out (default 5%)"
     ),
@@ -2667,7 +2691,9 @@ def calibrate_command(
     ),
     # Optional outputs
     pdf_report: Optional[Path] = typer.Option(
-        None, "--pdf", help="Generate calibration PDF report (rate-distortion + slice montages + CV curves)"
+        None,
+        "--pdf",
+        help="Generate calibration PDF report (rate-distortion + slice montages + CV curves)",
     ),
     keep_fits: Optional[Path] = typer.Option(
         None,
@@ -2798,7 +2824,9 @@ def calibrate_command(
             aprint("\n" + "═" * 64)
             aprint(f"  CALIBRATION  —  {input_path.name}")
             aprint("═" * 64)
-            aprint(f"  Volume:         {tuple(result.volume_shape)} {result.volume_dtype}")
+            aprint(
+                f"  Volume:         {tuple(result.volume_shape)} {result.volume_dtype}"
+            )
             sigma = result.noise_floor.sigma_hat
             ceil_db = result.noise_floor.psnr_max_db
             sigma_str = f"{sigma:.4f}" if math.isfinite(sigma) else "—"
@@ -4527,9 +4555,7 @@ def lod_additive(
     input_path: Path = typer.Argument(
         ..., exists=True, help="Input .gsplats.zarr (single- or multi-LOD)"
     ),
-    output_path: Path = typer.Argument(
-        ..., help="Output .gsplats.zarr (multi-LOD)"
-    ),
+    output_path: Path = typer.Argument(..., help="Output .gsplats.zarr (multi-LOD)"),
     n_lods: int = typer.Option(
         4,
         "--n-lods",
@@ -4622,8 +4648,7 @@ def lod_additive(
         }
         if method_norm not in valid_methods:
             raise typer.BadParameter(
-                f"--method must be one of {sorted(valid_methods)}, "
-                f"got {method!r}"
+                f"--method must be one of {sorted(valid_methods)}, got {method!r}"
             )
 
         bp = _parse_lod_breakpoints(breakpoints)
@@ -4660,10 +4685,7 @@ def lod_additive(
                     max_n_dense=max_n_dense,
                     seed=seed,
                 )
-                aprint(
-                    f"Built {ladder.n_lods}-level ladder in "
-                    f"{time.time() - t0:.2f}s"
-                )
+                aprint(f"Built {ladder.n_lods}-level ladder in {time.time() - t0:.2f}s")
                 cuts = ladder.stats.get("lod_cutpoints", [])
                 kind = ladder.stats.get("lod_breakpoints_kind", "?")
                 aprint(f"Cutpoints ({kind}): {cuts}")
@@ -4850,8 +4872,7 @@ def lod_substitutive(
                     verbose=verbose,
                 )
                 aprint(
-                    f"Built {len(hierarchy)}-level hierarchy in "
-                    f"{time.time() - t0:.2f}s"
+                    f"Built {len(hierarchy)}-level hierarchy in {time.time() - t0:.2f}s"
                 )
                 for level_idx, lev in enumerate(hierarchy):
                     aprint(f"  level {level_idx}: {lev.n_splats:,} splats")

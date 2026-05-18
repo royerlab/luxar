@@ -10,8 +10,28 @@
  * @module cache/cached-zarr-array
  */
 
-import type * as zarr from 'zarrita';
+import type * as zarr from '../data/zarr';
 import { DecompressedChunkCache, type DecompressedChunk } from './decompressed-chunk-cache';
+
+/**
+ * Clone an ArrayBufferView by allocating a fresh underlying buffer.
+ * Handles both TypedArray (Float32Array, Uint8Array, Uint16Array,
+ * BigInt64Array, etc.) and DataView. TypedArrays expose `.slice()`;
+ * DataView needs an explicit buffer slice to preserve byte offsets.
+ *
+ * Exported only for unit testing; not part of the public package
+ * surface.
+ *
+ * @internal
+ */
+export function cloneArrayBufferView(view: ArrayBufferView): ArrayBufferView {
+  if (view instanceof DataView) {
+    const buffer = view.buffer.slice(view.byteOffset, view.byteOffset + view.byteLength);
+    return new DataView(buffer);
+  }
+  // All TypedArray subtypes implement slice() returning their own subtype.
+  return (view as ArrayBufferView & { slice(): ArrayBufferView }).slice();
+}
 
 /** Symbol to mark proxied arrays (for detection) */
 const CACHE_MARKER = Symbol('luxar.l0cache');
@@ -58,6 +78,17 @@ export function wrapWithCache<D extends zarr.DataType>(
     return array;
   }
 
+  // Same-chunk decode coalescing: concurrent getChunk(coords) calls
+  // for the same key share a single underlying decompression. Without
+  // this, two parallel loaders requesting the same chunk both miss
+  // L0, both call target.getChunk(), and both run Blosc decode. Map
+  // is keyed by DecompressedChunkCache.makeKey so it's shared across
+  // every wrapped array routed through the same L0 cache instance.
+  const pendingChunks = new Map<
+    string,
+    Promise<{ data: zarr.TypedArray<D>; shape: number[]; stride: number[] }>
+  >();
+
   return new Proxy(array, {
     get(target, prop, _receiver) {
       // Handle cache marker check
@@ -82,6 +113,8 @@ export function wrapWithCache<D extends zarr.DataType>(
         prop === 'chunks' ||
         prop === 'order' ||
         prop === 'fill_value' ||
+        prop === 'fillValue' ||
+        prop === 'dimensionNames' ||
         prop === 'compressor' ||
         prop === 'filters' ||
         prop === 'codec' ||
@@ -93,9 +126,9 @@ export function wrapWithCache<D extends zarr.DataType>(
       // Intercept getChunk() to add caching
       if (prop === 'getChunk') {
         return async function (
-          chunkCoords: number[],
-          options?: Parameters<typeof target.getChunk>[1]
+          ...args: Parameters<typeof target.getChunk>
         ): Promise<{ data: zarr.TypedArray<D>; shape: number[]; stride: number[] }> {
+          const [chunkCoords] = args;
           const key = DecompressedChunkCache.makeKey(arrayPath, chunkCoords);
 
           // Check L0 cache first
@@ -109,21 +142,42 @@ export function wrapWithCache<D extends zarr.DataType>(
             };
           }
 
-          // Cache miss - call original getChunk (triggers Blosc decompression)
-          const chunk = await target.getChunk(chunkCoords, options);
+          // Same-chunk coalescing: if another caller is already
+          // decompressing this chunk, await their promise instead of
+          // re-running Blosc.
+          const pending = pendingChunks.get(key);
+          if (pending) return pending;
 
-          // Cache the decompressed result.
-          // Clone the data to prevent callers from mutating the cached copy
-          // (ArrayBufferViews are references to underlying ArrayBuffers).
-          const clonedData = (chunk.data as any).slice() as ArrayBufferView;
-          const cacheEntry: DecompressedChunk = {
-            data: clonedData,
-            shape: chunk.shape.slice(),
-            stride: chunk.stride.slice(),
-          };
-          cache.set(key, cacheEntry);
+          const chunkPromise = (async () => {
+            try {
+              // Cache miss — call original getChunk (triggers Blosc decompression)
+              const chunk = await target.getChunk(...args);
 
-          return chunk;
+              // Cache the decompressed result. Clone the data to
+              // prevent callers from mutating the cached copy
+              // (ArrayBufferViews are references to underlying
+              // ArrayBuffers). cloneArrayBufferView branches on
+              // TypedArray vs DataView — the union type's public d.ts
+              // doesn't expose a common slice() so a single cast hid
+              // the DataView gap. zarrita's TypedArray<D> union
+              // includes object-dtype as unknown[], which is not an
+              // ArrayBufferView; cast through ArrayBufferView since
+              // numeric chunks (the only kind we cache) always are.
+              const clonedData = cloneArrayBufferView(chunk.data as unknown as ArrayBufferView);
+              const cacheEntry: DecompressedChunk = {
+                data: clonedData,
+                shape: chunk.shape.slice(),
+                stride: chunk.stride.slice(),
+              };
+              cache.set(key, cacheEntry);
+
+              return chunk;
+            } finally {
+              pendingChunks.delete(key);
+            }
+          })();
+          pendingChunks.set(key, chunkPromise);
+          return chunkPromise;
         };
       }
 

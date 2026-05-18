@@ -1,0 +1,27 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "src/index.ts",
+    "src/lib-styles-entry.ts",
+    "src/tests/**/*.{test,spec}.ts",
+    "scripts/**/*.{ts,mjs,js}",
+    "tools/**/*.ts",
+    "tests/fixtures/**/*.{ts,py}"
+  ],
+  "project": ["src/**/*.ts"],
+  "ignore": [
+    "src/rendering/picking/index.ts",
+    "src/rendering/shaders/index.ts",
+    "src/themes/index.ts",
+    "src/types/index.ts",
+    "typedoc.json",
+    "src/tests/builders/**",
+    "src/tests/mocks/**",
+    "src/tests/e2e/helpers.ts",
+    "src/tests/test-config.ts"
+  ],
+  "ignoreBinaries": ["hatch"],
+  "ignoreDependencies": ["glob"],
+  "ignoreExportsUsedInFile": true,
+  "tags": ["-internal"]
+}

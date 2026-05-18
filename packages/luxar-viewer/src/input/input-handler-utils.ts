@@ -8,6 +8,7 @@
 
 import { SimpleDims } from '../types/dims';
 import { config } from '../config';
+import { clamp } from '../utils/clamp';
 
 /**
  * Keyboard navigation configuration
@@ -341,7 +342,7 @@ export function calculateNextPosition(
     }
   } else {
     // Clamp to range
-    newPos = Math.max(range[0], Math.min(range[1], newPos));
+    newPos = clamp(newPos, range[0], range[1]);
   }
 
   return newPos;
@@ -689,7 +690,7 @@ export function calculateFovChange(
   const newFov = currentFov + change;
 
   // Clamp to config-defined FOV range
-  return Math.max(config.camera.fovMin, Math.min(config.camera.fovMax, newFov));
+  return clamp(newFov, config.camera.fovMin, config.camera.fovMax);
 }
 
 /**

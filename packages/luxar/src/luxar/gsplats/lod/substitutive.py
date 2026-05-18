@@ -138,9 +138,7 @@ def make_substitutive_lod(
         is not recognised.
     """
     if compression_factor < 2:
-        raise ValueError(
-            f"compression_factor must be >= 2, got {compression_factor}"
-        )
+        raise ValueError(f"compression_factor must be >= 2, got {compression_factor}")
     if levels < 1:
         raise ValueError(f"levels must be >= 1, got {levels}")
     if method not in _VALID_METHODS:
@@ -230,33 +228,29 @@ def _reduce_one_level(
 ) -> GSplatData:
     """Run one application of the partition-and-merge operator $\\mathcal{R}_K$."""
     D = data.ndim
-    centres_t = torch.from_numpy(
-        np.asarray(data.centers, dtype=np.float32)
-    ).to(device=device, dtype=torch.float64)
+    centres_t = torch.from_numpy(np.asarray(data.centers, dtype=np.float32)).to(
+        device=device, dtype=torch.float64
+    )
     L_t = torch.from_numpy(
         unpack_tril(np.asarray(data.cholesky_factors, dtype=np.float32), D).astype(
             np.float64
         )
     ).to(device=device)
-    amps_t = torch.from_numpy(
-        np.asarray(data.amplitudes, dtype=np.float32)
-    ).to(device=device, dtype=torch.float64)
+    amps_t = torch.from_numpy(np.asarray(data.amplitudes, dtype=np.float32)).to(
+        device=device, dtype=torch.float64
+    )
     if data.colors is not None:
-        colors_t: Optional[torch.Tensor] = torch.from_numpy(
-            np.asarray(data.colors)
-        ).to(device=device)
+        colors_t: Optional[torch.Tensor] = torch.from_numpy(np.asarray(data.colors)).to(
+            device=device
+        )
     else:
         colors_t = None
 
     # 1) Warm-start partition
     if method.startswith("kmeans"):
-        assignments = _kmeans_partition(
-            centres_t, M=M_target, seed=seed, max_iter=20
-        )
+        assignments = _kmeans_partition(centres_t, M=M_target, seed=seed, max_iter=20)
     else:
-        assignments = _greedy_partition(
-            centres_t, L_t, amps_t, M_target=M_target
-        )
+        assignments = _greedy_partition(centres_t, L_t, amps_t, M_target=M_target)
 
     # 2) Optional Lloyd cost-increment refinement
     if method.endswith("_lloyd"):
@@ -290,9 +284,7 @@ def _reduce_one_level(
     centres_np = new_centres.detach().cpu().numpy().astype(np.float32)
     chol_np = pack_tril(new_L.detach().cpu().numpy()).astype(np.float32)
     amps_np = new_amps.detach().cpu().numpy().astype(np.float32)
-    colors_np = (
-        new_colors.detach().cpu().numpy() if new_colors is not None else None
-    )
+    colors_np = new_colors.detach().cpu().numpy() if new_colors is not None else None
 
     return GSplatData(
         centers=centres_np,
@@ -333,12 +325,8 @@ def _kmeans_partition(
         assignments = _assign_to_nearest(points, centres)
         new_centres = _scatter_mean(points, assignments, M)
         # Empty cluster: keep old centroid.
-        empty_mask = (
-            torch.bincount(assignments, minlength=M).to(device=device) == 0
-        )
-        new_centres = torch.where(
-            empty_mask.unsqueeze(-1), centres, new_centres
-        )
+        empty_mask = torch.bincount(assignments, minlength=M).to(device=device) == 0
+        new_centres = torch.where(empty_mask.unsqueeze(-1), centres, new_centres)
         shift = (new_centres - centres).abs().max()
         centres = new_centres
         if float(shift) < tol:
@@ -397,9 +385,7 @@ def _scatter_mean(
     device = points.device
     summed = torch.zeros(M, D, dtype=points.dtype, device=device)
     counts = torch.zeros(M, dtype=points.dtype, device=device)
-    summed.scatter_add_(
-        0, assignments.unsqueeze(1).expand(-1, D), points
-    )
+    summed.scatter_add_(0, assignments.unsqueeze(1).expand(-1, D), points)
     counts.scatter_add_(
         0, assignments, torch.ones(points.shape[0], dtype=points.dtype, device=device)
     )
@@ -451,9 +437,7 @@ def _greedy_partition(
         )
         # k-NN over cluster centres; exclude self-pair via [:, 1:].
         k = min(8, n_active)
-        _, neighbour_idx = grid.query_knn(
-            active_centres.detach().cpu().numpy(), k=k
-        )
+        _, neighbour_idx = grid.query_knn(active_centres.detach().cpu().numpy(), k=k)
         # Find best pair to merge.
         best_pair: Optional[tuple[int, int]] = None
         best_delta = float("inf")
@@ -491,9 +475,7 @@ def _greedy_partition(
         a, b = best_pair
         # Merge a and b into a new cluster (replace a's slot, drop b's).
         merged_members = members[a] + members[b]
-        merged_centres = torch.stack(
-            [active_centres[a], active_centres[b]], dim=0
-        )
+        merged_centres = torch.stack([active_centres[a], active_centres[b]], dim=0)
         merged_L = torch.stack([active_L[a], active_L[b]], dim=0)
         merged_amps = torch.stack([active_amps[a], active_amps[b]], dim=0)
         mu_bar, Sigma_bar, _ = kwise_moment_match_torch(
@@ -510,11 +492,21 @@ def _greedy_partition(
         members[a] = merged_members
         members.pop(b)
         active_centres = torch.cat(
-            [active_centres[:a], mu_bar.unsqueeze(0), active_centres[a + 1 : b], active_centres[b + 1 :]],
+            [
+                active_centres[:a],
+                mu_bar.unsqueeze(0),
+                active_centres[a + 1 : b],
+                active_centres[b + 1 :],
+            ],
             dim=0,
         )
         active_L = torch.cat(
-            [active_L[:a], merged_chol.unsqueeze(0), active_L[a + 1 : b], active_L[b + 1 :]],
+            [
+                active_L[:a],
+                merged_chol.unsqueeze(0),
+                active_L[a + 1 : b],
+                active_L[b + 1 :],
+            ],
             dim=0,
         )
         active_amps = torch.cat(
@@ -553,9 +545,7 @@ def _merge_cost_pair(
     )
     template_norm_sq = template_squared_norm_torch(Sigma_bar)
     bin_norm_sq = bin_squared_norm_torch(centres, L_pair, amps_pair)
-    residual = bin_residual_energy_torch(
-        bin_norm_sq, template_inner, template_norm_sq
-    )
+    residual = bin_residual_energy_torch(bin_norm_sq, template_inner, template_norm_sq)
     return float(residual)
 
 
@@ -641,9 +631,7 @@ def _cost_increment_lloyd(
         )
         # Top-k candidate bins per splat — query against current bin centres.
         k = min(candidate_bins_k + 1, M)  # +1 to allow excluding current bin
-        _, candidate_bins_np = grid.query_knn(
-            centres.detach().cpu().numpy(), k=k
-        )
+        _, candidate_bins_np = grid.query_knn(centres.detach().cpu().numpy(), k=k)
         candidate_bins = torch.from_numpy(candidate_bins_np).to(device=device)
 
         # Cache per-bin residual energy for the unchanged baseline.
@@ -686,7 +674,9 @@ def _cost_increment_lloyd(
                 E_b_plus_i = _bin_residual_for_indices(
                     centres[idx_b_plus], L[idx_b_plus], amps[idx_b_plus]
                 )
-                delta = (float(E_a_minus_i.item()) + float(E_b_plus_i.item())) - (E_a + E_b)
+                delta = (float(E_a_minus_i.item()) + float(E_b_plus_i.item())) - (
+                    E_a + E_b
+                )
                 if delta < best_delta - 1e-12:
                     best_delta = delta
                     best_b = b
@@ -719,9 +709,7 @@ def _cost_increment_lloyd(
     return assignments
 
 
-def _bin_membership_lists(
-    assignments: torch.Tensor, M: int
-) -> list[list[int]]:
+def _bin_membership_lists(assignments: torch.Tensor, M: int) -> list[list[int]]:
     """Convert per-splat assignments to per-bin member-index lists."""
     out: list[list[int]] = [[] for _ in range(M)]
     for i, b in enumerate(assignments.tolist()):
@@ -745,9 +733,7 @@ def _per_bin_mu_bar(
         if not members:
             continue
         idx = torch.tensor(members, dtype=torch.int64, device=device)
-        mu_bar, _, _ = kwise_moment_match_torch(
-            centres[idx], L[idx], amps[idx]
-        )
+        mu_bar, _, _ = kwise_moment_match_torch(centres[idx], L[idx], amps[idx])
         out[b] = mu_bar
     return out
 
@@ -767,9 +753,7 @@ def _bin_residual_for_indices(
     )
     template_norm_sq = template_squared_norm_torch(Sigma_bar)
     bin_norm_sq = bin_squared_norm_torch(centres_b, L_b, amps_b)
-    return bin_residual_energy_torch(
-        bin_norm_sq, template_inner, template_norm_sq
-    )
+    return bin_residual_energy_torch(bin_norm_sq, template_inner, template_norm_sq)
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -790,8 +774,8 @@ def _build_representatives(
     D = centres.shape[1]
     device = centres.device
     new_centres = torch.zeros(M, D, dtype=centres.dtype, device=device)
-    new_L = torch.eye(D, dtype=centres.dtype, device=device).unsqueeze(0).repeat(
-        M, 1, 1
+    new_L = (
+        torch.eye(D, dtype=centres.dtype, device=device).unsqueeze(0).repeat(M, 1, 1)
     )
     new_amps = torch.zeros(M, dtype=centres.dtype, device=device)
     if colors is not None:
@@ -828,8 +812,8 @@ def _build_representatives(
         if new_colors is not None and colors is not None:
             # Mass-weighted colour mean using the bin weights.
             color_b = colors[idx].to(dtype=weights.dtype)
-            new_colors[b] = (weights.unsqueeze(-1) * color_b).sum(dim=0).to(
-                dtype=colors.dtype
+            new_colors[b] = (
+                (weights.unsqueeze(-1) * color_b).sum(dim=0).to(dtype=colors.dtype)
             )
 
     return new_centres, new_L, new_amps, new_colors

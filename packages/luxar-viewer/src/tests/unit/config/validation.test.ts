@@ -225,66 +225,101 @@ describe('validateConfig', () => {
       expect(result.warnings).toContainEqual(expect.stringContaining('Unusual bloom.bloomRadius'));
     });
 
-    it('should warn when bloomThreshold is negative', () => {
+    it('should error when bloomThreshold is negative', () => {
       const cfg = cloneConfig();
       cfg.renderingControls.defaults.bloomThreshold = -0.1;
 
       const result = validateConfig(cfg);
 
-      expect(result.warnings).toContainEqual(
-        expect.stringContaining('Invalid bloom.bloomThreshold')
-      );
+      expect(result.errors).toContainEqual(expect.stringContaining('Invalid bloom.bloomThreshold'));
     });
 
-    it('should warn when bloomThreshold exceeds 1', () => {
+    it('should error when bloomThreshold exceeds 1', () => {
       const cfg = cloneConfig();
       cfg.renderingControls.defaults.bloomThreshold = 1.5;
 
       const result = validateConfig(cfg);
 
-      expect(result.warnings).toContainEqual(
-        expect.stringContaining('Invalid bloom.bloomThreshold')
-      );
+      expect(result.errors).toContainEqual(expect.stringContaining('Invalid bloom.bloomThreshold'));
     });
 
     it('should accept bloomThreshold at boundary values (0 and 1)', () => {
       const cfg = cloneConfig();
       cfg.renderingControls.defaults.bloomThreshold = 0;
-      expect(validateConfig(cfg).warnings.filter((w) => w.includes('bloomThreshold'))).toHaveLength(
-        0
-      );
+      expect(validateConfig(cfg).errors.filter((e) => e.includes('bloomThreshold'))).toHaveLength(0);
 
       cfg.renderingControls.defaults.bloomThreshold = 1;
-      expect(validateConfig(cfg).warnings.filter((w) => w.includes('bloomThreshold'))).toHaveLength(
-        0
-      );
+      expect(validateConfig(cfg).errors.filter((e) => e.includes('bloomThreshold'))).toHaveLength(0);
     });
 
-    it('should warn when bloomLevels is less than 1', () => {
+    it('should error when bloomLevels is less than 1', () => {
       const cfg = cloneConfig();
       cfg.renderingControls.defaults.bloomLevels = 0;
 
       const result = validateConfig(cfg);
 
-      expect(result.warnings).toContainEqual(expect.stringContaining('Invalid bloom.bloomLevels'));
+      expect(result.errors).toContainEqual(expect.stringContaining('Invalid bloom.bloomLevels'));
     });
 
-    it('should warn when bloomLevels exceeds 12', () => {
+    it('should error when bloomLevels exceeds 12', () => {
       const cfg = cloneConfig();
       cfg.renderingControls.defaults.bloomLevels = 13;
 
       const result = validateConfig(cfg);
 
-      expect(result.warnings).toContainEqual(expect.stringContaining('Invalid bloom.bloomLevels'));
+      expect(result.errors).toContainEqual(expect.stringContaining('Invalid bloom.bloomLevels'));
     });
 
     it('should accept bloomLevels at boundary values (1 and 12)', () => {
       const cfg = cloneConfig();
       cfg.renderingControls.defaults.bloomLevels = 1;
-      expect(validateConfig(cfg).warnings.filter((w) => w.includes('bloomLevels'))).toHaveLength(0);
+      expect(validateConfig(cfg).errors.filter((e) => e.includes('bloomLevels'))).toHaveLength(0);
 
       cfg.renderingControls.defaults.bloomLevels = 12;
-      expect(validateConfig(cfg).warnings.filter((w) => w.includes('bloomLevels'))).toHaveLength(0);
+      expect(validateConfig(cfg).errors.filter((e) => e.includes('bloomLevels'))).toHaveLength(0);
+    });
+
+    // NaN/Infinity must be caught explicitly — bare comparisons
+    // with NaN are always false, so a naked `< 0 || > 10` check
+    // would let NaN pass.
+    it('NaN bloomStrength is rejected as error', () => {
+      const cfg = cloneConfig();
+      cfg.renderingControls.defaults.bloomStrength = NaN;
+      expect(validateConfig(cfg).errors).toContainEqual(
+        expect.stringContaining('Invalid bloom.bloomStrength')
+      );
+    });
+
+    it('Infinity bloomRadius is rejected as error', () => {
+      const cfg = cloneConfig();
+      cfg.renderingControls.defaults.bloomRadius = Infinity;
+      expect(validateConfig(cfg).errors).toContainEqual(
+        expect.stringContaining('Invalid bloom.bloomRadius')
+      );
+    });
+
+    it('NaN bloomThreshold is rejected as error', () => {
+      const cfg = cloneConfig();
+      cfg.renderingControls.defaults.bloomThreshold = NaN;
+      expect(validateConfig(cfg).errors).toContainEqual(
+        expect.stringContaining('Invalid bloom.bloomThreshold')
+      );
+    });
+
+    it('fractional bloomLevels is rejected as error (must be integer)', () => {
+      const cfg = cloneConfig();
+      cfg.renderingControls.defaults.bloomLevels = 5.5;
+      expect(validateConfig(cfg).errors).toContainEqual(
+        expect.stringContaining('Invalid bloom.bloomLevels')
+      );
+    });
+
+    it('NaN bloomLevels is rejected as error', () => {
+      const cfg = cloneConfig();
+      cfg.renderingControls.defaults.bloomLevels = NaN;
+      expect(validateConfig(cfg).errors).toContainEqual(
+        expect.stringContaining('Invalid bloom.bloomLevels')
+      );
     });
   });
 
@@ -307,6 +342,50 @@ describe('validateConfig', () => {
 
       expect(result.valid).toBe(false);
       expect(result.errors).toContainEqual(expect.stringContaining('Invalid network timeout'));
+    });
+
+    // validationTimeoutMs is the per-request budget for
+    // cache validation in fetchWithRetry. Pre-fix it was unvalidated;
+    // 0 / negative / NaN / Infinity all flowed through and produced
+    // surprising abort/retry behavior.
+    it('should error when validationTimeoutMs is zero', () => {
+      const cfg = cloneConfig();
+      cfg.dataLoading.network.validationTimeoutMs = 0;
+
+      const result = validateConfig(cfg);
+
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(expect.stringContaining('Invalid validation timeout'));
+    });
+
+    it('should error when validationTimeoutMs is negative', () => {
+      const cfg = cloneConfig();
+      cfg.dataLoading.network.validationTimeoutMs = -50;
+
+      const result = validateConfig(cfg);
+
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(expect.stringContaining('Invalid validation timeout'));
+    });
+
+    it('should error when validationTimeoutMs is NaN', () => {
+      const cfg = cloneConfig();
+      cfg.dataLoading.network.validationTimeoutMs = Number.NaN;
+
+      const result = validateConfig(cfg);
+
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(expect.stringContaining('Invalid validation timeout'));
+    });
+
+    it('should error when validationTimeoutMs is Infinity', () => {
+      const cfg = cloneConfig();
+      cfg.dataLoading.network.validationTimeoutMs = Number.POSITIVE_INFINITY;
+
+      const result = validateConfig(cfg);
+
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(expect.stringContaining('Invalid validation timeout'));
     });
 
     it('should error when maxConcurrent is zero', () => {
@@ -350,6 +429,45 @@ describe('validateConfig', () => {
       const result = validateConfig(cfg);
 
       expect(result.errors.filter((e) => e.includes('retry attempts'))).toHaveLength(0);
+    });
+
+    // tighten numeric validation across timeoutMs,
+    // maxConcurrent, retryAttempts. Pre-fix, NaN slipped past `<= 0`
+    // because comparisons with NaN are always false; Infinity slipped
+    // past `<= 0` for the same reason; non-integers slipped past
+    // integer-only knobs (concurrency, retry counts).
+    it('should error when network timeoutMs is NaN', () => {
+      const cfg = cloneConfig();
+      cfg.dataLoading.network.timeoutMs = Number.NaN;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(expect.stringContaining('Invalid network timeout'));
+    });
+
+    it('should error when network timeoutMs is Infinity', () => {
+      const cfg = cloneConfig();
+      cfg.dataLoading.network.timeoutMs = Number.POSITIVE_INFINITY;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(expect.stringContaining('Invalid network timeout'));
+    });
+
+    it('should error when maxConcurrent is non-integer', () => {
+      const cfg = cloneConfig();
+      cfg.dataLoading.network.maxConcurrent = 2.5;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(
+        expect.stringContaining('Invalid max concurrent requests')
+      );
+    });
+
+    it('should error when retryAttempts is non-integer', () => {
+      const cfg = cloneConfig();
+      cfg.dataLoading.network.retryAttempts = 1.5;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(expect.stringContaining('Invalid retry attempts'));
     });
 
     it('should error when targetHeapUsage is zero', () => {
@@ -449,6 +567,54 @@ describe('validateConfig', () => {
         expect.stringContaining('Invalid spatial default max radius')
       );
     });
+
+    it('should error when workerVisibilityTimeoutMs is negative', () => {
+      const cfg = cloneConfig();
+      cfg.dataLoading.performance.workerVisibilityTimeoutMs = -100;
+
+      const result = validateConfig(cfg);
+
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(
+        expect.stringContaining('Invalid workerVisibilityTimeoutMs')
+      );
+    });
+
+    it('should error when workerVisibilityTimeoutMs is non-finite', () => {
+      const cfg = cloneConfig();
+      cfg.dataLoading.performance.workerVisibilityTimeoutMs = Number.POSITIVE_INFINITY;
+
+      const result = validateConfig(cfg);
+
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(
+        expect.stringContaining('Invalid workerVisibilityTimeoutMs')
+      );
+    });
+
+    it('should error when workerProjectionTimeoutMs is negative', () => {
+      const cfg = cloneConfig();
+      cfg.dataLoading.performance.workerProjectionTimeoutMs = -1;
+
+      const result = validateConfig(cfg);
+
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(
+        expect.stringContaining('Invalid workerProjectionTimeoutMs')
+      );
+    });
+
+    it('should accept 0 timeouts (disabled)', () => {
+      const cfg = cloneConfig();
+      cfg.dataLoading.performance.workerVisibilityTimeoutMs = 0;
+      cfg.dataLoading.performance.workerProjectionTimeoutMs = 0;
+
+      const result = validateConfig(cfg);
+
+      // Doesn't matter if other rules fail; the timeout rules specifically
+      // should not contribute errors.
+      expect(result.errors.find((e) => e.includes('Timeout'))).toBeUndefined();
+    });
   });
 
   describe('scene validation', () => {
@@ -526,6 +692,251 @@ describe('validateConfig', () => {
       const result = validateConfig(cfg);
 
       expect(result.errors.filter((e) => e.includes('fit ratio'))).toHaveLength(0);
+    });
+
+    it('rejects NaN backgroundColor', () => {
+      const cfg = cloneConfig();
+      cfg.scene.backgroundColor = NaN;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(
+        expect.stringContaining('Invalid scene background color')
+      );
+    });
+
+    it('rejects non-integer backgroundColor', () => {
+      const cfg = cloneConfig();
+      cfg.scene.backgroundColor = 1.5;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(
+        expect.stringContaining('Invalid scene background color')
+      );
+    });
+
+    it('rejects NaN defaultFitRatio', () => {
+      const cfg = cloneConfig();
+      cfg.scene.defaultFitRatio = NaN;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(expect.stringContaining('Invalid scene fit ratio'));
+    });
+  });
+
+  describe('NaN/Infinity hardening for memory + spatial + cache', () => {
+    it('rejects NaN memory.targetHeapUsage', () => {
+      const cfg = cloneConfig();
+      cfg.dataLoading.memory.targetHeapUsage = NaN;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(expect.stringContaining('target heap usage'));
+    });
+
+    it('rejects Infinity memory.targetHeapUsage', () => {
+      const cfg = cloneConfig();
+      cfg.dataLoading.memory.targetHeapUsage = Infinity;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(expect.stringContaining('target heap usage'));
+    });
+
+    it('rejects NaN memory.minCacheMB', () => {
+      const cfg = cloneConfig();
+      cfg.dataLoading.memory.minCacheMB = NaN;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(expect.stringContaining('min cache size'));
+    });
+
+    it('rejects NaN spatial.defaultTolerance', () => {
+      const cfg = cloneConfig();
+      if (cfg.dataLoading.spatial) cfg.dataLoading.spatial.defaultTolerance = NaN;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(expect.stringContaining('spatial default tolerance'));
+    });
+
+    it('rejects NaN spatial.defaultMaxRadius', () => {
+      const cfg = cloneConfig();
+      if (cfg.dataLoading.spatial) cfg.dataLoading.spatial.defaultMaxRadius = NaN;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(expect.stringContaining('spatial default max radius'));
+    });
+
+    it('rejects negative cache.l0MaxSizeMB', () => {
+      const cfg = cloneConfig();
+      cfg.cache.l0MaxSizeMB = -1;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(expect.stringContaining('cache.l0MaxSizeMB'));
+    });
+
+    it('rejects NaN cache.l1MaxSizeMB', () => {
+      const cfg = cloneConfig();
+      cfg.cache.l1MaxSizeMB = NaN;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(expect.stringContaining('cache.l1MaxSizeMB'));
+    });
+
+    it('rejects Infinity cache.l2MaxSizeMB', () => {
+      const cfg = cloneConfig();
+      cfg.cache.l2MaxSizeMB = Infinity;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(expect.stringContaining('cache.l2MaxSizeMB'));
+    });
+
+    it('rejects cache.l1MaxSizeMB < 10 (commit 7.5: below SegmentedLRUCache metadata floor)', () => {
+      const cfg = cloneConfig();
+      cfg.cache.l1MaxSizeMB = 5;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(
+        expect.stringMatching(/cache\.l1MaxSizeMB.*must be ≥ 10/)
+      );
+    });
+
+    // R1: opfsOperationTimeoutMs validation.
+    it('rejects NaN cache.opfsOperationTimeoutMs', () => {
+      const cfg = cloneConfig();
+      cfg.cache.opfsOperationTimeoutMs = NaN;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(
+        expect.stringContaining('cache.opfsOperationTimeoutMs')
+      );
+    });
+
+    it('rejects zero cache.opfsOperationTimeoutMs', () => {
+      const cfg = cloneConfig();
+      cfg.cache.opfsOperationTimeoutMs = 0;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(
+        expect.stringContaining('cache.opfsOperationTimeoutMs')
+      );
+    });
+
+    it('rejects negative cache.opfsOperationTimeoutMs', () => {
+      const cfg = cloneConfig();
+      cfg.cache.opfsOperationTimeoutMs = -100;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(
+        expect.stringContaining('cache.opfsOperationTimeoutMs')
+      );
+    });
+
+    it('accepts positive cache.opfsOperationTimeoutMs', () => {
+      const cfg = cloneConfig();
+      cfg.cache.opfsOperationTimeoutMs = 5_000;
+      const result = validateConfig(cfg);
+      expect(
+        result.errors.filter((e) => e.includes('opfsOperationTimeoutMs'))
+      ).toEqual([]);
+    });
+
+    // R1: externalDatasetTtlMs validation. null is explicitly allowed.
+    it('accepts null cache.externalDatasetTtlMs', () => {
+      const cfg = cloneConfig();
+      cfg.cache.externalDatasetTtlMs = null;
+      const result = validateConfig(cfg);
+      expect(
+        result.errors.filter((e) => e.includes('externalDatasetTtlMs'))
+      ).toEqual([]);
+    });
+
+    it('rejects NaN cache.externalDatasetTtlMs', () => {
+      const cfg = cloneConfig();
+      cfg.cache.externalDatasetTtlMs = NaN;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(
+        expect.stringContaining('cache.externalDatasetTtlMs')
+      );
+    });
+
+    it('rejects negative cache.externalDatasetTtlMs', () => {
+      const cfg = cloneConfig();
+      cfg.cache.externalDatasetTtlMs = -1000;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(
+        expect.stringContaining('cache.externalDatasetTtlMs')
+      );
+    });
+
+    it('accepts positive cache.externalDatasetTtlMs (24h)', () => {
+      const cfg = cloneConfig();
+      cfg.cache.externalDatasetTtlMs = 86_400_000;
+      const result = validateConfig(cfg);
+      expect(
+        result.errors.filter((e) => e.includes('externalDatasetTtlMs'))
+      ).toEqual([]);
+    });
+  });
+
+  describe('NaN/Infinity hardening for camera + rendering + controls + input', () => {
+    it('rejects NaN camera FOV', () => {
+      const cfg = cloneConfig();
+      cfg.renderingControls.defaults.fov = NaN;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(expect.stringContaining('Invalid camera FOV'));
+    });
+
+    it('rejects Infinity camera near plane', () => {
+      const cfg = cloneConfig();
+      cfg.renderingControls.defaults.near = Infinity;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(expect.stringContaining('Invalid camera near plane'));
+    });
+
+    it('rejects NaN camera fovMin', () => {
+      const cfg = cloneConfig();
+      cfg.camera.fovMin = NaN;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(expect.stringContaining('Invalid FOV limits'));
+    });
+
+    it('rejects NaN exposure (rendering)', () => {
+      const cfg = cloneConfig();
+      cfg.renderingControls.defaults.exposure = NaN;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(expect.stringContaining('Invalid exposure'));
+    });
+
+    it('rejects NaN globalOffset', () => {
+      const cfg = cloneConfig();
+      cfg.renderingControls.defaults.globalOffset = NaN;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(expect.stringContaining('Invalid globalOffset'));
+    });
+
+    it('rejects NaN in a controls range field (fly.movement.speed.default)', () => {
+      const cfg = cloneConfig();
+      cfg.controls.fly.movement.speed.default = NaN;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(
+        expect.stringContaining('non-finite values')
+      );
+    });
+
+    it('rejects NaN input.defaultSensitivity', () => {
+      const cfg = cloneConfig();
+      cfg.input.defaultSensitivity = NaN;
+      const result = validateConfig(cfg);
+      expect(result.valid).toBe(false);
+      expect(result.errors).toContainEqual(
+        expect.stringContaining('Invalid input.defaultSensitivity')
+      );
     });
   });
 

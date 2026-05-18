@@ -78,7 +78,7 @@ from luxar.utils.paths import get_demos_output_dir
 # -----------------------------------------------------------------------------
 
 DEFAULT_MAX_ORDER = 6  # Order 6 = 262,144 vertices (largest comfortable size)
-LINE_WIDTH = 0.0015    # In normalized cube units; thin enough not to drown the curve
+LINE_WIDTH = 0.0015  # In normalized cube units; thin enough not to drown the curve
 
 
 # -----------------------------------------------------------------------------
@@ -250,8 +250,7 @@ def build_scene(output_path: Path, max_order: int) -> int:
                 n = 8**order
                 side = 1 << order
                 scene.add_text(
-                    f"order {order}  ·  {n:,} vertices  ·  "
-                    f"{side}×{side}×{side} grid",
+                    f"order {order}  ·  {n:,} vertices  ·  {side}×{side}×{side} grid",
                     position=(0.02, 0.97),
                     anchor="bottom-left",
                     font_size=0.018,
@@ -270,9 +269,7 @@ def build_scene(output_path: Path, max_order: int) -> int:
                 color="rgba(200,200,200,0.55)",
             )
 
-        aprint(
-            f"  ✓ {len(orders)} orders, {total_pts:,} total vertices"
-        )
+        aprint(f"  ✓ {len(orders)} orders, {total_pts:,} total vertices")
 
     return total_pts
 
@@ -322,8 +319,7 @@ def main() -> None:
         aprint("=" * 70)
         aprint("NAVIGATION")
         aprint("=" * 70)
-        aprint("  Press '1' then '[' / ']' to step through orders 1.."
-               f"{max_order}")
+        aprint(f"  Press '1' then '[' / ']' to step through orders 1..{max_order}")
         aprint("  Layers panel: toggle individual orders for side-by-side")
         aprint("")
         aprint(f"  Total vertices across all orders: {n:,}")

@@ -8,7 +8,7 @@
  * - Invalid parameters are handled gracefully
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { waitForLuxarReady } from './helpers';
 
 const DATASET = 'http://localhost:9000/datasets/examples/build_example_structured.zarr';

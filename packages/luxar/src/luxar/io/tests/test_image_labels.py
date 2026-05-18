@@ -20,11 +20,13 @@ from luxar import Dimension, Dimensions, LuxarZarrCompiler
 
 
 def _make_3d_dims():
-    return Dimensions([
-        Dimension("X", display=True),
-        Dimension("Y", display=True),
-        Dimension("Z", display=True),
-    ])
+    return Dimensions(
+        [
+            Dimension("X", display=True),
+            Dimension("Y", display=True),
+            Dimension("Z", display=True),
+        ]
+    )
 
 
 def _decode_image_labels_from_zarr(zarr_path: str, node_name: str) -> list[bytes]:
@@ -197,9 +199,7 @@ class TestSparseImageLabels:
         with LuxarZarrCompiler(path, enable_spatial_index=False) as compiler:
             scene = compiler.create_scene(dimensions=_make_3d_dims())
             with pytest.raises(ValueError, match="out of range"):
-                scene.add_points(
-                    "pts", positions, image_labels={5: _make_fake_jpeg()}
-                )
+                scene.add_points("pts", positions, image_labels={5: _make_fake_jpeg()})
 
 
 class TestImageLabelValidation:
@@ -214,7 +214,9 @@ class TestImageLabelValidation:
             scene = compiler.create_scene(dimensions=_make_3d_dims())
             with pytest.raises(ValueError, match="must match"):
                 scene.add_points(
-                    "pts", positions, image_labels=[_make_fake_jpeg(), _make_fake_webp()]
+                    "pts",
+                    positions,
+                    image_labels=[_make_fake_jpeg(), _make_fake_webp()],
                 )
 
     def test_unsupported_type_raises(self, tmp_path):
@@ -346,12 +348,15 @@ class TestImageLabelSpatialOrdering:
         """Image labels are reordered when spatial ordering is enabled."""
         path = str(tmp_path / "test.zarr")
         # Use well-separated positions so ordering actually reorders
-        positions = np.array([
-            [100.0, 0.0, 0.0],
-            [0.0, 100.0, 0.0],
-            [0.0, 0.0, 100.0],
-            [50.0, 50.0, 50.0],
-        ], dtype=np.float32)
+        positions = np.array(
+            [
+                [100.0, 0.0, 0.0],
+                [0.0, 100.0, 0.0],
+                [0.0, 0.0, 100.0],
+                [50.0, 50.0, 50.0],
+            ],
+            dtype=np.float32,
+        )
         blobs = [
             _make_fake_jpeg(10),
             _make_fake_webp(20),
@@ -377,18 +382,19 @@ class TestImageLabelOnLinesAndGSplats:
     def test_lines_image_labels(self, tmp_path):
         """Image labels on lines nodes."""
         path = str(tmp_path / "test.zarr")
-        vertices = np.array([
-            [0.0, 0.0, 0.0],
-            [1.0, 1.0, 1.0],
-            [2.0, 0.0, 0.0],
-        ], dtype=np.float32)
+        vertices = np.array(
+            [
+                [0.0, 0.0, 0.0],
+                [1.0, 1.0, 1.0],
+                [2.0, 0.0, 0.0],
+            ],
+            dtype=np.float32,
+        )
         blobs = [_make_fake_jpeg(30), _make_fake_webp(40), _make_fake_png(50)]
 
         with LuxarZarrCompiler(path, enable_spatial_index=False) as compiler:
             scene = compiler.create_scene(dimensions=_make_3d_dims())
-            lines = scene.add_lines(
-                "lines", vertices, widths=0.1, image_labels=blobs
-            )
+            lines = scene.add_lines("lines", vertices, widths=0.1, image_labels=blobs)
             assert lines.has_image_labels is True
 
         decoded = _decode_image_labels_from_zarr(path, "lines")
@@ -397,10 +403,13 @@ class TestImageLabelOnLinesAndGSplats:
     def test_gsplats_image_labels(self, tmp_path):
         """Image labels on gsplats nodes."""
         path = str(tmp_path / "test.zarr")
-        centers = np.array([
-            [0.0, 0.0, 0.0],
-            [1.0, 1.0, 1.0],
-        ], dtype=np.float32)
+        centers = np.array(
+            [
+                [0.0, 0.0, 0.0],
+                [1.0, 1.0, 1.0],
+            ],
+            dtype=np.float32,
+        )
         amplitudes = np.array([1.0, 0.5], dtype=np.float32)
         # 3D Cholesky factors: k = 3*(3+1)/2 = 6
         cholesky = np.eye(3, dtype=np.float32)[np.triu_indices(3)]

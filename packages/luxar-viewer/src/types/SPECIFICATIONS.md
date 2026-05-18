@@ -1484,7 +1484,7 @@ interface GSplatsViewState {
 }
 ```
 
-**Note**: Unlike `ViewState` in `data-loader-types.ts` which uses `SimpleDims` for its `dimensions` field, `GSplatsViewState.dimensions` is `DimensionMetadata[]` (the raw metadata array).
+**Note**: `ViewState`, `PointsViewState`, `LinesViewState`, and `GSplatsViewState` all use the raw `DimensionMetadata[]` shape for their `dimensions` field. `SimpleDims` is the higher-level UI navigation state owned by `SceneDimsManager` (with `metadata`, `ndim`, `displayed`, `currentStep`); convert via `simpleDimsToViewState()`.
 
 #### GSplatsUserData
 

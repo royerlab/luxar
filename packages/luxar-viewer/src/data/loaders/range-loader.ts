@@ -13,12 +13,12 @@
  * @module data/loaders/range-loader
  */
 
-import * as zarr from 'zarrita';
-import { get, slice } from 'zarrita';
+import * as zarr from '../zarr';
+import { get, slice } from '../zarr';
 import { log, Modules } from '../../utils/log';
 import { config as appConfig } from '../../config';
 import { getWorkerPool } from '../../workers/worker-pool';
-import { ArrayDecoder, ArrayRefRegistry, type ArrayMetadata } from '../array-decoder';
+import { ArrayDecoder, ArrayRefRegistry, type ArrayMetadata } from '../utils/array-decoder';
 
 /**
  * Range specification for loading array subsets
@@ -36,6 +36,37 @@ export interface RangeLoaderConfig {
   workerThreshold?: number;
   /** Log module for debug output */
   logModule?: string;
+}
+
+type RangeNumericArray =
+  | Float32Array
+  | Float64Array
+  | Uint8Array
+  | Uint16Array
+  | Uint32Array
+  | Int8Array
+  | Int16Array
+  | Int32Array
+  | BigUint64Array
+  | BigInt64Array;
+
+function numericArrayToFloat32(data: RangeNumericArray): Float32Array {
+  if (data instanceof Float32Array) return data;
+  if (typeof BigUint64Array !== 'undefined' && data instanceof BigUint64Array) {
+    const result = new Float32Array(data.length);
+    for (let i = 0; i < data.length; i++) result[i] = Number(data[i]);
+    return result;
+  }
+  if (typeof BigInt64Array !== 'undefined' && data instanceof BigInt64Array) {
+    const result = new Float32Array(data.length);
+    for (let i = 0; i < data.length; i++) result[i] = Number(data[i]);
+    return result;
+  }
+  return new Float32Array(data as ArrayLike<number>);
+}
+
+function firstAxisRangeSlice(shape: readonly number[], range: LoadRange): zarr.Slice[] {
+  return [slice(range.start, range.end), ...shape.slice(1).map(() => slice(null))];
 }
 
 /**
@@ -132,6 +163,72 @@ export class RangeLoader {
   }
 
   /**
+   * Like {@link loadRanges} but transparently resolves `array_ref` encodings
+   * by opening the target array and delegating to `loadRanges` against it.
+   *
+   * `loadRanges` itself rejects unresolved refs as a defensive check — every
+   * caller of `loadRanges` directly should pre-resolve. This method is the
+   * standard entry point for the spatial-index loaders, which all need the
+   * same resolve-or-passthrough behavior. Pass the original `zarrStore` so
+   * the target path can be resolved relative to the dataset root.
+   *
+   * The target's true `elementsPerItem` is recomputed from its shape (the
+   * caller's `elementsPerItem` is used only when no ref is in play). Logs
+   * the redirect once at INFO when verbose, then again from the underlying
+   * encoding-specific loader.
+   *
+   * @param array - The directly-attached array (may be an array_ref).
+   * @param attrs - That array's metadata.
+   * @param ranges - Ranges to load.
+   * @param output - Pre-allocated output buffer.
+   * @param totalElements - Item count (e.g. number of points/splats).
+   * @param elementsPerItem - Used only when no ref is present.
+   * @param zarrStore - Store used to resolve the target path on a ref.
+   * @param logPrefix - Optional caller tag for the "Array ref → target" line
+   *   (e.g. "Points", "Lines"). Falls back to "RangeLoader" when omitted.
+   */
+  async loadRangesResolvingRef(
+    array: zarr.Array<zarr.DataType, zarr.FetchStore>,
+    attrs: ArrayMetadata | undefined,
+    ranges: LoadRange[],
+    output: Float32Array,
+    totalElements: number,
+    elementsPerItem: number,
+    zarrStore: zarr.Readable,
+    logPrefix?: string
+  ): Promise<number> {
+    if (attrs && ArrayDecoder.isArrayRef(attrs)) {
+      const targetPath = attrs.encoding!.target!;
+      if (this._verbose) {
+        log.info(this.config.logModule, `${logPrefix ?? 'RangeLoader'}: Array ref → ${targetPath}`);
+      }
+
+      const targetLoc = zarr.root(zarrStore).resolve(targetPath);
+      const targetArray = await zarr.open(targetLoc, { kind: 'array' });
+      const targetAttrs = targetArray.attrs as unknown as ArrayMetadata;
+
+      // The target's per-item element count is whatever the target array
+      // says — the caller's hint applies only to the unresolved direct case.
+      const targetShape = targetArray.shape;
+      const targetElementsPerItem =
+        targetShape.length > 1
+          ? targetShape.slice(1).reduce((product, value) => product * value, 1)
+          : 1;
+
+      return this.loadRanges(
+        targetArray as zarr.Array<zarr.DataType, zarr.FetchStore>,
+        targetAttrs,
+        ranges,
+        output,
+        totalElements,
+        targetElementsPerItem
+      );
+    }
+
+    return this.loadRanges(array, attrs, ranges, output, totalElements, elementsPerItem);
+  }
+
+  /**
    * Load broadcasted array (single value replicated to all elements)
    */
   private async loadBroadcasted(
@@ -151,7 +248,7 @@ export class RangeLoader {
       );
     }
 
-    // Fetch single value (cached via TwoLevelCachingStore)
+    // Fetch single value (cached via MultiLevelCachingStore)
     const fullData = await get(array);
     const broadcastValue = fullData.data as Float32Array | Uint8Array | Uint16Array;
 
@@ -161,15 +258,19 @@ export class RangeLoader {
 
     if (useWorkers && totalElements > this.config.workerThreshold) {
       try {
-        const worker = await getWorkerPool().getWorker();
-        const decoded = await worker.decodeBroadcasted({
-          value: valueAsFloat32,
-          numPoints: totalElements,
-          elementsPerPoint: elementsPerItem,
-        });
+        const decoded = await getWorkerPool().runWithTimeout('decodeBroadcasted', 'decode', (api) =>
+          api.decodeBroadcasted({
+            value: valueAsFloat32,
+            numPoints: totalElements,
+            elementsPerPoint: elementsPerItem,
+          })
+        );
         output.set(decoded);
         return;
       } catch (error) {
+        if (error instanceof Error && error.name === 'WorkerAbortError') {
+          throw error;
+        }
         log.warning(
           this.config.logModule,
           `Worker broadcast failed for ${arrayName}, falling back to main thread:`,
@@ -200,7 +301,7 @@ export class RangeLoader {
     const zarrDtype = String(array.dtype);
     const quantMetadata = ArrayDecoder.getQuantizationMetadata(attrs, zarrDtype);
     if (!quantMetadata) {
-      throw new Error('Quantization metadata missing');
+      throw new Error('[RangeLoader] Quantization metadata missing');
     }
 
     const totalPoints = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
@@ -219,12 +320,9 @@ export class RangeLoader {
     const shape = array.shape;
 
     for (const range of ranges) {
-      const sliceSpec: zarr.Slice[] =
-        shape.length === 2
-          ? [slice(range.start, range.end), slice(null)]
-          : [slice(range.start, range.end)];
+      const sliceSpec = firstAxisRangeSlice(shape, range);
 
-      // Main thread fetches (cached via TwoLevelCachingStore)
+      // Main thread fetches (cached via MultiLevelCachingStore)
       const chunkData = await get(array, sliceSpec);
       const quantizedData = chunkData.data as Uint8Array | Uint16Array;
 
@@ -232,22 +330,27 @@ export class RangeLoader {
 
       if (shouldUseWorkers) {
         try {
-          const worker = await getWorkerPool().getWorker();
-
           if (quantMetadata.isLogSpace) {
-            dequantized = await worker.decodeLogScalar({
-              data: quantizedData,
-              maxLog: quantMetadata.bounds[1],
-              dtype: quantMetadata.dtype, // Already normalized by getQuantizationMetadata
-            });
+            dequantized = await getWorkerPool().runWithTimeout('decodeLogScalar', 'decode', (api) =>
+              api.decodeLogScalar({
+                data: quantizedData,
+                maxLog: quantMetadata.bounds[1],
+                dtype: quantMetadata.dtype, // Already normalized by getQuantizationMetadata
+              })
+            );
           } else {
-            dequantized = await worker.decodeQuantized({
-              data: quantizedData,
-              bounds: quantMetadata.bounds,
-              dtype: quantMetadata.dtype, // Already normalized by getQuantizationMetadata
-            });
+            dequantized = await getWorkerPool().runWithTimeout('decodeQuantized', 'decode', (api) =>
+              api.decodeQuantized({
+                data: quantizedData,
+                bounds: quantMetadata.bounds,
+                dtype: quantMetadata.dtype, // Already normalized by getQuantizationMetadata
+              })
+            );
           }
         } catch (error) {
+          if (error instanceof Error && error.name === 'WorkerAbortError') {
+            throw error;
+          }
           log.warning(
             this.config.logModule,
             'Worker decoding failed, falling back to main thread:',
@@ -277,7 +380,7 @@ export class RangeLoader {
   ): Promise<number> {
     const lutMetadata = ArrayDecoder.getLUTMetadata(attrs);
     if (!lutMetadata) {
-      throw new Error('LUT metadata missing');
+      throw new Error('[RangeLoader] LUT metadata missing');
     }
 
     const totalPoints = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
@@ -304,10 +407,7 @@ export class RangeLoader {
       // Handle both 1D and 2D LUT-encoded arrays:
       // - 1D: row mode with one index per row (e.g., colors [N])
       // - 2D: scalar mode with one index per element (e.g., cholesky_factors [N, K])
-      const sliceSpec: zarr.Slice[] =
-        shape.length === 2
-          ? [slice(range.start, range.end), slice(null)]
-          : [slice(range.start, range.end)];
+      const sliceSpec = firstAxisRangeSlice(shape, range);
 
       // Main thread fetches indices
       const chunkData = await get(array, sliceSpec);
@@ -317,14 +417,18 @@ export class RangeLoader {
 
       if (shouldUseWorkers) {
         try {
-          const worker = await getWorkerPool().getWorker();
-          decoded = await worker.decodeLUT({
-            indices,
-            lut: flatLUT,
-            k: lutMetadata.k,
-            lutMode: lutMetadata.lutMode as 'row' | 'scalar',
-          });
+          decoded = await getWorkerPool().runWithTimeout('decodeLUT', 'decode', (api) =>
+            api.decodeLUT({
+              indices,
+              lut: flatLUT,
+              k: lutMetadata.k,
+              lutMode: lutMetadata.lutMode as 'row' | 'scalar',
+            })
+          );
         } catch (error) {
+          if (error instanceof Error && error.name === 'WorkerAbortError') {
+            throw error;
+          }
           log.warning(
             this.config.logModule,
             'Worker LUT decode failed, falling back to main thread:',
@@ -347,7 +451,7 @@ export class RangeLoader {
    * Load array reference (resolve target and recurse).
    *
    * This method should never be reached in practice. All spatial index loaders
-   * (point-spatial-index-loader, lines-spatial-index-loader, gsplats-spatial-index-loader)
+   * (points-spatial-index-loader, lines-spatial-index-loader, gsplats-spatial-index-loader)
    * check for array_ref encoding via `ArrayDecoder.isArrayRef(attrs)` BEFORE calling
    * RangeLoader, and resolve the target array themselves using the zarrStore.
    *
@@ -369,7 +473,7 @@ export class RangeLoader {
     }
 
     // Array refs are resolved by spatial index loaders before reaching RangeLoader.
-    // See isArrayRef checks in point-spatial-index-loader.ts, lines-spatial-index-loader.ts,
+    // See isArrayRef checks in points-spatial-index-loader.ts, lines-spatial-index-loader.ts,
     // and gsplats-spatial-index-loader.ts. If this error is thrown, a new code path is
     // calling RangeLoader.loadRanges() without first resolving the array_ref.
     throw new Error(
@@ -399,22 +503,14 @@ export class RangeLoader {
     const shape = array.shape;
 
     for (const range of ranges) {
-      const sliceSpec: zarr.Slice[] =
-        shape.length === 2
-          ? [slice(range.start, range.end), slice(null)]
-          : [slice(range.start, range.end)];
+      const sliceSpec = firstAxisRangeSlice(shape, range);
 
       const chunkData = await get(array, sliceSpec);
       const data = chunkData.data;
 
-      // Convert to Float32Array if needed (with value conversion, not buffer reinterpretation)
-      let float32Data: Float32Array;
-      if (data instanceof Float32Array) {
-        float32Data = data;
-      } else {
-        // Convert from other types (uint8, uint16, etc.) to float32 with proper value conversion
-        float32Data = new Float32Array(data as ArrayLike<number>);
-      }
+      // Convert from typed storage (uint8/uint16/uint32/uint64/etc.) to
+      // float32 with value conversion, not buffer reinterpretation.
+      const float32Data = numericArrayToFloat32(data as RangeNumericArray);
 
       output.set(float32Data, destOffset);
       destOffset += float32Data.length;

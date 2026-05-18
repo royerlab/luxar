@@ -21,6 +21,9 @@ vi.mock('three', async () => {
 
   // Mock ShaderMaterial to avoid WebGL dependencies
   const ShaderMaterial = vi.fn(function (this: any, params: any) {
+    // Minimal EventDispatcher surface: MaterialManager subscribes to
+    // the synchronous `dispose` event for automatic registry cleanup.
+    const listeners: Record<string, ((e: unknown) => void)[]> = {};
     Object.assign(this, {
       uniforms: params.uniforms,
       vertexShader: params.vertexShader,
@@ -31,7 +34,20 @@ vi.mock('three', async () => {
       toneMapped: params.toneMapped,
       blending: params.blending,
       userData: {},
-      dispose: vi.fn(),
+      addEventListener: vi.fn((type: string, l: (e: unknown) => void) => {
+        (listeners[type] ??= []).push(l);
+      }),
+      removeEventListener: vi.fn((type: string, l: (e: unknown) => void) => {
+        if (listeners[type]) {
+          listeners[type] = listeners[type].filter((x) => x !== l);
+        }
+      }),
+      dispatchEvent: vi.fn((event: { type: string }) => {
+        listeners[event.type]?.forEach((l) => l(event));
+      }),
+      dispose: vi.fn(function (this: any) {
+        this.dispatchEvent?.({ type: 'dispose', target: this });
+      }),
       clone: vi.fn(function (this: any) {
         // Simple clone for testing
         return {
@@ -446,6 +462,49 @@ describe('MaterialManager', () => {
       expect(stats.ownedMaterials).toBe(0);
       expect(stats.totalRegistered).toBe(1);
     });
+
+    it('should drop a clone from the registry when the clone is disposed', () => {
+      // Lock in the subscribeToDispose wiring — disposing a clone must
+      // remove it from registeredMaterials, otherwise per-node clones
+      // accumulate forever in the global update loop.
+      manager.getPointMaterial({
+        blendingMode: 'additive',
+        opacity: 1.0,
+        gamma: 1.0,
+        intensity: 1.0,
+        offset: 0.0,
+      });
+      const clone = new PointMaterial({ opacity: 0.5 });
+      manager.register(clone);
+      expect(manager.getCacheStats().totalRegistered).toBe(2);
+
+      clone.dispose();
+      expect(manager.getCacheStats().totalRegistered).toBe(1);
+      expect(manager.getCacheStats().ownedMaterials).toBe(0);
+    });
+
+    it('should not stack dispose listeners when registering the same material twice', () => {
+      // Idempotency guard: re-registering a material that already has a
+      // dispose listener must not stack another listener on the
+      // EventDispatcher. Tested behaviorally via the mock's
+      // `addEventListener` spy — a second `register()` for the same
+      // material must NOT add another listener for the 'dispose' event.
+      const mat = new PointMaterial({ opacity: 1.0 });
+      // PointMaterial extends our mocked ShaderMaterial which exposes
+      // addEventListener as a vi.fn. Pluck it to count calls.
+      const addEventListener = (mat as unknown as { addEventListener: ReturnType<typeof vi.fn> })
+        .addEventListener;
+      addEventListener.mockClear();
+
+      manager.register(mat);
+      manager.register(mat); // second registration — should be a no-op
+
+      const disposeCallCount = addEventListener.mock.calls.filter(
+        (call) => (call as unknown[])[0] === 'dispose'
+      ).length;
+      expect(disposeCallCount).toBe(1);
+      expect(manager.getCacheStats().totalRegistered).toBe(1);
+    });
   });
 
   // =========================================================================
@@ -785,6 +844,49 @@ describe('MaterialManager', () => {
       });
 
       expect(material.uniforms.radiusScale.value).toBeCloseTo(0.00001);
+    });
+  });
+
+  // =========================================================================
+  // B.1 — detachFromGlobalUpdates: clone-vs-pool safety
+  // =========================================================================
+
+  describe('B.1 detachFromGlobalUpdates', () => {
+    const props: PointMaterialProperties = {
+      blendingMode: 'additive',
+      opacity: 1.0,
+      gamma: 1.0,
+      intensity: 1.0,
+      offset: 0.0,
+    };
+
+    it('leaves the pooled material in the LRU cache (reusable on next get)', () => {
+      const pooled = manager.getPointMaterial(props);
+      manager.detachFromGlobalUpdates(pooled);
+      const reused = manager.getPointMaterial(props);
+      expect(reused).toBe(pooled);
+    });
+
+    it('after manager dispose(), detached pooled material is NOT disposed', () => {
+      const pooled = manager.getPointMaterial(props);
+      const pooledDispose = vi.spyOn(pooled, 'dispose');
+      // Simulate the NodeFactory clone-site pattern: detach pooled then
+      // register a clone. The clone takes pooled's global-update slot.
+      const cloneLike = {
+        ...pooled,
+        dispose: vi.fn(),
+        updateCameraParams: vi.fn(),
+      } as unknown as PointMaterial;
+      manager.detachFromGlobalUpdates(pooled);
+      manager.register(cloneLike);
+
+      manager.dispose();
+
+      // Pooled was removed from the global-update set BEFORE dispose, so
+      // its `.dispose()` is not called by manager.dispose(). The clone
+      // takes the hit instead.
+      expect(pooledDispose).not.toHaveBeenCalled();
+      expect(cloneLike.dispose).toHaveBeenCalled();
     });
   });
 });

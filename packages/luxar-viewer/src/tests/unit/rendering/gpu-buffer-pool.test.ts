@@ -101,6 +101,69 @@ describe('GPUBufferPool', () => {
       expect(stats.allocations).toBe(1); // Only one allocation
       expect(stats.reuses).toBe(1); // Reused for node2
     });
+
+    it('positions-only Points get default radius=0.5 and sharpness=2.0', () => {
+      const positionsOnly: LoadedPointsData = {
+        positions: new Float32Array([0, 0, 0, 1, 0, 0, 2, 0, 0]),
+        pointCount: 3,
+        ndim: 3,
+        metadata: {
+          totalPoints: 3,
+          loadedPoints: 3,
+          bounds: new THREE.Box3(),
+          usedSpatialIndex: true,
+        },
+      };
+      const geom = pool.acquirePointsGeometry('p1', positionsOnly, 3);
+      pool.updatePointsGeometry(geom, positionsOnly, 3);
+
+      const radAttr = geom.getAttribute('radius') as THREE.BufferAttribute;
+      const sharpAttr = geom.getAttribute('sharpness') as THREE.BufferAttribute;
+      const colAttr = geom.getAttribute('color') as THREE.BufferAttribute;
+
+      // Active range filled with defaults — not zeros
+      for (let i = 0; i < 3; i++) {
+        expect((radAttr.array as Float32Array)[i]).toBeCloseTo(0.5);
+        expect((sharpAttr.array as Float32Array)[i]).toBeCloseTo(2.0);
+      }
+      // White default color (positions-only path uses Float32 buffer)
+      for (let i = 0; i < 9; i++) {
+        expect((colAttr.array as Float32Array)[i]).toBeCloseTo(1.0);
+      }
+    });
+
+    it('pool reuse fills defaults when subsequent commit lacks colors/radii', () => {
+      // First commit: full data including colors/radii/sharpness
+      const full = createMockLoadedPointsData(4);
+      const geom = pool.acquirePointsGeometry('p2', full, 4);
+      pool.updatePointsGeometry(geom, full, 4);
+
+      // Second commit: same node, but data has no colors/radii/sharpness
+      // (e.g. nD slice change reveals points without those optional attrs).
+      // Pool reuses the same geometry since types match (Float32 default).
+      const sparse: LoadedPointsData = {
+        positions: new Float32Array(12), // 4 points × 3
+        pointCount: 4,
+        ndim: 3,
+        metadata: {
+          totalPoints: 4,
+          loadedPoints: 4,
+          bounds: new THREE.Box3(),
+          usedSpatialIndex: true,
+        },
+      };
+      pool.updatePointsGeometry(geom, sparse, 4);
+
+      const radAttr = geom.getAttribute('radius') as THREE.BufferAttribute;
+      const colAttr = geom.getAttribute('color') as THREE.BufferAttribute;
+      // Defaults overwrite values left in the reused buffer from `full`.
+      for (let i = 0; i < 4; i++) {
+        expect((radAttr.array as Float32Array)[i]).toBeCloseTo(0.5);
+      }
+      for (let i = 0; i < 12; i++) {
+        expect((colAttr.array as Float32Array)[i]).toBeCloseTo(1.0);
+      }
+    });
   });
 
   describe('Lines Geometry', () => {
@@ -191,6 +254,35 @@ describe('GPUBufferPool', () => {
       const stats = pool.getStats();
       expect(stats.activeBuffers).toBe(0);
       expect(stats.pooledBuffers).toBe(0);
+    });
+
+    it('acquire under pool pressure returns a usable geometry', () => {
+      // Stress the pool's release → evict → acquire sequence.
+      // Eviction in this codebase is triggered by `releasePointsGeometry`
+      // (which calls `evictUnused()` internally), not by acquire — so
+      // this test fills the pool, advances frames past evictionFrames,
+      // releases to trigger eviction, then asserts the next acquire
+      // returns a valid, undisposed geometry. A dispose-during-pool-
+      // churn bug would surface as either a thrown error inside
+      // acquire or as an already-disposed `attributes.position`.
+      const tinyPool = new GPUBufferPool(2, 0); // maxPoolSize=2, evictionFrames=0
+      const dataA = createMockLoadedPointsData(1000);
+      const dataB = createMockLoadedPointsData(2000);
+
+      tinyPool.acquirePointsGeometry('nodeA', dataA, 1000);
+      tinyPool.releasePointsGeometry('nodeA');
+      tinyPool.acquirePointsGeometry('nodeB', dataB, 2000);
+      tinyPool.releasePointsGeometry('nodeB');
+
+      tinyPool.beginFrame();
+      tinyPool.beginFrame();
+
+      const dataC = createMockLoadedPointsData(100000);
+      const geomC = tinyPool.acquirePointsGeometry('nodeC', dataC, 100000);
+
+      expect(geomC).toBeDefined();
+      expect(geomC.attributes.position).toBeDefined();
+      expect(() => tinyPool.releasePointsGeometry('nodeC')).not.toThrow();
     });
   });
 

@@ -7,12 +7,12 @@
  * @module data/loaders/base-types
  */
 
-import type * as zarr from 'zarrita';
+import type * as zarr from '../zarr';
 import type * as THREE from 'three';
 import type { DimensionMetadata } from '../../types/dims';
 import type { UpdateSession } from '../../profiling/update-profiler';
 import type { SceneNode } from '../data-loader-types';
-import type { ArrayRefRegistry } from '../array-decoder';
+import type { ArrayRefRegistry } from '../utils/array-decoder';
 
 // ============================================================================
 // Common View State
@@ -29,19 +29,17 @@ import type { ArrayRefRegistry } from '../array-decoder';
  */
 export interface BaseViewState {
   /** Which dimensions to display (max 3, indices into nD space) */
-  displayDims: number[];
+  displayDims: readonly number[];
 
   /** Current position in nD space (one value per dimension) */
-  slicePosition: number[];
+  slicePosition: readonly number[];
 
   /** Tolerance for slicing in each dimension */
-  tolerance: number[];
+  tolerance: readonly number[];
 
   /**
-   * Dimension metadata for the dataset (raw metadata array).
-   *
-   * **NOTE**: Unlike `ViewState.dimensions` (which is `SimpleDims`), this is `DimensionMetadata[]`.
-   * When converting from ViewState, extract the metadata: `viewState.dimensions?.metadata`
+   * Dimension metadata for the dataset (raw metadata array). Same
+   * shape as `ViewState.dimensions`.
    */
   dimensions?: DimensionMetadata[];
 }
@@ -73,6 +71,8 @@ export interface LoadRange {
  * - Morton/Hilbert ordering for locality
  * - Bounding boxes per chunk
  * - Query by nD slice position + tolerance
+ *
+ * @internal — preserved for future use; no current consumer.
  */
 export interface BaseChunkSpatialIndex {
   /** Chunk bounding boxes (num_chunks * ndim * 2), flattened row-major */
@@ -94,6 +94,8 @@ export interface BaseChunkSpatialIndex {
 
 /**
  * Common loader configuration options.
+ *
+ * @internal — preserved for future use; no current consumer.
  */
 export interface LoaderOptions {
   /** Worker threshold - minimum elements to offload to worker */
@@ -105,6 +107,8 @@ export interface LoaderOptions {
 
 /**
  * Dependencies injected into loaders.
+ *
+ * @internal — preserved for future use; no current consumer.
  */
 export interface LoaderDependencies {
   /** Zarr location for reading arrays */
@@ -143,9 +147,13 @@ export interface BaseLoader {
  * Data loader interface with load method.
  * TViewState: The view state type (PointsViewState, LinesViewState, GSplatsViewState)
  * TLoadedData: The loaded data type (LoadedPointsData, LoadedLinesData, LoadedGSplatsData)
+ *
+ * @internal — preserved for future use; no current consumer.
  */
-export interface SpatialDataLoader<TViewState extends BaseViewState, TLoadedData>
-  extends BaseLoader {
+export interface SpatialDataLoader<
+  TViewState extends BaseViewState,
+  TLoadedData,
+> extends BaseLoader {
   /**
    * Load data for the given view state.
    *
@@ -174,6 +182,8 @@ export interface SpatialDataLoader<TViewState extends BaseViewState, TLoadedData
  * Accumulators provide zero-allocation data loading by reusing buffers.
  * With TransferableAccumulator pattern, buffers can be transferred to/from workers
  * for combined zero-allocation + CPU offload benefits.
+ *
+ * @internal — preserved for future use; no current consumer.
  */
 export interface AccumulatorBuffers {
   /** Whether buffers are currently detached (transferred to worker) */
@@ -203,6 +213,8 @@ export interface AccumulatorStats {
 
 /**
  * Common metadata structure for loaded data.
+ *
+ * @internal — preserved for future use; no current consumer.
  */
 export interface LoadedDataMetadata {
   /** Total items in the full dataset */

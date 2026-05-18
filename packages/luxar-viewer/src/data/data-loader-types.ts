@@ -5,26 +5,28 @@
  * with proper spatial indexing support and aligned attribute loading.
  */
 
-import { SimpleDims } from '../types/dims';
-import * as THREE from 'three';
-import { log, Modules } from '../utils/log';
+import type { DimensionMetadata } from '../types/dims';
 
 /**
  * Represents the current view state for data loading.
  * This determines what portion of the nD dataset should be loaded.
+ *
+ * Array fields are typed `readonly number[]` so the *contents* cannot
+ * be mutated (`arr[i] = …`, `arr.push(…)`). The fields themselves are
+ * still re-assignable, so callers that need to update the view state
+ * should construct a fresh array (`tolerance: [...prev, x]`) rather
+ * than mutating in place. This prevents the cross-method mutation
+ * races flagged in the 2026-05-06 review.
  */
 export interface ViewState {
   /** Which dimensions to display (max 3, indices into nD space) */
-  displayDims: number[];
+  displayDims: readonly number[];
 
   /** Current position in nD space (one value per dimension) */
-  slicePosition: number[];
+  slicePosition: readonly number[];
 
   /** Tolerance for slicing in each dimension (radius in non-displayed dims, 0 for displayed) */
-  tolerance: number[];
-
-  /** Optional camera frustum for view-dependent loading */
-  cameraFrustum?: THREE.Frustum;
+  tolerance: readonly number[];
 
   /**
    * Dimension metadata for the dataset.
@@ -35,106 +37,38 @@ export interface ViewState {
    *
    * Always provide dimensions when using nD datasets with extend_to_all.
    *
-   * **NOTE**: This is `SimpleDims` (with `.metadata`, `.ndim`, `.displayed`, `.currentStep`).
-   * `BaseViewState.dimensions` in `loaders/base-types.ts` is `DimensionMetadata[]` (the raw
-   * metadata array). When passing ViewState data to BaseViewState-consuming code (e.g.,
-   * `SpatialQueryBuilder`), extract `.metadata` first: `viewState.dimensions?.metadata`.
+   * Same shape as `LinesViewState.dimensions`, `GSplatsViewState.dimensions`,
+   * `PointsViewState.dimensions`, and `BaseViewState.dimensions`. Callers
+   * that need richer dimension state (selected dim, animation state, etc.)
+   * read it off `sceneDimsManager` directly rather than reaching for a
+   * different shape on this field.
    */
-  dimensions?: SimpleDims;
+  dimensions?: DimensionMetadata[];
 }
 
-/**
- * Validates that ViewState has dimensions when extend_to_all is used.
- * Logs a warning if dimensions is missing.
- *
- * @param viewState - The view state to validate
- * @param extendToAll - The extend_to_all array from node attributes
- * @param nodePath - Path of the node for logging
- * @returns true if dimensions is present or extend_to_all is empty
- */
-export function validateViewStateForExtendToAll(
-  viewState: ViewState,
-  extendToAll: string[] | undefined,
-  nodePath: string
-): boolean {
-  if (extendToAll && extendToAll.length > 0 && !viewState.dimensions) {
-    log.warning(
-      Modules.SCENE_DIMS,
-      `Node "${nodePath}" has extend_to_all configured but ViewState.dimensions is undefined. ` +
-        'The extend_to_all optimization will be skipped. Provide dimensions in ViewState for this feature to work.'
-    );
-    return false;
-  }
-  return true;
-}
-
-/**
- * Supported TypedArray types for points attributes
- * Note: Float16Array is supported in modern browsers (2024+)
- * We include it in the type but handle fallback at runtime
- */
-export type PositionArray = Float32Array | Float16Array;
-export type ColorArray = Float32Array | Uint8Array | Uint16Array;
-export type ScalarArray = Float32Array | Float16Array | Uint8Array;
-
-/**
- * Loaded points data ready for GPU rendering.
- * All arrays are properly aligned with the same point ordering.
- * Arrays can be in different data types for memory efficiency.
- *
- * Named with "Loaded" prefix for consistency with LoadedLinesData and LoadedGSplatsData.
- */
-export interface LoadedPointsData {
-  /** 3D positions extracted from nD space (size: numPoints * 3) */
-  positions: PositionArray;
-
-  /** RGB colors (size: numPoints * 3, optional) */
-  colors?: ColorArray;
-
-  /** Point radii in world units (size: numPoints, optional) */
-  radii?: ScalarArray;
-
-  /** Point sharpness values (size: numPoints, optional) */
-  sharpness?: ScalarArray;
-
-  /** Number of points loaded (top-level for consistency with Lines/GSplats) */
-  pointCount: number;
-
-  /** Original nD dimensionality (top-level for consistency with Lines/GSplats) */
-  ndim: number;
-
-  /** Metadata about the loaded data */
-  metadata: {
-    /** Total points in the full dataset */
-    totalPoints: number;
-
-    /** Number of points actually loaded (also available as top-level pointCount) */
-    loadedPoints: number;
-
-    /** Bounding box of loaded points */
-    bounds: THREE.Box3;
-
-    /** Whether spatial index was used */
-    usedSpatialIndex: boolean;
-
-    /** Whether effective radius calculation was applied */
-    usedEffectiveRadius?: boolean;
-
-    /** Original data types from zarr (for proper conversion) */
-    dtypes?: {
-      positions?: string;
-      colors?: string;
-      radii?: string;
-      sharpness?: string;
-    };
-  };
-}
+// Re-export the points-specific types (LoadedPointsData, PointRange,
+// PositionArray, ColorArray, ScalarArray) from `types/points.ts` for
+// consumers that import through `data/data-loader-types`. New code
+// should import from `types/points` directly.
+export type {
+  LoadedPointsData,
+  PointRange,
+  PositionArray,
+  ColorArray,
+  ScalarArray,
+} from '../types/points';
 
 import type { UpdateSession } from '../profiling/update-profiler';
+import type { LoadedPointsData, PointRange } from '../types/points';
 
 /**
- * Core interface for data loaders.
- * Implementations handle different loading strategies (spatial index vs fallback).
+ * Core interface for points data loaders. Implementations handle
+ * different loading strategies (spatial index vs fallback).
+ *
+ * Mirrors `LinesDataLoader` and `GSplatsDataLoader` in
+ * `types/{lines,gsplats}.ts`. Aliased as `PointsDataLoader` in
+ * `types/points.ts` (using a slightly different `PointsViewState`
+ * shape).
  */
 export interface DataLoader {
   /** Load points data for the given view state */
@@ -174,17 +108,6 @@ export interface LoaderConfig {
 }
 
 /**
- * Range of points to load (for spatial index queries)
- */
-export interface PointRange {
-  /** Starting index (inclusive) */
-  start: number;
-
-  /** Ending index (exclusive) */
-  end: number;
-}
-
-/**
  * Node in the scene graph with loading information
  */
 export interface SceneNode {
@@ -196,8 +119,13 @@ export interface SceneNode {
 
   /** Rendering and node attributes from Zarr */
   attrs: {
-    /** Transformation matrix (16 elements for 4x4 matrix) */
-    transform?: number[];
+    /**
+     * Transformation matrix (16 elements for a column-major 4x4 matrix).
+     * Typed as `readonly number[]` because zarr metadata is parsed
+     * dynamically; see {@link import('../types/zarr').Matrix4x4} for the
+     * narrowed 16-tuple shape.
+     */
+    transform?: readonly number[];
 
     /** Per-dimension transforms for non-displayed dimensions */
     nd_transform?: import('../types/zarr').NdTransformMap;
@@ -248,6 +176,8 @@ export interface SceneNode {
 
 /**
  * Result of a spatial index query
+ *
+ * @internal — reserved extension shape; no current consumer.
  */
 export interface SpatialQueryResult {
   /** Point ranges that match the query */
@@ -262,6 +192,8 @@ export interface SpatialQueryResult {
 
 /**
  * Loader statistics for monitoring
+ *
+ * @internal — reserved extension shape; no current consumer.
  */
 export interface LoaderStats {
   /** Time taken to load (ms) */

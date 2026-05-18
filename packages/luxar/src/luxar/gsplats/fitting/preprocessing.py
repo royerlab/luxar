@@ -656,7 +656,9 @@ def _subsample_seeds_spatially_diverse(
             # outliers; correctness doesn't depend on a tight choice.
             bbox = result.max(axis=0) - result.min(axis=0)
             volume = float(np.prod(np.maximum(bbox, 1e-9)))
-            cell_size = max((volume / max(len(result), 1)) ** (1.0 / result.shape[1]), 1.0)
+            cell_size = max(
+                (volume / max(len(result), 1)) ** (1.0 / result.shape[1]), 1.0
+            )
             grid = BatchedSpatialHashGrid.from_points(
                 result, cell_size=cell_size, device="auto"
             )

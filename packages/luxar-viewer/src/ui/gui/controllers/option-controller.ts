@@ -6,13 +6,13 @@ import { Controller } from '../core/controller';
 import { ControllerType, type ControllerOptions } from '../core/types';
 import { applyAutoBlur } from '../utils/auto-blur';
 
-export class OptionController extends Controller<any> {
+export class OptionController extends Controller<unknown> {
   protected type = ControllerType.OPTION;
 
   private select!: HTMLSelectElement;
-  private optionsMap: Map<string, any> = new Map();
+  private optionsMap: Map<string, unknown> = new Map();
 
-  constructor(object: Record<string, any>, property: string, options: ControllerOptions) {
+  constructor(object: Record<string, unknown>, property: string, options: ControllerOptions) {
     super(object, property);
 
     if (!options.options) {

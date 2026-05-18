@@ -14,7 +14,11 @@ export class LRUCache<V> {
   private misses = 0;
   private evictions = 0;
 
-  constructor(maxSize: number, getSize: (v: V) => number, onEvict?: (key: string, value: V) => void) {
+  constructor(
+    maxSize: number,
+    getSize: (v: V) => number,
+    onEvict?: (key: string, value: V) => void
+  ) {
     this.maxSize = maxSize;
     this.getSize = getSize;
     this.onEvict = onEvict;

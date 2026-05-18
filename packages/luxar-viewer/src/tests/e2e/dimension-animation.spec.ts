@@ -12,7 +12,7 @@
  * - Animation progress and state
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import {
   waitForLuxarReady,
   getLuxarState,
@@ -344,7 +344,11 @@ test.describe('Dimension Animation - Keyboard Shortcuts', () => {
     const beforeValue = await getDimensionValue(page, 3);
     expect(beforeValue).toBeGreaterThan(0);
 
-    // Press Home to jump to start
+    // Press Home to jump to start. Keep the silent wait variant here:
+    // keyboard events occasionally fail to fire under headless Chromium for
+    // these shortcuts (see comment near line 408 of this file). The
+    // assertion below is the real signal — if Home didn't fire, the
+    // afterValue check fails informatively.
     await page.keyboard.press('Home');
     await waitForNavigationComplete(page);
 
@@ -376,7 +380,9 @@ test.describe('Dimension Animation - Keyboard Shortcuts', () => {
       return ranges[3]?.[1] ?? -1; // 4th dimension = index 3, max = [1]
     });
 
-    // Press End to jump to end
+    // Press End to jump to end. Same silent-wait rationale as the Home test
+    // above — keyboard shortcuts are E2E-flaky for these bindings; the
+    // value assertion is the real check.
     await page.keyboard.press('End');
     await waitForNavigationComplete(page);
 
@@ -550,7 +556,10 @@ test.describe('Dimension Animation - Animation Behavior', () => {
     await page.keyboard.press('k');
     await waitForNextRender(page);
 
-    // Wait long enough to pass end and wrap (should take < 1 second at 30 FPS)
+    // Intentional fixed sleep: this test asserts the animation is *still
+    // playing* after a known wall-clock window long enough for it to have
+    // hit the end and wrapped (≈1 s at 30 FPS). An event-driven wait would
+    // not exercise the wrap behaviour we're verifying.
     await page.waitForTimeout(2000);
 
     // In loop mode: either wrapped to start, or still progressing
@@ -701,7 +710,11 @@ test.describe('Dimension Animation - Animation Behavior', () => {
     await page.keyboard.press('k');
     await waitForNextRender(page);
 
-    // Wait for bounce (should reverse and move backward at 60 FPS)
+    // Intentional fixed sleep: this test verifies the animation *bounces*
+    // (reverses direction and continues) after hitting the end. The 2 s
+    // window is the time for the animation to reach the end and reverse;
+    // event-driven detection of a direction change is possible but adds
+    // complexity that doesn't pay off here.
     await page.waitForTimeout(2000);
 
     // After bounce, the animation should still be running
@@ -731,7 +744,10 @@ test.describe('Dimension Animation - Animation Behavior', () => {
     await page.keyboard.press('k');
     await waitForNextRender(page);
 
-    // Value should stay roughly constant while paused (allow for frames in flight during pause)
+    // Intentional fixed sleep: this assertion is "the value should *not*
+    // change while paused". An event-driven wait can prove the absence of
+    // change only by waiting a known wall-clock window — the sleep IS the
+    // observation window.
     await page.waitForTimeout(1000);
     const pausedValue = await getDimensionValue(page, 3);
     // Allow ~0.5 difference for animation frames that may complete during pause transition

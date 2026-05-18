@@ -10,7 +10,7 @@
  * whether point data has been loaded yet (important for large nD datasets).
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { waitForLuxarReady } from './helpers';
 
 // Use a basic example dataset which should have position_bounds set

@@ -9,7 +9,7 @@
  * Validates the UX improvements for better onboarding.
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { waitForNextRender } from './helpers';
 
 test.describe('First-Time User Experience', () => {
@@ -17,16 +17,9 @@ test.describe('First-Time User Experience', () => {
     // Navigate with no dataset parameter
     await page.goto('/?debug');
 
-    // Wait a moment for initialization
-    await page.waitForTimeout(2000);
-
-    // Dataset browser should appear automatically
-    const browserVisible = await page
-      .locator('.dataset-browser')
-      .isVisible()
-      .catch(() => false);
-
-    expect(browserVisible).toBe(true);
+    // Dataset browser should appear automatically. expect.toBeVisible
+    // retries with its own timeout; no fixed sleep needed.
+    await expect(page.locator('.dataset-browser')).toBeVisible({ timeout: 10000 });
   });
 
   test('should show welcome banner in dataset browser', async ({ page }) => {
@@ -68,6 +61,10 @@ test.describe('First-Time User Experience', () => {
   });
 
   test('should show error dialog or dataset browser when dataset fails', async ({ page }) => {
+    test.info().annotations.push({
+      type: 'allow-console-errors',
+      description: 'Bad-URL recovery path intentionally produces 404s.',
+    });
     // Try to load non-existent dataset via HTTP
     await page.goto('/?src=http://localhost:9000/nonexistent.zarr&debug');
 
@@ -104,6 +101,10 @@ test.describe('First-Time User Experience', () => {
   });
 
   test('should not show hardcoded example URLs in error/browser UI', async ({ page }) => {
+    test.info().annotations.push({
+      type: 'allow-console-errors',
+      description: 'Bad-URL recovery path intentionally produces 404s.',
+    });
     await page.goto('/?src=http://localhost:9000/missing.zarr&debug');
 
     // Wait for either error dialog or dataset browser
@@ -126,6 +127,10 @@ test.describe('First-Time User Experience', () => {
   });
 
   test('should allow dismissing error or browser UI', async ({ page }) => {
+    test.info().annotations.push({
+      type: 'allow-console-errors',
+      description: 'Bad-URL recovery path intentionally produces 404s.',
+    });
     await page.goto('/?src=http://localhost:9000/fail.zarr&debug');
 
     // Wait for UI to appear
@@ -175,6 +180,94 @@ test.describe('First-Time User Experience', () => {
       );
       await expect(browser).toBeHidden({ timeout: 10000 });
     }
+  });
+
+  test('Escape closes the dataset browser AND `O` reopens it cleanly', async ({ page }) => {
+    test.info().annotations.push({
+      type: 'allow-console-errors',
+      description: 'Opening the dataset browser triggers directory listing that 404s on the static test server.',
+    });
+    // Regression guard: the Escape path must route through
+    // `DatasetBrowser.close()` so `onClose` fires and
+    // `LuxarApp.datasetBrowser` is cleared. Without that, the `O`
+    // shortcut handler bails out via `if (!this.datasetBrowser)
+    // return` and makes `O` a silent no-op until reload.
+    await page.goto(
+      '/?src=http://localhost:9000/datasets/examples/rainbow_sphere_4d_example.zarr&debug'
+    );
+    await page.waitForFunction(() => !!(window as any).__luxarDebug?.app, {
+      timeout: 10000,
+    });
+    await page.click('canvas').catch(() => {
+      // Canvas may not be focusable yet; press 'O' on document instead.
+    });
+
+    // First: confirm `O` opens it on a fresh page.
+    await page.keyboard.press('o');
+    const browser = page.locator('.luxar-dataset-browser').first();
+    await expect(browser).toBeVisible({ timeout: 5000 });
+
+    // Press Escape — DatasetBrowser.close() fires onClose, clears
+    // app.datasetBrowser, and clears the input-handler ref.
+    await page.keyboard.press('Escape');
+    await expect(browser).toBeHidden({ timeout: 5000 });
+
+    // Critical assertion: the `O` shortcut must actually re-open the
+    // browser after Escape closes it.
+    await page.keyboard.press('o');
+    await expect(browser).toBeVisible({ timeout: 5000 });
+  });
+
+  test('Escape closes the dataset browser even when focus is in a text input', async ({
+    page,
+  }) => {
+    test.info().annotations.push({
+      type: 'allow-console-errors',
+      description: 'Opening the dataset browser triggers directory listing that 404s on the static test server.',
+    });
+    // Regression guard: Escape must reach the context manager even
+    // when focus is inside a text input (the dataset-browser's
+    // manual-path field, the debug-console filter, etc.) so panels
+    // close. `InputHandler.onKeyDown` exempts Escape from the typing
+    // guard.
+    await page.goto(
+      '/?src=http://localhost:9000/datasets/examples/rainbow_sphere_4d_example.zarr&debug'
+    );
+    await page.waitForFunction(() => !!(window as any).__luxarDebug?.app, {
+      timeout: 10000,
+    });
+    await page.click('canvas').catch(() => {});
+
+    // Open the browser via the O shortcut.
+    await page.keyboard.press('o');
+    const browser = page.locator('.luxar-dataset-browser').first();
+    await expect(browser).toBeVisible({ timeout: 5000 });
+
+    // Inject a focused text input inside the browser (mimics the
+    // manual-path field, which only renders when directory listing
+    // fails — too brittle to depend on for an E2E). Focusing it
+    // triggers the same `isTypingInInput()` guard at the top of
+    // `onKeyDown`; Escape must still close the browser.
+    await page.evaluate(() => {
+      const browserEl = document.querySelector('.luxar-dataset-browser');
+      if (!browserEl) throw new Error('browser missing');
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.id = '__escape_test_input';
+      browserEl.appendChild(input);
+      input.focus();
+    });
+
+    // Verify focus actually landed inside the input — `isTypingInInput`
+    // should return true from this state.
+    const focusOk = await page.evaluate(
+      () => document.activeElement?.id === '__escape_test_input'
+    );
+    expect(focusOk).toBe(true);
+
+    // Escape from focused input should still close the browser.
+    await page.keyboard.press('Escape');
+    await expect(browser).toBeHidden({ timeout: 5000 });
   });
 
   test('should provide helpful guidance without specific URLs', async ({ page }) => {

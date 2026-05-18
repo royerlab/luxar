@@ -4,7 +4,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as THREE from 'three';
-import { PostProcessingManager } from '../../../rendering/post-processing-manager';
+import { PostProcessingManager } from '../../../rendering/post-processing/post-processing-manager';
 
 // Mock postprocessing library
 vi.mock('postprocessing', () => ({
@@ -131,7 +131,7 @@ vi.mock('postprocessing', () => ({
 }));
 
 // Mock LuxarToneMappingEffect (vendored tone mapping with EOG)
-vi.mock('../../../rendering/luxar-tone-mapping-effect', () => ({
+vi.mock('../../../rendering/post-processing/luxar-tone-mapping-effect', () => ({
   LuxarToneMappingEffect: vi.fn().mockImplementation(() => ({
     mode: 7, // ToneMappingMode.ACES_FILMIC
     whitePoint: 2.0,

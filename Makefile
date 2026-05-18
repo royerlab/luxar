@@ -480,11 +480,11 @@ test-all:  ## Run all tests (Python, Rust/WASM, and TypeScript with fresh fixtur
 	fi; \
 	if command -v cargo >/dev/null 2>&1; then \
 		echo "Running Rust unit tests..."; \
-		cd packages/luxar-viewer && pnpm test:wasm; \
+		(cd packages/luxar-viewer && pnpm test:wasm) || exit $$?; \
 		echo ""; \
 		if command -v wasm-pack >/dev/null 2>&1; then \
 			echo "Building WASM module for TypeScript comparison tests..."; \
-			cd packages/luxar-viewer && pnpm build:wasm; \
+			(cd packages/luxar-viewer && pnpm build:wasm) || exit $$?; \
 		else \
 			echo "⚠️  wasm-pack not found - WASM comparison tests will be skipped"; \
 			echo "   Run 'make install-rust' to enable full WASM testing"; \
@@ -565,12 +565,12 @@ run-pre-commit:  ## Run pre-commit on all files
 check-all:  ## Run all quality checks (Python and TypeScript)
 	@echo "🐍 Running Python checks..."
 	hatch run check
-	@echo "📘 Running TypeScript checks..."
+	@echo "📘 Running TypeScript checks (CI: typecheck + lint + layers + coverage)..."
 	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
 		echo "📦 Installing TypeScript dependencies first..."; \
 		cd packages/luxar-viewer && pnpm install; \
 	fi
-	cd packages/luxar-viewer && pnpm run typecheck && pnpm run lint && pnpm test --run
+	cd packages/luxar-viewer && pnpm run check:ci
 
 # Documentation checks (Phase 4 automation)
 check-docs:  ## Check documentation quality and coverage

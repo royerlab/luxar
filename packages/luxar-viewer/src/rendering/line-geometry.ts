@@ -80,6 +80,15 @@ export interface InstancedLinesMeshConfig {
   startClipped: Uint8Array;
   /** Whether end was clipped (segmentCount) */
   endClipped: Uint8Array;
+  /**
+   * per-segment start/end scalar values for colormap lookup.
+   * When both fields are present, `createInstancedLinesMesh` binds them
+   * as instanced `aStartScalar`/`aEndScalar` attributes. The line
+   * shader's `USE_COLORMAP` path requires both attributes; if only one
+   * is provided the binding is skipped (fail-closed).
+   */
+  startScalars?: Float32Array;
+  endScalars?: Float32Array;
   /** Number of segments */
   segmentCount: number;
 }
@@ -87,6 +96,13 @@ export interface InstancedLinesMeshConfig {
 /**
  * Compute bounding box and sphere from line segment start/end positions.
  * Uses a direct min/max pass without temporary geometry or array allocations.
+ *
+ * bounds are expanded conservatively by `maxWidth × 0.5` (half-width)
+ * to capture the rendered footprint. Without this, frustum culling and
+ * camera-framing reject thick lines whose centerline is just outside
+ * the view but whose pixels are still on-screen. Width here is treated
+ * as a half-width (matches the rendering spec); doubling for full
+ * footprint is unnecessary.
  */
 function computeLineBounds(
   geometry: THREE.InstancedBufferGeometry,
@@ -97,6 +113,7 @@ function computeLineBounds(
     new THREE.Vector3(-Infinity, -Infinity, -Infinity)
   );
   const v = new THREE.Vector3();
+  let maxWidth = 0;
 
   for (let i = 0; i < meshConfig.segmentCount; i++) {
     const si = i * 3;
@@ -112,6 +129,19 @@ function computeLineBounds(
       meshConfig.endPositions[si + 2]
     );
     box.expandByPoint(v);
+
+    const sw = meshConfig.startWidths[i];
+    const ew = meshConfig.endWidths[i];
+    if (Number.isFinite(sw) && sw > maxWidth) maxWidth = sw;
+    if (Number.isFinite(ew) && ew > maxWidth) maxWidth = ew;
+  }
+
+  if (meshConfig.segmentCount > 0 && maxWidth > 0) {
+    // Half-width margin (widths in the codebase are half-widths per the
+    // rendering spec). Slightly conservative by using the full width
+    // (i.e. expand by maxWidth) so picking ray pre-cull doesn't reject
+    // thick lines whose centerline is just outside the view.
+    box.expandByScalar(maxWidth);
   }
 
   geometry.boundingBox = box;
@@ -181,6 +211,21 @@ export function createInstancedLinesMesh(
   geometry.setAttribute('aStartClipped', new THREE.InstancedBufferAttribute(startClippedFloat, 1));
   geometry.setAttribute('aEndClipped', new THREE.InstancedBufferAttribute(endClippedFloat, 1));
 
+  // bind aStartScalar/aEndScalar when both are present so the
+  // shader's USE_COLORMAP path can compile. Single-side absence is
+  // treated as "not ready" (fail-closed) to avoid an
+  // attribute-mismatch shader compile.
+  if (meshConfig.startScalars && meshConfig.endScalars) {
+    geometry.setAttribute(
+      'aStartScalar',
+      new THREE.InstancedBufferAttribute(meshConfig.startScalars, 1)
+    );
+    geometry.setAttribute(
+      'aEndScalar',
+      new THREE.InstancedBufferAttribute(meshConfig.endScalars, 1)
+    );
+  }
+
   // Set instance count
   geometry.instanceCount = meshConfig.segmentCount;
 
@@ -214,7 +259,7 @@ export function updateInstancedLinesMesh(
   const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
   const currentCount = geometry.instanceCount;
 
-  // Attribute layout: [name, source data, components per instance]
+  // Attribute layout: [name, source data, components per instance, needsFloat32Convert]
   const attrSpecs: Array<[string, Float32Array | Uint8Array, number, boolean]> = [
     ['aStartPos', meshConfig.startPositions, 3, false],
     ['aEndPos', meshConfig.endPositions, 3, false],
@@ -229,6 +274,13 @@ export function updateInstancedLinesMesh(
     ['aEndClipped', meshConfig.endClipped, 1, true], // Uint8 → Float32
   ];
 
+  // Include scalar attributes when both endpoints provide them, matching
+  // the createInstancedLinesMesh both-or-nothing pattern.
+  if (meshConfig.startScalars && meshConfig.endScalars) {
+    attrSpecs.push(['aStartScalar', meshConfig.startScalars, 1, false]);
+    attrSpecs.push(['aEndScalar', meshConfig.endScalars, 1, false]);
+  }
+
   if (meshConfig.segmentCount !== currentCount) {
     // Size changed: recreate attributes
     for (const [name, data, size, needsFloat32Convert] of attrSpecs) {
@@ -240,7 +292,7 @@ export function updateInstancedLinesMesh(
     // CRITICAL: Force THREE.js to recalculate _maxInstanceCount.
     // Same issue as gsplats: meshes created with 0 instances cache _maxInstanceCount=0.
     // (THREE.js r163+ internal property)
-    delete (geometry as any)._maxInstanceCount;
+    delete (geometry as unknown as { _maxInstanceCount?: number })._maxInstanceCount;
   } else {
     // Same size: update in place (zero GPU allocation)
     for (const [name, data, , needsFloat32Convert] of attrSpecs) {

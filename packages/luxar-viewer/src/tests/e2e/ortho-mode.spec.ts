@@ -12,7 +12,7 @@
  * Dataset: scene_dimensions_example.zarr (has physical units: um)
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import {
   waitForLuxarReady,
   waitForPointsLoaded,
@@ -132,6 +132,8 @@ test.describe('Orthographic Camera Mode', () => {
         debug?.renderOnce?.();
       }
     });
+    // Damping settle past the synchronous renderOnce loop — see
+    // mouse-interactions.spec.ts for the same shape.
     await page.waitForTimeout(300);
 
     // Read zoom after scroll
@@ -203,6 +205,9 @@ test.describe('Orthographic Camera Mode', () => {
         debug?.renderOnce?.();
       }
     });
+    // Same damping-settle pattern; the scale-bar label updates from a
+    // paint-driven observer, so we need a wall-clock paint window past
+    // the renderOnce loop before reading textContent.
     await page.waitForTimeout(500);
 
     // Read label text after zoom

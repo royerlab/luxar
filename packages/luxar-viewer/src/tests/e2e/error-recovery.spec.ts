@@ -11,13 +11,28 @@
  * IMPORTANT: Good error recovery improves user experience and debugging
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect, ALLOW_CONSOLE_ERRORS } from './fixtures';
 import {
   waitForLuxarReady,
   getLuxarState,
-  waitForSpatialQuery,
+  waitForSpatialQueryOrThrow,
   waitForNextRender,
 } from './helpers';
+
+// All tests in this file deliberately exercise broken-dataset paths
+// (missing files, corrupted zmetadata, missing positions, network
+// timeouts, etc.). The viewer's correct response logs console errors;
+// asserting their absence would defeat the purpose of these tests.
+// Playwright requires the first beforeEach arg to be a destructuring
+// pattern (its way of declaring used fixtures). We don't need any
+// fixtures here — only `testInfo` — so the empty pattern is correct.
+// eslint-disable-next-line no-empty-pattern
+test.beforeEach(async ({}, testInfo) => {
+  testInfo.annotations.push({
+    type: ALLOW_CONSOLE_ERRORS,
+    description: 'Error-recovery tests deliberately trigger viewer console.error output.',
+  });
+});
 
 test.describe('Error Recovery - Invalid Datasets', () => {
   test('should show error for non-existent dataset', async ({ page }) => {
@@ -248,7 +263,9 @@ test.describe('Error Recovery - WebGL Failures', () => {
       return false;
     });
 
-    // Wait for loss event to propagate
+    // Intentional fixed sleep: WEBGL_lose_context dispatches the lost
+    // event asynchronously through the browser's GL queue, with no
+    // JS-observable signal. Same shape as context-restore.spec.ts.
     await page.waitForTimeout(500);
 
     // Restore context
@@ -260,6 +277,9 @@ test.describe('Error Recovery - WebGL Failures', () => {
         ext?.restoreContext();
       });
 
+      // Same as the loss event above — give the restore handler
+      // (rebuildAfterContextRestore + dirty marking) wall-clock time
+      // to complete before reading state.
       await page.waitForTimeout(1000);
 
       // Verify the viewer state survived the loss/restore cycle. The
@@ -393,7 +413,7 @@ test.describe('Error Recovery - Memory Limits', () => {
 
     for (let i = 0; i < 5; i++) {
       await page.keyboard.press(']');
-      await waitForSpatialQuery(page);
+      await waitForSpatialQueryOrThrow(page);
     }
 
     // Check memory didn't explode
@@ -418,7 +438,7 @@ test.describe('Error Recovery - Memory Limits', () => {
     await page.keyboard.press('4');
     await waitForNextRender(page);
     await page.keyboard.press(']');
-    await waitForSpatialQuery(page);
+    await waitForSpatialQueryOrThrow(page);
 
     const cacheStats = await page.evaluate(async () => {
       const loader = await (window as any).__luxarDebug.getSceneLoader();

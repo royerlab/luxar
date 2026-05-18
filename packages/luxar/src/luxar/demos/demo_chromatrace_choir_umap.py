@@ -116,9 +116,7 @@ def _extract_zip(zip_path: Path) -> tuple[Path, Path]:
                 with zf.open(member) as src, open(out, "wb") as dst:
                     dst.write(src.read())
     if not (parquet.exists() and colormap.exists()):
-        raise RuntimeError(
-            f"Zip {zip_path} did not contain the expected data files."
-        )
+        raise RuntimeError(f"Zip {zip_path} did not contain the expected data files.")
     return parquet, colormap
 
 
@@ -176,9 +174,7 @@ def load_chromatrace_data(
             palette = json.load(fh)
         term_colors = palette.get("colors", {})
         groups = palette.get("groups", [])
-        aprint(
-            f"  palette: {len(term_colors)} term colors, {len(groups)} groups"
-        )
+        aprint(f"  palette: {len(term_colors)} term colors, {len(groups)} groups")
 
     return coords, attributes, category_maps, term_colors, groups
 
@@ -202,9 +198,7 @@ def _bio_term_colors(
     return lut[codes]
 
 
-def _bio_group_colors(
-    codes: np.ndarray, categories: list[str]
-) -> np.ndarray:
+def _bio_group_colors(codes: np.ndarray, categories: list[str]) -> np.ndarray:
     """Per-cell RGB float32 colors, one distinct hue per bio_group.
 
     The 'Unannotated' group is rendered gray regardless of palette index.
@@ -237,7 +231,7 @@ def _build_bio_term_legend_html(
     lines = [
         '<div style="font-size:1.15vh;line-height:1.35;'
         "background:rgba(0,0,0,0.6);padding:0.6vh 0.8vh;"
-        'border-radius:4px;max-height:92vh;overflow-y:auto;'
+        "border-radius:4px;max-height:92vh;overflow-y:auto;"
         'column-count:2;column-gap:1.2vh;width:34vh">'
     ]
     for grp in groups:
@@ -317,17 +311,11 @@ def build_scene(
     group_cats = category_maps["bio_group"]
 
     with asection("Building Multi-Attribute Scene"):
-        colors_term = _bio_term_colors(
-            attributes["bio_term"], term_cats, term_colors
-        )
+        colors_term = _bio_term_colors(attributes["bio_term"], term_cats, term_colors)
         colors_group = _bio_group_colors(attributes["bio_group"], group_cats)
 
-        pos_term = np.column_stack(
-            [np.zeros(n_cells, dtype=np.float32), coords]
-        )
-        pos_group = np.column_stack(
-            [np.ones(n_cells, dtype=np.float32), coords]
-        )
+        pos_term = np.column_stack([np.zeros(n_cells, dtype=np.float32), coords])
+        pos_group = np.column_stack([np.ones(n_cells, dtype=np.float32), coords])
         positions = np.vstack([pos_term, pos_group])
         colors = np.vstack([colors_term, colors_group])
 
@@ -346,9 +334,7 @@ def build_scene(
         present_terms = set(term_cats)
         n_unannotated = group_counts.get("Unannotated", 0)
 
-        aprint(
-            f"  2 views × {n_cells:,} cells = {len(positions):,} total points"
-        )
+        aprint(f"  2 views × {n_cells:,} cells = {len(positions):,} total points")
 
         dims = Dimensions(
             [

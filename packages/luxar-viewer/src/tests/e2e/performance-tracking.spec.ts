@@ -13,8 +13,8 @@
  * To reset baselines: delete performance-baselines.json and run tests
  */
 
-import { test, expect } from '@playwright/test';
-import { waitForLuxarReady, waitForSpatialQuery, waitForNextRender } from './helpers';
+import { test, expect } from './fixtures';
+import { waitForLuxarReady, waitForSpatialQueryOrThrow, waitForNextRender } from './helpers';
 import * as fs from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
@@ -149,7 +149,7 @@ test.describe('Performance Regression Tracking', () => {
     await page.keyboard.press('4');
     await waitForNextRender(page);
     await page.keyboard.press(']');
-    await waitForSpatialQuery(page);
+    await waitForSpatialQueryOrThrow(page);
 
     const navigationTime = Date.now() - startTime;
 

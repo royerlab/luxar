@@ -109,9 +109,7 @@ class TestRk4Step:
         field = _make_constant_field((1.0, 0.0, 0.0))
         points = np.array([[1.0, 1.0, 1.0], [2.0, 2.0, 2.0]], dtype=np.float32)
         out = rk4_step(points, step_size=0.5, field=field)
-        np.testing.assert_allclose(
-            out, [[1.5, 1.0, 1.0], [2.5, 2.0, 2.0]], atol=1e-5
-        )
+        np.testing.assert_allclose(out, [[1.5, 1.0, 1.0], [2.5, 2.0, 2.0]], atol=1e-5)
 
     def test_out_of_bounds_seed_propagates_nan(self) -> None:
         field = _make_constant_field((1.0, 0.0, 0.0))

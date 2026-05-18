@@ -82,7 +82,7 @@ VIEWER_EXPOSURE_EV: Final = 0.0
 # Lines (velocity comets + streamlines) carry the directional information and
 # get the dominant brightness budget.  Cells are 2× dimmer so the line field
 # reads as the foreground.  The reference cube is a faint outline.
-LINE_INTENSITY: Final = float(2.0 ** -7.0)  # ≈ 0.00781
+LINE_INTENSITY: Final = float(2.0**-7.0)  # ≈ 0.00781
 CELL_INTENSITY: Final = LINE_INTENSITY * 0.5
 REF_CUBE_INTENSITY: Final = LINE_INTENSITY * 0.35
 
@@ -319,9 +319,7 @@ def load_zebrahub(h5ad_path: Path) -> ZebrahubData:
 
         if VELOCITY_OBSM_KEY not in adata.obsm:
             available = list(adata.obsm.keys())
-            raise KeyError(
-                f"obsm['{VELOCITY_OBSM_KEY}'] missing.  Found: {available}"
-            )
+            raise KeyError(f"obsm['{VELOCITY_OBSM_KEY}'] missing.  Found: {available}")
         velocity_raw = np.asarray(adata.obsm[VELOCITY_OBSM_KEY]).astype(
             np.float32, copy=False
         )
@@ -349,15 +347,11 @@ def load_zebrahub(h5ad_path: Path) -> ZebrahubData:
             np.float32, copy=False
         )[:, :3]
         aprint(f"  positions: obsm['{position_key}']  shape={positions_raw.shape}")
-        aprint(
-            f"  velocities: obsm['{VELOCITY_OBSM_KEY}']  shape={velocity_raw.shape}"
-        )
+        aprint(f"  velocities: obsm['{VELOCITY_OBSM_KEY}']  shape={velocity_raw.shape}")
 
         anatomy_codes, anatomy_categories = _categorical_obs(adata, ANATOMY_OBS_KEY)
         if anatomy_categories:
-            aprint(
-                f"  anatomy ({ANATOMY_OBS_KEY}): {len(anatomy_categories)} classes"
-            )
+            aprint(f"  anatomy ({ANATOMY_OBS_KEY}): {len(anatomy_categories)} classes")
         else:
             aprint(f"  anatomy column '{ANATOMY_OBS_KEY}' missing; using single class")
             anatomy_categories = ["unknown"]
@@ -416,7 +410,9 @@ def compute_velocity_field(
 ) -> FlowField:
     """Bin cell-level velocity into a smoothed cubic field, with cache."""
     layout_hash = _array_hash(data.positions, data.velocities)
-    cache_key = f"{CACHE_VERSION}:{layout_hash}:{preset.grid_size}:{preset.gaussian_sigma}"
+    cache_key = (
+        f"{CACHE_VERSION}:{layout_hash}:{preset.grid_size}:{preset.gaussian_sigma}"
+    )
 
     if cache_path.exists() and not recompute:
         store = np.load(cache_path, allow_pickle=False)
@@ -435,28 +431,21 @@ def compute_velocity_field(
 
     with asection("Building velocity vector field"):
         aprint(
-            f"  Grid: {n}^3 = {n ** 3:,} cells, spacing={spacing:.4f}, "
-            f"raw size≈{n ** 3 * 3 * 4 / (1024 * 1024):.1f} MB"
+            f"  Grid: {n}^3 = {n**3:,} cells, spacing={spacing:.4f}, "
+            f"raw size≈{n**3 * 3 * 4 / (1024 * 1024):.1f} MB"
         )
 
         idx = (data.positions - grid_min[None, :]) / np.float32(spacing)
         ix = np.floor(idx[:, 0]).astype(np.int32)
         iy = np.floor(idx[:, 1]).astype(np.int32)
         iz = np.floor(idx[:, 2]).astype(np.int32)
-        valid = (
-            (ix >= 0)
-            & (iy >= 0)
-            & (iz >= 0)
-            & (ix < n)
-            & (iy < n)
-            & (iz < n)
-        )
+        valid = (ix >= 0) & (iy >= 0) & (iz >= 0) & (ix < n) & (iy < n) & (iz < n)
         ix = ix[valid]
         iy = iy[valid]
         iz = iz[valid]
         velocities = data.velocities[valid]
         flat = (ix * n + iy) * n + iz
-        n_cells = n ** 3
+        n_cells = n**3
 
         sums = np.zeros((n_cells, 3), dtype=np.float64)
         counts = np.zeros(n_cells, dtype=np.float64)
@@ -548,7 +537,9 @@ def integrate_streamlines(
     from scipy.spatial import cKDTree
 
     proximity_threshold = float(preset.cell_proximity_voxels * flow.spacing)
-    seed_token = "all" if preset.streamline_seeds is None else str(preset.streamline_seeds)
+    seed_token = (
+        "all" if preset.streamline_seeds is None else str(preset.streamline_seeds)
+    )
     cache_key = (
         f"{CACHE_VERSION}:{flow.cache_key}:{preset.streamline_steps}:"
         f"{preset.step_voxels}:seeds={seed_token}:"
@@ -680,12 +671,12 @@ def build_streamline_geometry(
     else:
         t_norm = np.zeros(1, dtype=np.float32)
     fade = (1.0 - t_norm).astype(np.float32)
-    curve = (fade ** 1.5).astype(np.float32)
+    curve = (fade**1.5).astype(np.float32)
     head_brightness = np.float32(1.40)
     tail_brightness = np.float32(0.04)
-    brightness = (
-        head_brightness * curve + tail_brightness * (1.0 - curve)
-    ).astype(np.float32)
+    brightness = (head_brightness * curve + tail_brightness * (1.0 - curve)).astype(
+        np.float32
+    )
 
     expanded = (
         source_colors[:, None, :] * brightness[None, :, None]
@@ -892,7 +883,9 @@ def write_scene(
                 "Cells (anatomy color)",
                 positions=data.positions.astype(np.float32),
                 colors=cell_colors,
-                radii=np.full(len(data.positions), preset.cell_radius, dtype=np.float32),
+                radii=np.full(
+                    len(data.positions), preset.cell_radius, dtype=np.float32
+                ),
                 sharpness=np.full(len(data.positions), 3.6, dtype=np.float32),
                 opacity=0.92,
                 intensity=CELL_INTENSITY,
@@ -1004,11 +997,14 @@ def generate_zebrahub_scene(
     data = load_zebrahub(h5ad_path)
 
     field_cache = (
-        cache_dir / f"velocity_field_{preset.name}_{preset.grid_size}_{CACHE_VERSION}.npz"
+        cache_dir
+        / f"velocity_field_{preset.name}_{preset.grid_size}_{CACHE_VERSION}.npz"
     )
     flow = compute_velocity_field(data, preset, field_cache, recompute_field)
 
-    seed_token = "all" if preset.streamline_seeds is None else str(preset.streamline_seeds)
+    seed_token = (
+        "all" if preset.streamline_seeds is None else str(preset.streamline_seeds)
+    )
     stream_cache = (
         cache_dir / f"streamlines_{preset.name}_{preset.grid_size}_"
         f"{preset.streamline_steps}_{seed_token}_{CACHE_VERSION}.npz"
@@ -1032,9 +1028,7 @@ def generate_zebrahub_scene(
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description=(
-            "Zebrahub 3D RNA-velocity UMAP + advected streamlines Luxar demo."
-        )
+        description=("Zebrahub 3D RNA-velocity UMAP + advected streamlines Luxar demo.")
     )
     parser.add_argument(
         "--preset",
@@ -1143,7 +1137,8 @@ def main() -> None:
     aprint("Zebrahub RNA-velocity — 3D UMAP + advected streamlines")
     aprint("=" * 72)
     seed_label = (
-        "all cells" if preset.streamline_seeds is None
+        "all cells"
+        if preset.streamline_seeds is None
         else f"{preset.streamline_seeds:,} seeds"
     )
     aprint(
@@ -1192,9 +1187,7 @@ def main() -> None:
         return
 
     with tempfile.TemporaryDirectory(prefix="luxar_zebrahub_velocity_") as tmpdir:
-        output_path = (
-            Path(tmpdir) / f"zebrahub_velocity_streamlines_{preset.name}.zarr"
-        )
+        output_path = Path(tmpdir) / f"zebrahub_velocity_streamlines_{preset.name}.zarr"
         data, _flow, streamlines = generate_zebrahub_scene(
             output_path,
             cache_dir,

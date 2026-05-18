@@ -38,6 +38,8 @@
  * popped off the stack as they run).
  */
 
+import { log, Modules } from './log';
+
 export class EventGroup {
   private cleanups: Array<() => void> = [];
 
@@ -94,6 +96,12 @@ export class EventGroup {
       } else {
         target.removeEventListener(type, listener, options);
       }
+      // Splice out of `cleanups` so a long-lived EventGroup that
+      // repeatedly registers + early-removes listeners doesn't
+      // accumulate no-op closures (each holds references to target,
+      // type, listener, options).
+      const idx = this.cleanups.indexOf(cleanup);
+      if (idx >= 0) this.cleanups.splice(idx, 1);
     };
     this.cleanups.push(cleanup);
     return cleanup;
@@ -118,10 +126,9 @@ export class EventGroup {
       try {
         cleanup?.();
       } catch (err) {
-        // A failing cleanup must not stop the rest from running. Log via
-        // platform console — not the project log utility — to avoid pulling
-        // in a dependency that itself relies on event-group cleanup.
-        console.error('[EventGroup] cleanup threw:', err);
+        // A failing cleanup must not stop the rest from running. log.ts has
+        // no project-code imports of its own, so this introduces no cycle.
+        log.error(Modules.EVENT_GROUP, 'cleanup threw:', err);
       }
     }
   }

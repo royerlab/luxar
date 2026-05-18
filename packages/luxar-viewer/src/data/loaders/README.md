@@ -1,6 +1,6 @@
 # Unified Loader Architecture
 
-**Status**: PHASE 1 & 2 COMPLETE - All loaders migrated to RangeLoader + TransferableAccumulator
+**Status**: All geometry loaders use RangeLoader + TransferableAccumulator.
 
 ## Overview
 
@@ -8,12 +8,12 @@ This module provides the foundation for the unified spatial index loader archite
 
 ### Problem Solved
 
-Before unification, each loader (Points, Lines, GSplats) had:
+The shared loader components keep Points, Lines, and GSplats aligned on:
 
-- Duplicated encoding dispatch logic (~600 lines total)
-- Duplicated spatial query logic (~300 lines total)
-- Inconsistent tolerance calculation
-- Inconsistent worker dispatch patterns
+- Encoding dispatch logic
+- Spatial query construction
+- Tolerance calculation
+- Worker dispatch patterns
 
 ### Solution
 
@@ -156,35 +156,48 @@ const ranges = mergeRanges(chunkIndicesToRanges(chunkIndices, chunkSize, totalEl
 Unified tolerance logic lives in `data/tolerance-computer.ts::computeTolerance`
 and is selected by `geometryType`:
 
-| Geometry  | Hidden spatial dim                      | Hidden discrete dim   |
-| --------- | --------------------------------------- | --------------------- |
-| `points`  | `maxRadius` (or 0.5 if `spatialExtendDims[d]` is false) | 0.5 |
-| `lines`   | 0 (segment bounds already include line width)           | `step / 2` (or 0.5 fallback) |
-| `gsplats` | `step × gsplatsDefaultTolerance` (default 3 σ; or 3.0 fallback) | 0.5 |
+| Geometry  | Hidden spatial dim                                              | Hidden discrete dim          |
+| --------- | --------------------------------------------------------------- | ---------------------------- |
+| `points`  | `maxRadius` (or 0.5 if `spatialExtendDims[d]` is false)         | 0.5                          |
+| `lines`   | 0 (segment bounds already include line width)                   | `step / 2` (or 0.5 fallback) |
+| `gsplats` | `step × gsplatsDefaultTolerance` (default 3 σ; or 3.0 fallback) | 0.5                          |
 
 Displayed dimensions always get `1e10` (effectively infinite).
 
 ## Worker Integration
 
-All components automatically use workers when enabled:
+All components automatically use workers when enabled. Always go through
+`runWithTimeout()` — calling `getWorker()` directly bypasses the timeout
+guard and the hung-worker eviction logic. See
+`src/workers/README.md#runwithtimeout` for the full contract.
 
 ```typescript
-// Config check happens automatically
+// Config check happens automatically inside the loader.
 if (appConfig.dataLoading.performance.useWebWorkers) {
-  // Use worker pool
-  const worker = await getWorkerPool().getWorker();
-  result = await worker.someMethod(...);
+  // The pool maps the TimeoutKind ('projection' / 'decode' / 'visibility')
+  // to the corresponding config knob and evicts the worker on timeout.
+  result = await getWorkerPool().runWithTimeout(
+    'someMethod',
+    'projection',
+    (api) => api.someMethod(...)
+  );
 } else {
   // Main thread fallback
   result = mainThreadImplementation(...);
 }
 ```
 
-Worker fallback on error:
+`runWithTimeout()` already rejects with a `WorkerTimeoutError` when the
+operation exceeds the configured budget; catch it (or the more general
+`Error`) at the loader boundary if you want a main-thread fallback:
 
 ```typescript
 try {
-  result = await worker.someMethod(...);
+  result = await getWorkerPool().runWithTimeout(
+    'someMethod',
+    'projection',
+    (api) => api.someMethod(...)
+  );
 } catch (error) {
   log.warning('Worker failed, falling back to main thread');
   result = mainThreadImplementation(...);
@@ -193,9 +206,9 @@ try {
 
 ## Migration Guide
 
-### Phase 1 (COMPLETE): All Loaders Use RangeLoader
+### All Loaders Use RangeLoader
 
-All three spatial index loaders have been migrated to use RangeLoader:
+All three spatial index loaders use RangeLoader:
 
 **Loaders Migrated:**
 
@@ -252,7 +265,7 @@ Lines and GSplats loaders always output Float32Array for colors. While Python's
 `LoadedLinesData.colors` and `LoadedGSplatsData.colors` only allow Float32Array.
 This is a design decision - updating would require type changes across the codebase.
 
-### Phase 2 (COMPLETE): TransferableAccumulator
+### TransferableAccumulator
 
 Enable zero-allocation + CPU offload:
 
@@ -283,7 +296,7 @@ accumulator.adopt(result.outputBuffers);
 - Enables BOTH accumulator pattern AND worker CPU offload
 - Buffers cycle between main thread and worker without copying
 
-### Phase 3 (FUTURE): Unified Base Class
+### (Future) Unified Base Class
 
 All loaders extend base class:
 

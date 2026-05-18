@@ -11,16 +11,16 @@
  * - points.ts      -> points.rs
  * - lines.ts       -> lines.rs
  * - gsplats.ts     -> gsplats.rs
- * - effective_radii.ts -> effective_radii.rs
+ * - effective-radii.ts -> effective_radii.rs
  * - decode.ts      -> decode.rs
- * - lines_clipping.ts -> lines_clipping.rs
+ * - lines-clipping.ts -> lines_clipping.rs
  */
 
 export { query_chunks_for_view } from './spatial';
 export { compute_nd_visibility_points } from './points';
 export { compute_nd_visibility_lines } from './lines';
 export { compute_nd_visibility_gsplats } from './gsplats';
-export { calculate_effective_radii } from './effective_radii';
+export { calculate_effective_radii } from './effective-radii';
 export {
   decode_quantized_u8,
   decode_quantized_u16,
@@ -46,7 +46,7 @@ export {
   compute_gsplats_attenuation,
   extract_visible_cholesky_3d,
   compact_attenuated_amplitudes,
-} from './gsplats_processing';
+} from './gsplats-processing';
 export {
   clip_segment_single,
   clip_segments_batch,
@@ -58,7 +58,7 @@ export {
   interpolate_colors_batch,
   calculate_segment_lengths,
   mark_clipped_endpoints,
-} from './lines_clipping';
+} from './lines-clipping';
 
 // Re-export as a module class for compatibility with WasmModule interface
 import type { WasmModule } from '../types';
@@ -66,7 +66,7 @@ import { query_chunks_for_view } from './spatial';
 import { compute_nd_visibility_points } from './points';
 import { compute_nd_visibility_lines } from './lines';
 import { compute_nd_visibility_gsplats } from './gsplats';
-import { calculate_effective_radii } from './effective_radii';
+import { calculate_effective_radii } from './effective-radii';
 import {
   decode_quantized_u8,
   decode_quantized_u16,
@@ -91,7 +91,7 @@ import {
   compute_gsplats_attenuation,
   extract_visible_cholesky_3d,
   compact_attenuated_amplitudes,
-} from './gsplats_processing';
+} from './gsplats-processing';
 import {
   clip_segment_single,
   clip_segments_batch,
@@ -103,7 +103,7 @@ import {
   interpolate_colors_batch,
   calculate_segment_lengths,
   mark_clipped_endpoints,
-} from './lines_clipping';
+} from './lines-clipping';
 
 /**
  * TypeScript fallback class implementing WasmModule interface.

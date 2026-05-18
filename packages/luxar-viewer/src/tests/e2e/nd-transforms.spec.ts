@@ -14,7 +14,7 @@
  *   - At world time=3: ~0 points (neither group has data here)
  */
 
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { waitForLuxarReady, getLuxarState, waitForDataLoaded, waitForNextRender } from './helpers';
 
 // Fixture URL — served by the Python HTTP server (port 9000) from project root
@@ -68,8 +68,10 @@ test.describe('nD Transforms', () => {
       await waitForNextRender(page, 2);
     }
 
-    // Wait for data to settle after navigation
-    await page.waitForTimeout(1000);
+    // Wait for the post-navigation re-load (worker projection + chunk
+    // fetches) to settle. waitForDataLoaded watches state.isLoading,
+    // which is the actual signal here.
+    await waitForDataLoaded(page);
     await waitForNextRender(page, 2);
 
     const stateAtTime5 = await getLuxarState(page);
@@ -99,7 +101,9 @@ test.describe('nD Transforms', () => {
       await waitForNextRender(page, 2);
     }
 
-    await page.waitForTimeout(1000);
+    // Same as above — wait for the post-navigation worker round-trip
+    // rather than a fixed sleep.
+    await waitForDataLoaded(page);
     await waitForNextRender(page, 2);
 
     const state = await getLuxarState(page);

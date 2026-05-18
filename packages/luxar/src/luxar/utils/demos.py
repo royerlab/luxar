@@ -299,9 +299,7 @@ def load_precomputed_bundle(
             _validate_lfs_files([bundle_path])
             aprint(f"Extracting {len(missing)} files from {bundle_name}")
             with zipfile.ZipFile(bundle_path, "r") as zf:
-                safe_members = [
-                    m for m in zf.namelist() if not zf.getinfo(m).is_dir()
-                ]
+                safe_members = [m for m in zf.namelist() if not zf.getinfo(m).is_dir()]
                 for fname in missing:
                     requested_path = _validate_zip_member_path(fname)
                     # Files may be at top level or inside a directory in the zip.

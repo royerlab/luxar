@@ -9,6 +9,7 @@ import pytest
 import zarr
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler, transforms
+from luxar.encoding import ArrayDecoder
 
 
 class TestCompilerIntegration:
@@ -90,6 +91,70 @@ class TestCompilerIntegration:
         stored_dims = store.attrs["scene_dimensions"]
         assert len(stored_dims["dimensions"]) == 5
         assert stored_dims["dimensions"][3]["name"] == "time"
+
+    def test_array_ref_positions_keep_logical_broadcast_counts(self, tmp_path) -> None:
+        """Scalar attrs must broadcast to logical count when positions are array_ref."""
+        output_path = tmp_path / "test.zarr"
+        positions = np.array(
+            [
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+            ],
+            dtype=np.float32,
+        )
+        colors = np.array(
+            [
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+                [1.0, 1.0, 0.0],
+            ],
+            dtype=np.float32,
+        )
+
+        with LuxarZarrCompiler(output_path, enable_spatial_index=False) as compiler:
+            compiler.create_scene(dimensions=Dimensions.default_3d())
+            compiler.write_points(
+                "source",
+                positions,
+                colors=colors,
+                radii=np.arange(1, 5, dtype=np.float32),
+            )
+            compiler.write_points(
+                "ref_with_scalars",
+                positions,
+                colors=(0.25, 0.5, 0.75),
+                radii=0.5,
+                sharpness=2.0,
+            )
+            compiler.write_points(
+                "ref_with_colormap",
+                positions,
+                radii=0.5,
+                scalars=1.25,
+                colormap="viridis",
+            )
+
+        store = zarr.open_group(output_path, mode="r")
+        assert store["ref_with_scalars/positions"].shape == (0, 3)
+        assert (
+            store["ref_with_scalars/positions"].attrs["encoding"]["name"] == "array_ref"
+        )
+
+        for path in (
+            "ref_with_scalars/colors",
+            "ref_with_scalars/radii",
+            "ref_with_scalars/sharpnesses",
+            "ref_with_colormap/radii",
+            "ref_with_colormap/scalars",
+        ):
+            enc = store[path].attrs["encoding"]
+            assert enc["name"] == "broadcasted"
+            assert enc["n_elements"] == len(positions)
+            decoded = ArrayDecoder().decode(store[path], store)
+            assert decoded.shape[0] == len(positions)
 
     def test_hdr_colors_and_attributes(self, tmp_path) -> None:
         """Test HDR colors and rendering attributes."""

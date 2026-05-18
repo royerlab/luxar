@@ -247,6 +247,11 @@ vi.mock('../rendering/post-processing', () => ({
     dispose: vi.fn(),
     updateBloomParams: vi.fn(),
     setEnabled: vi.fn(),
+    // Required by WebGLContextRecovery's restore handler — without it, the
+    // context-restored callback throws inside its try/catch and the
+    // downstream markSceneResourcesDirtyForContextRestore + onContextRestored
+    // calls never run.
+    rebuildAfterContextRestore: vi.fn(),
   })),
 }));
 
@@ -289,21 +294,35 @@ vi.mock('../../../data', () => ({
   }),
   // Need to provide other exports from the module
   SceneLoader: vi.fn(),
-  PointSpatialIndexLoader: vi.fn(),
+  PointsSpatialIndexLoader: vi.fn(),
   updateView: vi.fn(),
   updateSceneForDimensions: vi.fn(),
   dispose: vi.fn(),
 }));
 
-// Mock UI helpers module
-vi.mock('../../../ui/helpers', () => ({
-  showLoadingIndicator: vi.fn().mockReturnValue({
-    id: 'loading-indicator',
-    remove: vi.fn(),
-  }),
-  hideLoadingIndicator: vi.fn(),
-  showError: vi.fn(),
+// SceneManager now talks to UI feedback through `notifier`. Mock the
+// notifier surface so tests can assert on showLoading/hideLoading/error.
+// vi.mock hoists, so the spies must come from vi.hoisted to be defined
+// when the factory runs.
+const notifierMocks = vi.hoisted(() => ({
+  showLoading: vi.fn(),
+  hideLoading: vi.fn(),
+  error: vi.fn(),
 }));
+vi.mock('../../../utils/notifier', () => ({
+  notifier: {
+    showLoading: notifierMocks.showLoading,
+    hideLoading: notifierMocks.hideLoading,
+    error: notifierMocks.error,
+    toast: vi.fn(),
+    showHelp: vi.fn(),
+    hideHelp: vi.fn(),
+    clearError: vi.fn(),
+  },
+}));
+const mockShowLoading = notifierMocks.showLoading;
+const mockHideLoading = notifierMocks.hideLoading;
+const mockShowError = notifierMocks.error;
 
 vi.mock('../../../utils/hdr-detection', () => ({
   detectHDRCapabilities: vi.fn(() => ({
@@ -318,11 +337,8 @@ vi.mock('../../../utils/hdr-detection', () => ({
 // Import after mocks are set up
 import { SceneManager } from '../../../scene/scene-manager';
 import { loadScene as mockLoadScene } from '../../../data';
-import {
-  showLoadingIndicator as mockShowLoadingIndicator,
-  hideLoadingIndicator as mockHideLoadingIndicator,
-  showError as mockShowError,
-} from '../../../ui/helpers';
+const mockShowLoadingIndicator = mockShowLoading;
+const mockHideLoadingIndicator = mockHideLoading;
 
 describe('SceneManager', () => {
   let sceneManager: SceneManager;
@@ -470,6 +486,17 @@ describe('SceneManager', () => {
 
       // Second dispose should not throw
       expect(() => sceneManager.dispose()).not.toThrow();
+    });
+
+    it('dispose() clears the colormap texture cache', async () => {
+      const { getColormapTexture } = await import('../../../rendering/colormap-textures');
+      // Touch the cache so there's something to dispose.
+      const beforeTex = getColormapTexture('viridis');
+      sceneManager.dispose();
+      // After dispose, next access returns a fresh instance (cache was cleared).
+      const afterTex = getColormapTexture('viridis');
+      expect(afterTex).toBeDefined();
+      expect(afterTex).not.toBe(beforeTex);
     });
 
     it('should mark geometry attributes and materials dirty on context restore', async () => {
