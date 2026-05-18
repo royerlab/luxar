@@ -33,9 +33,6 @@ import { config as appConfig } from '../../config';
 import { log, Modules } from '../../utils/log';
 import { getWorkerPool } from '../../workers/worker-pool';
 import type { UpdateSession } from '../../profiling/update-profiler';
-import type { GPUBufferPool } from '../../rendering/gpu-buffer-pool';
-import { updateInstancedLinesMesh } from '../../rendering/line-geometry';
-import { invalidateRenderObjectFor } from './invalidate-render-object';
 
 /** Staged data carried between async processing and the GPU commit. */
 export interface StagedLinesCommit {
@@ -212,56 +209,7 @@ export async function processLinesData(
   return { path, processed };
 }
 
-/**
- * Synchronous GPU commit step: write the staged buffers into the
- * mesh's geometry, either via the GPU buffer pool (if enabled) or via
- * `updateInstancedLinesMesh`. Updates `visibleSegmentCount` on the
- * mesh's user-data and logs an info line on a zero-segment frame
- * (slice with no visible content).
- *
- * Must run synchronously inside the atomic commit stage — no async
- * operations allowed.
- */
-export function commitLinesGeometry(
-  staged: StagedLinesCommit,
-  rootGroup: THREE.Group | null,
-  gpuBufferPool: GPUBufferPool | null,
-  session?: UpdateSession
-): void {
-  if (!rootGroup) return;
-
-  const mesh = rootGroup.getObjectByName(staged.path) as THREE.Mesh;
-  if (!mesh || !isLinesUserData(mesh.userData)) return;
-
-  const { processed } = staged;
-
-  const bufferSession = session?.begin('Update Buffers');
-  try {
-    if (gpuBufferPool) {
-      const geometry = gpuBufferPool.acquireLinesGeometry(staged.path, processed.segmentCount);
-      // Capture the acquire's rebuild flag BEFORE updateLinesGeometry,
-      // which may itself trigger a spec-set rebuild (lazy scalar
-      // promotion) and OR onto the same flag.
-      const acquireRebuilt = gpuBufferPool.didLastAcquireRebuildAttributes();
-      gpuBufferPool.updateLinesGeometry(geometry, processed, processed.segmentCount);
-      const updateRebuilt = gpuBufferPool.didLastAcquireRebuildAttributes();
-      mesh.geometry = geometry;
-      if (acquireRebuilt || updateRebuilt) invalidateRenderObjectFor(mesh);
-    } else {
-      updateInstancedLinesMesh(mesh, processed);
-    }
-
-    if (isLinesUserData(mesh.userData)) {
-      mesh.userData.visibleSegmentCount = processed.segmentCount;
-    }
-
-    if (processed.segmentCount === 0) {
-      log.info(
-        Modules.SCENE_LOADER,
-        `Clearing lines for ${staged.path} (no visible segments at current slice)`
-      );
-    }
-  } finally {
-    bufferSession?.end();
-  }
-}
+// commitLinesGeometry moved to ./commit-lines-geometry (step 6 of the
+// god-object refactor). Re-exported here so existing consumers keep
+// working unchanged.
+export { commitLinesGeometry } from './commit-lines-geometry';
