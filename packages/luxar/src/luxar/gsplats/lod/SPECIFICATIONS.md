@@ -1,48 +1,60 @@
 # LOD: Levels-of-Detail for Gaussian Splats
 
-**Version**: 0.1.0
-**Last Updated**: 2026-05-06
-**Scope**: Additive LOD only. Substitutive LOD is planned and lives at the
-scene-graph node level (out of scope for this submodule's first cut).
+**Version**: 0.2.0
+**Last Updated**: 2026-05-07
+**Scope**: Additive LOD (`additive.py`) and Substitutive LOD
+(`substitutive.py`). Both are pure post-processes on a fitted
+`GSplatData`.
 
 ## Overview
 
-Given a fitted `GSplatData` of `N` splats, this module produces a
-multi-level `GSplatData` whose levels are valid prefixes of a principled
-ordering of the original splats. The ladder is consumed by the viewer's
-existing multi-LOD progressive loader without format changes; only the
-*order* of splats inside the LOD groups is changed.
+Given a fitted `GSplatData` of `N` splats, this module produces
+multi-resolution outputs along two complementary axes:
 
-The implementation derives directly from the supplementary document
-`additive_lod` (`luxar-paper/supp_doc/additive_lod/additive_lod.tex`),
-which formalises the additive-LOD problem and proves a
-$(1-1/e)$-approximation guarantee for the greedy / matching-pursuit
-ordering.
+- **Additive** (`additive.py`): same `N` splats, ordered into a
+  multi-level `GSplatData` whose `up_to_lod(k)` is the best $L^2$
+  prefix at any splat budget. Consumed by the viewer's existing
+  multi-LOD progressive loader without format changes.
+- **Substitutive** (`substitutive.py`): each coarser level synthesises
+  $\lceil N/K^\ell\rceil$ representative splats that *replace* the finer
+  level. Returns a Python `list[GSplatData]` (one per level), since the
+  on-disk multi-level container is a future scene-graph-node concern
+  — overloading `GSplatData`'s additive-prefix semantics is deliberately
+  avoided.
+
+The implementations derive from the supplementary documents
+`additive_lod` and `substitutive_lod` (under
+`luxar-paper/supp_doc/`); see References below.
 
 **Related Specifications**:
 
 - Splat container and serialization: `../gsplat_data.py` and
   `../io/SPECIFICATIONS.md`.
-- Substitutive LOD (planned): `substitutive_lod.tex` supp doc; will live
-  at the scene-graph node level, not in this module.
-- Removal LOD: `../culling.py` (`cull_by_contribution`) — distinct
-  operator, kept as-is.
+- Spatial-hash utility: `../../utils/SPECIFICATIONS.md` (used by both
+  axes).
+- Removal LOD: `../culling.py` (`cull_by_contribution`) — a distinct
+  *removal* operator, kept as-is.
 
 ## Dependencies
 
 **Core**:
 
-- NumPy
-- SciPy (`scipy.spatial.cKDTree`, `scipy.sparse`,
-  `scipy.sparse.linalg.eigsh`)
+- NumPy, SciPy (`scipy.sparse`, `scipy.sparse.linalg.eigsh`).
+- PyTorch (CUDA / MPS / CPU; required by `substitutive.py` and the
+  shared kernels).
+- `luxar.utils.spatial_hash.BatchedSpatialHashGrid` for radius / k-NN
+  queries (used by both axes; CUDA / MPS / CPU with conservative
+  fallback).
 
 **Internal reuse**:
 
-- `luxar.gsplats.gsplat_data.GSplatData` / `GSplatLOD`
-- `luxar.gsplats.gsplat_data._SplatArrayMixin._cholesky_diag_elements`
-- `luxar.gsplats.utils.trils.unpack_tril`
-
-No PyTorch, no GPU. Pure CPU.
+- `luxar.gsplats.gsplat_data.GSplatData` / `GSplatLOD`.
+- `luxar.gsplats.gsplat_data._SplatArrayMixin._cholesky_diag_elements`.
+- `luxar.gsplats.utils.trils.{pack_tril, unpack_tril}`.
+- `luxar.gsplats.utils.device.resolve_torch_device`.
+- `luxar.gsplats.lod._kernels` — closed-form $K_{ij}$, $K$-wise moment
+  match, $L^2$-optimal amplitude, bin residual energy. NumPy variant
+  feeds the additive sparse Gram; PyTorch variant feeds substitutive.
 
 ## Mathematical Formulation
 
@@ -269,33 +281,135 @@ ladder = make_additive_lod(data, method="self_energy", n_lods=4)
 - For $N \gtrsim 10^6$ recommend `method="self_energy"`.
 - The dense path at $N \leq 2000$ uses ~32 MB Gram; well within memory.
 
+## Substitutive LOD (`substitutive.py`)
+
+### Problem
+
+Given a fitted `GSplatData` of $N$ splats, produce a hierarchy of
+coarser levels in which each level $\ell$ has $\Mlev_\ell = \lceil N/K^\ell\rceil$
+*synthesised representative* splats that replace the level-$\ell-1$
+splats. This is a substitutive LOD per supp doc
+`substitutive_lod.tex`. The two subproblems are:
+
+1. **Per-bin merge.** Given a bin $\mathcal{S}_j$ of $\KK$ original
+   splats, find the single splat $\rep_j$ that best approximates
+   $\sum_{i\in\mathcal{S}_j}\phi_i$ in $L^2$. Closed form via
+   moment matching + $L^2$-optimal amplitude (supp doc Prop. 2.1–2.2).
+2. **Bin assignment.** Find the partition that minimises the global
+   $L^2$ error $\|f - g\|^2 = \sum_j \|r_j\|^2 + 2\sum_{j<k}\langle
+   r_j, r_k\rangle$. The cross-bin interference term vanishes for
+   spatially-decoupled bins (supp doc §3.1, Experiment A).
+
+### $K$-wise moment-matched merge
+
+Per the supp doc Prop. 2.1, the moment-matched representative for a bin
+$\mathcal{S}_j$ has
+
+$$
+\bar\mu_j = \sum_{i\in\mathcal{S}_j} w_i^{(j)}\,\mu_i,
+\quad
+\bar\Sigma_j = \sum_i w_i^{(j)} \Sigma_i + \sum_i w_i^{(j)} (\mu_i - \bar\mu_j)(\mu_i - \bar\mu_j)^\top
+$$
+
+with mass weights $w_i^{(j)} = m_i / \sum_{k} m_k$ where
+$m_i = a_i (2\pi)^{D/2} |\Sigma_i|^{1/2}$. The $L^2$-optimal amplitude
+(Prop. 2.2):
+
+$$
+\bar a_j^\star = \frac{\langle f_{\mathcal{S}_j}, \bar G_j\rangle}{\|\bar G_j\|^2}
+$$
+
+where $\bar G_j$ is the unit-amplitude template at $(\bar\mu_j,
+\bar\Sigma_j)$. The corresponding bin residual energy
+
+$$
+E_j^\star = \|f_{\mathcal{S}_j}\|^2 - \frac{|\langle f_{\mathcal{S}_j}, \bar G_j\rangle|^2}{\|\bar G_j\|^2}
+$$
+
+is the per-bin contribution to the partition cost (supp doc Eq. (2.5)).
+
+### Algorithms
+
+| Method          | Warm start                   | Refinement              |
+|-----------------|------------------------------|-------------------------|
+| `kmeans`        | k-means++ on splat means     | none                    |
+| `kmeans_lloyd`  | k-means++ on splat means     | cost-increment Lloyd    |
+| `greedy`        | bottom-up Runnalls merge     | none                    |
+| `greedy_lloyd`  | bottom-up Runnalls merge     | cost-increment Lloyd    |
+
+**Cost-increment Lloyd refinement** (supp doc Algorithm 4.3): for each
+splat $i$ in random order:
+
+1. Compute the change $\Delta_b(i) = [E_a(\mathcal{S}_a\setminus\{i\}) +
+   E_b(\mathcal{S}_b\cup\{i\})] - [E_a + E_b]$ for each candidate bin
+   $b\neq a$, where $a$ is $i$'s current bin.
+2. Move $i$ to $\mathrm{argmin}_b \Delta_b(i)$ if the minimum is
+   negative.
+
+Candidate bins are pruned spatially via
+`BatchedSpatialHashGrid.query_knn` (top-`candidate_bins_k` nearest bin
+centres), making each iteration $\mathcal{O}(N \cdot k \cdot \bar K^2)$
+in expectation.
+
+### Output container
+
+`make_substitutive_lod(...)` returns a Python `list[GSplatData]` of
+length `levels + 1`. Index 0 is the (flattened) input; subsequent
+indices are flat `GSplatData` objects (each with `n_lods=1`). Each
+level's `stats` carries `lod_kind="substitutive"`, `level`,
+`compression_factor`, `method`, and `n_splats`.
+
+The CLI (`luxar gsplat lod substitutive in.gsplats.zarr out_dir/`)
+serialises one `.gsplats.zarr` per level under `out_dir/` plus a
+`manifest.json` describing the hierarchy.
+
+### Empirical validation
+
+The demo `demos/demo_substitutive_lod_dapi.py` reproduces the supp doc
+Experiment C result on the IDR DAPI volume (903-splat fit, 64³
+resolution): substitutive LOD with `kmeans_lloyd` beats amplitude
+culling at every level by 5–6 dB PSNR and ~0.3–0.4 in relative $L^2$
+error.
+
 ## Future Extensions
 
-- **GPU sparse-Gram**: PyTorch / CUDA implementation of the closed-form
-  $\mathbf{G}_{ij}$ formula and lazy-greedy. Out of scope for this
-  module's first cut.
-- **Substitutive LOD**: at the scene-graph node level. Out of scope here.
-- **View-conditioned ordering**: pair greedy with view-frustum
-  filtering for interactive viewers (PRoGS-style).
+- **GPU sparse-Gram for additive**: a PyTorch / CUDA implementation of
+  the closed-form $\mathbf{G}_{ij}$ formula plus lazy-greedy. Currently
+  CPU only.
+- **Joint relaxation polish for substitutive**: gradient descent over
+  all $\Mlev$ representative parameters (supp doc §4.4) — relaxes the
+  partition constraint while keeping the "$\Mlev$ Gaussians" constraint.
+  Marked as future work in the supp doc.
+- **Cauchy–Schwarz / $W_2$ alternative cost metrics for substitutive**:
+  the supp doc discusses these; we ship $L^2$ only.
+- **View-conditioned ordering for additive**: pair greedy with
+  view-frustum filtering for interactive viewers (PRoGS-style).
 - **Stochastic greedy** (Mirzasoleiman et al. 2015): trades a slightly
   weaker $1-1/e-\epsilon$ bound for near-linear time.
 
 ## References
 
 - Supp. Doc. `additive_lod` (`luxar-paper/supp_doc/additive_lod/`).
+- Supp. Doc. `substitutive_lod` (`luxar-paper/supp_doc/substitutive_lod/`).
 - Nemhauser, Wolsey & Fisher (1978).
 - Mallat & Zhang (1993) — matching pursuit.
 - Minoux (1978) — accelerated greedy.
+- Lloyd (1982) — k-means iteration.
+- Runnalls (2007) — Gaussian mixture reduction by hierarchical merging.
 
 ## Glossary
 
 - **Additive LOD** — same `N` splats, ordered for prefix-monotone
-  fidelity. This module.
-- **Substitutive LOD** — `M < N` synthesised representative splats per
-  coarser level. Not implemented here.
+  fidelity. This module's `additive.py`.
+- **Substitutive LOD** — $\Mlev = \lceil N/K^\ell\rceil$ synthesised
+  representative splats per coarser level. This module's
+  `substitutive.py`.
 - **Removal LOD** — subset selection without synthesis or ordering;
-  implemented in `cull_by_contribution`.
+  implemented in `cull_by_contribution` (separate module).
 - **Gram matrix** — pairwise $L^2$ inner products of the splats.
 - **Tail-row-sum** $\sigma_i$ — running sum of the unchosen entries in
   row $i$ of the Gram matrix; the marginal gain of adding splat $i$ is
   $2\sigma_i - \mathbf{G}_{ii}$.
+- **Cost-increment Lloyd** — substitutive Lloyd variant whose
+  dissimilarity is the per-bin merge-cost increment, not Euclidean
+  distance (supp doc Algorithm 4.3).

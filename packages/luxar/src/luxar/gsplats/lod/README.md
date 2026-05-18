@@ -1,33 +1,39 @@
 # Levels-of-Detail for Gaussian Splats
 
-Post-processing operators that turn a fitted `GSplatData` into a streamable
-LOD ladder. Currently provides **additive** LOD; **substitutive** LOD is
-planned (see `additive_lod.tex` and `substitutive_lod.tex` supplementary
-documents).
+Post-processing operators that turn a fitted `GSplatData` into a
+multi-resolution representation. Two complementary axes are implemented:
 
-## Overview
-
-Two complementary LOD axes:
-
-- **Additive** — same `N` splats, ordered so that the prefix sum at any
-  `k` splats is the best $L^2$ approximation of the full scene at that
-  budget. Implemented in `additive.py`.
-- **Substitutive** — synthesised representative splats per coarser level
-  via mixture reduction. Not yet implemented.
+- **Additive** (`additive.py`) — same `N` splats, ordered so that the
+  prefix sum at any `k` splats is the best $L^2$ approximation. Streaming
+  / progressive-refinement use case.
+- **Substitutive** (`substitutive.py`) — each coarser level synthesises
+  $\lceil N/K^\ell \rceil$ representative splats that *replace* the
+  finer level. Real geometry / memory compression. Built on the
+  $K$-wise moment-matched merge with $L^2$-optimal amplitude (supp doc
+  `substitutive_lod.tex` Prop. 2.1–2.2) plus cost-increment Lloyd
+  refinement (Algorithm 4.3).
 
 This module is a **pure post-process**. Fitting (single-pass or
-progressive) returns a single flattened `GSplatData`; an LOD ladder is
-built only on demand.
+progressive) returns a single flattened `GSplatData`; an LOD hierarchy
+is built only on demand.
 
 ## Quick start
 
 ```python
-from luxar.gsplats.lod import make_additive_lod
+from luxar.gsplats.lod import make_additive_lod, make_substitutive_lod
 from luxar.gsplats.gsplat_data import GSplatData
 
 data = GSplatData.load("fit.gsplats.zarr")          # single-LOD
-lod  = make_additive_lod(data, n_lods=4)            # 4-level ladder
-lod.save("lod.gsplats.zarr")
+
+# ── Additive: same N splats, prefix-monotone
+ladder = make_additive_lod(data, n_lods=4)          # multi-LOD GSplatData
+ladder.save("additive_lod.gsplats.zarr")
+
+# ── Substitutive: ceil(N/K^L) splats per level, replacement hierarchy
+levels = make_substitutive_lod(data, compression_factor=4, levels=3)
+# levels is a list[GSplatData]; each is flat (n_lods=1)
+for L, lev in enumerate(levels):
+    lev.save(f"sub_lod_level_{L}.gsplats.zarr")
 ```
 
 ## API
@@ -112,10 +118,69 @@ The reference Luxar dataset benchmarks from `additive_lod` Experiment C:
 - The on-disk format is unchanged — the multi-LOD output is consumed by
   the existing viewer-side progressive loader without modification.
 
+## Substitutive LOD (`substitutive.py`)
+
+Each coarser level synthesises $M = \lceil N/K \rceil$ representative
+splats per the supp doc `substitutive_lod.tex`:
+
+```python
+make_substitutive_lod(
+    data: GSplatData,
+    *,
+    compression_factor: int = 4,        # K
+    levels: int = 3,                    # L (coarser levels to produce)
+    method: str = "kmeans_lloyd",       # see "Substitutive methods" below
+    lloyd_iterations: int = 5,
+    candidate_bins_k: int = 12,
+    device: str = "auto",               # auto | cpu | cuda | mps
+    seed: int | None = None,
+) -> list[GSplatData]
+```
+
+Returns `levels + 1` flat `GSplatData` objects:
+`[level_0=data, level_1, ..., level_L]` with splat counts
+`[N, ⌈N/K⌉, ⌈N/K²⌉, …, ⌈N/K^L⌉]`. Each level is a standalone single-LOD
+zarr (the on-disk multi-level container is a future scene-graph node).
+
+### Substitutive methods
+
+| Method          | Warm start        | Refinement        | Recommended for                                |
+|-----------------|-------------------|-------------------|------------------------------------------------|
+| `kmeans`        | k-means++ on means | none              | ablation only — *worse than amplitude culling on real anisotropic data*      |
+| `kmeans_lloyd`  | k-means++ on means | cost-increment Lloyd | **recommended workhorse**. Beats amplitude culling at every $K$ on supp-doc Experiment C |
+| `greedy`        | Runnalls hierarchical | none           | small/medium $N$ where $\mathcal{O}(N^2)$ is acceptable. Quality-leading at small $K$ |
+| `greedy_lloyd`  | Runnalls hierarchical | cost-increment Lloyd | quality-leaning option for small/medium $N$  |
+
+### Performance
+
+- All warm-start k-means and per-iteration top-k bin-candidate lookups
+  run on PyTorch via `device='auto'` and the
+  `BatchedSpatialHashGrid` from `luxar.utils.spatial_hash` (CUDA / MPS /
+  CPU; conservative fallback on OOM).
+- Lloyd's per-splat sequential update is honest about its cost: the
+  per-iteration work is $\mathcal{O}(N \cdot k \cdot \bar{K}^2)$ with
+  $k$ = candidate bins and $\bar{K} = N/M$ the average bin size. For
+  typical Luxar workloads ($N \approx 10^5{-}10^6$, $K = 4$,
+  $\bar K = 4$), this is fast.
+- Greedy with spatial-hash candidate pruning is still $\mathcal{O}(N^2)$
+  worst case; use only at small/medium $N$ (≤ a few thousand).
+
+### Out of scope (this round)
+
+- Joint relaxation polish (gradient descent over all $M$ Gaussians).
+- Cauchy–Schwarz divergence and $W_2$ alternative cost metrics
+  (the supp doc settles on $L^2$ as the primary objective).
+- Scene-graph node integration of the multi-level container.
+
 ## References
 
 - Supp. Doc. `additive_lod` (`luxar-paper/supp_doc/additive_lod/`):
   formal derivation, $(1-1/e)$ bound, complexity, real-data experiments.
+- Supp. Doc. `substitutive_lod` (`luxar-paper/supp_doc/substitutive_lod/`):
+  $K$-wise moment match, $L^2$-optimal amplitude, cost-increment Lloyd,
+  spectral lower bound; Experiment C settles the algorithm choice.
 - Nemhauser, Wolsey & Fisher (1978) — submodular greedy approximation.
 - Mallat & Zhang (1993) — matching pursuit.
 - Minoux (1978) — accelerated greedy via marginal-gain laziness.
+- Lloyd (1982) — k-means clustering iteration.
+- Runnalls (2007) — Gaussian mixture reduction via greedy hierarchical merging.
