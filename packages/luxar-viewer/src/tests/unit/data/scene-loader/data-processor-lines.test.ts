@@ -42,9 +42,7 @@ vi.mock('../../../../config', () => ({
 
 import {
   processLinesData,
-  commitLinesGeometry,
   projectLinesTo3DUsingWorker,
-  type StagedLinesCommit,
 } from '../../../../data/scene-loader/data-processor-lines';
 import type { LoadedLinesData, ProcessedLinesData } from '../../../../types/lines';
 
@@ -226,27 +224,8 @@ describe('processLinesData', () => {
   });
 });
 
-describe('commitLinesGeometry', () => {
-  it('no-ops when rootGroup is null', () => {
-    const staged: StagedLinesCommit = { path: '/lines', processed: makeProcessed() };
-    expect(() => commitLinesGeometry(staged, null, null)).not.toThrow();
-  });
-
-  it('no-ops silently when the mesh has gone missing', () => {
-    const root = new THREE.Group();
-    const staged: StagedLinesCommit = { path: '/missing', processed: makeProcessed() };
-    expect(() => commitLinesGeometry(staged, root, null)).not.toThrow();
-  });
-
-  it('writes visibleSegmentCount on the mesh userData', () => {
-    const root = new THREE.Group();
-    const mesh = makeMesh('/lines');
-    root.add(mesh);
-    const staged: StagedLinesCommit = { path: '/lines', processed: makeProcessed(7) };
-    commitLinesGeometry(staged, root, null);
-    expect(mesh.userData.visibleSegmentCount).toBe(7);
-  });
-});
+// commitLinesGeometry tests moved to commit-lines-geometry.test.ts
+// alongside the extracted module (step 6 of the god-object refactor).
 
 describe('projectLinesTo3DUsingWorker', () => {
   it('returns the worker result mapped to ProcessedLinesData on success', async () => {

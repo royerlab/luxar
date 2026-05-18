@@ -42,9 +42,7 @@ vi.mock('../../../../config', () => ({
 
 import {
   processGSplatsData,
-  commitGSplatsGeometry,
   projectGSplatsTo3DUsingWorker,
-  type StagedGSplatsCommit,
 } from '../../../../data/scene-loader/data-processor-gsplats';
 import type { LoadedGSplatsData, GSplatsViewState } from '../../../../types/gsplats';
 
@@ -182,34 +180,8 @@ describe('processGSplatsData', () => {
   });
 });
 
-describe('commitGSplatsGeometry', () => {
-  function makeStaged(splatCount = 5): StagedGSplatsCommit {
-    return {
-      path: '/g',
-      processed: makeProcessed(splatCount),
-      cholesky01: new Float32Array(),
-      cholesky23: new Float32Array(),
-      cholesky45: new Float32Array(),
-    };
-  }
-
-  it('no-ops when rootGroup is null', () => {
-    expect(() => commitGSplatsGeometry(makeStaged(), null, null)).not.toThrow();
-  });
-
-  it('no-ops silently when mesh has gone missing', () => {
-    expect(() => commitGSplatsGeometry(makeStaged(), new THREE.Group(), null)).not.toThrow();
-  });
-
-  it('writes visibleSplatCount on the mesh user-data', () => {
-    const root = new THREE.Group();
-    const mesh = makeMesh('/g');
-    root.add(mesh);
-    commitGSplatsGeometry(makeStaged(11), root, null);
-    expect((mesh.userData as { visibleSplatCount: number }).visibleSplatCount).toBe(11);
-    expect(mockUpdateInstancedMesh).toHaveBeenCalledTimes(1);
-  });
-});
+// commitGSplatsGeometry tests moved to commit-gsplats-geometry.test.ts
+// alongside the extracted module (step 6 of the god-object refactor).
 
 describe('projectGSplatsTo3DUsingWorker', () => {
   it('returns mapped worker result on success', async () => {

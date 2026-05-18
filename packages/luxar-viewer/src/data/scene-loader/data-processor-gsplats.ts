@@ -20,14 +20,12 @@
 
 import * as THREE from 'three';
 import { projectGSplats } from '../gsplats/projection';
-import { updateInstancedGSplatsMesh, packCholeskyForShader } from '../../rendering/gsplat-geometry';
-import type { LoadedGSplatsData, GSplatsUserData, GSplatsViewState } from '../../types/gsplats';
+import { packCholeskyForShader } from '../../rendering/gsplat-geometry';
+import type { LoadedGSplatsData, GSplatsViewState } from '../../types/gsplats';
 import { config as appConfig } from '../../config';
 import { log, Modules } from '../../utils/log';
 import { getWorkerPool } from '../../workers/worker-pool';
 import type { UpdateSession } from '../../profiling/update-profiler';
-import type { GPUBufferPool } from '../../rendering/gpu-buffer-pool';
-import { invalidateRenderObjectFor } from './invalidate-render-object';
 
 /** Default truncation radius if the mesh material doesn't expose one. */
 const DEFAULT_TRUNCATE = 3.0;
@@ -226,75 +224,7 @@ export async function processGSplatsData(
   return { path, processed, cholesky01, cholesky23, cholesky45 };
 }
 
-/**
- * Synchronous GPU commit step: write the staged buffers into the
- * mesh's geometry, either via the GPU buffer pool (if enabled) or via
- * `updateInstancedGSplatsMesh`. Updates `visibleSplatCount` on the
- * mesh's user-data and logs an info line on a zero-splat frame.
- *
- * Must run synchronously inside the atomic commit stage.
- */
-export function commitGSplatsGeometry(
-  staged: StagedGSplatsCommit,
-  rootGroup: THREE.Group | null,
-  gpuBufferPool: GPUBufferPool | null,
-  session?: UpdateSession
-): void {
-  if (!rootGroup) return;
-
-  const mesh = rootGroup.getObjectByName(staged.path) as THREE.Mesh;
-  if (!mesh || mesh.userData?.nodeType !== 'gsplats') return;
-
-  const { processed, cholesky01, cholesky23, cholesky45 } = staged;
-
-  const bufferSession = session?.begin('Update Buffers');
-  try {
-    if (gpuBufferPool) {
-      const geometry = gpuBufferPool.acquireGSplatsGeometry(staged.path, processed.splatCount);
-      const attributesRebuilt = gpuBufferPool.didLastAcquireRebuildAttributes();
-      const truncationRadius = readTruncate(mesh);
-      gpuBufferPool.updateGSplatsGeometry(
-        geometry,
-        {
-          centers3D: processed.centers3D,
-          amplitudes: processed.amplitudes,
-          cholesky01,
-          cholesky23,
-          cholesky45,
-          colors: processed.colors,
-          splatCount: processed.splatCount,
-        },
-        processed.splatCount,
-        truncationRadius
-      );
-      mesh.geometry = geometry;
-      // Pool rebuilt the geometry's InstancedInterleavedBuffer; evict
-      // Three's cached RenderObject so its `vertexBuffers` set is
-      // rebuilt against the new buffer next draw.
-      if (attributesRebuilt) invalidateRenderObjectFor(mesh);
-    } else {
-      updateInstancedGSplatsMesh(mesh, {
-        centers: processed.centers3D,
-        cholesky01,
-        cholesky23,
-        cholesky45,
-        amplitudes: processed.amplitudes,
-        colors: processed.colors,
-        splatCount: processed.splatCount,
-      });
-    }
-
-    if (mesh.userData) {
-      (mesh.userData as GSplatsUserData).visibleSplatCount = processed.splatCount;
-    }
-
-    if (processed.splatCount === 0) {
-      log.info(
-        Modules.SCENE_LOADER,
-        `Clearing gsplats for ${staged.path} (no visible splats at current slice)`
-      );
-    }
-  } finally {
-    bufferSession?.end();
-  }
-}
+// commitGSplatsGeometry moved to ./commit-gsplats-geometry (step 6 of
+// the god-object refactor). Re-exported here so existing consumers
+// keep working unchanged.
+export { commitGSplatsGeometry } from './commit-gsplats-geometry';
