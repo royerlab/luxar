@@ -877,12 +877,22 @@ export class LuxarApp {
       sceneLoader.nodeFactory.registerExistingSceneNodes(root);
     }
 
+    // Gate picks on overlay visibility — if no hover overlay is visible,
+    // there's no consumer for the pick result, so skip the work entirely.
+    this.pickingSystem.setShouldPick(() => this.overlayManager?.hasVisibleHoverOverlay() ?? false);
+
     // DOM events go through EventGroup.on(); Three.js EventDispatcher events
     // (controls, sceneManager) use add() with a manual remove closure since
     // their addEventListener/removeEventListener signatures aren't EventTarget.
+    // The picking handler never preventDefaults, so register the mousemove
+    // listener as `passive: true` (browser-hint optimization).
     const canvas = this.sceneManager.renderer.domElement;
     const handler = (e: MouseEvent) => this.pickingSystem?.onMouseMove(e);
-    this.pickingEvents.on(canvas, 'mousemove', handler);
+    this.pickingEvents.on(canvas, 'mousemove', handler, { passive: true });
+    // mouseleave drops the pending cursor so the camera-settle re-pick
+    // path doesn't fire when the cursor isn't over the viewer.
+    const leaveHandler = (): void => this.pickingSystem?.onMouseLeave();
+    this.pickingEvents.on(canvas, 'mouseleave', leaveHandler, { passive: true });
 
     const dirtyHandler = () => this.pickingSystem?.markDirty();
     this.sceneManager.controls.addEventListener('change', dirtyHandler);
@@ -1042,6 +1052,14 @@ export class LuxarApp {
         return SceneLoaderManager.getInstance();
       },
 
+      // Live accessors for the picking + overlay subsystems. Both are
+      // disposed and reconstructed across dataset reloads, so a direct
+      // snapshot would go stale; the accessor pattern always returns
+      // the current instance (or undefined before init / between
+      // disposals).
+      getPickingSystem: () => this.pickingSystem,
+      getOverlayManager: () => this.overlayManager,
+
       // Cache-specific helpers — thin wrappers over the SceneLoader cache
       // API. Implementation lives in `core/debug-cache-helpers.ts` so the
       // not-found / no-cache / success branches can be unit-tested
@@ -1070,9 +1088,8 @@ export class LuxarApp {
         seed?: number;
       }) => {
         const { generateSyntheticLines } = await import('../scene/synthetic-scene');
-        const { createInstancedLinesMesh, isAllSharpnessTwo } = await import(
-          '../rendering/line-geometry'
-        );
+        const { createInstancedLinesMesh, isAllSharpnessTwo } =
+          await import('../rendering/line-geometry');
         const { materialManager } = await import('../rendering/material-manager');
         const cfg = generateSyntheticLines(spec);
         // Build the visual material directly through the

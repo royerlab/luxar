@@ -2,19 +2,29 @@
  * GPU Picking System for Luxar.
  *
  * Orchestrates the picking pipeline:
- * 1. Debounced mousemove triggers a pick
- * 2. If dirty: re-render ALL registered nodes to cached RGBA32F pick buffer (half-res)
- * 3. Ray-BBox culling to skip readback if cursor is in empty space
- * 4. Readback 5×5 pixels at cursor + brightness-weighted majority voting
- * 5. Callback with winning (nodeId, elementId) or null
+ * 1. Mousemove records the cursor position and schedules a settle
+ *    check on the next animation frame.
+ * 2. A pick fires only when BOTH the mouse and the pick-buffer
+ *    (camera/geometry) have been stable for `HOVER_SETTLE_MS`. This
+ *    "two-axis settle" mirrors the drag-suppression UX: tooltips
+ *    appear when the world is quiet and hide whenever anything is
+ *    moving. Moving the cursor over a static scene costs nothing; a
+ *    stationary cursor during animation gets no stale tooltip.
+ * 3. If the buffer is dirty when the pick fires, ALL registered pick
+ *    nodes are rendered to a cached RGBA32F target at half-res.
+ * 4. Ray-AABB culling (using a per-node cached world AABB) skips the
+ *    readback when the cursor is over empty space.
+ * 5. Readback of a 5×5 region followed by brightness-weighted
+ *    majority voting picks the winning (nodeId, elementId).
  *
  * The pick buffer encodes: R=nodeId, G=elementId, B=brightness, A=1.0
  * Brightness-as-depth (gl_FragDepth = 1 - brightness) ensures the
  * brightest element at each pixel wins the depth test.
  *
  * Caching: the pick buffer is only re-rendered when dirty (camera move,
- * geometry update, window resize). Hover events just readback from the
- * cached buffer — zero GPU cost per hover.
+ * geometry update, window resize). World AABBs are cached per node and
+ * survive camera motion — only register/unregister or geometry commit
+ * invalidates them.
  */
 
 import * as THREE from 'three';
@@ -71,41 +81,75 @@ export function computePickBufferSize(drawW: number, drawH: number): { w: number
   return { w, h };
 }
 
-/** Debounce delay in milliseconds before triggering a pick re-render. */
-const DEBOUNCE_MS = 10;
+/**
+ * Two-axis settle window in milliseconds. A pick fires only after BOTH
+ * the mouse and the pick buffer (camera/geometry) have been stable for
+ * this long. 120 ms matches the standard tooltip-appearance delay used
+ * by browsers and IDEs — short enough to feel responsive, long enough
+ * to filter out cursor jitter and per-frame camera ticks.
+ */
+const HOVER_SETTLE_MS = 120;
 
 export class PickingSystem {
   private pickScene: THREE.Scene;
   private pickTarget: THREE.WebGLRenderTarget;
-  private readBuffer: Float32Array;
   private nodeMap: Map<number, PickNodeEntry> = new Map();
-  private debounceTimer: ReturnType<typeof setTimeout> | null = null;
-  private pendingMouse: { x: number; y: number } | null = null;
   private nextPickId = 1;
   private raycaster: THREE.Raycaster;
   private ndcCoord: THREE.Vector2;
 
-  // Reusable objects to avoid per-pick allocations
-  private _box = new THREE.Box3();
+  // Reusable objects to avoid per-pick allocations.
   private _lastReadX = 0;
   private _lastReadY = 0;
   private _savedClearColor = new THREE.Color();
   private _savedClearAlpha = 0;
-  private _lensUV = { x: 0, y: 0 }; // reusable return for applyLensDistortion
-  private _pickResolution = new THREE.Vector2(); // reusable for pick buffer resolution
+  private _lensUV = { x: 0, y: 0 };
+  private _pickResolution = new THREE.Vector2();
 
-  // Cache: only re-render when the view changes
+  // Pick-buffer cache: re-render the offscreen target only when the
+  // view changes (camera/geometry/resize).
   private _dirty = true;
   private _drawBufSize = new THREE.Vector2();
 
-  // Cached canvas rect (invalidated on resize via markDirty)
+  // Cached canvas rect (invalidated on resize via markDirty).
   private _canvasRect: DOMRect | null = null;
 
-  // Throttle clean-buffer picks to max ~60Hz (one per rAF)
-  private _lastPickTime = 0;
+  // -- Settle scheduler state ------------------------------------------------
+  // Pick fires only when both axes have been quiet for HOVER_SETTLE_MS:
+  //   - `_lastMouseMoveTime`: time of most recent onMouseMove.
+  //   - `_lastDirtyTime`:     time of most recent markDirty (camera/resize/geom).
+  //   - `_lastPickFiredTime`: time of most recent pick. A new pick fires only
+  //                           if EITHER `_lastMouseMoveTime > _lastPickFiredTime`
+  //                           (new hover) OR `_lastDirtyTime > _lastPickFiredTime`
+  //                           (camera-settle re-pick, even without new mousemove).
+  private _pendingMouse: { x: number; y: number } | null = null;
+  private _lastMouseMoveTime = 0;
+  private _lastDirtyTime = 0;
+  private _lastPickFiredTime = 0;
+  private _rafId: number | null = null;
+
+  // World-AABB cache: avoids re-applying matrixWorld per node per pick.
+  // Invalidated only on register/unregister/geometry-commit — camera motion
+  // does NOT invalidate.
+  private _worldBoxCache: Map<number, THREE.Box3> = new Map();
+
+  // Pre-allocated readback scratch (eliminates per-pick allocations).
+  private _readDst: Float32Array;
+  private _readFlipped: Float32Array;
+
+  // Reused vote map (cleared per readback instead of `new Map()`).
+  private _votes: Map<number, { nodeId: number; elementId: number; weight: number }> = new Map();
 
   /** When true, picking is suppressed (e.g. during orbit/pan/zoom). */
   private _suppressed = false;
+
+  /**
+   * Optional predicate gating whether picks should fire. Defaults to
+   * always-true. App wires this to overlayManager visibility so we
+   * skip the pick entirely when no hover tooltip would display the
+   * result.
+   */
+  private _shouldPick: () => boolean = () => true;
 
   /** Optional post-processing reference for lens distortion correction. */
   private postProcessing: PostProcessingManager | null = null;
@@ -130,7 +174,8 @@ export class PickingSystem {
       stencilBuffer: false,
     });
 
-    this.readBuffer = new Float32Array(PICK_SIZE * PICK_SIZE * 4);
+    this._readDst = new Float32Array(PICK_SIZE * PICK_SIZE * 4);
+    this._readFlipped = new Float32Array(PICK_SIZE * PICK_SIZE * 4);
     this.raycaster = new THREE.Raycaster();
     this.ndcCoord = new THREE.Vector2();
 
@@ -160,6 +205,7 @@ export class PickingSystem {
     mainNode.userData.pickNode = pickNode;
 
     this.nodeMap.set(pickId, { main: mainNode, pick: pickNode });
+    this._worldBoxCache.delete(pickId);
   }
 
   /** Unregister a node by its pick ID and dispose its pick material. */
@@ -169,6 +215,31 @@ export class PickingSystem {
       this._disposePickMaterial(entry.pick as THREE.Mesh);
     }
     this.nodeMap.delete(pickId);
+    this._worldBoxCache.delete(pickId);
+  }
+
+  /**
+   * Invalidate cached world-space AABBs. Call after geometry or
+   * matrixWorld changes; camera-only motion does NOT need this and
+   * should use {@link markDirty} alone.
+   *
+   * @param pickId - Specific node to invalidate, or omit to drop all.
+   */
+  invalidateBoxes(pickId?: number): void {
+    if (pickId === undefined) {
+      this._worldBoxCache.clear();
+    } else {
+      this._worldBoxCache.delete(pickId);
+    }
+  }
+
+  /**
+   * Set the predicate gating whether picks fire. Used by app.ts to
+   * skip picking when no hover overlay is visible (no consumer for
+   * the result).
+   */
+  setShouldPick(predicate: () => boolean): void {
+    this._shouldPick = predicate;
   }
 
   /**
@@ -230,16 +301,19 @@ export class PickingSystem {
       }
     }
     this.nodeMap.clear();
+    this._worldBoxCache.clear();
     while (this.pickScene.children.length > 0) {
       this.pickScene.remove(this.pickScene.children[0]);
     }
     this._dirty = true;
+    this._lastDirtyTime = performance.now();
   }
 
   /** Update camera reference (e.g., after perspective ↔ orthographic swap). */
   setCamera(camera: THREE.Camera): void {
     this.camera = camera;
     this._dirty = true; // Must re-render pick buffer with new projection
+    this._lastDirtyTime = performance.now();
   }
 
   /** Set post-processing reference for lens distortion correction. */
@@ -247,69 +321,124 @@ export class PickingSystem {
     this.postProcessing = pp;
   }
 
-  /** Invalidate the cached pick buffer. Call when camera, geometry, or viewport changes. */
+  /**
+   * Invalidate the cached pick buffer. Call when camera, geometry, or
+   * viewport changes. Fades the current hover overlay (matches the
+   * drag-suppression UX: while the camera is moving, tooltips hide).
+   * The rAF scheduler will fire a fresh pick once everything has been
+   * still for HOVER_SETTLE_MS.
+   */
   markDirty(): void {
     this._dirty = true;
-    this._canvasRect = null; // Invalidate cached rect (may have resized)
+    this._canvasRect = null;
+    this._lastDirtyTime = performance.now();
+    // Fade overlay (OverlayManager dedupes against the last state, so
+    // repeated calls do no DOM work).
+    this.onPickResult(null);
+    this._scheduleRaf();
   }
 
-  /** Suppress or resume picking (e.g. during orbit/pan/zoom interactions). */
+  /**
+   * Suppress or resume picking (e.g. during orbit/pan/zoom interactions).
+   * `true` cancels any pending rAF; `false` re-enables the scheduler
+   * and re-arms it when there's a pending cursor position. The re-arm
+   * matters for "orbit-and-release without moving the mouse": the
+   * camera dirtied during the suppressed window, so once it settles
+   * for HOVER_SETTLE_MS the rAF tick fires the camera-settle re-pick
+   * naturally — no mouse wiggle required.
+   */
   suppress(value: boolean): void {
     this._suppressed = value;
-    if (value && this.debounceTimer !== null) {
-      clearTimeout(this.debounceTimer);
-      this.debounceTimer = null;
+    if (value) {
+      this._cancelRaf();
+    } else if (this._pendingMouse) {
+      this._scheduleRaf();
     }
   }
 
   /**
-   * Handle mouse move: pick immediately from cache, debounce re-renders.
-   *
-   * When the pick buffer is clean (cached), readback is ~0.1ms so we fire
-   * immediately for instant tooltip response. When dirty (camera/geometry
-   * changed), we debounce to avoid re-rendering on every frame during
-   * orbit/pan/zoom — the render only fires once the mouse settles.
+   * Handle mouse move. Records the cursor position, fades any visible
+   * tooltip, and arms the settle scheduler. Performs zero picking
+   * work directly — the actual pick fires from the rAF loop once both
+   * the mouse and the pick buffer have been still for HOVER_SETTLE_MS.
    */
   onMouseMove(event: MouseEvent): void {
     if (this._suppressed) return;
 
-    // Cache getBoundingClientRect to avoid forced reflow on every mousemove
     if (!this._canvasRect) {
       this._canvasRect = this.renderer.domElement.getBoundingClientRect();
     }
-    this.pendingMouse = {
+    this._pendingMouse = {
       x: event.clientX - this._canvasRect.left,
       y: event.clientY - this._canvasRect.top,
     };
+    this._lastMouseMoveTime = performance.now();
+    // Fade existing overlay while moving (dedupe-safe).
+    this.onPickResult(null);
+    this._scheduleRaf();
+  }
 
-    if (this.debounceTimer !== null) {
-      clearTimeout(this.debounceTimer);
-    }
+  /**
+   * Cursor left the canvas. Drop the pending position so the
+   * camera-settle re-pick path doesn't fire a stale pick when the
+   * cursor isn't even over the viewer, and cancel any pending rAF.
+   */
+  onMouseLeave(): void {
+    this._pendingMouse = null;
+    this._cancelRaf();
+    this.onPickResult(null);
+  }
 
-    if (!this._dirty) {
-      // Buffer is cached — readback is instant, but throttle to ~60Hz
-      // to avoid redundant picks when mouse fires faster than display refresh
-      const now = performance.now();
-      if (now - this._lastPickTime < 16) return;
-      this._lastPickTime = now;
-      this.performPick(this.pendingMouse.x, this.pendingMouse.y);
-    } else {
-      // Buffer needs re-render — debounce to avoid rendering during active interaction
-      this.debounceTimer = setTimeout(() => {
-        this.debounceTimer = null;
-        if (this.pendingMouse) {
-          this.performPick(this.pendingMouse.x, this.pendingMouse.y);
-        }
-      }, DEBOUNCE_MS);
+  // -- Settle scheduler (rAF-driven) ----------------------------------------
+
+  private _scheduleRaf(): void {
+    if (this._rafId !== null) return;
+    if (this._suppressed) return;
+    this._rafId = requestAnimationFrame(this._rafTick);
+  }
+
+  private _cancelRaf(): void {
+    if (this._rafId !== null) {
+      cancelAnimationFrame(this._rafId);
+      this._rafId = null;
     }
   }
 
+  /**
+   * Per-frame settle check. Fires a pick when:
+   *   - a pending cursor position exists,
+   *   - both axes have been quiet for HOVER_SETTLE_MS,
+   *   - at least one axis has changed since the last pick fired,
+   *   - and the `shouldPick` predicate allows it.
+   * Otherwise reschedules itself until conditions are met (or no
+   * fresh trigger remains, in which case it stops).
+   */
+  private _rafTick = (): void => {
+    this._rafId = null;
+    if (this._suppressed || !this._pendingMouse) return;
+
+    const now = performance.now();
+    const mouseSettled = now - this._lastMouseMoveTime >= HOVER_SETTLE_MS;
+    const cameraSettled = now - this._lastDirtyTime >= HOVER_SETTLE_MS;
+
+    if (!mouseSettled || !cameraSettled) {
+      this._scheduleRaf();
+      return;
+    }
+
+    const newHover = this._lastMouseMoveTime > this._lastPickFiredTime;
+    const newCamera = this._lastDirtyTime > this._lastPickFiredTime;
+    if (!newHover && !newCamera) return; // nothing changed since last pick
+
+    if (!this._shouldPick()) return; // gated: no consumer for the result
+
+    this._lastPickFiredTime = now;
+    void this.performPick(this._pendingMouse.x, this._pendingMouse.y);
+  };
+
   /** Clean up all resources — render target, pick materials, scene. */
   dispose(): void {
-    if (this.debounceTimer !== null) {
-      clearTimeout(this.debounceTimer);
-      this.debounceTimer = null;
-    }
+    this._cancelRaf();
 
     // Dispose all pick materials (unregisters from materialManager automatically)
     for (const entry of this.nodeMap.values()) {
@@ -323,6 +452,9 @@ export class PickingSystem {
 
     this.pickTarget.dispose();
     this.nodeMap.clear();
+    this._worldBoxCache.clear();
+    this._votes.clear();
+    this._pendingMouse = null;
     this.postProcessing = null;
     log.info(Modules.RENDERER, 'PickingSystem disposed');
   }
@@ -399,12 +531,19 @@ export class PickingSystem {
     const ray = this.raycaster.ray;
 
     let nearAnyNode = false;
-    for (const entry of this.nodeMap.values()) {
+    for (const [pickId, entry] of this.nodeMap) {
       const geom = (entry.main as THREE.Mesh).geometry;
       if (!geom || !geom.boundingBox) continue;
-      this._box.copy(geom.boundingBox);
-      this._box.applyMatrix4(entry.main.matrixWorld);
-      if (ray.intersectsBox(this._box)) {
+      // Cache world-space AABB: only invalidated on register/unregister
+      // or geometry commit; survives camera motion. Avoids the per-pick
+      // Box3.copy().applyMatrix4() that dominated the hover hot path
+      // for scenes with many registered nodes.
+      let worldBox = this._worldBoxCache.get(pickId);
+      if (!worldBox) {
+        worldBox = new THREE.Box3().copy(geom.boundingBox).applyMatrix4(entry.main.matrixWorld);
+        this._worldBoxCache.set(pickId, worldBox);
+      }
+      if (ray.intersectsBox(worldBox)) {
         nearAnyNode = true;
         break;
       }
@@ -545,7 +684,8 @@ export class PickingSystem {
     // returning rows in the same top-down order. `_lastReadX/Y` are
     // computed in top-down coordinates in `performPick`, so we pass
     // them through unchanged; the primitive translates `y` to the
-    // backend's framebuffer convention internally.
+    // backend's framebuffer convention internally. Pre-allocated
+    // `_readDst`/`_readFlipped` keep the hot path allocation-free.
     const { pixels } = await readPixelsCompactAsync(this.renderer, this.capabilities, {
       target: this.pickTarget,
       x: this._lastReadX,
@@ -553,37 +693,37 @@ export class PickingSystem {
       width: PICK_SIZE,
       height: PICK_SIZE,
       kind: 'rgba32f',
+      out: this._readDst,
+      flipOut: this._readFlipped,
     });
-    this.readBuffer.set(pixels);
 
-    // Brightness-weighted majority voting
-    // Use numeric key (nodeId * 2^24 + elementId) to avoid string allocation per pixel.
-    // Both nodeId and elementId fit in 24 bits (float32 mantissa), so this is lossless.
-    const votes = new Map<number, { nodeId: number; elementId: number; weight: number }>();
-
+    // Brightness-weighted majority voting. Reuse the same Map across
+    // picks (cleared here) to avoid the per-pick allocation. Numeric
+    // key (nodeId * 2^24 + elementId) is lossless for 24-bit IDs.
+    this._votes.clear();
     for (let i = 0; i < PICK_SIZE * PICK_SIZE; i++) {
-      const r = this.readBuffer[i * 4]; // nodeId
-      const g = this.readBuffer[i * 4 + 1]; // elementId
-      const b = this.readBuffer[i * 4 + 2]; // brightness
+      const r = pixels[i * 4]; // nodeId
+      const g = pixels[i * 4 + 1]; // elementId
+      const b = pixels[i * 4 + 2]; // brightness
 
       // Skip background pixels (nodeId = 0 means no hit)
       if (r < 0.5) continue;
 
       const nodeId = Math.round(r);
       const elementId = Math.round(g);
-      const key = nodeId * 16777216 + elementId; // nodeId << 24 | elementId (safe for 24-bit ints)
+      const key = nodeId * 16777216 + elementId;
 
-      const existing = votes.get(key);
+      const existing = this._votes.get(key);
       if (existing) {
         existing.weight += b;
       } else {
-        votes.set(key, { nodeId, elementId, weight: b });
+        this._votes.set(key, { nodeId, elementId, weight: b });
       }
     }
 
     // Find the winner (highest total brightness weight)
     let winner: { nodeId: number; elementId: number; weight: number } | null = null;
-    for (const entry of votes.values()) {
+    for (const entry of this._votes.values()) {
       if (!winner || entry.weight > winner.weight) {
         winner = entry;
       }

@@ -68,6 +68,16 @@ declare global {
       getSceneLoader?: () => unknown;
 
       /**
+       * Live accessors for the picking and overlay subsystems. Both are
+       * disposed and reconstructed across dataset reloads, so callers must
+       * re-read after a load. Returns `undefined` before init / between
+       * disposals. Returned as `unknown` to avoid pulling the runtime
+       * classes into the window type and to force narrowing on consumers.
+       */
+      getPickingSystem?: () => unknown;
+      getOverlayManager?: () => unknown;
+
+      /**
        * Render the error dialog directly with the supplied message, without
        * going through URL-routing or load failures. Used by visual-
        * regression tests so the dialog's appearance can be verified in
