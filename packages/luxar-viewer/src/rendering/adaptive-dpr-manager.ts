@@ -236,10 +236,7 @@ export class AdaptiveDPRManager {
 
     // Floor decays so we re-probe after the configured TTL. Scene
     // content can change enough to shift the U-shape minimum.
-    if (
-      this.dprFloor > this.config.minDPR &&
-      timestamp - this.floorSetAt > this.FLOOR_TTL_MS
-    ) {
+    if (this.dprFloor > this.config.minDPR && timestamp - this.floorSetAt > this.FLOOR_TTL_MS) {
       log.info(
         Modules.ADAPTIVE_DPR,
         `DPR floor ${this.dprFloor.toFixed(2)} expired — re-enabling scale-down probes`

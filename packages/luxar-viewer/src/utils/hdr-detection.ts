@@ -90,10 +90,7 @@ export function detectDisplayCapabilities(): HDRCapabilities {
  * as `unknown` to avoid coupling the signature to either
  * `WebGLRenderer` or `WebGPURenderer`.
  */
-export function configureHDRRenderer(
-  _renderer: unknown,
-  capabilities: HDRCapabilities
-): void {
+export function configureHDRRenderer(_renderer: unknown, capabilities: HDRCapabilities): void {
   // Do NOT set renderer.outputColorSpace or renderer.toneMapping here.
   // The post-processing pipeline owns both: the mega-shader applies
   // tone mapping internally and the host pins

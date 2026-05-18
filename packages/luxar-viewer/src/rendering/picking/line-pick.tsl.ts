@@ -304,9 +304,7 @@ export function buildLinePickTSLNodesFromUniforms(
     uNodeId: uniform((uniforms.uNodeId?.value as number) ?? 0),
     uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 1e-4),
     uMaxLinePixelWidth: uniform((uniforms.uMaxLinePixelWidth?.value as number) ?? 1.0),
-    uPerspectiveLineScale: uniform(
-      (uniforms.uPerspectiveLineScale?.value as number) ?? 1.0
-    ),
+    uPerspectiveLineScale: uniform((uniforms.uPerspectiveLineScale?.value as number) ?? 1.0),
     uOrthoLineScale: uniform((uniforms.uOrthoLineScale?.value as number) ?? 1.0),
   };
 }

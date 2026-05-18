@@ -94,9 +94,7 @@ export function pointWebGPUFactory(
   const aRadius: TSLNode = attribute<'float'>('aRadius', 'float');
   const aSharpness: TSLNode = attribute<'float'>('aSharpness', 'float');
   const aColor: TSLNode = attribute<'vec3'>('aColor', 'vec3');
-  const aScalar: TSLNode = config.useColormap
-    ? attribute<'float'>('aScalar', 'float')
-    : null;
+  const aScalar: TSLNode = config.useColormap ? attribute<'float'>('aScalar', 'float') : null;
 
   // Uniforms — vertex stage. Each uniform binds via `.onUpdate(() =>
   // iuniform.value)` so the TSL node tracks the host's IUniform table
@@ -193,10 +191,7 @@ export function pointWebGPUFactory(
     aSharpness.mul(uSharpnessScale),
     float(2.0)
   );
-  const normalizedRadius: TSLNode = sanitizeNonNegative(
-    aRadius.mul(uRadiusScale),
-    float(0.0)
-  );
+  const normalizedRadius: TSLNode = sanitizeNonNegative(aRadius.mul(uRadiusScale), float(0.0));
 
   // Per-instance colour from LUT or attribute.
   let perPointColor: TSLNode;
@@ -227,15 +222,10 @@ export function pointWebGPUFactory(
     .and(sharpnessCompRaw.greaterThan(-1e30));
   const sharpnessComp: TSLNode = sharpnessCompFinite.select(sharpnessCompRaw, float(1.0));
   const computedPointSize: TSLNode = basePointSize.mul(sharpnessComp);
-  const pointSize: TSLNode = max(
-    float(1.0),
-    clamp(computedPointSize, float(1.0), uMaxPointSize)
-  );
+  const pointSize: TSLNode = max(float(1.0), clamp(computedPointSize, float(1.0), uMaxPointSize));
 
   // Expand the unit quad to a sprite in clip space.
-  const offsetClip: TSLNode = aQuadCorner
-    .mul(pointSize.div(uResolution))
-    .mul(projCenter.w);
+  const offsetClip: TSLNode = aQuadCorner.mul(pointSize.div(uResolution)).mul(projCenter.w);
   const clipPos: TSLNode = projCenter.add(vec4(offsetClip, 0.0, 0.0));
 
   // Sprite UV (replaces gl_PointCoord). Computed per-vertex,

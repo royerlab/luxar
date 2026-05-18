@@ -110,7 +110,9 @@ test.describe('Data Integrity - Attribute Alignment', () => {
     expect(radiusCheck).toEqual([]);
   });
 
-  test('should have visible instance count <= attribute count for all points geometry', async ({ page }) => {
+  test('should have visible instance count <= attribute count for all points geometry', async ({
+    page,
+  }) => {
     await page.goto(`/?src=${DATASET}&debug`);
     await waitForLuxarReady(page);
     await waitForPointsLoaded(page, 10);

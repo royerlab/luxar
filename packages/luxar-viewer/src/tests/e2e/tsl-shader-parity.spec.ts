@@ -43,10 +43,7 @@ async function bootHarness(page: Page): Promise<string[]> {
 }
 
 async function runGLSL(page: Page, shaderName: string): Promise<number[]> {
-  return page.evaluate(
-    (name) => Array.from(window.__tslHarness!.renderGLSL(name)),
-    shaderName
-  );
+  return page.evaluate((name) => Array.from(window.__tslHarness!.renderGLSL(name)), shaderName);
 }
 
 async function runTSL(page: Page, shaderName: string): Promise<TSLResult> {
@@ -84,11 +81,8 @@ function previewPixels(pixels: number[], count = 4): string {
   return lines.join('\n');
 }
 
-
 test.describe('TSL ↔ GLSL shader parity', () => {
-  test('const-rgb diagnostic: solid-colour fragment matches between backends', async ({
-    page,
-  }) => {
+  test('const-rgb diagnostic: solid-colour fragment matches between backends', async ({ page }) => {
     await bootHarness(page);
 
     const glslPixels = await runGLSL(page, 'const-rgb');
@@ -199,9 +193,7 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     ).toBeLessThan(2.0);
   });
 
-  test('point: PointMaterial sprite expansion + GOG + Gaussian falloff', async ({
-    page,
-  }) => {
+  test('point: PointMaterial sprite expansion + GOG + Gaussian falloff', async ({ page }) => {
     await bootHarness(page);
 
     const glslPixels = await runGLSL(page, 'point');
@@ -252,9 +244,7 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     ).toBeLessThan(2.0);
   });
 
-  test('gsplat: isotropic splat covariance projection + Mahalanobis fragment', async ({
-    page,
-  }) => {
+  test('gsplat: isotropic splat covariance projection + Mahalanobis fragment', async ({ page }) => {
     await bootHarness(page);
 
     const glslPixels = await runGLSL(page, 'gsplat');
@@ -313,9 +303,7 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     ).toBeLessThan(2.0);
   });
 
-  test('point-pick: tight sprite with nodeId / elementId / brightness output', async ({
-    page,
-  }) => {
+  test('point-pick: tight sprite with nodeId / elementId / brightness output', async ({ page }) => {
     await bootHarness(page);
 
     const glslPixels = await runGLSL(page, 'point-pick');

@@ -38,9 +38,7 @@ const SAMPLE_DURATION_MS = 2000;
 function median(values: number[]): number {
   const sorted = values.slice().sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2
-    ? sorted[mid]
-    : (sorted[mid - 1] + sorted[mid]) / 2;
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
 test('points migration: capture N=5 FPS samples on dense_cubic_gradient', async ({ page }) => {

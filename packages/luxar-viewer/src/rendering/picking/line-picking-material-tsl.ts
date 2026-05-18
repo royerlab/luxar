@@ -69,11 +69,7 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
     // matches the visual material and documents intent.
     this.forceSinglePass = true;
 
-    linePickWebGPUFactory(
-      this.tslNodes as LinePickTSLNodes,
-      this._currentConfig(),
-      this
-    );
+    linePickWebGPUFactory(this.tslNodes as LinePickTSLNodes, this._currentConfig(), this);
   }
 
   /**
@@ -108,11 +104,7 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
       return;
     }
     // Rebuild graph so the factory picks up the new flag.
-    linePickWebGPUFactory(
-      this.tslNodes as LinePickTSLNodes,
-      this._currentConfig(),
-      this
-    );
+    linePickWebGPUFactory(this.tslNodes as LinePickTSLNodes, this._currentConfig(), this);
     this.needsUpdate = true;
   }
 
@@ -140,11 +132,7 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
     }
     // Rebuild on projection-mode flip so the unused branch drops.
     if (isOrtho !== prevIsOrtho) {
-      linePickWebGPUFactory(
-        this.tslNodes as LinePickTSLNodes,
-        this._currentConfig(),
-        this
-      );
+      linePickWebGPUFactory(this.tslNodes as LinePickTSLNodes, this._currentConfig(), this);
       this.needsUpdate = true;
     }
   }

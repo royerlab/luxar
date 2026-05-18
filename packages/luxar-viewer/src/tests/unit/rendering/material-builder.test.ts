@@ -81,9 +81,8 @@ describe('buildMaterial backend dispatch', () => {
   it('throws under WebGL2 when source.webgl is missing', () => {
     const source: ShaderSource = {
       name: 'test-tsl-only',
-      webgpu: () => new THREE.ShaderMaterial() as unknown as ReturnType<
-        NonNullable<ShaderSource['webgpu']>
-      >,
+      webgpu: () =>
+        new THREE.ShaderMaterial() as unknown as ReturnType<NonNullable<ShaderSource['webgpu']>>,
     };
     expect(() => buildMaterial(source, {}, makeCaps('webgl2'))).toThrowError(
       /no 'webgl' reference.*caps\.apiSurface='webgl2'/s

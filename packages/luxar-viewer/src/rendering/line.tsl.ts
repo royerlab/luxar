@@ -164,9 +164,7 @@ export function lineWebGPUFactory(
   const aStartScalar: TSLNode = config.useColormap
     ? attribute<'float'>('aStartScalar', 'float')
     : null;
-  const aEndScalar: TSLNode = config.useColormap
-    ? attribute<'float'>('aEndScalar', 'float')
-    : null;
+  const aEndScalar: TSLNode = config.useColormap ? attribute<'float'>('aEndScalar', 'float') : null;
 
   // Bind directly to the persistent `UniformNode`s owned by the
   // wrapper class (or by `buildLineTSLNodesFromUniforms` for the
@@ -214,7 +212,14 @@ export function lineWebGPUFactory(
 
   // Per-endpoint colour or LUT lookup.
   let perPointColor: TSLNode;
-  if (config.useColormap && aStartScalar && aEndScalar && uColormapTex && uScalarMin && uScalarScale) {
+  if (
+    config.useColormap &&
+    aStartScalar &&
+    aEndScalar &&
+    uColormapTex &&
+    uScalarMin &&
+    uScalarScale
+  ) {
     const s: TSLNode = mix(aStartScalar, aEndScalar, t);
     const st: TSLNode = clamp(s.sub(uScalarMin).mul(uScalarScale), 0.0, 1.0);
     perPointColor = uColormapTex.sample(vec2(st, 0.5)).rgb;
@@ -393,9 +398,7 @@ export function lineWebGPUFactory(
     // Gamma fast path: when the wrapper knows gamma==1.0 the pow() is
     // identity. JS-level branch so the generated WGSL/GLSL omits the
     // pow entirely when not needed.
-    const gammaColor: TSLNode = config.gammaOne
-      ? adjusted
-      : adjusted.pow(vec3(uInvGamma));
+    const gammaColor: TSLNode = config.gammaOne ? adjusted : adjusted.pow(vec3(uInvGamma));
 
     const alpha: TSLNode = intensity.mul(uOpacity);
     if (premultiplyRGB) {
@@ -440,9 +443,7 @@ export function buildLineTSLNodesFromUniforms(
     uIsOrtho: uniform((uniforms.uIsOrtho?.value as number) ?? 0),
     uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 1e-4),
     uMaxLinePixelWidth: uniform((uniforms.uMaxLinePixelWidth?.value as number) ?? 1.0),
-    uPerspectiveLineScale: uniform(
-      (uniforms.uPerspectiveLineScale?.value as number) ?? 1.0
-    ),
+    uPerspectiveLineScale: uniform((uniforms.uPerspectiveLineScale?.value as number) ?? 1.0),
     uOrthoLineScale: uniform((uniforms.uOrthoLineScale?.value as number) ?? 1.0),
     uOpacity: uniform((uniforms.uOpacity?.value as number) ?? 1.0),
     uInvGamma: uniform((uniforms.uInvGamma?.value as number) ?? 1.0),
