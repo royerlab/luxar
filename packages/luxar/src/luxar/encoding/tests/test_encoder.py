@@ -263,14 +263,7 @@ class TestColorEncoding:
     """Test COLOR semantic type encoding."""
 
     def test_color_sdr_auto_mode(self):
-        """SDR colours default to float16 in AUTO mode.
-
-        Bumped from uint8 in phase-3 attribute packing — 8-bit is too
-        coarse for HDR-adjacent rendering and banding is visible on
-        smooth colormap gradients. Float16's 11-bit mantissa is the
-        new floor across all three geometry types (Points / Lines /
-        GSplats).
-        """
+        """Test SDR colors quantized to uint8 in AUTO mode."""
         data = np.random.rand(1000, 3).astype(np.float32)
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -279,9 +272,9 @@ class TestColorEncoding:
             encoder.encode(data, group, "test", SemanticType.COLOR, color_mode="sdr")
 
             arr = group["test"]
-            assert arr.dtype == np.float16
+            assert arr.dtype == np.uint8
             enc = arr.attrs["encoding"]
-            assert enc["name"] == "float16"
+            assert enc["name"] == "rgb_uint8"
 
     def test_color_hdr_auto_mode(self):
         """Test HDR colors use float32 in AUTO mode."""
@@ -367,32 +360,40 @@ class TestBoundedScalarEncoding:
             assert enc["max"] == 31.0
 
 
-class TestPositiveScalarEncodingDefault:
-    """POSITIVE_SCALAR always emits float16 in AUTO/MEMORY (phase-3 packing).
-
-    The previous "narrow → uint8, medium → uint16, wide → float32"
-    dynamic-range cascade was removed in favour of a flat float16
-    default across the entire range; see the same change in
-    `test_dynamic_range.TestPositiveScalarDefault` for the rationale.
-    """
+class TestPositiveScalarEncodingDynamicRange:
+    """Test POSITIVE_SCALAR semantic type encoding dynamic range selection."""
 
     def test_positive_scalar_narrow_dynamic_range(self):
+        """Test positive scalar with narrow dynamic range uses uint8."""
+        # Create data with narrow dynamic range (< 256:1)
+        # Range [0.1, 0.5] has dynamic range of 5:1 - definitely uint8
         data = np.random.rand(1000).astype(np.float32) * 0.4 + 0.1
+
         with tempfile.TemporaryDirectory() as tmpdir:
             group = zarr.open_group(str(tmpdir), mode="w")
             encoder = ArrayEncoder()
             encoder.encode(data, group, "test", SemanticType.POSITIVE_SCALAR)
-            assert group["test"].dtype == np.float16
-            assert group["test"].attrs["encoding"]["name"] == "float16"
+
+            arr = group["test"]
+            assert arr.dtype == np.uint8
+            enc = arr.attrs["encoding"]
+            assert enc["name"] == "bounded_scalar_uint8"
 
     def test_positive_scalar_wide_dynamic_range(self):
+        """Test positive scalar with wide dynamic range uses uint16."""
+        # Create data with wide dynamic range (> 256:1)
+        # Range [0.0001, 0.5] has dynamic range of 5000:1 - needs uint16
         data = np.linspace(0.0001, 0.5, 1000).astype(np.float32)
+
         with tempfile.TemporaryDirectory() as tmpdir:
             group = zarr.open_group(str(tmpdir), mode="w")
             encoder = ArrayEncoder()
             encoder.encode(data, group, "test", SemanticType.POSITIVE_SCALAR)
-            assert group["test"].dtype == np.float16
-            assert group["test"].attrs["encoding"]["name"] == "float16"
+
+            arr = group["test"]
+            assert arr.dtype == np.uint16
+            enc = arr.attrs["encoding"]
+            assert enc["name"] == "bounded_scalar_uint16"
 
     def test_positive_scalar_log_encoding(self):
         """Test positive scalar with log encoding."""

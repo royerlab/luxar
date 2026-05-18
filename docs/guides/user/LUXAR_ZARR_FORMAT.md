@@ -41,7 +41,7 @@ This diagram shows how data flows from Python creation through storage to WebGL 
 │  luxar.encoding                                                             │
 │  ┌──────────────────┐                                                      │
 │  │ Semantic typing  │  COORDINATE → float32 (AUTO/PRECISION) or float16 (MEMORY) │
-│  │ Quantization     │  COLOR → float16 default, float32 under PRECISION    │
+│  │ Quantization     │  COLOR → uint8/float32 (SDR/HDR)                     │
 │  │ Broadcasting     │  Uniform values → single scalar                      │
 │  └────────┬─────────┘                                                      │
 │           │                                                                 │
@@ -254,17 +254,10 @@ Points nodes contain the actual point data.
 
 #### colors/ (Optional)
 - **Shape:** `(N, 3)` for RGB
-- **Dtype:** `float16` (SDR or HDR, AUTO mode default)
-  - **AUTO mode (default):** `float16` for SDR, `float32` for HDR
-  - **MEMORY mode:** `float16` for both SDR and HDR
-  - **PRECISION mode:** `float32` for both
-  - **Legacy:** Older Luxar files (pre-phase-3 attribute packing) may
-    store SDR colours as `uint8` with `encoding.name = "rgb_uint8"`
-    (or `uint16` with `rgb_uint16`). The decoder retains read support
-    for those forms; new writes default to `float16`.
+- **Dtype:** `float32` (HDR colors)
 - **Chunks:** `(min(N, 32768), 3)`
 - **Compression:** Blosc with zstd, level 3, bit-shuffle
-- **Description:** RGB colors in normalized range
+- **Description:** HDR RGB colors in normalized range
   - **SDR Range:** 0.0-1.0 (standard dynamic range)
   - **HDR Range:** Values > 1.0 represent HDR brightness
   - **Typical HDR:** 0.0-10.0 (extreme brightness)

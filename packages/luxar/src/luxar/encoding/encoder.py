@@ -807,47 +807,35 @@ class ArrayEncoder:
             compressor: Optional compressor
         """
         original_dtype = str(data.dtype)
-        # Determine target dtype based on mode and color_mode.
-        #
-        # Defaults table (phase-3 attribute-packing pass):
-        #
-        #   mode \\ color_mode  |  sdr      |  hdr
-        #   PRECISION           |  float32  |  float32
-        #   AUTO  (default)     |  float16  |  float32
-        #   MEMORY              |  float16  |  float16
-        #
-        # Float16 is now the floor for COLOR. 8-bit colour quantization
-        # (the previous SDR default) is too coarse for HDR-adjacent
-        # rendering — banding is visible on smooth colormap gradients.
-        # `float16_allowed` is no longer consulted for COLOR; the gate
-        # remains in place for other semantic types (CHOLESKY) until
-        # their narrowing commit lands.
+        # Determine target dtype based on mode and color_mode
         if np.issubdtype(data.dtype, np.integer):
-            # Integer input: already quantized on disk, keep as-is. New
-            # data should generally arrive as float (and be narrowed
-            # here), but pre-quantized Uint8/Uint16 inputs are still
-            # valid — the viewer handles widening at GPU upload.
+            # Integer input: already quantized, keep as-is
             encoded_data = data
             encoder_name = str(data.dtype)
         elif color_mode == "hdr":
-            if mode == EncodingMode.PRECISION:
-                encoded_data = data.astype(np.float32)
-                encoder_name = "float32"
-            elif mode == EncodingMode.AUTO:
+            # HDR colors: use float
+            if mode == EncodingMode.PRECISION or mode == EncodingMode.AUTO:
                 encoded_data = data.astype(np.float32)
                 encoder_name = "float32"
             elif mode == EncodingMode.MEMORY:
-                encoded_data = data.astype(np.float16)
-                encoder_name = "float16"
+                # Check if float16 is allowed, fallback to float32 if not
+                if self._float16_allowed:
+                    encoded_data = data.astype(np.float16)
+                    encoder_name = "float16"
+                else:
+                    encoded_data = data.astype(np.float32)
+                    encoder_name = "float32"
             else:
                 raise ValueError("HDR colors require float dtype")
         elif color_mode == "sdr":
+            # SDR colors: can quantize
             if mode == EncodingMode.PRECISION:
                 encoded_data = data.astype(np.float32)
                 encoder_name = "float32"
-            elif mode == EncodingMode.AUTO or mode == EncodingMode.MEMORY:
-                encoded_data = data.astype(np.float16)
-                encoder_name = "float16"
+            elif mode == EncodingMode.MEMORY or mode == EncodingMode.AUTO:
+                # Quantize to uint8: [0, 1] → [0, 255]
+                encoded_data = np.clip(data * 255.0, 0, 255).astype(np.uint8)
+                encoder_name = "rgb_uint8"
             else:
                 raise ValueError(f"Unexpected mode for SDR COLOR: {mode}")
         else:
@@ -1029,23 +1017,59 @@ class ArrayEncoder:
                     "original_dtype": original_dtype,
                 }
             else:
-                # Linear encoding (the default). Phase-3 attribute
-                # packing: AUTO/MEMORY now writes float16 unconditionally
-                # rather than picking uint8/uint16 based on dynamic
-                # range. Float16's 11-bit mantissa is ~5e-4 relative
-                # precision — better than the prior uint8 bounded path
-                # at most ranges and equal-or-better than uint16. Saves
-                # the per-element renormalisation on read.
-                #
-                # The decoder retains `bounded_scalar_uint8` /
-                # `bounded_scalar_uint16` branches for legacy zarr
-                # files. `float16_allowed` is no longer consulted for
-                # POSITIVE_SCALAR (the float32 fallback was the only
-                # bypass for narrowing-averse consumers; the TS side
-                # gains native float16 attribute support in C-ts-3).
-                encoded_data = data.astype(np.float16)
-                encoder_name = "float16"
-                metadata = {"name": encoder_name, "original_dtype": original_dtype}
+                # Linear encoding - choose dtype based on dynamic range
+                bits = self._compute_quantization_bits(data)
+
+                if max_val == 0:
+                    # All zeros - use uint8
+                    encoded_data = np.zeros_like(data, dtype=np.uint8)
+                    encoder_name = "bounded_scalar_uint8"
+                    metadata = {
+                        "name": encoder_name,
+                        "min": 0.0,
+                        "max": 0.0,
+                        "bits": 8,
+                        "original_dtype": original_dtype,
+                    }
+                elif bits == 8:
+                    # Dynamic range <= 256, uint8 is sufficient
+                    normalized = data / max_val
+                    # Use rounding for better accuracy (not truncation)
+                    encoded_data = np.clip(np.round(normalized * 255), 0, 255).astype(
+                        np.uint8
+                    )
+                    encoder_name = "bounded_scalar_uint8"
+                    metadata = {
+                        "name": encoder_name,
+                        "min": 0.0,
+                        "max": max_val,
+                        "bits": 8,
+                        "original_dtype": original_dtype,
+                    }
+                elif bits == 16:
+                    # Dynamic range <= 65536, uint16 is sufficient
+                    normalized = data / max_val
+                    # Use rounding for better accuracy (not truncation)
+                    encoded_data = np.clip(
+                        np.round(normalized * 65535), 0, 65535
+                    ).astype(np.uint16)
+                    encoder_name = "bounded_scalar_uint16"
+                    metadata = {
+                        "name": encoder_name,
+                        "min": 0.0,
+                        "max": max_val,
+                        "bits": 16,
+                        "original_dtype": original_dtype,
+                    }
+                else:
+                    # Dynamic range > 65536, use float
+                    if self._float16_allowed:
+                        encoded_data = data.astype(np.float16)
+                        encoder_name = "float16"
+                    else:
+                        encoded_data = data.astype(np.float32)
+                        encoder_name = "float32"
+                    metadata = {"name": encoder_name, "original_dtype": original_dtype}
         else:
             raise ValueError(f"Unexpected mode for POSITIVE_SCALAR: {mode}")
 
@@ -1080,19 +1104,14 @@ class ArrayEncoder:
         original_dtype = str(data.dtype)
 
         target_dtype: np.dtype[Any]
-        # Phase-3 attribute packing: CHOLESKY defaults to float16 in
-        # AUTO and MEMORY (was float32 + float16-only-with-gate). The
-        # 6 Cholesky factors per splat are the dominant per-instance
-        # cost on GSplats; float16 halves the buffer while preserving
-        # enough precision for the 2x2 / 3x3 covariance reconstruction
-        # (worst-case ~5e-4 relative error on the lower-triangular
-        # factors). PRECISION still emits float32 for cases where the
-        # caller needs full Cholesky reconstruction fidelity (e.g.,
-        # downstream gradient-based fitting).
-        if mode == EncodingMode.PRECISION:
+        if mode == EncodingMode.PRECISION or mode == EncodingMode.AUTO:
             target_dtype = np.dtype("float32")
-        elif mode == EncodingMode.AUTO or mode == EncodingMode.MEMORY:
-            target_dtype = np.dtype("float16")
+        elif mode == EncodingMode.MEMORY:
+            # Check if float16 is allowed, fallback to float32 if not
+            if self._float16_allowed:
+                target_dtype = np.dtype("float16")
+            else:
+                target_dtype = np.dtype("float32")
         else:
             raise ValueError(f"Unexpected mode for CHOLESKY: {mode}")
 
