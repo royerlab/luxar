@@ -368,13 +368,25 @@ path remains live behind `VITE_LUXAR_USE_LEGACY_WEBGL=1` — same
 suite passes there too, so the TSL/GLSL parity harness keeps both
 backends covered.
 
-### M18 — default flip (DONE)
+### M18 — default flip (DONE; subsequently reversed on 2026-05-16)
 
-The migration toggle is now inverted. `SceneManager.setupRenderer`
-defaults to `setupWebGPURenderer()`; legacy GLSL is reached via
-`VITE_LUXAR_USE_LEGACY_WEBGL=1`. `VITE_LUXAR_USE_WEBGPU_RENDERER`
-is now a no-op alias (kept harmless so existing CI scripts that
-still set it keep working).
+> **State of this section.** M18 flipped the production default to
+> `WebGPURenderer` on 2026-05-14. The default was **flipped back to
+> `WebGLRenderer` on 2026-05-16** after per-scene performance
+> measurements showed the WebGPU path below the WebGL baseline
+> (see `CHANGELOG.md` "Production default renderer flipped back to
+> WebGL"). The current contract is WebGL default, WebGPU opt-in via
+> `?renderer=webgpu`. The migration plan kept M18's wiring (TSL
+> NodeMaterial wrappers, dispatch on `caps.api`, parity harness)
+> live so re-flipping is a single-line change once the perf gap
+> closes; only the default selector reverted.
+
+The migration toggle was inverted at M18. `SceneManager.setupRenderer`
+defaulted to `setupWebGPURenderer()`; legacy GLSL was reached via
+`VITE_LUXAR_USE_LEGACY_WEBGL=1`. After the 2026-05-16 revert the
+default is again `setupWebGLRenderer()`, and WebGPU is reached via
+`?renderer=webgpu` or `VITE_LUXAR_USE_WEBGPU=1`. The historical
+`VITE_LUXAR_USE_WEBGPU_RENDERER` env var remains a no-op alias.
 
 ### Real-WebGPU dispatch — `forceWebGL: true` dropped (DONE)
 
