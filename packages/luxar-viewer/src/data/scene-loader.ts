@@ -73,7 +73,6 @@ import type {
   SceneLoaderMonitorFactory,
 } from './scene-loader-monitor-port';
 import { ArrayRefRegistry } from './array-decoder/decoder';
-import { ViewStateManager } from './view-state-manager';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { config as appConfig } from '../config';
 import { MultiLevelCachingStore, DecompressedChunkCache } from '../cache';
@@ -105,7 +104,6 @@ import { notifier } from '../utils/notifier';
 import {
   hasOwnProperties,
   getOrComputeExtendedTolerance,
-  isSceneDimensions,
   validateExtendDims,
 } from './scene-loader/extend-tolerance';
 
@@ -135,6 +133,7 @@ import {
   loadLeafNode as loadLeafNodeHelper,
 } from './scene-loader/nodes/load-leaf-error-dispatch';
 import { enumerateStore as enumerateStoreHelper } from './scene-loader/nodes/enumerate-store';
+import { initializeSceneDimensions as initializeSceneDimensionsHelper } from './scene-loader/nodes/initialize-scene-dimensions';
 
 /**
  * Main scene loader that handles the complete loading pipeline.
@@ -1639,30 +1638,13 @@ export class SceneLoader {
   }
 
   /**
-   * Initialize scene dimensions from metadata using ViewStateManager
+   * Initialize scene dimensions from metadata. Implementation lives in
+   * `scene-loader/nodes/initialize-scene-dimensions.ts`; null return
+   * means validation failed and the existing viewState stays.
    */
   private initializeSceneDimensions(sceneDims: unknown): void {
-    // Validate sceneDims structure
-    if (!isSceneDimensions(sceneDims)) {
-      log.warning(Modules.SCENE_LOADER, 'Invalid scene_dimensions format, skipping');
-      return;
-    }
-
-    // Validate dimensions using ViewStateManager
-    const validation = ViewStateManager.validateDimensions(sceneDims.dimensions);
-
-    // Log validation results
-    const displayedCount = sceneDims.dimensions.filter((d) => d.display === true).length;
-    ViewStateManager.logValidationResults(validation, sceneDims.dimensions.length, displayedCount);
-
-    // Stop if validation failed with errors
-    if (!validation.isValid) {
-      log.error(Modules.SCENE_LOADER, 'Scene dimensions validation failed, cannot initialize');
-      return;
-    }
-
-    // Initialize ViewState using ViewStateManager
-    this.viewState = ViewStateManager.initializeFromDimensions(sceneDims);
+    const next = initializeSceneDimensionsHelper(sceneDims);
+    if (next) this.viewState = next;
   }
 
   /**
