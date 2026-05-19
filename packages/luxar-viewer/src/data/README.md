@@ -71,7 +71,7 @@ data/
 │   ├── range-loader.ts            # Unified encoding dispatch
 │   ├── spatial-query-builder.ts   # Canonical chunk-bounds query API
 │   │                              #   `SpatialQueryBuilder` accepts either a `geometryType` (delegates
-│   │                              #   tolerance to `utils/tolerance-computer.computeTolerance`) or a
+│   │                              #   tolerance to `loaders/tolerance-computer.computeTolerance`) or a
 │   │                              #   pre-computed `tolerance: number[]`.
 │   ├── transferable-accumulator.ts # Zero-allocation buffer management
 │   ├── image-label-loader.ts      # Lazy per-element image fetching from zarr

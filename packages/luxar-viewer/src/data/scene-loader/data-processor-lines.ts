@@ -27,7 +27,7 @@ import * as THREE from 'three';
 import { projectLinesTo3D } from '../lines/projection';
 import type { LinesViewState, LoadedLinesData, ProcessedLinesData } from '../../types/lines';
 import { isLinesUserData } from '../../types/lines';
-import { computeTolerance } from '../utils/tolerance-computer';
+import { computeTolerance } from '../loaders/tolerance-computer';
 import { EXTEND_TO_ALL_TOLERANCE } from './extend-tolerance';
 import { config as appConfig } from '../../config';
 import { log, Modules } from '../../utils/log';

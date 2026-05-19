@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeTolerance, type DimensionInfo } from '../../../data/utils/tolerance-computer';
+import { computeTolerance, type DimensionInfo } from '../../../data/loaders/tolerance-computer';
 
 const DISPLAYED = 1e10;
 

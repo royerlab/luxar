@@ -25,7 +25,7 @@ import {
   computeTolerance,
   type GeometryType,
   type ToleranceOptions,
-} from '../utils/tolerance-computer';
+} from './tolerance-computer';
 import type { BaseViewState, LoadRange } from './base-types';
 
 // ============================================================================

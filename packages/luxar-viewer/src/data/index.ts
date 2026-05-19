@@ -77,4 +77,4 @@ export {
   computeTolerance,
   type GeometryType,
   type ToleranceOptions,
-} from './utils/tolerance-computer';
+} from './loaders/tolerance-computer';
