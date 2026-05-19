@@ -49,17 +49,18 @@ vi.mock('../../../config/validation', () => ({
   validateAndLog: mocks.validateAndLog,
 }));
 
-vi.mock('../../../ui/helpers', () => ({
+vi.mock('../../../ui/error-overlay', () => ({
   showError: mocks.showError,
-  // bootstrap.ts also imports the rest to wire setNotifierBackend(...).
-  // The bootstrap unit tests don't exercise the notifier path; stubs
-  // are sufficient.
-  showToast: vi.fn(),
+  clearError: vi.fn(),
+}));
+vi.mock('../../../ui/toast', () => ({ showToast: vi.fn() }));
+vi.mock('../../../ui/help-overlay', () => ({
   showHelpOverlay: vi.fn(),
   hideHelpOverlay: vi.fn(),
+}));
+vi.mock('../../../ui/loading-indicator', () => ({
   showLoadingIndicator: vi.fn(),
   hideLoadingIndicator: vi.fn(),
-  clearError: vi.fn(),
 }));
 
 vi.mock('zarrita', () => ({
