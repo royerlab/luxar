@@ -40,7 +40,7 @@ import {
   cameraProjectionMatrix,
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-import { sanitizePositive, sanitizeNonNegative, type TSLNode } from '../tsl-helpers';
+import { sanitizePositive, sanitizeNonNegative, type TSLNode } from '../materials/_shared/tsl-helpers';
 
 /**
  * Pre-created TSL leaf nodes supplied by the wrapper class. See

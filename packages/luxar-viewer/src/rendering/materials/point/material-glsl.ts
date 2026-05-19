@@ -7,10 +7,10 @@
 
 import * as THREE from 'three';
 import { POINT_VERTEX_SHADER, POINT_FRAGMENT_SHADER } from './shader-glsl';
-import type { CameraAwareMaterial } from '../../camera-aware-material';
-import type { ColormapAwareMaterial } from '../../colormap-aware-material';
-import { clampGamma } from '../../material-uniform-helpers';
-import { computePointSizeFactor, computeMaxPointSize } from '../../camera-uniforms';
+import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
+import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
+import { clampGamma } from '../_shared/uniform-helpers';
+import { computePointSizeFactor, computeMaxPointSize } from '../_shared/camera-uniforms';
 import {
   applyColormapTextureToMaterial,
   applyScalarRangeToMaterial,

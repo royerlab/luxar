@@ -44,7 +44,7 @@
  *     viewMatrix, projectionMatrix, etc.); we use `position`
  *     directly without them since we already hand NDC coords.
  */
-import type { ShaderSource } from '../shaders/shader-source';
+import type { ShaderSource } from '../materials/_shared/shader-source';
 import { megaWebGPUFactory } from './mega.tsl';
 
 export const MEGA_VERTEX_SHADER = /* glsl */ `

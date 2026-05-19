@@ -12,7 +12,7 @@
  * @module rendering/post-processing/bloom-shaders
  */
 
-import type { ShaderSource } from '../shaders/shader-source';
+import type { ShaderSource } from '../materials/_shared/shader-source';
 import {
   bloomThresholdWebGPUFactory,
   bloomDownsampleWebGPUFactory,

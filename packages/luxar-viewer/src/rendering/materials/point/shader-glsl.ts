@@ -18,8 +18,8 @@
  *     vertexColors=true auto-injected `color` attribute)
  *   - aScalar    (float, USE_COLORMAP only)
  */
-import { GLSL_SANITIZE_FUNCTIONS } from '../../shaders/glsl-lib';
-import type { ShaderSource } from '../../shaders/shader-source';
+import { GLSL_SANITIZE_FUNCTIONS } from '../_shared/glsl-lib';
+import type { ShaderSource } from '../_shared/shader-source';
 import { pointWebGPUFactory } from './shader-tsl';
 
 export const POINT_VERTEX_SHADER = /* glsl */ `

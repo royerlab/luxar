@@ -26,9 +26,9 @@ import { uniform, texture } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
 import { lineWebGPUFactory, type LineTSLNodes } from './shader-tsl';
 import { isGammaOne, isNoGOG, type LineMaterialConfig } from './material-glsl';
-import type { CameraAwareMaterial } from '../../camera-aware-material';
-import type { ColormapAwareMaterial } from '../../colormap-aware-material';
-import { clampGamma } from '../../material-uniform-helpers';
+import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
+import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
+import { clampGamma } from '../_shared/uniform-helpers';
 import {
   applyColormapTextureToMaterial,
   applyScalarRangeToMaterial,
@@ -39,7 +39,7 @@ import {
   type CompleteBlendingState,
 } from '../../blending-state';
 import type { BlendingMode } from '../../material-manager';
-import { proxyIUniform, type TSLNode } from '../../tsl-helpers';
+import { proxyIUniform, type TSLNode } from '../_shared/tsl-helpers';
 
 /**
  * Persistent TSL node table owned by the wrapper. Colormap nodes are

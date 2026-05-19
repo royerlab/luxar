@@ -47,5 +47,5 @@ export {
 } from './material-colormap-helpers';
 
 // Shared rendering types / utilities that consumers commonly need.
-export type { CameraAwareMaterial } from './camera-aware-material';
+export type { CameraAwareMaterial } from './materials/_shared/camera-aware-material';
 export type { BlendingMode } from './material-manager';

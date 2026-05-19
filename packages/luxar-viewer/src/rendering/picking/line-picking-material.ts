@@ -8,9 +8,9 @@
  */
 
 import * as THREE from 'three';
-import type { CameraAwareMaterial } from '../camera-aware-material';
+import type { CameraAwareMaterial } from '../materials/_shared/camera-aware-material';
 import { LINE_PICK_SOURCE } from './picking-shaders';
-import { requireWebGLSources } from '../shaders/shader-source';
+import { requireWebGLSources } from '../materials/_shared/shader-source';
 
 // Module-load assertion: the GLSL wrapper requires the GLSL source.
 const LINE_PICK_GLSL = requireWebGLSources(LINE_PICK_SOURCE);

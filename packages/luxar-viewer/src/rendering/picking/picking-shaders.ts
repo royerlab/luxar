@@ -20,8 +20,8 @@
  * @module rendering/picking/picking-shaders
  */
 
-import type { ShaderSource } from '../shaders/shader-source';
-import { GLSL_SANITIZE_FUNCTIONS } from '../shaders/glsl-lib';
+import type { ShaderSource } from '../materials/_shared/shader-source';
+import { GLSL_SANITIZE_FUNCTIONS } from '../materials/_shared/glsl-lib';
 import { pointPickWebGPUFactory, buildPointPickTSLNodesFromUniforms } from './point-pick.tsl';
 import { linePickWebGPUFactory, buildLinePickTSLNodesFromUniforms } from './line-pick.tsl';
 import { gsplatPickWebGPUFactory, buildGSplatPickTSLNodesFromUniforms } from './gsplat-pick.tsl';
