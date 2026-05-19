@@ -31,11 +31,7 @@ import {
   commitGSplatsGeometry as commitGSplatsGeometryHelper,
   type StagedGSplatsCommit,
 } from './scene-loader/process/data-processor-gsplats';
-import {
-  createGSplatsLoader as createGSplatsLoaderHelper,
-  createProgressiveGSplatsLoader as createProgressiveGSplatsLoaderHelper,
-  type LoaderFactoryDeps,
-} from './scene-loader/loader-factory';
+import type { LoaderFactoryDeps } from './scene-loader/loader-factory';
 import { commitPointsGeometry as commitPointsGeometryHelper } from './scene-loader/commit/commit-points-geometry';
 import { ViewStateQueue } from './scene-loader/view-state-queue';
 import { runGSplatsRefinement } from './gsplats/lod-refinement';
@@ -80,7 +76,6 @@ import type {
   LoadedLinesData,
 } from '../types/lines';
 import type {
-  GSplatsMetadata,
   GSplatsDataLoader,
   GSplatsViewState,
   LoadedGSplatsData,
@@ -112,11 +107,7 @@ import { notifier } from '../utils/notifier';
  * `LoaderError`. The `kind` field drives the user-visible severity
  * and message, not control flow.
  */
-import {
-  LoaderError,
-  classifyLoaderError,
-  loadLeafNode as loadLeafNodeHelper,
-} from './scene-loader/nodes/load-leaf-error-dispatch';
+import { loadLeafNode as loadLeafNodeHelper } from './scene-loader/nodes/load-leaf-error-dispatch';
 import { initializeSceneDimensions as initializeSceneDimensionsHelper } from './scene-loader/nodes/initialize-scene-dimensions';
 import { buildSceneGraph as buildSceneGraphHelper } from './scene-loader/nodes/build-scene-graph';
 import {
@@ -130,6 +121,7 @@ import { updateVisibleCountsInMonitor as updateVisibleCountsInMonitorHelper } fr
 import { disposeSceneLoader } from './scene-loader/dispose';
 import { loadPointsNode } from './scene-loader/nodes/load-points-node';
 import { loadLinesNode } from './scene-loader/nodes/load-lines-node';
+import { loadGSplatsNode } from './scene-loader/nodes/load-gsplats-node';
 import type { NodeBuildCtx } from './scene-loader/nodes/build-ctx';
 
 /**
@@ -1132,132 +1124,15 @@ export class SceneLoader {
   }
 
   /**
-   * Load a single gsplats node
+   * Load a single gsplats node. Implementation lives in
+   * `scene-loader/nodes/load-gsplats-node.ts`.
    */
   private async loadGSplats(
     node: SceneNode,
     parentThree: THREE.Object3D,
     loc: zarr.Location<zarr.Readable>
   ): Promise<THREE.Mesh | null> {
-    const attrs = node.attrs as unknown as GSplatsMetadata;
-    // v2.0 surfaces the default substitutive level's additive sub-LOD count
-    // as `n_additive_sublods_default` on the splats group attrs. Progressive
-    // loading kicks in when that count > 1.
-    const nAdditive = attrs.n_additive_sublods_default ?? 0;
-    const defaultSub = attrs.default_substitutive ?? 0;
-    log.custom('🔮', Modules.SCENE_LOADER, `Loading gsplats: ${node.path}`);
-    log.info(
-      Modules.SCENE_LOADER,
-      `  Splats: ${(nAdditive > 1 ? (attrs.n_splats_total ?? attrs.n_splats) : attrs.n_splats)?.toLocaleString() || 'unknown'}`
-    );
-    log.info(Modules.SCENE_LOADER, `  Dimensions: ${attrs.ndim || 'unknown'}D`);
-    if ((attrs.n_substitutive ?? 1) > 1) {
-      log.info(
-        Modules.SCENE_LOADER,
-        `  Substitutive levels: ${attrs.n_substitutive} (rendering default level ${defaultSub})`
-      );
-    }
-    if (nAdditive > 1) {
-      log.info(
-        Modules.SCENE_LOADER,
-        `  Additive sub-LODs: ${nAdditive} (progressive loading enabled)`
-      );
-    }
-
-    // Create gsplats loader — progressive for multi-additive, standard otherwise
-    const loader =
-      nAdditive > 1
-        ? await this.createProgressiveGSplatsLoader(node, loc, nAdditive, defaultSub)
-        : this.createGSplatsLoader(node, loc);
-
-    // Store loader for updates (route through registry).
-    this.registry.registerGSplatsLoader(node.path, loader);
-
-    // Empty placeholder + same-flow commit. See loadPoints/loadLines
-    // for the rationale.
-    const placeholder = this.nodeFactory.createEmptyGSplatsNode(
-      node.path,
-      this.applyEffectiveAttrs(node),
-      attrs,
-      loader
-    );
-    parentThree.add(placeholder);
-
-    try {
-      // GSplats path mirrors Points: applyPartialExtendTolerance=true so
-      // tolerance overrides + nd_transform inversion both happen up front.
-      const derivedGSplats = this.deriveNodeViewState(node.path, node.attrs, {
-        applyPartialExtendTolerance: true,
-      });
-      const gsplatsViewState: GSplatsViewState = derivedGSplats.skip
-        ? {
-            displayDims: this.viewState.displayDims,
-            slicePosition: this.viewState.slicePosition,
-            tolerance: this.viewState.tolerance,
-            dimensions: this.viewState.dimensions,
-          }
-        : derivedGSplats.viewState;
-
-      // Load gsplats data
-      const data = await loader.loadGSplats(gsplatsViewState);
-
-      if (data.splatCount === 0) {
-        log.info(
-          Modules.SCENE_LOADER,
-          `No initially visible gsplats for ${node.path} - object created for future updates`
-        );
-      }
-
-      // Process + commit through the same helpers used by every update
-      // and retry. Helpers find the placeholder by name and read its
-      // userData for truncate/attrs.
-      const staged = await this.processGSplatsData(node.path, data, gsplatsViewState);
-      if (staged) this.commitGSplatsGeometry(staged);
-
-      log.success(
-        Modules.SCENE_LOADER,
-        `Loaded ${data.splatCount.toLocaleString()} gsplats for ${node.path}`
-      );
-
-      return placeholder;
-    } catch (error) {
-      // See loadPoints catch.
-      this.registry.recordFailure(node.path, error as Error);
-      throw new LoaderError(classifyLoaderError(error), node.path, error);
-    }
-  }
-
-  /** Create a single-LOD gsplats loader for a node. */
-  private createGSplatsLoader(
-    node: SceneNode,
-    loc: zarr.Location<zarr.Readable>
-  ): GSplatsDataLoader {
-    const loader = createGSplatsLoaderHelper(node, loc, this.factoryDeps());
-    this.connectLoaderToMonitor(node.path, loader);
-    return loader;
-  }
-
-  /**
-   * Create a progressive gsplats loader for a multi-LOD node. The
-   * parent's effective rendering attrs are composed up the scene-graph
-   * ancestry here (not in the helper) so the LOD synthetic nodes see
-   * ancestor opacity/intensity/etc.
-   */
-  private async createProgressiveGSplatsLoader(
-    node: SceneNode,
-    _loc: zarr.Location<zarr.Readable>,
-    nAdditive: number,
-    defaultSub: number
-  ): Promise<GSplatsDataLoader> {
-    const loader = await createProgressiveGSplatsLoaderHelper(
-      node,
-      nAdditive,
-      defaultSub,
-      this.applyEffectiveAttrs(node),
-      this.factoryDeps()
-    );
-    this.connectLoaderToMonitor(node.path, loader);
-    return loader;
+    return loadGSplatsNode(node, parentThree, loc, this.makeNodeBuildCtx());
   }
 
   /**
