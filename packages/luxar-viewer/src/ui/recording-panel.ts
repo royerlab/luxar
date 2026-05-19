@@ -24,8 +24,6 @@ import {
 } from './recording-panel/media-utilities';
 import {
   renderFrameToCanvas as renderFrameToCanvasHelper,
-  encodeScreenshotBlob,
-  normalizeScreenshotFormat,
   downloadBlob as downloadBlobHelper,
 } from './recording-panel/screenshot-exporter';
 import {
@@ -42,6 +40,7 @@ import type { CaptureContext, OfflineCaptureDriver } from './recording-panel/dri
 import { ImageSequenceDriver } from './recording-panel/drivers/image-sequence-driver';
 import { ExrSequenceDriver } from './recording-panel/drivers/exr-sequence-driver';
 import { VideoModeDriver } from './recording-panel/drivers/video-mode-driver';
+import { captureScreenshot, type ScreenshotCtx } from './recording-panel/modes/screenshot-mode';
 
 // Shared recording types live in `recording/types.ts`. Re-exported
 // here for external consumers that import from the panel directly.
@@ -288,83 +287,40 @@ export class RecordingPanel {
   // ========== Screenshot Capture ==========
 
   async captureScreenshot(): Promise<void> {
-    // Refuse during active recording. captureScreenshot() and the
-    // recording paths share `savedRecordingState` — without this guard,
-    // a screenshot during recording would clobber the active session's
-    // saved DPR/resize/renderer snapshot and the recording's eventual
-    // restoreRecordingState() would no-op, leaving DPR disabled and
-    // resize locked after recording ends.
-    if (this.isRecording || this.isOfflineCaptureActive) {
-      showToast('Stop recording before taking a screenshot');
-      return;
-    }
-    if (this.isCaptureInProgress) return;
-    this.isCaptureInProgress = true;
+    await captureScreenshot(this.makeScreenshotCtx());
+  }
 
-    let savedBackground: THREE.Color | THREE.Texture | null = null;
-
-    try {
-      log.info(Modules.RECORDING, 'Capturing screenshot...');
-
-      this.hideAllPanels();
-      await new Promise((r) => requestAnimationFrame(r));
-
-      // Save state (always — ensures restoreRecordingState restores panels)
-      const wantMaxDPR = this.options.maxDPR && !!this.adaptiveDPRManager;
-      this.saveRecordingState({ disableDPR: wantMaxDPR });
-      if (wantMaxDPR) {
-        await new Promise((r) => requestAnimationFrame(r));
-      }
-
-      // Set transparent background
-      if (this.options.transparentBackground) {
-        savedBackground = this.sceneManager.scene.background as THREE.Color | THREE.Texture | null;
-        this.sceneManager.scene.background = null;
-      }
-
-      const format = this.options.outputFormat;
-
-      if (format === 'exr') {
-        const exrData = await this.sceneManager.postProcessing.captureHDRAsEXR();
-        const blob = new Blob([exrData as BlobPart], { type: 'application/octet-stream' });
-        this.downloadBlob(blob, this.generateFilename('exr'));
-        showToast('HDR screenshot saved (EXR)');
-      } else {
-        const captureCanvas = await this.renderFrameToCanvas();
-
-        const { format: effectiveFormat, warning } = normalizeScreenshotFormat(
-          format,
-          this.options.transparentBackground
-        );
-        if (warning === 'video-fallback') {
-          log.warning(
-            Modules.RECORDING,
-            `Screenshot format '${format}' is a video format, falling back to PNG`
-          );
-        } else if (warning === 'jpeg-no-alpha') {
-          showToast('Switched to PNG (JPEG has no alpha)');
-        }
-
-        const blob = await encodeScreenshotBlob(
-          captureCanvas,
-          effectiveFormat,
-          this.options.imageQuality
-        );
-
-        if (blob) {
-          this.downloadBlob(blob, this.generateFilename(effectiveFormat));
-          showToast('Screenshot saved');
-        } else {
-          showToast('Screenshot failed');
-        }
-      }
-    } finally {
-      if (savedBackground !== null) {
-        this.sceneManager.scene.background = savedBackground;
-      }
-      this.restoreRecordingState();
-      this.isCaptureInProgress = false;
-    }
+  private makeScreenshotCtx(): ScreenshotCtx {
+    const self = this;
+    return {
+      get isRecording() {
+        return self.isRecording;
+      },
+      get isOfflineCaptureActive() {
+        return self.isOfflineCaptureActive;
+      },
+      get isCaptureInProgress() {
+        return self.isCaptureInProgress;
+      },
+      set isCaptureInProgress(v: boolean) {
+        self.isCaptureInProgress = v;
+      },
+      get options() {
+        return self.options;
+      },
+      get sceneManager() {
+        return self.sceneManager;
+      },
+      get adaptiveDPRManager() {
+        return self.adaptiveDPRManager;
+      },
+      hideAllPanels: () => self.hideAllPanels(),
+      saveRecordingState: (opts) => self.saveRecordingState(opts),
+      restoreRecordingState: () => self.restoreRecordingState(),
+      downloadBlob: (blob, filename) => self.downloadBlob(blob, filename),
+      generateFilename: (ext) => self.generateFilename(ext),
+      renderFrameToCanvas: () => self.renderFrameToCanvas(),
+    };
   }
 
   // ========== Video Recording ==========
