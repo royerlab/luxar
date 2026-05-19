@@ -463,6 +463,148 @@ describe('SceneManager', () => {
     });
   });
 
+  describe('loadSceneData orchestration', () => {
+    // Pin the 7-step call chain and the positionApplied conditional. These
+    // tests complement the basic smoke tests in `scene loading` — they spy
+    // on the private collaborators that loadSceneData orchestrates and
+    // assert ordering / conditional branches that aren't visible through
+    // the public-method assertions above.
+
+    beforeEach(async () => {
+      // Reset the loadScene mock back to its default success behaviour
+      // (the error test in the previous block leaves it in rejected
+      // state across cases otherwise).
+      (mockLoadScene as any).mockImplementation(async () => {
+        const T = await import('three');
+        const group = new T.Group();
+        group.name = 'LuxarScene';
+        return group;
+      });
+      await sceneManager.init({ canvas: mockCanvas as any });
+    });
+
+    /**
+     * Set up the seven spies the orchestration tests share. If
+     * `opts.viewerConfig` is provided, it's attached to the root group
+     * returned by `mockLoadScene` so that the `viewerConfig` read in
+     * `loadSceneData` picks it up *before* `applyZarrViewerConfig` is
+     * called (the production order is: capture viewerConfig, then call
+     * the helper, then read camOverrides from the captured value).
+     */
+    function installSpies(opts: { positionApplied?: boolean; viewerConfig?: unknown } = {}) {
+      const internals = sceneManager as unknown as {
+        clearSceneContent(): void;
+        resetControls(): void;
+        applyZarrViewerConfig(root: THREE.Group): { positionApplied: boolean };
+        autoFrameCamera(preserveTarget?: boolean): void;
+      };
+      if (opts.viewerConfig !== undefined) {
+        (mockLoadScene as any).mockImplementationOnce(async () => {
+          const T = await import('three');
+          const group = new T.Group();
+          group.name = 'LuxarScene';
+          group.userData.viewerConfig = opts.viewerConfig;
+          return group;
+        });
+      }
+      const clearSceneContent = vi.spyOn(internals, 'clearSceneContent');
+      const resetControls = vi.spyOn(internals, 'resetControls');
+      const updateMaterialsForCurrentCamera = vi.spyOn(
+        sceneManager,
+        'updateMaterialsForCurrentCamera'
+      );
+      const applyZarrViewerConfig = vi
+        .spyOn(internals, 'applyZarrViewerConfig')
+        .mockImplementation(() => ({ positionApplied: opts.positionApplied ?? false }));
+      const autoFrameCamera = vi.spyOn(internals, 'autoFrameCamera').mockImplementation(() => {});
+      const autoAdjustClippingPlanes = vi
+        .spyOn(sceneManager, 'autoAdjustClippingPlanes')
+        .mockImplementation(() => ({ near: 0.1, far: 1000 }));
+      return {
+        clearSceneContent,
+        resetControls,
+        updateMaterialsForCurrentCamera,
+        applyZarrViewerConfig,
+        autoFrameCamera,
+        autoAdjustClippingPlanes,
+      };
+    }
+
+    it('invokes collaborators in the documented order', async () => {
+      const spies = installSpies();
+
+      await sceneManager.loadSceneData('http://example.com/data.zarr');
+
+      // Expected sequence: clearSceneContent → resetControls →
+      // updateMaterialsForCurrentCamera → loadScene → applyZarrViewerConfig →
+      // autoFrameCamera (because positionApplied=false by default) →
+      // autoAdjustClippingPlanes.
+      const order = [
+        spies.clearSceneContent.mock.invocationCallOrder[0],
+        spies.resetControls.mock.invocationCallOrder[0],
+        spies.updateMaterialsForCurrentCamera.mock.invocationCallOrder[0],
+        (mockLoadScene as unknown as { mock: { invocationCallOrder: number[] } }).mock
+          .invocationCallOrder[0],
+        spies.applyZarrViewerConfig.mock.invocationCallOrder[0],
+        spies.autoFrameCamera.mock.invocationCallOrder[0],
+        spies.autoAdjustClippingPlanes.mock.invocationCallOrder[0],
+      ];
+      for (let i = 1; i < order.length; i++) {
+        expect(order[i]).toBeGreaterThan(order[i - 1]);
+      }
+    });
+
+    it('skips autoFrameCamera when applyZarrViewerConfig reports positionApplied=true', async () => {
+      const spies = installSpies({
+        positionApplied: true,
+        viewerConfig: { camera: { position: [10, 20, 30] } },
+      });
+
+      await sceneManager.loadSceneData('http://example.com/data.zarr');
+
+      // Author specified an explicit camera position — auto-framing must
+      // not overwrite it. Clipping still runs (it follows camera position
+      // regardless of source).
+      expect(spies.autoFrameCamera).not.toHaveBeenCalled();
+      expect(spies.autoAdjustClippingPlanes).toHaveBeenCalledTimes(1);
+    });
+
+    it('calls autoFrameCamera(true) when author set target/targetNode but no position', async () => {
+      const spies = installSpies({
+        positionApplied: false,
+        viewerConfig: { camera: { target: [5, 5, 5] } },
+      });
+
+      await sceneManager.loadSceneData('http://example.com/data.zarr');
+
+      expect(spies.autoFrameCamera).toHaveBeenCalledTimes(1);
+      // preserveTarget=true → the helper preserves the author's look-at
+      // point instead of overwriting it with bounding-box center.
+      expect(spies.autoFrameCamera).toHaveBeenCalledWith(true);
+    });
+
+    it('error path: skips autoFrame/autoAdjust + reports through notifier + rethrows', async () => {
+      const spies = installSpies();
+      const error = new Error('synthetic load failure');
+      (mockLoadScene as any).mockRejectedValueOnce(error);
+
+      await expect(sceneManager.loadSceneData('http://example.com/data.zarr')).rejects.toThrow(
+        'synthetic load failure'
+      );
+
+      // Pre-load steps still ran...
+      expect(spies.clearSceneContent).toHaveBeenCalledTimes(1);
+      expect(spies.resetControls).toHaveBeenCalledTimes(1);
+      // ...but the post-load orchestration was skipped after the throw.
+      expect(spies.applyZarrViewerConfig).not.toHaveBeenCalled();
+      expect(spies.autoFrameCamera).not.toHaveBeenCalled();
+      expect(spies.autoAdjustClippingPlanes).not.toHaveBeenCalled();
+      // notifier surface was invoked correctly.
+      expect(mockHideLoadingIndicator).toHaveBeenCalled();
+      expect(mockShowError).toHaveBeenCalledWith(expect.stringContaining('Failed to load'));
+    });
+  });
+
   describe('rendering', () => {
     beforeEach(async () => {
       await sceneManager.init({ canvas: mockCanvas as any });
