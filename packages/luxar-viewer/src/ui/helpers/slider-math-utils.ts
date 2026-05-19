@@ -10,7 +10,7 @@
  * @module ui/slider-math-utils
  */
 
-import { clamp } from '../gui/utils/value-formatting';
+import { clamp } from '../gui/format/value-formatting';
 
 /**
  * Clamp `value` into `[min, max]`. When `isCyclic` is true, an underflow

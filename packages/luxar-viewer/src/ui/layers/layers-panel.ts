@@ -35,7 +35,7 @@ import {
   getBlendingState,
   liveLayerAttrs as deriveLiveLayerAttrs,
 } from './layer-attrs-utils';
-import { clamp } from '../gui/utils/value-formatting';
+import { clamp } from '../gui/format/value-formatting';
 
 // Type guard: does this material have our update* methods?
 export interface LuxarMaterial extends THREE.Material, CameraAwareMaterial {

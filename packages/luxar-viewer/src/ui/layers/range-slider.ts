@@ -9,7 +9,7 @@
  * napari-style.
  */
 
-import { clamp } from '../gui/utils/value-formatting';
+import { clamp } from '../gui/format/value-formatting';
 
 export interface RangeSliderOptions {
   container: HTMLElement;
