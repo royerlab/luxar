@@ -543,16 +543,22 @@ describe('RecordingPanel', () => {
 
     it('startVideoRecording catch path restores state when canvas.captureStream throws', async () => {
       // Force the confirmation dialog to resolve true so the setup
-      // body runs.
-      vi.spyOn(panel as any, 'showConfirmationDialog').mockResolvedValue(true);
+      // body runs. (VideoRecordingStrategy calls session.showConfirmationDialog
+      // directly — Panel's wrapper is no longer in the call chain.)
+      vi.spyOn((panel as any).session, 'showConfirmationDialog').mockResolvedValue(true);
       // Make canvas.captureStream() throw.
       const canvas = mockSceneManager.renderer.domElement;
       (canvas as any).captureStream = vi.fn(() => {
         throw new Error('captureStream not supported');
       });
 
-      const restoreStateSpy = vi.spyOn(panel as any, 'restoreRecordingState');
-      const cleanupStreamSpy = vi.spyOn(panel as any, 'cleanupCaptureStream');
+      // VideoRecordingStrategy calls session.restoreRecordingState() and
+      // its own internal cleanupCaptureStream — spy at the new locations.
+      const restoreStateSpy = vi.spyOn((panel as any).session, 'restoreRecordingState');
+      const cleanupStreamSpy = vi.spyOn(
+        (panel as any).videoRecordingStrategy,
+        'cleanupCaptureStream'
+      );
 
       vi.mocked(showToast).mockClear();
       await expect(panel.startVideoRecording()).rejects.toThrow('captureStream not supported');

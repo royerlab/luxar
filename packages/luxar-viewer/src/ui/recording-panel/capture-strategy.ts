@@ -22,7 +22,7 @@
  *   release any long-lived state (track refs, AbortController, …).
  */
 
-import type { RecordingOptions } from './types';
+import type { RecordingMode, RecordingOptions } from './types';
 import type { RecordingSession } from './session';
 
 export type CaptureKind = 'screenshot' | 'video' | 'offline';
@@ -40,7 +40,7 @@ export interface SessionState {
 export interface CaptureStrategy {
   readonly kind: CaptureKind;
   canRun(state: SessionState): boolean;
-  run(opts: RecordingOptions, session: RecordingSession): Promise<void>;
+  run(opts: RecordingOptions, mode: RecordingMode, session: RecordingSession): Promise<void>;
   abort(): void;
   dispose(): void;
 }

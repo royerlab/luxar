@@ -39,6 +39,7 @@ import { VideoModeDriver } from './recording-panel/drivers/video-mode-driver';
 import { buildRecordingGUI } from './recording-panel/ui/gui-construction';
 import { RecordingSession, type SaveRecordingStateOptions } from './recording-panel/session';
 import { ScreenshotStrategy } from './recording-panel/screenshot-strategy';
+import { VideoRecordingStrategy } from './recording-panel/video-recording-strategy';
 
 // Shared recording types live in `recording-panel/types.ts`. Re-exported
 // here for external consumers that import from the panel directly.
@@ -117,20 +118,24 @@ export class RecordingPanel {
   private set savedAutoRotate(v: boolean) { (this.session as unknown as { savedAutoRotate: boolean }).savedAutoRotate = v; }
   private get recordingStartTime(): number { return this.session.recordingStartTime; }
   private set recordingStartTime(v: number) { this.session.recordingStartTime = v; }
-  private get animationManager(): DimensionAnimationManager | null { return this.session.animationManager; }
+  // Used only by test probes; non-private to silence TS6133.
+  get animationManager(): DimensionAnimationManager | null { return this.session.animationManager; }
   private get overlayManager(): OverlayManager | null { return this.session.overlayManager; }
 
-  // Video recording state (moves to VideoRecordingStrategy in Phase 3)
-  private mediaRecorder: MediaRecorder | null = null;
-  // canvas.captureStream() returns a MediaStream whose tracks live
-  // until explicitly stopped. mediaRecorder.stop() does NOT stop the
-  // underlying tracks, so we track the stream here and stop its
-  // tracks in every onstop branch to release browser media resources.
-  private captureStream: MediaStream | null = null;
-  private recordedChunks: Blob[] = [];
-  private durationTimer: ReturnType<typeof setTimeout> | null = null;
-  private keepAliveCallbackId = 'recording-keepalive';
-  private turntableCallbackId = 'recording-turntable';
+  // ── Proxies into VideoRecordingStrategy (test-only; tests still probe
+  //    `(panel as any).mediaRecorder` etc.). Removed in Phase 6.
+  //    Non-`private` so TS doesn't flag them as unused (they're accessed
+  //    only via `(panel as any)` in tests, which TS can't see).
+  get mediaRecorder(): MediaRecorder | null { return this.videoRecordingStrategy.mediaRecorder; }
+  set mediaRecorder(v: MediaRecorder | null) { this.videoRecordingStrategy.mediaRecorder = v; }
+  get captureStream(): MediaStream | null { return this.videoRecordingStrategy.captureStream; }
+  set captureStream(v: MediaStream | null) { this.videoRecordingStrategy.captureStream = v; }
+  get recordedChunks(): Blob[] { return this.videoRecordingStrategy.recordedChunks; }
+  set recordedChunks(v: Blob[]) { this.videoRecordingStrategy.recordedChunks = v; }
+  get durationTimer(): ReturnType<typeof setTimeout> | null { return this.videoRecordingStrategy.durationTimer; }
+  set durationTimer(v: ReturnType<typeof setTimeout> | null) { this.videoRecordingStrategy.durationTimer = v; }
+  private get keepAliveCallbackId(): string { return this.videoRecordingStrategy.keepAliveCallbackId; }
+  private get turntableCallbackId(): string { return this.videoRecordingStrategy.turntableCallbackId; }
   // Offline-capture callback IDs are class-level constants so
   // dispose() can remove them unconditionally even if the loop is
   // parked on an `await` and hasn't reached its finally yet.
@@ -150,6 +155,7 @@ export class RecordingPanel {
 
   // Strategies (own their own internal state; see capture-strategy.ts).
   private screenshotStrategy: ScreenshotStrategy;
+  private videoRecordingStrategy: VideoRecordingStrategy;
 
   // GUI controller references for dynamic show/hide
   private imageControllers: Controller[] = [];
@@ -175,10 +181,19 @@ export class RecordingPanel {
     // existing stopVideoRecording path so the user can stop from anywhere.
     this.session.setStopVideoCallback(() => this.stopVideoRecording());
 
+    const downloadHooks = {
+      downloadBlob: (blob: Blob, filename: string) => this.downloadBlob(blob, filename),
+      generateFilename: (ext: string) => this.generateFilename(ext),
+    };
+
     this.screenshotStrategy = new ScreenshotStrategy(sceneManager, {
       hideAllPanels: () => this.hideAllPanels(),
-      downloadBlob: (blob, filename) => this.downloadBlob(blob, filename),
-      generateFilename: (ext) => this.generateFilename(ext),
+      ...downloadHooks,
+    });
+
+    this.videoRecordingStrategy = new VideoRecordingStrategy(sceneManager, animationController, {
+      hideAllPanels: () => this.hideAllPanels(),
+      ...downloadHooks,
     });
 
     this.gui = new GUI({
@@ -260,10 +275,6 @@ export class RecordingPanel {
     if (this.isRecording) {
       this.stopVideoRecording();
     }
-    if (this.durationTimer) {
-      clearTimeout(this.durationTimer);
-      this.durationTimer = null;
-    }
 
     // Abort any in-flight offline-capture session so the loop's
     // next await checkpoint sees signal.aborted and short-circuits
@@ -279,9 +290,10 @@ export class RecordingPanel {
     this.animationController.removePerFrameCallback(RecordingPanel.OFFLINE_CAPTURE_CALLBACK_ID);
     this.animationController.removePerFrameCallback(RecordingPanel.OFFLINE_KEEPALIVE_CALLBACK_ID);
 
-    // Defensive: stop any captureStream tracks even if mediaRecorder.onstop
-    // didn't fire (browser quirks, mid-init dispose).
-    this.cleanupCaptureStream();
+    // VideoRecordingStrategy unwinds: defensive cleanupCaptureStream
+    // (mediaRecorder.onstop may have suppressed itself due to disposed)
+    // and clears duration timer + nulls mediaRecorder/recordedChunks.
+    this.videoRecordingStrategy.dispose();
 
     // Session unwinds: confirmation dialog, indicator, slider sync,
     // auto-rotate, renderer/DPR/resize-lock state, panel-state restore.
@@ -292,7 +304,7 @@ export class RecordingPanel {
   // ========== Screenshot Capture ==========
 
   async captureScreenshot(): Promise<void> {
-    return this.screenshotStrategy.run(this.options, this.session);
+    return this.screenshotStrategy.run(this.options, this.mode, this.session);
   }
 
   // ========== Video Recording ==========
@@ -300,152 +312,26 @@ export class RecordingPanel {
   async startVideoRecording(): Promise<void> {
     if (this.isRecording) return;
 
-    // Branch: frame-by-frame capture modes
+    // Mode dispatch: decide which capture pipeline to use based on
+    // format + turntable-smooth setting. Real-time MediaRecorder path
+    // (VideoRecordingStrategy) handles MP4/WebM/MKV in non-smooth mode;
+    // everything else falls through to OfflineCaptureStrategy
+    // (still in-Panel until Phase 4).
     const fmt = this.options.outputFormat;
     const isImageFormat = fmt === 'png' || fmt === 'webp' || fmt === 'jpeg';
     const isTurntableSmooth = this.mode === 'turntable' && this.options.frameByFrame;
 
-    // EXR → ZIP of EXR frames (always offline)
     if (fmt === 'exr') {
       return this.startEXRSequenceRecording();
     }
-    // Turntable smooth mode — all formats use offline capture
     if (isTurntableSmooth) {
       if (isImageFormat) {
-        return this.runOfflineCaptureLoop(fmt); // → ZIP of images
+        return this.runOfflineCaptureLoop(fmt);
       }
-      return this.runOfflineCaptureLoop(fmt as 'mp4' | 'webm' | 'mkv'); // → video file
-    }
-    // Video mode with image formats falls through to real-time MediaRecorder below
-
-    const mimeType = this.getSupportedMimeType();
-    if (!mimeType) {
-      showToast('Video recording not supported in this browser');
-      return;
+      return this.runOfflineCaptureLoop(fmt as 'mp4' | 'webm' | 'mkv');
     }
 
-    const confirmed = await this.showConfirmationDialog();
-    if (!confirmed || this.disposed) return;
-
-    // Wrap the entire setup phase. Without this, a throw from
-    // canvas.captureStream(), `new MediaRecorder(...)`, or
-    // mediaRecorder.start() would leave panels hidden, DPR disabled,
-    // resize locked, the keepalive callback registered, and no onstop
-    // to unwind any of it.
-    try {
-      this.hideAllPanels();
-
-      // Disable adaptive DPR during recording — resolution changes mid-capture cause
-      // frozen frames, aspect ratio glitches, and partial rotations
-      this.saveRecordingState({
-        disableDPR: true,
-        lockResize: true,
-        scaleResolution:
-          this.options.videoResolution > 0 ? { targetH: this.options.videoResolution } : undefined,
-      });
-      if (this.options.videoResolution > 0) {
-        await new Promise((r) => requestAnimationFrame(r));
-        if (this.disposed) {
-          this.restoreRecordingState();
-          return;
-        }
-      }
-
-      const canvas = this.sceneManager.renderer.domElement;
-      const videoBitsPerSecond = this.computeVideoBitrate(canvas.width, canvas.height);
-
-      log.info(
-        Modules.RECORDING,
-        `Starting video recording (${mimeType}, ${this.options.videoFPS} FPS, ` +
-          `${Math.round(videoBitsPerSecond / 1_000_000)}Mbps, ${canvas.width}x${canvas.height}, ` +
-          `mode: ${this.mode})`
-      );
-
-      this.animationController.startAnimation();
-      this.animationController.addPerFrameCallback(this.keepAliveCallbackId, () => {}, {
-        continuous: true,
-      });
-
-      this.captureStream = canvas.captureStream(this.options.videoFPS);
-      this.mediaRecorder = new MediaRecorder(this.captureStream, { mimeType, videoBitsPerSecond });
-      this.recordedChunks = [];
-
-      this.mediaRecorder.ondataavailable = (event) => {
-        if (event.data && event.data.size > 0) {
-          this.recordedChunks.push(event.data);
-        }
-      };
-
-      this.mediaRecorder.onstop = () => {
-        if (this.disposed) {
-          this.recordedChunks = [];
-          this.isRecording = false;
-          this.hideRecordingIndicator();
-          this.cleanupCaptureStream();
-          return;
-        }
-
-        const blob = new Blob(this.recordedChunks, { type: mimeType });
-        const totalElapsed = ((Date.now() - this.recordingStartTime) / 1000).toFixed(1);
-        log.info(
-          Modules.RECORDING,
-          `Recording finalized: ${this.recordedChunks.length} chunks, ` +
-            `${(blob.size / (1024 * 1024)).toFixed(1)} MB, ${totalElapsed}s elapsed`
-        );
-        this.downloadBlob(blob, this.generateFilename('webm'));
-        this.recordedChunks = [];
-        this.isRecording = false;
-        this.hideRecordingIndicator();
-
-        this.animationController.removePerFrameCallback(this.keepAliveCallbackId);
-        this.animationController.removePerFrameCallback(this.turntableCallbackId);
-        this.cleanupSyncListener();
-        this.restoreAutoRotate();
-        this.restoreRecordingState();
-        this.cleanupCaptureStream();
-        showToast('Video saved');
-      };
-
-      this.mediaRecorder.start(100);
-      this.isRecording = true;
-      this.recordingStartTime = Date.now();
-      this.showRecordingIndicator();
-
-      // Duration limit
-      if (this.options.videoDurationLimit > 0) {
-        this.durationTimer = setTimeout(() => {
-          this.stopVideoRecording();
-        }, this.options.videoDurationLimit * 1000);
-      }
-
-      // Start slider sync if enabled
-      if (this.mode === 'video' && this.options.syncToSlider && this.animationManager) {
-        this.startSliderSync();
-      }
-
-      // Start turntable rotation if in turntable mode
-      if (this.mode === 'turntable') {
-        this.startTurntableRotation();
-      }
-    } catch (err) {
-      log.error(Modules.RECORDING, `Real-time recording setup failed: ${err}`);
-      // Symmetric undo of every state mutation up to this point.
-      // mediaRecorder may or may not have been constructed; clearing
-      // the field is defensive. captureStream cleanup also runs even
-      // if it was never assigned (helper handles null).
-      this.cleanupCaptureStream();
-      this.mediaRecorder = null;
-      this.recordedChunks = [];
-      this.animationController.removePerFrameCallback(this.keepAliveCallbackId);
-      this.animationController.removePerFrameCallback(this.turntableCallbackId);
-      this.cleanupSyncListener();
-      this.restoreAutoRotate();
-      this.restoreRecordingState();
-      this.isRecording = false;
-      this.hideRecordingIndicator();
-      showToast('Video recording failed to start');
-      throw err;
-    }
+    return this.videoRecordingStrategy.run(this.options, this.mode, this.session);
   }
 
   stopVideoRecording(): void {
@@ -465,12 +351,7 @@ export class RecordingPanel {
     const elapsed = ((Date.now() - this.recordingStartTime) / 1000).toFixed(1);
     log.info(Modules.RECORDING, `Stopping video recording after ${elapsed}s...`);
 
-    if (this.durationTimer) {
-      clearTimeout(this.durationTimer);
-      this.durationTimer = null;
-    }
-
-    this.mediaRecorder?.stop();
+    this.videoRecordingStrategy.abort();
   }
 
   // ========== Offline Capture (image / video / EXR sequences) ==========
@@ -906,26 +787,22 @@ export class RecordingPanel {
 
   // ========== Slider Sync ==========
 
-  private startSliderSync(): void {
+  // Wrappers below are non-private to silence TS6133 — they're only
+  // called via `(panel as any).X()` in tests, which the compiler can't see.
+
+  startSliderSync(): void {
     this.session.startSliderSync(
       this.options.syncDimensionIndex,
       () => this.stopVideoRecording()
     );
   }
 
-  private cleanupSyncListener(): void {
-    this.session.cleanupSyncListener();
-  }
-
   /**
-   * Stop every track on the captureStream and drop the reference.
-   * `mediaRecorder.stop()` does NOT stop the underlying tracks, so
-   * without this call canvas-capture media tracks accumulate across
-   * repeated recordings.
+   * Stop captureStream tracks — wrapper around VideoRecordingStrategy
+   * for tests that still call `(panel as any).cleanupCaptureStream()`.
    */
-  private cleanupCaptureStream(): void {
-    this.captureStream?.getTracks().forEach((track) => track.stop());
-    this.captureStream = null;
+  cleanupCaptureStream(): void {
+    this.videoRecordingStrategy.cleanupCaptureStream();
   }
 
   /** Restore auto-rotation to its pre-turntable state. */
@@ -933,68 +810,12 @@ export class RecordingPanel {
     this.session.restoreAutoRotate();
   }
 
-  // ========== Turntable Rotation ==========
-
   /**
-   * Start time-based turntable rotation for the standard MediaRecorder path.
-   *
-   * Uses the same quaternion-based orbit rotation as auto-rotate (screen-up axis),
-   * driven by wall clock time because MediaRecorder operates in real time.
-   * The rotation completes after the correct wall clock duration regardless of GPU FPS.
-   *
-   * Note: The offline capture loop (for EXR/HDR video) uses its own
-   * frame-index-based stepping and does NOT use this method.
+   * Wrapper for tests still probing `(panel as any).startTurntableRotation()`.
+   * Internally delegates to the VideoRecordingStrategy.
    */
-  private startTurntableRotation(): void {
-    const controls = this.sceneManager.controls.getControls();
-    if (!(controls instanceof LuxarOrbitControls)) {
-      log.warning(Modules.RECORDING, 'Turntable requires orbit controls');
-      return;
-    }
-
-    // Pause auto-rotation so it doesn't compound with the turntable
-    this.savedAutoRotate = this.sceneManager.controls.getAutoRotate();
-    this.sceneManager.controls.setAutoRotate(false);
-
-    const totalDuration = (360 / this.options.turntableSpeed) * 1000;
-    const startTime = Date.now();
-
-    log.info(
-      Modules.RECORDING,
-      `Turntable started: speed=${this.options.turntableSpeed}°/s, ` +
-        `duration=${(totalDuration / 1000).toFixed(1)}s`
-    );
-
-    let turntableDone = false;
-    let frameCount = 0;
-    let lastProgress = 0;
-    this.animationController.addPerFrameCallback(
-      this.turntableCallbackId,
-      () => {
-        if (turntableDone) return;
-        frameCount++;
-
-        // Time-based progress — rotation completes after the correct wall clock duration
-        const elapsed = Date.now() - startTime;
-        const progress = Math.min(elapsed / totalDuration, 1);
-        const deltaAngle = (progress - lastProgress) * Math.PI * 2;
-        lastProgress = progress;
-
-        // Quaternion orbit — same math as auto-rotation (screen-up axis)
-        controls.applyOrbitRotation(deltaAngle);
-
-        if (progress >= 1) {
-          turntableDone = true;
-          log.info(
-            Modules.RECORDING,
-            `Turntable completed: ${frameCount} rendered frames in ` +
-              `${(elapsed / 1000).toFixed(1)}s (${(frameCount / (elapsed / 1000)).toFixed(1)} FPS)`
-          );
-          this.stopVideoRecording();
-        }
-      },
-      { continuous: true }
-    );
+  startTurntableRotation(): void {
+    this.videoRecordingStrategy.startTurntableRotationForTests(this.options, this.session);
   }
 
   // ========== GUI Construction ==========
@@ -1173,11 +994,9 @@ export class RecordingPanel {
 
   /**
    * Get a supported MIME type for real-time MediaRecorder capture.
-   * MediaRecorder only supports WebM with VP9 or VP8 — H.264/H.265 are
-   * NOT valid WebM codecs. The videoCodec option only applies to the
-   * offline mediabunny path (turntable mode).
+   * Non-private — test-only access via `(panel as any).getSupportedMimeType()`.
    */
-  private getSupportedMimeType(): string | null {
+  getSupportedMimeType(): string | null {
     return getSupportedMimeTypePure();
   }
 
