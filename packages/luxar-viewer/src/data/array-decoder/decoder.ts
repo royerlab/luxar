@@ -12,123 +12,12 @@
 import * as zarr from '../zarr';
 import { get } from '../zarr';
 import { log, Modules } from '../../utils/log';
+import { ArrayRefRegistry } from './ref-registry';
+import type { ArrayMetadata, EncodingMetadata } from './types';
 
-/**
- * Encoding metadata (nested under "encoding" key per Python spec)
- */
-export interface EncodingMetadata {
-  /** Encoding name/type */
-  name?: string;
-
-  /** Number of elements (for broadcasting) */
-  n_elements?: number;
-
-  /** Lookup table values (can be flat array or array of arrays) */
-  lut?: number[] | number[][];
-
-  /** LUT storage mode: "row" (one index per row) or "scalar" (one index per element) */
-  lut_mode?: 'row' | 'scalar' | string;
-
-  /** Original shape before encoding [n, k] */
-  original_shape?: number[];
-
-  /**
-   * Original dtype before encoding (e.g., "uint8", "float32")
-   * CRITICAL: The decoder must restore this dtype for correct rendering.
-   * - uint8 colors: THREE.js normalizes (0-255 → 0-1) with normalized=true
-   * - float32 colors: Expected to be 0-1, no normalization
-   */
-  original_dtype?: string;
-
-  /** Quantization bounds [min, max] */
-  bounds?: [number, number];
-
-  /** Quantization min (current format) */
-  min?: number;
-
-  /** Quantization max (current format) */
-  max?: number;
-
-  /** Array reference target path */
-  target?: string;
-
-  /** Array reference hash */
-  hash?: string;
-
-  /** Quantization bits */
-  bits?: number;
-
-  /** Log-space encoding max (for log_scalar_uint8/uint16) */
-  max_log?: number;
-}
-
-/**
- * Array metadata from zarr .zattrs
- *
- * NOTE: Per Python encoding spec, encoding metadata is nested under "encoding" key
- */
-export interface ArrayMetadata {
-  /** Shape of the array as written */
-  shape?: number[];
-
-  /** Data type */
-  dtype?: string;
-
-  /** Encoding metadata (nested) */
-  encoding?: EncodingMetadata;
-}
-
-/**
- * Global registry for array references (deduplication)
- */
-export class ArrayRefRegistry {
-  private registry = new Map<string, Float32Array>();
-
-  /**
-   * Register an array with its hash
-   */
-  register(hash: string, array: Float32Array): void {
-    if (!this.registry.has(hash)) {
-      this.registry.set(hash, array);
-      log.info(Modules.ZARR_LOADER, `Registered array ref: ${hash} (${array.length} elements)`);
-    }
-  }
-
-  /**
-   * Get an array by hash
-   */
-  get(hash: string): Float32Array | undefined {
-    return this.registry.get(hash);
-  }
-
-  /**
-   * Check if hash exists
-   */
-  has(hash: string): boolean {
-    return this.registry.has(hash);
-  }
-
-  /**
-   * Clear all registered arrays
-   */
-  clear(): void {
-    this.registry.clear();
-  }
-
-  /**
-   * Get statistics
-   */
-  getStats(): { count: number; totalBytes: number } {
-    let totalBytes = 0;
-    for (const arr of this.registry.values()) {
-      totalBytes += arr.byteLength;
-    }
-    return {
-      count: this.registry.size,
-      totalBytes,
-    };
-  }
-}
+export { ArrayRefRegistry } from './ref-registry';
+export type { ArrayMetadata, EncodingMetadata } from './types';
+export { loadAndDecodeOptionalArray } from './load-and-decode';
 
 /**
  * Main array decoder class
@@ -1076,38 +965,3 @@ export class ArrayDecoder {
   }
 }
 
-/**
- * Convenience function: Load and decode an optional array
- *
- * @param location - Zarr location
- * @param arrayName - Name of array (e.g., 'colors', 'radii')
- * @param decoder - ArrayDecoder instance
- * @param expectedElements - Expected total elements
- * @returns Decoded array or null if not present
- *
- * @internal — used by loader internals; not part of the public API.
- */
-export async function loadAndDecodeOptionalArray(
-  location: zarr.Location<zarr.Readable>,
-  arrayName: string,
-  decoder: ArrayDecoder,
-  expectedElements?: number
-): Promise<Float32Array | null> {
-  try {
-    // Try to open array
-    const array = await zarr.open(location.resolve(arrayName), { kind: 'array' });
-
-    // Load attributes
-    const attrs = array.attrs as unknown as ArrayMetadata;
-
-    // Decode
-    const decoded = await decoder.decode(array, attrs, expectedElements);
-
-    log.success(Modules.ZARR_LOADER, `Loaded ${arrayName}: ${decoded.length} elements`);
-
-    return decoded;
-  } catch {
-    // Array doesn't exist (this is OK for optional arrays)
-    return null;
-  }
-}
