@@ -34,6 +34,11 @@ import type { LinesMetadata, LinesUserData, LinesDataLoader } from '../types/lin
 import type { GSplatsMetadata, GSplatsUserData, GSplatsDataLoader } from '../types/gsplats';
 import { log, Modules } from '../utils/log';
 import type { PickingSystem } from './picking/picking-system';
+import {
+  validateLoadedPointsData as validateLoadedPointsDataImpl,
+  validateColorMode as validateColorModeImpl,
+  validateTransformFormat as validateTransformFormatImpl,
+} from './node-factory/validation';
 // Picking materials are constructed via `materialManager.create*PickingMaterial`
 // helpers so the GLSL vs. TSL dispatch on `caps.apiSurface` lives in one place. The
 // concrete types are still imported elsewhere (e.g. material-sync-helpers).
@@ -481,127 +486,18 @@ export class NodeFactory {
    * Logs detailed diagnostics to browser console for debugging.
    */
   validateLoadedPointsData(data: LoadedPointsData): void {
-    const pointCount = data.positions.length / 3;
-
-    log.info(Modules.SCENE_LOADER, 'Points Data Validation:', {
-      pointCount,
-      positionsLength: data.positions.length,
-      positionsType: data.positions.constructor.name,
-      hasColors: !!data.colors,
-      colorsType: data.colors?.constructor.name,
-      colorsLength: data.colors?.length,
-      hasRadii: !!data.radii,
-      radiiType: data.radii?.constructor.name,
-      radiiLength: data.radii?.length,
-      hasSharpness: !!data.sharpness,
-      sharpnessType: data.sharpness?.constructor.name,
-      sharpnessLength: data.sharpness?.length,
-    });
-
-    if (pointCount === 0) {
-      log.warning(Modules.SCENE_LOADER, 'Empty dataset detected - no points to render');
-      return;
-    }
-
-    if (data.positions.length % 3 !== 0) {
-      const error = `Malformed positions array: length ${data.positions.length} is not divisible by 3`;
-      log.error(Modules.SCENE_LOADER, error);
-      throw new Error(error);
-    }
-
-    if (data.colors && data.colors.length !== data.positions.length) {
-      const expected = data.positions.length;
-      const actual = data.colors.length;
-      log.warning(
-        Modules.SCENE_LOADER,
-        `Colors length mismatch: expected ${expected}, got ${actual}`,
-        { expected, actual }
-      );
-    }
-
-    if (data.radii && data.radii.length !== pointCount) {
-      const expected = pointCount;
-      const actual = data.radii.length;
-      log.warning(
-        Modules.SCENE_LOADER,
-        `Radii length mismatch: expected ${expected}, got ${actual}`,
-        { expected, actual }
-      );
-    }
-
-    if (data.sharpness && data.sharpness.length !== pointCount) {
-      const expected = pointCount;
-      const actual = data.sharpness.length;
-      log.warning(
-        Modules.SCENE_LOADER,
-        `Sharpness length mismatch: expected ${expected}, got ${actual}`,
-        { expected, actual }
-      );
-    }
-
-    log.success(Modules.SCENE_LOADER, `Points data validated: ${pointCount} points`);
+    validateLoadedPointsDataImpl(data);
   }
 
-  /**
-   * Validate color mode consistency.
-   * Ensures color array type matches expected encoding.
-   *
-   * `nodeMetadata` is typed loosely as `Record<string, unknown>` because
-   * it can come from either the typed `LoadedPointsData.metadata`
-   * (no `color_mode` today) or from a zarr attrs dict in tests. We
-   * only read `color_mode` from it.
-   */
   validateColorMode(
     colors: Uint8Array | Uint16Array | Float32Array,
     nodeMetadata: Record<string, unknown> | null | undefined
   ): void {
-    const isHDR = colors instanceof Float32Array;
-    const isSDR = colors instanceof Uint8Array || colors instanceof Uint16Array;
-
-    if (isSDR && nodeMetadata?.color_mode === 'hdr') {
-      log.warning(
-        Modules.SCENE_LOADER,
-        `Node metadata indicates HDR colors but array is ${colors.constructor.name}. ` +
-          'HDR colors should use Float32Array. This may indicate incorrect encoding.'
-      );
-    }
-
-    if (isHDR) {
-      const hasHDRValues = Array.from(colors).some((v) => v > 1.0);
-      if (!hasHDRValues && nodeMetadata?.color_mode === 'hdr') {
-        log.info(
-          Modules.SCENE_LOADER,
-          'HDR color mode specified but all values in [0, 1] range. Consider using SDR mode for better compression.'
-        );
-      }
-    }
-
-    const colorType = colors.constructor.name;
-    const colorMode = isHDR ? 'HDR (float32)' : 'SDR (normalized integer)';
-    log.info(Modules.SCENE_LOADER, `Colors: ${colorType} - ${colorMode}`);
+    validateColorModeImpl(colors, nodeMetadata);
   }
 
-  /**
-   * Validate transform matrix format. Throws when the matrix appears to be
-   * stored row-major (NumPy) rather than column-major (THREE.js / OpenGL),
-   * which is almost always a producer bug — column-major translation lives
-   * at indices [12,13,14], row-major at [3,7,11].
-   */
   validateTransformFormat(transform: readonly number[]): void {
-    const colMajorTranslation = [transform[12], transform[13], transform[14]];
-    const rowMajorTranslation = [transform[3], transform[7], transform[11]];
-
-    const colMajorNonZero = colMajorTranslation.some((v) => Math.abs(v) > 0.001);
-    const rowMajorNonZero = rowMajorTranslation.some((v) => Math.abs(v) > 0.001);
-
-    if (rowMajorNonZero && !colMajorNonZero) {
-      throw new Error(
-        'Transform matrix appears to be stored in row-major (NumPy) format ' +
-          'instead of column-major (THREE.js). Translation detected at ' +
-          'indices [3,7,11] instead of [12,13,14]. Python should transpose ' +
-          'before storing: matrix.T.ravel().tolist()'
-      );
-    }
+    validateTransformFormatImpl(transform);
   }
 
   /**
