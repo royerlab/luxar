@@ -1,6 +1,7 @@
 import type { AsyncReadable } from '../data/zarr';
 import { SegmentedLRUCache } from './multi-level-caching-store/segmented-lru-cache';
 import { OPFSStore } from './multi-level-caching-store/opfs-store';
+import { BandwidthWindow } from './multi-level-caching-store/bandwidth-window';
 import type { ChunkPrefetcher } from './chunk-prefetcher';
 import { log, Modules } from '../utils/log';
 import { config } from '../config';
@@ -153,14 +154,9 @@ export class MultiLevelCachingStore implements AsyncReadable {
   private l2HitCount = 0;
   private demandNetworkRequestCount = 0;
 
-  // Sliding window bandwidth tracking (last ~10 seconds).
-  // R5: pruning advances `bandwidthWindowStart` rather than calling
-  // Array.shift() (O(n) per pop). When the dead prefix exceeds half the
-  // array, we slice off the dead portion in one O(n) hit — amortized
-  // O(1) per push instead of O(n²) under high fetch rates.
-  private bandwidthWindow: { timestamp: number; bytes: number }[] = [];
-  private bandwidthWindowStart = 0;
+  // Sliding-window bandwidth tracking (last ~10 seconds).
   private static readonly BANDWIDTH_WINDOW_MS = 10_000;
+  private bandwidth = new BandwidthWindow(MultiLevelCachingStore.BANDWIDTH_WINDOW_MS);
 
   constructor(baseUrl: string, options?: MultiLevelCachingStoreOptions) {
     this.baseUrl = baseUrl;
@@ -540,18 +536,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
     // ensures this body runs at most once per key per concurrent wave).
     this.networkRequestCount++;
     this.networkBytesTransferred += data.byteLength;
-    this.bandwidthWindow.push({ timestamp: Date.now(), bytes: data.byteLength });
-    // R5: amortized compaction. When the dead prefix (anything before
-    // bandwidthWindowStart) is bigger than the live tail, slice it
-    // off in one allocation rather than letting the array grow
-    // unbounded.
-    if (
-      this.bandwidthWindowStart > 0 &&
-      this.bandwidthWindowStart > this.bandwidthWindow.length / 2
-    ) {
-      this.bandwidthWindow = this.bandwidthWindow.slice(this.bandwidthWindowStart);
-      this.bandwidthWindowStart = 0;
-    }
+    this.bandwidth.record(data.byteLength);
 
     // Populate caches once.
     if (this.enabled) {
@@ -899,35 +884,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
      */
     clearOnInitCount: number;
   } {
-    // Calculate bandwidth using sliding window (last ~10 seconds)
-    const now = Date.now();
-    const windowStart = now - MultiLevelCachingStore.BANDWIDTH_WINDOW_MS;
-
-    // R5: advance the start index past expired entries instead of
-    // shifting them off. Amortized compaction happens in the push
-    // path (above); here we just walk the index forward.
-    while (
-      this.bandwidthWindowStart < this.bandwidthWindow.length &&
-      this.bandwidthWindow[this.bandwidthWindowStart].timestamp < windowStart
-    ) {
-      this.bandwidthWindowStart++;
-    }
-
-    let bandwidth: number;
-    const liveCount = this.bandwidthWindow.length - this.bandwidthWindowStart;
-    if (liveCount === 0) {
-      bandwidth = 0;
-    } else {
-      let windowBytes = 0;
-      for (let i = this.bandwidthWindowStart; i < this.bandwidthWindow.length; i++) {
-        windowBytes += this.bandwidthWindow[i].bytes;
-      }
-      const windowSpan = Math.max(
-        1,
-        (now - this.bandwidthWindow[this.bandwidthWindowStart].timestamp) / 1000
-      );
-      bandwidth = windowBytes / windowSpan;
-    }
+    const bandwidth = this.bandwidth.rate();
 
     const validationState = this.l2Store?.getValidationState() ?? {
       mode: 'none' as const,
