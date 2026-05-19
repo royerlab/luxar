@@ -17,7 +17,8 @@ import {
   clearL2Cache,
   clearAllCaches,
 } from '../../../../data/scene-loader/cache-api';
-import type { MultiLevelCachingStore, DecompressedChunkCache } from '../../../../cache';
+import type { MultiLevelCachingStore } from '../../../../cache/multi-level-caching-store';
+import type { DecompressedChunkCache } from '../../../../cache/decompressed-chunk-cache';
 
 function makeL0Stub() {
   const stats = { entries: 3, sizeBytes: 1024 };

@@ -36,7 +36,7 @@ Request → L0 (Decompressed) → L1 (Memory) → L2 (OPFS) → Remote HTTP
 The cache is **enabled by default** and works transparently through the Luxar Zarr facade:
 
 ```typescript
-import { MultiLevelCachingStore } from '../cache';
+import { MultiLevelCachingStore } from '../cache/multi-level-caching-store';
 import * as zarr from '../data/zarr';
 
 // Create caching store
@@ -226,7 +226,8 @@ This makes the difference between 120 FPS and 60 FPS during navigation.
 L0 caching is **enabled by default** and integrated into the scene loading pipeline:
 
 ```typescript
-import { DecompressedChunkCache, wrapWithCache } from '../cache';
+import { DecompressedChunkCache } from '../cache/decompressed-chunk-cache';
+import { wrapWithCache } from '../cache/decompressed-chunk-cache/cached-zarr-array';
 
 // L0 is automatically enabled when loading scenes via SceneLoader
 // Manual usage (advanced):
@@ -340,7 +341,7 @@ Cache prefetches (in background):
 Prefetching is **enabled by default** and configurable via ChunkPrefetcher options:
 
 ```typescript
-import { ChunkPrefetcher } from '../cache';
+import { ChunkPrefetcher } from '../cache/chunk-prefetcher';
 
 const prefetcher = new ChunkPrefetcher(store, {
   maxConcurrent: 4, // Max concurrent prefetch requests

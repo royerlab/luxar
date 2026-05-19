@@ -48,7 +48,9 @@ import { choleskyPackedSize } from '../../types/gsplats';
 import { GSplatsDataAccumulator, type AccumulatorStats } from '../accumulators/gsplats';
 import { config as appConfig } from '../../config';
 import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profiler';
-import { DecompressedChunkCache, wrapWithCache, ChunkPrefetcher } from '../../cache';
+import { DecompressedChunkCache } from '../../cache/decompressed-chunk-cache';
+import { wrapWithCache } from '../../cache/decompressed-chunk-cache/cached-zarr-array';
+import { ChunkPrefetcher } from '../../cache/chunk-prefetcher';
 
 /**
  * GSplats data loader using spatial indices for efficient nD queries.

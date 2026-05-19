@@ -41,7 +41,9 @@ import {
 import { LinesDataAccumulator, type AccumulatorStats } from '../accumulators/lines';
 import { config as appConfig } from '../../config';
 import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profiler';
-import { DecompressedChunkCache, wrapWithCache, ChunkPrefetcher } from '../../cache';
+import { DecompressedChunkCache } from '../../cache/decompressed-chunk-cache';
+import { wrapWithCache } from '../../cache/decompressed-chunk-cache/cached-zarr-array';
+import { ChunkPrefetcher } from '../../cache/chunk-prefetcher';
 import {
   type LinesDualChunkIndex,
   loadLinesDualChunkIndex,

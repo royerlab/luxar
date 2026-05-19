@@ -12,7 +12,9 @@
  */
 
 import * as zarr from '../zarr';
-import { MultiLevelCachingStore, ChunkPrefetcher, DecompressedChunkCache } from '../../cache';
+import { MultiLevelCachingStore } from '../../cache/multi-level-caching-store';
+import { ChunkPrefetcher } from '../../cache/chunk-prefetcher';
+import { DecompressedChunkCache } from '../../cache/decompressed-chunk-cache';
 import { config as appConfig } from '../../config';
 import { log, Modules } from '../../utils/log';
 import type { CacheTelemetryState } from '../../types/data-monitor-types';
