@@ -39,6 +39,7 @@ import {
   validateColorMode as validateColorModeImpl,
   validateTransformFormat as validateTransformFormatImpl,
 } from './node-factory/validation';
+import { applyTransform as applyTransformImpl } from './node-factory/transforms';
 // Picking materials are constructed via `materialManager.create*PickingMaterial`
 // helpers so the GLSL vs. TSL dispatch on `caps.apiSurface` lives in one place. The
 // concrete types are still imported elsewhere (e.g. material-sync-helpers).
@@ -500,28 +501,8 @@ export class NodeFactory {
     validateTransformFormatImpl(transform);
   }
 
-  /**
-   * Apply transformation matrix to a THREE.js object. Throws when the
-   * transform is malformed or stored row-major.
-   */
   applyTransform(object: THREE.Object3D, transform: readonly number[]): void {
-    if (transform.length !== 16) {
-      throw new Error(`Invalid transform length: ${transform.length} (expected 16)`);
-    }
-
-    this.validateTransformFormat(transform);
-
-    // THREE.Matrix4.fromArray takes ArrayLike<number>; the readonly tuple is fine.
-    const matrix = new THREE.Matrix4().fromArray(transform as number[]);
-    const position = new THREE.Vector3();
-    const quaternion = new THREE.Quaternion();
-    const scale = new THREE.Vector3();
-
-    matrix.decompose(position, quaternion, scale);
-
-    object.position.copy(position);
-    object.quaternion.copy(quaternion);
-    object.scale.copy(scale);
+    applyTransformImpl(object, transform);
   }
 
   // ============================================================================
