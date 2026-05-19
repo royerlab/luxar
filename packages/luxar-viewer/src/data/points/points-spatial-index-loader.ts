@@ -58,7 +58,9 @@ import type { PointsMetadata } from '../../types/points';
 import { LoadedPointsDataAccumulator, type AccumulatorStats } from '../accumulators/points';
 import { config as appConfig } from '../../config';
 import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profiler';
-import { DecompressedChunkCache, wrapWithCache, ChunkPrefetcher } from '../../cache';
+import { DecompressedChunkCache } from '../../cache/decompressed-chunk-cache';
+import { wrapWithCache } from '../../cache/decompressed-chunk-cache/cached-zarr-array';
+import { ChunkPrefetcher } from '../../cache/chunk-prefetcher';
 
 type WritableNumericArray = {
   length: number;

@@ -32,7 +32,8 @@ import type { GSplatsDataLoader } from '../../types/gsplats';
 import { ArrayRefRegistry } from '../array-decoder/decoder';
 import { log, Modules } from '../../utils/log';
 import { UpdateProfiler } from '../../profiling/update-profiler';
-import type { DecompressedChunkCache, MultiLevelCachingStore } from '../../cache';
+import type { DecompressedChunkCache } from '../../cache/decompressed-chunk-cache';
+import type { MultiLevelCachingStore } from '../../cache/multi-level-caching-store';
 
 /** Common dependencies needed by every loader factory call. */
 export interface LoaderFactoryDeps {

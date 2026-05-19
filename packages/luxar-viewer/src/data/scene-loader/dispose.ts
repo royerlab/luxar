@@ -24,7 +24,8 @@ import { getWorkerPool } from '../../workers/worker-pool';
 import type { LoaderRegistry } from './loader-registry';
 import type { ViewStateQueue } from './view-state-queue';
 import type { GPUBufferPool } from '../../rendering/gpu-buffer-pool';
-import type { MultiLevelCachingStore, DecompressedChunkCache } from '../../cache';
+import type { MultiLevelCachingStore } from '../../cache/multi-level-caching-store';
+import type { DecompressedChunkCache } from '../../cache/decompressed-chunk-cache';
 import type { SceneLoaderMonitorPort } from '../scene-loader-monitor-port';
 
 /**

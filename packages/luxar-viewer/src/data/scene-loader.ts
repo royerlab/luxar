@@ -52,7 +52,8 @@ import type {
 import { ArrayRefRegistry } from './array-decoder/decoder';
 import { log, Modules } from '../utils/log';
 import { config as appConfig } from '../config';
-import { MultiLevelCachingStore, DecompressedChunkCache } from '../cache';
+import { MultiLevelCachingStore } from '../cache/multi-level-caching-store';
+import { DecompressedChunkCache } from '../cache/decompressed-chunk-cache';
 import type {
   LinesDataLoader,
   LinesViewState,

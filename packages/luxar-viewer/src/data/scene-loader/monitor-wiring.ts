@@ -20,7 +20,8 @@ import type { SceneGraphNode, CacheTelemetryState } from '../../types/data-monit
 import type { SceneLoaderMonitorPort } from '../scene-loader-monitor-port';
 import type { LinesDataLoader } from '../../types/lines';
 import type { GSplatsDataLoader } from '../../types/gsplats';
-import type { MultiLevelCachingStore, DecompressedChunkCache } from '../../cache';
+import type { MultiLevelCachingStore } from '../../cache/multi-level-caching-store';
+import type { DecompressedChunkCache } from '../../cache/decompressed-chunk-cache';
 import type { GPUBufferPool } from '../../rendering/gpu-buffer-pool';
 import type { UpdateProfiler } from '../../profiling/update-profiler';
 import {

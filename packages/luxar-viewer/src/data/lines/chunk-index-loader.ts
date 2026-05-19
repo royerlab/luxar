@@ -31,7 +31,7 @@ import * as zarr from '../zarr';
 import { log, Modules } from '../../utils/log';
 import { fetchChunkBoundsArray } from '../loaders/chunk-bounds-loader';
 import { type ChunkSpatialIndex } from '../loaders';
-import type { ChunkPrefetcher } from '../../cache';
+import type { ChunkPrefetcher } from '../../cache/chunk-prefetcher';
 import type { LinesMetadata, SegmentRange } from '../../types/lines';
 
 /**

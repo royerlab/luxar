@@ -21,7 +21,7 @@ import {
   type PointsNodeAttrsForIndex,
 } from '../../../../data/points/chunk-index-loader';
 import { log } from '../../../../utils/log';
-import type { ChunkPrefetcher } from '../../../../cache';
+import type { ChunkPrefetcher } from '../../../../cache/chunk-prefetcher';
 
 const mockFetchChunkBounds = vi.mocked(fetchChunkBoundsArray);
 
