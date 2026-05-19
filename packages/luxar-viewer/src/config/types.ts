@@ -4,12 +4,8 @@
 import type { CameraConfig } from './sections/camera/types';
 export type { CameraConfig };
 
-/**
- * Animation loop settings
- */
-export interface AnimationConfig {
-  idleTimeoutMs: number;
-}
+import type { AnimationConfig } from './sections/animation/types';
+export type { AnimationConfig };
 
 /**
  * Adaptive pixel ratio configuration for dynamic performance optimization

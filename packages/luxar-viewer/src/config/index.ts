@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import type { AppConfig } from './types';
 import { isMacPlatform } from '../utils/platform';
 import { cameraConfig } from './sections/camera/data';
+import { animationConfig } from './sections/animation/data';
 
 /**
  * Main configuration object containing all application settings
@@ -17,10 +18,7 @@ import { cameraConfig } from './sections/camera/data';
 export const config: AppConfig = {
   camera: cameraConfig,
 
-  // Animation loop settings
-  animation: {
-    idleTimeoutMs: 2000, // Time in milliseconds before pausing animation when idle - saves power
-  },
+  animation: animationConfig,
 
   // Adaptive pixel ratio configuration for dynamic performance optimization
   adaptiveDPR: {
