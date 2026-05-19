@@ -129,55 +129,11 @@ import {
  * `LoaderError`. The `kind` field drives the user-visible severity
  * and message, not control flow.
  */
-type LoaderErrorKind = 'Network' | 'Decode' | 'Validation' | 'Unexpected';
-
-/**
- * Thrown by `loadPoints` / `loadLines` / `loadGSplats` when a node
- * fails to load for an unexpected reason. The `kind` field tells
- * `loadSceneNodes` how to handle the failure.
- *
- * Note: validation skips (missing attr, ndim mismatch, etc.) still
- * `return null` from the loader — only genuine errors throw this.
- */
-class LoaderError extends Error {
-  constructor(
-    readonly kind: LoaderErrorKind,
-    readonly path: string,
-    cause: unknown
-  ) {
-    const causeMsg = cause instanceof Error ? cause.message : String(cause);
-    super(`${kind} loading ${path}: ${causeMsg}`);
-    this.name = 'LoaderError';
-    this.cause = cause;
-  }
-}
-
-/** Heuristic classifier for raw thrown errors. */
-function classifyLoaderError(error: unknown): LoaderErrorKind {
-  if (!(error instanceof Error)) return 'Unexpected';
-  if (error.name === 'AbortError') return 'Network';
-  const msg = error.message.toLowerCase();
-  if (
-    msg.includes('fetch') ||
-    msg.includes('network') ||
-    msg.includes('timeout') ||
-    msg.includes('http ')
-  ) {
-    return 'Network';
-  }
-  if (
-    msg.includes('decode') ||
-    msg.includes('parse') ||
-    msg.includes('invalid') ||
-    msg.includes('corrupt')
-  ) {
-    return 'Decode';
-  }
-  if (msg.includes('validation') || msg.includes('expected') || msg.includes('required')) {
-    return 'Validation';
-  }
-  return 'Unexpected';
-}
+import {
+  LoaderError,
+  classifyLoaderError,
+  loadLeafNode as loadLeafNodeHelper,
+} from './scene-loader/nodes/load-leaf-error-dispatch';
 
 /**
  * Main scene loader that handles the complete loading pipeline.
@@ -1310,33 +1266,14 @@ export class SceneLoader {
 
   /**
    * Run a leaf-node loader, dispatching {@link LoaderError} by kind so
-   * one bad node doesn't sink the whole scene. Returns the mesh on
-   * success, `null` on intentional skip (validation early-exit), or
-   * `null` after a logged/toasted error.
+   * one bad node doesn't sink the whole scene. Implementation lives in
+   * `scene-loader/build/load-leaf-error-dispatch.ts`.
    */
   private async loadLeafNode<T extends THREE.Object3D>(
     load: () => Promise<T | null>,
     path: string
   ): Promise<T | null> {
-    try {
-      return await load();
-    } catch (error) {
-      if (!(error instanceof LoaderError)) throw error;
-      const causeStack = error.cause instanceof Error ? error.cause.stack : undefined;
-      switch (error.kind) {
-        case 'Network':
-          log.warning(Modules.SCENE_LOADER, `Network error loading ${path}: ${error.message}`);
-          break;
-        case 'Decode':
-        case 'Validation':
-        case 'Unexpected':
-          log.error(Modules.SCENE_LOADER, `Failed to load ${path}: ${error.message}`);
-          if (causeStack) log.error(Modules.SCENE_LOADER, `Stack trace for ${path}`, causeStack);
-          notifier.toast(`Failed to load ${path}: ${error.kind.toLowerCase()} error`, 5000);
-          break;
-      }
-      return null;
-    }
+    return loadLeafNodeHelper(load, path);
   }
 
   /**
