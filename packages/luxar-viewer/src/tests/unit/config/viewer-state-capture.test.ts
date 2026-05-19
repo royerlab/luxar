@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { captureViewerState } from '../../../config/viewer-state-capture';
+import { captureViewerState } from '../../../config/zarr-bridge/viewer-state-capture';
 
 // Mock ThemeManager
 vi.mock('../../../themes/theme-manager', () => ({

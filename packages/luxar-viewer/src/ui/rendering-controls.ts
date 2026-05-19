@@ -31,7 +31,7 @@ import { ClippingDisplay } from './rendering-controls/clipping-display';
 import { validateRenderingSettings } from './rendering-controls/rendering-controls-utils';
 import type { AdaptiveDPRManager } from '../rendering/adaptive-dpr-manager';
 import type { ZarrViewerConfig } from '../types/zarr';
-import { extractRenderingOverrides } from '../config/viewer-config-utils';
+import { extractRenderingOverrides } from '../config/zarr-bridge/viewer-config-utils';
 
 export type { CinematicSnapshot, CinematicSnapshotKeys } from './rendering-controls/cinematic-mode';
 

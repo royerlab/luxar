@@ -44,7 +44,7 @@ import type { ScaleBar } from '../ui/components/scale-bar';
 import type { ColormapLegend } from '../ui/components/colormap-legend';
 import type { OverlayManager } from '../ui/helpers/overlay-manager';
 import { notifier } from '../utils/notifier';
-import { captureViewerState } from '../config/viewer-state-capture';
+import { captureViewerState } from '../config/zarr-bridge/viewer-state-capture';
 import type { DimensionSliders, SliderConfig } from '../ui/panels/dimension-sliders';
 
 /**
