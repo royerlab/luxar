@@ -25,12 +25,12 @@ import {
   processLinesData as processLinesDataHelper,
   commitLinesGeometry as commitLinesGeometryHelper,
   type StagedLinesCommit,
-} from './scene-loader/data-processor-lines';
+} from './scene-loader/process/data-processor-lines';
 import {
   processGSplatsData as processGSplatsDataHelper,
   commitGSplatsGeometry as commitGSplatsGeometryHelper,
   type StagedGSplatsCommit,
-} from './scene-loader/data-processor-gsplats';
+} from './scene-loader/process/data-processor-gsplats';
 import {
   createPointsLoader as createPointsLoaderHelper,
   createLinesLoader as createLinesLoaderHelper,
@@ -38,7 +38,7 @@ import {
   createProgressiveGSplatsLoader as createProgressiveGSplatsLoaderHelper,
   type LoaderFactoryDeps,
 } from './scene-loader/loader-factory';
-import { commitPointsGeometry as commitPointsGeometryHelper } from './scene-loader/commit-points-geometry';
+import { commitPointsGeometry as commitPointsGeometryHelper } from './scene-loader/commit/commit-points-geometry';
 import { ViewStateQueue } from './scene-loader/view-state-queue';
 import { runGSplatsRefinement } from './gsplats/lod-refinement';
 import {
@@ -57,8 +57,8 @@ import {
   type GSplatsHandlerCtx,
 } from './gsplats/handler';
 
-export type { StagedLinesCommit } from './scene-loader/data-processor-lines';
-export type { StagedGSplatsCommit } from './scene-loader/data-processor-gsplats';
+export type { StagedLinesCommit } from './scene-loader/process/data-processor-lines';
+export type { StagedGSplatsCommit } from './scene-loader/process/data-processor-gsplats';
 import {
   DataLoader,
   ViewState,
@@ -1091,7 +1091,7 @@ export class SceneLoader {
    * Process lines data: compute tolerance, project to 3D (async).
    * Returns staged commit data without mutating any mesh geometry.
    *
-   * Implementation lives in `scene-loader/data-processor-lines.ts`; this
+   * Implementation lives in `scene-loader/process/data-processor-lines.ts`; this
    * method is a thin delegate so the pipeline can be tested in isolation
    * without instantiating a SceneLoader.
    */
@@ -1126,7 +1126,7 @@ export class SceneLoader {
    * Process gsplats data: project nD to 3D, pack Cholesky factors (async).
    * Returns staged commit data without mutating any mesh geometry.
    *
-   * Implementation lives in `scene-loader/data-processor-gsplats.ts`.
+   * Implementation lives in `scene-loader/process/data-processor-gsplats.ts`.
    */
   private async processGSplatsData(
     path: string,

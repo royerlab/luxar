@@ -11,8 +11,8 @@
 
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { commitLinesGeometry } from '../../../../data/scene-loader/commit-lines-geometry';
-import type { StagedLinesCommit } from '../../../../data/scene-loader/data-processor-lines';
+import { commitLinesGeometry } from '../../../../data/scene-loader/commit/commit-lines-geometry';
+import type { StagedLinesCommit } from '../../../../data/scene-loader/process/data-processor-lines';
 import type { ProcessedLinesData } from '../../../../types/lines';
 
 function makeProcessed(segmentCount = 2): ProcessedLinesData {

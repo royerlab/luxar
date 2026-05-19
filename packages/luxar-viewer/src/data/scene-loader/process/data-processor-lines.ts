@@ -20,19 +20,19 @@
  *   - commits use the GPU buffer pool when enabled, otherwise
  *     `updateInstancedLinesMesh`.
  *
- * @module data/scene-loader/data-processor-lines
+ * @module data/scene-loader/process/data-processor-lines
  */
 
 import * as THREE from 'three';
-import { projectLinesTo3D } from '../lines/projection';
-import type { LinesViewState, LoadedLinesData, ProcessedLinesData } from '../../types/lines';
-import { isLinesUserData } from '../../types/lines';
-import { computeTolerance } from '../loaders/tolerance-computer';
-import { EXTEND_TO_ALL_TOLERANCE } from './extend-tolerance';
-import { config as appConfig } from '../../config';
-import { log, Modules } from '../../utils/log';
-import { getWorkerPool } from '../../workers/worker-pool';
-import type { UpdateSession } from '../../profiling/update-profiler';
+import { projectLinesTo3D } from '../../lines/projection';
+import type { LinesViewState, LoadedLinesData, ProcessedLinesData } from '../../../types/lines';
+import { isLinesUserData } from '../../../types/lines';
+import { computeTolerance } from '../../loaders/tolerance-computer';
+import { EXTEND_TO_ALL_TOLERANCE } from '../extend-tolerance';
+import { config as appConfig } from '../../../config';
+import { log, Modules } from '../../../utils/log';
+import { getWorkerPool } from '../../../workers/worker-pool';
+import type { UpdateSession } from '../../../profiling/update-profiler';
 
 /** Staged data carried between async processing and the GPU commit. */
 export interface StagedLinesCommit {
@@ -209,7 +209,7 @@ export async function processLinesData(
   return { path, processed };
 }
 
-// commitLinesGeometry moved to ./commit-lines-geometry (step 6 of the
-// god-object refactor). Re-exported here so existing consumers keep
-// working unchanged.
-export { commitLinesGeometry } from './commit-lines-geometry';
+// commitLinesGeometry moved to ../commit/commit-lines-geometry (step 6
+// of the god-object refactor, then re-clustered into commit/ in step 4).
+// Re-exported here so existing consumers keep working unchanged.
+export { commitLinesGeometry } from '../commit/commit-lines-geometry';

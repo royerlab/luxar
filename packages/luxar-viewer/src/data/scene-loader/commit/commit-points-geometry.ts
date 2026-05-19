@@ -28,18 +28,18 @@
  * file should grow into `data-processor-points.ts` matching the
  * other two.
  *
- * @module data/scene-loader/commit-points-geometry
+ * @module data/scene-loader/commit/commit-points-geometry
  */
 
 import * as THREE from 'three';
-import type { LoadedPointsData } from '../data-loader-types';
-import { widenToFloat32, writeInterleavedAttribute } from '../../rendering/interleaved-attributes';
-import { isPointsUserData } from '../../types/points';
-import { log, Modules } from '../../utils/log';
-import type { UpdateSession } from '../../profiling/update-profiler';
-import type { GPUBufferPool } from '../../rendering/gpu-buffer-pool';
-import type { NodeFactory } from '../../rendering/node-factory';
-import { syncPointMaterialWithGeometry } from '../../rendering/material-sync-helpers';
+import type { LoadedPointsData } from '../../data-loader-types';
+import { widenToFloat32, writeInterleavedAttribute } from '../../../rendering/interleaved-attributes';
+import { isPointsUserData } from '../../../types/points';
+import { log, Modules } from '../../../utils/log';
+import type { UpdateSession } from '../../../profiling/update-profiler';
+import type { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
+import type { NodeFactory } from '../../../rendering/node-factory';
+import { syncPointMaterialWithGeometry } from '../../../rendering/material-sync-helpers';
 import { invalidateRenderObjectFor } from './invalidate-render-object';
 
 // F.6: re-export so callers can continue to import this name from the

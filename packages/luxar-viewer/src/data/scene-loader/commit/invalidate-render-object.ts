@@ -48,12 +48,12 @@
  * event as a soft cache-invalidation rather than a real dispose.
  * See `SOFT_DISPOSE_FLAG` in `rendering/material-manager.ts`.
  *
- * @module data/scene-loader/invalidate-render-object
+ * @module data/scene-loader/commit/invalidate-render-object
  */
 
 import type * as THREE from 'three';
 
-import { SOFT_DISPOSE_FLAG } from '../../rendering/material-manager';
+import { SOFT_DISPOSE_FLAG } from '../../../rendering/material-manager';
 
 /**
  * Discard Three's cached `RenderObject` for the given mesh's material

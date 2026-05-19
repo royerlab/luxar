@@ -16,7 +16,7 @@ import type { ViewStateQueue } from '../scene-loader/view-state-queue';
 import {
   processLinesData,
   type StagedLinesCommit,
-} from '../scene-loader/data-processor-lines';
+} from '../scene-loader/process/data-processor-lines';
 
 export const kind: GeometryKind = 'lines';
 export const label = 'Lines' as const;

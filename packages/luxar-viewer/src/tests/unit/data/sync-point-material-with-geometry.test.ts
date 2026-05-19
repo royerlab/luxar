@@ -11,7 +11,7 @@ import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { PointMaterial } from '../../../rendering/point-material';
 import { PointPickingMaterial } from '../../../rendering/picking/point-picking-material';
-import { syncPointMaterialWithGeometry } from '../../../data/scene-loader/commit-points-geometry';
+import { syncPointMaterialWithGeometry } from '../../../data/scene-loader/commit/commit-points-geometry';
 
 describe('syncPointMaterialWithGeometry', () => {
   it('updates radiusScale and sharpnessScale uniforms from geometry.userData', () => {

@@ -17,8 +17,8 @@ vi.mock('../../../../rendering/gsplat-geometry', () => ({
   packCholeskyForShader: vi.fn(),
 }));
 
-import { commitGSplatsGeometry } from '../../../../data/scene-loader/commit-gsplats-geometry';
-import type { StagedGSplatsCommit } from '../../../../data/scene-loader/data-processor-gsplats';
+import { commitGSplatsGeometry } from '../../../../data/scene-loader/commit/commit-gsplats-geometry';
+import type { StagedGSplatsCommit } from '../../../../data/scene-loader/process/data-processor-gsplats';
 
 function makeProcessed(splatCount = 2) {
   return {

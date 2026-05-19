@@ -21,7 +21,7 @@ import type { ViewStateQueue } from '../scene-loader/view-state-queue';
 import {
   processGSplatsData,
   type StagedGSplatsCommit,
-} from '../scene-loader/data-processor-gsplats';
+} from '../scene-loader/process/data-processor-gsplats';
 
 export const kind: GeometryKind = 'gsplats';
 export const label = 'GSplats' as const;

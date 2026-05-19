@@ -15,17 +15,17 @@
  *   - commits use the GPU buffer pool when enabled, otherwise
  *     `updateInstancedGSplatsMesh`.
  *
- * @module data/scene-loader/data-processor-gsplats
+ * @module data/scene-loader/process/data-processor-gsplats
  */
 
 import * as THREE from 'three';
-import { projectGSplats } from '../gsplats/projection';
-import { packCholeskyForShader } from '../../rendering/gsplat-geometry';
-import type { LoadedGSplatsData, GSplatsViewState } from '../../types/gsplats';
-import { config as appConfig } from '../../config';
-import { log, Modules } from '../../utils/log';
-import { getWorkerPool } from '../../workers/worker-pool';
-import type { UpdateSession } from '../../profiling/update-profiler';
+import { projectGSplats } from '../../gsplats/projection';
+import { packCholeskyForShader } from '../../../rendering/gsplat-geometry';
+import type { LoadedGSplatsData, GSplatsViewState } from '../../../types/gsplats';
+import { config as appConfig } from '../../../config';
+import { log, Modules } from '../../../utils/log';
+import { getWorkerPool } from '../../../workers/worker-pool';
+import type { UpdateSession } from '../../../profiling/update-profiler';
 
 /** Default truncation radius if the mesh material doesn't expose one. */
 const DEFAULT_TRUNCATE = 3.0;
@@ -224,7 +224,7 @@ export async function processGSplatsData(
   return { path, processed, cholesky01, cholesky23, cholesky45 };
 }
 
-// commitGSplatsGeometry moved to ./commit-gsplats-geometry (step 6 of
-// the god-object refactor). Re-exported here so existing consumers
-// keep working unchanged.
-export { commitGSplatsGeometry } from './commit-gsplats-geometry';
+// commitGSplatsGeometry moved to ../commit/commit-gsplats-geometry (step
+// 6 of the god-object refactor, then re-clustered into commit/ in step 4).
+// Re-exported here so existing consumers keep working unchanged.
+export { commitGSplatsGeometry } from '../commit/commit-gsplats-geometry';
