@@ -11,6 +11,7 @@ import { validateCamera } from './sections/camera/validate';
 import { validateScene } from './sections/scene/validate';
 import { validateWebGL } from './sections/webgl/validate';
 import { validateInput } from './sections/input/validate';
+import { validateControls } from './sections/controls/validate';
 
 /**
  * Validation result interface
@@ -115,48 +116,6 @@ function validateBloomConsistency(config: AppConfig, errors: string[], warnings:
 
   if (!Number.isInteger(bloom.bloomLevels) || bloom.bloomLevels < 1 || bloom.bloomLevels > 12) {
     errors.push(`Invalid bloom.bloomLevels: ${bloom.bloomLevels} (must be an integer in 1-12)`);
-  }
-}
-
-/**
- * Validate control configuration (ConfigRange consistency)
- */
-function validateControls(config: AppConfig, errors: string[], _warnings: string[]): void {
-  const { controls } = config;
-
-  // Validate all ConfigRange objects: min < max and min <= default <= max
-  const ranges: Array<{ name: string; range: { min: number; max: number; default: number } }> = [
-    { name: 'fly.movement.speed', range: controls.fly.movement.speed },
-    { name: 'fly.movement.acceleration', range: controls.fly.movement.acceleration },
-    { name: 'fly.movement.damping', range: controls.fly.movement.damping },
-    { name: 'fly.rotation.speed', range: controls.fly.rotation.speed },
-    { name: 'fly.rotation.damping', range: controls.fly.rotation.damping },
-    { name: 'orbit.autoRotate.speed', range: controls.orbit.autoRotate.speed },
-    { name: 'orbit.zoom.speed', range: controls.orbit.zoom.speed },
-    { name: 'orbit.damping.factor', range: controls.orbit.damping.factor },
-  ];
-
-  for (const { name, range } of ranges) {
-    // NaN check on every range field — without this, any of
-    // {min, max, default} could be NaN and silently pass.
-    if (
-      !Number.isFinite(range.min) ||
-      !Number.isFinite(range.max) ||
-      !Number.isFinite(range.default)
-    ) {
-      errors.push(
-        `Invalid controls.${name}: non-finite values (min=${range.min}, max=${range.max}, default=${range.default})`
-      );
-      continue;
-    }
-    if (range.min >= range.max) {
-      errors.push(`Invalid controls.${name}: min (${range.min}) >= max (${range.max})`);
-    }
-    if (range.default < range.min || range.default > range.max) {
-      errors.push(
-        `Invalid controls.${name}: default (${range.default}) outside [${range.min}, ${range.max}]`
-      );
-    }
   }
 }
 
