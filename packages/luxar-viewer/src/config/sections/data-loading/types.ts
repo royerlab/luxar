@@ -1,18 +1,8 @@
 import type { DataLoadingNetworkConfig } from './network/types';
 export type { DataLoadingNetworkConfig };
 
-/**
- * Data loading memory configuration
- */
-export interface DataLoadingMemoryConfig {
-  targetHeapUsage: number;
-  minCacheMB: number;
-  checkIntervalMs: number;
-  adjustmentThresholds: {
-    critical: number;
-    high: number;
-  };
-}
+import type { DataLoadingMemoryConfig } from './memory/types';
+export type { DataLoadingMemoryConfig };
 
 /**
  * Data loading monitor timings
