@@ -19,23 +19,23 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as THREE from 'three';
 
-vi.mock('../../../../rendering/material-manager', () => ({
+vi.mock('../../../../../rendering/material-manager', () => ({
   materialManager: {
     rebuildAfterContextRestore: vi.fn(),
   },
 }));
-vi.mock('../../../../ui/helpers', () => ({
+vi.mock('../../../../../ui/helpers', () => ({
   showError: vi.fn(),
   hideLoadingIndicator: vi.fn(),
 }));
 
-import { materialManager } from '../../../../rendering/material-manager';
+import { materialManager } from '../../../../../rendering/material-manager';
 import {
   WebGLContextRecovery,
   markSceneResourcesDirtyForContextRestore,
   type WebGLContextRecoveryDeps,
-} from '../../../../scene/scene-manager/webgl-context-recovery';
-import type { PostProcessingManager } from '../../../../rendering/post-processing/post-processing-manager';
+} from '../../../../../scene/scene-manager/render-pipeline/webgl-context-recovery';
+import type { PostProcessingManager } from '../../../../../rendering/post-processing/post-processing-manager';
 
 function makeDeps(overrides: Partial<WebGLContextRecoveryDeps> = {}): {
   deps: WebGLContextRecoveryDeps;
