@@ -122,7 +122,7 @@ vi.mock('../../../config', () => ({
 }));
 
 // Mock helpers
-vi.mock('../../../ui/helpers', () => ({
+vi.mock('../../../ui/toast', () => ({
   showToast: vi.fn(),
 }));
 
@@ -153,7 +153,7 @@ vi.mock('../../../scene/scene-dims-manager', () => ({
 }));
 
 import { RecordingPanel } from '../../../ui/recording-panel';
-import { showToast } from '../../../ui/helpers';
+import { showToast } from '../../../ui/toast';
 
 // Mock URL.createObjectURL/revokeObjectURL. jsdom may provide a stub by
 // default, but tests need it to be a spy so call assertions work.

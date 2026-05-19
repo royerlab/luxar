@@ -4,7 +4,8 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { showHelpOverlay, hideHelpOverlay, showError, clearError } from '../../../ui/helpers';
+import { showHelpOverlay, hideHelpOverlay } from '../../../ui/help-overlay';
+import { showError, clearError } from '../../../ui/error-overlay';
 
 // Mock DOM environment
 beforeEach(() => {

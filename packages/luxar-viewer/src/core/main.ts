@@ -14,7 +14,7 @@
 import '../styles/standalone.css';
 import '../styles/index.css';
 import { bootstrapStandalone } from './bootstrap';
-import { showError } from '../ui/helpers';
+import { showError } from '../ui/error-overlay';
 
 const canvas = document.getElementById('app') as HTMLCanvasElement | null;
 if (!canvas) {
