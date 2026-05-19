@@ -18,7 +18,7 @@ import { config } from '../../config';
 import { materialManager } from '../../rendering';
 import { log, Modules } from '../../utils/log';
 import { EventGroup } from '../../utils/event-group';
-import { showToast } from '../helpers';
+import { showToast } from '../toast';
 import type { AnimationController } from '../../scene/animation/animation-controller';
 import { getColormapTexture } from '../../rendering/colormap-textures';
 import { supportsScalarColormap } from '../../rendering/material-colormap-helpers';

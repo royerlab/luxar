@@ -7,7 +7,7 @@ import * as THREE from 'three';
 import GUI, { type Controller } from './gui';
 import { config } from '../config';
 import { log, Modules } from '../utils/log';
-import { showToast } from './helpers';
+import { showToast } from './toast';
 // HDR video encoder kept for future use when browser 10-bit support matures
 // import { isHDRVideoSupported, HDRVideoEncoder } from '../utils/hdr-video-encoder';
 import type { SceneManager } from '../scene/scene-manager';

@@ -28,7 +28,9 @@ vi.mock('../../../ui/rendering-controls');
 vi.mock('../../../ui/recording-panel');
 vi.mock('../../../ui/scale-bar');
 vi.mock('../../../ui/dataset-browser');
-vi.mock('../../../ui/helpers');
+vi.mock('../../../ui/ui-cleanup');
+vi.mock('../../../ui/error-overlay');
+vi.mock('../../../ui/help-overlay');
 vi.mock('../../../ui/layers');
 // scene-dims-manager is unmocked: it's a pure JS singleton (no DOM
 // or WebGL), so running it real in app.test improves coverage of the
@@ -93,7 +95,8 @@ import { AnimationController } from '../../../scene/animation/animation-controll
 import { InputHandler } from '../../../input/input-handler';
 import { RenderingControls } from '../../../ui/rendering-controls';
 import { DatasetBrowser } from '../../../ui/dataset-browser';
-import { cleanupUI as mockCleanupUI, clearError as mockClearError } from '../../../ui/helpers';
+import { cleanupUI as mockCleanupUI } from '../../../ui/ui-cleanup';
+import { clearError as mockClearError } from '../../../ui/error-overlay';
 
 // Import LuxarApp after all mocks are set up
 import { LuxarApp } from '../../../core/app';

@@ -21,15 +21,10 @@ import { config } from '../config';
 import { validateAndLog } from '../config/validation';
 import { readUrlParams, type UrlParams } from '../config/url-params';
 import { StorageKeys } from '../utils/storage-keys';
-import {
-  showError,
-  showToast,
-  showHelpOverlay,
-  hideHelpOverlay,
-  showLoadingIndicator,
-  hideLoadingIndicator,
-  clearError,
-} from '../ui/helpers';
+import { showError, clearError } from '../ui/error-overlay';
+import { showToast } from '../ui/toast';
+import { showHelpOverlay, hideHelpOverlay } from '../ui/help-overlay';
+import { showLoadingIndicator, hideLoadingIndicator } from '../ui/loading-indicator';
 import { setNotifierBackend } from '../utils/notifier';
 import { ThemeManager } from '../themes/theme-manager';
 import { consoleInterceptor } from '../utils/console-interceptor';

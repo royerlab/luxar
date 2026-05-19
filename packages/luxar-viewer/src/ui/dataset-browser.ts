@@ -9,7 +9,7 @@ import { DirectoryNavigator, type DirectoryEntry } from '../data';
 import { escapeHtml } from '../utils/escape-html';
 import { extractBaseUrl, extractPath } from './dataset-browser/url-utils';
 import { log, Modules } from '../utils/log';
-import { showToast } from './helpers';
+import { showToast } from './toast';
 
 /**
  * Wrap an `onDatasetSelect` invocation so a Promise-returning
