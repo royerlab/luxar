@@ -1,7 +1,7 @@
-import type { OPFSMetadata, CacheValidationMode } from './types';
-import { OPFS_ENCODING_VERSION } from './types';
-import { log, Modules } from '../utils/log';
-import { config } from '../config';
+import type { OPFSMetadata, CacheValidationMode } from '../types';
+import { OPFS_ENCODING_VERSION } from '../types';
+import { log, Modules } from '../../utils/log';
+import { config } from '../../config';
 
 /**
  * Race a promise against a timeout. Throws Error('OPFS timeout') if
