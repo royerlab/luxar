@@ -2718,6 +2718,10 @@ def calibrate_command(
     this is the Noise2Self protocol from Batson & Royer (2019), as used
     in the Luxar manuscript's model-selection analysis.
 
+    Canonical end-to-end pipeline: ``cal`` → ``fit --seeds K*`` →
+    ``lod additive`` (or ``lod substitutive``) for a streaming-ready
+    multi-resolution dataset.
+
     Examples:
         luxar gsplat cal kidney_dapi.tiff cal.json
         luxar gsplat cal volume.zarr cal.json --n-grid 5 --k-max 128000 --preset draft
@@ -4614,6 +4618,13 @@ def lod_additive(
         help="Optional output compression: 'zip' or 'tar.gz' for an archive; "
         "omit for a plain .gsplats.zarr directory.",
     ),
+    quiet: bool = typer.Option(
+        False,
+        "--quiet",
+        "-q",
+        help="Suppress per-LOD progress lines and the trailing summary "
+        "(top-level asection headers still appear).",
+    ),
 ) -> None:
     """Build an additive LOD ladder from a fitted gsplat dataset.
 
@@ -4621,6 +4632,10 @@ def lod_additive(
     ``--n-lods`` (or as many levels as ``--breakpoints`` implies) so that
     ``up_to_lod(k)`` is the best L^2 approximation of the full scene at
     that splat budget.
+
+    Input must be a pre-fitted .gsplats.zarr (output of ``luxar gsplat fit``).
+    The canonical end-to-end pipeline is: ``cal`` → ``fit --seeds K*`` →
+    ``lod additive``.
 
     \b
     Examples:
@@ -4688,10 +4703,11 @@ def lod_additive(
                 aprint(f"Built {ladder.n_lods}-level ladder in {time.time() - t0:.2f}s")
                 cuts = ladder.stats.get("lod_cutpoints", [])
                 kind = ladder.stats.get("lod_breakpoints_kind", "?")
-                aprint(f"Cutpoints ({kind}): {cuts}")
-                for level in range(ladder.n_lods):
-                    lod = ladder.at_lod(level)
-                    aprint(f"  LOD {level}: {lod.n_splats:,} splats")
+                if not quiet:
+                    aprint(f"Cutpoints ({kind}): {cuts}")
+                    for level in range(ladder.n_lods):
+                        lod = ladder.at_lod(level)
+                        aprint(f"  LOD {level}: {lod.n_splats:,} splats")
 
             with asection("Saving"):
                 if output_path.exists() and overwrite:
@@ -4704,7 +4720,8 @@ def lod_additive(
                     encoding_mode=encoding_mode_obj,
                     compress=compress,  # type: ignore[arg-type]
                 )
-                aprint(f"Saved to {output_path}")
+                if not quiet:
+                    aprint(f"Saved to {output_path}")
 
     except typer.Exit:
         raise
@@ -4800,8 +4817,12 @@ def lod_substitutive(
             "Omit for plain .gsplats.zarr directories."
         ),
     ),
-    verbose: bool = typer.Option(
-        False, "--verbose", "-v", help="Per-level progress logging."
+    quiet: bool = typer.Option(
+        False,
+        "--quiet",
+        "-q",
+        help="Suppress per-level progress lines and the trailing summary "
+        "(top-level asection headers still appear).",
     ),
 ) -> None:
     """Build a substitutive LOD hierarchy from a fitted gsplat dataset.
@@ -4810,6 +4831,10 @@ def lod_substitutive(
     *replace* the previous level (compression factor K per step). The
     output directory contains one .gsplats.zarr per level (level_0 is the
     original input) plus manifest.json describing the hierarchy.
+
+    Input must be a pre-fitted .gsplats.zarr (output of ``luxar gsplat fit``).
+    The canonical end-to-end pipeline is: ``cal`` → ``fit --seeds K*`` →
+    ``lod substitutive``.
 
     \b
     Examples:
@@ -4869,13 +4894,14 @@ def lod_substitutive(
                     candidate_bins_k=candidate_bins_k,
                     device=device,
                     seed=seed,
-                    verbose=verbose,
+                    verbose=False,
                 )
                 aprint(
                     f"Built {len(hierarchy)}-level hierarchy in {time.time() - t0:.2f}s"
                 )
-                for level_idx, lev in enumerate(hierarchy):
-                    aprint(f"  level {level_idx}: {lev.n_splats:,} splats")
+                if not quiet:
+                    for level_idx, lev in enumerate(hierarchy):
+                        aprint(f"  level {level_idx}: {lev.n_splats:,} splats")
 
             with asection("Saving"):
                 if output_dir.exists() and overwrite:
@@ -4920,7 +4946,8 @@ def lod_substitutive(
                 }
                 manifest_path = output_dir / "manifest.json"
                 manifest_path.write_text(json.dumps(manifest, indent=2))
-                aprint(f"Wrote manifest to {manifest_path}")
+                if not quiet:
+                    aprint(f"Wrote manifest to {manifest_path}")
 
     except typer.Exit:
         raise
