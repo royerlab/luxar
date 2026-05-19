@@ -16,7 +16,7 @@ import type { ChunkPrefetcher } from './chunk-prefetcher';
 import { log, Modules } from '../utils/log';
 import { config } from '../config';
 import { type Result, ok, err, isErr } from '../utils/result';
-import type { CacheValidationMode } from './types';
+import type { MultiLevelCacheStats } from './types';
 
 /**
  * Structured failure modes from {@link MultiLevelCachingStore.getResult}.
@@ -595,74 +595,11 @@ export class MultiLevelCachingStore implements AsyncReadable {
   }
 
   /**
-   * Get cache statistics.
-   * Returns extended stats compatible with CacheStatsProvider interface.
+   * Get cache statistics. Returns the aggregated multi-tier snapshot
+   * (`MultiLevelCacheStats`) consumed by the data-loading monitor,
+   * debug overlay, and cache E2E suite.
    */
-  getStats(): {
-    l1: {
-      metadataSize: number;
-      chunksSize: number;
-      metadataCount: number;
-      chunksCount: number;
-      hits: number;
-      misses: number;
-      evictions: number;
-    };
-    l2: {
-      size: number;
-      count: number;
-      reads: number;
-      writes: number;
-      misses: number;
-      oversizedWriteSkipped?: number;
-      quotaWriteSkipped?: number;
-      evictions?: number;
-      writeFailures?: number;
-      corruptedEntries?: number;
-      metadataParseFailures?: number;
-      orphanedFilesRemoved?: number;
-    };
-    network: { bytesTransferred: number; requestCount: number; bandwidth: number };
-    /**
-     * Per-tier demand-hit counters (user demand only — prefetch
-     * traffic is excluded). Each user-demand call to `getResult`
-     * increments exactly one of `l1Hits`, `l2Hits`, or
-     * `networkRequests`. Combined with the L0 provider's stats, this
-     * lets the monitor surface an effective demand hit-rate rather
-     * than the L1-only ratio.
-     */
-    demand: { l1Hits: number; l2Hits: number; networkRequests: number };
-    /**
-     * Cache health snapshot. Surfaced by the data monitor status badges
-     * and debug diagnostics.
-     */
-    health: {
-      /** Validation mode the dataset is using (or 'none' if external + no TTL). */
-      validationMode: CacheValidationMode;
-      /** Wall-clock millis at last successful validation, or null. */
-      lastValidatedAt: number | null;
-      /**
-       * `true` when the dataset has no `content_hash` AND no TTL is
-       * configured — surfaced as a UI warning since the cache may be
-       * stale indefinitely.
-       */
-      unvalidatedExternalDataset: boolean;
-      /**
-       * S2: `true` when OPFS is available and L2 is operational, or
-       * when caching is disabled (no L2 expected). `false` only when
-       * caching is enabled but OPFS could not be acquired — drives
-       * the `opfs-unavailable` status badge.
-       */
-      opfsAvailable: boolean;
-    };
-    /**
-     * S4: number of times `?clear-cache` triggered a clearAll on
-     * init for this store. Increments at most once per store
-     * lifetime today but typed as a counter so future re-init paths
-     * stay observable.
-     */
-    clearOnInitCount: number;
-  } {
+  getStats(): MultiLevelCacheStats {
     const bandwidth = this.bandwidth.rate();
 
     const validationState = this.l2Store?.getValidationState() ?? {

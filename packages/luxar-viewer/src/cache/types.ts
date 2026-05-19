@@ -94,3 +94,68 @@ export interface OPFSMetadata {
 
 /** Current OPFS filename-encoding version. Bumped only when keyToFileName changes. */
 export const OPFS_ENCODING_VERSION = 2;
+
+/**
+ * Snapshot returned by `MultiLevelCachingStore.getStats()`. Aggregates
+ * the L1 segmented-LRU stats, the L2 OPFS stats, network counters,
+ * per-tier demand-hit counters, cache health (validation mode + OPFS
+ * availability), and the `?clear-cache` invocation counter.
+ *
+ * Consumed by the data-loading monitor, the debug overlay, and the
+ * cache E2E suite.
+ */
+export interface MultiLevelCacheStats {
+  l1: CacheStats;
+  l2: {
+    size: number;
+    count: number;
+    reads: number;
+    writes: number;
+    misses: number;
+    oversizedWriteSkipped?: number;
+    quotaWriteSkipped?: number;
+    evictions?: number;
+    writeFailures?: number;
+    corruptedEntries?: number;
+    metadataParseFailures?: number;
+    orphanedFilesRemoved?: number;
+  };
+  network: { bytesTransferred: number; requestCount: number; bandwidth: number };
+  /**
+   * Per-tier demand-hit counters (user demand only — prefetch traffic
+   * is excluded). Each user-demand `getResult` call increments exactly
+   * one of `l1Hits`, `l2Hits`, or `networkRequests`. Combined with the
+   * L0 provider's stats, this lets the monitor surface an effective
+   * demand hit-rate rather than the L1-only ratio.
+   */
+  demand: { l1Hits: number; l2Hits: number; networkRequests: number };
+  /**
+   * Cache health snapshot. Surfaced by the data monitor status badges
+   * and debug diagnostics.
+   */
+  health: {
+    /** Validation mode the dataset is using (or 'none' if external + no TTL). */
+    validationMode: CacheValidationMode;
+    /** Wall-clock millis at last successful validation, or null. */
+    lastValidatedAt: number | null;
+    /**
+     * `true` when the dataset has no `content_hash` AND no TTL is
+     * configured — surfaced as a UI warning since the cache may be
+     * stale indefinitely.
+     */
+    unvalidatedExternalDataset: boolean;
+    /**
+     * S2: `true` when OPFS is available and L2 is operational, or
+     * when caching is disabled (no L2 expected). `false` only when
+     * caching is enabled but OPFS could not be acquired — drives the
+     * `opfs-unavailable` status badge.
+     */
+    opfsAvailable: boolean;
+  };
+  /**
+   * S4: number of times `?clear-cache` triggered a clearAll on init
+   * for this store. Increments at most once per store lifetime today
+   * but typed as a counter so future re-init paths stay observable.
+   */
+  clearOnInitCount: number;
+}
