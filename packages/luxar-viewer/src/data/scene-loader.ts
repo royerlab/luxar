@@ -32,21 +32,9 @@ import type { LoaderFactoryDeps } from './scene-loader/loader-factory';
 import { commitPointsGeometry as commitPointsGeometryHelper } from './scene-loader/commit/commit-points-geometry';
 import { ViewStateQueue } from './scene-loader/view-state-queue';
 import { runGSplatsRefinement } from './gsplats/lod-refinement';
-import {
-  loadAndStage as pointsLoadAndStage,
-  label as pointsLabel,
-  type PointsHandlerCtx,
-} from './points/handler';
-import {
-  loadAndStage as linesLoadAndStage,
-  label as linesLabel,
-  type LinesHandlerCtx,
-} from './lines/handler';
-import {
-  loadAndStage as gsplatsLoadAndStage,
-  label as gsplatsLabel,
-  type GSplatsHandlerCtx,
-} from './gsplats/handler';
+import { loadAndStage as pointsLoadAndStage, label as pointsLabel } from './points/handler';
+import { loadAndStage as linesLoadAndStage, label as linesLabel } from './lines/handler';
+import { loadAndStage as gsplatsLoadAndStage, label as gsplatsLabel } from './gsplats/handler';
 
 export type { StagedLinesCommit } from './scene-loader/process/data-processor-lines';
 export type { StagedGSplatsCommit } from './scene-loader/process/data-processor-gsplats';
@@ -112,6 +100,8 @@ import { updateVisibleCountsInMonitor as updateVisibleCountsInMonitorHelper } fr
 import { disposeSceneLoader } from './scene-loader/dispose';
 import { loadScene as loadSceneHelper, type LoadSceneCtx } from './scene-loader/load-scene';
 import { runAtomicCommit } from './scene-loader/update-view/atomic-commit';
+import { buildUpdateCtxs } from './scene-loader/update-view/build-update-ctxs';
+import { queueNext } from './scene-loader/update-view/queue-next';
 import { connectLoaderToMonitor as connectLoaderToMonitorHelper } from './scene-loader/nodes/connect-loader-to-monitor';
 import type { NodeBuildCtx } from './scene-loader/nodes/build-ctx';
 
@@ -574,29 +564,9 @@ export class SceneLoader {
       // only the type-specific work.
       // ================================================================
 
-      // The three inline branches collapse into thin wrappers around
-      // the per-type handlers in data/{points,lines,gsplats}/handler.ts
-      // (step 7 of the god-object refactor). Each handler owns the
-      // per-type variations — extend_to_all opts, processX call,
-      // metadata shape, version-gated log — so this orchestration site
-      // just builds the ctx and dispatches.
-      const pointsCtx: PointsHandlerCtx = {
-        rootGroup: this.rootGroup,
-        viewStateQueue: this.viewStateQueue,
-        clearFailure: (path) => this.failedLoaders.delete(path),
-        currentVersion,
-        extendedToleranceCache,
-        deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),
-      };
-      const linesCtx: LinesHandlerCtx = {
-        rootGroup: this.rootGroup,
-        viewStateQueue: this.viewStateQueue,
-        clearFailure: (path) => this.failedLoaders.delete(path),
-        currentVersion,
-        updateVersion: this._updateVersion,
-        deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),
-      };
-      const gsplatsCtx: GSplatsHandlerCtx = {
+      // Per-type handler-ctx construction lives in
+      // scene-loader/update-view/build-update-ctxs.ts.
+      const { pointsCtx, linesCtx, gsplatsCtx } = buildUpdateCtxs({
         rootGroup: this.rootGroup,
         viewStateQueue: this.viewStateQueue,
         clearFailure: (path) => this.failedLoaders.delete(path),
@@ -604,7 +574,7 @@ export class SceneLoader {
         updateVersion: this._updateVersion,
         extendedToleranceCache,
         deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),
-      };
+      });
 
       const pointsTask = this.runLoaderUpdates(this.loaders, pointsLabel, (path, loader, session) =>
         pointsLoadAndStage(path, loader, session, pointsCtx)
@@ -668,45 +638,17 @@ export class SceneLoader {
       // End profiling update cycle (always, even if errors)
       this.profiler?.endUpdate();
 
-      // SERIALIZATION: Process pending update if one was queued
-      // CRITICAL: Keep _updateInProgress = true until the rAF callback fires!
-      // This prevents new slider events from starting updates during the yield.
-      const pendingState = this.viewStateQueue.takePending();
-      if (pendingState !== null) {
-
-        // Yield to render loop: ensure at least one frame is painted before next update
-        // This prevents the "updates faster than renders" problem that causes black screen
-        if (typeof requestAnimationFrame !== 'undefined') {
-          requestAnimationFrame(() => {
-            // Release the lock right before starting the next update
-            // Any slider events during the yield were queued (because lock was held)
-            this._updateInProgress = false;
-            this.updateView(pendingState);
-          });
-        } else {
-          // Fallback for non-browser environments (e.g., tests)
-          this._updateInProgress = false;
-          this.updateView(pendingState);
-        }
-      } else {
-        // No pending update — check if progressive GSplats loaders need refinement
-        const needsRefinement = [...this.gsplatLoaders.values()].some(
-          (l) => l.hasMoreLODs === true
-        );
-
-        if (needsRefinement) {
-          // Keep _updateInProgress = true during refinement so slider/animation
-          // events queue as _pendingViewState (which naturally cancels refinement)
-          log.info(
-            Modules.SCENE_LOADER,
-            'Scheduling GSplats LOD refinement (hasMoreLODs=true after update)'
-          );
-          this.scheduleGSplatsRefinement();
-        } else {
-          // No pending update, no refinement needed - release the lock now
-          this._updateInProgress = false;
-        }
-      }
+      // Decide what runs next — pending state, GSplats refinement, or
+      // lock release. Implementation in scene-loader/update-view/queue-next.ts.
+      queueNext({
+        viewStateQueue: this.viewStateQueue,
+        gsplatLoaders: this.gsplatLoaders,
+        updateView: (state) => this.updateView(state),
+        setUpdateInProgress: (v) => {
+          this._updateInProgress = v;
+        },
+        scheduleGSplatsRefinement: () => this.scheduleGSplatsRefinement(),
+      });
     }
   }
 
