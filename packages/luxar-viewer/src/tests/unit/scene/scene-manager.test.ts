@@ -605,6 +605,89 @@ describe('SceneManager', () => {
     });
   });
 
+  describe('setControlType', () => {
+    // Event dispatch is contractual: per refactor non-goal #2, the
+    // 'camera-changed' event must fire from the SceneManager call site
+    // when (and only when) the projection mode swaps. The camera-mode
+    // helper's swap logic is covered separately in camera-mode.test.ts.
+
+    beforeEach(async () => {
+      await sceneManager.init({ canvas: mockCanvas as any });
+    });
+
+    it("dispatches 'camera-changed' when switching to ortho swaps the camera", () => {
+      const listener = vi.fn();
+      sceneManager.addEventListener('camera-changed', listener);
+      // Start in perspective (the default after init).
+      expect(sceneManager.camera).toBeInstanceOf(THREE.PerspectiveCamera);
+
+      sceneManager.setControlType('ortho');
+
+      expect(sceneManager.camera).toBeInstanceOf(THREE.OrthographicCamera);
+      expect(listener).toHaveBeenCalledTimes(1);
+    });
+
+    it("does NOT dispatch 'camera-changed' when control type changes without a projection swap", () => {
+      const listener = vi.fn();
+      sceneManager.addEventListener('camera-changed', listener);
+
+      // 'fly' uses the existing perspective camera — no swap.
+      sceneManager.setControlType('fly');
+
+      expect(sceneManager.camera).toBeInstanceOf(THREE.PerspectiveCamera);
+      expect(listener).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('toggleCentering', () => {
+    // toggleCentering is a 2-state machine: bbox-center ↔ origin. Each
+    // toggle invokes the matching centering helper (private) and flips
+    // the internal isCenteredOnBoundingBox flag. The flag isn't directly
+    // observable, but a second toggle's behaviour proves the state flip.
+
+    beforeEach(async () => {
+      await sceneManager.init({ canvas: mockCanvas as any });
+    });
+
+    it('first toggle from default (origin) calls centerCameraOnScene and flips to bbox', () => {
+      const internals = sceneManager as unknown as {
+        centerOnOrigin(): void;
+        isCenteredOnBoundingBox: boolean;
+      };
+      const onOriginSpy = vi.spyOn(internals, 'centerOnOrigin').mockImplementation(() => {});
+      const onSceneSpy = vi
+        .spyOn(sceneManager, 'centerCameraOnScene')
+        .mockImplementation(() => {});
+      // Default after construction is isCenteredOnBoundingBox=false.
+      expect(internals.isCenteredOnBoundingBox).toBe(false);
+
+      sceneManager.toggleCentering();
+
+      expect(onSceneSpy).toHaveBeenCalledTimes(1);
+      expect(onOriginSpy).not.toHaveBeenCalled();
+      expect(internals.isCenteredOnBoundingBox).toBe(true);
+    });
+
+    it('second toggle from bbox calls centerOnOrigin and flips back to origin', () => {
+      const internals = sceneManager as unknown as {
+        centerOnOrigin(): void;
+        isCenteredOnBoundingBox: boolean;
+      };
+      const onOriginSpy = vi.spyOn(internals, 'centerOnOrigin').mockImplementation(() => {});
+      const onSceneSpy = vi
+        .spyOn(sceneManager, 'centerCameraOnScene')
+        .mockImplementation(() => {});
+      // Force the bbox-centered state directly.
+      internals.isCenteredOnBoundingBox = true;
+
+      sceneManager.toggleCentering();
+
+      expect(onOriginSpy).toHaveBeenCalledTimes(1);
+      expect(onSceneSpy).not.toHaveBeenCalled();
+      expect(internals.isCenteredOnBoundingBox).toBe(false);
+    });
+  });
+
   describe('rendering', () => {
     beforeEach(async () => {
       await sceneManager.init({ canvas: mockCanvas as any });
