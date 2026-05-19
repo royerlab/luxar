@@ -23,35 +23,6 @@ export interface CacheStats {
 }
 
 /**
- * Extended statistics for the full two-level cache system.
- * Used by CacheStatsProvider for DataLoadingMonitor integration.
- *
- * @internal — not consumed externally; preserved for future
- * provider implementations.
- */
-export interface ExtendedCacheStats {
-  /** L1 memory cache statistics */
-  l1: CacheStats;
-  /** L2 OPFS persistent cache statistics */
-  l2: {
-    /** Total bytes in L2 cache */
-    size: number;
-    /** Number of entries in L2 cache */
-    count: number;
-    /** Total reads from L2 */
-    reads: number;
-    /** Total writes to L2 */
-    writes: number;
-  };
-  /** Whether caching is enabled */
-  enabled: boolean;
-}
-
-/**
- * Metadata structure persisted to OPFS for L2 cache management.
- * Stored in _cache_meta.json within each dataset's OPFS directory.
- */
-/**
  * How the cached dataset is validated against the remote source.
  *
  * - `content-hash`: dataset has Luxar's `content_hash` attr; mismatch

@@ -20,7 +20,8 @@ export { wrapWithCache, isCachedArray, unwrapCachedArray } from './cached-zarr-a
 // Types
 export type { MultiLevelCachingStoreOptions } from './multi-level-caching-store';
 export type { ChunkPrefetcherOptions } from './chunk-prefetcher';
-export type { CacheStats, ExtendedCacheStats, OPFSMetadata } from './types';
+export type { CacheStats, MultiLevelCacheStats, OPFSMetadata } from './types';
+export type { CachedDatasetSummary } from './multi-level-caching-store/opfs-store';
 export type {
   DecompressedChunk,
   DecompressedChunkCacheOptions,
