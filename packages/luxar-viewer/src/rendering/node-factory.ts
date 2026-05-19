@@ -20,14 +20,12 @@ import {
   type LuxarGSplatMaterial,
 } from './material-manager';
 import { getColormapTexture } from './colormap-textures';
-import { supportsScalarColormap } from './material-colormap-helpers';
 import {
   createInstancedLinesMesh,
   isAllSharpnessTwo,
   type InstancedLinesMeshConfig,
 } from './line-geometry';
 import { createInstancedGSplatsMesh, type InstancedGSplatsMeshConfig } from './gsplat-geometry';
-import { createPointQuadGeometry } from './point-geometry';
 import type { LoadedPointsData, DataLoader } from '../data/data-loader-types';
 import type { PointsMetadata, PointsUserData } from '../types/points';
 import type { LinesMetadata, LinesUserData, LinesDataLoader } from '../types/lines';
@@ -40,6 +38,10 @@ import {
   validateTransformFormat as validateTransformFormatImpl,
 } from './node-factory/validation';
 import { applyTransform as applyTransformImpl } from './node-factory/transforms';
+import {
+  createPointsGeometry as createPointsGeometryImpl,
+  createPointsMaterial as createPointsMaterialImpl,
+} from './node-factory/create-points-node';
 // Picking materials are constructed via `materialManager.create*PickingMaterial`
 // helpers so the GLSL vs. TSL dispatch on `caps.apiSurface` lives in one place. The
 // concrete types are still imported elsewhere (e.g. material-sync-helpers).
@@ -506,171 +508,17 @@ export class NodeFactory {
   }
 
   // ============================================================================
-  // Private Helpers
+  // Private Helpers (delegated to node-factory/create-points-node.ts)
   // ============================================================================
 
-  /**
-   * Create THREE.js geometry from points data.
-   * Public because SceneLoader's update path also needs to create geometry.
-   */
   createPointsGeometry(
     data: LoadedPointsData,
     maxRadius: number = 1.0,
     maxSharpness: number = 31.0
   ): THREE.BufferGeometry {
-    // Start from the shared unit-quad base. Each Points node gets
-    // its own BufferGeometry instance with cloned base + per-point
-    // InstancedBufferAttributes.
-    const geometry = createPointQuadGeometry();
-
-    this.validateLoadedPointsData(data);
-
-    const pointCount = data.positions.length / 3;
-
-    // Per-instance centre positions. Float16 datasets are widened to
-    // Float32 because InstancedBufferAttribute doesn't accept Float16
-    // typed arrays directly.
-    let centersTyped: Float32Array;
-    if (
-      typeof globalThis.Float16Array !== 'undefined' &&
-      data.positions instanceof globalThis.Float16Array
-    ) {
-      centersTyped = new Float32Array(data.positions);
-    } else {
-      centersTyped = data.positions as Float32Array;
-    }
-    geometry.setAttribute('aCenter', new THREE.InstancedBufferAttribute(centersTyped, 3));
-
-    // Per-instance colours. Always present in the new path — if the
-    // loader didn't supply colours, fill with white. The material
-    // toggles between aColor and aScalar via the USE_COLORMAP define;
-    // both attributes can coexist.
-    if (data.colors) {
-      this.validateColorMode(data.colors, data.metadata);
-      const needsNormalization =
-        data.colors instanceof Uint8Array || data.colors instanceof Uint16Array;
-      geometry.setAttribute(
-        'aColor',
-        new THREE.InstancedBufferAttribute(data.colors, 3, needsNormalization)
-      );
-    } else {
-      const defaultColors = new Float32Array(pointCount * 3).fill(1.0);
-      geometry.setAttribute('aColor', new THREE.InstancedBufferAttribute(defaultColors, 3));
-    }
-
-    // Per-instance radii. Same dtype-handling rules as before; the
-    // resulting `radiusScale` is consumed by the material uniform.
-    let radiusScale = 1.0;
-    if (data.radii) {
-      if (
-        typeof globalThis.Float16Array !== 'undefined' &&
-        data.radii instanceof globalThis.Float16Array
-      ) {
-        geometry.setAttribute(
-          'aRadius',
-          new THREE.InstancedBufferAttribute(new Float32Array(data.radii), 1)
-        );
-        radiusScale = 1.0;
-      } else if (data.radii instanceof Uint8Array) {
-        geometry.setAttribute('aRadius', new THREE.InstancedBufferAttribute(data.radii, 1, true));
-        radiusScale = maxRadius;
-      } else {
-        geometry.setAttribute(
-          'aRadius',
-          new THREE.InstancedBufferAttribute(data.radii as Float32Array, 1, false)
-        );
-        radiusScale = 1.0;
-      }
-    } else {
-      const defaultRadii = new Float32Array(pointCount).fill(0.5);
-      geometry.setAttribute('aRadius', new THREE.InstancedBufferAttribute(defaultRadii, 1));
-    }
-
-    // Per-instance sharpness.
-    let sharpnessScale = 1.0;
-    if (data.sharpness) {
-      if (
-        typeof globalThis.Float16Array !== 'undefined' &&
-        data.sharpness instanceof globalThis.Float16Array
-      ) {
-        geometry.setAttribute(
-          'aSharpness',
-          new THREE.InstancedBufferAttribute(new Float32Array(data.sharpness), 1)
-        );
-        sharpnessScale = 1.0;
-      } else if (data.sharpness instanceof Uint8Array) {
-        geometry.setAttribute(
-          'aSharpness',
-          new THREE.InstancedBufferAttribute(data.sharpness, 1, true)
-        );
-        sharpnessScale = maxSharpness;
-      } else {
-        geometry.setAttribute(
-          'aSharpness',
-          new THREE.InstancedBufferAttribute(data.sharpness as Float32Array, 1, false)
-        );
-        sharpnessScale = 1.0;
-      }
-    } else {
-      const defaultSharpness = new Float32Array(pointCount).fill(2.0);
-      geometry.setAttribute('aSharpness', new THREE.InstancedBufferAttribute(defaultSharpness, 1));
-    }
-
-    // Per-instance scalar (USE_COLORMAP only). Attached as `aScalar`
-    // so the shader can read it via `in float aScalar` under the
-    // USE_COLORMAP define.
-    if (data.scalars) {
-      const scalarsTyped = data.scalars;
-      if (
-        typeof globalThis.Float16Array !== 'undefined' &&
-        scalarsTyped instanceof globalThis.Float16Array
-      ) {
-        geometry.setAttribute(
-          'aScalar',
-          new THREE.InstancedBufferAttribute(new Float32Array(scalarsTyped), 1)
-        );
-      } else if (scalarsTyped instanceof Uint8Array) {
-        geometry.setAttribute('aScalar', new THREE.InstancedBufferAttribute(scalarsTyped, 1, true));
-      } else {
-        geometry.setAttribute(
-          'aScalar',
-          new THREE.InstancedBufferAttribute(scalarsTyped as Float32Array, 1, false)
-        );
-      }
-    }
-
-    // WebGLRenderer only issues an instanced draw for InstancedBufferGeometry
-    // when instanceCount is set. The base quad has 6 indices; instanceCount
-    // is the number of point sprites to draw.
-    geometry.instanceCount = pointCount;
-    geometry.setDrawRange(0, 6);
-
-    // Bounding box/sphere of the per-instance positions (used by spatial
-    // queries / debug/camera paths). The base-quad bounds are irrelevant;
-    // frustum culling is disabled on the mesh because the sprites expand
-    // in screen space.
-    geometry.boundingBox = data.metadata.bounds.clone();
-    geometry.boundingSphere = new THREE.Sphere();
-    geometry.boundingBox.getBoundingSphere(geometry.boundingSphere);
-
-    // Store radius and sharpness scales as user data for material creation
-    if (!geometry.userData) {
-      geometry.userData = {};
-    }
-    geometry.userData.radiusScale = radiusScale;
-    geometry.userData.sharpnessScale = sharpnessScale;
-    geometry.userData.pointCount = pointCount;
-
-    return geometry;
+    return createPointsGeometryImpl(data, maxRadius, maxSharpness);
   }
 
-  /**
-   * Create material for points rendering.
-   * Public because SceneLoader tests and update paths access it.
-   *
-   * Accepts a `Partial<PointsMetadata>` because callers (and tests)
-   * frequently pass narrowed attribute subsets.
-   */
   createPointsMaterial(
     attrs: Partial<PointsMetadata>,
     radiusScale: number = 1.0,
@@ -678,47 +526,6 @@ export class NodeFactory {
     geometry?: THREE.BufferGeometry,
     path?: string
   ): LuxarPointMaterial {
-    let material = materialManager.getPointMaterial({
-      opacity: attrs.opacity ?? 1.0,
-      gamma: attrs.gamma ?? 1.0,
-      intensity: attrs.intensity ?? 1.0,
-      offset: attrs.offset ?? 0.0,
-      blendingMode: (attrs.blending_mode as BlendingMode) ?? 'additive',
-      radiusScale: radiusScale,
-      sharpnessScale: sharpnessScale,
-    });
-
-    const ptColormapName = attrs.colormap;
-    const ptHasScalars = !!attrs.has_scalars;
-    if (ptColormapName && ptHasScalars) {
-      // Point shader's USE_COLORMAP path requires a `scalar` attribute.
-      // When `geometry` is provided (placeholder/init path), check the
-      // actual binding; when it's absent (e.g. tests calling
-      // createPointsMaterial directly), skip the guard and trust the
-      // caller.
-      const guardOK = !geometry || supportsScalarColormap('points', geometry);
-      if (!guardOK) {
-        log.warning(
-          Modules.SCENE_LOADER,
-          `[${path ?? '<points>'}] Scalar colormap requested but 'scalar' attribute is not bound on geometry. Colormap suppressed; rendering with vertex colors.`
-        );
-      } else {
-        // pass customLutBytes when colormap='custom'.
-        const ptLutBytes = (attrs as { customLutBytes?: Uint8Array }).customLutBytes;
-        const ptColormapTex = getColormapTexture(ptColormapName, ptLutBytes);
-        if (ptColormapTex) {
-          // B.1: detach pooled material from global updates before cloning.
-          // See lines clone site for the full rationale.
-          materialManager.detachFromGlobalUpdates(material);
-          material = material.clone() as typeof material;
-          materialManager.register(material);
-          material.updateColormapTexture(ptColormapTex);
-          const ptScalarRange = attrs.scalar_data_range ?? [0, 1];
-          material.updateScalarRange(ptScalarRange[0], ptScalarRange[1]);
-        }
-      }
-    }
-
-    return material;
+    return createPointsMaterialImpl(attrs, radiusScale, sharpnessScale, geometry, path);
   }
 }
