@@ -25,6 +25,8 @@ import {
 import {
   renderFrameToCanvas as renderFrameToCanvasHelper,
   downloadBlob as downloadBlobHelper,
+  encodeScreenshotBlob,
+  normalizeScreenshotFormat,
 } from './recording-panel/screenshot-exporter';
 import {
   getTurntableInfo as getTurntableInfoHelper,
@@ -40,8 +42,6 @@ import type { CaptureContext, OfflineCaptureDriver } from './recording-panel/dri
 import { ImageSequenceDriver } from './recording-panel/drivers/image-sequence-driver';
 import { ExrSequenceDriver } from './recording-panel/drivers/exr-sequence-driver';
 import { VideoModeDriver } from './recording-panel/drivers/video-mode-driver';
-import { captureScreenshot, type ScreenshotCtx } from './recording-panel/modes/screenshot-mode';
-import { startVideoRecording, type VideoModeCtx } from './recording-panel/modes/video-mode';
 import { buildRecordingGUI } from './recording-panel/ui/gui-construction';
 
 // Shared recording types live in `recording/types.ts`. Re-exported
@@ -286,130 +286,236 @@ export class RecordingPanel {
   // ========== Screenshot Capture ==========
 
   async captureScreenshot(): Promise<void> {
-    await captureScreenshot(this.makeScreenshotCtx());
-  }
+    // Refuse during active recording. captureScreenshot() and the
+    // recording paths share `savedRecordingState` — without this guard,
+    // a screenshot during recording would clobber the active session's
+    // saved DPR/resize/renderer snapshot and the recording's eventual
+    // restoreRecordingState() would no-op, leaving DPR disabled and
+    // resize locked after recording ends.
+    if (this.isRecording || this.isOfflineCaptureActive) {
+      showToast('Stop recording before taking a screenshot');
+      return;
+    }
+    if (this.isCaptureInProgress) return;
+    this.isCaptureInProgress = true;
 
-  private makeScreenshotCtx(): ScreenshotCtx {
-    const self = this;
-    return {
-      get isRecording() {
-        return self.isRecording;
-      },
-      get isOfflineCaptureActive() {
-        return self.isOfflineCaptureActive;
-      },
-      get isCaptureInProgress() {
-        return self.isCaptureInProgress;
-      },
-      set isCaptureInProgress(v: boolean) {
-        self.isCaptureInProgress = v;
-      },
-      get options() {
-        return self.options;
-      },
-      get sceneManager() {
-        return self.sceneManager;
-      },
-      get adaptiveDPRManager() {
-        return self.adaptiveDPRManager;
-      },
-      hideAllPanels: () => self.hideAllPanels(),
-      saveRecordingState: (opts) => self.saveRecordingState(opts),
-      restoreRecordingState: () => self.restoreRecordingState(),
-      downloadBlob: (blob, filename) => self.downloadBlob(blob, filename),
-      generateFilename: (ext) => self.generateFilename(ext),
-      renderFrameToCanvas: () => self.renderFrameToCanvas(),
-    };
+    let savedBackground: THREE.Color | THREE.Texture | null = null;
+
+    try {
+      log.info(Modules.RECORDING, 'Capturing screenshot...');
+
+      this.hideAllPanels();
+      await new Promise((r) => requestAnimationFrame(r));
+
+      // Save state (always — ensures restoreRecordingState restores panels)
+      const wantMaxDPR = this.options.maxDPR && !!this.adaptiveDPRManager;
+      this.saveRecordingState({ disableDPR: wantMaxDPR });
+      if (wantMaxDPR) {
+        await new Promise((r) => requestAnimationFrame(r));
+      }
+
+      // Set transparent background
+      if (this.options.transparentBackground) {
+        savedBackground = this.sceneManager.scene.background as THREE.Color | THREE.Texture | null;
+        this.sceneManager.scene.background = null;
+      }
+
+      const format = this.options.outputFormat;
+
+      if (format === 'exr') {
+        const exrData = await this.sceneManager.postProcessing.captureHDRAsEXR();
+        const blob = new Blob([exrData as BlobPart], { type: 'application/octet-stream' });
+        this.downloadBlob(blob, this.generateFilename('exr'));
+        showToast('HDR screenshot saved (EXR)');
+      } else {
+        const captureCanvas = await this.renderFrameToCanvas();
+
+        const { format: effectiveFormat, warning } = normalizeScreenshotFormat(
+          format,
+          this.options.transparentBackground
+        );
+        if (warning === 'video-fallback') {
+          log.warning(
+            Modules.RECORDING,
+            `Screenshot format '${format}' is a video format, falling back to PNG`
+          );
+        } else if (warning === 'jpeg-no-alpha') {
+          showToast('Switched to PNG (JPEG has no alpha)');
+        }
+
+        const blob = await encodeScreenshotBlob(
+          captureCanvas,
+          effectiveFormat,
+          this.options.imageQuality
+        );
+
+        if (blob) {
+          this.downloadBlob(blob, this.generateFilename(effectiveFormat));
+          showToast('Screenshot saved');
+        } else {
+          showToast('Screenshot failed');
+        }
+      }
+    } finally {
+      if (savedBackground !== null) {
+        this.sceneManager.scene.background = savedBackground;
+      }
+      this.restoreRecordingState();
+      this.isCaptureInProgress = false;
+    }
   }
 
   // ========== Video Recording ==========
 
   async startVideoRecording(): Promise<void> {
-    await startVideoRecording(this.makeVideoModeCtx());
-  }
+    if (this.isRecording) return;
 
-  private makeVideoModeCtx(): VideoModeCtx {
-    const self = this;
-    return {
-      get isRecording() {
-        return self.isRecording;
-      },
-      set isRecording(v: boolean) {
-        self.isRecording = v;
-      },
-      get disposed() {
-        return self.disposed;
-      },
-      get mode() {
-        return self.mode;
-      },
-      get options() {
-        return self.options;
-      },
-      get animationManager() {
-        return self.animationManager;
-      },
-      get sceneManager() {
-        return self.sceneManager;
-      },
-      get animationController() {
-        return self.animationController;
-      },
-      get keepAliveCallbackId() {
-        return self.keepAliveCallbackId;
-      },
-      get turntableCallbackId() {
-        return self.turntableCallbackId;
-      },
-      get captureStream() {
-        return self.captureStream;
-      },
-      set captureStream(v: MediaStream | null) {
-        self.captureStream = v;
-      },
-      get mediaRecorder() {
-        return self.mediaRecorder;
-      },
-      set mediaRecorder(v: MediaRecorder | null) {
-        self.mediaRecorder = v;
-      },
-      get recordedChunks() {
-        return self.recordedChunks;
-      },
-      set recordedChunks(v: Blob[]) {
-        self.recordedChunks = v;
-      },
-      get recordingStartTime() {
-        return self.recordingStartTime;
-      },
-      set recordingStartTime(v: number) {
-        self.recordingStartTime = v;
-      },
-      get durationTimer() {
-        return self.durationTimer;
-      },
-      set durationTimer(v: ReturnType<typeof setTimeout> | null) {
-        self.durationTimer = v;
-      },
-      startEXRSequenceRecording: () => self.startEXRSequenceRecording(),
-      runOfflineCaptureLoop: (fmt) => self.runOfflineCaptureLoop(fmt),
-      getSupportedMimeType: () => self.getSupportedMimeType(),
-      showConfirmationDialog: () => self.showConfirmationDialog(),
-      hideAllPanels: () => self.hideAllPanels(),
-      saveRecordingState: (opts) => self.saveRecordingState(opts),
-      restoreRecordingState: () => self.restoreRecordingState(),
-      computeVideoBitrate: (w, h) => self.computeVideoBitrate(w, h),
-      downloadBlob: (blob, filename) => self.downloadBlob(blob, filename),
-      generateFilename: (ext) => self.generateFilename(ext),
-      hideRecordingIndicator: () => self.hideRecordingIndicator(),
-      showRecordingIndicator: () => self.showRecordingIndicator(),
-      cleanupCaptureStream: () => self.cleanupCaptureStream(),
-      cleanupSyncListener: () => self.cleanupSyncListener(),
-      restoreAutoRotate: () => self.restoreAutoRotate(),
-      startSliderSync: () => self.startSliderSync(),
-      startTurntableRotation: () => self.startTurntableRotation(),
-      stopVideoRecording: () => self.stopVideoRecording(),
-    };
+    // Branch: frame-by-frame capture modes
+    const fmt = this.options.outputFormat;
+    const isImageFormat = fmt === 'png' || fmt === 'webp' || fmt === 'jpeg';
+    const isTurntableSmooth = this.mode === 'turntable' && this.options.frameByFrame;
+
+    // EXR → ZIP of EXR frames (always offline)
+    if (fmt === 'exr') {
+      return this.startEXRSequenceRecording();
+    }
+    // Turntable smooth mode — all formats use offline capture
+    if (isTurntableSmooth) {
+      if (isImageFormat) {
+        return this.runOfflineCaptureLoop(fmt); // → ZIP of images
+      }
+      return this.runOfflineCaptureLoop(fmt as 'mp4' | 'webm' | 'mkv'); // → video file
+    }
+    // Video mode with image formats falls through to real-time MediaRecorder below
+
+    const mimeType = this.getSupportedMimeType();
+    if (!mimeType) {
+      showToast('Video recording not supported in this browser');
+      return;
+    }
+
+    const confirmed = await this.showConfirmationDialog();
+    if (!confirmed || this.disposed) return;
+
+    // Wrap the entire setup phase. Without this, a throw from
+    // canvas.captureStream(), `new MediaRecorder(...)`, or
+    // mediaRecorder.start() would leave panels hidden, DPR disabled,
+    // resize locked, the keepalive callback registered, and no onstop
+    // to unwind any of it.
+    try {
+      this.hideAllPanels();
+
+      // Disable adaptive DPR during recording — resolution changes mid-capture cause
+      // frozen frames, aspect ratio glitches, and partial rotations
+      this.saveRecordingState({
+        disableDPR: true,
+        lockResize: true,
+        scaleResolution:
+          this.options.videoResolution > 0 ? { targetH: this.options.videoResolution } : undefined,
+      });
+      if (this.options.videoResolution > 0) {
+        await new Promise((r) => requestAnimationFrame(r));
+        if (this.disposed) {
+          this.restoreRecordingState();
+          return;
+        }
+      }
+
+      const canvas = this.sceneManager.renderer.domElement;
+      const videoBitsPerSecond = this.computeVideoBitrate(canvas.width, canvas.height);
+
+      log.info(
+        Modules.RECORDING,
+        `Starting video recording (${mimeType}, ${this.options.videoFPS} FPS, ` +
+          `${Math.round(videoBitsPerSecond / 1_000_000)}Mbps, ${canvas.width}x${canvas.height}, ` +
+          `mode: ${this.mode})`
+      );
+
+      this.animationController.startAnimation();
+      this.animationController.addPerFrameCallback(this.keepAliveCallbackId, () => {}, {
+        continuous: true,
+      });
+
+      this.captureStream = canvas.captureStream(this.options.videoFPS);
+      this.mediaRecorder = new MediaRecorder(this.captureStream, { mimeType, videoBitsPerSecond });
+      this.recordedChunks = [];
+
+      this.mediaRecorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+          this.recordedChunks.push(event.data);
+        }
+      };
+
+      this.mediaRecorder.onstop = () => {
+        if (this.disposed) {
+          this.recordedChunks = [];
+          this.isRecording = false;
+          this.hideRecordingIndicator();
+          this.cleanupCaptureStream();
+          return;
+        }
+
+        const blob = new Blob(this.recordedChunks, { type: mimeType });
+        const totalElapsed = ((Date.now() - this.recordingStartTime) / 1000).toFixed(1);
+        log.info(
+          Modules.RECORDING,
+          `Recording finalized: ${this.recordedChunks.length} chunks, ` +
+            `${(blob.size / (1024 * 1024)).toFixed(1)} MB, ${totalElapsed}s elapsed`
+        );
+        this.downloadBlob(blob, this.generateFilename('webm'));
+        this.recordedChunks = [];
+        this.isRecording = false;
+        this.hideRecordingIndicator();
+
+        this.animationController.removePerFrameCallback(this.keepAliveCallbackId);
+        this.animationController.removePerFrameCallback(this.turntableCallbackId);
+        this.cleanupSyncListener();
+        this.restoreAutoRotate();
+        this.restoreRecordingState();
+        this.cleanupCaptureStream();
+        showToast('Video saved');
+      };
+
+      this.mediaRecorder.start(100);
+      this.isRecording = true;
+      this.recordingStartTime = Date.now();
+      this.showRecordingIndicator();
+
+      // Duration limit
+      if (this.options.videoDurationLimit > 0) {
+        this.durationTimer = setTimeout(() => {
+          this.stopVideoRecording();
+        }, this.options.videoDurationLimit * 1000);
+      }
+
+      // Start slider sync if enabled
+      if (this.mode === 'video' && this.options.syncToSlider && this.animationManager) {
+        this.startSliderSync();
+      }
+
+      // Start turntable rotation if in turntable mode
+      if (this.mode === 'turntable') {
+        this.startTurntableRotation();
+      }
+    } catch (err) {
+      log.error(Modules.RECORDING, `Real-time recording setup failed: ${err}`);
+      // Symmetric undo of every state mutation up to this point.
+      // mediaRecorder may or may not have been constructed; clearing
+      // the field is defensive. captureStream cleanup also runs even
+      // if it was never assigned (helper handles null).
+      this.cleanupCaptureStream();
+      this.mediaRecorder = null;
+      this.recordedChunks = [];
+      this.animationController.removePerFrameCallback(this.keepAliveCallbackId);
+      this.animationController.removePerFrameCallback(this.turntableCallbackId);
+      this.cleanupSyncListener();
+      this.restoreAutoRotate();
+      this.restoreRecordingState();
+      this.isRecording = false;
+      this.hideRecordingIndicator();
+      showToast('Video recording failed to start');
+      throw err;
+    }
   }
 
   stopVideoRecording(): void {
