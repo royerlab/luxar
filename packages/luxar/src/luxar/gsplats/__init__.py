@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, Optional
 _GSPLATS_IMPORT_ERROR: Optional[ImportError] = None
 
 if TYPE_CHECKING:
-    from luxar.gsplats import clahe, preprocessing, seeds
+    from luxar.gsplats import clahe, lod, preprocessing, seeds
     from luxar.gsplats.calibration import (
         CalibrationResult,
         HeldOutPeak,
@@ -24,6 +24,11 @@ if TYPE_CHECKING:
     from luxar.gsplats.fit_tiled_gsplats import fit_tile, fit_tiled
     from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
     from luxar.gsplats.gsplat_data import GSplatData, GSplatLOD
+    from luxar.gsplats.lod import (
+        compute_additive_order,
+        make_additive_lod,
+        make_substitutive_lod,
+    )
     from luxar.gsplats.seeds import (
         generate_seeds,
         seed_from_decomposition,
@@ -35,7 +40,7 @@ if TYPE_CHECKING:
     fit_tiled_gaussian_splats = fit_tiled
 else:
     try:
-        from luxar.gsplats import clahe, preprocessing, seeds
+        from luxar.gsplats import clahe, lod, preprocessing, seeds
         from luxar.gsplats.calibration import (
             CalibrationResult,
             HeldOutPeak,
@@ -56,6 +61,11 @@ else:
         from luxar.gsplats.fit_tiled_gsplats import fit_tile, fit_tiled
         from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
         from luxar.gsplats.gsplat_data import GSplatData, GSplatLOD
+        from luxar.gsplats.lod import (
+            compute_additive_order,
+            make_additive_lod,
+            make_substitutive_lod,
+        )
         from luxar.gsplats.seeds import (
             generate_seeds,
             seed_from_decomposition,
@@ -168,6 +178,18 @@ else:
             def __init__(self, *_args: Any, **_kwargs: Any) -> None:
                 _raise_gsplats_import_error()
 
+        # LOD (luxar.gsplats.lod)
+        lod = None  # type: ignore[assignment]
+
+        def compute_additive_order(*_args: Any, **_kwargs: Any) -> Any:
+            _raise_gsplats_import_error()
+
+        def make_additive_lod(*_args: Any, **_kwargs: Any) -> Any:
+            _raise_gsplats_import_error()
+
+        def make_substitutive_lod(*_args: Any, **_kwargs: Any) -> Any:
+            _raise_gsplats_import_error()
+
 
 __all__ = [
     # Culling
@@ -203,8 +225,13 @@ __all__ = [
     "NoiseFloor",
     "HeldOutPeak",
     "CalibrationResult",
+    # LOD (additive + substitutive)
+    "compute_additive_order",
+    "make_additive_lod",
+    "make_substitutive_lod",
     # Submodules
     "seeds",
     "clahe",
     "preprocessing",
+    "lod",
 ]
