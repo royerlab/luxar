@@ -7,7 +7,7 @@
  * the same math (range slider, dimension dropdown, etc.) shares one
  * implementation rather than reinventing it.
  *
- * @module ui/slider-math-utils
+ * @module ui/dimension-sliders/slider-math
  */
 
 import { clamp } from '../gui/format/value-formatting';

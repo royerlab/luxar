@@ -24,10 +24,6 @@ vi.mock('../../../../../rendering/material-manager', () => ({
     rebuildAfterContextRestore: vi.fn(),
   },
 }));
-vi.mock('../../../../../ui/helpers', () => ({
-  showError: vi.fn(),
-  hideLoadingIndicator: vi.fn(),
-}));
 
 import { materialManager } from '../../../../../rendering/material-manager';
 import {

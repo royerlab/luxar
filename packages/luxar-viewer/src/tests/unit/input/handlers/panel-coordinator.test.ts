@@ -16,8 +16,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // PanelCoordinator now goes through `notifier` for help/error UI; mock
-// the notifier surface instead of the underlying ui/helpers. Spies
-// must come from vi.hoisted to be defined when the mock factory runs.
+// the notifier surface instead of the underlying ui/ helper modules.
+// Spies must come from vi.hoisted to be defined when the mock factory runs.
 const notifierMocks = vi.hoisted(() => ({
   hideHelp: vi.fn(),
   clearError: vi.fn(),

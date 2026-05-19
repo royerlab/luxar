@@ -11,12 +11,12 @@ import {
   aggregateCacheMetrics,
   type CacheRatesSnapshot,
   type L0Provider,
-} from '../../../../ui/data-loading-monitor/metrics/cache';
+} from '../../../../../ui/data-loading-monitor/metrics/cache';
 import type {
   LoaderMonitor,
   LoaderMetrics,
   CacheStatsProvider,
-} from '../../../../types/data-monitor-types';
+} from '../../../../../types/data-monitor-types';
 
 const ZERO_RATES: CacheRatesSnapshot = {
   queriesPerSec: 0,

@@ -1,6 +1,6 @@
 /**
  * Small DOM helpers shared by the per-tab updater modules in
- * `ui/monitors/tabs/`.
+ * `ui/data-loading-monitor/tabs/`.
  *
  * The Monitor uses a `data-field="<key>"` selector pattern for
  * incremental DOM updates: each value cell on a tab carries a stable

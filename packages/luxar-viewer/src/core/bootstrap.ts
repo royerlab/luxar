@@ -104,8 +104,8 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
 
   // Wire the cross-layer notifier surface to the concrete UI helpers.
   // Lower layers (data, scene, input) call notifier.toast / .error /
-  // .showHelp etc. without importing ui/helpers directly — that's what
-  // keeps the dependency-cruiser layer order clean.
+  // .showHelp etc. without importing the ui/ helper modules directly —
+  // that's what keeps the dependency-cruiser layer order clean.
   setNotifierBackend({
     showError,
     showToast,

@@ -849,7 +849,7 @@ export class RenderingControls {
    * Setup auto-blur for all GUI controls
    *
    * NOTE: The custom GUI library now handles auto-blur internally via
-   * src/ui/gui/utils/auto-blur.ts. This method is kept for backwards
+   * src/ui/gui/format/auto-blur.ts. This method is kept for backwards
    * compatibility but does nothing - all auto-blur logic is in the GUI library.
    */
   private setupAutoBlur(): void {

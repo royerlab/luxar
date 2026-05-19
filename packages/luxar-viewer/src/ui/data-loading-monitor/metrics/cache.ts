@@ -29,7 +29,7 @@ export type { CacheTelemetryState };
 /**
  * Subset of `cachedRates` this aggregator reads. The aggregator
  * surfaces these as rolling per-second rates rather than computing
- * its own — `bandwidth` is already bytes/sec from rate-calculator.ts.
+ * its own — `bandwidth` is already bytes/sec from `./rates.ts`.
  */
 export interface CacheRatesSnapshot {
   queriesPerSec: number;
@@ -284,7 +284,7 @@ export function aggregateCacheMetrics(params: AggregateCacheMetricsParams): Cach
     evictionsTotal: evictions,
     avgEntrySize: totalEntries > 0 ? totalCacheMemory / totalEntries : 0,
     reuseRatio: 0,
-    // Rolling per-second rates from rate-calculator. Don't recompute
+    // Rolling per-second rates from `./rates.ts`. Don't recompute
     // here as `lifetime/60` — that ratio drifts as history accumulates.
     hitsPerSecond: rates.hitsPerSec,
     missesPerSecond: rates.missesPerSec,

@@ -37,7 +37,8 @@ cleanly.
 | `media-utilities.ts`        | Shared `Blob` / `ArrayBuffer` plumbing                                       |
 | `overlay-compositor.ts`     | Renders the recording overlay onto the captured frame                        |
 | `animation-sync.ts`         | Drives `AnimationController` deterministically during offline capture        |
-| `gui-builder.ts`            | Recording-panel GUI construction                                             |
+| `gui-builder.ts`            | Pure mode→format and format→predicate visibility rules                       |
+| `ui/gui-construction.ts`    | Builds the lil-gui controller tree for the recording panel                   |
 | `types.ts`                  | Shared recording types                                                       |
 
 ## Codec selection

@@ -5,8 +5,8 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { calculateRates, type RatesSnapshot } from '../../../../ui/data-loading-monitor/metrics/rates';
-import type { MonitorEvent } from '../../../../types/data-monitor-types';
+import { calculateRates, type RatesSnapshot } from '../../../../../ui/data-loading-monitor/metrics/rates';
+import type { MonitorEvent } from '../../../../../types/data-monitor-types';
 
 function freshRates(): RatesSnapshot {
   return {
