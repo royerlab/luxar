@@ -1,12 +1,12 @@
 import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
-import { GSplatMaterial } from '../../../rendering/materials/gsplat/material-glsl';
+import { GSplatMaterial } from '../../../../../rendering/materials/gsplat/material-glsl';
 import {
   createGSplatQuadGeometry,
   createInstancedGSplatsMesh,
   packCholeskyForShader,
   updateInstancedGSplatsMesh,
-} from '../../../rendering/gsplat-geometry';
+} from '../../../../../rendering/gsplat-geometry';
 
 // Mock THREE.ShaderMaterial
 vi.mock('three', async () => {
