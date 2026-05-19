@@ -27,15 +27,15 @@
  */
 
 import * as THREE from 'three';
-import { log, Modules } from '../../utils/log';
-import { estimateGeometryBytes, invalidateCachedByteSize } from '../../utils/geometry-utils';
-import type { LoadedPointsData } from '../../data/data-loader-types';
-import type { ProcessedLinesData } from '../../types/lines';
-import type { PooledBuffer, PoolStats } from './pool-stats';
-import { selectBuffersToEvict } from './eviction-policy';
-import { PointsBufferAdapter } from './points-adapter';
-import { LinesBufferAdapter } from './lines-adapter';
-import { GSplatsBufferAdapter, type PackedGSplatsData } from './gsplats-adapter';
+import { log, Modules } from '../utils/log';
+import { estimateGeometryBytes, invalidateCachedByteSize } from '../utils/geometry-utils';
+import type { LoadedPointsData } from '../data/data-loader-types';
+import type { ProcessedLinesData } from '../types/lines';
+import type { PooledBuffer, PoolStats } from './gpu-buffer-pool/pool-stats';
+import { selectBuffersToEvict } from './gpu-buffer-pool/eviction-policy';
+import { PointsBufferAdapter } from './gpu-buffer-pool/points-adapter';
+import { LinesBufferAdapter } from './gpu-buffer-pool/lines-adapter';
+import { GSplatsBufferAdapter, type PackedGSplatsData } from './gpu-buffer-pool/gsplats-adapter';
 
 // Per-type spec arrays and helpers moved to their respective adapters
 // in ./gpu-buffer-pool/{points,lines,gsplats}-adapter.
@@ -50,15 +50,15 @@ export { estimateGeometryBytes, invalidateCachedByteSize };
 
 // Re-export the public surface so the parent rendering/gpu-buffer-pool.ts
 // stub (and existing consumers) keep working unchanged.
-export type { PackedGSplatsData } from './gsplats-adapter';
+export type { PackedGSplatsData } from './gpu-buffer-pool/gsplats-adapter';
 export type {
   PointsAttributeTypes,
   PooledBuffer,
   TypePoolStats,
   PoolStats,
   PooledBufferRef,
-} from './pool-stats';
-export { selectBuffersToEvict } from './eviction-policy';
+} from './gpu-buffer-pool/pool-stats';
+export { selectBuffersToEvict } from './gpu-buffer-pool/eviction-policy';
 
 /**
  * GPU buffer pool for reusing THREE.BufferGeometry objects.

@@ -5,13 +5,13 @@
  * loading for all points nodes and managing the THREE.js scene construction.
  */
 
-import * as zarr from '../zarr';
+import * as zarr from './zarr';
 import * as THREE from 'three';
-import { getWorkerPool } from '../../workers/worker-pool';
-import { normalizeURL } from './url-normalization';
-import { setupCaches } from './cache-setup';
-import { wireMonitorAfterLoad } from './monitor-wiring';
-import { applyEffectiveAttrs as applyEffectiveAttrsHelper } from './effective-attrs';
+import { getWorkerPool } from '../workers/worker-pool';
+import { normalizeURL } from './scene-loader/url-normalization';
+import { setupCaches } from './scene-loader/cache-setup';
+import { wireMonitorAfterLoad } from './scene-loader/monitor-wiring';
+import { applyEffectiveAttrs as applyEffectiveAttrsHelper } from './scene-loader/effective-attrs';
 import {
   getCacheStats as getCacheStatsHelper,
   listCachedDatasets as listCachedDatasetsHelper,
@@ -20,86 +20,86 @@ import {
   clearL2Cache as clearL2CacheHelper,
   clearAllCaches as clearAllCachesHelper,
   type CacheStatsSnapshot,
-} from './cache-api';
+} from './scene-loader/cache-api';
 import {
   processLinesData as processLinesDataHelper,
   commitLinesGeometry as commitLinesGeometryHelper,
   type StagedLinesCommit,
-} from './data-processor-lines';
+} from './scene-loader/data-processor-lines';
 import {
   processGSplatsData as processGSplatsDataHelper,
   commitGSplatsGeometry as commitGSplatsGeometryHelper,
   type StagedGSplatsCommit,
-} from './data-processor-gsplats';
+} from './scene-loader/data-processor-gsplats';
 import {
   createPointsLoader as createPointsLoaderHelper,
   createLinesLoader as createLinesLoaderHelper,
   createGSplatsLoader as createGSplatsLoaderHelper,
   createProgressiveGSplatsLoader as createProgressiveGSplatsLoaderHelper,
   type LoaderFactoryDeps,
-} from './loader-factory';
-import { commitPointsGeometry as commitPointsGeometryHelper } from './commit-points-geometry';
-import { ViewStateQueue } from './view-state-queue';
-import { runGSplatsRefinement } from '../gsplats/lod-refinement';
+} from './scene-loader/loader-factory';
+import { commitPointsGeometry as commitPointsGeometryHelper } from './scene-loader/commit-points-geometry';
+import { ViewStateQueue } from './scene-loader/view-state-queue';
+import { runGSplatsRefinement } from './gsplats/lod-refinement';
 import {
   loadAndStage as pointsLoadAndStage,
   label as pointsLabel,
   type PointsHandlerCtx,
-} from '../points/handler';
+} from './points/handler';
 import {
   loadAndStage as linesLoadAndStage,
   label as linesLabel,
   type LinesHandlerCtx,
-} from '../lines/handler';
+} from './lines/handler';
 import {
   loadAndStage as gsplatsLoadAndStage,
   label as gsplatsLabel,
   type GSplatsHandlerCtx,
-} from '../gsplats/handler';
+} from './gsplats/handler';
 
-export type { StagedLinesCommit } from './data-processor-lines';
-export type { StagedGSplatsCommit } from './data-processor-gsplats';
+export type { StagedLinesCommit } from './scene-loader/data-processor-lines';
+export type { StagedGSplatsCommit } from './scene-loader/data-processor-gsplats';
 import {
   DataLoader,
   ViewState,
   SceneNode,
   LoaderConfig,
   LoadedPointsData,
-} from '../data-loader-types';
-import type { LoaderMonitor } from '../../types/data-monitor-types';
-import { ZarrSceneAttrs, ZarrNodeAttrs, hasContentsMethod } from '../../types/zarr';
+} from './data-loader-types';
+import type { LoaderMonitor } from '../types/data-monitor-types';
+import { ZarrSceneAttrs, ZarrNodeAttrs, hasContentsMethod } from '../types/zarr';
 import type {
   SceneLoaderMonitorPort,
   SceneLoaderMonitorFactory,
-} from '../scene-loader-monitor-port';
-import { ArrayRefRegistry } from '../utils/array-decoder';
-import { ViewStateManager } from '../view-state-manager';
-import { log, Modules, LogEmoji } from '../../utils/log';
-import { config as appConfig } from '../../config';
-import { MultiLevelCachingStore, DecompressedChunkCache } from '../../cache';
-import { disposeCustomColormapTextures } from '../../rendering/colormap-textures';
-import type { PointsMetadata } from '../../types/points';
+} from './scene-loader-monitor-port';
+import { ArrayRefRegistry } from './utils/array-decoder';
+import { ViewStateManager } from './view-state-manager';
+import { log, Modules, LogEmoji } from '../utils/log';
+import { config as appConfig } from '../config';
+import { MultiLevelCachingStore, DecompressedChunkCache } from '../cache';
+import { disposeCustomColormapTextures } from '../rendering/colormap-textures';
+import type { PointsMetadata } from '../types/points';
 import type {
   LinesMetadata,
   LinesDataLoader,
   LinesViewState,
   LoadedLinesData,
-} from '../../types/lines';
-import { isLinesUserData } from '../../types/lines';
+} from '../types/lines';
+import { isLinesUserData } from '../types/lines';
 import type {
   GSplatsMetadata,
   GSplatsDataLoader,
   GSplatsUserData,
   GSplatsViewState,
   LoadedGSplatsData,
-} from '../../types/gsplats';
-import { GPUBufferPool } from '../../rendering/gpu-buffer-pool';
-import { invertNdTransformForQuery, computeWorldNdTransform } from '../transforms/nd-transform';
-import { NodeFactory } from '../../rendering/node-factory';
-import { UpdateProfiler, type UpdateSession } from '../../profiling/update-profiler';
-import { LoaderRegistry } from '../loaders/loader-registry';
-import { loadOverlayConfigs } from '../loaders/overlay-loader';
-import { notifier } from '../../utils/notifier';
+} from '../types/gsplats';
+import { GPUBufferPool } from '../rendering/gpu-buffer-pool';
+import { invertNdTransformForQuery, computeWorldNdTransform } from './transforms/nd-transform';
+import { NodeFactory } from '../rendering/node-factory';
+import { UpdateProfiler, type UpdateSession } from '../profiling/update-profiler';
+import { LoaderRegistry } from './loaders/loader-registry';
+import { loadOverlayConfigs } from './loaders/overlay-loader';
+import { notifier } from '../utils/notifier';
 
 /** Check if an object has any own properties (avoids Object.keys() allocation). */
 import {
@@ -107,7 +107,7 @@ import {
   getOrComputeExtendedTolerance,
   isSceneDimensions,
   validateExtendDims,
-} from './extend-tolerance';
+} from './scene-loader/extend-tolerance';
 
 // ============================================================================
 // Staged commit types for atomic geometry updates

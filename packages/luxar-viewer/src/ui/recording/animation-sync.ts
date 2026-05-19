@@ -20,7 +20,7 @@
  * @module ui/recording/animation-sync
  */
 
-import type { DimensionAnimationManager } from '../../scene/dimension-animation-manager';
+import type { DimensionAnimationManager } from '../../scene/animation/dimension-animation-manager';
 import { sceneDimsManager } from '../../scene/scene-dims-manager';
 import { log, Modules } from '../../utils/log';
 

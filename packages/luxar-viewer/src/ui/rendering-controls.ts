@@ -4,7 +4,7 @@
 import GUI, { Folder } from './gui';
 import { PostProcessingManager } from '../rendering/post-processing/post-processing-manager';
 import { SceneManager } from '../scene/scene-manager';
-import { AnimationController } from '../scene/animation-controller';
+import { AnimationController } from '../scene/animation/animation-controller';
 import { config, type RenderingSettings } from '../config';
 
 import type { RenderingControllers } from '../controls/types';

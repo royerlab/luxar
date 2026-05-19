@@ -7,7 +7,7 @@ import {
   restoreSnapshot as restoreViewerSnapshot,
   type ViewerSnapshot,
 } from './viewer-snapshot';
-import { AnimationController } from '../scene/animation-controller';
+import { AnimationController } from '../scene/animation/animation-controller';
 import { InputHandler } from '../input/input-handler';
 import { DimensionSliders } from '../ui/panels/dimension-sliders';
 import { RenderingControls } from '../ui/rendering-controls';

@@ -28,7 +28,7 @@ import {
   getNavigableDimensionOptions,
   SliderSyncCoordinator,
 } from '../../../../ui/recording/animation-sync';
-import type { DimensionAnimationManager } from '../../../../scene/dimension-animation-manager';
+import type { DimensionAnimationManager } from '../../../../scene/animation/dimension-animation-manager';
 
 describe('getTurntableInfo', () => {
   it('formats duration as 360/speed and frames as ceil(duration * fps)', () => {

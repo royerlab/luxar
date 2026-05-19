@@ -18,7 +18,7 @@
  */
 
 import { SceneManager } from '../scene/scene-manager';
-import { AnimationController } from '../scene/animation-controller';
+import { AnimationController } from '../scene/animation/animation-controller';
 import { RenderingControls } from '../ui/rendering-controls';
 import { RecordingPanel } from '../ui/recording-panel';
 import { LayersPanel } from '../ui/layers';
