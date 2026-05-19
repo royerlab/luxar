@@ -67,7 +67,7 @@ import {
   LoadedPointsData,
 } from './data-loader-types';
 import type { LoaderMonitor } from '../types/data-monitor-types';
-import { ZarrSceneAttrs, ZarrNodeAttrs, hasContentsMethod } from '../types/zarr';
+import { ZarrSceneAttrs, ZarrNodeAttrs } from '../types/zarr';
 import type {
   SceneLoaderMonitorPort,
   SceneLoaderMonitorFactory,
@@ -134,6 +134,7 @@ import {
   classifyLoaderError,
   loadLeafNode as loadLeafNodeHelper,
 } from './scene-loader/nodes/load-leaf-error-dispatch';
+import { enumerateStore as enumerateStoreHelper } from './scene-loader/nodes/enumerate-store';
 
 /**
  * Main scene loader that handles the complete loading pipeline.
@@ -1665,21 +1666,11 @@ export class SceneLoader {
   }
 
   /**
-   * Enumerate all groups and arrays in the store
+   * Enumerate all groups and arrays in the store. Implementation lives
+   * in `scene-loader/nodes/enumerate-store.ts`.
    */
   private async enumerateStore(): Promise<Array<{ path: string; kind: string }>> {
-    if (!this._zarrStore) return [];
-
-    // Try to use consolidated metadata
-    if (hasContentsMethod(this._zarrStore)) {
-      const contents = await this._zarrStore.contents();
-      log.custom('📋', Modules.SCENE_LOADER, `Found ${contents.length} items in store`);
-      return contents;
-    }
-
-    // Fallback enumeration
-    log.warning(Modules.SCENE_LOADER, 'Store does not support contents(), using fallback');
-    return [{ path: '/', kind: 'group' }];
+    return enumerateStoreHelper(this._zarrStore);
   }
 
   /**
