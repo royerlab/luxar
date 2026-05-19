@@ -97,7 +97,7 @@ import { GPUBufferPool } from '../rendering/gpu-buffer-pool';
 import { invertNdTransformForQuery, computeWorldNdTransform } from './transforms/nd-transform';
 import { NodeFactory } from '../rendering/node-factory';
 import { UpdateProfiler, type UpdateSession } from '../profiling/update-profiler';
-import { LoaderRegistry } from './loaders/loader-registry';
+import { LoaderRegistry } from './scene-loader/loader-registry';
 import { loadOverlayConfigs } from './loaders/overlay-loader';
 import { notifier } from '../utils/notifier';
 

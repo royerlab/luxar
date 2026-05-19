@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { LoaderRegistry } from '../../../data/loaders/loader-registry';
+import { LoaderRegistry } from '../../../data/scene-loader/loader-registry';
 import type { DataLoader } from '../../../data/data-loader-types';
 import type { LinesDataLoader } from '../../../types/lines';
 import type { GSplatsDataLoader } from '../../../types/gsplats';
