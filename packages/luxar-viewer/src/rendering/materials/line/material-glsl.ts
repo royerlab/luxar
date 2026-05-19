@@ -11,25 +11,25 @@
  * - Cap factor for seamless joints (0.5 at endpoints, 1.0 in body)
  * - Per-vertex attributes (color, width, sharpness)
  *
- * @module rendering/line-material
+ * @module rendering/materials/line/material-glsl
  */
 
 import * as THREE from 'three';
-import { LINE_VERTEX_SHADER, LINE_FRAGMENT_SHADER } from './shaders/line-shaders';
-import type { CameraAwareMaterial } from './camera-aware-material';
-import type { ColormapAwareMaterial } from './colormap-aware-material';
-import { clampGamma } from './material-uniform-helpers';
+import { LINE_VERTEX_SHADER, LINE_FRAGMENT_SHADER } from './shader-glsl';
+import type { CameraAwareMaterial } from '../../camera-aware-material';
+import type { ColormapAwareMaterial } from '../../colormap-aware-material';
+import { clampGamma } from '../../material-uniform-helpers';
 import {
   applyColormapTextureToMaterial,
   applyScalarRangeToMaterial,
-} from './material-colormap-helpers';
+} from '../../material-colormap-helpers';
 import {
   isAdditiveMode,
   isLuminousMode,
   isMaxMode,
   isNormalMode,
   isOpaqueMode,
-} from './blending-state';
+} from '../../blending-state';
 
 /**
  * Gamma == 1.0 (with ±1e-4 epsilon for float-equality safety) lets

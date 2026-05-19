@@ -18,28 +18,28 @@
  * pattern already in use by `LinePickingTSLMaterial`,
  * `GSplatTSLMaterial`, and `PointPickingTSLMaterial`.
  *
- * @module rendering/line-material-tsl
+ * @module rendering/materials/line/material-tsl
  */
 
 import * as THREE from 'three';
 import { uniform, texture } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-import { lineWebGPUFactory, type LineTSLNodes } from './line.tsl';
-import { isGammaOne, isNoGOG, type LineMaterialConfig } from './line-material';
-import type { CameraAwareMaterial } from './camera-aware-material';
-import type { ColormapAwareMaterial } from './colormap-aware-material';
-import { clampGamma } from './material-uniform-helpers';
+import { lineWebGPUFactory, type LineTSLNodes } from './shader-tsl';
+import { isGammaOne, isNoGOG, type LineMaterialConfig } from './material-glsl';
+import type { CameraAwareMaterial } from '../../camera-aware-material';
+import type { ColormapAwareMaterial } from '../../colormap-aware-material';
+import { clampGamma } from '../../material-uniform-helpers';
 import {
   applyColormapTextureToMaterial,
   applyScalarRangeToMaterial,
-} from './material-colormap-helpers';
+} from '../../material-colormap-helpers';
 import {
   applyBlendingStateToMaterial,
   getCompleteBlendingState,
   type CompleteBlendingState,
-} from './blending-state';
-import type { BlendingMode } from './material-manager';
-import { proxyIUniform, type TSLNode } from './tsl-helpers';
+} from '../../blending-state';
+import type { BlendingMode } from '../../material-manager';
+import { proxyIUniform, type TSLNode } from '../../tsl-helpers';
 
 /**
  * Persistent TSL node table owned by the wrapper. Colormap nodes are

@@ -10,7 +10,7 @@ import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { PointMaterial } from '../../../rendering/materials/point/material-glsl';
 import { GSplatMaterial } from '../../../rendering/gsplat-material';
-import { LineMaterial } from '../../../rendering/line-material';
+import { LineMaterial } from '../../../rendering/materials/line/material-glsl';
 
 describe('Material colormap guards', () => {
   describe('PointMaterial', () => {

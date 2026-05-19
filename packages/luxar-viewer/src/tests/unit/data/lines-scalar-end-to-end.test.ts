@@ -24,7 +24,7 @@ import {
   updateInstancedLinesMesh,
   type InstancedLinesMeshConfig,
 } from '../../../rendering/line-geometry';
-import { LineMaterial } from '../../../rendering/line-material';
+import { LineMaterial } from '../../../rendering/materials/line/material-glsl';
 import { supportsScalarColormap } from '../../../rendering/material-colormap-helpers';
 import type { LoadedLinesData, ProcessedLinesData } from '../../../types/lines';
 

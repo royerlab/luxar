@@ -11,7 +11,7 @@ import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { NodeFactory } from '../../../rendering/node-factory';
 import { createInstancedLinesMesh } from '../../../rendering/line-geometry';
-import { LineMaterial } from '../../../rendering/line-material';
+import { LineMaterial } from '../../../rendering/materials/line/material-glsl';
 import { supportsScalarColormap } from '../../../rendering/material-colormap-helpers';
 import type { LoadedPointsData } from '../../../data/data-loader-types';
 

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
-import { LineMaterial } from '../../../rendering/line-material';
+import { LineMaterial } from '../../../rendering/materials/line/material-glsl';
 import { createLineQuadGeometry, createInstancedLinesMesh } from '../../../rendering/line-geometry';
 
 // Mock THREE.ShaderMaterial

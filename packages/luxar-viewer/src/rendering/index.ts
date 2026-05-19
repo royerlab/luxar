@@ -14,7 +14,7 @@
 
 // Materials
 export { PointMaterial } from './materials/point/material-glsl';
-export { LineMaterial } from './line-material';
+export { LineMaterial } from './materials/line/material-glsl';
 export { GSplatMaterial } from './gsplat-material';
 export { MaterialManager, materialManager } from './material-manager';
 
