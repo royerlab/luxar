@@ -566,6 +566,57 @@ def fit(
 - `render_gaussians_numpy()`: NumPy wrapper with no gradients
 - `render_gaussians_pytorch()`: PyTorch wrapper accepting packed parameters
 
+## 7. Integration Requirements
+
+### Device Support
+- Auto-detect best device: CUDA > MPS > CPU
+- Handle device-specific limitations (e.g., MPS doesn't support torch.unique with dim)
+- Provide fallbacks for missing functionality
+
+### Memory Management
+- Implement adaptive chunking based on available memory
+- Use grid caching with process-wide cache keyed by (device, dtype, strides, shape)
+- Monitor and report memory usage for debugging
+
+### Error Handling
+- Comprehensive input validation with descriptive messages
+- Graceful degradation for edge cases (empty arrays, uniform images, etc.)
+- Fallback paths for numerical instabilities
+
+### Optional Features
+- Napari integration for real-time visualization and optimization movies
+- Debug visualizations showing operation effects
+- Comprehensive logging with configurable verbosity
+- Support for headless operation (disable napari with flags)
+
+
+### 4D Validation Demo (`demos/demo_4d_hypercube.py`)
+
+**Purpose**: Comprehensive validation of nD capabilities with 4-dimensional hypercube data
+
+**4D Data Structure**:
+- **Dimensions**: (time/spectral, z, y, x) with moderate size (32×32×32×8) for efficiency
+- **Synthetic content**: Multiple 4D Gaussian blobs varying across all dimensions
+- **Validation target**: Test auto-candidate generation and nD dynamic operations
+
+**4D Visualization**:
+- **napari 4D support**: Native 4D visualization with dimension sliders
+- **Axis labels**: ["time/spectral", "z", "y", "x"] for intuitive navigation
+- **Compression analysis**: 4D-specific storage efficiency calculations
+- **Interactive exploration**: Full 4D navigation and quality assessment
+
+**nD Algorithm Validation**:
+- **Universal scales**: (0.5, 1.0, 2.0, 4.0, 8.0, 16.0) tested in 4D space
+- **Volume-proportional scaling**: Candidate density adapts to 4D volume size
+- **Dynamic operations**: Convergence-based seeding, LR boosting, pruning in 4D
+- **Parameter efficiency**: 4×4 covariance matrices (15 parameters per splat)
+
+### Main Exports
+Export primary user-facing functions and classes:
+- `fit_gaussian_splats`
+- `GaussianSplatFitter`
+- `DynamicOpsConfig`
+
 ## 8. Calibration (`calibration.py`)
 
 ### Purpose
@@ -664,56 +715,69 @@ The CLI delegates to `calibrate` with parsed K-grid args, mask args, and `load_f
 - NaN / +inf in held-out curves → preserved through JSON round-trip via `null` sentinels.
 - Synthetic Gaussian noise of known σ → `estimate_noise_floor` recovers σ within 25%.
 
-## 7. Integration Requirements
+## 9. Level of Detail (`lod/`)
 
-### Device Support
-- Auto-detect best device: CUDA > MPS > CPU
-- Handle device-specific limitations (e.g., MPS doesn't support torch.unique with dim)
-- Provide fallbacks for missing functionality
+### Purpose
+Post-fit construction of LOD ladders for progressive streaming, view-dependent rendering, and storage-tiered datasets. Two qualitatively different operators live side-by-side:
 
-### Memory Management
-- Implement adaptive chunking based on available memory
-- Use grid caching with process-wide cache keyed by (device, dtype, strides, shape)
-- Monitor and report memory usage for debugging
+- **Additive** (`lod/additive.py`) — same N splats, *reordered* so that the prefix sum at any k splats is the best L² approximation of the full scene. Output: a single multi-LOD `GSplatData` where each level *extends* the previous one. Implemented per `manuscript/supp_doc/additive_lod/`.
+- **Substitutive** (`lod/substitutive.py`) — synthesise M < N representative splats per coarser level via Gaussian mixture reduction (k-means + cost-increment Lloyd refinement, optionally hierarchical greedy). Output: a list of flat `GSplatData` (one per level), since each level *replaces* the previous one. Implemented per `manuscript/supp_doc/substitutive_lod/`.
 
-### Error Handling
-- Comprehensive input validation with descriptive messages
-- Graceful degradation for edge cases (empty arrays, uniform images, etc.)
-- Fallback paths for numerical instabilities
+Both operators are pure post-processes on a fitted `GSplatData`; fitting (single-pass or progressive) returns a single flattened dataset, and an LOD hierarchy is built only on demand.
 
-### Optional Features
-- Napari integration for real-time visualization and optimization movies
-- Debug visualizations showing operation effects
-- Comprehensive logging with configurable verbosity
-- Support for headless operation (disable napari with flags)
+### Public API
 
+```python
+# Additive (luxar.gsplats.lod.additive)
+def compute_additive_order(
+    data: GSplatData,
+    method: Literal["greedy", "self_energy", "mass", "amplitude"] = "greedy",
+    *,
+    truncation_sigmas: float = 3.0,
+    max_n_dense: int = 2_000,
+    seed: int | None = None,
+) -> np.ndarray   # permutation indices
 
-### 4D Validation Demo (`demos/demo_4d_hypercube.py`)
+def make_additive_lod(
+    data: GSplatData,
+    n_lods: int = 4,
+    *,
+    method: Literal[...] = "greedy",
+    breakpoints: Literal["equal-count"] | list[int] = "equal-count",
+    truncation_sigmas: float = 3.0,
+    max_n_dense: int = 2_000,
+    seed: int | None = None,
+) -> GSplatData   # multi-LOD container
 
-**Purpose**: Comprehensive validation of nD capabilities with 4-dimensional hypercube data
+# Substitutive (luxar.gsplats.lod.substitutive)
+def make_substitutive_lod(
+    data: GSplatData,
+    *,
+    compression_factor: int = 4,
+    levels: int = 3,
+    method: Literal["kmeans_lloyd", "greedy", "kmeans"] = "kmeans_lloyd",
+    lloyd_iterations: int = 5,
+    candidate_bins_k: int = 12,
+    device: str | torch.device | None = "auto",
+    seed: int | None = None,
+    verbose: bool = False,
+) -> list[GSplatData]   # one entry per level (coarsest last)
+```
 
-**4D Data Structure**:
-- **Dimensions**: (time/spectral, z, y, x) with moderate size (32×32×32×8) for efficiency
-- **Synthetic content**: Multiple 4D Gaussian blobs varying across all dimensions
-- **Validation target**: Test auto-candidate generation and nD dynamic operations
+### CLI integration (`luxar gsplat lod`)
+A Typer subgroup that exposes two subcommands:
+- `luxar gsplat lod additive <in.gsplats.zarr> <out.gsplats.zarr>` — wraps `make_additive_lod` with `--n-lods`, `--method`, `--breakpoints`, `--truncation-sigmas`, `--max-n-dense`, `--seed`.
+- `luxar gsplat lod substitutive <in.gsplats.zarr> <out_dir/>` — wraps `make_substitutive_lod` with `--levels`, `--compression-factor`, `--method`, `--lloyd-iterations`, `--candidate-bins-k`, `--device`, `--seed`.
 
-**4D Visualization**:
-- **napari 4D support**: Native 4D visualization with dimension sliders
-- **Axis labels**: ["time/spectral", "z", "y", "x"] for intuitive navigation
-- **Compression analysis**: 4D-specific storage efficiency calculations
-- **Interactive exploration**: Full 4D navigation and quality assessment
+Both accept `--quiet` (verbose-by-default) for terminal output control.
 
-**nD Algorithm Validation**:
-- **Universal scales**: (0.5, 1.0, 2.0, 4.0, 8.0, 16.0) tested in 4D space
-- **Volume-proportional scaling**: Candidate density adapts to 4D volume size
-- **Dynamic operations**: Convergence-based seeding, LR boosting, pruning in 4D
-- **Parameter efficiency**: 4×4 covariance matrices (15 parameters per splat)
+### Relationship to other features
+- **`cal` (Section 8)** — the canonical upstream step. Run `cal` to find a principled splat budget K\*, fit at K\*, then build the LOD ladder.
+- **`cull_by_contribution`** — orthogonal pruning operator (removes splats vs. reorders/synthesises). LOD operators and culling can be composed.
+- **`GSplatData` / `GSplatLOD`** — `make_additive_lod` returns a multi-LOD `GSplatData` whose `up_to_lod(k)` yields a valid additive prefix; `make_substitutive_lod` returns a list of single-LOD `GSplatData` because each level has different splat counts and cannot share a parameter array.
 
-### Main Exports
-Export primary user-facing functions and classes:
-- `fit_gaussian_splats`
-- `GaussianSplatFitter`
-- `DynamicOpsConfig`
+### Full specification
+The complete algorithm specifications, mathematical derivations, complexity analyses, and parameter-tuning guidance live in `lod/SPECIFICATIONS.md`. This document only summarises the surface API and integration contract.
 
 ## Terminology Glossary
 

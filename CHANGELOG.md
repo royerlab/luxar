@@ -338,7 +338,85 @@ User-visible behavior changes in the Luxar viewer:
 - **Lines counted in `__luxarDebug.getState()`** (`totalLines` + `lineMeshes`).
 
 Documentation: `E2E_TESTING_GUIDE.md` now references `getBufferedMessages()` (was stale `getMessages()`); `HDR_GUIDE.md` reads tone-mapping/exposure from `renderingControls.settings` rather than the nonexistent `state.rendering`.
-#### Added — `luxar gsplat cal` (blind-spot CV calibration)
+#### Added — `luxar gsplat lod substitutive` (PR #109)
+
+- New CLI subcommand `luxar gsplat lod substitutive <in.gsplats.zarr> <out_dir/>`
+  that builds a coarse-to-fine *substitutive* LOD hierarchy: each level
+  *replaces* the previous one with ``M = N / K^ℓ`` synthesised representative
+  splats. Output is a directory of per-level ``.gsplats.zarr`` files plus a
+  ``manifest.json``.
+- New module `luxar.gsplats.lod.substitutive` with `make_substitutive_lod(data,
+  *, compression_factor=4, levels=3, method="kmeans_lloyd", ...)`. Three
+  partition algorithms supported: ``kmeans_lloyd`` (k-means warm-start +
+  cost-increment Lloyd refinement, the recommended workhorse), ``greedy``
+  (hierarchical pairwise greedy), and ``kmeans`` (spatial-only).
+- Per-bin merge is a moment-matched single Gaussian with L²-optimal
+  amplitude (closed-form per `manuscript/supp_doc/substitutive_lod`).
+- New module `luxar.utils.spatial_hash` with `SpatialHashGrid` (online,
+  CPU) elevated from `gsplats/seeds/utils.py` and a new GPU-capable
+  `BatchedSpatialHashGrid.query_knn` that's behaviourally equivalent to
+  `scipy.spatial.cKDTree.query` (covered by
+  `TestBatchedNumpy::test_knn_matches_cKDTree`). The old
+  `gsplats.seeds.utils.SpatialHashGrid` symbol is re-exported for back-compat.
+- Seed-generation paths inside `fit_gaussian_splats`
+  (`_subsample_seeds_spatially_diverse`, `_add_grid_fallback_seeds`) now
+  use `BatchedSpatialHashGrid.query_knn` instead of `cKDTree.query`.
+  Behaviour preserved by the equivalence test; cal smoke test passes
+  end-to-end.
+- 27 new tests in `packages/luxar/src/luxar/utils/tests/test_spatial_hash.py`
+  + ~440 lines in `gsplats/tests/test_substitutive_lod.py`.
+
+#### Changed — Type-ignore tightening + ruff format propagation (PR #108)
+
+- Reverted decorator-targeted `# type: ignore[misc]` ignores on `numba.njit`
+  and `torch.jit.ignore` back to bare `# type: ignore` to match what mypy
+  actually reports on those decorators across the supported Python
+  versions, after a brief over-tightening from PR #107's format sweep.
+- Re-applied the `ruff format` sweep across the merged tree
+  (`packages/luxar/src/luxar/`) so newly-landed code (calibration,
+  additive LOD, progressive fitting demos) follows the same style as the
+  rest of the package.
+
+#### Changed — Massive viewer refactor and fixes (PR #107)
+
+- Extensive TypeScript refactor of the viewer (`packages/luxar-viewer/`):
+  modularised the `app.ts` lifecycle, decoupled overlay disposal from
+  dataset switching, hardened cache-fetch retries and async-cleanup
+  observability, tightened `extend_to_all` dimension validation, fixed
+  canonical `sharpnesses` loading, and improved WebGL context-restoration
+  resource recreation.
+- New per-worker docs and tests under `packages/luxar-viewer/src/workers/`
+  (SPECIFICATIONS.md, validation.ts, color-utils.ts).
+- `LuxarApp.init({ updateBrowserUrl })` default flipped from `true` to
+  `false` so embedded callers no longer have host-page URLs silently
+  rewritten on dataset selection; the standalone bootstrap (`bootstrap.ts`)
+  explicitly opts in.
+
+#### Added — `luxar gsplat lod additive` and progressive-fitting decoupling (PR #106)
+
+- New CLI subcommand `luxar gsplat lod additive <in.gsplats.zarr>
+  <out.gsplats.zarr>` that *reorders* the splats of a fitted dataset into
+  a multi-LOD `GSplatData` whose prefix sum at any ``k`` splats is the
+  best L² approximation of the full scene. Output is a single multi-LOD
+  ``.gsplats.zarr`` (each level *extends* the previous one).
+- New module `luxar.gsplats.lod.additive` with `make_additive_lod(data,
+  n_lods=4, method=..., breakpoints=..., ...)` and
+  `compute_additive_order(...)`. Four ordering methods supported:
+  ``greedy`` (residual-correlation matching pursuit; default),
+  ``self_energy`` (cheap O(N log N) baseline within 2-10% AUC of greedy
+  on real datasets), ``mass`` (peak-amplitude × covariance volume), and
+  ``amplitude`` (peak height alone). Algorithms documented in
+  `manuscript/supp_doc/additive_lod`.
+- **Progressive fitting decoupled from LOD construction.**
+  `fit_progressive_gaussian_splats` (and the `luxar gsplat fit
+  --progressive` CLI flag) now returns a single flattened
+  ``GSplatData`` rather than a multi-LOD container. To build an LOD
+  ladder, run `luxar gsplat lod additive` on the flat output. Progressive
+  multi-pass fitting remains a valid alternative fitting flow — it just
+  no longer overloads the LOD concept.
+- New tests in `gsplats/tests/test_additive_lod.py`.
+
+#### Added — `luxar gsplat cal` (blind-spot CV calibration) (PR #105)
 
 - New CLI command `luxar gsplat cal <volume> <out.json>` that sweeps splat
   count `K` and reports the recommended `K*` via blind-spot
