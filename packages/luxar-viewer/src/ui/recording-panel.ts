@@ -6,12 +6,10 @@
 import GUI, { type Controller } from './gui';
 import { config } from '../config';
 import { log, Modules } from '../utils/log';
-import { showToast } from './toast';
 import type { SceneManager } from '../scene/scene-manager';
 import type { AnimationController } from '../scene/animation/animation-controller';
 import type { DimensionAnimationManager } from '../scene/animation/dimension-animation-manager';
 import type { AdaptiveDPRManager } from '../rendering/adaptive-dpr-manager';
-import { LuxarOrbitControls } from '../controls/luxar-orbit-controls';
 import type { OverlayManager } from './overlay-manager';
 import {
   computeVideoBitrate as computeVideoBitratePure,
@@ -32,14 +30,11 @@ import {
   FORMAT_LABEL_TO_VALUE,
   CODEC_LABEL_TO_VALUE,
 } from './recording-panel/gui-builder';
-import type { CaptureContext, OfflineCaptureDriver } from './recording-panel/drivers/offline-capture-driver';
-import { ImageSequenceDriver } from './recording-panel/drivers/image-sequence-driver';
-import { ExrSequenceDriver } from './recording-panel/drivers/exr-sequence-driver';
-import { VideoModeDriver } from './recording-panel/drivers/video-mode-driver';
 import { buildRecordingGUI } from './recording-panel/ui/gui-construction';
 import { RecordingSession, type SaveRecordingStateOptions } from './recording-panel/session';
 import { ScreenshotStrategy } from './recording-panel/screenshot-strategy';
 import { VideoRecordingStrategy } from './recording-panel/video-recording-strategy';
+import { OfflineCaptureStrategy } from './recording-panel/offline-capture-strategy';
 
 // Shared recording types live in `recording-panel/types.ts`. Re-exported
 // here for external consumers that import from the panel directly.
@@ -114,8 +109,6 @@ export class RecordingPanel {
   private get isEXRSequenceRecording(): boolean { return this.session.isEXRSequenceRecording; }
   private set isEXRSequenceRecording(v: boolean) { this.session.isEXRSequenceRecording = v; }
   private get disposed(): boolean { return this.session.disposed; }
-  private get savedAutoRotate(): boolean { return (this.session as unknown as { savedAutoRotate: boolean }).savedAutoRotate; }
-  private set savedAutoRotate(v: boolean) { (this.session as unknown as { savedAutoRotate: boolean }).savedAutoRotate = v; }
   private get recordingStartTime(): number { return this.session.recordingStartTime; }
   private set recordingStartTime(v: number) { this.session.recordingStartTime = v; }
   // Used only by test probes; non-private to silence TS6133.
@@ -136,26 +129,25 @@ export class RecordingPanel {
   set durationTimer(v: ReturnType<typeof setTimeout> | null) { this.videoRecordingStrategy.durationTimer = v; }
   private get keepAliveCallbackId(): string { return this.videoRecordingStrategy.keepAliveCallbackId; }
   private get turntableCallbackId(): string { return this.videoRecordingStrategy.turntableCallbackId; }
-  // Offline-capture callback IDs are class-level constants so
-  // dispose() can remove them unconditionally even if the loop is
-  // parked on an `await` and hasn't reached its finally yet.
-  private static readonly OFFLINE_CAPTURE_CALLBACK_ID = 'recording-offline-capture';
-  private static readonly OFFLINE_KEEPALIVE_CALLBACK_ID = 'recording-offline-keepalive';
-  // AbortController for the offline-capture session. Set immediately
-  // after the confirmation check in runOfflineCaptureLoop, BEFORE any
-  // state mutation, so dispose() during the early state-save / rAF
-  // window can abort the in-flight session. Aborted by dispose() or
-  // the cancel button. Drivers + the loop body check signal.aborted
-  // between awaits so dispose-during-capture skips finalize cleanly.
-  private offlineSessionAbort: AbortController | null = null;
-
-  // Event/listener cleanup handle for the offline-capture overlay
-  // (moves to OfflineCaptureStrategy in Phase 4)
-  private offlineOverlayCleanup: (() => void) | null = null;
+  // Offline-capture state moved to OfflineCaptureStrategy. The Panel
+  // keeps proxies for tests that probe these fields via `(panel as any)`.
+  private get offlineSessionAbort(): AbortController | null {
+    return this.offlineCaptureStrategy.sessionAbort;
+  }
+  private set offlineSessionAbort(v: AbortController | null) {
+    this.offlineCaptureStrategy.sessionAbort = v;
+  }
+  private get offlineOverlayCleanup(): (() => void) | null {
+    return this.offlineCaptureStrategy.overlayCleanup;
+  }
+  private set offlineOverlayCleanup(v: (() => void) | null) {
+    this.offlineCaptureStrategy.overlayCleanup = v;
+  }
 
   // Strategies (own their own internal state; see capture-strategy.ts).
   private screenshotStrategy: ScreenshotStrategy;
   private videoRecordingStrategy: VideoRecordingStrategy;
+  private offlineCaptureStrategy: OfflineCaptureStrategy;
 
   // GUI controller references for dynamic show/hide
   private imageControllers: Controller[] = [];
@@ -193,6 +185,12 @@ export class RecordingPanel {
 
     this.videoRecordingStrategy = new VideoRecordingStrategy(sceneManager, animationController, {
       hideAllPanels: () => this.hideAllPanels(),
+      ...downloadHooks,
+    });
+
+    this.offlineCaptureStrategy = new OfflineCaptureStrategy(sceneManager, animationController, {
+      hideAllPanels: () => this.hideAllPanels(),
+      renderFrameToCanvas: () => this.renderFrameToCanvas(),
       ...downloadHooks,
     });
 
@@ -287,8 +285,8 @@ export class RecordingPanel {
     // Remove offline-capture callbacks. The normal loop path also
     // removes them in finally; this covers the dispose-while-awaiting
     // case where the loop hasn't reached its finally yet.
-    this.animationController.removePerFrameCallback(RecordingPanel.OFFLINE_CAPTURE_CALLBACK_ID);
-    this.animationController.removePerFrameCallback(RecordingPanel.OFFLINE_KEEPALIVE_CALLBACK_ID);
+    this.animationController.removePerFrameCallback(OfflineCaptureStrategy.CAPTURE_CALLBACK_ID);
+    this.animationController.removePerFrameCallback(OfflineCaptureStrategy.KEEPALIVE_CALLBACK_ID);
 
     // VideoRecordingStrategy unwinds: defensive cleanupCaptureStream
     // (mediaRecorder.onstop may have suppressed itself due to disposed)
@@ -357,423 +355,23 @@ export class RecordingPanel {
   // ========== Offline Capture (image / video / EXR sequences) ==========
 
   /**
-   * Run a deterministic offline capture loop for image, video, or EXR
-   * output. The mode parameter selects the per-mode driver
-   * (ImageSequenceDriver, VideoModeDriver, or ExrSequenceDriver).
-   *
-   * Unlike real-time MediaRecorder capture, this loop is fully decoupled from the
-   * browser's animation frame rate. Each frame is:
-   * 1. Camera orbited by one step (quaternion rotation, same as auto-rotate)
-   * 2. Scene rendered (full pipeline)
-   * 3. Pixels read back (synchronous GPU stall — intentional)
-   * 4. Frame stored / encoded
-   * 5. Brief yield to keep the browser responsive (UI updates, recording indicator)
-   *
-   * This guarantees every frame is perfectly rendered regardless of GPU speed.
-   * The output will be smooth 60fps even if capture takes seconds per frame.
-   */
-  /**
-   * Run a deterministic offline capture loop for image / video / EXR.
-   *
-   * The loop owns shared scaffolding (state save/restore, modal
-   * overlay, animation pump, progress display, error tolerance);
-   * per-mode capture (PNG/WebP/JPEG sequence, video container, EXR
-   * sequence) is delegated to a driver implementing
-   * {@link OfflineCaptureDriver}. Each driver runs its own setup,
-   * captures one frame at a time, and finalizes (download/save).
-   *
-   * The entire post-saveRecordingState body is wrapped in
-   * try/finally so an exception from driver.setup, driver.captureFrame,
-   * driver.finalize, or any DOM/state mutation cannot leave the panel
-   * with a stuck overlay, hidden panels, scaled renderer, or stale
-   * recording flags. The finally block is idempotent — every
-   * removal/restore handles the "wasn't set" case gracefully.
+   * Delegate to OfflineCaptureStrategy. The strategy temporarily overrides
+   * `opts.outputFormat` so legacy `runOfflineCaptureLoop(mode)` callers
+   * (currently EXR-sequence shortcut + the image-format turntable path)
+   * still drive the right per-mode driver.
    */
   private async runOfflineCaptureLoop(
     mode: 'exr' | 'webm' | 'mp4' | 'mkv' | 'png' | 'webp' | 'jpeg'
   ): Promise<void> {
-    const confirmed = await this.showConfirmationDialog();
-    if (!confirmed || this.disposed) return;
-
-    // Establish session ownership BEFORE any state mutation. dispose()
-    // reads `offlineSessionAbort` to abort an in-flight session; if we
-    // assign it later (after hideAllPanels / saveRecordingState / the
-    // first rAF), a dispose during that early window leaves the
-    // abort controller null and the function continues to bring up
-    // overlay/recording flags on a disposed panel.
-    const sessionAbort = new AbortController();
-    this.offlineSessionAbort = sessionAbort;
-
-    // Helper: bail out, releasing session ownership and restoring any
-    // state that may have been saved. Called from the early-abort
-    // checkpoints below.
-    const bailEarly = (): void => {
-      this.restoreRecordingState();
-      if (this.offlineSessionAbort === sessionAbort) {
-        this.offlineSessionAbort = null;
-      }
-    };
-
-    this.hideAllPanels();
-
-    // Save state, disable DPR, lock resize, and scale resolution.
-    // Dimensions are rounded to a multiple of 16 (macroblock alignment for H.264/H.265).
-    const targetH = this.options.videoResolution > 0 ? this.options.videoResolution : 1080;
-    this.saveRecordingState({
-      disableDPR: true,
-      lockResize: true,
-      scaleResolution: { targetH, align16: true },
-    });
-    await new Promise((r) => requestAnimationFrame(r));
-
-    // Re-check after the rAF wait. dispose() during this await fires
-    // sessionAbort, which we observe here so the function does not
-    // proceed to overlay creation / driver setup on a disposed panel.
-    if (this.disposed || sessionAbort.signal.aborted) {
-      bailEarly();
-      return;
-    }
-
-    // Compute turntable parameters
-    const fps = this.options.videoFPS;
-    const durationSeconds = 360 / this.options.turntableSpeed;
-    const totalFrames = Math.ceil(durationSeconds * fps);
-
-    const controls = this.sceneManager.controls.getControls();
-    if (!(controls instanceof LuxarOrbitControls)) {
-      log.warning(Modules.RECORDING, 'Turntable requires orbit controls');
-      bailEarly();
-      return;
-    }
-
-    // Pause auto-rotation so it doesn't compound with the turntable.
-    // savedAutoRotate is the only field we mutate before the
-    // try/finally; restoreAutoRotate inside the finally restores it
-    // unconditionally.
-    this.savedAutoRotate = this.sceneManager.controls.getAutoRotate();
-    this.sceneManager.controls.setAutoRotate(false);
-
-    // Per-frame rotation step: frame 0 captures the starting view without rotation,
-    // then frames 1..N-1 each advance by one step to complete exactly 2π total.
-    const anglePerFrame = totalFrames > 1 ? (2 * Math.PI) / (totalFrames - 1) : 0;
-
-    log.info(
-      Modules.RECORDING,
-      `Starting offline ${mode} capture: ${totalFrames} frames, ${fps} FPS, ${durationSeconds.toFixed(1)}s`
-    );
-
-    // Build the per-mode driver. EXR mode flips the panel's
-    // isEXRSequenceRecording flag in finalize via a callback so the
-    // driver doesn't need to know about that field.
-    const driver: OfflineCaptureDriver =
-      mode === 'png' || mode === 'webp' || mode === 'jpeg'
-        ? new ImageSequenceDriver(mode)
-        : mode === 'exr'
-          ? new ExrSequenceDriver(() => {
-              this.isEXRSequenceRecording = false;
-            })
-          : new VideoModeDriver(mode);
-
-    // Set recording state
-    if (mode === 'exr') {
-      this.isEXRSequenceRecording = true;
-    }
-    this.isRecording = true;
-    this.isOfflineCaptureActive = true;
-    this.recordingStartTime = Date.now();
-    this.showRecordingIndicator();
-
-    // Offline overlay built as a real modal dialog: dialog/aria-modal
-    // semantics + cancel-button focus + explicit Escape handling that
-    // aborts the session. The keydown listener stops propagation for
-    // non-Escape keys so navigation/dimension shortcuts don't fire
-    // mid-capture.
-    const overlay = document.createElement('div');
-    overlay.className = 'luxar-recording-overlay';
-    overlay.setAttribute('role', 'dialog');
-    overlay.setAttribute('aria-modal', 'true');
-    overlay.setAttribute('aria-labelledby', 'luxar-recording-overlay-label');
-    overlay.setAttribute('aria-describedby', 'luxar-recording-overlay-counter');
-    overlay.innerHTML = `
-      <div class="luxar-recording-overlay__content">
-        <canvas class="luxar-recording-overlay__preview"></canvas>
-        <div class="luxar-recording-overlay__progress">
-          <span id="luxar-recording-overlay-label" class="luxar-recording-overlay__label">Capturing frames...</span>
-          <span id="luxar-recording-overlay-counter" class="luxar-recording-overlay__counter">0/${totalFrames}</span>
-        </div>
-        <button class="luxar-recording-overlay__cancel">Cancel</button>
-      </div>
-    `;
-    const previewCanvas = overlay.querySelector(
-      '.luxar-recording-overlay__preview'
-    ) as HTMLCanvasElement;
-    const previewCtx = previewCanvas.getContext('2d');
-    const cancelButton = overlay.querySelector(
-      '.luxar-recording-overlay__cancel'
-    ) as HTMLButtonElement | null;
-    // Remember the previously-focused element so we can restore focus
-    // when the overlay closes (modal dialog convention).
-    const previouslyFocused = document.activeElement as HTMLElement | null;
-    const handleCancel = (): void => {
-      this.isRecording = false;
-      sessionAbort.abort('user-cancel');
-    };
-    const handleOverlayKeydown = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        e.stopPropagation();
-        handleCancel();
-        return;
-      }
-      // Focus trap: keep Tab inside the overlay so focus can't
-      // escape to the canvas mid-capture and route Escape through
-      // the global input handler instead of this overlay's cancel
-      // path.
-      if (e.key === 'Tab') {
-        const focusable = Array.from(
-          overlay.querySelectorAll<HTMLElement>(
-            'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
-          )
-        ).filter((el) => !el.hasAttribute('disabled'));
-        if (focusable.length > 0) {
-          const first = focusable[0];
-          const last = focusable[focusable.length - 1];
-          const active = document.activeElement as HTMLElement | null;
-          if (e.shiftKey && active === first) {
-            e.preventDefault();
-            last.focus();
-          } else if (!e.shiftKey && active === last) {
-            e.preventDefault();
-            first.focus();
-          }
-        }
-        e.stopPropagation();
-        return;
-      }
-      // Other keys still get blocked from reaching the canvas/global
-      // shortcuts so typing doesn't inadvertently fire dimensions
-      // navigation etc. mid-capture.
-      e.stopPropagation();
-    };
-    cancelButton?.addEventListener('click', handleCancel);
-    overlay.addEventListener('keydown', handleOverlayKeydown, true);
-
-    let overlayCleaned = false;
-    const cleanupOfflineOverlay = (): void => {
-      if (overlayCleaned) return;
-      overlayCleaned = true;
-      cancelButton?.removeEventListener('click', handleCancel);
-      overlay.removeEventListener('keydown', handleOverlayKeydown, true);
-      overlay.remove();
-      // Restore focus to whatever was focused before we hijacked the
-      // page (modal-dialog convention).
-      if (previouslyFocused && typeof previouslyFocused.focus === 'function') {
-        previouslyFocused.focus();
-      }
-      if (this.offlineOverlayCleanup === cleanupOfflineOverlay) {
-        this.offlineOverlayCleanup = null;
-      }
-    };
-    this.offlineOverlayCleanup = cleanupOfflineOverlay;
-
-    document.body.appendChild(overlay);
-    // Focus the cancel button so Escape / Enter route through the
-    // overlay's keydown handler rather than wherever focus was before.
-    cancelButton?.focus();
-
-    const counterEl = overlay.querySelector('.luxar-recording-overlay__counter');
-    const labelEl = overlay.querySelector('.luxar-recording-overlay__label');
-
-    // Build the dependency context the driver needs. Methods are
-    // pre-bound so the driver doesn't need a panel reference.
-    const ctx: CaptureContext = {
-      sceneManager: this.sceneManager,
-      fps,
-      renderFrameToCanvas: () => this.renderFrameToCanvas(),
-      generateFilename: (ext) => this.generateFilename(ext),
-      generateFfmpegScript: (rate, frames, ext) => this.generateFfmpegScript(rate, frames, ext),
-      downloadBlob: (blob, filename) => this.downloadBlob(blob, filename),
-      computeVideoBitrate: (w, h) => this.computeVideoBitrate(w, h),
-      showToast,
-      logWarning: (msg) => log.warning(Modules.RECORDING, msg),
-      logError: (msg) => log.error(Modules.RECORDING, msg),
-      imageQuality: this.options.imageQuality,
-      videoCodec: this.options.videoCodec,
-      env: window as unknown as CaptureContext['env'],
-      signal: sessionAbort.signal,
-    };
-
-    const progress = {
-      setLabel: (text: string): void => {
-        if (labelEl) labelEl.textContent = text;
-      },
-      setPreview: (canvas: HTMLCanvasElement): void => {
-        if (!previewCtx) return;
-        if (previewCanvas.width !== canvas.width || previewCanvas.height !== canvas.height) {
-          previewCanvas.width = canvas.width;
-          previewCanvas.height = canvas.height;
-        }
-        previewCtx.drawImage(canvas, 0, 0);
-      },
-    };
-
-    // Use the class-static IDs so dispose() can remove these
-    // callbacks even if this loop is parked on an await.
-    const captureCallbackId = RecordingPanel.OFFLINE_CAPTURE_CALLBACK_ID;
-    const keepAliveId = RecordingPanel.OFFLINE_KEEPALIVE_CALLBACK_ID;
-    let capturedFrames = 0;
-    let setupCompleted = false;
-    let finalizeSucceeded = false;
-
+    const savedFormat = this.options.outputFormat;
+    this.options.outputFormat = mode as typeof savedFormat;
     try {
-      // Per-mode driver setup (encoder construction, file picker, …).
-      // A false return means the driver couldn't proceed — currently
-      // only VideoModeDriver returns false (no supported codec at the
-      // requested resolution). The ZIP-based image/EXR drivers always
-      // return true; a user-cancelled file picker falls through to
-      // browser-download mode rather than aborting. Drivers that
-      // return false are expected to have already toasted the user.
-      const setupOk = await driver.setup(ctx);
-      if (!setupOk) {
-        return; // finally restores all state
-      }
-      setupCompleted = true;
-      if (sessionAbort.signal.aborted) return; // disposed during setup
-
-      // Frame-by-frame capture using the live animation loop.
-      //
-      // The animation loop runs: controls.update() → per-frame callbacks → render().
-      // We register a per-frame callback that applies an incremental quaternion rotation
-      // (same math as auto-rotate), then the animation loop renders and we read pixels.
-      //
-      // This guarantees we read pixels from a properly rendered frame — the same
-      // pipeline that produces visible on-screen output.
-      let consecutiveErrors = 0;
-      const MAX_CONSECUTIVE_ERRORS = 3;
-
-      // Keep the animation loop alive during the entire capture session.
-      // This is a separate no-op callback so we can safely add/remove the rotation
-      // callback each frame without risking the animation loop pausing mid-capture.
-      this.animationController.addPerFrameCallback(keepAliveId, () => {}, { continuous: true });
-
-      for (let i = 0; i < totalFrames; i++) {
-        if (!this.isRecording) break;
-        if (sessionAbort.signal.aborted) break;
-        if (driver.shouldAbort?.()) break;
-
-        // Orbit camera by one step and capture in a single animation frame.
-        // The callback applies a quaternion rotation (same as auto-rotate) AFTER
-        // controls.update, BEFORE render, so the frame is rendered at the new angle.
-        //
-        // IMPORTANT: The rotation callback is registered fresh each iteration and
-        // removed immediately after the frame renders. If it stayed registered
-        // (continuous: true), the animation loop would apply extra rotations during
-        // the async capture work between iterations.
-        this.animationController.addPerFrameCallback(captureCallbackId, () => {
-          if (i > 0) controls.applyOrbitRotation(anglePerFrame);
-        });
-
-        // Wait for one full animation frame (callback + render)
-        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-
-        // Remove the rotation callback immediately so the animation loop cannot
-        // apply extra rotations while we do async capture work below.
-        this.animationController.removePerFrameCallback(captureCallbackId);
-
-        // Re-check the abort signal after the rAF wait. A dispose
-        // during the wait must NOT proceed to captureFrame, which
-        // could download/toast or observe disposed renderer state.
-        if (sessionAbort.signal.aborted) break;
-
-        // The animation loop has rendered with the rotated camera. Hand off
-        // to the per-mode driver to capture the frame. Pass the OUTPUT
-        // frame index (capturedFrames so far), not the source loop
-        // index `i`. With tolerated frame failures, source `i` skips
-        // ahead while the output sequence stays contiguous —
-        // VideoModeDriver uses this for VideoSample.timestamp so the
-        // encoded video has gap-free timing; image/EXR drivers ignore
-        // it because ZipSequenceCapture maintains its own success
-        // counter for filenames.
-        try {
-          await driver.captureFrame(ctx, capturedFrames, progress);
-          capturedFrames++;
-          consecutiveErrors = 0;
-        } catch (err) {
-          consecutiveErrors++;
-          log.error(Modules.RECORDING, `Frame ${i + 1} capture failed: ${err}`);
-          if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-            log.error(
-              Modules.RECORDING,
-              `${MAX_CONSECUTIVE_ERRORS} consecutive failures — aborting capture. ` +
-                'The browser may not support 10-bit encoding at this resolution.'
-            );
-            showToast('HDR video encoding failed — try EXR sequence instead');
-            break;
-          }
-        }
-
-        if (counterEl) counterEl.textContent = `${i + 1}/${totalFrames}`;
-      }
-
-      // If the session was aborted, skip finalize so we don't
-      // download a partial artifact. The finally block will route
-      // to driver.abort instead.
-      if (sessionAbort.signal.aborted) {
-        return;
-      }
-
-      // Driver-specific finalize. Wrapped in its own try/catch so a
-      // throw here surfaces a toast but doesn't bypass the outer
-      // finally — the panel state still gets restored, and the
-      // finally-block driver.abort() runs because finalizeSucceeded
-      // remains false.
-      try {
-        await driver.finalize(ctx, capturedFrames, progress);
-        finalizeSucceeded = true;
-      } catch (err) {
-        log.error(Modules.RECORDING, `Offline ${mode} finalize failed: ${err}`);
-        showToast('Recording finalize failed');
-      }
-    } catch (err) {
-      log.error(Modules.RECORDING, `Offline ${mode} capture failed: ${err}`);
-      showToast('Recording failed');
+      await this.offlineCaptureStrategy.run(this.options, this.mode, this.session);
     } finally {
-      // If setup completed and finalize did not succeed (aborted
-      // session, captureFrame threw past the tolerance limit, or
-      // finalize itself threw), give the driver a chance to release
-      // partial encoder/zip resources without delivering an artifact.
-      if (setupCompleted && !finalizeSucceeded) {
-        try {
-          const reason = sessionAbort.signal.aborted
-            ? sessionAbort.signal.reason === 'user-cancel'
-              ? 'user-cancel'
-              : 'disposed'
-            : 'error';
-          await driver.abort?.(ctx, reason as 'disposed' | 'user-cancel' | 'error');
-        } catch (abortErr) {
-          log.warning(Modules.RECORDING, `Driver abort during cleanup failed: ${abortErr}`);
-        }
-      }
-      // Idempotent cleanup. removePerFrameCallback tolerates unknown
-      // IDs; cleanupOfflineOverlay short-circuits if already cleaned;
-      // restoreAutoRotate / restoreRecordingState are no-ops if the
-      // saved state is missing.
-      this.animationController.removePerFrameCallback(captureCallbackId);
-      this.animationController.removePerFrameCallback(keepAliveId);
-      this.hideRecordingIndicator();
-      this.isRecording = false;
-      this.isOfflineCaptureActive = false;
-      this.isEXRSequenceRecording = false;
-      cleanupOfflineOverlay();
-      this.restoreAutoRotate();
-      this.restoreRecordingState();
-      // Clear the session-abort field iff it's still pointing to ours
-      // (a re-entrant call would have already set up a new one).
-      if (this.offlineSessionAbort === sessionAbort) {
-        this.offlineSessionAbort = null;
-      }
+      this.options.outputFormat = savedFormat;
     }
   }
+
 
   private async startEXRSequenceRecording(): Promise<void> {
     return this.runOfflineCaptureLoop('exr');
@@ -805,8 +403,8 @@ export class RecordingPanel {
     this.videoRecordingStrategy.cleanupCaptureStream();
   }
 
-  /** Restore auto-rotation to its pre-turntable state. */
-  private restoreAutoRotate(): void {
+  /** Restore auto-rotation to its pre-turntable state. Non-private for test probes. */
+  restoreAutoRotate(): void {
     this.session.restoreAutoRotate();
   }
 
@@ -945,28 +543,29 @@ export class RecordingPanel {
   }
 
   // ========== Confirmation Dialog ==========
+  // Wrappers below are non-private (tests still probe via `(panel as any).X()`).
 
-  private showConfirmationDialog(): Promise<boolean> {
+  showConfirmationDialog(): Promise<boolean> {
     return this.session.showConfirmationDialog({ mode: this.mode, options: this.options });
   }
 
   // ========== Recording Indicator ==========
 
-  private showRecordingIndicator(): void {
+  showRecordingIndicator(): void {
     this.session.showRecordingIndicator();
   }
 
-  private hideRecordingIndicator(): void {
+  hideRecordingIndicator(): void {
     this.session.hideRecordingIndicator();
   }
 
   // ========== Recording State Guard ==========
 
-  private saveRecordingState(options: SaveRecordingStateOptions): void {
+  saveRecordingState(options: SaveRecordingStateOptions): void {
     this.session.saveRecordingState(options);
   }
 
-  private restoreRecordingState(): void {
+  restoreRecordingState(): void {
     this.session.restoreRecordingState();
   }
 
@@ -987,8 +586,8 @@ export class RecordingPanel {
     );
   }
 
-  /** Compute video bitrate based on canvas size, FPS, and quality preset */
-  private computeVideoBitrate(width: number, height: number): number {
+  /** Compute video bitrate based on canvas size, FPS, and quality preset. Non-private for tests. */
+  computeVideoBitrate(width: number, height: number): number {
     return computeVideoBitratePure(width, height, this.options.videoFPS, this.options.videoQuality);
   }
 
@@ -1002,11 +601,9 @@ export class RecordingPanel {
 
   /**
    * Generate the ffmpeg shell script bundled with image-sequence and
-   * EXR-sequence ZIPs. The `ext` parameter is the per-frame extension
-   * (`png` / `jpg` / `webp` / `exr`); ZipSequenceCapture passes the
-   * matching value when packaging.
+   * EXR-sequence ZIPs. Non-private for tests.
    */
-  private generateFfmpegScript(fps: number, frameCount: number, ext = 'exr'): string {
+  generateFfmpegScript(fps: number, frameCount: number, ext = 'exr'): string {
     return generateFfmpegScriptPure(fps, frameCount, ext);
   }
 
