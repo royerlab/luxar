@@ -3,7 +3,7 @@
  *
  * The original logic was inline in `recording-panel.ts`'s 432-LOC
  * runOfflineCaptureLoop and untestable in isolation. Now lives in
- * `recording/video-codec-selection.ts`.
+ * `recording-panel/video-codec-selection.ts`.
  */
 
 import { describe, it, expect, vi } from 'vitest';

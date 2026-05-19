@@ -7,14 +7,14 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import type { DirectoryEntry } from '../../../../data';
-import { DatasetBrowser } from '../../../../ui/dataset-browser';
+import type { DirectoryEntry } from '../../../data';
+import { DatasetBrowser } from '../../../ui/dataset-browser';
 
 const navigateMock = vi.fn();
 const getFullUrlMock = vi.fn();
 
-vi.mock('../../../../data', async () => {
-  const actual = await vi.importActual<typeof import('../../../../data')>('../../../../data');
+vi.mock('../../../data', async () => {
+  const actual = await vi.importActual<typeof import('../../../data')>('../../../data');
   return {
     ...actual,
     DirectoryNavigator: vi.fn().mockImplementation(() => ({

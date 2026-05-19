@@ -2,7 +2,7 @@
  * Toast Notification
  *
  * Brief auto-dismissing notification shown at bottom-center of viewport.
- * Used by showToast() in ui/helpers.ts
+ * Used by showToast() in ui/toast.ts
  */
 
 .luxar-toast {

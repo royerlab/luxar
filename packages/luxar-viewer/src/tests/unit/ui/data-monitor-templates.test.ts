@@ -1,5 +1,5 @@
 /**
- * Unit tests for the pure helpers in data-monitor-templates.ts.
+ * Unit tests for the pure helpers in data-loading-monitor/templates.ts.
  *
  * Targets the small zero-dependency utilities (formatters, color
  * classifiers, percentage math) that live alongside the larger

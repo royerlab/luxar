@@ -859,7 +859,7 @@ clearCaches();
 import { SceneLoaderManager } from 'luxar-viewer/data';
 // DataMonitorManager lives in ui/ now; only import it from there if you
 // truly need to inspect the monitor singleton (rare).
-import { DataMonitorManager } from 'luxar-viewer/ui/monitors';
+import { DataMonitorManager } from 'luxar-viewer/ui/data-monitor-manager';
 
 // Direct access to manager for advanced use cases
 const loaderManager = SceneLoaderManager.getInstance();

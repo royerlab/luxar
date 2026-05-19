@@ -44,7 +44,7 @@ import { ExrSequenceDriver } from './recording-panel/drivers/exr-sequence-driver
 import { VideoModeDriver } from './recording-panel/drivers/video-mode-driver';
 import { buildRecordingGUI } from './recording-panel/ui/gui-construction';
 
-// Shared recording types live in `recording/types.ts`. Re-exported
+// Shared recording types live in `recording-panel/types.ts`. Re-exported
 // here for external consumers that import from the panel directly.
 export type {
   RecordingMode,
@@ -1116,7 +1116,7 @@ export class RecordingPanel {
   /**
    * Show/hide controls based on current mode + format. The per-control
    * decision logic lives in
-   * `recording/gui-builder.ts:computeControlVisibility` (pure function);
+   * `recording-panel/gui-builder.ts:computeControlVisibility` (pure function);
    * this method only applies the decisions to its named lil-gui
    * controllers and dropdown <option> elements.
    */

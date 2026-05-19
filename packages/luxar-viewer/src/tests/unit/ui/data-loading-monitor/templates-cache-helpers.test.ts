@@ -1,8 +1,8 @@
 /**
  * R3: focused unit tests for the cache-tab helper functions exported
- * from `data-monitor-templates.ts`. These guard the small pure helpers
- * used by both the initial render and the per-tick patcher so changes
- * to the cache-tab UI stay in sync across both paths.
+ * from `data-loading-monitor/templates.ts`. These guard the small pure
+ * helpers used by both the initial render and the per-tick patcher so
+ * changes to the cache-tab UI stay in sync across both paths.
  */
 
 import { describe, it, expect } from 'vitest';

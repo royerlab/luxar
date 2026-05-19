@@ -1550,8 +1550,8 @@ export class DataLoadingMonitor {
   /**
    * Get cache metrics aggregated across all loaders. Delegates the
    * multi-source roll-up to
-   * `cache-metrics-aggregator.ts:aggregateCacheMetrics`. The
-   * aggregator refreshes `this.metrics` snapshots and reads
+   * `data-loading-monitor/metrics/cache.ts:aggregateCacheMetrics`.
+   * The aggregator refreshes `this.metrics` snapshots and reads
    * `this.cachedRates` (already updated by `calculateRates()` here).
    */
   private getCacheMetrics(): CacheMetrics {
@@ -1582,7 +1582,7 @@ export class DataLoadingMonitor {
 
   /**
    * Calculate all rates with caching. Delegates to
-   * `rate-calculator.ts:calculateRates`.
+   * `data-loading-monitor/metrics/rates.ts:calculateRates`.
    */
   private calculateRates(): void {
     calculateRates({

@@ -108,7 +108,7 @@ ui/
 
 - **Public API at root.** External imports (`from '../ui/<name>'`) always resolve to a real file at the package root. Node resolves the file in preference to a folder of the same name, so the public path stays canonical.
 - **Helpers under their consumer.** A single-consumer helper lives in the consumer's sibling folder — e.g. `dimension-sliders/slider-math.ts` is only used by `dimension-sliders.ts`. The depth signals audience: a sibling folder means "private to this public file".
-- **No generic folder names.** `components/`, `helpers/`, `panels/`, `monitors/`, `utils/` are gone — folders are named by their concern (`overlay-widgets/`, `drivers/`, `setup/`, `metrics/`, `tabs/`, `format/`, `ui/`, `modes/`).
+- **No generic folder names.** `components/`, `helpers/`, `panels/`, `monitors/`, `utils/` are gone — folders are named by their concern (`overlay-widgets/`, `drivers/`, `setup/`, `metrics/`, `tabs/`, `format/`, `ui/`).
 - **No buried barrels.** A barrel-as-folder (`ui/gui/index.ts`) hid 200+ LOC of re-exports behind a path. Now `ui/gui.ts` is the file; barrels with substantial code are split into focused public files (helpers/index.ts → `loading-indicator.ts`, `error-overlay.ts`, `help-overlay.ts`, `toast.ts`, `ui-cleanup.ts`).
 
 ### Orchestrator shrinkage — pragmatic notes
@@ -745,9 +745,9 @@ element.className = 'luxar-dimension-sliders';
 
 These components fully support theming:
 
-- ✅ Error Dialog (helpers.ts)
-- ✅ Help Overlay (helpers.ts)
-- ✅ Loading Indicator (helpers.ts)
+- ✅ Error Dialog (error-overlay.ts)
+- ✅ Help Overlay (help-overlay.ts)
+- ✅ Loading Indicator (loading-indicator.ts)
 - ✅ Dimension Sliders (dimension-sliders.ts)
 - ✅ Debug Console (debug-console.ts) - proper BEM naming (.luxar-debug-console)
 - ✅ Dataset Browser (dataset-browser.ts)

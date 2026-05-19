@@ -4,8 +4,9 @@
  * Lower layers (data, scene, input) need to surface user-visible
  * messages — toasts when a recording finishes, error dialogs when
  * loading fails, the help overlay when the user presses H — but they
- * can't directly import `ui/helpers.ts` without violating the layer
- * order documented in CONVENTIONS.md §10.
+ * can't directly import the `ui/` helper modules (`toast.ts`,
+ * `error-overlay.ts`, `help-overlay.ts`, `loading-indicator.ts`)
+ * without violating the layer order documented in CONVENTIONS.md §10.
  *
  * This module defines the abstract `Notifier` surface and a singleton
  * `notifier` that lower layers call. The UI bootstrap registers a
@@ -20,8 +21,8 @@
 import { log, Modules } from './log';
 
 /**
- * Methods a notifier backend must implement. Mirrors the existing
- * `ui/helpers.ts` exports so the UI layer can plug them in directly:
+ * Methods a notifier backend must implement. Mirrors the exports
+ * of the `ui/` helper modules so the UI layer can plug them in directly:
  *
  *   setNotifierBackend({
  *     showError, showToast, showHelpOverlay, hideHelpOverlay,
@@ -97,7 +98,7 @@ export const notifier = {
 
 /**
  * Register a notifier backend. Called once by the UI bootstrap with
- * the concrete `ui/helpers.ts` implementations. Subsequent calls
+ * the concrete implementations from the `ui/` helper modules. Subsequent calls
  * replace the backend (useful for tests).
  */
 export function setNotifierBackend(b: NotifierBackend): void {

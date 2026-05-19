@@ -1333,7 +1333,7 @@ function formatBytes(bytes: number): string {
 ### 9.8 Usage Example
 
 ```typescript
-import { renderMetricCard, renderProgressBar, renderStatGrid } from './data-monitor-templates';
+import { renderMetricCard, renderProgressBar, renderStatGrid } from './data-loading-monitor/templates';
 
 // Large metric card with CSS color class
 const html = renderMetricCard(
@@ -1471,7 +1471,7 @@ function analyze(stats: GlobalStats): Recommendation[] {
 ### 10.6 Usage Example
 
 ```typescript
-import { LoadingAdvisor } from './components/loading-advisor';
+import { LoadingAdvisor } from './data-loading-monitor/advisor';
 
 const advisor = new LoadingAdvisor();
 const recommendations = advisor.analyze(globalStats);
@@ -1802,7 +1802,7 @@ public toggleNodeExpansion(path: string): void {
 
 - **SceneLoader**: Provides scene graph data after loading
 - **DataLoadingMonitor**: Manages tree state and rendering
-- **data-monitor-templates.ts**: Contains renderSceneGraphTree() function
+- **data-loading-monitor/templates.ts**: Contains renderSceneGraphTree() function
 - **data-monitor-types.ts**: Defines SceneGraphNode and SceneGraphState types
 
 ### 12.8 Usage Example

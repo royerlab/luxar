@@ -4,9 +4,9 @@ import { validateDataLoadingMemory } from './memory/validate';
 import { validateDataLoadingPerformance } from './performance/validate';
 
 /**
- * Validate data loading configuration (composes sub-section validators
- * for the parts that have already been extracted, plus inline blocks
- * for the rest until they're split in Step 3).
+ * Validate data loading configuration. Composes the sub-section
+ * validators (network, memory, performance) and inlines the trivial
+ * spatial-section checks that don't warrant their own validate.ts.
  */
 export function validateDataLoading(
   config: AppConfig,

@@ -1,14 +1,13 @@
 /**
  * Incremental Cache-tab updater. The Cache tab paints L0/L1/L2 stats
  * + total cache memory bar + eviction counts using the data-field
- * selector pattern. The renderer (in `data-monitor-templates.ts`)
- * paints the static structure once; this module handles per-tick
- * value patching.
+ * selector pattern. The renderer (in `../templates.ts`) paints the
+ * static structure once; this module handles per-tick value patching.
  *
  * Inputs are the container element and the pre-aggregated
- * CacheMetrics (built by `cache-metrics-aggregator.ts`). Returns
- * `true` when the container had the expected structure; `false`
- * tells the monitor it needs a full rebuild.
+ * CacheMetrics (built by `../metrics/cache.ts`). Returns `true` when
+ * the container had the expected structure; `false` tells the monitor
+ * it needs a full rebuild.
  */
 
 import type { CacheMetrics } from '../../../types/data-monitor-types';
@@ -53,7 +52,7 @@ export function updateCacheTab(container: HTMLElement | null, cacheMetrics: Cach
     const l0HitrateEl = container.querySelector('[data-field="l0-hitrate"]') as HTMLElement | null;
     if (l0HitrateEl) {
       // S3: dimmed when no accesses yet, matching the initial render
-      // (data-monitor-templates uses getCacheHitRateColorClassWithGuard).
+      // (../templates.ts uses getCacheHitRateColorClassWithGuard).
       const colorClass =
         l0Total === 0
           ? getColorClass('dimmed')

@@ -44,8 +44,12 @@ Press **L** to toggle the Layers panel.
 layer-state.ts     Pure data model, min/max ↔ intensity/offset math
 layers-panel.ts    DOM panel, event handling, scene application
 range-slider.ts    Dual-thumb [min, max] slider component
-index.ts           Barrel exports
+attrs-utils.ts     Pure helpers for layer attribute filtering / coercion
+labeled-slider.ts  Single-thumb labeled slider component
 ```
+
+The public entrypoint is `../layers.ts` (parent file); it re-exports
+the surface external code should consume.
 
 ## Display Range Mapping
 
@@ -65,4 +69,7 @@ Slider bounds come from `color_data_range` stored in the zarr `.zattrs` during e
 | `layer-state.ts`                           | `LayerStateManager`, `computeUniforms()`, selection logic    |
 | `layers-panel.ts`                          | `LayersPanel` class — DOM, event handlers, scene application |
 | `range-slider.ts`                          | `RangeSlider` — dual-thumb input component                   |
+| `labeled-slider.ts`                        | `LabeledSlider` — single-thumb labeled input component       |
+| `attrs-utils.ts`                           | Pure helpers for filtering / coercing layer attributes       |
+| `../layers.ts`                             | Public entrypoint — re-exports the layers surface            |
 | `../../styles/components/layers-panel.css` | Themed CSS styles                                            |
