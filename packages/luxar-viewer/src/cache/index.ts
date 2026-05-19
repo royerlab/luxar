@@ -2,12 +2,14 @@
  * OPFS-based zarr cache package.
  * Provides multi-level caching (L0: decompressed chunks, L1: memory,
  * L2: OPFS) for zarr chunks with optional prefetching.
+ *
+ * This barrel is the package's curated public-API surface. OPFSStore and
+ * SegmentedLRUCache are internal helpers of MultiLevelCachingStore and are
+ * intentionally not re-exported here.
  */
 
 // Core cache classes
 export { LRUCache } from './lru-cache';
-export { SegmentedLRUCache } from './segmented-lru-cache';
-export { OPFSStore } from './opfs-store';
 export { MultiLevelCachingStore } from './multi-level-caching-store';
 export { ChunkPrefetcher } from './chunk-prefetcher';
 
