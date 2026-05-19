@@ -13,7 +13,7 @@ import type {
   CaptureProgress,
   OfflineCaptureDriver,
 } from './offline-capture-driver';
-import { ZipSequenceCapture } from './zip-sequence-capture';
+import { ZipSequenceCapture } from '../zip-sequence-capture';
 
 export class ExrSequenceDriver implements OfflineCaptureDriver {
   private zip: ZipSequenceCapture | null = null;

@@ -8,7 +8,7 @@
  */
 
 import { config } from '../../../config';
-import type { SetupContext, SetupResult } from './types';
+import type { SetupContext, SetupResult } from '../types';
 
 /**
  * Set up navigation controls in the rendering controls GUI.

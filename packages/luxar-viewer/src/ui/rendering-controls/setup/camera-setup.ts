@@ -9,8 +9,8 @@
 
 import { config } from '../../../config';
 import { log, Modules } from '../../../utils/log';
-import type { SetupContext, SetupResult } from './types';
-import { fovToFocalLength } from './fov-utils';
+import type { SetupContext, SetupResult } from '../types';
+import { fovToFocalLength } from '../fov-utils';
 
 /**
  * Set up camera controls in the rendering controls GUI.

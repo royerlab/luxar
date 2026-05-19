@@ -34,7 +34,7 @@ import {
   clampGamma,
   getBlendingState,
   liveLayerAttrs as deriveLiveLayerAttrs,
-} from './layer-attrs-utils';
+} from './attrs-utils';
 import { clamp } from '../gui/format/value-formatting';
 
 // Type guard: does this material have our update* methods?

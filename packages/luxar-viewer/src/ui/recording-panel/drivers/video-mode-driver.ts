@@ -24,7 +24,7 @@ import type {
   CaptureProgress,
   OfflineCaptureDriver,
 } from './offline-capture-driver';
-import { selectVideoCodec } from './video-codec-selection';
+import { selectVideoCodec } from '../video-codec-selection';
 
 type VideoMode = 'webm' | 'mp4' | 'mkv';
 

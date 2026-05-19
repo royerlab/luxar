@@ -21,7 +21,7 @@ import {
   formatValidationMode,
   formatLastValidated,
   l2ErrorTotal,
-} from '../data-monitor-templates';
+} from '../templates';
 import { patchField, updateColorClass } from './dom-helpers';
 
 /**
