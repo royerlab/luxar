@@ -12,8 +12,8 @@
  */
 
 import * as THREE from 'three';
-import { PointMaterial } from './point-material';
-import { PointTSLMaterial } from './point-material-tsl';
+import { PointMaterial } from './materials/point/material-glsl';
+import { PointTSLMaterial } from './materials/point/material-tsl';
 import { PointPickingMaterial } from './picking/point-picking-material';
 import { PointPickingTSLMaterial } from './picking/point-picking-material-tsl';
 

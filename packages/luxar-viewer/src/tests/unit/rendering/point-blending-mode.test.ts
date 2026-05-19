@@ -8,7 +8,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { PointMaterial } from '../../../rendering/point-material';
+import { PointMaterial } from '../../../rendering/materials/point/material-glsl';
 
 describe('PointMaterial.applyBlendingMode', () => {
   it('max mode sets CustomBlending + MaxEquation + OneFactor/OneFactor', () => {

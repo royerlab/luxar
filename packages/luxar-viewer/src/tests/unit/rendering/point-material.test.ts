@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
-import { PointMaterial } from '../../../rendering/point-material';
+import { PointMaterial } from '../../../rendering/materials/point/material-glsl';
 
 // Mock THREE.ShaderMaterial
 vi.mock('three', async () => {

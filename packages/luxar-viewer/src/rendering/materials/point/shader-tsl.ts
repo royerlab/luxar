@@ -22,7 +22,7 @@
  *   - `useMaxRGBContribution` → premultiplies output RGB by alpha
  *     for the CustomBlending + MaxEquation rendering mode.
  *
- * @module rendering/point.tsl
+ * @module rendering/materials/point/shader-tsl
  */
 
 import * as THREE from 'three';
@@ -47,9 +47,9 @@ import {
   cameraProjectionMatrix,
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-import { sanitizeNonNegative, sanitizePositive, type TSLNode } from './tsl-helpers';
-import { applyBlendingStateToMaterial, getCompleteBlendingState } from './blending-state';
-import type { BlendingMode } from './material-manager';
+import { sanitizeNonNegative, sanitizePositive, type TSLNode } from '../../tsl-helpers';
+import { applyBlendingStateToMaterial, getCompleteBlendingState } from '../../blending-state';
+import type { BlendingMode } from '../../material-manager';
 
 export interface PointTSLConfig {
   readonly useColormap?: boolean;

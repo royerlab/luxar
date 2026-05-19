@@ -24,27 +24,27 @@
  *     `if`), which is what `updateColormapTexture` triggers via
  *     `rebuildGraph()` whenever the on/off state changes.
  *
- * @module rendering/point-material-tsl
+ * @module rendering/materials/point/material-tsl
  */
 
 import * as THREE from 'three';
 import { NodeMaterial } from 'three/webgpu';
-import { pointWebGPUFactory } from './point.tsl';
-import type { PointMaterialConfig } from './point-material';
-import type { CameraAwareMaterial } from './camera-aware-material';
-import type { ColormapAwareMaterial } from './colormap-aware-material';
-import { clampGamma } from './material-uniform-helpers';
-import { computePointSizeFactor, computeMaxPointSize } from './camera-uniforms';
+import { pointWebGPUFactory } from './shader-tsl';
+import type { PointMaterialConfig } from './material-glsl';
+import type { CameraAwareMaterial } from '../../camera-aware-material';
+import type { ColormapAwareMaterial } from '../../colormap-aware-material';
+import { clampGamma } from '../../material-uniform-helpers';
+import { computePointSizeFactor, computeMaxPointSize } from '../../camera-uniforms';
 import {
   applyColormapTextureToMaterial,
   applyScalarRangeToMaterial,
-} from './material-colormap-helpers';
+} from '../../material-colormap-helpers';
 import {
   applyBlendingStateToMaterial,
   getCompleteBlendingState,
   type CompleteBlendingState,
-} from './blending-state';
-import type { BlendingMode } from './material-manager';
+} from '../../blending-state';
+import type { BlendingMode } from '../../material-manager';
 
 /**
  * Points material rendered via TSL / NodeMaterial.
