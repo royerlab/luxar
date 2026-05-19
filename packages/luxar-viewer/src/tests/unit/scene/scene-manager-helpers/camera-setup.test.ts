@@ -10,7 +10,7 @@ import {
   resetCameraToInitialPosition,
   resolveTargetNodeCenter,
   applyZarrViewerConfig,
-} from '../../../../scene/scene-setup/camera-setup';
+} from '../../../../scene/scene-manager/camera-setup';
 import type { ControlsManager } from '../../../../controls/controls-manager';
 import type { ZarrViewerConfig } from '../../../../types/zarr';
 

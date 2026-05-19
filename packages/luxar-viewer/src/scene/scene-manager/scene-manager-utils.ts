@@ -7,8 +7,8 @@
  * dependencies.
  */
 
-import { config } from '../config';
-import { clamp } from '../utils/clamp';
+import { config } from '../../config';
+import { clamp } from '../../utils/clamp';
 
 /**
  * 3D bounding box representation

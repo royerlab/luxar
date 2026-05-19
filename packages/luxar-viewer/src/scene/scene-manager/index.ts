@@ -35,23 +35,28 @@ import {
   projectBoundsToDisplayDims,
   SPHERE_SAFETY_EXPANSION,
   MIN_NEAR_PLANE,
-} from '../scene-manager-utils';
+} from './scene-manager-utils';
 import { log, Modules, LogEmoji } from '../../utils/log';
 import { sceneDimsManager } from '../scene-dims-manager';
-import { clearLoadedSceneContent, disposeSceneGraphResources } from '../scene-setup/scene-disposal';
+import { clearLoadedSceneContent, disposeSceneGraphResources } from './scene-disposal';
 import {
   applyZarrViewerConfig as applyZarrViewerConfigHelper,
   createDefaultPerspectiveCamera,
   resetCameraToInitialPosition,
-} from '../scene-setup/camera-setup';
-import { computeSceneBoundingBox, fitCameraToBounds } from '../scene-setup/camera-framing';
-import { WebGLContextRecovery } from '../scene-setup/webgl-context-recovery';
+} from './camera-setup';
+import { computeSceneBoundingBox, fitCameraToBounds } from './camera-framing';
+import { WebGLContextRecovery } from './webgl-context-recovery';
+import { ResizeOrchestrator } from './resize-orchestrator';
+import {
+  computePixelRatioOverride,
+  getActivePixelRatio as dprGetActive,
+  getNormalizedDPRScale as dprGetNormalized,
+} from './dpr-policy';
 import {
   type LuxarCamera,
   isPerspectiveCamera,
   isOrthographicCamera,
   getCameraFovRadians,
-  updateCameraAspect,
   getOrthoFrustumHeight,
 } from '../../utils/camera-utils';
 import type { ControlType } from '../../controls/controls-manager';
@@ -146,8 +151,7 @@ export class SceneManager extends THREE.EventDispatcher<{
   private lastBoundingBoxCenter: THREE.Vector3 = new THREE.Vector3();
 
   /** Resize debouncing with requestAnimationFrame for smooth resizing */
-  private resizeRAF: number | null = null;
-  private pendingResize: { width: number; height: number } | null = null;
+  private resizer = new ResizeOrchestrator();
 
   /**
    * WebGL context-loss / restoration concern. Constructed lazily in
@@ -157,8 +161,18 @@ export class SceneManager extends THREE.EventDispatcher<{
    */
   private contextRecovery: WebGLContextRecovery | null = null;
 
-  /** When true, resize events are suppressed (used during recording to prevent resolution changes) */
-  public resizeLocked: boolean = false;
+  /**
+   * When true, resize events are suppressed (used during recording to
+   * prevent resolution changes). Delegated to ResizeOrchestrator —
+   * exposed as a getter/setter so recording-panel.ts continues to read
+   * + write `sceneManager.resizeLocked` directly.
+   */
+  get resizeLocked(): boolean {
+    return this.resizer.resizeLocked;
+  }
+  set resizeLocked(v: boolean) {
+    this.resizer.resizeLocked = v;
+  }
 
   /** Cached ortho zoom level to avoid redundant material updates during panning */
   private lastOrthoZoom: number = 1;
@@ -304,9 +318,9 @@ export class SceneManager extends THREE.EventDispatcher<{
     this.setupControls();
     this.setupPostProcessing();
 
-    // Call doUpdateSize() directly during initialization (no debounce needed)
-    // This ensures immediate sizing without waiting for requestAnimationFrame
-    this.doUpdateSize(window.innerWidth, window.innerHeight);
+    // Apply resize directly during initialization (no rAF coalescing) so
+    // dimensions are available before the first render.
+    this.resizer.resizeNow(window.innerWidth, window.innerHeight, this.makeResizeCtx());
   }
 
   /**
@@ -460,7 +474,7 @@ export class SceneManager extends THREE.EventDispatcher<{
     // This allows for better integration into complex HTML pages
 
     // Configure renderer dimensions and high-DPI support
-    this.updateRendererSize();
+    this.resizer.resizeNow(window.innerWidth, window.innerHeight, this.makeResizeCtx());
 
     // Detect and configure HDR capabilities
     const hdrCapabilities = this.capabilities.hdr;
@@ -690,7 +704,7 @@ export class SceneManager extends THREE.EventDispatcher<{
 
     log.info(Modules.RENDERER, `Rendering API: ${this.capabilities.apiSurface}`);
 
-    this.updateRendererSize();
+    this.resizer.resizeNow(window.innerWidth, window.innerHeight, this.makeResizeCtx());
 
     const hdrCapabilities = this.capabilities.hdr;
     logHDRCapabilities(hdrCapabilities);
@@ -733,7 +747,8 @@ export class SceneManager extends THREE.EventDispatcher<{
         getScene: () => this.scene,
         renderer: this.renderer as THREE.WebGLRenderer,
         getPostProcessing: () => this.postProcessing ?? null,
-        updateRendererSize: () => this.updateRendererSize(),
+        updateRendererSize: () =>
+          this.resizer.resizeNow(window.innerWidth, window.innerHeight, this.makeResizeCtx()),
         onContextRestored: () => this.dispatchEvent({ type: 'webgl-context-restored' }),
         triggerChange: () => this.dispatchEvent({ type: 'change' }),
       });
@@ -1121,115 +1136,40 @@ export class SceneManager extends THREE.EventDispatcher<{
    * ```
    */
   updateSize(): void {
-    // Suppress resize during recording to prevent resolution changes mid-capture
-    if (this.resizeLocked) return;
+    this.resizer.scheduleResize(() => this.makeResizeCtx());
+  }
 
-    // Store the latest dimensions
-    this.pendingResize = {
-      width: window.innerWidth,
-      height: window.innerHeight,
+  /** Build the per-call ResizeCtx snapshot used by the resize orchestrator. */
+  private makeResizeCtx() {
+    return {
+      renderer: this.renderer,
+      camera: this.camera,
+      postProcessing: this.postProcessing,
+      pixelRatioOverride: this.pixelRatioOverride,
+      updateMaterialsForCurrentCamera: () => this.updateMaterialsForCurrentCamera(),
     };
-
-    // Cancel any pending resize
-    if (this.resizeRAF !== null) {
-      cancelAnimationFrame(this.resizeRAF);
-    }
-
-    // Schedule resize for next frame (coalesces multiple events)
-    this.resizeRAF = requestAnimationFrame(() => {
-      if (!this.pendingResize) return;
-
-      this.doUpdateSize(this.pendingResize.width, this.pendingResize.height);
-      this.pendingResize = null;
-      this.resizeRAF = null;
-    });
-  }
-
-  /**
-   * Actual resize logic (called once per frame at most)
-   */
-  private doUpdateSize(width: number, height: number): void {
-    if (document.fullscreenElement) {
-      log.success(Modules.SCENE_MANAGER, `Using fullscreen dimensions: ${width}x${height}`);
-    } else {
-      log.success(Modules.SCENE_MANAGER, `Using windowed dimensions: ${width}x${height}`);
-    }
-
-    // Only update camera if it exists (might be called during init)
-    if (this.camera) {
-      updateCameraAspect(this.camera, width, height);
-    }
-
-    // Ensure pixel ratio stays current. When adaptive/manual DPR is active,
-    // preserve that explicit override across ordinary window resizes; when
-    // no override is active, track native devicePixelRatio changes (e.g.
-    // dragging between monitors with different DPI).
-    this.renderer.setPixelRatio(this.getActivePixelRatio());
-
-    // PostProcessingManager owns renderer + composer sizing — it calls
-    // renderer.setSize() and composer.setSize() internally via resize().
-    // Only fall back to direct updateRendererSize() during early init
-    // before PostProcessingManager has been created.
-    if (this.postProcessing) {
-      this.postProcessing.resize(width, height);
-      this.syncPostProcessingDPRScale();
-    } else {
-      this.updateRendererSize(width, height);
-    }
-
-    // Update material uniforms for world-space point sizing
-    if (this.camera) {
-      this.updateMaterialsForCurrentCamera();
-    }
-  }
-
-  /**
-   * Update renderer size and pixel ratio
-   */
-  private updateRendererSize(width?: number, height?: number): void {
-    // Use provided dimensions or fall back to window dimensions
-    const w = width || window.innerWidth;
-    const h = height || window.innerHeight;
-
-    // Set pixel ratio BEFORE size for correct buffer calculations.
-    this.renderer.setPixelRatio(this.getActivePixelRatio());
-    // Let Three.js handle CSS sizing normally
-    this.renderer.setSize(w, h); // Allow Three.js to set CSS size
-
-    // Update material uniforms for world-space point sizing (only if camera exists)
-    if (this.camera) {
-      this.updateMaterialsForCurrentCamera();
-    }
   }
 
   /** Return the DPR currently applied to renderer sizing. */
   private getActivePixelRatio(): number {
-    return (this.pixelRatioOverride ?? window.devicePixelRatio) || 1;
+    return dprGetActive(this.pixelRatioOverride);
   }
 
   /**
    * Store/clear the explicit DPR override and return the effective DPR.
-   * Native DPR clears the override so future monitor-DPI changes continue
-   * to track `window.devicePixelRatio` automatically.
+   * Delegates the math to dpr-policy.computePixelRatioOverride.
    */
   private setPixelRatioOverride(dpr: number): number {
-    const nativeDPR = window.devicePixelRatio || 1;
-    const safeDPR = Number.isFinite(dpr) && dpr > 0 ? dpr : nativeDPR;
-    this.pixelRatioOverride = Math.abs(safeDPR - nativeDPR) < 0.01 ? null : safeDPR;
-    return this.getActivePixelRatio();
+    const { override, active } = computePixelRatioOverride(dpr, this.pixelRatioOverride);
+    this.pixelRatioOverride = override;
+    return active;
   }
 
   /** Normalize active DPR relative to current native DPR for perceptual effect scaling. */
   private getNormalizedDPRScale(dpr: number = this.getActivePixelRatio()): number {
-    const nativeDPR = window.devicePixelRatio || 1;
-    return dpr / nativeDPR;
+    return dprGetNormalized(dpr);
   }
 
-  /** Keep DPR-dependent post-processing effects consistent after DPR/resize changes. */
-  private syncPostProcessingDPRScale(): void {
-    if (!this.postProcessing) return;
-    this.postProcessing.setDPRScale(this.getNormalizedDPRScale());
-  }
 
   /**
    * Update pixel ratio for adaptive performance optimization.
@@ -1593,12 +1533,8 @@ export class SceneManager extends THREE.EventDispatcher<{
    * After calling dispose(), the scene manager cannot be reused.
    */
   dispose(): void {
-    // Cancel any pending resize operations to prevent memory leaks
-    if (this.resizeRAF !== null) {
-      cancelAnimationFrame(this.resizeRAF);
-      this.resizeRAF = null;
-    }
-    this.pendingResize = null;
+    // Cancel any pending resize operations to prevent memory leaks.
+    this.resizer.dispose();
 
     // Tear down the WebGL context-recovery listeners.
     if (this.contextRecovery) {

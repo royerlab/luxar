@@ -404,14 +404,21 @@ describe('SceneManager', () => {
       expect(sceneManager.camera.far).toBe(1000);
     });
 
-    it('should call doUpdateSize directly during initialization (no debounce)', async () => {
-      // Spy on private doUpdateSize method using type assertion
-      const doUpdateSizeSpy = vi.spyOn(sceneManager as any, 'doUpdateSize');
+    it('applies size directly during initialization (no debounce)', async () => {
+      // The init path calls resizer.resizeNow() so the renderer is sized
+      // before the first paint, bypassing the rAF coalescing path that
+      // updateSize() uses. Resizer was extracted from SceneManager in
+      // the bucket-C refactor — see scene/scene-manager/resize-orchestrator.ts.
+      const resizer = (sceneManager as unknown as { resizer: { resizeNow: () => void } }).resizer;
+      const resizeNowSpy = vi.spyOn(resizer, 'resizeNow');
 
       await sceneManager.init({ canvas: mockCanvas as any });
 
-      // Should call doUpdateSize directly (immediate sizing, no debounce)
-      expect(doUpdateSizeSpy).toHaveBeenCalledWith(window.innerWidth, window.innerHeight);
+      expect(resizeNowSpy).toHaveBeenCalled();
+      // First arg is width, second is height; verify against window dims.
+      const [width, height] = resizeNowSpy.mock.calls[0] as unknown as [number, number];
+      expect(width).toBe(window.innerWidth);
+      expect(height).toBe(window.innerHeight);
     });
   });
 
@@ -476,10 +483,14 @@ describe('SceneManager', () => {
       sceneManager.setAdaptivePixelRatio(0.5);
       setPixelRatioSpy.mockClear();
 
-      (sceneManager as unknown as { doUpdateSize: (w: number, h: number) => void }).doUpdateSize(
-        800,
-        600
-      );
+      // doUpdateSize was extracted into ResizeOrchestrator (bucket-C
+      // refactor). Drive the same code path via the orchestrator's
+      // synchronous entry point.
+      const internals = sceneManager as unknown as {
+        resizer: { resizeNow: (w: number, h: number, ctx: unknown) => void };
+        makeResizeCtx: () => unknown;
+      };
+      internals.resizer.resizeNow(800, 600, internals.makeResizeCtx());
 
       expect(setPixelRatioSpy).toHaveBeenCalledWith(0.5);
     });
