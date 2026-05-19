@@ -1,0 +1,251 @@
+/**
+ * Unit tests for `loadLinesNode` in scene-loader/nodes/load-lines-node.ts.
+ *
+ * Mirrors load-points-node.test.ts but for the Lines variant. The
+ * Lines-only invariant under test is `applyPartialExtendTolerance:
+ * false` — Lines tolerate the un-overridden tolerance during the data
+ * fetch because line bounds already encode their non-displayed spatial
+ * extent; the partial-extend override would double-apply during
+ * clipping.
+ */
+
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import * as THREE from 'three';
+
+const createLinesLoaderMock = vi.fn();
+vi.mock('../../../../../data/scene-loader/loader-factory', () => ({
+  createLinesLoader: (...args: unknown[]) => createLinesLoaderMock(...args),
+}));
+
+import { loadLinesNode } from '../../../../../data/scene-loader/nodes/load-lines-node';
+import { LoaderError } from '../../../../../data/scene-loader/nodes/load-leaf-error-dispatch';
+import { LoaderRegistry } from '../../../../../data/scene-loader/loader-registry';
+import type { NodeBuildCtx } from '../../../../../data/scene-loader/nodes/build-ctx';
+import type { SceneNode, ViewState } from '../../../../../data/data-loader-types';
+import type { LinesDataLoader, LoadedLinesData } from '../../../../../types/lines';
+import type { StagedLinesCommit } from '../../../../../data/scene-loader/process/data-processor-lines';
+
+// ============================================================================
+// Local fixtures
+// ============================================================================
+
+function makeViewState(): ViewState {
+  return {
+    displayDims: [0, 1, 2],
+    slicePosition: [0, 0, 0, 0],
+    tolerance: [0, 0, 0, 1],
+    dimensions: undefined,
+  };
+}
+
+function makeSceneNode(overrides: Partial<SceneNode> = {}): SceneNode {
+  return {
+    path: '/scene/l',
+    type: 'lines',
+    attrs: { n_segments: 10, n_vertices: 11 },
+    hasSpatialIndex: true,
+    children: [],
+    ...overrides,
+  };
+}
+
+function makeLinesLoader(
+  loadLines: (vs: ViewState) => Promise<LoadedLinesData>
+): LinesDataLoader {
+  return { loadLines } as unknown as LinesDataLoader;
+}
+
+function makePlaceholder(name: string): THREE.Mesh {
+  const m = new THREE.Mesh();
+  m.name = name;
+  return m;
+}
+
+function makeCtx(overrides: Partial<NodeBuildCtx> = {}): NodeBuildCtx & {
+  spies: {
+    applyEffectiveAttrs: ReturnType<typeof vi.fn>;
+    deriveNodeViewState: ReturnType<typeof vi.fn>;
+    connectLoaderToMonitor: ReturnType<typeof vi.fn>;
+    processLinesData: ReturnType<typeof vi.fn>;
+    commitLinesGeometry: ReturnType<typeof vi.fn>;
+    createEmptyLinesNode: ReturnType<typeof vi.fn>;
+  };
+} {
+  const viewState = makeViewState();
+  const createEmptyLinesNode = vi.fn((path: string) => makePlaceholder(path));
+  const applyEffectiveAttrs = vi.fn((node: SceneNode) => node.attrs);
+  const deriveNodeViewState = vi.fn(() => ({ skip: false as const, viewState }));
+  const connectLoaderToMonitor = vi.fn();
+  const processLinesData = vi.fn().mockResolvedValue(null);
+  const commitLinesGeometry = vi.fn();
+
+  const nodeFactory = {
+    createEmptyPointsNode: vi.fn(),
+    createEmptyLinesNode,
+    createEmptyGSplatsNode: vi.fn(),
+    applyTransform: vi.fn(),
+    markPickingDirty: vi.fn(),
+  } as unknown as NodeBuildCtx['nodeFactory'];
+
+  const ctx: NodeBuildCtx = {
+    registry: new LoaderRegistry(),
+    nodeFactory,
+    viewState,
+    factoryDeps: {} as never,
+    applyEffectiveAttrs,
+    deriveNodeViewState,
+    connectLoaderToMonitor,
+    updatePointsGeometry: vi.fn(),
+    processLinesData,
+    commitLinesGeometry,
+    processGSplatsData: vi.fn(),
+    commitGSplatsGeometry: vi.fn(),
+    ...overrides,
+  };
+  return Object.assign(ctx, {
+    spies: {
+      applyEffectiveAttrs,
+      deriveNodeViewState,
+      connectLoaderToMonitor,
+      processLinesData,
+      commitLinesGeometry,
+      createEmptyLinesNode,
+    },
+  });
+}
+
+beforeEach(() => {
+  createLinesLoaderMock.mockReset();
+});
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+describe('loadLinesNode — placeholder-before-fetch invariant', () => {
+  it('adds the placeholder BEFORE awaiting loader.loadLines', async () => {
+    let _resolve: (data: LoadedLinesData) => void = () => {};
+    const pending = new Promise<LoadedLinesData>((r) => {
+      _resolve = r;
+    });
+    createLinesLoaderMock.mockReturnValue(makeLinesLoader(() => pending));
+
+    const ctx = makeCtx();
+    const parent = new THREE.Group();
+    const promise = loadLinesNode(makeSceneNode(), parent, {} as never, ctx);
+
+    expect(parent.children.length).toBe(1);
+    expect((parent.children[0] as THREE.Mesh).name).toBe('/scene/l');
+
+    _resolve({ segmentCount: 0 } as LoadedLinesData);
+    await promise;
+  });
+});
+
+describe('loadLinesNode — happy path', () => {
+  it('uses applyPartialExtendTolerance:false (Lines variant)', async () => {
+    const data = { segmentCount: 4 } as LoadedLinesData;
+    createLinesLoaderMock.mockReturnValue(makeLinesLoader(vi.fn().mockResolvedValue(data)));
+    const ctx = makeCtx();
+
+    await loadLinesNode(makeSceneNode(), new THREE.Group(), {} as never, ctx);
+
+    expect(ctx.spies.deriveNodeViewState).toHaveBeenCalledWith(
+      '/scene/l',
+      { n_segments: 10, n_vertices: 11 },
+      { applyPartialExtendTolerance: false }
+    );
+  });
+
+  it('runs processLinesData → commitLinesGeometry on success', async () => {
+    const data = { segmentCount: 4 } as LoadedLinesData;
+    const staged = { path: '/scene/l' } as unknown as StagedLinesCommit;
+    createLinesLoaderMock.mockReturnValue(makeLinesLoader(vi.fn().mockResolvedValue(data)));
+
+    const ctx = makeCtx();
+    ctx.spies.processLinesData.mockResolvedValue(staged);
+
+    const placeholder = await loadLinesNode(
+      makeSceneNode(),
+      new THREE.Group(),
+      {} as never,
+      ctx
+    );
+
+    expect(placeholder).not.toBeNull();
+    expect(ctx.spies.processLinesData).toHaveBeenCalledWith(
+      '/scene/l',
+      data,
+      ctx.viewState
+    );
+    expect(ctx.spies.commitLinesGeometry).toHaveBeenCalledWith(staged);
+  });
+});
+
+describe('loadLinesNode — extend_to_all skip fallback', () => {
+  it('uses ctx.viewState when derive returns skip', async () => {
+    const loadLines = vi.fn().mockResolvedValue({ segmentCount: 0 } as LoadedLinesData);
+    createLinesLoaderMock.mockReturnValue(makeLinesLoader(loadLines));
+    const ctx = makeCtx();
+    ctx.spies.deriveNodeViewState.mockReturnValue({ skip: 'extend_to_all' });
+
+    await loadLinesNode(makeSceneNode(), new THREE.Group(), {} as never, ctx);
+
+    // Identity-check: initial-load falls back to the base viewState reference.
+    expect(loadLines.mock.calls[0][0]).toBe(ctx.viewState);
+  });
+});
+
+describe('loadLinesNode — processLinesData returns null', () => {
+  it('skips commitLinesGeometry but still returns the placeholder', async () => {
+    const data = { segmentCount: 4 } as LoadedLinesData;
+    createLinesLoaderMock.mockReturnValue(makeLinesLoader(vi.fn().mockResolvedValue(data)));
+    const ctx = makeCtx();
+    // ctx.processLinesData defaults to resolving null in makeCtx.
+
+    const placeholder = await loadLinesNode(
+      makeSceneNode(),
+      new THREE.Group(),
+      {} as never,
+      ctx
+    );
+
+    expect(placeholder).not.toBeNull();
+    expect(ctx.spies.processLinesData).toHaveBeenCalledTimes(1);
+    expect(ctx.spies.commitLinesGeometry).not.toHaveBeenCalled();
+  });
+});
+
+describe('loadLinesNode — segmentCount === 0 path', () => {
+  it('still runs processLinesData (placeholder needs the empty commit)', async () => {
+    const data = { segmentCount: 0 } as LoadedLinesData;
+    const staged = { path: '/scene/l' } as unknown as StagedLinesCommit;
+    createLinesLoaderMock.mockReturnValue(makeLinesLoader(vi.fn().mockResolvedValue(data)));
+    const ctx = makeCtx();
+    ctx.spies.processLinesData.mockResolvedValue(staged);
+
+    await loadLinesNode(makeSceneNode(), new THREE.Group(), {} as never, ctx);
+
+    // Lines does NOT short-circuit on 0 segments — unlike a guarded `if` —
+    // because the placeholder needs the empty commit to seed its geometry.
+    expect(ctx.spies.processLinesData).toHaveBeenCalled();
+    expect(ctx.spies.commitLinesGeometry).toHaveBeenCalled();
+  });
+});
+
+describe('loadLinesNode — error path', () => {
+  it('records failure, rethrows LoaderError, placeholder stays attached', async () => {
+    const cause = new Error('decode failed');
+    createLinesLoaderMock.mockReturnValue(makeLinesLoader(vi.fn().mockRejectedValue(cause)));
+    const ctx = makeCtx();
+    const parent = new THREE.Group();
+
+    await expect(
+      loadLinesNode(makeSceneNode(), parent, {} as never, ctx)
+    ).rejects.toBeInstanceOf(LoaderError);
+
+    expect(parent.children.length).toBe(1);
+    expect(ctx.registry.failedLoaders.has('/scene/l')).toBe(true);
+    expect(ctx.registry.failedLoaders.get('/scene/l')?.error).toBe(cause);
+  });
+});
