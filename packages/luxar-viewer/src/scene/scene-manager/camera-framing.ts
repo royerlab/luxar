@@ -21,7 +21,7 @@
 import * as THREE from 'three';
 import { config } from '../../config';
 import { log, Modules } from '../../utils/log';
-import { calculateCameraDistance, type BoundingBox } from '../scene-manager-utils';
+import { calculateCameraDistance, type BoundingBox } from './scene-manager-utils';
 import {
   isPerspectiveCamera,
   isOrthographicCamera,

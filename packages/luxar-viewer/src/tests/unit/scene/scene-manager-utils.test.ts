@@ -23,7 +23,7 @@ import {
   transformBoundingBox,
   BoundingBox,
   CameraConfig,
-} from '../../../scene/scene-manager-utils';
+} from '../../../scene/scene-manager/scene-manager-utils';
 
 describe('scene-manager-utils', () => {
   describe('calculateBoundingBoxFromPositions', () => {
