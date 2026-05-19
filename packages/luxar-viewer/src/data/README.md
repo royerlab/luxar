@@ -60,7 +60,6 @@ data/
 │   ├── attrs-composer.ts          # Composes per-layer attributes along the scene graph
 │   ├── data-accumulator.ts        # Zero-allocation buffer pooling
 │   ├── directory-navigator.ts     # Multi-strategy server directory browsing
-│   ├── scene-graph-builder.ts     # Scene hierarchy builder (extracted from SceneLoader)
 │   ├── stats-aggregator.ts        # Accumulator stats aggregation across loaders
 │   └── tolerance-computer.ts      # Canonical tolerance computer (`computeTolerance`) used by all
 │                                  #   geometry types via `SpatialQueryBuilder` + by SceneLoader
@@ -144,12 +143,6 @@ The SceneLoader has been refactored into focused, testable modules:
 │ Builder │ │         │ │                 │ │             │
 └─────────┘ └─────────┘ └─────────────────┘ └─────────────┘
 ```
-
-**SceneGraphBuilder** (`scene-graph-builder.ts`):
-
-- Builds hierarchical scene structure from Zarr metadata
-- Pure data structure building (no THREE.js dependencies)
-- Enumerates store contents
 
 **NodeFactory** (`node-factory.ts`):
 
@@ -1030,15 +1023,6 @@ location /data/ {
 | `retryFailedLoader(nodeId)` | Retry a failed loader                     |
 | `retryAllFailedLoaders()`   | Retry all failed loaders                  |
 | `dispose()`                 | Clean up all resources                    |
-
-### Scene Graph Builder (scene-graph-builder.ts)
-
-| Class/Method                  | Description                            |
-| ----------------------------- | -------------------------------------- |
-| `SceneGraphBuilder`           | Builds scene hierarchy from Zarr       |
-| `constructor(store, rootLoc)` | Create builder with store and location |
-| `buildSceneGraph(rootAttrs)`  | Build complete scene graph             |
-| `getNodesOfType(node, type)`  | Get all nodes of a specific type       |
 
 ### Node Factory (node-factory.ts)
 

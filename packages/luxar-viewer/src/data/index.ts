@@ -62,10 +62,6 @@ export {
   distance3D,
 } from './lines/projection';
 
-// Scene graph builder (extracted from SceneLoader for modularity)
-export { SceneGraphBuilder } from './utils/scene-graph-builder';
-export type { StoreEntry } from './utils/scene-graph-builder';
-
 // Extracted modules (decomposed from SceneLoader)
 export {
   getAggregatedPointsAccumulatorStats,

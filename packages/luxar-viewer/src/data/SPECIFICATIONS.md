@@ -1744,7 +1744,7 @@ This section documents all TypeScript source files in the `data/` package with t
 
 **Key Exports**: `SceneLoader`
 
-**Relationships**: Uses `NodeFactory` for scene node creation, `SceneGraphBuilder` for zarr metadata parsing, `ViewStateManager` for view state initialization, `GPUBufferPool` for GPU buffer management, and `DataMonitorManager` for monitoring.
+**Relationships**: Uses `NodeFactory` for scene node creation, `ViewStateManager` for view state initialization, `GPUBufferPool` for GPU buffer management, and `DataMonitorManager` for monitoring. Scene-graph construction (zarr metadata enumeration + hierarchical `SceneNode` tree assembly + custom-colormap LUT loading + overlay-group skipping) is an inline orchestrator method.
 
 #### `scene-loader-manager.ts`
 
@@ -1753,14 +1753,6 @@ This section documents all TypeScript source files in the `data/` package with t
 **Key Exports**: `SceneLoaderManager`, `getSceneLoader()`
 
 **Relationships**: Wraps `SceneLoader`; provides centralized access for `zarr-loader.ts` and UI components.
-
-#### `scene-graph-builder.ts`
-
-**Purpose**: Builds the hierarchical `SceneNode` structure from Zarr store metadata. Handles store enumeration, node attribute parsing, URL normalization, and type detection. Extracted from `SceneLoader`.
-
-**Key Exports**: `SceneGraphBuilder`, `StoreEntry`
-
-**Relationships**: Produces `SceneNode` trees consumed by `SceneLoader` for THREE.js scene construction.
 
 ### 9.2 Spatial Index Loaders
 

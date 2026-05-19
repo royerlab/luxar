@@ -12,7 +12,6 @@ single geometry type's loader.
 | `data-accumulator.ts`                   | Zero-allocation buffer accumulator used by Points / Lines / GSplats loaders for nD scrub hot path                                     |
 | `directory-navigator.ts`                | Filesystem-style navigation over a zarr group hierarchy (used by dataset browser)                                                     |
 | `dims-to-view-state.ts`                 | Convert scene dimension metadata into the initial `ViewState`                                                                         |
-| `scene-graph-builder.ts`                | Convert a zarr group tree into the Luxar scene-graph form                                                                             |
 | `scene-stats.ts`, `stats-aggregator.ts` | Roll up per-loader stats into a single scene snapshot                                                                                 |
 | `tolerance-computer.ts`                 | Geometry-aware tolerance computation for nD slicing                                                                                   |
 
@@ -30,6 +29,3 @@ about is the top-level `src/data/index.ts` barrel.
   post-dispose use rather than corrupting memory.
 - `attrs-composer` walks parent attrs first, then child — child wins
   on conflict (standard inheritance).
-- `scene-graph-builder` is **structural** — it consumes a duck-typed
-  zarr group shape, not a concrete `zarr.Group` import, so the
-  builder is testable without spinning up zarr.
