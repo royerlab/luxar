@@ -12,22 +12,22 @@
  *
  * When FXAA is disabled, stage (3) writes directly to the backbuffer.
  *
- * @module rendering/post-processing/post-processing-manager
+ * @module rendering/post-processing-manager
  */
 
 import * as THREE from 'three';
 import { EXRExporter, ZIP_COMPRESSION } from 'three/examples/jsm/exporters/EXRExporter.js';
-import { log, Modules } from '../../utils/log';
-import { config } from '../../config';
-import { materialManager, type LuxarMegaShaderMaterial } from '../material-manager';
-import { BloomChain } from './bloom-chain';
-import { FxaaPass } from './fxaa-pass';
-import { FullscreenPass } from './fullscreen-pass';
-import { computeEffectiveRenderSize } from './render-target-sizing';
-import type { Renderer, RendererCapabilities } from '../renderer-capabilities';
-import { halfFloatToFloat32, float32ToHalfFloat, readPixelsCompactAsync } from './hdr-pixel-utils';
-import { formatHDRExrLogLine } from './hdr-capture';
-import { clamp } from '../../utils/clamp';
+import { log, Modules } from '../utils/log';
+import { config } from '../config';
+import { materialManager, type LuxarMegaShaderMaterial } from './material-manager';
+import { BloomChain } from './post-processing/bloom-chain';
+import { FxaaPass } from './post-processing/fxaa-pass';
+import { FullscreenPass } from './post-processing/fullscreen-pass';
+import { computeEffectiveRenderSize } from './post-processing/render-target-sizing';
+import type { Renderer, RendererCapabilities } from './renderer-capabilities';
+import { halfFloatToFloat32, float32ToHalfFloat, readPixelsCompactAsync } from './post-processing/hdr-pixel-utils';
+import { formatHDRExrLogLine } from './post-processing/hdr-capture';
+import { clamp } from '../utils/clamp';
 
 /** Validated MSAA sample counts. */
 const VALID_MSAA_SAMPLES = [0, 2, 4, 8, 16] as const;
