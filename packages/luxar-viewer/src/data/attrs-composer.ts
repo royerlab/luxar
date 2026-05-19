@@ -18,8 +18,8 @@
  * API documents; viewer and spec match intentionally.
  */
 
-import type { SceneNode } from '../data-loader-types';
-import { clamp } from '../../utils/clamp';
+import type { SceneNode } from './data-loader-types';
+import { clamp } from '../utils/clamp';
 
 export interface ComposableAttrs {
   opacity?: number;

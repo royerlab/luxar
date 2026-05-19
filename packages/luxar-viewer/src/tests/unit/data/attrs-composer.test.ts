@@ -3,7 +3,7 @@ import {
   composeAttrs,
   collectAncestorAttrs,
   getEffectiveAttrs,
-} from '../../../data/utils/attrs-composer';
+} from '../../../data/attrs-composer';
 import type { SceneNode } from '../../../data/data-loader-types';
 
 describe('composeAttrs', () => {

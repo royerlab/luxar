@@ -183,7 +183,7 @@ unit that does not span multiple geometry types:
   dependency.
 - `attrs-applier.ts` — extract `applyEffectiveAttrs()` (~60 LOC). It
   composes parent + node attrs and delegates to
-  `data/utils/attrs-composer.ts`.
+  `data/attrs-composer.ts`.
 - `view-updater.ts` — pull the `updateView()` orchestration shell
   (~100 LOC) leaving the per-geometry data-processor calls in place.
 
