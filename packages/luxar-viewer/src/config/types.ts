@@ -27,6 +27,9 @@ import type {
 } from './sections/webgl/types';
 export type { WebGLConfig, WebGLContextAttributes, WebGLRendererConfig, WebGLRenderTargetConfig };
 
+import type { InputConfig } from './sections/input/types';
+export type { InputConfig };
+
 /**
  * Configuration range with min/max/default/step
  */
@@ -109,37 +112,6 @@ export interface ControlsConfig {
   fly: FlyControlsConfig;
   orbit: OrbitControlsConfig;
   scaleMultipliers: ScaleMultipliers;
-}
-
-/**
- * Input handling configuration
- */
-export interface InputConfig {
-  defaultSensitivity: number;
-  keyboard: {
-    shortcuts: {
-      toggleFullscreen: string;
-      toggleHelp: string;
-      toggleDimensions: string;
-      toggleDatasetBrowser: string;
-      togglePerformance: string;
-      toggleRendering: string;
-      toggleScaleBar: string;
-      toggleColormapLegend: string;
-      toggleDebugConsole: string;
-      toggleLayers: string;
-      recenterCamera: string;
-      toggleControlMode: string;
-      toggleInertialMode: string;
-      toggleCinematicMode: string;
-      toggleOverlays: string;
-    };
-    flyModeKeys: string[];
-    dimensionKeys: string[];
-  };
-  mouse: {
-    doubleClickDelay: number;
-  };
 }
 
 // Styling uses CSS variables and classes in src/styles/ (see the
