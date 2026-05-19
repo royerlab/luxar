@@ -25,31 +25,31 @@
  * Mechanics identical to `PointTSLMaterial` for the
  * uniforms-by-reference binding pattern.
  *
- * @module rendering/gsplat-material-tsl
+ * @module rendering/materials/gsplat/material-tsl
  */
 
 import * as THREE from 'three';
 import { texture, uniform } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-import { gsplatWebGPUFactory, type GSplatTSLNodes } from './gsplat.tsl';
-import type { GSplatMaterialConfig } from './gsplat-material';
-import type { CameraAwareMaterial } from './camera-aware-material';
-import type { ColormapAwareMaterial } from './colormap-aware-material';
-import { clampGamma } from './material-uniform-helpers';
-import { computeFocalLength } from './camera-uniforms';
-import { computeRayIntegralFactor } from './gsplat-math';
+import { gsplatWebGPUFactory, type GSplatTSLNodes } from './shader-tsl';
+import type { GSplatMaterialConfig } from './material-glsl';
+import type { CameraAwareMaterial } from '../../camera-aware-material';
+import type { ColormapAwareMaterial } from '../../colormap-aware-material';
+import { clampGamma } from '../../material-uniform-helpers';
+import { computeFocalLength } from '../../camera-uniforms';
+import { computeRayIntegralFactor } from './math';
 import {
   applyColormapTextureToMaterial,
   applyScalarRangeToMaterial,
-} from './material-colormap-helpers';
+} from '../../material-colormap-helpers';
 import {
   applyBlendingStateToMaterial,
   getCompleteBlendingState,
   isMaxMode,
   type CompleteBlendingState,
-} from './blending-state';
-import { proxyIUniform, type TSLNode } from './tsl-helpers';
-import type { BlendingMode } from './material-manager';
+} from '../../blending-state';
+import { proxyIUniform, type TSLNode } from '../../tsl-helpers';
+import type { BlendingMode } from '../../material-manager';
 
 export class GSplatTSLMaterial
   extends NodeMaterial

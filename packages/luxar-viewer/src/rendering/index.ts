@@ -15,7 +15,7 @@
 // Materials
 export { PointMaterial } from './materials/point/material-glsl';
 export { LineMaterial } from './materials/line/material-glsl';
-export { GSplatMaterial } from './gsplat-material';
+export { GSplatMaterial } from './materials/gsplat/material-glsl';
 export { MaterialManager, materialManager } from './material-manager';
 
 // GPU buffer pooling

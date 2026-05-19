@@ -34,7 +34,7 @@
  *   - Shifted Gaussian intensity: a · scale · max(0, exp(-r²/2) - C).
  *   - GOG (gain/offset/gamma) + opacity multiply on output RGB.
  *
- * @module rendering/gsplat.tsl
+ * @module rendering/materials/gsplat/shader-tsl
  */
 
 import * as THREE from 'three';
@@ -64,10 +64,10 @@ import {
   screenCoordinate,
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-import { invalidFloatTSL, type TSLNode } from './tsl-helpers';
-import { applyBlendingStateToMaterial, getCompleteBlendingState } from './blending-state';
-import type { BlendingMode } from './material-manager';
-import { isMaxMode } from './blending-state';
+import { invalidFloatTSL, type TSLNode } from '../../tsl-helpers';
+import { applyBlendingStateToMaterial, getCompleteBlendingState } from '../../blending-state';
+import type { BlendingMode } from '../../material-manager';
+import { isMaxMode } from '../../blending-state';
 
 // Type-erased constructor aliases. TSL's typed `vec2`/`vec3`/`vec4`/`mat3`
 // overloads reject many valid combinations of intermediate `Node<…>`

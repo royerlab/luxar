@@ -9,10 +9,10 @@
 import * as THREE from 'three';
 import { PointMaterial } from './materials/point/material-glsl';
 import { LineMaterial } from './materials/line/material-glsl';
-import { GSplatMaterial } from './gsplat-material';
+import { GSplatMaterial } from './materials/gsplat/material-glsl';
 import { PointTSLMaterial } from './materials/point/material-tsl';
 import { LineTSLMaterial } from './materials/line/material-tsl';
-import { GSplatTSLMaterial } from './gsplat-material-tsl';
+import { GSplatTSLMaterial } from './materials/gsplat/material-tsl';
 import { PointPickingMaterial } from './picking/point-picking-material';
 import { LinePickingMaterial } from './picking/line-picking-material';
 import { GSplatPickingMaterial } from './picking/gsplat-picking-material';
