@@ -42,6 +42,7 @@ import { ExrSequenceDriver } from './recording-panel/drivers/exr-sequence-driver
 import { VideoModeDriver } from './recording-panel/drivers/video-mode-driver';
 import { captureScreenshot, type ScreenshotCtx } from './recording-panel/modes/screenshot-mode';
 import { startVideoRecording, type VideoModeCtx } from './recording-panel/modes/video-mode';
+import { buildRecordingGUI } from './recording-panel/ui/gui-construction';
 
 // Shared recording types live in `recording/types.ts`. Re-exported
 // here for external consumers that import from the panel directly.
@@ -56,10 +57,7 @@ export type {
 } from './recording-panel/types';
 import type {
   RecordingMode,
-  VideoResolution,
   OutputFormat,
-  VideoCodecOption,
-  VideoQuality,
   PanelStates,
   RecordingOptions,
 } from './recording-panel/types';
@@ -972,267 +970,30 @@ export class RecordingPanel {
   // ========== GUI Construction ==========
 
   private buildGUI(): void {
-    // Mode toggle — at the top
-    const modeObj = { mode: this.mode };
-    this.gui
-      .add(modeObj, 'mode', { Image: 'image', Video: 'video', Turntable: 'turntable' })
-      .name('Mode')
-      .onChange((val: string) => {
-        this.mode = val as RecordingMode;
-        this.updateControlVisibility();
-      });
-
-    // Advanced Options folder (starts closed)
-    const advanced = this.gui.addFolder('Advanced Options');
-    advanced.close();
-
-    // ── General options (inside Advanced) ──
-    const generalSettings = { showPanels: this.options.showPanels };
-    const showPanelsCtrl = advanced
-      .add(generalSettings, 'showPanels')
-      .name('Show Panels')
-      .onChange((val: boolean) => {
-        this.options.showPanels = val;
-      });
-    showPanelsCtrl.domElement
-      .closest('.luxar-gui__controller')
-      ?.setAttribute('title', 'Keep other panels visible during capture');
-
-    const overlaySettings = { includeOverlays: this.options.includeOverlays };
-    const overlayCtrl = advanced
-      .add(overlaySettings, 'includeOverlays')
-      .name('Include Overlays')
-      .onChange((val: boolean) => {
-        this.options.includeOverlays = val;
-      });
-    overlayCtrl.domElement
-      .closest('.luxar-gui__controller')
-      ?.setAttribute('title', 'Composite text/image/HTML overlays into the capture');
-
-    // ── Image options ──
-    const imgSettings = {
-      format: this.options.outputFormat,
-      quality: this.options.imageQuality,
-      maxDPR: this.options.maxDPR,
-      transparentBg: this.options.transparentBackground,
-    };
-
-    const formatCtrl = advanced
-      .add(imgSettings, 'format', {
-        PNG: 'png',
-        WebP: 'webp',
-        JPEG: 'jpeg',
-        EXR: 'exr',
-        MP4: 'mp4',
-        WebM: 'webm',
-        MKV: 'mkv',
-      })
-      .name('Format')
-      .onChange((val: string) => {
-        this.options.outputFormat = val as OutputFormat;
-        this.updateControlVisibility();
-      });
-    this.formatController = formatCtrl;
-    // Format is always visible (applies to both image and video/turntable modes)
-
-    const qualityCtrl = advanced
-      .add(imgSettings, 'quality', 0.1, 1.0, 0.05)
-      .name('Image Quality')
-      .onChange((val: number) => {
-        this.options.imageQuality = val;
-      });
-    this.imageControllers.push(qualityCtrl);
-    this.qualityController = qualityCtrl;
-
-    const maxDPRCtrl = advanced
-      .add(imgSettings, 'maxDPR')
-      .name('Max Resolution')
-      .onChange((val: boolean) => {
-        this.options.maxDPR = val;
-      });
-    maxDPRCtrl.domElement
-      .closest('.luxar-gui__controller')
-      ?.setAttribute('title', 'Maximize pixel ratio for highest resolution screenshot');
-    this.imageControllers.push(maxDPRCtrl);
-
-    const transparentCtrl = advanced
-      .add(imgSettings, 'transparentBg')
-      .name('Transparent BG')
-      .onChange((val: boolean) => {
-        this.options.transparentBackground = val;
-      });
-    transparentCtrl.domElement
-      .closest('.luxar-gui__controller')
-      ?.setAttribute('title', 'Transparent background (PNG/WebP only, auto-switches from JPEG)');
-    this.imageControllers.push(transparentCtrl);
-    this.transparentController = transparentCtrl;
-
-    // ── Video options ──
-    const vidSettings = {
-      duration: this.options.videoDurationLimit,
-      fps: this.options.videoFPS,
-      codec: this.options.videoCodec,
-      quality: this.options.videoQuality,
-      resolution: this.options.videoResolution,
-      syncToSlider: this.options.syncToSlider,
-      syncDim: this.options.syncDimensionIndex,
-    };
-
-    const videoQualityCtrl = advanced
-      .add(vidSettings, 'quality', { Low: 'low', Medium: 'medium', High: 'high', Max: 'max' })
-      .name('Video Quality')
-      .onChange((val: string) => {
-        this.options.videoQuality = val as VideoQuality;
-      });
-    videoQualityCtrl.domElement
-      .closest('.luxar-gui__controller')
-      ?.setAttribute(
-        'title',
-        'Video bitrate quality (Low ~2.5Mbps, Medium ~5Mbps, High ~9Mbps, Max ~19Mbps at 1080p)'
-      );
-    this.videoControllers.push(videoQualityCtrl);
-    this.videoQualityController = videoQualityCtrl;
-
-    const resolutionCtrl = advanced
-      .add(vidSettings, 'resolution', { Native: 0, '1080p': 1080, '1440p': 1440, '4K': 2160 })
-      .name('Resolution')
-      .onChange((val: number) => {
-        this.options.videoResolution = val as VideoResolution;
-      });
-    resolutionCtrl.domElement
-      .closest('.luxar-gui__controller')
-      ?.setAttribute('title', 'Output video resolution (Native = current canvas size)');
-    this.videoControllers.push(resolutionCtrl);
-
-    const durationCtrl = advanced
-      .add(vidSettings, 'duration', 0, 300, 1)
-      .name('Max Duration (s)')
-      .onChange((val: number) => {
-        this.options.videoDurationLimit = val;
-      });
-    durationCtrl.domElement
-      .closest('.luxar-gui__controller')
-      ?.setAttribute('title', 'Recording duration limit in seconds (0 = unlimited)');
-    this.videoControllers.push(durationCtrl);
-    this.videoDurationController = durationCtrl;
-
-    const fpsCtrl = advanced
-      .add(vidSettings, 'fps', { '30 FPS': 30, '60 FPS': 60 })
-      .name('Frame Rate')
-      .onChange((val: number) => {
-        this.options.videoFPS = val;
-      });
-    this.videoControllers.push(fpsCtrl);
-
-    // Video codec selector (shown only for MP4/WebM formats)
-    const codecCtrl = advanced
-      .add(vidSettings, 'codec', {
-        'H.265': 'h265',
-        VP9: 'vp9',
-        'H.264': 'h264',
-        VP8: 'vp8',
-      })
-      .name('Codec')
-      .onChange((val: string) => {
-        this.options.videoCodec = val as VideoCodecOption;
-      });
-    this.videoControllers.push(codecCtrl);
-    this.videoCodecController = codecCtrl;
-
-    // Sync to slider
-    const syncCtrl = advanced
-      .add(vidSettings, 'syncToSlider')
-      .name('Sync to Slider')
-      .onChange((val: boolean) => {
-        this.options.syncToSlider = val;
-        this.syncDimensionController?.[val ? 'show' : 'hide']();
-      });
-    syncCtrl.domElement
-      .closest('.luxar-gui__controller')
-      ?.setAttribute('title', 'Sync recording to a dimension animation (auto-stop at end)');
-    this.videoControllers.push(syncCtrl);
-    this.syncToggleController = syncCtrl;
-
-    // Sync dimension dropdown
-    const dimNames = this.getNavigableDimensionOptions();
-    const syncDimCtrl = advanced
-      .add(vidSettings, 'syncDim', dimNames)
-      .name('Dimension')
-      .onChange((val: number) => {
-        this.options.syncDimensionIndex = val;
-      });
-    this.videoControllers.push(syncDimCtrl);
-    this.syncDimensionController = syncDimCtrl;
-
-    // ── Turntable options ──
-    const ttSettings = { speed: this.options.turntableSpeed };
-
-    // Turntable info display (computed from speed + FPS, read-only)
-    const turntableInfo = { info: this.getTurntableInfo() };
-    const turntableInfoCtrl = advanced.add(turntableInfo, 'info').name('Output');
-    // Make the input read-only (this is a computed display, not user-editable)
-    const infoInput = turntableInfoCtrl.domElement.querySelector('input');
-    if (infoInput) {
-      infoInput.readOnly = true;
-      infoInput.style.opacity = '0.7';
-      infoInput.style.cursor = 'default';
-    }
-    this.turntableControllers.push(turntableInfoCtrl);
-
-    const updateTurntableInfo = () => {
-      turntableInfo.info = this.getTurntableInfo();
-      turntableInfoCtrl.updateDisplay();
-    };
-
-    const speedCtrl = advanced
-      .add(ttSettings, 'speed', 6, 180, 1)
-      .name('Speed (°/s)')
-      .onChange((val: number) => {
-        this.options.turntableSpeed = val;
-        updateTurntableInfo();
-      });
-    speedCtrl.domElement
-      .closest('.luxar-gui__controller')
-      ?.setAttribute('title', 'Rotation speed in degrees per second (36 = 10s for 360°)');
-    this.turntableControllers.push(speedCtrl);
-
-    // Also update turntable info when FPS changes
-    fpsCtrl.onChange((val: number) => {
-      this.options.videoFPS = val;
-      updateTurntableInfo();
-    });
-
-    // Frame-by-frame (smooth) checkbox
-    const fbfSettings = { frameByFrame: this.options.frameByFrame };
-    const fbfCtrl = advanced
-      .add(fbfSettings, 'frameByFrame')
-      .name('Smooth (offline)')
-      .onChange((val: boolean) => {
-        this.options.frameByFrame = val;
-      });
-    fbfCtrl.domElement
-      .closest('.luxar-gui__controller')
-      ?.setAttribute(
-        'title',
-        'Render each frame individually for perfectly smooth video. ' +
-          'Slower to capture, but guarantees every frame is fully rendered. ' +
-          'Recommended for heavy scenes.'
-      );
-    this.turntableControllers.push(fbfCtrl);
-
-    // Capture/Record button — at the bottom, prominent
-    const actions = {
-      capture: () => {
-        if (this.mode === 'image') {
-          this.captureScreenshot();
-        } else {
-          this.startVideoRecording();
-        }
+    const result = buildRecordingGUI({
+      gui: this.gui,
+      options: this.options,
+      initialMode: this.mode,
+      setMode: (mode) => {
+        this.mode = mode;
       },
-    };
-    const captureBtn = this.gui.add(actions, 'capture').name('Capture');
-    captureBtn.domElement.closest('.luxar-gui__controller')?.classList.add('luxar-recording-btn');
-
+      updateControlVisibility: () => this.updateControlVisibility(),
+      getTurntableInfo: () => this.getTurntableInfo(),
+      getNavigableDimensionOptions: () => this.getNavigableDimensionOptions(),
+      captureScreenshot: () => this.captureScreenshot(),
+      startVideoRecording: () => this.startVideoRecording(),
+    });
+    this.formatController = result.formatController;
+    this.qualityController = result.qualityController;
+    this.transparentController = result.transparentController;
+    this.videoCodecController = result.videoCodecController;
+    this.videoQualityController = result.videoQualityController;
+    this.videoDurationController = result.videoDurationController;
+    this.syncToggleController = result.syncToggleController;
+    this.syncDimensionController = result.syncDimensionController;
+    this.imageControllers = result.imageControllers;
+    this.videoControllers = result.videoControllers;
+    this.turntableControllers = result.turntableControllers;
     this.updateControlVisibility();
   }
 
