@@ -12,7 +12,7 @@
 
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { computeSceneStats } from '../../../../data/utils/scene-stats';
+import { computeSceneStats } from '../../../../data/stats/scene-stats';
 
 function makePoints(
   count: number,
