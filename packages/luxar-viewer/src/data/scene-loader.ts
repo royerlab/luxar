@@ -32,7 +32,6 @@ import {
   type StagedGSplatsCommit,
 } from './scene-loader/process/data-processor-gsplats';
 import {
-  createPointsLoader as createPointsLoaderHelper,
   createLinesLoader as createLinesLoaderHelper,
   createGSplatsLoader as createGSplatsLoaderHelper,
   createProgressiveGSplatsLoader as createProgressiveGSplatsLoaderHelper,
@@ -76,7 +75,6 @@ import { ArrayRefRegistry } from './array-decoder/decoder';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { config as appConfig } from '../config';
 import { MultiLevelCachingStore, DecompressedChunkCache } from '../cache';
-import type { PointsMetadata } from '../types/points';
 import type {
   LinesMetadata,
   LinesDataLoader,
@@ -132,6 +130,8 @@ import { deriveNodeViewState as deriveNodeViewStateHelper } from './scene-loader
 import { runLoaderUpdates as runLoaderUpdatesHelper } from './scene-loader/run-loader-updates';
 import { updateVisibleCountsInMonitor as updateVisibleCountsInMonitorHelper } from './scene-loader/visible-counts';
 import { disposeSceneLoader } from './scene-loader/dispose';
+import { loadPointsNode } from './scene-loader/nodes/load-points-node';
+import type { NodeBuildCtx } from './scene-loader/nodes/build-ctx';
 
 /**
  * Main scene loader that handles the complete loading pipeline.
@@ -1073,90 +1073,40 @@ export class SceneLoader {
   }
 
   /**
-   * Load a single points node
+   * Build the per-call NodeBuildCtx for the initial-load leaf helpers.
+   * Snapshots viewState + factoryDeps so a concurrent updateView can't
+   * mutate state mid-flight. Never passes `this`.
+   */
+  private makeNodeBuildCtx(): NodeBuildCtx {
+    return {
+      registry: this.registry,
+      nodeFactory: this.nodeFactory,
+      viewState: this.viewState,
+      factoryDeps: this.factoryDeps(),
+      applyEffectiveAttrs: (node) => this.applyEffectiveAttrs(node),
+      deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),
+      connectLoaderToMonitor: (path, loader) => this.connectLoaderToMonitor(path, loader),
+      updatePointsGeometry: (path, data, session) =>
+        this.updatePointsGeometry(path, data, session),
+      processLinesData: (path, data, viewState, session) =>
+        this.processLinesData(path, data, viewState, session),
+      commitLinesGeometry: (staged, session) => this.commitLinesGeometry(staged, session),
+      processGSplatsData: (path, data, viewState, session) =>
+        this.processGSplatsData(path, data, viewState, session),
+      commitGSplatsGeometry: (staged, session) => this.commitGSplatsGeometry(staged, session),
+    };
+  }
+
+  /**
+   * Load a single points node. Implementation lives in
+   * `scene-loader/nodes/load-points-node.ts`.
    */
   private async loadPoints(
     node: SceneNode,
     parentThree: THREE.Object3D,
     loc: zarr.Location<zarr.Readable>
   ): Promise<THREE.Mesh | null> {
-    log.custom('📍', Modules.SCENE_LOADER, `Loading points: ${node.path}`);
-    log.info(Modules.SCENE_LOADER, `  Has spatial index: ${node.hasSpatialIndex}`);
-    log.info(Modules.SCENE_LOADER, `  Total points: ${node.attrs.n_points || 'unknown'}`);
-
-    // Create appropriate loader
-    const loader = this.createLoader(node, loc);
-
-    // Store loader for updates (route through the registry's
-    // register* methods rather than mutating its internal map).
-    this.registry.registerPointsLoader(node.path, loader);
-
-    // Construct + attach an empty placeholder before fetching data, so an
-    // initial-load failure leaves a recoverable scene state.
-    // commit-points-geometry finds the placeholder by name and populates
-    // it once data arrives (initial fetch or future retry/update); the
-    // 0-points → N-points transition naturally takes the "different size"
-    // branch in commitPointsGeometry. retryFailedLoader() reads the
-    // placeholder's `userData.attrs` to derive the retry view state.
-    const attrs = this.applyEffectiveAttrs(node) as unknown as PointsMetadata;
-    const placeholder = this.nodeFactory.createEmptyPointsNode(node.path, attrs, loader);
-    parentThree.add(placeholder);
-
-    try {
-      // Load points data
-      log.info(Modules.SCENE_LOADER, 'Initial ViewState for loading:');
-      log.info(Modules.SCENE_LOADER, `  displayDims: [${this.viewState.displayDims.join(', ')}]`);
-      log.info(
-        Modules.SCENE_LOADER,
-        `  slicePosition: [${this.viewState.slicePosition.join(', ')}]`
-      );
-      log.info(Modules.SCENE_LOADER, `  tolerance: [${this.viewState.tolerance.join(', ')}]`);
-
-      // Route initial load through deriveNodeViewState (same helper as
-      // the main update path and retry) so initial / update / retry can
-      // never silently load different query regions. Initial load doesn't
-      // apply the full-extend skip — we still want to construct the THREE
-      // node so future slice changes can populate it; the skip return only
-      // happens on update/retry where there's an existing node to leave
-      // alone.
-      const derived = this.deriveNodeViewState(node.path, node.attrs, {
-        applyPartialExtendTolerance: true,
-      });
-      let pointsViewState: ViewState;
-      if (derived.skip) {
-        // Full-extend on initial load: behave as if extend_to_all
-        // weren't set (load with the base view state) so the empty
-        // node still gets constructed.
-        pointsViewState = this.viewState;
-      } else {
-        pointsViewState = derived.viewState;
-      }
-
-      const data = await loader.loadPoints(pointsViewState);
-
-      // Log if no initial points are visible (this is normal for nD slicing)
-      if (data.pointCount === 0) {
-        log.info(
-          Modules.SCENE_LOADER,
-          `No initially visible points for ${node.path} - object created for future updates`
-        );
-      }
-
-      // Commit data into the placeholder via the same path future
-      // updateView() / retry calls use. Unifies initial-load and update
-      // through one geometry-commit code path.
-      this.updatePointsGeometry(node.path, data);
-
-      log.success(Modules.SCENE_LOADER, `Loaded ${data.pointCount} points for ${node.path}`);
-
-      return placeholder;
-    } catch (error) {
-      // Record the failure so `retryFailedLoader(path)` can target this
-      // node. The placeholder stays attached to the scene (added before
-      // this try/catch), so retry can populate it.
-      this.registry.recordFailure(node.path, error as Error);
-      throw new LoaderError(classifyLoaderError(error), node.path, error);
-    }
+    return loadPointsNode(node, parentThree, loc, this.makeNodeBuildCtx());
   }
 
   /**
@@ -1374,17 +1324,6 @@ export class SceneLoader {
       this.applyEffectiveAttrs(node),
       this.factoryDeps()
     );
-    this.connectLoaderToMonitor(node.path, loader);
-    return loader;
-  }
-
-  /**
-   * Create the points spatial index loader for a node and connect it to
-   * the data monitor (the monitor wiring stays here because it touches
-   * SceneManager-only state — the factory only constructs the loader).
-   */
-  private createLoader(node: SceneNode, loc: zarr.Location<zarr.Readable>): DataLoader {
-    const loader = createPointsLoaderHelper(node, loc, this.factoryDeps());
     this.connectLoaderToMonitor(node.path, loader);
     return loader;
   }
