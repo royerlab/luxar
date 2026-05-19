@@ -76,7 +76,6 @@ import { ArrayRefRegistry } from './array-decoder/decoder';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { config as appConfig } from '../config';
 import { MultiLevelCachingStore, DecompressedChunkCache } from '../cache';
-import { disposeCustomColormapTextures } from '../rendering/colormap-textures';
 import type { PointsMetadata } from '../types/points';
 import type {
   LinesMetadata,
@@ -84,11 +83,9 @@ import type {
   LinesViewState,
   LoadedLinesData,
 } from '../types/lines';
-import { isLinesUserData } from '../types/lines';
 import type {
   GSplatsMetadata,
   GSplatsDataLoader,
-  GSplatsUserData,
   GSplatsViewState,
   LoadedGSplatsData,
 } from '../types/gsplats';
@@ -133,6 +130,8 @@ import {
 } from './scene-loader/retry';
 import { deriveNodeViewState as deriveNodeViewStateHelper } from './scene-loader/derive-node-view-state';
 import { runLoaderUpdates as runLoaderUpdatesHelper } from './scene-loader/run-loader-updates';
+import { updateVisibleCountsInMonitor as updateVisibleCountsInMonitorHelper } from './scene-loader/visible-counts';
+import { disposeSceneLoader } from './scene-loader/dispose';
 
 /**
  * Main scene loader that handles the complete loading pipeline.
@@ -932,24 +931,7 @@ export class SceneLoader {
    * This should be called after view updates to report accurate visible counts.
    */
   private updateVisibleCountsInMonitor(): void {
-    if (!this.rootGroup || !this.monitor) return;
-
-    let totalVisibleSegments = 0;
-    let totalVisibleSplats = 0;
-
-    // Traverse all objects in the scene graph
-    this.rootGroup.traverse((object) => {
-      if (object instanceof THREE.Mesh) {
-        if (isLinesUserData(object.userData)) {
-          totalVisibleSegments += object.userData.visibleSegmentCount ?? 0;
-        } else if (object.userData?.nodeType === 'gsplats') {
-          totalVisibleSplats += (object.userData as GSplatsUserData).visibleSplatCount ?? 0;
-        }
-      }
-    });
-
-    this.monitor.updateVisibleSegments(totalVisibleSegments);
-    this.monitor.updateVisibleSplats(totalVisibleSplats);
+    updateVisibleCountsInMonitorHelper(this.rootGroup, this.monitor);
   }
 
   /**
@@ -1659,85 +1641,26 @@ export class SceneLoader {
    * which is the right scope for that lifecycle.
    */
   async dispose(): Promise<void> {
-    // Abort the dataset-scoped signal first so any in-flight worker
-    // `runWithTimeout` callers settle immediately instead of waiting
-    // for their tasks to complete (WASM tasks themselves keep running
-    // but their results are discarded). Clear the pool's reference
-    // afterwards so future workers don't get an already-aborted
-    // signal from this disposed loader.
-    if (this._datasetAbortController) {
-      this._datasetAbortController.abort();
-      this._datasetAbortController = null;
-    }
-    getWorkerPool().setAbortSignal(undefined);
+    await disposeSceneLoader({
+      datasetAbortController: this._datasetAbortController,
+      registry: this.registry,
+      gpuBufferPool: this._gpuBufferPool,
+      cachingStore: this.cachingStore,
+      l0Cache: this.l0Cache,
+      viewStateQueue: this.viewStateQueue,
+      monitor: this.monitor,
+    });
 
-    // Dispose all geometry loaders via registry
-    this.registry.disposeAll();
-
-    // dispose GPU buffer pool. Without this, the pool retains
-    // active+pooled InstancedBufferGeometry references after a dataset
-    // switch — at million-element scale this can leak hundreds of MB
-    // of GPU memory until the page is refreshed. The pool's internal
-    // dispose() is idempotent.
-    if (this._gpuBufferPool) {
-      try {
-        this._gpuBufferPool.dispose();
-      } catch (error) {
-        log.warning(Modules.SCENE_LOADER, 'GPU buffer pool disposal failed', error);
-      }
-      this._gpuBufferPool = null;
-    }
-
-    // Dispose caching store (flushes L2 metadata, clears L1).
-    // Awaited so a dataset switch sees the previous L2 fully drained
-    // before the next caching store is constructed.
-    if (this.cachingStore) {
-      try {
-        await this.cachingStore.dispose();
-      } catch (error) {
-        log.warning(Modules.SCENE_LOADER, 'Caching store disposal failed', error);
-      }
-      this.cachingStore = null;
-    }
-
-    // Clear L0 decompressed chunk cache
-    if (this.l0Cache) {
-      const stats = this.l0Cache.getStats();
-      log.info(
-        Modules.SCENE_LOADER,
-        `L0 cache stats at dispose: ${stats.count} chunks, ${(stats.size / 1024 / 1024).toFixed(1)}MB, ` +
-          `hit rate: ${(stats.hitRate * 100).toFixed(1)}%`
-      );
-      this.l0Cache.clear();
-      this.l0Cache = null;
-    }
-
+    // Clear the orchestrator's nullable fields. The helper handled the
+    // actual resource-release work; the references stay live across the
+    // await so the helper can address them.
+    this._datasetAbortController = null;
+    this._gpuBufferPool = null;
+    this.cachingStore = null;
+    this.l0Cache = null;
     this._zarrStore = null;
     this.rootGroup = null;
     this._sceneGraph = null;
-
-    // S6: clear per-loader prefetch predictor state on dispose so a
-    // reused SceneLoader doesn't extrapolate from a prior dataset.
-    this.viewStateQueue.clearPrev();
-
-    // Dispose dataset-scoped custom colormap LUTs. The custom-LUT cache
-    // is keyed by content hash and shared across all scenes, but entries
-    // from an unloaded dataset have no value and would accumulate in a
-    // long-lived app that swaps many unique LUTs. Built-ins survive
-    // because they're shared with all scenes and cheap to keep.
-    try {
-      disposeCustomColormapTextures();
-    } catch (error) {
-      log.warning(Modules.SCENE_LOADER, 'Custom colormap disposal failed', error);
-    }
-
-    // Tell the monitor to drop its scene-loader-bound closures (cache
-    // stats, L0 cache, GPU buffer pool, accumulators, profiler) before
-    // we release our reference. Without this, the monitor outlives the
-    // loader with closures that capture our nulled-out fields and NPE
-    // on the next stats poll. The monitor's lifecycle itself is owned
-    // by core/app.ts via DataMonitorManager.
-    this.monitor?.disconnectAllLoaders();
     this.monitor = null;
   }
 }
