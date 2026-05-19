@@ -11,10 +11,10 @@
  * sync without re-construction.
  */
 
-import { log, Modules } from '../../utils/log';
-import { type LuxarCamera, updateCameraAspect } from '../../utils/camera-utils';
-import type { PostProcessingManager } from '../../rendering/post-processing/post-processing-manager';
-import type { Renderer } from '../../rendering/renderer-capabilities';
+import { log, Modules } from '../../../utils/log';
+import { type LuxarCamera, updateCameraAspect } from '../../../utils/camera-utils';
+import type { PostProcessingManager } from '../../../rendering/post-processing/post-processing-manager';
+import type { Renderer } from '../../../rendering/renderer-capabilities';
 import { getActivePixelRatio, syncPostProcessingDPRScale } from './dpr-policy';
 
 export interface ResizeCtx {

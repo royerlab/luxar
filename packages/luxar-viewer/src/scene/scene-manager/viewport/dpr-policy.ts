@@ -7,7 +7,7 @@
  * informs when DPR changes) are passed in by callers.
  */
 
-import type { PostProcessingManager } from '../../rendering/post-processing/post-processing-manager';
+import type { PostProcessingManager } from '../../../rendering/post-processing/post-processing-manager';
 
 /** Return the DPR currently applied to renderer sizing. */
 export function getActivePixelRatio(override: number | null): number {

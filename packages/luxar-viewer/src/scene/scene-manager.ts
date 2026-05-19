@@ -46,12 +46,12 @@ import {
 } from './scene-manager/camera/camera-setup';
 import { computeSceneBoundingBox, fitCameraToBounds } from './scene-manager/camera/camera-framing';
 import { WebGLContextRecovery } from './scene-manager/render-pipeline/webgl-context-recovery';
-import { ResizeOrchestrator } from './scene-manager/resize-orchestrator';
+import { ResizeOrchestrator } from './scene-manager/viewport/resize-orchestrator';
 import {
   computePixelRatioOverride,
   getActivePixelRatio as dprGetActive,
   getNormalizedDPRScale as dprGetNormalized,
-} from './scene-manager/dpr-policy';
+} from './scene-manager/viewport/dpr-policy';
 import {
   type LuxarCamera,
   isPerspectiveCamera,
