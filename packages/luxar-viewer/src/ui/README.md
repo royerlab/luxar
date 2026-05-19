@@ -24,66 +24,102 @@ The Luxar UI package provides a comprehensive set of user interface components f
 
 ### Package Architecture
 
+All public-API files live at `ui/` root. Sibling folders hold each
+public file's private helpers. Generic-named folders (`components/`,
+`helpers/`, `panels/`, `monitors/`) and buried `index.ts` barrels were
+eliminated in a structural refactor — a developer reading a path can
+now predict the audience, peers, and home for a new sibling without
+opening files.
+
 ```
 ui/
-├── rendering-controls.ts        # Visual parameter adjustments (main class)
-├── rendering-controls/          # Modular setup functions + utils
-│   ├── types.ts                 # Shared types (SetupContext, SetupResult)
-│   ├── navigation-setup.ts      # Navigation controls (orbit, fly, ortho)
-│   ├── camera-setup.ts          # Camera settings (FOV, clipping)
-│   ├── hdr-setup.ts             # HDR intensity & tone mapping
-│   ├── anti-aliasing-setup.ts   # AA techniques (FXAA, MSAA, SSAA)
-│   ├── post-processing-setup.ts # Effects (bloom, noise, vignette, lens distortion)
-│   └── rendering-controls-utils.ts  # Settings validation, serialization, merging
-├── recording-panel.ts           # Screenshot and video capture panel (paired with recording/)
-├── recording/                   # Decomposed sub-modules of recording-panel
-│   ├── types.ts                 # Shared recording types (RecordingMode, OutputFormat, …)
-│   ├── animation-sync.ts        # Slider sync coordinator
-│   ├── gui-builder.ts           # Recording panel GUI construction + visibility rules
-│   ├── media-utilities.ts       # Codec helpers, video bitrate, filename generation
-│   ├── overlay-compositor.ts    # Overlay composition for screenshots
-│   ├── screenshot-exporter.ts   # canvas.toBlob + downloadBlob + URL revoke
-│   ├── video-codec-selection.ts # mediabunny codec selection + fallback chain
-│   ├── offline-capture-driver.ts# Per-mode driver protocol (CaptureContext, abort)
-│   ├── image-sequence-driver.ts # PNG/WebP/JPEG → streaming ZIP
-│   ├── exr-sequence-driver.ts   # EXR → streaming ZIP
-│   ├── video-mode-driver.ts     # WebM/MP4/MKV via mediabunny
-│   └── zip-sequence-capture.ts  # Streaming ZIP helper shared by image + EXR drivers
+├── README.md
+├── SPECIFICATIONS.md
 │
-├── panels/                      # Stand-alone user-facing panels
-│   ├── dataset-browser.ts       # Zarr dataset navigation
-│   ├── debug-console.ts         # Developer console overlay
-│   └── dimension-sliders.ts     # nD navigation controls
+│ ── Public-API entrypoints (at root) ──
+├── gui.ts                              # Re-export entrypoint for the custom GUI library
+├── rendering-controls.ts               # Visual parameter adjustments
+├── recording-panel.ts                  # Screenshot + video capture
+├── layers.ts                           # Re-export of layers panel
+├── dimension-sliders.ts                # nD navigation sliders
+├── debug-console.ts                    # Developer console overlay
+├── dataset-browser.ts                  # Zarr dataset navigation
+├── scale-bar.ts                        # Physical scale bar overlay
+├── colormap-legend.ts                  # Per-layer colormap gradient
+├── resolution-indicator.ts             # Resolution / DPR indicator
+├── performance-monitor.ts              # FPS + GPU stats HUD
+├── data-monitor-manager.ts             # Wires loaders to data-loading-monitor
+├── data-loading-monitor.ts             # Spatial-loader telemetry monitor
+├── overlay-manager.ts                  # Screen-space overlay rendering
+├── loading-indicator.ts                # Loading spinner (was helpers.showLoading*)
+├── error-overlay.ts                    # Error dialog (was helpers.showError/clearError)
+├── help-overlay.ts                     # Keyboard shortcuts panel (was helpers.show/hideHelp)
+├── toast.ts                            # Brief auto-dismiss notifications
+├── ui-cleanup.ts                       # App-teardown helper
 │
-├── monitors/                    # HUD-style live monitors (subscribe to event-bus)
-│   ├── performance-monitor.ts   # FPS and performance stats
-│   ├── data-loading-monitor.ts  # Data loading performance monitoring
-│   ├── data-monitor-templates.ts # HTML template functions for monitor
-│   ├── data-monitor-manager.ts  # Manages DataLoadingMonitor instances
-│   ├── cache-metrics-aggregator.ts # Combines L0/L1/L2/network telemetry
-│   ├── rate-calculator.ts       # Rolling per-second rate computation
-│   └── tabs/                    # Per-tab incremental DOM patchers
-│       ├── cache-tab.ts         # Cache tab patcher
-│       └── dom-helpers.ts       # patchField / updateColorClass helpers
-│
-├── helpers/                     # Cross-cutting helpers used by panels/monitors
-│   ├── index.ts                 # showToast, help overlays, loading indicators (was helpers.ts)
-│   ├── slider-math-utils.ts     # Pure math for range/dimension sliders
-│   └── overlay-manager.ts       # Screen-space overlay rendering (text/image/HTML)
-│
-├── layers/                      # Per-layer control panel (see layers/README.md)
-├── gui/                         # Custom GUI library (see gui/README.md)
-├── components/                  # Reusable UI components
-│   ├── base/ui-component.ts     # Base UI component class
-│   ├── loading-advisor.ts       # Smart recommendations engine
-│   ├── event-queue.ts           # Event queue for monitor
-│   ├── polling-loop.ts          # Polling loop utility
-│   ├── hierarchical-timing-panel.ts  # Hierarchical timing breakdown UI
-│   ├── scale-bar.ts             # Physical scale bar overlay
-│   ├── colormap-legend.ts       # Colormap legend overlay
-│   └── resolution-indicator.ts  # Resolution/DPR indicator
-└── README.md                    # This documentation
+│ ── Public-file private helpers (siblings) ──
+├── gui/                                # GUI library internals
+│   ├── gui.ts, controller.ts, folder.ts, types.ts
+│   ├── controllers/                    # per-type controllers
+│   ├── dom/                            # DOM plumbing
+│   └── format/                         # value-formatting + auto-blur
+├── rendering-controls/
+│   ├── focus-manager.ts, cinematic-mode.ts, apply-settings.ts,
+│   │ sync-current-state.ts, settings-persistence.ts,
+│   │ clipping-display.ts, controls-utils.ts, fov-utils.ts, types.ts
+│   └── setup/                          # *-setup.ts files
+│       ├── navigation-setup.ts, camera-setup.ts, hdr-setup.ts,
+│       │ anti-aliasing-setup.ts, post-processing-setup.ts,
+│       │ performance-setup.ts, theme-setup.ts
+├── recording-panel/
+│   ├── types.ts, media-utilities.ts, video-codec-selection.ts,
+│   │ animation-sync.ts, overlay-compositor.ts, screenshot-exporter.ts,
+│   │ zip-sequence-capture.ts, gui-builder.ts
+│   ├── ui/
+│   │   └── gui-construction.ts         # buildRecordingGUI(deps)
+│   └── drivers/                        # per-mode capture drivers
+│       ├── offline-capture-driver.ts   # CaptureContext + driver protocol
+│       ├── image-sequence-driver.ts, exr-sequence-driver.ts,
+│       │ video-mode-driver.ts
+├── data-loading-monitor/               # Monitor's private helpers
+│   ├── templates.ts, advisor.ts, event-queue.ts, polling-loop.ts,
+│   │ timing-panel.ts
+│   ├── metrics/
+│   │   ├── cache.ts (aggregator), rates.ts
+│   └── tabs/
+│       ├── cache.ts, dom-helpers.ts
+├── debug-console/
+│   └── formatters.ts                   # @timestamp / [stream] / etc.
+├── dataset-browser/
+│   └── url-utils.ts                    # extractBaseUrl / extractPath
+├── dimension-sliders/
+│   └── slider-math.ts                  # clamp / wrap helpers
+├── layers/                             # Layers panel internals
+│   ├── layers-panel.ts                 # main class (re-exported via ../layers.ts)
+│   ├── layer-state.ts, range-slider.ts, labeled-slider.ts,
+│   │ attrs-utils.ts
+├── overlay-widgets/                    # Shared base for scale-bar / colormap-legend
+│   └── ui-component.ts
+└── help-overlay/                       # Help overlay's private helper
+    └── focus-trap.ts                   # Tab/Shift+Tab focus trap (also used by error-overlay)
 ```
+
+### Why this layout?
+
+- **Public API at root.** External imports (`from '../ui/<name>'`) always resolve to a real file at the package root. Node resolves the file in preference to a folder of the same name, so the public path stays canonical.
+- **Helpers under their consumer.** A single-consumer helper lives in the consumer's sibling folder — e.g. `dimension-sliders/slider-math.ts` is only used by `dimension-sliders.ts`. The depth signals audience: a sibling folder means "private to this public file".
+- **No generic folder names.** `components/`, `helpers/`, `panels/`, `monitors/`, `utils/` are gone — folders are named by their concern (`overlay-widgets/`, `drivers/`, `setup/`, `metrics/`, `tabs/`, `format/`, `ui/`, `modes/`).
+- **No buried barrels.** A barrel-as-folder (`ui/gui/index.ts`) hid 200+ LOC of re-exports behind a path. Now `ui/gui.ts` is the file; barrels with substantial code are split into focused public files (helpers/index.ts → `loading-indicator.ts`, `error-overlay.ts`, `help-overlay.ts`, `toast.ts`, `ui-cleanup.ts`).
+
+### Orchestrator shrinkage — pragmatic notes
+
+A subset of the original refactor plan asked each oversized orchestrator (`recording-panel.ts`, `data-loading-monitor.ts`, `dimension-sliders.ts`, `layers-panel.ts`) to be shrunk to ≤25% of its pre-refactor LOC by extracting each method body to a `modes/<x>.ts` helper that takes a narrow `Ctx` object.
+
+That target turned out to be unreachable for the coordination-heavy orchestrators without harming the code: a body that touches 25-30 fields/methods on `this` requires a Ctx interface of the same width, plus a per-extraction getter/setter Ctx-builder of ~80-90 LOC. The net effect for `captureScreenshot` / `startVideoRecording` was *more* total LOC across the project for marginal in-orchestrator shrinkage — the boilerplate exceeded the savings, and "narrow Ctx" was narrow only in shape, not in semantic reach.
+
+Only **naturally pure** extractions were kept: those where the body is genuinely a pure helper of a small, well-defined set of inputs (e.g. `recording-panel/ui/gui-construction.ts::buildRecordingGUI(deps)` — DOM construction with a 9-callback `deps` interface, no `this` getters needed). Other coordination-heavy method bodies stay in their orchestrator with clear section markers (`// ========== Foo ==========`).
+
+The structural improvements (public API at root, no generic folders, no buried barrels, locality of helpers) deliver the navigability win; chasing a fixed LOC number per orchestrator is left as a follow-up if and when a section becomes genuinely extractable (e.g., when its dependencies are decoupled).
 
 ---
 
