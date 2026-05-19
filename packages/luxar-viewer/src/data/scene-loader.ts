@@ -67,7 +67,7 @@ import {
   LoadedPointsData,
 } from './data-loader-types';
 import type { LoaderMonitor } from '../types/data-monitor-types';
-import { ZarrSceneAttrs, ZarrNodeAttrs } from '../types/zarr';
+import { ZarrSceneAttrs } from '../types/zarr';
 import type {
   SceneLoaderMonitorPort,
   SceneLoaderMonitorFactory,
@@ -132,8 +132,8 @@ import {
   classifyLoaderError,
   loadLeafNode as loadLeafNodeHelper,
 } from './scene-loader/nodes/load-leaf-error-dispatch';
-import { enumerateStore as enumerateStoreHelper } from './scene-loader/nodes/enumerate-store';
 import { initializeSceneDimensions as initializeSceneDimensionsHelper } from './scene-loader/nodes/initialize-scene-dimensions';
+import { buildSceneGraph as buildSceneGraphHelper } from './scene-loader/nodes/build-scene-graph';
 
 /**
  * Main scene loader that handles the complete loading pipeline.
@@ -1112,109 +1112,14 @@ export class SceneLoader {
   }
 
   /**
-   * Build the scene graph structure
+   * Build the scene graph structure. Implementation lives in
+   * `scene-loader/nodes/build-scene-graph.ts`.
    */
   private async buildSceneGraph(
     rootLoc: zarr.Location<zarr.Readable>,
     rootAttrs: ZarrSceneAttrs
   ): Promise<SceneNode> {
-    // Enumerate all groups in the store
-    const listing = await this.enumerateStore();
-
-    // Build hierarchical structure
-    const root: SceneNode = {
-      path: '/',
-      type: 'scene',
-      attrs: rootAttrs,
-      hasSpatialIndex: false,
-      children: [],
-    };
-
-    // Build node map
-    const nodeMap = new Map<string, SceneNode>();
-    nodeMap.set('/', root);
-
-    // Sort by path depth to ensure parents are created before children
-    const sortedPaths = listing
-      .filter((e) => e.kind === 'group' && e.path !== '/')
-      .sort((a, b) => a.path.split('/').length - b.path.split('/').length);
-
-    for (const entry of sortedPaths) {
-      // Skip overlays group — screen-space overlays are not part of the 3D scene graph
-      if (entry.path === '/overlays' || entry.path.startsWith('/overlays/')) {
-        continue;
-      }
-
-      const loc = rootLoc.resolve(entry.path.slice(1)); // Remove leading /
-      const group = await zarr.open(loc, { kind: 'group' });
-      const attrs = group.attrs as ZarrNodeAttrs;
-
-      // We no longer check for spatial index here - PointsSpatialIndexLoader handles it
-      const node: SceneNode = {
-        path: entry.path,
-        type: attrs?.type || 'group',
-        attrs: attrs || {},
-        hasSpatialIndex: false, // Will be determined by the loader
-        children: [],
-      };
-
-      // when a node's metadata declares colormap='custom', load its
-      // colormap_lut zarr array (if present) and attach the bytes to the
-      // node's attrs so NodeFactory can pass them into
-      // getColormapTexture('custom', lut). Without this step the viewer
-      // falls back to the viridis built-in (handled by getColormapTexture).
-      if (attrs && (attrs as ZarrNodeAttrs).colormap === 'custom') {
-        try {
-          const lutArr = await zarr.open(loc.resolve('colormap_lut'), { kind: 'array' });
-          const lutResult = await zarr.get(lutArr);
-          const data = lutResult.data;
-          // Promote whatever typed-array we got into a tightly-typed Uint8Array.
-          // The Python writer stores LUTs as uint8 of shape [256,3] or [256,4].
-          let bytes: Uint8Array;
-          if (data instanceof Uint8Array) {
-            bytes = data;
-          } else if (data instanceof Int8Array || data instanceof Uint8ClampedArray) {
-            bytes = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
-          } else {
-            // Float / int16 etc. — unexpected for a LUT but recover by copying bytes view.
-            bytes = new Uint8Array((data as ArrayBufferView).buffer);
-          }
-          (node.attrs as ZarrNodeAttrs).customLutBytes = bytes;
-          log.info(
-            Modules.SCENE_LOADER,
-            `${entry.path}: loaded custom colormap LUT (${bytes.length} bytes)`
-          );
-        } catch (e: unknown) {
-          // colormap_lut may not exist if a node declared colormap='custom'
-          // by mistake. getColormapTexture will fall back to viridis with a
-          // warning. We don't fail the scene load.
-          log.warning(
-            Modules.SCENE_LOADER,
-            `${entry.path}: colormap='custom' but failed to load colormap_lut zarr array — falling back to viridis. ${e instanceof Error ? e.message : ''}`
-          );
-        }
-      }
-
-      // Log if extend_to_all is present
-      if (attrs?.extend_to_all) {
-        log.data(
-          Modules.SCENE_LOADER,
-          `Node ${entry.path} has extend_to_all: ${attrs.extend_to_all.join(', ')}`
-        );
-      }
-
-      // Find parent and add as child
-      const parentPath = entry.path.substring(0, entry.path.lastIndexOf('/')) || '/';
-      const parent = nodeMap.get(parentPath);
-      if (parent) {
-        parent.children = parent.children || [];
-        parent.children.push(node);
-      }
-
-      nodeMap.set(entry.path, node);
-    }
-
-    return root;
+    return buildSceneGraphHelper(rootLoc, rootAttrs, this._zarrStore);
   }
 
   /**
@@ -1645,14 +1550,6 @@ export class SceneLoader {
   private initializeSceneDimensions(sceneDims: unknown): void {
     const next = initializeSceneDimensionsHelper(sceneDims);
     if (next) this.viewState = next;
-  }
-
-  /**
-   * Enumerate all groups and arrays in the store. Implementation lives
-   * in `scene-loader/nodes/enumerate-store.ts`.
-   */
-  private async enumerateStore(): Promise<Array<{ path: string; kind: string }>> {
-    return enumerateStoreHelper(this._zarrStore);
   }
 
   /**
