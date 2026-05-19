@@ -30,7 +30,10 @@
 import * as THREE from 'three';
 import type { PostProcessingManager } from '../post-processing-manager';
 import { isCameraAwareMaterial } from '../materials/_shared/camera-aware-material';
-import { materialManager } from '../material-manager';
+import {
+  disposePickMaterial,
+  unregisterAllPickMaterials,
+} from './picking-system/registration';
 import type { Renderer, RendererCapabilities } from '../renderer-capabilities';
 import { readPixelsCompactAsync } from '../post-processing/hdr-pixel-utils';
 import {
@@ -248,14 +251,7 @@ export class PickingSystem {
    * doesn't leak shaders.
    */
   private _disposePickMaterial(mesh: THREE.Mesh): void {
-    const material = mesh.material;
-    if (Array.isArray(material)) {
-      for (const m of material) {
-        m?.dispose?.();
-      }
-    } else {
-      material?.dispose?.();
-    }
+    disposePickMaterial(mesh);
   }
 
   /** Number of registered pick nodes. */
@@ -287,19 +283,7 @@ export class PickingSystem {
    * the pick material when removing a single live node.
    */
   clearRegistrationsForRebuild(): void {
-    for (const entry of this.nodeMap.values()) {
-      const material = (entry.pick as THREE.Mesh).material;
-      const list = Array.isArray(material) ? material : [material];
-      for (const m of list) {
-        // Pick materials are constructed in NodeFactory and ALWAYS
-        // implement CameraAwareMaterial (Point/Line/GSplatPickingMaterial
-        // each declare `implements CameraAwareMaterial`), so the cast
-        // is safe. `isCameraAwareMaterial(m)` is the runtime guard.
-        if (m && isCameraAwareMaterial(m)) {
-          materialManager.unregister(m);
-        }
-      }
-    }
+    unregisterAllPickMaterials(this.nodeMap);
     this.nodeMap.clear();
     this._worldBoxCache.clear();
     while (this.pickScene.children.length > 0) {
