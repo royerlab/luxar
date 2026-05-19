@@ -348,9 +348,23 @@ vi.mock('../../../utils/hdr-detection', () => ({
   logHDRCapabilities: vi.fn(),
 }));
 
+// Wrap renderer-setup with importActual so the real helpers pass through
+// by default, but make createWebGPURenderer a vi.fn() that tests can
+// override (e.g. to force the WebGPU→WebGL fallback path).
+vi.mock('../../../scene/scene-manager/render-pipeline/renderer-setup', async () => {
+  const actual = await vi.importActual<
+    typeof import('../../../scene/scene-manager/render-pipeline/renderer-setup')
+  >('../../../scene/scene-manager/render-pipeline/renderer-setup');
+  return {
+    ...actual,
+    createWebGPURenderer: vi.fn(actual.createWebGPURenderer),
+  };
+});
+
 // Import after mocks are set up
 import { SceneManager } from '../../../scene/scene-manager';
 import { loadScene as mockLoadScene } from '../../../data';
+import { createWebGPURenderer as mockedCreateWebGPURenderer } from '../../../scene/scene-manager/render-pipeline/renderer-setup';
 const mockShowLoadingIndicator = mockShowLoading;
 const mockHideLoadingIndicator = mockHideLoading;
 
@@ -1040,6 +1054,35 @@ describe('SceneManager', () => {
       expect(bounds.max.x).toBe(5);
       expect(bounds.max.y).toBe(15);
       expect(bounds.max.z).toBe(25);
+    });
+  });
+
+  describe('WebGPU → WebGL fallback wiring', () => {
+    // When createWebGPURenderer returns { fallback: true } (adapter below
+    // the WebGPU spec minimum and no explicit override), SceneManager's
+    // setupWebGPURenderer must drop down to setupWebGLRenderer and the
+    // final this.renderer must be a THREE.WebGLRenderer.
+    //
+    // The createWebGPURenderer import is wrapped in a vi.fn() at the top
+    // of this file (see vi.mock for renderer-setup) so individual tests
+    // can override its resolution per case.
+
+    it('setupWebGPURenderer delegates to setupWebGLRenderer when createWebGPURenderer reports fallback', async () => {
+      // Force the fallback signal.
+      vi.mocked(mockedCreateWebGPURenderer).mockResolvedValueOnce({ fallback: true });
+
+      // Pass renderer:'webgpu' so selectBackend picks the WebGPU branch.
+      // The mock immediately returns fallback, so setupWebGPURenderer
+      // recurses into setupWebGLRenderer.
+      await sceneManager.init({ canvas: mockCanvas as any, renderer: 'webgpu' });
+
+      // After the fallback path, the renderer is the WebGL mock — the
+      // same one the rest of the suite exercises.
+      expect(sceneManager.renderer).toBeDefined();
+      expect((sceneManager.renderer as { isWebGLRenderer?: boolean }).isWebGLRenderer).toBe(true);
+      // And createWebGPURenderer was called exactly once before falling
+      // through; setupWebGPURenderer doesn't re-attempt the WebGPU path.
+      expect(mockedCreateWebGPURenderer).toHaveBeenCalledTimes(1);
     });
   });
 });
