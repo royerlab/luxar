@@ -343,7 +343,7 @@ describe('RecordingPanel', () => {
         resizeLocked: false,
       };
       (panel as any).isRecording = true;
-      (panel as any).savedRecordingState = recordingSavedState;
+      (panel as any).session.savedRecordingState = recordingSavedState;
 
       const saveStateSpy = vi.spyOn(panel as any, 'saveRecordingState');
       const restoreStateSpy = vi.spyOn(panel as any, 'restoreRecordingState');
@@ -355,14 +355,14 @@ describe('RecordingPanel', () => {
         // Expect the user-visible refusal toast and that the recording's
         // saved state was not overwritten or cleared.
         expect(showToast).toHaveBeenCalledWith('Stop recording before taking a screenshot');
-        expect((panel as any).savedRecordingState).toBe(recordingSavedState);
+        expect((panel as any).session.savedRecordingState).toBe(recordingSavedState);
         expect(saveStateSpy).not.toHaveBeenCalled();
         expect(restoreStateSpy).not.toHaveBeenCalled();
       } finally {
         // Clear the stub state so afterEach's panel.dispose() doesn't try
         // to restore against the mock sceneManager.
         (panel as any).isRecording = false;
-        (panel as any).savedRecordingState = null;
+        (panel as any).session.savedRecordingState = null;
         rafSpy.mockRestore();
       }
     });
@@ -375,7 +375,7 @@ describe('RecordingPanel', () => {
         resizeLocked: true,
       };
       (panel as any).isOfflineCaptureActive = true;
-      (panel as any).savedRecordingState = recordingSavedState;
+      (panel as any).session.savedRecordingState = recordingSavedState;
 
       const saveStateSpy = vi.spyOn(panel as any, 'saveRecordingState');
 
@@ -384,11 +384,11 @@ describe('RecordingPanel', () => {
         await panel.captureScreenshot();
 
         expect(showToast).toHaveBeenCalledWith('Stop recording before taking a screenshot');
-        expect((panel as any).savedRecordingState).toBe(recordingSavedState);
+        expect((panel as any).session.savedRecordingState).toBe(recordingSavedState);
         expect(saveStateSpy).not.toHaveBeenCalled();
       } finally {
         (panel as any).isOfflineCaptureActive = false;
-        (panel as any).savedRecordingState = null;
+        (panel as any).session.savedRecordingState = null;
       }
     });
   });
@@ -466,7 +466,7 @@ describe('RecordingPanel', () => {
         getTracks: vi.fn().mockReturnValue([trackA, trackB]),
       };
       (panel as any).captureStream = fakeStream;
-      (panel as any).disposed = true;
+      (panel as any).session.disposed = true;
       (panel as any).mediaRecorder = mockMediaRecorder;
 
       // Drive the disposed branch of cleanupCaptureStream directly.
@@ -509,7 +509,7 @@ describe('RecordingPanel', () => {
       vi.mocked(showToast).mockClear();
 
       // Simulate dispose having run: set the disposed flag.
-      (panel as any).disposed = true;
+      (panel as any).session.disposed = true;
       (panel as any).recordedChunks = [new Blob(['x'])];
       (panel as any).isRecording = true;
 
@@ -586,8 +586,8 @@ describe('RecordingPanel', () => {
     it('should clean up recording indicator on dispose', () => {
       const indicator = document.createElement('div');
       document.body.appendChild(indicator);
-      (panel as any).recordingIndicator = indicator;
-      (panel as any).recordingTimeInterval = setInterval(() => {}, 1000);
+      (panel as any).session.recordingIndicator = indicator;
+      (panel as any).session.recordingTimeInterval = setInterval(() => {}, 1000);
 
       panel.dispose();
 

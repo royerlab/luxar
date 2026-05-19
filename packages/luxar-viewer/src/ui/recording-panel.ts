@@ -8,8 +8,6 @@ import GUI, { type Controller } from './gui';
 import { config } from '../config';
 import { log, Modules } from '../utils/log';
 import { showToast } from './toast';
-// HDR video encoder kept for future use when browser 10-bit support matures
-// import { isHDRVideoSupported, HDRVideoEncoder } from '../utils/hdr-video-encoder';
 import type { SceneManager } from '../scene/scene-manager';
 import type { AnimationController } from '../scene/animation/animation-controller';
 import type { DimensionAnimationManager } from '../scene/animation/dimension-animation-manager';
@@ -31,7 +29,6 @@ import {
 import {
   getTurntableInfo as getTurntableInfoHelper,
   getNavigableDimensionOptions as getNavigableDimensionOptionsHelper,
-  SliderSyncCoordinator,
 } from './recording-panel/animation-sync';
 import {
   computeControlVisibility,
@@ -43,6 +40,7 @@ import { ImageSequenceDriver } from './recording-panel/drivers/image-sequence-dr
 import { ExrSequenceDriver } from './recording-panel/drivers/exr-sequence-driver';
 import { VideoModeDriver } from './recording-panel/drivers/video-mode-driver';
 import { buildRecordingGUI } from './recording-panel/ui/gui-construction';
+import { RecordingSession, type SaveRecordingStateOptions } from './recording-panel/session';
 
 // Shared recording types live in `recording-panel/types.ts`. Re-exported
 // here for external consumers that import from the panel directly.
@@ -97,13 +95,35 @@ export class RecordingPanel {
   private sceneManager: SceneManager;
   private animationController: AnimationController;
 
-  // Optional dependencies (set via setters)
-  private animationManager: DimensionAnimationManager | null = null;
-  private adaptiveDPRManager: AdaptiveDPRManager | null = null;
-  private overlayManager: OverlayManager | null = null;
+  // Shared scaffolding: state save/restore, dialog, indicator, slider-sync,
+  // mutual-exclusion flags, optional deps, disposed guard.
+  // Strategies (introduced in subsequent phases) will use this directly.
+  private session: RecordingSession;
 
-  // Video recording state
-  private isRecording: boolean = false;
+  // ── Proxy accessors for state that now lives on Session.
+  //    These are temporary scaffolding so existing internal code and
+  //    test probes (`(panel as any).isRecording`) keep working without
+  //    bulk edits. Phase 6 deletes them when tests are split per-collaborator.
+  //    Only proxies whose underlying state is read INSIDE this file are
+  //    declared here — purely test-facing fields (savedRecordingState,
+  //    savedPanelStates, recordingIndicator, recordingTimeInterval, …)
+  //    must be accessed via `panel.session.X` directly.
+  private get isRecording(): boolean { return this.session.isRecording; }
+  private set isRecording(v: boolean) { this.session.isRecording = v; }
+  private get isOfflineCaptureActive(): boolean { return this.session.isOfflineCaptureActive; }
+  private set isOfflineCaptureActive(v: boolean) { this.session.isOfflineCaptureActive = v; }
+  private get isEXRSequenceRecording(): boolean { return this.session.isEXRSequenceRecording; }
+  private set isEXRSequenceRecording(v: boolean) { this.session.isEXRSequenceRecording = v; }
+  private get disposed(): boolean { return this.session.disposed; }
+  private get savedAutoRotate(): boolean { return (this.session as unknown as { savedAutoRotate: boolean }).savedAutoRotate; }
+  private set savedAutoRotate(v: boolean) { (this.session as unknown as { savedAutoRotate: boolean }).savedAutoRotate = v; }
+  private get recordingStartTime(): number { return this.session.recordingStartTime; }
+  private set recordingStartTime(v: number) { this.session.recordingStartTime = v; }
+  private get animationManager(): DimensionAnimationManager | null { return this.session.animationManager; }
+  private get adaptiveDPRManager(): AdaptiveDPRManager | null { return this.session.adaptiveDPRManager; }
+  private get overlayManager(): OverlayManager | null { return this.session.overlayManager; }
+
+  // Video recording state (moves to VideoRecordingStrategy in Phase 3)
   private mediaRecorder: MediaRecorder | null = null;
   // canvas.captureStream() returns a MediaStream whose tracks live
   // until explicitly stopped. mediaRecorder.stop() does NOT stop the
@@ -111,9 +131,6 @@ export class RecordingPanel {
   // tracks in every onstop branch to release browser media resources.
   private captureStream: MediaStream | null = null;
   private recordedChunks: Blob[] = [];
-  private recordingIndicator: HTMLElement | null = null;
-  private recordingTimeInterval: ReturnType<typeof setInterval> | null = null;
-  private recordingStartTime: number = 0;
   private durationTimer: ReturnType<typeof setTimeout> | null = null;
   private keepAliveCallbackId = 'recording-keepalive';
   private turntableCallbackId = 'recording-turntable';
@@ -129,28 +146,13 @@ export class RecordingPanel {
   // the cancel button. Drivers + the loop body check signal.aborted
   // between awaits so dispose-during-capture skips finalize cleanly.
   private offlineSessionAbort: AbortController | null = null;
-  private sliderSync = new SliderSyncCoordinator();
-  private savedAutoRotate: boolean = false;
 
-  // Event/listener cleanup handles for transient recording DOM
-  private recordingIndicatorClickCleanup: (() => void) | null = null;
+  // Event/listener cleanup handle for the offline-capture overlay
+  // (moves to OfflineCaptureStrategy in Phase 4)
   private offlineOverlayCleanup: (() => void) | null = null;
-  private confirmationDialogCancel: (() => void) | null = null;
 
-  // EXR sequence recording state
-  private isEXRSequenceRecording: boolean = false;
-  private isOfflineCaptureActive: boolean = false;
-
-  // Screenshot debounce
+  // Screenshot debounce (moves to ScreenshotStrategy in Phase 2)
   private isCaptureInProgress: boolean = false;
-
-  // Dispose guard for async onstop handler
-  private disposed: boolean = false;
-
-  // Panel state callbacks (set by app.ts)
-  private getPanelStates: (() => PanelStates) | null = null;
-  private restorePanelStatesCallback: ((states: PanelStates) => void) | null = null;
-  private savedPanelStates: PanelStates | null = null;
 
   // GUI controller references for dynamic show/hide
   private imageControllers: Controller[] = [];
@@ -165,17 +167,16 @@ export class RecordingPanel {
   private videoDurationController: Controller | null = null;
   private formatController: Controller | null = null;
 
-  // Saved recording state for restore after capture/recording
-  private savedRecordingState: {
-    dprEnabled: boolean;
-    dpr: number;
-    rendererSize: { width: number; height: number } | null;
-    resizeLocked: boolean;
-  } | null = null;
-
   constructor(sceneManager: SceneManager, animationController: AnimationController) {
     this.sceneManager = sceneManager;
     this.animationController = animationController;
+
+    this.session = new RecordingSession(sceneManager, animationController, {
+      isExrSequenceActive: () => this.isEXRSequenceRecording,
+    });
+    // Wire the indicator's click-to-stop and Escape-to-stop into our
+    // existing stopVideoRecording path so the user can stop from anywhere.
+    this.session.setStopVideoCallback(() => this.stopVideoRecording());
 
     this.gui = new GUI({
       title: 'Recording',
@@ -223,34 +224,35 @@ export class RecordingPanel {
   }
 
   isCurrentlyRecording(): boolean {
-    return this.isRecording;
+    return this.session.isAnyCaptureActive();
   }
 
   setPanelStateCallbacks(
     getStates: () => PanelStates,
     restoreStates: (states: PanelStates) => void
   ): void {
-    this.getPanelStates = getStates;
-    this.restorePanelStatesCallback = restoreStates;
+    this.session.getPanelStates = getStates;
+    this.session.restorePanelStatesCallback = restoreStates;
   }
 
   setAnimationManager(manager: DimensionAnimationManager): void {
-    this.animationManager = manager;
+    this.session.animationManager = manager;
   }
 
   setAdaptiveDPRManager(manager: AdaptiveDPRManager): void {
-    this.adaptiveDPRManager = manager;
+    this.session.adaptiveDPRManager = manager;
   }
 
   setOverlayManager(manager: OverlayManager | null): void {
-    this.overlayManager = manager;
+    this.session.overlayManager = manager;
   }
 
   dispose(): void {
     if (this.disposed) return;
-    this.disposed = true;
-
-    this.confirmationDialogCancel?.();
+    // Mark disposed FIRST so any async callback (e.g. mediaRecorder.onstop)
+    // fired during the cleanup below short-circuits via `this.disposed` /
+    // `session.isDisposed()` checks.
+    this.session.disposed = true;
 
     if (this.isRecording) {
       this.stopVideoRecording();
@@ -264,9 +266,8 @@ export class RecordingPanel {
     // next await checkpoint sees signal.aborted and short-circuits
     // before downloading/toasting on a disposed panel.
     this.offlineSessionAbort?.abort('disposed');
-
     this.offlineOverlayCleanup?.();
-    this.hideRecordingIndicator();
+
     this.animationController.removePerFrameCallback(this.keepAliveCallbackId);
     this.animationController.removePerFrameCallback(this.turntableCallbackId);
     // Remove offline-capture callbacks. The normal loop path also
@@ -274,12 +275,14 @@ export class RecordingPanel {
     // case where the loop hasn't reached its finally yet.
     this.animationController.removePerFrameCallback(RecordingPanel.OFFLINE_CAPTURE_CALLBACK_ID);
     this.animationController.removePerFrameCallback(RecordingPanel.OFFLINE_KEEPALIVE_CALLBACK_ID);
-    this.cleanupSyncListener();
-    this.restoreAutoRotate();
-    this.restoreRecordingState();
+
     // Defensive: stop any captureStream tracks even if mediaRecorder.onstop
     // didn't fire (browser quirks, mid-init dispose).
     this.cleanupCaptureStream();
+
+    // Session unwinds: confirmation dialog, indicator, slider sync,
+    // auto-rotate, renderer/DPR/resize-lock state, panel-state restore.
+    this.session.dispose();
     this.gui.destroy();
   }
 
@@ -977,17 +980,14 @@ export class RecordingPanel {
   // ========== Slider Sync ==========
 
   private startSliderSync(): void {
-    if (!this.animationManager) return;
-    this.sliderSync.start(
+    this.session.startSliderSync(
       this.options.syncDimensionIndex,
-      this.animationManager,
-      () => this.stopVideoRecording(),
-      () => !this.disposed
+      () => this.stopVideoRecording()
     );
   }
 
   private cleanupSyncListener(): void {
-    this.sliderSync.cleanup(this.animationManager);
+    this.session.cleanupSyncListener();
   }
 
   /**
@@ -1003,10 +1003,7 @@ export class RecordingPanel {
 
   /** Restore auto-rotation to its pre-turntable state. */
   private restoreAutoRotate(): void {
-    if (this.savedAutoRotate) {
-      this.sceneManager.controls.setAutoRotate(true);
-      this.savedAutoRotate = false;
-    }
+    this.session.restoreAutoRotate();
   }
 
   // ========== Turntable Rotation ==========
@@ -1186,332 +1183,43 @@ export class RecordingPanel {
   // ========== Panel Hide/Restore ==========
 
   private hideAllPanels(): void {
-    if (!this.savedPanelStates && this.getPanelStates) {
-      this.savedPanelStates = this.getPanelStates();
-    }
-    if (this.visible) {
-      this.gui.hide();
-      this.visible = false;
-    }
-    if (this.options.showPanels) return;
-
-    if (this.savedPanelStates && this.restorePanelStatesCallback) {
-      const allHidden = new Map<string, boolean>();
-      for (const key of this.savedPanelStates.keys()) {
-        allHidden.set(key, false);
-      }
-      this.restorePanelStatesCallback(allHidden);
-    }
-  }
-
-  private restoreAllPanels(): void {
-    if (this.isRecording) return;
-    if (this.savedPanelStates && this.restorePanelStatesCallback) {
-      this.restorePanelStatesCallback(this.savedPanelStates);
-      this.savedPanelStates = null;
-    }
+    this.session.hideAllPanels(
+      {
+        hideOwnPanel: () => {
+          if (this.visible) {
+            this.gui.hide();
+            this.visible = false;
+          }
+        },
+      },
+      this.options.showPanels
+    );
   }
 
   // ========== Confirmation Dialog ==========
 
   private showConfirmationDialog(): Promise<boolean> {
-    return new Promise((resolve) => {
-      const overlay = document.createElement('div');
-      overlay.className = 'luxar-recording-confirm';
-      // Modal dialog ARIA semantics — match the offline overlay so
-      // screen readers announce the dialog, and Tab is trapped inside
-      // it. Without these, the dialog is just a styled <div>.
-      overlay.setAttribute('role', 'dialog');
-      overlay.setAttribute('aria-modal', 'true');
-      overlay.setAttribute('aria-labelledby', 'luxar-recording-confirm-title');
-      overlay.setAttribute('aria-describedby', 'luxar-recording-confirm-message');
-
-      const fmt = this.options.outputFormat;
-      let details = `Recording will capture at ${this.options.videoFPS} FPS.`;
-      if (this.mode === 'turntable') {
-        const duration = Math.round(360 / this.options.turntableSpeed);
-        const expectedFrames = Math.ceil(duration * this.options.videoFPS);
-        details = `Camera will rotate 360° — ${expectedFrames} frames at ${this.options.videoFPS} FPS (${duration}s video).`;
-        if (this.options.frameByFrame) {
-          details += '<br><strong>Offline capture</strong> — each frame is rendered individually.';
-        }
-      } else if (this.options.syncToSlider) {
-        details += '<br>Recording will stop when the slider animation completes.';
-      } else if (this.options.videoDurationLimit > 0) {
-        details += `<br>Duration limit: ${this.options.videoDurationLimit} seconds.`;
-      }
-      if (fmt === 'exr') {
-        details += '<br>Output: <strong>ZIP of EXR frames</strong> (full float precision).';
-      } else if (fmt === 'png' || fmt === 'webp' || fmt === 'jpeg') {
-        details += `<br>Output: <strong>ZIP of ${fmt.toUpperCase()} frames</strong> + ffmpeg script.`;
-      } else if (fmt === 'mp4' || fmt === 'webm' || fmt === 'mkv') {
-        details += `<br>Output: <strong>${fmt.toUpperCase()} video</strong> (${this.options.videoCodec.toUpperCase()}).`;
-      }
-
-      overlay.innerHTML = `
-        <div class="luxar-recording-confirm__dialog">
-          <div id="luxar-recording-confirm-title" class="luxar-recording-confirm__title">Start ${this.mode === 'turntable' ? 'Turntable' : 'Video'} Recording</div>
-          <p id="luxar-recording-confirm-message" class="luxar-recording-confirm__message">
-            ${details}<br>
-            Press <span class="luxar-recording-confirm__keybinding">Escape</span> to stop recording.
-          </p>
-          <div class="luxar-recording-confirm__buttons">
-            <button class="luxar-recording-confirm__btn" data-action="cancel">Cancel</button>
-            <button class="luxar-recording-confirm__btn luxar-recording-confirm__btn--primary" data-action="start">Start Recording</button>
-          </div>
-        </div>
-      `;
-
-      // Capture the previously-focused element so we can restore
-      // focus when the dialog closes (modal dialog convention).
-      const previouslyFocused = document.activeElement as HTMLElement | null;
-
-      let settled = false;
-      const finish = (result: boolean): void => {
-        if (settled) return;
-        settled = true;
-        cleanup();
-        // Restore focus to where it was before the dialog opened so
-        // keyboard users don't lose their place.
-        previouslyFocused?.focus?.();
-        resolve(result);
-      };
-
-      const focusableSelector =
-        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
-      const getFocusable = (): HTMLElement[] =>
-        Array.from(overlay.querySelectorAll<HTMLElement>(focusableSelector)).filter(
-          (el) => !el.hasAttribute('disabled')
-        );
-
-      const trapKeyboard = (e: KeyboardEvent) => {
-        e.stopPropagation();
-        if (e.key === 'Escape') {
-          finish(false);
-          return;
-        }
-        if (e.key === 'Enter') {
-          finish(true);
-          return;
-        }
-        // Focus trap: cycle Tab inside the dialog so focus can't
-        // escape to the canvas / external UI.
-        if (e.key === 'Tab') {
-          const focusable = getFocusable();
-          if (focusable.length === 0) return;
-          const first = focusable[0];
-          const last = focusable[focusable.length - 1];
-          const active = document.activeElement as HTMLElement | null;
-          if (e.shiftKey && active === first) {
-            e.preventDefault();
-            last.focus();
-          } else if (!e.shiftKey && active === last) {
-            e.preventDefault();
-            first.focus();
-          }
-        }
-      };
-
-      const handleClick = (e: MouseEvent) => {
-        const action = (e.target as HTMLElement).dataset.action;
-        if (action === 'cancel') {
-          finish(false);
-        } else if (action === 'start') {
-          finish(true);
-        }
-      };
-
-      const cleanup = () => {
-        overlay.removeEventListener('keydown', trapKeyboard, true);
-        overlay.removeEventListener('click', handleClick);
-        overlay.remove();
-        if (this.confirmationDialogCancel === cancelConfirmation) {
-          this.confirmationDialogCancel = null;
-        }
-      };
-
-      const cancelConfirmation = (): void => finish(false);
-      this.confirmationDialogCancel = cancelConfirmation;
-
-      overlay.addEventListener('keydown', trapKeyboard, true);
-      overlay.addEventListener('click', handleClick);
-      document.body.appendChild(overlay);
-      // Focus the primary action so Enter confirms by default.
-      // Falls back to the overlay itself if the button isn't found
-      // (e.g. innerHTML was overridden by tests).
-      const primaryBtn = overlay.querySelector<HTMLButtonElement>(
-        '.luxar-recording-confirm__btn--primary'
-      );
-      if (primaryBtn) {
-        primaryBtn.focus();
-      } else {
-        overlay.tabIndex = -1;
-        overlay.focus();
-      }
-    });
+    return this.session.showConfirmationDialog({ mode: this.mode, options: this.options });
   }
 
   // ========== Recording Indicator ==========
 
   private showRecordingIndicator(): void {
-    this.hideRecordingIndicator();
-
-    const indicator = document.createElement('div');
-    indicator.className = 'luxar-recording-indicator';
-    indicator.innerHTML = `
-      <div class="luxar-recording-indicator__dot"></div>
-      <span class="luxar-recording-indicator__text">REC</span>
-      <span class="luxar-recording-indicator__time">00:00</span>
-    `;
-    indicator.title = 'Click to stop recording';
-    const handleIndicatorClick = (): void => this.stopVideoRecording();
-    indicator.addEventListener('click', handleIndicatorClick);
-    this.recordingIndicatorClickCleanup = () => {
-      indicator.removeEventListener('click', handleIndicatorClick);
-      this.recordingIndicatorClickCleanup = null;
-    };
-    document.body.appendChild(indicator);
-    this.recordingIndicator = indicator;
-
-    const timeEl = indicator.querySelector('.luxar-recording-indicator__time');
-    this.recordingTimeInterval = setInterval(() => {
-      if (timeEl) {
-        if (this.isEXRSequenceRecording) {
-          // Offline capture uses the overlay for progress, not this indicator
-          timeEl.textContent = 'capturing...';
-        } else {
-          const elapsed = Math.floor((Date.now() - this.recordingStartTime) / 1000);
-          const mins = Math.floor(elapsed / 60)
-            .toString()
-            .padStart(2, '0');
-          const secs = (elapsed % 60).toString().padStart(2, '0');
-          timeEl.textContent = `${mins}:${secs}`;
-        }
-      }
-    }, 1000);
+    this.session.showRecordingIndicator();
   }
 
   private hideRecordingIndicator(): void {
-    if (this.recordingTimeInterval) {
-      clearInterval(this.recordingTimeInterval);
-      this.recordingTimeInterval = null;
-    }
-    this.recordingIndicatorClickCleanup?.();
-    if (this.recordingIndicator) {
-      this.recordingIndicator.remove();
-      this.recordingIndicator = null;
-    }
+    this.session.hideRecordingIndicator();
   }
 
   // ========== Recording State Guard ==========
 
-  /**
-   * Save current DPR, renderer size, and resize-lock state, then apply
-   * recording-safe defaults (disable adaptive DPR, lock resize, optionally
-   * scale resolution). Call `restoreRecordingState()` to undo all changes.
-   *
-   * Used by captureScreenshot, startVideoRecording, and runOfflineCaptureLoop
-   * to avoid duplicating the save/restore logic.
-   */
-  private saveRecordingState(options: {
-    lockResize?: boolean;
-    disableDPR?: boolean;
-    scaleResolution?: { targetH: number; align16?: boolean };
-  }): void {
-    // Save current state
-    const dprEnabled = this.adaptiveDPRManager?.isActive() ?? false;
-    const dpr = this.adaptiveDPRManager?.getCurrentDPR() ?? window.devicePixelRatio;
-    const renderer = this.sceneManager.renderer;
-    const currentSize = renderer.getSize(new THREE.Vector2());
-    this.savedRecordingState = {
-      dprEnabled,
-      dpr,
-      rendererSize: null, // set below only if we actually scale
-      resizeLocked: this.sceneManager.resizeLocked,
-    };
-
-    // Disable adaptive DPR — resolution changes during capture cause corruption
-    if (options.disableDPR && this.adaptiveDPRManager) {
-      this.adaptiveDPRManager.setEnabled(false);
-      this.sceneManager.setAdaptivePixelRatio(this.adaptiveDPRManager.getNativeDPR());
-    }
-
-    // Lock resize to prevent mid-capture resolution changes
-    if (options.lockResize) {
-      this.sceneManager.resizeLocked = true;
-    }
-
-    // Scale renderer to target resolution.
-    // Only call postProcessing.resize() — it internally calls renderer.setSize()
-    // and composer.setSize() with correct SSAA handling. Calling renderer.setSize()
-    // separately would be overridden by postProcessing.resize() anyway.
-    if (options.scaleResolution) {
-      this.savedRecordingState.rendererSize = { width: currentSize.x, height: currentSize.y };
-      const { targetH, align16 } = options.scaleResolution;
-      const aspect = currentSize.x / currentSize.y;
-      let w = Math.round(targetH * aspect);
-      let h = targetH;
-      if (align16) {
-        w = w & ~15;
-        h = h & ~15;
-      }
-      renderer.setPixelRatio(1);
-      this.sceneManager.postProcessing.resize(w, h);
-      // postProcessing.resize() sets canvas CSS to the capture dimensions,
-      // which shrinks the visible canvas and exposes the page background.
-      // Override CSS back to full viewport — the WebGL framebuffer is already
-      // at the correct capture resolution regardless of CSS size.
-      const canvas = renderer.domElement;
-      canvas.style.width = '100%';
-      canvas.style.height = '100%';
-      // Update camera projection to match new aspect ratio
-      const camera = this.sceneManager.camera;
-      if (camera instanceof THREE.PerspectiveCamera) {
-        camera.aspect = w / h;
-        camera.updateProjectionMatrix();
-      }
-      // Update material uniforms (viewport size, FOV) for the new resolution.
-      // Without this, point/splat shaders use stale viewport dimensions and
-      // render geometry at the wrong screen-space size (nearly invisible).
-      this.sceneManager.updateMaterialsForCurrentCamera();
-    }
+  private saveRecordingState(options: SaveRecordingStateOptions): void {
+    this.session.saveRecordingState(options);
   }
 
-  /**
-   * Restore DPR, renderer size, resize lock, and panels to pre-recording state.
-   * Safe to call multiple times (no-ops if no saved state).
-   */
   private restoreRecordingState(): void {
-    const saved = this.savedRecordingState;
-    if (!saved) return;
-
-    // Restore renderer size and camera projection
-    if (saved.rendererSize) {
-      const renderer = this.sceneManager.renderer;
-      renderer.setPixelRatio(window.devicePixelRatio);
-      this.sceneManager.postProcessing.resize(saved.rendererSize.width, saved.rendererSize.height);
-      const camera = this.sceneManager.camera;
-      if (camera instanceof THREE.PerspectiveCamera) {
-        camera.aspect = saved.rendererSize.width / saved.rendererSize.height;
-        camera.updateProjectionMatrix();
-      }
-      this.sceneManager.updateMaterialsForCurrentCamera();
-    }
-
-    // Restore resize lock
-    this.sceneManager.resizeLocked = saved.resizeLocked;
-
-    // Restore adaptive DPR
-    if (this.adaptiveDPRManager) {
-      if (saved.dprEnabled) {
-        this.adaptiveDPRManager.setEnabled(true);
-      } else {
-        this.sceneManager.setAdaptivePixelRatio(saved.dpr);
-      }
-    }
-
-    this.savedRecordingState = null;
-    this.restoreAllPanels();
+    this.session.restoreRecordingState();
   }
 
   // ========== Utilities ==========
