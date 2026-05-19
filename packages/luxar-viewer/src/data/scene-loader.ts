@@ -32,7 +32,6 @@ import {
   type StagedGSplatsCommit,
 } from './scene-loader/process/data-processor-gsplats';
 import {
-  createLinesLoader as createLinesLoaderHelper,
   createGSplatsLoader as createGSplatsLoaderHelper,
   createProgressiveGSplatsLoader as createProgressiveGSplatsLoaderHelper,
   type LoaderFactoryDeps,
@@ -76,7 +75,6 @@ import { log, Modules, LogEmoji } from '../utils/log';
 import { config as appConfig } from '../config';
 import { MultiLevelCachingStore, DecompressedChunkCache } from '../cache';
 import type {
-  LinesMetadata,
   LinesDataLoader,
   LinesViewState,
   LoadedLinesData,
@@ -131,6 +129,7 @@ import { runLoaderUpdates as runLoaderUpdatesHelper } from './scene-loader/run-l
 import { updateVisibleCountsInMonitor as updateVisibleCountsInMonitorHelper } from './scene-loader/visible-counts';
 import { disposeSceneLoader } from './scene-loader/dispose';
 import { loadPointsNode } from './scene-loader/nodes/load-points-node';
+import { loadLinesNode } from './scene-loader/nodes/load-lines-node';
 import type { NodeBuildCtx } from './scene-loader/nodes/build-ctx';
 
 /**
@@ -1110,78 +1109,17 @@ export class SceneLoader {
   }
 
   /**
-   * Load a single lines node
+   * Load a single lines node. Implementation lives in
+   * `scene-loader/nodes/load-lines-node.ts`.
    */
   private async loadLines(
     node: SceneNode,
     parentThree: THREE.Object3D,
     loc: zarr.Location<zarr.Readable>
   ): Promise<THREE.Mesh | null> {
-    log.custom('📐', Modules.SCENE_LOADER, `Loading lines: ${node.path}`);
-
-    const attrs = node.attrs as unknown as LinesMetadata;
-    log.info(Modules.SCENE_LOADER, `  Segments: ${attrs.n_segments || 'unknown'}`);
-    log.info(Modules.SCENE_LOADER, `  Vertices: ${attrs.n_vertices || 'unknown'}`);
-
-    // Create lines loader
-    const loader = this.createLinesLoader(node, loc);
-
-    // Store loader for updates (route through registry).
-    this.registry.registerLinesLoader(node.path, loader);
-
-    // Construct + attach empty placeholder before fetching.
-    // processLinesData / commitLinesGeometry look up the mesh by name
-    // and populate it on success; on failure the placeholder remains
-    // for retry to target. Same path is used by every future update.
-    const placeholder = this.nodeFactory.createEmptyLinesNode(
-      node.path,
-      this.applyEffectiveAttrs(node),
-      attrs,
-      loader
-    );
-    parentThree.add(placeholder);
-
-    try {
-      // Lines path does not apply the partial-extend tolerance override
-      // during the data fetch (only during clipping below), so
-      // applyPartialExtendTolerance=false. This call still validates
-      // extend_to_all dim names and applies the inverse nd_transform.
-      const derivedLines = this.deriveNodeViewState(node.path, attrs, {
-        applyPartialExtendTolerance: false,
-      });
-      const linesViewState: LinesViewState = derivedLines.skip
-        ? this.viewState
-        : derivedLines.viewState;
-
-      const data = await loader.loadLines(linesViewState);
-
-      if (data.segmentCount === 0) {
-        log.info(
-          Modules.SCENE_LOADER,
-          `No initially visible segments for ${node.path} - object created for future updates`
-        );
-      }
-
-      // Project + commit through the same helpers used by every update
-      // and retry. processLinesData reads the placeholder's userData
-      // (extend_to_all etc.) and finds the mesh by name; commit step
-      // writes into the existing geometry.
-      const staged = await this.processLinesData(node.path, data, linesViewState);
-      if (staged) this.commitLinesGeometry(staged);
-
-      log.success(Modules.SCENE_LOADER, `Loaded ${data.segmentCount} segments for ${node.path}`);
-
-      return placeholder;
-    } catch (error) {
-      // See loadPoints catch — same record-failure-then-throw shape.
-      this.registry.recordFailure(node.path, error as Error);
-      throw new LoaderError(classifyLoaderError(error), node.path, error);
-    }
+    return loadLinesNode(node, parentThree, loc, this.makeNodeBuildCtx());
   }
 
-  /**
-   * Create a lines loader for a node
-   */
   /** Build the per-call dependency snapshot for the loader factory. */
   private factoryDeps(): LoaderFactoryDeps {
     return {
@@ -1191,12 +1129,6 @@ export class SceneLoader {
       l0Cache: this.l0Cache,
       cachingStore: this.cachingStore,
     };
-  }
-
-  private createLinesLoader(node: SceneNode, loc: zarr.Location<zarr.Readable>): LinesDataLoader {
-    const loader = createLinesLoaderHelper(node, loc, this.factoryDeps());
-    this.connectLoaderToMonitor(node.path, loader);
-    return loader;
   }
 
   /**
