@@ -9,6 +9,7 @@ import { cameraConfig } from './sections/camera/data';
 import { animationConfig } from './sections/animation/data';
 import { sceneConfig, shaderConfig } from './sections/scene/data';
 import { adaptiveDPRConfig } from './sections/adaptive-dpr/data';
+import { cacheConfig } from './sections/cache/data';
 
 /**
  * Main configuration object containing all application settings
@@ -429,17 +430,7 @@ export const config: AppConfig = {
     },
   },
 
-  // OPFS-based zarr cache configuration
-  cache: {
-    enabled: true,
-    l0Enabled: true, // L0 decompressed chunk cache - eliminates ~2ms Blosc decompression per chunk
-    l0MaxSizeMB: 200, // 200MB for decompressed chunks (5x larger than compressed, but instant access)
-    l1MaxSizeMB: 100,
-    l2MaxSizeMB: 2048,
-    opfsOperationTimeoutMs: 10_000,
-    externalDatasetTtlMs: null,
-    debug: false,
-  },
+  cache: cacheConfig,
 
   // Dimension animation configuration
   dimensionAnimation: {
