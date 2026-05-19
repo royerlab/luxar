@@ -2,9 +2,9 @@
  * StringController - Text input for string values
  */
 
-import { Controller } from '../core/controller';
-import { ControllerType } from '../core/types';
-import { applyAutoBlur } from '../utils/auto-blur';
+import { Controller } from '../controller';
+import { ControllerType } from '../types';
+import { applyAutoBlur } from '../format/auto-blur';
 
 export class StringController extends Controller<string> {
   protected type = ControllerType.STRING;

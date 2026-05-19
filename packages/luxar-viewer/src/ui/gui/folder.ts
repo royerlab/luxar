@@ -11,12 +11,12 @@
 
 import { Controller } from './controller';
 import type { ControllerOptions } from './types';
-import { NumberController } from '../controllers/number-controller';
-import { BooleanController } from '../controllers/boolean-controller';
-import { StringController } from '../controllers/string-controller';
-import { OptionController } from '../controllers/option-controller';
-import { FunctionController } from '../controllers/function-controller';
-import { EventManager } from '../dom/event-manager';
+import { NumberController } from './controllers/number-controller';
+import { BooleanController } from './controllers/boolean-controller';
+import { StringController } from './controllers/string-controller';
+import { OptionController } from './controllers/option-controller';
+import { FunctionController } from './controllers/function-controller';
+import { EventManager } from './dom/event-manager';
 
 export class Folder {
   /** Display name */

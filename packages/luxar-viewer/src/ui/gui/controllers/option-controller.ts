@@ -2,9 +2,9 @@
  * OptionController - Dropdown select for enumerated values
  */
 
-import { Controller } from '../core/controller';
-import { ControllerType, type ControllerOptions } from '../core/types';
-import { applyAutoBlur } from '../utils/auto-blur';
+import { Controller } from '../controller';
+import { ControllerType, type ControllerOptions } from '../types';
+import { applyAutoBlur } from '../format/auto-blur';
 
 export class OptionController extends Controller<unknown> {
   protected type = ControllerType.OPTION;
