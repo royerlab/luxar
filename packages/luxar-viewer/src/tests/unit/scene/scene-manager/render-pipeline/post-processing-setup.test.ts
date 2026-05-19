@@ -18,7 +18,10 @@ vi.mock('../../../../../rendering/post-processing/post-processing-manager', () =
 
 import { createPostProcessing } from '../../../../../scene/scene-manager/render-pipeline/post-processing-setup';
 import { PostProcessingManager } from '../../../../../rendering/post-processing/post-processing-manager';
-import type { Renderer, RendererCapabilities } from '../../../../../rendering/renderer-capabilities';
+import type {
+  Renderer,
+  RendererCapabilities,
+} from '../../../../../rendering/renderer-capabilities';
 
 function makeRenderer(width: number, height: number): Renderer {
   const canvas = document.createElement('canvas');

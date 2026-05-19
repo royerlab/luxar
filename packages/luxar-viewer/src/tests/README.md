@@ -434,7 +434,7 @@ Tests for scene graph and state management.
   - Node hierarchy
   - Transform composition
 
-- `scene-manager-utils.test.ts` - Scene utility functions
+- `scene-manager/clipping/bounds-math.test.ts` - Scene utility functions
   - Transform helpers
   - Node traversal
   - Bounds calculation

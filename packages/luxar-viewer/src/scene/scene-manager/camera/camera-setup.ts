@@ -16,12 +16,15 @@
  *     color from the loaded zarr's `viewer_config` userData. Returns a
  *     boolean so the caller can decide whether to skip auto-framing.
  *
- * @module scene/scene-setup/camera-setup
+ * @module scene/scene-manager/camera/camera-setup
  */
 
 import * as THREE from 'three';
 import { config } from '../../../config';
-import { extractCameraOverrides, extractBackgroundColor } from '../../../config/viewer-config-utils';
+import {
+  extractCameraOverrides,
+  extractBackgroundColor,
+} from '../../../config/viewer-config-utils';
 import type { ZarrViewerConfig } from '../../../types/zarr';
 import type { ControlsManager } from '../../../controls/controls-manager';
 import { log, Modules } from '../../../utils/log';

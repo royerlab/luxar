@@ -1,9 +1,10 @@
 /**
  * Smoke test for the four SceneManager events that downstream
  * consumers depend on. Added in step 13 of the god-object refactor to
- * pin the public event surface against the folder-index move; the
- * SceneManager class implementation now lives in
- * `scene/scene-manager/index.ts` rather than `scene/scene-manager.ts`.
+ * pin the public event surface; helper files live in
+ * `scene/scene-manager/{camera,clipping,render-pipeline,viewport}/`,
+ * but the orchestrator class itself stays at `scene/scene-manager.ts`
+ * (see commit `hoist orchestrator files back to parent level`).
  *
  * The plan's non-goals list (item 2) explicitly preserves these event
  * names and payloads — this test fails the build if any of the four

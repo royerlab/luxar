@@ -36,7 +36,10 @@ import {
   adjustFOV,
 } from './scene-manager/camera/camera-materials';
 import { log, Modules, LogEmoji } from '../utils/log';
-import { clearLoadedSceneContent, disposeSceneGraphResources } from './scene-manager/render-pipeline/scene-disposal';
+import {
+  clearLoadedSceneContent,
+  disposeSceneGraphResources,
+} from './scene-manager/render-pipeline/scene-disposal';
 import {
   applyZarrViewerConfig as applyZarrViewerConfigHelper,
   createDefaultPerspectiveCamera,
@@ -64,11 +67,7 @@ import {
   getActivePixelRatio as dprGetActive,
   getNormalizedDPRScale as dprGetNormalized,
 } from './scene-manager/viewport/dpr-policy';
-import {
-  type LuxarCamera,
-  isPerspectiveCamera,
-  isOrthographicCamera,
-} from '../utils/camera-utils';
+import { type LuxarCamera, isPerspectiveCamera, isOrthographicCamera } from '../utils/camera-utils';
 import type { ControlType } from '../controls/controls-manager';
 
 /**
@@ -514,8 +513,8 @@ export class SceneManager extends THREE.EventDispatcher<{
 
   /**
    * Initialize the perspective camera. Thin delegate over
-   * `createDefaultPerspectiveCamera` in scene-setup/camera-setup so
-   * the FOV/clip/initial-position pose is unit-testable in isolation.
+   * `createDefaultPerspectiveCamera` in scene-manager/camera/camera-setup
+   * so the FOV/clip/initial-position pose is unit-testable in isolation.
    */
   private setupCamera(): void {
     this.camera = createDefaultPerspectiveCamera(this.renderer.domElement);
@@ -660,8 +659,8 @@ export class SceneManager extends THREE.EventDispatcher<{
   /**
    * Apply viewer config from zarr (camera position/target/up, background
    * color). Thin delegate over `applyZarrViewerConfig` in
-   * scene-setup/camera-setup; the helper returns whether an explicit
-   * camera position was applied so `loadSceneData` can suppress
+   * scene-manager/camera/camera-setup; the helper returns whether an
+   * explicit camera position was applied so `loadSceneData` can suppress
    * auto-framing. (Author target alone does NOT suppress auto-framing.)
    */
   private applyZarrViewerConfig(root: THREE.Group): void {
@@ -670,7 +669,8 @@ export class SceneManager extends THREE.EventDispatcher<{
 
   /**
    * Clear all loaded content from the scene, keeping lights and background.
-   * Thin delegate over `clearLoadedSceneContent` in scene-setup/scene-disposal.
+   * Thin delegate over `clearLoadedSceneContent` in
+   * scene-manager/render-pipeline/scene-disposal.
    */
   private clearSceneContent(): void {
     this.invalidateBoundsCache();
@@ -817,7 +817,6 @@ export class SceneManager extends THREE.EventDispatcher<{
   private getNormalizedDPRScale(dpr: number = this.getActivePixelRatio()): number {
     return dprGetNormalized(dpr);
   }
-
 
   /**
    * Update pixel ratio for adaptive performance optimization.
@@ -1049,8 +1048,8 @@ export class SceneManager extends THREE.EventDispatcher<{
 
     // Traverse scene graph and dispose all geometry and material resources
     // (WebGL resources are not garbage collected). Delegated to
-    // scene-setup/scene-disposal so the same one-shot final-dispose pass
-    // is unit-testable in isolation.
+    // scene-manager/render-pipeline/scene-disposal so the same one-shot
+    // final-dispose pass is unit-testable in isolation.
     disposeSceneGraphResources(this.scene);
   }
 

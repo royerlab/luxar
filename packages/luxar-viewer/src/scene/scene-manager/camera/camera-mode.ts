@@ -54,10 +54,7 @@ export interface CameraModeCtx {
  *   event in that case. (Event dispatch stays at the SceneManager
  *   call site — see non-goal #2.)
  */
-export function setControlType(
-  type: ControlType,
-  ctx: CameraModeCtx
-): { cameraChanged: boolean } {
+export function setControlType(type: ControlType, ctx: CameraModeCtx): { cameraChanged: boolean } {
   const needsOrtho = type === 'ortho';
   const hasOrtho = isOrthographicCamera(ctx.getCamera());
   const cameraChanged = needsOrtho !== hasOrtho;

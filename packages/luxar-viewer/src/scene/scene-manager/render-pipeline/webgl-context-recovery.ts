@@ -27,7 +27,7 @@
  * Behavior is identical to the inline original: same guard messages,
  * same rebuild order, same dispatch-events-after-restore sequence.
  *
- * @module scene/scene-setup/webgl-context-recovery
+ * @module scene/scene-manager/render-pipeline/webgl-context-recovery
  */
 
 import * as THREE from 'three';

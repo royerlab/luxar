@@ -129,10 +129,7 @@ describe('autoAdjustFromBounds — geometry fallback', () => {
 
   it('derives bounds from loaded geometry when metadata is missing', () => {
     const scene = new THREE.Scene();
-    const mesh = new THREE.Mesh(
-      new THREE.BoxGeometry(20, 20, 20),
-      new THREE.MeshBasicMaterial()
-    );
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(20, 20, 20), new THREE.MeshBasicMaterial());
     scene.add(mesh);
     const camera = makeCamera(new THREE.Vector3(0, 0, 50));
     const { ctx, setSceneScale } = makeCtx({ camera, scene, metadataBounds: null });
