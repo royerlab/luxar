@@ -266,6 +266,10 @@ luxar gsplat cal volume.zarr cal.json --progression power --power 2  # Polynomia
 # Output: K* + curve type {peak | plateau | signal_limited} + noise-floor σ̂ + PSNR ceiling.
 # Then re-run fit at the recommended K: luxar gsplat fit volume.zarr out.zarr --seeds <K*>
 
+# Canonical end-to-end pipeline: cal → fit (at K*) → lod (additive | substitutive)
+# `lod` operates on a pre-fitted .gsplats.zarr (output of `fit`); use `cal` upstream
+# to pick K* in a principled way.
+
 # Build an additive LOD ladder from a fitted gsplat dataset (post-fit ordering)
 # Progressive fitting now returns a single flattened dataset; the LOD ladder is
 # built explicitly here via the supp-doc additive-LOD algorithm (greedy /

@@ -28,6 +28,11 @@ The implementations derive from the supplementary documents
 
 **Related Specifications**:
 
+- **Upstream calibration**: `../calibration.py` and §8 of
+  `../SPECIFICATIONS.md`. Blind-spot CV (`luxar gsplat cal`) chooses the
+  splat budget `K*` *before* fitting; LOD then takes that fitted output
+  and reshapes it. The canonical pipeline is `cal` → `fit --seeds K*` →
+  `lod additive` (or `lod substitutive`).
 - Splat container and serialization: `../gsplat_data.py` and
   `../io/SPECIFICATIONS.md`.
 - Spatial-hash utility: `../../utils/SPECIFICATIONS.md` (used by both
