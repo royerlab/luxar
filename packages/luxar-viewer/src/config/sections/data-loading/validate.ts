@@ -1,9 +1,10 @@
 import type { AppConfig } from '../../types';
+import { validateDataLoadingNetwork } from './network/validate';
 
 /**
- * Validate data loading configuration (including cache + performance + spatial + network + memory)
- *
- * Cache validation lives here for now; sub-section split will happen in Step 3.
+ * Validate data loading configuration (composes sub-section validators
+ * for the parts that have already been extracted, plus inline blocks
+ * for the rest until they're split in Step 3).
  */
 export function validateDataLoading(
   config: AppConfig,
@@ -12,55 +13,7 @@ export function validateDataLoading(
 ): void {
   const { dataLoading } = config;
 
-  // Network validation: reject NaN (comparisons with NaN are always
-  // false, so `<= 0` accepts it), Infinity, and non-integers where
-  // integer semantics are required.
-  if (!Number.isFinite(dataLoading.network.timeoutMs) || dataLoading.network.timeoutMs <= 0) {
-    errors.push(
-      `Invalid network timeout: ${dataLoading.network.timeoutMs} ms (must be a finite positive number)`
-    );
-  }
-  // validationTimeoutMs is the per-request total budget for cache
-  // validation in fetchWithRetry; 0 / negative / NaN / Infinity all
-  // produce surprising abort/retry behavior, so reject up front.
-  if (
-    !Number.isFinite(dataLoading.network.validationTimeoutMs) ||
-    dataLoading.network.validationTimeoutMs <= 0
-  ) {
-    errors.push(
-      `Invalid validation timeout: ${dataLoading.network.validationTimeoutMs} ms (must be a finite positive number)`
-    );
-  } else if (dataLoading.network.validationTimeoutMs < 3000) {
-    // Soft warning, not a hard error. The documented default (5 s) is
-    // a fail-fast budget tuned for broadband; values under 3 s are
-    // almost always too aggressive — every round-trip including DNS,
-    // TLS, and server processing must complete in that window or the
-    // validation aborts and forces a re-fetch of otherwise-valid
-    // cached data. For 3G / Edge / high-latency targets, raise to
-    // >=8000 instead. See
-    // `DataLoadingNetworkConfig.validationTimeoutMs` JSDoc.
-    warnings.push(
-      `Very low cache validation timeout: ${dataLoading.network.validationTimeoutMs} ms ` +
-        '(values <3000 ms cause spurious validation aborts; consider 5000 ms default ' +
-        'or >=8000 ms for 3G/Edge targets)'
-    );
-  }
-  if (
-    !Number.isInteger(dataLoading.network.maxConcurrent) ||
-    dataLoading.network.maxConcurrent <= 0
-  ) {
-    errors.push(
-      `Invalid max concurrent requests: ${dataLoading.network.maxConcurrent} (must be a positive integer)`
-    );
-  }
-  if (
-    !Number.isInteger(dataLoading.network.retryAttempts) ||
-    dataLoading.network.retryAttempts < 0
-  ) {
-    errors.push(
-      `Invalid retry attempts: ${dataLoading.network.retryAttempts} (must be a non-negative integer)`
-    );
-  }
+  validateDataLoadingNetwork(config, errors, warnings);
 
   // Memory validation: reject NaN — `NaN <= 0` is always false, so a
   // bare `<= 0 || > 1` check would let NaN through.
