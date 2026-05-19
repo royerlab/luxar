@@ -25,10 +25,10 @@ import * as THREE from 'three';
 import type { SceneNode } from '../../../../data/data-loader-types';
 import type { AnimationController } from '../../../../scene/animation/animation-controller';
 
-// `showToast` lives in src/ui/helpers; mock so the empty-scene branch
+// `showToast` lives in src/ui/toast; mock so the empty-scene branch
 // is observable.
 const showToastMock = vi.fn();
-vi.mock('../../../../ui/helpers', () => ({
+vi.mock('../../../../ui/toast', () => ({
   showToast: (msg: string) => showToastMock(msg),
 }));
 
