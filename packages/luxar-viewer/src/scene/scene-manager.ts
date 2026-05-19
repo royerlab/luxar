@@ -29,15 +29,16 @@ import {
   getBoundingBoxDiagonal,
   getBoundingBoxCenter,
   BoundingBox,
-  BoundingSphere,
   boundingBoxToSphere,
   calculateClippingPlanesFromSphere,
-  projectBoundsToDisplayDims,
   SPHERE_SAFETY_EXPANSION,
   MIN_NEAR_PLANE,
 } from './scene-manager/clipping/bounds-math';
+import {
+  SceneBoundsCache,
+  computeBoundsFromMetadata,
+} from './scene-manager/clipping/scene-bounds-cache';
 import { log, Modules, LogEmoji } from '../utils/log';
-import { sceneDimsManager } from './scene-dims-manager';
 import { clearLoadedSceneContent, disposeSceneGraphResources } from './scene-manager/render-pipeline/scene-disposal';
 import {
   applyZarrViewerConfig as applyZarrViewerConfigHelper,
@@ -181,10 +182,12 @@ export class SceneManager extends THREE.EventDispatcher<{
   private dynamicClippingEnabled: boolean =
     config.renderingControls.defaults.dynamicClippingEnabled;
 
-  /** Cached scene bounds (invalidated on scene load/clear, lazily recomputed) */
-  private _cachedBounds: BoundingBox | null = null;
-  private _cachedSphere: BoundingSphere | null = null;
-  private _cachedNearCull: number = 0.1;
+  /**
+   * Cached scene bounds + bounding sphere + near-cull margin.
+   * Invalidated on scene load/clear; lazily recomputed by
+   * `boundsCache.ensure(scene)`.
+   */
+  private readonly boundsCache = new SceneBoundsCache();
 
   /** Reusable Vector2 for getDrawingBufferSize (avoids per-call allocation) */
   private readonly _bufferSize = new THREE.Vector2();
@@ -1382,24 +1385,12 @@ export class SceneManager extends THREE.EventDispatcher<{
   }
 
   /**
-   * Invalidate cached scene bounds. Called on scene load and scene clear.
-   * Display dims (sceneDimsManager.getDims().displayed) are immutable per scene,
-   * so no invalidation is needed for dimension navigation.
+   * Invalidate cached scene bounds. Called on scene load / clear.
+   * Display dims are immutable per scene, so no invalidation is
+   * needed for dimension navigation.
    */
   private invalidateBoundsCache(): void {
-    this._cachedBounds = null;
-    this._cachedSphere = null;
-    this._cachedNearCull = 0.1;
-  }
-
-  /** Lazily recompute cached bounds/sphere/nearCull from scene metadata. */
-  private ensureBoundsCache(): void {
-    if (this._cachedBounds !== null) return;
-    const bounds = this.getSceneBoundsFromMetadata();
-    if (!bounds) return;
-    this._cachedBounds = bounds;
-    this._cachedSphere = boundingBoxToSphere(bounds);
-    this._cachedNearCull = getBoundingBoxDiagonal(bounds) * 0.001;
+    this.boundsCache.invalidate();
   }
 
   /**
@@ -1412,8 +1403,8 @@ export class SceneManager extends THREE.EventDispatcher<{
   updateDynamicClippingPlanes(): void {
     if (!this.dynamicClippingEnabled) return;
 
-    this.ensureBoundsCache();
-    const s = this._cachedSphere;
+    this.boundsCache.ensure(this.scene);
+    const s = this.boundsCache.getSphere();
     if (!s) return;
 
     // Inline sphere-based clipping math (no intermediate object allocations)
@@ -1457,36 +1448,13 @@ export class SceneManager extends THREE.EventDispatcher<{
   }
 
   /**
-   * Get 3D bounding box from scene metadata, projecting nD bounds to display dimensions.
+   * Get 3D bounding box from scene metadata, projecting nD bounds
+   * to display dimensions. Delegates to the bounds-cache helper.
    *
    * @returns 3D bounding box or null if metadata bounds not available
    */
   private getSceneBoundsFromMetadata(): BoundingBox | null {
-    const foundBounds = this.findPositionBoundsInScene();
-    if (!foundBounds) return null;
-
-    const dims = sceneDimsManager.getDims();
-    const displayDims: number[] = dims?.displayed ?? [0, 1, 2];
-
-    return projectBoundsToDisplayDims(foundBounds.min, foundBounds.max, displayDims);
-  }
-
-  /**
-   * Search for position bounds in the scene graph
-   */
-  private findPositionBoundsInScene(): { min: number[]; max: number[] } | null {
-    let result: { min: number[]; max: number[] } | null = null;
-
-    this.scene.traverse((object) => {
-      if (result) return; // Already found
-
-      const bounds = object.userData?.positionBounds;
-      if (bounds && Array.isArray(bounds.min) && Array.isArray(bounds.max)) {
-        result = { min: bounds.min, max: bounds.max };
-      }
-    });
-
-    return result;
+    return computeBoundsFromMetadata(this.scene);
   }
 
   // ======================================================================
@@ -1722,8 +1690,8 @@ export class SceneManager extends THREE.EventDispatcher<{
    */
   updateMaterialsForCurrentCamera(): void {
     this.renderer.getDrawingBufferSize(this._bufferSize);
-    this.ensureBoundsCache();
-    const nearCull = this._cachedNearCull;
+    this.boundsCache.ensure(this.scene);
+    const nearCull = this.boundsCache.getNearCull();
 
     if (isOrthographicCamera(this.camera)) {
       const frustumHeight = getOrthoFrustumHeight(this.camera);

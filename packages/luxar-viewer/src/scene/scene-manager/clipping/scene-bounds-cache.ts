@@ -1,0 +1,133 @@
+/**
+ * Scene-bounds cache extracted from SceneManager.
+ *
+ * Holds the lazily-computed 3D bounding box (projected from the
+ * loaded scene's `position_bounds` metadata to the current display
+ * dimensions) plus its derived bounding sphere and near-cull margin.
+ *
+ * Invalidated on scene load / clear. Lazy `ensure(scene)` is called
+ * by callers that need a value; first call walks the scene graph
+ * once for `userData.positionBounds`, projects nD min/max through
+ * the current `sceneDimsManager.getDims().displayed`, computes the
+ * sphere + near-cull, and caches everything. Subsequent calls are
+ * O(1) until `invalidate()` is called.
+ *
+ * Pure with respect to SceneManager — the cache reads its inputs
+ * from the supplied scene + the global `sceneDimsManager` singleton.
+ * SceneManager owns one instance and threads it through clipping-
+ * policy helpers.
+ *
+ * @module scene/scene-manager/clipping/scene-bounds-cache
+ */
+
+import * as THREE from 'three';
+import { sceneDimsManager } from '../../scene-dims-manager';
+import {
+  type BoundingBox,
+  type BoundingSphere,
+  boundingBoxToSphere,
+  getBoundingBoxDiagonal,
+  projectBoundsToDisplayDims,
+} from './bounds-math';
+
+/**
+ * Lazily-computed, invalidatable cache of the 3D bounds /
+ * bounding sphere / near-cull margin derived from the scene's
+ * `position_bounds` metadata, projected to the current display
+ * dimensions.
+ */
+export class SceneBoundsCache {
+  private _bounds: BoundingBox | null = null;
+  private _sphere: BoundingSphere | null = null;
+  private _nearCull: number = 0.1;
+
+  /** Clear the cache. Call on scene load/clear. */
+  invalidate(): void {
+    this._bounds = null;
+    this._sphere = null;
+    this._nearCull = 0.1;
+  }
+
+  /**
+   * Compute the cache from the scene metadata if not already
+   * computed. Idempotent: subsequent calls are O(1) until
+   * `invalidate()` is called.
+   *
+   * If no `position_bounds` metadata is found in the scene graph,
+   * the cache remains empty and `getBounds()` / `getSphere()`
+   * return null.
+   */
+  ensure(scene: THREE.Scene): void {
+    if (this._bounds !== null) return;
+    const bounds = computeBoundsFromMetadata(scene);
+    if (!bounds) return;
+    this._bounds = bounds;
+    this._sphere = boundingBoxToSphere(bounds);
+    this._nearCull = getBoundingBoxDiagonal(bounds) * 0.001;
+  }
+
+  /**
+   * @returns the cached 3D bounds, or null if `ensure()` has not
+   *   been called or no metadata bounds were found in the scene.
+   */
+  getBounds(): BoundingBox | null {
+    return this._bounds;
+  }
+
+  /**
+   * @returns the cached bounding sphere, or null if `ensure()` has
+   *   not been called or no metadata bounds were found.
+   */
+  getSphere(): BoundingSphere | null {
+    return this._sphere;
+  }
+
+  /**
+   * @returns the cached near-cull safety margin (~0.1% of the
+   *   bounding box diagonal). Defaults to 0.1 when no bounds are
+   *   cached, matching the value `invalidate()` resets to.
+   */
+  getNearCull(): number {
+    return this._nearCull;
+  }
+}
+
+/**
+ * Get the 3D bounding box from scene metadata, projecting nD
+ * bounds (from `userData.positionBounds`) to display dimensions
+ * (from `sceneDimsManager.getDims().displayed`, defaulting to
+ * `[0,1,2]`).
+ *
+ * @returns 3D bounding box or null if metadata bounds not found.
+ */
+export function computeBoundsFromMetadata(scene: THREE.Scene): BoundingBox | null {
+  const foundBounds = findPositionBoundsInScene(scene);
+  if (!foundBounds) return null;
+
+  const dims = sceneDimsManager.getDims();
+  const displayDims: number[] = dims?.displayed ?? [0, 1, 2];
+
+  return projectBoundsToDisplayDims(foundBounds.min, foundBounds.max, displayDims);
+}
+
+/**
+ * Search for `userData.positionBounds` in the scene graph. Returns
+ * the first match (root-level metadata is set on the root group
+ * by the scene loader, so traversal short-circuits immediately in
+ * normal use).
+ */
+export function findPositionBoundsInScene(
+  scene: THREE.Scene
+): { min: number[]; max: number[] } | null {
+  let result: { min: number[]; max: number[] } | null = null;
+
+  scene.traverse((object) => {
+    if (result) return; // Already found
+    const bounds = object.userData?.positionBounds;
+    if (bounds && Array.isArray(bounds.min) && Array.isArray(bounds.max)) {
+      result = { min: bounds.min, max: bounds.max };
+    }
+  });
+
+  return result;
+}
