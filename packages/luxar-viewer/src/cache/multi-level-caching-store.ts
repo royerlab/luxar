@@ -2,6 +2,12 @@ import type { AsyncReadable } from '../data/zarr';
 import { SegmentedLRUCache } from './multi-level-caching-store/segmented-lru-cache';
 import { OPFSStore } from './multi-level-caching-store/opfs-store';
 import { BandwidthWindow } from './multi-level-caching-store/bandwidth-window';
+import {
+  buildUrl,
+  fetchWithRetry,
+  hashUrl,
+  mergeAbortSignals,
+} from './multi-level-caching-store/fetch-retry';
 import type { ChunkPrefetcher } from './chunk-prefetcher';
 import { log, Modules } from '../utils/log';
 import { config } from '../config';
@@ -22,33 +28,6 @@ export type CacheError =
 type IterableFileSystemDirectoryHandle = FileSystemDirectoryHandle & {
   entries(): AsyncIterableIterator<[string, FileSystemHandle]>;
 };
-
-/**
- * Merge a primary `AbortSignal` (e.g. per-attempt timeout) with an optional
- * caller signal (e.g. dispose-cancellation) so abort wins immediately on
- * either path.
- *
- * Uses native `AbortSignal.any` when available (Node 22+, modern browsers);
- * falls back to a hand-rolled relay otherwise.
- */
-function mergeAbortSignals(primary: AbortSignal, caller?: AbortSignal): AbortSignal {
-  if (!caller) return primary;
-  type StaticAny = { any?: (signals: AbortSignal[]) => AbortSignal };
-  const anyImpl = (AbortSignal as unknown as StaticAny).any;
-  if (typeof anyImpl === 'function') {
-    return anyImpl([primary, caller]);
-  }
-  // Fallback: relay aborts onto a fresh controller.
-  const relay = new AbortController();
-  const onAbort = (): void => relay.abort();
-  if (primary.aborted || caller.aborted) {
-    relay.abort();
-  } else {
-    primary.addEventListener('abort', onAbort, { once: true });
-    caller.addEventListener('abort', onAbort, { once: true });
-  }
-  return relay.signal;
-}
 
 interface CacheMetadataFile {
   baseUrl?: string;
@@ -105,9 +84,6 @@ export class MultiLevelCachingStore implements AsyncReadable {
     string,
     { promise: Promise<void>; abort: AbortController }
   >();
-  private static readonly INITIAL_RETRY_DELAY_MS = 50;
-  private static readonly MAX_RETRY_DELAY_MS = 500;
-
   // Captured during init() so dispose() can find this instance's queue entry.
   private datasetId?: string;
 
@@ -253,7 +229,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
     }
 
     // Generate dataset ID from URL and create L2 store
-    const datasetId = await this.hashUrl(this.baseUrl);
+    const datasetId = await hashUrl(this.baseUrl);
     this.datasetId = datasetId;
     this.l2Store = new OPFSStore(datasetId, this.baseUrl, this.l2MaxSize);
 
@@ -505,7 +481,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
     const fetchSignal = mergeAbortSignals(this.dataAbort.signal, callerSignal);
     let response: Response | undefined;
     try {
-      response = await this.fetchWithRetry(this.buildUrl(key), { signal: fetchSignal });
+      response = await fetchWithRetry(buildUrl(this.baseUrl, key), { signal: fetchSignal });
     } catch (error) {
       const cause = error instanceof Error ? error : new Error(String(error));
       return { result: err({ kind: 'NetworkError', cause }), source: 'network' };
@@ -660,7 +636,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
   private async getRemoteContentHash(signal?: AbortSignal): Promise<string | null> {
     try {
       // Direct HTTP fetch, no cache lookup
-      const response = await this.fetchWithRetry(this.buildUrl('.zattrs'), {
+      const response = await fetchWithRetry(buildUrl(this.baseUrl, '.zattrs'), {
         timeoutMsOverride: config.dataLoading.network.validationTimeoutMs,
         signal,
       });
@@ -675,106 +651,6 @@ export class MultiLevelCachingStore implements AsyncReadable {
       this.log(`Failed to fetch remote content_hash: ${errorMsg}`, 'warn');
       return null;
     }
-  }
-
-  /**
-   * Build a remote URL without producing duplicate slashes.
-   */
-  private buildUrl(key: string): string {
-    const cleanBase = this.baseUrl.replace(/\/+$/, '');
-    const cleanKey = key.replace(/^\/+/, '');
-    return `${cleanBase}/${cleanKey}`;
-  }
-
-  /**
-   * Fetch with retries for transient failures.
-   *
-   * 4xx responses are returned immediately because retrying cannot fix a
-   * missing zarr key. Network errors, timeouts, 429, and 5xx responses are
-   * retried using the configured retry budget. The configured timeout is
-   * treated as a total budget across attempts so retries do not multiply
-   * worst-case load time.
-   *
-   * @param url - URL to fetch.
-   * @param options - Optional `timeoutMsOverride` (e.g. for cache-validation
-   *   probes that want a shorter budget than the data-fetch timeout) and a
-   *   caller `signal` for dispose-cancel propagation. The caller signal is
-   *   merged with the per-attempt timeout signal so either abort source
-   *   wins immediately. A caller-aborted call exits without consuming
-   *   retry budget.
-   */
-  private async fetchWithRetry(
-    url: string,
-    options?: { timeoutMsOverride?: number; signal?: AbortSignal }
-  ): Promise<Response | undefined> {
-    const maxAttempts = Math.max(1, config.dataLoading.network.retryAttempts + 1);
-    const totalTimeoutMs = options?.timeoutMsOverride ?? config.dataLoading.network.timeoutMs;
-    const timeoutPerAttemptMs = Math.max(1, Math.ceil(totalTimeoutMs / maxAttempts));
-    let lastError: unknown;
-
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      // Caller-aborted requests must not be retried; bail out before the
-      // next attempt.
-      if (options?.signal?.aborted) {
-        return undefined;
-      }
-
-      const timeoutController = new AbortController();
-      const timeoutId = setTimeout(() => timeoutController.abort(), timeoutPerAttemptMs);
-      const signal = mergeAbortSignals(timeoutController.signal, options?.signal);
-
-      try {
-        const response = await fetch(url, { signal });
-        if (response.ok || (response.status < 500 && response.status !== 429)) {
-          return response;
-        }
-        lastError = new Error(`HTTP ${response.status} for ${url}`);
-      } catch (error) {
-        lastError = error;
-        // Caller-aborted: exit immediately rather than retrying.
-        if (options?.signal?.aborted) {
-          return undefined;
-        }
-      } finally {
-        clearTimeout(timeoutId);
-      }
-
-      if (attempt < maxAttempts - 1) {
-        // Exponential backoff with ±25% jitter so two stores that started
-        // a retry simultaneously (e.g. two browser tabs sharing a CDN)
-        // do not synchronize their next attempts. Jitter is bounded by
-        // MAX_RETRY_DELAY_MS so the worst-case wait stays predictable.
-        const base = MultiLevelCachingStore.INITIAL_RETRY_DELAY_MS * 2 ** attempt;
-        const jitter = (Math.random() - 0.5) * 0.5 * base; // [-12.5%, +12.5%]
-        const delayMs = Math.min(
-          Math.max(0, base + jitter),
-          MultiLevelCachingStore.MAX_RETRY_DELAY_MS
-        );
-        await this.sleep(delayMs);
-      }
-    }
-
-    if (lastError) {
-      const message = lastError instanceof Error ? lastError.message : String(lastError);
-      log.warning(Modules.CACHE, `Fetch failed after ${maxAttempts} attempt(s): ${message}`);
-    }
-    return undefined;
-  }
-
-  private sleep(delayMs: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, delayMs));
-  }
-
-  /**
-   * Generate a unique, collision-resistant hash for the dataset URL.
-   */
-  private async hashUrl(url: string): Promise<string> {
-    const encoder = new TextEncoder();
-    const data = encoder.encode(url);
-    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    const hashHex = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
-    return `zarr-cache-${hashHex.slice(0, 16)}`; // First 16 chars = 64 bits
   }
 
   /**
