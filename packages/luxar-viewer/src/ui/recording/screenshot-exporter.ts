@@ -19,7 +19,7 @@
  * @module ui/recording/screenshot-exporter
  */
 
-import type { OverlayManager } from '../helpers/overlay-manager';
+import type { OverlayManager } from '../overlay-manager';
 import { compositeOverlays } from './overlay-compositor';
 
 /** Subset of PostProcessingManager the screenshot path reads. */
