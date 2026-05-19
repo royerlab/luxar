@@ -1,13 +1,11 @@
 import type { DataLoadingConfig } from './types';
+import { dataLoadingSpatialConfig } from './spatial/data';
 
 /**
  * Data loading configuration
  */
 export const dataLoadingConfig: DataLoadingConfig = {
-  spatial: {
-    defaultTolerance: 0.1, // Default tolerance for nD slicing
-    defaultMaxRadius: 0.1, // Default max radius for spatial queries
-  },
+  spatial: dataLoadingSpatialConfig,
   network: {
     timeoutMs: 30000,
     // Dedicated short budget for the L2 cache-validation HEAD probe
