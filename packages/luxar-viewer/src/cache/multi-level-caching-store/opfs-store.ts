@@ -7,7 +7,22 @@ import { withTimeout } from './opfs-store/opfs-timeout';
 
 type IterableFileSystemDirectoryHandle = FileSystemDirectoryHandle & {
   keys(): AsyncIterableIterator<string>;
+  entries(): AsyncIterableIterator<[string, FileSystemHandle]>;
 };
+
+interface PersistedMetadataFile {
+  baseUrl?: string;
+  contentHash?: string;
+  totalSize?: number;
+  entries?: unknown[];
+}
+
+export interface CachedDatasetSummary {
+  url: string;
+  hash: string;
+  size: number;
+  count: number;
+}
 
 /**
  * OPFS persistence layer (L2 cache) with LRU eviction and shallow bucketing.
@@ -106,6 +121,41 @@ export class OPFSStore {
     this.datasetId = datasetId;
     this.baseUrl = baseUrl;
     this.maxSize = maxSize;
+  }
+
+  /**
+   * Enumerate every `zarr-cache-*` dataset present in OPFS. Reads each
+   * dataset's `_cache_meta.json` directly — no OPFSStore instance is
+   * created. Used by the debug-cache helpers (`window.__luxarDebug`)
+   * and the cache E2E suite to inspect persisted datasets without
+   * mounting them.
+   */
+  static async listAll(): Promise<CachedDatasetSummary[]> {
+    const datasets: CachedDatasetSummary[] = [];
+    try {
+      const opfsRoot = await navigator.storage.getDirectory();
+      const iterableRoot = opfsRoot as IterableFileSystemDirectoryHandle;
+      for await (const [name, handle] of iterableRoot.entries()) {
+        if (!name.startsWith('zarr-cache-') || handle.kind !== 'directory') continue;
+        try {
+          const directoryHandle = handle as FileSystemDirectoryHandle;
+          const metaHandle = await directoryHandle.getFileHandle('_cache_meta.json');
+          const file = await metaHandle.getFile();
+          const meta = JSON.parse(await file.text()) as PersistedMetadataFile;
+          datasets.push({
+            url: meta.baseUrl || 'unknown',
+            hash: meta.contentHash?.slice(0, 16) || 'none',
+            size: meta.totalSize || 0,
+            count: meta.entries?.length || 0,
+          });
+        } catch {
+          // Skip corrupted/invalid cache directories.
+        }
+      }
+    } catch {
+      // OPFS not available.
+    }
+    return datasets;
   }
 
   /**

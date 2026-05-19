@@ -1,6 +1,6 @@
 import type { AsyncReadable } from '../data/zarr';
 import { SegmentedLRUCache } from './multi-level-caching-store/segmented-lru-cache';
-import { OPFSStore } from './multi-level-caching-store/opfs-store';
+import { OPFSStore, type CachedDatasetSummary } from './multi-level-caching-store/opfs-store';
 import { BandwidthWindow } from './multi-level-caching-store/bandwidth-window';
 import {
   buildUrl,
@@ -28,17 +28,6 @@ export type CacheError =
   | { readonly kind: 'Missing' }
   | { readonly kind: 'NetworkError'; readonly cause: Error }
   | { readonly kind: 'Aborted' };
-
-type IterableFileSystemDirectoryHandle = FileSystemDirectoryHandle & {
-  entries(): AsyncIterableIterator<[string, FileSystemHandle]>;
-};
-
-interface CacheMetadataFile {
-  baseUrl?: string;
-  contentHash?: string;
-  totalSize?: number;
-  entries?: unknown[];
-}
 
 export interface MultiLevelCachingStoreOptions {
   /** L1 memory cache size in bytes (default: 100MB) */
@@ -597,41 +586,12 @@ export class MultiLevelCachingStore implements AsyncReadable {
   }
 
   /**
-   * List all cached datasets in OPFS.
+   * List all cached datasets in OPFS. Thin wrapper around
+   * {@link OPFSStore.listAll} — kept on the orchestrator so external
+   * callers keep importing through the package's public API.
    */
-  async listDatasets(): Promise<Array<{ url: string; hash: string; size: number; count: number }>> {
-    const datasets = [];
-
-    try {
-      const opfsRoot = await navigator.storage.getDirectory();
-
-      // Iterate all zarr-cache-* directories
-      const iterableRoot = opfsRoot as IterableFileSystemDirectoryHandle;
-      for await (const [name, handle] of iterableRoot.entries()) {
-        if (name.startsWith('zarr-cache-') && handle.kind === 'directory') {
-          try {
-            // Read _cache_meta.json from this dataset
-            const directoryHandle = handle as FileSystemDirectoryHandle;
-            const metaHandle = await directoryHandle.getFileHandle('_cache_meta.json');
-            const file = await metaHandle.getFile();
-            const meta = JSON.parse(await file.text()) as CacheMetadataFile;
-
-            datasets.push({
-              url: meta.baseUrl || 'unknown',
-              hash: meta.contentHash?.slice(0, 16) || 'none',
-              size: meta.totalSize || 0,
-              count: meta.entries?.length || 0,
-            });
-          } catch {
-            // Skip corrupted/invalid cache directories
-          }
-        }
-      }
-    } catch {
-      // OPFS not available
-    }
-
-    return datasets;
+  async listDatasets(): Promise<CachedDatasetSummary[]> {
+    return OPFSStore.listAll();
   }
 
   /**
