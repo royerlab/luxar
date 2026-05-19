@@ -45,8 +45,8 @@ export {
 } from './loaders';
 
 // Directory navigation
-export { DirectoryNavigator } from './utils/directory-navigator';
-export type { DirectoryEntry, NavigationResult } from './utils/directory-navigator';
+export { DirectoryNavigator } from './nav/directory-navigator';
+export type { DirectoryEntry, NavigationResult } from './nav/directory-navigator';
 
 // Array decoding (for Python luxar.encoding compatibility)
 export { ArrayDecoder, ArrayRefRegistry, loadAndDecodeOptionalArray } from './utils/array-decoder';
