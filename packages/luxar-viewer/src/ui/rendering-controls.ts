@@ -9,11 +9,11 @@ import { config, type RenderingSettings } from '../config';
 
 import type { RenderingControllers } from '../controls/types';
 import { log, Modules } from '../utils/log';
-import { setupNavigationControls } from './rendering-controls/navigation-setup';
-import { setupCameraControls } from './rendering-controls/camera-setup';
-import { setupHDRControls } from './rendering-controls/hdr-setup';
-import { setupAntiAliasingControls } from './rendering-controls/anti-aliasing-setup';
-import { setupPostProcessingControls } from './rendering-controls/post-processing-setup';
+import { setupNavigationControls } from './rendering-controls/setup/navigation-setup';
+import { setupCameraControls } from './rendering-controls/setup/camera-setup';
+import { setupHDRControls } from './rendering-controls/setup/hdr-setup';
+import { setupAntiAliasingControls } from './rendering-controls/setup/anti-aliasing-setup';
+import { setupPostProcessingControls } from './rendering-controls/setup/post-processing-setup';
 import { CinematicModeController } from './rendering-controls/cinematic-mode';
 import { applyRenderingSettings } from './rendering-controls/apply-settings';
 import { syncCurrentState as syncCurrentStateImpl } from './rendering-controls/sync-current-state';
@@ -25,10 +25,10 @@ import {
   saveSettingsToStorage,
   loadSettingsFromStorage,
 } from './rendering-controls/settings-persistence';
-import { setupPerformanceControls } from './rendering-controls/performance-setup';
-import { setupThemeControls } from './rendering-controls/theme-setup';
+import { setupPerformanceControls } from './rendering-controls/setup/performance-setup';
+import { setupThemeControls } from './rendering-controls/setup/theme-setup';
 import { ClippingDisplay } from './rendering-controls/clipping-display';
-import { validateRenderingSettings } from './rendering-controls/rendering-controls-utils';
+import { validateRenderingSettings } from './rendering-controls/controls-utils';
 import type { AdaptiveDPRManager } from '../rendering/adaptive-dpr-manager';
 import type { ZarrViewerConfig } from '../types/zarr';
 import { extractRenderingOverrides } from '../config/zarr-bridge/viewer-config-utils';

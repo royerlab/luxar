@@ -9,7 +9,7 @@
  */
 
 import * as THREE from 'three';
-import type { SetupContext, SetupResult } from './types';
+import type { SetupContext, SetupResult } from '../types';
 
 /**
  * Set up HDR controls in the rendering controls GUI.

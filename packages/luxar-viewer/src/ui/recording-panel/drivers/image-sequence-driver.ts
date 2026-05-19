@@ -12,7 +12,7 @@ import type {
   CaptureProgress,
   OfflineCaptureDriver,
 } from './offline-capture-driver';
-import { ZipSequenceCapture } from './zip-sequence-capture';
+import { ZipSequenceCapture } from '../zip-sequence-capture';
 
 type ImageMode = 'png' | 'webp' | 'jpeg';
 

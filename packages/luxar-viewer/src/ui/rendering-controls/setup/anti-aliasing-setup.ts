@@ -8,7 +8,7 @@
  * - MSAA (Multisample AA) with sample count
  */
 
-import type { SetupContext, SetupResult } from './types';
+import type { SetupContext, SetupResult } from '../types';
 
 /**
  * Set up anti-aliasing controls in the rendering controls GUI.

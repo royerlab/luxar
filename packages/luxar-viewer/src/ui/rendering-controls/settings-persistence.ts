@@ -20,7 +20,7 @@ import {
   serializeSettings,
   deserializeSettings,
   validateRenderingSettings,
-} from './rendering-controls-utils';
+} from './controls-utils';
 import { extractRenderingOverrides } from '../../config/zarr-bridge/viewer-config-utils';
 import type { ZarrViewerConfig } from '../../types/zarr';
 

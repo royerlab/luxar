@@ -14,7 +14,7 @@
  */
 
 import type { SceneManager } from '../../../scene/scene-manager';
-import type { VideoCodecOption } from './types';
+import type { VideoCodecOption } from '../types';
 
 /**
  * Dependencies a driver needs from the panel. Mostly wrapped panel

@@ -10,7 +10,7 @@
  * - Vignette (multiplicative edge darkening)
  */
 
-import type { SetupContext, SetupResult } from './types';
+import type { SetupContext, SetupResult } from '../types';
 
 /**
  * Set up post-processing effects controls in the rendering controls GUI.

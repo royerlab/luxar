@@ -21,27 +21,27 @@ import {
   generateFfmpegScript as generateFfmpegScriptPure,
   generateFilename as generateFilenamePure,
   getSupportedMimeType as getSupportedMimeTypePure,
-} from './recording/media-utilities';
+} from './recording-panel/media-utilities';
 import {
   renderFrameToCanvas as renderFrameToCanvasHelper,
   encodeScreenshotBlob,
   normalizeScreenshotFormat,
   downloadBlob as downloadBlobHelper,
-} from './recording/screenshot-exporter';
+} from './recording-panel/screenshot-exporter';
 import {
   getTurntableInfo as getTurntableInfoHelper,
   getNavigableDimensionOptions as getNavigableDimensionOptionsHelper,
   SliderSyncCoordinator,
-} from './recording/animation-sync';
+} from './recording-panel/animation-sync';
 import {
   computeControlVisibility,
   FORMAT_LABEL_TO_VALUE,
   CODEC_LABEL_TO_VALUE,
-} from './recording/gui-builder';
-import type { CaptureContext, OfflineCaptureDriver } from './recording/offline-capture-driver';
-import { ImageSequenceDriver } from './recording/image-sequence-driver';
-import { ExrSequenceDriver } from './recording/exr-sequence-driver';
-import { VideoModeDriver } from './recording/video-mode-driver';
+} from './recording-panel/gui-builder';
+import type { CaptureContext, OfflineCaptureDriver } from './recording-panel/drivers/offline-capture-driver';
+import { ImageSequenceDriver } from './recording-panel/drivers/image-sequence-driver';
+import { ExrSequenceDriver } from './recording-panel/drivers/exr-sequence-driver';
+import { VideoModeDriver } from './recording-panel/drivers/video-mode-driver';
 
 // Shared recording types live in `recording/types.ts`. Re-exported
 // here for external consumers that import from the panel directly.
@@ -53,7 +53,7 @@ export type {
   VideoQuality,
   PanelStates,
   RecordingOptions,
-} from './recording/types';
+} from './recording-panel/types';
 import type {
   RecordingMode,
   VideoResolution,
@@ -62,7 +62,7 @@ import type {
   VideoQuality,
   PanelStates,
   RecordingOptions,
-} from './recording/types';
+} from './recording-panel/types';
 
 /**
  * Recording panel for capturing screenshots and recording video.
