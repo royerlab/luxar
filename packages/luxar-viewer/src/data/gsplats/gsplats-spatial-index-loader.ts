@@ -21,7 +21,7 @@ import type {
   SplatRange,
 } from '../../types/gsplats';
 import type { SceneNode, PointRange } from '../data-loader-types';
-import { ArrayRefRegistry, type ArrayMetadata } from '../utils/array-decoder';
+import { ArrayRefRegistry, type ArrayMetadata } from '../array-decoder/decoder';
 import {
   RangeLoader,
   SpatialQueryBuilder,

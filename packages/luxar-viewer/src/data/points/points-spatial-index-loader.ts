@@ -45,7 +45,7 @@ import type {
   LoaderMetrics,
   QueryInfo,
 } from '../../types/data-monitor-types';
-import { ArrayDecoder, ArrayRefRegistry, type ArrayMetadata } from '../utils/array-decoder';
+import { ArrayDecoder, ArrayRefRegistry, type ArrayMetadata } from '../array-decoder/decoder';
 import { RangeLoader, SpatialQueryBuilder, type BaseViewState, type LoadRange } from '../loaders';
 import { loadColorRanges } from '../loaders/color-attribute-utils';
 import { OnceInit } from '../loaders/once-init';

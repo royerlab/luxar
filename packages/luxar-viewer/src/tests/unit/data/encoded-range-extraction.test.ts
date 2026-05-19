@@ -15,8 +15,8 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { ArrayDecoder, ArrayRefRegistry } from '../../../data/utils/array-decoder';
-import type { ArrayMetadata } from '../../../data/utils/array-decoder';
+import { ArrayDecoder, ArrayRefRegistry } from '../../../data/array-decoder/decoder';
+import type { ArrayMetadata } from '../../../data/array-decoder/decoder';
 import type { PointRange } from '../../../data/data-loader-types';
 import * as zarr from '../../../data/zarr';
 import { FileSystemStore } from '@zarrita/storage';
