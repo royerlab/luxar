@@ -12,7 +12,7 @@ import {
   compositeOverlays,
   compositeTextOverlay,
   compositeImageOverlay,
-} from '../../../../ui/recording/overlay-compositor';
+} from '../../../../ui/recording-panel/overlay-compositor';
 import type { OverlayManager } from '../../../../ui/overlay-manager';
 import type { OverlayConfig } from '../../../../data/loaders/overlay-loader';
 

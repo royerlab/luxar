@@ -7,7 +7,7 @@
  * - Fly controls (movement speed, rotation speed, inertial mode, damping)
  */
 
-import { config } from '../../config';
+import { config } from '../../../config';
 import type { SetupContext, SetupResult } from './types';
 
 /**

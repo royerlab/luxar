@@ -21,7 +21,7 @@ import type {
   CacheStatsProvider,
   CacheStatusBadge,
   CacheTelemetryState,
-} from '../../types/data-monitor-types';
+} from '../../../types/data-monitor-types';
 
 // Re-export so existing imports keep working.
 export type { CacheTelemetryState };

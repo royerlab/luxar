@@ -11,7 +11,7 @@ import {
   aggregateCacheMetrics,
   type CacheRatesSnapshot,
   type L0Provider,
-} from '../../../../ui/monitors/cache-metrics-aggregator';
+} from '../../../../ui/data-loading-monitor/metrics/cache';
 import type {
   LoaderMonitor,
   LoaderMetrics,

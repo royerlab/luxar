@@ -14,7 +14,7 @@
  * same per-overlay save/restore, same anchor offset rules, same
  * SVG foreignObject rasterization for HTML overlays.
  *
- * @module ui/recording/overlay-compositor
+ * @module ui/recording-panel/overlay-compositor
  */
 
 import type { OverlayManager } from '../overlay-manager';

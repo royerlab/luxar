@@ -7,7 +7,7 @@
  * {@link getSupportedMimeType} accepts an explicit MediaRecorder-like
  * argument so it can also be tested with a stub.
  *
- * @module ui/recording/media-utilities
+ * @module ui/recording-panel/media-utilities
  */
 
 /** Quality presets for video recording. */

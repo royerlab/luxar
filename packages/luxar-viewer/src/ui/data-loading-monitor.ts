@@ -24,13 +24,13 @@ import type {
 } from '../types/data-monitor-types';
 
 // Performance timeline removed - now using hierarchical timing panel
-import { aggregateCacheMetrics } from './monitors/cache-metrics-aggregator';
-import { calculateRates } from './monitors/rate-calculator';
-import { updateCacheTab } from './monitors/tabs/cache-tab';
-import { patchField, updateColorClass } from './monitors/tabs/dom-helpers';
-import { LoadingAdvisor } from './components/loading-advisor';
-import { EventQueue } from './components/event-queue';
-import { PollingLoop } from './components/polling-loop';
+import { aggregateCacheMetrics } from './data-loading-monitor/metrics/cache';
+import { calculateRates } from './data-loading-monitor/metrics/rates';
+import { updateCacheTab } from './data-loading-monitor/tabs/cache';
+import { patchField, updateColorClass } from './data-loading-monitor/tabs/dom-helpers';
+import { LoadingAdvisor } from './data-loading-monitor/advisor';
+import { EventQueue } from './data-loading-monitor/event-queue';
+import { PollingLoop } from './data-loading-monitor/polling-loop';
 import { log, Modules } from '../utils/log';
 import { config } from '../config';
 import { notifier } from '../utils/notifier';
@@ -62,13 +62,13 @@ import {
   calculateReuseRate,
   getReuseRateColorClass,
   type MemoryMetrics,
-} from './monitors/data-monitor-templates';
+} from './data-loading-monitor/templates';
 
 import {
   renderHierarchicalTimingPanel,
   attachTimingPanelHandlers,
   updateTimingPanelValues,
-} from './components/hierarchical-timing-panel';
+} from './data-loading-monitor/timing-panel';
 
 import type { UpdateProfiler } from '../profiling/update-profiler';
 

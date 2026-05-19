@@ -13,7 +13,7 @@ import {
   fractionToValue,
   fractionToThumbLeft,
   clampInteger,
-} from '../../../ui/helpers/slider-math-utils';
+} from '../../../ui/dimension-sliders/slider-math';
 
 describe('clampWithCyclicWrap', () => {
   it('returns the input unchanged when in range', () => {

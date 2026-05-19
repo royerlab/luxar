@@ -2,7 +2,7 @@
  * Unit tests for PollingLoop
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { PollingLoop } from '../../../ui/components/polling-loop';
+import { PollingLoop } from '../../../ui/data-loading-monitor/polling-loop';
 
 describe('PollingLoop', () => {
   let loop: PollingLoop;

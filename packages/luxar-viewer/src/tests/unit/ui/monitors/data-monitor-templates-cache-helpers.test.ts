@@ -15,7 +15,7 @@ import {
   getCacheHitRateColorClass,
   getCacheHitRateColorClassWithGuard,
   renderCacheContent,
-} from '../../../../ui/monitors/data-monitor-templates';
+} from '../../../../ui/data-loading-monitor/templates';
 import type {
   CacheMetrics,
   CacheStatusBadge,

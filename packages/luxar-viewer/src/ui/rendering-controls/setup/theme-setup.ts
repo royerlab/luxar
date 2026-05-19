@@ -7,9 +7,9 @@
  * the change is visible immediately.
  */
 
-import type GUI from '../gui';
-import { ThemeManager } from '../../themes/theme-manager';
-import { log, Modules } from '../../utils/log';
+import type GUI from '../../gui';
+import { ThemeManager } from '../../../themes/theme-manager';
+import { log, Modules } from '../../../utils/log';
 
 export interface ThemeSetupContext {
   gui: GUI;

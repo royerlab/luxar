@@ -1,5 +1,5 @@
 /**
- * Unit tests for ui/components/loading-advisor.ts.
+ * Unit tests for ui/data-loading-monitor/advisor.ts.
  *
  * The advisor is a pure analyzer: it ingests MonitorEvent /
  * LoaderMetrics / MemoryMetrics and emits Recommendation entries
@@ -8,9 +8,9 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { LoadingAdvisor } from '../../../../ui/components/loading-advisor';
+import { LoadingAdvisor } from '../../../../ui/data-loading-monitor/advisor';
 import type { LoaderMetrics, MonitorEvent } from '../../../../types/data-monitor-types';
-import type { MemoryMetrics } from '../../../../ui/monitors/data-monitor-templates';
+import type { MemoryMetrics } from '../../../../ui/data-loading-monitor/templates';
 
 const baseMetrics: LoaderMetrics = {
   type: 'point-spatial-index',

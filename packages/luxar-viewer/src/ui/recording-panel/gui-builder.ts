@@ -10,7 +10,7 @@
  * Pulling these out makes the rules testable without instantiating a
  * RecordingPanel and lets future format additions land in one place.
  *
- * @module ui/recording/gui-builder
+ * @module ui/recording-panel/gui-builder
  */
 
 import type { RecordingMode, OutputFormat } from './types';

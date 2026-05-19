@@ -1,5 +1,5 @@
 /**
- * Unit tests for ui/rendering-controls/post-processing-setup.ts.
+ * Unit tests for ui/rendering-controls/setup/post-processing-setup.ts.
  *
  * Stubs the GUI/Folder + postProcessing dependencies and verifies
  * that setupPostProcessingControls wires the 26 onChange callbacks
@@ -10,7 +10,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { SetupContext, SetupResult } from '../../../../ui/rendering-controls/types';
-import { setupPostProcessingControls } from '../../../../ui/rendering-controls/post-processing-setup';
+import { setupPostProcessingControls } from '../../../../ui/rendering-controls/setup/post-processing-setup';
 
 interface ControllerStub {
   name: ReturnType<typeof vi.fn>;

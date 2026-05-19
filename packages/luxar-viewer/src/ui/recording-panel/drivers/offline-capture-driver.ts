@@ -13,7 +13,7 @@
  * (UI hooks) so they stay decoupled from RecordingPanel internals.
  */
 
-import type { SceneManager } from '../../scene/scene-manager';
+import type { SceneManager } from '../../../scene/scene-manager';
 import type { VideoCodecOption } from './types';
 
 /**

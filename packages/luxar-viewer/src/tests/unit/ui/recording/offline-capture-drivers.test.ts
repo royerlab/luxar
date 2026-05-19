@@ -9,9 +9,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { ImageSequenceDriver } from '../../../../ui/recording/image-sequence-driver';
-import { ExrSequenceDriver } from '../../../../ui/recording/exr-sequence-driver';
-import type { CaptureContext } from '../../../../ui/recording/offline-capture-driver';
+import { ImageSequenceDriver } from '../../../../ui/recording-panel/image-sequence-driver';
+import { ExrSequenceDriver } from '../../../../ui/recording-panel/exr-sequence-driver';
+import type { CaptureContext } from '../../../../ui/recording-panel/offline-capture-driver';
 
 function makeProgress(): {
   setLabel: ReturnType<typeof vi.fn> & ((text: string) => void);
@@ -196,7 +196,7 @@ describe('VideoModeDriver', () => {
       VideoSampleSource: vi.fn(),
       VideoSample: vi.fn(),
     }));
-    const { VideoModeDriver } = await import('../../../../ui/recording/video-mode-driver');
+    const { VideoModeDriver } = await import('../../../../ui/recording-panel/video-mode-driver');
     const driver = new VideoModeDriver('webm');
     const ctx = makeCtx();
     expect(await driver.setup(ctx)).toBe(false);
@@ -217,7 +217,7 @@ describe('VideoModeDriver', () => {
       VideoSampleSource: vi.fn(() => ({ add: vi.fn() })),
       VideoSample: vi.fn(),
     }));
-    const { VideoModeDriver } = await import('../../../../ui/recording/video-mode-driver');
+    const { VideoModeDriver } = await import('../../../../ui/recording-panel/video-mode-driver');
     const driver = new VideoModeDriver('webm');
     const ctx = makeCtx({ videoCodec: 'vp9' });
     expect(await driver.setup(ctx)).toBe(true);
@@ -240,7 +240,7 @@ describe('VideoModeDriver', () => {
       VideoSampleSource: vi.fn(() => ({ add: vi.fn() })),
       VideoSample: vi.fn(),
     }));
-    const { VideoModeDriver } = await import('../../../../ui/recording/video-mode-driver');
+    const { VideoModeDriver } = await import('../../../../ui/recording-panel/video-mode-driver');
     const driver = new VideoModeDriver('webm');
     const ctx = makeCtx({ videoCodec: 'vp9' });
     await driver.setup(ctx);
@@ -267,7 +267,7 @@ describe('VideoModeDriver', () => {
       VideoSampleSource: vi.fn(() => ({ add: vi.fn() })),
       VideoSample: vi.fn(),
     }));
-    const { VideoModeDriver } = await import('../../../../ui/recording/video-mode-driver');
+    const { VideoModeDriver } = await import('../../../../ui/recording-panel/video-mode-driver');
     const driver = new VideoModeDriver('webm');
     const ctx = makeCtx({ videoCodec: 'vp9' });
     await driver.setup(ctx);
