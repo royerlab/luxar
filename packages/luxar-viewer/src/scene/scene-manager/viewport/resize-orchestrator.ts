@@ -13,7 +13,7 @@
 
 import { log, Modules } from '../../../utils/log';
 import { type LuxarCamera, updateCameraAspect } from '../../../utils/camera-utils';
-import type { PostProcessingManager } from '../../../rendering/post-processing/post-processing-manager';
+import type { PostProcessingManager } from '../../../rendering';
 import type { Renderer } from '../../../rendering/renderer-capabilities';
 import { getActivePixelRatio, syncPostProcessingDPRScale } from './dpr-policy';
 
@@ -113,8 +113,8 @@ export class ResizeOrchestrator {
     // Set pixel ratio BEFORE size for correct buffer calculations.
     ctx.renderer.setPixelRatio(getActivePixelRatio(ctx.pixelRatioOverride));
     ctx.renderer.setSize(width, height); // Allow Three.js to set CSS size.
-    if (ctx.camera) {
-      ctx.updateMaterialsForCurrentCamera();
-    }
+    // Material refresh is handled by the doResize() epilogue — no need to
+    // duplicate it here. Keeping this method narrowly focused on renderer
+    // sizing avoids a per-resize call to materialManager.updateCameraParams.
   }
 }

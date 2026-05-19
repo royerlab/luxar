@@ -8,7 +8,7 @@
  */
 
 import * as THREE from 'three';
-import { PostProcessingManager } from '../../../rendering/post-processing/post-processing-manager';
+import { PostProcessingManager } from '../../../rendering';
 import type { Renderer, RendererCapabilities } from '../../../rendering/renderer-capabilities';
 import type { LuxarCamera } from '../../../utils/camera-utils';
 import { log, Modules } from '../../../utils/log';

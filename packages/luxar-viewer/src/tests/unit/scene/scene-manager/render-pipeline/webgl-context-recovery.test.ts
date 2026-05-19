@@ -35,7 +35,7 @@ import {
   markSceneResourcesDirtyForContextRestore,
   type WebGLContextRecoveryDeps,
 } from '../../../../../scene/scene-manager/render-pipeline/webgl-context-recovery';
-import type { PostProcessingManager } from '../../../../../rendering/post-processing/post-processing-manager';
+import type { PostProcessingManager } from '../../../../../rendering/post-processing-manager';
 
 function makeDeps(overrides: Partial<WebGLContextRecoveryDeps> = {}): {
   deps: WebGLContextRecoveryDeps;

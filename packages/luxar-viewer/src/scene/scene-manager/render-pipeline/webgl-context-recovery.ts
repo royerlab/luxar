@@ -34,7 +34,7 @@ import * as THREE from 'three';
 import { log, Modules } from '../../../utils/log';
 import { notifier } from '../../../utils/notifier';
 import { materialManager } from '../../../rendering/material-manager';
-import type { PostProcessingManager } from '../../../rendering/post-processing/post-processing-manager';
+import type { PostProcessingManager } from '../../../rendering';
 
 /**
  * Side-effects the recovery class needs from the host scene. Passed

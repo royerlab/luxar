@@ -41,7 +41,7 @@ becomes `mesh.material = pointMat.getThreeMaterial()`.
 
 **Cons**:
 - Touches roughly 40-60 consumer sites across `material-manager.ts`,
-  `scene-setup/*`, factory functions, and test mocks — every
+  `scene-manager/*`, factory functions, and test mocks — every
   `mesh.material = ...`, every `dispose()` chain, every place
   that reads material properties.
 - Breaks Three.js convention (everyone reads `mesh.material as

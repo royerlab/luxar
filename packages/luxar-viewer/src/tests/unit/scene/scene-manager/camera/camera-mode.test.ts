@@ -17,7 +17,7 @@ import {
   swapToPerspective,
 } from '../../../../../scene/scene-manager/camera/camera-mode';
 import type { ControlsManager } from '../../../../../controls/controls-manager';
-import type { PostProcessingManager } from '../../../../../rendering/post-processing/post-processing-manager';
+import type { PostProcessingManager } from '../../../../../rendering/post-processing-manager';
 import type { Renderer } from '../../../../../rendering/renderer-capabilities';
 
 function makeRenderer(width = 800, height = 600): Renderer {
