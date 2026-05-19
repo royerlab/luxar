@@ -10,11 +10,11 @@ import {
   getAggregatedPointsAccumulatorStats,
   getAggregatedLinesAccumulatorStats,
   getAggregatedGSplatsAccumulatorStats,
-} from '../../../data/stats/aggregator';
-import type { AccumulatorStats } from '../../../data/accumulators/types';
-import type { DataLoader } from '../../../data/data-loader-types';
-import type { LinesDataLoader } from '../../../types/lines';
-import type { GSplatsDataLoader } from '../../../types/gsplats';
+} from '../../../../data/stats/aggregator';
+import type { AccumulatorStats } from '../../../../data/accumulators/types';
+import type { DataLoader } from '../../../../data/data-loader-types';
+import type { LinesDataLoader } from '../../../../types/lines';
+import type { GSplatsDataLoader } from '../../../../types/gsplats';
 
 const makeStats = (over: Partial<AccumulatorStats> = {}): AccumulatorStats => ({
   capacity: 0,
