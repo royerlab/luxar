@@ -32,7 +32,7 @@ import { estimateGeometryBytes, invalidateCachedByteSize } from '../utils/geomet
 import type { LoadedPointsData } from '../data/data-loader-types';
 import type { ProcessedLinesData } from '../types/lines';
 import type { PooledBuffer, PoolStats } from './gpu-buffer-pool/pool-stats';
-import { selectBuffersToEvict } from './gpu-buffer-pool/eviction-policy';
+import { evictUntilUnderByteBudget } from './gpu-buffer-pool/byte-budget-evictor';
 import { PointsBufferAdapter } from './gpu-buffer-pool/points-adapter';
 import { LinesBufferAdapter } from './gpu-buffer-pool/lines-adapter';
 import { GSplatsBufferAdapter, type PackedGSplatsData } from './gpu-buffer-pool/gsplats-adapter';
@@ -387,113 +387,21 @@ export class GPUBufferPool {
     return evicted;
   }
 
-  /**
-   * dispose pooled buffers (largest-first across all type pools)
-   * until `getPooledBytes()` is under `maxPoolBytes`. Returns the
-   * number disposed. Does NOT touch active buffers.
-   */
   private _evictUntilUnderByteBudget(): number {
-    // Single-pass collect + sort, then walk. We collect every pooled
-    // buffer with its byte size once, sort largest-first, and walk until
-    // under budget. Disposal happens in place and we splice from the
-    // original pool maps after the walk.
-    type Ref = {
-      pool: Map<number, PooledBuffer[]>;
-      bucket: number;
-      index: number;
-      buffer: PooledBuffer;
-      bytes: number;
-    };
-    const refs: Ref[] = [];
-    const collect = (pool: Map<number, PooledBuffer[]>): void => {
-      for (const [bucket, arr] of pool.entries()) {
-        for (let i = 0; i < arr.length; i++) {
-          const buffer = arr[i];
-          refs.push({
-            pool,
-            bucket,
-            index: i,
-            buffer,
-            bytes: estimateGeometryBytes(buffer.geometry),
-          });
-        }
-      }
-    };
-    collect(this.points.pointBuffers);
-    collect(this.lines.lineBuffers);
-    collect(this.gsplats.gsplatBuffers);
-
-    // One-shot warning when a pooled buffer crosses 100 MB. Such
-    // buffers are usually correct (huge Lines/GSplats datasets), but
-    // the size class makes a single eviction pause a frame visibly,
-    // and silent gigabyte-class accumulation is the failure mode
-    // worth flagging. Bound the noise: emit at most once per pool
-    // instance.
-    if (!this.largePoolWarningEmitted) {
-      const LARGE_POOLED_BYTES_THRESHOLD = 100_000_000; // 100 MB
-      const largest = refs.reduce((max, r) => (r.bytes > max ? r.bytes : max), 0);
-      if (largest > LARGE_POOLED_BYTES_THRESHOLD) {
-        this.largePoolWarningEmitted = true;
-        log.warning(
-          Modules.GPU_BUFFER_POOL,
-          `Pooled buffer of ${(largest / 1024 / 1024).toFixed(1)} MB exceeds the ` +
-            '100 MB diagnostic threshold. Eviction of this buffer will pause a frame ' +
-            '(geometry.dispose can take 5-20 ms on slow GPUs).'
-        );
-      }
-    }
-
-    const totalBytes = refs.reduce((sum, r) => sum + r.bytes, 0);
-    if (totalBytes <= this.maxPoolBytes) return 0;
-
-    const targets = selectBuffersToEvict(refs, this.maxPoolBytes, totalBytes);
-
-    // Bound the eviction count even though selectBuffersToEvict is
-    // finite — defensive guard against malformed ref shapes that don't
-    // reduce bytes when disposed.
-    const maxIterations = Math.max(this.maxPoolSize * 3, 16);
-    const evictCount = Math.min(targets.length, maxIterations);
-    if (targets.length > maxIterations) {
-      log.warning(
-        Modules.GPU_BUFFER_POOL,
-        `Byte-budget eviction capped at ${maxIterations} of ${targets.length} ` +
-          'selected buffers. Pool may still be over budget after this pass.'
-      );
-    }
-
-    // Splice from the lowest-index entries first WITHIN each (pool,bucket)
-    // so later splices don't invalidate earlier indices. We sort the
-    // evictions by descending index within their bucket arrays.
-    const evicted = targets.slice(0, evictCount);
-    // Group by (pool, bucket) then sort descending by index.
-    const grouped = new Map<Map<number, PooledBuffer[]>, Map<number, Ref[]>>();
-    for (const ref of evicted) {
-      let byBucket = grouped.get(ref.pool);
-      if (!byBucket) {
-        byBucket = new Map();
-        grouped.set(ref.pool, byBucket);
-      }
-      let bucketRefs = byBucket.get(ref.bucket);
-      if (!bucketRefs) {
-        bucketRefs = [];
-        byBucket.set(ref.bucket, bucketRefs);
-      }
-      bucketRefs.push(ref);
-    }
-    for (const [pool, byBucket] of grouped) {
-      for (const [bucket, bucketRefs] of byBucket) {
-        bucketRefs.sort((a, b) => b.index - a.index);
-        const arr = pool.get(bucket);
-        if (!arr) continue;
-        for (const ref of bucketRefs) {
-          ref.buffer.geometry.dispose();
-          arr.splice(ref.index, 1);
-          this.typeStats[ref.buffer.type].evictions++;
-        }
-        if (arr.length === 0) pool.delete(bucket);
-      }
-    }
-    return evicted.length;
+    const sentinel = { emitted: this.largePoolWarningEmitted };
+    const evicted = evictUntilUnderByteBudget(
+      {
+        pointBuffers: this.points.pointBuffers,
+        lineBuffers: this.lines.lineBuffers,
+        gsplatBuffers: this.gsplats.gsplatBuffers,
+        maxPoolBytes: this.maxPoolBytes,
+        maxPoolSize: this.maxPoolSize,
+        typeEvictionCounters: this.typeStats,
+      },
+      sentinel
+    );
+    this.largePoolWarningEmitted = sentinel.emitted;
+    return evicted;
   }
 
   /**
