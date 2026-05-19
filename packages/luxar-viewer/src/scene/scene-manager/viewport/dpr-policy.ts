@@ -7,7 +7,7 @@
  * informs when DPR changes) are passed in by callers.
  */
 
-import type { PostProcessingManager } from '../../../rendering/post-processing/post-processing-manager';
+import type { PostProcessingManager } from '../../../rendering';
 
 /** Return the DPR currently applied to renderer sizing. */
 export function getActivePixelRatio(override: number | null): number {
@@ -21,8 +21,7 @@ export function getActivePixelRatio(override: number | null): number {
  * automatically.
  */
 export function computePixelRatioOverride(
-  dpr: number,
-  _currentOverride: number | null
+  dpr: number
 ): { override: number | null; active: number } {
   const nativeDPR = window.devicePixelRatio || 1;
   const safeDPR = Number.isFinite(dpr) && dpr > 0 ? dpr : nativeDPR;

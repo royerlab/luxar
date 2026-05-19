@@ -15,7 +15,7 @@ import { notifier } from '../utils/notifier';
 import { config } from '../config';
 import { extractCameraOverrides } from '../config/viewer-config-utils';
 import type { ZarrViewerConfig } from '../types/zarr';
-import type { PostProcessingManager } from '../rendering/post-processing/post-processing-manager';
+import type { PostProcessingManager } from '../rendering/post-processing-manager';
 import { materialManager } from '../rendering';
 import { disposeColormapTextures } from '../rendering/colormap-textures';
 import type { Renderer, RendererCapabilities } from '../rendering/renderer-capabilities';
@@ -62,11 +62,7 @@ import {
 } from './scene-manager/render-pipeline/renderer-setup';
 import { createPostProcessing } from './scene-manager/render-pipeline/post-processing-setup';
 import { ResizeOrchestrator } from './scene-manager/viewport/resize-orchestrator';
-import {
-  computePixelRatioOverride,
-  getActivePixelRatio as dprGetActive,
-  getNormalizedDPRScale as dprGetNormalized,
-} from './scene-manager/viewport/dpr-policy';
+import { computePixelRatioOverride } from './scene-manager/viewport/dpr-policy';
 import { type LuxarCamera, isPerspectiveCamera, isOrthographicCamera } from '../utils/camera-utils';
 import type { ControlType } from '../controls/controls-manager';
 
@@ -618,17 +614,19 @@ export class SceneManager extends THREE.EventDispatcher<{
       // Materials created during loading already have correct FOV/resolution
       // No need to update again - this would be redundant work
 
-      // Apply viewer config from zarr (camera position, background color)
-      this.applyZarrViewerConfig(root);
-
-      // Auto-frame camera to fit scene contents, unless the zarr author specified a camera position.
-      // Only an explicit position suppresses auto-framing — a target/targetNode alone means the
-      // author wants the orbit pivot set but still expects the camera to be at a sensible distance.
+      // Apply viewer config from zarr (camera position, background color).
+      // The helper returns whether an explicit camera position was applied;
+      // also extract once more to detect author-set target/targetNode.
       const viewerConfig = root.userData?.viewerConfig as ZarrViewerConfig | undefined;
+      const { positionApplied } = this.applyZarrViewerConfig(root);
       const camOverrides = viewerConfig ? extractCameraOverrides(viewerConfig) : {};
       const hasAuthorTarget = !!(camOverrides.target || camOverrides.targetNode);
 
-      if (!camOverrides.position) {
+      // Auto-frame camera to fit scene contents, unless the zarr author specified
+      // a camera position. Only an explicit position suppresses auto-framing — a
+      // target/targetNode alone means the author wants the orbit pivot set but
+      // still expects the camera to be at a sensible distance.
+      if (!positionApplied) {
         // No author camera position — auto-frame using metadata bounds.
         // If the author set a target, preserve it as the look-at point
         // instead of overwriting with bounding box center.
@@ -659,12 +657,12 @@ export class SceneManager extends THREE.EventDispatcher<{
   /**
    * Apply viewer config from zarr (camera position/target/up, background
    * color). Thin delegate over `applyZarrViewerConfig` in
-   * scene-manager/camera/camera-setup; the helper returns whether an
-   * explicit camera position was applied so `loadSceneData` can suppress
-   * auto-framing. (Author target alone does NOT suppress auto-framing.)
+   * scene-manager/camera/camera-setup; forwards the helper's
+   * `positionApplied` flag so `loadSceneData` can suppress auto-framing.
+   * (Author target alone does NOT suppress auto-framing.)
    */
-  private applyZarrViewerConfig(root: THREE.Group): void {
-    applyZarrViewerConfigHelper(root, this.camera, this.controls, this.scene);
+  private applyZarrViewerConfig(root: THREE.Group): { positionApplied: boolean } {
+    return applyZarrViewerConfigHelper(root, this.camera, this.controls, this.scene);
   }
 
   /**
@@ -798,24 +796,14 @@ export class SceneManager extends THREE.EventDispatcher<{
     };
   }
 
-  /** Return the DPR currently applied to renderer sizing. */
-  private getActivePixelRatio(): number {
-    return dprGetActive(this.pixelRatioOverride);
-  }
-
   /**
    * Store/clear the explicit DPR override and return the effective DPR.
    * Delegates the math to dpr-policy.computePixelRatioOverride.
    */
   private setPixelRatioOverride(dpr: number): number {
-    const { override, active } = computePixelRatioOverride(dpr, this.pixelRatioOverride);
+    const { override, active } = computePixelRatioOverride(dpr);
     this.pixelRatioOverride = override;
     return active;
-  }
-
-  /** Normalize active DPR relative to current native DPR for perceptual effect scaling. */
-  private getNormalizedDPRScale(dpr: number = this.getActivePixelRatio()): number {
-    return dprGetNormalized(dpr);
   }
 
   /**
@@ -836,25 +824,11 @@ export class SceneManager extends THREE.EventDispatcher<{
     const h = canvas.clientHeight || window.innerHeight;
     const activeDPR = this.setPixelRatioOverride(dpr);
 
-    // Set new pixel ratio — PostProcessingManager's updateRendererSize()
-    // will pick this up when it calls renderer.setSize().
-    this.renderer.setPixelRatio(activeDPR);
-
-    // PostProcessingManager owns renderer + composer sizing.
-    // Its resize() → updateRendererSize() calls renderer.setSize(w, h, false)
-    // which keeps CSS dimensions constant while reducing the render buffer.
-    if (this.postProcessing) {
-      this.postProcessing.resize(w, h);
-
-      // Scale noise parameters based on DPR to maintain perceptual consistency
-      // At lower DPR, each pixel covers more area, so noise should be scaled down.
-      this.postProcessing.setDPRScale(this.getNormalizedDPRScale(activeDPR));
-    }
-
-    // Update material uniforms for world-space point sizing
-    if (this.camera) {
-      this.updateMaterialsForCurrentCamera();
-    }
+    // Resize through the orchestrator so the renderer / post-processing /
+    // material-uniform pipeline stays in lockstep with the normal resize
+    // path. resizeNow() is synchronous (no rAF coalescing), matching the
+    // frame-level granularity AdaptiveDPRManager already runs at.
+    this.resizer.resizeNow(w, h, this.makeResizeCtx());
 
     log.update(
       Modules.SCENE_MANAGER,
