@@ -25,7 +25,6 @@ import {
 } from '../rendering/renderer-capabilities';
 import { configureHDRRenderer, logHDRCapabilities } from '../utils/hdr-detection';
 import {
-  validateFOV,
   getBoundingBoxCenter,
   BoundingBox,
 } from './scene-manager/clipping/bounds-math';
@@ -39,6 +38,11 @@ import {
   autoAdjustFromBounds,
   updateDynamicFromCache,
 } from './scene-manager/clipping/clipping-policy';
+import {
+  type CameraMaterialsCtx,
+  updateMaterialsForCurrentCamera as updateCameraMaterials,
+  adjustFOV,
+} from './scene-manager/camera/camera-materials';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { clearLoadedSceneContent, disposeSceneGraphResources } from './scene-manager/render-pipeline/scene-disposal';
 import {
@@ -58,8 +62,6 @@ import {
   type LuxarCamera,
   isPerspectiveCamera,
   isOrthographicCamera,
-  getCameraFovRadians,
-  getOrthoFrustumHeight,
 } from '../utils/camera-utils';
 import type { ControlType } from '../controls/controls-manager';
 
@@ -1221,21 +1223,9 @@ export class SceneManager extends THREE.EventDispatcher<{
     );
   }
 
-  /**
-   * Update camera FOV with bounds checking
-   */
+  /** Update perspective camera FOV with bounds checking. No-op for orthographic. */
   updateFOV(deltaY: number): void {
-    if (!isPerspectiveCamera(this.camera)) return; // No FOV in orthographic mode
-    const fovChange = deltaY * config.camera.fovSensitivity;
-    this.camera.fov = validateFOV(
-      this.camera.fov + fovChange,
-      config.camera.fovMin,
-      config.camera.fovMax
-    );
-    this.camera.updateProjectionMatrix();
-
-    // Update material uniforms for world-space point sizing
-    this.updateMaterialsForCurrentCamera();
+    adjustFOV(this.makeCameraMaterialsCtx(), deltaY);
   }
 
   /** Update camera clipping planes with validation. */
@@ -1583,27 +1573,25 @@ export class SceneManager extends THREE.EventDispatcher<{
 
   /**
    * Update all materials with current camera projection parameters.
-   * Handles both perspective (FOV-based) and orthographic (frustum-based) modes.
+   * Perspective: FOV-based. Orthographic: frustum-based.
    *
-   * Called internally on resize and camera changes. Also used by
-   * RecordingPanel when the renderer is resized for offline capture.
+   * Called internally on resize and camera changes. Also called
+   * by RecordingPanel when the renderer is resized for offline
+   * capture.
    */
   updateMaterialsForCurrentCamera(): void {
-    this.renderer.getDrawingBufferSize(this._bufferSize);
-    this.boundsCache.ensure(this.scene);
-    const nearCull = this.boundsCache.getNearCull();
+    updateCameraMaterials(this.makeCameraMaterialsCtx());
+  }
 
-    if (isOrthographicCamera(this.camera)) {
-      const frustumHeight = getOrthoFrustumHeight(this.camera);
-      materialManager.updateCameraParams(frustumHeight, this._bufferSize, true, nearCull);
-    } else {
-      materialManager.updateCameraParams(
-        getCameraFovRadians(this.camera),
-        this._bufferSize,
-        false,
-        nearCull
-      );
-    }
+  /** Build the narrow ctx that the camera-materials helpers consume. */
+  private makeCameraMaterialsCtx(): CameraMaterialsCtx {
+    return {
+      renderer: this.renderer,
+      camera: this.camera,
+      scene: this.scene,
+      boundsCache: this.boundsCache,
+      bufferSize: this._bufferSize,
+    };
   }
 
   /**
