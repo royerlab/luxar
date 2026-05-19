@@ -16,7 +16,6 @@
  */
 
 import * as THREE from 'three';
-import { EXRExporter, ZIP_COMPRESSION } from 'three/examples/jsm/exporters/EXRExporter.js';
 import { log, Modules } from '../utils/log';
 import { config } from '../config';
 import { type LuxarMegaShaderMaterial } from './material-manager';
@@ -24,8 +23,6 @@ import { BloomChain } from './post-processing/bloom-chain';
 import { FxaaPass } from './post-processing/fxaa-pass';
 import { FullscreenPass } from './post-processing/fullscreen-pass';
 import type { Renderer, RendererCapabilities } from './renderer-capabilities';
-import { halfFloatToFloat32, float32ToHalfFloat, readPixelsCompactAsync } from './post-processing/hdr-pixel-utils';
-import { formatHDRExrLogLine } from './post-processing/hdr-capture';
 import { clamp } from '../utils/clamp';
 import {
   computeEffectiveSize,
@@ -36,7 +33,14 @@ import {
   disposeTransientResources,
   applyScaledNoiseSettings,
 } from './post-processing/post-processing-manager/resource-lifecycle';
-import { runPipeline } from './post-processing/post-processing-manager/pipeline';
+import { runPipeline, type PipelineCtx } from './post-processing/post-processing-manager/pipeline';
+import {
+  captureHDRPixels as captureHDRPixelsImpl,
+  captureHDRAsEXR as captureHDRAsEXRImpl,
+  renderToImageData as renderToImageDataImpl,
+  type CaptureCtx,
+  type CaptureMode,
+} from './post-processing/post-processing-manager/capture';
 import {
   updateBloomSettings as updateBloomSettingsImpl,
   clampBloomLevels,
@@ -579,21 +583,35 @@ export class PostProcessingManager {
     this.pipeline({ applyFxaa: this.fxaaPass !== null, finalTarget: null });
   }
 
+  private pipelineCtx(): PipelineCtx {
+    return {
+      renderer: this.renderer,
+      scene: this.scene,
+      camera: this.camera,
+      hdrTarget: this.hdrTarget,
+      ldrTarget: this.ldrTarget,
+      megaShader: this.megaShader,
+      megaPass: this.megaPass,
+      bloomChain: this.bloomChain,
+      fxaaPass: this.fxaaPass,
+    };
+  }
+
   private pipeline(opts: { applyFxaa: boolean; finalTarget: THREE.WebGLRenderTarget | null }): void {
-    runPipeline(
-      {
-        renderer: this.renderer,
-        scene: this.scene,
-        camera: this.camera,
-        hdrTarget: this.hdrTarget,
-        ldrTarget: this.ldrTarget,
-        megaShader: this.megaShader,
-        megaPass: this.megaPass,
-        bloomChain: this.bloomChain,
-        fxaaPass: this.fxaaPass,
-      },
-      opts
-    );
+    runPipeline(this.pipelineCtx(), opts);
+  }
+
+  private captureCtx(): CaptureCtx {
+    return {
+      renderer: this.renderer,
+      capabilities: this.capabilities,
+      scene: this.scene,
+      camera: this.camera,
+      hdrTarget: this.hdrTarget,
+      ldrTarget: this.ldrTarget,
+      megaShader: this.megaShader,
+      pipelineCtx: this.pipelineCtx(),
+    };
   }
 
   // ================================================================
@@ -681,155 +699,22 @@ export class PostProcessingManager {
    * to preserve the orientation external tools expect.
    */
   async captureHDRPixels(
-    mode: 'visible-ldr' | 'hdr-effects-pre-tone' | 'raw-scene-hdr' = 'hdr-effects-pre-tone',
+    mode: CaptureMode = 'hdr-effects-pre-tone',
     opts: { flipY?: boolean } = {}
   ): Promise<{ pixels: Float32Array; width: number; height: number }> {
-    if (mode === 'raw-scene-hdr') {
-      // Scene render only — no bloom, no mega-shader.
-      // Save/restore the renderer's current target + autoClear so a
-      // caller that invokes capture while another target is bound
-      // (picking, offscreen probe) doesn't get its state clobbered.
-      // `runPipeline` wraps the same way; mirror it here too.
-      const prevTarget = this.renderer.getRenderTarget();
-      const prevAutoClear = this.renderer.autoClear;
-      try {
-        this.renderer.setRenderTarget(this.hdrTarget);
-        this.renderer.clear();
-        this.renderer.render(this.scene, this.camera);
-        return await this.readTarget(this.hdrTarget, opts);
-      } finally {
-        // See note above the matching `setRenderTarget` call in
-        // `runPipeline` for the cast rationale.
-        this.renderer.setRenderTarget(prevTarget as THREE.WebGLRenderTarget | null);
-        this.renderer.autoClear = prevAutoClear;
-      }
-    }
-
-    if (mode === 'hdr-effects-pre-tone') {
-      // Save state, disable LDR-space effects, set the RAW_HDR
-      // capture define so the mega-shader bypasses EOG, tone mapping,
-      // vignette, and sRGB encoding. Bloom is intentionally kept in
-      // the sample (USE_BLOOM is left as-is) — bloom is an HDR-space
-      // effect and belongs in linear-HDR captures.
-      const wasNoise = this.megaShader.isDetectorNoiseEnabled();
-      const wasVignette = this.megaShader.isVignetteEnabled();
-      const wasLens = this.megaShader.isLensDistortionEnabled();
-
-      this.megaShader.toggleDetectorNoise(false);
-      this.megaShader.toggleVignette(false);
-      this.megaShader.toggleLensDistortion(false);
-      this.megaShader.toggleRawHdrCapture(true);
-
-      try {
-        this.pipeline({ applyFxaa: false, finalTarget: this.ldrTarget });
-        return await this.readTarget(this.ldrTarget, opts);
-      } finally {
-        this.megaShader.toggleRawHdrCapture(false);
-        if (wasNoise) this.megaShader.toggleDetectorNoise(true);
-        if (wasVignette) this.megaShader.toggleVignette(true);
-        if (wasLens) this.megaShader.toggleLensDistortion(true);
-      }
-    }
-
-    // 'visible-ldr': full pipeline (every enabled effect, EOG, tone
-    // mapping) but skip the final sRGB encoding so the captured
-    // pixels are post-tone-mapping LINEAR LDR.
-    this.megaShader.toggleLinearLdrCapture(true);
-    try {
-      this.pipeline({ applyFxaa: false, finalTarget: this.ldrTarget });
-      return await this.readTarget(this.ldrTarget, opts);
-    } finally {
-      this.megaShader.toggleLinearLdrCapture(false);
-    }
-  }
-
-  private async readTarget(
-    target: THREE.WebGLRenderTarget,
-    opts: { flipY?: boolean } = {}
-  ): Promise<{
-    pixels: Float32Array;
-    width: number;
-    height: number;
-  }> {
-    const flipY = opts.flipY ?? false;
-    const isHalfFloat = target.texture.type === THREE.HalfFloatType;
-
-    if (isHalfFloat) {
-      const {
-        pixels: halfData,
-        width,
-        height,
-      } = await readPixelsCompactAsync(this.renderer, this.capabilities, {
-        target,
-        kind: 'rgba16f',
-        flipY,
-      });
-      return { pixels: halfFloatToFloat32(halfData), width, height };
-    }
-
-    const { pixels, width, height } = await readPixelsCompactAsync(
-      this.renderer,
-      this.capabilities,
-      { target, kind: 'rgba32f', flipY }
-    );
-    return { pixels, width, height };
+    return captureHDRPixelsImpl(this.captureCtx(), mode, opts);
   }
 
   async captureHDRAsEXR(options?: {
     type?: THREE.TextureDataType;
-    mode?: 'visible-ldr' | 'hdr-effects-pre-tone' | 'raw-scene-hdr';
+    mode?: CaptureMode;
   }): Promise<Uint8Array> {
-    const exrType: THREE.TextureDataType = options?.type ?? THREE.HalfFloatType;
-    // EXR consumers (Nuke, Houdini, oiiotool) conventionally expect
-    // rows in scene-space bottom-up order. Override the default
-    // top-down convention here — this is the single documented
-    // exception to the viewer-wide top-down contract.
-    const { pixels, width, height } = await this.captureHDRPixels(options?.mode, {
-      flipY: true,
-    });
-
-    const data: Float32Array | Uint16Array =
-      exrType === THREE.HalfFloatType ? float32ToHalfFloat(pixels) : pixels;
-
-    const texture = new THREE.DataTexture(data, width, height, THREE.RGBAFormat, exrType);
-    texture.needsUpdate = true;
-
-    try {
-      const exporter = new EXRExporter();
-      const exrData = await exporter.parse(texture, {
-        type: exrType,
-        compression: ZIP_COMPRESSION,
-      });
-      log.info(
-        Modules.POST_PROCESSING,
-        formatHDRExrLogLine(width, height, exrType === THREE.HalfFloatType, exrData.byteLength)
-      );
-      return exrData;
-    } finally {
-      texture.dispose();
-    }
+    return captureHDRAsEXRImpl(this.captureCtx(), options);
   }
 
-  /**
-   * Run a full render and return the result as an ImageData (used by
-   * screenshot/video export paths).
-   *
-   * The pipeline renders into an offscreen `WebGLRenderTarget` rather
-   * than the canvas backbuffer, then reads back via
-   * `readRenderTargetPixelsAsync`. Render targets are addressable on
-   * both `WebGLRenderer` (with the async-readback wrapper from r184)
-   * and `WebGPURenderer` — uniform API across backends. Reading the
-   * raw canvas backbuffer under WebGPU is unsupported because the
-   * compositor owns the canvas surface; offscreen targets sidestep
-   * that limitation entirely.
-   *
-   * Detector-noise time advance, advanceTime accounting, and FXAA
-   * routing are identical to {@link render}; only the final write
-   * destination differs.
-   */
   async renderToImageData(): Promise<ImageData> {
-    // Mirror `render()`'s detector-noise time advance — the capture
-    // is conceptually a frame in its own right.
+    // Mirror render()'s detector-noise time advance — capture is a
+    // frame in its own right.
     const now = performance.now();
     const dt =
       this._previousRenderTimestamp === 0 ? 0 : (now - this._previousRenderTimestamp) / 1000;
@@ -837,37 +722,11 @@ export class PostProcessingManager {
     if (this.megaShader.isDetectorNoiseEnabled()) {
       this.megaShader.advanceTime(dt);
     }
-
-    const { width, height } = this.getPhysicalSize();
-    const captureTarget = new THREE.WebGLRenderTarget(width, height, {
-      type: THREE.UnsignedByteType,
-      format: THREE.RGBAFormat,
-      minFilter: THREE.NearestFilter,
-      magFilter: THREE.NearestFilter,
-      depthBuffer: false,
-      stencilBuffer: false,
-    });
-    captureTarget.texture.name = 'PostProcessing.captureTarget';
-
-    try {
-      this.pipeline({ applyFxaa: this.fxaaPass !== null, finalTarget: captureTarget });
-      // Read pixels in canonical top-down order. The unified primitive
-      // hides the backend signature split, compacts WebGPU row padding,
-      // and flips WebGL2's bottom-up rows to top-down — i.e. exactly
-      // the layout ImageData wants. No further flip needed here.
-      const { pixels } = await readPixelsCompactAsync(this.renderer, this.capabilities, {
-        target: captureTarget,
-        kind: 'rgba8',
-      });
-      // ImageData requires Uint8ClampedArray over a plain ArrayBuffer
-      // (not SharedArrayBuffer). The primitive returns Uint8Array;
-      // build a clamped copy backed by a freshly-allocated ArrayBuffer.
-      const clamped = new Uint8ClampedArray(pixels.length);
-      clamped.set(pixels);
-      return new ImageData(clamped, width, height);
-    } finally {
-      captureTarget.dispose();
-    }
+    return renderToImageDataImpl(
+      this.captureCtx(),
+      this.getPhysicalSize(),
+      this.fxaaPass !== null
+    );
   }
 
   // ================================================================
