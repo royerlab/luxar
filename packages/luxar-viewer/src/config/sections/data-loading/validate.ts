@@ -1,5 +1,6 @@
 import type { AppConfig } from '../../types';
 import { validateDataLoadingNetwork } from './network/validate';
+import { validateDataLoadingMemory } from './memory/validate';
 
 /**
  * Validate data loading configuration (composes sub-section validators
@@ -14,17 +15,7 @@ export function validateDataLoading(
   const { dataLoading } = config;
 
   validateDataLoadingNetwork(config, errors, warnings);
-
-  // Memory validation: reject NaN — `NaN <= 0` is always false, so a
-  // bare `<= 0 || > 1` check would let NaN through.
-  const targetHeap = dataLoading.memory.targetHeapUsage;
-  if (!Number.isFinite(targetHeap) || targetHeap <= 0 || targetHeap > 1) {
-    errors.push(`Invalid target heap usage: ${targetHeap} (must be a finite number in (0, 1])`);
-  }
-  const minCache = dataLoading.memory.minCacheMB;
-  if (!Number.isFinite(minCache) || minCache <= 0) {
-    errors.push(`Invalid min cache size: ${minCache} MB (must be a finite positive number)`);
-  }
+  validateDataLoadingMemory(config, errors, warnings);
 
   // Spatial validation: same NaN hardening.
   if (dataLoading.spatial) {

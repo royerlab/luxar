@@ -1,6 +1,7 @@
 import type { DataLoadingConfig } from './types';
 import { dataLoadingSpatialConfig } from './spatial/data';
 import { dataLoadingNetworkConfig } from './network/data';
+import { dataLoadingMemoryConfig } from './memory/data';
 
 /**
  * Data loading configuration
@@ -8,15 +9,7 @@ import { dataLoadingNetworkConfig } from './network/data';
 export const dataLoadingConfig: DataLoadingConfig = {
   spatial: dataLoadingSpatialConfig,
   network: dataLoadingNetworkConfig,
-  memory: {
-    targetHeapUsage: 0.8,
-    minCacheMB: 128,
-    checkIntervalMs: 10000,
-    adjustmentThresholds: {
-      critical: 0.85,
-      high: 0.7,
-    },
-  },
+  memory: dataLoadingMemoryConfig,
   monitor: {
     timings: {
       eventCleanupInterval: 30000,
