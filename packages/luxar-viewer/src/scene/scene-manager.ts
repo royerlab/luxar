@@ -35,7 +35,7 @@ import {
   projectBoundsToDisplayDims,
   SPHERE_SAFETY_EXPANSION,
   MIN_NEAR_PLANE,
-} from './scene-manager/scene-manager-utils';
+} from './scene-manager/clipping/bounds-math';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { sceneDimsManager } from './scene-dims-manager';
 import { clearLoadedSceneContent, disposeSceneGraphResources } from './scene-manager/scene-disposal';
