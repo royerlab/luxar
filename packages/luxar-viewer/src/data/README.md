@@ -55,15 +55,29 @@ data/
 │                                  #   composed nd_transform, produces the equivalent local-space query.
 │                                  #   Avoids transforming geometry data — all loader internals unchanged.
 │
-├── utils/                         # Pure data utilities (no I/O, no GPU state)
-│   ├── array-decoder.ts           # Decodes Python luxar.encoding arrays
-│   ├── attrs-composer.ts          # Composes per-layer attributes along the scene graph
-│   ├── data-accumulator.ts        # Zero-allocation buffer pooling
-│   ├── directory-navigator.ts     # Multi-strategy server directory browsing
-│   ├── stats-aggregator.ts        # Accumulator stats aggregation across loaders
-│   └── tolerance-computer.ts      # Canonical tolerance computer (`computeTolerance`) used by all
-│                                  #   geometry types via `SpatialQueryBuilder` + by SceneLoader
-│                                  #   for lines projection clipping.
+├── accumulators/                  # Per-geometry zero-allocation buffer pooling
+│   ├── types.ts                   # Shared DataAccumulator<T> + AccumulatorStats
+│   ├── points.ts                  # LoadedPointsDataAccumulator
+│   ├── lines.ts                   # LinesDataAccumulator (flat per-vertex buffers)
+│   └── gsplats.ts                 # GSplatsDataAccumulator
+│
+├── array-decoder/                 # Decodes Python luxar.encoding arrays
+│   ├── decoder.ts                 # ArrayDecoder priority-dispatch body
+│   ├── ref-registry.ts            # ArrayRefRegistry (array_ref dedup)
+│   ├── load-and-decode.ts         # loadAndDecodeOptionalArray helper
+│   └── types.ts                   # ArrayMetadata + EncodingMetadata
+│
+├── attrs-composer.ts              # Composes per-layer attributes along the scene graph
+│                                  #   (used by SceneLoader and UI panels)
+│
+├── nav/                           # Multi-strategy server directory browsing
+│   └── directory-navigator.ts
+│
+├── stats/                         # Scene + per-loader statistics
+│   ├── scene-stats.ts             # Roll up loaded geometry per type
+│   └── aggregator.ts              # Accumulator stats aggregation across loaders
+│
+├── dims-to-view-state.ts          # SimpleDims → ViewState (zarr-loader entry helper)
 │
 ├── loaders/                       # Unified loader infrastructure (see loaders/README.md)
 │   ├── base-types.ts              # Common types (BaseViewState, LoadRange)
