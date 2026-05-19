@@ -17,7 +17,7 @@
 import * as THREE from 'three';
 import { config } from '../../../config';
 import type { ControlsManager, ControlType } from '../../../controls/controls-manager';
-import type { PostProcessingManager } from '../../../rendering/post-processing/post-processing-manager';
+import type { PostProcessingManager } from '../../../rendering';
 import type { Renderer } from '../../../rendering/renderer-capabilities';
 import {
   type LuxarCamera,
