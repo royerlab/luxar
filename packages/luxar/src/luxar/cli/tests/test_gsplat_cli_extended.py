@@ -1888,3 +1888,164 @@ class TestCalibrateCommand:
         assert out_fits.is_dir()
         persisted = sorted(out_fits.iterdir())
         assert len(persisted) == 2
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# LOD command tests (additive + substitutive)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+@pytest.fixture
+def medium_gsplats(tmp_path: Path) -> Path:
+    """A 32-splat .gsplats.zarr large enough for both LOD subcommands.
+
+    Additive needs ``data.n_splats >= n_lods`` (default 4). Substitutive
+    needs enough splats that ``ceil(N / K^L)`` stays positive — 32 splats
+    with default ``K=4, L=3`` yields levels 32 / 8 / 2 / 1.
+    """
+    from luxar.gsplats.gsplat_data import GSplatData
+
+    rng = np.random.default_rng(0)
+    n, d = 32, 3
+    data = GSplatData(
+        centers=(rng.random((n, d)) * 10).astype(np.float32),
+        amplitudes=rng.random(n).astype(np.float32),
+        cholesky_factors=np.tile(
+            np.array([1.0, 0, 1.0, 0, 0, 1.0], dtype=np.float32), (n, 1)
+        ),
+    )
+    out = tmp_path / "medium.gsplats.zarr"
+    data.save(out)
+    return out
+
+
+class TestLODCommand:
+    def test_lod_additive_basic(
+        self,
+        runner: CliRunner,
+        medium_gsplats: Path,
+        tmp_path: Path,
+    ) -> None:
+        """`lod additive` produces a valid multi-LOD .gsplats.zarr."""
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        out = tmp_path / "ladder.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                "additive",
+                str(medium_gsplats),
+                str(out),
+                "--n-lods",
+                "2",
+                "--method",
+                "self_energy",  # cheap, avoids dense Gram on tiny inputs
+            ],
+        )
+        assert result.exit_code == 0, f"lod additive failed:\n{result.stdout}"
+        assert out.exists()
+        ladder = GSplatData.load(out)
+        # Multi-LOD with 2 levels; sum of per-level counts equals total
+        assert ladder.n_lods == 2
+        per_level = [ladder.at_lod(i).n_splats for i in range(ladder.n_lods)]
+        assert sum(per_level) == ladder.n_splats == 32
+
+    def test_lod_additive_quiet_suppresses_per_lod_lines(
+        self,
+        runner: CliRunner,
+        medium_gsplats: Path,
+        tmp_path: Path,
+    ) -> None:
+        """`--quiet` suppresses 'LOD 0: ... splats' progress lines."""
+        out_loud = tmp_path / "loud.gsplats.zarr"
+        out_quiet = tmp_path / "quiet.gsplats.zarr"
+
+        loud = runner.invoke(
+            app,
+            [
+                "gsplat", "lod", "additive",
+                str(medium_gsplats), str(out_loud),
+                "--n-lods", "2", "--method", "self_energy",
+            ],
+        )
+        assert loud.exit_code == 0, f"loud invocation failed:\n{loud.stdout}"
+
+        quiet = runner.invoke(
+            app,
+            [
+                "gsplat", "lod", "additive",
+                str(medium_gsplats), str(out_quiet),
+                "--n-lods", "2", "--method", "self_energy",
+                "--quiet",
+            ],
+        )
+        assert quiet.exit_code == 0, f"quiet invocation failed:\n{quiet.stdout}"
+
+        # The per-LOD enumeration "LOD 0:" / "LOD 1:" appears in loud only
+        assert "LOD 0" in loud.stdout or "LOD 1" in loud.stdout
+        assert "LOD 0" not in quiet.stdout
+        assert "LOD 1" not in quiet.stdout
+
+    def test_lod_substitutive_basic(
+        self,
+        runner: CliRunner,
+        medium_gsplats: Path,
+        tmp_path: Path,
+    ) -> None:
+        """`lod substitutive` produces a directory + manifest.json."""
+        import json
+
+        out_dir = tmp_path / "hierarchy"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                "substitutive",
+                str(medium_gsplats),
+                str(out_dir),
+                "--K", "2",
+                "--L", "2",
+                "--device", "cpu",
+            ],
+        )
+        assert result.exit_code == 0, f"lod substitutive failed:\n{result.stdout}"
+        assert out_dir.is_dir()
+        manifest_path = out_dir / "manifest.json"
+        assert manifest_path.exists()
+        manifest = json.loads(manifest_path.read_text())
+        assert manifest["lod_kind"] == "substitutive"
+        assert manifest["compression_factor"] == 2
+        assert manifest["levels"] == 2
+        # 3 entries (level 0 = original + 2 coarser levels)
+        assert len(manifest["levels_data"]) == 3
+
+    def test_lod_substitutive_quiet_suppresses_per_level_lines(
+        self,
+        runner: CliRunner,
+        medium_gsplats: Path,
+        tmp_path: Path,
+    ) -> None:
+        """`--quiet` suppresses per-level enumeration."""
+        out_dir = tmp_path / "hierarchy_quiet"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                "substitutive",
+                str(medium_gsplats),
+                str(out_dir),
+                "--K", "2",
+                "--L", "1",
+                "--device", "cpu",
+                "--quiet",
+            ],
+        )
+        assert result.exit_code == 0, f"quiet substitutive failed:\n{result.stdout}"
+        assert (out_dir / "manifest.json").exists()
+        # The per-level "level 0: ... splats" / "Wrote manifest" lines are gated
+        assert "level 0:" not in result.stdout
+        assert "Wrote manifest" not in result.stdout
