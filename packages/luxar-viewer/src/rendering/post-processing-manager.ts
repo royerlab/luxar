@@ -19,15 +19,23 @@ import * as THREE from 'three';
 import { EXRExporter, ZIP_COMPRESSION } from 'three/examples/jsm/exporters/EXRExporter.js';
 import { log, Modules } from '../utils/log';
 import { config } from '../config';
-import { materialManager, type LuxarMegaShaderMaterial } from './material-manager';
+import { type LuxarMegaShaderMaterial } from './material-manager';
 import { BloomChain } from './post-processing/bloom-chain';
 import { FxaaPass } from './post-processing/fxaa-pass';
 import { FullscreenPass } from './post-processing/fullscreen-pass';
-import { computeEffectiveRenderSize } from './post-processing/render-target-sizing';
 import type { Renderer, RendererCapabilities } from './renderer-capabilities';
 import { halfFloatToFloat32, float32ToHalfFloat, readPixelsCompactAsync } from './post-processing/hdr-pixel-utils';
 import { formatHDRExrLogLine } from './post-processing/hdr-capture';
 import { clamp } from '../utils/clamp';
+import {
+  computeEffectiveSize,
+  getPhysicalSize,
+  createHdrTarget,
+  buildTransientResources,
+  buildBloomChain,
+  disposeTransientResources,
+  applyScaledNoiseSettings,
+} from './post-processing/post-processing-manager/resource-lifecycle';
 
 /** Validated MSAA sample counts. */
 const VALID_MSAA_SAMPLES = [0, 2, 4, 8, 16] as const;
@@ -141,162 +149,88 @@ export class PostProcessingManager {
   }
 
   // ================================================================
-  // Resource lifecycle
+  // Resource lifecycle (delegates to resource-lifecycle.ts)
   // ================================================================
 
   private computeEffectiveSize(): { width: number; height: number } {
-    return computeEffectiveRenderSize(this.renderSize, this.ssaaEnabled, this.ssaaMultiplier);
+    return computeEffectiveSize({
+      renderer: this.renderer,
+      renderSize: this.renderSize,
+      ssaaEnabled: this.ssaaEnabled,
+      ssaaMultiplier: this.ssaaMultiplier,
+    });
   }
 
-  /**
-   * Physical-pixel framebuffer size = effective (logical SSAA) size ×
-   * renderer's `getPixelRatio()`. Render targets, the mega-shader and
-   * the bloom/FXAA passes are all sized here so they match the
-   * renderer's canvas backbuffer AND what materials read from
-   * `renderer.getDrawingBufferSize()`.
-   *
-   * Without this, at DPR > 1 the hdrTarget would be smaller than the
-   * canvas (and smaller than what point/line materials expect), and
-   * `gl_PointSize` values would overshoot the viewport — visibly
-   * brightening the scene through extra additive-blended pixel
-   * coverage.
-   */
   private getPhysicalSize(): { width: number; height: number } {
-    const { width, height } = this.computeEffectiveSize();
-    const dpr = this.renderer.getPixelRatio();
-    return {
-      width: Math.max(1, Math.round(width * dpr)),
-      height: Math.max(1, Math.round(height * dpr)),
-    };
+    return getPhysicalSize({
+      renderer: this.renderer,
+      renderSize: this.renderSize,
+      ssaaEnabled: this.ssaaEnabled,
+      ssaaMultiplier: this.ssaaMultiplier,
+    });
   }
 
   private initializeTransientResources(
     opts: { applyDefaults: boolean } = { applyDefaults: true }
   ): void {
     const { width, height } = this.getPhysicalSize();
-
-    // HDR target: scene renders here (linear, HalfFloat, optional MSAA).
-    this.hdrTarget = new THREE.WebGLRenderTarget(width, height, {
-      type: THREE.HalfFloatType,
-      format: THREE.RGBAFormat,
-      minFilter: THREE.LinearFilter,
-      magFilter: THREE.LinearFilter,
-      depthBuffer: true,
-      stencilBuffer: false,
-      samples: this.msaaEnabled ? this.msaaSamples : 0,
+    const r = buildTransientResources({
+      physW: width,
+      physH: height,
+      msaaEnabled: this.msaaEnabled,
+      msaaSamples: this.msaaSamples,
+      fxaaEnabled: this.fxaaEnabled,
+      capabilities: this.capabilities,
+      bloomLevels: this.bloomLevels,
+      bloomRadius: this.bloomRadius,
+      bloomThreshold: this.bloomThreshold,
+      bloomIntensity: this.bloomIntensity,
+      allocateBloomFromDefaults: opts.applyDefaults,
     });
-    this.hdrTarget.texture.name = 'PostProcessing.hdrTarget';
-
-    // LDR intermediate: mega-shader output. HalfFloat keeps the EXR
-    // export path lossless even though values are tone-mapped to [0,1].
-    this.ldrTarget = new THREE.WebGLRenderTarget(width, height, {
-      type: THREE.HalfFloatType,
-      format: THREE.RGBAFormat,
-      minFilter: THREE.LinearFilter,
-      magFilter: THREE.LinearFilter,
-      depthBuffer: false,
-      stencilBuffer: false,
-    });
-    this.ldrTarget.texture.name = 'PostProcessing.ldrTarget';
-
-    // Mega-shader + fullscreen mesh + ortho camera. Dispatch on
-    // `caps.apiSurface` through MaterialManager so the WebGPU path returns
-    // the TSL/NodeMaterial counterpart instead of the GLSL
-    // ShaderMaterial.
-    this.megaShader = materialManager.createMegaShaderMaterial({
-      exposure: config.renderingControls.defaults.exposure,
-      globalOffset: config.renderingControls.defaults.globalOffset,
-      globalGamma: config.renderingControls.defaults.globalGamma,
-      toneMapping: this.resolveToneMappingDefault(),
-    });
-    this.megaShader.setResolution(width, height);
-
-    // Fullscreen pass for the mega-shader. The FullscreenPass owns the
-    // caps-aware triangle geometry so we never have to think about
-    // framebuffer-Y orientation here.
-    this.megaPass = new FullscreenPass(this.megaShader, this.capabilities);
-
-    // Bloom chain (built only when enabled; on by default per config).
-    // Skip during context-restore rebuilds — the caller restores the
-    // user's bloom-enabled choice from a snapshot, which may have been
-    // off even if config defaults say on.
-    if (opts.applyDefaults && config.renderingControls.defaults.bloomEnabled) {
-      this.allocateBloomChain(width, height);
-    }
-
-    // FXAA pass (built only when enabled).
-    if (this.fxaaEnabled) {
-      this.fxaaPass = new FxaaPass(width, height, this.capabilities);
-    }
+    this.hdrTarget = r.hdrTarget;
+    this.ldrTarget = r.ldrTarget;
+    this.megaShader = r.megaShader;
+    this.megaPass = r.megaPass;
+    this.bloomChain = r.bloomChain;
+    this.fxaaPass = r.fxaaPass;
 
     // Apply config defaults to the mega-shader uniforms / defines.
     // Skipped during context-restore rebuilds — the caller restores user
-    // toggle state from a snapshot, which would otherwise be clobbered
-    // back to defaults here.
+    // toggle state from a snapshot.
     if (opts.applyDefaults) {
       this.applyConfigDefaults();
     }
   }
 
   private allocateBloomChain(width: number, height: number): void {
-    this.bloomChain = new BloomChain({
+    this.bloomChain = buildBloomChain(width, height, {
       levels: this.bloomLevels,
       threshold: this.bloomThreshold,
-      smoothing: 0.01,
       radius: this.bloomRadius,
-      width,
-      height,
+      intensity: this.bloomIntensity,
       caps: this.capabilities,
+      megaShader: this.megaShader,
     });
-    this.megaShader.toggleBloom(true);
-    this.megaShader.setBloom(this.bloomIntensity, this.bloomChain.outputTexture);
-  }
-
-  private resolveToneMappingDefault(): THREE.ToneMapping {
-    const name = config.renderingControls.defaults.toneMapping;
-    switch (name) {
-      case 'None':
-        return THREE.NoToneMapping;
-      case 'Linear':
-        return THREE.LinearToneMapping;
-      case 'Reinhard':
-        return THREE.ReinhardToneMapping;
-      case 'Cineon':
-        return THREE.CineonToneMapping;
-      case 'ACES':
-        return THREE.ACESFilmicToneMapping;
-      case 'AgX':
-        return THREE.AgXToneMapping;
-      case 'Neutral':
-        return THREE.NeutralToneMapping;
-      default:
-        return THREE.NeutralToneMapping;
-    }
   }
 
   private applyConfigDefaults(): void {
     const d = config.renderingControls.defaults;
-
-    if (d.detectorNoiseEnabled) {
-      this.setDetectorNoiseEnabled(true);
-    }
-    if (d.vignetteEnabled) {
-      this.setVignetteEnabled(true);
-    }
-    if (d.chromaticLensDistortionEnabled) {
-      this.setChromaticLensDistortionEnabled(true);
-    }
+    if (d.detectorNoiseEnabled) this.setDetectorNoiseEnabled(true);
+    if (d.vignetteEnabled) this.setVignetteEnabled(true);
+    if (d.chromaticLensDistortionEnabled) this.setChromaticLensDistortionEnabled(true);
   }
 
   private disposeTransientResources(): void {
-    this.hdrTarget?.dispose();
-    this.ldrTarget?.dispose();
-    this.bloomChain?.dispose();
+    disposeTransientResources({
+      hdrTarget: this.hdrTarget,
+      ldrTarget: this.ldrTarget,
+      bloomChain: this.bloomChain,
+      fxaaPass: this.fxaaPass,
+      megaShader: this.megaShader,
+      megaPass: this.megaPass,
+    });
     this.bloomChain = null;
-    this.fxaaPass?.dispose();
     this.fxaaPass = null;
-    this.megaShader?.dispose();
-    this.megaPass?.dispose();
   }
 
   // ================================================================
@@ -498,12 +432,10 @@ export class PostProcessingManager {
    * with DPR² (shot noise).
    */
   private applyScaledNoiseSettings(): void {
-    if (!this.megaShader.isDetectorNoiseEnabled()) return;
-    const s = this.currentDPRScale;
-    this.megaShader.setDetectorNoise({
-      readoutSigma: this.baseNoiseSettings.readoutSigma * s,
-      photonGain: this.baseNoiseSettings.photonGain * s * s,
-      fpnSigma: this.baseNoiseSettings.fpnSigma * s,
+    applyScaledNoiseSettings({
+      megaShader: this.megaShader,
+      currentDPRScale: this.currentDPRScale,
+      baseNoiseSettings: this.baseNoiseSettings,
     });
   }
 
@@ -829,16 +761,7 @@ export class PostProcessingManager {
     // All render targets at PHYSICAL size — matches canvas backbuffer
     // and the resolution materials read from `getDrawingBufferSize()`.
     this.hdrTarget.dispose();
-    this.hdrTarget = new THREE.WebGLRenderTarget(physW, physH, {
-      type: THREE.HalfFloatType,
-      format: THREE.RGBAFormat,
-      minFilter: THREE.LinearFilter,
-      magFilter: THREE.LinearFilter,
-      depthBuffer: true,
-      stencilBuffer: false,
-      samples: this.msaaEnabled ? this.msaaSamples : 0,
-    });
-    this.hdrTarget.texture.name = 'PostProcessing.hdrTarget';
+    this.hdrTarget = createHdrTarget(physW, physH, this.msaaEnabled ? this.msaaSamples : 0);
 
     this.ldrTarget.setSize(physW, physH);
     if (this.bloomChain) {
