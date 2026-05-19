@@ -44,6 +44,15 @@ import {
   type MaterialBackend,
 } from './material-manager/factories';
 import { lruGet, lruSet } from './material-manager/lru-cache';
+import {
+  SOFT_DISPOSE_FLAG,
+  subscribeToDispose,
+  removeFromRegistries,
+  type LifecycleCtx,
+} from './material-manager/lifecycle';
+
+// Re-export the sentinel for callers that import from material-manager.
+export { SOFT_DISPOSE_FLAG };
 
 // Re-export factory types so external callers don't need to know
 // about the helper subfolder — the material-manager module remains
@@ -56,26 +65,6 @@ export {
   type GSplatMaterialProperties,
   type MaterialBackend,
 };
-
-/**
- * Sentinel symbol that callers set transiently on a material when
- * they dispatch a `'dispose'` event purely to evict Three's cached
- * `RenderObject` — NOT because the material is actually being torn
- * down. `subscribeToDispose`'s listener checks for this flag and
- * skips registry / cache cleanup when it is present, so the material
- * continues to receive global camera updates and stays cached.
- *
- * Used by `data/scene-loader/invalidate-render-object.ts`, which is
- * fired when the GPU buffer pool rebuilds a geometry's underlying
- * `InstancedInterleavedBuffer` and the mesh's cached `RenderObject`
- * needs to drop its stale `vertexBuffers` set. Exported so the
- * dispatcher and the listener stay name-coupled.
- *
- * Symbol-keyed so the flag can't collide with Three's internal
- * properties or with userspace `userData` keys, and so it's invisible
- * to enumeration / serialization.
- */
-export const SOFT_DISPOSE_FLAG = Symbol.for('luxar.invalidateRenderObject.softDispose');
 
 /**
  * Per-geometry-type material returned by
@@ -187,60 +176,19 @@ export class MaterialManager {
   };
 
   /**
-   * Subscribe to a material's `dispose` event so the manager can clean
-   * up its registry / cache entries automatically. THREE.Material's
-   * EventDispatcher fires `dispose` synchronously inside `dispose()`,
-   * so by the time super.dispose() returns, the manager has already
-   * forgotten about this material.
+   * Build the lifecycle context handed to `subscribeToDispose` and
+   * `removeFromRegistries`. Lazy getter — captures `this` references
+   * once, reused across calls.
    */
-  private subscribeToDispose(material: THREE.Material & CameraAwareMaterial): void {
-    if (this.subscribedMaterials.has(material)) return;
-    const onDispose = (): void => {
-      // Soft-dispose: caller dispatched `'dispose'` purely to evict
-      // Three's cached `RenderObject` (see `SOFT_DISPOSE_FLAG`).
-      // Skip registry/cache cleanup so the material keeps receiving
-      // global camera updates and stays in its allocation cache.
-      const tagged = material as unknown as Record<symbol, boolean | undefined>;
-      if (tagged[SOFT_DISPOSE_FLAG]) return;
-      this.subscribedMaterials.delete(material);
-      this.removeFromRegistries(material);
-      material.removeEventListener('dispose', onDispose);
+  private get lifecycleCtx(): LifecycleCtx {
+    return {
+      registeredMaterials: this.registeredMaterials,
+      ownedMaterials: this.ownedMaterials,
+      subscribedMaterials: this.subscribedMaterials,
+      pointMaterialCache: this.pointMaterialCache,
+      lineMaterialCache: this.lineMaterialCache,
+      gsplatMaterialCache: this.gsplatMaterialCache,
     };
-    material.addEventListener('dispose', onDispose);
-    this.subscribedMaterials.add(material);
-  }
-
-  /**
-   * Internal cleanup: remove `material` from every registry and cache.
-   * Called from the dispose listener and (for backwards compatibility)
-   * from the public `unregister` method. Idempotent.
-   */
-  private removeFromRegistries(material: THREE.Material & CameraAwareMaterial): void {
-    this.registeredMaterials.delete(material);
-    this.ownedMaterials.delete(material);
-
-    if (material instanceof PointMaterial || material instanceof PointTSLMaterial) {
-      for (const [key, cachedMaterial] of this.pointMaterialCache.entries()) {
-        if (cachedMaterial === material) {
-          this.pointMaterialCache.delete(key);
-          break;
-        }
-      }
-    } else if (material instanceof LineMaterial || material instanceof LineTSLMaterial) {
-      for (const [key, cachedMaterial] of this.lineMaterialCache.entries()) {
-        if (cachedMaterial === material) {
-          this.lineMaterialCache.delete(key);
-          break;
-        }
-      }
-    } else if (material instanceof GSplatMaterial || material instanceof GSplatTSLMaterial) {
-      for (const [key, cachedMaterial] of this.gsplatMaterialCache.entries()) {
-        if (cachedMaterial === material) {
-          this.gsplatMaterialCache.delete(key);
-          break;
-        }
-      }
-    }
   }
 
   /**
@@ -291,7 +239,7 @@ export class MaterialManager {
     this.createCount++;
 
     this.registeredMaterials.add(material);
-    this.subscribeToDispose(material);
+    subscribeToDispose(material, this.lifecycleCtx);
     material.updateCameraParams(this.currentFov, this.currentResolution, this.currentIsOrtho);
     lruSet(
       this.pointMaterialCache,
@@ -332,7 +280,7 @@ export class MaterialManager {
     this.createCount++;
 
     this.registeredMaterials.add(material);
-    this.subscribeToDispose(material);
+    subscribeToDispose(material, this.lifecycleCtx);
     material.updateCameraParams(this.currentFov, this.currentResolution, this.currentIsOrtho);
     lruSet(
       this.lineMaterialCache,
@@ -374,7 +322,7 @@ export class MaterialManager {
     this.createCount++;
 
     this.registeredMaterials.add(material);
-    this.subscribeToDispose(material);
+    subscribeToDispose(material, this.lifecycleCtx);
     material.updateCameraParams(this.currentFov, this.currentResolution, this.currentIsOrtho);
     lruSet(
       this.gsplatMaterialCache,
@@ -446,7 +394,7 @@ export class MaterialManager {
   register(material: THREE.Material & CameraAwareMaterial): void {
     this.registeredMaterials.add(material);
     this.ownedMaterials.add(material);
-    this.subscribeToDispose(material);
+    subscribeToDispose(material, this.lifecycleCtx);
     material.updateCameraParams(
       this.currentFov,
       this.currentResolution,
@@ -463,7 +411,7 @@ export class MaterialManager {
    * directly.
    */
   unregister(material: THREE.Material & CameraAwareMaterial): void {
-    this.removeFromRegistries(material);
+    removeFromRegistries(material, this.lifecycleCtx);
   }
 
   /**
