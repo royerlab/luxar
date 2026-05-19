@@ -18,7 +18,7 @@ import { SimpleDims } from '../types/dims';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { config } from '../config';
 import { simpleDimsToViewState } from './utils/dims-to-view-state';
-import { computeSceneStats } from './utils/scene-stats';
+import { computeSceneStats } from './stats/scene-stats';
 
 /**
  * Load a complete scene from a Zarr store using the new architecture.
@@ -129,7 +129,7 @@ export function dispose(loaderId?: string): void {
 
 /**
  * Log statistics about the loaded scene. The traversal/counting logic is
- * `data/utils/scene-stats.ts::computeSceneStats`; this function is only
+ * `data/stats/scene-stats.ts::computeSceneStats`; this function is only
  * the logging layer.
  */
 function logSceneStats(scene: THREE.Group): void {
