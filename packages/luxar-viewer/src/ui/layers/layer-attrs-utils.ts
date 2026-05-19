@@ -13,7 +13,7 @@
 import * as THREE from 'three';
 import { computeUniforms, type LayerInfo } from './layer-state';
 import type { ComposableAttrs } from '../../data/attrs-composer';
-import { clamp } from '../gui/utils/value-formatting';
+import { clamp } from '../gui/format/value-formatting';
 import {
   getCompleteBlendingState,
   type CompleteBlendingState,

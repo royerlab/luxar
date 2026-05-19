@@ -12,7 +12,7 @@
  */
 
 import type { ChangeCallback, FinishChangeCallback, ControllerType } from './types';
-import { EventManager } from '../dom/event-manager';
+import { EventManager } from './dom/event-manager';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export abstract class Controller<T = any> {

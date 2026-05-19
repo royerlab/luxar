@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { clamp, formatNumber, parseNumber } from '../../../ui/gui/utils/value-formatting';
+import { clamp, formatNumber, parseNumber } from '../../../ui/gui/format/value-formatting';
 
 describe('clamp', () => {
   it('returns value unchanged when within range', () => {
