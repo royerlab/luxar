@@ -11,17 +11,17 @@
  * processing and the synchronous commit) remains in
  * `data-processor-lines.ts` and is consumed here as a type import.
  *
- * @module data/scene-loader/commit-lines-geometry
+ * @module data/scene-loader/commit/commit-lines-geometry
  */
 
 import * as THREE from 'three';
-import { isLinesUserData } from '../../types/lines';
-import { log, Modules } from '../../utils/log';
-import type { UpdateSession } from '../../profiling/update-profiler';
-import type { GPUBufferPool } from '../../rendering/gpu-buffer-pool';
-import { updateInstancedLinesMesh } from '../../rendering/line-geometry';
+import { isLinesUserData } from '../../../types/lines';
+import { log, Modules } from '../../../utils/log';
+import type { UpdateSession } from '../../../profiling/update-profiler';
+import type { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
+import { updateInstancedLinesMesh } from '../../../rendering/line-geometry';
 import { invalidateRenderObjectFor } from './invalidate-render-object';
-import type { StagedLinesCommit } from './data-processor-lines';
+import type { StagedLinesCommit } from '../process/data-processor-lines';
 
 /**
  * Synchronous GPU commit step: write the staged buffers into the

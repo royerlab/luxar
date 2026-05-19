@@ -31,7 +31,7 @@ import type { LoadedGSplatsData } from '../../types/gsplats';
 import { log, Modules } from '../../utils/log';
 import type { ViewState } from '../data-loader-types';
 import type { ViewStateQueue } from '../scene-loader/view-state-queue';
-import type { StagedGSplatsCommit } from '../scene-loader/data-processor-gsplats';
+import type { StagedGSplatsCommit } from '../scene-loader/process/data-processor-gsplats';
 
 /**
  * Bundle of host references the refinement loop needs. Kept narrow so

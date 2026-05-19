@@ -10,17 +10,17 @@
  * `StagedGSplatsCommit` remains in `data-processor-gsplats.ts` and is
  * consumed here as a type import.
  *
- * @module data/scene-loader/commit-gsplats-geometry
+ * @module data/scene-loader/commit/commit-gsplats-geometry
  */
 
 import * as THREE from 'three';
-import { updateInstancedGSplatsMesh } from '../../rendering/gsplat-geometry';
-import type { GSplatsUserData } from '../../types/gsplats';
-import { log, Modules } from '../../utils/log';
-import type { UpdateSession } from '../../profiling/update-profiler';
-import type { GPUBufferPool } from '../../rendering/gpu-buffer-pool';
+import { updateInstancedGSplatsMesh } from '../../../rendering/gsplat-geometry';
+import type { GSplatsUserData } from '../../../types/gsplats';
+import { log, Modules } from '../../../utils/log';
+import type { UpdateSession } from '../../../profiling/update-profiler';
+import type { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
 import { invalidateRenderObjectFor } from './invalidate-render-object';
-import type { StagedGSplatsCommit } from './data-processor-gsplats';
+import type { StagedGSplatsCommit } from '../process/data-processor-gsplats';
 
 const DEFAULT_TRUNCATE = 3.0;
 

@@ -43,7 +43,7 @@ vi.mock('../../../../config', () => ({
 import {
   processLinesData,
   projectLinesTo3DUsingWorker,
-} from '../../../../data/scene-loader/data-processor-lines';
+} from '../../../../data/scene-loader/process/data-processor-lines';
 import type { LoadedLinesData, ProcessedLinesData } from '../../../../types/lines';
 
 function makeProcessed(segmentCount = 2): ProcessedLinesData {

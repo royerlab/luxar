@@ -18,7 +18,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
 
-import { invalidateRenderObjectFor } from '../../../../data/scene-loader/invalidate-render-object';
+import { invalidateRenderObjectFor } from '../../../../data/scene-loader/commit/invalidate-render-object';
 import { SOFT_DISPOSE_FLAG } from '../../../../rendering/material-manager';
 
 describe('invalidateRenderObjectFor', () => {

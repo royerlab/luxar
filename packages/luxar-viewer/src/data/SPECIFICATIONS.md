@@ -1532,7 +1532,7 @@ Worker-side dtype handling:
 | `Float16Array` | element-wise expand to Float32 | WASM expects Float32                      |
 | `Uint8Array`   | element-wise `* 1/255`         | match colormap shader's `[0, 1]` contract |
 
-See `src/data/scene-loader/data-processor-lines.ts::projectLinesTo3DUsingWorker`
+See `src/data/scene-loader/process/data-processor-lines.ts::projectLinesTo3DUsingWorker`
 and `src/workers/data-worker.ts::projectLinesTo3D` for the
 implementations. `coerceScalarsToFloat32` in `src/workers/color-utils.ts`
 is the shared dtype-coercion helper.

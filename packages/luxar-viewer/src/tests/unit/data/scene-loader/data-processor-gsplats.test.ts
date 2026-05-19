@@ -43,7 +43,7 @@ vi.mock('../../../../config', () => ({
 import {
   processGSplatsData,
   projectGSplatsTo3DUsingWorker,
-} from '../../../../data/scene-loader/data-processor-gsplats';
+} from '../../../../data/scene-loader/process/data-processor-gsplats';
 import type { LoadedGSplatsData, GSplatsViewState } from '../../../../types/gsplats';
 
 function makeProcessed(splatCount = 2) {
