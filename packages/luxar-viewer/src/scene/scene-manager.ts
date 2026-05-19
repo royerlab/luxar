@@ -38,14 +38,14 @@ import {
 } from './scene-manager/clipping/bounds-math';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { sceneDimsManager } from './scene-dims-manager';
-import { clearLoadedSceneContent, disposeSceneGraphResources } from './scene-manager/scene-disposal';
+import { clearLoadedSceneContent, disposeSceneGraphResources } from './scene-manager/render-pipeline/scene-disposal';
 import {
   applyZarrViewerConfig as applyZarrViewerConfigHelper,
   createDefaultPerspectiveCamera,
   resetCameraToInitialPosition,
 } from './scene-manager/camera/camera-setup';
 import { computeSceneBoundingBox, fitCameraToBounds } from './scene-manager/camera/camera-framing';
-import { WebGLContextRecovery } from './scene-manager/webgl-context-recovery';
+import { WebGLContextRecovery } from './scene-manager/render-pipeline/webgl-context-recovery';
 import { ResizeOrchestrator } from './scene-manager/resize-orchestrator';
 import {
   computePixelRatioOverride,

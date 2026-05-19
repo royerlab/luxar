@@ -8,7 +8,7 @@ import {
   disposeObjectTree,
   clearLoadedSceneContent,
   disposeSceneGraphResources,
-} from '../../../../scene/scene-manager/scene-disposal';
+} from '../../../../../scene/scene-manager/render-pipeline/scene-disposal';
 
 function makeMesh(): {
   mesh: THREE.Mesh;
