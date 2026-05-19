@@ -6,21 +6,21 @@
  */
 
 import * as THREE from 'three';
-import { POINT_VERTEX_SHADER, POINT_FRAGMENT_SHADER } from './shaders/point-shaders';
-import type { CameraAwareMaterial } from './camera-aware-material';
-import type { ColormapAwareMaterial } from './colormap-aware-material';
-import { clampGamma } from './material-uniform-helpers';
-import { computePointSizeFactor, computeMaxPointSize } from './camera-uniforms';
+import { POINT_VERTEX_SHADER, POINT_FRAGMENT_SHADER } from './shader-glsl';
+import type { CameraAwareMaterial } from '../../camera-aware-material';
+import type { ColormapAwareMaterial } from '../../colormap-aware-material';
+import { clampGamma } from '../../material-uniform-helpers';
+import { computePointSizeFactor, computeMaxPointSize } from '../../camera-uniforms';
 import {
   applyColormapTextureToMaterial,
   applyScalarRangeToMaterial,
-} from './material-colormap-helpers';
+} from '../../material-colormap-helpers';
 import {
   getCompleteBlendingState,
   applyBlendingStateToMaterial,
   type CompleteBlendingState,
-} from './blending-state';
-import type { BlendingMode } from './material-manager';
+} from '../../blending-state';
+import type { BlendingMode } from '../../material-manager';
 
 /**
  * Configuration for point material creation

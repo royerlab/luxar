@@ -28,7 +28,7 @@ import { describe, it, expect } from 'vitest';
 import {
   POINT_VERTEX_SHADER,
   POINT_FRAGMENT_SHADER,
-} from '../../../rendering/shaders/point-shaders';
+} from '../../../rendering/materials/point/shader-glsl';
 import {
   GSPLAT_VERTEX_SHADER,
   GSPLAT_FRAGMENT_SHADER,

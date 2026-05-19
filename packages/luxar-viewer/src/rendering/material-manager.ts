@@ -7,10 +7,10 @@
  */
 
 import * as THREE from 'three';
-import { PointMaterial } from './point-material';
+import { PointMaterial } from './materials/point/material-glsl';
 import { LineMaterial } from './line-material';
 import { GSplatMaterial } from './gsplat-material';
-import { PointTSLMaterial } from './point-material-tsl';
+import { PointTSLMaterial } from './materials/point/material-tsl';
 import { LineTSLMaterial } from './line-material-tsl';
 import { GSplatTSLMaterial } from './gsplat-material-tsl';
 import { PointPickingMaterial } from './picking/point-picking-material';

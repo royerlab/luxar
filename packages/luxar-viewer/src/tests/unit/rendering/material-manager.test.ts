@@ -16,7 +16,7 @@ import {
   resolveMaterialBackend,
   type PointMaterialProperties,
 } from '../../../rendering/material-manager';
-import { PointMaterial } from '../../../rendering/point-material';
+import { PointMaterial } from '../../../rendering/materials/point/material-glsl';
 import type { RendererCapabilities } from '../../../rendering/renderer-capabilities';
 import * as THREE from 'three';
 
