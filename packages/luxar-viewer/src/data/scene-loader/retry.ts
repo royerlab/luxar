@@ -1,0 +1,211 @@
+/**
+ * Retry path for failed loaders — partial-scene-resilience recovery.
+ *
+ * Exposes lock-free helpers (`retryFailedLoaderUnlocked`,
+ * `retryAllFailedLoadersUnlocked`) that re-trigger the data fetch +
+ * commit for paths that recorded a failure. The orchestrator (SceneLoader)
+ * wraps each call in its `_updateInProgress` lock dance — these helpers
+ * never touch that lock so retry-from-inside-retry doesn't deadlock.
+ *
+ * Each retry repeats the same query-shape logic the main update path
+ * uses (deriveNodeViewState + the per-type viewState fallback for
+ * extend_to_all skip) so retry / update / initial-load are never out
+ * of sync.
+ */
+
+import type * as THREE from 'three';
+import type { DataLoader, LoadedPointsData, ViewState } from '../data-loader-types';
+import type { LinesDataLoader, LinesViewState } from '../../types/lines';
+import type { GSplatsDataLoader, GSplatsViewState } from '../../types/gsplats';
+import { log, Modules } from '../../utils/log';
+import type { LoaderRegistry } from './loader-registry';
+import type { StagedLinesCommit } from './process/data-processor-lines';
+import type { StagedGSplatsCommit } from './process/data-processor-gsplats';
+
+/**
+ * Result of `deriveNodeViewState` — `skip` is true when the helper
+ * decides the node should fall back to the base view state (e.g. full
+ * extend_to_all coverage where deriving would empty the query).
+ */
+type DerivedViewState =
+  | { skip: 'extend_to_all' }
+  | { skip: false; viewState: ViewState };
+
+/**
+ * Narrow context the retry helpers need from the orchestrator. Keeps
+ * the helper independent of SceneLoader internals.
+ */
+export interface RetryCtx {
+  registry: LoaderRegistry;
+  rootGroup: THREE.Group | null;
+  viewState: ViewState;
+  deriveNodeViewState(
+    path: string,
+    attrs: { extend_to_all?: string[] } | undefined,
+    opts: { applyPartialExtendTolerance: boolean }
+  ): DerivedViewState;
+  updatePointsGeometry(path: string, data: LoadedPointsData): void;
+  processLinesData(
+    path: string,
+    data: Awaited<ReturnType<LinesDataLoader['updateView']>>,
+    viewState: LinesViewState
+  ): Promise<StagedLinesCommit | null>;
+  commitLinesGeometry(staged: StagedLinesCommit): void;
+  processGSplatsData(
+    path: string,
+    data: Awaited<ReturnType<GSplatsDataLoader['updateView']>>,
+    viewState: GSplatsViewState
+  ): Promise<StagedGSplatsCommit | null>;
+  commitGSplatsGeometry(staged: StagedGSplatsCommit): void;
+}
+
+/**
+ * Retry a single failed loader without touching the orchestrator's
+ * update lock. Returns true on success (failure cleared from the
+ * registry), false on continued failure (registry updated with new
+ * retry count), or false if the path is no longer in failed-loaders.
+ */
+export async function retryFailedLoaderUnlocked(
+  path: string,
+  ctx: RetryCtx
+): Promise<boolean> {
+  const { registry } = ctx;
+  if (!registry.failedLoaders.has(path)) return false;
+
+  log.info(Modules.SCENE_LOADER, `Retrying failed loader: ${path}`);
+
+  // Determine which loader type this path belongs to
+  const pointsLoader = registry.loaders.get(path);
+  const linesLoader = registry.linesLoaders.get(path);
+  const gsplatsLoader = registry.gsplatLoaders.get(path);
+
+  try {
+    // Look up the per-node attrs so retry applies the same
+    // extend_to_all / nd_transform adjustments as the main update path.
+    // Passing a raw view state here silently renders an incorrect query
+    // region for transformed or extended nodes.
+    const obj = ctx.rootGroup?.getObjectByName(path) as
+      | THREE.Object3D
+      | THREE.Mesh
+      | THREE.Points
+      | undefined;
+    const attrs = obj?.userData?.attrs as { extend_to_all?: string[] } | undefined;
+
+    // Defensive guard — only clear `failedLoaders` if the named object
+    // still exists in the scene. The placeholder model should make
+    // commit always succeed when retry runs in normal conditions, but
+    // a scene reload or programmatic node removal between failure and
+    // retry could leave us fetching data that has nowhere to land.
+    // Without this guard, retry would falsely report success ("data
+    // fetched + commit silently no-op'd") and clear the failure,
+    // hiding the broken state from `hasFailures()`.
+    const verifyAndClear = (kind: string): boolean => {
+      if (!ctx.rootGroup?.getObjectByName(path)) {
+        log.warning(
+          Modules.SCENE_LOADER,
+          `Retry of ${path} fetched data but no scene object exists; not clearing failure`
+        );
+        return false;
+      }
+      registry.failedLoaders.delete(path);
+      log.success(Modules.SCENE_LOADER, `Successfully retried ${kind} loader: ${path}`);
+      return true;
+    };
+
+    if (pointsLoader) {
+      const derived = ctx.deriveNodeViewState(path, attrs, {
+        applyPartialExtendTolerance: true,
+      });
+      // Mirror loadPoints() initial-load fallback. When derived.skip
+      // is true (extend_to_all fully covers), the placeholder still
+      // needs data committed — skipping the load and clearing
+      // failedLoaders would falsely report success against an empty
+      // placeholder.
+      const pointsViewState = derived.skip ? ctx.viewState : derived.viewState;
+      const points = await (pointsLoader as DataLoader).updateView(pointsViewState);
+      if (points) ctx.updatePointsGeometry(path, points);
+      return verifyAndClear('points');
+    } else if (linesLoader) {
+      const derived = ctx.deriveNodeViewState(path, attrs, {
+        applyPartialExtendTolerance: false,
+      });
+      const linesViewState: LinesViewState = derived.skip ? ctx.viewState : derived.viewState;
+      const data = await linesLoader.updateView(linesViewState);
+      if (data) {
+        const staged = await ctx.processLinesData(path, data, linesViewState);
+        if (staged) ctx.commitLinesGeometry(staged);
+      }
+      return verifyAndClear('lines');
+    } else if (gsplatsLoader) {
+      const derived = ctx.deriveNodeViewState(path, attrs, {
+        applyPartialExtendTolerance: true,
+      });
+      // Mirror loadGSplats() initial-load fallback shape (explicit
+      // object spread to match LinesViewState/GSplatsViewState).
+      const gsplatsViewState: GSplatsViewState = derived.skip
+        ? {
+            displayDims: ctx.viewState.displayDims,
+            slicePosition: ctx.viewState.slicePosition,
+            tolerance: ctx.viewState.tolerance,
+            dimensions: ctx.viewState.dimensions,
+          }
+        : derived.viewState;
+      const data = await gsplatsLoader.updateView(gsplatsViewState);
+      if (data) {
+        const staged = await ctx.processGSplatsData(path, data, gsplatsViewState);
+        if (staged) ctx.commitGSplatsGeometry(staged);
+      }
+      return verifyAndClear('gsplats');
+    } else {
+      // Loader not found - it may have been disposed
+      log.warning(Modules.SCENE_LOADER, `No loader found for path: ${path}`);
+      registry.failedLoaders.delete(path); // Clean up stale entry
+      return false;
+    }
+  } catch (error) {
+    // Update error tracking with new attempt
+    const errorInfo = registry.failedLoaders.get(path);
+    const retryCount = errorInfo ? errorInfo.retryCount + 1 : 1;
+    registry.failedLoaders.set(path, {
+      error: error as Error,
+      timestamp: Date.now(),
+      retryCount,
+    });
+    log.error(
+      Modules.SCENE_LOADER,
+      `Retry failed for ${path} (attempt ${retryCount}): ${(error as Error).message}`
+    );
+    return false;
+  }
+}
+
+/**
+ * Retry the supplied set of failed paths in parallel without touching
+ * the orchestrator's update lock. Caller is expected to hold the lock
+ * (parity with the single-path helper above). Returns the path split
+ * into succeeded / still-failing buckets.
+ */
+export async function retryAllFailedLoadersUnlocked(
+  failedPaths: string[],
+  ctx: RetryCtx
+): Promise<{ succeeded: string[]; failed: string[] }> {
+  const succeeded: string[] = [];
+  const failed: string[] = [];
+
+  const results = await Promise.all(
+    failedPaths.map(async (path) => {
+      const success = await retryFailedLoaderUnlocked(path, ctx);
+      return { path, success };
+    })
+  );
+
+  for (const { path, success } of results) {
+    if (success) {
+      succeeded.push(path);
+    } else {
+      failed.push(path);
+    }
+  }
+
+  return { succeeded, failed };
+}

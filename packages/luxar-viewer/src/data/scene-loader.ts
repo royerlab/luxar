@@ -134,6 +134,11 @@ import {
 } from './scene-loader/nodes/load-leaf-error-dispatch';
 import { initializeSceneDimensions as initializeSceneDimensionsHelper } from './scene-loader/nodes/initialize-scene-dimensions';
 import { buildSceneGraph as buildSceneGraphHelper } from './scene-loader/nodes/build-scene-graph';
+import {
+  retryFailedLoaderUnlocked,
+  retryAllFailedLoadersUnlocked,
+  type RetryCtx,
+} from './scene-loader/retry';
 
 /**
  * Main scene loader that handles the complete loading pipeline.
@@ -1650,128 +1655,26 @@ export class SceneLoader {
 
     this._updateInProgress = true;
     try {
-      return await this._retryFailedLoaderUnlocked(path);
+      return await retryFailedLoaderUnlocked(path, this.makeRetryCtx());
     } finally {
       this._updateInProgress = false;
       this.viewStateQueue.drain((state) => this.updateView(state));
     }
   }
 
-  /**
-   * Internal retry body without the `_updateInProgress` lock dance.
-   * Used by both `retryFailedLoader` (which takes the lock once) and
-   * `retryAllFailedLoaders` (which takes the lock once and runs
-   * multiple retries inside it).
-   */
-  private async _retryFailedLoaderUnlocked(path: string): Promise<boolean> {
-    if (!this.failedLoaders.has(path)) return false;
-
-    log.info(Modules.SCENE_LOADER, `Retrying failed loader: ${path}`);
-
-    // Determine which loader type this path belongs to
-    const pointsLoader = this.loaders.get(path);
-    const linesLoader = this.linesLoaders.get(path);
-    const gsplatsLoader = this.gsplatLoaders.get(path);
-
-    try {
-      // Look up the per-node attrs so retry applies the same
-      // extend_to_all / nd_transform adjustments as the main update path.
-      // Passing a raw view state here silently renders an incorrect query
-      // region for transformed or extended nodes.
-      const obj = this.rootGroup?.getObjectByName(path) as
-        | THREE.Object3D
-        | THREE.Mesh
-        | THREE.Points
-        | undefined;
-      const attrs = obj?.userData?.attrs as { extend_to_all?: string[] } | undefined;
-
-      // Defensive guard — only clear `failedLoaders` if the named object
-      // still exists in the scene. The placeholder model should make
-      // commit always succeed when retry runs in normal conditions, but
-      // a scene reload or programmatic node removal between failure and
-      // retry could leave us fetching data that has nowhere to land.
-      // Without this guard, retry would falsely report success ("data
-      // fetched + commit silently no-op'd") and clear the failure,
-      // hiding the broken state from `hasFailures()`.
-      const verifyAndClear = (kind: string): boolean => {
-        if (!this.rootGroup?.getObjectByName(path)) {
-          log.warning(
-            Modules.SCENE_LOADER,
-            `Retry of ${path} fetched data but no scene object exists; not clearing failure`
-          );
-          return false;
-        }
-        this.failedLoaders.delete(path);
-        log.success(Modules.SCENE_LOADER, `Successfully retried ${kind} loader: ${path}`);
-        return true;
-      };
-
-      if (pointsLoader) {
-        const derived = this.deriveNodeViewState(path, attrs, {
-          applyPartialExtendTolerance: true,
-        });
-        // Mirror loadPoints() initial-load fallback. When derived.skip
-        // is true (extend_to_all fully covers), the placeholder still
-        // needs data committed — skipping the load and clearing
-        // failedLoaders would falsely report success against an empty
-        // placeholder.
-        const pointsViewState = derived.skip ? this.viewState : derived.viewState;
-        const points = await pointsLoader.updateView(pointsViewState);
-        if (points) this.updatePointsGeometry(path, points);
-        return verifyAndClear('points');
-      } else if (linesLoader) {
-        const derived = this.deriveNodeViewState(path, attrs, {
-          applyPartialExtendTolerance: false,
-        });
-        // See Points branch.
-        const linesViewState: LinesViewState = derived.skip ? this.viewState : derived.viewState;
-        const data = await linesLoader.updateView(linesViewState);
-        if (data) {
-          const staged = await this.processLinesData(path, data, linesViewState);
-          if (staged) this.commitLinesGeometry(staged);
-        }
-        return verifyAndClear('lines');
-      } else if (gsplatsLoader) {
-        const derived = this.deriveNodeViewState(path, attrs, {
-          applyPartialExtendTolerance: true,
-        });
-        // Mirror loadGSplats() initial-load fallback shape (explicit
-        // object spread to match LinesViewState/GSplatsViewState).
-        const gsplatsViewState: GSplatsViewState = derived.skip
-          ? {
-              displayDims: this.viewState.displayDims,
-              slicePosition: this.viewState.slicePosition,
-              tolerance: this.viewState.tolerance,
-              dimensions: this.viewState.dimensions,
-            }
-          : derived.viewState;
-        const data = await gsplatsLoader.updateView(gsplatsViewState);
-        if (data) {
-          const staged = await this.processGSplatsData(path, data, gsplatsViewState);
-          if (staged) this.commitGSplatsGeometry(staged);
-        }
-        return verifyAndClear('gsplats');
-      } else {
-        // Loader not found - it may have been disposed
-        log.warning(Modules.SCENE_LOADER, `No loader found for path: ${path}`);
-        this.failedLoaders.delete(path); // Clean up stale entry
-        return false;
-      }
-    } catch (error) {
-      // Update error tracking with new attempt
-      const errorInfo = this.failedLoaders.get(path);
-      const retryCount = errorInfo ? errorInfo.retryCount + 1 : 1;
-      this.failedLoaders.set(path, {
-        error: error as Error,
-        timestamp: Date.now(),
-        retryCount,
-      });
-      log.error(
-        Modules.SCENE_LOADER,
-        `Retry failed for ${path} (attempt ${retryCount}): ${(error as Error).message}`
-      );
-      return false;
-    }
+  /** Build the per-call RetryCtx. Never passes `this` to the helper. */
+  private makeRetryCtx(): RetryCtx {
+    return {
+      registry: this.registry,
+      rootGroup: this.rootGroup,
+      viewState: this.viewState,
+      deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),
+      updatePointsGeometry: (path, data) => this.updatePointsGeometry(path, data),
+      processLinesData: (path, data, vs) => this.processLinesData(path, data, vs),
+      commitLinesGeometry: (staged) => this.commitLinesGeometry(staged),
+      processGSplatsData: (path, data, vs) => this.processGSplatsData(path, data, vs),
+      commitGSplatsGeometry: (staged) => this.commitGSplatsGeometry(staged),
+    };
   }
 
   /**
@@ -1811,29 +1714,14 @@ export class SceneLoader {
 
     this._updateInProgress = true;
     try {
-      const succeeded: string[] = [];
-      const failed: string[] = [];
-
-      const results = await Promise.all(
-        failedPaths.map(async (path) => {
-          const success = await this._retryFailedLoaderUnlocked(path);
-          return { path, success };
-        })
+      const { succeeded, failed } = await retryAllFailedLoadersUnlocked(
+        failedPaths,
+        this.makeRetryCtx()
       );
-
-      for (const { path, success } of results) {
-        if (success) {
-          succeeded.push(path);
-        } else {
-          failed.push(path);
-        }
-      }
-
       log.info(
         Modules.SCENE_LOADER,
         `Retry complete: ${succeeded.length} succeeded, ${failed.length} still failing`
       );
-
       return { succeeded, failed };
     } finally {
       this._updateInProgress = false;
