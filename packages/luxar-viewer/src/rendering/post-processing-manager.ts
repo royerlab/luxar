@@ -36,6 +36,7 @@ import {
   disposeTransientResources,
   applyScaledNoiseSettings,
 } from './post-processing/post-processing-manager/resource-lifecycle';
+import { runPipeline } from './post-processing/post-processing-manager/pipeline';
 import {
   updateBloomSettings as updateBloomSettingsImpl,
   clampBloomLevels,
@@ -575,68 +576,24 @@ export class PostProcessingManager {
       this.megaShader.advanceTime(dt);
     }
 
-    this.runPipeline({ applyFxaa: this.fxaaPass !== null, finalTarget: null });
+    this.pipeline({ applyFxaa: this.fxaaPass !== null, finalTarget: null });
   }
 
-  /**
-   * Run the full pipeline: scene → HDR → (bloom) → mega-shader →
-   * (FXAA) → finalTarget.
-   *
-   * - `applyFxaa = true`: mega-shader writes to ldrTarget, FXAA reads
-   *   ldrTarget and writes to `finalTarget`.
-   * - `applyFxaa = false`: mega-shader writes directly to `finalTarget`.
-   * - `finalTarget = null`: write to the canvas backbuffer.
-   *
-   * The capture paths use `applyFxaa = false` + an explicit target so
-   * they can read the post-tone-mapping LDR buffer without an FXAA
-   * pass between mega-shader and readback.
-   */
-  private runPipeline(opts: {
-    applyFxaa: boolean;
-    finalTarget: THREE.WebGLRenderTarget | null;
-  }): void {
-    // Defensive save/restore: the typical call sites (`render()` and
-    // `captureHDRPixels`) don't care about pre-existing renderer
-    // state, but a future caller (picking, offscreen probe) might
-    // invoke runPipeline while another target is bound. Mirroring
-    // BloomChain.render's pattern keeps the pipeline composable.
-    const prevTarget = this.renderer.getRenderTarget();
-    const prevAutoClear = this.renderer.autoClear;
-    try {
-      // (0) Scene → HDR target
-      this.renderer.setRenderTarget(this.hdrTarget);
-      this.renderer.clear();
-      this.renderer.render(this.scene, this.camera);
-
-      // (1) Bloom pyramid
-      if (this.bloomChain) {
-        this.bloomChain.render(this.renderer, this.hdrTarget.texture);
-      }
-
-      // (2) Mega-shader
-      this.megaShader.setHdrSceneTexture(this.hdrTarget.texture);
-
-      if (opts.applyFxaa && this.fxaaPass) {
-        // Mega → ldrTarget → FXAA → finalTarget
-        this.renderer.setRenderTarget(this.ldrTarget);
-        this.megaPass.render(this.renderer);
-        this.renderer.setRenderTarget(opts.finalTarget);
-        this.fxaaPass.render(this.renderer, this.ldrTarget.texture);
-      } else {
-        // Mega → finalTarget directly (no FXAA)
-        this.renderer.setRenderTarget(opts.finalTarget);
-        this.megaPass.render(this.renderer);
-      }
-    } finally {
-      // Cast is a TypeScript-only narrowing: `setRenderTarget` on
-      // the `Renderer` union is typed against `WebGLRenderTarget`
-      // (the intersection of WebGLRenderer's and WebGPURenderer's
-      // signatures), while `getRenderTarget` returns the looser
-      // `RenderTarget`. Round-tripping at runtime is safe on either
-      // backend.
-      this.renderer.setRenderTarget(prevTarget as THREE.WebGLRenderTarget | null);
-      this.renderer.autoClear = prevAutoClear;
-    }
+  private pipeline(opts: { applyFxaa: boolean; finalTarget: THREE.WebGLRenderTarget | null }): void {
+    runPipeline(
+      {
+        renderer: this.renderer,
+        scene: this.scene,
+        camera: this.camera,
+        hdrTarget: this.hdrTarget,
+        ldrTarget: this.ldrTarget,
+        megaShader: this.megaShader,
+        megaPass: this.megaPass,
+        bloomChain: this.bloomChain,
+        fxaaPass: this.fxaaPass,
+      },
+      opts
+    );
   }
 
   // ================================================================
@@ -764,7 +721,7 @@ export class PostProcessingManager {
       this.megaShader.toggleRawHdrCapture(true);
 
       try {
-        this.runPipeline({ applyFxaa: false, finalTarget: this.ldrTarget });
+        this.pipeline({ applyFxaa: false, finalTarget: this.ldrTarget });
         return await this.readTarget(this.ldrTarget, opts);
       } finally {
         this.megaShader.toggleRawHdrCapture(false);
@@ -779,7 +736,7 @@ export class PostProcessingManager {
     // pixels are post-tone-mapping LINEAR LDR.
     this.megaShader.toggleLinearLdrCapture(true);
     try {
-      this.runPipeline({ applyFxaa: false, finalTarget: this.ldrTarget });
+      this.pipeline({ applyFxaa: false, finalTarget: this.ldrTarget });
       return await this.readTarget(this.ldrTarget, opts);
     } finally {
       this.megaShader.toggleLinearLdrCapture(false);
@@ -893,7 +850,7 @@ export class PostProcessingManager {
     captureTarget.texture.name = 'PostProcessing.captureTarget';
 
     try {
-      this.runPipeline({ applyFxaa: this.fxaaPass !== null, finalTarget: captureTarget });
+      this.pipeline({ applyFxaa: this.fxaaPass !== null, finalTarget: captureTarget });
       // Read pixels in canonical top-down order. The unified primitive
       // hides the backend signature split, compacts WebGPU row padding,
       // and flips WebGL2's bottom-up rows to top-down — i.e. exactly
