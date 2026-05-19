@@ -30,8 +30,8 @@ import { InputHandler } from '../../../input/input-handler';
 import { sceneDimsManager } from '../../../scene/scene-dims-manager';
 import type { SceneManager } from '../../../scene/scene-manager';
 import type { AnimationController } from '../../../scene/animation/animation-controller';
-import type { PerformanceMonitor } from '../../../ui/monitors/performance-monitor';
-import type { DebugConsole } from '../../../ui/panels/debug-console';
+import type { PerformanceMonitor } from '../../../ui/performance-monitor';
+import type { DebugConsole } from '../../../ui/debug-console';
 
 function makeSceneManagerStub(): SceneManager {
   // The InputHandler constructor passes sceneManager to

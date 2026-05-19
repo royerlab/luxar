@@ -19,8 +19,8 @@ import { notifier } from '../../utils/notifier';
 import { eventBus } from '../../utils/event-bus';
 import type { RenderingControls } from '../../ui/rendering-controls';
 import type { RecordingPanel } from '../../ui/recording-panel';
-import type { DimensionSliders } from '../../ui/panels/dimension-sliders';
-import type { DebugConsole } from '../../ui/panels/debug-console';
+import type { DimensionSliders } from '../../ui/dimension-sliders';
+import type { DebugConsole } from '../../ui/debug-console';
 
 // Avoid a hard dependency on Stats.js — only the visible/hide surface we
 // touch is captured here.

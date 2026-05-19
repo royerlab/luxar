@@ -5,11 +5,11 @@
  * Zarr datasets from various server types.
  */
 
-import { DirectoryNavigator, type DirectoryEntry } from '../../data';
-import { escapeHtml } from '../../utils/escape-html';
-import { extractBaseUrl, extractPath } from './dataset-url-utils';
-import { log, Modules } from '../../utils/log';
-import { showToast } from '../helpers';
+import { DirectoryNavigator, type DirectoryEntry } from '../data';
+import { escapeHtml } from '../utils/escape-html';
+import { extractBaseUrl, extractPath } from './dataset-browser/url-utils';
+import { log, Modules } from '../utils/log';
+import { showToast } from './helpers';
 
 /**
  * Wrap an `onDatasetSelect` invocation so a Promise-returning

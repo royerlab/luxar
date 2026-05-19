@@ -26,8 +26,8 @@ vi.mock('../../../scene/animation/animation-controller');
 vi.mock('../../../input/input-handler');
 vi.mock('../../../ui/rendering-controls');
 vi.mock('../../../ui/recording-panel');
-vi.mock('../../../ui/components/scale-bar');
-vi.mock('../../../ui/panels/dataset-browser');
+vi.mock('../../../ui/scale-bar');
+vi.mock('../../../ui/dataset-browser');
 vi.mock('../../../ui/helpers');
 vi.mock('../../../ui/layers');
 // scene-dims-manager is unmocked: it's a pure JS singleton (no DOM
@@ -36,7 +36,7 @@ vi.mock('../../../ui/layers');
 // PerformanceMonitor and DebugConsole are owned by LuxarApp and are
 // mocked here so stats.js / DebugConsole's document.createElement
 // calls don't run in the stubbed-window env.
-vi.mock('../../../ui/monitors/performance-monitor', () => ({
+vi.mock('../../../ui/performance-monitor', () => ({
   PerformanceMonitor: vi.fn().mockImplementation(() => ({
     show: vi.fn(),
     hide: vi.fn(),
@@ -46,7 +46,7 @@ vi.mock('../../../ui/monitors/performance-monitor', () => ({
     visible: false,
   })),
 }));
-vi.mock('../../../ui/panels/debug-console', () => ({
+vi.mock('../../../ui/debug-console', () => ({
   DebugConsole: vi.fn().mockImplementation(() => ({
     show: vi.fn(),
     hide: vi.fn(),
@@ -92,7 +92,7 @@ import { SceneManager } from '../../../scene/scene-manager';
 import { AnimationController } from '../../../scene/animation/animation-controller';
 import { InputHandler } from '../../../input/input-handler';
 import { RenderingControls } from '../../../ui/rendering-controls';
-import { DatasetBrowser } from '../../../ui/panels/dataset-browser';
+import { DatasetBrowser } from '../../../ui/dataset-browser';
 import { cleanupUI as mockCleanupUI, clearError as mockClearError } from '../../../ui/helpers';
 
 // Import LuxarApp after all mocks are set up
@@ -628,7 +628,7 @@ describe('LuxarApp', () => {
       // calls, their loaders + cache stores + eventBus subscriptions
       // survive across LuxarApp re-init.
       const sceneLoaderModule = await import('../../../data/scene-loader-manager');
-      const dataMonitorModule = await import('../../../ui/monitors/data-monitor-manager');
+      const dataMonitorModule = await import('../../../ui/data-monitor-manager');
 
       const sceneLoaderSpy = vi.spyOn(sceneLoaderModule.SceneLoaderManager, 'disposeInstance');
       const dataMonitorSpy = vi.spyOn(dataMonitorModule.DataMonitorManager, 'disposeInstance');
@@ -652,7 +652,7 @@ describe('LuxarApp', () => {
       // / managerRegistry. The safeDispose helper guarantees later
       // teardown runs regardless.
       const sceneLoaderModule = await import('../../../data/scene-loader-manager');
-      const dataMonitorModule = await import('../../../ui/monitors/data-monitor-manager');
+      const dataMonitorModule = await import('../../../ui/data-monitor-manager');
       const workerPoolModule = await import('../../../workers/worker-pool');
 
       const sceneLoaderSpy = vi.spyOn(sceneLoaderModule.SceneLoaderManager, 'disposeInstance');
@@ -675,7 +675,7 @@ describe('LuxarApp', () => {
 
     it('still disposes singletons + workerPool when a middle component throws', async () => {
       const sceneLoaderModule = await import('../../../data/scene-loader-manager');
-      const dataMonitorModule = await import('../../../ui/monitors/data-monitor-manager');
+      const dataMonitorModule = await import('../../../ui/data-monitor-manager');
       const workerPoolModule = await import('../../../workers/worker-pool');
 
       const sceneLoaderSpy = vi.spyOn(sceneLoaderModule.SceneLoaderManager, 'disposeInstance');

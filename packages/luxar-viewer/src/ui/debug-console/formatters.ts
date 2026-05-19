@@ -5,7 +5,7 @@
  * filter matcher, and the timestamp formatter are unit-testable
  * without instantiating the panel's DOM.
  *
- * @module ui/panels/debug-console-formatters
+ * @module ui/debug-console/formatters
  */
 
 /**

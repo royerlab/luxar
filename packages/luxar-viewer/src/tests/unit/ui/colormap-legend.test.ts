@@ -15,7 +15,7 @@ vi.mock('../../../themes/theme-manager', () => ({
   },
 }));
 
-import { ColormapLegend } from '../../../ui/components/colormap-legend';
+import { ColormapLegend } from '../../../ui/colormap-legend';
 import type { LayerInfo, LayerStateManager } from '../../../ui/layers/layer-state';
 
 function makeLayer(overrides: Partial<LayerInfo> = {}): LayerInfo {

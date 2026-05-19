@@ -7,7 +7,7 @@ import {
   formatArgs,
   formatConsoleTimestamp,
   messageMatchesFilter,
-} from '../../../ui/panels/debug-console-formatters';
+} from '../../../ui/debug-console/formatters';
 
 describe('formatArgs', () => {
   it('returns empty string for empty arg list', () => {

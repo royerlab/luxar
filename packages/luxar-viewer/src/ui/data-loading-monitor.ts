@@ -21,19 +21,19 @@ import type {
   CacheTelemetryState,
   SceneGraphNode,
   SceneGraphState,
-} from '../../types/data-monitor-types';
+} from '../types/data-monitor-types';
 
 // Performance timeline removed - now using hierarchical timing panel
 import { aggregateCacheMetrics } from './cache-metrics-aggregator';
 import { calculateRates } from './rate-calculator';
 import { updateCacheTab } from './tabs/cache-tab';
 import { patchField, updateColorClass } from './tabs/dom-helpers';
-import { LoadingAdvisor } from '../components/loading-advisor';
-import { EventQueue } from '../components/event-queue';
-import { PollingLoop } from '../components/polling-loop';
-import { log, Modules } from '../../utils/log';
-import { config } from '../../config';
-import { notifier } from '../../utils/notifier';
+import { LoadingAdvisor } from './components/loading-advisor';
+import { EventQueue } from './components/event-queue';
+import { PollingLoop } from './components/polling-loop';
+import { log, Modules } from '../utils/log';
+import { config } from '../config';
+import { notifier } from '../utils/notifier';
 
 // Only extract timings and limits from config (these are data values, not styles)
 const MonitorTimings = config.dataLoading.monitor.timings;
@@ -68,9 +68,9 @@ import {
   renderHierarchicalTimingPanel,
   attachTimingPanelHandlers,
   updateTimingPanelValues,
-} from '../components/hierarchical-timing-panel';
+} from './components/hierarchical-timing-panel';
 
-import type { UpdateProfiler } from '../../profiling/update-profiler';
+import type { UpdateProfiler } from '../profiling/update-profiler';
 
 /**
  * Main Data Loading Monitor class
