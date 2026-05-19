@@ -45,11 +45,11 @@ import {
   buildLinePickTSLNodesFromUniforms,
 } from '../../../rendering/picking/line-pick.tsl';
 import { createLineQuadGeometry } from '../../../rendering/line-geometry';
-import { GSPLAT_SOURCE } from '../../../rendering/shaders/gsplat-shaders';
+import { GSPLAT_SOURCE } from '../../../rendering/materials/gsplat/shader-glsl';
 import {
   gsplatWebGPUFactory,
   buildGSplatTSLNodesFromUniforms,
-} from '../../../rendering/gsplat.tsl';
+} from '../../../rendering/materials/gsplat/shader-tsl';
 import { GSPLAT_PICK_SOURCE } from '../../../rendering/picking/picking-shaders';
 import {
   gsplatPickWebGPUFactory,

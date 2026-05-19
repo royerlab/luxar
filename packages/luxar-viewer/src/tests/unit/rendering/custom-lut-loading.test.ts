@@ -21,7 +21,7 @@ import {
   _resetCustomColormapCacheStatsForTests,
 } from '../../../rendering/colormap-textures';
 import { NodeFactory } from '../../../rendering/node-factory';
-import { GSplatMaterial } from '../../../rendering/gsplat-material';
+import { GSplatMaterial } from '../../../rendering/materials/gsplat/material-glsl';
 import { LineMaterial } from '../../../rendering/materials/line/material-glsl';
 import {
   createInstancedGSplatsMesh,

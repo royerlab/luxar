@@ -5,9 +5,9 @@
  * Contains 3D-to-2D covariance projection, perspective Jacobian, amplitude calculation,
  * oriented quad expansion, near-plane fade, and screen-coverage safety.
  */
-import { GLSL_SANITIZE_FUNCTIONS } from './glsl-lib';
-import type { ShaderSource } from './shader-source';
-import { gsplatWebGPUFactory, buildGSplatTSLNodesFromUniforms } from '../gsplat.tsl';
+import { GLSL_SANITIZE_FUNCTIONS } from '../../shaders/glsl-lib';
+import type { ShaderSource } from '../../shaders/shader-source';
+import { gsplatWebGPUFactory, buildGSplatTSLNodesFromUniforms } from './shader-tsl';
 
 export const GSPLAT_VERTEX_SHADER = /* glsl */ `
     precision highp float;

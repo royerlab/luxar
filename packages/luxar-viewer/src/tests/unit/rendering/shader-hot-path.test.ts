@@ -32,7 +32,7 @@ import {
 import {
   GSPLAT_VERTEX_SHADER,
   GSPLAT_FRAGMENT_SHADER,
-} from '../../../rendering/shaders/gsplat-shaders';
+} from '../../../rendering/materials/gsplat/shader-glsl';
 import { LINE_VERTEX_SHADER } from '../../../rendering/materials/line/shader-glsl';
 
 describe('Shader hot-path string regressions', () => {

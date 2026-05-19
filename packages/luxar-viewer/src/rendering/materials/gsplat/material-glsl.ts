@@ -25,27 +25,27 @@
  * - Max projection: amplitude = a (peak value, no integration)
  * - 2D covariance: Σ_2D = J · Σ_cam · Jᵀ (perspective Jacobian projection)
  *
- * @module rendering/gsplat-material
+ * @module rendering/materials/gsplat/material-glsl
  */
 
 import * as THREE from 'three';
-import { GSPLAT_VERTEX_SHADER, GSPLAT_FRAGMENT_SHADER } from './shaders/gsplat-shaders';
-import type { CameraAwareMaterial } from './camera-aware-material';
-import type { ColormapAwareMaterial } from './colormap-aware-material';
-import { clampGamma } from './material-uniform-helpers';
-import { computeFocalLength } from './camera-uniforms';
-import { computeRayIntegralFactor } from './gsplat-math';
+import { GSPLAT_VERTEX_SHADER, GSPLAT_FRAGMENT_SHADER } from './shader-glsl';
+import type { CameraAwareMaterial } from '../../camera-aware-material';
+import type { ColormapAwareMaterial } from '../../colormap-aware-material';
+import { clampGamma } from '../../material-uniform-helpers';
+import { computeFocalLength } from '../../camera-uniforms';
+import { computeRayIntegralFactor } from './math';
 import {
   applyColormapTextureToMaterial,
   applyScalarRangeToMaterial,
-} from './material-colormap-helpers';
+} from '../../material-colormap-helpers';
 import {
   isAdditiveMode,
   isLuminousMode,
   isMaxMode,
   isNormalMode,
   isOpaqueMode,
-} from './blending-state';
+} from '../../blending-state';
 
 /**
  * Configuration for gsplat material creation

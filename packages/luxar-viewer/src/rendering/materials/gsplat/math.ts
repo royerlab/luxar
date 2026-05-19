@@ -6,7 +6,7 @@
  * compute identical numeric values from identical inputs — the parity
  * test (`tsl-shader-parity.spec.ts`) depends on this.
  *
- * @module rendering/gsplat-math
+ * @module rendering/materials/gsplat/math
  */
 
 /**
