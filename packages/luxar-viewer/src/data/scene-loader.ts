@@ -7,10 +7,7 @@
 
 import * as zarr from './zarr';
 import * as THREE from 'three';
-import { getWorkerPool } from '../workers/worker-pool';
 import { normalizeURL } from './scene-loader/url-normalization';
-import { setupCaches } from './scene-loader/cache-setup';
-import { wireMonitorAfterLoad } from './scene-loader/monitor-wiring';
 import { applyEffectiveAttrs as applyEffectiveAttrsHelper } from './scene-loader/effective-attrs';
 import {
   getCacheStats as getCacheStatsHelper,
@@ -60,13 +57,12 @@ import {
   LoaderConfig,
   LoadedPointsData,
 } from './data-loader-types';
-import { ZarrSceneAttrs } from '../types/zarr';
 import type {
   SceneLoaderMonitorPort,
   SceneLoaderMonitorFactory,
 } from './scene-loader-monitor-port';
 import { ArrayRefRegistry } from './array-decoder/decoder';
-import { log, Modules, LogEmoji } from '../utils/log';
+import { log, Modules } from '../utils/log';
 import { config as appConfig } from '../config';
 import { MultiLevelCachingStore, DecompressedChunkCache } from '../cache';
 import type {
@@ -83,8 +79,6 @@ import { GPUBufferPool } from '../rendering/gpu-buffer-pool';
 import { NodeFactory } from '../rendering/node-factory';
 import { UpdateProfiler, type UpdateSession } from '../profiling/update-profiler';
 import { LoaderRegistry } from './scene-loader/loader-registry';
-import { loadOverlayConfigs } from './loaders/overlay-loader';
-import { notifier } from '../utils/notifier';
 
 // ============================================================================
 // Staged commit types for atomic geometry updates
@@ -107,7 +101,6 @@ import { notifier } from '../utils/notifier';
  * and message, not control flow.
  */
 import { initializeSceneDimensions as initializeSceneDimensionsHelper } from './scene-loader/nodes/initialize-scene-dimensions';
-import { buildSceneGraph as buildSceneGraphHelper } from './scene-loader/nodes/build-scene-graph';
 import {
   retryFailedLoaderUnlocked,
   retryAllFailedLoadersUnlocked,
@@ -117,7 +110,7 @@ import { deriveNodeViewState as deriveNodeViewStateHelper } from './scene-loader
 import { runLoaderUpdates as runLoaderUpdatesHelper } from './scene-loader/run-loader-updates';
 import { updateVisibleCountsInMonitor as updateVisibleCountsInMonitorHelper } from './scene-loader/visible-counts';
 import { disposeSceneLoader } from './scene-loader/dispose';
-import { loadSceneNodes as loadSceneNodesHelper } from './scene-loader/nodes/load-scene-nodes';
+import { loadScene as loadSceneHelper, type LoadSceneCtx } from './scene-loader/load-scene';
 import { connectLoaderToMonitor as connectLoaderToMonitorHelper } from './scene-loader/nodes/connect-loader-to-monitor';
 import type { NodeBuildCtx } from './scene-loader/nodes/build-ctx';
 
@@ -394,168 +387,50 @@ export class SceneLoader {
    * @see SPECIFICATIONS.md - Section 4 for complete scene loading protocol
    */
   async loadScene(url: string): Promise<THREE.Group> {
-    log.custom(LogEmoji.SCENE, Modules.SCENE_LOADER, `Loading scene from ${url}`);
+    return loadSceneHelper(url, this.makeLoadSceneCtx());
+  }
 
-    // Clear any existing loaders from monitor before loading new scene
-    this.monitor?.disconnectAllLoaders();
-
-    // Abort any in-flight worker tasks queued by the previous dataset.
-    // Doing this BEFORE `dispose()` settles already-racing
-    // `runWithTimeout` callers immediately so they unwind without
-    // waiting for the worker tasks to complete — the worker keeps
-    // executing the WASM kernels to completion (no WASM cancellation),
-    // but the results are dropped.
-    if (this._datasetAbortController) {
-      this._datasetAbortController.abort();
-      this._datasetAbortController = null;
-    }
-    getWorkerPool().setAbortSignal(undefined);
-
-    // Dispose of any existing loaders. Awaited so the previous caching
-    // store fully drains (prefetcher tear-down, OPFS metadata flush,
-    // validation cancellation) before we construct the next one — without
-    // this, rapid dataset switches let an old store's writes land after
-    // the new store starts initialising.
-    if (this.loaders.size > 0) {
-      await this.dispose();
-    }
-
-    // Fresh abort source for THIS dataset; wire into the worker pool so
-    // every subsequent `runWithTimeout` races against it.
-    this._datasetAbortController = new AbortController();
-    getWorkerPool().setAbortSignal(this._datasetAbortController.signal);
-
-    // S6: reset per-loader prefetch predictor state. Without this,
-    // the first updateView on a new dataset would extrapolate from
-    // the prior dataset's slicePosition, producing wild prefetch
-    // targets.
-    this.viewStateQueue.clearPrev();
-
-    const cacheResult = await setupCaches(this.normalizeURL(url), {
-      noCache: this.config.noCache,
-      cacheDebug: this.config.cacheDebug,
-      clearCache: this.config.clearCache,
-      noPrefetch: this.config.noPrefetch,
-      prefetchDebug: this.config.prefetchDebug,
-    });
-    this.l0Cache = cacheResult.l0Cache;
-    this.cachingStore = cacheResult.cachingStore;
-    this._zarrStore = (await zarr.openStore(cacheResult.rawStore)) as zarr.Readable;
-
-    // Create root THREE.js group
-    this.rootGroup = new THREE.Group();
-    this.rootGroup.name = 'LuxarScene';
-
-    // Load scene metadata
-    const rootLoc = zarr.root(this._zarrStore);
-    const rootZarrGroup = await zarr.open(rootLoc, { kind: 'group' });
-    const sceneAttrs = rootZarrGroup.attrs as ZarrSceneAttrs;
-
-    // Initialize scene dimensions - CRITICAL for extend_to_all feature
-    if (sceneAttrs?.scene_dimensions) {
-      this.initializeSceneDimensions(sceneAttrs.scene_dimensions);
-      this.rootGroup.userData.sceneDimensions = sceneAttrs.scene_dimensions;
-
-      // Log dimension initialization status for debugging
-      const ndim = this.viewState.dimensions?.length ?? 0;
-      if (ndim > 0) {
-        log.success(
-          Modules.SCENE_LOADER,
-          `Scene dimensions initialized: ${ndim} dimensions, ` +
-            `displayed=[${this.viewState.displayDims.join(', ')}]`
-        );
-      }
-
-      // Surface a user-facing toast when the scene exceeds the WASM
-      // 16-dim ceiling — the worker auto-falls-back to TS, which is
-      // correct but slower, and silent fallback can confuse users
-      // wondering why interaction feels sluggish.
-      if (ndim > 16) {
-        notifier.toast(
-          `Scene has ${ndim} dimensions — WASM acceleration limited to 16D, using TypeScript fallback. ` +
-            'Consider reducing dimensions for better performance.',
-          5000
-        );
-      }
-    } else {
-      log.warning(
-        Modules.SCENE_LOADER,
-        'No scene_dimensions found in scene metadata. extend_to_all features will not work.'
-      );
-    }
-
-    // Extract viewer_config if present (Python API scene defaults)
-    if (sceneAttrs?.viewer_config) {
-      this.rootGroup.userData.viewerConfig = sceneAttrs.viewer_config;
-      log.info(
-        Modules.SCENE_LOADER,
-        `Viewer config found in zarr: ${Object.keys(sceneAttrs.viewer_config).join(', ')}`
-      );
-    }
-
-    // Store scene-level position bounds (from Python compiler)
-    // These bounds represent the full dataset extent, available immediately without loading points
-    if (sceneAttrs?.position_bounds) {
-      this.rootGroup.userData.positionBounds = sceneAttrs.position_bounds;
-      log.info(
-        Modules.SCENE_LOADER,
-        `Scene bounds loaded: min=[${sceneAttrs.position_bounds.min.join(', ')}], ` +
-          `max=[${sceneAttrs.position_bounds.max.join(', ')}]`
-      );
-    }
-
-    // Build scene graph
-    const sceneGraph = await this.buildSceneGraph(rootLoc, sceneAttrs);
-    this._sceneGraph = sceneGraph;
-
-    // Load points
-    await this.loadSceneNodes(sceneGraph, this.rootGroup, rootLoc);
-
-    // Load overlay configs (screen-space annotations)
-    const overlayConfigs = await loadOverlayConfigs(this._zarrStore, rootLoc);
-    if (overlayConfigs.length > 0) {
-      this.rootGroup.userData.overlayConfigs = overlayConfigs;
-      // Store base URL for image fetching
-      this.rootGroup.userData.zarrBaseUrl = this.normalizeURL(url);
-    }
-
-    // Post-load monitor-tab provider wiring (extracted to
-    // scene-loader/monitor-wiring.ts).
-    wireMonitorAfterLoad({
-      monitor: this.monitor,
-      cachingStore: this.cachingStore,
-      l0Cache: this.l0Cache,
-      cacheTelemetryState: cacheResult.telemetryState,
-      gpuBufferPool: this._gpuBufferPool,
-      profiler: this.profiler,
+  /** Build the per-call LoadSceneCtx. Never passes `this` to the helper. */
+  private makeLoadSceneCtx(): LoadSceneCtx {
+    return {
+      config: this.config,
+      viewState: () => this.viewState,
       loaders: this.loaders,
       linesLoaders: this.linesLoaders,
       gsplatLoaders: this.gsplatLoaders,
-      sceneGraph,
-      updateVisibleCounts: () => this.updateVisibleCountsInMonitor(),
-    });
-
-    log.success(Modules.SCENE_LOADER, 'Scene loaded successfully');
-
-    // Schedule progressive GSplats LOD refinement after initial load.
-    // loadGSplats() loads LOD 0 for each progressive loader, but LODs 1-N
-    // are only loaded by the refinement loop. Without this trigger, higher
-    // LODs would not load until the first updateView() call (user interaction).
-    const needsPostLoadRefinement = [...this.gsplatLoaders.values()].some(
-      (l) => l.hasMoreLODs === true
-    );
-    if (needsPostLoadRefinement) {
-      log.info(
-        Modules.SCENE_LOADER,
-        'Scheduling post-load GSplats LOD refinement (higher LODs pending)'
-      );
-      // Hold the serialization lock during refinement so any updateView() calls
-      // queue as _pendingViewState (which naturally cancels the refinement loop)
-      this._updateInProgress = true;
-      this.scheduleGSplatsRefinement();
-    }
-
-    return this.rootGroup;
+      gpuBufferPool: () => this._gpuBufferPool,
+      monitor: () => this.monitor,
+      profiler: this.profiler,
+      normalizeURL: (u) => this.normalizeURL(u),
+      dispose: () => this.dispose(),
+      clearViewStatePrev: () => this.viewStateQueue.clearPrev(),
+      initializeSceneDimensions: (sd) => this.initializeSceneDimensions(sd),
+      makeNodeBuildCtx: () => this.makeNodeBuildCtx(),
+      updateVisibleCountsInMonitor: () => this.updateVisibleCountsInMonitor(),
+      scheduleGSplatsRefinement: () => this.scheduleGSplatsRefinement(),
+      setDatasetAbortController: (c) => {
+        this._datasetAbortController = c;
+      },
+      setCachingStore: (s) => {
+        this.cachingStore = s;
+      },
+      setL0Cache: (c) => {
+        this.l0Cache = c;
+      },
+      setZarrStore: (s) => {
+        this._zarrStore = s;
+      },
+      setRootGroup: (g) => {
+        this.rootGroup = g;
+      },
+      setSceneGraph: (g) => {
+        this._sceneGraph = g;
+      },
+      setUpdateInProgress: (v) => {
+        this._updateInProgress = v;
+      },
+      getDatasetAbortController: () => this._datasetAbortController,
+    };
   }
 
   /**
@@ -988,37 +863,6 @@ export class SceneLoader {
    */
   private commitGSplatsGeometry(staged: StagedGSplatsCommit, session?: UpdateSession): void {
     commitGSplatsGeometryHelper(staged, this.rootGroup, this._gpuBufferPool, session);
-  }
-
-  /**
-   * Build the scene graph structure. Implementation lives in
-   * `scene-loader/nodes/build-scene-graph.ts`.
-   */
-  private async buildSceneGraph(
-    rootLoc: zarr.Location<zarr.Readable>,
-    rootAttrs: ZarrSceneAttrs
-  ): Promise<SceneNode> {
-    return buildSceneGraphHelper(rootLoc, rootAttrs, this._zarrStore);
-  }
-
-  /**
-   * Load all nodes in the scene graph. Each leaf node is wrapped in a
-   * per-node try/catch so a single failing node does not abort loading
-   * sibling nodes — the user gets a partial scene plus a per-failure
-   * log entry instead of an empty scene with no actionable signal.
-   *
-   * `LoaderError` thrown from `loadX` is dispatched on `kind`:
-   * - Network → log warning + skip (transient, retry path will handle)
-   * - Decode / Validation → log error + toast (real data problem)
-   * - Unexpected → log error + toast (programmer bug; doesn't re-throw
-   *   because we still want sibling nodes to render)
-   */
-  private async loadSceneNodes(
-    node: SceneNode,
-    parentThree: THREE.Object3D,
-    parentLoc: zarr.Location<zarr.Readable>
-  ): Promise<void> {
-    return loadSceneNodesHelper(node, parentThree, parentLoc, this.makeNodeBuildCtx());
   }
 
   /**
