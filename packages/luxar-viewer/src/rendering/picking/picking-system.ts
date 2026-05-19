@@ -34,6 +34,7 @@ import {
   disposePickMaterial,
   unregisterAllPickMaterials,
 } from './picking-system/registration';
+import { rayHitsAnyNode, invalidateBoxCache } from './picking-system/ray-aabb';
 import type { Renderer, RendererCapabilities } from '../renderer-capabilities';
 import { readPixelsCompactAsync } from '../post-processing/hdr-pixel-utils';
 import {
@@ -229,11 +230,7 @@ export class PickingSystem {
    * @param pickId - Specific node to invalidate, or omit to drop all.
    */
   invalidateBoxes(pickId?: number): void {
-    if (pickId === undefined) {
-      this._worldBoxCache.clear();
-    } else {
-      this._worldBoxCache.delete(pickId);
-    }
+    invalidateBoxCache(this._worldBoxCache, pickId);
   }
 
   /**
@@ -514,26 +511,7 @@ export class PickingSystem {
     this.raycaster.setFromCamera(this.ndcCoord, this.camera);
     const ray = this.raycaster.ray;
 
-    let nearAnyNode = false;
-    for (const [pickId, entry] of this.nodeMap) {
-      const geom = (entry.main as THREE.Mesh).geometry;
-      if (!geom || !geom.boundingBox) continue;
-      // Cache world-space AABB: only invalidated on register/unregister
-      // or geometry commit; survives camera motion. Avoids the per-pick
-      // Box3.copy().applyMatrix4() that dominated the hover hot path
-      // for scenes with many registered nodes.
-      let worldBox = this._worldBoxCache.get(pickId);
-      if (!worldBox) {
-        worldBox = new THREE.Box3().copy(geom.boundingBox).applyMatrix4(entry.main.matrixWorld);
-        this._worldBoxCache.set(pickId, worldBox);
-      }
-      if (ray.intersectsBox(worldBox)) {
-        nearAnyNode = true;
-        break;
-      }
-    }
-
-    if (!nearAnyNode) {
+    if (!rayHitsAnyNode(ray, this.nodeMap, this._worldBoxCache)) {
       this.onPickResult(null);
       return;
     }
