@@ -1,0 +1,189 @@
+/**
+ * Material factory tables + backend resolution + cache-key helpers.
+ *
+ * Extracted from material-manager.ts in P6/step 4.1 to keep the
+ * `MaterialManager` class focused on cache + lifecycle orchestration.
+ *
+ * Everything here is **stateless** — pure constructor lookups and
+ * pure cache-key string construction. The single piece of state
+ * (renderer capabilities) is threaded through `resolveMaterialBackend`
+ * by the caller; we don't import the singleton.
+ *
+ * @module rendering/material-manager/factories
+ */
+
+import { PointMaterial } from '../materials/point/material-glsl';
+import { LineMaterial } from '../materials/line/material-glsl';
+import { GSplatMaterial } from '../materials/gsplat/material-glsl';
+import { PointTSLMaterial } from '../materials/point/material-tsl';
+import { LineTSLMaterial } from '../materials/line/material-tsl';
+import { GSplatTSLMaterial } from '../materials/gsplat/material-tsl';
+import { PointPickingMaterial } from '../picking/point-picking-material';
+import { LinePickingMaterial } from '../picking/line-picking-material';
+import { GSplatPickingMaterial } from '../picking/gsplat-picking-material';
+import { PointPickingTSLMaterial } from '../picking/point-picking-material-tsl';
+import { LinePickingTSLMaterial } from '../picking/line-picking-material-tsl';
+import { GSplatPickingTSLMaterial } from '../picking/gsplat-picking-material-tsl';
+import { MegaShaderMaterial } from '../post-processing/mega-shader-material';
+import { MegaShaderTSLMaterial } from '../post-processing/mega-shader-material-tsl';
+import type { RendererCapabilities } from '../renderer-capabilities';
+import { clamp } from '../../utils/clamp';
+
+/**
+ * Supported blending modes for materials.
+ *
+ * - 'normal': Standard alpha blending (semi-transparent). For
+ *   **Points** and **Lines** this works as expected — the shader
+ *   emits a per-fragment alpha derived from opacity and edge
+ *   softness. For **GSplats** the shader emits `alpha = 1.0` and
+ *   modulates RGB by uOpacity instead, so 'normal' on a GSplat layer
+ *   behaves like "opaque dimmed by opacity": the framebuffer behind
+ *   the splat is not revealed. Proper alpha-on-GSplats requires
+ *   premultiplied-alpha output + a `ONE` / `ONE_MINUS_SRC_ALPHA`
+ *   blend func, which is a deeper shader change deferred until
+ *   needed. Users wanting semi-transparent splats today should use
+ *   'luminous' or 'additive'.
+ * - 'additive': Classic additive blending, ignores depth (renders on top of everything)
+ * - 'max': Maximum of source and destination (brightest wins)
+ * - 'opaque': Solid rendering with depth write (closest object wins)
+ * - 'luminous': Same as additive visually, but respects depth occlusion (occluded by closer objects)
+ */
+export type BlendingMode = 'normal' | 'additive' | 'max' | 'opaque' | 'luminous';
+
+/** Point material properties driving cache key + constructor config. */
+export interface PointMaterialProperties {
+  blendingMode: BlendingMode;
+  opacity: number;
+  gamma: number;
+  intensity: number;
+  offset: number;
+  /** Scale factor for radius normalization (e.g., 1/255 for uint8) */
+  radiusScale?: number;
+  /** Scale factor for sharpness normalization (e.g., 1/255 for uint8) */
+  sharpnessScale?: number;
+}
+
+/** Line material properties driving cache key + constructor config. */
+export interface LineMaterialProperties {
+  blendingMode: BlendingMode;
+  opacity: number;
+  gamma: number;
+  intensity: number;
+  offset: number;
+}
+
+/** GSplat material properties driving cache key + constructor config. */
+export interface GSplatMaterialProperties {
+  blendingMode: BlendingMode;
+  opacity: number;
+  gamma: number;
+  intensity: number;
+  offset: number;
+  /** Default 3.0 */
+  truncationRadius?: number;
+}
+
+/**
+ * The material backend tag used in cache keys and as the index into
+ * the factory tables. `'tsl'` selects the `NodeMaterial`-derived
+ * implementation built for WebGPURenderer; `'glsl'` selects the
+ * `ShaderMaterial`-derived implementation for `THREE.WebGLRenderer`.
+ */
+export type MaterialBackend = 'glsl' | 'tsl';
+
+/**
+ * Resolve the active material backend from a `RendererCapabilities`
+ * snapshot. Returns `'glsl'` when caps are unset so unit tests that
+ * touch material creation without configuring caps get the WebGL2
+ * dispatch — same default as before this helper existed.
+ */
+export function resolveMaterialBackend(caps: RendererCapabilities | null): MaterialBackend {
+  return caps?.apiSurface === 'webgpu' ? 'tsl' : 'glsl';
+}
+
+/**
+ * Constructor table for the visual material pair of each geometry
+ * type. `MaterialManager.get{Point,Line,GSplat}Material` looks up
+ * `VISUAL_FACTORIES[kind][backend]` to pick the class to instantiate,
+ * replacing what used to be inline `useTSL ? new XTSL(...) : new
+ * X(...)` ternaries.
+ */
+export const VISUAL_FACTORIES = {
+  point: { glsl: PointMaterial, tsl: PointTSLMaterial },
+  line: { glsl: LineMaterial, tsl: LineTSLMaterial },
+  gsplat: { glsl: GSplatMaterial, tsl: GSplatTSLMaterial },
+} as const;
+
+/**
+ * Constructor table for the picking material pair of each geometry
+ * type. Mirror of {@link VISUAL_FACTORIES} for the picking pipeline;
+ * the `create*PickingMaterial` methods look up
+ * `PICKING_FACTORIES[kind][backend]` and instantiate it directly
+ * (picking materials are not cached).
+ */
+export const PICKING_FACTORIES = {
+  point: { glsl: PointPickingMaterial, tsl: PointPickingTSLMaterial },
+  line: { glsl: LinePickingMaterial, tsl: LinePickingTSLMaterial },
+  gsplat: { glsl: GSplatPickingMaterial, tsl: GSplatPickingTSLMaterial },
+} as const;
+
+/**
+ * Constructor pair for the post-processing mega-shader. Looked up by
+ * `createMegaShaderMaterial`; one entry per backend, no per-geometry
+ * indirection (there is only one mega-shader).
+ */
+export const MEGA_SHADER_FACTORIES = {
+  glsl: MegaShaderMaterial,
+  tsl: MegaShaderTSLMaterial,
+} as const;
+
+/**
+ * Compute the integer-bucketed cache-key components shared by all three
+ * material caches (Points / Lines / GSplats). All four properties have
+ * the same valid ranges and bucketing rules across material types, so
+ * having one helper avoids drift the next time the rules change.
+ */
+function getCommonMaterialBuckets(props: {
+  opacity: number;
+  gamma: number;
+  intensity: number;
+  offset: number;
+}): { opacityBucket: number; gammaBucket: number; intensityBucket: number; offsetBucket: number } {
+  return {
+    opacityBucket: Math.round(clamp(props.opacity, 0, 1) * 100),
+    gammaBucket: Math.round(clamp(props.gamma, 0, 10) * 100),
+    intensityBucket: Math.round(clamp(props.intensity, 0, 100) * 100),
+    offsetBucket: Math.round((clamp(props.offset, -10, 10) + 10) * 10),
+  };
+}
+
+/** Cache key for a Points material variant. */
+export function pointCacheKey(props: PointMaterialProperties, backend: MaterialBackend): string {
+  const { opacityBucket, gammaBucket, intensityBucket, offsetBucket } =
+    getCommonMaterialBuckets(props);
+  const radiusBucket = props.radiusScale
+    ? Math.round(Math.max(0, props.radiusScale) * 1000)
+    : 1000;
+  const sharpnessBucket = props.sharpnessScale
+    ? Math.round(Math.max(0, props.sharpnessScale) * 1000)
+    : 1000;
+  const transparent = props.blendingMode !== 'opaque';
+  return `point_${backend}_${props.blendingMode}_o${opacityBucket}_g${gammaBucket}_i${intensityBucket}_f${offsetBucket}_r${radiusBucket}_s${sharpnessBucket}_t${transparent ? 1 : 0}`;
+}
+
+/** Cache key for a Lines material variant. */
+export function lineCacheKey(props: LineMaterialProperties, backend: MaterialBackend): string {
+  const { opacityBucket, gammaBucket, intensityBucket, offsetBucket } =
+    getCommonMaterialBuckets(props);
+  const transparent = props.blendingMode !== 'opaque';
+  return `line_${backend}_${props.blendingMode}_o${opacityBucket}_g${gammaBucket}_i${intensityBucket}_f${offsetBucket}_t${transparent ? 1 : 0}`;
+}
+
+/** Cache key for a GSplats material variant. */
+export function gsplatCacheKey(props: GSplatMaterialProperties, backend: MaterialBackend): string {
+  const { opacityBucket, gammaBucket, intensityBucket, offsetBucket } =
+    getCommonMaterialBuckets(props);
+  const truncBucket = Math.round((props.truncationRadius ?? 3.0) * 10);
+  const transparent = props.blendingMode !== 'opaque';
+  return `gsplat_${backend}_${props.blendingMode}_o${opacityBucket}_g${gammaBucket}_i${intensityBucket}_f${offsetBucket}_tr${truncBucket}_t${transparent ? 1 : 0}`;
+}
