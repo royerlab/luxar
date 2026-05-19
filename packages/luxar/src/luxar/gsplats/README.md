@@ -680,6 +680,68 @@ After calibration, re-fit at the recommended budget: `luxar gsplat fit volume.za
 
 The report module imports matplotlib lazily so it does not inflate cold-start cost when `--pdf` is not set.
 
+## Level of Detail (LOD) Ladders
+
+The `lod` subpackage builds streaming-ready LOD hierarchies from a fitted `GSplatData`. Two qualitatively different operators live side-by-side:
+
+- **Additive** — same `N` splats, *reordered* so that the prefix sum at any `k ≤ N` splats is the best L² approximation of the full scene. Output: a single multi-LOD `GSplatData` where each level *extends* the previous one. Use this when you want progressive streaming: the viewer can stop loading at any point and the partial reconstruction is principled.
+- **Substitutive** — synthesise `M < N` representative splats per coarser level via Gaussian mixture reduction (k-means + cost-increment Lloyd refinement, optionally hierarchical greedy). Output: a list of flat `GSplatData` (one per level), since each level *replaces* the previous one. Use this when you want fixed-budget coarse mip-levels for view-dependent rendering.
+
+Both operators are pure post-processes on a fitted dataset; fitting (single-pass or progressive) returns one flat container, and an LOD hierarchy is built on demand.
+
+### Quick Example
+
+```python
+from luxar.gsplats import (
+    fit_gaussian_splats,
+    make_additive_lod,
+    make_substitutive_lod,
+)
+
+# 1. Fit (or use cal upstream to find K*; see "Calibration" section)
+data = fit_gaussian_splats(volume, seeds=32_000)
+
+# 2a. Additive: same N splats, reordered into 4 prefix-monotone levels
+additive = make_additive_lod(data, n_lods=4, method="greedy")
+# additive.up_to_lod(2) → best L² approximation using levels 0+1+2
+
+# 2b. Substitutive: 3 coarser levels with 4x compression each
+hierarchy = make_substitutive_lod(
+    data, compression_factor=4, levels=3, method="kmeans_lloyd",
+)
+# hierarchy[0] = original; hierarchy[3] = coarsest (≈ N / 64 splats)
+```
+
+### CLI
+
+```bash
+# Additive LOD: writes a single multi-LOD .gsplats.zarr
+luxar gsplat lod additive fit.gsplats.zarr additive.gsplats.zarr --n-lods 4
+luxar gsplat lod additive fit.gsplats.zarr out.gsplats.zarr --method self_energy   # cheap O(N log N)
+luxar gsplat lod additive fit.gsplats.zarr out.gsplats.zarr -m mass -b counts:500,2000,10000
+
+# Substitutive LOD: writes a directory of per-level files + manifest.json
+luxar gsplat lod substitutive fit.gsplats.zarr substitutive_dir/ --levels 3 --compression-factor 4
+luxar gsplat lod substitutive fit.gsplats.zarr out_dir/ --method greedy --device cuda
+```
+
+### Recommended Workflow
+
+`cal` → `fit` → `lod` is the canonical end-to-end pipeline:
+
+```bash
+# 1. Calibrate splat budget K* via blind-spot CV
+luxar gsplat cal volume.tiff cal.json
+
+# 2. Fit at the recommended K* (read from cal.json or its stdout)
+luxar gsplat fit volume.tiff fitted.gsplats.zarr --seeds <K*>
+
+# 3. Build a streaming LOD ladder
+luxar gsplat lod additive fitted.gsplats.zarr scene.gsplats.zarr --n-lods 4
+```
+
+See `lod/README.md` for algorithm details (greedy vs self-energy vs mass vs amplitude ordering, breakpoint specs, performance notes), and `lod/SPECIFICATIONS.md` for mathematical derivations and complexity analyses.
+
 ## Rendering
 
 The `rendering` module provides GPU-accelerated volume rendering with automatic backend selection (CUDA > MPS > CPU).
@@ -992,6 +1054,11 @@ gsplats/
 │                                  #   estimate_noise_floor, build_k_grid, find_k_star, calibrate)
 ├── calibration_report.py          # Optional matplotlib PDF report for `luxar gsplat cal --pdf`
 ├── gpu_profile.py                 # GPU benchmark profile management
+│
+├── lod/                            # Level-of-Detail post-processing (additive + substitutive)
+│   ├── additive.py                 # compute_additive_order, make_additive_lod
+│   ├── substitutive.py             # make_substitutive_lod (k-means + Lloyd / hierarchical greedy)
+│   └── _kernels.py                 # Shared L² / Gram / merge kernels
 │
 ├── seeds/                         # Seed generation subpackage
 │   ├── generate.py                # Unified entry point (generate_seeds)

@@ -360,6 +360,52 @@ After calibration, re-run the fit at the recommended budget:
 
    luxar gsplat fit volume.zarr out.gsplats.zarr --seeds <K*>
 
+Building Streaming LOD Ladders
+-------------------------------
+
+A fitted ``.gsplats.zarr`` is a single flat container of N splats. For
+progressive streaming and view-dependent rendering, build an LOD ladder
+on top with ``luxar gsplat lod``.
+
+Two complementary operators are available:
+
+* **Additive** — same N splats, *reordered* so that the prefix sum at any
+  k splats is the best L² approximation of the full scene. Use this when
+  you want a streaming-friendly file the viewer can stop loading at any
+  point.
+* **Substitutive** — synthesise M < N representative splats per coarser
+  level via Gaussian mixture reduction. Use this when you want fixed-budget
+  coarse mip-levels for view-dependent rendering.
+
+.. code-block:: bash
+
+   # Canonical end-to-end pipeline: cal → fit → lod
+   luxar gsplat cal volume.tiff cal.json --device cuda
+   luxar gsplat fit volume.tiff fitted.gsplats.zarr --seeds <K*>
+
+   # Additive (single multi-LOD .gsplats.zarr)
+   luxar gsplat lod additive fitted.gsplats.zarr scene.gsplats.zarr --n-lods 4
+
+   # Substitutive (directory of per-level files + manifest.json)
+   luxar gsplat lod substitutive fitted.gsplats.zarr scene_dir/ --levels 3 --compression-factor 4
+
+Programmatically:
+
+.. code-block:: python
+
+   from luxar.gsplats import make_additive_lod, make_substitutive_lod
+
+   additive = make_additive_lod(data, n_lods=4, method="greedy")
+   # additive.up_to_lod(2) → prefix of levels 0+1+2
+
+   levels = make_substitutive_lod(data, compression_factor=4, levels=3)
+   # levels[0] = original; levels[3] = coarsest
+
+See ``packages/luxar/src/luxar/gsplats/lod/SPECIFICATIONS.md`` for the
+full algorithm spec (greedy vs self-energy vs mass vs amplitude
+orderings; k-means+Lloyd vs hierarchical greedy clustering; breakpoint
+strategies; complexity).
+
 Summary
 -------
 
