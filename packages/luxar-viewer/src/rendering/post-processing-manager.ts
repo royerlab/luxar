@@ -36,9 +36,16 @@ import {
   disposeTransientResources,
   applyScaledNoiseSettings,
 } from './post-processing/post-processing-manager/resource-lifecycle';
-
-/** Validated MSAA sample counts. */
-const VALID_MSAA_SAMPLES = [0, 2, 4, 8, 16] as const;
+import {
+  updateBloomSettings as updateBloomSettingsImpl,
+  clampBloomLevels,
+  validateMSAASamples,
+  setVignetteEnabled as setVignetteEnabledImpl,
+  setChromaticLensDistortionEnabled as setChromaticLensDistortionEnabledImpl,
+  updateChromaticLensDistortion as updateChromaticLensDistortionImpl,
+  getLensDistortionParams as getLensDistortionParamsImpl,
+  type LensDistortionParams,
+} from './post-processing/post-processing-manager/settings';
 
 /**
  * Manages HDR post-processing: scene → bloom → mega-shader → (FXAA) →
@@ -271,23 +278,18 @@ export class PostProcessingManager {
   // ================================================================
 
   updateBloomSettings(strength?: number, radius?: number, threshold?: number): void {
-    if (strength !== undefined) {
-      this.bloomIntensity = strength;
-      this.megaShader.setBloom(strength, this.bloomChain?.outputTexture ?? null);
-    }
-    if (radius !== undefined) {
-      this.bloomRadius = radius;
-      this.bloomChain?.setRadius(radius);
-    }
-    if (threshold !== undefined) {
-      this.bloomThreshold = threshold;
-      this.bloomChain?.setThreshold(threshold);
-    }
-    log.update(
-      Modules.POST_PROCESSING,
-      `Bloom updated: strength=${this.bloomIntensity.toFixed(2)}, ` +
-        `radius=${this.bloomRadius.toFixed(2)}, threshold=${this.bloomThreshold.toFixed(2)}`
-    );
+    const state = {
+      bloomChain: this.bloomChain,
+      bloomIntensity: this.bloomIntensity,
+      bloomRadius: this.bloomRadius,
+      bloomThreshold: this.bloomThreshold,
+      bloomLevels: this.bloomLevels,
+      megaShader: this.megaShader,
+    };
+    updateBloomSettingsImpl(state, strength, radius, threshold);
+    this.bloomIntensity = state.bloomIntensity;
+    this.bloomRadius = state.bloomRadius;
+    this.bloomThreshold = state.bloomThreshold;
   }
 
   setBloomEnabled(enabled: boolean, strength?: number, radius?: number, threshold?: number): void {
@@ -319,21 +321,15 @@ export class PostProcessingManager {
   }
 
   setBloomLevels(levels: number): void {
-    const next = clamp(Math.round(levels), 1, 12);
-    if (this.bloomLevels === next) return;
-    this.bloomLevels = next;
-    if (this.bloomChain) {
-      // Pass the CURRENT physical canvas size so the rebuilt pyramid
-      // matches the present render target dimensions. Without this
-      // explicit argument, setLevels would derive the size from the
-      // stale mip[0] — wrong if the canvas resized since the last
-      // setSize() but before setLevels() (e.g. a quality-preset
-      // change in a resize-debounce window).
-      this.bloomChain.setLevels(next, this.getPhysicalSize());
-      // Re-bind in case texture identity changed after reallocation.
-      this.megaShader.setBloom(this.bloomIntensity, this.bloomChain.outputTexture);
-    }
-    log.info(Modules.POST_PROCESSING, `Bloom mipmap levels set to ${next}`);
+    const next = clampBloomLevels(
+      this.bloomLevels,
+      levels,
+      this.bloomChain,
+      this.getPhysicalSize(),
+      this.bloomIntensity,
+      this.megaShader
+    );
+    if (next !== null) this.bloomLevels = next;
   }
 
   // ================================================================
@@ -457,16 +453,7 @@ export class PostProcessingManager {
   // ================================================================
 
   setVignetteEnabled(enabled: boolean, darkness?: number, offset?: number): void {
-    if (enabled) {
-      const d = darkness ?? config.renderingControls.defaults.vignetteDarkness;
-      const o = offset ?? config.renderingControls.defaults.vignetteOffset;
-      this.megaShader.setVignette(d, o);
-      this.megaShader.toggleVignette(true);
-      log.success(Modules.POST_PROCESSING, `Vignette enabled: darkness=${d}, offset=${o}`);
-    } else {
-      this.megaShader.toggleVignette(false);
-      log.info(Modules.POST_PROCESSING, 'Vignette disabled');
-    }
+    setVignetteEnabledImpl(this.megaShader, enabled, darkness, offset);
   }
 
   // ================================================================
@@ -484,94 +471,29 @@ export class PostProcessingManager {
     focalLengthY?: number,
     skew?: number
   ): void {
-    if (enabled) {
-      const d = config.renderingControls.defaults;
-      this.megaShader.setLensDistortion({
-        distortion: new THREE.Vector2(
-          distortionX ?? d.chromaticLensDistortionX,
-          distortionY ?? d.chromaticLensDistortionY
-        ),
-        dispersion: dispersion ?? d.chromaticLensDispersion,
-        principalPoint: new THREE.Vector2(
-          principalPointX ?? d.chromaticLensPrincipalPointX,
-          principalPointY ?? d.chromaticLensPrincipalPointY
-        ),
-        focalLength: new THREE.Vector2(
-          focalLengthX ?? d.chromaticLensFocalLengthX,
-          focalLengthY ?? d.chromaticLensFocalLengthY
-        ),
-        skew: skew ?? d.chromaticLensSkew,
-      });
-      this.megaShader.toggleLensDistortion(true);
-      log.info(Modules.POST_PROCESSING, 'Chromatic lens distortion enabled');
-    } else {
-      this.megaShader.toggleLensDistortion(false);
-      log.info(Modules.POST_PROCESSING, 'Chromatic lens distortion disabled');
-    }
-  }
-
-  updateChromaticLensDistortion(params: {
-    distortionX?: number;
-    distortionY?: number;
-    dispersion?: number;
-    principalPointX?: number;
-    principalPointY?: number;
-    focalLengthX?: number;
-    focalLengthY?: number;
-    skew?: number;
-  }): void {
-    const distortion =
-      params.distortionX !== undefined || params.distortionY !== undefined
-        ? new THREE.Vector2(
-            params.distortionX ?? this.megaShader.uniforms.uDistortion.value.x,
-            params.distortionY ?? this.megaShader.uniforms.uDistortion.value.y
-          )
-        : undefined;
-    const principalPoint =
-      params.principalPointX !== undefined || params.principalPointY !== undefined
-        ? new THREE.Vector2(
-            params.principalPointX ?? this.megaShader.uniforms.uPrincipalPoint.value.x,
-            params.principalPointY ?? this.megaShader.uniforms.uPrincipalPoint.value.y
-          )
-        : undefined;
-    const focalLength =
-      params.focalLengthX !== undefined || params.focalLengthY !== undefined
-        ? new THREE.Vector2(
-            params.focalLengthX ?? this.megaShader.uniforms.uFocalLength.value.x,
-            params.focalLengthY ?? this.megaShader.uniforms.uFocalLength.value.y
-          )
-        : undefined;
-    this.megaShader.setLensDistortion({
-      distortion,
-      principalPoint,
-      focalLength,
-      skew: params.skew,
-      dispersion: params.dispersion,
+    setChromaticLensDistortionEnabledImpl(this.megaShader, enabled, {
+      distortionX,
+      distortionY,
+      dispersion,
+      principalPointX,
+      principalPointY,
+      focalLengthX,
+      focalLengthY,
+      skew,
     });
   }
 
-  /**
-   * Picking-system hook: the same UV transform the mega-shader uses
-   * for chromatic lens distortion, exposed so input coordinates can be
-   * corrected before lookup. Returns `null` when distortion is off.
-   *
-   * Vector2 values are cloned so a caller mutating the returned
-   * object can't accidentally pollute the shader's live uniforms.
-   */
+  updateChromaticLensDistortion(params: LensDistortionParams): void {
+    updateChromaticLensDistortionImpl(this.megaShader, params);
+  }
+
   getLensDistortionParams(): {
     distortion: THREE.Vector2;
     principalPoint: THREE.Vector2;
     focalLength: THREE.Vector2;
     skew: number;
   } | null {
-    if (!this.megaShader.isLensDistortionEnabled()) return null;
-    const u = this.megaShader.uniforms;
-    return {
-      distortion: (u.uDistortion.value as THREE.Vector2).clone(),
-      principalPoint: (u.uPrincipalPoint.value as THREE.Vector2).clone(),
-      focalLength: (u.uFocalLength.value as THREE.Vector2).clone(),
-      skew: u.uSkew.value as number,
-    };
+    return getLensDistortionParamsImpl(this.megaShader);
   }
 
   // ================================================================
@@ -596,23 +518,12 @@ export class PostProcessingManager {
   }
 
   setMSAASamples(samples: number): void {
-    if (!(VALID_MSAA_SAMPLES as readonly number[]).includes(samples)) {
-      log.warning(Modules.POST_PROCESSING, `Invalid MSAA samples: ${samples}. Using 4.`);
-      samples = 4;
-    }
-    const maxSamples = this.capabilities.maxMSAASamples;
-    if (samples > maxSamples) {
-      log.warning(
-        Modules.POST_PROCESSING,
-        `Requested ${samples} MSAA samples but GPU max is ${maxSamples}. Clamping.`
-      );
-      samples = maxSamples;
-    }
-    if (this.msaaSamples === samples) return;
-    this.msaaSamples = samples;
+    const validated = validateMSAASamples(samples, this.capabilities.maxMSAASamples);
+    if (this.msaaSamples === validated) return;
+    this.msaaSamples = validated;
     if (this.msaaEnabled) {
       this.reallocateForSize();
-      log.info(Modules.POST_PROCESSING, `MSAA samples set to ${samples}`);
+      log.info(Modules.POST_PROCESSING, `MSAA samples set to ${validated}`);
     }
   }
 
