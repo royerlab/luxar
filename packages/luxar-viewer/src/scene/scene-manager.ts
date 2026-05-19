@@ -24,10 +24,7 @@ import {
   type RendererCapabilities,
 } from '../rendering/renderer-capabilities';
 import { configureHDRRenderer, logHDRCapabilities } from '../utils/hdr-detection';
-import {
-  getBoundingBoxCenter,
-  BoundingBox,
-} from './scene-manager/clipping/bounds-math';
+import { BoundingBox } from './scene-manager/clipping/bounds-math';
 import {
   SceneBoundsCache,
   computeBoundsFromMetadata,
@@ -50,7 +47,15 @@ import {
   createDefaultPerspectiveCamera,
   resetCameraToInitialPosition,
 } from './scene-manager/camera/camera-setup';
-import { computeSceneBoundingBox, fitCameraToBounds } from './scene-manager/camera/camera-framing';
+import {
+  autoFrameCamera,
+  centerCameraOnScene,
+  centerOnOrigin,
+} from './scene-manager/camera/camera-framing';
+import {
+  type CameraModeCtx,
+  setControlType as cameraModeSetControlType,
+} from './scene-manager/camera/camera-mode';
 import { WebGLContextRecovery } from './scene-manager/render-pipeline/webgl-context-recovery';
 import { ResizeOrchestrator } from './scene-manager/viewport/resize-orchestrator';
 import {
@@ -1010,28 +1015,8 @@ export class SceneManager extends THREE.EventDispatcher<{
    * ```
    */
   public centerCameraOnScene(): void {
-    // Ensure world matrices are up to date before computing bounds.
-    this.scene.updateMatrixWorld(true);
-
-    const { box, primitiveCount } = computeSceneBoundingBox(this.scene);
-    if (box.isEmpty() || primitiveCount === 0) {
-      log.warning(Modules.SCENE_MANAGER, 'No visible geometry found to center camera on');
-      return;
-    }
-
-    const center = box.getCenter(new THREE.Vector3());
-    this.lastBoundingBoxCenter.copy(center);
-
-    fitCameraToBounds(
-      this.camera,
-      this.controls,
-      {
-        min: { x: box.min.x, y: box.min.y, z: box.min.z },
-        max: { x: box.max.x, y: box.max.y, z: box.max.z },
-      },
-      { lookAtTarget: center, logLabel: 'Camera centered on scene' }
-    );
-    log.success(Modules.CONTROLS, 'Controls target updated and state saved');
+    const center = centerCameraOnScene(this.scene, this.camera, this.controls);
+    if (center) this.lastBoundingBoxCenter.copy(center);
   }
 
   /**
@@ -1092,34 +1077,9 @@ export class SceneManager extends THREE.EventDispatcher<{
     }
   }
 
-  /**
-   * Center camera and controls on the origin
-   */
+  /** Center camera and controls on the origin. */
   private centerOnOrigin(): void {
-    // Get current camera distance from target. getFocusTarget() returns a
-    // clone, so it is safe to use as a one-shot read.
-    const currentDistance = this.camera.position.distanceTo(this.controls.getFocusTarget());
-
-    // Reset target to origin
-    const origin = new THREE.Vector3(0, 0, 0);
-
-    // Position camera at same distance from origin
-    this.camera.position.set(0, 0, currentDistance);
-    this.camera.lookAt(origin);
-    this.camera.updateMatrixWorld(true);
-
-    // Update controls target through the typed setter.
-    this.controls.setTarget(origin);
-    this.controls.update();
-
-    // Save the new origin-centered state as the default
-    // NOTE: Do NOT call reset() before saveState() - that would undo the centering!
-    this.controls.saveState();
-
-    log.success(
-      Modules.SCENE_MANAGER,
-      `Camera reset to origin with distance: ${currentDistance.toFixed(2)}`
-    );
+    centerOnOrigin(this.camera, this.controls);
   }
 
   /**
@@ -1243,43 +1203,25 @@ export class SceneManager extends THREE.EventDispatcher<{
   }
 
   /**
-   * Auto-frame the camera to fit the scene contents using metadata bounds.
+   * Auto-frame the camera to fit the scene contents using metadata
+   * bounds. Delegates to the camera-framing helper. Updates the
+   * centering-state tracking fields when framing succeeds.
    *
-   * Uses position_bounds from zarr metadata (available immediately, no geometry load needed)
-   * to compute the optimal camera distance via FOV-aware calculation. This ensures
-   * the initial view fits the scene regardless of its physical scale.
-   *
-   * For orthographic cameras, adjusts zoom instead of distance.
-   *
-   * @param preserveTarget - If true, keep the current controls target (set by zarr viewer_config)
-   *   instead of overwriting it with the bounding box center.
+   * @param preserveTarget If true, keep the current controls target
+   *   (set by zarr viewer_config) instead of overwriting it with
+   *   the bounding box center.
    */
   private autoFrameCamera(preserveTarget: boolean = false): void {
-    const bounds = this.getSceneBoundsFromMetadata();
-    if (!bounds) {
-      log.warning(Modules.SCENE_MANAGER, 'No metadata bounds available for auto-framing');
-      return;
+    const result = autoFrameCamera(
+      this.camera,
+      this.controls,
+      this.getSceneBoundsFromMetadata(),
+      preserveTarget
+    );
+    if (result.framed && result.center) {
+      this.isCenteredOnBoundingBox = !preserveTarget;
+      this.lastBoundingBoxCenter.copy(result.center);
     }
-
-    // Determine the look-at target: author's target if set, otherwise bounding box center.
-    const center = getBoundingBoxCenter(bounds);
-    const lookAtTarget = preserveTarget
-      ? this.controls.getFocusTarget()
-      : new THREE.Vector3(center.x, center.y, center.z);
-
-    const diagonal = fitCameraToBounds(this.camera, this.controls, bounds, {
-      lookAtTarget,
-      preserveControlsTarget: preserveTarget,
-      logLabel: 'Auto-framed camera on scene',
-    });
-    if (diagonal === 0) {
-      log.warning(Modules.SCENE_MANAGER, 'Scene bounds have zero extent, skipping auto-frame');
-      return;
-    }
-
-    // Track centering state
-    this.isCenteredOnBoundingBox = !preserveTarget;
-    this.lastBoundingBoxCenter.set(center.x, center.y, center.z);
   }
 
   /**
@@ -1473,102 +1415,39 @@ export class SceneManager extends THREE.EventDispatcher<{
   }
 
   /**
-   * Switch camera control type. Handles camera swap for ortho mode.
-   * @param type - Control type ('orbit', 'fly', or 'ortho')
+   * Switch camera control type. Handles camera swap for ortho
+   * mode. Event dispatch (`camera-changed`) stays at this call
+   * site — see refactor non-goal #2.
+   *
+   * @param type Control type ('orbit', 'fly', or 'ortho')
    */
   setControlType(type: ControlType): void {
-    const needsOrtho = type === 'ortho';
-    const hasOrtho = isOrthographicCamera(this.camera);
-    const cameraChanged = needsOrtho !== hasOrtho;
-
-    // Swap camera if projection mode changes
-    if (needsOrtho && !hasOrtho) {
-      this.swapToOrthographic();
-    } else if (!needsOrtho && hasOrtho) {
-      this.swapToPerspective();
-    }
-
-    // Update controls with new camera reference (may have changed)
-    this.controls.setCamera(this.camera);
-    this.controls.setControlType(type);
-
-    // Update materials for new projection mode
-    this.updateMaterialsForCurrentCamera();
-
-    // Notify listeners that the camera object was replaced (picking system, etc.)
+    const { cameraChanged } = cameraModeSetControlType(type, this.makeCameraModeCtx());
     if (cameraChanged) {
       this.dispatchEvent({ type: 'camera-changed' });
     }
   }
 
-  /**
-   * Get current control type
-   */
+  /** Get current control type. */
   getControlType(): ControlType {
     return this.controls.getControlType();
   }
 
-  /**
-   * Swap from perspective to orthographic camera, matching the current view.
-   * Frustum is computed to show the same visible area at the target distance.
-   */
-  private swapToOrthographic(): void {
-    if (!isPerspectiveCamera(this.camera)) return;
-
-    const focusTarget = this.controls.getFocusTarget();
-    const distance = Math.max(this.camera.position.distanceTo(focusTarget), 0.001);
-    const fovRad = (this.camera.fov * Math.PI) / 180;
-    const frustumHeight = 2 * distance * Math.tan(fovRad / 2);
-    const aspect = this.camera.aspect || 1;
-
-    const ortho = new THREE.OrthographicCamera(
-      (-frustumHeight * aspect) / 2,
-      (frustumHeight * aspect) / 2,
-      frustumHeight / 2,
-      -frustumHeight / 2,
-      this.camera.near,
-      this.camera.far
-    );
-
-    // Reset to a clean front view (looking along -Z, up = Y)
-    // Ortho is for 2D viewing — carrying over a tilted 3D orientation is confusing
-    ortho.position.set(focusTarget.x, focusTarget.y, focusTarget.z + distance);
-    ortho.up.set(0, 1, 0);
-    ortho.lookAt(focusTarget);
-    ortho.updateMatrixWorld();
-
-    // Prior camera is not disposed — THREE.js cameras hold no GPU resources.
-    this.camera = ortho;
-    this.lastOrthoZoom = ortho.zoom;
-    this.postProcessing.setCamera(ortho);
-  }
-
-  /**
-   * Swap from orthographic back to perspective camera.
-   * Restores the default FOV.
-   */
-  private swapToPerspective(): void {
-    if (isPerspectiveCamera(this.camera)) return;
-
-    const canvas = this.renderer.domElement;
-    const aspect =
-      (canvas.clientWidth || window.innerWidth) / (canvas.clientHeight || window.innerHeight);
-
-    const persp = new THREE.PerspectiveCamera(
-      config.renderingControls.defaults.fov,
-      aspect,
-      this.camera.near,
-      this.camera.far
-    );
-
-    persp.position.copy(this.camera.position);
-    persp.quaternion.copy(this.camera.quaternion);
-    persp.up.copy(this.camera.up);
-    persp.updateMatrixWorld();
-
-    // Prior camera is not disposed — THREE.js cameras hold no GPU resources.
-    this.camera = persp;
-    this.postProcessing.setCamera(persp);
+  /** Build the narrow ctx that the camera-mode helpers consume. */
+  private makeCameraModeCtx(): CameraModeCtx {
+    return {
+      getCamera: () => this.camera,
+      setCamera: (camera) => {
+        this.camera = camera;
+      },
+      controls: this.controls,
+      renderer: this.renderer,
+      postProcessing: this.postProcessing,
+      updateMaterialsForCurrentCamera: () => this.updateMaterialsForCurrentCamera(),
+      setLastOrthoZoom: (zoom) => {
+        this.lastOrthoZoom = zoom;
+      },
+    };
   }
 
   /**

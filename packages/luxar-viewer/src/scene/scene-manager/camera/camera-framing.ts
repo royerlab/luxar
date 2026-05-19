@@ -21,7 +21,11 @@
 import * as THREE from 'three';
 import { config } from '../../../config';
 import { log, Modules } from '../../../utils/log';
-import { calculateCameraDistance, type BoundingBox } from '../clipping/bounds-math';
+import {
+  calculateCameraDistance,
+  getBoundingBoxCenter,
+  type BoundingBox,
+} from '../clipping/bounds-math';
 import {
   isPerspectiveCamera,
   isOrthographicCamera,
@@ -211,4 +215,132 @@ export function fitCameraToBounds(
   );
 
   return diagonal;
+}
+
+// ============================================================================
+// Centering helpers (extracted from SceneManager in Step 8).
+// ============================================================================
+
+/**
+ * Result of `centerCameraOnScene`. Returns the bounding-box center
+ * so the caller (SceneManager) can update its `lastBoundingBoxCenter`
+ * tracking field. Returns `null` when the scene has no visible
+ * geometry to center on.
+ */
+export type CenterResult = THREE.Vector3 | null;
+
+/**
+ * Compute scene bounds from loaded geometry and frame the camera
+ * around them. Returns the bounding-box center so the caller can
+ * update centering-state tracking; returns null when the scene
+ * has no visible geometry.
+ *
+ * Called by F-key recenter via SceneManager.
+ */
+export function centerCameraOnScene(
+  scene: THREE.Scene,
+  camera: LuxarCamera,
+  controls: ControlsManager
+): CenterResult {
+  // Ensure world matrices are up to date before computing bounds.
+  scene.updateMatrixWorld(true);
+
+  const { box, primitiveCount } = computeSceneBoundingBox(scene);
+  if (box.isEmpty() || primitiveCount === 0) {
+    log.warning(Modules.SCENE_MANAGER, 'No visible geometry found to center camera on');
+    return null;
+  }
+
+  const center = box.getCenter(new THREE.Vector3());
+
+  fitCameraToBounds(
+    camera,
+    controls,
+    {
+      min: { x: box.min.x, y: box.min.y, z: box.min.z },
+      max: { x: box.max.x, y: box.max.y, z: box.max.z },
+    },
+    { lookAtTarget: center, logLabel: 'Camera centered on scene' }
+  );
+  log.success(Modules.CONTROLS, 'Controls target updated and state saved');
+
+  return center;
+}
+
+/**
+ * Reset camera + controls target to the origin (0, 0, 0) at the
+ * camera's current distance from its current target. Saves the
+ * new origin-centered state as the controls' default so a reset
+ * later returns here.
+ */
+export function centerOnOrigin(camera: LuxarCamera, controls: ControlsManager): void {
+  // Get current camera distance from target. getFocusTarget() returns a
+  // clone, so it is safe to use as a one-shot read.
+  const currentDistance = camera.position.distanceTo(controls.getFocusTarget());
+
+  const origin = new THREE.Vector3(0, 0, 0);
+
+  camera.position.set(0, 0, currentDistance);
+  camera.lookAt(origin);
+  camera.updateMatrixWorld(true);
+
+  controls.setTarget(origin);
+  controls.update();
+  // NOTE: Do NOT call reset() before saveState() — that would undo the
+  // centering and return the camera to the previous default.
+  controls.saveState();
+
+  log.success(Modules.SCENE_MANAGER, 'Centered on origin');
+}
+
+/**
+ * Result of `autoFrameCamera`. `bounds` is null when no metadata
+ * is available; otherwise the bounding-box center is returned so
+ * the caller can update centering-state tracking.
+ */
+export interface AutoFrameResult {
+  /** True when bounds were found and the camera was framed. */
+  framed: boolean;
+  /** Bounding-box center, or null when bounds are missing or zero-extent. */
+  center: THREE.Vector3 | null;
+}
+
+/**
+ * Auto-frame the camera to fit a pre-computed (typically metadata-
+ * derived) 3D bounding box. For orthographic cameras, adjusts zoom
+ * instead of distance.
+ *
+ * Used by SceneManager.loadSceneData() to auto-frame on scene load.
+ *
+ * @param preserveTarget If true, keep the current controls target
+ *   (set by zarr viewer_config) instead of overwriting it with the
+ *   bounding box center.
+ */
+export function autoFrameCamera(
+  camera: LuxarCamera,
+  controls: ControlsManager,
+  bounds: BoundingBox | null,
+  preserveTarget: boolean = false
+): AutoFrameResult {
+  if (!bounds) {
+    log.warning(Modules.SCENE_MANAGER, 'No metadata bounds available for auto-framing');
+    return { framed: false, center: null };
+  }
+
+  const center = getBoundingBoxCenter(bounds);
+  const lookAtTarget = preserveTarget
+    ? controls.getFocusTarget()
+    : new THREE.Vector3(center.x, center.y, center.z);
+
+  const diagonal = fitCameraToBounds(camera, controls, bounds, {
+    lookAtTarget,
+    preserveControlsTarget: preserveTarget,
+    logLabel: 'Auto-framed camera on scene',
+  });
+  if (diagonal === 0) {
+    log.warning(Modules.SCENE_MANAGER, 'Scene bounds have zero extent, skipping auto-frame');
+    return { framed: false, center: null };
+  }
+
+  return { framed: true, center: new THREE.Vector3(center.x, center.y, center.z) };
 }
