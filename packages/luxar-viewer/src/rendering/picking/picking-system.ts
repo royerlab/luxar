@@ -35,6 +35,7 @@ import {
   unregisterAllPickMaterials,
 } from './picking-system/registration';
 import { rayHitsAnyNode, invalidateBoxCache } from './picking-system/ray-aabb';
+import { voteWinner } from './picking-system/pick-render';
 import type { Renderer, RendererCapabilities } from '../renderer-capabilities';
 import { readPixelsCompactAsync } from '../post-processing/hdr-pixel-utils';
 import {
@@ -659,44 +660,10 @@ export class PickingSystem {
       flipOut: this._readFlipped,
     });
 
-    // Brightness-weighted majority voting. Reuse the same Map across
-    // picks (cleared here) to avoid the per-pick allocation. Numeric
-    // key (nodeId * 2^24 + elementId) is lossless for 24-bit IDs.
-    this._votes.clear();
-    for (let i = 0; i < PICK_SIZE * PICK_SIZE; i++) {
-      const r = pixels[i * 4]; // nodeId
-      const g = pixels[i * 4 + 1]; // elementId
-      const b = pixels[i * 4 + 2]; // brightness
-
-      // Skip background pixels (nodeId = 0 means no hit)
-      if (r < 0.5) continue;
-
-      const nodeId = Math.round(r);
-      const elementId = Math.round(g);
-      const key = nodeId * 16777216 + elementId;
-
-      const existing = this._votes.get(key);
-      if (existing) {
-        existing.weight += b;
-      } else {
-        this._votes.set(key, { nodeId, elementId, weight: b });
-      }
-    }
-
-    // Find the winner (highest total brightness weight)
-    let winner: { nodeId: number; elementId: number; weight: number } | null = null;
-    for (const entry of this._votes.values()) {
-      if (!winner || entry.weight > winner.weight) {
-        winner = entry;
-      }
-    }
-
+    const winner = voteWinner(pixels, PICK_SIZE, this._votes);
     if (!winner) return null;
-
-    // Look up the main node
     const nodeEntry = this.nodeMap.get(winner.nodeId);
     if (!nodeEntry) return null;
-
     return {
       nodeId: winner.nodeId,
       elementId: winner.elementId,
