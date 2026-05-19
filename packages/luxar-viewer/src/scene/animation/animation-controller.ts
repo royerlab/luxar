@@ -6,11 +6,11 @@
 // - Performance monitoring integration for real-time metrics
 // - Proper cleanup and resource management
 
-import { ControlsManager } from '../controls/controls-manager';
-import { config } from '../config';
-import { PostProcessingManager } from '../rendering/post-processing/post-processing-manager';
-import { AdaptiveDPRManager } from '../rendering/adaptive-dpr-manager';
-import { eventBus } from '../utils/event-bus';
+import { ControlsManager } from '../../controls/controls-manager';
+import { config } from '../../config';
+import { PostProcessingManager } from '../../rendering/post-processing/post-processing-manager';
+import { AdaptiveDPRManager } from '../../rendering/adaptive-dpr-manager';
+import { eventBus } from '../../utils/event-bus';
 
 /**
  * AnimationController manages the main rendering loop and performance optimization

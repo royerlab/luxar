@@ -27,7 +27,7 @@ import {
   type AnimationShortcutsContext,
 } from '../../../../input/handlers/animation-shortcuts';
 import { InputContext, type InputContextManager } from '../../../../input/input-context-manager';
-import type { DimensionAnimationManager } from '../../../../scene/dimension-animation-manager';
+import type { DimensionAnimationManager } from '../../../../scene/animation/dimension-animation-manager';
 import type { SimpleDims } from '../../../../types/dims';
 
 function makeContextManager(): {

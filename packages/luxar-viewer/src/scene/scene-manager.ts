@@ -8,22 +8,22 @@
 // - Resource disposal for memory management
 
 import * as THREE from 'three';
-import { ControlsManager } from '../../controls/controls-manager';
-import { loadScene } from '../../data';
-import type { LoaderConfig } from '../../data/data-loader-types';
-import { notifier } from '../../utils/notifier';
-import { config } from '../../config';
-import { extractCameraOverrides } from '../../config/viewer-config-utils';
-import type { ZarrViewerConfig } from '../../types/zarr';
-import { PostProcessingManager } from '../../rendering/post-processing/post-processing-manager';
-import { materialManager } from '../../rendering';
-import { disposeColormapTextures } from '../../rendering/colormap-textures';
+import { ControlsManager } from '../controls/controls-manager';
+import { loadScene } from '../data';
+import type { LoaderConfig } from '../data/data-loader-types';
+import { notifier } from '../utils/notifier';
+import { config } from '../config';
+import { extractCameraOverrides } from '../config/viewer-config-utils';
+import type { ZarrViewerConfig } from '../types/zarr';
+import { PostProcessingManager } from '../rendering/post-processing/post-processing-manager';
+import { materialManager } from '../rendering';
+import { disposeColormapTextures } from '../rendering/colormap-textures';
 import {
   createRendererCapabilities,
   type Renderer,
   type RendererCapabilities,
-} from '../../rendering/renderer-capabilities';
-import { configureHDRRenderer, logHDRCapabilities } from '../../utils/hdr-detection';
+} from '../rendering/renderer-capabilities';
+import { configureHDRRenderer, logHDRCapabilities } from '../utils/hdr-detection';
 import {
   validateFOV,
   getBoundingBoxDiagonal,
@@ -35,31 +35,31 @@ import {
   projectBoundsToDisplayDims,
   SPHERE_SAFETY_EXPANSION,
   MIN_NEAR_PLANE,
-} from './scene-manager-utils';
-import { log, Modules, LogEmoji } from '../../utils/log';
-import { sceneDimsManager } from '../scene-dims-manager';
-import { clearLoadedSceneContent, disposeSceneGraphResources } from './scene-disposal';
+} from './scene-manager/scene-manager-utils';
+import { log, Modules, LogEmoji } from '../utils/log';
+import { sceneDimsManager } from './scene-dims-manager';
+import { clearLoadedSceneContent, disposeSceneGraphResources } from './scene-manager/scene-disposal';
 import {
   applyZarrViewerConfig as applyZarrViewerConfigHelper,
   createDefaultPerspectiveCamera,
   resetCameraToInitialPosition,
-} from './camera-setup';
-import { computeSceneBoundingBox, fitCameraToBounds } from './camera-framing';
-import { WebGLContextRecovery } from './webgl-context-recovery';
-import { ResizeOrchestrator } from './resize-orchestrator';
+} from './scene-manager/camera-setup';
+import { computeSceneBoundingBox, fitCameraToBounds } from './scene-manager/camera-framing';
+import { WebGLContextRecovery } from './scene-manager/webgl-context-recovery';
+import { ResizeOrchestrator } from './scene-manager/resize-orchestrator';
 import {
   computePixelRatioOverride,
   getActivePixelRatio as dprGetActive,
   getNormalizedDPRScale as dprGetNormalized,
-} from './dpr-policy';
+} from './scene-manager/dpr-policy';
 import {
   type LuxarCamera,
   isPerspectiveCamera,
   isOrthographicCamera,
   getCameraFovRadians,
   getOrthoFrustumHeight,
-} from '../../utils/camera-utils';
-import type { ControlType } from '../../controls/controls-manager';
+} from '../utils/camera-utils';
+import type { ControlType } from '../controls/controls-manager';
 
 /**
  * SceneManager orchestrates all Three.js components for 3D rendering

@@ -11,8 +11,8 @@ import { showToast } from './helpers';
 // HDR video encoder kept for future use when browser 10-bit support matures
 // import { isHDRVideoSupported, HDRVideoEncoder } from '../utils/hdr-video-encoder';
 import type { SceneManager } from '../scene/scene-manager';
-import type { AnimationController } from '../scene/animation-controller';
-import type { DimensionAnimationManager } from '../scene/dimension-animation-manager';
+import type { AnimationController } from '../scene/animation/animation-controller';
+import type { DimensionAnimationManager } from '../scene/animation/dimension-animation-manager';
 import type { AdaptiveDPRManager } from '../rendering/adaptive-dpr-manager';
 import { LuxarOrbitControls } from '../controls/luxar-orbit-controls';
 import type { OverlayManager } from './helpers/overlay-manager';

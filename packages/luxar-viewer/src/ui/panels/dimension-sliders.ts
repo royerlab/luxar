@@ -1,6 +1,6 @@
 import { SimpleDims } from '../../types/dims';
 import { sceneDimsManager } from '../../scene/scene-dims-manager';
-import type { DimensionAnimationManager } from '../../scene/dimension-animation-manager';
+import type { DimensionAnimationManager } from '../../scene/animation/dimension-animation-manager';
 import { config } from '../../config';
 import { log, Modules } from '../../utils/log';
 import { EventGroup } from '../../utils/event-group';

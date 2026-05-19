@@ -32,7 +32,7 @@ vi.mock('../../../rendering/adaptive-dpr-manager', () => ({
   AdaptiveDPRManager: vi.fn(),
 }));
 
-import { AnimationController } from '../../../scene/animation-controller';
+import { AnimationController } from '../../../scene/animation/animation-controller';
 
 describe('AnimationController', () => {
   let controller: AnimationController;

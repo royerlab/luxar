@@ -11,7 +11,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { RenderingControls } from '../../../ui/rendering-controls';
-import type { AnimationController } from '../../../scene/animation-controller';
+import type { AnimationController } from '../../../scene/animation/animation-controller';
 
 // Note: PostProcessingManager and SceneManager are not imported because we use
 // duck-typed mocks (any type) to avoid loading the actual modules which have

@@ -23,7 +23,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import * as THREE from 'three';
 import type { SceneNode } from '../../../../data/data-loader-types';
-import type { AnimationController } from '../../../../scene/animation-controller';
+import type { AnimationController } from '../../../../scene/animation/animation-controller';
 
 // `showToast` lives in src/ui/helpers; mock so the empty-scene branch
 // is observable.

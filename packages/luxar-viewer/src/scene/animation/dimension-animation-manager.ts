@@ -30,16 +30,16 @@
 
 import * as THREE from 'three';
 import type { AnimationController } from './animation-controller';
-import type { SceneDimsManager } from './scene-dims-manager';
-import { config } from '../config';
-import { log, Modules } from '../utils/log';
-import { clamp } from '../utils/clamp';
+import type { SceneDimsManager } from '../scene-dims-manager';
+import { config } from '../../config';
+import { log, Modules } from '../../utils/log';
+import { clamp } from '../../utils/clamp';
 import type {
   DimensionAnimationState,
   DimensionAnimationEvents,
   LoopMode,
   AnimationDirection,
-} from '../types/animation';
+} from '../../types/animation';
 
 /**
  * Options for starting dimension animation
