@@ -10,6 +10,7 @@ import { log, Modules } from '../utils/log';
 import { validateCamera } from './sections/camera/validate';
 import { validateScene } from './sections/scene/validate';
 import { validateWebGL } from './sections/webgl/validate';
+import { validateInput } from './sections/input/validate';
 
 /**
  * Validation result interface
@@ -308,28 +309,6 @@ function validateDataLoading(config: AppConfig, errors: string[], warnings: stri
   if (!Number.isFinite(initTimeout) || initTimeout < 0) {
     errors.push(
       `Invalid workerInitTimeoutMs: ${initTimeout} (must be ≥ 0; 0 disables, but the guard is recommended)`
-    );
-  }
-}
-
-/**
- * Validate input configuration
- */
-function validateInput(config: AppConfig, errors: string[], warnings: string[]): void {
-  const { input } = config;
-
-  // NaN/Infinity hardening.
-  if (!Number.isFinite(input.defaultSensitivity)) {
-    errors.push(
-      `Invalid input.defaultSensitivity: ${input.defaultSensitivity} (must be a finite number)`
-    );
-    return;
-  }
-
-  // Sensitivity validation
-  if (input.defaultSensitivity <= 0 || input.defaultSensitivity > 1) {
-    warnings.push(
-      `Unusual input sensitivity: ${input.defaultSensitivity} (typical range 0.01-0.5)`
     );
   }
 }

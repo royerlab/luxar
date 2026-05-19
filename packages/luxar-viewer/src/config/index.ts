@@ -11,6 +11,7 @@ import { adaptiveDPRConfig } from './sections/adaptive-dpr/data';
 import { cacheConfig } from './sections/cache/data';
 import { dimensionAnimationConfig } from './sections/dimension-animation/data';
 import { webglConfig } from './sections/webgl/data';
+import { inputConfig } from './sections/input/data';
 
 /**
  * Main configuration object containing all application settings
@@ -237,52 +238,7 @@ export const config: AppConfig = {
     },
   },
 
-  // Input handling configuration (migrated from control-config.ts)
-  input: {
-    defaultSensitivity: 0.1, // Default input sensitivity for adjustments
-    keyboard: {
-      shortcuts: {
-        toggleFullscreen: ' ',
-        toggleHelp: 'h',
-        toggleDimensions: 'n',
-        toggleDatasetBrowser: 'o',
-        togglePerformance: 'p',
-        toggleRendering: 'r',
-        toggleScaleBar: 'b',
-        toggleColormapLegend: 'j',
-        toggleDebugConsole: 'ctrl+l',
-        toggleLayers: 'l',
-        recenterCamera: 'f',
-        toggleControlMode: 'v',
-        toggleInertialMode: 'i',
-        toggleCinematicMode: 'c',
-        toggleOverlays: 'u',
-      },
-      flyModeKeys: [
-        'w',
-        'a',
-        's',
-        'd',
-        'q',
-        'e',
-        'W',
-        'A',
-        'S',
-        'D',
-        'Q',
-        'E',
-        'Shift',
-        'ArrowUp',
-        'ArrowDown',
-        'ArrowLeft',
-        'ArrowRight',
-      ],
-      dimensionKeys: ['[', ']', '1', '2', '3', '4', '5', '6', '7', '8', '9'],
-    },
-    mouse: {
-      doubleClickDelay: 300,
-    },
-  },
+  input: inputConfig,
 
   // Data loading configuration
   dataLoading: {
