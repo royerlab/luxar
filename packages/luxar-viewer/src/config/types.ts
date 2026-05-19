@@ -19,6 +19,14 @@ export type { CacheConfig };
 import type { DimensionAnimationConfig } from './sections/dimension-animation/types';
 export type { DimensionAnimationConfig };
 
+import type {
+  WebGLConfig,
+  WebGLContextAttributes,
+  WebGLRendererConfig,
+  WebGLRenderTargetConfig,
+} from './sections/webgl/types';
+export type { WebGLConfig, WebGLContextAttributes, WebGLRendererConfig, WebGLRenderTargetConfig };
+
 /**
  * Configuration range with min/max/default/step
  */
@@ -502,55 +510,6 @@ export interface RenderingControlsConfig {
 }
 
 // Rendering settings are centralized in RenderingSettings.
-
-/**
- * WebGL context attributes
- */
-export interface WebGLContextAttributes {
-  alpha: boolean;
-  antialias: boolean;
-  depth: boolean;
-  stencil: boolean;
-  powerPreference: 'high-performance' | 'low-power' | 'default';
-  colorSpace: string;
-  preserveDrawingBuffer: boolean;
-  desynchronized: boolean;
-  premultipliedAlpha: boolean;
-  failIfMajorPerformanceCaveat: boolean;
-}
-
-/**
- * THREE.WebGLRenderer configuration (renderer-specific settings only).
- * Shared attributes (antialias, powerPreference, preserveDrawingBuffer,
- * premultipliedAlpha) live in WebGLContextAttributes and are spread
- * alongside these at renderer creation time.
- */
-export interface WebGLRendererConfig {
-  logarithmicDepthBuffer: boolean;
-  precision: 'highp' | 'mediump' | 'lowp';
-  shadowMap: {
-    enabled: boolean;
-    type: number;
-  };
-}
-
-/**
- * WebGL render target configuration
- */
-export interface WebGLRenderTargetConfig {
-  depthBuffer: boolean;
-  stencilBuffer: boolean;
-  samples: number;
-}
-
-/**
- * WebGL configuration
- */
-export interface WebGLConfig {
-  context: WebGLContextAttributes;
-  renderer: WebGLRendererConfig;
-  renderTarget: WebGLRenderTargetConfig;
-}
 
 /**
  * Complete application configuration structure
