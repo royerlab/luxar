@@ -21,9 +21,9 @@ import {
   computeSceneBoundingBox,
   fitCameraToBounds,
   ZOOM_RANGE_FACTOR,
-} from '../../../../scene/scene-manager/camera-framing';
-import type { ControlsManager } from '../../../../controls/controls-manager';
-import type { BoundingBox } from '../../../../scene/scene-manager/scene-manager-utils';
+} from '../../../../../scene/scene-manager/camera/camera-framing';
+import type { ControlsManager } from '../../../../../controls/controls-manager';
+import type { BoundingBox } from '../../../../../scene/scene-manager/scene-manager-utils';
 
 function makeControls(focusTarget = new THREE.Vector3(0, 0, 0)): {
   controls: ControlsManager;

@@ -19,15 +19,15 @@
  */
 
 import * as THREE from 'three';
-import { config } from '../../config';
-import { log, Modules } from '../../utils/log';
-import { calculateCameraDistance, type BoundingBox } from './scene-manager-utils';
+import { config } from '../../../config';
+import { log, Modules } from '../../../utils/log';
+import { calculateCameraDistance, type BoundingBox } from '../scene-manager-utils';
 import {
   isPerspectiveCamera,
   isOrthographicCamera,
   type LuxarCamera,
-} from '../../utils/camera-utils';
-import type { ControlsManager } from '../../controls/controls-manager';
+} from '../../../utils/camera-utils';
+import type { ControlsManager } from '../../../controls/controls-manager';
 
 /**
  * How far the user can zoom in or out relative to the "scene fits in
