@@ -1,30 +1,9 @@
-import type { OPFSMetadata, CacheValidationMode } from '../types';
-import { OPFS_ENCODING_VERSION } from '../types';
+import type { CacheValidationMode } from '../types';
 import { log, Modules } from '../../utils/log';
 import { config } from '../../config';
 import { OPFSBucketCache, getBucket, keyToFileName } from './opfs-store/buckets';
-
-/**
- * Race a promise against a timeout. Throws Error('OPFS timeout') if
- * the timeout fires first. Used to bound individual OPFS I/O calls so
- * a hung browser handle cannot stall the cache indefinitely.
- */
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<T>((_resolve, reject) => {
-        timer = setTimeout(
-          () => reject(new Error(`OPFS timeout: ${label} exceeded ${timeoutMs}ms`)),
-          timeoutMs
-        );
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
+import { OPFSMetadataManager, type MetadataSnapshot } from './opfs-store/metadata';
+import { withTimeout } from './opfs-store/opfs-timeout';
 
 type IterableFileSystemDirectoryHandle = FileSystemDirectoryHandle & {
   keys(): AsyncIterableIterator<string>;
@@ -90,23 +69,20 @@ export class OPFSStore {
   //   retries.
   // `corruptedEntries`: get() detected a size mismatch between index
   //   and on-disk data and removed the bad file.
-  // `metadataParseFailures`: loadMetadata() could not JSON-parse
-  //   `_cache_meta.json` — recovery starts the cache fresh.
-  // `orphanedFilesRemoved`: cleanupOrphans() reclaimed files that
-  //   existed on disk but had no matching index entry.
+  // Counters: `parseFailures` (loadMetadata could not JSON-parse) and
+  // `orphansRemoved` (cleanupOrphans reclaim count) live on the
+  // metadata manager and are read by getStats().
   private oversizedWriteSkipped = 0;
   private quotaWriteSkipped = 0;
   private evictions = 0;
   private writeFailures = 0;
   private corruptedEntries = 0;
-  private metadataParseFailures = 0;
-  private orphanedFilesRemoved = 0;
 
   // Bucket handle cache (256 possible buckets: 00-ff)
   private buckets = new OPFSBucketCache();
 
-  // Debounced metadata save
-  private metadataSaveTimeout: ReturnType<typeof setTimeout> | null = null;
+  // Owns _cache_meta.json: load/save + debounced-save timer + orphan reclaim.
+  private metadata = new OPFSMetadataManager();
   private static readonly METADATA_SAVE_DELAY = 1000; // 1 second debounce
 
   // Serialize concurrent writes to the same key to prevent race conditions
@@ -126,11 +102,6 @@ export class OPFSStore {
   // browser never gave us a directory.
   private disposed = false;
 
-  // Tracks the in-flight metadata save fired by scheduleMetadataSave's
-  // setTimeout. dispose() awaits this so a save that started just
-  // before dispose() finishes before the final flush.
-  private metadataSaveInFlight: Promise<void> | null = null;
-
   constructor(datasetId: string, baseUrl: string, maxSize: number) {
     this.datasetId = datasetId;
     this.baseUrl = baseUrl;
@@ -144,11 +115,47 @@ export class OPFSStore {
     try {
       const root = await navigator.storage.getDirectory();
       this.opfsRoot = await root.getDirectoryHandle(this.datasetId, { create: true });
-      await this.loadMetadata();
+      await this.applyMetadataOnLoad();
     } catch (error) {
       log.warning(Modules.CACHE, 'OPFSStore failed to initialize', error);
       this.opfsRoot = null;
     }
+  }
+
+  private async applyMetadataOnLoad(): Promise<void> {
+    if (!this.opfsRoot) return;
+    const outcome = await this.metadata.load(this.opfsRoot);
+    if (!outcome) {
+      // Cold start (file missing). Defaults already match the constructor.
+      return;
+    }
+    this.index = outcome.index;
+    this.totalSize = outcome.totalSize;
+    this.orderCounter = outcome.orderCounter;
+    this.contentHash = outcome.contentHash;
+    this.validationMode = outcome.validationMode;
+    this.lastValidatedAt = outcome.lastValidatedAt;
+    if (outcome.needsOrphanCleanup) {
+      const expected = new Set<string>();
+      for (const key of this.index.keys()) {
+        expected.add(keyToFileName(key));
+      }
+      await this.metadata.cleanupOrphans(this.opfsRoot, expected).catch(() => {
+        // Best-effort; ignore reclaim failures.
+      });
+    }
+  }
+
+  private metadataSnapshot(): MetadataSnapshot {
+    return {
+      baseUrl: this.baseUrl,
+      entries: Array.from(this.index.entries()),
+      totalSize: this.totalSize,
+      orderCounter: this.orderCounter,
+      contentHash: this.contentHash,
+      validationMode: this.validationMode,
+      lastValidatedAt: this.lastValidatedAt ?? undefined,
+    };
   }
 
   /**
@@ -406,8 +413,8 @@ export class OPFSStore {
     this.evictions = 0;
     this.writeFailures = 0;
     this.corruptedEntries = 0;
-    this.metadataParseFailures = 0;
-    this.orphanedFilesRemoved = 0;
+    this.metadata.parseFailures = 0;
+    this.metadata.orphansRemoved = 0;
 
     if (this.opfsRoot) {
       try {
@@ -498,8 +505,8 @@ export class OPFSStore {
       evictions: this.evictions,
       writeFailures: this.writeFailures,
       corruptedEntries: this.corruptedEntries,
-      metadataParseFailures: this.metadataParseFailures,
-      orphanedFilesRemoved: this.orphanedFilesRemoved,
+      metadataParseFailures: this.metadata.parseFailures,
+      orphanedFilesRemoved: this.metadata.orphansRemoved,
       available: this.opfsRoot !== null && !this.disposed,
     };
   }
@@ -591,18 +598,13 @@ export class OPFSStore {
     if (this.disposed) return;
     this.generation++;
 
-    if (this.metadataSaveTimeout) {
-      clearTimeout(this.metadataSaveTimeout);
-      this.metadataSaveTimeout = null;
-      await this.saveMetadata();
-    }
-    if (this.metadataSaveInFlight) {
-      try {
-        await this.metadataSaveInFlight;
-      } catch {
-        // Already-logged inside scheduleMetadataSave's catch.
+    if (this.metadata.hasPendingSave()) {
+      this.metadata.cancelPendingSave();
+      if (this.opfsRoot) {
+        await this.metadata.save(this.opfsRoot, this.metadataSnapshot());
       }
     }
+    await this.metadata.awaitInFlight();
 
     if (this.pendingWrites.size > 0) {
       await Promise.allSettled([...this.pendingWrites.values()]);
@@ -614,158 +616,15 @@ export class OPFSStore {
   // ========== Private Methods ==========
 
   private scheduleMetadataSave(): void {
-    if (this.metadataSaveTimeout) {
-      clearTimeout(this.metadataSaveTimeout);
-    }
-    this.metadataSaveTimeout = setTimeout(() => {
-      // Track the in-flight save so dispose() can await it before the
-      // final flush. Without this, dispose racing the timer-fired save
-      // produces interleaved writes to _cache_meta.json.
-      this.metadataSaveInFlight = this.saveMetadata()
-        .catch((error) => {
-          this.writeFailures++;
-          log.warning(Modules.CACHE, 'OPFSStore metadata save failed', error);
-        })
-        .finally(() => {
-          this.metadataSaveTimeout = null;
-          this.metadataSaveInFlight = null;
-        });
-    }, OPFSStore.METADATA_SAVE_DELAY);
-  }
-
-  private async loadMetadata(): Promise<void> {
     if (!this.opfsRoot) return;
-
-    try {
-      const metaHandle = await this.opfsRoot.getFileHandle('_cache_meta.json');
-      const file = await metaHandle.getFile();
-      const meta: OPFSMetadata = JSON.parse(await file.text());
-
-      // Encoding-version mismatch ⇒ stale directory: previous cache
-      // entries used a different keyToFileName encoding and won't be
-      // findable. Treat as cold cache (no migration today; the cache
-      // is best-effort and rebuilds itself in seconds).
-      const persistedVersion = meta.encodingVersion ?? 1;
-      if (persistedVersion !== OPFS_ENCODING_VERSION) {
-        log.info(
-          Modules.CACHE,
-          `OPFSStore encoding version ${persistedVersion} != ${OPFS_ENCODING_VERSION}, starting fresh`
-        );
-        this.index = new Map();
-        this.totalSize = 0;
-        this.orderCounter = 0;
-        this.contentHash = null;
-        return;
-      }
-
-      // Reconstruct Map sorted by ascending order so Map insertion order = LRU order
-      const entries = (meta.entries || []).slice();
-      entries.sort((a, b) => a[1].order - b[1].order);
-      this.index = new Map(entries);
-      // R6e: defensive hardening against partial metadata corruption.
-      // `meta.totalSize` is whatever value the JSON contains; values
-      // like NaN, Infinity, or negatives are accepted by `|| 0` but
-      // surface as nonsensical stats downstream. Clamp to non-negative
-      // and recompute from the live entries when the persisted value
-      // disagrees by more than a trivial amount — entries[] is the
-      // source of truth for what's actually stored.
-      const persistedTotal =
-        Number.isFinite(meta.totalSize) && meta.totalSize >= 0 ? meta.totalSize : 0;
-      const computedTotal = entries.reduce(
-        (sum, [, e]) => sum + (Number.isFinite(e.size) && e.size > 0 ? e.size : 0),
-        0
-      );
-      this.totalSize =
-        Math.abs(persistedTotal - computedTotal) > 1 ? computedTotal : persistedTotal;
-      this.orderCounter =
-        Number.isFinite(meta.orderCounter) && meta.orderCounter >= 0 ? meta.orderCounter : 0;
-      this.contentHash = meta.contentHash || null;
-      this.validationMode = meta.validationMode ?? 'none';
-      this.lastValidatedAt = meta.lastValidatedAt ?? null;
-    } catch (error) {
-      // Two cases reach here:
-      //  - getFileHandle threw "not found" → no metadata yet, cold start
-      //  - JSON.parse threw → metadata file is corrupt; treat as cold
-      //    start, count the failure, and run a best-effort orphan
-      //    cleanup so files left over from the corrupt run don't take
-      //    up quota indefinitely.
-      const wasParseFailure =
-        error instanceof SyntaxError ||
-        (error instanceof Error && /JSON|parse|Unexpected/i.test(error.message));
-      this.index = new Map();
-      this.totalSize = 0;
-      this.orderCounter = 0;
-      this.contentHash = null;
-      if (wasParseFailure) {
-        this.metadataParseFailures++;
-        log.warning(
-          Modules.CACHE,
-          'OPFSStore metadata corrupt, starting fresh and reclaiming orphans'
-        );
-        await this.cleanupOrphans().catch(() => {
-          // Best-effort; ignore reclaim failures.
-        });
-      }
-    }
-  }
-
-  /**
-   * Reclaim OPFS files that exist on disk but have no entry in
-   * `this.index`. Called from loadMetadata() when metadata parse
-   * failed; safe to skip otherwise (the cache rebuilds itself in
-   * seconds and orphans are bounded by quota anyway).
-   */
-  private async cleanupOrphans(): Promise<void> {
-    if (!this.opfsRoot) return;
-    const expected = new Set<string>();
-    for (const key of this.index.keys()) {
-      expected.add(keyToFileName(key));
-    }
-    const root = this.opfsRoot as IterableFileSystemDirectoryHandle;
-    for await (const bucketName of root.keys()) {
-      // Only iterate hex-buckets (00-ff); skip _cache_meta.json itself.
-      if (!/^[0-9a-f]{2}$/.test(bucketName)) continue;
-      try {
-        const bucketHandle = await this.opfsRoot.getDirectoryHandle(bucketName);
-        const iterableBucket = bucketHandle as IterableFileSystemDirectoryHandle;
-        for await (const fileName of iterableBucket.keys()) {
-          if (expected.has(fileName)) continue;
-          try {
-            await bucketHandle.removeEntry(fileName);
-            this.orphanedFilesRemoved++;
-          } catch {
-            // Skip file we can't remove; surface in stats but don't bail.
-          }
-        }
-      } catch {
-        // Bucket may have disappeared mid-scan; ignore.
-      }
-    }
-  }
-
-  private async saveMetadata(): Promise<void> {
-    if (!this.opfsRoot) return;
-
-    try {
-      const metaHandle = await this.opfsRoot.getFileHandle('_cache_meta.json', {
-        create: true,
-      });
-      const writable = await metaHandle.createWritable();
-      const metadata: OPFSMetadata = {
-        baseUrl: this.baseUrl,
-        entries: Array.from(this.index.entries()),
-        totalSize: this.totalSize,
-        orderCounter: this.orderCounter,
-        contentHash: this.contentHash,
-        encodingVersion: OPFS_ENCODING_VERSION,
-        validationMode: this.validationMode,
-        lastValidatedAt: this.lastValidatedAt ?? undefined,
-      };
-      await writable.write(JSON.stringify(metadata));
-      await writable.close();
-    } catch (error) {
-      // Ignore metadata save failures
-      log.warning(Modules.CACHE, 'OPFSStore failed to save metadata', error);
-    }
+    this.metadata.scheduleSave({
+      root: this.opfsRoot,
+      getSnapshot: () => this.metadataSnapshot(),
+      delayMs: OPFSStore.METADATA_SAVE_DELAY,
+      onError: (error) => {
+        this.writeFailures++;
+        log.warning(Modules.CACHE, 'OPFSStore metadata save failed', error);
+      },
+    });
   }
 }
