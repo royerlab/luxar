@@ -214,6 +214,32 @@ ceiling. Used by the ``luxar gsplat cal`` CLI command.
    :members:
    :undoc-members:
 
+Level of Detail (LOD)
+---------------------
+
+Post-fit LOD construction for streaming and view-dependent rendering. Used by
+the ``luxar gsplat lod additive`` and ``luxar gsplat lod substitutive`` CLI
+commands.
+
+* **Additive** — same N splats, reordered into a prefix-monotone ladder
+  (``make_additive_lod``). Loading the first k splats is the best L²
+  approximation at that budget.
+* **Substitutive** — synthesise M < N representative splats per coarser
+  level via Gaussian mixture reduction (``make_substitutive_lod``).
+
+.. automodule:: luxar.gsplats.lod
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: luxar.gsplats.lod.additive
+   :members:
+   :undoc-members:
+
+.. automodule:: luxar.gsplats.lod.substitutive
+   :members:
+   :undoc-members:
+
 GPU Profiling
 -------------
 
