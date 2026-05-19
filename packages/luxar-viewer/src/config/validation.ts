@@ -17,6 +17,7 @@ import {
   validateBloomConsistency,
 } from './sections/rendering-controls/validate';
 import { validateDataLoading } from './sections/data-loading/validate';
+import { validateCache } from './sections/cache/validate';
 
 /**
  * Validation result interface
@@ -48,6 +49,9 @@ export function validateConfig(config: AppConfig): ValidationResult {
 
   // Validate data loading configuration
   validateDataLoading(config, errors, warnings);
+
+  // Validate cache configuration
+  validateCache(config, errors, warnings);
 
   // Validate scene configuration
   validateScene(config, errors, warnings);
