@@ -7,6 +7,9 @@ export type { CameraConfig };
 import type { AnimationConfig } from './sections/animation/types';
 export type { AnimationConfig };
 
+import type { SceneConfig, ShaderConfig } from './sections/scene/types';
+export type { SceneConfig, ShaderConfig };
+
 /**
  * Adaptive pixel ratio configuration for dynamic performance optimization
  *
@@ -32,21 +35,6 @@ export interface AdaptiveDPRConfig {
   hysteresisSeconds: number;
   /** How often to evaluate FPS and adjust DPR in milliseconds (default: 500) */
   evaluationIntervalMs: number;
-}
-
-/**
- * 3D scene visual configuration
- */
-export interface SceneConfig {
-  backgroundColor: number;
-  defaultFitRatio: number;
-}
-
-/**
- * Shader configuration for point rendering
- */
-export interface ShaderConfig {
-  points: Record<string, never>;
 }
 
 /**

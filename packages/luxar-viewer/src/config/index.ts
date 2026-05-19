@@ -7,6 +7,7 @@ import type { AppConfig } from './types';
 import { isMacPlatform } from '../utils/platform';
 import { cameraConfig } from './sections/camera/data';
 import { animationConfig } from './sections/animation/data';
+import { sceneConfig, shaderConfig } from './sections/scene/data';
 
 /**
  * Main configuration object containing all application settings
@@ -32,17 +33,9 @@ export const config: AppConfig = {
     evaluationIntervalMs: 500, // Evaluate FPS every 500ms
   },
 
-  // 3D scene visual configuration
-  scene: {
-    backgroundColor: 0x111111, // Background color in hexadecimal - dark gray for good contrast with points
-    defaultFitRatio: 0.75, // How much of view to fill when fitting to bounds (0-1)
-  },
+  scene: sceneConfig,
 
-  // Shader configuration for point rendering
-  // Note: global exposure/offset/gamma live in renderingControls.defaults (applied in post-processing)
-  shader: {
-    points: {},
-  },
+  shader: shaderConfig,
 
   // UI configuration for overlays and visual elements
   ui: {
