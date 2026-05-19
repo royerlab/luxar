@@ -31,9 +31,9 @@
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import * as THREE from 'three';
-import { PostProcessingManager } from '../../../../rendering/post-processing-manager';
-import { materialManager } from '../../../../rendering/material-manager';
-import type { Renderer, RendererCapabilities } from '../../../../rendering/renderer-capabilities';
+import { PostProcessingManager } from '../../../rendering/post-processing-manager';
+import { materialManager } from '../../../rendering/material-manager';
+import type { Renderer, RendererCapabilities } from '../../../rendering/renderer-capabilities';
 
 function mockCaps(apiSurface: 'webgl2' | 'webgpu' = 'webgl2'): RendererCapabilities {
   return {
