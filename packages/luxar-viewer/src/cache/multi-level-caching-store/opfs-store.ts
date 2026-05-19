@@ -2,6 +2,7 @@ import type { OPFSMetadata, CacheValidationMode } from '../types';
 import { OPFS_ENCODING_VERSION } from '../types';
 import { log, Modules } from '../../utils/log';
 import { config } from '../../config';
+import { OPFSBucketCache, getBucket, keyToFileName } from './opfs-store/buckets';
 
 /**
  * Race a promise against a timeout. Throws Error('OPFS timeout') if
@@ -102,7 +103,7 @@ export class OPFSStore {
   private orphanedFilesRemoved = 0;
 
   // Bucket handle cache (256 possible buckets: 00-ff)
-  private bucketHandles = new Map<string, FileSystemDirectoryHandle>();
+  private buckets = new OPFSBucketCache();
 
   // Debounced metadata save
   private metadataSaveTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -163,7 +164,7 @@ export class OPFSStore {
     try {
       const data = await withTimeout(
         (async () => {
-          const fileHandle = await this.navigateToFile(key, false);
+          const fileHandle = await this.buckets.navigateToFile(this.opfsRoot!, key, false);
           const file = await fileHandle.getFile();
           return new Uint8Array(await file.arrayBuffer());
         })(),
@@ -273,7 +274,7 @@ export class OPFSStore {
       try {
         await withTimeout(
           (async () => {
-            const fileHandle = await this.navigateToFile(key, true);
+            const fileHandle = await this.buckets.navigateToFile(this.opfsRoot!, key, true);
             const writable = await fileHandle.createWritable();
             // Slice the view's portion, NOT data.buffer directly. If the Uint8Array is
             // a view on a larger ArrayBuffer (e.g., from a sub-slice), data.buffer would
@@ -296,10 +297,10 @@ export class OPFSStore {
         // the (now-empty) index.
         if (this.generation !== startGeneration) {
           try {
-            const bucket = this.getBucket(key);
-            const bucketHandle = await this.getBucketHandle(bucket, false);
+            const bucket = getBucket(key);
+            const bucketHandle = await this.buckets.getHandle(this.opfsRoot!, bucket, false);
             if (bucketHandle) {
-              await bucketHandle.removeEntry(this.keyToFileName(key));
+              await bucketHandle.removeEntry(keyToFileName(key));
             }
           } catch {
             // Best-effort; orphaned file is harmless and will be reclaimed
@@ -331,8 +332,8 @@ export class OPFSStore {
         const errorMsg = error instanceof Error ? error.message : String(error);
         if (attempt === 0 && errorMsg.includes('could not be found')) {
           // Stale bucket handle from a concurrent clear() — invalidate and retry
-          const bucket = this.getBucket(key);
-          this.invalidateBucketHandle(bucket);
+          const bucket = getBucket(key);
+          this.buckets.invalidate(bucket);
           continue;
         }
         this.writeFailures++;
@@ -356,10 +357,10 @@ export class OPFSStore {
       }
 
       // Get bucket and delete file from it
-      const bucket = this.getBucket(key);
-      const bucketHandle = await this.getBucketHandle(bucket, false);
+      const bucket = getBucket(key);
+      const bucketHandle = await this.buckets.getHandle(this.opfsRoot, bucket, false);
       if (bucketHandle) {
-        const fileName = this.keyToFileName(key);
+        const fileName = keyToFileName(key);
         await bucketHandle.removeEntry(fileName);
       }
       this.index.delete(key);
@@ -391,7 +392,7 @@ export class OPFSStore {
     // Clear all in-memory state first — ensures no stale handles are used
     // even if the filesystem operations below fail
     this.index = new Map();
-    this.bucketHandles = new Map();
+    this.buckets.clear();
     this.totalSize = 0;
     this.orderCounter = 0;
     this.contentHash = null;
@@ -612,90 +613,6 @@ export class OPFSStore {
 
   // ========== Private Methods ==========
 
-  /**
-   * Compute bucket index (0-255) from cache key using simple hash.
-   * Distributes ~65,000 files into ~256 buckets = ~250 files each.
-   *
-   * @returns Two-character hex string (00-ff)
-   */
-  private getBucket(key: string): string {
-    let hash = 0;
-    for (let i = 0; i < key.length; i++) {
-      hash = ((hash << 5) - hash + key.charCodeAt(i)) | 0;
-    }
-    return (hash & 0xff).toString(16).padStart(2, '0');
-  }
-
-  /**
-   * Get bucket directory handle, with caching.
-   * Only 256 possible buckets, so caching is memory-efficient.
-   *
-   * If a cached handle turns out to be stale (e.g., directory was deleted during
-   * a clear() operation), callers should use invalidateBucketHandle() and retry.
-   */
-  private async getBucketHandle(
-    bucket: string,
-    create: boolean
-  ): Promise<FileSystemDirectoryHandle | null> {
-    if (!this.opfsRoot) return null;
-
-    // Check cache first
-    const cached = this.bucketHandles.get(bucket);
-    if (cached) return cached;
-
-    try {
-      const handle = await this.opfsRoot.getDirectoryHandle(bucket, { create });
-      this.bucketHandles.set(bucket, handle);
-      return handle;
-    } catch {
-      return null;
-    }
-  }
-
-  /**
-   * Invalidate a cached bucket handle (e.g., after a stale handle error).
-   */
-  private invalidateBucketHandle(bucket: string): void {
-    this.bucketHandles.delete(bucket);
-  }
-
-  /**
-   * Convert cache key to OPFS-safe filename via UTF-8 → base64url.
-   *
-   * zarr keys can include non-ASCII group/array names, so the key is
-   * encoded to UTF-8 bytes before base64url conversion. The resulting
-   * filename is filesystem-safe without manual `+`/`/`/`=` substitution.
-   *
-   * Bumping {@link OPFS_ENCODING_VERSION} invalidates any directory
-   * persisted with a different output (handled in loadMetadata).
-   *
-   * Example: "points/positions/0.0.0" → "cG9pbnRzL3Bvc2l0aW9ucy8wLjAuMA"
-   */
-  private keyToFileName(key: string): string {
-    const bytes = new TextEncoder().encode(key);
-    let binary = '';
-    for (let i = 0; i < bytes.length; i++) {
-      binary += String.fromCharCode(bytes[i]);
-    }
-    const base64 = btoa(binary);
-    // base64url: replace + with -, / with _, drop = padding (filesystem-safe).
-    return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
-  }
-
-  /**
-   * Navigate to file within its bucket directory.
-   * Structure: {root}/{bucket}/{base64-filename}
-   */
-  private async navigateToFile(key: string, create: boolean): Promise<FileSystemFileHandle> {
-    const bucket = this.getBucket(key);
-    const bucketHandle = await this.getBucketHandle(bucket, create);
-    if (!bucketHandle) {
-      throw new Error(`Cannot access bucket ${bucket}`);
-    }
-    const fileName = this.keyToFileName(key);
-    return bucketHandle.getFileHandle(fileName, { create });
-  }
-
   private scheduleMetadataSave(): void {
     if (this.metadataSaveTimeout) {
       clearTimeout(this.metadataSaveTimeout);
@@ -802,7 +719,7 @@ export class OPFSStore {
     if (!this.opfsRoot) return;
     const expected = new Set<string>();
     for (const key of this.index.keys()) {
-      expected.add(this.keyToFileName(key));
+      expected.add(keyToFileName(key));
     }
     const root = this.opfsRoot as IterableFileSystemDirectoryHandle;
     for await (const bucketName of root.keys()) {
