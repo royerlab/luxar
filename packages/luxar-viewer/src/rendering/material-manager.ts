@@ -43,6 +43,7 @@ import {
   type GSplatMaterialProperties,
   type MaterialBackend,
 } from './material-manager/factories';
+import { lruGet, lruSet } from './material-manager/lru-cache';
 
 // Re-export factory types so external callers don't need to know
 // about the helper subfolder — the material-manager module remains
@@ -167,53 +168,23 @@ export class MaterialManager {
   private currentNearCull: number | undefined = undefined;
 
   /**
-   * LRU-aware cache lookup. On hit, promote the entry to
-   * most-recently-used by re-inserting it (Map preserves insertion
-   * order, so the first key is the LRU). Returns the cached value or
-   * undefined.
+   * Callback used by `lruSet` on eviction. Drops the evicted material
+   * from the global camera-update registry, disposes its GPU resources,
+   * and bumps the diagnostic counter. Bound as an arrow field so each
+   * `lruSet` call site can pass it without rebinding `this`.
    */
-  private lruGet<T>(cache: Map<string, T>, key: string): T | undefined {
-    const value = cache.get(key);
-    if (value !== undefined) {
-      // Re-insert to bump to MRU.
-      cache.delete(key);
-      cache.set(key, value);
-    }
-    return value;
-  }
-
-  /**
-   * LRU-aware cache insert. If the cache is at its bound, evict the
-   * LRU entry (first key in insertion order), dispose the material,
-   * and remove it from the registered-materials set so global camera
-   * updates stop targeting it. `materialCacheMaxSize: 0` disables
-   * eviction and allows unbounded cache growth.
-   */
-  private lruSet<T extends THREE.Material & CameraAwareMaterial>(
-    cache: Map<string, T>,
+  private readonly handleEviction = (
     key: string,
-    value: T
-  ): void {
-    const maxSize = config.dataLoading.performance.materialCacheMaxSize;
-    if (maxSize > 0) {
-      while (cache.size >= maxSize) {
-        const lruKey = cache.keys().next().value;
-        if (lruKey === undefined) break;
-        const lruMat = cache.get(lruKey);
-        cache.delete(lruKey);
-        if (lruMat) {
-          this.registeredMaterials.delete(lruMat);
-          try {
-            lruMat.dispose();
-          } catch (err) {
-            log.warning(Modules.RENDERER, `Error disposing evicted material '${lruKey}': ${err}`);
-          }
-          this.evictionCount++;
-        }
-      }
+    material: THREE.Material & CameraAwareMaterial
+  ): void => {
+    this.registeredMaterials.delete(material);
+    try {
+      material.dispose();
+    } catch (err) {
+      log.warning(Modules.RENDERER, `Error disposing evicted material '${key}': ${err}`);
     }
-    cache.set(key, value);
-  }
+    this.evictionCount++;
+  };
 
   /**
    * Subscribe to a material's `dispose` event so the manager can clean
@@ -303,7 +274,7 @@ export class MaterialManager {
     const backend = resolveMaterialBackend(this.caps);
     const key = pointCacheKey(props, backend);
 
-    let material = this.lruGet(this.pointMaterialCache, key);
+    let material = lruGet(this.pointMaterialCache, key);
     if (material) return material;
 
     const createStart = performance.now();
@@ -322,7 +293,13 @@ export class MaterialManager {
     this.registeredMaterials.add(material);
     this.subscribeToDispose(material);
     material.updateCameraParams(this.currentFov, this.currentResolution, this.currentIsOrtho);
-    this.lruSet(this.pointMaterialCache, key, material);
+    lruSet(
+      this.pointMaterialCache,
+      key,
+      material,
+      config.dataLoading.performance.materialCacheMaxSize,
+      this.handleEviction
+    );
 
     log.info(Modules.RENDERER, `Created point material: ${key}`);
     return material;
@@ -340,7 +317,7 @@ export class MaterialManager {
     const backend = resolveMaterialBackend(this.caps);
     const key = lineCacheKey(props, backend);
 
-    let material = this.lruGet(this.lineMaterialCache, key);
+    let material = lruGet(this.lineMaterialCache, key);
     if (material) return material;
 
     const createStart = performance.now();
@@ -357,7 +334,13 @@ export class MaterialManager {
     this.registeredMaterials.add(material);
     this.subscribeToDispose(material);
     material.updateCameraParams(this.currentFov, this.currentResolution, this.currentIsOrtho);
-    this.lruSet(this.lineMaterialCache, key, material);
+    lruSet(
+      this.lineMaterialCache,
+      key,
+      material,
+      config.dataLoading.performance.materialCacheMaxSize,
+      this.handleEviction
+    );
 
     log.info(Modules.RENDERER, `Created line material: ${key}`);
     return material;
@@ -375,7 +358,7 @@ export class MaterialManager {
     const backend = resolveMaterialBackend(this.caps);
     const key = gsplatCacheKey(props, backend);
 
-    let material = this.lruGet(this.gsplatMaterialCache, key);
+    let material = lruGet(this.gsplatMaterialCache, key);
     if (material) return material;
 
     const createStart = performance.now();
@@ -393,7 +376,13 @@ export class MaterialManager {
     this.registeredMaterials.add(material);
     this.subscribeToDispose(material);
     material.updateCameraParams(this.currentFov, this.currentResolution, this.currentIsOrtho);
-    this.lruSet(this.gsplatMaterialCache, key, material);
+    lruSet(
+      this.gsplatMaterialCache,
+      key,
+      material,
+      config.dataLoading.performance.materialCacheMaxSize,
+      this.handleEviction
+    );
 
     log.info(Modules.RENDERER, `Created gsplat material: ${key}`);
     return material;
