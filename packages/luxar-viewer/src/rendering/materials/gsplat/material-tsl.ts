@@ -33,10 +33,10 @@ import { texture, uniform } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
 import { gsplatWebGPUFactory, type GSplatTSLNodes } from './shader-tsl';
 import type { GSplatMaterialConfig } from './material-glsl';
-import type { CameraAwareMaterial } from '../../camera-aware-material';
-import type { ColormapAwareMaterial } from '../../colormap-aware-material';
-import { clampGamma } from '../../material-uniform-helpers';
-import { computeFocalLength } from '../../camera-uniforms';
+import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
+import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
+import { clampGamma } from '../_shared/uniform-helpers';
+import { computeFocalLength } from '../_shared/camera-uniforms';
 import { computeRayIntegralFactor } from './math';
 import {
   applyColormapTextureToMaterial,
@@ -48,7 +48,7 @@ import {
   isMaxMode,
   type CompleteBlendingState,
 } from '../../blending-state';
-import { proxyIUniform, type TSLNode } from '../../tsl-helpers';
+import { proxyIUniform, type TSLNode } from '../_shared/tsl-helpers';
 import type { BlendingMode } from '../../material-manager';
 
 export class GSplatTSLMaterial

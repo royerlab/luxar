@@ -19,8 +19,8 @@ import * as THREE from 'three';
 import { uniform } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
 import { linePickWebGPUFactory, type LinePickTSLNodes } from './line-pick.tsl';
-import type { CameraAwareMaterial } from '../camera-aware-material';
-import { proxyIUniform, type TSLNode } from '../tsl-helpers';
+import type { CameraAwareMaterial } from '../materials/_shared/camera-aware-material';
+import { proxyIUniform, type TSLNode } from '../materials/_shared/tsl-helpers';
 import type { LinePickingMaterialConfig } from './line-picking-material';
 
 export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareMaterial {

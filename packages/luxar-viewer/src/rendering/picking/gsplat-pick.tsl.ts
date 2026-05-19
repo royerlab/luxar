@@ -43,7 +43,7 @@ import {
   screenCoordinate,
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-import { invalidFloatTSL, type TSLNode } from '../tsl-helpers';
+import { invalidFloatTSL, type TSLNode } from '../materials/_shared/tsl-helpers';
 
 const vec2: (a?: TSLNode, b?: TSLNode) => TSLNode = _vec2 as TSLNode;
 const vec3: (a?: TSLNode, b?: TSLNode, c?: TSLNode) => TSLNode = _vec3 as TSLNode;

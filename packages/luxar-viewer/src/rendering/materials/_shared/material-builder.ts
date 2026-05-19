@@ -23,13 +23,13 @@
  *
  * See `MATERIAL_WRAPPER_DESIGN.md` for the design rationale.
  *
- * @module rendering/material-builder
+ * @module rendering/materials/_shared/material-builder
  */
 
 import * as THREE from 'three';
 
-import type { ShaderSource } from './shaders/shader-source';
-import type { RendererCapabilities } from './renderer-capabilities';
+import type { ShaderSource } from './shader-source';
+import type { RendererCapabilities } from '../../renderer-capabilities';
 
 /**
  * Subset of `THREE.ShaderMaterialParameters` the buildMaterial

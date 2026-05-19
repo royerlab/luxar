@@ -25,7 +25,7 @@ import type { PointPickingMaterialConfig } from './picking/point-picking-materia
 import type { LinePickingMaterialConfig } from './picking/line-picking-material';
 import type { GSplatPickingMaterialConfig } from './picking/gsplat-picking-material';
 import type { MegaShaderConfig } from './post-processing/mega-shader-material';
-import type { CameraAwareMaterial } from './camera-aware-material';
+import type { CameraAwareMaterial } from './materials/_shared/camera-aware-material';
 import type { RendererCapabilities } from './renderer-capabilities';
 import { log, Modules } from '../utils/log';
 import { clamp } from '../utils/clamp';

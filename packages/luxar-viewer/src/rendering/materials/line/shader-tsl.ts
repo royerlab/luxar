@@ -53,7 +53,7 @@ import {
   Discard,
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-import { sanitizeNonNegative, sanitizePositive, type TSLNode } from '../../tsl-helpers';
+import { sanitizeNonNegative, sanitizePositive, type TSLNode } from '../_shared/tsl-helpers';
 import { applyBlendingStateToMaterial, getCompleteBlendingState } from '../../blending-state';
 import type { BlendingMode } from '../../material-manager';
 

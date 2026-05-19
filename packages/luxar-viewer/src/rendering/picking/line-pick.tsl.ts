@@ -38,7 +38,7 @@ import {
   Discard,
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-import { sanitizeNonNegative, sanitizePositive, type TSLNode } from '../tsl-helpers';
+import { sanitizeNonNegative, sanitizePositive, type TSLNode } from '../materials/_shared/tsl-helpers';
 
 /**
  * Pre-created TSL leaf nodes supplied by the wrapper class. Same

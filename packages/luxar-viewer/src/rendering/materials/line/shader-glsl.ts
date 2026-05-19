@@ -33,9 +33,9 @@
  *     looks "stranded" — every visible fragment paints at full
  *     intensity regardless of opacity, intensity, or fade.
  */
-import { GLSL_SANITIZE_FUNCTIONS } from '../../shaders/glsl-lib';
+import { GLSL_SANITIZE_FUNCTIONS } from '../_shared/glsl-lib';
 import { lineWebGPUFactory, buildLineTSLNodesFromUniforms } from './shader-tsl';
-import type { ShaderSource } from '../../shaders/shader-source';
+import type { ShaderSource } from '../_shared/shader-source';
 
 export const LINE_VERTEX_SHADER = /* glsl */ `
     precision highp float;

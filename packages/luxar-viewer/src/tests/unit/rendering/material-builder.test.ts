@@ -11,8 +11,8 @@
 
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
-import { buildMaterial } from '../../../rendering/material-builder';
-import type { ShaderSource } from '../../../rendering/shaders/shader-source';
+import { buildMaterial } from '../../../rendering/materials/_shared/material-builder';
+import type { ShaderSource } from '../../../rendering/materials/_shared/shader-source';
 import type { RendererCapabilities } from '../../../rendering/renderer-capabilities';
 
 function makeCaps(apiSurface: 'webgl2' | 'webgpu'): RendererCapabilities {

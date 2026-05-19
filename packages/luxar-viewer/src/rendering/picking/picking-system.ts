@@ -29,7 +29,7 @@
 
 import * as THREE from 'three';
 import type { PostProcessingManager } from '../post-processing-manager';
-import { isCameraAwareMaterial } from '../camera-aware-material';
+import { isCameraAwareMaterial } from '../materials/_shared/camera-aware-material';
 import { materialManager } from '../material-manager';
 import type { Renderer, RendererCapabilities } from '../renderer-capabilities';
 import { readPixelsCompactAsync } from '../post-processing/hdr-pixel-utils';

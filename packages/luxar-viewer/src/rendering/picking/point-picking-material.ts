@@ -8,10 +8,10 @@
  */
 
 import * as THREE from 'three';
-import type { CameraAwareMaterial } from '../camera-aware-material';
-import { computePointSizeFactor, computeMaxPointSize } from '../camera-uniforms';
+import type { CameraAwareMaterial } from '../materials/_shared/camera-aware-material';
+import { computePointSizeFactor, computeMaxPointSize } from '../materials/_shared/camera-uniforms';
 import { POINT_PICK_SOURCE } from './picking-shaders';
-import { requireWebGLSources } from '../shaders/shader-source';
+import { requireWebGLSources } from '../materials/_shared/shader-source';
 
 // Module-load assertion: the GLSL wrapper requires the GLSL source.
 // Captured once so the constructor can splice the strings into super().

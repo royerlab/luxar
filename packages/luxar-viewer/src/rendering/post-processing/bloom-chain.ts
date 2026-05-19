@@ -25,7 +25,7 @@ import {
   BLOOM_DOWNSAMPLE_SOURCE,
   BLOOM_UPSAMPLE_SOURCE,
 } from './bloom-shaders';
-import { buildMaterial } from '../material-builder';
+import { buildMaterial } from '../materials/_shared/material-builder';
 import { FullscreenPass } from './fullscreen-pass';
 import type { Renderer, RendererCapabilities } from '../renderer-capabilities';
 

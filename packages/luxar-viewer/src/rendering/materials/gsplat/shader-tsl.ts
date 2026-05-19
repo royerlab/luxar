@@ -64,7 +64,7 @@ import {
   screenCoordinate,
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-import { invalidFloatTSL, type TSLNode } from '../../tsl-helpers';
+import { invalidFloatTSL, type TSLNode } from '../_shared/tsl-helpers';
 import { applyBlendingStateToMaterial, getCompleteBlendingState } from '../../blending-state';
 import type { BlendingMode } from '../../material-manager';
 import { isMaxMode } from '../../blending-state';
