@@ -61,7 +61,7 @@ vi.spyOn(document, 'createElement').mockImplementation((tag: string, options?: a
 });
 
 // Mock the GUI module before importing RecordingPanel
-vi.mock('../../../ui/gui/index', () => {
+vi.mock('../../../ui/gui', () => {
   function createMockElement(): any {
     return {
       style: {},
