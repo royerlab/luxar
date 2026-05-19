@@ -8,6 +8,10 @@ import {
   hashUrl,
   mergeAbortSignals,
 } from './multi-level-caching-store/fetch-retry';
+import {
+  ValidationQueue,
+  getRemoteContentHash,
+} from './multi-level-caching-store/validation-queue';
 import type { ChunkPrefetcher } from './chunk-prefetcher';
 import { log, Modules } from '../utils/log';
 import { config } from '../config';
@@ -71,19 +75,6 @@ export class MultiLevelCachingStore implements AsyncReadable {
 
   private static readonly DEFAULT_L1_SIZE = config.cache.l1MaxSizeMB * 1024 * 1024;
   private static readonly DEFAULT_L2_SIZE = config.cache.l2MaxSizeMB * 1024 * 1024;
-  /**
-   * Per-dataset validation queue keyed by `datasetId` (URL hash). Two stores
-   * pointing at the same URL serialize their validations across instances so
-   * a slower-finishing older validation cannot overwrite a newer
-   * content-hash. Each entry carries an `AbortController` so `dispose()`
-   * can both cancel the in-flight fetch AND remove the queue entry,
-   * preventing a closure that captured `this` from running
-   * `setContentHash()` against a disposed L2 store.
-   */
-  private static readonly validationQueues = new Map<
-    string,
-    { promise: Promise<void>; abort: AbortController }
-  >();
   // Captured during init() so dispose() can find this instance's queue entry.
   private datasetId?: string;
 
@@ -544,35 +535,15 @@ export class MultiLevelCachingStore implements AsyncReadable {
    * captured `this`.
    */
   private async validateCache(datasetId: string): Promise<void> {
-    const abort = new AbortController();
-    const previous = MultiLevelCachingStore.validationQueues.get(datasetId);
-    const validation = (previous?.promise ?? Promise.resolve())
-      .catch(() => undefined)
-      .then(() => {
-        // Skip the validation entirely if dispose() aborted while we were
-        // waiting in line. The closure captured `this`, so running
-        // doValidateCache() now would write into a disposed l2Store.
-        if (abort.signal.aborted) return;
-        return this.doValidateCache(abort.signal);
-      });
-
-    const entry = { promise: validation, abort };
-    MultiLevelCachingStore.validationQueues.set(datasetId, entry);
-    try {
-      await validation;
-    } finally {
-      // Only delete the entry if it's still ours — a newer validation may
-      // have replaced it after we started.
-      if (MultiLevelCachingStore.validationQueues.get(datasetId) === entry) {
-        MultiLevelCachingStore.validationQueues.delete(datasetId);
-      }
-    }
+    await ValidationQueue.serialize(datasetId, (signal) => this.doValidateCache(signal));
   }
 
   private async doValidateCache(signal: AbortSignal): Promise<void> {
     try {
-      // Fetch current content_hash directly from server (bypass cache)
-      const remoteHash = await this.getRemoteContentHash(signal);
+      const remoteHash = await getRemoteContentHash(this.baseUrl, {
+        signal,
+        timeoutMsOverride: config.dataLoading.network.validationTimeoutMs,
+      });
 
       if (signal.aborted) {
         this.log('Validation aborted (caller disposed)');
@@ -622,34 +593,6 @@ export class MultiLevelCachingStore implements AsyncReadable {
     } catch {
       // Offline or error - use cached data
       this.log('Cannot validate (offline?), using cached data');
-    }
-  }
-
-  /**
-   * Get content_hash directly from remote server, bypassing cache.
-   * Used for cache validation to detect dataset changes.
-   * This ensures we always check the TRUE current hash, not a cached one.
-   *
-   * Uses the dedicated `validationTimeoutMs` budget (default 5 s) so a flaky
-   * network never blocks scene loading for the full data-fetch timeout.
-   */
-  private async getRemoteContentHash(signal?: AbortSignal): Promise<string | null> {
-    try {
-      // Direct HTTP fetch, no cache lookup
-      const response = await fetchWithRetry(buildUrl(this.baseUrl, '.zattrs'), {
-        timeoutMsOverride: config.dataLoading.network.validationTimeoutMs,
-        signal,
-      });
-      if (!response?.ok) return null;
-
-      const data = await response.arrayBuffer();
-      const attrs = JSON.parse(new TextDecoder().decode(data));
-      return attrs?.content_hash ?? null;
-    } catch (error) {
-      // Network error or parse error
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      this.log(`Failed to fetch remote content_hash: ${errorMsg}`, 'warn');
-      return null;
     }
   }
 
@@ -861,11 +804,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
 
     // Cancel any in-flight or queued validation belonging to this instance.
     if (this.datasetId !== undefined) {
-      const queued = MultiLevelCachingStore.validationQueues.get(this.datasetId);
-      if (queued) {
-        queued.abort.abort();
-        MultiLevelCachingStore.validationQueues.delete(this.datasetId);
-      }
+      ValidationQueue.cancel(this.datasetId);
     }
 
     if (this.l2Store) {
