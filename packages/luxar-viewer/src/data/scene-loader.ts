@@ -111,6 +111,7 @@ import { runLoaderUpdates as runLoaderUpdatesHelper } from './scene-loader/run-l
 import { updateVisibleCountsInMonitor as updateVisibleCountsInMonitorHelper } from './scene-loader/visible-counts';
 import { disposeSceneLoader } from './scene-loader/dispose';
 import { loadScene as loadSceneHelper, type LoadSceneCtx } from './scene-loader/load-scene';
+import { runAtomicCommit } from './scene-loader/update-view/atomic-commit';
 import { connectLoaderToMonitor as connectLoaderToMonitorHelper } from './scene-loader/nodes/connect-loader-to-monitor';
 import type { NodeBuildCtx } from './scene-loader/nodes/build-ctx';
 
@@ -636,61 +637,16 @@ export class SceneLoader {
 
       // ================================================================
       // Stage 2: Atomic commit — ALL geometry mutations in one sync block.
-      // Since JS is single-threaded, no requestAnimationFrame can fire
-      // during this block, so all meshes update in the same rendered frame.
+      // Implementation in scene-loader/update-view/atomic-commit.ts.
       // ================================================================
-
-      // Advance GPU buffer pool frame counter once per update cycle
-      // (not per-acquire) so eviction timing reflects actual frames
-      if (this._gpuBufferPool) {
-        this._gpuBufferPool.beginFrame();
-      }
-
-      // Commits run inside each per-node session so the GPU-upload step
-      // ("Update Buffers") shows up under Points/Lines/GSplats in the
-      // Performance tab. Always end the session afterwards — including
-      // the staged === null case (loader failed or marked skipped) so
-      // every opened session is closed exactly once.
-      //
-      // Belt-and-braces: if a commit throws synchronously, the
-      // remaining iterations and the later geometry-type loops never
-      // run, leaving their sessions un-ended. The outer `finally`
-      // sweeps every staged session afterwards. `SessionImpl.end()`
-      // is idempotent (no-ops on already-ended sessions), so this is
-      // safe to overlay on the per-iteration end() calls that record
-      // accurate per-node timings on the happy path.
-      try {
-        for (const { staged, session } of pointsStaged) {
-          try {
-            if (staged) this.updatePointsGeometry(staged.path, staged.data, session);
-          } finally {
-            session.end();
-          }
-        }
-        for (const { staged, session } of linesStaged) {
-          try {
-            if (staged) this.commitLinesGeometry(staged, session);
-          } finally {
-            session.end();
-          }
-        }
-        for (const { staged, session } of gsplatsStaged) {
-          try {
-            if (staged) this.commitGSplatsGeometry(staged, session);
-          } finally {
-            session.end();
-          }
-        }
-      } finally {
-        for (const { session } of pointsStaged) session.end();
-        for (const { session } of linesStaged) session.end();
-        for (const { session } of gsplatsStaged) session.end();
-      }
-
-      // Invalidate cached pick buffer after geometry changes
-      if (pointsStaged.length > 0 || linesStaged.length > 0 || gsplatsStaged.length > 0) {
-        this.nodeFactory.markPickingDirty();
-      }
+      runAtomicCommit(pointsStaged, linesStaged, gsplatsStaged, {
+        gpuBufferPool: this._gpuBufferPool,
+        nodeFactory: this.nodeFactory,
+        updatePointsGeometry: (path, data, session) =>
+          this.updatePointsGeometry(path, data, session),
+        commitLinesGeometry: (staged, session) => this.commitLinesGeometry(staged, session),
+        commitGSplatsGeometry: (staged, session) => this.commitGSplatsGeometry(staged, session),
+      });
 
       // Update monitor with total visible segments across all lines nodes
       this.updateVisibleCountsInMonitor();
