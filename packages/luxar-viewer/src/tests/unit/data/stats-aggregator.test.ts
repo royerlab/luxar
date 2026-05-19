@@ -11,7 +11,7 @@ import {
   getAggregatedLinesAccumulatorStats,
   getAggregatedGSplatsAccumulatorStats,
 } from '../../../data/stats/aggregator';
-import type { AccumulatorStats } from '../../../data/utils/data-accumulator';
+import type { AccumulatorStats } from '../../../data/accumulators/all';
 import type { DataLoader } from '../../../data/data-loader-types';
 import type { LinesDataLoader } from '../../../types/lines';
 import type { GSplatsDataLoader } from '../../../types/gsplats';

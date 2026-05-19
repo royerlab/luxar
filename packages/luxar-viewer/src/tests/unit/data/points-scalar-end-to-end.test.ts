@@ -16,7 +16,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { LoadedPointsDataAccumulator } from '../../../data/utils/data-accumulator';
+import { LoadedPointsDataAccumulator } from '../../../data/accumulators/all';
 import {
   projectPointsTo3D,
   type ProjectionContext,

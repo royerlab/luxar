@@ -7,7 +7,7 @@ import {
   LoadedPointsDataAccumulator,
   LinesDataAccumulator,
   GSplatsDataAccumulator,
-} from '../../../data/utils/data-accumulator';
+} from '../../../data/accumulators/all';
 import * as THREE from 'three';
 
 describe('LoadedPointsDataAccumulator', () => {

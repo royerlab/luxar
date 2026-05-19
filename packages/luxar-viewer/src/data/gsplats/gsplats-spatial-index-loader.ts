@@ -45,7 +45,7 @@ import {
   announceExtendToAllOnce,
 } from '../loaders/extend-to-all-preflight';
 import { choleskyPackedSize } from '../../types/gsplats';
-import { GSplatsDataAccumulator, type AccumulatorStats } from '../utils/data-accumulator';
+import { GSplatsDataAccumulator, type AccumulatorStats } from '../accumulators/all';
 import { config as appConfig } from '../../config';
 import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profiler';
 import { DecompressedChunkCache, wrapWithCache, ChunkPrefetcher } from '../../cache';

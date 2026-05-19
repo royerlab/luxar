@@ -16,7 +16,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { LinesDataAccumulator } from '../../../data/utils/data-accumulator';
+import { LinesDataAccumulator } from '../../../data/accumulators/all';
 import { projectLinesTo3D } from '../../../data/lines/projection';
 import { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
 import {
