@@ -60,7 +60,6 @@ import {
   LoaderConfig,
   LoadedPointsData,
 } from './data-loader-types';
-import type { LoaderMonitor } from '../types/data-monitor-types';
 import { ZarrSceneAttrs } from '../types/zarr';
 import type {
   SceneLoaderMonitorPort,
@@ -107,7 +106,6 @@ import { notifier } from '../utils/notifier';
  * `LoaderError`. The `kind` field drives the user-visible severity
  * and message, not control flow.
  */
-import { loadLeafNode as loadLeafNodeHelper } from './scene-loader/nodes/load-leaf-error-dispatch';
 import { initializeSceneDimensions as initializeSceneDimensionsHelper } from './scene-loader/nodes/initialize-scene-dimensions';
 import { buildSceneGraph as buildSceneGraphHelper } from './scene-loader/nodes/build-scene-graph';
 import {
@@ -119,9 +117,8 @@ import { deriveNodeViewState as deriveNodeViewStateHelper } from './scene-loader
 import { runLoaderUpdates as runLoaderUpdatesHelper } from './scene-loader/run-loader-updates';
 import { updateVisibleCountsInMonitor as updateVisibleCountsInMonitorHelper } from './scene-loader/visible-counts';
 import { disposeSceneLoader } from './scene-loader/dispose';
-import { loadPointsNode } from './scene-loader/nodes/load-points-node';
-import { loadLinesNode } from './scene-loader/nodes/load-lines-node';
-import { loadGSplatsNode } from './scene-loader/nodes/load-gsplats-node';
+import { loadSceneNodes as loadSceneNodesHelper } from './scene-loader/nodes/load-scene-nodes';
+import { connectLoaderToMonitor as connectLoaderToMonitorHelper } from './scene-loader/nodes/connect-loader-to-monitor';
 import type { NodeBuildCtx } from './scene-loader/nodes/build-ctx';
 
 /**
@@ -1021,46 +1018,7 @@ export class SceneLoader {
     parentThree: THREE.Object3D,
     parentLoc: zarr.Location<zarr.Readable>
   ): Promise<void> {
-    if (node.type === 'points') {
-      // loadPoints attaches its own placeholder to parentThree before
-      // fetching data; no caller-side `if (points) add(points)` is needed.
-      // The placeholder stays in the scene even on failure so retry can
-      // populate it.
-      await this.loadLeafNode(() => this.loadPoints(node, parentThree, parentLoc), node.path);
-    } else if (node.type === 'lines') {
-      await this.loadLeafNode(() => this.loadLines(node, parentThree, parentLoc), node.path);
-    } else if (node.type === 'gsplats') {
-      await this.loadLeafNode(() => this.loadGSplats(node, parentThree, parentLoc), node.path);
-    } else if (node.children) {
-      // Create group and recurse
-      const group = new THREE.Group();
-      group.name = node.path;
-
-      // Apply transform if present
-      if (node.attrs.transform) {
-        this.nodeFactory.applyTransform(group, node.attrs.transform);
-      }
-
-      parentThree.add(group);
-
-      // Load children
-      for (const child of node.children) {
-        const childLoc = parentLoc.resolve(child.path.slice(1));
-        await this.loadSceneNodes(child, group, childLoc);
-      }
-    }
-  }
-
-  /**
-   * Run a leaf-node loader, dispatching {@link LoaderError} by kind so
-   * one bad node doesn't sink the whole scene. Implementation lives in
-   * `scene-loader/build/load-leaf-error-dispatch.ts`.
-   */
-  private async loadLeafNode<T extends THREE.Object3D>(
-    load: () => Promise<T | null>,
-    path: string
-  ): Promise<T | null> {
-    return loadLeafNodeHelper(load, path);
+    return loadSceneNodesHelper(node, parentThree, parentLoc, this.makeNodeBuildCtx());
   }
 
   /**
@@ -1088,30 +1046,6 @@ export class SceneLoader {
     };
   }
 
-  /**
-   * Load a single points node. Implementation lives in
-   * `scene-loader/nodes/load-points-node.ts`.
-   */
-  private async loadPoints(
-    node: SceneNode,
-    parentThree: THREE.Object3D,
-    loc: zarr.Location<zarr.Readable>
-  ): Promise<THREE.Mesh | null> {
-    return loadPointsNode(node, parentThree, loc, this.makeNodeBuildCtx());
-  }
-
-  /**
-   * Load a single lines node. Implementation lives in
-   * `scene-loader/nodes/load-lines-node.ts`.
-   */
-  private async loadLines(
-    node: SceneNode,
-    parentThree: THREE.Object3D,
-    loc: zarr.Location<zarr.Readable>
-  ): Promise<THREE.Mesh | null> {
-    return loadLinesNode(node, parentThree, loc, this.makeNodeBuildCtx());
-  }
-
   /** Build the per-call dependency snapshot for the loader factory. */
   private factoryDeps(): LoaderFactoryDeps {
     return {
@@ -1124,39 +1058,14 @@ export class SceneLoader {
   }
 
   /**
-   * Load a single gsplats node. Implementation lives in
-   * `scene-loader/nodes/load-gsplats-node.ts`.
-   */
-  private async loadGSplats(
-    node: SceneNode,
-    parentThree: THREE.Object3D,
-    loc: zarr.Location<zarr.Readable>
-  ): Promise<THREE.Mesh | null> {
-    return loadGSplatsNode(node, parentThree, loc, this.makeNodeBuildCtx());
-  }
-
-  /**
-   * Connect a loader to the data-loading monitor when the monitor is active
-   * and the loader implements the {@link LoaderMonitor} surface (lines and
-   * gsplats expose the surface as optional methods, points always defines
-   * them). Same wiring is used for all three geometry types.
+   * Connect a loader to the data-loading monitor. Implementation lives
+   * in `scene-loader/nodes/connect-loader-to-monitor.ts`.
    */
   private connectLoaderToMonitor(
     path: string,
     loader: DataLoader | LinesDataLoader | GSplatsDataLoader
   ): void {
-    const monitor = this.monitor;
-    if (!monitor) return;
-
-    const candidate = loader as Partial<LoaderMonitor>;
-    if (
-      typeof candidate.addEventListener === 'function' &&
-      typeof candidate.removeEventListener === 'function' &&
-      typeof candidate.getMetrics === 'function' &&
-      typeof candidate.getActiveQueries === 'function'
-    ) {
-      monitor.connectLoader(path, candidate as LoaderMonitor);
-    }
+    connectLoaderToMonitorHelper(path, loader, this.monitor);
   }
 
   /**
