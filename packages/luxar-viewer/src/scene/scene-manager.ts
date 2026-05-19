@@ -13,7 +13,7 @@ import { loadScene } from '../data';
 import type { LoaderConfig } from '../data/data-loader-types';
 import { notifier } from '../utils/notifier';
 import { config } from '../config';
-import { extractCameraOverrides } from '../config/viewer-config-utils';
+import { extractCameraOverrides } from '../config/zarr-bridge/viewer-config-utils';
 import type { ZarrViewerConfig } from '../types/zarr';
 import type { PostProcessingManager } from '../rendering/post-processing-manager';
 import { materialManager } from '../rendering';

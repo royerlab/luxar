@@ -6,8 +6,8 @@
  * The viewer uses camelCase for RenderingSettings.
  */
 
-import type { ZarrViewerConfig } from '../types/zarr';
-import type { RenderingSettings } from './types';
+import type { ZarrViewerConfig } from '../../types/zarr';
+import type { RenderingSettings } from '../types';
 
 /**
  * Mapping from snake_case zarr viewer_config keys to camelCase RenderingSettings keys.

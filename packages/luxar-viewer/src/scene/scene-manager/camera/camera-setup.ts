@@ -24,7 +24,7 @@ import { config } from '../../../config';
 import {
   extractCameraOverrides,
   extractBackgroundColor,
-} from '../../../config/viewer-config-utils';
+} from '../../../config/zarr-bridge/viewer-config-utils';
 import type { ZarrViewerConfig } from '../../../types/zarr';
 import type { ControlsManager } from '../../../controls/controls-manager';
 import { log, Modules } from '../../../utils/log';

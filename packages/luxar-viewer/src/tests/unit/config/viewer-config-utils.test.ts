@@ -9,7 +9,7 @@ import {
   extractBackgroundColor,
   renderingSettingsToZarr,
   RENDERING_SETTINGS_MAP,
-} from '../../../config/viewer-config-utils';
+} from '../../../config/zarr-bridge/viewer-config-utils';
 import type { ZarrViewerConfig } from '../../../types/zarr';
 
 describe('extractRenderingOverrides', () => {
