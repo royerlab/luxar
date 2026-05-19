@@ -408,7 +408,7 @@ describe('SceneManager', () => {
       // The init path calls resizer.resizeNow() so the renderer is sized
       // before the first paint, bypassing the rAF coalescing path that
       // updateSize() uses. Resizer was extracted from SceneManager in
-      // the bucket-C refactor — see scene/scene-manager/resize-orchestrator.ts.
+      // the bucket-C refactor — see scene/scene-manager/viewport/resize-orchestrator.ts.
       const resizer = (sceneManager as unknown as { resizer: { resizeNow: () => void } }).resizer;
       const resizeNowSpy = vi.spyOn(resizer, 'resizeNow');
 

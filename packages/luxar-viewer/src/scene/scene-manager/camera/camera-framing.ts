@@ -15,7 +15,7 @@
  * `fitCameraToBounds` helper; step 1 has its own helper
  * `computeSceneBoundingBox` since the metadata path doesn't need it.
  *
- * @module scene/scene-setup/camera-framing
+ * @module scene/scene-manager/camera/camera-framing
  */
 
 import * as THREE from 'three';

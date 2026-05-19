@@ -353,12 +353,10 @@ src/
 │   └── post-processing/           # Mega-shader post-processing pipeline
 │                                  # (bloom + FXAA + fused per-pixel effects)
 ├── scene/
-│   ├── animation-controller.ts    # Render loop and performance
-│   ├── camera-utils.ts            # Camera type union, type guards, and projection helpers
-│   ├── dimension-animation-manager.ts # Dimension animation management
+│   ├── animation/                 # Animation controller + dimension animation manager
 │   ├── scene-dims-manager.ts      # Scene-level dimension state management
-│   ├── scene-manager.ts           # 3D scene and renderer setup
-│   └── scene-manager-utils.ts     # Scene manager utilities
+│   ├── scene-manager.ts           # 3D scene and renderer setup (orchestrator)
+│   └── scene-manager/             # Extracted helpers — camera/, clipping/, render-pipeline/, viewport/
 ├── styles/                        # CSS styles
 │   ├── index.css                  # Main stylesheet
 │   ├── reset.css                  # CSS reset

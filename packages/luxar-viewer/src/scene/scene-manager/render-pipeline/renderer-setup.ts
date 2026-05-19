@@ -57,9 +57,7 @@ export interface BackendSelection {
  *   3. `VITE_LUXAR_USE_LEGACY_WEBGL=1` env var (no-op alias for the default).
  *   4. Default: WebGL.
  */
-export function selectBackend(
-  rendererOverride: 'webgl' | 'webgpu' | undefined
-): BackendSelection {
+export function selectBackend(rendererOverride: 'webgl' | 'webgpu' | undefined): BackendSelection {
   if (rendererOverride === 'webgl') return { backend: 'webgl', source: 'url-param' };
   if (rendererOverride === 'webgpu') return { backend: 'webgpu', source: 'url-param' };
   if (
@@ -98,10 +96,7 @@ export async function createWebGLRenderer(canvas: HTMLCanvasElement): Promise<Cr
     gl = canvas.getContext('webgl2', config.webgl.context) as WebGLRenderingContext | null;
 
     if (!gl) {
-      log.warning(
-        Modules.SCENE_MANAGER,
-        'WebGL2 context creation failed, falling back to default'
-      );
+      log.warning(Modules.SCENE_MANAGER, 'WebGL2 context creation failed, falling back to default');
     }
   } catch (error) {
     log.error(Modules.SCENE_MANAGER, 'Error creating WebGL2 context:', error);
@@ -165,9 +160,7 @@ export interface CreateWebGPUOptions {
  * was below the spec minimum and the caller should fall back to
  * `createWebGLRenderer`.
  */
-export type CreateWebGPUResult =
-  | (CreatedRenderer & { fallback: false })
-  | { fallback: true };
+export type CreateWebGPUResult = (CreatedRenderer & { fallback: false }) | { fallback: true };
 
 /**
  * Construct a `WebGPURenderer`. Negotiates a "core" adapter with

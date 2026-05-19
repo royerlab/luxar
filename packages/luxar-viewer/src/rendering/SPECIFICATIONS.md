@@ -89,7 +89,7 @@ WebGPU's `maxVertexBuffers` defaults to 8 under Chrome's compat-mode adapter. To
 
 ### Context loss / device loss policy
 
-- **WebGL2 context loss** — full deterministic recovery via `WebGLContextRecovery` (`scene/scene-setup/webgl-context-recovery.ts`). Rebuilds the renderer, post-processing chain, picking buffers, and material caches, then dispatches `webgl-context-restored` for `NodeFactory` to re-register scene nodes.
+- **WebGL2 context loss** — full deterministic recovery via `WebGLContextRecovery` (`scene/scene-manager/render-pipeline/webgl-context-recovery.ts`). Rebuilds the renderer, post-processing chain, picking buffers, and material caches, then dispatches `webgl-context-restored` for `NodeFactory` to re-register scene nodes.
 - **WebGPU device loss** — treated as **unrecoverable** in this release. `SceneManager.setupContextLossHandling` attaches a `device.lost` observer that logs the failure and dispatches a `webgpu-device-lost` event so the host application can prompt for a page reload. Three's WebGPURenderer recreates its own GPU device internally, but Luxar-owned resources (post-processing targets, picking buffers, interleaved geometry buffers) are not rebuilt.
 
 ### See also

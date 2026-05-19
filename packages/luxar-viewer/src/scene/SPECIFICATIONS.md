@@ -539,7 +539,7 @@ Automatically adjust near and far clipping planes as the camera moves to maintai
 **Per-Frame Update**:
 
 ```typescript
-// Constants from scene-manager-utils.ts
+// Constants from scene-manager/clipping/bounds-math.ts
 const SPHERE_SAFETY_EXPANSION = 1.05; // 5% safety margin
 const MIN_NEAR_PLANE = 0.0001; // Minimum near plane
 

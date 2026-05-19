@@ -17,7 +17,7 @@
  *     scene root is NOT cleared from `scene.children`; the caller is
  *     about to drop the renderer/scene/camera anyway.
  *
- * @module scene/scene-setup/scene-disposal
+ * @module scene/scene-manager/render-pipeline/scene-disposal
  */
 
 import * as THREE from 'three';

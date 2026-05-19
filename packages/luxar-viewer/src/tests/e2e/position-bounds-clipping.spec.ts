@@ -297,7 +297,7 @@ test.describe('Position Bounds and Clipping Planes', () => {
       const bMin = bounds.min;
       const bMax = bounds.max;
 
-      // Compute bounding sphere (matching scene-manager-utils.ts boundingBoxToSphere)
+      // Compute bounding sphere (matching scene-manager/clipping/bounds-math.ts boundingBoxToSphere)
       const cx = (bMin[0] + bMax[0]) / 2;
       const cy = (bMin[1] + bMax[1]) / 2;
       const cz = (bMin[2] + bMax[2]) / 2;

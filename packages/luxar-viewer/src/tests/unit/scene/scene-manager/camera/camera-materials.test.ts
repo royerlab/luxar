@@ -38,10 +38,7 @@ function makeRenderer(): Renderer {
   } as unknown as Renderer;
 }
 
-function makeCtx(opts: {
-  camera: THREE.Camera;
-  bufferSize?: THREE.Vector2;
-}): CameraMaterialsCtx {
+function makeCtx(opts: { camera: THREE.Camera; bufferSize?: THREE.Vector2 }): CameraMaterialsCtx {
   return {
     renderer: makeRenderer(),
     camera: opts.camera as CameraMaterialsCtx['camera'],
