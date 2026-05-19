@@ -24,7 +24,7 @@ import {
 } from './screenshot-exporter';
 import type { CaptureStrategy, SessionState } from './capture-strategy';
 import type { RecordingSession } from './session';
-import type { RecordingOptions } from './types';
+import type { RecordingMode, RecordingOptions } from './types';
 
 /**
  * Hooks the Panel must expose so the strategy can:
@@ -59,7 +59,7 @@ export class ScreenshotStrategy implements CaptureStrategy {
     return true;
   }
 
-  async run(opts: RecordingOptions, session: RecordingSession): Promise<void> {
+  async run(opts: RecordingOptions, _mode: RecordingMode, session: RecordingSession): Promise<void> {
     // Refuse during active recording. captureScreenshot() and the
     // recording paths share `savedRecordingState` — without this guard,
     // a screenshot during recording would clobber the active session's
