@@ -16,19 +16,14 @@ import {
   materialManager,
   type BlendingMode,
   type LuxarPointMaterial,
-  type LuxarLineMaterial,
   type LuxarGSplatMaterial,
 } from './material-manager';
 import { getColormapTexture } from './colormap-textures';
-import {
-  createInstancedLinesMesh,
-  isAllSharpnessTwo,
-  type InstancedLinesMeshConfig,
-} from './line-geometry';
+import { type InstancedLinesMeshConfig } from './line-geometry';
 import { createInstancedGSplatsMesh, type InstancedGSplatsMeshConfig } from './gsplat-geometry';
 import type { LoadedPointsData, DataLoader } from '../data/data-loader-types';
 import type { PointsMetadata, PointsUserData } from '../types/points';
-import type { LinesMetadata, LinesUserData, LinesDataLoader } from '../types/lines';
+import type { LinesMetadata, LinesDataLoader } from '../types/lines';
 import type { GSplatsMetadata, GSplatsUserData, GSplatsDataLoader } from '../types/gsplats';
 import { log, Modules } from '../utils/log';
 import type { PickingSystem } from './picking/picking-system';
@@ -42,6 +37,10 @@ import {
   createPointsGeometry as createPointsGeometryImpl,
   createPointsMaterial as createPointsMaterialImpl,
 } from './node-factory/create-points-node';
+import {
+  createLinesNode as createLinesNodeImpl,
+  createEmptyLinesNode as createEmptyLinesNodeImpl,
+} from './node-factory/create-lines-node';
 // Picking materials are constructed via `materialManager.create*PickingMaterial`
 // helpers so the GLSL vs. TSL dispatch on `caps.apiSurface` lives in one place. The
 // concrete types are still imported elsewhere (e.g. material-sync-helpers).
@@ -212,13 +211,6 @@ export class NodeFactory {
     return points;
   }
 
-  // ============================================================================
-  // Lines Node Creation
-  // ============================================================================
-
-  /**
-   * Create a THREE.Mesh (instanced lines) from processed line data.
-   */
   createLinesNode(
     path: string,
     nodeAttrs: Record<string, unknown>,
@@ -226,83 +218,7 @@ export class NodeFactory {
     processed: InstancedLinesMeshConfig,
     loader: LinesDataLoader
   ): THREE.Mesh {
-    let material: LuxarLineMaterial = materialManager.getLineMaterial({
-      opacity: (attrs.opacity as number | undefined) ?? 1.0,
-      gamma: (attrs.gamma as number | undefined) ?? 1.0,
-      intensity: (attrs.intensity as number | undefined) ?? 1.0,
-      offset: (attrs.offset as number | undefined) ?? 0.0,
-      blendingMode: (attrs.blending_mode as string | undefined as BlendingMode) ?? 'additive',
-    });
-
-    // Apply colormap if specified and scalar data exists. When the
-    // line's metadata declares `colormap='custom'`, the scene loader
-    // has already attached the LUT bytes as `nodeAttrs.customLutBytes`.
-    const lnColormapName = nodeAttrs.colormap as string | undefined;
-    const lnHasScalars = !!nodeAttrs.has_scalars;
-    const linesScalarsReady = 'startScalars' in processed && 'endScalars' in processed;
-    if (lnColormapName && lnHasScalars) {
-      if (!linesScalarsReady) {
-        log.warning(
-          Modules.SCENE_LOADER,
-          `[${path}] Line scalar colormap requested but scalar attributes are not bound. Colormap suppressed.`
-        );
-      } else {
-        const lnLutBytes = nodeAttrs.customLutBytes as Uint8Array | undefined;
-        const lnColormapTex = getColormapTexture(lnColormapName, lnLutBytes);
-        if (lnColormapTex) {
-          // B.1: detach the pooled original from global updates BEFORE
-          // cloning, so disposeAll doesn't dispose the cache entry that
-          // still serves other callers. The clone takes the global-
-          // update slot; the pooled material stays in lineMaterialCache.
-          materialManager.detachFromGlobalUpdates(material);
-          material = material.clone() as typeof material;
-          materialManager.register(material);
-          material.updateColormapTexture(lnColormapTex);
-          const lnScalarRange = (nodeAttrs.scalar_data_range as [number, number]) ?? [0, 1];
-          material.updateScalarRange(lnScalarRange[0], lnScalarRange[1]);
-        }
-      }
-    }
-
-    // Auto-detect the sharpness fast path: when every per-vertex
-    // sharpness in this geometry is 2.0 (the default), the wrapper
-    // toggles `LUXAR_SHARPNESS_TWO` so the fragment shader replaces
-    // its `pow(x, vSharpness)` with `x*x`. O(N) over segments, runs
-    // once at upload.
-    const sharpnessFastPath = isAllSharpnessTwo(processed);
-    material.setSharpnessAllTwo(sharpnessFastPath);
-
-    const mesh = createInstancedLinesMesh(processed, material);
-    mesh.name = path;
-
-    mesh.userData = {
-      nodeType: 'lines',
-      loader,
-      attrs,
-      maxWidth: attrs.max_width ?? 1.0,
-      visibleSegmentCount: processed.segmentCount,
-    } as LinesUserData;
-
-    if (attrs.transform) {
-      this.applyTransform(mesh, attrs.transform);
-    }
-
-    // Create picking shadow node if picking system is active
-    if (this.pickingSystem) {
-      const pickId = this.pickingSystem.allocatePickId();
-      mesh.userData.pickId = pickId;
-      const pickMaterial = materialManager.createLinePickingMaterial({ nodeId: pickId });
-      // Mirror the visual material's sharpness fast path on the
-      // picking material so the pick shader skips its `pow(...)` too.
-      pickMaterial.setSharpnessAllTwo(sharpnessFastPath);
-      materialManager.register(pickMaterial);
-      // Share the same InstancedBufferGeometry — only material differs
-      const pickNode = new THREE.Mesh(mesh.geometry, pickMaterial);
-      pickNode.matrixWorld.copy(mesh.matrixWorld);
-      this.pickingSystem.registerNode(mesh, pickNode, pickId);
-    }
-
-    return mesh;
+    return createLinesNodeImpl(path, nodeAttrs, attrs, processed, loader, this.pickingSystem);
   }
 
   // ============================================================================
@@ -441,21 +357,7 @@ export class NodeFactory {
     attrs: LinesMetadata,
     loader: LinesDataLoader
   ): THREE.Mesh {
-    const emptyConfig: InstancedLinesMeshConfig = {
-      startPositions: new Float32Array(0),
-      endPositions: new Float32Array(0),
-      startColors: new Float32Array(0),
-      endColors: new Float32Array(0),
-      startWidths: new Float32Array(0),
-      endWidths: new Float32Array(0),
-      startSharpness: new Float32Array(0),
-      endSharpness: new Float32Array(0),
-      segmentLengths: new Float32Array(0),
-      startClipped: new Uint8Array(0),
-      endClipped: new Uint8Array(0),
-      segmentCount: 0,
-    };
-    return this.createLinesNode(path, nodeAttrs, attrs, emptyConfig, loader);
+    return createEmptyLinesNodeImpl(path, nodeAttrs, attrs, loader, this.pickingSystem);
   }
 
   /**
