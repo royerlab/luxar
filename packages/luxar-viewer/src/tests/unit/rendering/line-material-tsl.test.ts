@@ -12,7 +12,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { LineTSLMaterial } from '../../../rendering/line-material-tsl';
+import { LineTSLMaterial } from '../../../rendering/materials/line/material-tsl';
 
 describe('LineTSLMaterial clone', () => {
   it('preserves the LUXAR_SHARPNESS_TWO fast-path define', () => {

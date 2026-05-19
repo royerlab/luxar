@@ -26,7 +26,7 @@
  * × edgeAA × widthScale × widthFade × capFactor (capFactor ramps to
  * full intensity inside the body but is 1.0 at clipped endpoints).
  *
- * @module rendering/line.tsl
+ * @module rendering/materials/line/shader-tsl
  */
 
 import * as THREE from 'three';
@@ -53,9 +53,9 @@ import {
   Discard,
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-import { sanitizeNonNegative, sanitizePositive, type TSLNode } from './tsl-helpers';
-import { applyBlendingStateToMaterial, getCompleteBlendingState } from './blending-state';
-import type { BlendingMode } from './material-manager';
+import { sanitizeNonNegative, sanitizePositive, type TSLNode } from '../../tsl-helpers';
+import { applyBlendingStateToMaterial, getCompleteBlendingState } from '../../blending-state';
+import type { BlendingMode } from '../../material-manager';
 
 export interface LineTSLConfig {
   readonly useColormap?: boolean;

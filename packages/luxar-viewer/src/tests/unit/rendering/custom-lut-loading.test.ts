@@ -22,7 +22,7 @@ import {
 } from '../../../rendering/colormap-textures';
 import { NodeFactory } from '../../../rendering/node-factory';
 import { GSplatMaterial } from '../../../rendering/gsplat-material';
-import { LineMaterial } from '../../../rendering/line-material';
+import { LineMaterial } from '../../../rendering/materials/line/material-glsl';
 import {
   createInstancedGSplatsMesh,
   type InstancedGSplatsMeshConfig,

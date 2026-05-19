@@ -37,8 +37,8 @@ import {
   buildPointPickTSLNodesFromUniforms,
 } from '../../../rendering/picking/point-pick.tsl';
 import { createPointQuadGeometry } from '../../../rendering/point-geometry';
-import { LINE_SOURCE } from '../../../rendering/shaders/line-shaders';
-import { lineWebGPUFactory, buildLineTSLNodesFromUniforms } from '../../../rendering/line.tsl';
+import { LINE_SOURCE } from '../../../rendering/materials/line/shader-glsl';
+import { lineWebGPUFactory, buildLineTSLNodesFromUniforms } from '../../../rendering/materials/line/shader-tsl';
 import { LINE_PICK_SOURCE } from '../../../rendering/picking/picking-shaders';
 import {
   linePickWebGPUFactory,
