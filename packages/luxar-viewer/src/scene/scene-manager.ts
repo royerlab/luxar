@@ -15,15 +15,10 @@ import { notifier } from '../utils/notifier';
 import { config } from '../config';
 import { extractCameraOverrides } from '../config/viewer-config-utils';
 import type { ZarrViewerConfig } from '../types/zarr';
-import { PostProcessingManager } from '../rendering/post-processing/post-processing-manager';
+import type { PostProcessingManager } from '../rendering/post-processing/post-processing-manager';
 import { materialManager } from '../rendering';
 import { disposeColormapTextures } from '../rendering/colormap-textures';
-import {
-  createRendererCapabilities,
-  type Renderer,
-  type RendererCapabilities,
-} from '../rendering/renderer-capabilities';
-import { configureHDRRenderer, logHDRCapabilities } from '../utils/hdr-detection';
+import type { Renderer, RendererCapabilities } from '../rendering/renderer-capabilities';
 import { BoundingBox } from './scene-manager/clipping/bounds-math';
 import {
   SceneBoundsCache,
@@ -57,6 +52,12 @@ import {
   setControlType as cameraModeSetControlType,
 } from './scene-manager/camera/camera-mode';
 import { WebGLContextRecovery } from './scene-manager/render-pipeline/webgl-context-recovery';
+import {
+  createWebGLRenderer,
+  createWebGPURenderer,
+  selectBackend,
+} from './scene-manager/render-pipeline/renderer-setup';
+import { createPostProcessing } from './scene-manager/render-pipeline/post-processing-setup';
 import { ResizeOrchestrator } from './scene-manager/viewport/resize-orchestrator';
 import {
   computePixelRatioOverride,
@@ -346,56 +347,13 @@ export class SceneManager extends THREE.EventDispatcher<{
    * - Fullscreen immersive experience
    */
   private async setupRenderer(): Promise<void> {
-    // Backend selection — precedence (highest to lowest):
-    //
-    //   1. Per-instance override (`this.rendererOverride`), threaded
-    //      in via `init({ renderer })` — ultimately from the
-    //      `?renderer=webgl|webgpu` URL parameter. Useful for
-    //      per-load A/B comparisons.
-    //   2. Build-time env: `VITE_LUXAR_USE_WEBGPU=1` opts in to the
-    //      WebGPURenderer / TSL `NodeMaterial` path.
-    //   3. Default: `THREE.WebGLRenderer` (GLSL `ShaderMaterial`).
-    //      WebGPU is available behind the URL flag / env var but is
-    //      not yet the default because per-scene perf measurements
-    //      were below the WebGL baseline.
-    //
-    // Both paths are kept live: WebGL is the production default,
-    // WebGPU is the second supported backend. The TSL graphs and
-    // WebGPU codepath are exercised by `?renderer=webgpu` URL
-    // overrides and the TSL/GLSL parity harness.
-    //
-    // Transient migration-window flags `VITE_LUXAR_USE_LEGACY_WEBGL=1`
-    // and `VITE_LUXAR_USE_WEBGPU_RENDERER=1` are retained as no-op
-    // aliases so existing CI invocations keep working harmlessly. The
-    // former selects the (now default) WebGL path; the latter is
-    // equivalent to setting `VITE_LUXAR_USE_WEBGPU=1`.
-    let useLegacyWebGL: boolean;
-    let source: 'url-param' | 'env-var' | 'default';
-    if (this.rendererOverride === 'webgl') {
-      useLegacyWebGL = true;
-      source = 'url-param';
-    } else if (this.rendererOverride === 'webgpu') {
-      useLegacyWebGL = false;
-      source = 'url-param';
-    } else if (
-      import.meta.env.VITE_LUXAR_USE_WEBGPU === '1' ||
-      import.meta.env.VITE_LUXAR_USE_WEBGPU_RENDERER === '1'
-    ) {
-      useLegacyWebGL = false;
-      source = 'env-var';
-    } else if (import.meta.env.VITE_LUXAR_USE_LEGACY_WEBGL === '1') {
-      useLegacyWebGL = true;
-      source = 'env-var';
-    } else {
-      useLegacyWebGL = true;
-      source = 'default';
-    }
+    const { backend, source } = selectBackend(this.rendererOverride);
     log.info(
       Modules.RENDERER,
-      `Backend selection: ${useLegacyWebGL ? 'WebGLRenderer (GLSL)' : 'WebGPURenderer (TSL)'} ` +
-        `[source: ${source}${!useLegacyWebGL && this.webgpuForceWebGL ? ', forceWebGL backend' : ''}]`
+      `Backend selection: ${backend === 'webgl' ? 'WebGLRenderer (GLSL)' : 'WebGPURenderer (TSL)'} ` +
+        `[source: ${source}${backend === 'webgpu' && this.webgpuForceWebGL ? ', forceWebGL backend' : ''}]`
     );
-    if (useLegacyWebGL) {
+    if (backend === 'webgl') {
       await this.setupWebGLRenderer();
       return;
     }
@@ -403,97 +361,25 @@ export class SceneManager extends THREE.EventDispatcher<{
   }
 
   private async setupWebGLRenderer(): Promise<void> {
-    // Try to get HDR canvas context first using config values.
-    //
-    // Allow-list rule: a `getContext` call is permitted ONLY if it
-    // runs before the renderer exists (no `this.capabilities` to
-    // route through yet). Today there are exactly two such sites:
-    //
-    //   1. This line — creates the WebGL2 context the WebGLRenderer
-    //      wraps.
-    //   2. `src/utils/webgpu-availability.ts` — page-load probe that
-    //      classifies the browser as `'webgpu' | 'webgl2' | 'unsupported'`.
-    //
-    // Under WebGPU the parallel call at site (1) becomes
-    // `navigator.gpu.requestAdapter()` / async `renderer.init()`;
-    // everything else in the codebase must go through
-    // `this.capabilities`.
-    let gl: WebGLRenderingContext | null = null;
-    try {
-      gl = this.canvasElement.getContext(
-        'webgl2',
-        config.webgl.context
-      ) as WebGLRenderingContext | null;
-
-      if (!gl) {
-        log.warning(
-          Modules.SCENE_MANAGER,
-          'WebGL2 context creation failed, falling back to default'
-        );
-      }
-    } catch (error) {
-      log.error(Modules.SCENE_MANAGER, 'Error creating WebGL2 context:', error);
-      notifier.error('Failed to create WebGL2 context. Your browser may not support WebGL2.');
-    }
-
-    // Create WebGL renderer using configuration values.
-    // Shared attributes (antialias, powerPreference, etc.) come from webgl.context;
-    // renderer-specific settings (precision, shadowMap, etc.) come from webgl.renderer.
-    this.renderer = new THREE.WebGLRenderer({
-      canvas: this.canvasElement, // Use the scene manager's canvas element
-      context: gl || undefined, // Use our HDR context if available
-      // Shared attributes from context config
-      alpha: config.webgl.context.alpha,
-      antialias: config.webgl.context.antialias,
-      depth: config.webgl.context.depth,
-      stencil: config.webgl.context.stencil,
-      powerPreference: config.webgl.context.powerPreference,
-      preserveDrawingBuffer: config.webgl.context.preserveDrawingBuffer,
-      premultipliedAlpha: config.webgl.context.premultipliedAlpha,
-      // Renderer-specific settings
-      ...config.webgl.renderer,
-    });
-
-    // NOTE: We don't append renderer.domElement because we're using the
-    // existing HTML canvas. Page-chrome styling (body margin/overflow,
-    // background) is the responsibility of the host page (index.html for
-    // the standalone app), not of SceneManager.
-
-    // Build the renderer-capabilities snapshot. This is the single
-    // module that owns raw-GL probes (MAX_SAMPLES, point-size range,
-    // HDR extensions). All downstream consumers read from here, never
-    // from `renderer.getContext()`.
-    this.capabilities = createRendererCapabilities(this.renderer);
+    const { renderer, capabilities } = await createWebGLRenderer(this.canvasElement);
+    this.renderer = renderer;
+    this.capabilities = capabilities;
 
     // Hand the capabilities to the material manager so its
-    // `getPointMaterial / getLineMaterial / getGSplatMaterial`
-    // dispatch can pick the GLSL or TSL backend. Done immediately
-    // after constructing capabilities — must precede any node-factory
-    // material requests downstream.
+    // getPoint/Line/GSplatMaterial dispatch can pick the GLSL or TSL
+    // backend. Must precede any node-factory material requests.
     materialManager.setCaps(this.capabilities);
 
-    // Log the active graphics API. Doubles as a live consumer of
-    // `capabilities.apiSurface` so the discriminator field can't silently
-    // rot before the WebGPU port adds the second arm.
-    log.info(Modules.RENDERER, `Rendering API: ${this.capabilities.apiSurface}`);
-
-    // Report hardware point size limits when debug logging is requested.
     if (this.debug) {
       const [minPt, maxPt] = this.capabilities.pointSizeRange;
       log.info(Modules.RENDERER, `Hardware point size limits: ${minPt}-${maxPt} pixels`);
     }
-    // This allows for better integration into complex HTML pages
 
-    // Configure renderer dimensions and high-DPI support
+    // Configure renderer dimensions and high-DPI support.
     this.resizer.resizeNow(window.innerWidth, window.innerHeight, this.makeResizeCtx());
 
-    // Detect and configure HDR capabilities
-    const hdrCapabilities = this.capabilities.hdr;
-    logHDRCapabilities(hdrCapabilities);
-    configureHDRRenderer(this.renderer, hdrCapabilities);
-
-    // Immediately clear to the scene background color to avoid a white flash
-    // before the first frame renders (alpha:false makes the canvas opaque white by default)
+    // Clear immediately to the scene background color to avoid the
+    // brief white flash before the first frame renders.
     this.renderer.setClearColor(config.scene.backgroundColor);
     this.renderer.clear();
   }
@@ -512,216 +398,29 @@ export class SceneManager extends THREE.EventDispatcher<{
    * See `BROWSER_SUPPORT_POLICY.md` for the policy.
    */
   private async setupWebGPURenderer(): Promise<void> {
-    log.info(Modules.SCENE_MANAGER, 'Constructing WebGPURenderer…');
-    // Dynamic import so the WebGPU build doesn't pull into the
-    // default bundle for users on the legacy WebGL2 path.
-    const { WebGPURenderer } = await import('three/webgpu');
-    const forceWebGLBackend = this.webgpuForceWebGL;
-    if (forceWebGLBackend) {
-      log.info(
-        Modules.RENDERER,
-        'WebGPURenderer forceWebGL enabled: using Three.js WebGL2 backend with TSL materials.'
-      );
+    const result = await createWebGPURenderer(this.canvasElement, {
+      debug: this.debug,
+      webgpuForceWebGL: this.webgpuForceWebGL,
+      perfTimestamp: this.perfTimestamp,
+      rendererOverride: this.rendererOverride,
+    });
+    if (result.fallback) {
+      // Adapter below the WebGPU spec minimum (< 8 vertex buffers)
+      // and the user didn't force the path; drop to WebGL.
+      await this.setupWebGLRenderer();
+      return;
     }
-
-    // ============================================================
-    // Bypass Three.js's `featureLevel: 'compatibility'` default.
-    //
-    // r184's WebGPURenderer hard-codes
-    // `featureLevel: 'compatibility'` when it calls
-    // `requestAdapter`. Compat-mode adapters report the WebGPU
-    // spec-minimum limits — most importantly `maxVertexBuffers=8`
-    // — even on hardware that natively supports many more (Apple
-    // Silicon Metal exposes 30 under `featureLevel: 'core'`).
-    //
-    // Luxar's line material binds 12 vertex attributes (14 with
-    // colormap): aStartPos/aEndPos, aStartColor/aEndColor,
-    // aStartWidth/aEndWidth, aStartSharpness/aEndSharpness,
-    // aStartClipped/aEndClipped, aSegmentLength, aQuadCorner,
-    // optionally aStartScalar/aEndScalar. Each attribute is its
-    // own vertex buffer under WebGPU. Under compat mode, the line
-    // pipeline fails to create on every frame with
-    // `Vertex buffer count (12) exceeds the maximum number of
-    // vertex buffers (8)`, lines silently drop out, and the
-    // renderer churns recreating the broken pipeline (perf hit +
-    // apparent dimming).
-    //
-    // Workaround: construct our own core adapter + device with
-    // higher limits, then hand the device to WebGPURenderer via
-    // its `device` parameter (which bypasses the internal
-    // requestAdapter call entirely).
-    //
-    // Fallback chain:
-    //   1. `requestAdapter({ featureLevel: 'core' })`
-    //   2. If null/error: `requestAdapter()` (compat default).
-    //   3. If still null: pass no device, let Three's internal
-    //      compat path run (and warn — line materials won't fit).
-    // ============================================================
-    type GPUAdapterLike = {
-      readonly features: ReadonlySet<string>;
-      readonly limits: Record<string, number | undefined>;
-      requestDevice: (descriptor: {
-        requiredFeatures?: string[];
-        requiredLimits?: Record<string, number>;
-      }) => Promise<unknown>;
-    };
-    type NavigatorWithGPU = Navigator & {
-      gpu?: {
-        requestAdapter?: (options?: {
-          featureLevel?: 'core' | 'compatibility';
-          powerPreference?: 'low-power' | 'high-performance';
-        }) => Promise<GPUAdapterLike | null>;
-      };
-    };
-    const gpu = forceWebGLBackend ? undefined : (navigator as NavigatorWithGPU).gpu;
-    let adapter: GPUAdapterLike | null = null;
-    if (gpu?.requestAdapter) {
-      try {
-        adapter = await gpu.requestAdapter({
-          featureLevel: 'core',
-          powerPreference: 'high-performance',
-        });
-      } catch {
-        // Older browsers reject the `featureLevel` option — fall
-        // through to the no-options path below.
-      }
-      if (!adapter) {
-        adapter = await gpu.requestAdapter().catch(() => null);
-      }
-    }
-
-    // Defensive backstop: every Luxar geometry now packs its
-    // per-instance attributes into a single
-    // `InstancedInterleavedBuffer` (one vertex-buffer slot per
-    // geometry, regardless of how many attributes it carries), so
-    // the line material no longer trips Chrome's compat-mode
-    // `maxVertexBuffers=8` ceiling. We still check for an
-    // implausibly low limit (< the WebGPU spec minimum of 8) and
-    // fall back to the legacy WebGL path if it ever triggers —
-    // that would indicate a fundamentally broken adapter.
-    const LUXAR_MIN_VERTEX_BUFFERS_REQUIRED = 8;
-
-    let device: unknown;
-    let adapterMax: number | undefined;
-    if (adapter) {
-      adapterMax = adapter.limits?.maxVertexBuffers;
-
-      // Auto-fallback only when even the spec minimum isn't met.
-      // Respect explicit `?renderer=webgpu` even in that case.
-      if (
-        typeof adapterMax === 'number' &&
-        adapterMax < LUXAR_MIN_VERTEX_BUFFERS_REQUIRED &&
-        this.rendererOverride !== 'webgpu'
-      ) {
-        log.warning(
-          Modules.RENDERER,
-          `WebGPU adapter advertises maxVertexBuffers=${adapterMax}, below the WebGPU spec minimum ` +
-            `of ${LUXAR_MIN_VERTEX_BUFFERS_REQUIRED}. Auto-falling back to the legacy WebGLRenderer ` +
-            'path. Override with `?renderer=webgpu` to force WebGPU anyway (for debugging).'
-        );
-        await this.setupWebGLRenderer();
-        return;
-      }
-
-      // Request what the hardware exposes, capped at 16 (enough
-      // for every Luxar material, with headroom for future growth).
-      const requestedMax = typeof adapterMax === 'number' ? Math.min(adapterMax, 16) : undefined;
-
-      // Lift the buffer-size limit too. Compat mode caps
-      // `maxBufferSize` at the WebGPU spec minimum 256 MB, but Luxar
-      // scenes can need much more (the Zebrahub demo's interleaved
-      // line buffer is ~295 MB at 2.6 M segments × 11 floats × 4
-      // bytes). The user-reported failure was:
-      //
-      //   Buffer size (295323764) exceeds the max buffer size limit
-      //   (268435456). This adapter supports a higher maxBufferSize
-      //   of 4294967292.
-      //
-      // Apple Silicon Metal exposes ~4 GB, desktop Vulkan typically
-      // similar. We request the adapter's actual ceiling — there's
-      // no downside; WebGPU lazily allocates so the limit just
-      // means "we promise not to fail later if we ask for more
-      // than this." (`maxStorageBufferBindingSize` is the matching
-      // ceiling for storage buffers, lifted in the same way.)
-      const adapterMaxBufferSize = adapter.limits?.maxBufferSize;
-      const adapterMaxStorageBuffer = adapter.limits?.maxStorageBufferBindingSize;
-
-      const requiredFeatures: string[] = [];
-      // Enumerate the adapter's features so the device gets the
-      // full WebGPU surface (mirrors Three's internal path).
-      for (const name of adapter.features) {
-        requiredFeatures.push(name);
-      }
-      const requiredLimits: Record<string, number> = {};
-      if (requestedMax !== undefined) {
-        requiredLimits.maxVertexBuffers = requestedMax;
-      }
-      if (typeof adapterMaxBufferSize === 'number') {
-        requiredLimits.maxBufferSize = adapterMaxBufferSize;
-      }
-      if (typeof adapterMaxStorageBuffer === 'number') {
-        requiredLimits.maxStorageBufferBindingSize = adapterMaxStorageBuffer;
-      }
-      log.info(
-        Modules.RENDERER,
-        `WebGPU adapter advertises maxVertexBuffers=${adapterMax}, ` +
-          `maxBufferSize=${adapterMaxBufferSize}, ` +
-          `maxStorageBufferBindingSize=${adapterMaxStorageBuffer}; ` +
-          `requesting maxVertexBuffers=${requestedMax}, ` +
-          `maxBufferSize=${requiredLimits.maxBufferSize ?? 'default'}, ` +
-          `maxStorageBufferBindingSize=${requiredLimits.maxStorageBufferBindingSize ?? 'default'}`
-      );
-      try {
-        device = await adapter.requestDevice({
-          requiredFeatures,
-          requiredLimits,
-        });
-      } catch (err) {
-        log.warning(
-          Modules.RENDERER,
-          `WebGPU requestDevice failed (${err}); falling through to Three's internal compat-mode init.`
-        );
-      }
-    }
-
-    const gpuRenderer = new WebGPURenderer({
-      canvas: this.canvasElement,
-      antialias: config.webgl.context.antialias,
-      alpha: config.webgl.context.alpha,
-      // `forceWebGL` is a diagnostic mode: keep WebGPURenderer + TSL
-      // NodeMaterial dispatch, but make Three use its internal WebGL2
-      // backend instead of a native WebGPU adapter. It is mutually
-      // exclusive with passing a pre-built GPUDevice.
-      ...(forceWebGLBackend ? { forceWebGL: true } : device !== undefined ? { device } : {}),
-      // GPU timestamp queries (`?perf-timestamp`). Three.js gates the
-      // pool's allocation on `device.features.has('timestamp-query')`
-      // so it's safe to opt in unconditionally — drivers without the
-      // feature silently drop to no-op resolve() returning lastValue.
-      ...(this.perfTimestamp ? { trackTimestamp: true } : {}),
-    } as ConstructorParameters<typeof WebGPURenderer>[0]);
-    await gpuRenderer.init();
-    this.renderer = gpuRenderer;
-
-    this.capabilities = createRendererCapabilities(this.renderer);
+    this.renderer = result.renderer;
+    this.capabilities = result.capabilities;
 
     // Hand the capabilities to the material manager so its
-    // `getPointMaterial / getLineMaterial / getGSplatMaterial`
-    // dispatch can pick the TSL backend. Must precede any
-    // node-factory or post-processing material requests downstream.
-    // Without this, the WebGPU path silently dispatches GLSL
-    // ShaderMaterial and the WebGPURenderer's NodeBuilder rejects
-    // it with "Material 'ShaderMaterial' is not compatible."
+    // getPoint/Line/GSplatMaterial dispatch picks the TSL backend.
+    // Must precede any node-factory or post-processing material
+    // requests — without this, the WebGPU path silently dispatches
+    // GLSL ShaderMaterial and the NodeBuilder rejects it.
     materialManager.setCaps(this.capabilities);
 
-    log.info(Modules.RENDERER, `Rendering API: ${this.capabilities.apiSurface}`);
-
     this.resizer.resizeNow(window.innerWidth, window.innerHeight, this.makeResizeCtx());
-
-    const hdrCapabilities = this.capabilities.hdr;
-    logHDRCapabilities(hdrCapabilities);
-
-    configureHDRRenderer(this.renderer, hdrCapabilities);
-
     this.renderer.setClearColor(config.scene.backgroundColor);
     this.renderer.clear();
   }
@@ -873,37 +572,20 @@ export class SceneManager extends THREE.EventDispatcher<{
   }
 
   /**
-   * Initialize the HDR post-processing pipeline.
-   *
-   * Wires up the mega-shader pipeline with 16-bit float (HalfFloat)
-   * buffers, the bloom pre-pass, and the optional FXAA post-pass.
-   * See PostProcessingManager for the full pipeline.
+   * Initialize the HDR post-processing pipeline. Wires the manager's
+   * resize callback to refresh material uniforms that cache the
+   * drawing-buffer size.
    */
   private setupPostProcessing(): void {
-    // Get canvas dimensions for proper HDR render target sizing
-    const canvas = this.renderer.domElement;
-    const width = canvas.clientWidth || window.innerWidth;
-    const height = canvas.clientHeight || window.innerHeight;
-
-    // Create post-processing manager with actual canvas dimensions.
-    // The onResize callback fires whenever the manager reallocates
-    // its render-target pyramid (window resize, SSAA toggle, MSAA
-    // toggle, DPR change). Scene material uniforms cache
-    // pointSizeFactor / uResolution from `renderer.getDrawingBufferSize()`
-    // and would otherwise stay stale until the next manual window
-    // resize.
-    this.postProcessing = new PostProcessingManager(
-      this.renderer,
-      this.capabilities,
-      this.scene,
-      this.camera,
-      { width, height },
-      () => {
+    this.postProcessing = createPostProcessing({
+      renderer: this.renderer,
+      capabilities: this.capabilities,
+      scene: this.scene,
+      camera: this.camera,
+      onResize: () => {
         if (this.camera) this.updateMaterialsForCurrentCamera();
-      }
-    );
-
-    log.success(Modules.POST_PROCESSING, 'HDR pipeline initialized');
+      },
+    });
   }
 
   /**
