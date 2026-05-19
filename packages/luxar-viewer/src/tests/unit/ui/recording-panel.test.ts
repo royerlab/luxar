@@ -963,7 +963,7 @@ describe('RecordingPanel', () => {
     it('should set adaptive DPR manager via setter', () => {
       const mockDPR = { isActive: vi.fn() };
       panel.setAdaptiveDPRManager(mockDPR as any);
-      expect((panel as any).adaptiveDPRManager).toBe(mockDPR);
+      expect((panel as any).session.adaptiveDPRManager).toBe(mockDPR);
     });
   });
 
