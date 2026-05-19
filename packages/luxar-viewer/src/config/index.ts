@@ -8,6 +8,7 @@ import { isMacPlatform } from '../utils/platform';
 import { cameraConfig } from './sections/camera/data';
 import { animationConfig } from './sections/animation/data';
 import { sceneConfig, shaderConfig } from './sections/scene/data';
+import { adaptiveDPRConfig } from './sections/adaptive-dpr/data';
 
 /**
  * Main configuration object containing all application settings
@@ -21,17 +22,7 @@ export const config: AppConfig = {
 
   animation: animationConfig,
 
-  // Adaptive pixel ratio configuration for dynamic performance optimization
-  adaptiveDPR: {
-    enabled: true, // Construction-time default; runtime toggle is renderingControls.defaults.adaptiveDPREnabled
-    minFPS: 50, // FPS threshold for scaling down resolution
-    maxFPS: 58, // FPS threshold for scaling up resolution
-    minDPR: 0.5, // Minimum DPR - lower bound before image becomes too pixelated
-    scaleDownFactor: 0.9, // Reduce DPR by 10% when scaling down
-    scaleUpFactor: 1.05, // Increase DPR by 5% when scaling up
-    hysteresisSeconds: 3, // Wait 3 seconds of stable high FPS before scaling up
-    evaluationIntervalMs: 500, // Evaluate FPS every 500ms
-  },
+  adaptiveDPR: adaptiveDPRConfig,
 
   scene: sceneConfig,
 
