@@ -21,8 +21,8 @@
  * shape the public ViewState contract uses for navigation events.
  */
 
-import type { SimpleDims } from '../../types/dims';
-import type { ViewState } from '../data-loader-types';
+import type { SimpleDims } from '../types/dims';
+import type { ViewState } from './data-loader-types';
 
 export interface DimsToViewStateOptions {
   /** Per-non-displayed continuous dim tolerance (typical: scene maxRadius). */

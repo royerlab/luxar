@@ -17,7 +17,7 @@ import { ViewState, LoaderConfig } from './data-loader-types';
 import { SimpleDims } from '../types/dims';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { config } from '../config';
-import { simpleDimsToViewState } from './utils/dims-to-view-state';
+import { simpleDimsToViewState } from './dims-to-view-state';
 import { computeSceneStats } from './stats/scene-stats';
 
 /**
