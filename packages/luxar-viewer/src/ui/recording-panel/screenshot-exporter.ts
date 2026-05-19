@@ -16,7 +16,7 @@
  * DPR override, save/restore recording state) stay in the panel
  * because they're tightly coupled to its mode tracking.
  *
- * @module ui/recording/screenshot-exporter
+ * @module ui/recording-panel/screenshot-exporter
  */
 
 import type { OverlayManager } from '../overlay-manager';

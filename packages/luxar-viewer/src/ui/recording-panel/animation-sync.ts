@@ -17,7 +17,7 @@
  * shares `savedAutoRotate` state with the offline capture path, so
  * splitting it here would just push the coupling around.
  *
- * @module ui/recording/animation-sync
+ * @module ui/recording-panel/animation-sync
  */
 
 import type { DimensionAnimationManager } from '../../scene/animation/dimension-animation-manager';

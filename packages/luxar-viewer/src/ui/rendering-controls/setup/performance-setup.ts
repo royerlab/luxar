@@ -12,11 +12,11 @@
  *  - a cleanup function for the FPS-display polling interval.
  */
 
-import type { Controller } from '../gui';
-import type GUI from '../gui';
-import type { RenderingSettings } from '../../config';
-import type { AdaptiveDPRManager } from '../../rendering/adaptive-dpr-manager';
-import { log, Modules } from '../../utils/log';
+import type { Controller } from '../../gui';
+import type GUI from '../../gui';
+import type { RenderingSettings } from '../../../config';
+import type { AdaptiveDPRManager } from '../../../rendering/adaptive-dpr-manager';
+import { log, Modules } from '../../../utils/log';
 
 export interface PerformanceSetupContext {
   gui: GUI;

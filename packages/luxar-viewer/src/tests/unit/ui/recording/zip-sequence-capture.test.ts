@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { ZipSequenceCapture } from '../../../../ui/recording/zip-sequence-capture';
+import { ZipSequenceCapture } from '../../../../ui/recording-panel/zip-sequence-capture';
 
 function makeWritable(): {
   write: ReturnType<typeof vi.fn>;

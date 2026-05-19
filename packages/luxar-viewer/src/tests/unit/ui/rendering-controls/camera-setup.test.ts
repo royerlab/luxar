@@ -1,5 +1,5 @@
 /**
- * Unit tests for ui/rendering-controls/camera-setup.ts.
+ * Unit tests for ui/rendering-controls/setup/camera-setup.ts.
  *
  * Stubs the GUI/Folder + sceneManager + postProcessing dependencies,
  * then verifies setupCameraControls wires the FOV preset dropdown,
@@ -9,7 +9,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { SetupContext, SetupResult } from '../../../../ui/rendering-controls/types';
-import { setupCameraControls } from '../../../../ui/rendering-controls/camera-setup';
+import { setupCameraControls } from '../../../../ui/rendering-controls/setup/camera-setup';
 
 interface ControllerStub {
   name: ReturnType<typeof vi.fn>;

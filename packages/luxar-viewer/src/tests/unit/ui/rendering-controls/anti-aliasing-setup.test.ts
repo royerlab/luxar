@@ -1,5 +1,5 @@
 /**
- * Unit tests for ui/rendering-controls/anti-aliasing-setup.ts.
+ * Unit tests for ui/rendering-controls/setup/anti-aliasing-setup.ts.
  *
  * Stubs the GUI/Folder + postProcessing dependencies and verifies
  * that setupAntiAliasingControls wires its onChange callbacks
@@ -10,7 +10,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { SetupContext } from '../../../../ui/rendering-controls/types';
-import { setupAntiAliasingControls } from '../../../../ui/rendering-controls/anti-aliasing-setup';
+import { setupAntiAliasingControls } from '../../../../ui/rendering-controls/setup/anti-aliasing-setup';
 
 interface ControllerStub {
   name: ReturnType<typeof vi.fn>;

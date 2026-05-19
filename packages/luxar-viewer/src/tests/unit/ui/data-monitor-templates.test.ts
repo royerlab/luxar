@@ -23,7 +23,7 @@ import {
   renderMetricCard,
   renderProgressBar,
   renderStatGrid,
-} from '../../../ui/monitors/data-monitor-templates';
+} from '../../../ui/data-loading-monitor/templates';
 
 describe('getColorClass', () => {
   it('prefixes the semantic name with luxar-color--', () => {

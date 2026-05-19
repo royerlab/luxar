@@ -7,8 +7,8 @@
  * - Clipping planes (near, far, dynamic clipping)
  */
 
-import { config } from '../../config';
-import { log, Modules } from '../../utils/log';
+import { config } from '../../../config';
+import { log, Modules } from '../../../utils/log';
 import type { SetupContext, SetupResult } from './types';
 import { fovToFocalLength } from './fov-utils';
 

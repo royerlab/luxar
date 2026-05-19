@@ -1,5 +1,5 @@
 /**
- * Unit tests for ui/components/hierarchical-timing-panel.ts.
+ * Unit tests for ui/data-loading-monitor/timing-panel.ts.
  *
  * The renderer is a pure function from TimingEntry → HTML string.
  * The handlers + in-place updater touch the DOM (jsdom) but no
@@ -14,7 +14,7 @@ import {
   renderHierarchicalTimingPanel,
   attachTimingPanelHandlers,
   updateTimingPanelValues,
-} from '../../../ui/components/hierarchical-timing-panel';
+} from '../../../ui/data-loading-monitor/timing-panel';
 
 function makeEntry(overrides: Partial<TimingEntry> = {}): TimingEntry {
   return {

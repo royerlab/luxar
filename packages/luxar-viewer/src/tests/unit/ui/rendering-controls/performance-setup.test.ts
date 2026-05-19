@@ -1,5 +1,5 @@
 /**
- * Unit tests for ui/rendering-controls/performance-setup.ts.
+ * Unit tests for ui/rendering-controls/setup/performance-setup.ts.
  *
  * Stubs the GUI/Folder + AdaptiveDPRManager dependencies and verifies
  * that setupPerformanceControls wires the adaptive toggle, manual DPR
@@ -10,7 +10,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   setupPerformanceControls,
   type PerformanceSetupContext,
-} from '../../../../ui/rendering-controls/performance-setup';
+} from '../../../../ui/rendering-controls/setup/performance-setup';
 
 interface ControllerStub {
   name: ReturnType<typeof vi.fn>;

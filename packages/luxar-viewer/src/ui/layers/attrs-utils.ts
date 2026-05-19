@@ -7,7 +7,7 @@
  * The DOM-facing `LayersPanel` calls these and applies the returned
  * shape to its THREE.Material instances.
  *
- * @module ui/layers/layer-attrs-utils
+ * @module ui/layers/attrs-utils
  */
 
 import * as THREE from 'three';

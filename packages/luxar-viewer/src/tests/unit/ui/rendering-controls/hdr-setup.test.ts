@@ -1,5 +1,5 @@
 /**
- * Unit tests for ui/rendering-controls/hdr-setup.ts.
+ * Unit tests for ui/rendering-controls/setup/hdr-setup.ts.
  *
  * Stubs the GUI/Folder + sceneManager/postProcessing dependencies and
  * verifies that setupHDRControls wires its four onChange callbacks
@@ -10,7 +10,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import * as THREE from 'three';
 import type { SetupContext } from '../../../../ui/rendering-controls/types';
-import { setupHDRControls } from '../../../../ui/rendering-controls/hdr-setup';
+import { setupHDRControls } from '../../../../ui/rendering-controls/setup/hdr-setup';
 
 interface ControllerStub {
   name: ReturnType<typeof vi.fn>;

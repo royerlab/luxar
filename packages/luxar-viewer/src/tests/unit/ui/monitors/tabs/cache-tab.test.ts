@@ -1,11 +1,11 @@
 /**
- * Direct unit tests for `ui/monitors/tabs/cache-tab.ts`. Exercises
+ * Direct unit tests for `ui/data-loading-monitor/tabs/cache.ts`. Exercises
  * the structure guard, L0/L1/L2 patch paths, progress-bar fill, and
  * the optional-field no-op case under jsdom.
  */
 
 import { describe, it, expect } from 'vitest';
-import { updateCacheTab } from '../../../../../ui/monitors/tabs/cache-tab';
+import { updateCacheTab } from '../../../../../ui/data-loading-monitor/tabs/cache';
 import type { CacheMetrics } from '../../../../../types/data-monitor-types';
 
 function makeContainer(): HTMLElement {

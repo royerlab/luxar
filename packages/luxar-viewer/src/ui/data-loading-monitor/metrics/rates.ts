@@ -7,7 +7,7 @@
  * module can be unit-tested directly.
  */
 
-import type { MonitorEvent } from '../../types/data-monitor-types';
+import type { MonitorEvent } from '../../../types/data-monitor-types';
 
 /** The rates the Monitor caches and exposes to its tabs. */
 export interface RatesSnapshot {

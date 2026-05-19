@@ -10,7 +10,7 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   selectVideoCodec,
   type MediabunnyCodec,
-} from '../../../../ui/recording/video-codec-selection';
+} from '../../../../ui/recording-panel/video-codec-selection';
 
 const ENC_OPTS = { width: 1920, height: 1080, bitrate: 8_000_000 };
 

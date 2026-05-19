@@ -17,7 +17,7 @@ import {
   computeControlVisibility,
   FORMAT_LABEL_TO_VALUE,
   CODEC_LABEL_TO_VALUE,
-} from '../../../../ui/recording/gui-builder';
+} from '../../../../ui/recording-panel/gui-builder';
 
 describe('getValidFormatsForMode', () => {
   it('returns the four image formats for image mode', () => {

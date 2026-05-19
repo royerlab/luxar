@@ -8,7 +8,7 @@ import {
   encodeScreenshotBlob,
   downloadBlob,
   renderFrameToCanvas,
-} from '../../../../ui/recording/screenshot-exporter';
+} from '../../../../ui/recording-panel/screenshot-exporter';
 import type { OverlayManager } from '../../../../ui/overlay-manager';
 
 describe('normalizeScreenshotFormat', () => {

@@ -1,5 +1,5 @@
 /**
- * Unit tests for ui/rendering-controls/theme-setup.ts.
+ * Unit tests for ui/rendering-controls/setup/theme-setup.ts.
  *
  * Mocks ThemeManager.getInstance() and verifies that
  * setupThemeControls builds a single dropdown bound to setTheme()
@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { setupThemeControls } from '../../../../ui/rendering-controls/theme-setup';
+import { setupThemeControls } from '../../../../ui/rendering-controls/setup/theme-setup';
 
 const setThemeMock = vi.fn();
 const getCurrentThemeMock = vi.fn();
