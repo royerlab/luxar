@@ -7,7 +7,7 @@
  * @module data/stats-aggregator
  */
 
-import type { AccumulatorStats } from '../utils/data-accumulator';
+import type { AccumulatorStats } from '../accumulators/all';
 import type { DataLoader } from '../data-loader-types';
 import type { LinesDataLoader } from '../../types/lines';
 import type { GSplatsDataLoader } from '../../types/gsplats';

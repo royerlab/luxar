@@ -38,7 +38,7 @@ import {
   warnExtendToAllNoDimensions,
   announceExtendToAllOnce,
 } from '../loaders/extend-to-all-preflight';
-import { LinesDataAccumulator, type AccumulatorStats } from '../utils/data-accumulator';
+import { LinesDataAccumulator, type AccumulatorStats } from '../accumulators/all';
 import { config as appConfig } from '../../config';
 import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profiler';
 import { DecompressedChunkCache, wrapWithCache, ChunkPrefetcher } from '../../cache';

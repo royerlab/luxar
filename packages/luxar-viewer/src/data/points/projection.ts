@@ -39,7 +39,7 @@ import type {
   ColorArray,
   ScalarArray,
 } from '../data-loader-types';
-import { LoadedPointsDataAccumulator } from '../utils/data-accumulator';
+import { LoadedPointsDataAccumulator } from '../accumulators/all';
 import type { PointsMetadata } from '../../types/points';
 import type { PointsChunkIndex } from './chunk-index-loader';
 import { getWorkerPool } from '../../workers/worker-pool';
