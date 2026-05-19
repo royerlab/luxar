@@ -616,7 +616,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
 
     return {
       l1: this.l1Cache.getStats(),
-      l2: this.l2Store?.getStats() ?? {
+      l2: l2Stats ?? {
         size: 0,
         count: 0,
         reads: 0,
