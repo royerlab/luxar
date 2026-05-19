@@ -1,5 +1,5 @@
-import { LRUCache } from './lru-cache';
-import type { CacheStats } from './types';
+import { LRUCache } from '../lru-cache';
+import type { CacheStats } from '../types';
 
 /**
  * Segmented LRU with name-based routing: Metadata files go to a dedicated segment,

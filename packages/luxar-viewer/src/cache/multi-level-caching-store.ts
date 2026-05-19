@@ -1,6 +1,6 @@
 import type { AsyncReadable } from '../data/zarr';
-import { SegmentedLRUCache } from './segmented-lru-cache';
-import { OPFSStore } from './opfs-store';
+import { SegmentedLRUCache } from './multi-level-caching-store/segmented-lru-cache';
+import { OPFSStore } from './multi-level-caching-store/opfs-store';
 import type { ChunkPrefetcher } from './chunk-prefetcher';
 import { log, Modules } from '../utils/log';
 import { config } from '../config';
