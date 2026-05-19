@@ -23,9 +23,9 @@ import {
   transformBoundingBox,
   BoundingBox,
   CameraConfig,
-} from '../../../scene/scene-manager/scene-manager-utils';
+} from '../../../../../scene/scene-manager/clipping/bounds-math';
 
-describe('scene-manager-utils', () => {
+describe('bounds-math', () => {
   describe('calculateBoundingBoxFromPositions', () => {
     it('should calculate correct bounds from positions', () => {
       const positions = new Float32Array([

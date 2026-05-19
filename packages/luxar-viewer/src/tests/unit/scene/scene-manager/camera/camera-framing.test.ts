@@ -23,7 +23,7 @@ import {
   ZOOM_RANGE_FACTOR,
 } from '../../../../../scene/scene-manager/camera/camera-framing';
 import type { ControlsManager } from '../../../../../controls/controls-manager';
-import type { BoundingBox } from '../../../../../scene/scene-manager/scene-manager-utils';
+import type { BoundingBox } from '../../../../../scene/scene-manager/clipping/bounds-math';
 
 function makeControls(focusTarget = new THREE.Vector3(0, 0, 0)): {
   controls: ControlsManager;
