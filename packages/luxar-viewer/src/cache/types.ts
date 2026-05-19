@@ -35,6 +35,10 @@ export interface CacheStats {
  */
 export type CacheValidationMode = 'content-hash' | 'ttl' | 'none';
 
+/**
+ * Metadata structure persisted to OPFS for L2 cache management.
+ * Stored in _cache_meta.json within each dataset's OPFS directory.
+ */
 export interface OPFSMetadata {
   /** Original dataset URL (for listDatasets() debugging) */
   baseUrl: string;
