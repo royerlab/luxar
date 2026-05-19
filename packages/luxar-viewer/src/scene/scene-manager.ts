@@ -26,18 +26,19 @@ import {
 import { configureHDRRenderer, logHDRCapabilities } from '../utils/hdr-detection';
 import {
   validateFOV,
-  getBoundingBoxDiagonal,
   getBoundingBoxCenter,
   BoundingBox,
-  boundingBoxToSphere,
-  calculateClippingPlanesFromSphere,
-  SPHERE_SAFETY_EXPANSION,
-  MIN_NEAR_PLANE,
 } from './scene-manager/clipping/bounds-math';
 import {
   SceneBoundsCache,
   computeBoundsFromMetadata,
 } from './scene-manager/clipping/scene-bounds-cache';
+import {
+  type ClippingCtx,
+  applyClippingPlanes,
+  autoAdjustFromBounds,
+  updateDynamicFromCache,
+} from './scene-manager/clipping/clipping-policy';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { clearLoadedSceneContent, disposeSceneGraphResources } from './scene-manager/render-pipeline/scene-disposal';
 import {
@@ -1237,111 +1238,18 @@ export class SceneManager extends THREE.EventDispatcher<{
     this.updateMaterialsForCurrentCamera();
   }
 
-  /**
-   * Update camera clipping planes with validation
-   */
+  /** Update camera clipping planes with validation. */
   updateClippingPlanes(near: number, far: number): void {
-    // Validate near/far relationship
-    if (near >= far) {
-      log.warning(Modules.SCENE_MANAGER, 'Near plane must be less than far plane');
-      return;
-    }
-
-    // Warn about Z-buffer precision if ratio is too high
-    const ratio = far / near;
-    if (ratio > 10000) {
-      log.warning(
-        Modules.SCENE_MANAGER,
-        `High near/far ratio (${ratio.toFixed(0)}:1) may cause Z-buffer precision issues. Consider adjusting clipping planes.`
-      );
-    }
-
-    // Update camera clipping planes
-    this.camera.near = near;
-    this.camera.far = far;
-    this.camera.updateProjectionMatrix();
-
-    log.info(
-      Modules.SCENE_MANAGER,
-      `Clipping planes updated - Near: ${near < 0.001 ? near.toExponential(1) : near.toFixed(3)}, Far: ${far.toFixed(1)} (ratio: ${ratio.toFixed(0)}:1)`
-    );
+    applyClippingPlanes(this.camera, near, far);
   }
 
   /**
-   * Auto-adjust clipping planes based on scene bounds from metadata.
-   *
-   * This uses the position_bounds stored in zarr metadata, which represents
-   * the full dataset extent computed at compile time. This is more reliable
-   * than computing bounds from loaded geometry because:
-   * 1. It includes the full dataset, not just currently loaded points
-   * 2. It works correctly for nD data (we project to display dimensions)
-   * 3. It's available immediately without waiting for data to load
-   *
-   * Falls back to geometry-based calculation if metadata bounds are not available.
+   * Auto-adjust clipping planes from scene bounds (metadata first,
+   * geometry fallback). Also feeds the bounding-box diagonal into
+   * the scale-aware controls.
    */
   autoAdjustClippingPlanes(): { near: number; far: number } {
-    // Get camera position for distance calculations
-    const cameraPos = {
-      x: this.camera.position.x,
-      y: this.camera.position.y,
-      z: this.camera.position.z,
-    };
-
-    // Try to get scene bounds from metadata first
-    const sceneBounds = this.getSceneBoundsFromMetadata();
-
-    if (sceneBounds) {
-      // Update scale-aware controls from metadata bounds (available before geometry loads)
-      const diagonal = getBoundingBoxDiagonal(sceneBounds);
-      if (diagonal > 0) {
-        this.controls.setSceneScale(diagonal);
-      }
-
-      // Use bounding sphere for smooth clipping (no box-edge discontinuities)
-      const sphere = boundingBoxToSphere(sceneBounds);
-      const { near, far } = calculateClippingPlanesFromSphere(sphere, cameraPos);
-
-      // Apply the calculated planes
-      this.updateClippingPlanes(near, far);
-
-      log.success(
-        Modules.SCENE_MANAGER,
-        `Clipping planes set from metadata bounds (near: ${near.toFixed(4)}, far: ${far.toFixed(1)})`
-      );
-
-      return { near, far };
-    }
-
-    // Fallback: Calculate scene bounding box from loaded geometry
-    const box = new THREE.Box3().setFromObject(this.scene);
-
-    if (box.isEmpty()) {
-      log.warning(Modules.SCENE_MANAGER, 'No scene content for clipping plane calculation');
-      return {
-        near: config.renderingControls.defaults.near,
-        far: config.renderingControls.defaults.far,
-      };
-    }
-
-    // Use unified utility function with camera position
-    const fallbackBounds = {
-      min: { x: box.min.x, y: box.min.y, z: box.min.z },
-      max: { x: box.max.x, y: box.max.y, z: box.max.z },
-    };
-
-    // Update scale-aware controls from geometry bounds as fallback
-    const diagonal = getBoundingBoxDiagonal(fallbackBounds);
-    if (diagonal > 0) {
-      this.controls.setSceneScale(diagonal);
-    }
-
-    const sphere = boundingBoxToSphere(fallbackBounds);
-    const { near, far } = calculateClippingPlanesFromSphere(sphere, cameraPos);
-
-    // Apply the calculated planes
-    this.updateClippingPlanes(near, far);
-
-    return { near, far };
+    return autoAdjustFromBounds(this.makeClippingCtx());
   }
 
   /**
@@ -1402,30 +1310,22 @@ export class SceneManager extends THREE.EventDispatcher<{
    */
   updateDynamicClippingPlanes(): void {
     if (!this.dynamicClippingEnabled) return;
+    updateDynamicFromCache(this.makeClippingCtx());
+  }
 
-    this.boundsCache.ensure(this.scene);
-    const s = this.boundsCache.getSphere();
-    if (!s) return;
-
-    // Inline sphere-based clipping math (no intermediate object allocations)
-    const cam = this.camera.position;
-    const dx = cam.x - s.center.x;
-    const dy = cam.y - s.center.y;
-    const dz = cam.z - s.center.z;
-    const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-    const R = s.radius * SPHERE_SAFETY_EXPANSION;
-    const far = dist + R;
-    const near = dist < R ? MIN_NEAR_PLANE : Math.max(MIN_NEAR_PLANE, dist - R);
-
-    // Only update camera if values changed significantly (>0.1%)
-    const nearChanged = Math.abs(this.camera.near - near) / this.camera.near > 0.001;
-    const farChanged = Math.abs(this.camera.far - far) / this.camera.far > 0.001;
-
-    if (nearChanged || farChanged) {
-      this.camera.near = near;
-      this.camera.far = far;
-      this.camera.updateProjectionMatrix();
-    }
+  /**
+   * Build the narrow ctx that the clipping-policy helpers consume.
+   * Created on demand to keep helper signatures stable as
+   * subsystem fields evolve.
+   */
+  private makeClippingCtx(): ClippingCtx {
+    return {
+      camera: this.camera,
+      controls: this.controls,
+      scene: this.scene,
+      boundsCache: this.boundsCache,
+      getSceneBoundsFromMetadata: () => this.getSceneBoundsFromMetadata(),
+    };
   }
 
   /**
