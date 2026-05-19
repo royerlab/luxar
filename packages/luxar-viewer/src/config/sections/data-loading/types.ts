@@ -88,13 +88,8 @@ export interface DataLoadingMonitorConfig {
   limits: MonitorLimits;
 }
 
-/**
- * Data loading spatial configuration
- */
-export interface DataLoadingSpatialConfig {
-  defaultTolerance: number;
-  defaultMaxRadius: number;
-}
+import type { DataLoadingSpatialConfig } from './spatial/types';
+export type { DataLoadingSpatialConfig };
 
 /**
  * Performance optimization configuration: object pooling, web workers,
