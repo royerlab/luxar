@@ -15,17 +15,17 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { ArrayDecoder, ArrayRefRegistry } from '../../../data/array-decoder/decoder';
-import type { ArrayMetadata } from '../../../data/array-decoder/decoder';
-import type { PointRange } from '../../../data/data-loader-types';
-import * as zarr from '../../../data/zarr';
+import { ArrayDecoder, ArrayRefRegistry } from '../../../../data/array-decoder/decoder';
+import type { ArrayMetadata } from '../../../../data/array-decoder/decoder';
+import type { PointRange } from '../../../../data/data-loader-types';
+import * as zarr from '../../../../data/zarr';
 import { FileSystemStore } from '@zarrita/storage';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const FIXTURES_DIR = path.resolve(__dirname, '../../../../tests/fixtures');
+const FIXTURES_DIR = path.resolve(__dirname, '../../../../../tests/fixtures');
 
 /**
  * Helper to load array with metadata from zarr

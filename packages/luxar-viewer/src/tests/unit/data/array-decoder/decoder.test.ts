@@ -15,9 +15,9 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { ArrayDecoder, ArrayRefRegistry } from '../../../data/array-decoder/decoder';
-import type { ArrayMetadata } from '../../../data/array-decoder/decoder';
-import * as zarr from '../../../data/zarr';
+import { ArrayDecoder, ArrayRefRegistry } from '../../../../data/array-decoder/decoder';
+import type { ArrayMetadata } from '../../../../data/array-decoder/decoder';
+import * as zarr from '../../../../data/zarr';
 import { FileSystemStore } from '@zarrita/storage';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
@@ -27,7 +27,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Path to test fixtures
-const FIXTURES_DIR = path.resolve(__dirname, '../../../../tests/fixtures');
+const FIXTURES_DIR = path.resolve(__dirname, '../../../../../tests/fixtures');
 
 /**
  * Helper to load array with attributes from a zarr dataset

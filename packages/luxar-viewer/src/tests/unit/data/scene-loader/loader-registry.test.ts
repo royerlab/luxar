@@ -7,10 +7,10 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { LoaderRegistry } from '../../../data/scene-loader/loader-registry';
-import type { DataLoader } from '../../../data/data-loader-types';
-import type { LinesDataLoader } from '../../../types/lines';
-import type { GSplatsDataLoader } from '../../../types/gsplats';
+import { LoaderRegistry } from '../../../../data/scene-loader/loader-registry';
+import type { DataLoader } from '../../../../data/data-loader-types';
+import type { LinesDataLoader } from '../../../../types/lines';
+import type { GSplatsDataLoader } from '../../../../types/gsplats';
 
 function makeStub<T>(): T & { dispose: ReturnType<typeof vi.fn> } {
   return { dispose: vi.fn() } as unknown as T & { dispose: ReturnType<typeof vi.fn> };

@@ -11,10 +11,10 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { ArrayDecoder, ArrayRefRegistry } from '../../../data/array-decoder/decoder';
-import type { ArrayMetadata } from '../../../data/array-decoder/decoder';
-import { RangeLoader } from '../../../data/loaders/range-loader';
-import * as zarr from '../../../data/zarr';
+import { ArrayDecoder, ArrayRefRegistry } from '../../../../data/array-decoder/decoder';
+import type { ArrayMetadata } from '../../../../data/array-decoder/decoder';
+import { RangeLoader } from '../../../../data/loaders/range-loader';
+import * as zarr from '../../../../data/zarr';
 import { FileSystemStore } from '@zarrita/storage';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
@@ -23,7 +23,7 @@ import { createHash } from 'crypto';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const FIXTURES_DIR = path.resolve(__dirname, '../../../../tests/fixtures');
+const FIXTURES_DIR = path.resolve(__dirname, '../../../../../tests/fixtures');
 const EXPECTATIONS_PATH = path.join(FIXTURES_DIR, 'roundtrip_expectations.json');
 
 interface ArrayOperationExpectation {
