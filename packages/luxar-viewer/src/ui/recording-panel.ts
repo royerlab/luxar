@@ -3,7 +3,6 @@
 // canvas.captureStream() + MediaRecorder for video recording (WebM)
 // HDR export: EXR screenshots, EXR frame sequences (ZIP), 10-bit HDR video (WebCodecs)
 
-import * as THREE from 'three';
 import GUI, { type Controller } from './gui';
 import { config } from '../config';
 import { log, Modules } from '../utils/log';
@@ -23,8 +22,6 @@ import {
 import {
   renderFrameToCanvas as renderFrameToCanvasHelper,
   downloadBlob as downloadBlobHelper,
-  encodeScreenshotBlob,
-  normalizeScreenshotFormat,
 } from './recording-panel/screenshot-exporter';
 import {
   getTurntableInfo as getTurntableInfoHelper,
@@ -41,6 +38,7 @@ import { ExrSequenceDriver } from './recording-panel/drivers/exr-sequence-driver
 import { VideoModeDriver } from './recording-panel/drivers/video-mode-driver';
 import { buildRecordingGUI } from './recording-panel/ui/gui-construction';
 import { RecordingSession, type SaveRecordingStateOptions } from './recording-panel/session';
+import { ScreenshotStrategy } from './recording-panel/screenshot-strategy';
 
 // Shared recording types live in `recording-panel/types.ts`. Re-exported
 // here for external consumers that import from the panel directly.
@@ -120,7 +118,6 @@ export class RecordingPanel {
   private get recordingStartTime(): number { return this.session.recordingStartTime; }
   private set recordingStartTime(v: number) { this.session.recordingStartTime = v; }
   private get animationManager(): DimensionAnimationManager | null { return this.session.animationManager; }
-  private get adaptiveDPRManager(): AdaptiveDPRManager | null { return this.session.adaptiveDPRManager; }
   private get overlayManager(): OverlayManager | null { return this.session.overlayManager; }
 
   // Video recording state (moves to VideoRecordingStrategy in Phase 3)
@@ -151,8 +148,8 @@ export class RecordingPanel {
   // (moves to OfflineCaptureStrategy in Phase 4)
   private offlineOverlayCleanup: (() => void) | null = null;
 
-  // Screenshot debounce (moves to ScreenshotStrategy in Phase 2)
-  private isCaptureInProgress: boolean = false;
+  // Strategies (own their own internal state; see capture-strategy.ts).
+  private screenshotStrategy: ScreenshotStrategy;
 
   // GUI controller references for dynamic show/hide
   private imageControllers: Controller[] = [];
@@ -177,6 +174,12 @@ export class RecordingPanel {
     // Wire the indicator's click-to-stop and Escape-to-stop into our
     // existing stopVideoRecording path so the user can stop from anywhere.
     this.session.setStopVideoCallback(() => this.stopVideoRecording());
+
+    this.screenshotStrategy = new ScreenshotStrategy(sceneManager, {
+      hideAllPanels: () => this.hideAllPanels(),
+      downloadBlob: (blob, filename) => this.downloadBlob(blob, filename),
+      generateFilename: (ext) => this.generateFilename(ext),
+    });
 
     this.gui = new GUI({
       title: 'Recording',
@@ -289,83 +292,7 @@ export class RecordingPanel {
   // ========== Screenshot Capture ==========
 
   async captureScreenshot(): Promise<void> {
-    // Refuse during active recording. captureScreenshot() and the
-    // recording paths share `savedRecordingState` — without this guard,
-    // a screenshot during recording would clobber the active session's
-    // saved DPR/resize/renderer snapshot and the recording's eventual
-    // restoreRecordingState() would no-op, leaving DPR disabled and
-    // resize locked after recording ends.
-    if (this.isRecording || this.isOfflineCaptureActive) {
-      showToast('Stop recording before taking a screenshot');
-      return;
-    }
-    if (this.isCaptureInProgress) return;
-    this.isCaptureInProgress = true;
-
-    let savedBackground: THREE.Color | THREE.Texture | null = null;
-
-    try {
-      log.info(Modules.RECORDING, 'Capturing screenshot...');
-
-      this.hideAllPanels();
-      await new Promise((r) => requestAnimationFrame(r));
-
-      // Save state (always — ensures restoreRecordingState restores panels)
-      const wantMaxDPR = this.options.maxDPR && !!this.adaptiveDPRManager;
-      this.saveRecordingState({ disableDPR: wantMaxDPR });
-      if (wantMaxDPR) {
-        await new Promise((r) => requestAnimationFrame(r));
-      }
-
-      // Set transparent background
-      if (this.options.transparentBackground) {
-        savedBackground = this.sceneManager.scene.background as THREE.Color | THREE.Texture | null;
-        this.sceneManager.scene.background = null;
-      }
-
-      const format = this.options.outputFormat;
-
-      if (format === 'exr') {
-        const exrData = await this.sceneManager.postProcessing.captureHDRAsEXR();
-        const blob = new Blob([exrData as BlobPart], { type: 'application/octet-stream' });
-        this.downloadBlob(blob, this.generateFilename('exr'));
-        showToast('HDR screenshot saved (EXR)');
-      } else {
-        const captureCanvas = await this.renderFrameToCanvas();
-
-        const { format: effectiveFormat, warning } = normalizeScreenshotFormat(
-          format,
-          this.options.transparentBackground
-        );
-        if (warning === 'video-fallback') {
-          log.warning(
-            Modules.RECORDING,
-            `Screenshot format '${format}' is a video format, falling back to PNG`
-          );
-        } else if (warning === 'jpeg-no-alpha') {
-          showToast('Switched to PNG (JPEG has no alpha)');
-        }
-
-        const blob = await encodeScreenshotBlob(
-          captureCanvas,
-          effectiveFormat,
-          this.options.imageQuality
-        );
-
-        if (blob) {
-          this.downloadBlob(blob, this.generateFilename(effectiveFormat));
-          showToast('Screenshot saved');
-        } else {
-          showToast('Screenshot failed');
-        }
-      }
-    } finally {
-      if (savedBackground !== null) {
-        this.sceneManager.scene.background = savedBackground;
-      }
-      this.restoreRecordingState();
-      this.isCaptureInProgress = false;
-    }
+    return this.screenshotStrategy.run(this.options, this.session);
   }
 
   // ========== Video Recording ==========
