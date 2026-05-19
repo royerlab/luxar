@@ -33,6 +33,7 @@ import { isCameraAwareMaterial } from '../materials/_shared/camera-aware-materia
 import {
   disposePickMaterial,
   unregisterAllPickMaterials,
+  type PickNodeEntry,
 } from './picking-system/registration';
 import { rayHitsAnyNode, invalidateBoxCache } from './picking-system/ray-aabb';
 import { voteWinner, type VoteEntry } from './picking-system/pick-render';
@@ -58,12 +59,6 @@ export interface PickResult {
   brightness: number;
   /** Reference to the main scene object */
   mainNode: THREE.Object3D;
-}
-
-/** Internal tracking of a registered node pair. */
-interface PickNodeEntry {
-  main: THREE.Object3D;
-  pick: THREE.Object3D;
 }
 
 /** Size of the pick buffer in pixels (5x5 = 25 pixels). */
