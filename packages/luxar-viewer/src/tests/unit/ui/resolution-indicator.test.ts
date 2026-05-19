@@ -7,7 +7,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
-import { ResolutionIndicator } from '../../../ui/components/resolution-indicator';
+import { ResolutionIndicator } from '../../../ui/resolution-indicator';
 
 describe('ResolutionIndicator', () => {
   let indicator: ResolutionIndicator;

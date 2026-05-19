@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { extractBaseUrl, extractPath } from '../../../ui/panels/dataset-url-utils';
+import { extractBaseUrl, extractPath } from '../../../ui/dataset-browser/url-utils';
 
 const ORIGIN = 'http://example.test:8000';
 

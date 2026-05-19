@@ -8,7 +8,7 @@
  * Automatically shows/hides based on the AdaptiveDPRManager state.
  */
 
-import { log, Modules } from '../../utils/log';
+import { log, Modules } from '../utils/log';
 
 /**
  * Manages the resolution indicator UI

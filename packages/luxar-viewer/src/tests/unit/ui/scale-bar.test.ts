@@ -36,7 +36,7 @@ vi.mock('../../../scene/scene-dims-manager', () => ({
 }));
 
 // Import after vi.mock declarations (mocks are hoisted)
-import { computeNiceValue, formatScaleValue, ScaleBar } from '../../../ui/components/scale-bar';
+import { computeNiceValue, formatScaleValue, ScaleBar } from '../../../ui/scale-bar';
 
 describe('Scale Bar', () => {
   describe('computeNiceValue', () => {
@@ -157,7 +157,7 @@ describe('Scale Bar', () => {
       document.body.innerHTML = '';
     });
 
-    function createMockConfig(): import('../../../ui/components/scale-bar').ScaleBarConfig {
+    function createMockConfig(): import('../../../ui/scale-bar').ScaleBarConfig {
       const camera = new THREE.PerspectiveCamera(47, 1, 0.1, 1000);
       camera.position.set(0, 0, 10);
       camera.position.distanceTo = vi.fn(() => 10);

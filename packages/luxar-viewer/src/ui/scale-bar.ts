@@ -10,10 +10,10 @@
  * since visible height is independent of depth.
  */
 
-import { UIComponent } from './base/ui-component';
-import { ControlsManager } from '../../controls/controls-manager';
-import { sceneDimsManager } from '../../scene/scene-dims-manager';
-import { type LuxarCamera, isPerspectiveCamera } from '../../utils/camera-utils';
+import { UIComponent } from './overlay-widgets/ui-component';
+import { ControlsManager } from '../controls/controls-manager';
+import { sceneDimsManager } from '../scene/scene-dims-manager';
+import { type LuxarCamera, isPerspectiveCamera } from '../utils/camera-utils';
 
 export interface ScaleBarConfig {
   camera: LuxarCamera;

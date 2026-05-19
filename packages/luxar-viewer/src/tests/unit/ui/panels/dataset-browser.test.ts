@@ -1,5 +1,5 @@
 /**
- * Unit tests for ui/panels/dataset-browser.ts.
+ * Unit tests for ui/dataset-browser.ts.
  *
  * Mocks DirectoryNavigator (the only external dependency that touches
  * the network). The panel construction + entry rendering run for real
@@ -8,7 +8,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { DirectoryEntry } from '../../../../data';
-import { DatasetBrowser } from '../../../../ui/panels/dataset-browser';
+import { DatasetBrowser } from '../../../../ui/dataset-browser';
 
 const navigateMock = vi.fn();
 const getFullUrlMock = vi.fn();

@@ -9,7 +9,7 @@ import {
   downloadBlob,
   renderFrameToCanvas,
 } from '../../../../ui/recording/screenshot-exporter';
-import type { OverlayManager } from '../../../../ui/helpers/overlay-manager';
+import type { OverlayManager } from '../../../../ui/overlay-manager';
 
 describe('normalizeScreenshotFormat', () => {
   it('passes through valid image formats unchanged', () => {

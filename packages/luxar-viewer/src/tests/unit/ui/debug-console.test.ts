@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { DebugConsole } from '../../../ui/panels/debug-console';
+import { DebugConsole } from '../../../ui/debug-console';
 
 // Mock console interceptor
 vi.mock('../../../utils/console-interceptor', () => ({

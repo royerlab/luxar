@@ -4,7 +4,7 @@
  * instantiating a DatasetBrowser (which needs a DOM container plus a
  * DirectoryNavigator).
  *
- * @module ui/panels/dataset-url-utils
+ * @module ui/dataset-browser/url-utils
  */
 
 /**

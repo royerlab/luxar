@@ -19,7 +19,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { OverlayManager, FONT_PRESETS } from '../../../../ui/helpers/overlay-manager';
+import { OverlayManager, FONT_PRESETS } from '../../../../ui/overlay-manager';
 import type { OverlayConfig } from '../../../../data/loaders/overlay-loader';
 
 function makeTextOverlay(overrides: Partial<OverlayConfig> = {}): OverlayConfig {

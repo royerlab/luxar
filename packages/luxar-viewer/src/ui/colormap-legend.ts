@@ -7,9 +7,9 @@
  * Updates reactively when layer state changes (colormap, visibility, range).
  */
 
-import { UIComponent } from './base/ui-component';
-import type { LayerStateManager, LayerInfo } from '../layers/layer-state';
-import { BUILTIN_COLORMAPS } from '../../rendering/colormap-data';
+import { UIComponent } from './overlay-widgets/ui-component';
+import type { LayerStateManager, LayerInfo } from './layers/layer-state';
+import { BUILTIN_COLORMAPS } from '../rendering/colormap-data';
 
 export interface ColormapLegendConfig {
   layerState: LayerStateManager;

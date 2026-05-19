@@ -6,9 +6,9 @@
  * CSS transitions, blend modes, and configurable interaction.
  */
 
-import { sceneDimsManager } from '../../scene/scene-dims-manager';
-import { log, Modules } from '../../utils/log';
-import type { OverlayConfig } from '../../data/loaders/overlay-loader';
+import { sceneDimsManager } from '../scene/scene-dims-manager';
+import { log, Modules } from '../utils/log';
+import type { OverlayConfig } from '../data/loaders/overlay-loader';
 
 /** Font preset mappings to CSS font-family stacks */
 export const FONT_PRESETS: Record<string, string> = {

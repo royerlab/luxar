@@ -13,7 +13,7 @@ import {
   compositeTextOverlay,
   compositeImageOverlay,
 } from '../../../../ui/recording/overlay-compositor';
-import type { OverlayManager } from '../../../../ui/helpers/overlay-manager';
+import type { OverlayManager } from '../../../../ui/overlay-manager';
 import type { OverlayConfig } from '../../../../data/loaders/overlay-loader';
 
 interface FakeCtx {

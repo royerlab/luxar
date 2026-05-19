@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { UIComponent } from '../../../ui/components/base/ui-component';
+import { UIComponent } from '../../../ui/overlay-widgets/ui-component';
 import { ThemeManager } from '../../../themes/theme-manager';
 import type { Theme } from '../../../themes/types';
 

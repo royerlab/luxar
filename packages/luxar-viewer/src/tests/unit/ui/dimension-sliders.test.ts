@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { DimensionSliders } from '../../../ui/panels/dimension-sliders';
+import { DimensionSliders } from '../../../ui/dimension-sliders';
 import type { SimpleDims } from '../../../types/dims';
 
 // Mock scene dims manager

@@ -24,7 +24,7 @@ import {
 } from '../../../../input/handlers/key-bindings';
 import { InputContext, type InputContextManager } from '../../../../input/input-context-manager';
 import type { SceneManager } from '../../../../scene/scene-manager';
-import type { DebugConsole } from '../../../../ui/panels/debug-console';
+import type { DebugConsole } from '../../../../ui/debug-console';
 
 interface CapturedBinding {
   context: InputContext;
