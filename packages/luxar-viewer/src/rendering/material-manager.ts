@@ -50,6 +50,7 @@ import {
   removeFromRegistries,
   type LifecycleCtx,
 } from './material-manager/lifecycle';
+import { getCacheStats as buildCacheStats } from './material-manager/stats';
 
 // Re-export the sentinel for callers that import from material-manager.
 export { SOFT_DISPOSE_FLAG };
@@ -460,34 +461,18 @@ export class MaterialManager {
     // registeredMaterials / ownedMaterials deliberately preserved.
   }
 
-  /** Get cache statistics. */
+  /** Get cache statistics (delegates to stats.ts). */
   getCacheStats() {
-    return {
-      pointMaterials: this.pointMaterialCache.size,
-      lineMaterials: this.lineMaterialCache.size,
-      gsplatMaterials: this.gsplatMaterialCache.size,
-      ownedMaterials: this.ownedMaterials.size,
-      cachedMaterials:
-        this.pointMaterialCache.size + this.lineMaterialCache.size + this.gsplatMaterialCache.size,
-      totalRegistered: this.registeredMaterials.size,
-      /** Cumulative LRU evictions across all three caches since creation. */
-      evictions: this.evictionCount,
-      /** Configured cache bound (`0` = disabled). */
-      maxSize: config.dataLoading.performance.materialCacheMaxSize,
-      /**
-       * Cumulative wall-clock ms spent inside `new XMaterial(...)`
-       * calls (cache-miss path). Excludes WebGL program compilation,
-       * which happens lazily on first render.
-       */
+    return buildCacheStats({
+      pointMaterialCache: this.pointMaterialCache,
+      lineMaterialCache: this.lineMaterialCache,
+      gsplatMaterialCache: this.gsplatMaterialCache,
+      ownedMaterials: this.ownedMaterials,
+      registeredMaterials: this.registeredMaterials,
+      evictionCount: this.evictionCount,
       totalCreateMs: this.totalCreateMs,
-      /** Number of `new XMaterial(...)` calls (cache misses). */
       createCount: this.createCount,
-      keys: [
-        ...Array.from(this.pointMaterialCache.keys()),
-        ...Array.from(this.lineMaterialCache.keys()),
-        ...Array.from(this.gsplatMaterialCache.keys()),
-      ],
-    };
+    });
   }
 }
 
