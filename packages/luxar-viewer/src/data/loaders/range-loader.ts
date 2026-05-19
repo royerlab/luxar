@@ -18,7 +18,7 @@ import { get, slice } from '../zarr';
 import { log, Modules } from '../../utils/log';
 import { config as appConfig } from '../../config';
 import { getWorkerPool } from '../../workers/worker-pool';
-import { ArrayDecoder, ArrayRefRegistry, type ArrayMetadata } from '../utils/array-decoder';
+import { ArrayDecoder, ArrayRefRegistry, type ArrayMetadata } from '../array-decoder/decoder';
 
 /**
  * Range specification for loading array subsets

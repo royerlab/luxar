@@ -21,7 +21,7 @@
 
 import * as zarr from '../zarr';
 import { get, slice } from '../zarr';
-import { ArrayDecoder, type ArrayMetadata } from '../utils/array-decoder';
+import { ArrayDecoder, type ArrayMetadata } from '../array-decoder/decoder';
 import type { RangeLoader, LoadRange } from './range-loader';
 import { clamp } from '../../utils/clamp';
 

@@ -22,7 +22,7 @@ import type {
   SegmentRange,
 } from '../../types/lines';
 import type { SceneNode, PointRange } from '../data-loader-types';
-import { ArrayRefRegistry, type ArrayMetadata } from '../utils/array-decoder';
+import { ArrayRefRegistry, type ArrayMetadata } from '../array-decoder/decoder';
 import { RangeLoader, SpatialQueryBuilder, mergeRanges, type LoadRange } from '../loaders';
 import { getExpectedColorType, loadColorRanges } from '../loaders/color-attribute-utils';
 import { computeLoadLatency, recordLoadEvent } from '../loaders/loader-metrics';

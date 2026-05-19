@@ -72,7 +72,7 @@ import type {
   SceneLoaderMonitorPort,
   SceneLoaderMonitorFactory,
 } from './scene-loader-monitor-port';
-import { ArrayRefRegistry } from './utils/array-decoder';
+import { ArrayRefRegistry } from './array-decoder/decoder';
 import { ViewStateManager } from './view-state-manager';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { config as appConfig } from '../config';
