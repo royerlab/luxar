@@ -2,7 +2,7 @@
 // Provides real-time control over post-processing and rendering parameters
 
 import GUI, { Folder } from './gui';
-import { PostProcessingManager } from '../rendering/post-processing/post-processing-manager';
+import { PostProcessingManager } from '../rendering';
 import { SceneManager } from '../scene/scene-manager';
 import { AnimationController } from '../scene/animation/animation-controller';
 import { config, type RenderingSettings } from '../config';

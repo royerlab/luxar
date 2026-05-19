@@ -8,7 +8,7 @@
  */
 
 import type { RenderingSettings } from '../../config';
-import type { PostProcessingManager } from '../../rendering/post-processing/post-processing-manager';
+import type { PostProcessingManager } from '../../rendering';
 import type { SceneManager } from '../../scene/scene-manager';
 import type { AnimationController } from '../../scene/animation/animation-controller';
 import { TONE_MAPPING_MAP } from './cinematic-mode';

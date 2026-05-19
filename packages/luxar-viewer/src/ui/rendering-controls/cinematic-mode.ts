@@ -15,7 +15,7 @@
 import * as THREE from 'three';
 import { config, type RenderingSettings } from '../../config';
 import { log, Modules } from '../../utils/log';
-import type { PostProcessingManager } from '../../rendering/post-processing/post-processing-manager';
+import type { PostProcessingManager } from '../../rendering';
 import type { SceneManager } from '../../scene/scene-manager';
 import type { AnimationController } from '../../scene/animation/animation-controller';
 import type { RenderingControllers } from '../../controls/types';

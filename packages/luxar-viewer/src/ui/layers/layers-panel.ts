@@ -29,7 +29,7 @@ import {
   collectDataDescendants,
   type ComposableAttrs,
   type EffectiveAttrs,
-} from '../../data/utils/attrs-composer';
+} from '../../data/attrs-composer';
 import {
   clampGamma,
   getBlendingState,
