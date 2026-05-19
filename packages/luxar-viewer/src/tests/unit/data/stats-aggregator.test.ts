@@ -10,7 +10,7 @@ import {
   getAggregatedPointsAccumulatorStats,
   getAggregatedLinesAccumulatorStats,
   getAggregatedGSplatsAccumulatorStats,
-} from '../../../data/utils/stats-aggregator';
+} from '../../../data/stats/aggregator';
 import type { AccumulatorStats } from '../../../data/utils/data-accumulator';
 import type { DataLoader } from '../../../data/data-loader-types';
 import type { LinesDataLoader } from '../../../types/lines';

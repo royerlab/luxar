@@ -27,7 +27,7 @@ import {
   getAggregatedPointsAccumulatorStats,
   getAggregatedLinesAccumulatorStats,
   getAggregatedGSplatsAccumulatorStats,
-} from '../utils/stats-aggregator';
+} from '../stats/aggregator';
 import { convertToSceneGraphNode } from './scene-graph-converter';
 
 export interface WireMonitorAfterLoadParams {

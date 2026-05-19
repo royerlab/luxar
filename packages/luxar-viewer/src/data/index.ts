@@ -71,7 +71,7 @@ export {
   getAggregatedPointsAccumulatorStats,
   getAggregatedLinesAccumulatorStats,
   getAggregatedGSplatsAccumulatorStats,
-} from './utils/stats-aggregator';
+} from './stats/aggregator';
 export { LoaderRegistry, type FailedLoaderInfo } from './loaders/loader-registry';
 export {
   computeTolerance,
