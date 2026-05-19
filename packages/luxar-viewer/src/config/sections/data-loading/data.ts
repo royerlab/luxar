@@ -1,21 +1,13 @@
 import type { DataLoadingConfig } from './types';
 import { dataLoadingSpatialConfig } from './spatial/data';
+import { dataLoadingNetworkConfig } from './network/data';
 
 /**
  * Data loading configuration
  */
 export const dataLoadingConfig: DataLoadingConfig = {
   spatial: dataLoadingSpatialConfig,
-  network: {
-    timeoutMs: 30000,
-    // Dedicated short budget for the L2 cache-validation HEAD probe
-    // (MultiLevelCachingStore.getRemoteContentHash). On flaky networks this
-    // path must NOT block scene loading for the full timeoutMs — failing
-    // fast is better since we can render from cached data.
-    validationTimeoutMs: 5000,
-    maxConcurrent: 6,
-    retryAttempts: 3,
-  },
+  network: dataLoadingNetworkConfig,
   memory: {
     targetHeapUsage: 0.8,
     minCacheMB: 128,
