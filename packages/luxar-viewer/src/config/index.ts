@@ -10,6 +10,7 @@ import { animationConfig } from './sections/animation/data';
 import { sceneConfig, shaderConfig } from './sections/scene/data';
 import { adaptiveDPRConfig } from './sections/adaptive-dpr/data';
 import { cacheConfig } from './sections/cache/data';
+import { dimensionAnimationConfig } from './sections/dimension-animation/data';
 
 /**
  * Main configuration object containing all application settings
@@ -432,27 +433,7 @@ export const config: AppConfig = {
 
   cache: cacheConfig,
 
-  // Dimension animation configuration
-  dimensionAnimation: {
-    defaults: {
-      targetFPS: 10,
-      loop: 'loop' as const,
-      direction: 'forward' as const,
-    },
-    presets: {
-      fps: [1, 2, 5, 10, 15, 30, 60],
-      customMin: 0.1,
-      customMax: 120,
-    },
-    timing: {
-      minFrameTimeMs: 16, // ~60fps absolute max
-      continuousTraverseSeconds: 10, // Full range in 10s for continuous dims
-    },
-    ui: {
-      showFPSFeedback: true, // Show "target vs actual" fps
-      feedbackThreshold: 0.8, // Warn if actual < 80% of target
-    },
-  },
+  dimensionAnimation: dimensionAnimationConfig,
 
   // Default path to demo Zarr data when no source is specified
   // Empty string = show dataset browser instead of attempting to load non-existent dataset
