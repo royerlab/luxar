@@ -93,19 +93,11 @@ import type {
   LoadedGSplatsData,
 } from '../types/gsplats';
 import { GPUBufferPool } from '../rendering/gpu-buffer-pool';
-import { invertNdTransformForQuery, computeWorldNdTransform } from './transforms/nd-transform';
 import { NodeFactory } from '../rendering/node-factory';
 import { UpdateProfiler, type UpdateSession } from '../profiling/update-profiler';
 import { LoaderRegistry } from './scene-loader/loader-registry';
 import { loadOverlayConfigs } from './loaders/overlay-loader';
 import { notifier } from '../utils/notifier';
-
-/** Check if an object has any own properties (avoids Object.keys() allocation). */
-import {
-  hasOwnProperties,
-  getOrComputeExtendedTolerance,
-  validateExtendDims,
-} from './scene-loader/extend-tolerance';
 
 // ============================================================================
 // Staged commit types for atomic geometry updates
@@ -139,6 +131,8 @@ import {
   retryAllFailedLoadersUnlocked,
   type RetryCtx,
 } from './scene-loader/retry';
+import { deriveNodeViewState as deriveNodeViewStateHelper } from './scene-loader/derive-node-view-state';
+import { runLoaderUpdates as runLoaderUpdatesHelper } from './scene-loader/run-loader-updates';
 
 /**
  * Main scene loader that handles the complete loading pipeline.
@@ -613,60 +607,7 @@ export class SceneLoader {
       extendedToleranceCache?: Map<string, number[]>;
     }
   ): { skip: 'extend_to_all' } | { skip: false; viewState: ViewState } {
-    const extendDims: string[] = attrs?.extend_to_all ?? [];
-
-    let derived: ViewState = {
-      displayDims: this.viewState.displayDims,
-      slicePosition: this.viewState.slicePosition,
-      tolerance: this.viewState.tolerance,
-      dimensions: this.viewState.dimensions,
-    };
-
-    // Step 1: full-extend skip check.
-    if (extendDims.length > 0 && this.viewState.dimensions) {
-      const dims = this.viewState.dimensions;
-      validateExtendDims(extendDims, dims);
-      const nonDisplayedDims = dims
-        .filter((_: { name?: string }, idx: number) => !this.viewState.displayDims.includes(idx))
-        .map((d: { name?: string }) => d.name)
-        .filter((name: string | undefined): name is string => !!name);
-
-      const isFullyExtended = nonDisplayedDims.every((dimName: string) =>
-        extendDims.includes(dimName)
-      );
-      if (isFullyExtended) {
-        return { skip: 'extend_to_all' };
-      }
-
-      // Step 2: partial-extend tolerance override (Points + GSplats only).
-      if (opts.applyPartialExtendTolerance) {
-        const tolerance = getOrComputeExtendedTolerance(
-          this.viewState.tolerance,
-          extendDims,
-          this.viewState.dimensions,
-          opts.extendedToleranceCache ?? new Map<string, number[]>()
-        );
-        derived = { ...derived, tolerance };
-      }
-    }
-
-    // Step 3: nd_transform inverse for world→local query mapping.
-    if (this._sceneGraph && derived.dimensions) {
-      const worldNdT = computeWorldNdTransform(this._sceneGraph, path);
-      if (hasOwnProperties(worldNdT)) {
-        const dimNames = derived.dimensions.map((d: { name?: string }) => d.name ?? '');
-        const inverted = invertNdTransformForQuery(
-          derived.slicePosition,
-          derived.tolerance,
-          worldNdT,
-          dimNames,
-          derived.displayDims
-        );
-        derived = { ...derived, ...inverted };
-      }
-    }
-
-    return { skip: false, viewState: derived };
+    return deriveNodeViewStateHelper(path, attrs, this.viewState, this._sceneGraph, opts);
   }
 
   /**
@@ -688,48 +629,11 @@ export class SceneLoader {
     loaderType: 'Points' | 'Lines' | 'GSplats',
     updateFn: (path: string, loader: TLoader, session: UpdateSession) => Promise<TStaged | null>
   ): Promise<Array<{ staged: TStaged | null; session: UpdateSession }>> {
-    const noopSession: UpdateSession = {
-      begin: () => noopSession,
-      end: () => {},
-      setMetadata: () => {},
-      markSkipped: () => {},
-    };
-
-    const tasks = Array.from(loaders.entries()).map(async ([path, loader]) => {
-      // Open a top-level session per node and keep it alive across the
-      // atomic commit stage so the per-node "Update Buffers" child entry
-      // nests under this session. The caller is responsible for calling
-      // session.end() once the commit has run.
-      const session = this.profiler
-        ? this.profiler.beginTopLevel(`${loaderType} (${path})`)
-        : noopSession;
-      try {
-        const staged = await updateFn(path, loader, session);
-        return { staged, session };
-      } catch (error) {
-        // Predictive prefetch is keyed by the previous successful
-        // derived view-state for this path. If the demand update
-        // fails, discard that baseline so the next success
-        // re-baselines instead of extrapolating across a stale/error
-        // gap and warming irrelevant chunks.
-        this.viewStateQueue.forgetPath(path);
-
-        const errorInfo = this.failedLoaders.get(path);
-        const retryCount = errorInfo ? errorInfo.retryCount + 1 : 0;
-        this.failedLoaders.set(path, {
-          error: error as Error,
-          timestamp: Date.now(),
-          retryCount,
-        });
-        const lcType = loaderType === 'Points' ? '' : `${loaderType.toLowerCase()} `;
-        log.error(
-          Modules.SCENE_LOADER,
-          `Failed to update ${lcType}${path} (attempt ${retryCount + 1}): ${(error as Error).message}`
-        );
-        return { staged: null, session };
-      }
+    return runLoaderUpdatesHelper(loaders, loaderType, updateFn, {
+      profiler: this.profiler,
+      viewStateQueue: this.viewStateQueue,
+      failedLoaders: this.failedLoaders,
     });
-    return Promise.all(tasks);
   }
 
   /**
