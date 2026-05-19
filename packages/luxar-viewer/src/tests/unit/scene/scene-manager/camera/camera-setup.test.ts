@@ -4,15 +4,15 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as THREE from 'three';
-import { config } from '../../../../config';
+import { config } from '../../../../../config';
 import {
   createDefaultPerspectiveCamera,
   resetCameraToInitialPosition,
   resolveTargetNodeCenter,
   applyZarrViewerConfig,
-} from '../../../../scene/scene-manager/camera-setup';
-import type { ControlsManager } from '../../../../controls/controls-manager';
-import type { ZarrViewerConfig } from '../../../../types/zarr';
+} from '../../../../../scene/scene-manager/camera/camera-setup';
+import type { ControlsManager } from '../../../../../controls/controls-manager';
+import type { ZarrViewerConfig } from '../../../../../types/zarr';
 
 function makeCanvas(width = 800, height = 600): HTMLCanvasElement {
   const canvas = document.createElement('canvas');

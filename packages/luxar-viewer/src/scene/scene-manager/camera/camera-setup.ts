@@ -20,12 +20,12 @@
  */
 
 import * as THREE from 'three';
-import { config } from '../../config';
-import { extractCameraOverrides, extractBackgroundColor } from '../../config/viewer-config-utils';
-import type { ZarrViewerConfig } from '../../types/zarr';
-import type { ControlsManager } from '../../controls/controls-manager';
-import { log, Modules } from '../../utils/log';
-import type { LuxarCamera } from '../../utils/camera-utils';
+import { config } from '../../../config';
+import { extractCameraOverrides, extractBackgroundColor } from '../../../config/viewer-config-utils';
+import type { ZarrViewerConfig } from '../../../types/zarr';
+import type { ControlsManager } from '../../../controls/controls-manager';
+import { log, Modules } from '../../../utils/log';
+import type { LuxarCamera } from '../../../utils/camera-utils';
 
 /**
  * Build a fresh `PerspectiveCamera` configured with the FOV /

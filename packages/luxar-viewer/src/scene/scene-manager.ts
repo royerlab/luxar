@@ -43,8 +43,8 @@ import {
   applyZarrViewerConfig as applyZarrViewerConfigHelper,
   createDefaultPerspectiveCamera,
   resetCameraToInitialPosition,
-} from './scene-manager/camera-setup';
-import { computeSceneBoundingBox, fitCameraToBounds } from './scene-manager/camera-framing';
+} from './scene-manager/camera/camera-setup';
+import { computeSceneBoundingBox, fitCameraToBounds } from './scene-manager/camera/camera-framing';
 import { WebGLContextRecovery } from './scene-manager/webgl-context-recovery';
 import { ResizeOrchestrator } from './scene-manager/resize-orchestrator';
 import {
