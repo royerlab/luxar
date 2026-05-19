@@ -25,7 +25,7 @@ export { GPUBufferPool } from './gpu-buffer-pool';
 export { AdaptiveDPRManager } from './adaptive-dpr-manager';
 
 // Post-processing entry point
-export { PostProcessingManager } from './post-processing/post-processing-manager';
+export { PostProcessingManager } from './post-processing-manager';
 
 // Blending helpers (public API; mirrors src/index.ts re-exports).
 export {

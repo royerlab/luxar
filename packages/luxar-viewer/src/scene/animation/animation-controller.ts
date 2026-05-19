@@ -8,7 +8,7 @@
 
 import { ControlsManager } from '../../controls/controls-manager';
 import { config } from '../../config';
-import { PostProcessingManager } from '../../rendering/post-processing/post-processing-manager';
+import { PostProcessingManager } from '../../rendering';
 import { AdaptiveDPRManager } from '../../rendering/adaptive-dpr-manager';
 import { eventBus } from '../../utils/event-bus';
 
