@@ -24,10 +24,10 @@ import type {
 } from '../types/data-monitor-types';
 
 // Performance timeline removed - now using hierarchical timing panel
-import { aggregateCacheMetrics } from './cache-metrics-aggregator';
-import { calculateRates } from './rate-calculator';
-import { updateCacheTab } from './tabs/cache-tab';
-import { patchField, updateColorClass } from './tabs/dom-helpers';
+import { aggregateCacheMetrics } from './monitors/cache-metrics-aggregator';
+import { calculateRates } from './monitors/rate-calculator';
+import { updateCacheTab } from './monitors/tabs/cache-tab';
+import { patchField, updateColorClass } from './monitors/tabs/dom-helpers';
 import { LoadingAdvisor } from './components/loading-advisor';
 import { EventQueue } from './components/event-queue';
 import { PollingLoop } from './components/polling-loop';
@@ -62,7 +62,7 @@ import {
   calculateReuseRate,
   getReuseRateColorClass,
   type MemoryMetrics,
-} from './data-monitor-templates';
+} from './monitors/data-monitor-templates';
 
 import {
   renderHierarchicalTimingPanel,

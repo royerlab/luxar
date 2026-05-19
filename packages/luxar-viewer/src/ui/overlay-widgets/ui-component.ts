@@ -12,8 +12,8 @@
  * - Disposal pattern (cleanup all resources)
  */
 
-import { ThemeManager } from '../../../themes/theme-manager';
-import type { Theme } from '../../../themes/types';
+import { ThemeManager } from '../../themes/theme-manager';
+import type { Theme } from '../../themes/types';
 
 /**
  * Abstract base class for UI components
