@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { LoadedPointsDataAccumulator } from '../../../data/accumulators/all';
+import { LoadedPointsDataAccumulator } from '../../../data/accumulators/points';
 
 describe('Accumulator Performance Regression Tests', () => {
   let accumulator: LoadedPointsDataAccumulator;

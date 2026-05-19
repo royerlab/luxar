@@ -3,11 +3,9 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import {
-  LoadedPointsDataAccumulator,
-  LinesDataAccumulator,
-  GSplatsDataAccumulator,
-} from '../../../data/accumulators/all';
+import { LoadedPointsDataAccumulator } from '../../../data/accumulators/points';
+import { LinesDataAccumulator } from '../../../data/accumulators/lines';
+import { GSplatsDataAccumulator } from '../../../data/accumulators/gsplats';
 import * as THREE from 'three';
 
 describe('LoadedPointsDataAccumulator', () => {

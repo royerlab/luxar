@@ -55,7 +55,7 @@ import {
 } from '../loaders/extend-to-all-preflight';
 import type { ZarrSceneAttrs } from '../../types/zarr';
 import type { PointsMetadata } from '../../types/points';
-import { LoadedPointsDataAccumulator, type AccumulatorStats } from '../accumulators/all';
+import { LoadedPointsDataAccumulator, type AccumulatorStats } from '../accumulators/points';
 import { config as appConfig } from '../../config';
 import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profiler';
 import { DecompressedChunkCache, wrapWithCache, ChunkPrefetcher } from '../../cache';
