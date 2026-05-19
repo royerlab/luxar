@@ -15,7 +15,7 @@ export { ChunkPrefetcher } from './chunk-prefetcher';
 
 // L0 decompressed chunk cache (caches decoded zarr chunks to avoid Blosc decompression)
 export { DecompressedChunkCache } from './decompressed-chunk-cache';
-export { wrapWithCache, isCachedArray, unwrapCachedArray } from './cached-zarr-array';
+export { wrapWithCache, isCachedArray, unwrapCachedArray } from './decompressed-chunk-cache/cached-zarr-array';
 
 // Types
 export type { MultiLevelCachingStoreOptions } from './multi-level-caching-store';

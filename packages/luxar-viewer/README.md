@@ -281,15 +281,24 @@ src/
 │   ├── main.ts                    # Application entry point
 │   └── app.ts                     # Main application class
 ├── cache/
-│   ├── index.ts                   # Cache module exports
-│   ├── cached-zarr-array.ts       # Cached zarr array access
-│   ├── chunk-prefetcher.ts        # Chunk prefetching logic
-│   ├── decompressed-chunk-cache.ts # Decompressed chunk caching
-│   ├── lru-cache.ts               # LRU cache implementation
-│   ├── opfs-store.ts              # Origin Private File System store
-│   ├── segmented-lru-cache.ts     # Segmented LRU cache
-│   ├── two-level-caching-store.ts # Two-level caching store
-│   └── types.ts                   # Cache type definitions
+│   ├── index.ts                       # Public-API barrel
+│   ├── multi-level-caching-store.ts   # L1+L2 cascade orchestrator
+│   ├── chunk-prefetcher.ts            # Background prefetch loop
+│   ├── decompressed-chunk-cache.ts    # L0 decompressed chunk cache
+│   ├── lru-cache.ts                   # Generic LRU
+│   ├── types.ts                       # Shared cache types
+│   ├── decompressed-chunk-cache/
+│   │   └── cached-zarr-array.ts       # zarrita proxy wrapping L0
+│   └── multi-level-caching-store/
+│       ├── opfs-store.ts              # L2 OPFS persistence
+│       ├── segmented-lru-cache.ts     # L1 segmented LRU
+│       ├── bandwidth-window.ts        # Sliding-window throughput tracker
+│       ├── fetch-retry.ts             # fetchWithRetry + abort/URL helpers
+│       ├── validation-queue.ts        # Cross-instance validation serializer
+│       └── opfs-store/
+│           ├── buckets.ts             # Bucket-handle cache
+│           ├── metadata.ts            # _cache_meta.json lifecycle
+│           └── opfs-timeout.ts        # I/O timeout race helper
 ├── config/
 │   ├── index.ts                   # Unified configuration system
 │   ├── types.ts                   # Configuration type definitions
