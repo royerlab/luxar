@@ -10,7 +10,7 @@
 import { describe, expect, it } from 'vitest';
 import * as zarr from '../../../data/zarr';
 import { DecompressedChunkCache } from '../../../cache/decompressed-chunk-cache';
-import { wrapWithCache } from '../../../cache/cached-zarr-array';
+import { wrapWithCache } from '../../../cache/decompressed-chunk-cache/cached-zarr-array';
 
 const encoder = new TextEncoder();
 

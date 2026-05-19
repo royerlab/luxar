@@ -7,11 +7,11 @@
  * - Works with any zarr.Array without modification
  * - Requires no changes to zarrita source code
  *
- * @module cache/cached-zarr-array
+ * @module cache/decompressed-chunk-cache/cached-zarr-array
  */
 
-import type * as zarr from '../data/zarr';
-import { DecompressedChunkCache, type DecompressedChunk } from './decompressed-chunk-cache';
+import type * as zarr from '../../data/zarr';
+import { DecompressedChunkCache, type DecompressedChunk } from '../decompressed-chunk-cache';
 
 /**
  * Clone an ArrayBufferView by allocating a fresh underlying buffer.

@@ -12,7 +12,7 @@ import {
   isCachedArray,
   unwrapCachedArray,
   cloneArrayBufferView,
-} from '../../../cache/cached-zarr-array';
+} from '../../../cache/decompressed-chunk-cache/cached-zarr-array';
 
 // Mock zarr types for testing
 type MockChunk = {
