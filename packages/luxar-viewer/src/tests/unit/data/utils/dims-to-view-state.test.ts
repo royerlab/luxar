@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { simpleDimsToViewState } from '../../../../data/utils/dims-to-view-state';
+import { simpleDimsToViewState } from '../../../../data/dims-to-view-state';
 import type { SimpleDims } from '../../../../types/dims';
 
 const baseDims = (overrides: Partial<SimpleDims> = {}): SimpleDims => ({
