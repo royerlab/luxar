@@ -35,7 +35,8 @@ import {
   unregisterAllPickMaterials,
 } from './picking-system/registration';
 import { rayHitsAnyNode, invalidateBoxCache } from './picking-system/ray-aabb';
-import { voteWinner } from './picking-system/pick-render';
+import { voteWinner, type VoteEntry } from './picking-system/pick-render';
+import { evaluateSettle } from './picking-system/settle-loop';
 import type { Renderer, RendererCapabilities } from '../renderer-capabilities';
 import { readPixelsCompactAsync } from '../post-processing/hdr-pixel-utils';
 import {
@@ -86,15 +87,6 @@ export function computePickBufferSize(drawW: number, drawH: number): { w: number
   return { w, h };
 }
 
-/**
- * Two-axis settle window in milliseconds. A pick fires only after BOTH
- * the mouse and the pick buffer (camera/geometry) have been stable for
- * this long. 120 ms matches the standard tooltip-appearance delay used
- * by browsers and IDEs — short enough to feel responsive, long enough
- * to filter out cursor jitter and per-frame camera ticks.
- */
-const HOVER_SETTLE_MS = 120;
-
 export class PickingSystem {
   private pickScene: THREE.Scene;
   private pickTarget: THREE.WebGLRenderTarget;
@@ -143,7 +135,7 @@ export class PickingSystem {
   private _readFlipped: Float32Array;
 
   // Reused vote map (cleared per readback instead of `new Map()`).
-  private _votes: Map<number, { nodeId: number; elementId: number; weight: number }> = new Map();
+  private _votes: Map<number, VoteEntry> = new Map();
 
   /** When true, picking is suppressed (e.g. during orbit/pan/zoom). */
   private _suppressed = false;
@@ -400,19 +392,19 @@ export class PickingSystem {
     if (this._suppressed || !this._pendingMouse) return;
 
     const now = performance.now();
-    const mouseSettled = now - this._lastMouseMoveTime >= HOVER_SETTLE_MS;
-    const cameraSettled = now - this._lastDirtyTime >= HOVER_SETTLE_MS;
+    const decision = evaluateSettle({
+      now,
+      lastMouseMoveTime: this._lastMouseMoveTime,
+      lastDirtyTime: this._lastDirtyTime,
+      lastPickFiredTime: this._lastPickFiredTime,
+    });
 
-    if (!mouseSettled || !cameraSettled) {
+    if (decision.action === 'wait') {
       this._scheduleRaf();
       return;
     }
-
-    const newHover = this._lastMouseMoveTime > this._lastPickFiredTime;
-    const newCamera = this._lastDirtyTime > this._lastPickFiredTime;
-    if (!newHover && !newCamera) return; // nothing changed since last pick
-
-    if (!this._shouldPick()) return; // gated: no consumer for the result
+    if (decision.action === 'idle') return;
+    if (!this._shouldPick()) return;
 
     this._lastPickFiredTime = now;
     void this.performPick(this._pendingMouse.x, this._pendingMouse.y);
