@@ -22,22 +22,76 @@ The default backend is `THREE.WebGLRenderer` (GLSL `ShaderMaterial`). `WebGPURen
 
 ```
 rendering/
-├── point-material.ts                   # Custom points shaders (per-node GOG + scalar colormaps)
-├── line-material.ts                    # Instanced line rendering with fragment cap math
-├── gsplat-material.ts                  # Gaussian splatting with volumetric rendering
-├── blending-state.ts                   # Complete THREE blending state for every Luxar mode
+├── post-processing-manager.ts          # Public API — HDR pipeline orchestrator (hoisted to root in step 1)
 ├── material-manager.ts                 # Material creation, caching, and global camera updates
-├── material-colormap-helpers.ts        # Shared scalar-colormap guards and uniform helpers
+├── node-factory.ts                     # Scene-node factories for Points / Lines / GSplats
 ├── gpu-buffer-pool.ts                  # Geometry reuse with count and byte-budget eviction
-├── colormap-data.ts                    # Built-in colormap lookup tables (auto-generated)
+├── adaptive-dpr-manager.ts             # Adaptive resolution
 ├── colormap-textures.ts                # Built-in/custom DataTexture creation and cache disposal
+├── colormap-data.ts                    # Built-in colormap lookup tables (auto-generated)
+├── renderer-capabilities.ts            # WebGL2 vs WebGPU capability detection
+├── blending-state.ts                   # THREE blending state for every Luxar mode
+├── material-colormap-helpers.ts        # Shared scalar-colormap guards and uniform helpers
+├── material-sync-helpers.ts            # Geometry-commit material sync helpers
 ├── line-geometry.ts                    # Instanced line mesh creation/update helpers
 ├── gsplat-geometry.ts                  # Instanced GSplat mesh creation/update helpers
-├── shaders/                           # GLSL source for Points, Lines, and GSplats
-├── picking/                           # GPU picking materials and picking-system orchestration
-├── post-processing/                   # Mega-shader + bloom chain + FXAA + HDR capture (see post-processing/README.md)
-├── SPECIFICATIONS.md                  # Technical specification
-└── README.md                          # This documentation
+├── point-geometry.ts                   # Point unit-quad base geometry
+├── interleaved-attributes.ts           # InterleavedBufferAttribute helpers
+│
+├── materials/                          # P4: per-geometry stacks co-located by kind
+│   ├── point/   { material-glsl, material-tsl, shader-glsl, shader-tsl }
+│   ├── line/    { material-glsl, material-tsl, shader-glsl, shader-tsl }
+│   ├── gsplat/  { material-glsl, material-tsl, shader-glsl, shader-tsl, math }
+│   └── _shared/ { camera-aware-material, colormap-aware-material, camera-uniforms,
+│                  uniform-helpers, material-builder, tsl-helpers, glsl-lib, shader-source }
+│
+├── material-manager/                   # Step 4 helpers
+│   ├── factories.ts                    # VISUAL/PICKING/MEGA_SHADER_FACTORIES + cache-key fns
+│   ├── lru-cache.ts                    # Generic lruGet / lruSet
+│   ├── lifecycle.ts                    # subscribeToDispose + removeFromRegistries + SOFT_DISPOSE_FLAG
+│   └── stats.ts                        # getCacheStats snapshot
+│
+├── node-factory/                       # Step 6 helpers
+│   ├── validation.ts                   # validateLoadedPointsData / ColorMode / TransformFormat
+│   ├── transforms.ts                   # applyTransform
+│   ├── create-points-node.ts           # createPointsGeometry + createPointsMaterial
+│   ├── create-lines-node.ts            # createLinesNode + createEmptyLinesNode
+│   └── create-gsplats-node.ts          # createGSplatsNode + createEmptyGSplatsNode
+│
+├── post-processing/                    # Private helpers for post-processing-manager
+│   ├── bloom-chain / bloom-shaders / bloom.tsl
+│   ├── fxaa-pass / fxaa-shaders / fxaa.tsl
+│   ├── fullscreen-pass / fullscreen-geometry / render-target-sizing
+│   ├── mega-shader-material / mega-shader-material-tsl / mega-shader.glsl / mega.tsl
+│   ├── hdr-pixel-utils / hdr-capture
+│   └── post-processing-manager/        # Step 5 helpers
+│       ├── resource-lifecycle.ts       # buildTransientResources / disposeTransientResources / sizing
+│       ├── settings.ts                 # bloom / msaa / vignette / chromatic-lens setters
+│       ├── pipeline.ts                 # runPipeline (scene → HDR → bloom → mega → FXAA)
+│       └── capture.ts                  # captureHDRPixels / captureHDRAsEXR / renderToImageData
+│
+├── picking/                            # GPU picking materials + orchestration
+│   ├── picking-system.ts               # Orchestrator (decomposed in step 7)
+│   ├── picking-shaders.ts
+│   ├── {point,line,gsplat}-picking-material(-tsl).ts
+│   ├── {point,line,gsplat}-pick.tsl.ts
+│   └── picking-system/                 # Step 7 helpers
+│       ├── registration.ts             # disposePickMaterial / unregisterAllPickMaterials / PickNodeEntry
+│       ├── ray-aabb.ts                 # rayHitsAnyNode / getOrComputeWorldBox / invalidateBoxCache
+│       ├── pick-render.ts              # voteWinner (brightness-weighted majority over 5×5)
+│       └── settle-loop.ts              # HOVER_SETTLE_MS + evaluateSettle decision logic
+│
+├── gpu-buffer-pool/                    # Per-type adapters + eviction
+│   ├── {points,lines,gsplats}-adapter.ts
+│   ├── attribute-codec.ts / eviction-policy.ts / pool-stats.ts
+│   └── byte-budget-evictor.ts          # Step 8 — pulled out of gpu-buffer-pool.ts
+│
+├── shaders/                            # Barrel only — re-exports GLSL constants from materials/<kind>/shader-glsl.ts
+│   └── index.ts                        # Keeps the tsl-shader-parity e2e harness's import path stable
+│
+├── index.ts                            # Public-API barrel
+├── SPECIFICATIONS.md                   # Technical specification
+└── README.md                           # This documentation
 ```
 
 ---

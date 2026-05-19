@@ -4,6 +4,15 @@ WebGL post-processing pipeline for the viewer. Built from a custom
 mega-shader: tone mapping, bloom, anti-aliasing (FXAA / MSAA / SSAA),
 detector noise, vignette, and chromatic lens distortion.
 
+> **Note**: `PostProcessingManager` (the public API class) was hoisted
+> to `rendering/post-processing-manager.ts` (one level up from this
+> folder) in P1/step 1 of the rendering refactor. This folder now
+> contains only the private helpers that the orchestrator depends on
+> (bloom chain, FXAA pass, fullscreen geometry, mega-shader,
+> HDR-capture helpers) plus the `post-processing-manager/` sub-folder
+> with the four single-concern modules carved out of the orchestrator
+> in P6/steps 5.1–5.4 (resource-lifecycle, settings, pipeline, capture).
+
 This module previously sat on top of `pmndrs/postprocessing` and its
 `EffectComposer`. That was replaced with a hand-written three-stage
 pipeline that fuses all per-pixel effects into a single fullscreen
