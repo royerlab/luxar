@@ -16,6 +16,9 @@ export type { AdaptiveDPRConfig };
 import type { CacheConfig } from './sections/cache/types';
 export type { CacheConfig };
 
+import type { DimensionAnimationConfig } from './sections/dimension-animation/types';
+export type { DimensionAnimationConfig };
+
 /**
  * Configuration range with min/max/default/step
  */
@@ -547,31 +550,6 @@ export interface WebGLConfig {
   context: WebGLContextAttributes;
   renderer: WebGLRendererConfig;
   renderTarget: WebGLRenderTargetConfig;
-}
-
-/**
- * Dimension animation configuration
- * Controls FPS-based animation through dimension ranges with various loop modes
- */
-export interface DimensionAnimationConfig {
-  defaults: {
-    targetFPS: number;
-    loop: 'once' | 'loop' | 'bounce';
-    direction: 'forward' | 'backward';
-  };
-  presets: {
-    fps: number[];
-    customMin: number;
-    customMax: number;
-  };
-  timing: {
-    minFrameTimeMs: number;
-    continuousTraverseSeconds: number;
-  };
-  ui: {
-    showFPSFeedback: boolean;
-    feedbackThreshold: number;
-  };
 }
 
 /**
