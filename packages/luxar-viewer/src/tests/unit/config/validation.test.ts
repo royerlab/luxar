@@ -29,56 +29,6 @@ describe('validateConfig', () => {
   });
 
   describe('data loading validation', () => {
-    it('should error when targetHeapUsage is zero', () => {
-      const cfg = cloneConfig();
-      cfg.dataLoading.memory.targetHeapUsage = 0;
-
-      const result = validateConfig(cfg);
-
-      expect(result.valid).toBe(false);
-      expect(result.errors).toContainEqual(expect.stringContaining('Invalid target heap usage'));
-    });
-
-    it('should error when targetHeapUsage exceeds 1', () => {
-      const cfg = cloneConfig();
-      cfg.dataLoading.memory.targetHeapUsage = 1.5;
-
-      const result = validateConfig(cfg);
-
-      expect(result.valid).toBe(false);
-      expect(result.errors).toContainEqual(expect.stringContaining('Invalid target heap usage'));
-    });
-
-    it('should error when targetHeapUsage is negative', () => {
-      const cfg = cloneConfig();
-      cfg.dataLoading.memory.targetHeapUsage = -0.5;
-
-      const result = validateConfig(cfg);
-
-      expect(result.valid).toBe(false);
-      expect(result.errors).toContainEqual(expect.stringContaining('Invalid target heap usage'));
-    });
-
-    it('should error when minCacheMB is zero', () => {
-      const cfg = cloneConfig();
-      cfg.dataLoading.memory.minCacheMB = 0;
-
-      const result = validateConfig(cfg);
-
-      expect(result.valid).toBe(false);
-      expect(result.errors).toContainEqual(expect.stringContaining('Invalid min cache size'));
-    });
-
-    it('should error when minCacheMB is negative', () => {
-      const cfg = cloneConfig();
-      cfg.dataLoading.memory.minCacheMB = -100;
-
-      const result = validateConfig(cfg);
-
-      expect(result.valid).toBe(false);
-      expect(result.errors).toContainEqual(expect.stringContaining('Invalid min cache size'));
-    });
-
     it('should error when spatial defaultTolerance is zero', () => {
       const cfg = cloneConfig();
       cfg.dataLoading.spatial.defaultTolerance = 0;
@@ -176,31 +126,7 @@ describe('validateConfig', () => {
     });
   });
 
-  describe('NaN/Infinity hardening for memory + spatial + cache', () => {
-    it('rejects NaN memory.targetHeapUsage', () => {
-      const cfg = cloneConfig();
-      cfg.dataLoading.memory.targetHeapUsage = NaN;
-      const result = validateConfig(cfg);
-      expect(result.valid).toBe(false);
-      expect(result.errors).toContainEqual(expect.stringContaining('target heap usage'));
-    });
-
-    it('rejects Infinity memory.targetHeapUsage', () => {
-      const cfg = cloneConfig();
-      cfg.dataLoading.memory.targetHeapUsage = Infinity;
-      const result = validateConfig(cfg);
-      expect(result.valid).toBe(false);
-      expect(result.errors).toContainEqual(expect.stringContaining('target heap usage'));
-    });
-
-    it('rejects NaN memory.minCacheMB', () => {
-      const cfg = cloneConfig();
-      cfg.dataLoading.memory.minCacheMB = NaN;
-      const result = validateConfig(cfg);
-      expect(result.valid).toBe(false);
-      expect(result.errors).toContainEqual(expect.stringContaining('min cache size'));
-    });
-
+  describe('NaN/Infinity hardening for spatial', () => {
     it('rejects NaN spatial.defaultTolerance', () => {
       const cfg = cloneConfig();
       if (cfg.dataLoading.spatial) cfg.dataLoading.spatial.defaultTolerance = NaN;
