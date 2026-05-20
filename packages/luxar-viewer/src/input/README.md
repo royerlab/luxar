@@ -1033,5 +1033,5 @@ _For implementation details, see the source files in this directory._
 ## Dependencies
 
 - Internal: `controls`, `scene`, `ui/*`, `config`, `types/dims`,
-  `utils/log`, `utils/event-bus`, `utils/notifier`, `utils/clamp`,
+  `utils/log`, `utils/cross-layer/event-bus`, `utils/cross-layer/notifier`, `utils/clamp`,
   `config/zarr-bridge/viewer-state-capture`, `data`.

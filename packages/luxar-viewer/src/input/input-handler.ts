@@ -66,6 +66,10 @@ import { AnimationShortcuts } from './input-handler/key-bindings/animation-short
 import { registerAllKeyBindings } from './input-handler/key-bindings/register-all';
 import { isTypingInInput, isFocusOnSceneCanvas } from './input-handler/commands/focus-utils';
 import { nextControlType } from './input-handler/commands/control-mode';
+import {
+  toggleFullscreen,
+  type FullscreenCtx,
+} from './input-handler/window-events/fullscreen-toggle';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { updateSceneForDimensions } from '../data';
 import { eventBus } from '../utils/cross-layer/event-bus';
@@ -781,21 +785,11 @@ export class InputHandler {
    * @private
    */
   private toggleFullscreen(): void {
-    if (!document.fullscreenElement) {
-      // Enter fullscreen - target the document element for true fullscreen
-      document.documentElement.requestFullscreen().catch((err) => {
-        log.error(Modules.INPUT, 'Error attempting to enable fullscreen:', err);
-        // Fallback: try the canvas element
-        this.sceneManager.renderer.domElement.requestFullscreen().catch((fallbackErr) => {
-          log.error(Modules.INPUT, 'Fallback fullscreen also failed:', fallbackErr);
-        });
-      });
-    } else {
-      // Exit fullscreen
-      document.exitFullscreen().catch((err) => {
-        log.error(Modules.INPUT, 'Error attempting to exit fullscreen:', err);
-      });
-    }
+    toggleFullscreen(this.makeFullscreenCtx());
+  }
+
+  private makeFullscreenCtx(): FullscreenCtx {
+    return { sceneManager: this.sceneManager };
   }
 
   /**

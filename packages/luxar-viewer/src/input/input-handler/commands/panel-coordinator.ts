@@ -201,4 +201,4 @@ export class PanelCoordinator {
 }
 
 // Help overlay open is now exposed via `notifier.showHelp()` from
-// `utils/notifier`. Callers should import it from there directly.
+// `utils/cross-layer/notifier`. Callers should import it from there directly.
