@@ -17,6 +17,28 @@ import * as THREE from 'three';
 import type { ViewState, DataLoader } from '../data/data-loader-types';
 
 // ============================================================================
+// Effective-Radius Config (shared between data/points/ and workers/)
+// ============================================================================
+
+/**
+ * Configuration for effective radius calculation.
+ *
+ * Canonical definition lives here in `types/` because both
+ * `data/points/effective-radius-calculator.ts` (main-thread path) and
+ * `workers/data-worker/projection/points.ts` (WASM-accelerated worker
+ * path) consume the same shape. Re-exported from both sites for
+ * backward compatibility — existing importers don't need to change.
+ */
+export interface EffectiveRadiusConfig {
+  /** Which dimensions points extend through spatially */
+  spatialExtendDims: boolean[];
+  /** Maximum radius in the dataset for query optimization */
+  maxRadius: number;
+  /** Which dimensions are discrete (for exact matching) - DEPRECATED: non-spatial is always discrete */
+  discreteDims?: boolean[];
+}
+
+// ============================================================================
 // Element Array Types (Float16 is points-specific)
 // ============================================================================
 
