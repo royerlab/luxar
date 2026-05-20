@@ -33,7 +33,6 @@
  * to ensure consistent state across all nD objects in the scene.
  */
 
-import * as THREE from 'three';
 import { SceneManager } from '../scene/scene-manager';
 import { AnimationController } from '../scene/animation/animation-controller';
 import { DimensionAnimationManager } from '../scene/animation/dimension-animation-manager';
@@ -61,7 +60,6 @@ import { InputContextManager } from './input-handler/context-manager';
 import { computeDimensionStep, resolveSelectedDimension } from './input-handler/dimension-navigation/compute-step';
 import { PanelCoordinator } from './input-handler/commands/panel-coordinator';
 import { WindowEventHandler } from './input-handler/window-events/window-event-handler';
-import { AnimationShortcuts } from './input-handler/key-bindings/animation-shortcuts';
 import { registerAllKeyBindings } from './input-handler/key-bindings/register-all';
 import { isTypingInInput, isFocusOnSceneCanvas } from './input-handler/commands/focus-utils';
 import {
@@ -69,6 +67,11 @@ import {
   toggleInertialMode,
   type ControlModeCtx,
 } from './input-handler/commands/control-mode';
+import {
+  clearDimensionUI,
+  initDimensionSliders,
+  type DimNavSetupCtx,
+} from './input-handler/dimension-navigation/setup';
 import {
   toggleFullscreen,
   type FullscreenCtx,
@@ -79,7 +82,6 @@ import {
   type ViewerStateExportCtx,
 } from './input-handler/commands/viewer-state-export';
 import { log, Modules } from '../utils/log';
-import { updateSceneForDimensions } from '../data';
 
 /**
  * Central coordinator for all user input events and nD navigation.
@@ -339,31 +341,7 @@ export class InputHandler {
    * ```
    */
   clearDimensionUI(): void {
-    // Dispose of existing dimension sliders
-    if (this.dimensionSliders) {
-      this.dimensionSliders.dispose();
-      this.dimensionSliders = undefined;
-      this.panelCoordinator.setDimensionSliders(undefined);
-    }
-
-    // Dispose of animation manager
-    if (this.animationManager) {
-      this.animationManager.dispose();
-      this.animationManager = undefined;
-    }
-
-    // Remove the listener before resetting so a stale closure can't
-    // observe a half-reset state.
-    if (this.sceneDimsListener) {
-      sceneDimsManager.removeListener(this.sceneDimsListener);
-      this.sceneDimsListener = undefined;
-    }
-
-    // Reset the scene dimension manager
-    sceneDimsManager.reset();
-
-    // Reset selected dimension
-    this.selectedDimension = 0;
+    clearDimensionUI(this.makeDimNavSetupCtx());
   }
 
   /**
@@ -409,84 +387,7 @@ export class InputHandler {
    * ```
    */
   initDimensionSliders(): void {
-    // Initialize scene dims manager
-    if (!sceneDimsManager.initFromScene(this.sceneManager.scene)) {
-      return; // No nD objects found
-    }
-
-    const dims = sceneDimsManager.getDims();
-    const dimensionRanges = sceneDimsManager.getDimensionRanges();
-
-    if (!dims || !dimensionRanges) {
-      return;
-    }
-
-    // Clean up existing sliders if any
-    if (this.dimensionSliders) {
-      this.dimensionSliders.dispose();
-    }
-
-    // Build the slider panel only if a factory is injected. Listener
-    // wiring + animation manager + initial update are hoisted out of
-    // this branch so embed callers without a slider factory still get
-    // keyboard nD navigation that actually loads data.
-    if (this.dimensionSlidersFactory) {
-      const dimensionNames = sceneDimsManager.getDimensionNames();
-      const dimensionUnits = sceneDimsManager.getDimensionUnits();
-
-      this.dimensionSliders = this.dimensionSlidersFactory({
-        container: document.body,
-        dims,
-        dimensionRanges,
-        dimensionNames,
-        dimensionUnits,
-      });
-      this.panelCoordinator.setDimensionSliders(this.dimensionSliders);
-
-      // Show sliders only if we have non-displayed dimensions
-      this.dimensionSliders.setVisible(sceneDimsManager.hasNonDisplayedDimensions());
-    } else {
-      log.warning(
-        Modules.INPUT,
-        'No DimensionSliders factory provided; skipping slider construction'
-      );
-      this.panelCoordinator.setDimensionSliders(undefined);
-    }
-
-    // Initialize animation manager and register keyboard shortcuts —
-    // these don't depend on the slider panel existing.
-    this.initAnimationManager();
-
-    // Cross-link animation manager. Slider link is null-guarded; the
-    // recording-panel link runs unconditionally.
-    if (this.animationManager) {
-      this.dimensionSliders?.setAnimationManager(this.animationManager);
-      this.recordingPanel?.setAnimationManager(this.animationManager);
-    }
-
-    // Listen for dimension changes (returns Promise for animation
-    // synchronization). The slider .update() inside the callback is
-    // null-guarded, so this listener works fine without a slider
-    // panel. Stored on the instance so clearDimensionUI / dispose
-    // can remove it cleanly. Replace any prior listener instead of
-    // stacking when initDimensionSliders runs more than once.
-    if (this.sceneDimsListener) {
-      sceneDimsManager.removeListener(this.sceneDimsListener);
-    }
-    this.sceneDimsListener = async (): Promise<void> => {
-      if (this.dimensionSliders) {
-        this.dimensionSliders.update();
-      }
-      this.animationController.startAnimation();
-      await this.updateAllNDNodes();
-    };
-    sceneDimsManager.addListener(this.sceneDimsListener);
-
-    // Trigger initial update now that listener is registered — ensures
-    // data loads at the correct initial slice position whether or not
-    // a slider panel exists.
-    this.updateAllNDNodes();
-    this.animationController.startAnimation();
+    initDimensionSliders(this.makeDimNavSetupCtx());
   }
 
   /**
@@ -497,68 +398,31 @@ export class InputHandler {
     this.dimensionSliders?.setVisible(true);
   }
 
-  /**
-   * Initialize animation manager and register keyboard shortcuts
-   * Called from initDimensionSliders() after scene loads
-   * @private
-   */
-  private initAnimationManager(): void {
-    if (!this.animationManager) {
-      this.animationManager = new DimensionAnimationManager(
-        sceneDimsManager,
-        this.animationController
-      );
-
-      // Register animation shortcuts via the dedicated AnimationShortcuts
-      // concern. The context callbacks read instance state at dispatch
-      // time so subsequent dim selections / animation-manager swaps are
-      // picked up automatically.
-      const shortcuts = new AnimationShortcuts(this.contextManager, {
-        getSelectedDimension: () => this.selectedDimension,
-        getAnimationManager: () => this.animationManager,
-      });
-      shortcuts.register();
-    }
-  }
-
-  /**
-   * Update all nD nodes (points, lines, splats) with current dimension values.
-   *
-   * Called automatically when dimension slice positions change. Updates ALL
-   * nD-aware data nodes in the scene by:
-   * - Querying spatial indices for visible chunks in current slice
-   * - Loading necessary data chunks from cache/HTTP
-   * - Updating point positions, colors, and other attributes
-   * - Triggering re-render to display new data
-   *
-   * This is the core of nD navigation - it translates dimension changes into
-   * data updates. The update is asynchronous because it may need to fetch
-   * data over the network.
-   *
-   * @private
-   * @returns Promise that resolves when all nD nodes have been updated and
-   *          data loading is complete (or in progress)
-   *
-   * @example
-   * ```typescript
-   * // Called automatically by dimension change listener:
-   * sceneDimsManager.addListener(() => {
-   *   this.updateAllNDNodes();  // Update data for new slice
-   *   this.animationController.startAnimation();  // Re-render
-   * });
-   * ```
-   */
-  private async updateAllNDNodes(): Promise<void> {
-    const dims = sceneDimsManager.getDims();
-    if (!dims) {
-      return;
-    }
-
-    // Use the new loader architecture's update mechanism
-    await updateSceneForDimensions(dims, this.sceneManager.scene as unknown as THREE.Group);
-
-    // Trigger re-render after update
-    this.animationController.startAnimation();
+  private makeDimNavSetupCtx(): DimNavSetupCtx {
+    return {
+      sceneManager: this.sceneManager,
+      animationController: this.animationController,
+      dimensionSlidersFactory: this.dimensionSlidersFactory,
+      contextManager: this.contextManager,
+      panelCoordinator: this.panelCoordinator,
+      recordingPanel: this.recordingPanel,
+      getSelectedDimension: () => this.selectedDimension,
+      setSelectedDimension: (value) => {
+        this.selectedDimension = value;
+      },
+      getAnimationManager: () => this.animationManager,
+      setAnimationManager: (manager) => {
+        this.animationManager = manager;
+      },
+      getDimensionSliders: () => this.dimensionSliders,
+      setDimensionSliders: (sliders) => {
+        this.dimensionSliders = sliders;
+      },
+      getSceneDimsListener: () => this.sceneDimsListener,
+      setSceneDimsListener: (listener) => {
+        this.sceneDimsListener = listener;
+      },
+    };
   }
 
   /**
