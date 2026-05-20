@@ -248,6 +248,10 @@ export class VideoRecordingStrategy implements CaptureStrategy {
       clearTimeout(this.durationTimer);
       this.durationTimer = null;
     }
+    // Per-frame callbacks may still be registered if dispose fires
+    // mid-recording before onstop has unwound them.
+    this.animationController.removePerFrameCallback(this.keepAliveCallbackId);
+    this.animationController.removePerFrameCallback(this.turntableCallbackId);
     // Defensive: stop captureStream tracks even if mediaRecorder.onstop
     // didn't fire (browser quirks, mid-init dispose).
     this.cleanupCaptureStream();

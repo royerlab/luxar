@@ -13,6 +13,11 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { LuxarOrbitControls } from '../../../controls/luxar-orbit-controls';
+import {
+  computeVideoBitrate,
+  generateFfmpegScript,
+  getSupportedMimeType,
+} from '../../../ui/recording-panel/media-utilities';
 
 // Polyfill ImageData for jsdom (not available in jsdom by default)
 if (typeof globalThis.ImageData === 'undefined') {
@@ -342,11 +347,11 @@ describe('RecordingPanel', () => {
         rendererSize: null,
         resizeLocked: false,
       };
-      (panel as any).isRecording = true;
+      (panel as any).session.isRecording = true;
       (panel as any).session.savedRecordingState = recordingSavedState;
 
-      const saveStateSpy = vi.spyOn(panel as any, 'saveRecordingState');
-      const restoreStateSpy = vi.spyOn(panel as any, 'restoreRecordingState');
+      const saveStateSpy = vi.spyOn((panel as any).session, 'saveRecordingState');
+      const restoreStateSpy = vi.spyOn((panel as any).session, 'restoreRecordingState');
 
       vi.mocked(showToast).mockClear();
       try {
@@ -361,7 +366,7 @@ describe('RecordingPanel', () => {
       } finally {
         // Clear the stub state so afterEach's panel.dispose() doesn't try
         // to restore against the mock sceneManager.
-        (panel as any).isRecording = false;
+        (panel as any).session.isRecording = false;
         (panel as any).session.savedRecordingState = null;
         rafSpy.mockRestore();
       }
@@ -374,10 +379,10 @@ describe('RecordingPanel', () => {
         rendererSize: { width: 1920, height: 1080 },
         resizeLocked: true,
       };
-      (panel as any).isOfflineCaptureActive = true;
+      (panel as any).session.isOfflineCaptureActive = true;
       (panel as any).session.savedRecordingState = recordingSavedState;
 
-      const saveStateSpy = vi.spyOn(panel as any, 'saveRecordingState');
+      const saveStateSpy = vi.spyOn((panel as any).session, 'saveRecordingState');
 
       vi.mocked(showToast).mockClear();
       try {
@@ -387,7 +392,7 @@ describe('RecordingPanel', () => {
         expect((panel as any).session.savedRecordingState).toBe(recordingSavedState);
         expect(saveStateSpy).not.toHaveBeenCalled();
       } finally {
-        (panel as any).isOfflineCaptureActive = false;
+        (panel as any).session.isOfflineCaptureActive = false;
         (panel as any).session.savedRecordingState = null;
       }
     });
@@ -434,8 +439,8 @@ describe('RecordingPanel', () => {
 
     it('should stop recording when stopVideoRecording is called', () => {
       // Simulate an active recording
-      (panel as any).isRecording = true;
-      (panel as any).mediaRecorder = mockMediaRecorder;
+      (panel as any).session.isRecording = true;
+      (panel as any).videoRecordingStrategy.mediaRecorder = mockMediaRecorder;
 
       panel.stopVideoRecording();
 
@@ -450,9 +455,9 @@ describe('RecordingPanel', () => {
     it('should clear duration timer when stopping', () => {
       const clearTimeoutSpy = vi.spyOn(global, 'clearTimeout');
 
-      (panel as any).isRecording = true;
-      (panel as any).mediaRecorder = mockMediaRecorder;
-      (panel as any).durationTimer = setTimeout(() => {}, 10000);
+      (panel as any).session.isRecording = true;
+      (panel as any).videoRecordingStrategy.mediaRecorder = mockMediaRecorder;
+      (panel as any).videoRecordingStrategy.durationTimer = setTimeout(() => {}, 10000);
 
       panel.stopVideoRecording();
 
@@ -465,23 +470,23 @@ describe('RecordingPanel', () => {
       const fakeStream = {
         getTracks: vi.fn().mockReturnValue([trackA, trackB]),
       };
-      (panel as any).captureStream = fakeStream;
+      (panel as any).videoRecordingStrategy.captureStream = fakeStream;
       (panel as any).session.disposed = true;
-      (panel as any).mediaRecorder = mockMediaRecorder;
+      (panel as any).videoRecordingStrategy.mediaRecorder = mockMediaRecorder;
 
       // Drive the disposed branch of cleanupCaptureStream directly.
-      (panel as any).cleanupCaptureStream();
+      (panel as any).videoRecordingStrategy.cleanupCaptureStream();
 
       expect(fakeStream.getTracks).toHaveBeenCalledTimes(1);
       expect(trackA.stop).toHaveBeenCalledTimes(1);
       expect(trackB.stop).toHaveBeenCalledTimes(1);
-      expect((panel as any).captureStream).toBeNull();
+      expect((panel as any).videoRecordingStrategy.captureStream).toBeNull();
     });
 
     it('cleanupCaptureStream is idempotent when no stream is active', () => {
-      (panel as any).captureStream = null;
-      expect(() => (panel as any).cleanupCaptureStream()).not.toThrow();
-      expect((panel as any).captureStream).toBeNull();
+      (panel as any).videoRecordingStrategy.captureStream = null;
+      expect(() => (panel as any).videoRecordingStrategy.cleanupCaptureStream()).not.toThrow();
+      expect((panel as any).videoRecordingStrategy.captureStream).toBeNull();
     });
 
     it('MediaRecorder onstop after dispose: stops tracks, suppresses download + toast', async () => {
@@ -499,7 +504,7 @@ describe('RecordingPanel', () => {
       const fakeStream = {
         getTracks: vi.fn().mockReturnValue([trackA, trackB]),
       };
-      (panel as any).captureStream = fakeStream;
+      (panel as any).videoRecordingStrategy.captureStream = fakeStream;
 
       // Manually construct the onstop handler with the same shape
       // startVideoRecording installs. This avoids needing to drive
@@ -510,17 +515,17 @@ describe('RecordingPanel', () => {
 
       // Simulate dispose having run: set the disposed flag.
       (panel as any).session.disposed = true;
-      (panel as any).recordedChunks = [new Blob(['x'])];
-      (panel as any).isRecording = true;
+      (panel as any).videoRecordingStrategy.recordedChunks = [new Blob(['x'])];
+      (panel as any).session.isRecording = true;
 
       // Drive the disposed onstop branch directly (the same code
       // path startVideoRecording's onstop closure executes).
       const onstop = () => {
-        if ((panel as any).disposed) {
-          (panel as any).recordedChunks = [];
-          (panel as any).isRecording = false;
-          (panel as any).hideRecordingIndicator?.();
-          (panel as any).cleanupCaptureStream();
+        if ((panel as any).session.disposed) {
+          (panel as any).videoRecordingStrategy.recordedChunks = [];
+          (panel as any).session.isRecording = false;
+          (panel as any).session.hideRecordingIndicator();
+          (panel as any).videoRecordingStrategy.cleanupCaptureStream();
           return;
         }
         // Non-dispose branch (not exercised here).
@@ -530,11 +535,11 @@ describe('RecordingPanel', () => {
       // Tracks were stopped via cleanupCaptureStream.
       expect(trackA.stop).toHaveBeenCalledTimes(1);
       expect(trackB.stop).toHaveBeenCalledTimes(1);
-      expect((panel as any).captureStream).toBeNull();
+      expect((panel as any).videoRecordingStrategy.captureStream).toBeNull();
 
       // Recording state cleared.
-      expect((panel as any).isRecording).toBe(false);
-      expect((panel as any).recordedChunks).toEqual([]);
+      expect((panel as any).session.isRecording).toBe(false);
+      expect((panel as any).videoRecordingStrategy.recordedChunks).toEqual([]);
 
       // No artifact handoff.
       expect(downloadBlobSpy).not.toHaveBeenCalled();
@@ -567,8 +572,8 @@ describe('RecordingPanel', () => {
       // recording flag cleared, and a user-visible toast surfaced.
       expect(restoreStateSpy).toHaveBeenCalled();
       expect(cleanupStreamSpy).toHaveBeenCalled();
-      expect((panel as any).isRecording).toBe(false);
-      expect((panel as any).mediaRecorder).toBeNull();
+      expect((panel as any).session.isRecording).toBe(false);
+      expect((panel as any).videoRecordingStrategy.mediaRecorder).toBeNull();
       expect(showToast).toHaveBeenCalledWith('Video recording failed to start');
     });
   });
@@ -581,8 +586,8 @@ describe('RecordingPanel', () => {
         onstop: null,
         ondataavailable: null,
       };
-      (panel as any).isRecording = true;
-      (panel as any).mediaRecorder = mockMediaRecorder;
+      (panel as any).session.isRecording = true;
+      (panel as any).videoRecordingStrategy.mediaRecorder = mockMediaRecorder;
 
       panel.dispose();
 
@@ -601,7 +606,7 @@ describe('RecordingPanel', () => {
     });
 
     it('should resolve an active confirmation dialog when disposed', async () => {
-      const promise = (panel as any).showConfirmationDialog();
+      const promise = (panel as any).session.showConfirmationDialog({ mode: (panel as any).mode, options: (panel as any).options });
       expect(document.querySelector('.luxar-recording-confirm')).toBeTruthy();
 
       panel.dispose();
@@ -613,7 +618,7 @@ describe('RecordingPanel', () => {
 
   describe('recording indicator', () => {
     it('should create indicator element when recording starts', () => {
-      (panel as any).showRecordingIndicator();
+      (panel as any).session.showRecordingIndicator();
 
       const indicator = document.querySelector('.luxar-recording-indicator');
       expect(indicator).toBeTruthy();
@@ -622,28 +627,28 @@ describe('RecordingPanel', () => {
     });
 
     it('should remove indicator when recording stops', () => {
-      (panel as any).showRecordingIndicator();
+      (panel as any).session.showRecordingIndicator();
       expect(document.querySelector('.luxar-recording-indicator')).toBeTruthy();
 
-      (panel as any).hideRecordingIndicator();
+      (panel as any).session.hideRecordingIndicator();
       expect(document.querySelector('.luxar-recording-indicator')).toBeNull();
     });
 
     it('should clear interval timer when hiding indicator', () => {
       const clearIntervalSpy = vi.spyOn(global, 'clearInterval');
 
-      (panel as any).showRecordingIndicator();
-      (panel as any).hideRecordingIndicator();
+      (panel as any).session.showRecordingIndicator();
+      (panel as any).session.hideRecordingIndicator();
 
       expect(clearIntervalSpy).toHaveBeenCalled();
     });
 
     it('should remove indicator click listener when hiding indicator', () => {
-      (panel as any).showRecordingIndicator();
+      (panel as any).session.showRecordingIndicator();
       const indicator = document.querySelector('.luxar-recording-indicator') as HTMLElement;
       const removeSpy = vi.spyOn(indicator, 'removeEventListener');
 
-      (panel as any).hideRecordingIndicator();
+      (panel as any).session.hideRecordingIndicator();
 
       expect(removeSpy).toHaveBeenCalledWith('click', expect.any(Function));
     });
@@ -733,7 +738,7 @@ describe('RecordingPanel', () => {
 
   describe('confirmation dialog', () => {
     it('should create dialog with correct structure', () => {
-      const promise = (panel as any).showConfirmationDialog();
+      const promise = (panel as any).session.showConfirmationDialog({ mode: (panel as any).mode, options: (panel as any).options });
 
       const dialog = document.querySelector('.luxar-recording-confirm');
       expect(dialog).toBeTruthy();
@@ -751,7 +756,7 @@ describe('RecordingPanel', () => {
     });
 
     it('should resolve true when Start is clicked', () => {
-      const promise = (panel as any).showConfirmationDialog();
+      const promise = (panel as any).session.showConfirmationDialog({ mode: (panel as any).mode, options: (panel as any).options });
 
       const startBtn = document.querySelector('[data-action="start"]') as HTMLElement;
       startBtn?.click();
@@ -762,7 +767,7 @@ describe('RecordingPanel', () => {
     });
 
     it('should resolve false when Escape is pressed', () => {
-      const promise = (panel as any).showConfirmationDialog();
+      const promise = (panel as any).session.showConfirmationDialog({ mode: (panel as any).mode, options: (panel as any).options });
 
       const overlay = document.querySelector('.luxar-recording-confirm') as HTMLElement;
       overlay?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
@@ -773,7 +778,7 @@ describe('RecordingPanel', () => {
     });
 
     it('should resolve true when Enter is pressed', () => {
-      const promise = (panel as any).showConfirmationDialog();
+      const promise = (panel as any).session.showConfirmationDialog({ mode: (panel as any).mode, options: (panel as any).options });
 
       const overlay = document.querySelector('.luxar-recording-confirm') as HTMLElement;
       overlay?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
@@ -784,7 +789,7 @@ describe('RecordingPanel', () => {
     });
 
     it('should remove dialog after resolution', async () => {
-      const promise = (panel as any).showConfirmationDialog();
+      const promise = (panel as any).session.showConfirmationDialog({ mode: (panel as any).mode, options: (panel as any).options });
 
       const cancelBtn = document.querySelector('[data-action="cancel"]') as HTMLElement;
       cancelBtn?.click();
@@ -794,7 +799,7 @@ describe('RecordingPanel', () => {
     });
 
     it('sets modal-dialog ARIA attributes', async () => {
-      const promise = (panel as any).showConfirmationDialog();
+      const promise = (panel as any).session.showConfirmationDialog({ mode: (panel as any).mode, options: (panel as any).options });
 
       const overlay = document.querySelector('.luxar-recording-confirm') as HTMLElement;
       expect(overlay.getAttribute('role')).toBe('dialog');
@@ -810,7 +815,7 @@ describe('RecordingPanel', () => {
     });
 
     it('focuses the primary Start button on open', async () => {
-      const promise = (panel as any).showConfirmationDialog();
+      const promise = (panel as any).session.showConfirmationDialog({ mode: (panel as any).mode, options: (panel as any).options });
       const startBtn = document.querySelector(
         '.luxar-recording-confirm__btn--primary'
       ) as HTMLElement;
@@ -828,7 +833,7 @@ describe('RecordingPanel', () => {
       sentinel.focus();
       expect(document.activeElement).toBe(sentinel);
 
-      const promise = (panel as any).showConfirmationDialog();
+      const promise = (panel as any).session.showConfirmationDialog({ mode: (panel as any).mode, options: (panel as any).options });
       // Dialog steals focus.
       expect(document.activeElement).not.toBe(sentinel);
 
@@ -842,7 +847,10 @@ describe('RecordingPanel', () => {
 
   describe('turntable rotation', () => {
     it('should add per-frame callback when turntable starts', () => {
-      (panel as any).startTurntableRotation();
+      (panel as any).videoRecordingStrategy.startTurntableRotationForTests(
+        (panel as any).options,
+        (panel as any).session
+      );
 
       expect(mockAnimController.addPerFrameCallback).toHaveBeenCalledWith(
         'recording-turntable',
@@ -893,42 +901,35 @@ describe('RecordingPanel', () => {
 
   describe('EXR sequence recording', () => {
     it('should initialize EXR sequence state fields', () => {
-      expect((panel as any).isEXRSequenceRecording).toBe(false);
+      expect((panel as any).session.isEXRSequenceRecording).toBe(false);
     });
 
     it('should branch to EXR sequence when format is exr in video mode', async () => {
       (panel as any).options.outputFormat = 'exr';
       (panel as any).mode = 'video';
 
-      const startEXRSpy = vi
-        .spyOn(panel as any, 'startEXRSequenceRecording')
+      // EXR always goes through the offline-capture strategy regardless of mode.
+      const offlineSpy = vi
+        .spyOn((panel as any).offlineCaptureStrategy, 'run')
         .mockResolvedValue(undefined);
 
       await panel.startVideoRecording();
 
-      expect(startEXRSpy).toHaveBeenCalled();
+      expect(offlineSpy).toHaveBeenCalled();
     });
 
     it('should stop EXR sequence recording via stopVideoRecording', () => {
-      (panel as any).isRecording = true;
-      (panel as any).isEXRSequenceRecording = true;
+      (panel as any).session.isRecording = true;
+      (panel as any).session.isEXRSequenceRecording = true;
+      // Stub abort so we observe the call without needing a live AbortController.
+      const abortSpy = vi.spyOn((panel as any).offlineCaptureStrategy, 'abort');
 
       panel.stopVideoRecording();
 
-      // The offline loop checks isRecording — stopVideoRecording sets flags to signal the loop
-      expect((panel as any).isRecording).toBe(false);
-      expect((panel as any).isEXRSequenceRecording).toBe(false);
-    });
-
-    it('should set isRecording flag to signal the offline loop to stop', () => {
-      (panel as any).isRecording = true;
-      (panel as any).isEXRSequenceRecording = true;
-
-      (panel as any).stopEXRSequenceRecording();
-
-      // Offline loop architecture: stop methods just set flags
-      expect((panel as any).isRecording).toBe(false);
-      expect((panel as any).isEXRSequenceRecording).toBe(false);
+      // The offline loop's finally is what actually clears the flags;
+      // stopVideoRecording's job here is to route to the offline
+      // strategy's abort.
+      expect(abortSpy).toHaveBeenCalled();
     });
   });
 
@@ -940,7 +941,7 @@ describe('RecordingPanel', () => {
         play: vi.fn(),
       };
       panel.setAnimationManager(mockAnimManager as any);
-      expect((panel as any).animationManager).toBe(mockAnimManager);
+      expect((panel as any).session.animationManager).toBe(mockAnimManager);
     });
 
     it('should clear delayed slider playback on dispose', () => {
@@ -953,7 +954,7 @@ describe('RecordingPanel', () => {
       panel.setAnimationManager(mockAnimManager as any);
       (panel as any).options.syncDimensionIndex = 3;
 
-      (panel as any).startSliderSync();
+      (panel as any).session.startSliderSync(3, () => panel.stopVideoRecording());
       panel.dispose();
       vi.advanceTimersByTime(150);
 
@@ -975,48 +976,42 @@ describe('RecordingPanel', () => {
 
   describe('computeVideoBitrate', () => {
     it('low quality at 1080p30', () => {
-      (panel as any).options.videoQuality = 'low';
-      (panel as any).options.videoFPS = 30;
-      const bitrate = (panel as any).computeVideoBitrate(1920, 1080);
+      const bitrate = computeVideoBitrate(1920, 1080, 30, 'low');
       expect(bitrate).toBe(Math.round(1920 * 1080 * 30 * 0.04));
     });
 
     it('high quality at 1080p60', () => {
-      (panel as any).options.videoQuality = 'high';
-      (panel as any).options.videoFPS = 60;
-      const bitrate = (panel as any).computeVideoBitrate(1920, 1080);
+      const bitrate = computeVideoBitrate(1920, 1080, 60, 'high');
       expect(bitrate).toBe(Math.round(1920 * 1080 * 60 * 0.15));
     });
 
     it('max quality at 4K', () => {
-      (panel as any).options.videoQuality = 'max';
-      (panel as any).options.videoFPS = 60;
-      const bitrate = (panel as any).computeVideoBitrate(3840, 2160);
+      const bitrate = computeVideoBitrate(3840, 2160, 60, 'max');
       expect(bitrate).toBe(Math.round(3840 * 2160 * 60 * 0.3));
     });
   });
 
   describe('generateFfmpegScript', () => {
     it('generates valid bash script', () => {
-      const script = (panel as any).generateFfmpegScript(30, 300, 'png');
+      const script = generateFfmpegScript(30, 300, 'png');
       expect(script.startsWith('#!/bin/bash')).toBe(true);
       expect(script).toContain('set -e');
     });
 
     it('uses correct frame pattern for PNG', () => {
-      const script = (panel as any).generateFfmpegScript(60, 600, 'png');
+      const script = generateFfmpegScript(60, 600, 'png');
       expect(script).toContain('frame_%06d.png');
       expect(script).toContain('framerate 60');
     });
 
     it('includes HDR section for EXR', () => {
-      const script = (panel as any).generateFfmpegScript(30, 300, 'exr');
+      const script = generateFfmpegScript(30, 300, 'exr');
       expect(script).toContain('yuv420p10le');
       expect(script).toContain('bt2020');
     });
 
     it('excludes HDR section for non-EXR', () => {
-      const script = (panel as any).generateFfmpegScript(30, 300, 'jpg');
+      const script = generateFfmpegScript(30, 300, 'jpg');
       expect(script).not.toContain('yuv420p10le');
     });
   });
@@ -1101,7 +1096,7 @@ describe('RecordingPanel', () => {
       (globalThis as any).MediaRecorder = {
         isTypeSupported: vi.fn((type: string) => type.includes('vp9')),
       };
-      const result = (panel as any).getSupportedMimeType();
+      const result = getSupportedMimeType();
       expect(result).toBe('video/webm;codecs=vp9');
     });
 
@@ -1109,7 +1104,7 @@ describe('RecordingPanel', () => {
       (globalThis as any).MediaRecorder = {
         isTypeSupported: vi.fn((type: string) => type.includes('vp8')),
       };
-      const result = (panel as any).getSupportedMimeType();
+      const result = getSupportedMimeType();
       expect(result).toBe('video/webm;codecs=vp8');
     });
 
@@ -1117,13 +1112,13 @@ describe('RecordingPanel', () => {
       (globalThis as any).MediaRecorder = {
         isTypeSupported: vi.fn().mockReturnValue(false),
       };
-      const result = (panel as any).getSupportedMimeType();
+      const result = getSupportedMimeType();
       expect(result).toBeNull();
     });
 
     it('returns null when MediaRecorder undefined', () => {
       delete (globalThis as any).MediaRecorder;
-      const result = (panel as any).getSupportedMimeType();
+      const result = getSupportedMimeType();
       expect(result).toBeNull();
     });
   });
