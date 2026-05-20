@@ -20,12 +20,8 @@
  */
 
 import type { SimpleDims } from '../../../types/dims';
-import {
-  getNonDisplayedDimensions,
-  calculateStepSize,
-  calculateNextPosition,
-  mapKeyToDimension,
-} from '../../input-handler-utils';
+import { getNonDisplayedDimensions, mapKeyToDimension } from './selection';
+import { calculateStepSize, calculateNextPosition } from './step-math';
 
 /** Result of `computeDimensionStep` — the next position for the targeted dim. */
 export interface DimensionStepResult {
