@@ -102,6 +102,11 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
   dispose(): void {
     this.sessionAbort?.abort('disposed');
     this.overlayCleanup?.();
+    // The normal loop path removes these in its finally; this covers
+    // the dispose-while-awaiting case where the loop hasn't reached
+    // its finally yet.
+    this.animationController.removePerFrameCallback(OfflineCaptureStrategy.CAPTURE_CALLBACK_ID);
+    this.animationController.removePerFrameCallback(OfflineCaptureStrategy.KEEPALIVE_CALLBACK_ID);
   }
 
   // ── Test-only access (Panel proxies forward to these) ─────────
