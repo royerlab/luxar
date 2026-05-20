@@ -39,11 +39,11 @@ import {
 import { createPointQuadGeometry } from '../../../rendering/point-geometry';
 import { LINE_SOURCE } from '../../../rendering/materials/line/shader-glsl';
 import { lineWebGPUFactory, buildLineTSLNodesFromUniforms } from '../../../rendering/materials/line/shader-tsl';
-import { LINE_PICK_SOURCE } from '../../../rendering/picking/picking-shaders';
+import { LINE_PICK_SOURCE } from '../../../rendering/picking/line/shaders';
 import {
   linePickWebGPUFactory,
   buildLinePickTSLNodesFromUniforms,
-} from '../../../rendering/picking/line-pick.tsl';
+} from '../../../rendering/picking/line/pick.tsl';
 import { createLineQuadGeometry } from '../../../rendering/line-geometry';
 import { GSPLAT_SOURCE } from '../../../rendering/materials/gsplat/shader-glsl';
 import {

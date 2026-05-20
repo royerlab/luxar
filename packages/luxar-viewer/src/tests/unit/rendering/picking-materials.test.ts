@@ -8,8 +8,8 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import { PointPickingMaterial } from '../../../rendering/picking/point/material';
-import { LinePickingMaterial } from '../../../rendering/picking/line-picking-material';
-import { LinePickingTSLMaterial } from '../../../rendering/picking/line-picking-material-tsl';
+import { LinePickingMaterial } from '../../../rendering/picking/line/material';
+import { LinePickingTSLMaterial } from '../../../rendering/picking/line/material-tsl';
 import { GSplatPickingMaterial } from '../../../rendering/picking/gsplat-picking-material';
 import {
   MAX_PICK_BUFFER_DIM,
