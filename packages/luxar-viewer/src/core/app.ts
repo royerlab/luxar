@@ -57,6 +57,7 @@ import { openCacheStatsView as openCacheStatsViewImpl } from './app/debug/cache-
 import { disposeOverlays as disposeOverlaysImpl } from './app/overlays/dispose-overlays';
 import { initColormapLegend as initColormapLegendImpl } from './app/overlays/init-colormap-legend';
 import { initOverlays as initOverlaysImpl } from './app/overlays/init-overlays';
+import { installFocusHandling } from './app/lifecycle/focus-handling';
 
 import type { LuxarAppOptions } from './app/options';
 export type { LuxarAppOptions } from './app/options';
@@ -825,23 +826,10 @@ export class LuxarApp {
    * This prevents stale renders when switching between windows/tabs
    */
   private setupFocusHandling(): void {
-    this.events.on(window, 'focus', () => {
-      // Suppress focus-triggered renders during recording — they can interfere
-      // with the deterministic capture loop or cause resize side effects
-      if (this.recordingPanel?.isCurrentlyRecording()) return;
-      this.animationController.startAnimation();
-      log.info(Modules.LUXAR, 'Window focused - triggering render refresh');
-    });
-    this.events.on(document, 'visibilitychange', () => {
-      // Don't stop animation during recording (offline capture needs the loop alive)
-      if (this.recordingPanel?.isCurrentlyRecording()) return;
-      if (document.hidden) {
-        this.animationController.stopAnimation();
-        log.info(Modules.LUXAR, 'Document hidden - stopping animation to save resources');
-      } else {
-        this.animationController.startAnimation();
-        log.info(Modules.LUXAR, 'Document became visible - resuming animation');
-      }
+    installFocusHandling({
+      events: this.events,
+      animationController: this.animationController,
+      recordingPanel: this.recordingPanel,
     });
   }
 
