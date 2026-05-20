@@ -466,7 +466,7 @@ luxar export SOURCE -o DIR              # Export standalone folder (Python 3 + b
 luxar export SOURCE -o DIR --native macos|linux-amd64|linux-arm64
                                         # Double-clickable native bundle (.app / portable folder)
 luxar profiles                          # List network simulation profiles
-luxar gsplat <subcommand> [OPTIONS]     # Gaussian splatting tools (fit, cal, lod, convert, render, merge, ...)
+luxar gsplat <subcommand> [OPTIONS]     # Gaussian splatting tools (fit, cal, lod {additive,substitutive,pyramid}, migrate-format, convert, render, merge, ...)
 ```
 
 See [`docs/tutorials/distributing_scenes.rst`](docs/tutorials/distributing_scenes.rst) for the full distribution story (folder export, native bundles, sharing across OSes, Gatekeeper handling).

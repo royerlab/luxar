@@ -6,6 +6,47 @@ All notable changes to Luxar are documented in this file.
 
 ### May 2026
 
+#### Changed — `.gsplats.zarr` format v2.0 (2-D LOD matrix) (2026-05-20)
+
+The `.gsplats.zarr` on-disk format moves to v2.0, a 2-D
+`substitutive × additive` LOD matrix housed under a single self-describing
+file. This breaks v1.x compatibility at the runtime; convert legacy files
+(v1.0 single-LOD, v1.1 multi-additive, or the pre-v2.0 substitutive
+directory + manifest.json) with the new `luxar gsplat migrate-format`
+command. Luxar is pre-1.0; no historical reading path is retained outside
+the migrate tool.
+
+**On-disk layout.** Splat data lives at
+`splats/substitutive_<s>/additive_<a>/` with root attrs `format_version`,
+`n_substitutive`, `default_substitutive`. The four canonical pyramid shapes
+all use the same layout: `[1, 1]` (one splat set), `[1, M]` (additive
+ladder), `[N, 1]` (substitutive pyramid), and `[N, M_i]` (full 2-D).
+
+**Python.** `GSplatLOD` is renamed `AdditiveSubLOD`; a new `SubstitutiveLevel`
+holds the per-substitutive-level metadata; `GSplatData` is refactored around
+`substitutive_levels`. Accessors: `additive_sublods`, `n_additive_sublods`,
+`additive_sublod(k)`, `additive_prefix(k)` (the old `lods` / `n_lods` /
+`at_lod` / `up_to_lod` names are gone). New 2-D accessors: `n_substitutive`,
+`at_substitutive(s)`, `cell(s, a)`, `from_substitutive_levels(...)`.
+
+**LOD producers.** `make_substitutive_lod` now returns a single `GSplatData`
+with `n_substitutive = levels + 1` (was `list[GSplatData]`). `make_additive_lod`
+gains `substitutive_level=` to target one substitutive level of a pyramid.
+New `make_lod_pyramid` builds the full 2-D matrix in one call.
+
+**CLI.** `luxar gsplat lod substitutive` writes a single v2.0 file (no more
+directory + manifest.json). `luxar gsplat lod additive` accepts
+`--substitutive-level <s>`. New `luxar gsplat lod pyramid` builds the full
+2-D pyramid in one shot. New `luxar gsplat migrate-format` converts
+legacy layouts to v2.0.
+
+**Scene + viewer.** `LuxarZarrCompiler.write_gsplats_multi_lod` writes the
+v2.0 layout (`splats/substitutive_0/additive_<i>/`). The TypeScript viewer's
+`createProgressiveGSplatsLoader` walks
+`substitutive_<defaultSub>/additive_<i>/`; `GSplatsMetadata` adds
+`format_version`, `n_substitutive`, `default_substitutive`,
+`n_additive_sublods_default` (the legacy `n_lods` field is dropped).
+
 #### Changed — Cache final polish after S1–S7 (2026-05-10)
 
 - Added browser screenshot artifact coverage for the Cache tab's status

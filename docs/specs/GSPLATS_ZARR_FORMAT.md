@@ -19,7 +19,11 @@ The `gsplats.io` package provides I/O operations for persisting and loading Gaus
 1. **Save/Load fitted results** - Persist expensive fitting results for later use
 2. **Lightweight rendering** - Load only splat data for visualization
 3. **Provenance tracking** - Record what image/parameters produced the splats
-4. **Multi-LOD storage** - Store progressive fitting results as hierarchical LOD levels (format v1.1)
+4. **2-D LOD storage** - Single self-describing file carrying any of:
+   - one splat set (trivial `[1, 1]` case)
+   - an additive ladder (`[1, M]` — same N splats sliced into prefix-sum levels)
+   - a substitutive pyramid (`[N, 1]` — synthesised representative splats per level)
+   - a full 2-D pyramid (`[N, M_i]` — substitutive levels each with their own additive ladder)
 5. **Future: Checkpoint/Resume** - Pause and resume fitting (deferred)
 
 ## Core Data Structure
@@ -57,98 +61,82 @@ The `n_splats` attribute in `splats/.zattrs` always reflects the true count (N),
 
 ## Format Versions
 
-Two format versions exist:
+The current format is **v2.0**, a 2-D ``substitutive × additive`` layout.
+Earlier versions (v1.0 single-LOD; v1.1 additive multi-LOD; pre-v2.0 substitutive
+directory + manifest.json) are no longer read by the runtime — convert legacy
+files with ``luxar gsplat migrate-format <input> <output.gsplats.zarr>``.
 
-- **v1.0**: Single-LOD flat layout. Used when `GSplatData.n_lods == 1`.
-- **v1.1**: Multi-LOD with per-LOD subgroups. Used when `GSplatData.n_lods > 1` (from progressive fitting).
+A v2.0 file always carries at least one substitutive level and at least one
+additive sub-LOD per level. The four canonical shapes are:
 
-The loader detects the version from `format_version` in root `.zattrs` and handles both transparently.
+| Shape         | Meaning                                                      |
+|---------------|--------------------------------------------------------------|
+| `[1, 1]`      | One splat set (the "trivial" case — output of plain `fit`)   |
+| `[1, M]`      | One substitutive level with an M-step additive ladder        |
+| `[N, 1]`      | N substitutive levels, each a single flat splat set          |
+| `[N, M_i]`    | Full pyramid: N substitutive levels, each with its own ladder|
 
 ---
 
-## Zarr Structure (v1.0 — Single LOD)
+## Zarr Structure (v2.0 — 2-D substitutive × additive)
 
 ```
 fitted.gsplats.zarr/
-├── .zattrs                      # Format metadata (format_version: "1.0")
-├── .zmetadata                   # Consolidated metadata for fast loading
+├── .zattrs                                 # Format metadata: format_version: "2.0",
+│                                           # format_type, timestamp, luxar_gsplats_version,
+│                                           # description, n_substitutive, default_substitutive
+├── .zmetadata                              # Consolidated metadata for fast loading
 │
-├── splats/                      # Core splat data (flat)
-│   ├── centers                  # (N, d) float32, spatially ordered
-│   ├── amplitudes               # (N,) or (1,) float32, spatially ordered
-│   ├── cholesky_factors         # (N, k) or (1, k) float32, spatially ordered
-│   ├── colors                   # (N, 3) or (1, 3) float32/uint8, optional
-│   ├── chunk_bounds             # (num_chunks, d, 2) float32, single chunk
-│   └── .zattrs                  # n_splats, ndim, truncation_radius, ordering info
-│
-├── fitting/                     # Optimization info (optional)
-│   ├── .zattrs                  # Common: time_seconds, fitter_name, fitter_version
-│   └── config/
-│       └── .zattrs              # Fitter-specific parameters
-│
-└── provenance/                  # Image lineage (optional)
-    └── .zattrs                  # source_file, shape, dtype, normalization
-```
-
-## Zarr Structure (v1.1 — Multi-LOD)
-
-```
-fitted.gsplats.zarr/
-├── .zattrs                      # Format metadata (format_version: "1.1", n_lods)
-├── .zmetadata                   # Consolidated metadata
-│
-├── splats/                      # LOD container
-│   ├── .zattrs                  # type: "gsplats", n_lods, n_splats_total
+├── splats/                                 # Splat container (always a substitutive_<s> hierarchy)
+│   ├── .zattrs                             # type: "gsplats", n_substitutive,
+│   │                                       # default_substitutive, truncation_radius,
+│   │                                       # n_additive_sublods_default, center_bounds, …
 │   │
-│   ├── lod_0/                   # LOD 0 (coarsest — pass 0 splats)
-│   │   ├── centers              # (N_0, d) float32
-│   │   ├── amplitudes           # (N_0,) float32
-│   │   ├── cholesky_factors     # (N_0, k) float32
-│   │   ├── colors               # (N_0, 3) optional
-│   │   ├── chunk_bounds         # (num_chunks_0, d, 2) float32
-│   │   └── .zattrs              # Per-LOD: n_splats, ndim, ordering, lod_stats
+│   ├── substitutive_0/                     # Finest substitutive level (= the original/finest)
+│   │   ├── .zattrs                         # n_additive_sublods, compression_factor=1,
+│   │   │                                   # parent_method=null, level_index=0, level_stats?
+│   │   ├── additive_0/                     # Coarsest additive sub-LOD
+│   │   │   ├── centers                     # (N_{0,0}, d) float32, spatially ordered
+│   │   │   ├── amplitudes                  # (N_{0,0},) float32
+│   │   │   ├── cholesky_factors            # (N_{0,0}, k) float32
+│   │   │   ├── colors                      # (N_{0,0}, 3) float32/uint8, optional
+│   │   │   ├── chunk_bounds                # (num_chunks, d, 2) float32
+│   │   │   └── .zattrs                     # n_splats, ndim, ordering, lod_stats, …
+│   │   ├── additive_1/                     # Only present when M_0 > 1
+│   │   └── additive_{M_0-1}/
 │   │
-│   ├── lod_1/                   # LOD 1 (finer — pass 1 residual splats)
-│   │   └── ...                  # Same structure as lod_0
+│   ├── substitutive_1/                     # K^1 splats (e.g. K=4)
+│   │   ├── .zattrs                         # compression_factor=K, parent_method, level_index
+│   │   └── additive_0/                     # Typically a single flat set; M_i can vary per level
 │   │
-│   └── lod_N/                   # LOD N (finest)
-│       └── ...
+│   └── substitutive_{N-1}/                 # K^(N-1) splats (coarsest)
 │
-├── fitting/                     # Optional
-│   └── ...
+├── fitting/                                # Optimization info (optional, unchanged from v1.x)
+│   ├── .zattrs                             # time_seconds, iterations, converged, psnr_db, …
+│   └── config/.zattrs                      # Fitter hyperparameters
 │
-└── provenance/                  # Optional
-    └── ...
+└── provenance/                             # Image lineage (optional, unchanged from v1.x)
+    └── .zattrs                             # source_file, shape, dtype, normalization
 ```
-
-Each LOD subgroup has the same internal structure as the v1.0 `splats/` group (arrays, ordering, chunk_bounds). LODs are additive: to render at LOD level L, load and combine LODs 0 through L.
 
 ### Root Attributes (.zattrs)
 
-**v1.0**:
 ```json
 {
-  "format_version": "1.0",
+  "format_version": "2.0",
   "format_type": "gsplats_zarr",
-  "timestamp": "2025-01-15T14:30:00Z",
+  "timestamp": "2026-05-20T10:00:00Z",
   "luxar_gsplats_version": "X.Y.Z",
-  "description": "Optional user description"
+  "description": "Optional user description",
+  "n_substitutive": 3,
+  "default_substitutive": 0
 }
 ```
 
-**v1.1** (additional fields):
-```json
-{
-  "format_version": "1.1",
-  "format_type": "gsplats_zarr",
-  "n_lods": 5,
-  "timestamp": "2026-03-27T10:00:00Z",
-  "luxar_gsplats_version": "X.Y.Z",
-  "description": "Progressive fit, 5 passes"
-}
-```
-
-**Note**: Core splat metadata (`n_splats`, `ndim`) is stored in `splats/.zattrs` (single source of truth). For v1.1, each `splats/lod_i/.zattrs` has per-LOD counts.
+**Note**: Core per-cell splat metadata (`n_splats`, `ndim`, `ordering`, …) lives
+on each `splats/substitutive_<s>/additive_<a>/.zattrs`. The outer
+`splats/.zattrs` carries pyramid-wide attributes (`n_substitutive`,
+`default_substitutive`, `truncation_radius`, `n_additive_sublods_default`).
 
 ### Splats Group Attributes (Single Source of Truth)
 
@@ -717,7 +705,7 @@ incrementally for progressive rendering.
 | Covariance storage | Cholesky (packed) | Already have it, compresses well |
 | Fitting info | Fitter-agnostic design | Allows other programs to use format |
 | Checkpoint/Resume | Deferred | Focus on basic I/O first |
-| Multi-LOD | v1.1 per-LOD subgroups | Progressive fitting produces additive LODs; viewer loads incrementally |
+| 2-D LOD | v2.0 `substitutive_<s>/additive_<a>/` cells | Substitutive (replacement) and additive (extension) compose as a 2-D matrix in a single file |
 | Image embedding | No | Keep format focused on splats |
 | Compression | Blosc + BITSHUFFLE + zstd | Standard, well-supported |
 | Delta encoding | No | Blosc shuffle sufficient |
@@ -737,6 +725,28 @@ incrementally for progressive rendering.
 ---
 
 ## Changelog
+
+- **v3.0.0** (2026-05-20): `.gsplats.zarr` format v2.0 — 2-D LOD matrix
+  - On-disk format bumped to v2.0; legacy v1.0 / v1.1 / pre-v2.0 substitutive
+    directory layouts no longer read at runtime. Convert with
+    `luxar gsplat migrate-format <input> <output.gsplats.zarr>`.
+  - Splat container is now a `substitutive × additive` matrix laid out at
+    `splats/substitutive_<s>/additive_<a>/`. The four canonical pyramid shapes
+    `[1, 1]`, `[1, M]`, `[N, 1]`, `[N, M_i]` all live in a single self-describing
+    file (the pre-v2.0 substitutive directory + manifest.json layout is retired).
+  - Root attrs surface `n_substitutive` and `default_substitutive`; the splats
+    group surfaces `n_additive_sublods_default`. Per-substitutive-level attrs
+    (`compression_factor`, `parent_method`, `level_index`, `n_additive_sublods`)
+    live on the `substitutive_<s>/` groups; per-cell attrs (`n_splats`, `ndim`,
+    `ordering`, `lod_stats`, …) live on the leaf `additive_<a>/` groups.
+  - Python: `GSplatLOD` renamed to `AdditiveSubLOD`; new `SubstitutiveLevel`
+    dataclass; `GSplatData` refactored around `substitutive_levels`. Scene
+    embedding writes the same layout (`splats/substitutive_0/additive_<i>/`).
+  - CLI: `lod substitutive` now writes a single v2.0 file (no more directory
+    + manifest.json); `lod additive` gains `--substitutive-level`; new
+    `lod pyramid` builds the full 2-D pyramid in one call.
+  - Viewer: TypeScript loader walks `substitutive_<defaultSub>/additive_<i>/`;
+    legacy v1.x reading path removed.
 
 - **v2.0.0** (2026-03-27): Multi-LOD format (v1.1) and scene integration
   - Added format v1.1 with per-LOD subgroups (`splats/lod_0/`, `splats/lod_1/`, ...)

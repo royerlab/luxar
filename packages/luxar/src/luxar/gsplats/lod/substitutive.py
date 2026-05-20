@@ -38,12 +38,12 @@ math (moment matching, $L^2$-optimal amplitude, residual energy) lives
 in :mod:`luxar.gsplats.lod._kernels` and is shared with the additive
 axis.
 
-The returned value is a Python ``list[GSplatData]``; each element is a
-flat (single-LOD) dataset that can be saved independently with
-:meth:`luxar.gsplats.gsplat_data.GSplatData.save`. The on-disk
-multi-level container will be handled at the scene-graph node level
-in a future change; this module deliberately avoids overloading
-``GSplatData``'s additive-prefix LOD semantics.
+The returned value is a single :class:`GSplatData` with
+``n_substitutive = levels + 1`` and ``M_i = 1`` per substitutive level
+(one additive sub-LOD each). On disk this is a single v2.0
+``.gsplats.zarr`` file with ``splats/substitutive_<s>/additive_0/``
+nested groups; the legacy directory + manifest.json layout is replaced
+by the unified format.
 """
 
 from __future__ import annotations
@@ -55,7 +55,11 @@ import numpy as np
 import torch
 from arbol import aprint, asection
 
-from luxar.gsplats.gsplat_data import GSplatData
+from luxar.gsplats.gsplat_data import (
+    AdditiveSubLOD,
+    GSplatData,
+    SubstitutiveLevel,
+)
 from luxar.gsplats.lod._kernels import (
     bin_inner_product_with_template_torch,
     bin_residual_energy_torch,
@@ -93,20 +97,21 @@ def make_substitutive_lod(
     device: Union[str, torch.device, None] = "auto",
     seed: Optional[int] = None,
     verbose: bool = False,
-) -> list[GSplatData]:
+) -> GSplatData:
     """Build a substitutive-LOD hierarchy.
 
     Parameters
     ----------
     data
-        Source dataset. If multi-LOD, it is flattened to a single LOD
-        before processing.
+        Source dataset. If multi-substitutive, only its default
+        substitutive level is reduced (additive sub-LODs at that
+        level are flattened first).
     compression_factor
         Per-level branching factor $K$. Each level ``ℓ`` has
         ``ceil(N / K^ℓ)`` splats.
     levels
-        Number of *coarser* levels to produce. The returned list has
-        ``levels + 1`` entries (the original at index 0).
+        Number of *coarser* levels to produce. The returned object has
+        ``levels + 1`` substitutive levels (the original at index 0).
     method
         Partition algorithm. See module docstring.
     lloyd_iterations
@@ -127,9 +132,10 @@ def make_substitutive_lod(
 
     Returns
     -------
-    list of GSplatData
-        ``[data, level_1, ..., level_L]``. Each element is a flat
-        (single-LOD) dataset.
+    GSplatData
+        A v2.0 dataset with ``n_substitutive = levels + 1`` and a
+        single additive sub-LOD per substitutive level (the finest at
+        ``substitutive_levels[0]``).
 
     Raises
     ------
@@ -148,29 +154,76 @@ def make_substitutive_lod(
     K = int(compression_factor)
     L_levels = int(levels)
 
-    src = data.flattened() if data.n_lods > 1 else data
+    # Flatten the input's default substitutive level (and its additive
+    # sub-LODs) down to a single splat set. Substitutive reduction always
+    # operates on the finest level; non-default substitutive levels of the
+    # input are discarded by design (substitutive composes with itself by
+    # taking the finest as the new finest).
+    src = data.flattened()
+    if src.n_substitutive > 1:
+        src = src.at_substitutive(src.default_substitutive)
     target_device = resolve_torch_device(
         device if not isinstance(device, str) or device != "auto" else None
     )
 
-    out: list[GSplatData] = [src]
+    # Collect per-level outputs and pack them as SubstitutiveLevels.
+    sub_levels: list[SubstitutiveLevel] = [
+        SubstitutiveLevel(
+            additive_sublods=[
+                AdditiveSubLOD(
+                    centers=np.asarray(src.centers, dtype=np.float32),
+                    amplitudes=np.asarray(src.amplitudes, dtype=np.float32),
+                    cholesky_factors=np.asarray(
+                        src.cholesky_factors, dtype=np.float32
+                    ),
+                    colors=(
+                        np.asarray(src.colors) if src.colors is not None else None
+                    ),
+                    stats={"lod_method": "none", "lod_level": 0},
+                    truncation_radius=src.truncation_radius,
+                )
+            ],
+            compression_factor=1,
+            parent_method=None,
+            level_index=0,
+            stats={"n_splats_total": int(src.n_splats)},
+        )
+    ]
+
     current = src
     for level_idx in range(1, L_levels + 1):
         N_in = current.n_splats
         if N_in <= 1:
             # Cannot reduce further; emit the unchanged dataset and stop.
-            new_lod = current.flattened()
-            new_lod.stats.update(
-                {
-                    "lod_kind": "substitutive",
-                    "level": level_idx,
-                    "compression_factor": K,
-                    "method": method,
-                    "n_splats": N_in,
-                    "stop_reason": "input_too_small",
-                }
+            sub_levels.append(
+                SubstitutiveLevel(
+                    additive_sublods=[
+                        AdditiveSubLOD(
+                            centers=np.asarray(current.centers, dtype=np.float32),
+                            amplitudes=np.asarray(
+                                current.amplitudes, dtype=np.float32
+                            ),
+                            cholesky_factors=np.asarray(
+                                current.cholesky_factors, dtype=np.float32
+                            ),
+                            colors=(
+                                np.asarray(current.colors)
+                                if current.colors is not None
+                                else None
+                            ),
+                            stats={"lod_method": "none", "lod_level": 0},
+                            truncation_radius=current.truncation_radius,
+                        )
+                    ],
+                    compression_factor=K**level_idx,
+                    parent_method=method,
+                    level_index=level_idx,
+                    stats={
+                        "n_splats_total": int(N_in),
+                        "stop_reason": "input_too_small",
+                    },
+                )
             )
-            out.append(new_lod)
             break
         M_target = max(1, math.ceil(N_in / K))
         if verbose:
@@ -197,18 +250,42 @@ def make_substitutive_lod(
                 device=target_device,
                 seed=None if seed is None else seed + level_idx,
             )
-        new_data.stats.update(
-            {
-                "lod_kind": "substitutive",
-                "level": level_idx,
-                "compression_factor": K,
-                "method": method,
-                "n_splats": new_data.n_splats,
-            }
+        sub_levels.append(
+            SubstitutiveLevel(
+                additive_sublods=[
+                    AdditiveSubLOD(
+                        centers=np.asarray(new_data.centers, dtype=np.float32),
+                        amplitudes=np.asarray(new_data.amplitudes, dtype=np.float32),
+                        cholesky_factors=np.asarray(
+                            new_data.cholesky_factors, dtype=np.float32
+                        ),
+                        colors=(
+                            np.asarray(new_data.colors)
+                            if new_data.colors is not None
+                            else None
+                        ),
+                        stats={"lod_method": "none", "lod_level": 0},
+                        truncation_radius=new_data.truncation_radius,
+                    )
+                ],
+                compression_factor=K**level_idx,
+                parent_method=method,
+                level_index=level_idx,
+                stats={"n_splats_total": int(new_data.n_splats)},
+            )
         )
-        out.append(new_data)
         current = new_data
-    return out
+
+    out_stats = dict(src.stats)
+    out_stats.update(
+        {
+            "lod_kind": "substitutive",
+            "compression_factor": K,
+            "method": method,
+            "n_substitutive_levels": len(sub_levels),
+        }
+    )
+    return GSplatData.from_substitutive_levels(sub_levels, stats=out_stats)
 
 
 # ─────────────────────────────────────────────────────────────────────

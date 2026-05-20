@@ -44,7 +44,7 @@ class TestFormatCompliance:
             root = zarr.open_group(str(path), mode="r")
 
             # Required root attributes (spec Section "Root Attributes")
-            assert root.attrs["format_version"] == "1.0"
+            assert root.attrs["format_version"] == "2.0"
             assert root.attrs["format_type"] == "gsplats_zarr"
             assert "timestamp" in root.attrs
             assert "luxar_gsplats_version" in root.attrs
@@ -65,13 +65,13 @@ class TestFormatCompliance:
             # Check splats group exists
             assert "splats" in root
 
-            splats_group = root["splats"]
+            root["splats"]
 
             # Check required arrays (spec Section "Zarr Structure")
-            assert "centers" in splats_group
-            assert "amplitudes" in splats_group
-            assert "cholesky_factors" in splats_group
-            assert "chunk_bounds" in splats_group
+            assert "centers" in root["splats/substitutive_0/additive_0"]
+            assert "amplitudes" in root["splats/substitutive_0/additive_0"]
+            assert "cholesky_factors" in root["splats/substitutive_0/additive_0"]
+            assert "chunk_bounds" in root["splats/substitutive_0/additive_0"]
 
             # Check optional arrays
 
@@ -84,8 +84,8 @@ class TestFormatCompliance:
             save_gsplats(path=path, **splats, ordering="morton")
 
             root = zarr.open_group(str(path), mode="r")
-            splats_group = root["splats"]
-            attrs = splats_group.attrs
+            root["splats"]
+            attrs = root["splats/substitutive_0/additive_0"].attrs
 
             # Required attributes (spec Section "Splats Group Attributes")
             assert attrs["n_splats"] == 100
@@ -128,20 +128,20 @@ class TestFormatCompliance:
             )
 
             root = zarr.open_group(str(path), mode="r")
-            splats_group = root["splats"]
+            root["splats"]
 
             # Check shapes (spec Section "Core Data Structure")
             # Note: Broadcasting may change shapes to (1,) or (1, d)
-            centers = splats_group["centers"]
+            centers = root["splats/substitutive_0/additive_0"]["centers"]
             assert centers.shape[1] == 3  # ndim
 
-            amplitudes = splats_group["amplitudes"]
+            amplitudes = root["splats/substitutive_0/additive_0"]["amplitudes"]
             assert len(amplitudes.shape) == 1
 
-            cholesky_factors = splats_group["cholesky_factors"]
+            cholesky_factors = root["splats/substitutive_0/additive_0"]["cholesky_factors"]
             assert cholesky_factors.shape[1] == 6  # d*(d+1)//2 for d=3
 
-            chunk_bounds = splats_group["chunk_bounds"]
+            chunk_bounds = root["splats/substitutive_0/additive_0"]["chunk_bounds"]
             assert chunk_bounds.shape[1] == 3  # ndim
             assert chunk_bounds.shape[2] == 2  # min/max
 
@@ -158,7 +158,7 @@ class TestFormatCompliance:
             )
 
             root = zarr.open_group(str(path), mode="r")
-            splats_group = root["splats"]
+            cell_group = root["splats/substitutive_0/additive_0"]
 
             # All arrays should have encoding metadata (spec Section "Encoding Metadata Preservation")
             for array_name in [
@@ -166,7 +166,7 @@ class TestFormatCompliance:
                 "amplitudes",
                 "cholesky_factors",
             ]:
-                array = splats_group[array_name]
+                array = cell_group[array_name]
                 enc = array.attrs.get("encoding")
                 assert enc is not None, f"{array_name} missing encoding metadata"
                 assert "name" in enc
@@ -264,7 +264,7 @@ class TestFormatCompliance:
             save_gsplats(path=path, **splats, ordering="morton")
 
             root = zarr.open_group(str(path), mode="r")
-            chunk_bounds = root["splats/chunk_bounds"]
+            chunk_bounds = root["splats/substitutive_0/additive_0/chunk_bounds"]
 
             # Check shape (spec Section "Chunk Bounding Boxes")
             # Shape should be (num_chunks, ndim, 2)
@@ -305,17 +305,17 @@ class TestFormatCompliance:
             )
 
             root = zarr.open_group(str(path), mode="r")
-            splats_group = root["splats"]
+            root["splats"]
 
             # For 3D: k = d*(d+1)//2 = 3*4//2 = 6
-            cholesky = splats_group["cholesky_factors"]
+            cholesky = root["splats/substitutive_0/additive_0"]["cholesky_factors"]
             assert cholesky.shape[1] == 6
 
             # Metadata should reflect 3D
-            assert splats_group.attrs["ndim"] == 3
+            assert root["splats/substitutive_0/additive_0"].attrs["ndim"] == 3
 
             # Center bounds should have 3 dimensions
-            center_bounds = splats_group.attrs["center_bounds"]
+            center_bounds = root["splats/substitutive_0/additive_0"].attrs["center_bounds"]
             assert len(center_bounds["min"]) == 3
             assert len(center_bounds["max"]) == 3
 
@@ -332,11 +332,11 @@ class TestFormatCompliance:
             )
 
             root = zarr.open_group(str(path), mode="r")
-            splats_group = root["splats"]
+            root["splats"]
 
             # Check semantic types via encoding names (spec Section "Semantic Types")
             # Centers: COORDINATE → float32 in MEMORY mode (new default with float16_allowed=False)
-            centers_enc = splats_group["centers"].attrs.get("encoding", {})
+            centers_enc = root["splats/substitutive_0/additive_0"]["centers"].attrs.get("encoding", {})
             assert centers_enc["name"] == "float32"
 
             # Sharpnesses: BOUNDED_SCALAR → bounded_scalar_uint8 in MEMORY mode
@@ -361,10 +361,10 @@ class TestFormatCompliance:
             root = zarr.open_group(str(path), mode="r")
 
             # Check colors are present
-            assert "colors" in root["splats"]
+            assert "colors" in root["splats/substitutive_0/additive_0"]
 
             # Check color_mode in encoding metadata (spec Section "Color Mode Storage")
-            colors_array = root["splats/colors"]
+            colors_array = root["splats/substitutive_0/additive_0/colors"]
             enc = colors_array.attrs.get("encoding", {})
             assert enc is not None
             # color_mode should be preserved
@@ -380,7 +380,7 @@ class TestFormatCompliance:
             save_gsplats(path=path, **splats, ordering="morton")
 
             root = zarr.open_group(str(path), mode="r")
-            splats_attrs = root["splats"].attrs
+            splats_attrs = root["splats/substitutive_0/additive_0"].attrs
 
             # Ordering metadata (spec Section "Ordering Metadata")
             assert splats_attrs["ordering"] == "morton"
@@ -398,7 +398,7 @@ class TestFormatCompliance:
             save_gsplats(path=path, **splats, ordering="none")
 
             root = zarr.open_group(str(path), mode="r")
-            splats_attrs = root["splats"].attrs
+            splats_attrs = root["splats/substitutive_0/additive_0"].attrs
 
             # Should have ordering="none" but no ordering metadata
             assert splats_attrs["ordering"] == "none"

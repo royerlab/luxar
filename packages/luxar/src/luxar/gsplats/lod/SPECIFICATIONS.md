@@ -53,7 +53,7 @@ The implementations derive from the supplementary documents
 
 **Internal reuse**:
 
-- `luxar.gsplats.gsplat_data.GSplatData` / `GSplatLOD`.
+- `luxar.gsplats.gsplat_data.GSplatData` / `AdditiveSubLOD`.
 - `luxar.gsplats.gsplat_data._SplatArrayMixin._cholesky_diag_elements`.
 - `luxar.gsplats.utils.trils.{pack_tril, unpack_tril}`.
 - `luxar.gsplats.utils.device.resolve_torch_device`.
@@ -171,7 +171,7 @@ $N = 1{,}274$).
   multi-LOD.
 - `make_additive_lod(data, n_lods, ..., breakpoints, ...) -> GSplatData` —
   computes order, resolves breakpoints to cutpoints, slices the
-  ordered splat arrays into per-level `GSplatLOD` instances, and
+  ordered splat arrays into per-level `AdditiveSubLOD` instances, and
   assembles a multi-LOD `GSplatData` whose `up_to_lod(k)` is a valid
   additive prefix.
 
@@ -358,15 +358,19 @@ in expectation.
 
 ### Output container
 
-`make_substitutive_lod(...)` returns a Python `list[GSplatData]` of
-length `levels + 1`. Index 0 is the (flattened) input; subsequent
-indices are flat `GSplatData` objects (each with `n_lods=1`). Each
-level's `stats` carries `lod_kind="substitutive"`, `level`,
-`compression_factor`, `method`, and `n_splats`.
+`make_substitutive_lod(...)` returns a single `GSplatData` with
+`n_substitutive = levels + 1` and one additive sub-LOD per substitutive
+level (so the matrix shape is `[levels+1, 1]`). The finest level
+(`substitutive_levels[0]`) is the flattened input. Per-level metadata
+(`compression_factor = K^s`, `parent_method`, `level_index`,
+`n_splats_total`) lives on each `SubstitutiveLevel`.
 
-The CLI (`luxar gsplat lod substitutive in.gsplats.zarr out_dir/`)
-serialises one `.gsplats.zarr` per level under `out_dir/` plus a
-`manifest.json` describing the hierarchy.
+The CLI (`luxar gsplat lod substitutive in.gsplats.zarr out.gsplats.zarr`)
+serialises the full hierarchy to a single v2.0 `.gsplats.zarr` file
+(`splats/substitutive_<s>/additive_0/` cells, no more
+directory + manifest.json). For a full 2-D pyramid carrying additive
+ladders within each substitutive level, use `luxar gsplat lod pyramid`
+or `make_lod_pyramid(...)`.
 
 ### Empirical validation
 

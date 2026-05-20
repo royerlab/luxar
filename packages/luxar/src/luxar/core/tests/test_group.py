@@ -162,10 +162,10 @@ class TestMultiLODGSplats:
     @staticmethod
     def _make_multi_lod_gsplat_data():
         """Create a multi-LOD GSplatData with 2 LODs."""
-        from luxar.gsplats.gsplat_data import GSplatData, GSplatLOD
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
 
         rng = np.random.RandomState(42)
-        lod0 = GSplatLOD(
+        lod0 = AdditiveSubLOD(
             centers=rng.rand(5, 3).astype(np.float32) * 100,
             amplitudes=rng.rand(5).astype(np.float32),
             cholesky_factors=np.tile(
@@ -173,7 +173,7 @@ class TestMultiLODGSplats:
             ),
             stats={"pass_index": 0, "cumulative_psnr_db": 25.0},
         )
-        lod1 = GSplatLOD(
+        lod1 = AdditiveSubLOD(
             centers=rng.rand(3, 3).astype(np.float32) * 100,
             amplitudes=rng.rand(3).astype(np.float32),
             cholesky_factors=np.tile(
@@ -181,10 +181,10 @@ class TestMultiLODGSplats:
             ),
             stats={"pass_index": 1, "cumulative_psnr_db": 30.0},
         )
-        return GSplatData.from_lods([lod0, lod1])
+        return GSplatData.from_additive_sublods([lod0, lod1])
 
     def test_multi_lod_writes_subgroups(self, tmp_path) -> None:
-        """Multi-LOD GSplatData writes per-LOD subgroups (lod_0, lod_1)."""
+        """Multi-LOD GSplatData writes v2.0 ``substitutive_0/additive_<i>`` cells."""
         output_path = tmp_path / "test.zarr"
         data = self._make_multi_lod_gsplat_data()
 
@@ -197,22 +197,28 @@ class TestMultiLODGSplats:
         store = zarr.open(str(output_path), mode="r")
         grp = store["splats"]
         assert grp.attrs["type"] == "gsplats"
-        assert grp.attrs["n_lods"] == 2
+        assert grp.attrs["format_version"] == "2.0"
+        assert grp.attrs["n_substitutive"] == 1
+        assert grp.attrs["default_substitutive"] == 0
+        assert grp.attrs["n_additive_sublods_default"] == 2
         assert grp.attrs["n_splats"] == 8
 
-        # Per-LOD subgroups exist
-        assert "lod_0" in grp
-        assert "lod_1" in grp
-        assert grp["lod_0"].attrs["n_splats"] == 5
-        assert grp["lod_1"].attrs["n_splats"] == 3
-
-        # Per-LOD arrays exist
-        assert "centers" in grp["lod_0"]
-        assert "amplitudes" in grp["lod_0"]
-        assert "cholesky_factors" in grp["lod_0"]
+        # v2.0 layout: substitutive_0/additive_<i> cells
+        assert "substitutive_0" in grp
+        sub0 = grp["substitutive_0"]
+        assert sub0.attrs["n_additive_sublods"] == 2
+        assert sub0.attrs["compression_factor"] == 1
+        assert "additive_0" in sub0
+        assert "additive_1" in sub0
+        assert sub0["additive_0"].attrs["n_splats"] == 5
+        assert sub0["additive_1"].attrs["n_splats"] == 3
+        # Per-additive arrays
+        assert "centers" in sub0["additive_0"]
+        assert "amplitudes" in sub0["additive_0"]
+        assert "cholesky_factors" in sub0["additive_0"]
 
     def test_multi_lod_preserves_per_lod_stats(self, tmp_path) -> None:
-        """Per-LOD stats are written to lod_stats attribute."""
+        """Per-additive-sub-LOD stats land on each ``additive_<i>`` group."""
         output_path = tmp_path / "test.zarr"
         data = self._make_multi_lod_gsplat_data()
 
@@ -221,9 +227,10 @@ class TestMultiLODGSplats:
             scene.add_gsplats_from_data("splats", data)
 
         store = zarr.open(str(output_path), mode="r")
-        lod0_stats = store["splats"]["lod_0"].attrs.get("lod_stats", {})
+        sub0 = store["splats"]["substitutive_0"]
+        lod0_stats = sub0["additive_0"].attrs.get("lod_stats", {})
         assert lod0_stats.get("pass_index") == 0
-        lod1_stats = store["splats"]["lod_1"].attrs.get("lod_stats", {})
+        lod1_stats = sub0["additive_1"].attrs.get("lod_stats", {})
         assert lod1_stats.get("pass_index") == 1
 
     def test_single_lod_uses_flat_layout(self, tmp_path) -> None:
@@ -245,8 +252,8 @@ class TestMultiLODGSplats:
         grp = store["splats"]
         assert grp.attrs["type"] == "gsplats"
         # No LOD subgroups — flat layout
-        assert "lod_0" not in grp
-        assert "n_lods" not in grp.attrs
+        assert "substitutive_0" not in grp
+        assert "n_substitutive" not in grp.attrs
         # Arrays at top level
         assert "centers" in grp
         assert "amplitudes" in grp
@@ -262,5 +269,6 @@ class TestMultiLODGSplats:
             group.add_gsplats_from_data("splats", data)
 
         store = zarr.open(str(output_path), mode="r")
-        assert "lod_0" in store["grp"]["splats"]
-        assert "lod_1" in store["grp"]["splats"]
+        sub0 = store["grp"]["splats"]["substitutive_0"]
+        assert "additive_0" in sub0
+        assert "additive_1" in sub0

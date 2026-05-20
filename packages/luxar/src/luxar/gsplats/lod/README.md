@@ -26,20 +26,31 @@ is built only on demand.
 ## Quick start
 
 ```python
-from luxar.gsplats.lod import make_additive_lod, make_substitutive_lod
+from luxar.gsplats.lod import (
+    make_additive_lod, make_substitutive_lod, make_lod_pyramid,
+)
 from luxar.gsplats.gsplat_data import GSplatData
 
-data = GSplatData.load("fit.gsplats.zarr")          # single-LOD
+data = GSplatData.load("fit.gsplats.zarr")          # n_substitutive=1, n_additive_sublods=1
 
 # ── Additive: same N splats, prefix-monotone
-ladder = make_additive_lod(data, n_lods=4)          # multi-LOD GSplatData
+ladder = make_additive_lod(data, n_lods=4)          # GSplatData with [1, 4] shape
 ladder.save("additive_lod.gsplats.zarr")
 
 # ── Substitutive: ceil(N/K^L) splats per level, replacement hierarchy
-levels = make_substitutive_lod(data, compression_factor=4, levels=3)
-# levels is a list[GSplatData]; each is flat (n_lods=1)
-for L, lev in enumerate(levels):
-    lev.save(f"sub_lod_level_{L}.gsplats.zarr")
+pyramid = make_substitutive_lod(data, compression_factor=4, levels=3)
+# pyramid is a single GSplatData with [4, 1] shape (n_substitutive=4, M_i=1)
+pyramid.save("substitutive_pyramid.gsplats.zarr")
+for s, lev in enumerate(pyramid.substitutive_levels):
+    print(f"level {s}: {lev.n_splats_total} splats, K={lev.compression_factor}")
+
+# ── Full 2-D pyramid: substitutive (outer) × additive (inner) in one call
+matrix = make_lod_pyramid(
+    data,
+    compression_factor=4, levels=3,     # substitutive axis (N=4)
+    n_additive_lods=4,                  # additive axis (M=4 per level)
+)
+matrix.save("pyramid.gsplats.zarr")     # [4, 4] in a single file
 ```
 
 ## API
@@ -121,8 +132,11 @@ The reference Luxar dataset benchmarks from `additive_lod` Experiment C:
   not recommended; use `method="self_energy"` instead.
 - Auto-fallback to `self_energy` is **not** enabled. Method choice is
   explicit so failure modes are loud.
-- The on-disk format is unchanged — the multi-LOD output is consumed by
-  the existing viewer-side progressive loader without modification.
+- Output rides the `.gsplats.zarr` v2.0 format (2-D `substitutive ×
+  additive` matrix); the additive ladder lives on
+  `splats/substitutive_<default>/additive_<a>/`. The viewer's progressive
+  loader walks the additive axis of the default substitutive level by
+  default — see `docs/specs/GSPLATS_ZARR_FORMAT.md`.
 
 ## Substitutive LOD (`substitutive.py`)
 
@@ -140,13 +154,14 @@ make_substitutive_lod(
     candidate_bins_k: int = 12,
     device: str = "auto",               # auto | cpu | cuda | mps
     seed: int | None = None,
-) -> list[GSplatData]
+) -> GSplatData
 ```
 
-Returns `levels + 1` flat `GSplatData` objects:
-`[level_0=data, level_1, ..., level_L]` with splat counts
-`[N, ⌈N/K⌉, ⌈N/K²⌉, …, ⌈N/K^L⌉]`. Each level is a standalone single-LOD
-zarr (the on-disk multi-level container is a future scene-graph node).
+Returns a single `GSplatData` with `n_substitutive = levels + 1`, one
+additive sub-LOD per substitutive level, and splat counts
+`[N, ⌈N/K⌉, ⌈N/K²⌉, …, ⌈N/K^L⌉]`. The on-disk container is a single
+v2.0 `.gsplats.zarr` (`splats/substitutive_<s>/additive_0/` per level)
+— no more directory + manifest.json layout.
 
 ### Substitutive methods
 
@@ -176,7 +191,9 @@ zarr (the on-disk multi-level container is a future scene-graph node).
 - Joint relaxation polish (gradient descent over all $M$ Gaussians).
 - Cauchy–Schwarz divergence and $W_2$ alternative cost metrics
   (the supp doc settles on $L^2$ as the primary objective).
-- Scene-graph node integration of the multi-level container.
+- Cross-cell parameter deduplication via `splats/shared/` — deferred to a
+  future v2.1; revisit after empirical disk-footprint evidence on real
+  combined pyramids.
 
 ## References
 

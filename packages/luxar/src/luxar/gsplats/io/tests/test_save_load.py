@@ -52,14 +52,14 @@ class TestSaveGsplats:
             # Check format
             root = zarr.open_group(str(path), mode="r")
             assert root.attrs["format_type"] == "gsplats_zarr"
-            assert root.attrs["format_version"] == "1.0"
+            assert root.attrs["format_version"] == "2.0"
 
             # Check splats group
             assert "splats" in root
             splats_group = root["splats"]
             assert splats_group.attrs["type"] == "gsplats"  # Required for SceneLoader
-            assert splats_group.attrs["n_splats"] == 100
-            assert splats_group.attrs["ndim"] == 3
+            assert root["splats/substitutive_0/additive_0"].attrs["n_splats"] == 100
+            assert root["splats/substitutive_0/additive_0"].attrs["ndim"] == 3
 
     def test_save_with_colors(self) -> None:
         """Test save with colors."""
@@ -79,8 +79,8 @@ class TestSaveGsplats:
             )
 
             root = zarr.open_group(str(path), mode="r")
-            assert "colors" in root["splats"]
-            assert root["splats"].attrs["has_colors"] is True
+            assert "colors" in root["splats/substitutive_0/additive_0"]
+            assert root["splats/substitutive_0/additive_0"].attrs["has_colors"] is True
 
     def test_save_with_morton_ordering(self) -> None:
         """Test save with Morton ordering."""
@@ -95,12 +95,12 @@ class TestSaveGsplats:
             )
 
             root = zarr.open_group(str(path), mode="r")
-            splats_group = root["splats"]
+            root["splats"]
 
-            assert splats_group.attrs["ordering"] == "morton"
-            assert "ordering_min" in splats_group.attrs
-            assert "ordering_max" in splats_group.attrs
-            assert "ordering_bits_per_dim" in splats_group.attrs
+            assert root["splats/substitutive_0/additive_0"].attrs["ordering"] == "morton"
+            assert "ordering_min" in root["splats/substitutive_0/additive_0"].attrs
+            assert "ordering_max" in root["splats/substitutive_0/additive_0"].attrs
+            assert "ordering_bits_per_dim" in root["splats/substitutive_0/additive_0"].attrs
 
     def test_save_with_hilbert_ordering(self) -> None:
         """Test save with Hilbert ordering."""
@@ -116,9 +116,9 @@ class TestSaveGsplats:
                 )
 
                 root = zarr.open_group(str(path), mode="r")
-                splats_group = root["splats"]
+                root["splats"]
 
-                assert splats_group.attrs["ordering"] == "hilbert"
+                assert root["splats/substitutive_0/additive_0"].attrs["ordering"] == "hilbert"
 
             except ImportError:
                 pytest.skip("hilbertcurve package not installed")
@@ -139,7 +139,7 @@ class TestSaveGsplats:
 
             root = zarr.open_group(str(path_precision), mode="r")
             # PRECISION should use float32
-            assert root["splats/centers"].dtype == np.float32
+            assert root["splats/substitutive_0/additive_0/centers"].dtype == np.float32
 
             # Test MEMORY mode
             path_memory = Path(tmpdir) / "memory.gsplats.zarr"
@@ -154,7 +154,7 @@ class TestSaveGsplats:
             root = zarr.open_group(str(path_memory), mode="r")
             # MEMORY mode uses float32 by default (float16_allowed=False for compatibility)
             # Check encoding metadata
-            enc = root["splats/centers"].attrs.get("encoding", {})
+            enc = root["splats/substitutive_0/additive_0/centers"].attrs.get("encoding", {})
             assert (
                 enc["name"] == "float16"
             )  # Should be float16 because we passed float16_allowed=True
@@ -665,7 +665,7 @@ class TestCompression:
             save_gsplats(path=path, **splats)
 
             root = zarr.open(str(path), "r")
-            centers = root["splats/centers"]
+            centers = root["splats/substitutive_0/additive_0/centers"]
             assert isinstance(centers.compressor, Blosc)
             assert centers.compressor.cname == "zstd"
 
@@ -677,7 +677,7 @@ class TestCompression:
             save_gsplats(path=path, compressor=None, **splats)
 
             root = zarr.open(str(path), "r")
-            assert root["splats/centers"].compressor is None
+            assert root["splats/substitutive_0/additive_0/centers"].compressor is None
 
     def test_chunk_capping_small_array(self):
         """Chunk rows should not exceed n_splats."""
@@ -687,9 +687,9 @@ class TestCompression:
             save_gsplats(path=path, **splats)
 
             root = zarr.open(str(path), "r")
-            assert root["splats/centers"].chunks[0] <= 50
-            assert root["splats/amplitudes"].chunks[0] <= 50
-            assert root["splats/cholesky_factors"].chunks[0] <= 50
+            assert root["splats/substitutive_0/additive_0/centers"].chunks[0] <= 50
+            assert root["splats/substitutive_0/additive_0/amplitudes"].chunks[0] <= 50
+            assert root["splats/substitutive_0/additive_0/cholesky_factors"].chunks[0] <= 50
 
     def test_gsplatdata_save_default_compression(self):
         """GSplatData.save() uses Blosc compression by default."""
@@ -702,34 +702,34 @@ class TestCompression:
             g.save(path)
 
             root = zarr.open(str(path), "r")
-            assert isinstance(root["splats/centers"].compressor, Blosc)
+            assert isinstance(root["splats/substitutive_0/additive_0/centers"].compressor, Blosc)
 
     def test_multi_lod_compression(self):
         """Multi-LOD save applies compression to each LOD."""
         from numcodecs import Blosc
 
-        from luxar.gsplats.gsplat_data import GSplatLOD
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD
 
         lods = [
-            GSplatLOD(
+            AdditiveSubLOD(
                 centers=np.random.randn(n, 3).astype(np.float32),
                 amplitudes=np.random.rand(n).astype(np.float32),
                 cholesky_factors=np.random.randn(n, 6).astype(np.float32),
             )
             for n in [50, 80]
         ]
-        g = GSplatData(lods=lods)
+        g = GSplatData(additive_sublods=lods)
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "test.gsplats.zarr"
             g.save(path)
 
             root = zarr.open(str(path), "r")
             # Both LODs should have compression
-            assert isinstance(root["splats/lod_0/centers"].compressor, Blosc)
-            assert isinstance(root["splats/lod_1/centers"].compressor, Blosc)
+            assert isinstance(root["splats/substitutive_0/additive_0/centers"].compressor, Blosc)
+            assert isinstance(root["splats/substitutive_0/additive_1/centers"].compressor, Blosc)
             # Chunks capped at LOD size
-            assert root["splats/lod_0/centers"].chunks[0] <= 50
-            assert root["splats/lod_1/centers"].chunks[0] <= 80
+            assert root["splats/substitutive_0/additive_0/centers"].chunks[0] <= 50
+            assert root["splats/substitutive_0/additive_1/centers"].chunks[0] <= 80
 
     def test_roundtrip_with_compression(self):
         """Compressed files load correctly."""
@@ -781,10 +781,10 @@ class TestTruncationRadiusRoundtrip:
 
     def test_custom_truncation_radius_multi_lod(self):
         """Non-default truncation_radius survives multi-LOD save/load."""
-        from luxar.gsplats.gsplat_data import GSplatLOD
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD
 
         lods = [
-            GSplatLOD(
+            AdditiveSubLOD(
                 centers=np.random.randn(n, 3).astype(np.float32),
                 amplitudes=np.random.rand(n).astype(np.float32),
                 cholesky_factors=np.random.randn(n, 6).astype(np.float32),
@@ -792,7 +792,7 @@ class TestTruncationRadiusRoundtrip:
             )
             for n in [30, 50]
         ]
-        g = GSplatData(lods=lods)
+        g = GSplatData(additive_sublods=lods)
         assert g.truncation_radius == 2.5
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -800,8 +800,8 @@ class TestTruncationRadiusRoundtrip:
             g.save(path, ordering="none", encoding_mode=EncodingMode.PRECISION)
             g2 = GSplatData.load(path)
             assert g2.truncation_radius == 2.5
-            assert g2.lods[0].truncation_radius == 2.5
-            assert g2.lods[1].truncation_radius == 2.5
+            assert g2.additive_sublods[0].truncation_radius == 2.5
+            assert g2.additive_sublods[1].truncation_radius == 2.5
 
     def test_truncation_radius_in_zarr_metadata(self):
         """truncation_radius is written to zarr splats group attrs."""

@@ -146,7 +146,7 @@ def _load_dapi_volume() -> np.ndarray:
 
 def _render_data(data: GSplatData, shape: tuple[int, ...]) -> np.ndarray:
     """Render a flat (or already-flat) GSplatData to a volume."""
-    flat = data if data.n_lods == 1 else data.flattened()
+    flat = data if data.n_additive_sublods == 1 else data.flattened()
     return render_gaussians_numpy(shape, flat, truncate=TRUNCATE_SIG).astype(np.float32)
 
 
@@ -175,7 +175,7 @@ def main() -> None:
             )
 
         with asection("Substitutive LOD"):
-            hierarchy = make_substitutive_lod(
+            pyramid = make_substitutive_lod(
                 fitted,
                 compression_factor=COMPRESSION_FACTOR,
                 levels=LEVELS,
@@ -186,6 +186,10 @@ def main() -> None:
                 seed=SEED,
                 verbose=False,
             )
+            # Materialise per-level views for convenient enumeration.
+            hierarchy = [
+                pyramid.at_substitutive(s) for s in range(pyramid.n_substitutive)
+            ]
             for level_idx, lev in enumerate(hierarchy):
                 aprint(f"  level {level_idx}: {lev.n_splats} splats")
 

@@ -302,7 +302,7 @@ def fit_tiled(
         )
 
     # Merge tile results — LOD-aware if progressive
-    has_lods = any(r.n_lods > 1 for r in results)
+    has_lods = any(r.n_additive_sublods > 1 for r in results)
     if has_lods:
         merged = _merge_lods_across_tiles(results)
     else:
@@ -324,7 +324,7 @@ def fit_tiled(
     )
 
     if verbose:
-        lod_info = f", {merged.n_lods} LODs" if has_lods else ""
+        lod_info = f", {merged.n_additive_sublods} LODs" if has_lods else ""
         aprint(
             f"Total: {merged.n_splats:,} splats from {len(specs)} tiles "
             f"in {elapsed:.1f}s{lod_info}"
