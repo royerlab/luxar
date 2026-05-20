@@ -9,13 +9,17 @@ import { describe, it, expect } from 'vitest';
 import {
   getNextDimensionIndex,
   getNonDisplayedDimensions,
+  mapKeyToDimension,
+} from '../../../input/input-handler/dimension-navigation/selection';
+import {
   calculateStepSize,
   calculateNextPosition,
-  mapKeyToDimension,
+  NavigationConfig,
+} from '../../../input/input-handler/dimension-navigation/step-math';
+import {
   formatDimensionValue,
   generateNavigationHelp,
-  NavigationConfig,
-} from '../../../input/input-handler-utils';
+} from '../../../input/input-handler/dimension-navigation/format';
 import { DimensionsBuilder } from '../../builders/test-data-builders';
 
 describe('nD Navigation Utilities', () => {

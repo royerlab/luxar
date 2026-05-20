@@ -12,7 +12,6 @@ import { InputHandler } from '../input/input-handler';
 import { DimensionSliders } from '../ui/dimension-sliders';
 import { RenderingControls } from '../ui/rendering-controls';
 import { cleanupUI } from '../ui/ui-cleanup';
-import { showError } from '../ui/error-overlay';
 import { showHelpOverlay } from '../ui/help-overlay';
 import { notifier } from '../utils/cross-layer/notifier';
 import { config } from '../config';
@@ -37,16 +36,14 @@ import * as zarr from '../data/zarr';
 import { PickingSystem } from '../rendering/picking/picking-system';
 import { LabelLoader } from '../data/loaders/label-loader';
 import { ImageLabelLoader } from '../data/loaders/image-label-loader';
-import { consoleInterceptor } from '../utils/console-interceptor';
 import { EventGroup } from '../utils/cross-layer/event-group';
 import { setWasmJsUrl } from '../wasm';
-import { setDataWorkerUrl, disposeWorkerPool, getWorkerPool } from '../workers/worker-pool';
+import { setDataWorkerUrl, disposeWorkerPool } from '../workers/worker-pool';
 import { shouldShowBrowser as shouldShowBrowserImpl } from './app/dataset/should-show-browser';
 import { showDatasetBrowser as showDatasetBrowserImpl } from './app/dataset/show-browser';
 import { loadDataset as loadDatasetImpl } from './app/dataset/load-dataset';
+import { installDebugInterface } from './app/debug/debug-interface';
 import { applyViewerConfigState as applyViewerConfigStateHelper } from './app/viewer-config/apply-state';
-import { computeDebugState } from './app/debug/debug-state';
-import { buildDebugCacheHelpers } from './app/debug/debug-cache-helpers';
 import { buildPickResultHandler } from './app/picking/pick-result-handler';
 import {
   getPanelVisibilityStates as getPanelVisibilityStatesHelper,
@@ -727,161 +724,18 @@ export class LuxarApp {
    * derives that from the `?debug` URL param or persisted `luxar.debug` flag).
    */
   private setupDebugInterface(): void {
-    if (!this.options.debug) {
-      return;
-    }
-
-    log.info(Modules.LUXAR, 'Extending debug interface with runtime components');
-
-    // Extend whatever bootstrap seeded (app/consoleInterceptor/version). When
-    // LuxarApp is instantiated outside the standalone-app entry point
-    // (tests, embeds), bootstrap hasn't run; fall back to a fresh base.
-    const existing = window.__luxarDebug ?? {
+    installDebugInterface({
+      debug: !!this.options.debug,
       app: this,
-      consoleInterceptor: consoleInterceptor,
-      version: '1.0.0',
-    };
-
-    window.__luxarDebug = {
-      // Preserve existing properties from main.ts
-      ...existing,
-
-      // Add runtime components (only available after initialization)
-      scene: this.sceneManager.scene,
-      camera: this.sceneManager.camera,
-      renderer: this.sceneManager.renderer,
-      controls: this.sceneManager.controls,
-      postProcessing: this.sceneManager.postProcessing,
+      sceneManager: this.sceneManager,
       animationController: this.animationController,
       inputHandler: this.inputHandler,
       renderingControls: this.renderingControls,
       recordingPanel: this.recordingPanel,
-      sceneDimsManager: sceneDimsManager,
-      app: this,
-
-      // Worker pool diagnostics. `queueDepth` is the aggregate count of
-      // in-flight worker tasks; useful for spotting prefetch
-      // backpressure or task accumulation after rapid dataset switches.
-      // Returns 0 when the pool is idle / uninitialized.
-      workers: {
-        getQueueDepth: () => getWorkerPool().getQueueDepth(),
-        getStats: () => getWorkerPool().getStats(),
-      },
-
-      // Helper function to get current state snapshot.
-      // Implementation lives in `core/debug-state.ts` so the
-      // scene-walking logic can be unit-tested directly.
-      getState: () =>
-        computeDebugState({
-          scene: this.sceneManager.scene,
-          camera: this.sceneManager.camera,
-          currentFov: this.sceneManager.currentFov,
-          isAnimating: this.animationController.isActive,
-          initialized: this.isInitialized,
-          dims: sceneDimsManager.getDims(),
-        }),
-
-      // Helper to trigger a single frame render (for stable screenshots)
-      renderOnce: () => {
-        this.animationController.startAnimation();
-      },
-
-      // Helper to get scene loader manager (for cache inspection)
-      getSceneLoader: () => {
-        return SceneLoaderManager.getInstance();
-      },
-
-      // Live accessors for the picking + overlay subsystems. Both are
-      // disposed and reconstructed across dataset reloads, so a direct
-      // snapshot would go stale; the accessor pattern always returns
-      // the current instance (or undefined before init / between
-      // disposals).
       getPickingSystem: () => this.pickingSystem,
       getOverlayManager: () => this.overlayManager,
-
-      // Cache-specific helpers — thin wrappers over the SceneLoader cache
-      // API. Implementation lives in `core/debug-cache-helpers.ts` so the
-      // not-found / no-cache / success branches can be unit-tested
-      // directly with a stub loader.
-      cache: buildDebugCacheHelpers(() => SceneLoaderManager.getInstance().getDefaultLoader()),
-
-      // Test-friendly hook for the error-dialog component. Lets
-      // visual-regression specs render the dialog directly without going
-      // through URL-routing failure paths (whose semantics evolve
-      // independently of the dialog's appearance).
-      showError,
-
-      // Debug-only synthetic-scene injector for the perf bench. Builds
-      // a large `InstancedLinesMeshConfig` purely in JS, wires it
-      // through the existing material-manager + node-factory pipeline,
-      // and adds the resulting mesh to the scene. Returns `{type,
-      // segmentCount, mesh}` so the bench can capture the actual
-      // instance count it ran against. Importing `synthetic-scene.ts`
-      // dynamically keeps it out of the production bundle's main
-      // chunk; tree-shaking trims the entry when `__luxarDebug` isn't
-      // referenced.
-      injectSyntheticScene: async (spec: {
-        type: 'lines';
-        count: number;
-        bounds?: number;
-        seed?: number;
-      }) => {
-        const { generateSyntheticLines } = await import('../scene/synthetic-scene');
-        const { createInstancedLinesMesh, isAllSharpnessTwo } =
-          await import('../rendering/line-geometry');
-        const { materialManager } = await import('../rendering/material-manager');
-        const cfg = generateSyntheticLines(spec);
-        // Build the visual material directly through the
-        // material-manager so the same blending / dispatch logic
-        // production uses applies. Picking material is intentionally
-        // skipped — the synthetic scenarios don't exercise picking.
-        const material = materialManager.getLineMaterial({
-          blendingMode: 'additive',
-          opacity: 1.0,
-          gamma: 1.0,
-          intensity: 1.0,
-          offset: 0.0,
-        });
-        material.setSharpnessAllTwo(isAllSharpnessTwo(cfg));
-        const mesh = createInstancedLinesMesh(cfg, material);
-        mesh.userData = {
-          nodeType: 'lines',
-          attrs: {},
-          maxWidth: 1.0,
-          visibleSegmentCount: cfg.segmentCount,
-          synthetic: true,
-        };
-        this.sceneManager.scene.add(mesh);
-        // Kick the renderer so the new mesh is uploaded before the
-        // bench's first measurement frame.
-        this.animationController.startAnimation();
-        return { type: spec.type, segmentCount: cfg.segmentCount, mesh };
-      },
-
-      // Mark that runtime components are now available
-      runtimeReady: true,
-    };
-
-    // Log available debug commands
-    log.info(Modules.LUXAR, 'Debug interface ready:');
-    log.info(Modules.LUXAR, '  __luxarDebug.getState() - Get current state snapshot');
-    log.info(Modules.LUXAR, '  __luxarDebug.renderOnce() - Trigger single frame render');
-    log.info(Modules.LUXAR, '  __luxarDebug.scene - Access THREE.js scene');
-    log.info(Modules.LUXAR, '  __luxarDebug.camera - Access camera');
-    log.info(Modules.LUXAR, '  __luxarDebug.app - Access LuxarApp instance');
-    log.info(Modules.LUXAR, '  __luxarDebug.cache.getStats() - Get cache statistics (L0, L1, L2)');
-    log.info(
-      Modules.LUXAR,
-      '  __luxarDebug.workers.getQueueDepth() - In-flight worker task count (backpressure diagnostic)'
-    );
-    log.info(
-      Modules.LUXAR,
-      '  __luxarDebug.cache.listDatasets() - List all cached datasets (URL, hash, size)'
-    );
-    log.info(Modules.LUXAR, '  __luxarDebug.cache.clearL0() - Clear L0 decompressed chunk cache');
-    log.info(Modules.LUXAR, '  __luxarDebug.cache.clearL1() - Clear L1 memory cache');
-    log.info(Modules.LUXAR, '  __luxarDebug.cache.clearL2() - Clear L2 OPFS cache');
-    log.info(Modules.LUXAR, '  __luxarDebug.cache.clearAll() - Clear all caches (L0, L1, L2)');
+      isInitialized: () => this.isInitialized,
+    });
   }
 
   /**
