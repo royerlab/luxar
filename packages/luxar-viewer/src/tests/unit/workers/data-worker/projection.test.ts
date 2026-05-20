@@ -59,10 +59,10 @@ async function loadWorker(): Promise<{ mod: WorkerModule; wasm: WasmStubs }> {
     compact_attenuated_amplitudes: vi.fn(),
   };
 
-  vi.doMock('../../../wasm', () => ({
+  vi.doMock('../../../../wasm', () => ({
     initWasm: vi.fn(async () => wasm),
   }));
-  vi.doMock('../../../utils/log', () => ({
+  vi.doMock('../../../../utils/log', () => ({
     log: { info: vi.fn(), warning: vi.fn(), error: vi.fn(), success: vi.fn() },
     Modules: { WORKER_POOL: 'WorkerPool' },
   }));
@@ -71,7 +71,7 @@ async function loadWorker(): Promise<{ mod: WorkerModule; wasm: WasmStubs }> {
     transfer: vi.fn((obj) => obj),
   }));
 
-  const mod = (await import('../../../workers/data-worker')) as unknown as WorkerModule;
+  const mod = (await import('../../../../workers/data-worker')) as unknown as WorkerModule;
   await mod.workerAPI.initialize();
   return { mod, wasm };
 }

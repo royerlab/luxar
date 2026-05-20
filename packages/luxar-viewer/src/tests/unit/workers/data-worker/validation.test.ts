@@ -42,10 +42,10 @@ async function loadWorker(): Promise<WorkerModule> {
     decode_broadcasted: vi.fn(),
     query_chunks_for_view: vi.fn(() => 0),
   };
-  vi.doMock('../../../wasm', () => ({
+  vi.doMock('../../../../wasm', () => ({
     initWasm: vi.fn(async () => wasmStub),
   }));
-  vi.doMock('../../../utils/log', () => ({
+  vi.doMock('../../../../utils/log', () => ({
     log: { info: vi.fn(), warning: vi.fn(), error: vi.fn(), success: vi.fn() },
     Modules: { WORKER_POOL: 'WorkerPool' },
   }));
@@ -54,7 +54,7 @@ async function loadWorker(): Promise<WorkerModule> {
     transfer: vi.fn((obj) => obj),
   }));
 
-  const mod = (await import('../../../workers/data-worker')) as unknown as WorkerModule;
+  const mod = (await import('../../../../workers/data-worker')) as unknown as WorkerModule;
   await mod.workerAPI.initialize();
   return mod;
 }
