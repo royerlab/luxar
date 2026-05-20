@@ -18,12 +18,47 @@ The Luxar Controls package provides a comprehensive control system for navigatin
 
 ```
 controls/
-├── controls-manager.ts        # Central control system orchestrator
-├── luxar-orbit-controls.ts    # Quaternion orbit + ortho controls
-├── luxar-fly-controls.ts      # Free-flight 6DOF controller
-├── types.ts                   # TypeScript type definitions
-└── README.md                  # This documentation
+├── controls-manager.ts                 # Central control system orchestrator
+├── controls-manager/                   # Orchestrator helpers
+│   ├── factories.ts                   #   createOrbit/Fly/Ortho + naturalDragButtonMap
+│   ├── camera-state.ts                #   save/restore camera state across mode switches
+│   ├── event-forwarders.ts            #   wire change/start/end → manager
+│   └── scene-scale.ts                 #   diagonal → distance/zoom/flySpeed math
+│
+├── luxar-orbit-controls.ts             # Quaternion orbit + ortho controls
+├── luxar-orbit-controls/               # Per-class helpers
+│   ├── camera-application.ts          #   applyToCamera, initializeFromCamera
+│   ├── update.ts                      #   per-frame update sequencer
+│   ├── math/                          #   pure-math cluster
+│   │   ├── trackball.ts
+│   │   ├── pan.ts
+│   │   └── zoom.ts
+│   └── input/                         #   DOM-event handler cluster
+│       ├── pointer.ts
+│       ├── touch.ts
+│       └── keyboard.ts
+│
+├── luxar-fly-controls.ts               # Free-flight 6DOF controller
+├── luxar-fly-controls/                 # Per-class helpers (parallel to orbit)
+│   ├── camera-application.ts          #   initializeFromCamera, updateOrientation, lookAtSmooth
+│   ├── physics.ts                     #   integrateTranslation, integrateRotation
+│   ├── listeners.ts                   #   attachListeners → disposer
+│   └── input/                         #   DOM-event handler cluster
+│       ├── keyboard.ts
+│       ├── mouse.ts
+│       └── wheel.ts
+│
+├── types.ts                            # TypeScript type definitions
+└── README.md                           # This documentation
 ```
+
+The orchestrator files at the package root are the public API (imported
+from `scene/`, `ui/`, etc.). Each orchestrator delegates body work to
+helpers in its sibling `<orchestrator-name>/` subfolder, with thematic
+subgroups for `math/` (pure functions) and `input/` (DOM-event handler
+bodies). Event dispatch sites stay on the orchestrator so the listener
+contract (`change` / `start` / `end`) is unchanged from outside the
+package.
 
 ---
 
@@ -263,3 +298,10 @@ Test files:
 - `controls-manager.test.ts` — Mode switching, configuration, events
 - `luxar-orbit-controls.test.ts` — Rotation, pan, zoom, damping, trackball math
 - `luxar-fly-controls.test.ts` — Movement, physics, input handling
+
+---
+
+## Dependencies
+
+- Internal: `config`, `ui/gui`, `utils/log`.
+- External: `three`.
