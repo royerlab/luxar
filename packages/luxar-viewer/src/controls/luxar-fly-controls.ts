@@ -50,6 +50,7 @@ import {
   integrateRotation,
   type FlyPhysicsCtx,
 } from './luxar-fly-controls/physics';
+import { attachListeners } from './luxar-fly-controls/listeners';
 
 export interface LuxarFlyControlsConfig {
   movementSpeed?: number; // Units per second
@@ -99,9 +100,6 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
   // Speed boost state
   private speedBoost: boolean = false;
 
-  // Track whether keyboard listeners are currently attached
-  private keyListenersAttached = false;
-
   // Velocity vectors for physics
   private velocity = new THREE.Vector3(0, 0, 0); // Translational velocity in world space
   private angularVelocity = new THREE.Vector3(0, 0, 0); // Angular velocity in world space (rad/s)
@@ -123,16 +121,9 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
   private camera: LuxarCamera;
   private domElement: HTMLElement;
 
-  // Bound DOM event handlers, captured for clean removal in dispose().
-  private boundHandlers: {
-    keydown: (e: KeyboardEvent) => void;
-    keyup: (e: KeyboardEvent) => void;
-    mousedown: (e: MouseEvent) => void;
-    mouseup: (e: MouseEvent) => void;
-    mousemove: (e: MouseEvent) => void;
-    wheel: (e: WheelEvent) => void;
-    contextmenu: (e: Event) => void;
-  };
+  // Disposer for DOM listeners; populated in the constructor by
+  // attachListeners() and invoked from dispose().
+  private listenerDisposer: () => void = () => {};
 
   // When true, keyboard input is forwarded by the caller (e.g.
   // InputContextManager) rather than registered on `window`. Set at
@@ -162,49 +153,16 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
     // Save initial state so reset() has a valid baseline
     this.saveState();
 
-    this.boundHandlers = this.bindEventHandlers();
-    this.addEventListeners();
-  }
-
-  private bindEventHandlers(): typeof this.boundHandlers {
-    return {
-      keydown: this.onKeyDown.bind(this),
-      keyup: this.onKeyUp.bind(this),
-      mousedown: this.onMouseDown.bind(this),
-      mouseup: this.onMouseUp.bind(this),
-      mousemove: this.onMouseMove.bind(this),
-      wheel: this.onWheel.bind(this),
-      contextmenu: (e: Event) => e.preventDefault(),
-    };
-  }
-
-  private addEventListeners(): void {
-    if (!this.externalInputManagement) {
-      window.addEventListener('keydown', this.boundHandlers.keydown);
-      window.addEventListener('keyup', this.boundHandlers.keyup);
-      this.keyListenersAttached = true;
-    }
-
-    // Mouse events are always handled internally
-    this.domElement.addEventListener('mousedown', this.boundHandlers.mousedown);
-    window.addEventListener('mouseup', this.boundHandlers.mouseup);
-    window.addEventListener('mousemove', this.boundHandlers.mousemove);
-    this.domElement.addEventListener('wheel', this.boundHandlers.wheel, { passive: false });
-    this.domElement.addEventListener('contextmenu', this.boundHandlers.contextmenu);
-  }
-
-  private removeEventListeners(): void {
-    if (this.keyListenersAttached) {
-      window.removeEventListener('keydown', this.boundHandlers.keydown);
-      window.removeEventListener('keyup', this.boundHandlers.keyup);
-      this.keyListenersAttached = false;
-    }
-
-    this.domElement.removeEventListener('mousedown', this.boundHandlers.mousedown);
-    window.removeEventListener('mouseup', this.boundHandlers.mouseup);
-    window.removeEventListener('mousemove', this.boundHandlers.mousemove);
-    this.domElement.removeEventListener('wheel', this.boundHandlers.wheel);
-    this.domElement.removeEventListener('contextmenu', this.boundHandlers.contextmenu);
+    this.listenerDisposer = attachListeners({
+      domElement: this.domElement,
+      externalInputManagement: this.externalInputManagement,
+      onKeyDown: (event) => this.onKeyDown(event),
+      onKeyUp: (event) => this.onKeyUp(event),
+      onMouseDown: (event) => this.onMouseDown(event),
+      onMouseUp: (event) => this.onMouseUp(event),
+      onMouseMove: (event) => this.onMouseMove(event),
+      onWheel: (event) => this.onWheel(event),
+    });
   }
 
   /**
@@ -411,6 +369,6 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
    * Dispose of controls and clean up event listeners
    */
   public dispose(): void {
-    this.removeEventListeners();
+    this.listenerDisposer();
   }
 }
