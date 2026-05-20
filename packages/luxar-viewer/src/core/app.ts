@@ -54,6 +54,7 @@ import {
 import { installUnloadHandler } from './app/lifecycle/unload-handling';
 import { installBrowserShortcut } from './app/dataset/browser-shortcut';
 import { openCacheStatsView as openCacheStatsViewImpl } from './app/debug/cache-stats-view';
+import { disposeOverlays as disposeOverlaysImpl } from './app/overlays/dispose-overlays';
 
 import type { LuxarAppOptions } from './app/options';
 export type { LuxarAppOptions } from './app/options';
@@ -652,10 +653,12 @@ export class LuxarApp {
    * Tear down the current OverlayManager, removing its DOM elements.
    */
   private disposeOverlays(): void {
-    if (this.overlayManager) {
-      this.overlayManager.dispose();
-      this.overlayManager = undefined;
-    }
+    disposeOverlaysImpl({
+      manager: this.overlayManager,
+      onDisposed: () => {
+        this.overlayManager = undefined;
+      },
+    });
   }
 
   /**
