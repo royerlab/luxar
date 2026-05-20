@@ -18,9 +18,27 @@
  * exercised transitively through loadOverlays.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { OverlayManager, FONT_PRESETS } from '../../../ui/overlay-manager';
 import type { OverlayConfig } from '../../../data/loaders/overlay-loader';
+import type { SimpleDims } from '../../../types/dims';
+
+/**
+ * Settable dims state for the dimension-filtering describe block below.
+ * The mock returns whatever the current test has assigned. Tests that
+ * don't touch dimensions are unaffected because their overlays have no
+ * `visible_range`, so `isOverlayVisible` short-circuits to `true`
+ * before reading `getDims()`.
+ */
+const mockDimsState: { current: SimpleDims | null } = { current: null };
+
+vi.mock('../../../scene/scene-dims-manager', () => ({
+  sceneDimsManager: {
+    getDims: () => mockDimsState.current,
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+  },
+}));
 
 function makeTextOverlay(overrides: Partial<OverlayConfig> = {}): OverlayConfig {
   return {
@@ -234,6 +252,140 @@ describe('OverlayManager.dispose', () => {
   });
 });
 
+describe('OverlayManager.updateVisibility — dimension filtering', () => {
+  let manager: OverlayManager;
+
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    mockDimsState.current = null;
+    manager = new OverlayManager();
+  });
+
+  afterEach(() => {
+    manager.dispose();
+  });
+
+  /** Build a SimpleDims with a single dimension named `t` whose current step
+   *  is the supplied value. The metadata.findIndex by name is what the
+   *  visible_range check resolves through, so the name is what matters. */
+  function setTimeStep(value: number): void {
+    mockDimsState.current = {
+      ndim: 1,
+      currentStep: [value],
+      displayed: [],
+      metadata: [{ name: 't', unit: 's', scale: 1 }],
+    };
+  }
+
+  it('hides a dimension-filtered overlay when getDims() returns null', async () => {
+    // isOverlayVisible's early-return at the "dims not ready" branch:
+    // when no scene is loaded, overlays with visible_range must hide.
+    mockDimsState.current = null;
+    await manager.loadOverlays(
+      [makeTextOverlay({ name: 'd', visible_range: { t: [0, 5] } })],
+      'http://example.com'
+    );
+    expect(manager.getVisibleOverlays()).toHaveLength(0);
+  });
+
+  it('exact-match visible_range: shows on match, hides off-by-one', async () => {
+    setTimeStep(3);
+    await manager.loadOverlays(
+      [makeTextOverlay({ name: 'exact', visible_range: { t: 3 } })],
+      'http://example.com'
+    );
+    expect(manager.getVisibleOverlays()).toHaveLength(1);
+
+    setTimeStep(4);
+    manager.updateVisibility();
+    expect(manager.getVisibleOverlays()).toHaveLength(0);
+  });
+
+  it('range visible_range: includes both endpoints and the interior, excludes outside', async () => {
+    setTimeStep(2);
+    await manager.loadOverlays(
+      [makeTextOverlay({ name: 'r', visible_range: { t: [2, 5] } })],
+      'http://example.com'
+    );
+    expect(manager.getVisibleOverlays()).toHaveLength(1);
+
+    setTimeStep(5);
+    manager.updateVisibility();
+    expect(manager.getVisibleOverlays()).toHaveLength(1);
+
+    setTimeStep(3.5);
+    manager.updateVisibility();
+    expect(manager.getVisibleOverlays()).toHaveLength(1);
+
+    setTimeStep(1);
+    manager.updateVisibility();
+    expect(manager.getVisibleOverlays()).toHaveLength(0);
+
+    setTimeStep(6);
+    manager.updateVisibility();
+    expect(manager.getVisibleOverlays()).toHaveLength(0);
+  });
+
+  it('fade transition toggles the --hidden class on/off across dim changes', async () => {
+    setTimeStep(3);
+    await manager.loadOverlays(
+      [
+        makeTextOverlay({
+          name: 'fade-dim',
+          opacity: 0.8,
+          transition: 'fade',
+          visible_range: { t: [2, 5] },
+        }),
+      ],
+      'http://example.com'
+    );
+    const el = document.querySelector('[data-overlay-name="fade-dim"]') as HTMLDivElement;
+    expect(el).toBeTruthy();
+    // In-range → --hidden absent, inline opacity is config.opacity.
+    expect(el.classList.contains('luxar-overlay--hidden')).toBe(false);
+    expect(el.style.opacity).toBe('0.8');
+
+    setTimeStep(10);
+    manager.updateVisibility();
+    expect(el.classList.contains('luxar-overlay--hidden')).toBe(true);
+    // Fade overlays NEVER set display:none — the class is the only signal.
+    expect(el.style.display).not.toBe('none');
+
+    setTimeStep(3);
+    manager.updateVisibility();
+    expect(el.classList.contains('luxar-overlay--hidden')).toBe(false);
+    expect(el.style.opacity).toBe('0.8');
+  });
+
+  it('non-fade transition toggles display:none on/off across dim changes', async () => {
+    setTimeStep(3);
+    await manager.loadOverlays(
+      [
+        makeTextOverlay({
+          name: 'plain-dim',
+          opacity: 0.5,
+          transition: 'none',
+          visible_range: { t: [2, 5] },
+        }),
+      ],
+      'http://example.com'
+    );
+    const el = document.querySelector('[data-overlay-name="plain-dim"]') as HTMLDivElement;
+    expect(el).toBeTruthy();
+    expect(el.style.display).not.toBe('none');
+    expect(el.style.opacity).toBe('0.5');
+
+    setTimeStep(10);
+    manager.updateVisibility();
+    expect(el.style.display).toBe('none');
+
+    setTimeStep(3);
+    manager.updateVisibility();
+    expect(el.style.display).not.toBe('none');
+    expect(el.style.opacity).toBe('0.5');
+  });
+});
+
 describe('OverlayManager.updateHoverContent', () => {
   let manager: OverlayManager;
 
@@ -320,6 +472,42 @@ describe('OverlayManager.updateHoverContent', () => {
 
     manager.updateHoverContent({ label: 'visible', nodeName: '/n', elementIndex: 0 });
     expect(el.classList.contains('luxar-overlay--hidden')).toBe(false);
+    expect(el.style.opacity).toBe('1');
+  });
+
+  it('shows a hover overlay configured with visible_range and transition:"none"', async () => {
+    // Sibling of the fade-branch regression above. The "start hidden"
+    // gate in createOverlayElement has two sides:
+    //   - transition:"fade" → adds luxar-overlay--hidden class
+    //   - transition:"none" (or default) → sets display:none inline
+    // Both must be skipped for hover overlays, because updateHoverContent
+    // controls visibility via inline opacity and cannot recover from a
+    // display:none element (opacity changes on a display:none box paint
+    // nothing).
+    await manager.loadOverlays(
+      [
+        makeTextOverlay({
+          name: 'hover-trap-display',
+          hover: true,
+          text: '{hover_label}',
+          opacity: 1.0,
+          transition: 'none',
+          visible_range: { t: [0, 5] },
+        }),
+      ],
+      'http://example.com'
+    );
+
+    const el = document.querySelector(
+      '[data-overlay-name="hover-trap-display"]'
+    ) as HTMLDivElement;
+    expect(el).toBeTruthy();
+    // The non-fade branch of the gate sets display:none; it must be
+    // skipped for hover overlays.
+    expect(el.style.display).not.toBe('none');
+
+    manager.updateHoverContent({ label: 'visible', nodeName: '/n', elementIndex: 0 });
+    expect(el.style.display).not.toBe('none');
     expect(el.style.opacity).toBe('1');
   });
 });

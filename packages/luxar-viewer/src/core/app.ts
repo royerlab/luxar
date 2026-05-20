@@ -34,7 +34,7 @@ import { ThemeManager } from '../themes/theme-manager';
 import type { ZarrViewerConfig } from '../types/zarr';
 import { OverlayManager } from '../ui/overlay-manager';
 import * as zarr from '../data/zarr';
-import { PickingSystem, type PickResult } from '../rendering/picking/picking-system';
+import { PickingSystem } from '../rendering/picking/picking-system';
 import { LabelLoader } from '../data/loaders/label-loader';
 import { ImageLabelLoader } from '../data/loaders/image-label-loader';
 import type { LoaderConfig } from '../data/data-loader-types';
@@ -47,6 +47,7 @@ import { classifyBrowserUrl } from './browser-decision';
 import { applyViewerConfigState as applyViewerConfigStateHelper } from './viewer-config-applier';
 import { computeDebugState } from './debug-state';
 import { buildDebugCacheHelpers } from './debug-cache-helpers';
+import { buildPickResultHandler } from './pick-result-handler';
 import {
   getPanelVisibilityStates as getPanelVisibilityStatesHelper,
   restorePanelVisibilityStates as restorePanelVisibilityStatesHelper,
@@ -842,35 +843,19 @@ export class LuxarApp {
       this.imageLabelLoader = new ImageLabelLoader(store, rootLoc);
     }
 
-    // Create picking system with result callback
+    // Create picking system with result callback. The handler closure
+    // lives in `pick-result-handler.ts` so its branch logic (null /
+    // label-only / image-only / both / neither / fetch reject /
+    // missing loaders) can be unit-tested with stub ports.
     this.pickingSystem = new PickingSystem(
       this.sceneManager.renderer,
       this.sceneManager.capabilities,
       this.sceneManager.camera,
-      async (result: PickResult | null) => {
-        try {
-          if (!result) {
-            this.overlayManager?.updateHoverContent(null);
-            return;
-          }
-          const nodePath = result.mainNode.name;
-          // Fetch text label and image URL in parallel
-          const [label, imageUrl] = await Promise.all([
-            this.labelLoader?.getLabel(nodePath, result.elementId) ?? Promise.resolve(null),
-            this.imageLabelLoader?.getImageUrl(nodePath, result.elementId) ?? Promise.resolve(null),
-          ]);
-          const hasContent = label || imageUrl;
-          this.overlayManager?.updateHoverContent(
-            hasContent
-              ? { label, imageUrl, nodeName: nodePath, elementIndex: result.elementId }
-              : null
-          );
-        } catch (err) {
-          // Don't let label loading errors kill the hover loop
-          log.warning(Modules.APP, `Picking callback error: ${err}`);
-          this.overlayManager?.updateHoverContent(null);
-        }
-      }
+      buildPickResultHandler({
+        labelLoader: this.labelLoader,
+        imageLabelLoader: this.imageLabelLoader,
+        overlayManager: this.overlayManager,
+      })
     );
 
     // Wire NodeFactory to create pick nodes for future scene loads
