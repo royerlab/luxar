@@ -1499,6 +1499,70 @@ def generate_gsplats_test():
         aprint(f"  Centers: {centers.shape}, Cholesky: {cholesky.shape}")
 
 
+def generate_labelled_points_test():
+    """Small labelled-points dataset for the hover-tooltip E2E spec.
+
+    Each point gets a string label "Point 0", "Point 1", ... The scene
+    auto-injects a default hover overlay because `has_labels=True`
+    (see `luxar/core/scene.py::_inject_default_hover_overlay`). The
+    Playwright spec `hover-tooltip.spec.ts` loads this fixture, stops
+    the cursor over a point, and verifies the tooltip appears.
+
+    Kept deliberately small (8 points, fixed layout) so the spec can
+    predict pixel-coords without any randomness.
+    """
+    with asection("Generating Labelled Points Test (E2E hover-tooltip)"):
+        output = FIXTURES_DIR / "test_labelled_points.zarr"
+
+        # 8 points in a regular pattern across the visible volume.
+        # Stay near the origin (the viewer's default camera centres on (0,0,0));
+        # spread out enough that mouse can hover one without hitting another.
+        positions = np.array(
+            [
+                [-5.0, -5.0, 0.0],
+                [5.0, -5.0, 0.0],
+                [-5.0, 5.0, 0.0],
+                [5.0, 5.0, 0.0],
+                [0.0, 0.0, -5.0],
+                [0.0, 0.0, 5.0],
+                [-5.0, 0.0, 0.0],
+                [5.0, 0.0, 0.0],
+            ],
+            dtype=np.float32,
+        )
+        n = positions.shape[0]
+
+        colors = np.tile(np.array([[1.0, 0.5, 0.25]], dtype=np.float32), (n, 1))
+        radii = np.full(n, 1.0, dtype=np.float32)
+        labels = [f"Point {i}" for i in range(n)]
+
+        dims = Dimensions(
+            [
+                Dimension("x", unit="units", display=True),
+                Dimension("y", unit="units", display=True),
+                Dimension("z", unit="units", display=True),
+            ]
+        )
+
+        with LuxarZarrCompiler(
+            output,
+            encoding_mode=EncodingMode.MEMORY,
+            compressor=None,
+            float16_allowed=False,
+        ) as compiler:
+            scene = compiler.create_scene(dimensions=dims)
+            scene.add_points(
+                "labelled_points",
+                positions=positions,
+                colors=colors,
+                radii=radii,
+                labels=labels,
+            )
+
+        aprint(f"  Created {output}")
+        aprint(f"  {n} labelled points; default hover overlay auto-injected")
+
+
 def main():
     """Generate all test datasets."""
     aprint("=" * 70)
@@ -1564,6 +1628,9 @@ def main():
         generate_gsplats_test()
         aprint("")
 
+        generate_labelled_points_test()
+        aprint("")
+
         aprint("=" * 70)
         aprint("✓ ALL TEST DATASETS GENERATED")
         aprint("=" * 70)
@@ -1588,6 +1655,7 @@ def main():
         aprint(f"  {FIXTURES_DIR}/test_nd_transforms.zarr")
         aprint(f"  {FIXTURES_DIR}/test_lines.zarr")
         aprint(f"  {FIXTURES_DIR}/test_gsplats.zarr")
+        aprint(f"  {FIXTURES_DIR}/test_labelled_points.zarr")
         aprint("")
         aprint("Run TypeScript tests with:")
         aprint("  cd packages/luxar-viewer && pnpm test array-decoder")
