@@ -70,9 +70,9 @@ import {
   toggleFullscreen,
   type FullscreenCtx,
 } from './input-handler/window-events/fullscreen-toggle';
+import { cycleDataMonitor } from './input-handler/commands/data-monitor-cycle';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { updateSceneForDimensions } from '../data';
-import { eventBus } from '../utils/cross-layer/event-bus';
 
 /**
  * Central coordinator for all user input events and nD navigation.
@@ -640,8 +640,7 @@ export class InputHandler {
    * @private
    */
   private handleDataMonitorCycle(): void {
-    eventBus.emit('panel-cycle', { panelId: 'data-monitor' });
-    log.info(Modules.DATA_MONITOR, 'Data loading monitor cycled');
+    cycleDataMonitor();
   }
 
   /**
