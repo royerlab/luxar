@@ -44,7 +44,6 @@ import type { ScaleBar } from '../ui/scale-bar';
 import type { ColormapLegend } from '../ui/colormap-legend';
 import type { OverlayManager } from '../ui/overlay-manager';
 import { notifier } from '../utils/cross-layer/notifier';
-import { captureViewerState } from '../config/zarr-bridge/viewer-state-capture';
 import type { DimensionSliders, SliderConfig } from '../ui/dimension-sliders';
 
 /**
@@ -71,6 +70,10 @@ import {
   type FullscreenCtx,
 } from './input-handler/window-events/fullscreen-toggle';
 import { cycleDataMonitor } from './input-handler/commands/data-monitor-cycle';
+import {
+  exportViewerState,
+  type ViewerStateExportCtx,
+} from './input-handler/commands/viewer-state-export';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { updateSceneForDimensions } from '../data';
 
@@ -838,36 +841,15 @@ export class InputHandler {
    * @private
    */
   private exportViewerState(): void {
-    if (!this.renderingControls) {
-      log.warning(Modules.INPUT, 'Cannot export state: rendering controls not available');
-      return;
-    }
+    exportViewerState(this.makeViewerStateExportCtx());
+  }
 
-    const state = captureViewerState(
-      this.sceneManager,
-      this.renderingControls,
-      sceneDimsManager,
-      this.animationManager
-    );
-
-    const json = JSON.stringify(state, null, 2);
-
-    // Copy to clipboard
-    navigator.clipboard
-      .writeText(json)
-      .then(() => {
-        notifier.toast('Viewer state copied to clipboard');
-        log.info(Modules.INPUT, 'Viewer state exported to clipboard');
-      })
-      .catch((err) => {
-        log.error(Modules.INPUT, 'Failed to copy state to clipboard:', err);
-        notifier.toast('Failed to copy state to clipboard');
-      });
-
-    // Also store on debug interface for programmatic access
-    if (window.__luxarDebug) {
-      window.__luxarDebug.lastExportedState = state;
-    }
+  private makeViewerStateExportCtx(): ViewerStateExportCtx {
+    return {
+      sceneManager: this.sceneManager,
+      renderingControls: this.renderingControls,
+      animationManager: this.animationManager,
+    };
   }
 
   /**
