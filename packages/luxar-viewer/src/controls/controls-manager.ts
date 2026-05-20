@@ -20,10 +20,17 @@ import { LuxarOrbitControls } from './luxar-orbit-controls';
 import { LuxarFlyControls } from './luxar-fly-controls';
 import { config } from '../config';
 import { log, Modules, LogEmoji } from '../utils/log';
-import { EventGroup } from '../utils/event-group';
+import { EventGroup } from '../utils/cross-layer/event-group';
 import type { LuxarCamera } from '../utils/camera-utils';
 import type { ControlType } from './types';
 import { isMacPlatform } from '../utils/platform';
+import {
+  createOrbitControls,
+  createFlyControls,
+  createOrthoControls,
+  naturalDragButtonMap,
+  type ControlsCreationCtx,
+} from './controls-manager/factories';
 export type { ControlType };
 
 export interface ControlsManagerConfig {
@@ -185,101 +192,37 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   }
 
   // ---------------------------------------------------------------------------
-  // Control creation
+  // Control creation (delegated to controls-manager/factories.ts)
   // ---------------------------------------------------------------------------
 
+  private makeCreationCtx(): ControlsCreationCtx {
+    return {
+      camera: this.camera,
+      domElement: this.domElement,
+      config: this.config,
+      sceneScale: this.sceneScale,
+      storedDistanceLimits: this.storedDistanceLimits,
+      storedZoomLimits: this.storedZoomLimits,
+    };
+  }
+
   private createOrbitControls(): void {
-    const m = config.controls.scaleMultipliers;
-
-    // Use stored limits (from auto-frame) if available, then scale-derived,
-    // then hardcoded config defaults.
-    const minDist =
-      this.storedDistanceLimits?.min ??
-      (this.sceneScale > 0
-        ? this.sceneScale * m.minDistanceFactor
-        : config.controls.orbit.zoom.minDistance);
-    const maxDist =
-      this.storedDistanceLimits?.max ??
-      (this.sceneScale > 0
-        ? this.sceneScale * m.maxDistanceFactor
-        : config.controls.orbit.zoom.maxDistance);
-
-    const controls = new LuxarOrbitControls(this.camera, this.domElement, {
-      enableDamping: true,
-      screenSpacePanning: true,
-      autoRotate: this.config.autoRotate || false,
-      autoRotateSpeed: this.config.autoRotateSpeed || 0.25,
-      minDistance: minDist,
-      maxDistance: maxDist,
-    });
-
-    // Shift+scroll = view-axis rotation (roll)
-    controls.enableViewAxisRotation();
-
-    // Apply "natural drag" mapping (touchpad-friendly: LEFT=rotate, RIGHT=pan)
-    // when enabled. The default in LuxarOrbitControls is the mouse-friendly
-    // mapping (LEFT=pan, RIGHT=rotate); we only need to act when swapping in.
-    if (this.config.naturalDrag) {
-      controls.mouseButtons = {
-        LEFT: THREE.MOUSE.ROTATE,
-        MIDDLE: THREE.MOUSE.DOLLY,
-        RIGHT: THREE.MOUSE.PAN,
-      };
-    }
-
-    // Target is set in restoreCameraState() after creation
-    this.currentControls = controls;
-    this.attachControlEventForwarders(controls);
+    // Target is set in restoreCameraState() after creation.
+    this.currentControls = createOrbitControls(this.makeCreationCtx());
+    this.attachControlEventForwarders(this.currentControls);
     this.clock.update(); // Reset baseline; next getDelta() reads from now.
   }
 
   private createFlyControls(): void {
-    const controls = new LuxarFlyControls(this.camera, this.domElement, {
-      movementSpeed: this.config.flyMovementSpeed,
-      rotationSpeed: this.config.flyRotationSpeed,
-      lookSpeed: this.config.flyLookSpeed,
-      inertialMode: this.config.flyInertialMode,
-      damping: this.config.flyDamping,
-      rotationDamping: this.config.flyRotationDamping,
-      // Keyboard is routed through InputContextManager — see input/README.md.
-      externalInputManagement: true,
-    });
-
-    this.currentControls = controls;
-    this.attachControlEventForwarders(controls);
+    this.currentControls = createFlyControls(this.makeCreationCtx());
+    this.attachControlEventForwarders(this.currentControls);
     this.clock.update(); // Reset baseline; next getDelta() reads from now.
   }
 
   private createOrthoControls(): void {
-    const m = config.controls.scaleMultipliers;
-
-    // Use stored zoom limits (from auto-frame) if available, else wide defaults.
-    const minZoom = this.storedZoomLimits?.min ?? m.minDistanceFactor;
-    const maxZoom = this.storedZoomLimits?.max ?? 1.0 / m.minDistanceFactor;
-
-    const controls = new LuxarOrbitControls(this.camera, this.domElement, {
-      enableDamping: true,
-      screenSpacePanning: true,
-      enableRotate: false,
-      minZoom,
-      maxZoom,
-      minDistance: 0,
-      maxDistance: Infinity,
-    });
-
-    // Remap: left-click = pan (Napari/Google Maps convention)
-    controls.mouseButtons = {
-      LEFT: THREE.MOUSE.PAN,
-      MIDDLE: THREE.MOUSE.DOLLY,
-      RIGHT: null,
-    };
-
-    // Shift+scroll = view-axis rotation (roll)
-    controls.enableViewAxisRotation();
-
-    // Target is set in restoreCameraState() after creation
-    this.currentControls = controls;
-    this.attachControlEventForwarders(controls);
+    // Target is set in restoreCameraState() after creation.
+    this.currentControls = createOrthoControls(this.makeCreationCtx());
+    this.attachControlEventForwarders(this.currentControls);
     this.clock.update(); // Reset baseline; next getDelta() reads from now.
   }
 
@@ -400,9 +343,7 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
     this.config.naturalDrag = enabled;
     if (this.currentType !== 'orbit') return;
     if (!(this.currentControls instanceof LuxarOrbitControls)) return;
-    this.currentControls.mouseButtons = enabled
-      ? { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN }
-      : { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE };
+    this.currentControls.mouseButtons = naturalDragButtonMap(enabled);
   }
 
   public getNaturalDrag(): boolean {
