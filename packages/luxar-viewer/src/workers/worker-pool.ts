@@ -34,6 +34,7 @@ import { withTimeout } from './worker-pool/timeout/with-timeout';
 import { combineSignals } from './worker-pool/timeout/combine-signals';
 import { pickTimeoutMs } from './worker-pool/timeout/pick-timeout-ms';
 import { getConfiguredWorkerCount } from './worker-pool/lifecycle/worker-count';
+import { initializeWithGuard } from './worker-pool/lifecycle/init-with-guard';
 export { getWorkerPool, disposeWorkerPool, setDataWorkerUrl };
 
 export class WorkerPool {
@@ -266,50 +267,13 @@ export class WorkerPool {
     api: Remote<DataWorkerAPI>,
     workerNumber: number
   ): Promise<void> {
-    const timeoutMs = config.dataLoading.performance.workerInitTimeoutMs;
-    return new Promise<void>((resolve, reject) => {
-      let settled = false;
-      const settle = (kind: 'ok' | 'err', err?: Error): void => {
-        if (settled) return;
-        settled = true;
-        if (timer !== undefined) clearTimeout(timer);
-        // Restore the permanent runtime handlers; the early ones above
-        // are scoped to the init race only.
-        this.attachWorkerErrorHandlers(worker, workerNumber);
-        if (kind === 'ok') resolve();
-        else reject(err);
-      };
-      // Mirror withTimeout() semantics: 0/negative/non-finite disables the
-      // guard. `config/validation.ts` documents this convention for all
-      // worker timeouts ("0 disables, but the guard is recommended"); the
-      // pre-fix `setTimeout(..., 0)` instead fired on the next macrotask
-      // and rejected real async inits immediately.
-      const timer: ReturnType<typeof setTimeout> | undefined =
-        timeoutMs > 0 && Number.isFinite(timeoutMs)
-          ? setTimeout(() => {
-              settle('err', new Error(`Worker ${workerNumber} init exceeded ${timeoutMs}ms`));
-            }, timeoutMs)
-          : undefined;
-      // Override the permanent handlers for the duration of init so an
-      // early failure (script load error, WASM init throw) rejects the
-      // init promise rather than getting swallowed by the can't-find-
-      // worker-in-pool branch of handleWorkerFailure.
-      worker.onerror = (event) => {
-        const message = event instanceof ErrorEvent ? event.message : 'unknown error';
-        settle('err', new Error(`Worker ${workerNumber} runtime error during init: ${message}`));
-        if (typeof event.preventDefault === 'function') event.preventDefault();
-      };
-      worker.onmessageerror = () => {
-        settle(
-          'err',
-          new Error(`Worker ${workerNumber} produced an unserializable message during init`)
-        );
-      };
-      api.initialize().then(
-        () => settle('ok'),
-        (err) => settle('err', err instanceof Error ? err : new Error(String(err)))
-      );
-    });
+    return initializeWithGuard(
+      worker,
+      api,
+      workerNumber,
+      config.dataLoading.performance.workerInitTimeoutMs,
+      () => this.attachWorkerErrorHandlers(worker, workerNumber)
+    );
   }
 
   /**
