@@ -20,14 +20,15 @@ import { expose, transfer } from 'comlink';
 import { state, requireWasm } from './data-worker/state';
 import { initialize as initializeImpl } from './data-worker/initialize';
 import { querySpatialIndex as querySpatialIndexImpl } from './data-worker/spatial-index/query';
+import { computeNDVisibilityPoints as computeNDVisibilityPointsImpl } from './data-worker/visibility/points';
+import { computeNDVisibilityLines as computeNDVisibilityLinesImpl } from './data-worker/visibility/lines';
+import { computeNDVisibilityGSplats as computeNDVisibilityGSplatsImpl } from './data-worker/visibility/gsplats';
 
 // Validation + color helpers live in ./data-worker/validation and ./color-utils.
 // The worker imports them as bare identifiers (used in projection and
 // decode paths below) and re-exports the color helpers for the
 // existing unit test.
 import {
-  MAX_WASM_DIMS,
-  validateNDArrays,
   validateProjectionInputs,
   validateDecodeArgs,
   validateLineSegmentReferences,
@@ -36,166 +37,6 @@ import { coerceColorsToFloat32, coerceScalarsToFloat32, fillColorsWhite } from '
 export { coerceColorsToFloat32, coerceScalarsToFloat32, fillColorsWhite };
 
 
-
-/**
- * Task 2: Compute nD visibility for Points
- *
- * NOTE: Receives ALREADY DECODED data (ArrayDecoder runs on main thread).
- * Computes which points are visible in the current nD slice using hypersphere intersection.
- */
-async function computeNDVisibilityPoints(params: {
-  positions: Float32Array;
-  radii: Float32Array;
-  slicePosition: Float32Array;
-  tolerance: Float32Array;
-  ndim: number;
-  numPoints: number;
-}): Promise<{ visibilityMask: Uint8Array; visibleCount: number }> {
-  const wasmModule = requireWasm(state);
-
-  const { positions, radii, slicePosition, tolerance, ndim, numPoints } = params;
-  validateNDArrays(
-    'computeNDVisibilityPoints',
-    positions,
-    slicePosition,
-    tolerance,
-    ndim,
-    numPoints,
-    ndim,
-    radii
-  );
-
-  // Ensure buffer capacity (pooled across calls via state.visibilityMaskBuffer)
-  let buf = state.visibilityMaskBuffer;
-  if (!buf || buf.length < numPoints) {
-    buf = new Uint8Array(Math.ceil(numPoints * 1.5));
-    state.visibilityMaskBuffer = buf;
-  }
-
-  // Call WASM (or TypeScript fallback)
-  const visibleCount = wasmModule.compute_nd_visibility_points(
-    positions,
-    radii,
-    slicePosition,
-    tolerance,
-    ndim,
-    numPoints,
-    buf
-  );
-
-  return {
-    visibilityMask: buf.subarray(0, numPoints),
-    visibleCount,
-  };
-}
-
-/**
- * Task 3: Compute nD visibility for Lines (check segment endpoints)
- */
-async function computeNDVisibilityLines(params: {
-  vertices: Float32Array;
-  segments: Uint32Array;
-  widths: Float32Array;
-  slicePosition: Float32Array;
-  tolerance: Float32Array;
-  ndim: number;
-  numSegments: number;
-}): Promise<{ visibilityMask: Uint8Array; visibleCount: number }> {
-  const wasmModule = requireWasm(state);
-
-  const { vertices, segments, widths, slicePosition, tolerance, ndim, numSegments } = params;
-  if (!Number.isInteger(ndim) || ndim < 1 || ndim > MAX_WASM_DIMS) {
-    throw new Error(`computeNDVisibilityLines: ndim=${ndim} out of range [1, ${MAX_WASM_DIMS}]`);
-  }
-  if (slicePosition.length < ndim || tolerance.length < ndim) {
-    throw new Error(`computeNDVisibilityLines: slicePosition/tolerance too short for ndim=${ndim}`);
-  }
-  // Validates segments[i] < vertex-count, plus widths length, against the
-  // max referenced vertex (a stronger check than `>= numSegments`, which
-  // earlier code did).
-  validateLineSegmentReferences('computeNDVisibilityLines', segments, numSegments, vertices, ndim, {
-    widths,
-  });
-
-  // Ensure buffer capacity (pooled across calls via state.visibilityMaskBuffer)
-  let buf = state.visibilityMaskBuffer;
-  if (!buf || buf.length < numSegments) {
-    buf = new Uint8Array(Math.ceil(numSegments * 1.5));
-    state.visibilityMaskBuffer = buf;
-  }
-
-  // Call WASM (checks if EITHER endpoint is visible)
-  const visibleCount = wasmModule.compute_nd_visibility_lines(
-    vertices,
-    segments,
-    widths,
-    slicePosition,
-    tolerance,
-    ndim,
-    numSegments,
-    buf
-  );
-
-  return {
-    visibilityMask: buf.subarray(0, numSegments),
-    visibleCount,
-  };
-}
-
-/**
- * Task 4: Compute nD visibility for GSplats (check center + ellipsoid extent)
- */
-async function computeNDVisibilityGSplats(params: {
-  centers: Float32Array;
-  choleskyFactors: Float32Array;
-  slicePosition: Float32Array;
-  tolerance: Float32Array;
-  ndim: number;
-  numSplats: number;
-}): Promise<{ visibilityMask: Uint8Array; visibleCount: number }> {
-  const wasmModule = requireWasm(state);
-
-  const { centers, choleskyFactors, slicePosition, tolerance, ndim, numSplats } = params;
-  validateNDArrays(
-    'computeNDVisibilityGSplats',
-    centers,
-    slicePosition,
-    tolerance,
-    ndim,
-    numSplats
-  );
-  // Cholesky factors: packed lower-triangular has ndim*(ndim+1)/2 entries per splat.
-  const expectedCholesky = numSplats * ((ndim * (ndim + 1)) / 2);
-  if (choleskyFactors.length < expectedCholesky) {
-    throw new Error(
-      'computeNDVisibilityGSplats: choleskyFactors too short ' +
-        `(got ${choleskyFactors.length}, expected ≥ ${expectedCholesky})`
-    );
-  }
-
-  // Ensure buffer capacity (pooled across calls via state.visibilityMaskBuffer)
-  let buf = state.visibilityMaskBuffer;
-  if (!buf || buf.length < numSplats) {
-    buf = new Uint8Array(Math.ceil(numSplats * 1.5));
-    state.visibilityMaskBuffer = buf;
-  }
-
-  // Call WASM (computes ellipsoid extent from Cholesky factors)
-  const visibleCount = wasmModule.compute_nd_visibility_gsplats(
-    centers,
-    choleskyFactors,
-    slicePosition,
-    tolerance,
-    ndim,
-    numSplats,
-    buf
-  );
-
-  return {
-    visibilityMask: buf.subarray(0, numSplats),
-    visibleCount,
-  };
-}
 
 // ============================================================================
 // PROJECTION FUNCTIONS (nD → 3D, CPU-intensive)
@@ -1233,9 +1074,12 @@ export const workerAPI = {
   initialize: (): Promise<void> => initializeImpl(state),
   querySpatialIndex: (p: Parameters<typeof querySpatialIndexImpl>[1]) =>
     querySpatialIndexImpl(state, p),
-  computeNDVisibilityPoints,
-  computeNDVisibilityLines,
-  computeNDVisibilityGSplats,
+  computeNDVisibilityPoints: (p: Parameters<typeof computeNDVisibilityPointsImpl>[1]) =>
+    computeNDVisibilityPointsImpl(state, p),
+  computeNDVisibilityLines: (p: Parameters<typeof computeNDVisibilityLinesImpl>[1]) =>
+    computeNDVisibilityLinesImpl(state, p),
+  computeNDVisibilityGSplats: (p: Parameters<typeof computeNDVisibilityGSplatsImpl>[1]) =>
+    computeNDVisibilityGSplatsImpl(state, p),
   // Decoding functions (main thread fetches, worker decodes)
   decodeQuantized,
   decodeLogScalar,
