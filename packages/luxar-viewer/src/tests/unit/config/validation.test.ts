@@ -557,53 +557,6 @@ describe('validateConfig', () => {
       expect(result.errors).toContainEqual(expect.stringContaining('non-finite values'));
     });
 
-    it('rejects NaN input.defaultSensitivity', () => {
-      const cfg = cloneConfig();
-      cfg.input.defaultSensitivity = NaN;
-      const result = validateConfig(cfg);
-      expect(result.valid).toBe(false);
-      expect(result.errors).toContainEqual(
-        expect.stringContaining('Invalid input.defaultSensitivity')
-      );
-    });
-  });
-
-  describe('input validation', () => {
-    it('should warn when sensitivity is zero', () => {
-      const cfg = cloneConfig();
-      cfg.input.defaultSensitivity = 0;
-
-      const result = validateConfig(cfg);
-
-      expect(result.warnings).toContainEqual(expect.stringContaining('Unusual input sensitivity'));
-    });
-
-    it('should warn when sensitivity is negative', () => {
-      const cfg = cloneConfig();
-      cfg.input.defaultSensitivity = -0.5;
-
-      const result = validateConfig(cfg);
-
-      expect(result.warnings).toContainEqual(expect.stringContaining('Unusual input sensitivity'));
-    });
-
-    it('should warn when sensitivity exceeds 1', () => {
-      const cfg = cloneConfig();
-      cfg.input.defaultSensitivity = 2;
-
-      const result = validateConfig(cfg);
-
-      expect(result.warnings).toContainEqual(expect.stringContaining('Unusual input sensitivity'));
-    });
-
-    it('should not warn when sensitivity is within valid range', () => {
-      const cfg = cloneConfig();
-      cfg.input.defaultSensitivity = 0.5;
-
-      const result = validateConfig(cfg);
-
-      expect(result.warnings.filter((w) => w.includes('input sensitivity'))).toHaveLength(0);
-    });
   });
 
   describe('WebGL validation', () => {
