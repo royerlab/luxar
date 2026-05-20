@@ -32,7 +32,7 @@
 import * as THREE from 'three';
 import * as zarr from '../zarr';
 import { log, Modules, LogEmoji } from '../../utils/log';
-import { notifier } from '../../utils/notifier';
+import { notifier } from '../../utils/cross-layer/notifier';
 import { getWorkerPool } from '../../workers/worker-pool';
 import { ZarrSceneAttrs } from '../../types/zarr';
 import type { LoaderConfig, SceneNode, ViewState } from '../data-loader-types';

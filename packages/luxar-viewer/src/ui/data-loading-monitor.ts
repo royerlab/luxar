@@ -33,7 +33,7 @@ import { EventQueue } from './data-loading-monitor/event-queue';
 import { PollingLoop } from './data-loading-monitor/polling-loop';
 import { log, Modules } from '../utils/log';
 import { config } from '../config';
-import { notifier } from '../utils/notifier';
+import { notifier } from '../utils/cross-layer/notifier';
 
 // Only extract timings and limits from config (these are data values, not styles)
 const MonitorTimings = config.dataLoading.monitor.timings;

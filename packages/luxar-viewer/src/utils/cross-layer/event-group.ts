@@ -38,7 +38,7 @@
  * popped off the stack as they run).
  */
 
-import { log, Modules } from './log';
+import { log, Modules } from '../log';
 
 export class EventGroup {
   private cleanups: Array<() => void> = [];

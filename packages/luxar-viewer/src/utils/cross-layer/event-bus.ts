@@ -21,7 +21,7 @@
  *   - per-event payload typing fails mistyped event names at the
  *     call site.
  *
- * @module utils/event-bus
+ * @module utils/cross-layer/event-bus
  */
 
 /**

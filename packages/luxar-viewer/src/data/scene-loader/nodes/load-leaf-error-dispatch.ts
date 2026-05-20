@@ -15,7 +15,7 @@
 
 import type * as THREE from 'three';
 import { log, Modules } from '../../../utils/log';
-import { notifier } from '../../../utils/notifier';
+import { notifier } from '../../../utils/cross-layer/notifier';
 
 export type LoaderErrorKind = 'Network' | 'Decode' | 'Validation' | 'Unexpected';
 
