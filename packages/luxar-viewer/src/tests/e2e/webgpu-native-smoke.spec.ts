@@ -14,7 +14,7 @@
  * the TSL parity harness (`tsl-shader-parity.spec.ts`).
  *
  * @see picking/PICKING_DESIGN.md — WebGPU implementation details
- * @see rendering/SPECIFICATIONS.md § 11 — Dual-stack architecture
+ * @see rendering/README.md — Dual-stack architecture overview
  */
 
 import { test, expect } from './fixtures';

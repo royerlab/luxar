@@ -332,7 +332,7 @@ print(f"Compression: {info['compression_ratio']}x")
 
 ### Dependencies
 
-- **`luxar.encoding`**: Semantic type-based array encoding (see `../../encoding/SPECIFICATIONS.md`)
+- **`luxar.encoding`**: Semantic type-based array encoding (see `../../encoding/README.md`)
 - **`luxar.typing_utils`**: Constants (TARGET_CHUNK_BYTES)
 - **`hilbertcurve`**: Required for Hilbert ordering (optional for Morton)
 
@@ -397,7 +397,6 @@ Compression gains from:
 
 ## Related Documentation
 
-- **Technical specification**: `SPECIFICATIONS.md` (format details, algorithms)
-- **Encoding system**: `../../encoding/SPECIFICATIONS.md` (semantic types, quantization)
-- **Scene embedding**: `../../core/SPECIFICATIONS.md` (GSplats in scene graph)
+- **Encoding system**: `../../encoding/README.md` (semantic types, quantization)
+- **Scene embedding**: `../../core/README.md` (GSplats in scene graph)
 - **Parent package**: `../README.md` (Gaussian splatting algorithms)

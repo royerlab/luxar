@@ -1,9 +1,9 @@
 # luxar-viewer Conventions
 
-Cross-cutting conventions that apply to every subpackage. Each
-SPECIFICATIONS.md may override or extend these for its own scope; the
-defaults below are what new code should follow unless there is a
-documented reason not to.
+Cross-cutting conventions that apply to every subpackage. A
+subpackage's `README.md` may override or extend these for its own
+scope; the defaults below are what new code should follow unless there
+is a documented reason not to.
 
 ## Table of contents
 
@@ -76,7 +76,7 @@ Examples:
 - `luxar-dimension-slider__thumb` (element)
 
 Do **not** use Tailwind utility classes in component CSS. Themes are
-CSS-variable driven (see `src/themes/SPECIFICATIONS.md`); component
+CSS-variable driven (see `src/themes/README.md`); component
 styles read those variables, never hard-coded values.
 
 ## 4. Logging
@@ -207,7 +207,7 @@ thread. Conventions:
 
 - **Always validate inputs at the JS boundary**: every public entry
   point in `data-worker.ts` calls a `validate*` helper before crossing
-  into WASM. See `wasm/SPECIFICATIONS.md` §3.
+  into WASM.
 - **Always set `onerror` and `onmessageerror`** on Workers you create
   — silent failures otherwise become "the worker just stopped".
 - **Use `WorkerPool.withTimeout()`** for any RPC that could hang.

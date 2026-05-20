@@ -214,7 +214,7 @@ This glossary defines standard terminology used throughout the gsplats package s
 - ❌ LR adjustment (doesn't explain why)
 - ❌ Dimensional compensation (unclear)
 
-**Related**: See [utils/SPECIFICATIONS.md](./utils/SPECIFICATIONS.md) → `calculate_gradient_dilution_factor()`
+**Related**: See [utils/README.md](./utils/README.md) → `calculate_gradient_dilution_factor()`
 
 ---
 
@@ -237,7 +237,7 @@ This glossary defines standard terminology used throughout the gsplats package s
 
 **Benefit**: 50x+ faster optimization with simpler architecture
 
-**Related**: See [optim/SPECIFICATIONS.md](./optim/SPECIFICATIONS.md) → create_optimizer_and_scheduler
+**Related**: See [optim/README.md](./optim/README.md) → create_optimizer_and_scheduler
 
 ---
 
@@ -256,7 +256,7 @@ This glossary defines standard terminology used throughout the gsplats package s
 - ❌ Peak performance (vague)
 - ❌ Checkpoint (implies persistence)
 
-**Related**: See [fitting/SPECIFICATIONS.md](./fitting/SPECIFICATIONS.md) → Best State Tracking
+**Related**: See [fitting/README.md](./fitting/README.md) → Best State Tracking
 
 ---
 
@@ -489,7 +489,7 @@ These are user-facing configuration options:
 
 **Formula**: `effective_lr = base_lr × gradient_dilution_factor`
 
-**See**: [utils/SPECIFICATIONS.md](./utils/SPECIFICATIONS.md) → `calculate_gradient_dilution_factor()`
+**See**: [utils/README.md](./utils/README.md) → `calculate_gradient_dilution_factor()`
 
 ---
 
@@ -610,16 +610,16 @@ When referencing modules in documentation:
 ---
 
 ### Package Paths
-When referencing package specifications:
+When referencing other packages:
 
-**Format**: `[Package Name](./relative/path/SPECIFICATIONS.md)`
+**Format**: `[Package Name](./relative/path/README.md)`
 
 **Examples**:
-- [Main SPECIFICATIONS.md](../SPECIFICATIONS.md)
-- [fitting/SPECIFICATIONS.md](../fitting/SPECIFICATIONS.md)
-- [optim/SPECIFICATIONS.md](../optim/SPECIFICATIONS.md)
+- [Main README](../README.md)
+- [fitting/README.md](../fitting/README.md)
+- [optim/README.md](../optim/README.md)
 
-**Convention**: Always use relative paths from current spec location
+**Convention**: Always use relative paths from the current document.
 
 ---
 
@@ -682,10 +682,10 @@ When referencing package specifications:
 
 ## See Also
 
-- **Main Specification**: [SPECIFICATIONS.md](./SPECIFICATIONS.md) - Complete technical specification
-- **Fitting Pipeline**: [fitting/SPECIFICATIONS.md](./fitting/SPECIFICATIONS.md) - Pipeline architecture
-- **Optimizers**: [optim/SPECIFICATIONS.md](./optim/SPECIFICATIONS.md) - Standard Adam with gradient dilution
-- **Dynamic Operations**: [fitting/dynamic_ops/SPECIFICATIONS.md](./fitting/dynamic_ops/SPECIFICATIONS.md) - Fixed-pool relocation
-- **Models**: [models/SPECIFICATIONS.md](./models/SPECIFICATIONS.md) - PyTorch models
-- **Utilities**: [utils/SPECIFICATIONS.md](./utils/SPECIFICATIONS.md) - Mathematical utilities
-- **Multi-Scale**: [multiscale/SPECIFICATIONS.md](./multiscale/SPECIFICATIONS.md) - Image decomposition
+- **Main package**: [README.md](./README.md)
+- **Fitting Pipeline**: [fitting/README.md](./fitting/README.md)
+- **Optimizers**: [optim/README.md](./optim/README.md) - Standard Adam with gradient dilution
+- **Dynamic Operations**: [fitting/dynamic_ops/README.md](./fitting/dynamic_ops/README.md) - Fixed-pool relocation
+- **Models**: [models/README.md](./models/README.md) - PyTorch models
+- **Utilities**: [utils/README.md](./utils/README.md) - Mathematical utilities
+- **Multi-Scale**: [multiscale/README.md](./multiscale/README.md) - Image decomposition

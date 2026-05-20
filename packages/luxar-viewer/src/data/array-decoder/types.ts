@@ -5,8 +5,8 @@
  * types module so each layer can import the schema without dragging
  * in the decoder body.
  *
- * Reference: luxar.encoding specification
- * (../../../../../luxar/src/luxar/encoding/SPECIFICATIONS.md)
+ * Reference: see the Python `luxar.encoding` package
+ * (../../../../../luxar/src/luxar/encoding/README.md).
  */
 
 /**

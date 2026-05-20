@@ -528,9 +528,8 @@ class TestSharpnessValidation:
         assert result.shape == (n_points,)
 
     def test_sharpness_out_of_range_no_warning(self) -> None:
-        """Test that values outside old typical range are accepted without warning.
+        """Test that values outside the old typical range are accepted without warning.
 
-        Per SPECIFICATIONS.md v1.0.2, the arbitrary "typical range" warning was removed.
         Basic validation only checks positivity. Full range [0, 31] enforced by base.py.
         """
         n_points = 3

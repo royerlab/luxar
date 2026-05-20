@@ -156,13 +156,3 @@ this.sceneLoader = new SceneLoader(store, {
 // Connect profiler to UI
 this.monitor.setProfiler(this.profiler);
 ```
-
-## Complete Documentation
-
-See `SPECIFICATIONS.md` for:
-
-- Full API specification
-- Implementation details
-- UI panel layout
-- Integration examples
-- Testing strategy

@@ -175,7 +175,7 @@ make build-launchers
 
 **Runtime fallback:** end users can set `LUXAR_LAUNCHER_NO_WEBVIEW=1` to make the launcher open the system default browser instead of the embedded WebView. Useful for headless smoke tests and minimal Linux installs without `libwebkit2gtk`.
 
-See `packages/luxar-launcher/README.md` for source-level details and `packages/luxar/src/luxar/cli/SPECIFICATIONS.md` for the full bundle output structure.
+See `packages/luxar-launcher/README.md` for source-level details and `packages/luxar/src/luxar/cli/README.md` for the full bundle output structure.
 
 ### Environment Detection
 

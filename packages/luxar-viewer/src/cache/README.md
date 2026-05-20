@@ -750,10 +750,6 @@ console.log('Cached datasets:', datasets);
 await window.__luxarDebug.cache.clearAll();
 ```
 
-## Implementation Details
-
-See [SPECIFICATIONS.md](./SPECIFICATIONS.md) for detailed algorithms and design rationale.
-
 ## Related Packages
 
 - **Scene Loader** (`../data/scene-loader.ts`) - Uses MultiLevelCachingStore transparently

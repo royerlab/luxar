@@ -1,8 +1,7 @@
 /**
  * Attribute composition across the scene graph hierarchy.
  *
- * Per spec (packages/luxar/src/luxar/core/SPECIFICATIONS.md), rendering
- * attributes compose from root to leaf rather than override:
+ * Rendering attributes compose from root to leaf rather than override:
  *
  *   effective_opacity   = clamp(∏ opacity_i,  0, 1)
  *   effective_gamma     = clamp(∏ gamma_i,    0.1, 10)

@@ -143,5 +143,4 @@ gui/
 
 ## See Also
 
-- `SPECIFICATIONS.md` - Technical implementation details
 - `../../rendering-controls/` - Primary consumer of this library

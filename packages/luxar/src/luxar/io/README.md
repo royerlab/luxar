@@ -388,7 +388,6 @@ Compression gains from:
 
 ## Related Documentation
 
-- **Technical specification**: `SPECIFICATIONS.md` (Morton/Hilbert algorithms, chunk sizing)
-- **Encoding system**: `../encoding/SPECIFICATIONS.md` (semantic types, quantization)
-- **Core structures**: `../core/SPECIFICATIONS.md` (Scene graph, dimensions)
+- **Encoding system**: `../encoding/README.md` (semantic types, quantization)
+- **Core structures**: `../core/README.md` (Scene graph, dimensions)
 - **Ordering module**: `ordering.py` (Morton/Hilbert implementations)

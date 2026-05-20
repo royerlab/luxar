@@ -3,8 +3,6 @@ CUDA-accelerated Gaussian splatting model for NVIDIA GPUs.
 
 This module provides a high-performance replacement for GaussianSplatModel
 using custom CUDA compute kernels for the forward and backward passes.
-
-See SPECIFICATIONS.md for implementation details and algorithm descriptions.
 """
 
 from __future__ import annotations
@@ -42,7 +40,7 @@ def cholesky_to_conic(L: torch.Tensor) -> torch.Tensor:
 
     Note:
         The output is in row-major upper triangle order, matching the CUDA kernel
-        expectations. For coordinate convention details, see SPECIFICATIONS.md.
+        expectations.
     """
     N, d, _ = L.shape
     device = L.device

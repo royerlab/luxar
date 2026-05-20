@@ -154,7 +154,6 @@ def validate_sharpness(
     if np.any(sharpness <= 0):
         raise ValueError("All sharpness values must be positive")
 
-    # Note: Per SPECIFICATIONS.md v1.0.2, the "typical range" warning was removed as arbitrary.
     # Valid sharpness range is (0, 31] enforced by base.validate_sharpness_for_writing().
     # Basic validation here only checks positivity (> 0) for type guards and runtime checks.
 

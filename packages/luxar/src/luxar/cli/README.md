@@ -121,7 +121,7 @@ luxar export my_scene.zarr -o out/ --native macos,linux-amd64,linux-arm64 \
 
 **Runtime fallback**: setting `LUXAR_LAUNCHER_NO_WEBVIEW=1` makes the launcher open the user's default browser instead of an embedded WebView — useful for headless smoke tests and minimal Linux installs without `libwebkit2gtk`.
 
-See `cli/SPECIFICATIONS.md` for the full output structure and behavior contract, and `packages/luxar-launcher/README.md` for the launcher source itself.
+See `packages/luxar-launcher/README.md` for the launcher source itself.
 
 
 ### GSplat Processing Commands

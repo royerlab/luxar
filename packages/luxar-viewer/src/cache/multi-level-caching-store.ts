@@ -199,7 +199,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
    * ```
    *
    * @see {@link validateCache} for cache validation algorithm
-   * @see SPECIFICATIONS.md - Section 4 for OPFS architecture
+   * @see README.md for OPFS architecture
    * @remarks Performance: First init: ~100ms (OPFS setup + validation), Subsequent: ~10ms (validation only)
    */
   async init(): Promise<void> {
@@ -313,7 +313,6 @@ export class MultiLevelCachingStore implements AsyncReadable {
    *
    * @see {@link init} for cache initialization and validation
    * @see {@link setPrefetcher} for enabling automatic adjacent chunk loading
-   * @see SPECIFICATIONS.md - Section 3 for complete cache algorithm
    */
   async get(key: string, _options?: unknown): Promise<Uint8Array | undefined> {
     // zarrita's AsyncReadable contract is `Uint8Array | undefined`; both
