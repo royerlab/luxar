@@ -24,27 +24,13 @@ import {
 export type { WorkerInstance };
 export { WorkerTimeoutError, WorkerAbortError };
 export type { TimeoutKind };
-
-/**
- * Optional override for the data-worker module URL.
- *
- * The default `new Worker(new URL('./data-worker.ts', import.meta.url))`
- * pattern works under Vite, Rollup, and webpack 5. Bundlers that don't
- * resolve `import.meta.url` for workers, or consumers that ship the
- * worker bundle from a non-default location, can call
- * {@link setDataWorkerUrl} once at startup with an explicit absolute URL.
- *
- * Set via `LuxarAppOptions.workerPath` from `LuxarApp.init`.
- */
-let dataWorkerUrlOverride: string | undefined;
-
-/**
- * Override the URL used to construct data workers. Pass an absolute URL
- * to a module-format worker bundle. Call before the first worker is created.
- */
-export function setDataWorkerUrl(url: string): void {
-  dataWorkerUrlOverride = url;
-}
+import {
+  getDataWorkerUrlOverride,
+  getWorkerPool,
+  disposeWorkerPool,
+  setDataWorkerUrl,
+} from './worker-pool/singleton';
+export { getWorkerPool, disposeWorkerPool, setDataWorkerUrl };
 
 export class WorkerPool {
   private workers: WorkerInstance[] = [];
@@ -129,11 +115,16 @@ export class WorkerPool {
         log.info(Modules.WORKER_POOL, `Creating ${workerCount} data worker(s)...`);
 
         // Create all workers in parallel.
-        // dataWorkerUrlOverride lets embedders whose bundlers don't support
-        // vite's `?worker` import point at an explicitly-built worker bundle.
+        // The data-worker URL override (set via setDataWorkerUrl) lets
+        // embedders whose bundlers don't support vite's `?worker` import
+        // point at an explicitly-built worker bundle. The override is
+        // resolved lazily here so that calls to setDataWorkerUrl made
+        // before the first getWorkerPool() take effect on every worker
+        // spawned in this attempt.
+        const urlOverride = getDataWorkerUrlOverride();
         const workerPromises = Array.from({ length: workerCount }, async (_, index) => {
-          const worker = dataWorkerUrlOverride
-            ? new Worker(dataWorkerUrlOverride, { type: 'module' })
+          const worker = urlOverride
+            ? new Worker(urlOverride, { type: 'module' })
             : new DataWorker();
 
           // Track this worker as in-flight so a concurrent dispose()
@@ -765,25 +756,3 @@ export class WorkerPool {
   }
 }
 
-// Singleton instance
-let workerPoolInstance: WorkerPool | null = null;
-
-/**
- * Get the global worker pool instance
- */
-export function getWorkerPool(): WorkerPool {
-  if (!workerPoolInstance) {
-    workerPoolInstance = new WorkerPool();
-  }
-  return workerPoolInstance;
-}
-
-/**
- * Dispose the global worker pool (for testing/cleanup)
- */
-export function disposeWorkerPool(): void {
-  if (workerPoolInstance) {
-    workerPoolInstance.dispose();
-    workerPoolInstance = null;
-  }
-}
