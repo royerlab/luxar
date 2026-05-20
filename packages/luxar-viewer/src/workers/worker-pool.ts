@@ -5,7 +5,7 @@
  * spatial queries across multiple nodes.
  */
 
-import { wrap, Remote } from 'comlink';
+import type { Remote } from 'comlink';
 import type { DataWorkerAPI } from './data-worker';
 // Vite's `?worker` import emits a bundled, transpiled, hashed worker chunk and
 // returns a default-exported Worker constructor. This sidesteps the broken
@@ -35,6 +35,10 @@ import { combineSignals } from './worker-pool/timeout/combine-signals';
 import { pickTimeoutMs } from './worker-pool/timeout/pick-timeout-ms';
 import { getConfiguredWorkerCount } from './worker-pool/lifecycle/worker-count';
 import { initializeWithGuard } from './worker-pool/lifecycle/init-with-guard';
+import {
+  spawnWorker,
+  terminateAttemptWorkers,
+} from './worker-pool/lifecycle/spawn-worker';
 import {
   attachWorkerErrorHandlers,
   evictFailedWorker,
@@ -116,82 +120,41 @@ export class WorkerPool {
         const workerCount = this.getConfiguredWorkerCount();
         log.info(Modules.WORKER_POOL, `Creating ${workerCount} data worker(s)...`);
 
-        // Create all workers in parallel.
-        // The data-worker URL override (set via setDataWorkerUrl) lets
-        // embedders whose bundlers don't support vite's `?worker` import
-        // point at an explicitly-built worker bundle. The override is
-        // resolved lazily here so that calls to setDataWorkerUrl made
-        // before the first getWorkerPool() take effect on every worker
-        // spawned in this attempt.
+        // Spawn every worker in parallel. The URL override is resolved lazily
+        // (inside spawnWorker via the captured value) so setDataWorkerUrl
+        // calls made before the first getWorkerPool() take effect.
         const urlOverride = getDataWorkerUrlOverride();
-        const workerPromises = Array.from({ length: workerCount }, async (_, index) => {
-          const worker = urlOverride
-            ? new Worker(urlOverride, { type: 'module' })
-            : new DataWorker();
-
-          // Track this worker as in-flight so a concurrent dispose()
-          // can terminate it. Removed on success or on the per-factory
-          // catch path.
-          this.pendingWorkers.add(worker);
-
-          // Install runtime-error handlers BEFORE the first message — a
-          // worker can crash during its own boot sequence (e.g. WASM init
-          // OOM), and we want those failures to be surfaced as worker
-          // failures rather than uncaught browser-level errors.
-          this.attachWorkerErrorHandlers(worker, index + 1);
-
-          const api = wrap<DataWorkerAPI>(worker);
-
-          try {
-            // Race api.initialize() against:
-            //   1. a hard init timeout (worker script blocked / unreachable
-            //      → onerror may fire but Comlink's initialize() never
-            //      settles because the worker never sent a message),
-            //   2. an onerror short-circuit (worker fails *during* its
-            //      boot before any pool entry exists for it).
-            await this.initializeWithGuard(worker, api, index + 1);
-            // If dispose() ran while we were awaiting init, the
-            // generation has moved on. Self-terminate and reject so the
-            // parent doesn't push us into the post-dispose pool.
-            if (this.initGeneration !== myGeneration) {
-              throw new Error(`Worker ${index + 1} aborted: pool was disposed during init`);
-            }
-            this.pendingWorkers.delete(worker);
-            log.info(Modules.WORKER_POOL, `Worker ${index + 1}/${workerCount} ready`);
-            return { worker, api, activeQueries: 0 };
-          } catch (error) {
-            log.error(Modules.WORKER_POOL, `Worker ${index + 1} initialization failed`, error);
-            this.pendingWorkers.delete(worker);
-            worker.terminate();
-            throw error;
-          }
-        });
+        const workerPromises = Array.from({ length: workerCount }, (_, index) =>
+          spawnWorker({
+            index,
+            total: workerCount,
+            dataWorkerCtor: DataWorker,
+            urlOverride,
+            pendingWorkers: this.pendingWorkers,
+            attachPermanentHandlers: (w, n) => this.attachWorkerErrorHandlers(w, n),
+            runInitGuard: (w, a, n) => this.initializeWithGuard(w, a, n),
+            isCurrentGeneration: () => this.initGeneration === myGeneration,
+          })
+        );
 
         // Wait for all workers to initialize
         const results = await Promise.allSettled(workerPromises);
 
-        // Collect successful workers into the attempt-local list
-        // first, so stale-generation cleanup doesn't reach for any
-        // newer attempt's published workers.
+        // Collect successful workers into the attempt-local list first, so
+        // stale-generation cleanup doesn't reach for any newer attempt's
+        // published workers.
         for (const result of results) {
           if (result.status === 'fulfilled') {
             attemptWorkers.push(result.value);
           }
         }
 
-        // Stale-generation guard. If dispose() bumped the generation
-        // while we were awaiting allSettled, terminate ONLY this
-        // attempt's workers and return. Do NOT touch `this.workers` —
-        // a fresh generation may have already published its own
-        // workers there.
+        // Stale-generation guard. If dispose() bumped the generation while
+        // we were awaiting allSettled, terminate ONLY this attempt's workers
+        // and return. Do NOT touch `this.workers` — a fresh generation may
+        // have already published its own workers there.
         if (this.initGeneration !== myGeneration) {
-          for (const { worker } of attemptWorkers) {
-            try {
-              worker.terminate();
-            } catch {
-              // Already terminated by dispose's pendingWorkers walk.
-            }
-          }
+          terminateAttemptWorkers(attemptWorkers);
           return;
         }
 
@@ -218,16 +181,9 @@ export class WorkerPool {
         log.info(Modules.WORKER_POOL, `Worker pool ready with ${this.workers.length} worker(s)`);
       } catch (e) {
         // Same stale-generation guard for the error path. If a newer
-        // generation has taken over, only clean up this attempt's
-        // workers.
+        // generation has taken over, only clean up this attempt's workers.
         if (this.initGeneration !== myGeneration) {
-          for (const { worker } of attemptWorkers) {
-            try {
-              worker.terminate();
-            } catch {
-              // Already terminated.
-            }
-          }
+          terminateAttemptWorkers(attemptWorkers);
           throw e;
         }
         // Generation current — full cleanup of this generation's state.
@@ -235,19 +191,19 @@ export class WorkerPool {
           worker.terminate();
         }
         this.workers = [];
-        // Terminate anything still pending too, in case the catch
-        // fires while factories are still settling.
+        // Terminate anything still pending too, in case the catch fires
+        // while factories are still settling.
         for (const worker of this.pendingWorkers) {
           worker.terminate();
         }
         this.pendingWorkers.clear();
         // Note: we deliberately keep `initPromise` (the rejected one) so
-        // subsequent `getWorker()` / `runWithTimeout` calls fail FAST
-        // rather than re-running the 10s init guard for every nD load.
-        // A blocked worker chunk would otherwise stack 10s × N delays
-        // and blow past the page's `waitForLuxarReady` timeout. To opt
-        // back in to a fresh init attempt (e.g. after a transient
-        // network blip), call `reinitialize()`.
+        // subsequent `getWorker()` / `runWithTimeout` calls fail FAST rather
+        // than re-running the 10s init guard for every nD load. A blocked
+        // worker chunk would otherwise stack 10s × N delays and blow past
+        // the page's `waitForLuxarReady` timeout. To opt back in to a fresh
+        // init attempt (e.g. after a transient network blip), call
+        // `reinitialize()`.
         throw e;
       }
     })();
