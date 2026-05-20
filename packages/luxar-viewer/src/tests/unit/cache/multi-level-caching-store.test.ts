@@ -1550,82 +1550,33 @@ describe('MultiLevelCachingStore', () => {
     });
   });
 
-  // R5: bandwidth window pruning now uses a start-index instead of
-  // Array.shift(). These tests lock in numeric parity + amortized
-  // compaction behaviour.
-  describe('Bandwidth Window Pruning (R5)', () => {
-    function getInternals(s: MultiLevelCachingStore) {
-      return s as unknown as {
-        bandwidth: {
-          window: Array<{ timestamp: number; bytes: number }>;
-          start: number;
-        };
-      };
-    }
-
-    it('starts with an empty window and start=0', () => {
-      const internals = getInternals(store);
-      expect(internals.bandwidth.window.length).toBe(0);
-      expect(internals.bandwidth.start).toBe(0);
-    });
-
-    it('advances start-index past entries that fall out of the 10s window', async () => {
-      const internals = getInternals(store);
-      const now = Date.now();
-      // Inject 5 stale entries + 3 fresh entries. (Bypassing the
-      // public API because the only way the window is appended is
-      // through a real network fetch.)
-      for (let i = 0; i < 5; i++) {
-        internals.bandwidth.window.push({ timestamp: now - 30_000 + i, bytes: 1000 });
-      }
-      for (let i = 0; i < 3; i++) {
-        internals.bandwidth.window.push({ timestamp: now - 1000 + i, bytes: 2000 });
-      }
-      // Trigger pruning via getStats().
-      const stats = store.getStats();
-      expect(internals.bandwidth.start).toBe(5);
-      // Bandwidth covers 3 entries × 2000 bytes over a ~1s span ≈ 6000 B/s.
-      // Allow generous slack for clock jitter.
-      expect(stats.network.bandwidth).toBeGreaterThan(2000);
-    });
-
-    it('compacts the array when more than half is stale (amortized O(1))', async () => {
-      const internals = getInternals(store);
-      const now = Date.now();
-      // Seed 21 stale entries directly. They sit in the window with
-      // start = 0 until the next getStats call.
-      for (let i = 0; i < 21; i++) {
-        internals.bandwidth.window.push({ timestamp: now - 30_000 + i, bytes: 100 });
-      }
-      internals.bandwidth.window.push({ timestamp: now, bytes: 1000 });
-
-      // Advance the start index past the 21 stale entries.
-      store.getStats();
-      expect(internals.bandwidth.start).toBe(21);
-      expect(internals.bandwidth.window.length).toBe(22);
-
-      // Drive a real network fetch — BandwidthWindow.record appends
-      // an entry AND checks "start > length/2". With start=21 and
-      // length=23 after this push, compaction must fire: array gets
-      // sliced down to the live tail and start resets to 0.
+  // getStats cascade contract: the orchestrator surfaces bandwidth +
+  // health + clear-on-init from its subordinate units. Implementation-
+  // level invariants (R5 amortized compaction, formula, start-index
+  // walk) live in bandwidth-window.test.ts; here we only assert that
+  // bytes recorded through a real getResult surface in the snapshot.
+  describe('getStats cascade contract', () => {
+    it('records demand-fetch bytes into stats.network.bandwidth', async () => {
       global.fetch = vi.fn(() =>
         Promise.resolve({
           ok: true,
           status: 200,
           async arrayBuffer() {
-            return new Uint8Array([0]).buffer;
+            return new Uint8Array(1000).buffer;
           },
         } as Response)
       ) as unknown as typeof fetch;
 
-      await store.getResult('compaction-trigger');
+      // Initial bandwidth is 0.
+      expect(store.getStats().network.bandwidth).toBe(0);
 
-      // Compaction fired: start reset to 0, array shrunk to live tail.
-      expect(internals.bandwidth.start).toBe(0);
-      expect(internals.bandwidth.window.length).toBeLessThan(22);
-      // At least the two recent entries remain (the pre-existing
-      // `now`-timestamped entry plus the one just pushed).
-      expect(internals.bandwidth.window.length).toBeGreaterThanOrEqual(2);
+      await store.getResult('bandwidth-cascade');
+      const stats = store.getStats();
+      // Demand counters reflect the fetch we just drove.
+      expect(stats.network.requestCount).toBeGreaterThan(0);
+      expect(stats.network.bytesTransferred).toBeGreaterThanOrEqual(1000);
+      // Bandwidth has aggregated the bytes into the sliding window.
+      expect(stats.network.bandwidth).toBeGreaterThan(0);
     });
 
     // S2: opfsAvailable is propagated from the L2 store's getStats().available.
@@ -1652,29 +1603,6 @@ describe('MultiLevelCachingStore', () => {
       await clearStore.init();
       const stats = clearStore.getStats();
       expect(stats.clearOnInitCount).toBe(1);
-    });
-
-    it('produces zero bandwidth when no entries are within the window', async () => {
-      const internals = getInternals(store);
-      const now = Date.now();
-      internals.bandwidth.window.push({ timestamp: now - 60_000, bytes: 1000 });
-      const stats = store.getStats();
-      expect(stats.network.bandwidth).toBe(0);
-      // All stale entries advanced past.
-      expect(internals.bandwidth.start).toBe(1);
-    });
-
-    it('bandwidth value matches the simple sum/span formula', () => {
-      const internals = getInternals(store);
-      const now = Date.now();
-      // Two entries 5 seconds apart inside the window.
-      internals.bandwidth.window.push({ timestamp: now - 5000, bytes: 4000 });
-      internals.bandwidth.window.push({ timestamp: now - 2000, bytes: 2000 });
-      const stats = store.getStats();
-      // 6000 bytes / 5s span (now - first.timestamp = 5000ms) = 1200 B/s.
-      // Allow ±5% for any sub-millisecond timing drift.
-      expect(stats.network.bandwidth).toBeGreaterThan(1100);
-      expect(stats.network.bandwidth).toBeLessThan(1300);
     });
   });
 
