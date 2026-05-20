@@ -36,6 +36,10 @@ import {
   restoreCameraState,
   type CameraStateCtx,
 } from './controls-manager/camera-state';
+import {
+  attachControlEventForwarders,
+  type ControlEventDispatcher,
+} from './controls-manager/event-forwarders';
 export type { ControlType };
 
 export interface ControlsManagerConfig {
@@ -62,14 +66,7 @@ interface ControlsManagerEventMap {
   end: {};
 }
 
-type ControlEventMap = {
-  change: {};
-  start: {};
-  end: {};
-};
-
 type ActiveControls = LuxarOrbitControls | LuxarFlyControls;
-type ControlEventDispatcher = THREE.EventDispatcher<ControlEventMap>;
 
 export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventMap> {
   private camera: LuxarCamera;
@@ -256,25 +253,11 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   }
 
   private attachControlEventForwarders(controls: ControlEventDispatcher): void {
-    const change = (): void => {
-      this.dispatchEvent({ type: 'change' });
-    };
-    const start = (): void => {
-      this.dispatchEvent({ type: 'start' });
-    };
-    const end = (): void => {
-      this.dispatchEvent({ type: 'end' });
-    };
-
-    controls.addEventListener('change', change);
-    controls.addEventListener('start', start);
-    controls.addEventListener('end', end);
-
-    // THREE.EventDispatcher isn't a DOM EventTarget so EventGroup.on()
-    // doesn't apply; register manual cleanup callbacks instead.
-    this.controlEvents.add(() => controls.removeEventListener('change', change));
-    this.controlEvents.add(() => controls.removeEventListener('start', start));
-    this.controlEvents.add(() => controls.removeEventListener('end', end));
+    attachControlEventForwarders(
+      controls,
+      (type) => this.dispatchEvent({ type }),
+      this.controlEvents
+    );
   }
 
   private disposeCurrentControls(): void {
