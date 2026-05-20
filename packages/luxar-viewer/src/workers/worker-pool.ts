@@ -30,6 +30,7 @@ import {
   disposeWorkerPool,
   setDataWorkerUrl,
 } from './worker-pool/singleton';
+import { withTimeout } from './worker-pool/timeout/with-timeout';
 export { getWorkerPool, disposeWorkerPool, setDataWorkerUrl };
 
 export class WorkerPool {
@@ -415,28 +416,13 @@ export class WorkerPool {
     timeoutMs: number,
     worker?: Worker
   ): Promise<T> {
-    if (timeoutMs <= 0 || !Number.isFinite(timeoutMs)) {
-      return call;
-    }
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const timeout = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => {
-        log.error(
-          Modules.WORKER_POOL,
-          `Worker call '${operation}' timed out after ${timeoutMs}ms; evicting worker`
-        );
-        if (worker) {
-          this.handleWorkerFailure(worker, `timeout(${operation}, ${timeoutMs}ms)`);
-        }
-        reject(new WorkerTimeoutError(operation, timeoutMs));
-      }, timeoutMs);
-    });
-    return Promise.race([
-      call.finally(() => {
-        if (timer !== undefined) clearTimeout(timer);
-      }),
-      timeout,
-    ]);
+    return withTimeout(
+      operation,
+      call,
+      timeoutMs,
+      (w, reason) => this.handleWorkerFailure(w, reason),
+      worker
+    );
   }
 
   /**
