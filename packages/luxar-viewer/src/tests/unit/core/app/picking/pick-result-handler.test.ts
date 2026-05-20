@@ -10,8 +10,8 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
-import { buildPickResultHandler } from '../../../core/app/picking/pick-result-handler';
-import type { PickResult } from '../../../rendering/picking/picking-system';
+import { buildPickResultHandler } from '../../../../../core/app/picking/pick-result-handler';
+import type { PickResult } from '../../../../../rendering/picking/picking-system';
 
 type GetLabelFn = (path: string, idx: number) => Promise<string | null>;
 type GetImageUrlFn = (path: string, idx: number) => Promise<string | null>;

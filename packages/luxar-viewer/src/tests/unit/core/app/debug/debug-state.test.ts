@@ -9,8 +9,8 @@
 
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { computeDebugState, type DebugStateContext } from '../../../core/app/debug/debug-state';
-import type { SimpleDims } from '../../../types/dims';
+import { computeDebugState, type DebugStateContext } from '../../../../../core/app/debug/debug-state';
+import type { SimpleDims } from '../../../../../types/dims';
 
 function makePointCloud(
   count: number,
