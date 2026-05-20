@@ -57,14 +57,18 @@ export type DimensionSlidersFactory = (config: SliderConfig) => DimensionSliders
 import { sceneDimsManager } from '../scene/scene-dims-manager';
 import type { DebugConsole } from '../ui/debug-console';
 import type { PerformanceMonitor } from '../ui/performance-monitor';
-import { InputContextManager, InputContext } from './input-handler/context-manager';
+import { InputContextManager } from './input-handler/context-manager';
 import { computeDimensionStep, resolveSelectedDimension } from './input-handler/dimension-navigation/compute-step';
 import { PanelCoordinator } from './input-handler/commands/panel-coordinator';
 import { WindowEventHandler } from './input-handler/window-events/window-event-handler';
 import { AnimationShortcuts } from './input-handler/key-bindings/animation-shortcuts';
 import { registerAllKeyBindings } from './input-handler/key-bindings/register-all';
 import { isTypingInInput, isFocusOnSceneCanvas } from './input-handler/commands/focus-utils';
-import { nextControlType } from './input-handler/commands/control-mode';
+import {
+  toggleControlMode,
+  toggleInertialMode,
+  type ControlModeCtx,
+} from './input-handler/commands/control-mode';
 import {
   toggleFullscreen,
   type FullscreenCtx,
@@ -74,7 +78,7 @@ import {
   exportViewerState,
   type ViewerStateExportCtx,
 } from './input-handler/commands/viewer-state-export';
-import { log, Modules, LogEmoji } from '../utils/log';
+import { log, Modules } from '../utils/log';
 import { updateSceneForDimensions } from '../data';
 
 /**
@@ -866,31 +870,7 @@ export class InputHandler {
    * @private
    */
   private toggleControlMode(): void {
-    const currentType = this.sceneManager.controls.getControlType();
-    log.custom(LogEmoji.CONTROLS, Modules.INPUT, `toggleControlMode called: ${currentType} → ?`);
-
-    const newType = nextControlType(currentType);
-
-    // Use sceneManager.setControlType for ortho (handles camera swap)
-    this.sceneManager.setControlType(newType);
-
-    // Update input context based on control mode
-    if (newType === 'fly') {
-      this.contextManager.setContext(InputContext.FLY_CONTROLS);
-    } else {
-      this.contextManager.setContext(InputContext.NAVIGATION);
-    }
-
-    // Sync rendering controls if they exist
-    if (this.renderingControls) {
-      this.renderingControls.syncCurrentState();
-    }
-
-    log.custom(
-      LogEmoji.CONTROLS,
-      Modules.CONTROLS,
-      `Switched to ${newType} controls (press V to toggle)`
-    );
+    toggleControlMode(this.makeControlModeCtx());
   }
 
   /**
@@ -908,27 +888,15 @@ export class InputHandler {
    * @private
    */
   private toggleInertialMode(): void {
-    const flyControls = this.sceneManager.controls.getFlyControls();
-    if (flyControls) {
-      const currentInertial = flyControls.inertialMode;
-      flyControls.setInertialMode(!currentInertial);
+    toggleInertialMode(this.makeControlModeCtx());
+  }
 
-      // Sync rendering controls if they exist
-      if (this.renderingControls) {
-        this.renderingControls.syncCurrentState();
-      }
-
-      log.custom(
-        LogEmoji.ROCKET,
-        Modules.CONTROLS,
-        `Fly controls inertial mode: ${!currentInertial ? 'ON' : 'OFF'}`
-      );
-    } else {
-      log.info(
-        Modules.INPUT,
-        'Inertial mode is only available in fly control mode (press V to switch)'
-      );
-    }
+  private makeControlModeCtx(): ControlModeCtx {
+    return {
+      sceneManager: this.sceneManager,
+      contextManager: this.contextManager,
+      renderingControls: this.renderingControls,
+    };
   }
 
   /**
