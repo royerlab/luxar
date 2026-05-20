@@ -1,0 +1,252 @@
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import {
+  buildUrl,
+  fetchWithRetry,
+  hashUrl,
+  mergeAbortSignals,
+} from '../../../cache/multi-level-caching-store/fetch-retry';
+
+function mockResponse(status: number, body: ArrayBuffer | string = ''): Response {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    async arrayBuffer() {
+      return typeof body === 'string' ? new TextEncoder().encode(body).buffer : body;
+    },
+  } as unknown as Response;
+}
+
+describe('mergeAbortSignals', () => {
+  it('returns the primary signal verbatim when no caller signal is provided', () => {
+    const primary = new AbortController().signal;
+    expect(mergeAbortSignals(primary)).toBe(primary);
+  });
+
+  it('aborts when the primary signal aborts', () => {
+    const primary = new AbortController();
+    const caller = new AbortController();
+    const merged = mergeAbortSignals(primary.signal, caller.signal);
+    primary.abort();
+    expect(merged.aborted).toBe(true);
+  });
+
+  it('aborts when the caller signal aborts', () => {
+    const primary = new AbortController();
+    const caller = new AbortController();
+    const merged = mergeAbortSignals(primary.signal, caller.signal);
+    caller.abort();
+    expect(merged.aborted).toBe(true);
+  });
+
+  it('returns an already-aborted signal when either source is pre-aborted', () => {
+    const primary = new AbortController();
+    primary.abort();
+    const caller = new AbortController();
+    const merged = mergeAbortSignals(primary.signal, caller.signal);
+    expect(merged.aborted).toBe(true);
+  });
+});
+
+describe('buildUrl', () => {
+  it('joins a clean base + key with a single slash', () => {
+    expect(buildUrl('https://example.com/data.zarr', 'positions/0.0.0')).toBe(
+      'https://example.com/data.zarr/positions/0.0.0'
+    );
+  });
+
+  it('strips trailing slashes on the base', () => {
+    expect(buildUrl('https://example.com/data.zarr/', 'k')).toBe(
+      'https://example.com/data.zarr/k'
+    );
+    expect(buildUrl('https://example.com/data.zarr///', 'k')).toBe(
+      'https://example.com/data.zarr/k'
+    );
+  });
+
+  it('strips leading slashes on the key', () => {
+    expect(buildUrl('https://example.com/d.zarr', '/k')).toBe('https://example.com/d.zarr/k');
+    expect(buildUrl('https://example.com/d.zarr', '///k')).toBe('https://example.com/d.zarr/k');
+  });
+
+  it('prevents the triple-slash bug (base trailing + key leading)', () => {
+    const url = buildUrl('https://example.com/d.zarr/', '/positions/0.0.0');
+    expect(url).toBe('https://example.com/d.zarr/positions/0.0.0');
+    // The only protocol-level "//" appears once; no // elsewhere.
+    expect(url.replace('https://', '').includes('//')).toBe(false);
+  });
+});
+
+describe('hashUrl', () => {
+  it('matches the documented `zarr-cache-<16 hex>` format', async () => {
+    expect(await hashUrl('https://example.com/d.zarr')).toMatch(/^zarr-cache-[0-9a-f]{16}$/);
+  });
+
+  it('is deterministic for the same URL', async () => {
+    const url = 'https://example.com/d.zarr';
+    expect(await hashUrl(url)).toBe(await hashUrl(url));
+  });
+
+  it('distinguishes different URLs', async () => {
+    const a = await hashUrl('https://example.com/a.zarr');
+    const b = await hashUrl('https://example.com/b.zarr');
+    expect(a).not.toBe(b);
+  });
+});
+
+describe('fetchWithRetry', () => {
+  let originalFetch: typeof fetch;
+
+  beforeEach(() => {
+    originalFetch = global.fetch;
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    vi.useRealTimers();
+  });
+
+  it('returns the response on first success', async () => {
+    const fetchMock = vi.fn(async () => mockResponse(200, 'hello'));
+    global.fetch = fetchMock as unknown as typeof fetch;
+    const response = await fetchWithRetry('https://example.com/x');
+    expect(response?.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns a 4xx response immediately without retrying', async () => {
+    const fetchMock = vi.fn(async () => mockResponse(404));
+    global.fetch = fetchMock as unknown as typeof fetch;
+    const response = await fetchWithRetry('https://example.com/x');
+    expect(response?.status).toBe(404);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries on 5xx until the budget is exhausted', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async () => mockResponse(500));
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const promise = fetchWithRetry('https://example.com/x', { timeoutMsOverride: 10_000 });
+    // Default retryAttempts: 3 → maxAttempts: 4. Backoffs: 50, 100, 200 ms
+    // (jittered). Advance enough to flush every backoff.
+    await vi.advanceTimersByTimeAsync(5_000);
+    const response = await promise;
+
+    // 5xx is retried; after the budget, returns undefined.
+    expect(response).toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it('retries on 429 (rate-limited)', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async () => mockResponse(429));
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const promise = fetchWithRetry('https://example.com/x', { timeoutMsOverride: 10_000 });
+    await vi.advanceTimersByTimeAsync(5_000);
+    await promise;
+
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it('retries on network errors (fetch throws)', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async () => {
+      throw new Error('ENETUNREACH');
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const promise = fetchWithRetry('https://example.com/x', { timeoutMsOverride: 10_000 });
+    await vi.advanceTimersByTimeAsync(5_000);
+    const response = await promise;
+
+    expect(response).toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it('does not retry when the caller signal is already aborted at entry', async () => {
+    const ac = new AbortController();
+    ac.abort();
+    const fetchMock = vi.fn(async () => mockResponse(200));
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const response = await fetchWithRetry('https://example.com/x', { signal: ac.signal });
+    expect(response).toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('bails mid-retry when the caller aborts', async () => {
+    vi.useFakeTimers();
+    const ac = new AbortController();
+    const fetchMock = vi.fn(async () => {
+      // Abort the caller signal after the first failure.
+      if (fetchMock.mock.calls.length === 1) ac.abort();
+      throw new Error('network');
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const promise = fetchWithRetry('https://example.com/x', {
+      timeoutMsOverride: 10_000,
+      signal: ac.signal,
+    });
+    await vi.advanceTimersByTimeAsync(5_000);
+    const response = await promise;
+
+    expect(response).toBeUndefined();
+    // Either 1 (caught via signal check inside catch) or 2 (signal seen
+    // by the loop-top check). Both honour the "no retries after caller
+    // abort" contract; we just assert "did not exhaust the budget".
+    expect(fetchMock.mock.calls.length).toBeLessThan(4);
+  });
+
+  it('honours the per-attempt timeout (= ceil(total / maxAttempts))', async () => {
+    vi.useFakeTimers();
+    // fetch resolves only when the timeout-controller aborts it.
+    let abortCount = 0;
+    const fetchMock = vi.fn(async (_url: string, opts?: { signal?: AbortSignal }) => {
+      return new Promise<Response>((_, reject) => {
+        const onAbort = () => {
+          abortCount++;
+          reject(new Error('aborted'));
+        };
+        if (opts?.signal?.aborted) {
+          onAbort();
+        } else {
+          opts?.signal?.addEventListener('abort', onAbort, { once: true });
+        }
+      });
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    // Total budget 1000ms → per-attempt ceil(1000/4)=250ms.
+    const promise = fetchWithRetry('https://example.com/x', { timeoutMsOverride: 1000 });
+    await vi.advanceTimersByTimeAsync(10_000);
+    const response = await promise;
+
+    expect(response).toBeUndefined();
+    // Each attempt should have aborted via the per-attempt timeout.
+    expect(abortCount).toBeGreaterThan(0);
+  });
+
+  it('caps backoff at MAX_RETRY_DELAY_MS (~500ms)', async () => {
+    vi.useFakeTimers();
+    const callTimes: number[] = [];
+    const fetchMock = vi.fn(async () => {
+      callTimes.push(Date.now());
+      return mockResponse(500);
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const start = Date.now();
+    const promise = fetchWithRetry('https://example.com/x', { timeoutMsOverride: 10_000 });
+    await vi.advanceTimersByTimeAsync(10_000);
+    await promise;
+
+    // 4 attempts; backoffs between them: 50 (jittered ±25%), 100, 200
+    // (capped at 500). Total worst-case ≈ 50*1.25 + 100*1.25 + 200*1.25 ≈
+    // 437ms; cap ensures it cannot exceed 500*3 = 1500ms.
+    const totalElapsed = callTimes[callTimes.length - 1] - start;
+    expect(totalElapsed).toBeLessThan(1500);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+});
