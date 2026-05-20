@@ -19,6 +19,7 @@
 import { expose, transfer } from 'comlink';
 import { state, requireWasm } from './data-worker/state';
 import { initialize as initializeImpl } from './data-worker/initialize';
+import { querySpatialIndex as querySpatialIndexImpl } from './data-worker/spatial-index/query';
 
 // Validation + color helpers live in ./data-worker/validation and ./color-utils.
 // The worker imports them as bare identifiers (used in projection and
@@ -30,52 +31,11 @@ import {
   validateProjectionInputs,
   validateDecodeArgs,
   validateLineSegmentReferences,
-  validateChunkQueryInputs,
 } from './data-worker/validation';
 import { coerceColorsToFloat32, coerceScalarsToFloat32, fillColorsWhite } from './color-utils';
 export { coerceColorsToFloat32, coerceScalarsToFloat32, fillColorsWhite };
 
 
-/**
- * Task 1: Query spatial index (generic for all types)
- *
- * Finds which chunks intersect the current nD view frustum.
- */
-async function querySpatialIndex(params: {
-  chunkBounds: Float32Array;
-  slicePosition: Float32Array;
-  tolerance: Float32Array;
-  numChunks: number;
-  ndim: number;
-}): Promise<Uint32Array> {
-  const wasmModule = requireWasm(state);
-
-  const { chunkBounds, slicePosition, tolerance, numChunks, ndim } = params;
-
-  validateChunkQueryInputs(
-    'querySpatialIndex',
-    chunkBounds,
-    slicePosition,
-    tolerance,
-    ndim,
-    numChunks
-  );
-
-  // Output buffer for matching chunk indices
-  const matchingChunks = new Uint32Array(numChunks); // Max size
-
-  // Call WASM (or TypeScript fallback)
-  const count = wasmModule.query_chunks_for_view(
-    chunkBounds,
-    slicePosition,
-    tolerance,
-    ndim,
-    numChunks,
-    matchingChunks
-  );
-
-  return matchingChunks.subarray(0, count);
-}
 
 /**
  * Task 2: Compute nD visibility for Points
@@ -1271,7 +1231,8 @@ async function decodeBroadcasted(params: {
  */
 export const workerAPI = {
   initialize: (): Promise<void> => initializeImpl(state),
-  querySpatialIndex,
+  querySpatialIndex: (p: Parameters<typeof querySpatialIndexImpl>[1]) =>
+    querySpatialIndexImpl(state, p),
   computeNDVisibilityPoints,
   computeNDVisibilityLines,
   computeNDVisibilityGSplats,
