@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { InputContextManager, InputContext } from '../../../input/input-context-manager';
+import { InputContextManager, InputContext } from '../../../input/input-handler/context-manager';
 
 describe('InputContextManager', () => {
   let manager: InputContextManager;

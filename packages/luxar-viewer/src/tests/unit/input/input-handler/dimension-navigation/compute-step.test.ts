@@ -7,8 +7,8 @@ import {
   computeDimensionStep,
   getSelectedDimensionIndex,
   resolveSelectedDimension,
-} from '../../../../input/handlers/dimension-navigation';
-import type { SimpleDims, DimensionMetadata } from '../../../../types/dims';
+} from '../../../../../input/input-handler/dimension-navigation/compute-step';
+import type { SimpleDims, DimensionMetadata } from '../../../../../types/dims';
 
 function makeDims(overrides: Partial<SimpleDims> = {}): SimpleDims {
   return {

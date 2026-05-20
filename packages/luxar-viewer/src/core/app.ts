@@ -26,7 +26,7 @@ import { DataMonitorManager } from '../ui/data-monitor-manager';
 import { DebugConsole } from '../ui/debug-console';
 import { SceneLoaderManager, getSceneLoader } from '../data/scene-loader-manager';
 import { ScaleBar } from '../ui/scale-bar';
-import { ColormapLegend } from '../ui/colormap-legend';
+import type { ColormapLegend } from '../ui/colormap-legend';
 import { RecordingPanel } from '../ui/recording-panel';
 import { LayersPanel } from '../ui/layers';
 import { resolveFactories } from './app/factories';
@@ -55,6 +55,7 @@ import { installUnloadHandler } from './app/lifecycle/unload-handling';
 import { installBrowserShortcut } from './app/dataset/browser-shortcut';
 import { openCacheStatsView as openCacheStatsViewImpl } from './app/debug/cache-stats-view';
 import { disposeOverlays as disposeOverlaysImpl } from './app/overlays/dispose-overlays';
+import { initColormapLegend as initColormapLegendImpl } from './app/overlays/init-colormap-legend';
 
 import type { LuxarAppOptions } from './app/options';
 export type { LuxarAppOptions } from './app/options';
@@ -631,22 +632,11 @@ export class LuxarApp {
    * Shows per-layer colormap gradients with names and data ranges.
    */
   private initColormapLegend(): void {
-    if (this.colormapLegend) {
-      this.colormapLegend.dispose();
-    }
-
-    if (!this.layersPanel) return;
-
-    try {
-      this.colormapLegend = new ColormapLegend({
-        layerState: this.layersPanel.layerState,
-      });
-
-      // Wire to input handler for keyboard toggle
-      this.inputHandler.setColormapLegend(this.colormapLegend);
-    } catch {
-      // ColormapLegend requires DOM; may fail in test environments
-    }
+    this.colormapLegend = initColormapLegendImpl({
+      previous: this.colormapLegend,
+      layersPanel: this.layersPanel,
+      inputHandler: this.inputHandler,
+    });
   }
 
   /**

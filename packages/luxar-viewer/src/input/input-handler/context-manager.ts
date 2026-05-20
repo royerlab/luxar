@@ -11,12 +11,12 @@
  * - Priority-based key handling
  */
 
-import { config } from '../config';
-import { log, Modules, LogEmoji } from '../utils/log';
+import { config } from '../../config';
+import { log, Modules, LogEmoji } from '../../utils/log';
 import {
   isKeyAllowedInContext as isKeyAllowedInContextPure,
   sortContextsByPriority,
-} from './context-routing-utils';
+} from './context-manager/routing-rules';
 
 /**
  * Maximum recursion depth for {@link InputContextManager.handleKeyEvent}.

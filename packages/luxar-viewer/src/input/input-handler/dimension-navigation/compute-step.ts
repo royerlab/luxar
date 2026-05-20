@@ -19,13 +19,13 @@
  * @module input/handlers/dimension-navigation
  */
 
-import type { SimpleDims } from '../../types/dims';
+import type { SimpleDims } from '../../../types/dims';
 import {
   getNonDisplayedDimensions,
   calculateStepSize,
   calculateNextPosition,
   mapKeyToDimension,
-} from '../input-handler-utils';
+} from '../../input-handler-utils';
 
 /** Result of `computeDimensionStep` — the next position for the targeted dim. */
 export interface DimensionStepResult {

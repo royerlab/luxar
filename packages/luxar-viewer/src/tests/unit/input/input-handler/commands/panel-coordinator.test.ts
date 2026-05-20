@@ -22,7 +22,7 @@ const notifierMocks = vi.hoisted(() => ({
   hideHelp: vi.fn(),
   clearError: vi.fn(),
 }));
-vi.mock('../../../../utils/notifier', () => ({
+vi.mock('../../../../../utils/cross-layer/notifier', () => ({
   notifier: {
     hideHelp: notifierMocks.hideHelp,
     clearError: notifierMocks.clearError,
@@ -38,12 +38,12 @@ const hideHelpOverlay = notifierMocks.hideHelp;
 const clearError = notifierMocks.clearError;
 // panel-coordinator emits 'panel-hide' on the event bus instead of
 // calling hideDataMonitor directly. Spy on the bus to observe the emit.
-import { eventBus } from '../../../../utils/cross-layer/event-bus';
-import { PanelCoordinator } from '../../../../input/handlers/panel-coordinator';
-import type { RenderingControls } from '../../../../ui/rendering-controls';
-import type { RecordingPanel } from '../../../../ui/recording-panel';
-import type { DimensionSliders } from '../../../../ui/dimension-sliders';
-import type { DebugConsole } from '../../../../ui/debug-console';
+import { eventBus } from '../../../../../utils/cross-layer/event-bus';
+import { PanelCoordinator } from '../../../../../input/input-handler/commands/panel-coordinator';
+import type { RenderingControls } from '../../../../../ui/rendering-controls';
+import type { RecordingPanel } from '../../../../../ui/recording-panel';
+import type { DimensionSliders } from '../../../../../ui/dimension-sliders';
+import type { DebugConsole } from '../../../../../ui/debug-console';
 
 function makeRenderingControls(initiallyVisible = true): {
   controls: RenderingControls;

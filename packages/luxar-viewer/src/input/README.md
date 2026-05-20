@@ -20,10 +20,12 @@ The Luxar Input package provides a sophisticated input handling system that mana
 
 ```
 input/
-├── input-handler.ts         # Main input event processing
-├── input-context-manager.ts # Context-based input routing
-├── input-handler-utils.ts   # Pure utility functions (dimension nav, FOV, camera)
-└── README.md               # This documentation
+├── input-handler.ts          # Main input event processing
+├── input-context-manager.ts  # Context-based input routing
+├── input-handler-utils.ts    # Pure utility functions (dimension nav, FOV, camera)
+├── context-routing-utils.ts  # Pure allow/block filter + priority ordering
+├── handlers/                 # Per-concern handlers extracted from InputHandler
+└── README.md                 # This documentation
 ```
 
 ---
@@ -141,19 +143,31 @@ Execute action
 
 ```typescript
 class InputHandler {
-  constructor(sceneManager: SceneManager, animationController: AnimationController);
+  constructor(
+    sceneManager: SceneManager,
+    animationController: AnimationController,
+    performanceMonitor: PerformanceMonitor,
+    debugConsole: DebugConsole,
+    dimensionSlidersFactory?: DimensionSlidersFactory
+  );
 
-  // Event handlers
-  private onKeyDown(event: KeyboardEvent): void;
-  private onKeyUp(event: KeyboardEvent): void;
-  private onMouseDown(event: MouseEvent): void;
-
-  // Context checks
-  private isTypingInInput(): boolean;
-  private shouldHandleKey(key: string): boolean;
-
-  // Cleanup
+  // Lifecycle
+  init(): void;
   dispose(): void;
+
+  // Optional UI wiring
+  setRenderingControls(controls: RenderingControls): void;
+  setScaleBar(scaleBar: ScaleBar): void;
+  setColormapLegend(legend: ColormapLegend): void;
+  setRecordingPanel(panel: RecordingPanel): void;
+  setLayersPanel(panel: LayersPanel): void;
+  setOverlayManager(manager: OverlayManager): void;
+  setDatasetBrowser(browser: { close(): void } | undefined): void;
+
+  // Dimension UI lifecycle
+  initDimensionSliders(): void;
+  showDimensionSliders(): void;
+  clearDimensionUI(): void;
 }
 ```
 
@@ -168,18 +182,24 @@ initDimensionSliders(): void {
     return; // No nD objects found
   }
 
-  // 2. Create dimension slider UI
-  this.dimensionSliders = new DimensionSliders({...});
+  // 2. Build the slider panel (only if a factory was injected)
+  if (this.dimensionSlidersFactory) {
+    this.dimensionSliders = this.dimensionSlidersFactory({...});
+    ...
+  }
 
-  // 3. Register listener for dimension changes
-  sceneDimsManager.addListener(() => {
-    this.updateAllNDNodes();
+  // 3. Set up the animation manager + animation keyboard shortcuts
+  this.initAnimationManager();
+
+  // 4. Register listener for dimension changes (replaces any prior listener)
+  this.sceneDimsListener = async () => {
     this.dimensionSliders?.update();
     this.animationController.startAnimation();
-  });
+    await this.updateAllNDNodes();
+  };
+  sceneDimsManager.addListener(this.sceneDimsListener);
 
-  // 4. CRITICAL: Trigger initial update (lines 191-194)
-  // This ensures data loads at correct initial slice position
+  // 5. CRITICAL: Trigger initial update so data loads at the initial slice
   this.updateAllNDNodes();
   this.animationController.startAnimation();
 }
@@ -187,13 +207,15 @@ initDimensionSliders(): void {
 
 **Why the Manual Initial Trigger?**
 
-The `sceneDimsManager.initFromScene()` sets up dimension state but does NOT call `notifyListeners()` because listeners haven't been registered yet. The initial update is triggered manually after listener registration to ensure:
+`sceneDimsManager.initFromScene()` sets up dimension state but does NOT call `notifyListeners()` because listeners haven't been registered yet. The initial update is triggered manually after listener registration to ensure:
 
-- Data loads at correct initial position (t=0 for time, channel=0 for channels)
-- Slider position matches displayed data from first render
+- Data loads at the correct initial position (t=0 for time, channel=0 for channels)
+- Slider position matches displayed data from the first render
 - No race condition between initialization and listener registration
 
-See `input-handler.ts:191-194` for implementation and `scene-dims-manager.ts:157-160` for the rationale.
+**Slider-less embedders**: when no `dimensionSlidersFactory` is injected the
+listener wiring + animation manager + initial update still run, so keyboard
+nD navigation works without a slider panel UI.
 
 ### 2. Input Context Manager
 
@@ -226,16 +248,31 @@ class InputContextManager {
   // Context management
   setContext(context: InputContext): void;
   pushContext(context: InputContext): void;
-  popContext(): InputContext | undefined;
-  clearContextStack(): void;
+  popContext(): void;
 
   // State queries
-  getCurrentContext(): InputContext;
-  hasContext(context: InputContext): boolean;
-  shouldHandleKey(key: string): boolean;
+  getContext(): InputContext;
 
-  // Debug support
-  setDebugMode(enabled: boolean): void;
+  // Binding management
+  registerBinding(context: InputContext, binding: KeyBinding): void;
+  unregisterBinding(
+    context: InputContext,
+    key: string,
+    modifiers?: KeyBinding['modifiers']
+  ): void;
+  clearContextBindings(context: InputContext): void;
+  reset(): void;
+
+  // Event dispatch
+  handleKeyEvent(event: KeyboardEvent, type: 'down' | 'up'): boolean;
+
+  // Master switch + introspection
+  setEnabled(enabled: boolean): void;
+  getDebugInfo(): {
+    currentContext: InputContext;
+    contextStack: InputContext[];
+    registeredBindings: Map<InputContext, string[]>;
+  };
 }
 ```
 
@@ -685,43 +722,33 @@ const KEY_BINDINGS = {
 
 ---
 
-## Debug Mode
+## Debugging
 
-### Enabling Debug Mode
+### Inspecting current state
 
-```typescript
-// Enable comprehensive input logging
-contextManager.setDebugMode(true);
-
-// Also available via console
-window.__luxarDebug = { input: true };
-```
-
-### Debug Output
-
-With debug mode enabled:
-
-```
-[Input] Context changed: NAVIGATION → FLY_CONTROLS
-[Input] Key down: 'w' (context: FLY_CONTROLS)
-[Input] Routing to fly controls handler
-[Input] Key up: 'w'
-[Input] Context pushed: UI_INTERACTION
-[Input] Key filtered: 'w' (blocked by UI_INTERACTION context)
-```
-
-### Context Visualization
-
-Show current context on screen:
+`InputContextManager.getDebugInfo()` returns a snapshot of the active
+context, the pushed context stack, and a map of registered bindings per
+context — useful in the browser console or in failing tests:
 
 ```typescript
-function showContextIndicator() {
-  const indicator = document.createElement('div');
-  indicator.className = 'context-indicator';
-  indicator.textContent = `Context: ${InputContext[currentContext]}`;
-  document.body.appendChild(indicator);
-}
+const info = contextManager.getDebugInfo();
+console.log('Current context:', info.currentContext);
+console.log('Context stack:', info.contextStack);
+console.log('Bindings in NAVIGATION:',
+  info.registeredBindings.get(InputContext.NAVIGATION));
 ```
+
+Every context switch is logged via the project's `log` helper at the
+INPUT module (`log.custom(LogEmoji.CONTROLS, Modules.INPUT, ...)`), so
+turning on console output is enough to see the context churn — there is
+no separate debug-mode flag on the manager.
+
+### Recursion guard
+
+`handleKeyEvent` is capped at `MAX_KEY_EVENT_DEPTH` (10) re-entrant
+invocations. A binding handler that re-dispatches keyboard events back
+through the manager will trip this guard and log a single error rather
+than blowing the stack.
 
 ---
 
@@ -906,30 +933,33 @@ if (dimIndex !== null) {
 **Problem: Keys not working**
 
 ```typescript
-// Check context
-console.log('Current context:', contextManager.getCurrentContext());
-// Check if typing
-console.log('Typing:', inputHandler.isTypingInInput());
-// Enable debug mode
-contextManager.setDebugMode(true);
+// Inspect current context + bindings
+const info = contextManager.getDebugInfo();
+console.log('Current context:', info.currentContext);
+console.log('Bindings here:',
+  info.registeredBindings.get(info.currentContext));
 ```
+
+Also check that focus is not in a text input — `InputHandler.onKeyDown`
+short-circuits when typing in a text-entry element (except Escape, which
+routes through `InputContextManager.dispatchEscapeFromTypingContext`).
 
 **Problem: Input conflicts**
 
 ```typescript
-// Review context stack
-console.log('Context stack:', contextManager.getContextStack());
-// Clear stuck contexts
-contextManager.clearContextStack();
+// Review the context stack
+const info = contextManager.getDebugInfo();
+console.log('Context stack:', info.contextStack);
+
+// Hard reset (drops all bindings as well — use sparingly)
+contextManager.reset();
 ```
 
 **Problem: Keys working in wrong mode**
 
-```typescript
-// Verify key filtering
-const shouldHandle = contextManager.shouldHandleKey('w');
-console.log('Should handle W:', shouldHandle);
-```
+Check the context configs in `InputContextManager.initializeContexts()` —
+`allowedKeys`/`blockedKeys` on each context, plus the `passthrough` flag,
+determine which lower-priority contexts get a fallback dispatch.
 
 ---
 
@@ -937,11 +967,15 @@ console.log('Should handle W:', shouldHandle);
 
 ### InputHandler
 
-| Method                                           | Description                         |
-| ------------------------------------------------ | ----------------------------------- |
-| `constructor(sceneManager, animationController)` | Initialize with scene and animation |
-| `initDimensionSliders()`                         | Initialize nD dimension UI          |
-| `dispose()`                                      | Clean up event listeners            |
+| Method                                                                                          | Description                                                                |
+| ----------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `constructor(sceneManager, animationController, performanceMonitor, debugConsole, factory?)`    | Build the handler. The optional `factory` constructs the slider panel lazily. |
+| `init()`                                                                                        | Attach all window / canvas / controls listeners (idempotent).              |
+| `initDimensionSliders()`                                                                        | Initialize nD dimension UI + listener after a scene loads.                 |
+| `showDimensionSliders()`                                                                        | Force the slider panel visible (called from viewer config application).    |
+| `clearDimensionUI()`                                                                            | Tear down sliders + listener when switching scenes.                        |
+| `setRenderingControls / setScaleBar / setColormapLegend / setRecordingPanel / setLayersPanel / setOverlayManager / setDatasetBrowser` | Wire in optional panels post-construction.                                 |
+| `dispose()`                                                                                     | Detach listeners and dispose owned UI.                                     |
 
 ### InputContextManager
 
@@ -964,3 +998,40 @@ Part of the Luxar project. See root LICENSE file for details.
 ---
 
 _For implementation details, see the source files in this directory._
+
+---
+
+## Contents
+
+- `input-handler.ts` — `InputHandler` orchestrator: keyboard, mouse,
+  touch, fullscreen, and FOV coordination.
+- `input-context-manager.ts` — Stacked input contexts with conflict
+  detection and allow/block routing.
+- `input-handler-utils.ts` — Pure helpers for keyboard navigation,
+  step-size calculation, FOV change, and dimension formatting.
+- `context-routing-utils.ts` — Pure allow/block filter and
+  priority-ordering for fallback contexts (split out for unit testing).
+- `handlers/` — Per-concern handlers extracted from `InputHandler`
+  (animation shortcuts, control-mode cycle, dimension navigation,
+  focus utils, key bindings, panel coordinator, window events).
+
+## Public API / Exports
+
+- `class InputHandler`
+- `class InputContextManager`
+- enum `InputContext`
+- type `KeyBinding`, `ContextConfig`
+- type `DimensionSlidersFactory`
+- const `MAX_KEY_EVENT_DEPTH`
+- pure helpers from `input-handler-utils.ts` (`getNonDisplayedDimensions`,
+  `mapKeyToDimension`, `calculateStepSize`, `calculateNextPosition`,
+  `calculateFovChange`, `formatDimensionValue`, `generateNavigationHelp`,
+  `isNavigationKey`, `shouldBlockShortcut`, `getNextDimensionIndex`)
+- pure helpers from `context-routing-utils.ts` (`isKeyAllowedInContext`,
+  `sortContextsByPriority`)
+
+## Dependencies
+
+- Internal: `controls`, `scene`, `ui/*`, `config`, `types/dims`,
+  `utils/log`, `utils/event-bus`, `utils/notifier`, `utils/clamp`,
+  `config/zarr-bridge/viewer-state-capture`, `data`.

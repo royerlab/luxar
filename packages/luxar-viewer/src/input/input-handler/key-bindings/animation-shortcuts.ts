@@ -24,11 +24,11 @@
  * @module input/handlers/animation-shortcuts
  */
 
-import { sceneDimsManager } from '../../scene/scene-dims-manager';
-import type { DimensionAnimationManager } from '../../scene/animation/dimension-animation-manager';
-import { InputContext, type InputContextManager } from '../input-context-manager';
-import { getSelectedDimensionIndex } from './dimension-navigation';
-import { log, Modules } from '../../utils/log';
+import { sceneDimsManager } from '../../../scene/scene-dims-manager';
+import type { DimensionAnimationManager } from '../../../scene/animation/dimension-animation-manager';
+import { InputContext, type InputContextManager } from '../context-manager';
+import { getSelectedDimensionIndex } from '../dimension-navigation/compute-step';
+import { log, Modules } from '../../../utils/log';
 
 /**
  * Read-only access to the two pieces of InputHandler state the
