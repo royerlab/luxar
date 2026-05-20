@@ -1,0 +1,263 @@
+import { SceneManager } from '../../../scene/scene-manager';
+import { AnimationController } from '../../../scene/animation/animation-controller';
+import { PerformanceMonitor } from '../../../ui/performance-monitor';
+import { DebugConsole } from '../../../ui/debug-console';
+import { AdaptiveDPRManager } from '../../../rendering/adaptive-dpr-manager';
+import { ResolutionIndicator } from '../../../ui/resolution-indicator';
+import { InputHandler } from '../../../input/input-handler';
+import { DimensionSliders } from '../../../ui/dimension-sliders';
+import { RenderingControls } from '../../../ui/rendering-controls';
+import { RecordingPanel } from '../../../ui/recording-panel';
+import { LayersPanel } from '../../../ui/layers';
+import { DataMonitorManager } from '../../../ui/data-monitor-manager';
+import { SceneLoaderManager, getSceneLoader } from '../../../data/scene-loader-manager';
+import { notifier } from '../../../utils/cross-layer/notifier';
+import { log, Modules } from '../../../utils/log';
+import { config } from '../../../config';
+import { resolveFactories, type AppFactories } from '../factories';
+import type { LuxarAppOptions } from '../options';
+import type { EventGroup } from '../../../utils/cross-layer/event-group';
+
+/**
+ * Everything `LuxarApp.init()` constructs is returned in this result.
+ * The orchestrator copies the fields onto itself after the pipeline
+ * resolves, so the helper never reaches into LuxarApp directly.
+ */
+export interface InitPipelineResult {
+  sceneManager: SceneManager;
+  animationController: AnimationController;
+  performanceMonitor: PerformanceMonitor;
+  debugConsole: DebugConsole;
+  adaptiveDPRManager: AdaptiveDPRManager;
+  resolutionIndicator: ResolutionIndicator;
+  inputHandler: InputHandler;
+  renderingControls: RenderingControls;
+  recordingPanel: RecordingPanel;
+  layersPanel: LayersPanel;
+  /** Resolved dataset URL — orchestrator routes to browser or load. */
+  sceneSrc: string;
+}
+
+/**
+ * Pipeline only builds the subsystem graph. Post-construction work
+ * (dataset routing, beforeunload/focus listeners, debug interface)
+ * runs in the orchestrator after it copies the result onto its own
+ * fields, because those steps call back into orchestrator methods
+ * that read `this.inputHandler` / `this.sceneManager` etc.
+ *
+ * `getPanelVisibilityStates` / `restorePanelVisibilityStates` are
+ * the only callbacks the pipeline captures during construction —
+ * they wire into `RecordingPanel.setPanelStateCallbacks` at the
+ * moment of recording-panel build, and the orchestrator's closures
+ * over `this` resolve correctly by the time the recording panel
+ * actually calls them.
+ */
+export interface InitPipelinePorts {
+  options: LuxarAppOptions;
+  events: EventGroup;
+  getPanelVisibilityStates: () => Map<string, boolean>;
+  restorePanelVisibilityStates: (states: Map<string, boolean>) => void;
+}
+
+
+/**
+ * Build the complete viewer subsystem graph (scene manager, animation
+ * controller, panels, input handler, etc.), wire context-loss /
+ * device-loss listeners, kick the animation loop, then either open
+ * the dataset browser or load the configured scene.
+ *
+ * Returns the constructed components so the orchestrator can store
+ * them on its fields. The order of construction is part of observable
+ * behaviour (e.g. PerformanceMonitor depends on the bus the animation
+ * controller emits each frame), so the helper keeps the steps
+ * strictly in their original order.
+ */
+/**
+ * @param partial Mutable accumulator the pipeline fills as each
+ *   subsystem is constructed. The caller pre-allocates and passes it
+ *   in so partial state survives an exception: if `sceneManager.init`
+ *   throws, `partial.sceneManager` is still set and `LuxarApp.dispose`
+ *   can clean it up. The pipeline ALSO returns the same object cast
+ *   to the full result type — on the happy path the caller can use
+ *   either reference.
+ */
+export async function runInitPipeline(
+  ports: InitPipelinePorts,
+  partial: Partial<InitPipelineResult>
+): Promise<InitPipelineResult> {
+  // Inform users about expected console messages
+  log.info(
+    Modules.LUXAR,
+    'Note: You may see 404 errors for optional features like spatial indexes and array attributes.'
+  );
+  log.info(
+    Modules.LUXAR,
+    'These are expected and do not indicate a problem - the app checks for optional features that may not exist.'
+  );
+
+  const sceneSrc = ports.options.src ?? config.defaultZarrPath;
+
+  // Resolve construction-factory overrides once. Without
+  // overrides each entry simply calls the matching `new X(...)`.
+  const factories: Required<AppFactories> = resolveFactories(ports.options.factories);
+
+  // Initialize scene manager first. Stored on `partial` *before*
+  // awaiting init() so a thrown init still leaves a disposable
+  // reference behind for the orchestrator's error handler.
+  const sceneManager = factories.sceneManager();
+  partial.sceneManager = sceneManager;
+  await sceneManager.init({
+    canvas: ports.options.canvas,
+    debug: ports.options.debug,
+    renderer: ports.options.renderer,
+    webgpuForceWebGL: ports.options.webgpuForceWebGL,
+    perfTimestamp: ports.options.perfTimestamp,
+  });
+
+  // Initialize animation controller with HDR post-processing.
+  // The PerformanceMonitor UI panel is constructed up here (not in
+  // the controller) and subscribes to the bus events the
+  // controller emits each frame. Owning it at the app level keeps
+  // the lower scene/ layer free of UI imports.
+  const animationController = factories.animationController(
+    sceneManager.controls,
+    sceneManager.postProcessing
+  );
+  partial.animationController = animationController;
+  // Skip GPU rendering while the WebGL context is lost.
+  // SceneManager flips this flag in its webglcontextlost/restored
+  // handlers; the loop polls each frame.
+  animationController.setContextLostPredicate(() => sceneManager.isWebGLContextLost());
+  const performanceMonitor = new PerformanceMonitor();
+  partial.performanceMonitor = performanceMonitor;
+  const debugConsole = new DebugConsole();
+  partial.debugConsole = debugConsole;
+
+  // Set up per-frame callback for dynamic clipping plane updates
+  // Uses unique ID so it won't conflict with other per-frame callbacks (e.g., dimension animation)
+  animationController.addPerFrameCallback('dynamic-clipping', () => {
+    sceneManager.updateDynamicClippingPlanes();
+  });
+
+  // Initialize adaptive DPR manager for dynamic resolution scaling
+  const adaptiveDPRManager = new AdaptiveDPRManager();
+  partial.adaptiveDPRManager = adaptiveDPRManager;
+  adaptiveDPRManager.setRenderer(sceneManager);
+  animationController.setAdaptiveDPRManager(adaptiveDPRManager);
+
+  // Initialize resolution indicator and connect to DPR manager
+  const resolutionIndicator = new ResolutionIndicator();
+  partial.resolutionIndicator = resolutionIndicator;
+  // Display target FPS rounded up from maxFPS (58 → 60) since targetFPS (55) is a hysteresis threshold
+  const displayTargetFPS = Math.ceil(config.adaptiveDPR.maxFPS / 5) * 5;
+  resolutionIndicator.setTargetFPS(displayTargetFPS);
+  adaptiveDPRManager.setOnDPRChangeCallback((dpr, isReducedResolution) => {
+    if (isReducedResolution) {
+      resolutionIndicator.show(dpr);
+    } else {
+      // Reset the indicator so it can show again on next reduced resolution mode activation
+      resolutionIndicator.reset();
+    }
+  });
+
+  // Re-register picking-system / GPU-pool resources after a WebGL
+  // context-restore event. SceneManager rebuilds the renderer +
+  // post-processing + material cache before dispatching, then we
+  // call NodeFactory.rebuildAfterContextRestore on the loaded
+  // scene so the picking system gets fresh registrations against
+  // the new context.
+  //
+  // Track the listener via ports.events so dispose() removes it.
+  // An untracked anonymous arrow here would leak if sceneManager
+  // outlives app teardown — inconsistent with every other
+  // app-level listener.
+  if (typeof sceneManager.addEventListener === 'function') {
+    const onContextRestored = (): void => {
+      const sceneLoader = getSceneLoader('default');
+      if (sceneLoader && sceneManager.scene) {
+        sceneLoader.nodeFactory.rebuildAfterContextRestore(sceneManager.scene);
+      }
+    };
+    sceneManager.addEventListener('webgl-context-restored', onContextRestored);
+    ports.events.add(() =>
+      sceneManager.removeEventListener('webgl-context-restored', onContextRestored)
+    );
+
+    // WebGPU device-loss is unrecoverable in this release (see
+    // `scene-manager.setupContextLossHandling`). Surface it as a
+    // user-facing error dialog with reload guidance — the only
+    // remediation. Console diagnostics are already emitted by the
+    // scene-manager handler; this listener exists to make sure the
+    // user is told too.
+    const onWebGPUDeviceLost = (event: { reason?: string; message?: string }): void => {
+      const reason = event.reason ? ` (${event.reason})` : '';
+      const detail = event.message ? `: ${event.message}` : '';
+      notifier.error(
+        `WebGPU device lost${reason}${detail}. ` + 'Please reload the page to continue.'
+      );
+    };
+    sceneManager.addEventListener('webgpu-device-lost', onWebGPUDeviceLost);
+    ports.events.add(() =>
+      sceneManager.removeEventListener('webgpu-device-lost', onWebGPUDeviceLost)
+    );
+  }
+
+  // Inject the monitor factory into SceneLoaderManager so each
+  // SceneLoader can resolve its UI monitor without the data/ layer
+  // importing ui/ directly.
+  SceneLoaderManager.getInstance().setMonitorFactory((monitorId) => {
+    if (typeof document === 'undefined') return null;
+    const mgr = DataMonitorManager.getInstance();
+    if (!mgr.hasMonitor(monitorId)) {
+      mgr.createMonitor(monitorId, document.body);
+    }
+    return mgr.getMonitor(monitorId) ?? null;
+  });
+
+  // Initialize input handler. The DimensionSliders factory is
+  // injected here so the input layer never imports the concrete
+  // ui/ panel — input → ui is a layer-cruiser violation.
+  const inputHandler = new InputHandler(
+    sceneManager,
+    animationController,
+    performanceMonitor,
+    debugConsole,
+    (config) => new DimensionSliders(config)
+  );
+  partial.inputHandler = inputHandler;
+  inputHandler.init();
+
+  // Initialize rendering controls
+  const renderingControls = factories.renderingControls(sceneManager.postProcessing, sceneManager);
+  partial.renderingControls = renderingControls;
+
+  // Connect rendering controls to animation controller
+  renderingControls.setAnimationController(animationController);
+
+  // Connect rendering controls to adaptive DPR manager for performance UI
+  renderingControls.setAdaptiveDPRManager(adaptiveDPRManager);
+
+  // Connect rendering controls to input handler
+  inputHandler.setRenderingControls(renderingControls);
+
+  // Initialize recording panel (screenshot/video capture)
+  const recordingPanel = factories.recordingPanel(sceneManager, animationController);
+  partial.recordingPanel = recordingPanel;
+  recordingPanel.setPanelStateCallbacks(
+    () => ports.getPanelVisibilityStates(),
+    (states) => ports.restorePanelVisibilityStates(states)
+  );
+  recordingPanel.setAdaptiveDPRManager(adaptiveDPRManager);
+  inputHandler.setRecordingPanel(recordingPanel);
+
+  // Initialize layers panel (per-node controls)
+  const layersPanel = factories.layersPanel(document.body, animationController);
+  partial.layersPanel = layersPanel;
+  inputHandler.setLayersPanel(layersPanel);
+
+  // Start animation loop first to ensure background is rendered
+  animationController.startAnimation();
+
+  partial.sceneSrc = sceneSrc;
+  return partial as InitPipelineResult;
+}
