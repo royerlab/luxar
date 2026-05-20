@@ -31,6 +31,7 @@ import {
   setDataWorkerUrl,
 } from './worker-pool/singleton';
 import { withTimeout } from './worker-pool/timeout/with-timeout';
+import { combineSignals } from './worker-pool/timeout/combine-signals';
 export { getWorkerPool, disposeWorkerPool, setDataWorkerUrl };
 
 export class WorkerPool {
@@ -576,21 +577,7 @@ export class WorkerPool {
     a: AbortSignal | undefined,
     b: AbortSignal | undefined
   ): AbortSignal | undefined {
-    if (!a && !b) return undefined;
-    if (a && !b) return a;
-    if (!a && b) return b;
-    // Both present. `AbortSignal.any` is the standard combinator; fall
-    // back to manual wiring when unavailable.
-    const anyFn = (AbortSignal as unknown as { any?: (signals: AbortSignal[]) => AbortSignal }).any;
-    if (typeof anyFn === 'function') {
-      return anyFn([a as AbortSignal, b as AbortSignal]);
-    }
-    const controller = new AbortController();
-    const forward = (): void => controller.abort();
-    (a as AbortSignal).addEventListener('abort', forward, { once: true });
-    (b as AbortSignal).addEventListener('abort', forward, { once: true });
-    if ((a as AbortSignal).aborted || (b as AbortSignal).aborted) controller.abort();
-    return controller.signal;
+    return combineSignals(a, b);
   }
 
   /**
