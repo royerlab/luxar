@@ -27,6 +27,24 @@ import {
   updateOrientation as updateOrientationHelper,
   lookAtSmooth as lookAtSmoothHelper,
 } from './luxar-fly-controls/camera-application';
+import {
+  handleKeyDown as handleKeyDownHelper,
+  handleKeyUp as handleKeyUpHelper,
+  type FlyKeyboardCtx,
+  type FlyMoveState,
+  type FlyLookState,
+  type FlyMouseAction,
+} from './luxar-fly-controls/input/keyboard';
+import {
+  handleMouseDown as handleMouseDownHelper,
+  handleMouseUp as handleMouseUpHelper,
+  handleMouseMove as handleMouseMoveHelper,
+  type FlyMouseCtx,
+} from './luxar-fly-controls/input/mouse';
+import {
+  handleWheel as handleWheelHelper,
+  type FlyWheelCtx,
+} from './luxar-fly-controls/input/wheel';
 
 // Reusable scratch vectors/quaternions to avoid per-frame/per-event allocations.
 // Names are neutral (v0-v3) because these hold different semantic values depending
@@ -66,7 +84,7 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
   public rotationDamping: number = config.controls.fly.rotation.damping.default;
 
   // Movement state
-  private moveState = {
+  private moveState: FlyMoveState = {
     forward: 0,
     back: 0,
     left: 0,
@@ -76,7 +94,7 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
   };
 
   // Look state for arrow key camera rotation
-  private lookState = {
+  private lookState: FlyLookState = {
     horizontal: 0, // -1 for left, 1 for right
     vertical: 0, // -1 for up, 1 for down
     roll: 0, // -1 for Q (roll left), 1 for E (roll right)
@@ -101,7 +119,7 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
 
   // Mouse state — tracks which button is down for different drag actions
   // Left drag = strafe (translate), Right drag = rotate (look)
-  private activeMouseAction: 'none' | 'strafe' | 'rotate' = 'none';
+  private activeMouseAction: FlyMouseAction = 'none';
   private mouseX = 0;
   private mouseY = 0;
 
@@ -209,247 +227,84 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
     this.onKeyUp(event);
   }
 
+  // ---------------------------------------------------------------------------
+  // Input handling (delegated to luxar-fly-controls/input/*)
+  // ---------------------------------------------------------------------------
+
+  private makeKeyboardCtx(): FlyKeyboardCtx {
+    return {
+      enabled: this.enabled,
+      moveState: this.moveState,
+      lookState: this.lookState,
+      setSpeedBoost: (v) => {
+        this.speedBoost = v;
+      },
+      dispatch: (type) => this.dispatchEvent({ type }),
+    };
+  }
+
+  private makeMouseCtx(): FlyMouseCtx {
+    return {
+      enabled: this.enabled,
+      inertialMode: this.inertialMode,
+      lookSpeed: this.lookSpeed,
+      movementSpeed: this.movementSpeed,
+      camera: this.camera,
+      orientation: this.orientation,
+      velocity: this.velocity,
+      angularVelocity: this.angularVelocity,
+      getActiveMouseAction: () => this.activeMouseAction,
+      setActiveMouseAction: (v) => {
+        this.activeMouseAction = v;
+      },
+      getMouseX: () => this.mouseX,
+      setMouseX: (v) => {
+        this.mouseX = v;
+      },
+      getMouseY: () => this.mouseY,
+      setMouseY: (v) => {
+        this.mouseY = v;
+      },
+      dispatch: (type) => this.dispatchEvent({ type }),
+    };
+  }
+
+  private makeWheelCtx(): FlyWheelCtx {
+    return {
+      enabled: this.enabled,
+      inertialMode: this.inertialMode,
+      movementSpeed: this.movementSpeed,
+      rotationSpeed: this.rotationSpeed,
+      camera: this.camera,
+      orientation: this.orientation,
+      velocity: this.velocity,
+      angularVelocity: this.angularVelocity,
+      dispatch: (type) => this.dispatchEvent({ type }),
+    };
+  }
+
   private onKeyDown(event: KeyboardEvent): void {
-    if (!this.enabled) return;
-
-    // Only prevent default for arrow keys (always used for camera look)
-    if (event.key.startsWith('Arrow')) {
-      event.preventDefault();
-    }
-
-    // Only prevent default for WASD if we're not typing in an input field
-    const activeElement = document.activeElement;
-    const isTyping =
-      activeElement &&
-      (activeElement.tagName === 'INPUT' ||
-        activeElement.tagName === 'TEXTAREA' ||
-        activeElement.getAttribute('contenteditable') === 'true');
-
-    if (
-      !isTyping &&
-      ['w', 'a', 's', 'd', 'q', 'e', 'W', 'A', 'S', 'D', 'Q', 'E'].includes(event.key)
-    ) {
-      event.preventDefault();
-    }
-
-    // WASD for movement
-    switch (event.key.toLowerCase()) {
-      case 'w':
-        if (event.altKey || event.metaKey) {
-          this.moveState.up = 1; // Alt/Option+W for up
-        } else {
-          this.moveState.forward = 1; // W for forward
-        }
-        break;
-      case 's':
-        if (event.altKey || event.metaKey) {
-          this.moveState.down = 1; // Alt/Option+S for down
-        } else {
-          this.moveState.back = 1; // S for backward
-        }
-        break;
-      case 'a':
-        this.moveState.left = 1; // A for strafe left
-        break;
-      case 'd':
-        this.moveState.right = 1; // D for strafe right
-        break;
-      case 'q':
-        this.lookState.roll = -1; // Q for roll left
-        break;
-      case 'e':
-        this.lookState.roll = 1; // E for roll right
-        break;
-    }
-
-    if (event.key === 'Shift') {
-      this.speedBoost = true;
-    }
-
-    // Arrow keys for camera look direction
-    switch (event.key) {
-      case 'ArrowUp':
-        this.startLookChange(0, -1); // Look up
-        break;
-      case 'ArrowDown':
-        this.startLookChange(0, 1); // Look down
-        break;
-      case 'ArrowLeft':
-        this.startLookChange(-1, 0); // Look left
-        break;
-      case 'ArrowRight':
-        this.startLookChange(1, 0); // Look right
-        break;
-    }
-
-    this.dispatchEvent({ type: 'change' });
+    handleKeyDownHelper(this.makeKeyboardCtx(), event);
   }
 
   private onKeyUp(event: KeyboardEvent): void {
-    if (!this.enabled) return;
-
-    // WASD movement release
-    switch (event.key.toLowerCase()) {
-      case 'w':
-        this.moveState.forward = 0;
-        this.moveState.up = 0; // Also clear up in case Alt was held
-        break;
-      case 's':
-        this.moveState.back = 0;
-        this.moveState.down = 0; // Also clear down in case Alt was held
-        break;
-      case 'a':
-        this.moveState.left = 0;
-        break;
-      case 'd':
-        this.moveState.right = 0;
-        break;
-      case 'q':
-        this.lookState.roll = 0;
-        break;
-      case 'e':
-        this.lookState.roll = 0;
-        break;
-    }
-
-    // Release speed boost
-    if (event.key === 'Shift') {
-      this.speedBoost = false;
-    }
-
-    // Arrow keys for camera look release
-    switch (event.key) {
-      case 'ArrowUp':
-      case 'ArrowDown':
-        this.lookState.vertical = 0;
-        break;
-      case 'ArrowLeft':
-      case 'ArrowRight':
-        this.lookState.horizontal = 0;
-        break;
-    }
-
-    this.dispatchEvent({ type: 'change' });
+    handleKeyUpHelper(this.makeKeyboardCtx(), event);
   }
 
   private onMouseDown(event: MouseEvent): void {
-    if (!this.enabled) return;
-
-    // Left button (0) = strafe, Right button (2) = rotate
-    if (event.button === 0) {
-      this.activeMouseAction = 'strafe';
-      this.mouseX = event.clientX;
-      this.mouseY = event.clientY;
-      event.preventDefault();
-      this.dispatchEvent({ type: 'start' });
-    } else if (event.button === 2) {
-      this.activeMouseAction = 'rotate';
-      this.mouseX = event.clientX;
-      this.mouseY = event.clientY;
-      event.preventDefault();
-      this.dispatchEvent({ type: 'start' });
-    }
+    handleMouseDownHelper(this.makeMouseCtx(), event);
   }
 
   private onMouseUp(event: MouseEvent): void {
-    if (!this.enabled) return;
-
-    if (
-      (event.button === 0 && this.activeMouseAction === 'strafe') ||
-      (event.button === 2 && this.activeMouseAction === 'rotate')
-    ) {
-      this.activeMouseAction = 'none';
-      this.dispatchEvent({ type: 'end' });
-    }
+    handleMouseUpHelper(this.makeMouseCtx(), event);
   }
 
   private onMouseMove(event: MouseEvent): void {
-    if (!this.enabled || this.activeMouseAction === 'none') return;
-
-    const deltaX = event.clientX - this.mouseX;
-    const deltaY = event.clientY - this.mouseY;
-
-    this.mouseX = event.clientX;
-    this.mouseY = event.clientY;
-
-    if (this.activeMouseAction === 'rotate') {
-      // Right-drag: apply angular impulse for rotation (look around)
-      const torquePitch = -deltaY * this.lookSpeed * 2.5;
-      const torqueYaw = -deltaX * this.lookSpeed * 2.5;
-
-      _v0.set(1, 0, 0).applyQuaternion(this.orientation);
-      _v1.set(0, 1, 0).applyQuaternion(this.orientation);
-
-      this.angularVelocity.addScaledVector(_v0, torquePitch);
-      this.angularVelocity.addScaledVector(_v1, torqueYaw);
-    } else if (this.activeMouseAction === 'strafe') {
-      // Left-drag: screen-space translation (strafe up/down/left/right)
-      // Drag direction matches on-screen movement, consistent with pan in orbit/ortho.
-      _v0.set(1, 0, 0).applyQuaternion(this.orientation);
-      _v1.set(0, 1, 0).applyQuaternion(this.orientation);
-
-      // Scale by movementSpeed for scene-appropriate sensitivity.
-      // The 0.005 factor converts pixel deltas to reasonable world-space distances.
-      const strafeScale = this.movementSpeed * 0.005;
-
-      if (this.inertialMode) {
-        // Inertial: add velocity impulse
-        this.velocity.addScaledVector(_v0, -deltaX * strafeScale);
-        this.velocity.addScaledVector(_v1, deltaY * strafeScale);
-      } else {
-        // Non-inertial: move directly
-        this.camera.position.addScaledVector(_v0, -deltaX * strafeScale);
-        this.camera.position.addScaledVector(_v1, deltaY * strafeScale);
-      }
-    }
-
-    this.dispatchEvent({ type: 'change' });
+    handleMouseMoveHelper(this.makeMouseCtx(), event);
   }
 
-  /**
-   * Handle mouse wheel for forward/back movement and roll.
-   * - Plain scroll: forward/backward velocity impulse
-   * - Shift+scroll: roll (rotate around viewing axis)
-   * - Ctrl/Meta+scroll: FOV (handled by InputHandler, not intercepted here)
-   */
   private onWheel(event: WheelEvent): void {
-    if (!this.enabled) return;
-
-    // Let Ctrl/Meta+scroll pass through to InputHandler for FOV control
-    if (event.ctrlKey || event.metaKey) return;
-
-    event.preventDefault();
-
-    // Normalize deltaY across browsers (line vs pixel vs page scrolling)
-    const delta = -Math.sign(event.deltaY);
-
-    if (event.shiftKey) {
-      // Shift+scroll: roll around viewing axis
-      _v0.set(0, 0, -1).applyQuaternion(this.orientation);
-      const rollImpulse = delta * this.rotationSpeed * 0.06;
-
-      if (this.inertialMode) {
-        this.angularVelocity.addScaledVector(_v0, rollImpulse);
-      } else {
-        // Non-inertial: apply rotation directly
-        _q0.setFromAxisAngle(_v0, rollImpulse);
-        this.orientation.premultiply(_q0);
-        this.orientation.normalize();
-      }
-    } else {
-      // Plain scroll: move forward/backward
-      _v0.set(0, 0, -1).applyQuaternion(this.orientation);
-      const impulse = delta * this.movementSpeed * 0.3;
-
-      if (this.inertialMode) {
-        this.velocity.addScaledVector(_v0, impulse);
-      } else {
-        // Non-inertial: move directly
-        this.camera.position.addScaledVector(_v0, impulse * 0.2);
-      }
-    }
-
-    this.dispatchEvent({ type: 'change' });
+    handleWheelHelper(this.makeWheelCtx(), event);
   }
 
   private initializeFromCamera(): void {
@@ -598,16 +453,6 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
     this.inertialMode = inertial;
     // Both modes now use physics, just with different damping
     // No need to clear velocity as it will quickly dampen out
-  }
-
-  /**
-   * Start continuous look change with arrow keys
-   * @param horizontal - Horizontal look direction (-1 left, 1 right)
-   * @param vertical - Vertical look direction (-1 up, 1 down)
-   */
-  private startLookChange(horizontal: number, vertical: number): void {
-    this.lookState.horizontal = horizontal;
-    this.lookState.vertical = vertical;
   }
 
   /**
