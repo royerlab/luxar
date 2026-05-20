@@ -147,6 +147,7 @@ Tests mirror the source layout under `tests/unit/input/`. The shape:
 tests/unit/input/
 ├── input-handler.test.ts                          # Orchestrator unit suite
 ├── input-handler-class.test.ts                    # Orchestrator class shape
+├── input-context-manager.test.ts                  # Context-manager suite
 └── input-handler/
     ├── context-manager-keyup.test.ts
     ├── context-manager-recursion.test.ts

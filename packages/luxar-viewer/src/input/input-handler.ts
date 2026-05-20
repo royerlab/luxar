@@ -35,7 +35,7 @@
 
 import { SceneManager } from '../scene/scene-manager';
 import { AnimationController } from '../scene/animation/animation-controller';
-import { DimensionAnimationManager } from '../scene/animation/dimension-animation-manager';
+import type { DimensionAnimationManager } from '../scene/animation/dimension-animation-manager';
 import { RenderingControls } from '../ui/rendering-controls';
 import type { RecordingPanel } from '../ui/recording-panel';
 import type { LayersPanel } from '../ui/layers';
