@@ -13,8 +13,8 @@
  * @module core/debug-cache-helpers
  */
 
-import type { CacheStatsSnapshot } from '../data/scene-loader/cache-api';
-import { log, Modules } from '../utils/log';
+import type { CacheStatsSnapshot } from '../../../data/scene-loader/cache-api';
+import { log, Modules } from '../../../utils/log';
 
 /** Subset of `SceneLoader` the cache helpers call into. */
 export interface CacheCapableLoader {

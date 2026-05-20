@@ -12,7 +12,7 @@ import {
   restorePanelVisibilityStates,
   type PanelVisibilityPorts,
   type VisibilityPanel,
-} from '../../../core/panel-visibility';
+} from '../../../core/app/viewer-config/panel-visibility';
 
 // vitest's Mock type doesn't structurally satisfy `() => void` so we keep
 // the stub shape inline + cast at the call site rather than inheriting.

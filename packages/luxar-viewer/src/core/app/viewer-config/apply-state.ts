@@ -16,7 +16,7 @@
  * @module core/viewer-config-applier
  */
 
-import type { ZarrViewerConfig } from '../types/zarr';
+import type { ZarrViewerConfig } from '../../../types/zarr';
 
 /**
  * The surface this dispatcher needs from the parent LuxarApp. Each

@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { buildDebugCacheHelpers, type CacheCapableLoader } from '../../../core/debug-cache-helpers';
+import { buildDebugCacheHelpers, type CacheCapableLoader } from '../../../core/app/debug/debug-cache-helpers';
 
 // vitest's Mock type doesn't structurally satisfy concrete method signatures
 // (e.g. `() => CacheStatsSnapshot`), so the stub keeps the shape inline and we

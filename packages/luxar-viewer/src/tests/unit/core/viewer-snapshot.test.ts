@@ -5,7 +5,7 @@ import {
   restoreSnapshot,
   VIEWER_SNAPSHOT_VERSION,
   type ViewerSnapshot,
-} from '../../../core/viewer-snapshot';
+} from '../../../core/app/snapshot/viewer-snapshot';
 import { sceneDimsManager } from '../../../scene/scene-dims-manager';
 
 interface FakeControls {

@@ -16,7 +16,7 @@
  */
 
 import * as THREE from 'three';
-import type { SimpleDims } from '../types/dims';
+import type { SimpleDims } from '../../../types/dims';
 
 /** Per-mesh point-cloud info reported by getState(). */
 export interface PointCloudInfo {
