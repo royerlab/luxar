@@ -6,6 +6,10 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as THREE from 'three';
 import { LuxarOrbitControls } from '../../../controls/luxar-orbit-controls';
 import { projectOnTrackball } from '../../../controls/luxar-orbit-controls/math/trackball';
+import {
+  mouseAction,
+  type OrbitInputCtx,
+} from '../../../controls/luxar-orbit-controls/input/pointer';
 
 describe('LuxarOrbitControls', () => {
   let camera: THREE.PerspectiveCamera;
@@ -294,14 +298,26 @@ describe('LuxarOrbitControls', () => {
       controls = new LuxarOrbitControls(camera, domElement);
       controls.mouseButtons.RIGHT = null;
 
-      const action = (controls as any).getMouseAction(2, false);
+      const ctx = {
+        mouseButtons: controls.mouseButtons,
+        enableRotate: controls.enableRotate,
+        enablePan: controls.enablePan,
+        enableZoom: controls.enableZoom,
+      } as unknown as OrbitInputCtx;
+      const action = mouseAction(2, false, ctx);
       expect(action).toBe('none');
     });
 
     it('should map Shift+left to rotate in default mode (inverts primary)', () => {
       controls = new LuxarOrbitControls(camera, domElement);
 
-      const action = (controls as any).getMouseAction(0, true);
+      const ctx = {
+        mouseButtons: controls.mouseButtons,
+        enableRotate: controls.enableRotate,
+        enablePan: controls.enablePan,
+        enableZoom: controls.enableZoom,
+      } as unknown as OrbitInputCtx;
+      const action = mouseAction(0, true, ctx);
       expect(action).toBe('rotate');
     });
   });
