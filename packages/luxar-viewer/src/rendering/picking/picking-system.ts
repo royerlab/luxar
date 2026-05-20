@@ -37,7 +37,7 @@ import {
 } from './picking-system/registration';
 import { rayHitsAnyNode, invalidateBoxCache } from './picking-system/ray-aabb';
 import { voteWinner, type VoteEntry } from './picking-system/pick-render';
-import { evaluateSettle } from './picking-system/settle-loop';
+import { SettleScheduler } from './picking-system/settle-scheduler';
 import { applyLensDistortion } from './picking-system/lens-distortion';
 import type { Renderer, RendererCapabilities } from '../renderer-capabilities';
 import { readPixelsCompactAsync } from '../post-processing/hdr-pixel-utils';
@@ -107,19 +107,11 @@ export class PickingSystem {
   // Cached canvas rect (invalidated on resize via markDirty).
   private _canvasRect: DOMRect | null = null;
 
-  // -- Settle scheduler state ------------------------------------------------
-  // Pick fires only when both axes have been quiet for HOVER_SETTLE_MS:
-  //   - `_lastMouseMoveTime`: time of most recent onMouseMove.
-  //   - `_lastDirtyTime`:     time of most recent markDirty (camera/resize/geom).
-  //   - `_lastPickFiredTime`: time of most recent pick. A new pick fires only
-  //                           if EITHER `_lastMouseMoveTime > _lastPickFiredTime`
-  //                           (new hover) OR `_lastDirtyTime > _lastPickFiredTime`
-  //                           (camera-settle re-pick, even without new mousemove).
-  private _pendingMouse: { x: number; y: number } | null = null;
-  private _lastMouseMoveTime = 0;
-  private _lastDirtyTime = 0;
-  private _lastPickFiredTime = 0;
-  private _rafId: number | null = null;
+  // Settle scheduler: owns the rAF lifecycle and the mouse/dirty
+  // timestamps. The orchestrator forwards events (onMouseMove,
+  // markDirty, suppress) and exposes the scheduler's bookkeeping via
+  // `getDiagnostics()`.
+  private scheduler: SettleScheduler;
 
   // World-AABB cache: avoids re-applying matrixWorld per node per pick.
   // Invalidated only on register/unregister/geometry-commit — camera motion
@@ -132,9 +124,6 @@ export class PickingSystem {
 
   // Reused vote map (cleared per readback instead of `new Map()`).
   private _votes: Map<number, VoteEntry> = new Map();
-
-  /** When true, picking is suppressed (e.g. during orbit/pan/zoom). */
-  private _suppressed = false;
 
   /**
    * Optional predicate gating whether picks should fire. Defaults to
@@ -171,6 +160,14 @@ export class PickingSystem {
     this._readFlipped = new Float32Array(PICK_SIZE * PICK_SIZE * 4);
     this.raycaster = new THREE.Raycaster();
     this.ndcCoord = new THREE.Vector2();
+
+    this.scheduler = new SettleScheduler({
+      now: () => performance.now(),
+      shouldFire: () => this._shouldPick(),
+      firePick: (x, y) => {
+        void this.performPick(x, y);
+      },
+    });
 
     log.info(Modules.RENDERER, 'PickingSystem initialized (5x5 RGBA32F)');
   }
@@ -261,11 +258,11 @@ export class PickingSystem {
     suppressed: boolean;
   } {
     return {
-      lastPickFiredTime: this._lastPickFiredTime,
-      lastMouseMoveTime: this._lastMouseMoveTime,
-      lastDirtyTime: this._lastDirtyTime,
+      lastPickFiredTime: this.scheduler.lastPickFiredTime,
+      lastMouseMoveTime: this.scheduler.lastMouseMoveTime,
+      lastDirtyTime: this.scheduler.lastDirtyTime,
       registeredNodeCount: this.nodeMap.size,
-      suppressed: this._suppressed,
+      suppressed: this.scheduler.isSuppressed,
     };
   }
 
@@ -300,14 +297,14 @@ export class PickingSystem {
       this.pickScene.remove(this.pickScene.children[0]);
     }
     this._dirty = true;
-    this._lastDirtyTime = performance.now();
+    this.scheduler.markDirty();
   }
 
   /** Update camera reference (e.g., after perspective ↔ orthographic swap). */
   setCamera(camera: THREE.Camera): void {
     this.camera = camera;
     this._dirty = true; // Must re-render pick buffer with new projection
-    this._lastDirtyTime = performance.now();
+    this.scheduler.markDirty();
   }
 
   /** Set post-processing reference for lens distortion correction. */
@@ -325,11 +322,10 @@ export class PickingSystem {
   markDirty(): void {
     this._dirty = true;
     this._canvasRect = null;
-    this._lastDirtyTime = performance.now();
     // Fade overlay (OverlayManager dedupes against the last state, so
     // repeated calls do no DOM work).
     this.onPickResult(null);
-    this._scheduleRaf();
+    this.scheduler.markDirty();
   }
 
   /**
@@ -342,12 +338,7 @@ export class PickingSystem {
    * naturally — no mouse wiggle required.
    */
   suppress(value: boolean): void {
-    this._suppressed = value;
-    if (value) {
-      this._cancelRaf();
-    } else if (this._pendingMouse) {
-      this._scheduleRaf();
-    }
+    this.scheduler.setSuppressed(value);
   }
 
   /**
@@ -357,19 +348,16 @@ export class PickingSystem {
    * the mouse and the pick buffer have been still for HOVER_SETTLE_MS.
    */
   onMouseMove(event: MouseEvent): void {
-    if (this._suppressed) return;
+    if (this.scheduler.isSuppressed) return;
 
     if (!this._canvasRect) {
       this._canvasRect = this.renderer.domElement.getBoundingClientRect();
     }
-    this._pendingMouse = {
-      x: event.clientX - this._canvasRect.left,
-      y: event.clientY - this._canvasRect.top,
-    };
-    this._lastMouseMoveTime = performance.now();
+    const x = event.clientX - this._canvasRect.left;
+    const y = event.clientY - this._canvasRect.top;
     // Fade existing overlay while moving (dedupe-safe).
     this.onPickResult(null);
-    this._scheduleRaf();
+    this.scheduler.recordMouseMove(x, y);
   }
 
   /**
@@ -378,61 +366,13 @@ export class PickingSystem {
    * cursor isn't even over the viewer, and cancel any pending rAF.
    */
   onMouseLeave(): void {
-    this._pendingMouse = null;
-    this._cancelRaf();
+    this.scheduler.recordMouseLeave();
     this.onPickResult(null);
   }
 
-  // -- Settle scheduler (rAF-driven) ----------------------------------------
-
-  private _scheduleRaf(): void {
-    if (this._rafId !== null) return;
-    if (this._suppressed) return;
-    this._rafId = requestAnimationFrame(this._rafTick);
-  }
-
-  private _cancelRaf(): void {
-    if (this._rafId !== null) {
-      cancelAnimationFrame(this._rafId);
-      this._rafId = null;
-    }
-  }
-
-  /**
-   * Per-frame settle check. Fires a pick when:
-   *   - a pending cursor position exists,
-   *   - both axes have been quiet for HOVER_SETTLE_MS,
-   *   - at least one axis has changed since the last pick fired,
-   *   - and the `shouldPick` predicate allows it.
-   * Otherwise reschedules itself until conditions are met (or no
-   * fresh trigger remains, in which case it stops).
-   */
-  private _rafTick = (): void => {
-    this._rafId = null;
-    if (this._suppressed || !this._pendingMouse) return;
-
-    const now = performance.now();
-    const decision = evaluateSettle({
-      now,
-      lastMouseMoveTime: this._lastMouseMoveTime,
-      lastDirtyTime: this._lastDirtyTime,
-      lastPickFiredTime: this._lastPickFiredTime,
-    });
-
-    if (decision.action === 'wait') {
-      this._scheduleRaf();
-      return;
-    }
-    if (decision.action === 'idle') return;
-    if (!this._shouldPick()) return;
-
-    this._lastPickFiredTime = now;
-    void this.performPick(this._pendingMouse.x, this._pendingMouse.y);
-  };
-
   /** Clean up all resources — render target, pick materials, scene. */
   dispose(): void {
-    this._cancelRaf();
+    this.scheduler.dispose();
 
     // Dispose all pick materials (unregisters from materialManager automatically)
     for (const entry of this.nodeMap.values()) {
@@ -448,7 +388,6 @@ export class PickingSystem {
     this.nodeMap.clear();
     this._worldBoxCache.clear();
     this._votes.clear();
-    this._pendingMouse = null;
     this.postProcessing = null;
     log.info(Modules.RENDERER, 'PickingSystem disposed');
   }
