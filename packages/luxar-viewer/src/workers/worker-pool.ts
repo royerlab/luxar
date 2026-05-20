@@ -33,6 +33,7 @@ import {
 import { withTimeout } from './worker-pool/timeout/with-timeout';
 import { combineSignals } from './worker-pool/timeout/combine-signals';
 import { pickTimeoutMs } from './worker-pool/timeout/pick-timeout-ms';
+import { getConfiguredWorkerCount } from './worker-pool/lifecycle/worker-count';
 export { getWorkerPool, disposeWorkerPool, setDataWorkerUrl };
 
 export class WorkerPool {
@@ -80,20 +81,7 @@ export class WorkerPool {
    * - workerCount > 0: Uses that number, capped at (hardwareConcurrency - 1)
    */
   private getConfiguredWorkerCount(): number {
-    const configCount = config.dataLoading.performance.workerCount;
-    const hardwareConcurrency =
-      typeof navigator !== 'undefined' ? navigator.hardwareConcurrency || 4 : 4;
-
-    // Leave one core for main thread (rendering, UI)
-    const maxWorkers = Math.max(1, hardwareConcurrency - 1);
-
-    // 0 = auto mode: use all available cores minus one
-    if (configCount <= 0) {
-      return maxWorkers;
-    }
-
-    // Otherwise use config value, capped at max
-    return Math.min(configCount, maxWorkers);
+    return getConfiguredWorkerCount(config.dataLoading.performance.workerCount);
   }
 
   /**
