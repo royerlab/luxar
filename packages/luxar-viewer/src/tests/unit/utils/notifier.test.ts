@@ -13,7 +13,7 @@ import {
   notifier,
   setNotifierBackend,
   type NotifierBackend,
-} from '../../../utils/notifier';
+} from '../../../utils/cross-layer/notifier';
 
 interface RecordingBackend extends NotifierBackend {
   calls: Array<{ method: string; args: unknown[] }>;

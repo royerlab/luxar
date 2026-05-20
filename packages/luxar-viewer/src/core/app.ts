@@ -6,7 +6,7 @@ import {
   captureSnapshot as captureViewerSnapshot,
   restoreSnapshot as restoreViewerSnapshot,
   type ViewerSnapshot,
-} from './viewer-snapshot';
+} from './app/snapshot/viewer-snapshot';
 import { AnimationController } from '../scene/animation/animation-controller';
 import { InputHandler } from '../input/input-handler';
 import { DimensionSliders } from '../ui/dimension-sliders';
@@ -14,7 +14,7 @@ import { RenderingControls } from '../ui/rendering-controls';
 import { cleanupUI } from '../ui/ui-cleanup';
 import { clearError, showError } from '../ui/error-overlay';
 import { showHelpOverlay } from '../ui/help-overlay';
-import { notifier } from '../utils/notifier';
+import { notifier } from '../utils/cross-layer/notifier';
 import { config } from '../config';
 import { DatasetBrowser } from '../ui/dataset-browser';
 import { log, Modules } from '../utils/log';
@@ -29,7 +29,7 @@ import { ScaleBar } from '../ui/scale-bar';
 import { ColormapLegend } from '../ui/colormap-legend';
 import { RecordingPanel } from '../ui/recording-panel';
 import { LayersPanel } from '../ui/layers';
-import { type AppFactories, resolveFactories } from './app-factories';
+import { type AppFactories, resolveFactories } from './app/factories';
 import { ThemeManager } from '../themes/theme-manager';
 import type { ZarrViewerConfig } from '../types/zarr';
 import { OverlayManager } from '../ui/overlay-manager';
@@ -39,19 +39,19 @@ import { LabelLoader } from '../data/loaders/label-loader';
 import { ImageLabelLoader } from '../data/loaders/image-label-loader';
 import type { LoaderConfig } from '../data/data-loader-types';
 import { consoleInterceptor } from '../utils/console-interceptor';
-import { EventGroup } from '../utils/event-group';
+import { EventGroup } from '../utils/cross-layer/event-group';
 import { setWasmJsUrl } from '../wasm';
 import { setDataWorkerUrl, disposeWorkerPool, getWorkerPool } from '../workers/worker-pool';
 import { replaceBrowserDataSourceUrl } from '../config/url-params';
-import { classifyBrowserUrl } from './browser-decision';
-import { applyViewerConfigState as applyViewerConfigStateHelper } from './viewer-config-applier';
-import { computeDebugState } from './debug-state';
-import { buildDebugCacheHelpers } from './debug-cache-helpers';
-import { buildPickResultHandler } from './pick-result-handler';
+import { classifyBrowserUrl } from './app/dataset/browser-decision';
+import { applyViewerConfigState as applyViewerConfigStateHelper } from './app/viewer-config/apply-state';
+import { computeDebugState } from './app/debug/debug-state';
+import { buildDebugCacheHelpers } from './app/debug/debug-cache-helpers';
+import { buildPickResultHandler } from './app/picking/pick-result-handler';
 import {
   getPanelVisibilityStates as getPanelVisibilityStatesHelper,
   restorePanelVisibilityStates as restorePanelVisibilityStatesHelper,
-} from './panel-visibility';
+} from './app/viewer-config/panel-visibility';
 
 /**
  * Init-time options for {@link LuxarApp.init}.

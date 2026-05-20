@@ -34,7 +34,7 @@
 import { consoleInterceptor, type BufferedMessage } from '../utils/console-interceptor';
 import { config } from '../config';
 import { log, Modules, LogEmoji } from '../utils/log';
-import { EventGroup } from '../utils/event-group';
+import { EventGroup } from '../utils/cross-layer/event-group';
 import {
   formatArgs as formatArgsImpl,
   formatConsoleTimestamp,

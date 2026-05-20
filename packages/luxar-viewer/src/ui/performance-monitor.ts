@@ -6,7 +6,7 @@
 
 import Stats from 'stats.js';
 import { config } from '../config';
-import { eventBus, type Unsubscribe } from '../utils/event-bus';
+import { eventBus, type Unsubscribe } from '../utils/cross-layer/event-bus';
 
 /**
  * PerformanceMonitor manages real-time performance statistics display

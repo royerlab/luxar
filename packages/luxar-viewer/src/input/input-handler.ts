@@ -43,7 +43,7 @@ import type { LayersPanel } from '../ui/layers';
 import type { ScaleBar } from '../ui/scale-bar';
 import type { ColormapLegend } from '../ui/colormap-legend';
 import type { OverlayManager } from '../ui/overlay-manager';
-import { notifier } from '../utils/notifier';
+import { notifier } from '../utils/cross-layer/notifier';
 import { captureViewerState } from '../config/zarr-bridge/viewer-state-capture';
 import type { DimensionSliders, SliderConfig } from '../ui/dimension-sliders';
 
@@ -68,7 +68,7 @@ import { isTypingInInput, isFocusOnSceneCanvas } from './handlers/focus-utils';
 import { nextControlType } from './handlers/control-mode-cycle';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { updateSceneForDimensions } from '../data';
-import { eventBus } from '../utils/event-bus';
+import { eventBus } from '../utils/cross-layer/event-bus';
 
 /**
  * Central coordinator for all user input events and nD navigation.

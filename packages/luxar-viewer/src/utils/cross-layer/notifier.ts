@@ -15,10 +15,10 @@
  * registration doesn't crash code paths that legitimately run before
  * UI init (and so unit tests don't need a backend).
  *
- * @module utils/notifier
+ * @module utils/cross-layer/notifier
  */
 
-import { log, Modules } from './log';
+import { log, Modules } from '../log';
 
 /**
  * Methods a notifier backend must implement. Mirrors the exports

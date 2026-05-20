@@ -25,7 +25,7 @@ import { showError, clearError } from '../ui/error-overlay';
 import { showToast } from '../ui/toast';
 import { showHelpOverlay, hideHelpOverlay } from '../ui/help-overlay';
 import { showLoadingIndicator, hideLoadingIndicator } from '../ui/loading-indicator';
-import { setNotifierBackend } from '../utils/notifier';
+import { setNotifierBackend } from '../utils/cross-layer/notifier';
 import { ThemeManager } from '../themes/theme-manager';
 import { consoleInterceptor } from '../utils/console-interceptor';
 import { log, Modules, LogEmoji } from '../utils/log';

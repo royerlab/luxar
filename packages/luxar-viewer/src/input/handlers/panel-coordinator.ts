@@ -15,8 +15,8 @@
  * @module input/handlers/panel-coordinator
  */
 
-import { notifier } from '../../utils/notifier';
-import { eventBus } from '../../utils/event-bus';
+import { notifier } from '../../utils/cross-layer/notifier';
+import { eventBus } from '../../utils/cross-layer/event-bus';
 import type { RenderingControls } from '../../ui/rendering-controls';
 import type { RecordingPanel } from '../../ui/recording-panel';
 import type { DimensionSliders } from '../../ui/dimension-sliders';

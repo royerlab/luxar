@@ -38,7 +38,7 @@ const hideHelpOverlay = notifierMocks.hideHelp;
 const clearError = notifierMocks.clearError;
 // panel-coordinator emits 'panel-hide' on the event bus instead of
 // calling hideDataMonitor directly. Spy on the bus to observe the emit.
-import { eventBus } from '../../../../utils/event-bus';
+import { eventBus } from '../../../../utils/cross-layer/event-bus';
 import { PanelCoordinator } from '../../../../input/handlers/panel-coordinator';
 import type { RenderingControls } from '../../../../ui/rendering-controls';
 import type { RecordingPanel } from '../../../../ui/recording-panel';

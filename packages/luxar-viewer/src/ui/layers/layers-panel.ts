@@ -17,7 +17,7 @@ import { LabeledSlider } from './labeled-slider';
 import { config } from '../../config';
 import { materialManager } from '../../rendering';
 import { log, Modules } from '../../utils/log';
-import { EventGroup } from '../../utils/event-group';
+import { EventGroup } from '../../utils/cross-layer/event-group';
 import { showToast } from '../toast';
 import type { AnimationController } from '../../scene/animation/animation-controller';
 import { getColormapTexture } from '../../rendering/colormap-textures';
