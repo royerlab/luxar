@@ -32,10 +32,9 @@ import { resolveFactories } from './app/factories';
 import { ThemeManager } from '../themes/theme-manager';
 import type { ZarrViewerConfig } from '../types/zarr';
 import type { OverlayManager } from '../ui/overlay-manager';
-import * as zarr from '../data/zarr';
-import { PickingSystem } from '../rendering/picking/picking-system';
-import { LabelLoader } from '../data/loaders/label-loader';
-import { ImageLabelLoader } from '../data/loaders/image-label-loader';
+import type { PickingSystem } from '../rendering/picking/picking-system';
+import type { LabelLoader } from '../data/loaders/label-loader';
+import type { ImageLabelLoader } from '../data/loaders/image-label-loader';
 import { EventGroup } from '../utils/cross-layer/event-group';
 import { setWasmJsUrl } from '../wasm';
 import { setDataWorkerUrl, disposeWorkerPool } from '../workers/worker-pool';
@@ -43,8 +42,8 @@ import { shouldShowBrowser as shouldShowBrowserImpl } from './app/dataset/should
 import { showDatasetBrowser as showDatasetBrowserImpl } from './app/dataset/show-browser';
 import { loadDataset as loadDatasetImpl } from './app/dataset/load-dataset';
 import { installDebugInterface } from './app/debug/debug-interface';
+import { initPicking as initPickingImpl } from './app/picking/init-picking';
 import { applyViewerConfigState as applyViewerConfigStateHelper } from './app/viewer-config/apply-state';
-import { buildPickResultHandler } from './app/picking/pick-result-handler';
 import {
   getPanelVisibilityStates as getPanelVisibilityStatesHelper,
   restorePanelVisibilityStates as restorePanelVisibilityStatesHelper,
@@ -552,129 +551,19 @@ export class LuxarApp {
    * Wires up: PickingSystem → LabelLoader/ImageLabelLoader → OverlayManager.updateHoverContent.
    */
   private async initPicking(): Promise<void> {
-    // Re-init: tear down listeners from any previous picking session.
-    // (initPicking() also resets pickingEvents at the listener registration
-    // site below, but doing it here too lets us early-return on no-labels
-    // without leaking the previous session's listeners.)
-    this.pickingEvents.dispose();
-    this.pickingSystem?.dispose();
-    this.labelLoader?.dispose();
-    this.imageLabelLoader?.dispose();
-    this.pickingSystem = undefined;
-    this.labelLoader = undefined;
-    this.imageLabelLoader = undefined;
-
-    // Check if any node has labels or image labels
-    const root = this.sceneManager.scene?.children?.find((c) => c.name === 'LuxarScene') as
-      | THREE.Group
-      | undefined;
-    if (!root) return;
-
-    let hasAnyLabels = false;
-    let hasAnyImageLabels = false;
-    root.traverse((obj) => {
-      if (obj.userData?.attrs?.has_labels) {
-        hasAnyLabels = true;
-      }
-      if (obj.userData?.attrs?.has_image_labels) {
-        hasAnyImageLabels = true;
-      }
-    });
-    if (!hasAnyLabels && !hasAnyImageLabels) return;
-
-    // Get the scene loader for store/rootLoc access
-    const sceneLoader = getSceneLoader('default');
-    if (!sceneLoader) return;
-
-    // Create label loader using the scene loader's zarr store
-    const store = sceneLoader.zarrStore;
-    if (!store) {
-      log.warning(Modules.APP, 'Cannot init picking: zarr store not available');
-      return;
-    }
-    const rootLoc = zarr.root(store);
-    if (hasAnyLabels) {
-      this.labelLoader = new LabelLoader(store, rootLoc);
-    }
-    if (hasAnyImageLabels) {
-      this.imageLabelLoader = new ImageLabelLoader(store, rootLoc);
-    }
-
-    // Create picking system with result callback. The handler closure
-    // lives in `pick-result-handler.ts` so its branch logic (null /
-    // label-only / image-only / both / neither / fetch reject /
-    // missing loaders) can be unit-tested with stub ports.
-    this.pickingSystem = new PickingSystem(
-      this.sceneManager.renderer,
-      this.sceneManager.capabilities,
-      this.sceneManager.camera,
-      buildPickResultHandler({
+    const result = await initPickingImpl({
+      sceneManager: this.sceneManager,
+      pickingEvents: this.pickingEvents,
+      previous: {
+        pickingSystem: this.pickingSystem,
         labelLoader: this.labelLoader,
         imageLabelLoader: this.imageLabelLoader,
-        overlayManager: this.overlayManager,
-      })
-    );
-
-    // Wire NodeFactory to create pick nodes for future scene loads
-    sceneLoader.nodeFactory.setPickingSystem(this.pickingSystem);
-
-    // Wire post-processing for lens distortion coordinate correction
-    this.pickingSystem.setPostProcessing(this.sceneManager.postProcessing);
-
-    // Retroactively register already-loaded nodes (scene loads before picking init)
-    if (root) {
-      sceneLoader.nodeFactory.registerExistingSceneNodes(root);
-    }
-
-    // Gate picks on overlay visibility — if no hover overlay is visible,
-    // there's no consumer for the pick result, so skip the work entirely.
-    this.pickingSystem.setShouldPick(() => this.overlayManager?.hasVisibleHoverOverlay() ?? false);
-
-    // DOM events go through EventGroup.on(); Three.js EventDispatcher events
-    // (controls, sceneManager) use add() with a manual remove closure since
-    // their addEventListener/removeEventListener signatures aren't EventTarget.
-    // The picking handler never preventDefaults, so register the mousemove
-    // listener as `passive: true` (browser-hint optimization).
-    const canvas = this.sceneManager.renderer.domElement;
-    const handler = (e: MouseEvent) => this.pickingSystem?.onMouseMove(e);
-    this.pickingEvents.on(canvas, 'mousemove', handler, { passive: true });
-    // mouseleave drops the pending cursor so the camera-settle re-pick
-    // path doesn't fire when the cursor isn't over the viewer.
-    const leaveHandler = (): void => this.pickingSystem?.onMouseLeave();
-    this.pickingEvents.on(canvas, 'mouseleave', leaveHandler, { passive: true });
-
-    const dirtyHandler = () => this.pickingSystem?.markDirty();
-    this.sceneManager.controls.addEventListener('change', dirtyHandler);
-    this.pickingEvents.add(() =>
-      this.sceneManager.controls.removeEventListener('change', dirtyHandler)
-    );
-    this.pickingEvents.on(window, 'resize', dirtyHandler);
-
-    // Suppress picking during orbit/pan/zoom — no expensive offscreen renders
-    // while the user is navigating, and fade out stale hover labels.
-    const controls = this.sceneManager.controls;
-    const interactionStart = () => {
-      this.pickingSystem?.suppress(true);
-      this.overlayManager?.updateHoverContent(null);
-    };
-    const interactionEnd = () => {
-      this.pickingSystem?.suppress(false);
-    };
-    controls.addEventListener('start', interactionStart);
-    controls.addEventListener('end', interactionEnd);
-    this.pickingEvents.add(() => controls.removeEventListener('start', interactionStart));
-    this.pickingEvents.add(() => controls.removeEventListener('end', interactionEnd));
-
-    // Update picking camera when perspective ↔ orthographic swap occurs
-    const cameraChangedHandler = () => {
-      this.pickingSystem?.setCamera(this.sceneManager.camera);
-    };
-    this.sceneManager.addEventListener('camera-changed', cameraChangedHandler);
-    this.pickingEvents.add(() =>
-      this.sceneManager.removeEventListener('camera-changed', cameraChangedHandler)
-    );
-
-    log.info(Modules.APP, 'GPU picking system initialized (labels detected)');
+      },
+      getOverlayManager: () => this.overlayManager,
+    });
+    this.pickingSystem = result.pickingSystem;
+    this.labelLoader = result.labelLoader;
+    this.imageLabelLoader = result.imageLabelLoader;
   }
 
   /**
