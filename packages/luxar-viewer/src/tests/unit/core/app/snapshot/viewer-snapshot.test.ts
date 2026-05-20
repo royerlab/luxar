@@ -5,8 +5,8 @@ import {
   restoreSnapshot,
   VIEWER_SNAPSHOT_VERSION,
   type ViewerSnapshot,
-} from '../../../core/app/snapshot/viewer-snapshot';
-import { sceneDimsManager } from '../../../scene/scene-dims-manager';
+} from '../../../../../core/app/snapshot/viewer-snapshot';
+import { sceneDimsManager } from '../../../../../scene/scene-dims-manager';
 
 interface FakeControls {
   getFocusTarget: () => THREE.Vector3;

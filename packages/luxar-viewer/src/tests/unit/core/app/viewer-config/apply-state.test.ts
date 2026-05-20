@@ -11,8 +11,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   applyViewerConfigState,
   type ViewerConfigPorts,
-} from '../../../core/app/viewer-config/apply-state';
-import type { ZarrViewerConfig } from '../../../types/zarr';
+} from '../../../../../core/app/viewer-config/apply-state';
+import type { ZarrViewerConfig } from '../../../../../types/zarr';
 
 // vitest's Mock type doesn't structurally satisfy `() => void` so we keep the
 // stub shape inline + cast to ViewerConfigPorts at the call site rather than
