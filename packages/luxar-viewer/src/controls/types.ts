@@ -1,70 +1,21 @@
 /**
- * Type definitions for the Luxar control system
+ * Type definitions for the Luxar control system.
  *
- * This file provides strong typing for all control-related interfaces,
- * eliminating the need for 'any' types throughout the codebase.
+ * The GUI-controller reference types (RenderingControllers / BloomControllers /
+ * HDRControllers) describe handles to lil-gui controllers for the rendering
+ * panel — they live here for historical reasons but are consumed entirely
+ * by `ui/rendering-controls/`. Moving them would change external import
+ * paths; see the controls package README for the deferred cleanup.
  */
 
 import type { Controller } from '../ui/gui';
 import type { LuxarOrbitControls } from './luxar-orbit-controls';
 import type { LuxarFlyControls } from './luxar-fly-controls';
 
-/**
- * Available control types
- */
+/** Available control types. */
 export type ControlType = 'orbit' | 'fly' | 'ortho';
 
-/**
- * Complete control state for both orbit and fly modes
- *
- * @internal — reserved state-snapshot shape; not consumed today.
- */
-export interface ControlState {
-  type: ControlType;
-  orbit: OrbitState;
-  fly: FlyState;
-}
-
-/**
- * Orbit control specific state
- */
-export interface OrbitState {
-  autoRotate: boolean;
-  autoRotateSpeed: number;
-  enableDamping: boolean;
-  dampingFactor: number;
-  minDistance: number;
-  maxDistance: number;
-  enableZoom: boolean;
-  zoomSpeed: number;
-}
-
-/**
- * Fly control specific state
- */
-export interface FlyState {
-  movementSpeed: number;
-  rotationSpeed: number;
-  lookSpeed: number;
-  inertialMode: boolean;
-  damping: number;
-  rotationDamping: number;
-}
-
-/**
- * Type-safe references to GUI controllers
- *
- * @internal — reserved controller-snapshot shape.
- */
-export interface GuiControllers {
-  navigation: RenderingControllers;
-  bloom?: BloomControllers;
-  hdr?: HDRControllers;
-}
-
-/**
- * Rendering controls GUI controllers for the entire rendering panel
- */
+/** Rendering controls GUI controllers for the entire rendering panel. */
 export interface RenderingControllers {
   controlType?: Controller;
   // Camera controls
@@ -103,97 +54,28 @@ export interface RenderingControllers {
   cinematicMode?: Controller;
 }
 
-/**
- * Bloom effect GUI controllers
- */
+/** Bloom effect GUI controllers. */
 export interface BloomControllers {
   threshold?: Controller;
   strength?: Controller;
   radius?: Controller;
 }
 
-/**
- * HDR GUI controllers
- */
+/** HDR GUI controllers. */
 export interface HDRControllers {
   hdrMultiplier?: Controller;
   toneMapping?: Controller;
 }
 
-/**
- * Union type for control instances
- */
+/** Union type for control instances. */
 export type ControlInstance = LuxarOrbitControls | LuxarFlyControls;
 
-/**
- * Type guard for LuxarOrbitControls
- */
+/** Type guard for LuxarOrbitControls. */
 export function isOrbitControls(control: ControlInstance | null): control is LuxarOrbitControls {
   return control !== null && 'target' in control && 'autoRotate' in control;
 }
 
-/**
- * Type guard for LuxarFlyControls
- */
+/** Type guard for LuxarFlyControls. */
 export function isFlyControls(control: ControlInstance | null): control is LuxarFlyControls {
   return control !== null && 'inertialMode' in control && 'lookSpeed' in control;
-}
-
-/**
- * Control configuration with validation ranges
- *
- * @internal — reserved config-validation shape.
- */
-export interface ControlConfig {
-  fly: FlyConfig;
-  orbit: OrbitConfig;
-}
-
-export interface FlyConfig {
-  inertialMode: {
-    default: boolean;
-  };
-  movement: {
-    speed: ConfigRange;
-    acceleration: ConfigRange;
-    damping: ConfigRange;
-  };
-  rotation: {
-    speed: ConfigRange;
-    damping: ConfigRange;
-  };
-  look: {
-    mouseSpeed: ConfigValue;
-  };
-  physics: {
-    velocityThreshold: number;
-    dampingPower: number;
-    angularVelocityThreshold: number;
-  };
-}
-
-export interface OrbitConfig {
-  autoRotate: {
-    speed: ConfigRange;
-  };
-  zoom: {
-    minDistance: number;
-    maxDistance: number;
-    speed: ConfigRange;
-  };
-  damping: {
-    enabled: boolean;
-    factor: ConfigRange;
-  };
-}
-
-export interface ConfigRange {
-  min: number;
-  max: number;
-  default: number;
-  step?: number;
-}
-
-export interface ConfigValue {
-  default: number;
 }
