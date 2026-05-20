@@ -4,13 +4,13 @@
  * Renders line segments to an RGBA32F pick buffer encoding:
  *   R = nodeId, G = elementId (gl_InstanceID), B = brightness, A = 1.0
  *
- * Shader source-of-truth lives in `./picking-shaders.ts`.
+ * Shader source-of-truth lives in `./shaders.ts`.
  */
 
 import * as THREE from 'three';
-import type { CameraAwareMaterial } from '../materials/_shared/camera-aware-material';
-import { LINE_PICK_SOURCE } from './picking-shaders';
-import { requireWebGLSources } from '../materials/_shared/shader-source';
+import type { CameraAwareMaterial } from '../../materials/_shared/camera-aware-material';
+import { LINE_PICK_SOURCE } from './shaders';
+import { requireWebGLSources } from '../../materials/_shared/shader-source';
 
 // Module-load assertion: the GLSL wrapper requires the GLSL source.
 const LINE_PICK_GLSL = requireWebGLSources(LINE_PICK_SOURCE);

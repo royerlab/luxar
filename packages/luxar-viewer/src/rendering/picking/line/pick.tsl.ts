@@ -13,7 +13,7 @@
  * Lines use FULL width for picking (no half-radius like points) —
  * thin lines would be impossible to pick otherwise.
  *
- * @module rendering/picking/line-pick.tsl
+ * @module rendering/picking/line/pick.tsl
  */
 
 import * as THREE from 'three';
@@ -38,7 +38,7 @@ import {
   Discard,
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-import { sanitizeNonNegative, sanitizePositive, type TSLNode } from '../materials/_shared/tsl-helpers';
+import { sanitizeNonNegative, sanitizePositive, type TSLNode } from '../../materials/_shared/tsl-helpers';
 
 /**
  * Pre-created TSL leaf nodes supplied by the wrapper class. Same
