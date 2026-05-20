@@ -17,16 +17,11 @@
  */
 
 import { expose, transfer } from 'comlink';
-import { initWasm, type WasmModule } from '../wasm';
+import { initWasm } from '../wasm';
 import { log, Modules } from '../utils/log';
+import { state, requireWasm } from './data-worker/state';
 
-// Worker-side persistent state
-let wasmModule: WasmModule | null = null;
-
-// Persistent buffers (avoid per-task allocations)
-let visibilityMaskBuffer: Uint8Array | null = null;
-
-// Validation + color helpers live in ./validation and ./color-utils.
+// Validation + color helpers live in ./data-worker/validation and ./color-utils.
 // The worker imports them as bare identifiers (used in projection and
 // decode paths below) and re-exports the color helpers for the
 // existing unit test.
@@ -42,15 +37,6 @@ import { coerceColorsToFloat32, coerceScalarsToFloat32, fillColorsWhite } from '
 export { coerceColorsToFloat32, coerceScalarsToFloat32, fillColorsWhite };
 
 /**
- * Single source of truth for the "task called before initialize()"
- * error. Each task entry point inlines the `if (!wasmModule) throw`
- * check so TypeScript narrowing persists for the rest of the
- * function body — `asserts` clauses don't apply to module-scoped
- * `let` variables, so an extracted guard helper would lose narrowing.
- */
-const NOT_INITIALIZED_MSG = '[DataWorker] Not initialized - call initialize() first';
-
-/**
  * Initialize worker (called once at startup).
  *
  * Loads the WASM module via initWasm(); if that fails catastrophically (including
@@ -61,7 +47,7 @@ async function initialize(): Promise<void> {
 
   // Load WASM module (falls back to TypeScript implementation if compiled WASM missing)
   try {
-    wasmModule = await initWasm();
+    state.wasm = await initWasm();
     log.info(Modules.WORKER_POOL, 'DataWorker WASM module loaded successfully');
   } catch (error) {
     log.error(Modules.WORKER_POOL, 'DataWorker WASM initialization failed', error);
@@ -72,7 +58,7 @@ async function initialize(): Promise<void> {
   }
 
   // Pre-allocate visibility buffer (will grow as needed)
-  visibilityMaskBuffer = new Uint8Array(100000); // 100K elements max
+  state.visibilityMaskBuffer = new Uint8Array(100000); // 100K elements max
 
   log.info(Modules.WORKER_POOL, 'DataWorker ready');
 }
@@ -89,7 +75,7 @@ async function querySpatialIndex(params: {
   numChunks: number;
   ndim: number;
 }): Promise<Uint32Array> {
-  if (!wasmModule) throw new Error(NOT_INITIALIZED_MSG);
+  const wasmModule = requireWasm(state);
 
   const { chunkBounds, slicePosition, tolerance, numChunks, ndim } = params;
 
@@ -132,7 +118,7 @@ async function computeNDVisibilityPoints(params: {
   ndim: number;
   numPoints: number;
 }): Promise<{ visibilityMask: Uint8Array; visibleCount: number }> {
-  if (!wasmModule) throw new Error(NOT_INITIALIZED_MSG);
+  const wasmModule = requireWasm(state);
 
   const { positions, radii, slicePosition, tolerance, ndim, numPoints } = params;
   validateNDArrays(
@@ -146,9 +132,11 @@ async function computeNDVisibilityPoints(params: {
     radii
   );
 
-  // Ensure buffer capacity
-  if (!visibilityMaskBuffer || visibilityMaskBuffer.length < numPoints) {
-    visibilityMaskBuffer = new Uint8Array(Math.ceil(numPoints * 1.5));
+  // Ensure buffer capacity (pooled across calls via state.visibilityMaskBuffer)
+  let buf = state.visibilityMaskBuffer;
+  if (!buf || buf.length < numPoints) {
+    buf = new Uint8Array(Math.ceil(numPoints * 1.5));
+    state.visibilityMaskBuffer = buf;
   }
 
   // Call WASM (or TypeScript fallback)
@@ -159,11 +147,11 @@ async function computeNDVisibilityPoints(params: {
     tolerance,
     ndim,
     numPoints,
-    visibilityMaskBuffer
+    buf
   );
 
   return {
-    visibilityMask: visibilityMaskBuffer.subarray(0, numPoints),
+    visibilityMask: buf.subarray(0, numPoints),
     visibleCount,
   };
 }
@@ -180,7 +168,7 @@ async function computeNDVisibilityLines(params: {
   ndim: number;
   numSegments: number;
 }): Promise<{ visibilityMask: Uint8Array; visibleCount: number }> {
-  if (!wasmModule) throw new Error(NOT_INITIALIZED_MSG);
+  const wasmModule = requireWasm(state);
 
   const { vertices, segments, widths, slicePosition, tolerance, ndim, numSegments } = params;
   if (!Number.isInteger(ndim) || ndim < 1 || ndim > MAX_WASM_DIMS) {
@@ -196,9 +184,11 @@ async function computeNDVisibilityLines(params: {
     widths,
   });
 
-  // Ensure buffer capacity
-  if (!visibilityMaskBuffer || visibilityMaskBuffer.length < numSegments) {
-    visibilityMaskBuffer = new Uint8Array(Math.ceil(numSegments * 1.5));
+  // Ensure buffer capacity (pooled across calls via state.visibilityMaskBuffer)
+  let buf = state.visibilityMaskBuffer;
+  if (!buf || buf.length < numSegments) {
+    buf = new Uint8Array(Math.ceil(numSegments * 1.5));
+    state.visibilityMaskBuffer = buf;
   }
 
   // Call WASM (checks if EITHER endpoint is visible)
@@ -210,11 +200,11 @@ async function computeNDVisibilityLines(params: {
     tolerance,
     ndim,
     numSegments,
-    visibilityMaskBuffer
+    buf
   );
 
   return {
-    visibilityMask: visibilityMaskBuffer.subarray(0, numSegments),
+    visibilityMask: buf.subarray(0, numSegments),
     visibleCount,
   };
 }
@@ -230,7 +220,7 @@ async function computeNDVisibilityGSplats(params: {
   ndim: number;
   numSplats: number;
 }): Promise<{ visibilityMask: Uint8Array; visibleCount: number }> {
-  if (!wasmModule) throw new Error(NOT_INITIALIZED_MSG);
+  const wasmModule = requireWasm(state);
 
   const { centers, choleskyFactors, slicePosition, tolerance, ndim, numSplats } = params;
   validateNDArrays(
@@ -250,9 +240,11 @@ async function computeNDVisibilityGSplats(params: {
     );
   }
 
-  // Ensure buffer capacity
-  if (!visibilityMaskBuffer || visibilityMaskBuffer.length < numSplats) {
-    visibilityMaskBuffer = new Uint8Array(Math.ceil(numSplats * 1.5));
+  // Ensure buffer capacity (pooled across calls via state.visibilityMaskBuffer)
+  let buf = state.visibilityMaskBuffer;
+  if (!buf || buf.length < numSplats) {
+    buf = new Uint8Array(Math.ceil(numSplats * 1.5));
+    state.visibilityMaskBuffer = buf;
   }
 
   // Call WASM (computes ellipsoid extent from Cholesky factors)
@@ -263,11 +255,11 @@ async function computeNDVisibilityGSplats(params: {
     tolerance,
     ndim,
     numSplats,
-    visibilityMaskBuffer
+    buf
   );
 
   return {
-    visibilityMask: visibilityMaskBuffer.subarray(0, numSplats),
+    visibilityMask: buf.subarray(0, numSplats),
     visibleCount,
   };
 }
@@ -330,7 +322,7 @@ async function projectPointsTo3D(params: {
     numPoints,
     outputBuffers,
   } = params;
-  if (!wasmModule) throw new Error(NOT_INITIALIZED_MSG);
+  const wasmModule = requireWasm(state);
   const { displayDims, slicePosition } = viewState;
 
   validateProjectionInputs(
@@ -629,7 +621,7 @@ async function projectLinesTo3D(params: {
   endClipped: Uint8Array;
   visibleSegmentCount: number;
 }> {
-  if (!wasmModule) throw new Error(NOT_INITIALIZED_MSG);
+  const wasmModule = requireWasm(state);
 
   const { positions, segments, widths, colors, sharpness, scalars, viewState, ndim, segmentCount } =
     params;
@@ -915,7 +907,7 @@ async function projectGSplatsTo3D(params: {
   sharpness: Float32Array;
   visibleCount: number;
 }> {
-  if (!wasmModule) throw new Error(NOT_INITIALIZED_MSG);
+  const wasmModule = requireWasm(state);
 
   const { positions, choleskyFactors, amplitudes, colors, viewState, ndim, splatCount } = params;
   const { displayDims, slicePosition } = viewState;
@@ -1126,7 +1118,7 @@ async function decodeQuantized(params: {
   bounds: [number, number];
   dtype: 'uint8' | 'uint16';
 }): Promise<Float32Array> {
-  if (!wasmModule) throw new Error(NOT_INITIALIZED_MSG);
+  const wasmModule = requireWasm(state);
 
   const { data, bounds, dtype } = params;
   validateDecodeArgs('decodeQuantized', data, {
@@ -1160,7 +1152,7 @@ async function decodeLogScalar(params: {
   maxLog: number;
   dtype: 'uint8' | 'uint16';
 }): Promise<Float32Array> {
-  if (!wasmModule) throw new Error(NOT_INITIALIZED_MSG);
+  const wasmModule = requireWasm(state);
 
   const { data, maxLog, dtype } = params;
   validateDecodeArgs('decodeLogScalar', data, {
@@ -1196,7 +1188,7 @@ async function decodeLUT(params: {
   lutMode: 'row' | 'scalar';
   dtype?: 'uint8' | 'uint16'; // Optional - inferred from indices type if not provided
 }): Promise<Float32Array> {
-  if (!wasmModule) throw new Error(NOT_INITIALIZED_MSG);
+  const wasmModule = requireWasm(state);
 
   const { indices, lut, k, lutMode } = params;
   validateDecodeArgs('decodeLUT', indices, {
@@ -1275,7 +1267,7 @@ async function decodeBroadcasted(params: {
   numPoints: number;
   elementsPerPoint: number;
 }): Promise<Float32Array> {
-  if (!wasmModule) throw new Error(NOT_INITIALIZED_MSG);
+  const wasmModule = requireWasm(state);
 
   const { value, numPoints, elementsPerPoint } = params;
   if (!Number.isInteger(numPoints) || numPoints < 0) {
