@@ -70,7 +70,7 @@ for (const theme of THEMES) {
     });
 
     // Wait for the dialog to render. luxar-error-dialog is the styling
-    // class; error-message is the legacy E2E hook (kept for compatibility).
+    // class; error-message is kept as an E2E hook for compatibility.
     const errorDialog = page.locator('.luxar-error-dialog');
     await expect(errorDialog).toBeVisible({ timeout: 5000 });
 

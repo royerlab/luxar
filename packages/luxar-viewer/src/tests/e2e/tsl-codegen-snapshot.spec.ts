@@ -12,8 +12,8 @@
  * Two purposes:
  *   1. **Regression detection.** Every commit that touches the TSL
  *      graph re-runs this spec. If the generated code diverges from
- *      the snapshot (e.g. a "lossless" refactor accidentally adds an
- *      `if` branch or duplicates a `pow()`), the diff is the alarm.
+ *      the snapshot (e.g. a supposedly equivalent change adds an `if`
+ *      branch or duplicates a `pow()`), the diff is the alarm.
  *   2. **Optimization evidence.** Commits that intentionally change
  *      generated code update the snapshot and the diff goes into the
  *      commit body — concrete proof that, e.g., `forceSinglePass` or
@@ -111,11 +111,9 @@ function assertSnapshot(shader: string, kind: 'vertex' | 'fragment', actual: str
   ).toBe(expected);
 }
 
-// Shaders to snapshot. Lines + their fast-path variants are the
-// existing coverage; phase-3 adds `point` / `point-pick` / `gsplat`
-// / `gsplat-pick` so the three-geometry-symmetry rule has a
-// regression gate when attribute-packing changes (Float16 colours,
-// etc.) start landing across all three geometries.
+// Shaders to snapshot. Includes all geometry kinds and their picking
+// variants so attribute-packing changes (Float16 colours, etc.) have a
+// regression gate across Points, Lines, and GSplats.
 const SHADERS = [
   'line',
   'line-pick',

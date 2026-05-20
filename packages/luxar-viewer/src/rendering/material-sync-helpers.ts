@@ -3,10 +3,8 @@
  * after a commit. Live in the rendering layer because they operate on
  * Materials and Geometries rather than on data-loading state.
  *
- * F.6 of viewer-code-review-rerun action plan: moved from
- * `data/scene-loader/commit-points-geometry.ts` so the helper can be
- * reused by future rendering paths (e.g., picking shadow rebuilds)
- * without pulling in the data-loading dependency cone.
+ * Kept here so rendering paths can reuse the helper without pulling in
+ * the data-loading dependency cone.
  *
  * @module rendering/material-sync-helpers
  */

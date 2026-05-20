@@ -98,7 +98,7 @@ export class LineTSLMaterial
     // `uFOV` stays as a plain IUniform because the TSL graph no
     // longer reads it (the CPU precomputes `uPerspectiveLineScale` /
     // `uOrthoLineScale`); we keep the slot for downstream consumers
-    // (clone(), legacy reads).
+    // (clone(), direct uniform reads).
     this.uniforms = {
       uFOV: { value: (60 * Math.PI) / 180 },
       uResolution: proxyIUniform(this.tslNodes.uResolution),

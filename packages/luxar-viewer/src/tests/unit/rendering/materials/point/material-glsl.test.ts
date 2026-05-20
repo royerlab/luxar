@@ -48,8 +48,8 @@ describe('PointMaterial', () => {
       expect(material.uniforms.pointSizeFactor.value).toBeCloseTo(expectedPointSizeFactor, 5);
       expect(material.uniforms.maxPointSize.value).toBe(1080 * 0.5);
 
-      // After the container migration, vertexColors is unconditionally
-      // false — the shader reads aColor as an explicit InstancedBufferAttribute.
+      // vertexColors is unconditionally false — the shader reads aColor
+      // as an explicit InstancedBufferAttribute.
       expect(material.vertexColors).toBe(false);
       expect(material.transparent).toBe(true);
       expect(material.depthWrite).toBe(false);
@@ -78,10 +78,8 @@ describe('PointMaterial', () => {
     it('should have correct vertex shader with optimized world-space sizing', () => {
       const material = new PointMaterial();
 
-      // E.2: radius normalization now flows through sanitizeNonNegative
-      // from glsl-lib (replaces the inline isnan/isinf/<0 check).
-      // After the container migration, the input attribute is the
-      // per-instance `aRadius` (was per-vertex `radius`).
+      // Radius normalization flows through sanitizeNonNegative from glsl-lib.
+      // The input attribute is the per-instance `aRadius`.
       expect(material.vertexShader).toContain(
         'float normalizedRadius = sanitizeNonNegative(aRadius * radiusScale'
       );
@@ -110,7 +108,7 @@ describe('PointMaterial', () => {
         'float pointSize = basePointSize * sharpnessCompensation'
       );
 
-      // Per-instance attributes (post-migration). aQuadCorner is per-vertex.
+      // Per-instance attributes. aQuadCorner is per-vertex.
       expect(material.vertexShader).toContain('in vec2 aQuadCorner');
       expect(material.vertexShader).toContain('in vec3 aCenter');
       expect(material.vertexShader).toContain('in float aRadius');
@@ -122,15 +120,13 @@ describe('PointMaterial', () => {
       expect(material.vertexShader).toContain('uniform float sharpnessScale');
       expect(material.vertexShader).toContain('uniform vec2 uResolution');
 
-      // E.2: sharpness normalization now flows through sanitizePositive
-      // from glsl-lib (replaces the inline isnan/isinf/<=0 check).
+      // Sharpness normalization flows through sanitizePositive from glsl-lib.
       expect(material.vertexShader).toContain(
         'float normalizedSharpness = sanitizePositive(aSharpness * sharpnessScale'
       );
       expect(material.vertexShader).toContain('vSharpness = normalizedSharpness');
 
-      // E.2: GLSL sanitize lib is injected; verify the helper functions
-      // are present (proxies for the legacy inline NaN/Inf checks).
+      // GLSL sanitize lib is injected; verify the helper functions are present.
       expect(material.vertexShader).toContain('bool isInvalidFloat(float v)');
       expect(material.vertexShader).toContain('float sanitizePositive(float v, float fallback)');
       expect(material.vertexShader).toContain('float sanitizeNonNegative(float v, float fallback)');
@@ -146,8 +142,7 @@ describe('PointMaterial', () => {
     it('should have correct fragment shader with HDR handling and optimizations', () => {
       const material = new PointMaterial();
 
-      // After the container migration, the fragment reads the sprite
-      // UV from a varying (was `gl_PointCoord`).
+      // The fragment reads the sprite UV from a varying.
       expect(material.fragmentShader).toContain('vec2 centered = vSpriteCoord - 0.5');
       expect(material.fragmentShader).toContain('float r2 = dot(centered, centered)');
 

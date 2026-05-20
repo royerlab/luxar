@@ -1,6 +1,5 @@
 /**
- * Unit tests for the camera-materials helpers extracted from
- * SceneManager in Step 7 of the scene-folder layout overhaul.
+ * Unit tests for the camera-materials helpers used by SceneManager.
  *
  * Mocks the global materialManager (which is the singleton bridge
  * between scene-manager and the rendering layer) and verifies:

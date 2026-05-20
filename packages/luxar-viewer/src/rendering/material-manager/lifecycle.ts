@@ -4,10 +4,9 @@
  * to evict Three's cached `RenderObject` without actually tearing
  * down the material.
  *
- * Extracted from `material-manager.ts` in P6/step 4.3. The class
- * keeps ownership of the registries / caches; this module operates
- * on them via a `LifecycleCtx` so the helpers don't pull in a
- * back-reference to the orchestrator.
+ * MaterialManager keeps ownership of the registries / caches; this
+ * module operates on them via a `LifecycleCtx` so the helpers don't
+ * pull in a back-reference to the orchestrator.
  *
  * @module rendering/material-manager/lifecycle
  */

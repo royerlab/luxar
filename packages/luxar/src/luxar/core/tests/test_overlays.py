@@ -583,19 +583,19 @@ class TestMixedOverlays:
             scene = c.create_scene(dimensions=_make_4d_dims())
 
             scene.add_text(
-                "Phase 1",
+                "Window A",
                 position=(0.5, 0.1),
                 visible_range={"time": (0, 30)},
                 transition="fade",
             )
             scene.add_text(
-                "Phase 2",
+                "Window B",
                 position=(0.5, 0.1),
                 visible_range={"time": (31, 70)},
                 transition="fade",
             )
             scene.add_text(
-                "Phase 3",
+                "Window C",
                 position=(0.5, 0.1),
                 visible_range={"time": (71, 100)},
                 transition="fade",

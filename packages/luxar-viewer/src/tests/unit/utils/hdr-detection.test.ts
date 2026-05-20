@@ -55,7 +55,7 @@ function makeCaps(over: Partial<HDRCapabilities> = {}): HDRCapabilities {
 
 // ---------------------------------------------------------------------
 // detectDisplayCapabilities — CSS-media-query branch only.
-// (Renderer-side GL probes moved to renderer-capabilities.test.ts.)
+// Renderer-side GL probes are covered by renderer-capabilities.test.ts.
 // ---------------------------------------------------------------------
 
 describe('detectDisplayCapabilities', () => {

@@ -516,10 +516,8 @@ class TestDimensionsProperty:
 class TestToZarr:
     """Tests for to_zarr method.
 
-    ``Scene.to_zarr`` was implemented in commit 67a410bf; the previous
-    "not implemented" assertion is gone. The full behavioral contract
-    (FileExistsError, inside-source rejection, finalize semantics) is
-    covered in ``test_review_fixes.py``.
+    The full behavioral contract (FileExistsError, inside-source rejection,
+    finalize semantics) is covered in ``test_review_fixes.py``.
     """
 
     def test_to_zarr_finalizes_and_copies_store(self) -> None:

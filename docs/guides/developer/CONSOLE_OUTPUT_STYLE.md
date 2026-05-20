@@ -230,7 +230,7 @@ const elapsed = performance.now() - start;
 log.custom('⚡', Modules.PERFORMANCE, `Operation completed in ${elapsed.toFixed(1)}ms`);
 ```
 
-## Migration Guide
+## Updating Existing Code
 
 When updating existing code:
 

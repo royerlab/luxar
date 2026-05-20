@@ -1,9 +1,7 @@
 /**
  * Geometry-related utility functions shared across the rendering layer.
- *
- * D.4: extracted from `rendering/gpu-buffer-pool.ts` so the helpers can
- * be reused outside the pool (e.g., monitor stats, layer-level audits)
- * without pulling in pool-specific imports.
+ * These helpers are usable by monitor stats, layer-level audits, and the
+ * GPU buffer pool without pulling in pool-specific imports.
  *
  * @module utils/geometry-utils
  */
@@ -18,7 +16,7 @@ import * as THREE from 'three';
  * if `count < array.length / itemSize`, but that's the footprint that
  * matters for pool memory pressure.
  *
- * D.3: result cached on `geometry.userData.cachedByteSize` so repeated
+ * The result is cached on `geometry.userData.cachedByteSize` so repeated
  * stats polls don't re-iterate attribute byteLengths. Grow paths
  * invalidate the cache via `invalidateCachedByteSize()`.
  */
@@ -29,10 +27,9 @@ export function estimateGeometryBytes(geometry: THREE.BufferGeometry): number {
   }
   let total = 0;
   // Multiple `InterleavedBufferAttribute` views can share one
-  // underlying `InterleavedBuffer` (this is how per-instance
-  // attributes are packed post-WebGPU-migration). Counting
-  // `attr.array.byteLength` for each view would multi-count the
-  // shared backing array; dedupe by visited-buffer identity.
+  // underlying `InterleavedBuffer`. Counting `attr.array.byteLength`
+  // for each view would multi-count the shared backing array; dedupe
+  // by visited-buffer identity.
   const seenInterleavedBuffers = new WeakSet<THREE.InterleavedBuffer>();
   for (const name in geometry.attributes) {
     const attr = geometry.attributes[name];

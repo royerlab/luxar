@@ -85,7 +85,7 @@ export interface RendererCapabilities {
    * row 0 at the **top** of the viewport (real WebGPU; also
    * WebGPURenderer running on its WebGL2 compat backend, which Three.js
    * normalises to match real WebGPU). False when row 0 is at the
-   * **bottom** (the legacy `THREE.WebGLRenderer`).
+   * **bottom** (`THREE.WebGLRenderer`).
    *
    * This is the canonical seam for every Y-orientation decision in the
    * viewer:
@@ -234,9 +234,8 @@ export function createRendererCapabilities(
   // WebGL2 path uses (MAX_SAMPLES, ALIASED_POINT_SIZE_RANGE, GL
   // extensions, channel bit depths) don't have direct WebGPU
   // equivalents — WebGPU's adapter limits cover different things.
-  // For now, use sensible defaults; M17 fills in the real
-  // backbuffer-readback body and may expose more capabilities
-  // when needed.
+  // Use sensible defaults for probes that do not map directly to
+  // WebGPU limits.
   const hdr: HDRCapabilities = {
     ...display,
     floatTextures: true, // WebGPU canvas formats include float-texture targets
@@ -254,13 +253,12 @@ export function createRendererCapabilities(
       // `gl.readPixels(canvas, …)` equivalent — the canvas is owned
       // by the browser compositor and not directly mappable.
       //
-      // After M17-bis, the canonical capture path is
-      // `PostProcessingManager.renderToImageData()`, which renders
-      // into an offscreen `WebGLRenderTarget` and reads it via the
-      // backend-agnostic `readRenderTargetPixelsAsync`. Direct
-      // backbuffer readback (this method) has no production caller
-      // post-M17-bis but is retained on the interface for tests
-      // and any future direct readers under WebGL2.
+      // The canonical capture path is
+      // `PostProcessingManager.renderToImageData()`, which renders into
+      // an offscreen `WebGLRenderTarget` and reads it via the
+      // backend-agnostic `readRenderTargetPixelsAsync`. Direct backbuffer
+      // readback (this method) is retained on the interface for tests and
+      // direct readers under WebGL2.
       //
       // Under WebGPU we deliberately fail loud rather than fake a
       // success: this method has no scene/render context to capture

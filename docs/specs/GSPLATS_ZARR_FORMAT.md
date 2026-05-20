@@ -775,7 +775,7 @@ incrementally for progressive rendering.
   - Clarified that `chunk_size` in metadata is an element count (Zarr's requirement)
 
 - **v1.0.0** (2025-11-28): Initial versioned specification
-  - Relocated from the legacy `gsplats/GSPLATS_ZARR_FORMAT.md` path
+  - Relocated from the old `gsplats/GSPLATS_ZARR_FORMAT.md` path
   - Converted from design document to technical specification format
   - Updated sharpness bounds from [0, 32] to [0, 31] for consistency
   - **Spatial ordering**: Added Morton/Hilbert ordering with chunk_bounds (aligned with embedded format)

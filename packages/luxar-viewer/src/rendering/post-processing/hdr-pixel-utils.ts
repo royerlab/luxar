@@ -235,9 +235,8 @@ export interface ReadPixelsOpts<K extends TexelKind = TexelKind> {
    * Default `false`. The primitive's canonical return convention is
    * rows in **top-down** order (row 0 = top of the source target).
    * Pass `true` to receive bottom-up rows instead — used by callers
-   * whose downstream consumers expect the legacy scene-space layout
-   * (e.g. EXR export, or transitional picking code while migration is
-   * in flight).
+   * whose downstream consumers expect scene-space row order (e.g. EXR
+   * export).
    */
   flipY?: boolean;
   /**
@@ -317,8 +316,8 @@ export async function readPixelsCompactAsync<K extends TexelKind>(
 
   // Both renderer surfaces use `gl.readPixels`-style bottom-up
   // addressing for the input `(x, y)` argument. WebGPURenderer's
-  // compat layer maintains the legacy WebGL convention on both
-  // backends — verified by the y-orientation E2E spec.
+  // compat layer maintains the WebGL convention on both backends —
+  // verified by the y-orientation E2E spec.
   const x = xTopDown;
   const y = target.height - yTopDown - height;
 

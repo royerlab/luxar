@@ -24,10 +24,9 @@ export interface LinesAccumulatorTypes {
   width: 'Float32Array';
   sharpness: 'Float32Array';
   /**
-   * A.2: optional scalar dtype. Mirrors `PointsAccumulatorTypes.scalar`
-   * so Uint8 scalars stay in Uint8 storage until projection widens
-   * them. Omitted when the first fill carried no scalars (most
-   * datasets).
+   * Optional scalar dtype. Mirrors `PointsAccumulatorTypes.scalar` so
+   * Uint8 scalars stay in Uint8 storage until projection widens them.
+   * Omitted when the first fill carried no scalars (most datasets).
    */
   scalar?: 'Float32Array' | 'Float16Array' | 'Uint8Array';
 }
@@ -55,7 +54,7 @@ export class LinesDataAccumulator implements DataAccumulator<
   private colorBuffer: Float32Array | Uint8Array | Uint16Array; // RGB per-vertex (multi-type!)
   private sharpnessBuffer: Float32Array; // per-vertex (always allocated)
   /**
-   * A.2: per-vertex scalar buffer for colormap lookup. Allocated as
+   * Per-vertex scalar buffer for colormap lookup. Allocated as
    * Float32Array initially; replaced with Uint8Array on first fill if
    * the input scalars are Uint8. Float16 input stays in the default
    * Float32 buffer (widened at fill time via the typed-array `.set()`
@@ -71,10 +70,10 @@ export class LinesDataAccumulator implements DataAccumulator<
   private hasSharpness = false;
   /** tracks whether scalars were ever filled this session. */
   private hasScalars = false;
-  /** B.6: flips to true on dispose(); fill/ensureCapacity then throw. */
+  /** Flips to true on dispose(); fill/ensureCapacity then throw. */
   private _disposed = false;
   /**
-   * C.2: highest vertex / segment indices touched by any `fill()` call.
+   * Highest vertex / segment indices touched by any `fill()` call.
    * Lets `ensureCapacity()` copy only the live prefix into the new
    * buffers instead of the full capacity.
    */
@@ -96,7 +95,7 @@ export class LinesDataAccumulator implements DataAccumulator<
     }
   }
 
-  /** B.6: introspection — true if dispose() has been called. */
+  /** Introspection — true if dispose() has been called. */
   isDisposed(): boolean {
     return this._disposed;
   }
@@ -114,8 +113,8 @@ export class LinesDataAccumulator implements DataAccumulator<
     this.widthBuffer = new Float32Array(initialVertexCapacity); // PER-VERTEX!
     this.colorBuffer = new Float32Array(initialVertexCapacity * 3); // RGB
     this.sharpnessBuffer = new Float32Array(initialVertexCapacity);
-    // C.4: scalars are an optional per-vertex attribute. Start with an
-    // empty sentinel buffer so non-scalar line datasets don't reserve
+    // Scalars are an optional per-vertex attribute. Start with an empty
+    // sentinel buffer so non-scalar line datasets don't reserve
     // `initialVertexCapacity * 4 B` up front. `initializeTypes` allocates
     // it on first scalar fill.
     this.scalarBuffer = new Float32Array(0);
@@ -127,9 +126,9 @@ export class LinesDataAccumulator implements DataAccumulator<
    * Initialize types from first data fill (like Points accumulator)
    */
   private initializeTypes(data: Partial<LoadedLinesData>): void {
-    // C.4: a later fill might be the first to carry scalars; allocate
-    // the scalar buffer at the current vertex capacity without re-pinning
-    // the color/width/sharpness types.
+    // A later fill might be the first to carry scalars; allocate the
+    // scalar buffer at the current vertex capacity without re-pinning the
+    // color/width/sharpness types.
     if (this.types && this.types.scalar === undefined && data.scalars) {
       let scalarType: 'Float32Array' | 'Float16Array' | 'Uint8Array';
       if (data.scalars instanceof Uint8Array) {
@@ -184,9 +183,9 @@ export class LinesDataAccumulator implements DataAccumulator<
       this.colorBuffer = new Uint16Array(this.vertexCapacity * 3);
     }
 
-    // C.4 / A.2: lazily allocate scalar buffer when first scalar fill is
-    // observed. Sized to current vertex capacity. Skipped when there
-    // are no scalars (`types.scalar === undefined`).
+    // Lazily allocate scalar buffer when first scalar fill is observed.
+    // Sized to current vertex capacity. Skipped when there are no scalars
+    // (`types.scalar === undefined`).
     if (types.scalar === 'Uint8Array') {
       this.scalarBuffer = new Uint8Array(this.vertexCapacity);
     } else if (types.scalar) {
@@ -224,7 +223,7 @@ export class LinesDataAccumulator implements DataAccumulator<
         `Growing LinesDataAccumulator: ${this.vertexCapacity} → ${newVertexCap} vertices`
       );
 
-      // C.2: copy only the live prefix.
+      // Copy only the live prefix.
       const liveVerts = Math.min(this.usedVertexCount, this.vertexCapacity);
       const liveVertexFloats = liveVerts * this.ndim;
       const liveColorFloats = liveVerts * 3;
@@ -241,9 +240,9 @@ export class LinesDataAccumulator implements DataAccumulator<
       this.widthBuffer = newWidthBuf;
       this.sharpnessBuffer = newSharpnessBuf;
 
-      // A.2 / C.4: scalar buffer grows only when allocated; the
-      // sentinel-empty (length 0) buffer stays empty until the first
-      // scalar fill, at which point initializeTypes sizes it.
+      // Scalar buffer grows only when allocated; the sentinel-empty
+      // (length 0) buffer stays empty until the first scalar fill, at
+      // which point initializeTypes sizes it.
       if (this.scalarBuffer.length > 0) {
         if (this.scalarBuffer instanceof Uint8Array) {
           const newScalarBuf = new Uint8Array(newVertexCap);
@@ -282,7 +281,7 @@ export class LinesDataAccumulator implements DataAccumulator<
         newSegmentCap = Math.ceil(newSegmentCap * 1.5);
       }
 
-      // C.2: copy only the live prefix of segment-index pairs.
+      // Copy only the live prefix of segment-index pairs.
       const liveSegments = Math.min(this.usedSegmentCount, this.segmentCapacity);
       const newSegmentBuf = new Uint32Array(newSegmentCap * 2);
       newSegmentBuf.set(this.segmentBuffer.subarray(0, liveSegments * 2));
@@ -338,7 +337,7 @@ export class LinesDataAccumulator implements DataAccumulator<
       this.initializeTypes(data);
     }
 
-    // C.2: track live prefixes for cheap ensureCapacity copies.
+    // Track live prefixes for cheap ensureCapacity copies.
     if (data.positions) {
       const filledVerts = data.positions.length / this.ndim;
       this.usedVertexCount = Math.max(this.usedVertexCount, vertexOffset + filledVerts);
@@ -375,7 +374,7 @@ export class LinesDataAccumulator implements DataAccumulator<
       this.hasSharpness = true;
       this.sharpnessBuffer.set(data.sharpness, vertexOffset);
     }
-    // A.2: copy scalars into per-vertex buffer preserving native dtype
+    // Copy scalars into per-vertex buffer preserving native dtype
     // (Uint8 stays Uint8, Float16 widens to Float32 via numeric .set()).
     if (data.scalars) {
       this.hasScalars = true;
@@ -430,7 +429,7 @@ export class LinesDataAccumulator implements DataAccumulator<
   /**
    * Direct accessor for the per-vertex scalar buffer.
    *
-   * C.4: lazy-allocated on first access. Non-scalar line datasets keep
+   * Lazy-allocated on first access. Non-scalar line datasets keep
    * `scalarBuffer.length === 0` indefinitely, saving 4 B/vertex.
    */
   getScalarBuffer(): Float32Array | Uint8Array {

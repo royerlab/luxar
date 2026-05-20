@@ -228,8 +228,7 @@ describe('LayersPanel.dispose', () => {
   });
 
   it('dispose tears down all event listeners attached to row buttons', () => {
-    // Regression for the LayersPanel EventGroup migration: every
-    // addEventListener now goes through this.events.on(...), and
+    // Every addEventListener goes through this.events.on(...), and
     // clear() / dispose() drains the group. After dispose, click
     // events on the (still-rooted) eye button should NOT trigger
     // visibility toggle handlers.

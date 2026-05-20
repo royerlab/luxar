@@ -20,7 +20,7 @@
  *   onstop handler captured Session before disposal and checks
  *   `session.isDisposed()` to short-circuit.
  *
- * Important invariants reproduced from the pre-refactor code:
+ * Important invariants:
  * 1. The entire setup phase is wrapped in try/catch; the catch performs
  *    a symmetric undo of every state mutation up to the throw point, so
  *    a failure in canvas.captureStream() / new MediaRecorder() does NOT

@@ -300,7 +300,7 @@ def test_validate_positions_with_wrong_dims():
 
 ---
 
-## Migration Guide
+## Updating Existing Code
 
 ### Standardizing Existing Code
 

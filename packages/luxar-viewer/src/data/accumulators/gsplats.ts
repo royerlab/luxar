@@ -50,9 +50,9 @@ export class GSplatsDataAccumulator implements DataAccumulator<
 
   // Track whether data has colors
   private hasColors = false;
-  /** B.6: flips to true on dispose(); fill/ensureCapacity then throw. */
+  /** Flips to true on dispose(); fill/ensureCapacity then throw. */
   private _disposed = false;
-  /** C.2: highest splat index touched by any `fill()` call. */
+  /** Highest splat index touched by any `fill()` call. */
   private usedCount = 0;
 
   private capacity: number;
@@ -70,7 +70,7 @@ export class GSplatsDataAccumulator implements DataAccumulator<
     }
   }
 
-  /** B.6: introspection — true if dispose() has been called. */
+  /** Introspection — true if dispose() has been called. */
   isDisposed(): boolean {
     return this._disposed;
   }
@@ -131,7 +131,7 @@ export class GSplatsDataAccumulator implements DataAccumulator<
       `Growing GSplatsDataAccumulator: ${this.capacity} → ${newCapacity} splats`
     );
 
-    // C.2: copy only the live prefix.
+    // Copy only the live prefix.
     const live = Math.min(this.usedCount, this.capacity);
     const liveCenterFloats = live * this.ndim;
     const liveColorFloats = live * 3;
@@ -198,7 +198,7 @@ export class GSplatsDataAccumulator implements DataAccumulator<
       this.initializeTypes(data);
     }
 
-    // C.2: track live prefix for cheap ensureCapacity copies.
+    // Track live prefix for cheap ensureCapacity copies.
     const filledCount = data.positions
       ? data.positions.length / this.ndim
       : (data.amplitudes?.length ?? 0);

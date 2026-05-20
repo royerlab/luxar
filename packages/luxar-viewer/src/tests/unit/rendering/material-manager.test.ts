@@ -105,8 +105,8 @@ describe('MaterialManager', () => {
       // caps is unset in this test, so the dispatch picks GLSL).
       expect(material).toBeInstanceOf(PointMaterial);
 
-      // Test REAL vertex shader content (post-migration: per-instance
-      // attributes prefixed `a*`, plus the per-vertex `aQuadCorner`).
+      // Test REAL vertex shader content: per-instance attributes
+      // prefixed `a*`, plus the per-vertex `aQuadCorner`.
       expect(material.vertexShader).toContain('in float aRadius');
       expect(material.vertexShader).toContain('in float aSharpness');
       expect(material.vertexShader).toContain('in vec2 aQuadCorner');
@@ -862,10 +862,10 @@ describe('MaterialManager', () => {
   });
 
   // =========================================================================
-  // B.1 — detachFromGlobalUpdates: clone-vs-pool safety
+  // detachFromGlobalUpdates: clone-vs-pool safety
   // =========================================================================
 
-  describe('B.1 detachFromGlobalUpdates', () => {
+  describe('detachFromGlobalUpdates', () => {
     const props: PointMaterialProperties = {
       blendingMode: 'additive',
       opacity: 1.0,

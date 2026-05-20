@@ -70,13 +70,9 @@ def inspect_gsplats_zarr(path: str | Path) -> Dict[str, Any]:
     info["ordering"] = splats_attrs.get("ordering", "none")
     info["chunk_size"] = splats_attrs.get("chunk_size")
 
-    # Legacy field-name compatibility: pre-`refactor: make Points/GSplats spatial
-    # ordering storage consistent` (commit 517c223f, ~2026-02) datasets used
-    # `morton_*` / `hilbert_resolution` keys. Production writers now emit
-    # `ordering_*` exclusively (see `gsplats/io/save_gsplats.py:138` and
-    # `io/ordering.py:323-325`). This fallback is read-side defense for
-    # inspecting externally-produced or older zarr files; remove once those
-    # are no longer in circulation.
+    # Field-name compatibility for externally produced or older datasets:
+    # some files use `morton_*` / `hilbert_resolution` keys, while current
+    # writers emit `ordering_*` keys.
     if info["ordering"] in ["morton", "hilbert"]:
         info["ordering_min"] = splats_attrs.get("ordering_min") or splats_attrs.get(
             "morton_min"

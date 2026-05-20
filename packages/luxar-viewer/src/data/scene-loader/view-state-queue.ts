@@ -1,7 +1,7 @@
 /**
- * View-state queue — the "update" phase of the scene-loader split.
+ * View-state queue for serialized SceneLoader updates.
  *
- * Owns two pieces of update-time state previously inlined on SceneLoader:
+ * Owns two pieces of update-time state:
  *
  *   1. `_pendingViewState` — the single Partial<ViewState> queued by an
  *      `updateView()` call while a previous retry / refinement loop holds
@@ -10,12 +10,10 @@
  *
  *   2. `_prevPerNodeViewState` — per-node snapshots of the last
  *      successful view-state, used to extrapolate the next-frame view
- *      for predictive prefetch (S6).
+ *      for predictive prefetch.
  *
- * Step 5 of the god-object refactor: per the plan, this lives in
- * `data/scene-loader/view-state-queue.ts`. SceneLoader holds one queue
- * instance and delegates the pending-state set/take/has, the prefetch
- * dispatch, and the drain trigger to it.
+ * SceneLoader holds one queue instance and delegates pending-state
+ * set/take/has, prefetch dispatch, and the drain trigger to it.
  *
  * Drain ordering is load-bearing: it MUST fire on a microtask
  * (`Promise.resolve().then(...)`) after the caller's own promise

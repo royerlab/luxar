@@ -202,7 +202,7 @@ describe('custom LUT byte-loading', () => {
       const lut = makeRgbLut(13);
       // Build a stub geometry with `scalar` so the colormap guard passes.
       const geometry = new THREE.BufferGeometry();
-      // Post-migration: per-instance attributes (aCenter, aScalar).
+      // Per-instance attributes (aCenter, aScalar).
       geometry.setAttribute(
         'aCenter',
         new THREE.InstancedBufferAttribute(new Float32Array([0, 0, 0]), 3)
@@ -230,7 +230,7 @@ describe('custom LUT byte-loading', () => {
     it('createPointsMaterial without customLutBytes falls back to viridis', () => {
       const factory = new NodeFactory();
       const geometry = new THREE.BufferGeometry();
-      // Post-migration: per-instance attributes (aCenter, aScalar).
+      // Per-instance attributes (aCenter, aScalar).
       geometry.setAttribute(
         'aCenter',
         new THREE.InstancedBufferAttribute(new Float32Array([0, 0, 0]), 3)

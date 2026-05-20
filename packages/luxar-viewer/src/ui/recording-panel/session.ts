@@ -45,7 +45,6 @@ export interface ConfirmationDialogInfo {
  * Hook surface a strategy may need to ask the panel about (e.g. the
  * recording indicator's elapsed-time formatter wants to know whether
  * the current capture is an EXR sequence to switch the label text).
- * Phase 1 only needs the EXR-sequence query; later phases may add more.
  */
 export interface SessionHooks {
   isExrSequenceActive(): boolean;

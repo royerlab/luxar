@@ -29,9 +29,9 @@ VALID_FOV_PRESETS = (
     "135mm Tele",
     "Custom",
 )
-# (Ambient-occlusion was dropped from the viewer mega-shader
-# refactor — SSAO needed surface normals which point/gsplat/line
-# geometry doesn't provide. The `ao_*` keys are no longer accepted.)
+# Ambient occlusion is unsupported: SSAO needs surface normals, which
+# point/gsplat/line geometry does not provide. The `ao_*` keys are not
+# accepted.
 VALID_THEMES = ("dark", "light", "frosted-glass", "liquid-glass")
 VALID_LOOP_MODES = ("once", "loop", "bounce")
 VALID_DIRECTIONS = ("forward", "backward")
@@ -341,19 +341,19 @@ class ViewerConfig:
     detector_noise_photon_gain: Optional[float] = None
     detector_noise_fpn_sigma: Optional[float] = None
 
-    # Anti-aliasing. SMAA was dropped in the viewer mega-shader
-    # refactor — its 3-pass blend cannot fold into the single
-    # fullscreen pass. FXAA / MSAA / SSAA remain.
+    # Anti-aliasing. SMAA is unsupported because its 3-pass blend does
+    # not fit Luxar's single-pass post-processing model. FXAA / MSAA /
+    # SSAA remain.
     fxaa_enabled: Optional[bool] = None
     msaa_enabled: Optional[bool] = None
     msaa_samples: Optional[int] = None
     ssaa_enabled: Optional[bool] = None
     ssaa_multiplier: Optional[float] = None
 
-    # NOTE: Depth-of-Field and Ambient Occlusion were also dropped:
-    # DoF needs depth-aware multi-pass blur, SSAO needs surface
-    # normals which point/gsplat/line geometry don't provide. The
-    # corresponding `dof_*` / `ao_*` keys are no longer accepted.
+    # Depth-of-Field and Ambient Occlusion are unsupported: DoF needs
+    # depth-aware multi-pass blur, and SSAO needs surface normals which
+    # point/gsplat/line geometry does not provide. The corresponding
+    # `dof_*` / `ao_*` keys are not accepted.
 
     # Chromatic lens distortion
     chromatic_lens_distortion_enabled: Optional[bool] = None

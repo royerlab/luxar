@@ -403,7 +403,7 @@ interface RenderingSettings {
 
 - Compile-time validation of configuration values
 - IntelliSense support in IDEs
-- Refactoring safety when changing configuration structure
+- Safer changes when configuration structure evolves
 - Self-documenting configuration interface
 
 ## Best Practices
@@ -459,12 +459,12 @@ const panelWidth = config.ui.debugConsole.panel.defaultWidth;
 const bufferSize = config.ui.debugConsole.interceptor.maxBufferSize;
 ```
 
-### Migration and Versioning
+### Versioning
 
 When updating configuration:
 
-1. **Backwards Compatibility**: Consider existing users
-2. **Deprecation Strategy**: Gradual migration for breaking changes
+1. **Compatibility**: Consider existing users
+2. **Deprecation Strategy**: Stage breaking changes clearly when needed
 3. **Validation**: Ensure new values are within acceptable ranges
 4. **Documentation**: Update comments and examples
 

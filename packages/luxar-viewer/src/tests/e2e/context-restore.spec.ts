@@ -67,8 +67,8 @@ test.describe('WebGL Context Restore (CR-1)', () => {
     );
     test.skip(
       api !== 'webgl2',
-      `context-restore tests require the legacy WebGL path (caps.apiSurface=${api}); ` +
-        'run with VITE_LUXAR_USE_LEGACY_WEBGL=1 to exercise this suite.'
+      `context-restore tests require the WebGL path (caps.apiSurface=${api}); ` +
+        'run with ?renderer=webgl to exercise this suite.'
     );
   });
 

@@ -796,11 +796,10 @@ describe('SceneLoader', () => {
     });
 
     /**
-     * Drop a real `THREE.Mesh` (the post-migration points container)
-     * into the loader's rootGroup so the `getObjectByName(path)`
-     * lookup inside `commitPointsGeometry` returns it. Per-instance
-     * attributes are `InstancedBufferAttribute`s named `aCenter`,
-     * `aColor`, `aRadius`, `aSharpness`.
+     * Drop a real point mesh into the loader's rootGroup so the
+     * `getObjectByName(path)` lookup inside `commitPointsGeometry`
+     * returns it. Per-instance attributes are `InstancedBufferAttribute`s
+     * named `aCenter`, `aColor`, `aRadius`, `aSharpness`.
      */
     function attachPointsChild(name: string, oldCount: number): THREE.Mesh {
       const root = (sceneLoader as any).rootGroup as THREE.Group;

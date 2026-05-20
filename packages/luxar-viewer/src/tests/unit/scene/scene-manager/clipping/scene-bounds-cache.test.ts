@@ -1,10 +1,8 @@
 /**
  * Unit tests for SceneBoundsCache + computeBoundsFromMetadata.
  *
- * Extracted from SceneManager in Step 5 of the scene-folder layout
- * overhaul. These tests pin the cache-invalidation contract, the
- * lazy-recompute behaviour, and the metadata-scan that
- * `getSceneBoundsFromMetadata()` used to do inline on the class.
+ * These tests pin the cache-invalidation contract, the lazy-recompute
+ * behaviour, and metadata scanning through `getSceneBoundsFromMetadata()`.
  *
  * nD→3D display-dim projection is tested separately in
  * `bounds-math.test.ts` (`projectBoundsToDisplayDims`).

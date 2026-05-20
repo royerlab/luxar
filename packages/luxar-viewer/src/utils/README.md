@@ -77,7 +77,7 @@ Comprehensive system for detecting and configuring HDR display capabilities:
 **Core Functions**:
 
 - `detectHDRCapabilities()` - Complete capability detection
-- `configureHDRRenderer()` - Log detected HDR capabilities (legacy name, doesn't actually configure renderer)
+- `configureHDRRenderer()` - Log detected HDR capabilities; it does not configure the renderer
 - `logHDRCapabilities()` - Detailed capability reporting
 - `isHDRDisplay()` - Simple boolean HDR check
 - `getOptimalRenderTargetType()` - Get optimal THREE.TextureDataType for display
@@ -187,7 +187,7 @@ const colorDepth = {
 
 ```typescript
 export function configureHDRRenderer(
-  renderer: THREE.WebGLRenderer, // Unused - for backward compatibility
+  renderer: THREE.WebGLRenderer, // Unused; kept for API compatibility
   capabilities: HDRCapabilities
 ): void {
   // Log detected capabilities (informational only)
@@ -195,7 +195,7 @@ export function configureHDRRenderer(
 }
 ```
 
-**Note**: Despite the legacy name, this function only logs HDR capabilities. It does NOT configure the renderer. All actual HDR configuration (outputColorSpace, toneMapping) is owned by `PostProcessingManager` (the mega-shader pipeline applies tone mapping internally).
+**Note**: `configureHDRRenderer()` only logs HDR capabilities. It does NOT configure the renderer. Actual HDR configuration (outputColorSpace, toneMapping) is owned by `PostProcessingManager` (the mega-shader pipeline applies tone mapping internally).
 
 ## Usage Examples
 

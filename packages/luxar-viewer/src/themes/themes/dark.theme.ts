@@ -7,11 +7,7 @@
 
 import type { Theme } from '../types';
 
-/**
- * Dark theme definition
- *
- * Migrated from config.ui.styles with additional values from hardcoded colors.
- */
+/** Dark theme definition. */
 export const darkTheme: Theme = {
   id: 'dark',
   name: 'Dark Theme',

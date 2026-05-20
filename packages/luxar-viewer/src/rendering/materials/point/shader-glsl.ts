@@ -14,7 +14,7 @@
  *   - aCenter    (vec3) — world-space centre position
  *   - aRadius    (float)
  *   - aSharpness (float)
- *   - aColor     (vec3) — always present (replaces the legacy
+ *   - aColor     (vec3) — always present (instead of Three.js'
  *     vertexColors=true auto-injected `color` attribute)
  *   - aScalar    (float, USE_COLORMAP only)
  */
@@ -188,7 +188,7 @@ export const POINT_FRAGMENT_SHADER = /* glsl */ `
 export const POINT_SOURCE: ShaderSource = {
   name: 'point',
   webgl: { vertex: POINT_VERTEX_SHADER, fragment: POINT_FRAGMENT_SHADER },
-  // M11: TSL NodeMaterial that owns vertexNode (sprite expansion)
+  // TSL NodeMaterial that owns vertexNode (sprite expansion)
   // and colorNode (Gaussian falloff + GOG). Default config — no
   // toggles. Consumers needing USE_COLORMAP / LUXAR_MAX_RGB_CONTRIBUTION
   // call `pointWebGPUFactory(uniforms, { ...flags })` directly.

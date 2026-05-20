@@ -70,7 +70,7 @@ def _save_splat_arrays_to_group(
 ) -> None:
     """Write splat arrays into an existing zarr group.
 
-    This is the inner workhorse used by both ``save_gsplats()`` (single-LOD legacy)
+    This is the inner workhorse used by both ``save_gsplats()`` (single-LOD)
     and the LOD-aware save path in ``GSplatData.save()``.
     """
     n_splats, ndim = centers.shape

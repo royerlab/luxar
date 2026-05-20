@@ -1,8 +1,6 @@
 import type { InputConfig } from './types';
 
-/**
- * Input handling configuration (migrated from control-config.ts)
- */
+/** Input handling configuration. */
 export const inputConfig: InputConfig = {
   defaultSensitivity: 0.1, // Default input sensitivity for adjustments
   keyboard: {

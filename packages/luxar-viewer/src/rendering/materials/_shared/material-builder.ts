@@ -21,8 +21,6 @@
  * blank quads. Throwing surfaces the gap at construction time
  * instead.
  *
- * See `MATERIAL_WRAPPER_DESIGN.md` for the design rationale.
- *
  * @module rendering/materials/_shared/material-builder
  */
 
@@ -76,7 +74,7 @@ export function buildMaterial(
           "path (caps.apiSurface='webgpu'). WebGPURenderer cannot " +
           'dispatch ShaderMaterial even in its WebGL2 fallback mode; ' +
           "add a 'webgpu' factory to the ShaderSource or switch to the " +
-          'legacy WebGLRenderer path (default; remove ?renderer=webgpu / ' +
+          'default WebGLRenderer path (remove ?renderer=webgpu / ' +
           'VITE_LUXAR_USE_WEBGPU=1).'
       );
     }

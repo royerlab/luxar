@@ -1,10 +1,10 @@
 /**
  * Settle-loop predicates for PickingSystem.
  *
- * Extracted in P6/step 7.4. The RAF state machine + lifecycle stays
- * on the orchestrator (it owns `_rafId`, `_pendingMouse`, etc.); this
- * module owns the pure two-axis-settle decision logic — when should
- * a pick actually fire based on the timestamps?
+ * The RAF state machine + lifecycle stays on the orchestrator (it owns
+ * `_rafId`, `_pendingMouse`, etc.); this module owns the pure
+ * two-axis-settle decision logic — when should a pick actually fire
+ * based on the timestamps?
  *
  * @module rendering/picking/picking-system/settle-loop
  */

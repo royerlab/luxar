@@ -80,8 +80,7 @@ function makeManager(opts: { width?: number; height?: number } = {}): PostProces
 /**
  * Reach into PostProcessingManager's private fields for the asserts
  * that pin disposal/allocation. Tests are co-located with the module
- * and live behind the field-access cast so a public-API-only
- * refactor only has to update this declaration.
+ * and live behind the field-access cast so public API stays narrow.
  */
 type ManagerInternals = {
   hdrTarget: THREE.WebGLRenderTarget;

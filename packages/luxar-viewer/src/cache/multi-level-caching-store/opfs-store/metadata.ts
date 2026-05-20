@@ -83,8 +83,8 @@ export class OPFSMetadataManager {
 
       // Encoding-version mismatch ⇒ stale directory: previous cache
       // entries used a different keyToFileName encoding and won't be
-      // findable. Treat as cold cache (no migration today; the cache
-      // is best-effort and rebuilds itself in seconds).
+      // findable. Treat as cold cache; the cache is best-effort and
+      // rebuilds itself in seconds.
       const persistedVersion = meta.encodingVersion ?? 1;
       if (persistedVersion !== OPFS_ENCODING_VERSION) {
         log.info(

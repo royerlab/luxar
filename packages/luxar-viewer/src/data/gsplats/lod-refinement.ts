@@ -6,7 +6,6 @@
  * each pass — each LOD level is painted as a separate frame, giving
  * visible progressive refinement.
  *
- * Extracted from scene-loader.ts in step 8 of the god-object refactor.
  * The refinement loop does NOT go through SceneLoader's updateView()
  * entry point (which has the serialization lock). It directly calls
  * loader.updateView() + process + commit for GSplats loaders only.

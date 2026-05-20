@@ -209,7 +209,6 @@ export async function processLinesData(
   return { path, processed };
 }
 
-// commitLinesGeometry moved to ../commit/commit-lines-geometry (step 6
-// of the god-object refactor, then re-clustered into commit/ in step 4).
-// Re-exported here so existing consumers keep working unchanged.
+// Re-export the commit helper from its focused module so existing
+// data-processor imports keep working unchanged.
 export { commitLinesGeometry } from '../commit/commit-lines-geometry';

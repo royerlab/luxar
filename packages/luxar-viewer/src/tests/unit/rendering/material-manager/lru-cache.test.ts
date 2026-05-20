@@ -1,6 +1,5 @@
 /**
- * Direct unit tests for the generic LRU helpers extracted from
- * material-manager.ts in P6/step 4.2.
+ * Direct unit tests for the generic material-manager LRU helpers.
  *
  * The orchestrator-level tests (`material-cache-lru.test.ts`,
  * `material-manager.test.ts`) exercise these through real Point/Line/

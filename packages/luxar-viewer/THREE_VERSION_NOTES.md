@@ -35,31 +35,26 @@ otherwise.
 
 ## What features we rely on (from r184)
 
-These are the Three.js surfaces the viewer uses that the WebGPU port
-will need to map:
+These are the Three.js surfaces the viewer uses directly:
 
-- `WebGLRenderer` — replaced by `WebGPURenderer` post-port.
-- `ShaderMaterial` with `glslVersion: THREE.GLSL3` — replaced by
-  `NodeMaterial` / TSL post-port (see `ShaderSource` in
-  `src/rendering/shaders/shader-source.ts`).
-- `WebGLRenderTarget` with `HalfFloatType` — replaced by
-  WebGPU-aware render target type.
-- `renderer.readRenderTargetPixels` — replaced by async equivalent
-  (see Item 3 of the migration plan; capture paths are already
-  Promise-typed).
-- `EXRExporter` from `three/examples/jsm/exporters/EXRExporter.js` —
-  unchanged across recent releases.
-- Built-in tone-mapping chunk `<tonemapping_pars_fragment>` referenced
-  by the mega-shader. This is renderer-injected; the WebGPU node
-  pipeline will need an equivalent.
+- `WebGLRenderer` for the default GLSL rendering path.
+- `WebGPURenderer` for the opt-in TSL rendering path.
+- `ShaderMaterial` with `glslVersion: THREE.GLSL3` for WebGL shaders.
+- `NodeMaterial` / TSL for WebGPU shaders.
+- `WebGLRenderTarget` with `HalfFloatType` for HDR scene and
+  post-processing targets.
+- `renderer.readRenderTargetPixelsAsync` for capture and picking readback.
+- `EXRExporter` from `three/examples/jsm/exporters/EXRExporter.js`.
+- Built-in tone-mapping support used by the WebGL mega-shader, with
+  matching TSL math in the WebGPU mega-shader.
 
 ## When to bump
 
 Trigger an explicit `~0.185.0` (or higher) bump only when:
 
-1. Three.js releases a notes-marked stable WebGPU API, **or**
-2. We start the actual WebGPU port and need a specific feature only
-   present in a newer minor.
+1. Three.js releases notes for a stable WebGPU API surface, **or**
+2. Luxar needs a specific rendering or TSL feature only present in a
+   newer minor.
 
 A bump means:
 

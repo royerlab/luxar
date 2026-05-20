@@ -140,7 +140,6 @@ describe('setupAntiAliasingControls', () => {
     // Top folder closed (collapsed).
     expect(stubs.aaFolder.close).toHaveBeenCalled();
     // Three toggles added directly under aa folder: SSAA, FXAA, MSAA.
-    // (SMAA dropped in the mega-shader refactor.)
     expect(stubs.aaFolder.controllers).toHaveLength(3);
   });
 
@@ -244,8 +243,6 @@ describe('setupAntiAliasingControls', () => {
       expect(stubs.postProcessing.setMSAASamples).toHaveBeenCalledWith(8);
     });
   });
-
-  // SMAA dropped in the mega-shader refactor — no toggle to test.
 
   describe('initial folder visibility', () => {
     it('hides SSAA sub-folder when ssaaEnabled=false at init', () => {

@@ -42,9 +42,8 @@ import type { NodeFactory } from '../../../rendering/node-factory';
 import { syncPointMaterialWithGeometry } from '../../../rendering/material-sync-helpers';
 import { invalidateRenderObjectFor } from './invalidate-render-object';
 
-// F.6: re-export so callers can continue to import this name from the
-// commit-points-geometry module. The implementation now lives in the
-// rendering layer (`rendering/material-sync-helpers`).
+// Re-export so callers can import this name from the commit module while
+// the implementation lives in the rendering layer.
 export { syncPointMaterialWithGeometry };
 
 /**
@@ -126,8 +125,8 @@ export function commitPointsGeometry(
 
     // Pool disabled: try in-place reuse if the count matches; otherwise
     // dispose and recreate. Recreation handles all the dtype logic via
-    // NodeFactory. After the points-instanced-mesh migration the
-    // attribute names are a* and the storage is InstancedBufferAttribute.
+    // NodeFactory. Point attributes use a* names and
+    // InstancedBufferAttribute storage.
     const oldGeometry = points.geometry;
     // Post-interleaving, the per-instance attributes on a points
     // geometry are `InterleavedBufferAttribute` views sharing one
@@ -183,11 +182,10 @@ export function commitPointsGeometry(
         writeInterleavedAttribute(buffer, sharpAttr.offset, 1, widened, data.pointCount);
       }
 
-      // After the points-instanced-mesh migration the 'position'
-      // attribute holds the unit quad template, not the per-point
-      // world positions — so THREE's computeBoundingBox()/Sphere()
-      // would compute the quad's [-1,1]² bounds, not the actual
-      // scene extent. Source the bounds from the loader metadata
+      // The 'position' attribute holds the unit quad template, not the
+      // per-point world positions — so THREE's computeBoundingBox()/
+      // Sphere() would compute the quad's [-1,1]² bounds, not the
+      // actual scene extent. Source the bounds from the loader metadata
       // instead (same pattern as the pool-enabled path above).
       if (data.metadata.bounds) {
         oldGeometry.boundingBox = data.metadata.bounds.clone();

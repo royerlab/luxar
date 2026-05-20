@@ -1,11 +1,9 @@
 /**
  * Lines geometry-commit concern, mirroring `commit-points-geometry.ts`.
  *
- * Extracted from `data-processor-lines.ts` in step 6 of the god-object
- * refactor — the per-type commit helpers now live in dedicated files
- * (Points + Lines + GSplats), giving the three-geometry-symmetry rule
- * matching filenames. The async projection step keeps its home in
- * `data-processor-lines.ts` because it has no Points counterpart.
+ * Keeps the synchronous Lines GPU commit in a focused module. The async
+ * projection step stays in `data-processor-lines.ts` because it has no
+ * Points counterpart.
  *
  * `StagedLinesCommit` (the staged-data shape carried between the async
  * processing and the synchronous commit) remains in

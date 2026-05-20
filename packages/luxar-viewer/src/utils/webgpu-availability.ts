@@ -3,8 +3,7 @@
  *
  * Returns which rendering backend the browser supports *before* a
  * renderer is constructed. Used for diagnostics ("you'll get the
- * fast path" badges), feature flags, and the migration-time runtime
- * gate.
+ * fast path" badges), feature flags, and runtime backend messaging.
  *
  * For the API the renderer *actually used*, read
  * `RendererCapabilities.apiSurface` instead — this helper answers a

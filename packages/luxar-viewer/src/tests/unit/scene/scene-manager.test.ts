@@ -16,9 +16,9 @@ vi.mock('three', async () => {
     // Positive flag that the real `THREE.WebGLRenderer` sets on
     // `this`. `renderer-capabilities.ts::isWebGLRenderer` reads it
     // to pick the WebGL2 vs WebGPU branch for the `api` field;
-    // without this, the api detection mis-classifies the mock as
-    // WebGPU and the legacy-path code (`setupContextLossHandling`,
-    // raw-GL probes) silently skips.
+    // without this, the api detection mis-classifies the mock as WebGPU
+    // and the WebGL-specific code (`setupContextLossHandling`, raw-GL
+    // probes) silently skips.
     isWebGLRenderer = true;
     domElement = (() => {
       const canvas = document.createElement('canvas') as any;
@@ -421,8 +421,7 @@ describe('SceneManager', () => {
     it('applies size directly during initialization (no debounce)', async () => {
       // The init path calls resizer.resizeNow() so the renderer is sized
       // before the first paint, bypassing the rAF coalescing path that
-      // updateSize() uses. Resizer was extracted from SceneManager in
-      // the bucket-C refactor — see scene/scene-manager/viewport/resize-orchestrator.ts.
+      // updateSize() uses.
       const resizer = (sceneManager as unknown as { resizer: { resizeNow: () => void } }).resizer;
       const resizeNowSpy = vi.spyOn(resizer, 'resizeNow');
 
@@ -620,10 +619,10 @@ describe('SceneManager', () => {
   });
 
   describe('setControlType', () => {
-    // Event dispatch is contractual: per refactor non-goal #2, the
-    // 'camera-changed' event must fire from the SceneManager call site
-    // when (and only when) the projection mode swaps. The camera-mode
-    // helper's swap logic is covered separately in camera-mode.test.ts.
+    // Event dispatch is contractual: the 'camera-changed' event must
+    // fire from the SceneManager call site when (and only when) the
+    // projection mode swaps. The camera-mode helper's swap logic is
+    // covered separately in camera-mode.test.ts.
 
     beforeEach(async () => {
       await sceneManager.init({ canvas: mockCanvas as any });
@@ -722,9 +721,7 @@ describe('SceneManager', () => {
       sceneManager.setAdaptivePixelRatio(0.5);
       setPixelRatioSpy.mockClear();
 
-      // doUpdateSize was extracted into ResizeOrchestrator (bucket-C
-      // refactor). Drive the same code path via the orchestrator's
-      // synchronous entry point.
+      // Drive the resize path via the orchestrator's synchronous entry point.
       const internals = sceneManager as unknown as {
         resizer: { resizeNow: (w: number, h: number, ctx: unknown) => void };
         makeResizeCtx: () => unknown;

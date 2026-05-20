@@ -210,7 +210,7 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
       // can't paint the entire screen. Default uMaxLinePixelWidth is
       // resolution.y * 0.5 (set by JS).
       float maxPW = max(uMaxLinePixelWidth, minPixelWidth + 1.0);
-      // E.1: degenerate (extremely close to camera AND extreme pixel
+      // Degenerate (extremely close to camera AND extreme pixel
       // width) segments expand into a half-viewport quad that the GPU
       // still rasterizes pixel-by-pixel. The pixel-width clamp + fade
       // keeps the visible footprint bounded but doesn't avoid the

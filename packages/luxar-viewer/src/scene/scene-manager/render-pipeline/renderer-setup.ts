@@ -244,7 +244,7 @@ export async function createWebGPURenderer(
       log.warning(
         Modules.RENDERER,
         `WebGPU adapter advertises maxVertexBuffers=${adapterMax}, below the WebGPU spec minimum ` +
-          `of ${LUXAR_MIN_VERTEX_BUFFERS_REQUIRED}. Auto-falling back to the legacy WebGLRenderer ` +
+          `of ${LUXAR_MIN_VERTEX_BUFFERS_REQUIRED}. Auto-falling back to the default WebGLRenderer ` +
           'path. Override with `?renderer=webgpu` to force WebGPU anyway (for debugging).'
       );
       return { fallback: true };

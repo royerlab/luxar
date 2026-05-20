@@ -33,7 +33,7 @@ export const uiConfig: UIConfig = {
   // Styling is provided by CSS variables and classes in src/styles/
   // (see the theming system in src/themes/).
 
-  // Debug console configuration (migrated from debug-console.ts)
+  // Debug console configuration
   debugConsole: {
     panel: {
       defaultWidth: 600,

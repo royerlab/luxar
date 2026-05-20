@@ -2,9 +2,7 @@
  * Shared GLSL helper snippets injected into the Points / Lines / GSplats
  * shaders.
  *
- * E.2 of viewer-code-review-rerun action plan: previously each shader
- * inlined its own `isnan(v) || isinf(v) || v < 0.0 ? fallback : v`
- * pattern. Keeping the helpers in one place lets us:
+ * Keeping the sanitize helpers in one place lets us:
  *   - change the sanitize policy once (e.g., to also reject denormals)
  *     without hunting through three shader source strings;
  *   - test the GLSL-string content with a single regex assertion;

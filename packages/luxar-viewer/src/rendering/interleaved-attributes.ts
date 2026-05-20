@@ -294,8 +294,8 @@ export function writeInterleavedAttribute(
 
 /**
  * Widen a `Uint8Array` or `Uint16Array` source to a `Float32Array`
- * for interleaving. Useful for Points' historically-Uint8 color /
- * radius / sharpness attributes.
+ * for interleaving. Useful for Points color / radius / sharpness
+ * attributes that arrive as compact integer arrays.
  *
  * When `divisor` is supplied (e.g. `255` for normalized uint8), the
  * widened floats are divided by that divisor — preserves the

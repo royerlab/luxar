@@ -31,7 +31,7 @@ export function getBucket(key: string): string {
  * filename is safe across all browser OPFS implementations.
  *
  * Bumping OPFS_ENCODING_VERSION invalidates any directory persisted
- * with a different output (loadMetadata handles the migration).
+ * with a different output; loadMetadata treats it as a cold cache.
  */
 export function keyToFileName(key: string): string {
   const bytes = new TextEncoder().encode(key);

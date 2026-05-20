@@ -6,9 +6,9 @@
  * state (activeBuffers, stats, frame counter) is read from the
  * GPUBufferPool reference passed at construction.
  *
- * Step 3 of the god-object refactor: per-type method bodies move here
- * so the orchestrator (in gpu-buffer-pool.ts) keeps only shared
- * coordination logic (eviction, frame counter, dispose).
+ * The top-level GPUBufferPool owns only shared coordination logic
+ * (eviction, frame counter, dispose); this adapter owns Points-specific
+ * buffer layout and update behavior.
  */
 
 import * as THREE from 'three';

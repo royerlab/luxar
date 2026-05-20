@@ -354,7 +354,7 @@ describe('renderCacheContent layout guards (full L0/L1/L2 view)', () => {
     );
 
     expect(html).toContain('no memory limit configured');
-    // The misleading legacy label must not slip back in.
+    // The misleading zero-limit label must not slip back in.
     expect(html).not.toContain('0% of 0B limit');
     expect(html).not.toContain('of 0B');
   });

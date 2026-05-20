@@ -358,7 +358,7 @@ Rejected at validation time. Affine transforms only apply to continuous/discrete
 ### 11.6 Cyclic Dimensions
 For cyclic dimensions (e.g., angle wrapping at 360), the transformed value should be wrapped: `effective_value = (scale * value + offset) % cycle_length`. This requires the dimension's range to define the cycle period.
 
-## 12. Migration / Backward Compatibility
+## 12. Backward Compatibility
 
 - Scenes without `nd_transform` attribute behave identically to today
 - The `nd_transform` attribute is optional on all node types

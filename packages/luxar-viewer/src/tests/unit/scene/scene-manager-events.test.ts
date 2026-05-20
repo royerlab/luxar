@@ -1,14 +1,11 @@
 /**
  * Smoke test for the four SceneManager events that downstream
- * consumers depend on. Added in step 13 of the god-object refactor to
- * pin the public event surface; helper files live in
+ * consumers depend on. Helper files live in
  * `scene/scene-manager/{camera,clipping,render-pipeline,viewport}/`,
- * but the orchestrator class itself stays at `scene/scene-manager.ts`
- * (see commit `hoist orchestrator files back to parent level`).
+ * but the orchestrator class itself stays at `scene/scene-manager.ts`.
  *
- * The plan's non-goals list (item 2) explicitly preserves these event
- * names and payloads — this test fails the build if any of the four
- * names is dropped or renamed accidentally.
+ * These public event names and payloads are contractual; this test fails
+ * the build if any of the four names is dropped or renamed accidentally.
  *
  * The second describe block exercises the WebGPU `device.lost` observer
  * in `setupContextLossHandling()` — the only place that dispatches
@@ -23,7 +20,7 @@ import * as THREE from 'three';
 import { SceneManager } from '../../../scene/scene-manager';
 
 describe('SceneManager event surface', () => {
-  it('extends THREE.EventDispatcher with the four refactor-non-goal event names', () => {
+  it('extends THREE.EventDispatcher with the public scene event names', () => {
     // Construct without init() — the constructor doesn't touch
     // WebGL / DOM, so we can verify dispatcher wiring in jsdom.
     const sm = new SceneManager();

@@ -50,9 +50,8 @@ describe('Material colormap guards', () => {
     it('updateColormapTexture enables colormap and sets needsUpdate', () => {
       const mat = new PointMaterial();
       expect(mat.defines.USE_COLORMAP).toBeUndefined();
-      // After the container migration, vertexColors is unconditionally
-      // false — the shader reads aColor as an explicit attribute and
-      // toggles USE_COLORMAP independently.
+      // vertexColors is unconditionally false — the shader reads aColor
+      // as an explicit attribute and toggles USE_COLORMAP independently.
       expect(mat.vertexColors).toBe(false);
 
       const tex = new THREE.DataTexture(new Uint8Array(1024), 256, 1, THREE.RGBAFormat);
@@ -70,7 +69,7 @@ describe('Material colormap guards', () => {
 
       mat.updateColormapTexture(null);
       expect(mat.defines.USE_COLORMAP).toBeUndefined();
-      // Stays false post-migration — vertexColors is no longer toggled.
+      // Stays false; vertexColors is not toggled by colormap state.
       expect(mat.vertexColors).toBe(false);
     });
 
@@ -98,7 +97,7 @@ describe('Material colormap guards', () => {
       // depending on which path the constructor took, but its value must not
       // resurrect the disabled texture.
       expect(cloned.uniforms.uColormapTex?.value ?? null).toBeNull();
-      // vertexColors is unconditionally false post-migration.
+      // vertexColors is unconditionally false.
       expect(cloned.vertexColors).toBe(false);
     });
 
@@ -111,8 +110,7 @@ describe('Material colormap guards', () => {
 
     it('vertex shader does NOT have unconditional scalar attribute', () => {
       const mat = new PointMaterial();
-      // Post-migration: aScalar attribute should only appear inside
-      // #ifdef USE_COLORMAP (was per-vertex `scalar`).
+      // aScalar attribute should only appear inside #ifdef USE_COLORMAP.
       const lines = mat.vertexShader.split('\n');
       for (const line of lines) {
         if (line.trim().startsWith('in float aScalar') && !line.includes('//')) {

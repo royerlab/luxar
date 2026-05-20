@@ -118,8 +118,8 @@ describe('SceneLoader lifecycle stress', () => {
       tolerance: [0, 0, 0, 1],
     };
 
-    // viewStateQueue owns the per-node previous-view-state map (extracted
-    // in step 5 of the god-object refactor). Seed via the private field.
+    // viewStateQueue owns the per-node previous-view-state map; seed it
+    // directly for this lifecycle test.
     (sceneLoader as any).viewStateQueue._prevPerNodeViewState.set(path, previousViewState);
 
     const result = await (sceneLoader as any).runLoaderUpdates(

@@ -1,13 +1,10 @@
 /**
  * Unit tests for `computeSceneStats`.
  *
- * Pure traversal extracted from `zarr-loader.ts::logSceneStats`. Uses real
- * THREE objects (Group, Mesh, InstancedBufferGeometry, InstancedBufferAttribute) —
- * none of these need a WebGL context, so tests run without any mocks.
- *
- * After the container migration, points render as `THREE.Mesh` with
- * `userData.nodeType === 'points'` and `InstancedBufferGeometry.instanceCount`,
- * mirroring lines and gsplats.
+ * Uses real THREE objects (Group, Mesh, InstancedBufferGeometry,
+ * InstancedBufferAttribute); none of these need a WebGL context, so tests
+ * run without any mocks. Points, Lines, and GSplats all report visible
+ * counts through mesh userData or `InstancedBufferGeometry.instanceCount`.
  */
 
 import { describe, it, expect } from 'vitest';

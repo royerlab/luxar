@@ -1,11 +1,10 @@
 /**
  * HDR capture + EXR export + ImageData snapshot helpers.
  *
- * Extracted in P6/step 5.4. The functions are pure over their
- * `CaptureCtx` argument plus the `runPipeline` helper — no `this`
- * reference. The orchestrator's `captureHDRPixels`, `captureHDRAsEXR`,
- * and `renderToImageData` methods reduce to thin delegates that
- * bundle their state into the ctx and forward.
+ * The functions are pure over their `CaptureCtx` argument plus the
+ * `runPipeline` helper — no `this` reference. The orchestrator's
+ * `captureHDRPixels`, `captureHDRAsEXR`, and `renderToImageData`
+ * methods bundle their state into the ctx and forward.
  *
  * @module rendering/post-processing/post-processing-manager/capture
  */

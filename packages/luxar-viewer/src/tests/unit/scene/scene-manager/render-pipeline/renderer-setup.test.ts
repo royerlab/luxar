@@ -1,6 +1,5 @@
 /**
- * Unit tests for the renderer-setup helpers extracted from
- * SceneManager in Step 9 of the scene-folder layout overhaul.
+ * Unit tests for the renderer-setup helpers used by SceneManager.
  *
  * `createWebGLRenderer` is intentionally NOT unit-tested: mocking the
  * WebGL2 context surface (getContext / getExtension / getParameter /
@@ -82,7 +81,7 @@ describe('selectBackend', () => {
     vi.unstubAllEnvs();
   });
 
-  it('respects VITE_LUXAR_USE_WEBGPU_RENDERER=1 env var (legacy alias)', () => {
+  it('respects VITE_LUXAR_USE_WEBGPU_RENDERER=1 env var alias', () => {
     vi.stubEnv('VITE_LUXAR_USE_WEBGPU_RENDERER', '1');
     const r = selectBackend(undefined);
     expect(r).toEqual({ backend: 'webgpu', source: 'env-var' });

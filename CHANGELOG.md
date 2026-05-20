@@ -71,10 +71,9 @@ baseline, so WebGL stays the safe choice until those gaps close.
 second backend behind `?renderer=webgpu` URL flag or
 `VITE_LUXAR_USE_WEBGPU=1` env var; the TSL ↔ GLSL parity harness
 keeps both stacks in sync and per-shader GLSL3 sources are retained
-as the reference. The previous default-flip-to-WebGPU entry
-(2026-05-14) is superseded by this change.
+as the reference.
 
-The transitional `VITE_LUXAR_USE_LEGACY_WEBGL=1` env var is now a
+The compatibility `VITE_LUXAR_USE_LEGACY_WEBGL=1` env var is now a
 no-op alias (WebGL is the default), and
 `VITE_LUXAR_USE_WEBGPU_RENDERER=1` is accepted as a synonym for
 `VITE_LUXAR_USE_WEBGPU=1` so existing CI invocations keep working.
@@ -88,11 +87,11 @@ no-op alias (WebGL is the default), and
   WebGL2 backend instead of a native WebGPU adapter. This isolates
   TSL/generated-shader overhead from native WebGPU/Dawn/backend costs.
 
-#### Fixed — Multi-agent review fixes for the WebGPU/r184 migration (2026-05-16)
+#### Fixed — Multi-agent review fixes for WebGPU/r184 renderer work (2026-05-16)
 
 Landed a batch of correctness, performance, and architecture fixes
 surfaced by a multi-agent review of the dual-stack rendering branch.
-Each phase ships with full unit/lint/type/layer checks green.
+The batch ships with full unit/lint/type/layer checks green.
 
 - **WebGPU readback row padding.** Added
   `compactWebGPUReadbackRows` to `hdr-pixel-utils.ts` and wired it
@@ -157,55 +156,19 @@ Each phase ships with full unit/lint/type/layer checks green.
   outside both `colorNode` and `depthNode` Fn bodies so the TSL
   builder can fold the shared subexpression into a single local
   if it supports CSE. Worst case is equivalent to before.
-- **Docs refresh.** `rendering/README.md`, `rendering/SPECIFICATIONS.md`,
-  `picking/PICKING_DESIGN.md`, and `MEGA_SHADER_DESIGN.md` updated
-  to describe the actually-shipped dual-stack pipeline. New
-  "Dual-stack Architecture (WebGPU / WebGL2)" section in
-  rendering/SPECIFICATIONS.md covering renderer dispatch, readback
-  signatures, WebGPU row-padding, interleaved attributes, and
-  the device-loss policy. Line cap-factor pseudocode rewritten to
+- **Docs refresh.** Rendering docs and `picking/PICKING_DESIGN.md`
+  updated to describe the shipped dual-stack pipeline, including renderer
+  dispatch, readback signatures, WebGPU row-padding, interleaved attributes,
+  and the device-loss policy. Line cap-factor pseudocode rewritten to
   match the fragment-shader implementation (the original
   vertex-side `vCapFactor` design didn't survive the
   4-vertex-quad layout).
 
-#### Changed — WebGPU migration: default renderer flipped to WebGPU (2026-05-14) — SUPERSEDED
-
-> **Superseded by the 2026-05-16 entry above.** Per-scene performance
-> measurements on the WebGPU path landed below the WebGL baseline,
-> so WebGL was restored as the production default. The current
-> contract is "WebGL default, WebGPU opt-in via `?renderer=webgpu`".
-> This entry is preserved for historical record only.
-
-The viewer's production rendering path now defaults to
-`WebGPURenderer` (no `forceWebGL` — the renderer dispatches to a
-real WebGPU adapter when the browser provides one and transparently
-falls back to its internal WebGL2 backend otherwise); the legacy
-`WebGLRenderer` + GLSL `ShaderMaterial` path stays live behind
-`VITE_LUXAR_USE_LEGACY_WEBGL=1` as a runnable reference (parity
-harness, baseline pixel comparisons, fallback for hosts where
-WebGPU isn't an option). `VITE_LUXAR_USE_WEBGPU_RENDERER` becomes
-a no-op alias so existing CI invocations keep working harmlessly.
-
-Wrapper-layer wiring completed since 2026-05-13:
-
-- **TSL `NodeMaterial` wrappers shipped one-for-one with the GLSL
-  ones**: `{Point,Line,GSplat}TSLMaterial`,
-  `{Point,Line,GSplat}PickingTSLMaterial`, `MegaShaderTSLMaterial`.
-  Same surface (`updateCameraParams`, `applyBlendingMode`, `clone`,
-  `dispose`), same uniforms table, same userData fields. Dispatch
-  inside `MaterialManager.getXxxMaterial` / `createXxxPickingMaterial`
-  branches on `caps.api === 'webgpu'`.
-- **`ShaderSource.webgl` relaxed to optional**: TSL is now the
-  source of truth for every Luxar shader; GLSL3 strings are an
-  optional reference. New `requireWebGLSources` helper fails fast
-  at module load for the GLSL-only sites (picking-material
-  wrappers, parity harness) when a source ships WebGPU-only.
-
-#### Changed — WebGPU migration: TSL ports + container refactor (2026-05-13)
+#### Changed — WebGPU renderer work: TSL ports + point container update (2026-05-13)
 
 Infrastructure step toward the WebGPU rendering backend. What
 landed at this commit (production rendering path was still on
-`WebGLRenderer` here; the flip is in the 2026-05-14 entry above):
+`WebGLRenderer` here):
 
 - **All 12 shaders ported to TSL / NodeMaterial**: scene materials
   (`point`, `line`, `gsplat`), picking variants (`point-pick`,
@@ -216,7 +179,7 @@ landed at this commit (production rendering path was still on
   blending-state helper. Pixel parity vs. GLSL3 verified by
   `tsl-shader-parity.spec.ts` under
   `WebGPURenderer({ forceWebGL: true })`.
-- **Container migration**: points are now rendered as a
+- **Point container update**: points are now rendered as a
   `THREE.Mesh + InstancedBufferGeometry` (matching the existing
   line/gsplat container shape) instead of `THREE.Points`. Required
   because r184's `GLSLNodeBuilder` hardcodes `gl_PointSize = 1.0`
@@ -228,7 +191,7 @@ landed at this commit (production rendering path was still on
   both WebGLRenderer and WebGPURenderer in r184). Stale-tooltip
   suppression added in `core/app.ts` so an in-flight readback
   doesn't blank the tooltip prematurely.
-- **`renderToImageData` refactor**: capture now renders through an
+- **`renderToImageData` readback path**: capture now renders through an
   offscreen `WebGLRenderTarget` and reads via
   `readRenderTargetPixelsAsync`. Backbuffer readback fallback is
   retained on `RendererCapabilities` for WebGL2-only tests.
@@ -242,11 +205,6 @@ landed at this commit (production rendering path was still on
   TSL factory now accepts a `blendingMode` config field and applies
   the matching THREE blending state via the existing
   `blending-state.ts` helper.
-
-Remaining work: real-WebGPU smoke pass on Chrome stable with a
-working GPU (Playwright's headless chromium falls back to WebGL2),
-then the matching pixel-baseline refresh. See
-`packages/luxar-viewer/MIGRATION_PROGRESS.md` for the full ledger.
 
 #### Changed — Three.js r184 and custom post-processing pipeline (2026-05-12)
 
@@ -278,10 +236,8 @@ then the matching pixel-baseline refresh. See
 
 #### Changed — Cache recheck polish S1–S7 (2026-05-10)
 
-Follow-up to the cache recheck at
-`delme/viewer-cache-rereview-20260510-200308/`, which confirmed R1–R7
-closed most prior gaps and flagged seven concrete remaining items.
-S1–S7 close those.
+Follow-up cache polish for UI styling, predictive prefetch behavior,
+cache metrics cleanup, and additional edge-case coverage.
 
 - **S1 — CSS for the new cache UI classes.** `data-loading-monitor.css`
   gains rules for `.luxar-cache-section__metrics--cols-4` (the L2
@@ -338,12 +294,9 @@ path. Tests: 89 cache unit + 86 monitor unit + 1 strengthened E2E.
 
 #### Changed — Cache re-review remediation R1–R7 (2026-05-10)
 
-Follow-up to the cache re-review at
-`delme/viewer-cache-rereview-20260510-140614/`. The Phase 1–8
-hardening had already landed (lifecycle/dispose, OPFS races,
-in-flight coalescing, content-hash/TTL validation, Points/Lines
-prefetch parity); the re-review surfaced remaining UI/observability
-gaps and a handful of edge-case test holes. R1–R7 close those.
+Cache hardening pass for lifecycle/dispose, OPFS races, in-flight
+coalescing, content-hash/TTL validation, Points/Lines prefetch parity,
+UI/observability gaps, and edge-case test coverage.
 
 - **R1 — config validation for new cache fields.**
   `validateConfig` rejects bad `cache.opfsOperationTimeoutMs` (NaN
@@ -408,9 +361,8 @@ cache manager UI.
 
 #### Changed — Viewer code-review recheck hardening (2026-05-10)
 
-Follow-up pass against the recheck reports under
-`delme/viewer-code-review-recheck/`. Addresses W-tier findings still
-open after the prior pass:
+Follow-up hardening pass for findings still open after the prior viewer
+code review:
 
 - **Constants**: `MAX_SUPPORTED_DIMS` consolidated into
   `src/config/constants.ts`; `wasm/typescript/gsplats-processing.ts`,
@@ -435,8 +387,8 @@ open after the prior pass:
   Math.max(min, x))`.
 - **Lines TS fallback note**: `data/lines/projection.ts` documents the
   TS fallback path's allocation profile as an accepted trade-off.
-- **Docs**: `src/data/SPECIFICATIONS.md`, `src/data/loaders/README.md`
-  rewritten to show the `runWithTimeout(name, kind, fn)` pattern
+- **Docs**: data-loader docs rewritten to show the
+  `runWithTimeout(name, kind, fn)` pattern
   instead of raw `getWorker()` access. `CONVENTIONS.md` gains §§12-14
   for dependency-inversion ports, error-handling discipline, and the
   disposal pattern. `packages/luxar-viewer/README.md` documents
@@ -444,11 +396,10 @@ open after the prior pass:
 
 #### Changed — Viewer code-review rerun hardening pass (2026-05-10)
 
-Multi-phase hardening of the scalar-colormap + GPU pool + blending-state
-feature work, addressing every actionable finding from a six-agent code
-review rerun. Phases A–J in `delme/viewer-code-review-rerun/ACTION_PLAN.md`.
+Hardening of the scalar-colormap + GPU pool + blending-state feature
+work, addressing actionable findings from a six-agent code review rerun.
 
-**Type-safety (Phase A):**
+**Type-safety:**
 - `PointsAttributeTypes.scalar` is now optional (`undefined` when absent)
   instead of a `'none'` sentinel; Float16Array gets a first-class dtype tag.
 - `LoadedLinesData.scalars` aligned with `ScalarArray` (Float32/Float16/
@@ -458,7 +409,7 @@ review rerun. Phases A–J in `delme/viewer-code-review-rerun/ACTION_PLAN.md`.
 - `growLinesGeometry` preserves optional `aStartScalar`/`aEndScalar`
   attributes on resize.
 
-**Lifecycle (Phase B):**
+**Lifecycle:**
 - Material clone-vs-pool registration bug: pooled materials are
   detached from global updates before NodeFactory clone sites; clones
   take the global slot, pooled stays in the LRU cache.
@@ -472,7 +423,7 @@ review rerun. Phases A–J in `delme/viewer-code-review-rerun/ACTION_PLAN.md`.
 - Data accumulators expose `isDisposed()`; `fill`/`ensureCapacity`
   throw with a descriptive error post-dispose.
 
-**Performance (Phases C–D):**
+**Performance:**
 - Lines worker scalar fallback now emits a one-shot warning so users
   notice the main-thread cliff.
 - Accumulator growth copies only the live prefix
@@ -487,7 +438,7 @@ review rerun. Phases A–J in `delme/viewer-code-review-rerun/ACTION_PLAN.md`.
 - `estimateGeometryBytes` cached on `geometry.userData.cachedByteSize`;
   invalidated on grow.
 
-**Shaders (Phase E):**
+**Shaders:**
 - Line shader: pathological near-camera wide-quad segments now early-
   discard instead of rasterizing a half-viewport quad at reduced
   intensity.
@@ -497,7 +448,7 @@ review rerun. Phases A–J in `delme/viewer-code-review-rerun/ACTION_PLAN.md`.
 - Documented `LUXAR_MAX_RGB_CONTRIBUTION` and `USE_COLORMAP` defines
   in the line shader header.
 
-**API surface (Phase F):**
+**API surface:**
 - Public exports for `getCompleteBlendingState`,
   `applyBlendingStateToMaterial`, `supportsScalarColormap`,
   `applyColormapTextureToMaterial`, `applyScalarRangeToMaterial`,
@@ -506,14 +457,14 @@ review rerun. Phases A–J in `delme/viewer-code-review-rerun/ACTION_PLAN.md`.
   centralize the mode discriminators across materials.
 - `syncPointMaterialWithGeometry` moved to `rendering/material-sync-helpers.ts`.
 
-**Diagnostics (Phase G):**
+**Diagnostics:**
 - Array decoder broadcast-encoding error includes zarr path + encoding shape.
 - `captureHDRPixels` validates the mode at runtime, falls back with a warning.
 - `updateView` log differentiates supersede vs first-queue.
 - Custom LUT cache validates content fingerprint on hit (defends
   against DJB2 collisions).
 
-**Tests + Docs (Phases H–I):**
+**Tests + Docs:**
 - New `blending-state.test.ts` with predicate + canonical-state tests
   including max-mode round-trip lock-in.
 - Accumulator dispose/usedCount tests, scalar buffer lazy-alloc tests,
@@ -521,8 +472,7 @@ review rerun. Phases A–J in `delme/viewer-code-review-rerun/ACTION_PLAN.md`.
 - Byte-budget eviction tests for the pure selector + pool integration.
 - `LUXAR_ZARR_FORMAT.md` documents `has_scalars`, `scalar_data_range`,
   `colormap`, and the `colormap_lut` sibling array.
-- `rendering/SPECIFICATIONS.md` documents the byte-cache + bounded
-  eviction policy.
+- Rendering docs describe the byte-cache + bounded eviction policy.
 
 #### Changed — Viewer shader/material follow-through (2026-05-10)
 
@@ -710,12 +660,12 @@ Documentation: `E2E_TESTING_GUIDE.md` now references `getBufferedMessages()` (wa
   Gaussian noise, JSON round-trip, and a CPU smoke test of the full
   driver. Plus 4 CLI smoke tests in
   `cli/tests/test_gsplat_cli_extended.py::TestCalibrateCommand`.
-- Docs: `gsplats/README.md` Calibration section, `gsplats/SPECIFICATIONS.md`
-  §8, Sphinx page `docs/api/gsplats.rst`, and CLAUDE.md examples block.
+- Docs: `gsplats/README.md` Calibration section, Sphinx page
+  `docs/api/gsplats.rst`, and CLAUDE.md examples block.
 
 #### Changed — GSplats default device on macOS
 
-- `GaussianSplatModel` (and the gsplat fitting API) now auto-selects MPS on macOS when no explicit device is provided and `use_metal=True` (the default). Pre-rewrite, MPS was never auto-selected. Pass `use_metal=False` to keep CPU as the default on Macs that prefer it.
+- `GaussianSplatModel` (and the gsplat fitting API) now auto-selects MPS on macOS when no explicit device is provided and `use_metal=True` (the default). Pass `use_metal=False` to keep CPU as the default on Macs that prefer it.
 - Centralized device selection in `luxar.gsplats.utils.device.resolve_torch_device(...)`; remaining hand-rolled `torch.cuda.is_available()` / `torch.backends.mps.is_available()` ternaries in `utils/demos.py`, `gsplats/multiscale/decompose.py`, `gsplats/seeds/gpu_ops.py`, `gsplats/preprocessing/denoise_pipeline.py`, and `gsplats/fitting/preprocessing.py` (FPS GPU gate) now route through it. The denoise and FPS paths consequently honor MPS where they previously ignored it.
 
 #### Fixed — Encoding, viewer, and GSplats hardening
@@ -835,7 +785,7 @@ updated to assert `"l1"`.
 - Points and Lines retain their sharpness attribute
 - GSplats now use the standard Gaussian falloff (equivalent to sharpness=2.0) without per-splat configurability
 - Affected formats: `.gsplats.zarr` standalone format and embedded Luxar scene format
-- Migration: existing `.gsplats.zarr` files with sharpness arrays will ignore the sharpness data on load
+- Compatibility: existing `.gsplats.zarr` files with sharpness arrays ignore the sharpness data on load
 
 #### Major Features
 
@@ -886,7 +836,7 @@ updated to assert `"l1"`.
 
 - Added `luxar[gsplats]` optional dependency group and lazy imports for gsplats tooling
 - Standardized Python console output on `arbol` and viewer output on `utils/log`
-- Filled missing package `README.md` and `SPECIFICATIONS.md` files across Python and viewer packages
+- Filled missing package documentation across Python and viewer packages
 
 ### December 2025
 
@@ -943,8 +893,8 @@ updated to assert `"l1"`.
 
 #### Code Cleanup
 
-**Legacy Code Removed**
-- Eliminated unused "legacy mode" from Node class (~40 lines dead code)
+**Dead Code Removed**
+- Eliminated unused mode handling from Node class (~40 lines dead code)
 - Removed `group` parameter and all `if self._group is not None:` branches
 - Node now only supports progressive writing mode (simpler, clearer)
 
@@ -956,7 +906,7 @@ updated to assert `"l1"`.
 
 #### Quality Improvements
 
-**Compiler Refactoring**
+**Compiler Cleanup**
 - Reduced `write_points()` from 432 to 117 lines (73% reduction)
 - Extracted 8 focused helper methods with single responsibilities
 
@@ -1007,7 +957,7 @@ updated to assert `"l1"`.
 - Keyboard Navigation: Simple 2-step: select dimension (1-9), navigate ([/])
 - TypeScript Integration: Scene dimensions loaded from zarr attrs, used for step sizes
 
-**Data Loading Architecture Refactor**
+**Data Loading Architecture Cleanup**
 - Removed Lazy Loading: Eliminated LazyDataManager in favor of spatial index-based loading
 - Spatial Index Required: All datasets now require spatial indices for efficient loading
 - Range-Based Caching: New RangeCache system for intelligent memory management

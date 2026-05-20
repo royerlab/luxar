@@ -1,6 +1,6 @@
 /**
  * Pixel-ratio (DPR) policy — pure functions for the SceneManager's
- * adaptive/manual DPR handling. Step 10 of the god-object refactor.
+ * adaptive/manual DPR handling.
  *
  * Kept stateless so the policy can be unit-tested without a SceneManager.
  * The active override + post-processing manager (which the policy

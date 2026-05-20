@@ -1,8 +1,6 @@
 import type { ControlsConfig } from './types';
 
-/**
- * Control system configuration (migrated from control-config.ts)
- */
+/** Control system configuration. */
 export const controlsConfig: ControlsConfig = {
   scaleMultipliers: {
     minDistanceFactor: 0.01,

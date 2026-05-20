@@ -16,10 +16,10 @@
  * better cache locality on both backends.
  *
  * Mirrors the line-geometry.ts / gsplat-geometry.ts pattern so the
- * three geometry types share one mental model. Migrating away from
- * `THREE.Points` is what unblocks the TSL/WebGPU port (r184's
+ * three geometry types share one mental model. The mesh-based point
+ * layout supports both GLSL and TSL/WebGPU materials; r184's
  * `GLSLNodeBuilder` hardcodes `gl_PointSize = 1.0` for any
- * `THREE.Points` object).
+ * `THREE.Points` object.
  *
  * @module rendering/point-geometry
  */

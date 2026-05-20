@@ -1,7 +1,7 @@
 /**
- * Direct unit tests for the material lifecycle helpers extracted in
- * P6/step 4.3. Covers the dispose-event subscription, the
- * `SOFT_DISPOSE_FLAG` soft-dispose path, and the per-class cache
+ * Direct unit tests for the material lifecycle helpers. Covers the
+ * dispose-event subscription, the `SOFT_DISPOSE_FLAG` soft-dispose
+ * path, and the per-class cache
  * teardown branches of `removeFromRegistries`.
  *
  * Uses real PointMaterial / LineMaterial / GSplatMaterial instances

@@ -301,16 +301,6 @@ class TestDimensions:
             Dimensions.from_positions(np.random.randn(10, 3), names=["x", "y"])
 
 
-class TestSceneIntegration:
-    """Test dimensions integration with Scene."""
-
-    # Test removed: Scene dimension validation was removed in new flexible API
-    # The Scene class now accepts any dimension values without validation
-
-    # test_scene_dimension_persistence moved to test_dimension_metadata.py
-    # (TestSceneDimensionMetadata has a more thorough version with field-level checks)
-
-
 class TestCategoricalDimensions:
     """Test categorical dimension support."""
 

@@ -6,12 +6,8 @@
  * by deleting + re-inserting; `lruSet` evicts from the front until
  * the cache is under `maxSize` and then appends.
  *
- * Extracted from `material-manager.ts` in P6/step 4.2. The original
- * methods were private class members that captured `this.registered
- * Materials`, `this.evictionCount`, and the `log` helper directly;
- * here the eviction-time side effects are threaded through an
- * `onEvict` callback so the helpers are agnostic to who owns the
- * cache.
+ * Eviction-time side effects are threaded through an `onEvict`
+ * callback so the helpers are agnostic to who owns the cache.
  *
  * @module rendering/material-manager/lru-cache
  */

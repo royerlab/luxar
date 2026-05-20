@@ -2,10 +2,10 @@
  * Unit tests for `loadPointsNode` in scene-loader/nodes/load-points-node.ts.
  *
  * The initial-load path's three load-bearing invariants:
- *   1. Placeholder attached to parentThree BEFORE the async fetch — if a
- *      future refactor moves the `.add(placeholder)` after the await,
- *      the failure-recovery contract breaks (retry has no mesh to
- *      target) but the happy path still passes its tests.
+ *   1. Placeholder attached to parentThree BEFORE the async fetch — if
+ *      `.add(placeholder)` happens after the await, the failure-recovery
+ *      contract breaks (retry has no mesh to target) but the happy path
+ *      still passes its tests.
  *   2. extend_to_all skip fallback uses the BASE viewState — on initial
  *      load we still want to construct the THREE node so future slice
  *      changes can populate it; the skip return only short-circuits on

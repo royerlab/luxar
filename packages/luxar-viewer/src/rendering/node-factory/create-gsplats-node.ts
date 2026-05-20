@@ -1,5 +1,5 @@
 /**
- * GSplats-node creation helpers extracted from NodeFactory in P6/step 6.5.
+ * GSplats-node creation helpers for NodeFactory.
  *
  * @module rendering/node-factory/create-gsplats-node
  */

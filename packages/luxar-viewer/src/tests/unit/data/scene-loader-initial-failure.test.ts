@@ -51,10 +51,10 @@ vi.mock('../../../rendering/material-manager', async () => {
         clone: vi.fn().mockReturnThis(),
         updateColormapTexture: vi.fn(),
         updateScalarRange: vi.fn(),
-        // Added by the line shader perf phase 2 (C9): node-factory
-        // calls `setSharpnessAllTwo` on every line material at upload
-        // time. The mock stubs it so production code-paths exercising
-        // an empty / placeholder geometry don't trip on missing API.
+        // NodeFactory calls `setSharpnessAllTwo` on every line material
+        // at upload time. The mock stubs it so production code paths
+        // exercising an empty / placeholder geometry don't trip on
+        // missing API.
         setSharpnessAllTwo: vi.fn(),
       })),
       getGSplatMaterial: vi.fn(() => ({
@@ -89,8 +89,8 @@ describe('NodeFactory.createEmptyPointsNode', () => {
 
     const placeholder = factory.createEmptyPointsNode('/empty-points', attrs, loader);
 
-    // After the container migration, points are THREE.Mesh with
-    // instanced quad geometry — aCenter is the per-instance position.
+    // Points are THREE.Mesh with instanced quad geometry; aCenter is
+    // the per-instance position.
     expect(placeholder).toBeInstanceOf(THREE.Mesh);
     expect(placeholder.name).toBe('/empty-points');
     expect(placeholder.userData.nodeType).toBe('points');
@@ -370,8 +370,7 @@ describe('SceneLoader.retryFailedLoader — derived.skip fallback', () => {
     //      onto viewStateQueue and returns immediately.
     //   4. retry releases lock; the queue's drain helper fires the
     //      queued updateView async (so retry's promise resolves first).
-    // Pending state lives on viewStateQueue (extracted in step 5 of the
-    // god-object refactor); inspect via hasPending().
+    // Pending state lives on viewStateQueue; inspect via hasPending().
     type Internals = LoaderInternals & {
       _updateInProgress: boolean;
       viewStateQueue: { hasPending(): boolean };

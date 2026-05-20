@@ -26,9 +26,8 @@ function makeData(pointCount: number, withRadii = false): LoadedPointsData {
 }
 
 function makePoints(name: string): THREE.Mesh {
-  // After the container migration, points are THREE.Mesh with
-  // instanced quad geometry. Per-instance attribute is `aCenter`
-  // (InstancedBufferAttribute).
+  // Points are THREE.Mesh with instanced quad geometry. Per-instance
+  // attribute is `aCenter` (InstancedBufferAttribute).
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('aCenter', new THREE.InstancedBufferAttribute(new Float32Array(0), 3));
   const material = new THREE.MeshBasicMaterial();

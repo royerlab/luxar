@@ -1,6 +1,6 @@
 /**
  * Direct tests for runGSplatsRefinement — the progressive GSplats LOD
- * refinement loop extracted in step 8 of the god-object refactor.
+ * refinement loop.
  *
  * End-to-end behaviour (rAF integration with real browser paint timing)
  * is covered by the e2e suite; these tests pin the unit semantics:

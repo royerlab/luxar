@@ -1,5 +1,5 @@
 /**
- * Points-node creation helpers extracted from NodeFactory in P6/step 6.3.
+ * Points-node creation helpers for NodeFactory.
  *
  * Two free functions: `createPointsGeometry` builds the
  * InstancedBufferGeometry (one shared unit-quad base + per-instance

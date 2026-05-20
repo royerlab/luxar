@@ -20,7 +20,7 @@ The Luxar Scene package provides comprehensive scene management, animation contr
 ```
 scene/
 ├── scene-manager.ts                # Main scene orchestrator
-├── scene-manager/                  # Extracted helpers (god-object refactor)
+├── scene-manager/                  # Focused helpers owned by SceneManager
 │   ├── camera/                     # camera-framing, camera-setup, camera-materials, camera-mode
 │   ├── clipping/                   # bounds-math, scene-bounds-cache, clipping-policy
 │   ├── render-pipeline/            # renderer-setup, post-processing-setup, scene-disposal, webgl-context-recovery

@@ -69,7 +69,7 @@ describe('estimateGeometryBytes', () => {
     expect(estimateGeometryBytes(g)).toBe(120 + 6);
   });
 
-  it('D.3: caches the result on userData.cachedByteSize', () => {
+  it('caches the result on userData.cachedByteSize', () => {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(30, 3));
     const first = estimateGeometryBytes(g);
@@ -87,7 +87,7 @@ describe('estimateGeometryBytes', () => {
     expect(recomputed).toBe(120 + 240);
   });
 
-  it('D.3: invalidateCachedByteSize is a no-op when the cache is missing', () => {
+  it('invalidateCachedByteSize is a no-op when the cache is missing', () => {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(30, 3));
     invalidateCachedByteSize(g); // no cache yet — should not throw

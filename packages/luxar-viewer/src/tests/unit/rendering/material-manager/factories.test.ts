@@ -1,6 +1,6 @@
 /**
- * Direct unit tests for the factory tables + backend resolution +
- * cache-key helpers extracted in P6/step 4.1.
+ * Direct unit tests for the factory tables, backend resolution, and
+ * cache-key helpers.
  *
  * Orchestrator tests (material-manager.test.ts) exercise these
  * indirectly through `getXMaterial` cache hits/misses; this file pins

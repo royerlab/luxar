@@ -2,9 +2,7 @@
  * Unit tests for NodeFactory.
  *
  * Tests geometry creation, validation, and transform utilities.
- * Migrated from geometry-update-manager.test.ts after removing the dead
- * GeometryUpdateManager class — NodeFactory is the single source of truth
- * for these operations.
+ * NodeFactory is the single source of truth for these operations.
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';

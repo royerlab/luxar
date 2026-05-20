@@ -93,7 +93,7 @@ class DocumentationChecker:
         """Check README.md quality."""
         content = readme.read_text()
 
-        # Check for Quick Start section (Phase 3 enhancement)
+        # Check for a Quick Start or Getting Started section.
         if "## Quick Start" not in content and "## Getting Started" not in content:
             self.results.append(
                 CheckResult(

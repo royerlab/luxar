@@ -1,9 +1,8 @@
 /**
  * Validation helpers used by NodeFactory at load time.
  *
- * Extracted in P6/step 6.1 — all three functions are pure over
- * their inputs (with logging side-effects), so the orchestrator's
- * `validate*` private methods become 1-line delegates.
+ * All functions are pure over their inputs, aside from logging
+ * side-effects.
  *
  * @module rendering/node-factory/validation
  */

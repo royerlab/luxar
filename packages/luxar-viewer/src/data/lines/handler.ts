@@ -1,8 +1,8 @@
 /**
  * Lines geometry-type handler — per-type wiring for the scene-loader's
- * load + stage phase. Mirror of `data/points/handler.ts` and
- * `data/gsplats/handler.ts` (three-geometry-symmetry rule). Step 7 of
- * the god-object refactor.
+ * load + stage phase. Mirrors `data/points/handler.ts` and
+ * `data/gsplats/handler.ts` so all first-class geometry kinds share the
+ * same loader/update shape.
  *
  * @module data/lines/handler
  */

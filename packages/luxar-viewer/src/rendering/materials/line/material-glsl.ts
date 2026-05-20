@@ -425,7 +425,7 @@ export class LineMaterial
       | 'opaque'
       | 'luminous'
       | undefined;
-    // F.2: predicates over BlendingMode replace inline string comparisons.
+    // Predicates keep BlendingMode dispatch centralized.
     const isOpaque = isOpaqueMode(mode);
     const isAdditive = isAdditiveMode(mode);
     const isMax = isMaxMode(mode);

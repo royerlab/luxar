@@ -398,7 +398,7 @@ export class GSplatMaterial
       | 'opaque'
       | 'luminous'
       | undefined;
-    // F.2: predicate-driven mode dispatch.
+    // Predicate-driven mode dispatch.
     const isOpaque = isOpaqueMode(mode);
     const isAdditive = isAdditiveMode(mode);
     const isMax = isMaxMode(mode);
