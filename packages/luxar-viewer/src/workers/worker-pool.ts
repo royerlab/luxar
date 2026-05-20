@@ -32,6 +32,7 @@ import {
 } from './worker-pool/singleton';
 import { withTimeout } from './worker-pool/timeout/with-timeout';
 import { combineSignals } from './worker-pool/timeout/combine-signals';
+import { pickTimeoutMs } from './worker-pool/timeout/pick-timeout-ms';
 export { getWorkerPool, disposeWorkerPool, setDataWorkerUrl };
 
 export class WorkerPool {
@@ -471,8 +472,7 @@ export class WorkerPool {
    * need).
    */
   private pickTimeoutMs(kind: TimeoutKind): number {
-    const perf = config.dataLoading.performance;
-    return kind === 'visibility' ? perf.workerVisibilityTimeoutMs : perf.workerProjectionTimeoutMs;
+    return pickTimeoutMs(kind, config.dataLoading.performance);
   }
 
   /**
