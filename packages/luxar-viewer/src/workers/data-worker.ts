@@ -17,9 +17,8 @@
  */
 
 import { expose, transfer } from 'comlink';
-import { initWasm } from '../wasm';
-import { log, Modules } from '../utils/log';
 import { state, requireWasm } from './data-worker/state';
+import { initialize as initializeImpl } from './data-worker/initialize';
 
 // Validation + color helpers live in ./data-worker/validation and ./color-utils.
 // The worker imports them as bare identifiers (used in projection and
@@ -36,32 +35,6 @@ import {
 import { coerceColorsToFloat32, coerceScalarsToFloat32, fillColorsWhite } from './color-utils';
 export { coerceColorsToFloat32, coerceScalarsToFloat32, fillColorsWhite };
 
-/**
- * Initialize worker (called once at startup).
- *
- * Loads the WASM module via initWasm(); if that fails catastrophically (including
- * the TypeScript fallback), throws — the viewer requires a functioning worker.
- */
-async function initialize(): Promise<void> {
-  log.info(Modules.WORKER_POOL, 'DataWorker initializing...');
-
-  // Load WASM module (falls back to TypeScript implementation if compiled WASM missing)
-  try {
-    state.wasm = await initWasm();
-    log.info(Modules.WORKER_POOL, 'DataWorker WASM module loaded successfully');
-  } catch (error) {
-    log.error(Modules.WORKER_POOL, 'DataWorker WASM initialization failed', error);
-    throw new Error(
-      'WASM unavailable. Luxar requires WebAssembly support. ' +
-        'Please use a modern browser (Chrome 57+, Firefox 52+, Safari 11+).'
-    );
-  }
-
-  // Pre-allocate visibility buffer (will grow as needed)
-  state.visibilityMaskBuffer = new Uint8Array(100000); // 100K elements max
-
-  log.info(Modules.WORKER_POOL, 'DataWorker ready');
-}
 
 /**
  * Task 1: Query spatial index (generic for all types)
@@ -1297,7 +1270,7 @@ async function decodeBroadcasted(params: {
  * Expose worker API via Comlink
  */
 export const workerAPI = {
-  initialize,
+  initialize: (): Promise<void> => initializeImpl(state),
   querySpatialIndex,
   computeNDVisibilityPoints,
   computeNDVisibilityLines,
