@@ -1994,10 +1994,10 @@ class TestLODCommand:
         medium_gsplats: Path,
         tmp_path: Path,
     ) -> None:
-        """`lod substitutive` produces a directory + manifest.json."""
-        import json
+        """`lod substitutive` produces a single v2.0 .gsplats.zarr."""
+        from luxar.gsplats import GSplatData
 
-        out_dir = tmp_path / "hierarchy"
+        out_path = tmp_path / "hierarchy.gsplats.zarr"
         result = runner.invoke(
             app,
             [
@@ -2005,22 +2005,22 @@ class TestLODCommand:
                 "lod",
                 "substitutive",
                 str(medium_gsplats),
-                str(out_dir),
+                str(out_path),
                 "--K", "2",
                 "--L", "2",
                 "--device", "cpu",
             ],
         )
         assert result.exit_code == 0, f"lod substitutive failed:\n{result.stdout}"
-        assert out_dir.is_dir()
-        manifest_path = out_dir / "manifest.json"
-        assert manifest_path.exists()
-        manifest = json.loads(manifest_path.read_text())
-        assert manifest["lod_kind"] == "substitutive"
-        assert manifest["compression_factor"] == 2
-        assert manifest["levels"] == 2
-        # 3 entries (level 0 = original + 2 coarser levels)
-        assert len(manifest["levels_data"]) == 3
+        assert out_path.is_dir()
+        loaded = GSplatData.load(out_path)
+        # n_substitutive = levels + 1 (= 3 for L=2)
+        assert loaded.n_substitutive == 3
+        # Each substitutive level is a single additive sub-LOD
+        for lev in loaded.substitutive_levels:
+            assert lev.n_additive_lods == 1
+        # compression_factor = K^level_index = 2^s
+        assert [lev.compression_factor for lev in loaded.substitutive_levels] == [1, 2, 4]
 
     def test_lod_substitutive_quiet_suppresses_per_level_lines(
         self,
@@ -2029,7 +2029,7 @@ class TestLODCommand:
         tmp_path: Path,
     ) -> None:
         """`--quiet` suppresses per-level enumeration."""
-        out_dir = tmp_path / "hierarchy_quiet"
+        out_path = tmp_path / "hierarchy_quiet.gsplats.zarr"
         result = runner.invoke(
             app,
             [
@@ -2037,7 +2037,7 @@ class TestLODCommand:
                 "lod",
                 "substitutive",
                 str(medium_gsplats),
-                str(out_dir),
+                str(out_path),
                 "--K", "2",
                 "--L", "1",
                 "--device", "cpu",
@@ -2045,10 +2045,103 @@ class TestLODCommand:
             ],
         )
         assert result.exit_code == 0, f"quiet substitutive failed:\n{result.stdout}"
-        assert (out_dir / "manifest.json").exists()
-        # The per-level "level 0: ... splats" / "Wrote manifest" lines are gated
+        assert out_path.is_dir()
+        # The per-level "level 0: ... splats" / "Wrote ..." lines are gated
         assert "level 0:" not in result.stdout
-        assert "Wrote manifest" not in result.stdout
+        assert "Wrote" not in result.stdout
+
+    def test_lod_pyramid_full_matrix(
+        self,
+        runner: CliRunner,
+        medium_gsplats: Path,
+        tmp_path: Path,
+    ) -> None:
+        """`lod pyramid` builds the full [N, M] LOD matrix in one shot."""
+        from luxar.gsplats import GSplatData
+
+        out_path = tmp_path / "pyramid.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "lod",
+                "pyramid",
+                str(medium_gsplats),
+                str(out_path),
+                "--substitutive", "K=2,L=2",
+                "--additive", "2",
+                "--additive-method", "self_energy",
+                "--device", "cpu",
+            ],
+        )
+        assert result.exit_code == 0, f"lod pyramid failed:\n{result.stdout}"
+        loaded = GSplatData.load(out_path)
+        assert loaded.n_substitutive == 3
+        # Each substitutive level has its own additive ladder (<= 2; may clamp on tiny levels)
+        for lev in loaded.substitutive_levels:
+            assert 1 <= lev.n_additive_lods <= 2
+
+    def test_lod_additive_substitutive_level_kwarg(
+        self,
+        runner: CliRunner,
+        medium_gsplats: Path,
+        tmp_path: Path,
+    ) -> None:
+        """`lod additive --substitutive-level` targets a specific level of a pyramid."""
+        from luxar.gsplats import GSplatData
+
+        # First build a 3-level substitutive pyramid (M_i = 1 each).
+        pyramid_path = tmp_path / "pyramid.gsplats.zarr"
+        r1 = runner.invoke(
+            app,
+            [
+                "gsplat", "lod", "substitutive",
+                str(medium_gsplats), str(pyramid_path),
+                "--K", "2", "--L", "2", "--device", "cpu",
+            ],
+        )
+        assert r1.exit_code == 0, f"substitutive prep failed:\n{r1.stdout}"
+
+        # Now add an additive ladder on substitutive level 1 only.
+        ladder_path = tmp_path / "ladder.gsplats.zarr"
+        r2 = runner.invoke(
+            app,
+            [
+                "gsplat", "lod", "additive",
+                str(pyramid_path), str(ladder_path),
+                "--n-lods", "2", "--method", "self_energy",
+                "--substitutive-level", "1",
+            ],
+        )
+        assert r2.exit_code == 0, f"additive on level 1 failed:\n{r2.stdout}"
+
+        loaded = GSplatData.load(ladder_path)
+        assert loaded.n_substitutive == 3
+        # Level 0 and 2 carried over unchanged: still M=1
+        assert loaded.substitutive_levels[0].n_additive_lods == 1
+        assert loaded.substitutive_levels[2].n_additive_lods == 1
+        # Level 1 now has additive ladder
+        assert loaded.substitutive_levels[1].n_additive_lods >= 1
+
+    def test_lod_additive_substitutive_level_out_of_bounds(
+        self,
+        runner: CliRunner,
+        medium_gsplats: Path,
+        tmp_path: Path,
+    ) -> None:
+        """Out-of-bounds --substitutive-level should error cleanly."""
+        out_path = tmp_path / "fail.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat", "lod", "additive",
+                str(medium_gsplats), str(out_path),
+                "--n-lods", "2", "--method", "self_energy",
+                "--substitutive-level", "5",
+            ],
+        )
+        assert result.exit_code != 0
+        assert not out_path.exists()
 
 
 class TestMigrateFormatCommand:

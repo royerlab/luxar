@@ -175,7 +175,7 @@ def main() -> None:
             )
 
         with asection("Substitutive LOD"):
-            hierarchy = make_substitutive_lod(
+            pyramid = make_substitutive_lod(
                 fitted,
                 compression_factor=COMPRESSION_FACTOR,
                 levels=LEVELS,
@@ -186,6 +186,10 @@ def main() -> None:
                 seed=SEED,
                 verbose=False,
             )
+            # Materialise per-level views for convenient enumeration.
+            hierarchy = [
+                pyramid.at_substitutive(s) for s in range(pyramid.n_substitutive)
+            ]
             for level_idx, lev in enumerate(hierarchy):
                 aprint(f"  level {level_idx}: {lev.n_splats} splats")
 

@@ -34,7 +34,11 @@ import numpy as np
 from scipy import sparse
 from scipy.sparse.linalg import eigsh
 
-from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
+from luxar.gsplats.gsplat_data import (
+    AdditiveSubLOD,
+    GSplatData,
+    SubstitutiveLevel,
+)
 from luxar.gsplats.lod._kernels import (
     gaussian_pair_inner_product_numpy,
     gaussian_self_energy_numpy,
@@ -483,18 +487,23 @@ def make_additive_lod(
     truncation_sigmas: float = 3.0,
     max_n_dense: int = 2_000,
     seed: int | None = None,
+    substitutive_level: int | None = None,
 ) -> GSplatData:
     """Permute and split a fitted gsplat dataset into a multi-LOD ladder.
 
     The result is a ``GSplatData`` with ``n_lods`` (or as resolved by
-    ``breakpoints``) ``AdditiveSubLOD`` levels.  ``up_to_lod(k)`` returns the
-    valid additive prefix of size $\\sum_{\\ell \\leq k} N_\\ell$.
+    ``breakpoints``) ``AdditiveSubLOD`` levels on the selected
+    substitutive level.  ``additive_prefix(k)`` returns the valid
+    additive prefix of size :math:`\\sum_{\\ell \\leq k} N_\\ell` for
+    that level.
 
     Parameters
     ----------
     data : GSplatData
-        Fitted gsplat dataset (single- or multi-LOD; the input is
-        flattened internally before ordering).
+        Fitted gsplat dataset. May be multi-substitutive: the
+        ``substitutive_level`` argument (default = default substitutive
+        level) selects which level receives the new additive ladder.
+        Other substitutive levels are carried over verbatim.
     n_lods : int
         Number of LOD levels when ``breakpoints='equal-count'``.  Ignored
         when ``breakpoints`` is a list (the list length determines the
@@ -513,70 +522,135 @@ def make_additive_lod(
         Threshold below which ``greedy`` uses a dense Gram + scan-greedy.
     seed : int, optional
         Random seed for ``method='random'``.
+    substitutive_level : int, optional
+        Index of the substitutive level to build the ladder for. Defaults
+        to ``data.default_substitutive``.
 
     Returns
     -------
     GSplatData
-        Multi-LOD container; ``up_to_lod(k)`` is a valid prefix sum.
+        A v2.0 ``GSplatData`` with the same ``n_substitutive`` as
+        ``data``; the selected level's additive sub-LODs form the new
+        ladder, other substitutive levels are passed through unchanged.
     """
-    n = data.n_splats
-    if n == 0:
-        return data.flattened()
-
-    order = compute_additive_order(
-        data,
-        method=method,
-        truncation_sigmas=truncation_sigmas,
-        max_n_dense=max_n_dense,
-        seed=seed,
+    s_target = (
+        data.default_substitutive
+        if substitutive_level is None
+        else int(substitutive_level)
     )
-
-    cuts_or_fracs, kind = _resolve_breakpoints(n, n_lods, breakpoints)
-
-    if kind == "energy-fractions":
-        # Need the Gram matrix to resolve fractions to counts.
-        gram_csr = _build_sparse_gram(data, sigmas=truncation_sigmas)
-        cuts = _energy_fraction_cuts([float(x) for x in cuts_or_fracs], gram_csr, order)
-    else:
-        cuts = [int(x) for x in cuts_or_fracs]
-
-    centers_full = np.asarray(data.centers)[order]
-    amps_full = np.asarray(data.amplitudes)[order]
-    chol_full = np.asarray(data.cholesky_factors)[order]
-    colors_full = np.asarray(data.colors)[order] if data.colors is not None else None
-
-    lods: list[AdditiveSubLOD] = []
-    prev = 0
-    for level, end in enumerate(cuts):
-        end = int(end)
-        if end <= prev:
-            continue  # skip degenerate empty slice
-        lod_stats: dict[str, Any] = {
-            "lod_method": method,
-            "lod_level": level,
-            "lod_breakpoints_kind": kind,
-            "lod_n_splats": int(end - prev),
-            "lod_cumulative_n": end,
-        }
-        lods.append(
-            AdditiveSubLOD(
-                centers=centers_full[prev:end].astype(np.float32, copy=False),
-                amplitudes=amps_full[prev:end].astype(np.float32, copy=False),
-                cholesky_factors=chol_full[prev:end].astype(np.float32, copy=False),
-                colors=(colors_full[prev:end] if colors_full is not None else None),
-                stats=lod_stats,
-                truncation_radius=data.truncation_radius,
-            )
+    if not (0 <= s_target < data.n_substitutive):
+        raise ValueError(
+            f"substitutive_level={s_target} is out of bounds for "
+            f"n_substitutive={data.n_substitutive}"
         )
-        prev = end
+
+    # Build the new additive ladder on the chosen substitutive level
+    target_view = data.at_substitutive(s_target).flattened()
+    n = target_view.n_splats
+
+    if n == 0:
+        new_sublods: list[AdditiveSubLOD] = [
+            AdditiveSubLOD(
+                centers=np.asarray(target_view.centers, dtype=np.float32),
+                amplitudes=np.asarray(target_view.amplitudes, dtype=np.float32),
+                cholesky_factors=np.asarray(
+                    target_view.cholesky_factors, dtype=np.float32
+                ),
+                colors=(
+                    np.asarray(target_view.colors)
+                    if target_view.colors is not None
+                    else None
+                ),
+                stats={"lod_method": "none", "lod_level": 0},
+                truncation_radius=target_view.truncation_radius,
+            )
+        ]
+        cuts = [0]
+        kind = "equal-count"
+    else:
+        order = compute_additive_order(
+            target_view,
+            method=method,
+            truncation_sigmas=truncation_sigmas,
+            max_n_dense=max_n_dense,
+            seed=seed,
+        )
+
+        cuts_or_fracs, kind = _resolve_breakpoints(n, n_lods, breakpoints)
+
+        if kind == "energy-fractions":
+            gram_csr = _build_sparse_gram(target_view, sigmas=truncation_sigmas)
+            cuts = _energy_fraction_cuts(
+                [float(x) for x in cuts_or_fracs], gram_csr, order
+            )
+        else:
+            cuts = [int(x) for x in cuts_or_fracs]
+
+        centers_full = np.asarray(target_view.centers)[order]
+        amps_full = np.asarray(target_view.amplitudes)[order]
+        chol_full = np.asarray(target_view.cholesky_factors)[order]
+        colors_full = (
+            np.asarray(target_view.colors)[order]
+            if target_view.colors is not None
+            else None
+        )
+
+        new_sublods = []
+        prev = 0
+        for level, end in enumerate(cuts):
+            end = int(end)
+            if end <= prev:
+                continue
+            lod_stats: dict[str, Any] = {
+                "lod_method": method,
+                "lod_level": level,
+                "lod_breakpoints_kind": kind,
+                "lod_n_splats": int(end - prev),
+                "lod_cumulative_n": end,
+            }
+            new_sublods.append(
+                AdditiveSubLOD(
+                    centers=centers_full[prev:end].astype(np.float32, copy=False),
+                    amplitudes=amps_full[prev:end].astype(np.float32, copy=False),
+                    cholesky_factors=chol_full[prev:end].astype(np.float32, copy=False),
+                    colors=(
+                        colors_full[prev:end] if colors_full is not None else None
+                    ),
+                    stats=lod_stats,
+                    truncation_radius=target_view.truncation_radius,
+                )
+            )
+            prev = end
+
+    # Build new substitutive_levels: replace target index with the new
+    # ladder; carry the rest through verbatim.
+    new_sub_levels = list(data.substitutive_levels)
+    new_sub_levels[s_target] = SubstitutiveLevel(
+        additive_sublods=new_sublods,
+        compression_factor=data.substitutive_levels[s_target].compression_factor,
+        parent_method=data.substitutive_levels[s_target].parent_method,
+        level_index=data.substitutive_levels[s_target].level_index,
+        stats={
+            **data.substitutive_levels[s_target].stats,
+            "lod_method": method,
+            "lod_n_lods": len(new_sublods),
+            "lod_breakpoints_kind": kind,
+            "lod_cutpoints": [int(c) for c in cuts],
+        },
+    )
 
     out_stats = dict(data.stats)
     out_stats.update(
         {
             "lod_method": method,
-            "lod_n_lods": len(lods),
+            "lod_n_lods": len(new_sublods),
             "lod_breakpoints_kind": kind,
             "lod_cutpoints": [int(c) for c in cuts],
+            "lod_substitutive_level": s_target,
         }
     )
-    return GSplatData.from_additive_sublods(lods, stats=out_stats)
+    return GSplatData(
+        substitutive_levels=new_sub_levels,
+        stats=out_stats,
+        default_substitutive=data.default_substitutive,
+    )

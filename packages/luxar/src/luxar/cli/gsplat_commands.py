@@ -4664,6 +4664,17 @@ def lod_additive(
     seed: Optional[int] = typer.Option(
         None, "--seed", help="Random seed for --method=random."
     ),
+    substitutive_level: Optional[int] = typer.Option(
+        None,
+        "--substitutive-level",
+        help=(
+            "When the input is a multi-substitutive pyramid (output of "
+            "`lod substitutive` or `lod pyramid`), build the additive ladder "
+            "on this substitutive level only. Other substitutive levels are "
+            "carried through unchanged. Defaults to the default substitutive "
+            "level (= 0, the finest)."
+        ),
+    ),
     overwrite: bool = typer.Option(
         False, "--overwrite", help="Overwrite output if it exists."
     ),
@@ -4691,8 +4702,10 @@ def lod_additive(
 
     The original splats are reordered by the chosen method, then sliced into
     ``--n-lods`` (or as many levels as ``--breakpoints`` implies) so that
-    ``up_to_lod(k)`` is the best L^2 approximation of the full scene at
-    that splat budget.
+    ``additive_prefix(k)`` is the best L^2 approximation of the full scene
+    at that splat budget. On a multi-substitutive input, the new ladder
+    replaces the chosen substitutive level (default: the finest level);
+    other substitutive levels are passed through unchanged.
 
     Input must be a pre-fitted .gsplats.zarr (output of ``luxar gsplat fit``).
     The canonical end-to-end pipeline is: ``cal`` → ``fit --seeds K*`` →
@@ -4752,6 +4765,16 @@ def lod_additive(
 
             with asection(f"Ordering ({method_norm})"):
                 t0 = time.time()
+                target_sub = (
+                    data.default_substitutive
+                    if substitutive_level is None
+                    else int(substitutive_level)
+                )
+                if not (0 <= target_sub < data.n_substitutive):
+                    raise typer.BadParameter(
+                        f"--substitutive-level {target_sub} is out of bounds "
+                        f"for input with n_substitutive={data.n_substitutive}"
+                    )
                 ladder = make_additive_lod(
                     data,
                     n_lods=n_lods,
@@ -4760,15 +4783,21 @@ def lod_additive(
                     truncation_sigmas=truncation_sigmas,
                     max_n_dense=max_n_dense,
                     seed=seed,
+                    substitutive_level=target_sub,
                 )
-                aprint(f"Built {ladder.n_additive_sublods}-level ladder in {time.time() - t0:.2f}s")
+                # The ladder we just produced lives on `target_sub`; report counts
+                # from that level (other substitutive levels were carried over).
+                touched_level = ladder.substitutive_levels[target_sub]
+                aprint(
+                    f"Built {touched_level.n_additive_lods}-level ladder on "
+                    f"substitutive level {target_sub} in {time.time() - t0:.2f}s"
+                )
                 cuts = ladder.stats.get("lod_cutpoints", [])
                 kind = ladder.stats.get("lod_breakpoints_kind", "?")
                 if not quiet:
                     aprint(f"Cutpoints ({kind}): {cuts}")
-                    for level in range(ladder.n_additive_sublods):
-                        lod = ladder.additive_sublod(level)
-                        aprint(f"  LOD {level}: {lod.n_splats:,} splats")
+                    for level, sublod in enumerate(touched_level.additive_sublods):
+                        aprint(f"  LOD {level}: {sublod.n_splats:,} splats")
 
             with asection("Saving"):
                 if output_path.exists() and overwrite:
@@ -4809,11 +4838,12 @@ def lod_substitutive(
     input_path: Path = typer.Argument(
         ..., exists=True, help="Input .gsplats.zarr (single- or multi-LOD)"
     ),
-    output_dir: Path = typer.Argument(
+    output_path: Path = typer.Argument(
         ...,
         help=(
-            "Output directory; one .gsplats.zarr per level + manifest.json. "
-            "Each level is loadable independently with `luxar gsplat info`."
+            "Output .gsplats.zarr (v2.0) holding the full substitutive "
+            "hierarchy as ``splats/substitutive_<s>/additive_0/`` cells. "
+            "Loadable with ``luxar gsplat info``."
         ),
     ),
     compression_factor: int = typer.Option(
@@ -4874,7 +4904,7 @@ def lod_substitutive(
         None,
         "--compress",
         help=(
-            "Optional per-level compression: 'zip' or 'tar.gz'. "
+            "Optional output compression: 'zip' or 'tar.gz'. "
             "Omit for plain .gsplats.zarr directories."
         ),
     ),
@@ -4888,26 +4918,27 @@ def lod_substitutive(
 ) -> None:
     """Build a substitutive LOD hierarchy from a fitted gsplat dataset.
 
-    Each coarser level contains synthesised representative splats that
-    *replace* the previous level (compression factor K per step). The
-    output directory contains one .gsplats.zarr per level (level_0 is the
-    original input) plus manifest.json describing the hierarchy.
+    Each coarser substitutive level contains synthesised representative
+    splats that *replace* the previous level (compression factor K per
+    step). The full hierarchy is written to a single v2.0 .gsplats.zarr
+    file (``splats/substitutive_<s>/additive_0/`` per cell), loadable
+    independently and renderable level-by-level by the viewer.
 
     Input must be a pre-fitted .gsplats.zarr (output of ``luxar gsplat fit``).
     The canonical end-to-end pipeline is: ``cal`` → ``fit --seeds K*`` →
-    ``lod substitutive``.
+    ``lod substitutive``. For a 2-D ``[N, M]`` pyramid combining
+    substitutive + additive in one shot, use ``luxar gsplat lod pyramid``.
 
     \b
     Examples:
-        luxar gsplat lod substitutive in.gsplats.zarr out_dir/
-        luxar gsplat lod substitutive in.gsplats.zarr out_dir/ --K 4 --L 3
-        luxar gsplat lod substitutive in.gsplats.zarr out_dir/ \\
+        luxar gsplat lod substitutive in.gsplats.zarr out.gsplats.zarr
+        luxar gsplat lod substitutive in.gsplats.zarr out.gsplats.zarr --K 4 --L 3
+        luxar gsplat lod substitutive in.gsplats.zarr out.gsplats.zarr \\
             --method kmeans-lloyd --lloyd-iters 5
-        luxar gsplat lod substitutive in.gsplats.zarr out_dir/ \\
+        luxar gsplat lod substitutive in.gsplats.zarr out.gsplats.zarr \\
             --method greedy_lloyd --K 2
     """
     try:
-        import json
         import shutil
         import time
 
@@ -4927,9 +4958,9 @@ def lod_substitutive(
                 f"--compress must be 'zip' or 'tar.gz'; got {compress!r}"
             )
 
-        if output_dir.exists() and not overwrite:
+        if output_path.exists() and not overwrite:
             raise typer.BadParameter(
-                f"Output {output_dir} exists; pass --overwrite to replace it."
+                f"Output {output_path} exists; pass --overwrite to replace it."
             )
 
         with asection(f"LOD substitutive: {input_path.name}"):
@@ -4946,7 +4977,7 @@ def lod_substitutive(
                 f"Reducing ({method_norm}, K={compression_factor}, L={levels})"
             ):
                 t0 = time.time()
-                hierarchy = make_substitutive_lod(
+                pyramid = make_substitutive_lod(
                     data,
                     compression_factor=compression_factor,
                     levels=levels,
@@ -4958,57 +4989,275 @@ def lod_substitutive(
                     verbose=False,
                 )
                 aprint(
-                    f"Built {len(hierarchy)}-level hierarchy in {time.time() - t0:.2f}s"
+                    f"Built {pyramid.n_substitutive}-level pyramid "
+                    f"in {time.time() - t0:.2f}s"
                 )
                 if not quiet:
-                    for level_idx, lev in enumerate(hierarchy):
-                        aprint(f"  level {level_idx}: {lev.n_splats:,} splats")
+                    for s, lev in enumerate(pyramid.substitutive_levels):
+                        aprint(f"  level {s}: {lev.n_splats_total:,} splats")
 
             with asection("Saving"):
-                if output_dir.exists() and overwrite:
-                    if output_dir.is_dir():
-                        shutil.rmtree(output_dir)
+                if output_path.exists() and overwrite:
+                    if output_path.is_dir():
+                        shutil.rmtree(output_path)
                     else:
-                        output_dir.unlink()
-                output_dir.mkdir(parents=True, exist_ok=False)
-
-                manifest_levels: list[dict[str, Any]] = []
-                for level_idx, lev in enumerate(hierarchy):
-                    file_name = f"level_{level_idx}.gsplats.zarr"
-                    if compress == "zip":
-                        file_name += ".zip"
-                    elif compress == "tar.gz":
-                        file_name += ".tar.gz"
-                    out_path = output_dir / file_name
-                    lev.save(
-                        out_path,
-                        encoding_mode=encoding_mode_obj,
-                        compress=compress,  # type: ignore[arg-type]
-                    )
-                    manifest_levels.append(
-                        {
-                            "level": level_idx,
-                            "file": file_name,
-                            "n_splats": int(lev.n_splats),
-                        }
-                    )
-
-                manifest = {
-                    "lod_kind": "substitutive",
-                    "compression_factor": int(compression_factor),
-                    "levels": int(levels),
-                    "method": method_norm,
-                    "lloyd_iterations": int(lloyd_iterations),
-                    "candidate_bins_k": int(candidate_bins_k),
-                    "seed": seed,
-                    "input_n_splats": int(data.n_splats),
-                    "input_ndim": int(data.ndim),
-                    "levels_data": manifest_levels,
-                }
-                manifest_path = output_dir / "manifest.json"
-                manifest_path.write_text(json.dumps(manifest, indent=2))
+                        output_path.unlink()
+                pyramid.save(
+                    output_path,
+                    encoding_mode=encoding_mode_obj,
+                    compress=compress,  # type: ignore[arg-type]
+                )
                 if not quiet:
-                    aprint(f"Wrote manifest to {manifest_path}")
+                    aprint(f"Wrote {output_path}")
+
+    except typer.Exit:
+        raise
+    except typer.BadParameter:
+        raise
+    except Exception as e:
+        aprint(f"Error: {e}")
+        import traceback
+
+        traceback.print_exc()
+        raise typer.Exit(1) from e
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# lod pyramid — Build the 2-D LOD matrix (substitutive × additive) in one shot
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def _parse_substitutive_spec(spec: str) -> tuple[int, int]:
+    """Parse ``--substitutive K=4,L=3`` into ``(K, L)``."""
+    parts = [p.strip() for p in spec.split(",") if p.strip()]
+    kv = {}
+    for p in parts:
+        if "=" not in p:
+            raise typer.BadParameter(
+                f"--substitutive must be 'K=<int>,L=<int>'; got {spec!r}"
+            )
+        k, _, v = p.partition("=")
+        kv[k.strip().upper()] = v.strip()
+    if "K" not in kv or "L" not in kv:
+        raise typer.BadParameter(
+            f"--substitutive must specify both K and L; got {spec!r}"
+        )
+    try:
+        K = int(kv["K"])
+        L = int(kv["L"])
+    except ValueError as exc:
+        raise typer.BadParameter(
+            f"--substitutive K and L must be integers; got {spec!r}"
+        ) from exc
+    if K < 2 or L < 1:
+        raise typer.BadParameter(
+            f"--substitutive requires K>=2 and L>=1; got K={K}, L={L}"
+        )
+    return K, L
+
+
+@app_lod.command("pyramid")
+def lod_pyramid(
+    input_path: Path = typer.Argument(
+        ..., exists=True, help="Input .gsplats.zarr (fitted)."
+    ),
+    output_path: Path = typer.Argument(
+        ...,
+        help=(
+            "Output .gsplats.zarr (v2.0) carrying the full 2-D pyramid: "
+            "``splats/substitutive_<s>/additive_<a>/`` per cell."
+        ),
+    ),
+    substitutive: str = typer.Option(
+        "K=4,L=3",
+        "--substitutive",
+        help=(
+            "Substitutive axis spec as ``K=<int>,L=<int>`` where K is the "
+            "per-level compression factor and L is the number of coarser "
+            "substitutive levels (so n_substitutive = L+1)."
+        ),
+    ),
+    additive: int = typer.Option(
+        4,
+        "--additive",
+        help="Number of additive sub-LODs per substitutive level.",
+        min=1,
+    ),
+    substitutive_method: str = typer.Option(
+        "kmeans_lloyd",
+        "--substitutive-method",
+        help=(
+            "Substitutive partition algorithm "
+            "(kmeans_lloyd | kmeans | greedy | greedy_lloyd)."
+        ),
+    ),
+    additive_method: str = typer.Option(
+        "greedy",
+        "--additive-method",
+        help=(
+            "Additive ordering algorithm "
+            "(greedy | self_energy | mass | amplitude | spectral | random)."
+        ),
+    ),
+    breakpoints: str = typer.Option(
+        "equal-count",
+        "--breakpoints",
+        "-b",
+        help=(
+            "Additive breakpoints: 'equal-count', 'counts:N1,N2,...', or "
+            "'energy:f1,f2,...'. Applied to every substitutive level."
+        ),
+    ),
+    lloyd_iterations: int = typer.Option(
+        5,
+        "--lloyd-iters",
+        help="Max Lloyd refinement passes per substitutive level.",
+        min=0,
+    ),
+    candidate_bins_k: int = typer.Option(
+        12,
+        "--candidate-bins-k",
+        help="Top-k spatial-hash candidates per splat during Lloyd.",
+        min=1,
+    ),
+    truncation_sigmas: float = typer.Option(
+        3.0,
+        "--truncation-sigmas",
+        help="Mahalanobis cutoff for additive sparse-Gram pruning.",
+    ),
+    max_n_dense: int = typer.Option(
+        2000,
+        "--max-n-dense",
+        help="Additive greedy switches to dense Gram at N <= this.",
+    ),
+    device: str = typer.Option(
+        "auto",
+        "--device",
+        help="PyTorch device for substitutive reduction: auto | cpu | cuda | mps.",
+    ),
+    seed: Optional[int] = typer.Option(
+        None, "--seed", help="Shared RNG seed (per-axis offsets are added internally)."
+    ),
+    overwrite: bool = typer.Option(
+        False, "--overwrite", help="Overwrite output if it exists."
+    ),
+    encoding_mode: Literal["auto", "precision", "memory"] = typer.Option(
+        "auto",
+        "--encoding",
+        "-e",
+        help="Encoding mode for output.",
+    ),
+    compress: Optional[str] = typer.Option(
+        None,
+        "--compress",
+        help="Optional output compression: 'zip' or 'tar.gz'.",
+    ),
+    quiet: bool = typer.Option(
+        False,
+        "--quiet",
+        "-q",
+        help="Suppress per-level enumeration; top-level asection headers remain.",
+    ),
+) -> None:
+    """Build the full 2-D LOD pyramid (substitutive × additive) in one shot.
+
+    Equivalent to running ``lod substitutive`` then ``lod additive
+    --substitutive-level`` for every substitutive level, but written as
+    a single composite invocation that produces one v2.0 .gsplats.zarr
+    file with shape ``[L+1, additive]``.
+
+    \b
+    Examples:
+        luxar gsplat lod pyramid in.gsplats.zarr out.gsplats.zarr \\
+            --substitutive K=4,L=3 --additive 4
+        luxar gsplat lod pyramid in.gsplats.zarr out.gsplats.zarr \\
+            --substitutive K=2,L=2 --additive 3 \\
+            --substitutive-method kmeans_lloyd --additive-method greedy
+    """
+    try:
+        import shutil
+        import time
+
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.lod import make_lod_pyramid
+
+        sub_norm = substitutive_method.strip().replace("-", "_")
+        if sub_norm not in _VALID_SUBSTITUTIVE_METHODS:
+            raise typer.BadParameter(
+                f"--substitutive-method must be one of "
+                f"{sorted(_VALID_SUBSTITUTIVE_METHODS)}, got {substitutive_method!r}"
+            )
+        add_norm = additive_method.strip().replace("-", "_")
+        valid_additive = {
+            "greedy", "self_energy", "mass", "amplitude", "spectral", "random",
+        }
+        if add_norm not in valid_additive:
+            raise typer.BadParameter(
+                f"--additive-method must be one of {sorted(valid_additive)}, "
+                f"got {additive_method!r}"
+            )
+        K, L = _parse_substitutive_spec(substitutive)
+        bp = _parse_lod_breakpoints(breakpoints)
+        encoding_mode_obj = _resolve_encoding_mode(encoding_mode)
+        if compress not in (None, "zip", "tar.gz"):
+            raise typer.BadParameter(
+                f"--compress must be 'zip' or 'tar.gz'; got {compress!r}"
+            )
+        if output_path.exists() and not overwrite:
+            raise typer.BadParameter(
+                f"Output {output_path} exists; pass --overwrite to replace it."
+            )
+
+        with asection(f"LOD pyramid: {input_path.name}"):
+            with asection("Loading dataset"):
+                data = GSplatData.load(input_path, include_stats=True)
+                aprint(f"Loaded {data.n_splats:,} splats ({data.ndim}D)")
+
+            with asection(
+                f"Building pyramid (K={K}, L={L}, additive={additive}, "
+                f"sub={sub_norm}, add={add_norm})"
+            ):
+                t0 = time.time()
+                pyramid = make_lod_pyramid(
+                    data,
+                    compression_factor=K,
+                    levels=L,
+                    substitutive_method=sub_norm,  # type: ignore[arg-type]
+                    lloyd_iterations=lloyd_iterations,
+                    candidate_bins_k=candidate_bins_k,
+                    device=device,
+                    n_additive_lods=additive,
+                    additive_method=add_norm,  # type: ignore[arg-type]
+                    breakpoints=bp,  # type: ignore[arg-type]
+                    truncation_sigmas=truncation_sigmas,
+                    max_n_dense=max_n_dense,
+                    seed=seed,
+                    verbose=False,
+                )
+                aprint(
+                    f"Built {pyramid.n_substitutive}-level pyramid in "
+                    f"{time.time() - t0:.2f}s"
+                )
+                if not quiet:
+                    for s, lev in enumerate(pyramid.substitutive_levels):
+                        aprint(
+                            f"  substitutive {s}: {lev.n_splats_total:,} splats, "
+                            f"{lev.n_additive_lods} additive sub-LOD(s)"
+                        )
+
+            with asection("Saving"):
+                if output_path.exists() and overwrite:
+                    if output_path.is_dir():
+                        shutil.rmtree(output_path)
+                    else:
+                        output_path.unlink()
+                pyramid.save(
+                    output_path,
+                    encoding_mode=encoding_mode_obj,
+                    compress=compress,  # type: ignore[arg-type]
+                )
+                if not quiet:
+                    aprint(f"Wrote {output_path}")
 
     except typer.Exit:
         raise

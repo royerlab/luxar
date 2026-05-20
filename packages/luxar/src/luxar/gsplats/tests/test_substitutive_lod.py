@@ -175,7 +175,7 @@ class TestHierarchy:
     )
     def test_counts_K4_L2(self, method):
         data = _make_isotropic_3d(n=64, seed=1)
-        levels = make_substitutive_lod(
+        pyramid = make_substitutive_lod(
             data,
             compression_factor=4,
             levels=2,
@@ -185,20 +185,20 @@ class TestHierarchy:
             device="cpu",
             seed=42,
         )
-        assert len(levels) == 3
+        assert pyramid.n_substitutive == 3
         # Level 0 unchanged
-        assert levels[0].n_splats == 64
+        assert pyramid.substitutive_levels[0].n_splats_total == 64
         # Levels 1, 2: ceil(64/4)=16, ceil(16/4)=4
         # (k-means may produce empty bins → fewer; assert <= target)
-        assert 1 <= levels[1].n_splats <= 16
-        assert 1 <= levels[2].n_splats <= 4
+        assert 1 <= pyramid.substitutive_levels[1].n_splats_total <= 16
+        assert 1 <= pyramid.substitutive_levels[2].n_splats_total <= 4
 
     @pytest.mark.parametrize(
         "method", ["kmeans", "kmeans_lloyd", "greedy", "greedy_lloyd"]
     )
     def test_levels_are_flat(self, method):
         data = _make_isotropic_3d(n=32, seed=1)
-        levels = make_substitutive_lod(
+        pyramid = make_substitutive_lod(
             data,
             compression_factor=4,
             levels=2,
@@ -208,12 +208,12 @@ class TestHierarchy:
             device="cpu",
             seed=0,
         )
-        for lev in levels:
-            assert lev.n_additive_sublods == 1, f"{method} produced multi-LOD level"
+        for lev in pyramid.substitutive_levels:
+            assert lev.n_additive_lods == 1, f"{method} produced multi-additive level"
 
     def test_levels_eq_one(self):
         data = _make_isotropic_3d(n=20, seed=1)
-        levels = make_substitutive_lod(
+        pyramid = make_substitutive_lod(
             data,
             compression_factor=4,
             levels=1,
@@ -223,14 +223,14 @@ class TestHierarchy:
             device="cpu",
             seed=0,
         )
-        assert len(levels) == 2
-        assert levels[0].n_splats == 20
-        assert levels[1].n_splats <= 5
+        assert pyramid.n_substitutive == 2
+        assert pyramid.substitutive_levels[0].n_splats_total == 20
+        assert pyramid.substitutive_levels[1].n_splats_total <= 5
 
     def test_n_too_small_for_K(self):
         """N=10, K=4, L=3: levels collapse but don't crash."""
         data = _make_isotropic_3d(n=10, seed=1)
-        levels = make_substitutive_lod(
+        pyramid = make_substitutive_lod(
             data,
             compression_factor=4,
             levels=3,
@@ -241,7 +241,7 @@ class TestHierarchy:
             seed=0,
         )
         # Should produce something for each level (some may be n=1 with stop reason)
-        assert len(levels) >= 2
+        assert pyramid.n_substitutive >= 2
 
     def test_empty_input_raises_or_handled(self):
         """Empty input: API contract is to refuse via ValueError or
@@ -249,7 +249,7 @@ class TestHierarchy:
         data = _empty_3d()
         # The current implementation hits the n_splats <= 1 short-circuit
         # which appends a stats-only level and stops.
-        levels = make_substitutive_lod(
+        pyramid = make_substitutive_lod(
             data,
             compression_factor=4,
             levels=2,
@@ -257,7 +257,7 @@ class TestHierarchy:
             device="cpu",
             seed=0,
         )
-        assert levels[0].n_splats == 0
+        assert pyramid.substitutive_levels[0].n_splats_total == 0
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -266,13 +266,14 @@ class TestHierarchy:
 
 
 def _total_residual_for_assignments(
-    data: GSplatData, levels_out: list[GSplatData]
+    data: GSplatData, pyramid: GSplatData
 ) -> float:
     """Helper: compute the sum of residual energies of all bins in
     a single-level reduction, recovering it from the difference
     ``‖f‖² - ⟨f, g⟩`` at the level."""
-    # We reverse-engineer this via the reduce operator's level 1 stats.
-    return float(levels_out[1].stats.get("residual_energy", float("nan")))
+    return float(
+        pyramid.substitutive_levels[1].stats.get("residual_energy", float("nan"))
+    )
 
 
 class TestLloyd:
@@ -306,8 +307,8 @@ class TestLloyd:
         # representative splats should fit the data at least as well as
         # the kmeans-only baseline. Compare squared L2 residual of
         # f - g, computed on a deterministic query grid.
-        rel_l2_kmeans = _rel_l2_render(data, out_kmeans[1])
-        rel_l2_lloyd = _rel_l2_render(data, out_lloyd[1])
+        rel_l2_kmeans = _rel_l2_render(data, out_kmeans.at_substitutive(1))
+        rel_l2_lloyd = _rel_l2_render(data, out_lloyd.at_substitutive(1))
         # Lloyd should not be substantially worse than kmeans on this
         # small synthetic; in practice it tends to improve, but for the
         # monotonicity contract we just require non-regression
@@ -336,10 +337,11 @@ class TestLloyd:
             device="cpu",
             seed=11,
         )
-        assert out[1].n_splats >= 1
+        level_1 = out.at_substitutive(1)
+        assert level_1.n_splats >= 1
         # All representative amplitudes finite + non-negative.
-        assert np.all(np.isfinite(out[1].amplitudes))
-        assert np.all(out[1].amplitudes >= 0)
+        assert np.all(np.isfinite(level_1.amplitudes))
+        assert np.all(level_1.amplitudes >= 0)
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -393,7 +395,7 @@ class TestApiContract:
     def test_device_auto_smoke(self):
         """``device='auto'`` shouldn't crash regardless of GPU presence."""
         data = _make_isotropic_3d(n=16, seed=0)
-        levels = make_substitutive_lod(
+        pyramid = make_substitutive_lod(
             data,
             compression_factor=4,
             levels=1,
@@ -403,11 +405,11 @@ class TestApiContract:
             device="auto",
             seed=0,
         )
-        assert len(levels) == 2
+        assert pyramid.n_substitutive == 2
 
     def test_stats_recorded(self):
         data = _make_isotropic_3d(n=16, seed=0)
-        levels = make_substitutive_lod(
+        pyramid = make_substitutive_lod(
             data,
             compression_factor=4,
             levels=2,
@@ -417,16 +419,24 @@ class TestApiContract:
             device="cpu",
             seed=0,
         )
-        # Levels 1+ carry substitutive metadata.
-        for lev in levels[1:]:
-            assert lev.stats["lod_kind"] == "substitutive"
-            assert lev.stats["compression_factor"] == 4
-            assert lev.stats["method"] == "kmeans_lloyd"
+        # Top-level pyramid stats carry the substitutive metadata.
+        assert pyramid.stats["lod_kind"] == "substitutive"
+        assert pyramid.stats["compression_factor"] == 4
+        assert pyramid.stats["method"] == "kmeans_lloyd"
+        # Per-level metadata: compression_factor = K^level_index.
+        K = 4
+        for s, lev in enumerate(pyramid.substitutive_levels):
+            assert lev.compression_factor == K**s
+            assert lev.level_index == s
+            if s == 0:
+                assert lev.parent_method is None
+            else:
+                assert lev.parent_method == "kmeans_lloyd"
 
     def test_save_load_roundtrip(self, tmp_path):
-        """Each level can be saved and loaded as a standalone zarr."""
+        """The pyramid round-trips through a single v2.0 .gsplats.zarr."""
         data = _make_isotropic_3d(n=16, seed=0)
-        levels = make_substitutive_lod(
+        pyramid = make_substitutive_lod(
             data,
             compression_factor=4,
             levels=1,
@@ -436,7 +446,12 @@ class TestApiContract:
             device="cpu",
             seed=0,
         )
-        path = tmp_path / "level_1.gsplats.zarr"
-        levels[1].save(str(path), ordering="none")
+        path = tmp_path / "pyramid.gsplats.zarr"
+        pyramid.save(str(path), ordering="none")
         loaded = GSplatData.load(str(path), include_stats=True)
-        assert loaded.n_splats == levels[1].n_splats
+        assert loaded.n_substitutive == pyramid.n_substitutive
+        for s in range(pyramid.n_substitutive):
+            assert (
+                loaded.substitutive_levels[s].n_splats_total
+                == pyramid.substitutive_levels[s].n_splats_total
+            )

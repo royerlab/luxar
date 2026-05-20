@@ -220,3 +220,71 @@ def test_lod_stats_recorded() -> None:
         lod_stats = ladder.additive_sublod(level).stats
         assert lod_stats["lod_method"] == "self_energy"
         assert lod_stats["lod_level"] == level
+
+
+def test_make_additive_lod_substitutive_level_arg() -> None:
+    """`substitutive_level` selects which substitutive level receives the new ladder."""
+    from luxar.gsplats.lod import make_substitutive_lod
+
+    data = _make_random_gsplat(n=32, ndim=3, seed=12)
+    pyr = make_substitutive_lod(
+        data, compression_factor=4, levels=2, method="kmeans_lloyd", device="cpu", seed=0
+    )
+    # Pyramid has 3 substitutive levels, each with M=1 additive sub-LOD.
+    assert pyr.n_substitutive == 3
+    for s in range(3):
+        assert pyr.substitutive_levels[s].n_additive_lods == 1
+
+    # Build an additive ladder on substitutive level 1 only.
+    ladded = make_additive_lod(
+        pyr,
+        n_lods=3,
+        method="self_energy",
+        substitutive_level=1,
+    )
+    # Same n_substitutive, level 1 has 3 sub-LODs, others unchanged.
+    assert ladded.n_substitutive == 3
+    assert ladded.substitutive_levels[0].n_additive_lods == 1
+    assert ladded.substitutive_levels[1].n_additive_lods <= 3
+    assert ladded.substitutive_levels[2].n_additive_lods == 1
+    # Total splats per level preserved
+    for s in range(3):
+        assert (
+            ladded.substitutive_levels[s].n_splats_total
+            == pyr.substitutive_levels[s].n_splats_total
+        )
+
+
+def test_make_additive_lod_substitutive_level_out_of_bounds() -> None:
+    data = _make_random_gsplat(n=8, ndim=3, seed=13)
+    with pytest.raises(ValueError, match="out of bounds"):
+        make_additive_lod(data, n_lods=2, substitutive_level=2)
+
+
+def test_make_lod_pyramid_full_matrix() -> None:
+    """`make_lod_pyramid` produces a [levels+1, n_additive_lods] matrix."""
+    from luxar.gsplats.lod import make_lod_pyramid
+
+    data = _make_random_gsplat(n=64, ndim=3, seed=14)
+    pyr = make_lod_pyramid(
+        data,
+        compression_factor=4,
+        levels=2,
+        substitutive_method="kmeans_lloyd",
+        n_additive_lods=3,
+        additive_method="self_energy",
+        device="cpu",
+        seed=0,
+    )
+    assert pyr.n_substitutive == 3
+    # Each substitutive level has its own additive ladder (subject to clamping).
+    for s in range(3):
+        lev = pyr.substitutive_levels[s]
+        assert lev.n_additive_lods >= 1
+        # Stats propagated:
+        assert lev.compression_factor == 4**s
+        assert lev.level_index == s
+        if s == 0:
+            assert lev.parent_method is None
+        else:
+            assert lev.parent_method == "kmeans_lloyd"
