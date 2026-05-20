@@ -45,15 +45,11 @@ import {
   handleWheel as handleWheelHelper,
   type FlyWheelCtx,
 } from './luxar-fly-controls/input/wheel';
-
-// Reusable scratch vectors/quaternions to avoid per-frame/per-event allocations.
-// Names are neutral (v0-v3) because these hold different semantic values depending
-// on the call site (e.g., _v0 may be "forward" in update() but "cameraRight" in onMouseMove()).
-const _v0 = new THREE.Vector3();
-const _v1 = new THREE.Vector3();
-const _v2 = new THREE.Vector3();
-const _v3 = new THREE.Vector3();
-const _q0 = new THREE.Quaternion();
+import {
+  integrateTranslation,
+  integrateRotation,
+  type FlyPhysicsCtx,
+} from './luxar-fly-controls/physics';
 
 export interface LuxarFlyControlsConfig {
   movementSpeed?: number; // Units per second
@@ -322,127 +318,34 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
   public update(delta: number): void {
     if (!this.enabled) return;
 
-    // Get movement vectors from orientation quaternion for consistency
-    // This ensures movement is perfectly tied to the control model
-    _v0.set(0, 0, -1).applyQuaternion(this.orientation).normalize();
-    _v1.set(1, 0, 0).applyQuaternion(this.orientation).normalize();
-    _v2.set(0, 1, 0); // Keep world up for vertical rise/fall
-
-    let isMoving = false;
-
-    // Determine effective damping based on mode
-    // Non-inertial mode uses high damping for immediate response
-    const effectiveDamping = this.inertialMode ? this.damping : 0.5;
-    const effectiveRotationDamping = this.inertialMode ? this.rotationDamping : 0.5;
-
-    // Apply speed boost multiplier (2x speed when Shift is held)
-    const speedMultiplier = this.speedBoost ? 2.0 : 1.0;
-
-    // Always use physics-based movement (unified approach)
-    // Calculate acceleration from input.
-    // movementSpeed is the user-facing "speed" parameter (controlled by UI slider
-    // and scale-aware system).
-    _v3.set(0, 0, 0);
-    _v3.addScaledVector(
-      _v0,
-      (this.moveState.forward - this.moveState.back) * this.movementSpeed * speedMultiplier
-    );
-    _v3.addScaledVector(
-      _v1,
-      (this.moveState.right - this.moveState.left) * this.movementSpeed * speedMultiplier
-    );
-    _v3.addScaledVector(
-      _v2,
-      (this.moveState.up - this.moveState.down) * this.movementSpeed * speedMultiplier
-    );
-
-    // Update velocity
-    this.velocity.addScaledVector(_v3, delta);
-
-    // Apply damping
-    this.velocity.multiplyScalar(
-      Math.pow(effectiveDamping, delta * config.controls.fly.physics.dampingPower)
-    );
-
-    // Apply velocity to position
-    this.camera.position.addScaledVector(this.velocity, delta);
-
-    // Check if we're still moving (using configured threshold)
-    if (this.velocity.length() < config.controls.fly.physics.velocityThreshold) {
-      this.velocity.set(0, 0, 0);
-    } else {
-      isMoving = true;
-    }
-
-    // Handle angular velocity for rotation with arrow keys and Q/E roll
-    // True airplane-like fly controls: all rotations relative to camera's local axes
-    if (
-      this.lookState.horizontal !== 0 ||
-      this.lookState.vertical !== 0 ||
-      this.lookState.roll !== 0
-    ) {
-      // Get camera's local axes in world space (reuse _v0/_v1/_v2 — dead after accel at line 530)
-      // These define the rotation axes for consistent airplane-like controls
-      _v0.set(1, 0, 0).applyQuaternion(this.orientation);
-      _v1.set(0, 1, 0).applyQuaternion(this.orientation);
-      _v2.set(0, 0, -1).applyQuaternion(this.orientation);
-
-      if (this.inertialMode) {
-        // Apply angular acceleration (torque)
-        _v3.set(0, 0, 0);
-        // Pitch: rotate around camera's local right axis (negative for correct up/down)
-        _v3.addScaledVector(_v0, -this.lookState.vertical * this.rotationSpeed);
-        // Yaw: rotate around camera's local up axis
-        _v3.addScaledVector(_v1, -this.lookState.horizontal * this.rotationSpeed);
-        // Roll: rotate around camera's local forward axis
-        _v3.addScaledVector(_v2, this.lookState.roll * this.rotationSpeed);
-
-        // Add torque to world-space angular velocity
-        this.angularVelocity.addScaledVector(_v3, delta);
-      } else {
-        // Non-inertial: directly set angular velocity
-        this.angularVelocity.set(0, 0, 0);
-        this.angularVelocity.addScaledVector(_v0, -this.lookState.vertical * this.rotationSpeed);
-        this.angularVelocity.addScaledVector(_v1, -this.lookState.horizontal * this.rotationSpeed);
-        this.angularVelocity.addScaledVector(_v2, this.lookState.roll * this.rotationSpeed);
-      }
-    } else if (!this.inertialMode) {
-      // In non-inertial mode, stop rotation when keys are released
-      // High damping will handle this quickly
-    }
-
-    // Apply angular velocity to orientation
-    const angularSpeed = this.angularVelocity.length();
-    if (angularSpeed > config.controls.fly.physics.angularVelocityThreshold) {
-      // Create rotation from angular velocity
-      const angle = angularSpeed * delta;
-      _v3.copy(this.angularVelocity).normalize();
-      _q0.setFromAxisAngle(_v3, angle);
-
-      // Apply WORLD-space delta rotation (pre-multiply)
-      this.orientation.premultiply(_q0);
-      this.orientation.normalize();
-
-      isMoving = true;
-    }
-
-    // Apply angular damping to world-space angular velocity
-    this.angularVelocity.multiplyScalar(
-      Math.pow(effectiveRotationDamping, delta * config.controls.fly.physics.dampingPower)
-    );
-
-    // Stop tiny rotations
-    if (this.angularVelocity.length() < config.controls.fly.physics.angularVelocityThreshold) {
-      this.angularVelocity.set(0, 0, 0);
-    }
+    const ctx = this.makePhysicsCtx();
+    const translated = integrateTranslation(ctx, delta);
+    const rotated = integrateRotation(ctx, delta);
 
     // Update camera orientation
     this.updateOrientation();
 
     // Dispatch change event if we're moving to keep animation running
-    if (isMoving) {
+    if (translated || rotated) {
       this.dispatchEvent({ type: 'change' });
     }
+  }
+
+  private makePhysicsCtx(): FlyPhysicsCtx {
+    return {
+      camera: this.camera,
+      orientation: this.orientation,
+      velocity: this.velocity,
+      angularVelocity: this.angularVelocity,
+      moveState: this.moveState,
+      lookState: this.lookState,
+      inertialMode: this.inertialMode,
+      damping: this.damping,
+      rotationDamping: this.rotationDamping,
+      movementSpeed: this.movementSpeed,
+      rotationSpeed: this.rotationSpeed,
+      speedBoost: this.speedBoost,
+    };
   }
 
   /**
