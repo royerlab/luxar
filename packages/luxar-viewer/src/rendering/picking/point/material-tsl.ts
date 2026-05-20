@@ -16,17 +16,17 @@
  * `.onUpdate` callback bridge. Three-geometry symmetry with the
  * core PointTSLMaterial.
  *
- * @module rendering/picking/point-picking-material-tsl
+ * @module rendering/picking/point/material-tsl
  */
 
 import * as THREE from 'three';
 import { uniform } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-import { pointPickWebGPUFactory, type PointPickTSLNodes } from './point-pick.tsl';
-import type { CameraAwareMaterial } from '../materials/_shared/camera-aware-material';
-import { computePointSizeFactor, computeMaxPointSize } from '../materials/_shared/camera-uniforms';
-import { proxyIUniform, type TSLNode } from '../materials/_shared/tsl-helpers';
-import type { PointPickingMaterialConfig } from './point-picking-material';
+import { pointPickWebGPUFactory, type PointPickTSLNodes } from './pick.tsl';
+import type { CameraAwareMaterial } from '../../materials/_shared/camera-aware-material';
+import { computePointSizeFactor, computeMaxPointSize } from '../../materials/_shared/camera-uniforms';
+import { proxyIUniform, type TSLNode } from '../../materials/_shared/tsl-helpers';
+import type { PointPickingMaterialConfig } from './material';
 
 export class PointPickingTSLMaterial extends NodeMaterial implements CameraAwareMaterial {
   uniforms: Record<string, THREE.IUniform>;

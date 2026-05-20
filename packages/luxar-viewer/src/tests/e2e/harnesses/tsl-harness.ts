@@ -31,11 +31,11 @@ import { MEGA_SOURCE } from '../../../rendering/post-processing/mega-shader.glsl
 import { megaWebGPUFactory } from '../../../rendering/post-processing/mega.tsl';
 import { POINT_SOURCE } from '../../../rendering/materials/point/shader-glsl';
 import { pointWebGPUFactory } from '../../../rendering/materials/point/shader-tsl';
-import { POINT_PICK_SOURCE } from '../../../rendering/picking/picking-shaders';
+import { POINT_PICK_SOURCE } from '../../../rendering/picking/point/shaders';
 import {
   pointPickWebGPUFactory,
   buildPointPickTSLNodesFromUniforms,
-} from '../../../rendering/picking/point-pick.tsl';
+} from '../../../rendering/picking/point/pick.tsl';
 import { createPointQuadGeometry } from '../../../rendering/point-geometry';
 import { LINE_SOURCE } from '../../../rendering/materials/line/shader-glsl';
 import { lineWebGPUFactory, buildLineTSLNodesFromUniforms } from '../../../rendering/materials/line/shader-tsl';
