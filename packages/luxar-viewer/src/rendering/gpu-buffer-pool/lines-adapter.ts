@@ -13,7 +13,7 @@
 
 import * as THREE from 'three';
 import { packInterleavedAttributes, widenToFloat32 } from '../interleaved-attributes';
-import { invalidateCachedByteSize } from '../../utils/geometry-utils';
+import { invalidateCachedByteSize } from './geometry-bytes';
 import type { ProcessedLinesData } from '../../types/lines';
 import { rebuildInterleavedBuffer, writePooledAttribute } from './attribute-codec';
 import type { PooledBuffer } from './pool-stats';

@@ -1,9 +1,9 @@
 /**
- * Geometry-related utility functions shared across the rendering layer.
- * These helpers are usable by monitor stats, layer-level audits, and the
- * GPU buffer pool without pulling in pool-specific imports.
+ * GPU-resident geometry byte accounting. Used by the GPU buffer pool
+ * (and adapters) to track memory pressure across point / line / gsplat
+ * layers without re-iterating attribute byteLengths on every stats poll.
  *
- * @module utils/geometry-utils
+ * @module rendering/gpu-buffer-pool/geometry-bytes
  */
 
 import * as THREE from 'three';

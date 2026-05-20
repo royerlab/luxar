@@ -17,7 +17,7 @@ import {
   widenToFloat32,
   writeInterleavedAttribute,
 } from '../interleaved-attributes';
-import { invalidateCachedByteSize } from '../../utils/geometry-utils';
+import { invalidateCachedByteSize } from './geometry-bytes';
 import type { LoadedPointsData } from '../../data/data-loader-types';
 import { rebuildInterleavedBuffer, writePooledAttribute } from './attribute-codec';
 import type { PointsAttributeTypes, PooledBuffer } from './pool-stats';
