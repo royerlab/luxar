@@ -61,7 +61,7 @@ describe('validateCache', () => {
 
   it('rejects Infinity cache.l2MaxSizeMB', () => {
     const cfg = cloneConfig();
-    cfg.cache.l2MaxSizeMB = Infinity;
+    cfg.cache.l2MaxSizeMB = Number.POSITIVE_INFINITY;
     const result = invokeValidator(validateCache, cfg);
     expect(result.valid).toBe(false);
     expect(result.errors).toContainEqual(expect.stringContaining('cache.l2MaxSizeMB'));
