@@ -1,0 +1,341 @@
+# E2E Tests (Playwright)
+
+Full-browser end-to-end specs that exercise the viewer through real
+WebGL, OPFS, and network paths. The folder also ships the **shared
+test fixture, helper toolbox, global setup, and TSL/GLSL parity
+harness** that every spec is built on — those are described first
+because most spec-authoring questions are really questions about how
+the supporting infrastructure works.
+
+For the wider testing strategy (unit vs E2E, mocks, builders, fixture
+data) see the parent [tests README](../README.md).
+
+## Quick Start
+
+```bash
+# Run the whole suite
+pnpm test:e2e
+
+# Interactive UI
+pnpm test:e2e:ui
+
+# Single spec
+pnpm exec playwright test src/tests/e2e/basic-rendering.spec.ts
+
+# Open the HTML report after a run
+pnpm test:e2e:report
+```
+
+New specs import from `./fixtures`, not from `@playwright/test`
+directly — see [Shared Fixture](#shared-fixture-fixturests) below.
+
+## Folder Layout
+
+```
+e2e/
+├── fixtures.ts          # Re-extended `test` fixture; auto console-error guard
+├── helpers.ts           # ~40 Playwright helper utilities (wait/get/assert)
+├── global-setup.ts      # Pre-flight: checks `datasets/examples/`, makes dirs
+├── harnesses/
+│   └── tsl-harness.ts   # TSL ↔ GLSL parity harness (loaded by tsl-harness.html)
+├── *.spec.ts            # Playwright specs (one per feature area)
+└── *.spec.ts-snapshots/ # Visual-regression baselines (auto-managed)
+```
+
+A spec's filename hints at its scope: `basic-rendering`,
+`dimension-animation`, `cache-system`, `tsl-shader-parity`, etc. See
+the parent README's "Running E2E tests in chunks" section for a
+suggested grouping.
+
+## Shared Fixture (`fixtures.ts`)
+
+`fixtures.ts` exports a `test` that re-extends `@playwright/test`'s
+`test` so **every spec auto-asserts no console errors after each
+test**. There are no direct `@playwright/test` imports across the
+suite — new specs must use:
+
+```ts
+import { test, expect } from './fixtures';
+```
+
+The fixture merges two signal sources before failing:
+
+- Playwright's own `page.on('console')` and `page.on('pageerror')`
+  events — catches errors fired **before** the viewer's debug
+  interceptor installs (e.g. pre-init `ReferenceError`s) and uncaught
+  exceptions surfaced via `pageerror`.
+- The viewer's in-app debug interceptor, polled via
+  [`assertNoConsoleErrors(page)`](#helpers-helperts) — formatted,
+  application-aware.
+
+Both flows are filtered against `DEFAULT_ALLOWED_CONSOLE_ERRORS`,
+which is intentionally narrow:
+
+| Pattern | Why allowed |
+|---------|-------------|
+| `/WebGL context lost/` | Headless Chromium occasionally drops the context under GPU pressure; the viewer recovers. Real context-loss bugs surface as black-canvas or frame-count divergences caught by the spec body. |
+| `Failed to load resource: …status of 4xx/501` (default; off when `LUXAR_E2E_STRICT_CONSOLE=1` is set) | The zarr loader probes optional resources during normal scene loading (`.zattrs` / `.zgroup` / `zarr.json` detection chain, optional overlays, fallback PROPFIND for directory listing). Each miss is a benign 404/501 the loader's `try/catch` handles. |
+
+Specs that **intentionally** trigger console errors (e.g.
+`error-recovery.spec.ts`, `webgl-errors.spec.ts`) opt out per test:
+
+```ts
+import { test, ALLOW_CONSOLE_ERRORS } from './fixtures';
+
+test('handles a bad URL gracefully', async ({ page }) => {
+  test.info().annotations.push({
+    type: ALLOW_CONSOLE_ERRORS,
+    description: 'Bad-URL recovery surfaces a console.error by design.',
+  });
+  // ... test body ...
+});
+```
+
+The annotation type is checked verbatim against `ALLOW_CONSOLE_ERRORS`
+— typos turn into hard failures rather than silent opt-outs. The
+fixture also skips the assertion when the test already failed or
+timed out, so the original error stays prominent.
+
+## Helpers (`helpers.ts`)
+
+`helpers.ts` is the toolbox specs use to wait for asynchronous viewer
+state, query the debug interface, and assert on rendering / console /
+WebGL outcomes. It is the largest single file in the folder; the
+exports group into the categories below.
+
+### Lifecycle and readiness
+
+| Helper | Use when |
+|--------|----------|
+| `waitForLuxarReady` | Wait for `window.__luxarDebug.getState().initialized` (45 s default). The first thing nearly every spec calls. |
+| `waitForDebugInterfaceReady` | Lighter check that just asserts `window.__luxarDebug` is present. |
+| `waitForConsoleInterceptor` | Wait for the viewer's debug-console interceptor to install before reading captured logs. |
+| `waitForDataLoaded` | Wait for at least one geometry to have committed data. |
+| `waitForPointsLoaded(page, minPoints)` | Wait until `getState().totalPoints >= minPoints`. |
+
+### Render / animation pacing
+
+| Helper | Use when |
+|--------|----------|
+| `renderOnce` | Trigger a single deterministic frame and wait one paint cycle — used before screenshots. |
+| `waitForNextRender(page, frames)` | Yield until N animation frames have passed. |
+| `waitForRenderStable` | Wait until per-frame render counters stop changing (FPS-style settled detection). |
+| `waitForAnimationStep` | Wait for the animation manager to advance one logical step. |
+
+### nD / dimension navigation
+
+| Helper | Use when |
+|--------|----------|
+| `waitForDimensionSystemReady` | Wait for the scene dimensions manager to expose its API. |
+| `waitForDimensionSelected(page, index)` | Wait until a specific dimension is the active one. |
+| `waitForDimensionNavigation` | Wait for a dimension-change to commit (debounce-aware). |
+| `waitForNavigationComplete` / `waitForNavigationCompleteOrThrow` | Wait for queued navigation events to drain; the `OrThrow` variant fails the test on timeout. |
+| `waitForSpatialQuery` / `waitForSpatialQueryOrThrow` | Wait for the spatial-index query that drives nD slicing. |
+
+### Console and error assertions
+
+| Helper | Use when |
+|--------|----------|
+| `captureConsoleMessages(page)` | Attach a synchronous capture object that accumulates `errors` / `warnings` / `logs`. |
+| `getConsoleMessages(page)` | Read the viewer's debug interceptor (formatted, captured in-app). |
+| `assertConsoleContains(page, pattern)` / `assertConsoleDoesNotContain` | Positive / negative assertion on the captured stream. |
+| `assertNoConsoleErrors(page, allow)` | Strict no-error gate against an allow-list — called automatically by the [shared fixture](#shared-fixture-fixturests), and explicitly by specs that want a tighter gate mid-test. |
+| `assertNoShaderErrors(page)` | Read the debug renderer for shader-compile / link failures specifically. |
+| `getWebGLErrors(page)` | Drain accumulated WebGL errors from the renderer. |
+| `waitForWebGLError(page, pattern)` | Block until a matching WebGL error appears (used by `webgl-errors.spec.ts`). |
+
+### Cache, UI, and input
+
+| Helper | Use when |
+|--------|----------|
+| `waitForCacheStable` | Wait for in-flight prefetch / write-through traffic to drain. |
+| `waitForUIState(page, predicate)` | Generic wait that polls a UI-state predicate. |
+| `dismissDatasetBrowser(page)` | Close the first-time-UX picker so the spec can drive a known dataset. |
+| `focusCanvas(page)` | Move keyboard focus onto the canvas (required before `1-9` / `[]` navigation). |
+| `openLayersPanel(page)` | Open the Layers UI from a known closed state. |
+| `ctrlScroll` / `shiftScroll` | Synthetic modifier-scroll events (used by zoom / depth tests). |
+| `getInputHandler` / `getAnimationManager` / `getSceneDimsManager` | Pull singleton managers off the debug interface for direct inspection. |
+
+### Scene introspection and pixel sampling
+
+| Helper | Use when |
+|--------|----------|
+| `getLuxarState(page)` | Read `__luxarDebug.getState()` with a clear error if the interface isn't ready. |
+| `getSceneObjectNames(page)` | Flat list of every named object in the scene graph. |
+| `getLayerMaterialState(page, layer)` | Inspect uniforms / blending / depth state of a specific layer's material. |
+| `getPostProcessingState(page)` | Read the post-processing pipeline state (tone mapping mode, bloom, exposure). |
+| `validateSceneAttributes(page)` | Audit every geometry's attribute buffers against the format spec. |
+| `SampledPixel`, `ElementPixelStats` | Types returned by the pixel-sampling helpers. |
+| `samplePixelAt(page, x, y)` / `samplePixelsAt` | Read one or many canvas pixels via `gl.readPixels`. |
+| `getElementPixelStats(page, ...)` | Pixel-statistics rollup used by visual-regression-adjacent specs. |
+
+### Pattern for a new helper
+
+Helpers follow a few conventions worth matching:
+
+- All async helpers take `page: Page` as the first argument.
+- Wait helpers expose an explicit `timeout` parameter (default 45 s
+  for top-level readiness, 5–15 s otherwise) and throw with a
+  message that names the expected condition.
+- Helpers that read the debug interface go through `getLuxarState`
+  rather than poking `window.__luxarDebug` directly — the wrapper
+  surfaces a clean "Debug interface not ready" error when the page
+  hasn't initialized.
+- "Wait then throw" variants are spelled `XxxOrThrow` and exist
+  alongside the polling versions so specs can choose between
+  best-effort waits and hard gates.
+
+## Global Setup (`global-setup.ts`)
+
+Runs once before any spec (wired in `playwright.config.ts`). Three
+preflight checks:
+
+1. **Examples directory** — `datasets/examples/` (five levels up
+   from this file) is verified to exist. If missing, a warning is
+   logged with instructions to run `make run-examples`; the run is
+   **not** aborted because some specs (basic-rendering,
+   viewer-initialization, test-fixtures, geometry-types) don't need
+   the examples.
+2. **Required datasets** — checks for the seven required `*.zarr`
+   directories (`simple_nd_example.zarr`,
+   `build_example_manual.zarr`,
+   `build_example_structured.zarr`,
+   `dimension_navigation_example.zarr`,
+   `dimension_sliders_5d_example.zarr`,
+   `dense_grid_5d_example.zarr`,
+   `layers_test_example.zarr`) and logs which are missing.
+3. **Output directories** — creates `test-results/` and
+   `test-results/debug/` (the latter for `pnpm agent:debug`
+   screenshots) if they don't exist.
+
+The file uses ESM (`import.meta.url`) to reconstruct `__dirname`
+because the package is `"type": "module"`.
+
+## TSL ↔ GLSL Parity Harness (`harnesses/tsl-harness.ts`)
+
+Loaded by `packages/luxar-viewer/tsl-harness.html` (Vite serves it
+at `/tsl-harness.html`). The harness renders every registered shader
+through **both** the GLSL3 path (`THREE.WebGLRenderer` +
+`THREE.ShaderMaterial`) and the TSL path
+(`WebGPURenderer({ forceWebGL: true })` + `NodeMaterial` /
+`MeshBasicNodeMaterial`), then exposes both readbacks plus the
+generated GLSL strings to the Playwright spec for pixel-diffing.
+
+Why a dedicated page rather than reusing the main viewer:
+
+- Construction order is explicit and minimal — no app/state machine
+  to wait on, no scene graph to mock around.
+- Both backends live side by side; the test toggles between them per
+  call rather than per page load.
+- The TSL path drives `GLSLNodeBuilder` so the generated GLSL
+  strings are recoverable for snapshot diff.
+
+Not in scope: real WebGPU dispatch. That requires Chrome stable +
+`?webgpu=1` and runs in a separate spec
+(`webgpu-native-smoke.spec.ts`). This harness validates the
+WebGL2-via-WebGPU-backend fallback parity, which is what
+`forceWebGL: true` covers.
+
+### Window API exposed by the harness
+
+```ts
+window.__tslHarness = {
+  ready: Promise<void>,
+  renderGLSL: (shaderName: string) => Uint8Array,
+  renderTSL: (shaderName: string) => Promise<{
+    pixels: Uint8Array;
+    vertexShader: string;
+    fragmentShader: string;
+  }>,
+  listShaders: () => string[],
+};
+```
+
+`renderTSL` patches the renderer's internal
+`NodeManager._createNodeBuilderState` once per call to capture the
+generated vertex/fragment GLSL — there is no public Three.js API
+for "give me the source", so the harness reaches into the backend's
+pipeline cache during the build phase and restores the original
+method immediately after.
+
+### Registered shaders
+
+Each entry in the (private) `SHADER_REGISTRY` provides:
+
+- `source` — a `ShaderSource` whose `glsl3`, `webgpu`, and
+  uniform-binding metadata is the same one the production renderer
+  consumes.
+- `buildUniforms()` — default uniforms for the parity test.
+- `buildDefines?()` — optional GLSL3 `#define`s (used by shaders
+  like `mega` that gate feature toggles).
+- `buildTSLMaterial?(uniforms)` — TSL-side override when a
+  shader-specific factory config is required (e.g.
+  `megaWebGPUFactory(uniforms, { toneMappingMode: 1 })`).
+- `buildMesh?(material)` — override for non-fullscreen-quad cases
+  (`point`, `line`, `gsplat` need instanced quad geometry).
+- `vertexColors?` — set on the GLSL3 material so Three emits the
+  `in vec3 color` attribute declaration; the TSL side reads the
+  same attribute via `attribute('color', 'vec3')` and doesn't need
+  a parallel flag.
+
+The registry currently covers FXAA, bloom threshold, the mega
+post-processing pass, point / line / gsplat materials, and the
+three picking shaders. Adding a new shader to `SHADER_REGISTRY` is
+the only step needed to make it diff-testable from the spec.
+
+Helpers shared by point/line/gsplat entries:
+`buildPointInstancedMesh`, `buildLineInstancedMesh`,
+`buildGSplatInstancedMesh` — each builds a small instanced quad
+mesh seeded with deterministic per-instance attributes so both
+backends render the same scene.
+
+The 8×8 `buildTestTexture()` produces a deterministic input
+texture: an `x`/`y` gradient with one high-contrast pixel near the
+centre so FXAA's edge-detection path actually triggers.
+
+### Specs that use the harness
+
+- `tsl-shader-parity.spec.ts` — pixel diff (GLSL vs TSL) for every
+  entry in the registry.
+- `tsl-codegen-snapshot.spec.ts` — snapshot the generated GLSL
+  strings into `src/tests/__codegen__/` so unintended codegen
+  regressions surface as text diffs.
+
+## Visual-Regression Snapshots
+
+Folders named `<spec>.spec.ts-snapshots/` hold per-spec PNG
+baselines used by `expect(...).toHaveScreenshot(...)`. They are
+checked in. Update them deliberately with
+`pnpm exec playwright test --update-snapshots`, then review the diff
+before committing — the baselines drive every theme / visual /
+post-processing regression check.
+
+## Conventions for New Specs
+
+1. **Import from `./fixtures`**, never `@playwright/test` directly.
+2. Use the `?src=<dataset>&debug` URL form (not `?data=`) so
+   `window.__luxarDebug` is exposed.
+3. Wait for `waitForLuxarReady(page)` before reading state.
+4. Prefer 3D datasets for general specs — 4D/nD slicing may show 0
+   points at arbitrary slice positions. Specs that test nD behavior
+   should drive to a slice known to contain geometry.
+5. **No trailing slash on `?src=`** — the zarr loader treats it as
+   a path component and 404s the metadata probes.
+6. If a spec intentionally produces console errors, annotate it
+   with `ALLOW_CONSOLE_ERRORS`; do not broaden
+   `DEFAULT_ALLOWED_CONSOLE_ERRORS` unless the noise is genuinely
+   environmental.
+7. Reach for an existing helper before writing a new wait loop —
+   the `*OrThrow` variants exist precisely so specs don't reinvent
+   them.
+
+## See Also
+
+- Parent: [Luxar Viewer Test Suite](../README.md)
+- Sibling unit tests: `../unit/`
+- Sibling mocks: `../mocks/`
+- Playwright config: `../../../playwright.config.ts`
+- Playwright reference guide:
+  [`docs/guides/developer/PLAYWRIGHT_GUIDE.md`](../../../../../docs/guides/developer/PLAYWRIGHT_GUIDE.md)
+- E2E quick reference:
+  [`docs/guides/user/E2E_TESTING_GUIDE.md`](../../../../../docs/guides/user/E2E_TESTING_GUIDE.md)
