@@ -74,7 +74,7 @@ export class SliderSyncCoordinator {
    * actual play call after a short delay so the snap propagates
    * before playback starts.
    *
-   * `playDelayMs` defaults to 100 — the panel's historical value.
+   * `playDelayMs` defaults to 100 ms.
    * `isAlive` is consulted right before play() so a dispose during
    * the delay window short-circuits cleanly.
    */

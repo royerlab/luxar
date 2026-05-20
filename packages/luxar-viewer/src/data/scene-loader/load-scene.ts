@@ -1,10 +1,10 @@
 /**
  * Initial scene-load orchestrator.
  *
- * Phases:
+ * Sequence:
  *   1. Reset monitor + abort any in-flight worker tasks from a prior dataset.
  *   2. Dispose the previous loader (caching store, GPU pool, L0 cache,
- *      colormap LUTs, monitor closures) — awaited so old writes drain.
+ *      colormap LUTs, monitor closures) — awaited so stale writes drain.
  *   3. Fresh AbortController wired into the worker pool's signal.
  *   4. Reset the predictive-prefetch baseline (otherwise the first
  *      updateView extrapolates from the prior dataset's slicePosition).

@@ -464,7 +464,7 @@ The decomposition method uses `local_maxima()` for peak detection:
 
 ### Deduplication Strategy
 
-Uses `dedupe_farthest_first()` for spatial deduplication (note: despite the legacy name, this uses a simple greedy approach which is ~50x faster and produces equivalent results for Gaussian splatting):
+Uses `dedupe_farthest_first()` for spatial deduplication. The implementation uses a simple greedy approach, which is ~50x faster and produces equivalent results for Gaussian splatting:
 1. Sort candidates by energy/intensity (highest first)
 2. Keep first (highest energy) candidate
 3. Iterate through remaining candidates in intensity order
@@ -519,7 +519,7 @@ hatch run pytest packages/luxar/src/luxar/gsplats/seeds/tests/test_generate_seed
   - Decomposition excluded by default for speed (use explicitly if needed)
   - Budget allocation: 60% edges, 40% grid
 
-- **v2.0 (2025-01)**: Major refactor
+- **v2.0 (2025-01)**: API update
   - Removed `seed_from_gaussian()` and `seed_from_moments()` methods
   - Added `seed_from_grid()` for uniform coverage
   - Added `seed_from_edges()` for isotropic edge seeding

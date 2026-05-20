@@ -42,8 +42,8 @@ import type { RendererCapabilities } from '../renderer-capabilities';
  *   Per-corner UVs `{(0,1), (2,1), (0,-1)}` (V-inverted relative to
  *   the WebGL case).
  *
- * - `framebufferYDown = false` — the legacy `THREE.WebGLRenderer`
- *   GLSL path only. Row 0 of the source target is at the bottom of
+ * - `framebufferYDown = false` — the `THREE.WebGLRenderer` GLSL path
+ *   only. Row 0 of the source target is at the bottom of
  *   the viewport. Vertex (-1,-1) needs `uv.y = 0` to sample the
  *   bottom row. Per-corner UVs `{(0,0), (2,0), (0,2)}`.
  *

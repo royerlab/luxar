@@ -1,5 +1,5 @@
 /**
- * Camera-framing helpers extracted from `scene/scene-manager.ts`.
+ * Camera-framing helpers for `scene/scene-manager.ts`.
  *
  * Shared FOV-aware fit math for two camera-framing callers:
  *
@@ -8,12 +8,11 @@
  *   - `SceneManager.autoFrameCamera()` — auto-frame on scene load,
  *     uses bounds from zarr metadata.
  *
- * Both paths (1) compute / get bounds, (2) feed scene scale to the
- * controls, (3) compute distance (perspective) or zoom
- * (orthographic), (4) position the camera, (5) lookAt the target,
- * (6) reinitialize + saveState. Steps 3-6 live here as the shared
- * `fitCameraToBounds` helper; step 1 has its own helper
- * `computeSceneBoundingBox` since the metadata path doesn't need it.
+ * Both paths compute or get bounds, feed scene scale to the controls,
+ * compute distance (perspective) or zoom (orthographic), position the
+ * camera, look at the target, then reinitialize + saveState.
+ * `fitCameraToBounds` owns the shared fit math; `computeSceneBoundingBox`
+ * owns scene traversal for the F-key path.
  *
  * @module scene/scene-manager/camera/camera-framing
  */
@@ -51,8 +50,7 @@ export interface SceneBoundingBoxResult {
 
 /**
  * Walk `scene` and aggregate the world-space bounding box of every
- * renderable primitive. After the container migration all three
- * geometry types (Points / Lines / GSplats) render as
+ * renderable primitive. Points, Lines, and GSplats all render as
  * `THREE.Mesh + InstancedBufferGeometry`, so a single shape covers
  * them:
  *
@@ -218,7 +216,7 @@ export function fitCameraToBounds(
 }
 
 // ============================================================================
-// Centering helpers (extracted from SceneManager in Step 8).
+// Centering helpers.
 // ============================================================================
 
 /**

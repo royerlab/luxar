@@ -1,7 +1,7 @@
 /**
- * Direct unit tests for the brightness-weighted majority-voting helper
- * extracted in P6/step 7.3. Pure over its (pixels, pickSize, scratch)
- * inputs — no PickingSystem instance, no GPU, no renderer.
+ * Direct unit tests for the brightness-weighted majority-voting helper.
+ * Pure over its (pixels, pickSize, scratch) inputs — no PickingSystem
+ * instance, no GPU, no renderer.
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';

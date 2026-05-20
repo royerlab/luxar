@@ -8,7 +8,7 @@ docs/
 # Per-machine performance baselines (test self-rewrites this on every
 # passing run; should not be tracked across hardware).
 performance-baselines.json
-points-migration-perf.json
+points-rendering-perf.json
 line-renderer-compare-perf.json
 test-results-perf/
 

@@ -24,9 +24,9 @@ function makePointCloud(
     hasSharpness?: boolean;
   } = {}
 ): THREE.Mesh {
-  // After the container migration, point clouds are THREE.Mesh with
-  // instanced quad geometry and per-instance attributes prefixed `a*`.
-  // `computeDebugState` selects on `userData.nodeType === 'points'`.
+  // Point clouds are THREE.Mesh with instanced quad geometry and
+  // per-instance attributes prefixed `a*`. `computeDebugState` selects
+  // on `userData.nodeType === 'points'`.
   const geometry = new THREE.InstancedBufferGeometry();
   geometry.instanceCount = options.instanceCount ?? count;
   geometry.setAttribute(
@@ -247,7 +247,7 @@ describe('computeDebugState', () => {
       const state = computeDebugState(ctx);
       expect(state.camera.position).toEqual({ x: 10, y: 20, z: 30 });
       expect(state.camera.fov).toBe(35);
-      // Legacy mirror.
+      // Top-level mirror for compatibility.
       expect(state.cameraPosition).toEqual({ x: 10, y: 20, z: 30 });
       expect(state.cameraFov).toBe(35);
     });

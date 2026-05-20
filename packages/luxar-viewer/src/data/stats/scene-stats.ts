@@ -2,17 +2,16 @@
  * Pure scene-graph statistics — counts the loaded geometry in a scene
  * tree.
  *
- * Extracted from `zarr-loader.ts::logSceneStats` so the traversal /
- * counting logic can be tested directly against real THREE objects
- * (no WebGL needed). The logging layer in `zarr-loader.ts` calls this
- * helper and emits one info line per stat.
+ * The logging layer in `zarr-loader.ts` calls this helper and emits one
+ * info line per stat. Keeping traversal and counting here lets tests run
+ * directly against real THREE objects without WebGL.
  *
- * Counts mirror the legacy logSceneStats output:
+ * Counted fields:
  * - `pointsObjects` / `totalPoints`: `THREE.Mesh` nodes tagged with
- *   `userData.nodeType === 'points'`. After the container migration
- *   points are instanced quad meshes; `geometry.instanceCount` is the
- *   source of truth for visible points because pooled attributes may be
- *   over-allocated beyond the visible count.
+ *   `userData.nodeType === 'points'`. Points are instanced quad meshes;
+ *   `geometry.instanceCount` is the source of truth for visible points
+ *   because pooled attributes may be over-allocated beyond the visible
+ *   count.
  * - `gsplatsObjects` / `totalGSplats`: `THREE.Mesh` nodes tagged with
  *   `userData.nodeType === 'gsplats'`. `userData.visibleSplatCount`
  *   contributes to the running total (default 0 if absent).

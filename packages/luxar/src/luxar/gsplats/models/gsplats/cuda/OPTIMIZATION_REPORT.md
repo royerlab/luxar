@@ -52,7 +52,7 @@ C++:    splat_bwd (1 kernel, N blocks)
 
 ## Optimization Progression
 
-### Phase 1: Tile-based kernel optimizations (iterations 1-14)
+### Tile-based kernel optimizations (iterations 1-14)
 
 | Iter | Optimization | Impact | Status |
 |------|-------------|--------|--------|
@@ -71,14 +71,14 @@ C++:    splat_bwd (1 kernel, N blocks)
 | 13 | `#pragma unroll 2` forward inner loop | +2.4% | DISCARD (register pressure) |
 | 14 | `__launch_bounds__(512, 3)` on backward kernel | ~0% primary, fixed secondaries | **KEEP** |
 
-### Phase 2: Splat-centric architecture (iterations 16-17)
+### Splat-centric architecture work (iterations 16-17)
 
 | Iter | Optimization | Impact | Status |
 |------|-------------|--------|--------|
 | 16 | **Splat-centric backward kernel** | -25.9% from iter 4 | **KEEP** |
 | 17 | **Splat-centric forward kernel** (eliminates tile binning) | -10.3% | **KEEP** |
 
-### Phase 3: Python-side optimizations (iterations 19-25)
+### Python-side optimizations (iterations 19-25)
 
 | Iter | Optimization | Impact | Status |
 |------|-------------|--------|--------|
@@ -90,7 +90,7 @@ C++:    splat_bwd (1 kernel, N blocks)
 | 24 | Analytical L→conic backward | -6.4% primary, -43% secondary | **KEEP** (later replaced) |
 | 25 | Skip Ls.clone() for 2D/3D | ~0% | **KEEP** (later reverted) |
 
-### Phase 4: Correctness fixes (post-optimization)
+### Correctness fixes after optimization
 
 | Fix | Issue | Resolution |
 |-----|-------|------------|

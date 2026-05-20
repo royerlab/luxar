@@ -1,8 +1,8 @@
 /**
  * Transform-matrix application for NodeFactory.
  *
- * Extracted in P6/step 6.2. Pure over its inputs; throws on bad
- * length or row-major (NumPy) layout — the producer-side test guard.
+ * Pure over its inputs; throws on bad length or row-major (NumPy)
+ * layout — the producer-side test guard.
  *
  * @module rendering/node-factory/transforms
  */

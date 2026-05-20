@@ -66,9 +66,7 @@ test.describe('Blending Modes', () => {
       let normal: any = null;
 
       debug.scene.traverse((obj: any) => {
-        // After the container migration, points render as
-        // `THREE.Mesh + userData.nodeType === 'points'` (the legacy
-        // `THREE.Points` filter no longer matches anything).
+        // Points render as `THREE.Mesh + userData.nodeType === 'points'`.
         const isPoints = obj.userData?.nodeType === 'points';
         if (!isPoints || !obj.material) return;
 
@@ -139,7 +137,7 @@ test.describe('Blending Modes', () => {
       const modes = new Set<number>();
 
       debug.scene.traverse((obj: any) => {
-        // Post-container-migration: points are Mesh + nodeType='points'.
+        // Points are Mesh + nodeType='points'.
         if (obj.userData?.nodeType === 'points' && obj.material) {
           modes.add(obj.material.blending);
         }

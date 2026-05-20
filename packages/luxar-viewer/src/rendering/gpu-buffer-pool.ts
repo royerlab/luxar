@@ -37,14 +37,13 @@ import { PointsBufferAdapter } from './gpu-buffer-pool/points-adapter';
 import { LinesBufferAdapter } from './gpu-buffer-pool/lines-adapter';
 import { GSplatsBufferAdapter, type PackedGSplatsData } from './gpu-buffer-pool/gsplats-adapter';
 
-// Per-type spec arrays and helpers moved to their respective adapters
-// in ./gpu-buffer-pool/{points,lines,gsplats}-adapter.
+// Per-type spec arrays and helpers live in
+// ./gpu-buffer-pool/{points,lines,gsplats}-adapter.
 
-// rebuildInterleavedBuffer + writePooledAttribute moved to
-// ./gpu-buffer-pool/attribute-codec — geometry-agnostic helpers that
-// the per-type adapters (carved out in step 3) will share.
+// Geometry-agnostic interleaved-buffer helpers live in
+// ./gpu-buffer-pool/attribute-codec for reuse by all adapters.
 
-// D.4: re-export so existing consumers that import these from
+// Re-export so existing consumers that import these from
 // `rendering/gpu-buffer-pool` keep working.
 export { estimateGeometryBytes, invalidateCachedByteSize };
 

@@ -165,8 +165,8 @@ export function projectPointsTo3D(
     );
   }
 
-  // A.3: validate scalar length matches point count. Mismatch suppresses
-  // the scalar branch (fail-closed) — geometry renders without colormap
+  // Validate scalar length matches point count. Mismatch suppresses the
+  // scalar branch (fail-closed) — geometry renders without colormap
   // rather than carrying truncated/over-large scalar arrays into the GPU
   // pool and producing garbage LUT lookups.
   if (scalars && scalars.length !== totalPoints) {
@@ -681,10 +681,10 @@ export async function projectPointsTo3DUsingWorker(
     if (error instanceof Error && error.name === 'WorkerAbortError') {
       throw error;
     }
-    // C.3: fallback to main thread on worker failure. When the loader
-    // owns an accumulator, route the projection through its buffers so
-    // we don't allocate a fresh Float32Array per worker timeout — the
-    // accumulator is already sized for `totalPoints` (the loader called
+    // Fallback to main thread on worker failure. When the loader owns an
+    // accumulator, route the projection through its buffers so we don't
+    // allocate a fresh Float32Array per worker timeout — the accumulator
+    // is already sized for `totalPoints` (the loader called
     // `ensureCapacity` before kicking off the worker call).
     log.warning(
       Modules.SPATIAL_INDEX_LOADER,

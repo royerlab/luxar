@@ -287,9 +287,9 @@ describe('GPUBufferPool scalar attribute', () => {
   });
 
   it('widens Uint8 normalized scalar source to Float32 [0,1] when scalars are Uint8', () => {
-    // Post-interleaving, pooled storage is uniformly Float32. Uint8
-    // source data with the historical `normalized: true` semantics is
-    // widened by /255 at upload time so the shader sees the same
+    // Pooled storage is uniformly Float32. Uint8 source data with
+    // `normalized: true` semantics is widened by /255 at upload time so
+    // the shader sees the same
     // [0, 1] range — see `pointsNormalizationDivisor` in
     // `gpu-buffer-pool.ts`.
     const pool = new GPUBufferPool(20, 300, 5, 0);

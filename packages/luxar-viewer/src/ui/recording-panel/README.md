@@ -48,7 +48,7 @@ for an ordered list of preferences:
 
 1. MP4 (H.264) — universal playback, smallest files
 2. WebM (VP9) — fallback when MP4 unavailable (most Firefox, some Linux Chrome)
-3. WebM (VP8) — legacy fallback
+3. WebM (VP8) — broad-compatibility fallback
 4. MKV (H.264) — Chromium-only with `chromiumExperimental` mime
 
 The first supported entry wins. Browsers that support none get a

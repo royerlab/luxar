@@ -1,9 +1,8 @@
 /**
- * Direct unit tests for the byte-budget eviction pass extracted in
- * P6/step 8. The orchestrator-level `gpu-pool-byte-budget.test.ts`
- * exercises this through `GPUBufferPool.evictUnused()`; here we test
- * the pure helper against a synthesised EvictorCtx with real
- * BufferGeometry instances.
+ * Direct unit tests for the byte-budget eviction pass. The
+ * orchestrator-level `gpu-pool-byte-budget.test.ts` exercises this
+ * through `GPUBufferPool.evictUnused()`; here we test the pure helper
+ * against a synthesised EvictorCtx with real BufferGeometry instances.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';

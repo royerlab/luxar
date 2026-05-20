@@ -1,6 +1,5 @@
 /**
- * Unit tests for camera-mode helpers extracted from SceneManager
- * in Step 8 of the scene-folder layout overhaul.
+ * Unit tests for camera-mode helpers used by SceneManager.
  *
  * Verifies the perspective ↔ orthographic swap policy and the
  * setControlType integration that drives it. Event dispatch is

@@ -4,8 +4,7 @@
  *
  * The end-to-end behaviour of the pool's grow/update paths is already
  * covered by gpu-buffer-pool.test.ts. These tests pin the helpers in
- * isolation so future refactors (per-type adapters in step 3) keep the
- * load-bearing invariants:
+ * isolation so load-bearing invariants stay intact:
  *   - carry-forward of old attribute data when capacity grows
  *   - aQuadCorner is preserved across rebuilds (it's the indexed quad
  *     attribute used by every instanced renderer)

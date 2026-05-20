@@ -377,7 +377,7 @@ describe('GSplatsDataAccumulator', () => {
   });
 });
 
-describe('B.6 — accumulator dispose-state guards', () => {
+describe('accumulator dispose-state guards', () => {
   it('LoadedPointsDataAccumulator: isDisposed() flips on dispose()', () => {
     const acc = new LoadedPointsDataAccumulator(64, 3, 100);
     expect(acc.isDisposed()).toBe(false);
@@ -434,8 +434,8 @@ describe('B.6 — accumulator dispose-state guards', () => {
   });
 
   it('read-only getters still return empty buffers post-dispose (no throw)', () => {
-    // Read getters are non-throwing so legacy "did we wipe?" checks
-    // keep working. Only mutating calls (fill/ensureCapacity) throw.
+    // Read getters are non-throwing so disposal assertions can inspect
+    // cleared buffers. Only mutating calls (fill/ensureCapacity) throw.
     const acc = new LoadedPointsDataAccumulator(64, 3, 100);
     acc.dispose();
     expect(acc.getPositionBuffer().length).toBe(0);
@@ -446,7 +446,7 @@ describe('B.6 — accumulator dispose-state guards', () => {
   });
 });
 
-describe('C.4 — lazy scalar buffer allocation', () => {
+describe('lazy scalar buffer allocation', () => {
   it('LoadedPointsDataAccumulator: scalar buffer stays empty when no scalars fill', () => {
     const acc = new LoadedPointsDataAccumulator(1024, 3, 100);
     // Multiple fills with positions / colors / radii / sharpness — no scalars.
@@ -512,7 +512,7 @@ describe('C.4 — lazy scalar buffer allocation', () => {
   });
 });
 
-describe('C.2 — accumulator growth uses usedCount subarray copy', () => {
+describe('accumulator growth uses usedCount subarray copy', () => {
   it('LoadedPointsDataAccumulator: growing after partial fill preserves the live prefix', () => {
     const acc = new LoadedPointsDataAccumulator(1024, 3, 100);
     // Fill 800 positions: 800 points × 3 floats = 2400 elements.

@@ -168,7 +168,7 @@ const CONST_SHADER: ShaderSource = {
 };
 
 /**
- * Build a real instanced-points mesh for the M11 point parity test.
+ * Build a real instanced-points mesh for the point parity test.
  * One point at world origin with realistic attributes; 4-vertex quad
  * base + InstancedBufferAttribute per-instance data (aCenter etc.).
  */
@@ -336,7 +336,7 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
         useBloom: true,
       }) as unknown as THREE.Material,
   },
-  // Mega + detector noise: validates the M9-bis Bob Jenkins hash +
+  // Mega + detector noise: validates the Bob Jenkins hash +
   // Anscombe Poisson + clampedLogistic Gaussian port. The noise is
   // deterministic per (uv, time) so both backends should agree
   // bit-for-bit modulo float-precision rounding.
@@ -381,7 +381,7 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
         useVignette: true,
       }) as unknown as THREE.Material,
   },
-  // M11 point parity: full PointMaterial sprite + GOG + Gaussian falloff.
+  // Point parity: full PointMaterial sprite + GOG + Gaussian falloff.
   // Uniforms mirror the production PointMaterial constructor; ortho mode
   // keeps `invDistance = 1` so the test is deterministic across cameras.
   point: {
@@ -410,7 +410,7 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
     },
     buildMesh: buildPointInstancedMesh,
   },
-  // M13 line parity: instanced quad line with width, sharpness, GOG.
+  // Line parity: instanced quad line with width, sharpness, GOG.
   // Ortho camera so screen-space conversion is deterministic.
   line: {
     source: LINE_SOURCE,
@@ -440,7 +440,7 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
     },
     buildMesh: buildLineInstancedMesh,
   },
-  // M13b — line with the gamma==1 fast path enabled. Same geometry +
+  // Line with the gamma==1 fast path enabled. Same geometry +
   // uniforms as `line`, but the TSL factory is built with
   // `gammaOne: true` so the fragment-stage pow() is replaced with an
   // identity. The codegen snapshot for this variant pins the
@@ -473,7 +473,7 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
     },
     buildMesh: buildLineInstancedMesh,
   },
-  // M13d — line with the sharpness == 2 fast path. The factory uses
+  // Line with the sharpness == 2 fast path. The factory uses
   // `sharpnessTwo: true` so the fragment shader's
   // `pow(x, max(vSharpness, 0.0001))` is replaced by `x * x`. The GLSL
   // counterpart defines `LUXAR_SHARPNESS_TWO`.
@@ -504,7 +504,7 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
     },
     buildMesh: buildLineInstancedMesh,
   },
-  // M13c — line with the no-GOG fast path. Same geometry as `line`,
+  // Line with the no-GOG fast path. Same geometry as `line`,
   // but the TSL factory is built with `noGOG: true` so the
   // `vColor * uIntensity + uOffset` + `max(..., 0)` chain is replaced
   // with `adjusted = vColor`. The GLSL counterpart defines
@@ -536,7 +536,7 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
     },
     buildMesh: buildLineInstancedMesh,
   },
-  // M15 gsplat parity: isotropic Gaussian splat at world origin with
+  // GSplat parity: isotropic Gaussian splat at world origin with
   // identity Cholesky factor. Ortho camera for deterministic projection.
   // Tests the 3D→2D covariance Jacobian, Cholesky factorisation,
   // eigendecomposition, oriented-quad expansion, Mahalanobis fragment.
@@ -571,7 +571,7 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
     },
     buildMesh: buildGSplatInstancedMesh,
   },
-  // M16 gsplat-pick parity: same covariance projection as `gsplat`
+  // GSplat-pick parity: same covariance projection as `gsplat`
   // but fragment outputs (nodeId, elementId, brightness, 1.0) and
   // depth = 1 - brightness. No GOG, no ray-integration boost.
   'gsplat-pick': {
@@ -595,7 +595,7 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
       ) as unknown as THREE.Material,
     buildMesh: buildGSplatInstancedMesh,
   },
-  // M14 line-pick parity: same quad-expansion math as `line` but
+  // Line-pick parity: same quad-expansion math as `line` but
   // fragment outputs (nodeId, elementId, brightness, 1.0) and
   // depth = 1 - brightness. No edgeAA, no GOG.
   'line-pick': {
@@ -617,7 +617,7 @@ const SHADER_REGISTRY: Record<string, RegistryEntry> = {
       }) as unknown as THREE.Material,
     buildMesh: buildLineInstancedMesh,
   },
-  // M12 point-pick parity: identical sprite layout to `point` but
+  // Point-pick parity: identical sprite layout to `point` but
   // the fragment outputs (nodeId, elementId, brightness, 1.0) and
   // depth = 1 - brightness. Pick footprint is half-radius (×0.5).
   'point-pick': {

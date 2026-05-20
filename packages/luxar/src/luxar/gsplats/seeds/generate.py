@@ -371,7 +371,7 @@ def _auto_combine(
 
     results: List[GSplatData] = []
 
-    # Phase 1: Edge seeds (highest priority - captures structure)
+    # Edge seeds first (highest priority - captures structure)
     try:
         from luxar.gsplats.seeds.edges import seed_from_edges
 
@@ -389,7 +389,7 @@ def _auto_combine(
 
         warnings.warn(f"Edge seeding failed: {e}", UserWarning, stacklevel=2)
 
-    # Phase 2: Grid seeds (fill gaps for coverage)
+    # Grid seeds fill coverage gaps after edge seeding.
     try:
         # Auto-compute spacing based on budget
         total_voxels = float(np.prod(V.shape))

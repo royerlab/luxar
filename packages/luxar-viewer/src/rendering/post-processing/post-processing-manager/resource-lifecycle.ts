@@ -1,7 +1,7 @@
 /**
  * Pure helpers for `PostProcessingManager` resource construction +
- * sizing. Extracted in P6/step 5.1 to keep the orchestrator focused
- * on event dispatch + setter routing.
+ * sizing. The orchestrator stays focused on event dispatch and setter
+ * routing.
  *
  * Everything here is a factory or a pure function — no mutation of
  * external state. The orchestrator owns the resources and assigns

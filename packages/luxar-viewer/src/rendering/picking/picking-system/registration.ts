@@ -1,8 +1,8 @@
 /**
  * Registration helpers for PickingSystem.
  *
- * Extracted in P6/step 7.1. Contains pure utilities operating on a
- * registered-pick-node entry without back-references to the orchestrator.
+ * Contains pure utilities operating on a registered-pick-node entry
+ * without back-references to the orchestrator.
  *
  * @module rendering/picking/picking-system/registration
  */

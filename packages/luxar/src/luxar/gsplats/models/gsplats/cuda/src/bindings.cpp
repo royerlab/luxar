@@ -104,7 +104,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         rendering volumetric Gaussian splats. It supports 2D-8D volumes with
         splat-centric rasterization and optimized gradient computation.
 
-        See SPECIFICATIONS.md for detailed algorithm descriptions.
+        See README.md and OPTIMIZATION_REPORT.md for algorithm details.
     )doc";
 
     m.def(

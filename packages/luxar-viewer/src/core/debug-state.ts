@@ -117,9 +117,9 @@ export function computeDebugState(ctx: DebugStateContext): DebugState {
   const lineMeshes: LineMeshInfo[] = [];
 
   ctx.scene.traverse((object) => {
-    // Points: now THREE.Mesh + InstancedBufferGeometry after the
-    // container migration. `instanceCount` is the source of truth for
-    // visible-point count; attribute count can be pooled capacity.
+    // Points render as THREE.Mesh + InstancedBufferGeometry.
+    // `instanceCount` is the source of truth for visible-point count;
+    // attribute count can be pooled capacity.
     if (
       object instanceof THREE.Mesh &&
       (object.userData as { nodeType?: string })?.nodeType === 'points'

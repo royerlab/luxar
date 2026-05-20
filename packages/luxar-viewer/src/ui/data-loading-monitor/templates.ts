@@ -529,8 +529,8 @@ export function l2ErrorTotal(l2: CacheMetrics['l2']): number {
  */
 export function renderCacheContent(_stats: GlobalStats, cacheMetrics: CacheMetrics): string {
   // Switch on the explicit telemetry state so each not-enabled
-  // variant gets a faithful message. Fall back to the legacy
-  // `enabled` boolean only when telemetryState is absent.
+  // variant gets a faithful message. Fall back to the `enabled`
+  // boolean only when telemetryState is absent.
   const stateKind =
     cacheMetrics.telemetryState?.kind ?? (cacheMetrics.enabled === false ? 'not-wired' : 'enabled');
 

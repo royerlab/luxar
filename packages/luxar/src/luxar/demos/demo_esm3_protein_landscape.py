@@ -6,9 +6,9 @@ Visualizes ~572K Swiss-Prot protein embeddings from ESM-3 (or ESM C) as a
 3D UMAP point cloud. Each point is a protein, colored by taxonomic kingdom,
 with hover labels showing protein name, organism, and kingdom.
 
-This is a two-phase demo:
-  Phase 1 (first run): Download Swiss-Prot, compute ESM embeddings, run UMAP (~5h)
-  Phase 2 (subsequent): Load cached results instantly
+Run behavior:
+  First run: Download Swiss-Prot, compute ESM embeddings, run UMAP (~5h)
+  Subsequent runs: Load cached results instantly
 
 Data source: UniProt/Swiss-Prot (CC BY 4.0)
 Model: ESM-3 open (Hayes et al. 2025) or ESM C 300M (EvolutionaryScale)

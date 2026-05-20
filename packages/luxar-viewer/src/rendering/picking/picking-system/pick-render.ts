@@ -1,10 +1,9 @@
 /**
  * Pick-buffer voting for PickingSystem.
  *
- * Extracted in P6/step 7.3. The pick render itself stays on the
- * orchestrator (binds the renderer, sets the target, etc.). This
- * module owns the brightness-weighted majority-voting pass over the
- * 5×5 readback pixel block.
+ * The pick render itself stays on the orchestrator (binds the renderer,
+ * sets the target, etc.). This module owns the brightness-weighted
+ * majority-voting pass over the 5×5 readback pixel block.
  *
  * @module rendering/picking/picking-system/pick-render
  */

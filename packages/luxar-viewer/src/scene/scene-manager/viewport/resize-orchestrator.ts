@@ -1,6 +1,6 @@
 /**
- * Resize orchestrator — owns the rAF-coalescing window-resize loop
- * extracted from SceneManager. Step 10 of the god-object refactor.
+ * Resize orchestrator — owns the rAF-coalescing window-resize loop for
+ * SceneManager.
  *
  * SceneManager holds one instance and delegates updateSize() to it.
  * The orchestrator carries its own rAF handle + pending dimensions

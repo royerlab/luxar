@@ -224,7 +224,6 @@ export async function processGSplatsData(
   return { path, processed, cholesky01, cholesky23, cholesky45 };
 }
 
-// commitGSplatsGeometry moved to ../commit/commit-gsplats-geometry (step
-// 6 of the god-object refactor, then re-clustered into commit/ in step 4).
-// Re-exported here so existing consumers keep working unchanged.
+// Re-export the commit helper from its focused module so existing
+// data-processor imports keep working unchanged.
 export { commitGSplatsGeometry } from '../commit/commit-gsplats-geometry';

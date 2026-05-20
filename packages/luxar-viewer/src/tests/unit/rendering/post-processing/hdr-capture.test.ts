@@ -1,8 +1,6 @@
 /**
- * Pure-helper tests for the `hdr-capture` module. Currently covers
- * only the EXR log-line formatter — the composer-era memory estimator
- * and ping-pong buffer pickers were retired with the mega-shader
- * refactor.
+ * Pure-helper tests for the `hdr-capture` module. Covers the EXR
+ * log-line formatter.
  */
 
 import { describe, it, expect } from 'vitest';

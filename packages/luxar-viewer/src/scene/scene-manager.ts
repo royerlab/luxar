@@ -1070,9 +1070,8 @@ export class SceneManager extends THREE.EventDispatcher<{
   }
 
   /**
-   * Switch camera control type. Handles camera swap for ortho
-   * mode. Event dispatch (`camera-changed`) stays at this call
-   * site — see refactor non-goal #2.
+   * Switch camera control type. Handles camera swap for ortho mode and
+   * dispatches `camera-changed` at this public call site.
    *
    * @param type Control type ('orbit', 'fly', or 'ortho')
    */

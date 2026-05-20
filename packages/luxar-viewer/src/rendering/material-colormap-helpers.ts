@@ -110,7 +110,7 @@ export function supportsScalarColormap(
 ): boolean {
   if (nodeType === 'gsplats') return true;
   if (nodeType === 'points') {
-    // Post-migration: per-instance scalar lives on the InstancedBufferAttribute
+    // Per-instance scalar lives on the InstancedBufferAttribute.
     // named `aScalar` (was per-vertex `scalar` under THREE.Points).
     return geometry ? geometry.hasAttribute('aScalar') : false;
   }

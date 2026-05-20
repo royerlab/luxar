@@ -312,9 +312,8 @@ export class ThemeManager {
    *
    * Numbers (font weights, line heights, opacity, z-index) are stringified
    * here. Optional theme fields that resolve to undefined are kept in the
-   * map and skipped at write time — this preserves the historical behavior
-   * where, e.g., `theme.colors.text.disabled` only landed in the DOM when
-   * the theme actually defined it.
+   * map and skipped at write time, so variables only land in the DOM when
+   * the theme actually defines them.
    */
   private themeToCSSVariables(theme: Theme): Record<string, string | undefined> {
     return {

@@ -1145,9 +1145,9 @@ export async function validateSceneAttributes(page: Page): Promise<
 
     const results: any[] = [];
     debug.scene.traverse((obj: any) => {
-      // After the container migration, points are THREE.Mesh with
-      // instanced quad geometry. Per-instance attributes are prefixed
-      // with `a` (aCenter, aColor, etc.).
+      // Points are THREE.Mesh with instanced quad geometry.
+      // Per-instance attributes are prefixed with `a` (aCenter, aColor,
+      // etc.).
       if (obj.userData?.nodeType !== 'points' || !obj.geometry?.attributes?.aCenter) return;
 
       const pos = obj.geometry.attributes.aCenter;

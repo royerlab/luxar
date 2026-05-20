@@ -2,10 +2,9 @@
  * Material-manager diagnostics: cache-size + eviction + create-time
  * snapshot.
  *
- * Extracted from `material-manager.ts` in P6/step 4.4. The counters
- * stay on the class (they're mutated in eviction / cache-miss paths);
- * this module just builds the returned object shape so the
- * orchestrator's `getCacheStats()` becomes a one-line delegate.
+ * Counters stay on MaterialManager because eviction and cache-miss paths
+ * mutate them; this module builds the returned object shape for
+ * `getCacheStats()`.
  *
  * @module rendering/material-manager/stats
  */

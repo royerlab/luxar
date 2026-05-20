@@ -1,6 +1,5 @@
 /**
- * Unit tests for the clipping-policy helpers extracted from
- * SceneManager in Step 6 of the scene-folder layout overhaul.
+ * Unit tests for the clipping-policy helpers used by SceneManager.
  *
  * The three helpers — applyClippingPlanes, autoAdjustFromBounds,
  * updateDynamicFromCache — are pure with respect to SceneManager,

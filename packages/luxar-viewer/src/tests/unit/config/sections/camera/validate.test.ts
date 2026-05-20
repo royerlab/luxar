@@ -1,8 +1,7 @@
 /**
  * Tests for validateCamera (src/config/sections/camera/validate.ts).
- *
- * Migrated from the monolithic validation.test.ts dispatcher tests; each test
- * exercises the per-section validator directly via invokeValidator().
+ * Each test exercises the per-section validator directly via
+ * invokeValidator().
  */
 
 import { describe, it, expect } from 'vitest';

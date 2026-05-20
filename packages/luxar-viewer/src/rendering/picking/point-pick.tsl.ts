@@ -177,9 +177,8 @@ export function pointPickWebGPUFactory(
 
 /**
  * Snapshot adapter: build a `PointPickTSLNodes` set from a flat
- * `IUniform` record. Used by legacy callers that don't own
- * persistent nodes. See `buildLineTSLNodesFromUniforms` for the
- * rationale.
+ * `IUniform` record. Used by callers that don't own persistent nodes.
+ * See `buildLineTSLNodesFromUniforms` for the rationale.
  */
 export function buildPointPickTSLNodesFromUniforms(
   uniforms: Record<string, THREE.IUniform>

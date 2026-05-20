@@ -85,7 +85,7 @@ class TestSceneDimensionMetadata:
             assert retrieved.dimensions[1].unit == "um"
             assert retrieved.dimensions[2].scale == 1.0
 
-            # Check stored in zarr attrs (new format)
+            # Check stored in zarr attrs.
             store = zarr.open_group(tmp_path / "test_with_dims.zarr", mode="r")
             assert "scene_dimensions" in store.attrs
 
@@ -93,7 +93,7 @@ class TestSceneDimensionMetadata:
         """Test dimension metadata persists through save/load."""
         zarr_path = tmp_path / "persist.zarr"
 
-        # Create scene with metadata using new API
+        # Create scene with dimension metadata.
         dims = Dimensions(
             [
                 Dimension("t", unit="ms", range=(0, 100), step=2.0),
@@ -121,12 +121,3 @@ class TestSceneDimensionMetadata:
         assert dims_dict["dimensions"][0]["name"] == "t"
         assert dims_dict["dimensions"][0]["unit"] == "ms"
         assert dims_dict["dimensions"][0]["range"] == [0, 100]
-
-    # Test removed: Dimension validation was removed in new flexible API
-    # The dimension_metadata parameter in add_points is deprecated
-
-    # Test removed: Dimension inheritance was removed in new flexible API
-    # Points no longer inherit dimension metadata from the scene
-
-    # Test removed: Mixed dimensionality is fully supported in new flexible API
-    # Each points can have any dimensionality independent of others

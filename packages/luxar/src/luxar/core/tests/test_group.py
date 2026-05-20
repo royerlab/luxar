@@ -104,11 +104,11 @@ class TestGroupNotAttachedToScene:
             group.add_points("pts", positions)
 
 
-class TestBackwardCompatibility:
-    """Test that scene.add_points(..., parent=group) still works."""
+class TestParentArgument:
+    """Test that Scene add_* methods accept parent groups."""
 
     def test_scene_add_points_with_parent(self, tmp_path) -> None:
-        """Old pattern: scene.add_points('name', data, parent=group)."""
+        """scene.add_points('name', data, parent=group)."""
         output_path = tmp_path / "test.zarr"
         positions = np.array([[1, 2, 3]], dtype=np.float32)
 
@@ -123,7 +123,7 @@ class TestBackwardCompatibility:
         assert "pts" in store["grp"]
 
     def test_scene_add_gsplats_with_parent(self, tmp_path) -> None:
-        """Old pattern: scene.add_gsplats('name', ..., parent=group)."""
+        """scene.add_gsplats('name', ..., parent=group)."""
         output_path = tmp_path / "test.zarr"
         centers = np.array([[1, 2, 3]], dtype=np.float32)
         amplitudes = np.array([1.0], dtype=np.float32)

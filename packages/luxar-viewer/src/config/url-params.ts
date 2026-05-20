@@ -106,9 +106,8 @@ export interface UrlParams {
   cacheStats: boolean;
   /**
    * Force a specific rendering backend regardless of the default
-   * resolution. Useful for per-load A/B comparisons during the
-   * WebGPU migration and for diagnosing TSL-vs-GLSL divergences
-   * without restarting the dev server.
+   * resolution. Useful for per-load A/B comparisons and for diagnosing
+   * TSL-vs-GLSL divergences without restarting the dev server.
    *
    * - `?renderer=webgl` — `THREE.WebGLRenderer` + GLSL `ShaderMaterial`
    *   (the production default).

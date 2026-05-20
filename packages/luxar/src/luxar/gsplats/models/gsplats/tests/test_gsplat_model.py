@@ -95,10 +95,9 @@ class TestGaussianSplatModelInitialization:
     def test_default_device_is_mps_on_macos(self, simple_2d_setup) -> None:
         """On macOS the default device auto-resolves to MPS (use_metal=True).
 
-        Pre-rewrite, GaussianSplatModel never auto-selected MPS even when it
-        was available. This test guards the deliberate default-flip introduced
-        with the centralized device.resolve_torch_device helper. On systems
-        without MPS the test skips so non-Mac CI stays clean.
+        This test guards the deliberate default behavior provided by the
+        centralized device.resolve_torch_device helper. On systems without
+        MPS the test skips so non-Mac CI stays clean.
         """
         from luxar.gsplats.utils.device import is_mps_available
 

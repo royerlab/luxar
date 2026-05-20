@@ -286,10 +286,6 @@ describe('setupPostProcessingControls', () => {
     });
   });
 
-  // Depth-of-field and Ambient Occlusion UI sections were removed in the
-  // mega-shader refactor (DoF niche for scientific viz; SSAO has no
-  // surface normals for point/gsplat geometry). Their UI tests dropped.
-
   describe('Vignette', () => {
     function ctrls() {
       return stubs.effectsFolder.subFolders.get('Vignette')!.controllers;

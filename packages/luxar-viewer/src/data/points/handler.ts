@@ -1,11 +1,10 @@
 /**
  * Points geometry-type handler — per-type wiring for the scene-loader's
- * load + stage phase. Step 7 of the god-object refactor.
+ * load + stage phase.
  *
- * Collapses the inline Points branch of scene-loader.ts's `updateView`
- * into a single function. The lines/gsplats handlers mirror this shape
- * (parallel filenames, parallel test files — the three-geometry-symmetry
- * rule).
+ * Handles the Points branch of `SceneLoader.updateView` as a focused
+ * function. The Lines and GSplats handlers mirror this shape so all
+ * first-class geometry kinds stay symmetrical.
  *
  * @module data/points/handler
  */

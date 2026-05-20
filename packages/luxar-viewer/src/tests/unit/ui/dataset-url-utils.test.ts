@@ -37,7 +37,7 @@ describe('extractBaseUrl', () => {
 
   it('handles a top-level .zarr by returning the bare origin', () => {
     // Stripping the dataset segment leaves an empty path; the result is
-    // origin + '/' (one slash), not the historical '//' double-slash.
+    // origin + '/' (one slash), not a '//' double-slash.
     expect(extractBaseUrl('http://x.test/foo.zarr', ORIGIN)).toBe('http://x.test/');
   });
 });

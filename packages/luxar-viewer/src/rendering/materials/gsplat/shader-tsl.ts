@@ -462,10 +462,10 @@ export function gsplatWebGPUFactory(
 
 /**
  * Snapshot adapter: build a `GSplatTSLNodes` set from a flat
- * `IUniform` record. Used by legacy callers that don't own
- * persistent nodes (the `GSPLAT_SOURCE.webgpu` `buildMaterial` entry
- * point and the TSL parity harness). See `buildLineTSLNodesFromUniforms`
- * for the rationale + lifecycle contract.
+ * `IUniform` record. Used by callers that don't own persistent nodes
+ * (the `GSPLAT_SOURCE.webgpu` `buildMaterial` entry point and the TSL
+ * parity harness). See `buildLineTSLNodesFromUniforms` for the
+ * rationale + lifecycle contract.
  */
 export function buildGSplatTSLNodesFromUniforms(
   uniforms: Record<string, THREE.IUniform>

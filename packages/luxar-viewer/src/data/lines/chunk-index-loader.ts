@@ -55,7 +55,7 @@ export interface LinesDualChunkIndex {
  *   - `attrs.vertex_ordering` or `attrs.segment_ordering` missing —
  *     metadata incomplete, full load fallback;
  *   - either `chunk_bounds` array is missing on disk — full load
- *     fallback (legacy datasets without spatial indexing).
+ *     fallback (datasets without spatial indexing).
  *
  * Logs warnings (does not raise) on size mismatches between the
  * blob's element count and the expected `chunkCount × ndim × 2`.

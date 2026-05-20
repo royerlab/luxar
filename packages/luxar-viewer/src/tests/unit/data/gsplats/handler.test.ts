@@ -1,7 +1,7 @@
 /**
- * Smoke tests for the GSplats handler — mirror of points/handler.test.ts
- * and lines/handler.test.ts (three-geometry-symmetry rule). Step 7 of
- * the god-object refactor.
+ * Smoke tests for the GSplats handler — mirrors points/handler.test.ts
+ * and lines/handler.test.ts so all geometry handlers share the same
+ * basic contract.
  */
 
 import { describe, it, expect, vi } from 'vitest';

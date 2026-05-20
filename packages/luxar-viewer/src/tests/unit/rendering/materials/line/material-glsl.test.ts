@@ -116,8 +116,8 @@ describe('LineMaterial', () => {
       expect(material.vertexShader).toContain('out vec3 vColor');
       expect(material.vertexShader).toContain('out float vSharpness');
       expect(material.vertexShader).toContain('out float vPerpNorm');
-      // cap math moved to fragment shader; vertex passes vT/vSegmentLength
-      // /vWidthAtT/vClippedStart/vClippedEnd instead.
+      // Cap math lives in the fragment shader; vertex passes
+      // vT/vSegmentLength/vWidthAtT/vClippedStart/vClippedEnd.
       expect(material.vertexShader).toContain('out float vT');
       expect(material.vertexShader).toContain('out float vSegmentLength');
       expect(material.vertexShader).toContain('out float vWidthAtT');

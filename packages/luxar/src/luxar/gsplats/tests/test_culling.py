@@ -452,8 +452,8 @@ class TestNdSupport:
         assert result.n_culled >= 1
 
 
-class TestPhase2BinarySearch:
-    """Test that Phase 2 binary search produces monotonic results."""
+class TestJointCompoundingBinarySearch:
+    """Test that the joint compounding binary search is monotonic."""
 
     def test_verbose_output(self, device: torch.device) -> None:
         """Verbose mode should not crash."""

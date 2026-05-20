@@ -1,9 +1,9 @@
 /**
  * Pipeline runner for PostProcessingManager.
  *
- * Extracted in P6/step 5.3. The function is pure over its `PipelineCtx`
- * argument — no `this` reference — so it can be unit-tested with a
- * synthesised mock renderer + mesh stack.
+ * The function is pure over its `PipelineCtx` argument — no `this`
+ * reference — so it can be unit-tested with a synthesised mock renderer
+ * and mesh stack.
  *
  * @module rendering/post-processing/post-processing-manager/pipeline
  */

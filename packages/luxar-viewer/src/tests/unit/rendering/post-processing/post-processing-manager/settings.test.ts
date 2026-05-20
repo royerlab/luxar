@@ -1,7 +1,7 @@
 /**
- * Direct unit tests for the user-toggle setter helpers extracted in
- * P6/step 5.2. Each helper is pure over a mega-shader mock (plus a
- * BloomChain mock for the bloom helpers) — no renderer, no GPU.
+ * Direct unit tests for the user-toggle setter helpers. Each helper is
+ * pure over a mega-shader mock (plus a BloomChain mock for the bloom
+ * helpers) — no renderer, no GPU.
  */
 
 import { describe, it, expect, vi } from 'vitest';

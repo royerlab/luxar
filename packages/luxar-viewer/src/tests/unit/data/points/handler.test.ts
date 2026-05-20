@@ -1,7 +1,7 @@
 /**
- * Smoke tests for the Points handler — mirror of
- * data/lines/handler.test.ts and data/gsplats/handler.test.ts
- * (three-geometry-symmetry rule). Step 7 of the god-object refactor.
+ * Smoke tests for the Points handler — mirrors
+ * data/lines/handler.test.ts and data/gsplats/handler.test.ts so all
+ * geometry handlers share the same basic contract.
  *
  * End-to-end exercise of load + stage runs through the SceneLoader
  * suite; these tests just pin the kind / label discriminants and the

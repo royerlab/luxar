@@ -28,8 +28,7 @@ function makePoints(): {
   geometryDispose: ReturnType<typeof vi.fn>;
   materialDispose: ReturnType<typeof vi.fn>;
 } {
-  // Points are now THREE.Mesh after the container migration; the
-  // disposal helper treats Mesh and InstancedMesh uniformly.
+  // The disposal helper treats Mesh and InstancedMesh uniformly.
   const geometry = new THREE.InstancedBufferGeometry();
   const material = new THREE.MeshBasicMaterial();
   const geometryDispose = vi.spyOn(geometry, 'dispose');

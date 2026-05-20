@@ -224,9 +224,6 @@ describe('processLinesData', () => {
   });
 });
 
-// commitLinesGeometry tests moved to commit-lines-geometry.test.ts
-// alongside the extracted module (step 6 of the god-object refactor).
-
 describe('projectLinesTo3DUsingWorker', () => {
   it('returns the worker result mapped to ProcessedLinesData on success', async () => {
     const projectLinesTo3D = vi.fn(async () => ({
@@ -275,7 +272,7 @@ describe('projectLinesTo3DUsingWorker', () => {
     expect(mockBuildInstanceBuffers).toHaveBeenCalledTimes(1);
   });
 
-  it('C.1: emits a one-shot warning when scalars force main-thread fallback', async () => {
+  it('emits a one-shot warning when scalars force main-thread fallback', async () => {
     // The module-scoped warned-flag means the warning may have already
     // fired in an earlier test run. Reset by re-mocking and counting
     // emissions on `log.warning` for the current run only.

@@ -4,7 +4,7 @@
  * The top-level `validateConfig` dispatcher wraps every per-section validator
  * with the void-returning `(cfg, errors, warnings)` contract; per-section tests
  * use `invokeValidator()` so assertions keep the same `{valid, errors, warnings}`
- * shape that dispatcher-level tests used pre-migration.
+ * shape as dispatcher-level tests.
  */
 
 import { config } from '../../../config';

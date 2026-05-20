@@ -160,7 +160,7 @@ export class Folder {
   // strongly-typed RenderingSettings interface) that lack an index
   // signature. Tightening to `Record<string, unknown>` would force every
   // typed caller to add `as any`. The looser `any` here keeps the public
-  // surface ergonomic; internal Controller storage already moved to
+  // surface ergonomic; internal Controller storage uses
   // Record<string, unknown> so the unsafe surface is just this entry point.
   /* eslint-disable @typescript-eslint/no-explicit-any */
   public add(

@@ -141,11 +141,10 @@ export class PointMaterial
       glslVersion: THREE.GLSL3,
 
       // Material properties.
-      // vertexColors=false because the migration from THREE.Points to
-      // instanced THREE.Mesh means we now read `aColor` ourselves as
-      // an InstancedBufferAttribute — Three's auto-injected `color`
-      // attribute is for the per-vertex `position` attribute it
-      // assumes, which we don't use.
+      // vertexColors=false because points read `aColor` directly as an
+      // InstancedBufferAttribute. Three's auto-injected `color` attribute
+      // is for the per-vertex `position` attribute it assumes, which this
+      // instanced mesh layout does not use.
       vertexColors: false,
       transparent: materialConfig.transparent ?? !isOpaque,
       depthWrite: materialConfig.depthWrite ?? false, // Usually false for additive blending

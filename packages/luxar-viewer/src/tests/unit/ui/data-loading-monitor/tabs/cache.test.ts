@@ -269,7 +269,7 @@ describe('updateCacheTab', () => {
 
     const label = c.querySelector('.luxar-cache-total .luxar-progress-bar__label') as HTMLElement;
     expect(label.textContent).toBe('no memory limit configured');
-    // Misleading legacy label must not slip back in across ticks.
+    // Misleading zero-limit label must not slip back in across ticks.
     expect(label.textContent).not.toContain('0% of 0B');
     expect(label.textContent).not.toContain('of 0B');
   });

@@ -2,10 +2,9 @@
  * GSplats geometry-commit concern, mirroring `commit-points-geometry.ts`
  * and `commit-lines-geometry.ts`.
  *
- * Extracted from `data-processor-gsplats.ts` in step 6 of the
- * god-object refactor — the per-type commit helpers now live in
- * dedicated files. The async projection step keeps its home in
- * `data-processor-gsplats.ts` because it has no Points counterpart.
+ * Keeps the synchronous GSplats GPU commit in a focused module. The
+ * async projection step stays in `data-processor-gsplats.ts` because it
+ * has no Points counterpart.
  *
  * `StagedGSplatsCommit` remains in `data-processor-gsplats.ts` and is
  * consumed here as a type import.

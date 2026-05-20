@@ -218,14 +218,12 @@ export type GeometryKind = 'points' | 'lines' | 'gsplats';
 
 /**
  * Per-geometry-type handler — a small bundle of the operations the
- * scene-loader needs to dispatch by geometry kind. Step 7 of the
- * god-object refactor introduces a `Map<GeometryKind, GeometryTypeHandler<…>>`
- * to replace the switch/case dispatch currently scattered across
- * `scene-loader.ts`.
+ * scene-loader needs to dispatch by geometry kind. Concrete handlers
+ * live in `data/{points,lines,gsplats}/handler.ts` and are registered in
+ * a `Map<GeometryKind, GeometryTypeHandler<…>>`.
  *
- * Concrete handlers live in `data/{points,lines,gsplats}/handler.ts`
- * (added in step 7). The four generic parameters widen to `unknown` by
- * default; each concrete handler narrows them to its per-type variants
+ * The four generic parameters widen to `unknown` by default; each
+ * concrete handler narrows them to its per-type variants
  * — for example `PointsBufferAdapter` consumes
  * `GeometryTypeHandler<PointsDataLoader, LoadedPointsData, void, PointsViewState>`.
  *

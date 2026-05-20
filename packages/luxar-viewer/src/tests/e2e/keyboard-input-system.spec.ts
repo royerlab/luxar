@@ -9,8 +9,8 @@
  * - Context passthrough (global shortcuts in fly mode)
  * - Escape key behavior
  *
- * This test suite provides critical coverage for the input system refactoring
- * that migrated from dual-track architecture to unified binding system.
+ * This test suite provides critical coverage for the unified input binding
+ * system.
  *
  * **A note on `page.waitForTimeout()`.** The fly-control tests below
  * use the `keyboard.down(X) → waitForTimeout(N) → keyboard.up(X)`

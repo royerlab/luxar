@@ -1,5 +1,5 @@
 /**
- * Lines-node creation helpers extracted from NodeFactory in P6/step 6.4.
+ * Lines-node creation helpers for NodeFactory.
  *
  * `createLinesNode` resolves the line material backend through
  * materialManager, applies the colormap clone path when scalars +

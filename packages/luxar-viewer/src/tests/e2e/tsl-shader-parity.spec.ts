@@ -165,17 +165,6 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     ).toBeLessThan(2.0);
   });
 
-  // The points-hello test was *removed* after diagnostic dumps showed
-  // it passed by accident — the TSL path's output is all zeros because
-  // `gl_PointSize = 1.0` is hardcoded in r184's `GLSLNodeBuilder`
-  // (`renderers/webgl-fallback/nodes/GLSLNodeBuilder.js:1416`). The
-  // GLSL3 path produced a small disk; the TSL path produced nothing;
-  // the mean-abs-diff fell below the 2.0 tolerance through accidental
-  // averaging. See MIGRATION_PROGRESS.md for the corrected approach:
-  // M11-M16 must switch the geometry container from `THREE.Points` to
-  // `THREE.Sprite` / `THREE.InstancedMesh` so the TSL setupVertexSprite
-  // path (which respects `sizeNode`) actually fires.
-
   test('mega with USE_DETECTOR_NOISE matches across backends', async ({ page }) => {
     await bootHarness(page);
 

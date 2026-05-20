@@ -64,8 +64,7 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
         );
     }
 
-    // E.2: invalidFloat is now an alias for the shared isInvalidFloat
-    // helper in glsl-lib (kept for diff minimality at call sites).
+    // invalidFloat is an alias for the shared isInvalidFloat helper in glsl-lib.
     bool invalidFloat(float v) {
         return isInvalidFloat(v);
     }

@@ -8,8 +8,8 @@
  *   - per-node Gain/Offset/Gamma colour adjustment
  *   - zero-radius nD-slicing discard
  *
- * The mesh layout matches the post-migration container: 4-vertex
- * unit-quad base + InstancedBufferAttribute per-instance data
+ * The mesh layout is a 4-vertex unit-quad base plus
+ * InstancedBufferAttribute per-instance data
  * (aCenter, aRadius, aSharpness, aColor, aScalar). The vertex stage
  * projects aCenter to clip space and expands the unit quad by the
  * per-instance pointSize; the fragment stage discards outside the

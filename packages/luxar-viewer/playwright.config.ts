@@ -131,11 +131,10 @@ export default defineConfig({
       // (e.g. `VITE_LUXAR_USE_WEBGPU=1 pnpm playwright test`) can opt
       // into the WebGPU path on the dev server. Without forwarding,
       // Playwright spawns (or reuses) the server in its own env and
-      // the flag is lost. The legacy `VITE_LUXAR_USE_LEGACY_WEBGL`
-      // (now a no-op — WebGL is the default) and
-      // `VITE_LUXAR_USE_WEBGPU_RENDERER` (transitional alias for the
-      // WebGPU opt-in) are forwarded too so existing CI invocations
-      // keep working harmlessly.
+      // the flag is lost. `VITE_LUXAR_USE_LEGACY_WEBGL` (a no-op because
+      // WebGL is the default) and `VITE_LUXAR_USE_WEBGPU_RENDERER` (an
+      // alias for the WebGPU opt-in) are forwarded too so existing CI
+      // invocations keep working harmlessly.
       command: 'pnpm dev',
       url: 'http://localhost:5173',
       reuseExistingServer: !process.env.CI,

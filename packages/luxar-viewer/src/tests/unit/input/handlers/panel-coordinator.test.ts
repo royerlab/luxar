@@ -114,7 +114,6 @@ describe('PanelCoordinator.closeAll', () => {
     document.body.innerHTML = '';
     vi.mocked(hideHelpOverlay).mockClear();
     vi.mocked(clearError).mockClear();
-    // hideDataMonitor moved to panel-hide bus event
   });
 
   afterEach(() => {
@@ -307,7 +306,6 @@ describe('PanelCoordinator.handleEscape', () => {
     document.body.innerHTML = '';
     vi.mocked(hideHelpOverlay).mockClear();
     vi.mocked(clearError).mockClear();
-    // hideDataMonitor moved to panel-hide bus event
     // Default: not in fullscreen.
     Object.defineProperty(document, 'fullscreenElement', {
       configurable: true,

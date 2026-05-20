@@ -154,7 +154,7 @@ export function linePickWebGPUFactory(
   // The +0.5 in (ndc*0.5+0.5)*resolution cancels under subtraction.
   const pixelDir: TSLNode = vec2(ndcEnd.sub(ndcStart).mul(uResolution.mul(0.5)));
   const pixelLen: TSLNode = length(pixelDir);
-  // `.toVar()` on the chained branch — see M13 sharp-edge notes.
+  // `.toVar()` on the chained branch keeps the sharp edge stable.
   const lineDir: TSLNode = pixelLen
     .greaterThan(0.0001)
     .select(vec2(pixelDir.div(pixelLen)).toVar(), vec2(1.0, 0.0));

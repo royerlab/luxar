@@ -1,7 +1,6 @@
 /**
- * Direct tests for `commitGSplatsGeometry` (extracted in step 6 of the
- * god-object refactor — mirror of `commit-points-geometry.test.ts` and
- * `commit-lines-geometry.test.ts`).
+ * Direct tests for `commitGSplatsGeometry`, mirroring
+ * `commit-points-geometry.test.ts` and `commit-lines-geometry.test.ts`.
  *
  * Mocks `updateInstancedGSplatsMesh` so the test doesn't pull in the
  * gsplat shader / r184 instanced mesh paths; we only verify the

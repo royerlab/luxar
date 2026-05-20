@@ -1,6 +1,6 @@
 /**
- * Unit tests for the post-processing-setup factory extracted from
- * SceneManager in Step 9 of the scene-folder layout overhaul.
+ * Unit tests for the post-processing-setup factory used by
+ * SceneManager.
  *
  * The factory itself is thin (one constructor call + a log line);
  * these tests pin the canvas-size resolution path so a renamed

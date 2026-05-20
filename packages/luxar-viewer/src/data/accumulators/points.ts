@@ -70,13 +70,13 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
   /** tracks whether scalars were ever filled this session. */
   private hasScalars = false;
   /**
-   * B.6: flips to true on `dispose()`. Getters/fill/getData throw a
+   * Flips to true on `dispose()`. Getters/fill/getData throw a
    * descriptive error if called after disposal so caller bugs don't
    * silently operate on the empty-buffer state.
    */
   private _disposed = false;
   /**
-   * C.2: highest point index touched by any `fill()` call. Lets
+   * Highest point index touched by any `fill()` call. Lets
    * `ensureCapacity()` copy only the live prefix into the new buffers
    * instead of the full capacity — when growing 1024 → 1536 after
    * filling 800 points, the position copy goes from 12288 floats down
@@ -121,9 +121,9 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
     this.colorBuffer = new Float32Array(initialCapacity * 3);
     this.radiiBuffer = new Float32Array(initialCapacity);
     this.sharpnessBuffer = new Float32Array(initialCapacity);
-    // C.4: scalars are an optional attribute on most datasets. Start
-    // with an empty sentinel buffer so a non-scalar load doesn't reserve
-    // `initialCapacity * 4 B` up front. `fill()` allocates on first use.
+    // Scalars are optional on most datasets. Start with an empty sentinel
+    // buffer so a non-scalar load doesn't reserve `initialCapacity * 4 B`
+    // up front. `fill()` allocates on first use.
     this.scalarBuffer = new Float32Array(0);
 
     this.allocations++;
@@ -162,9 +162,9 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
       `Growing LoadedPointsDataAccumulator: ${this.capacity} → ${newCapacity} points`
     );
 
-    // C.2: copy only the live prefix (usedCount * stride). When the
+    // Copy only the live prefix (usedCount * stride). When the
     // accumulator is fresh or sparsely filled this is dramatically
-    // cheaper than copying the full old buffer; for full accumulators
+    // cheaper than copying the full previous buffer; for full accumulators
     // it's identical work since usedCount === capacity.
     const liveCount = Math.min(this.usedCount, this.capacity);
     const livePos = liveCount * 3;
@@ -213,10 +213,9 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
       this.sharpnessBuffer = newSharpness;
     }
 
-    // Scalar — type-preserving growth. C.4: skip growth when the
-    // accumulator never saw scalars (buffer stayed at sentinel size 0);
-    // initializeTypes will allocate at the new capacity on first
-    // scalar fill.
+    // Scalar — type-preserving growth. Skip growth when the accumulator
+    // never saw scalars (buffer stayed at sentinel size 0); initializeTypes
+    // will allocate at the new capacity on first scalar fill.
     if (this.scalarBuffer.length > 0) {
       if (this.scalarBuffer instanceof Uint8Array) {
         const newScalars = new Uint8Array(newCapacity);
@@ -321,10 +320,10 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
    * Detect and initialize buffer types on first fill
    */
   private initializeTypes(data: Partial<LoadedPointsData>): void {
-    // C.4: even after the initial color/radius/sharpness types have
-    // been pinned by a prior fill, a later fill might be the first to
-    // carry scalars — in which case we lazily allocate the scalar
-    // buffer here without disturbing the other type pins.
+    // Even after the initial color/radius/sharpness types have been pinned
+    // by a prior fill, a later fill might be the first to carry scalars —
+    // in which case we lazily allocate the scalar buffer here without
+    // disturbing the other type pins.
     if (this.types && this.types.scalar === undefined && data.scalars) {
       let scalarType: 'Float32Array' | 'Float16Array' | 'Uint8Array';
       if (data.scalars instanceof Uint8Array) {
@@ -387,9 +386,9 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
       this.sharpnessBuffer = new Uint8Array(this.capacity);
     }
 
-    // C.4: lazily allocate the scalar buffer on first sight of scalars
-    // (sized to current capacity). When `types.scalar` is undefined the
-    // buffer stays at length 0.
+    // Lazily allocate the scalar buffer on first sight of scalars (sized
+    // to current capacity). When `types.scalar` is undefined the buffer
+    // stays at length 0.
     if (types.scalar === 'Uint8Array') {
       this.scalarBuffer = new Uint8Array(this.capacity);
     } else if (types.scalar) {
@@ -431,7 +430,7 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
     // Initialize types on first fill
     this.initializeTypes(data);
 
-    // C.2: track the highest filled index for cheap ensureCapacity copies.
+    // Track the highest filled index for cheap ensureCapacity copies.
     const filledCount = data.positions
       ? data.positions.length / 3
       : data.colors
@@ -526,15 +525,15 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
     return this.types !== null;
   }
 
-  /** B.6: introspection — true if dispose() has been called. */
+  /** Introspection — true if dispose() has been called. */
   isDisposed(): boolean {
     return this._disposed;
   }
 
   /**
-   * B.6: throws if a mutating call lands on a disposed accumulator.
-   * Read-only getters return the (empty) buffers so existing post-
-   * dispose "did we wipe?" assertions keep working without raising.
+   * Throws if a mutating call lands on a disposed accumulator. Read-only
+   * getters return the empty buffers so disposal assertions can inspect
+   * the cleared state without raising.
    */
   private assertNotDisposed(method: string): void {
     if (this._disposed) {
@@ -563,8 +562,8 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
   /**
    * Direct accessor for the scalar buffer (used by loaders writing through).
    *
-   * C.4: the accumulator starts with a zero-length scalar buffer to
-   * avoid reserving 4 B/point on the common no-scalars path. The first
+   * The accumulator starts with a zero-length scalar buffer to avoid
+   * reserving 4 B/point on the common no-scalars path. The first
    * `getScalarBuffer()` call allocates to current capacity so the
    * spatial-index loader's direct-write path (`loadVertexRanges` →
    * `scalarBuffer`) writes into a real buffer.
@@ -577,10 +576,10 @@ export class LoadedPointsDataAccumulator implements DataAccumulator<
   }
 
   dispose(): void {
-    // B.6: zero-length sentinels keep the field types non-nullable
-    // (avoiding ?-checks at every internal read), and the small backing
-    // ArrayBuffers are GC-eligible once the accumulator itself drops.
-    // The `_disposed` flag is the real signal — getters/fill throw.
+    // Zero-length sentinels keep the field types non-nullable (avoiding
+    // ?-checks at every internal read), and the small backing ArrayBuffers
+    // are GC-eligible once the accumulator itself drops. The `_disposed`
+    // flag is the real signal — getters/fill throw.
     this.positionBuffer = new Float32Array(0);
     this.colorBuffer = new Float32Array(0);
     this.radiiBuffer = new Float32Array(0);

@@ -3,8 +3,7 @@
  *
  * Kept separate from the side-effecting eviction loop on `GPUBufferPool`
  * so the policy can be unit-tested without instantiating a pool, and so
- * per-type adapters (carved out in a later refactor step) can call into
- * a single source of truth.
+ * per-type adapters can call into a single source of truth.
  */
 
 import type { PooledBufferRef } from './pool-stats';

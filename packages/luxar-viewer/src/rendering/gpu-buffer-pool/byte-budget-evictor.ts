@@ -1,8 +1,8 @@
 /**
  * Byte-budget evictor for GPUBufferPool.
  *
- * Extracted in P6/step 8. Disposes pooled buffers (largest-first
- * across all three type pools) until `pooledBytes < maxPoolBytes`.
+ * Disposes pooled buffers (largest-first across all three type pools)
+ * until `pooledBytes < maxPoolBytes`.
  * Does NOT touch active buffers.
  *
  * @module rendering/gpu-buffer-pool/byte-budget-evictor

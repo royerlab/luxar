@@ -1,8 +1,8 @@
 /**
  * Material factory tables + backend resolution + cache-key helpers.
  *
- * Extracted from material-manager.ts in P6/step 4.1 to keep the
- * `MaterialManager` class focused on cache + lifecycle orchestration.
+ * Keeps the `MaterialManager` class focused on cache + lifecycle
+ * orchestration.
  *
  * Everything here is **stateless** — pure constructor lookups and
  * pure cache-key string construction. The single piece of state

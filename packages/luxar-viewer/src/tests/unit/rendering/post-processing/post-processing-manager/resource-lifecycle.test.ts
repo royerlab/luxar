@@ -1,7 +1,7 @@
 /**
- * Direct unit tests for the pure helpers in resource-lifecycle.ts
- * (extracted in P6/step 5.1). Covers the sizing pair, tone-mapping
- * resolver, and DPR-scaled noise computation.
+ * Direct unit tests for the pure helpers in resource-lifecycle.ts.
+ * Covers the sizing pair, tone-mapping resolver, and DPR-scaled noise
+ * computation.
  *
  * GPU-coupled exports (`buildTransientResources`, `createHdrTarget`,
  * `createLdrTarget`, `buildBloomChain`, `disposeTransientResources`)

@@ -1,6 +1,6 @@
 # Picking strategy — design + implementation reference
 
-**Status:** ✅ Implemented on both the WebGL2 (production default) and WebGPU (opt-in via `?renderer=webgpu`) paths. This document captures the original design decision plus the WebGPU-specific implementation notes that landed during the r184 dual-stack migration.
+**Status:** ✅ Implemented on both the WebGL2 (production default) and WebGPU (opt-in via `?renderer=webgpu`) paths. This document is the reference for picking behavior and backend-specific readback details.
 
 ## Context
 

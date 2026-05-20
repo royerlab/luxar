@@ -1,6 +1,6 @@
 /**
- * Direct tests for `commitLinesGeometry` (extracted in step 6 of the
- * god-object refactor — mirror of `commit-points-geometry.test.ts`).
+ * Direct tests for `commitLinesGeometry`, mirroring
+ * `commit-points-geometry.test.ts`.
  *
  * End-to-end exercise of the surrounding processLinesData /
  * projectLinesTo3DUsingWorker still lives in

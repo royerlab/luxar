@@ -311,9 +311,8 @@ describe('InputHandler — PanelCoordinator forwarding', () => {
   });
 
   it('setScaleBar / setColormapLegend / setOverlayManager do NOT forward', () => {
-    // Sanity: these setters only store local references; if a future
-    // refactor adds panelCoordinator forwarding, this test should be
-    // updated alongside.
+    // Sanity: these setters only store local references. If
+    // panelCoordinator forwarding is added, update this test alongside.
     const handler = makeHandler();
     const coordinator = (
       handler as unknown as {

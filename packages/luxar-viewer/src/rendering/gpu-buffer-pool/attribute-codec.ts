@@ -2,10 +2,9 @@
  * Geometry-agnostic helpers for the GPU buffer pool's interleaved
  * attribute layout.
  *
- * Extracted from gpu-buffer-pool.ts so the per-type adapters (Points,
- * Lines, GSplats) carved out in a later refactor step share a single
- * implementation of buffer rebuild + attribute write, rather than each
- * duplicating the strided-copy bookkeeping.
+ * Shared by the per-type adapters (Points, Lines, GSplats) so buffer
+ * rebuild and attribute write logic stays in one implementation rather
+ * than duplicating strided-copy bookkeeping.
  *
  * Per-type spec arrays (POINTS_BASE_ATTRIBUTE_SPECS,
  * LINES_BASE_ATTRIBUTE_SPECS, GSPLATS_ATTRIBUTE_SPECS, etc.) stay with

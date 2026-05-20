@@ -260,9 +260,7 @@ describe('RenderingControls', () => {
     });
   });
 
-  // Bug Fix #2 (AO disable) — feature removed in mega-shader refactor.
-
-  describe('Bug Fix #4: Initialization Sync', () => {
+  describe('Initialization Sync', () => {
     it('should apply camera settings after loading from localStorage', () => {
       const controls = renderingControls as any;
 

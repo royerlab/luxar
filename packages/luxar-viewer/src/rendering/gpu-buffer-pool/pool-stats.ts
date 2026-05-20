@@ -1,9 +1,8 @@
 /**
  * Pool-stats types — common across Points/Lines/GSplats buffer pools.
  *
- * Extracted from gpu-buffer-pool.ts so per-type adapters (added in a
- * later refactor step) can depend on a single source of truth for the
- * stats and ref shapes without circular imports.
+ * Shared by per-type adapters so stats and ref shapes have a single
+ * source of truth without circular imports.
  */
 
 import * as THREE from 'three';

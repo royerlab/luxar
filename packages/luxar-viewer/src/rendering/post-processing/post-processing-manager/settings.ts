@@ -1,12 +1,9 @@
 /**
  * Setter logic for the PostProcessingManager's user-toggle surface.
  *
- * Extracted in P6/step 5.2 so the orchestrator's setter methods
- * become thin delegates that route into these helpers with the
- * already-bound mega-shader + ancillary state. Each helper here owns
- * the validation + logging + side-effect routing for one user-facing
- * setting; the orchestrator class still owns the **state fields**
- * (which the helpers read via the supplied snapshot).
+ * Each helper owns the validation, logging, and side-effect routing for
+ * one user-facing setting. The orchestrator class still owns the state
+ * fields, which the helpers read via the supplied snapshot.
  *
  * @module rendering/post-processing/post-processing-manager/settings
  */

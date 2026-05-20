@@ -1,19 +1,17 @@
 /**
- * Points migration perf gate — multi-sample FPS measurement.
+ * Points rendering perf diagnostic — multi-sample FPS measurement.
  *
- * After the THREE.Points → THREE.Mesh + InstancedBufferAttribute
- * migration (commit a0566830), this spec captures N=5 FPS samples on a
- * representative points-heavy dataset so the regression check has real
- * statistical mass behind it rather than depending on a single-sample
- * comparison against a stale baseline.
+ * Captures N=5 FPS samples on a representative points-heavy dataset so
+ * rendering changes can be compared with enough statistical mass to avoid
+ * relying on a single noisy sample.
  *
  * Output: the min / median / max FPS across N trials, written both to
- * the test console and to `points-migration-perf.json` at the package
- * root so it can be diffed against a previous run.
+ * the test console and to `points-rendering-perf.json` at the package
+ * root so it can be diffed against another run.
  *
  * Not a CI gate — strictly developer-facing diagnostic.
  *
- * @module tests/e2e/points-migration-perf.spec
+ * @module tests/e2e/points-rendering-perf.spec
  */
 
 import { test } from '@playwright/test';
@@ -23,7 +21,7 @@ import * as path from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const OUTPUT_PATH = path.join(__dirname, '../../../points-migration-perf.json');
+const OUTPUT_PATH = path.join(__dirname, '../../../points-rendering-perf.json');
 
 // Densest points-only example dataset shipped with the repo. The
 // other "dense" candidate (`dense_grid_5d_example.zarr`) is a 5-D
@@ -41,7 +39,7 @@ function median(values: number[]): number {
   return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
-test('points migration: capture N=5 FPS samples on dense_cubic_gradient', async ({ page }) => {
+test('points rendering: capture N=5 FPS samples on dense_cubic_gradient', async ({ page }) => {
   test.skip(
     process.env.LUXAR_RUN_BENCHMARKS !== '1',
     'Developer-facing benchmark; set LUXAR_RUN_BENCHMARKS=1 to run. ' +

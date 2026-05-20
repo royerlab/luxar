@@ -180,9 +180,6 @@ describe('processGSplatsData', () => {
   });
 });
 
-// commitGSplatsGeometry tests moved to commit-gsplats-geometry.test.ts
-// alongside the extracted module (step 6 of the god-object refactor).
-
 describe('projectGSplatsTo3DUsingWorker', () => {
   it('returns mapped worker result on success', async () => {
     const projectGSplatsTo3D = vi.fn(async () => ({

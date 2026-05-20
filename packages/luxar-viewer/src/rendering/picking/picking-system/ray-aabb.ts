@@ -1,9 +1,9 @@
 /**
  * Ray-AABB culling for PickingSystem.
  *
- * Extracted in P6/step 7.2 — quick cursor-over-empty-space check that
- * lets the orchestrator skip the GPU readback when the ray doesn't
- * intersect any registered pick node's world-space AABB.
+ * Quick cursor-over-empty-space check that lets the orchestrator skip
+ * the GPU readback when the ray doesn't intersect any registered pick
+ * node's world-space AABB.
  *
  * @module rendering/picking/picking-system/ray-aabb
  */

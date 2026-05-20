@@ -6,9 +6,9 @@ Visualizes ~114K per-image CytoSelf embeddings from the OpenCell dataset as a
 endogenously tagged protein, colored by subcellular localization or protein
 identity.
 
-This is a two-phase demo:
-  Phase 1 (first run): Download embeddings from Google Drive, compute 3D UMAP (~10-30 min)
-  Phase 2 (subsequent): Load cached results instantly
+Run behavior:
+  First run: Download embeddings from Google Drive, compute 3D UMAP (~10-30 min)
+  Subsequent runs: Load cached results instantly
 
 Data source: OpenCell / CytoSelf (CC BY 4.0)
   - Embeddings: Global VQ-VAE-2 representations (9,216-dim per image)

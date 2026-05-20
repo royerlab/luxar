@@ -117,8 +117,6 @@ describe('applyRenderingSettings — tone mapping', () => {
   });
 });
 
-// DOF tests dropped — feature removed in mega-shader refactor.
-
 describe('applyRenderingSettings — detector noise', () => {
   it('forwards the four detector-noise parameters', () => {
     stubs.settings.detectorNoiseEnabled = true;
@@ -182,8 +180,6 @@ describe('applyRenderingSettings — chromatic lens distortion', () => {
     );
   });
 });
-
-// Ambient-occlusion tests dropped — feature removed in mega-shader refactor.
 
 describe('applyRenderingSettings — dynamic clipping', () => {
   it('applies enabled state to scene manager AND notifies controls', () => {
