@@ -11,7 +11,8 @@
 export interface OrbitKeyboardCtx {
   enabled: () => boolean;
   enablePan: () => boolean;
-  keyPanSpeed: number;
+  /** Read as a getter so callers see live mutations to the field. */
+  keyPanSpeed: () => number;
   pan: (deltaX: number, deltaY: number) => void;
 }
 
@@ -26,21 +27,22 @@ export function attachKeyboardPan(
   const onKeyDown = (event: KeyboardEvent): void => {
     if (!ctx.enabled() || !ctx.enablePan()) return;
 
+    const speed = ctx.keyPanSpeed();
     switch (event.code) {
       case 'ArrowUp':
-        ctx.pan(0, ctx.keyPanSpeed);
+        ctx.pan(0, speed);
         event.preventDefault();
         break;
       case 'ArrowDown':
-        ctx.pan(0, -ctx.keyPanSpeed);
+        ctx.pan(0, -speed);
         event.preventDefault();
         break;
       case 'ArrowLeft':
-        ctx.pan(ctx.keyPanSpeed, 0);
+        ctx.pan(speed, 0);
         event.preventDefault();
         break;
       case 'ArrowRight':
-        ctx.pan(-ctx.keyPanSpeed, 0);
+        ctx.pan(-speed, 0);
         event.preventDefault();
         break;
     }

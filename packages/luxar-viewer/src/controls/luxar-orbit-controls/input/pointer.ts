@@ -188,11 +188,14 @@ export function handlePointerMove(ctx: OrbitInputCtx, event: PointerEvent): void
 }
 
 export function handlePointerUp(ctx: OrbitInputCtx, event: PointerEvent): void {
-  // Remove this pointer
-  ctx.setPointers(ctx.pointers.filter((p) => p.pointerId !== event.pointerId));
+  // Remove this pointer. Use the filtered result directly — ctx.pointers
+  // still references the pre-filter array after setPointers, so reading
+  // its length here would check the wrong list.
+  const remaining = ctx.pointers.filter((p) => p.pointerId !== event.pointerId);
+  ctx.setPointers(remaining);
   ctx.pointerPositions.delete(event.pointerId);
 
-  if (ctx.pointers.length === 0) {
+  if (remaining.length === 0) {
     try {
       ctx.domElement.releasePointerCapture(event.pointerId);
     } catch {
