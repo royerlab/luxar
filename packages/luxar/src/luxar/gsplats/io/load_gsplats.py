@@ -11,7 +11,7 @@ import zarr
 
 from luxar.encoding import ArrayDecoder
 from luxar.gsplats import GSplatData
-from luxar.gsplats.gsplat_data import AdditiveSubLOD
+from luxar.gsplats.gsplat_data import AdditiveSubLOD, SubstitutiveLevel
 
 
 def _extract_compressed_zarr(compressed_path: Path) -> Path:
@@ -142,9 +142,13 @@ def load_gsplats(
             )
 
         format_version = root.attrs.get("format_version")
-        if format_version not in ("1.0", "1.1"):
+        if format_version != "2.0":
             raise ValueError(
-                f"Unsupported format_version: {format_version}, expected '1.0' or '1.1'"
+                f"Unsupported format_version: {format_version!r}. The on-disk "
+                f"format is now v2.0 (2-D substitutive × additive LOD). "
+                f"Convert legacy v1.0 / v1.1 files (and old substitutive "
+                f"directories) with `luxar gsplat migrate-format <input> "
+                f"<output.gsplats.zarr>`."
             )
 
         # Get splats group
@@ -175,65 +179,85 @@ def load_gsplats(
             if "description" in root.attrs:
                 stats["description"] = root.attrs["description"]
 
-        # Read truncation radius (default 3.0 for backward compatibility with old files)
+        # Read truncation radius (default 3.0 if absent)
         truncation_radius = float(splats_group.attrs.get("truncation_radius", 3.0))
 
-        if format_version == "1.1":
-            # v1.1: Multi-LOD format with per-LOD groups
-            n_lods = splats_group.attrs.get("n_lods", 1)
-            lods = []
-            for i in range(n_lods):
-                lod_group = splats_group[f"lod_{i}"]
-                lod_centers = decoder.decode(lod_group["centers"], root)
-                lod_amplitudes = decoder.decode(lod_group["amplitudes"], root)
-                lod_cholesky = decoder.decode(lod_group["cholesky_factors"], root)
-                lod_colors = (
-                    decoder.decode(lod_group["colors"], root)
-                    if "colors" in lod_group
+        # v2.0: 2-D substitutive × additive layout
+        n_substitutive = int(
+            root.attrs.get(
+                "n_substitutive", splats_group.attrs.get("n_substitutive", 1)
+            )
+        )
+        default_substitutive = int(
+            root.attrs.get(
+                "default_substitutive",
+                splats_group.attrs.get("default_substitutive", 0),
+            )
+        )
+
+        substitutive_levels = []
+        for s in range(n_substitutive):
+            sub_group = splats_group[f"substitutive_{s}"]
+            n_additive_sublods = int(sub_group.attrs.get("n_additive_sublods", 1))
+            compression_factor = int(sub_group.attrs.get("compression_factor", 1))
+            parent_method_raw = sub_group.attrs.get("parent_method", "")
+            parent_method = (
+                None
+                if parent_method_raw in ("", None)
+                else str(parent_method_raw)
+            )
+            level_index = int(sub_group.attrs.get("level_index", s))
+            level_stats: Dict[str, Any] = {}
+            if include_stats:
+                ls_raw = sub_group.attrs.get("level_stats", {})
+                if isinstance(ls_raw, dict):
+                    level_stats = dict(ls_raw)
+
+            additive_sublods = []
+            for a in range(n_additive_sublods):
+                add_group = sub_group[f"additive_{a}"]
+                add_centers = decoder.decode(add_group["centers"], root)
+                add_amplitudes = decoder.decode(add_group["amplitudes"], root)
+                add_cholesky = decoder.decode(add_group["cholesky_factors"], root)
+                add_colors = (
+                    decoder.decode(add_group["colors"], root)
+                    if "colors" in add_group
                     else None
                 )
                 lod_stats: Dict[str, Any] = {}
                 if include_stats:
-                    lod_stats_raw = lod_group.attrs.get("lod_stats", {})
+                    lod_stats_raw = add_group.attrs.get("lod_stats", {})
                     if isinstance(lod_stats_raw, dict):
                         lod_stats = dict(lod_stats_raw)
-                    lod_stats["n_splats"] = lod_group.attrs.get("n_splats")
-                    lod_stats["ndim"] = lod_group.attrs.get("ndim")
-                    lod_stats["ordering"] = lod_group.attrs.get("ordering", "none")
-                lods.append(
+                    lod_stats["n_splats"] = add_group.attrs.get("n_splats")
+                    lod_stats["ndim"] = add_group.attrs.get("ndim")
+                    lod_stats["ordering"] = add_group.attrs.get("ordering", "none")
+                additive_sublods.append(
                     AdditiveSubLOD(
-                        centers=lod_centers,
-                        amplitudes=lod_amplitudes,
-                        cholesky_factors=lod_cholesky,
-                        colors=lod_colors,
+                        centers=add_centers,
+                        amplitudes=add_amplitudes,
+                        cholesky_factors=add_cholesky,
+                        colors=add_colors,
                         stats=lod_stats,
                         truncation_radius=truncation_radius,
                     )
                 )
-            data = GSplatData(additive_sublods=lods, stats=stats)
-        else:
-            # v1.0: Flat format (single LOD)
-            centers = decoder.decode(splats_group["centers"], root)
-            amplitudes = decoder.decode(splats_group["amplitudes"], root)
-            cholesky_factors = decoder.decode(splats_group["cholesky_factors"], root)
-            colors = (
-                decoder.decode(splats_group["colors"], root)
-                if "colors" in splats_group
-                else None
+
+            substitutive_levels.append(
+                SubstitutiveLevel(
+                    additive_sublods=additive_sublods,
+                    compression_factor=compression_factor,
+                    parent_method=parent_method,
+                    level_index=level_index,
+                    stats=level_stats,
+                )
             )
-            # Note: old files may contain a "sharpnesses" array — we simply ignore it.
-            if include_stats:
-                stats["n_splats"] = splats_group.attrs.get("n_splats")
-                stats["ndim"] = splats_group.attrs.get("ndim")
-                stats["ordering"] = splats_group.attrs.get("ordering", "none")
-            data = GSplatData(
-                centers=centers,
-                amplitudes=amplitudes,
-                cholesky_factors=cholesky_factors,
-                colors=colors,
-                stats=stats,
-                truncation_radius=truncation_radius,
-            )
+
+        data = GSplatData(
+            substitutive_levels=substitutive_levels,
+            stats=stats,
+            default_substitutive=default_substitutive,
+        )
 
         return data
 

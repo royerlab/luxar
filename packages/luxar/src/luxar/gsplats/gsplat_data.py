@@ -1512,8 +1512,9 @@ class GSplatData(_SplatArrayMixin):
             if "provenance" in self.stats:
                 provenance_info = self.stats["provenance"]
 
-        if self.n_additive_sublods == 1:
-            # Single LOD: use v1.0 format for full backward compatibility
+        if self.n_substitutive == 1 and self.n_additive_sublods == 1:
+            # Trivial 1×1 case: route through save_gsplats for the simplest
+            # v2.0 layout (single substitutive level, single additive sub-LOD).
             save_gsplats(
                 path=path,
                 centers=self.centers,
@@ -1534,7 +1535,8 @@ class GSplatData(_SplatArrayMixin):
                 truncation_radius=self.truncation_radius,
             )
         else:
-            # Multi-LOD: use v1.1 format with per-LOD groups
+            # 2-D matrix with N substitutive × M_i additive: write the full
+            # v2.0 substitutive_<s>/additive_<a> nested layout.
             self._save_multi_lod(
                 path=path,
                 ordering=ordering,
@@ -1565,7 +1567,22 @@ class GSplatData(_SplatArrayMixin):
         compressor: Optional[Any] = None,
         zip_deflate: bool = False,
     ) -> None:
-        """Write multi-LOD data as v1.1 zarr format with per-LOD groups."""
+        """Write the 2-D substitutive × additive matrix as v2.0 zarr format.
+
+        Layout::
+
+            <path>/.zattrs                       # format_version=2.0, n_substitutive,
+                                                 # default_substitutive, …
+            <path>/splats/.zattrs                # n_substitutive, default_substitutive
+            <path>/splats/substitutive_<s>/      # one per substitutive level
+                .zattrs                          # n_additive_sublods, compression_factor,
+                                                 # parent_method, level_index
+                additive_<a>/                    # one per additive sub-LOD
+                    centers, amplitudes,
+                    cholesky_factors, colors?,
+                    chunk_bounds
+                    .zattrs                      # lod_stats={…}
+        """
         import datetime
         import shutil
         import tempfile
@@ -1597,57 +1614,78 @@ class GSplatData(_SplatArrayMixin):
         store = DirectoryStore(str(zarr_path))
         root = zarr.group(store=store, overwrite=True)
 
-        # Root attributes (v1.1)
+        # Root attributes (v2.0 — 2-D substitutive × additive)
         timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
         root.attrs.update(
             {
-                "format_version": "1.1",
+                "format_version": "2.0",
                 "format_type": "gsplats_zarr",
                 "timestamp": timestamp,
                 "luxar_gsplats_version": GSPLATS_VERSION,
-                "n_lods": self.n_additive_sublods,
+                "n_substitutive": self.n_substitutive,
+                "default_substitutive": self.default_substitutive,
             }
         )
         if description:
             root.attrs["description"] = description
 
-        # Create splats group with LOD subgroups
         splats_group = root.create_group("splats")
         splats_group.attrs.update(
             {
                 "type": "gsplats",
-                "n_lods": self.n_additive_sublods,
-                "n_splats_total": self.n_splats,
+                "n_substitutive": self.n_substitutive,
+                "default_substitutive": self.default_substitutive,
                 "truncation_radius": self.truncation_radius,
             }
         )
 
-        # Write each LOD as a subgroup
-        for i, lod in enumerate(self.additive_sublods):
-            lod_group = splats_group.create_group(f"lod_{i}")
-
-            # Serialize LOD stats that are JSON-safe
-            lod_stats = {
+        # Iterate substitutive × additive matrix
+        for s, sub_level in enumerate(self.substitutive_levels):
+            sub_group = splats_group.create_group(f"substitutive_{s}")
+            sub_group.attrs.update(
+                {
+                    "n_additive_sublods": sub_level.n_additive_lods,
+                    "compression_factor": int(sub_level.compression_factor),
+                    "parent_method": sub_level.parent_method
+                    if sub_level.parent_method is not None
+                    else "",
+                    "level_index": int(sub_level.level_index),
+                }
+            )
+            # Serialize SubstitutiveLevel.stats that are JSON-safe
+            sub_stats = {
                 k: v
-                for k, v in lod.stats.items()
+                for k, v in sub_level.stats.items()
                 if isinstance(v, (int, float, str, bool, list))
             }
+            if sub_stats:
+                sub_group.attrs["level_stats"] = sub_stats
 
-            _save_splat_arrays_to_group(
-                splats_group=lod_group,
-                centers=lod.centers,
-                amplitudes=lod.amplitudes,
-                cholesky_factors=lod.cholesky_factors,
-                colors=lod.colors,
-                ordering=ordering,
-                encoding_mode=encoding_mode,
-                color_mode=color_mode,
-                positive_scalar_encoding=positive_scalar_encoding,
-                float16_allowed=False,
-                lod_stats=lod_stats,
-                compressor=compressor,
-                truncation_radius=lod.truncation_radius,
-            )
+            for a, sublod in enumerate(sub_level.additive_sublods):
+                add_group = sub_group.create_group(f"additive_{a}")
+
+                # Serialize AdditiveSubLOD stats that are JSON-safe
+                lod_stats = {
+                    k: v
+                    for k, v in sublod.stats.items()
+                    if isinstance(v, (int, float, str, bool, list))
+                }
+
+                _save_splat_arrays_to_group(
+                    splats_group=add_group,
+                    centers=sublod.centers,
+                    amplitudes=sublod.amplitudes,
+                    cholesky_factors=sublod.cholesky_factors,
+                    colors=sublod.colors,
+                    ordering=ordering,
+                    encoding_mode=encoding_mode,
+                    color_mode=color_mode,
+                    positive_scalar_encoding=positive_scalar_encoding,
+                    float16_allowed=False,
+                    lod_stats=lod_stats,
+                    compressor=compressor,
+                    truncation_radius=sublod.truncation_radius,
+                )
 
         # Write fitting info (optional, root level)
         if fitting_info is not None:
