@@ -412,7 +412,7 @@ export class LuxarApp {
     installFocusHandling({
       events: this.events,
       animationController: this.animationController,
-      recordingPanel: this.recordingPanel,
+      getRecordingPanel: () => this.recordingPanel,
     });
   }
 
@@ -468,20 +468,12 @@ export class LuxarApp {
   }
 
   /**
-   * Dispose all application resources.
-   *
-   * Tears down the animation loop, scene, input handlers, UI panels, and
-   * registered listeners. Idempotent: safe to call repeatedly. After
-   * dispose(), the LuxarApp instance is in an uninitialized state — call
-   * init() again to re-create resources, or discard the instance.
-   */
-  /**
    * Capture a JSON-serialisable snapshot of the current viewer state.
    *
    * Includes camera placement (position, target, up, projection params)
    * and per-dimension slice positions. Layer-panel state and rendering-
    * controls settings are not included in v1 — see
-   * `src/core/viewer-snapshot.ts` for the rationale and the schema.
+   * `src/core/app/snapshot/viewer-snapshot.ts` for the rationale and the schema.
    *
    * Use the returned object to share a view, write a regression fixture,
    * or hand to {@link restoreSnapshot} on another LuxarApp instance.
@@ -512,6 +504,14 @@ export class LuxarApp {
     return restoreViewerSnapshot(this.sceneManager, snapshot);
   }
 
+  /**
+   * Dispose all application resources.
+   *
+   * Tears down the animation loop, scene, input handlers, UI panels, and
+   * registered listeners. Idempotent: safe to call repeatedly. After
+   * dispose(), the LuxarApp instance is in an uninitialized state — call
+   * init() again to re-create resources, or discard the instance.
+   */
   dispose(): void {
     // Idempotency: a second dispose() after a successful one is a no-op.
     // Component fields still reference their (already disposed) instances,
@@ -580,7 +580,7 @@ export class LuxarApp {
 
   /**
    * Get visibility states of all UI panels for save/restore during recording.
-   * Implementation lives in `core/panel-visibility.ts`.
+   * Implementation lives in `core/app/viewer-config/panel-visibility.ts`.
    */
   private getPanelVisibilityStates(): Map<string, boolean> {
     return getPanelVisibilityStatesHelper({

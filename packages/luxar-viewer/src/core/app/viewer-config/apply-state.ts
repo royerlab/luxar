@@ -13,7 +13,7 @@
  * Only explicitly-set fields (`true` / `false` / non-undefined) are
  * applied — unset fields preserve the viewer's built-in defaults.
  *
- * @module core/viewer-config-applier
+ * @module core/app/viewer-config/apply-state
  */
 
 import type { ZarrViewerConfig } from '../../../types/zarr';

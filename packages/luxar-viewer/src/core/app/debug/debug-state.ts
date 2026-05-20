@@ -12,7 +12,7 @@
  * (or call it from a notebook embed where `getInstance()` shorthand
  * isn't available).
  *
- * @module core/debug-state
+ * @module core/app/debug/debug-state
  */
 
 import * as THREE from 'three';

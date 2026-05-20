@@ -7,7 +7,7 @@
  * is pass-through: it knows about the typed `PanelVisibilityPorts`
  * shape but does not import any panel implementation.
  *
- * @module core/panel-visibility
+ * @module core/app/viewer-config/panel-visibility
  */
 
 /** A panel's minimal show/hide/visibility surface. */
