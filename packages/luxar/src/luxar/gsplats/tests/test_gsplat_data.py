@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
+from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData, SubstitutiveLevel
 
 
 def _make_3d_gsplat(n=5, seed=42):
@@ -2176,3 +2176,165 @@ class TestSubstitutiveLevel:
         # frozen=True dataclass: setting an attribute should raise
         with pytest.raises((AttributeError, Exception)):
             level.compression_factor = 4  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# GSplatData 2-D substitutive × additive accessors
+# ---------------------------------------------------------------------------
+
+
+class TestGSplatData2DAccessors:
+    """Tests for the new v2.0 2-D accessors: n_substitutive, at_substitutive,
+    cell, default_substitutive, from_substitutive_levels.
+
+    Construction paths (centers/amplitudes/cholesky_factors, lods=..., and
+    substitutive_levels=...) all yield a valid 2-D shape; verify the new
+    accessors return the right cells and that existing accessors
+    (``lods``, ``n_lods``) remain consistent with the default substitutive
+    level.
+    """
+
+    @staticmethod
+    def _make_additive(n: int = 5, seed: int = 0) -> AdditiveSubLOD:
+        rng = np.random.default_rng(seed)
+        return AdditiveSubLOD(
+            centers=(rng.random((n, 3)) * 10).astype(np.float32),
+            amplitudes=rng.random(n).astype(np.float32),
+            cholesky_factors=np.tile(
+                np.array([1.0, 0, 1.0, 0, 0, 1.0], dtype=np.float32), (n, 1)
+            ),
+        )
+
+    def _make_substitutive_level(
+        self, n_additive: int = 2, n_per: int = 4, compression: int = 1
+    ) -> "SubstitutiveLevel":
+        from luxar.gsplats.gsplat_data import SubstitutiveLevel
+
+        sublods = [
+            self._make_additive(n_per, seed=i) for i in range(n_additive)
+        ]
+        return SubstitutiveLevel(
+            additive_sublods=sublods,
+            compression_factor=compression,
+        )
+
+    # ── Construction paths ────────────────────────────────────
+
+    def test_array_form_yields_single_substitutive(self):
+        """Convenience constructor produces ``[1, 1]`` matrix shape."""
+        rng = np.random.default_rng(0)
+        data = GSplatData(
+            centers=(rng.random((5, 3)) * 10).astype(np.float32),
+            amplitudes=rng.random(5).astype(np.float32),
+            cholesky_factors=np.tile(
+                np.array([1.0, 0, 1.0, 0, 0, 1.0], dtype=np.float32), (5, 1)
+            ),
+        )
+        assert data.n_substitutive == 1
+        assert data.default_substitutive == 0
+        # The single substitutive level wraps a single additive sub-LOD
+        level = data.default_substitutive_level
+        assert level.n_additive_lods == 1
+        assert level.n_splats_total == 5
+        assert level.compression_factor == 1
+
+    def test_lods_form_yields_single_substitutive(self):
+        """``lods=...`` constructor produces ``[1, M]`` matrix shape."""
+        sublods = [self._make_additive(3, seed=0), self._make_additive(2, seed=1)]
+        data = GSplatData(lods=sublods)
+        assert data.n_substitutive == 1
+        # Existing lods accessor still works and matches default substitutive level
+        assert data.n_lods == 2
+        assert list(data.lods) == list(data.default_substitutive_level.additive_sublods)
+
+    def test_substitutive_levels_form_yields_multi(self):
+        """``substitutive_levels=...`` constructor produces ``[N, M_i]`` shape."""
+        levels = [
+            self._make_substitutive_level(n_additive=3, n_per=4, compression=1),
+            self._make_substitutive_level(n_additive=1, n_per=2, compression=4),
+        ]
+        data = GSplatData(substitutive_levels=levels)
+        assert data.n_substitutive == 2
+        assert data.default_substitutive == 0
+        # Default substitutive level's additive ladder is the shape of lods
+        assert data.n_lods == 3
+        # The coarser level has its own count
+        assert data.substitutive_levels[1].n_additive_lods == 1
+        assert data.substitutive_levels[1].compression_factor == 4
+
+    def test_from_substitutive_levels_classmethod(self):
+        levels = [
+            self._make_substitutive_level(n_additive=2, n_per=4, compression=1),
+            self._make_substitutive_level(n_additive=1, n_per=3, compression=2),
+        ]
+        data = GSplatData.from_substitutive_levels(
+            levels, stats={"hello": "world"}
+        )
+        assert data.n_substitutive == 2
+        assert data.stats == {"hello": "world"}
+
+    def test_default_substitutive_out_of_range_rejected(self):
+        levels = [self._make_substitutive_level()]
+        with pytest.raises(ValueError, match="default_substitutive"):
+            GSplatData(substitutive_levels=levels, default_substitutive=5)
+
+    def test_empty_substitutive_levels_rejected(self):
+        with pytest.raises(ValueError, match="at least one SubstitutiveLevel"):
+            GSplatData(substitutive_levels=[])
+
+    def test_non_substitutive_level_rejected(self):
+        with pytest.raises(TypeError, match="SubstitutiveLevel"):
+            GSplatData(substitutive_levels=["not a level"])  # type: ignore[list-item]
+
+    # ── Accessors ────────────────────────────────────────────
+
+    def test_at_substitutive_returns_view(self):
+        levels = [
+            self._make_substitutive_level(n_additive=2, n_per=4, compression=1),
+            self._make_substitutive_level(n_additive=1, n_per=3, compression=4),
+        ]
+        data = GSplatData.from_substitutive_levels(levels)
+        coarse = data.at_substitutive(1)
+        assert isinstance(coarse, GSplatData)
+        assert coarse.n_substitutive == 1
+        assert coarse.n_lods == 1
+        # The coarse level's data: 3 splats in one additive sub-LOD
+        assert coarse.n_splats == 3
+
+    def test_at_substitutive_out_of_range_raises(self):
+        data = GSplatData(lods=[self._make_additive(3)])
+        with pytest.raises(IndexError, match="substitutive"):
+            data.at_substitutive(5)
+        with pytest.raises(IndexError, match="substitutive"):
+            data.at_substitutive(-1)
+
+    def test_cell_direct_2d_access(self):
+        levels = [
+            self._make_substitutive_level(n_additive=3, n_per=4),
+            self._make_substitutive_level(n_additive=2, n_per=2, compression=4),
+        ]
+        data = GSplatData.from_substitutive_levels(levels)
+        c00 = data.cell(0, 0)
+        c11 = data.cell(1, 1)
+        assert isinstance(c00, AdditiveSubLOD)
+        assert isinstance(c11, AdditiveSubLOD)
+        assert c00.n_splats == 4
+        assert c11.n_splats == 2
+
+    def test_cell_out_of_range_raises(self):
+        data = GSplatData(lods=[self._make_additive(3)])
+        with pytest.raises(IndexError, match="substitutive"):
+            data.cell(5, 0)
+        with pytest.raises(IndexError, match="additive"):
+            data.cell(0, 5)
+
+    def test_array_caches_reflect_default_substitutive(self):
+        """``data.centers/amplitudes/cholesky_factors`` reflect default level."""
+        levels = [
+            self._make_substitutive_level(n_additive=2, n_per=4),
+            self._make_substitutive_level(n_additive=1, n_per=2, compression=4),
+        ]
+        data = GSplatData.from_substitutive_levels(levels)
+        # n_splats = concatenation of default substitutive level's additive ladder
+        # = 4 + 4 = 8 (not 8 + 2 = 10 — the coarse level is alternative)
+        assert data.n_splats == 8

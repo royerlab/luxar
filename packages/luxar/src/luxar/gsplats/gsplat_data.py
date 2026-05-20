@@ -303,10 +303,37 @@ class GSplatData(_SplatArrayMixin):
         stats: Optional[Dict[str, Any]] = None,
         *,
         lods: Optional[List[AdditiveSubLOD]] = None,
+        substitutive_levels: Optional[List[SubstitutiveLevel]] = None,
+        default_substitutive: int = 0,
         truncation_radius: float = 3.0,
     ) -> None:
-        if lods is not None:
-            # Explicit LOD construction
+        if substitutive_levels is not None:
+            # New 2-D construction: full substitutive × additive matrix
+            if len(substitutive_levels) == 0:
+                raise ValueError(
+                    "substitutive_levels must contain at least one SubstitutiveLevel"
+                )
+            for s in substitutive_levels:
+                if not isinstance(s, SubstitutiveLevel):
+                    raise TypeError(
+                        f"Each entry must be a SubstitutiveLevel, got "
+                        f"{type(s).__name__}"
+                    )
+            if not 0 <= default_substitutive < len(substitutive_levels):
+                raise ValueError(
+                    f"default_substitutive {default_substitutive} out of range "
+                    f"[0, {len(substitutive_levels)})"
+                )
+            self.substitutive_levels: List[SubstitutiveLevel] = list(
+                substitutive_levels
+            )
+            self.default_substitutive: int = default_substitutive
+            # Derived: the "primary" additive ladder is the default level's
+            self.lods: List[AdditiveSubLOD] = list(
+                self.substitutive_levels[default_substitutive].additive_sublods
+            )
+        elif lods is not None:
+            # Single-substitutive construction with explicit additive sub-LODs
             if len(lods) == 0:
                 raise ValueError("lods must contain at least one AdditiveSubLOD")
             for lod in lods:
@@ -314,13 +341,23 @@ class GSplatData(_SplatArrayMixin):
                     raise TypeError(
                         f"Each LOD must be a AdditiveSubLOD, got {type(lod).__name__}"
                     )
-            self.lods: List[AdditiveSubLOD] = list(lods)
+            self.lods = list(lods)
+            # Single substitutive level wrapping the additive ladder
+            self.substitutive_levels = [
+                SubstitutiveLevel(
+                    additive_sublods=list(lods),
+                    compression_factor=1,
+                    parent_method=None,
+                    level_index=0,
+                )
+            ]
+            self.default_substitutive = 0
         elif (
             centers is not None
             and amplitudes is not None
             and cholesky_factors is not None
         ):
-            # Convenience constructor — wrap into single LOD
+            # Convenience constructor — wrap into single LOD, single substitutive level
             single_lod = AdditiveSubLOD(
                 centers=centers,
                 amplitudes=amplitudes,
@@ -330,9 +367,19 @@ class GSplatData(_SplatArrayMixin):
                 truncation_radius=truncation_radius,
             )
             self.lods = [single_lod]
+            self.substitutive_levels = [
+                SubstitutiveLevel(
+                    additive_sublods=[single_lod],
+                    compression_factor=1,
+                    parent_method=None,
+                    level_index=0,
+                )
+            ]
+            self.default_substitutive = 0
         else:
             raise ValueError(
-                "Provide either lods=[...] or (centers, amplitudes, cholesky_factors)"
+                "Provide either substitutive_levels=[...], lods=[...], "
+                "or (centers, amplitudes, cholesky_factors)"
             )
 
         # Compute cached concatenations from LODs
@@ -452,6 +499,91 @@ class GSplatData(_SplatArrayMixin):
             New GSplatData with the given LODs.
         """
         return cls(lods=lods, stats=stats)
+
+    @classmethod
+    def from_substitutive_levels(
+        cls,
+        substitutive_levels: List[SubstitutiveLevel],
+        stats: Optional[Dict[str, Any]] = None,
+        default_substitutive: int = 0,
+    ) -> "GSplatData":
+        """Construct a 2-D GSplatData from a list of substitutive levels.
+
+        Each ``SubstitutiveLevel`` carries its own additive ladder (one or
+        more :class:`AdditiveSubLOD`). The resulting ``GSplatData`` has
+        ``n_substitutive == len(substitutive_levels)`` and represents the
+        full ``[N, M_i]`` matrix of splat sets.
+
+        Args:
+            substitutive_levels: Ordered list, finest at index 0.
+            stats: Optional top-level statistics.
+            default_substitutive: Which level the legacy ``lods`` /
+                ``n_lods`` accessors return (default: 0 = finest).
+
+        Returns:
+            New ``GSplatData`` with the given substitutive × additive matrix.
+        """
+        return cls(
+            substitutive_levels=substitutive_levels,
+            stats=stats,
+            default_substitutive=default_substitutive,
+        )
+
+    # ── 2-D substitutive × additive accessors ──────────────
+
+    @property
+    def n_substitutive(self) -> int:
+        """Number of substitutive levels (always >= 1)."""
+        return len(self.substitutive_levels)
+
+    @property
+    def default_substitutive_level(self) -> SubstitutiveLevel:
+        """The substitutive level pointed to by ``default_substitutive``."""
+        return self.substitutive_levels[self.default_substitutive]
+
+    def at_substitutive(self, level: int) -> "GSplatData":
+        """Return a single-substitutive-level view as a new ``GSplatData``.
+
+        The returned object has ``n_substitutive == 1`` and its lone
+        substitutive level carries the additive ladder of ``self``'s level
+        ``level``. Useful for operating one substitutive level at a time
+        (e.g., ``data.at_substitutive(s).flattened()``).
+
+        Args:
+            level: Substitutive level index (0 = finest).
+        """
+        if not 0 <= level < self.n_substitutive:
+            raise IndexError(
+                f"substitutive level {level} out of range "
+                f"[0, {self.n_substitutive})"
+            )
+        return GSplatData(
+            substitutive_levels=[self.substitutive_levels[level]],
+            stats=dict(self.stats),
+        )
+
+    def cell(self, substitutive: int, additive: int) -> AdditiveSubLOD:
+        """Direct 2-D matrix access: cell at ``(substitutive, additive)``.
+
+        Args:
+            substitutive: Substitutive level index.
+            additive: Additive sub-LOD index within that substitutive level.
+
+        Returns:
+            The :class:`AdditiveSubLOD` at the requested matrix cell.
+        """
+        if not 0 <= substitutive < self.n_substitutive:
+            raise IndexError(
+                f"substitutive level {substitutive} out of range "
+                f"[0, {self.n_substitutive})"
+            )
+        level = self.substitutive_levels[substitutive]
+        if not 0 <= additive < level.n_additive_lods:
+            raise IndexError(
+                f"additive sub-LOD {additive} out of range "
+                f"[0, {level.n_additive_lods}) at substitutive level {substitutive}"
+            )
+        return level.additive_sublods[additive]
 
     # ── Filtering ───────────────────────────────────────────
 
