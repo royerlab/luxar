@@ -16,7 +16,7 @@
  * pick footprint is the bright core only — peripheral falloff
  * regions don't capture hover state.
  *
- * @module rendering/picking/point-pick.tsl
+ * @module rendering/picking/point/pick.tsl
  */
 
 import * as THREE from 'three';
@@ -40,7 +40,7 @@ import {
   cameraProjectionMatrix,
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-import { sanitizePositive, sanitizeNonNegative, type TSLNode } from '../materials/_shared/tsl-helpers';
+import { sanitizePositive, sanitizeNonNegative, type TSLNode } from '../../materials/_shared/tsl-helpers';
 
 /**
  * Pre-created TSL leaf nodes supplied by the wrapper class. See
