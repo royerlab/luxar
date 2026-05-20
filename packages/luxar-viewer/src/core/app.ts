@@ -9,7 +9,6 @@ import {
 import type { AnimationController } from '../scene/animation/animation-controller';
 import type { InputHandler } from '../input/input-handler';
 import type { RenderingControls } from '../ui/rendering-controls';
-import { cleanupUI } from '../ui/ui-cleanup';
 import { showHelpOverlay } from '../ui/help-overlay';
 import type { DatasetBrowser } from '../ui/dataset-browser';
 import { log, Modules } from '../utils/log';
@@ -17,8 +16,6 @@ import { sceneDimsManager } from '../scene/scene-dims-manager';
 import type { AdaptiveDPRManager } from '../rendering/adaptive-dpr-manager';
 import type { ResolutionIndicator } from '../ui/resolution-indicator';
 import type { PerformanceMonitor } from '../ui/performance-monitor';
-import { DataMonitorManager } from '../ui/data-monitor-manager';
-import { SceneLoaderManager } from '../data/scene-loader-manager';
 import type { ScaleBar } from '../ui/scale-bar';
 import type { ColormapLegend } from '../ui/colormap-legend';
 import type { RecordingPanel } from '../ui/recording-panel';
@@ -30,10 +27,10 @@ import type { PickingSystem } from '../rendering/picking/picking-system';
 import type { LabelLoader } from '../data/loaders/label-loader';
 import type { ImageLabelLoader } from '../data/loaders/image-label-loader';
 import { EventGroup } from '../utils/cross-layer/event-group';
-import { disposeWorkerPool } from '../workers/worker-pool';
 import { assertBrowserEnvironment, assertThreeRevision } from './app/init/environment-guards';
 import { applyModuleOverrides } from './app/init/module-overrides';
 import { runInitPipeline, type InitPipelineResult } from './app/init/pipeline';
+import { runDisposePipeline } from './app/lifecycle/dispose-pipeline';
 import { shouldShowBrowser as shouldShowBrowserImpl } from './app/dataset/should-show-browser';
 import { showDatasetBrowser as showDatasetBrowserImpl } from './app/dataset/show-browser';
 import { loadDataset as loadDatasetImpl } from './app/dataset/load-dataset';
@@ -530,97 +527,52 @@ export class LuxarApp {
     // teardown throws partway through.
     this.isInitialized = false;
 
-    // Per-component teardown: a single throwing component must NOT skip
-    // later cleanup (especially singletons + workers + the manager registry).
-    // Each step is wrapped in safeDispose; errors collect and log without
-    // bubbling out of dispose().
-    const errors: Array<{ label: string; error: unknown }> = [];
-    const safeDispose = (label: string, fn: () => void): void => {
-      try {
-        fn();
-      } catch (error) {
-        errors.push({ label, error });
-        log.warning(Modules.LUXAR, `Error disposing ${label}:`, error);
-      }
-    };
-
-    // Stop animation first.
-    safeDispose('animationController', () => this.animationController?.dispose());
-    safeDispose('adaptiveDPRManager', () => this.adaptiveDPRManager?.dispose());
-    safeDispose('resolutionIndicator', () => this.resolutionIndicator?.dispose());
-    safeDispose('scaleBar', () => {
-      this.scaleBar?.dispose();
-      this.scaleBar = undefined;
+    runDisposePipeline({
+      events: this.events,
+      pickingEvents: this.pickingEvents,
+      sceneManager: this.sceneManager,
+      animationController: this.animationController,
+      adaptiveDPRManager: this.adaptiveDPRManager,
+      resolutionIndicator: this.resolutionIndicator,
+      inputHandler: this.inputHandler,
+      renderingControls: this.renderingControls,
+      recordingPanel: this.recordingPanel,
+      layersPanel: this.layersPanel,
+      scaleBar: this.scaleBar,
+      colormapLegend: this.colormapLegend,
+      overlayManager: this.overlayManager,
+      pickingSystem: this.pickingSystem,
+      labelLoader: this.labelLoader,
+      imageLabelLoader: this.imageLabelLoader,
+      datasetBrowser: this.datasetBrowser,
+      clearScaleBar: () => {
+        this.scaleBar = undefined;
+      },
+      clearColormapLegend: () => {
+        this.colormapLegend = undefined;
+      },
+      clearOverlayManager: () => {
+        this.overlayManager = undefined;
+      },
+      clearRecordingPanel: () => {
+        this.recordingPanel = undefined;
+      },
+      clearLayersPanel: () => {
+        this.layersPanel = undefined;
+      },
+      clearPickingSystem: () => {
+        this.pickingSystem = undefined;
+      },
+      clearLabelLoader: () => {
+        this.labelLoader = undefined;
+      },
+      clearImageLabelLoader: () => {
+        this.imageLabelLoader = undefined;
+      },
+      clearDatasetBrowser: () => {
+        this.datasetBrowser = undefined;
+      },
     });
-    safeDispose('colormapLegend', () => {
-      this.colormapLegend?.dispose();
-      this.colormapLegend = undefined;
-    });
-    // Clear recording-panel back-reference before overlayManager dispose.
-    safeDispose('overlayManager', () => {
-      this.recordingPanel?.setOverlayManager(null);
-      this.overlayManager?.dispose();
-      this.overlayManager = undefined;
-    });
-    safeDispose('recordingPanel', () => {
-      this.recordingPanel?.dispose();
-      this.recordingPanel = undefined;
-    });
-    safeDispose('layersPanel', () => {
-      this.layersPanel?.dispose();
-      this.layersPanel = undefined;
-    });
-    // pickingEvents is reusable: dispose() leaves it empty for next initPicking().
-    safeDispose('pickingEvents', () => this.pickingEvents.dispose());
-    safeDispose('pickingSystem', () => {
-      this.pickingSystem?.dispose();
-      this.pickingSystem = undefined;
-    });
-    safeDispose('labelLoader', () => {
-      this.labelLoader?.dispose();
-      this.labelLoader = undefined;
-    });
-    safeDispose('imageLabelLoader', () => {
-      this.imageLabelLoader?.dispose();
-      this.imageLabelLoader = undefined;
-    });
-    // Explicitly close any open DatasetBrowser BEFORE input-handler
-    // teardown. The browser is a child panel owned by LuxarApp; without
-    // this step its DOM stays attached and the PanelCoordinator close
-    // handle stays bound until input-handler disposes its listeners.
-    // Embedded re-init scenarios must not start with a stale browser
-    // modal from the prior app.
-    safeDispose('datasetBrowser', () => {
-      this.datasetBrowser?.close();
-      this.datasetBrowser = undefined;
-      this.inputHandler?.setDatasetBrowser(undefined);
-    });
-    safeDispose('inputHandler', () => this.inputHandler?.dispose());
-    safeDispose('renderingControls', () => this.renderingControls?.dispose());
-    safeDispose('sceneManager', () => this.sceneManager?.dispose());
-    // ThemeManager: disconnects glass-refraction MutationObserver, removes
-    // injected SVG filters, clears CSS custom properties.
-    safeDispose('themeManager', () => ThemeManager.disposeInstance());
-    safeDispose('cleanupUI', () => cleanupUI());
-    // App-level event listeners (focus, visibility, beforeunload,
-    // open-dataset-browser, picking-system subscriptions).
-    safeDispose('events', () => this.events.dispose());
-
-    // Three-tier singleton teardown. Monitor first (factory wiring holds
-    // loader refs); loader manager drops loaders + cache stores; worker
-    // pool terminates remaining workers last so any in-flight worker
-    // call sees the upstream owners gone before being torn down itself.
-    safeDispose('dataMonitorManager', () => DataMonitorManager.disposeInstance());
-    safeDispose('sceneLoaderManager', () => SceneLoaderManager.disposeInstance());
-    safeDispose('workerPool', () => disposeWorkerPool());
-
-    if (errors.length > 0) {
-      log.error(
-        Modules.LUXAR,
-        `dispose(): ${errors.length} component(s) threw during teardown`,
-        errors.map((e) => e.label).join(', ')
-      );
-    }
 
     this.isDisposing = false;
     this.isDisposed = true;
