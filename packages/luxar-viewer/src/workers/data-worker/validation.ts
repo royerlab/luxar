@@ -13,7 +13,7 @@
  * worker-local state, which is why they extract cleanly.
  */
 
-import { MAX_SUPPORTED_DIMS } from '../config/constants';
+import { MAX_SUPPORTED_DIMS } from '../../config/constants';
 
 /**
  * Maximum number of dimensions WASM supports. The compiled Rust code

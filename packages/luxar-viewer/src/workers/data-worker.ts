@@ -37,7 +37,7 @@ import {
   validateDecodeArgs,
   validateLineSegmentReferences,
   validateChunkQueryInputs,
-} from './validation';
+} from './data-worker/validation';
 import { coerceColorsToFloat32, coerceScalarsToFloat32, fillColorsWhite } from './color-utils';
 export { coerceColorsToFloat32, coerceScalarsToFloat32, fillColorsWhite };
 
