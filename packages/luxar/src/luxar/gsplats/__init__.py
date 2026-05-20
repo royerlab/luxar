@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from luxar.gsplats.lod import (
         compute_additive_order,
         make_additive_lod,
+        make_lod_pyramid,
         make_substitutive_lod,
     )
     from luxar.gsplats.seeds import (
@@ -68,6 +69,7 @@ else:
         from luxar.gsplats.lod import (
             compute_additive_order,
             make_additive_lod,
+            make_lod_pyramid,
             make_substitutive_lod,
         )
         from luxar.gsplats.seeds import (
@@ -198,6 +200,9 @@ else:
         def make_substitutive_lod(*_args: Any, **_kwargs: Any) -> Any:
             _raise_gsplats_import_error()
 
+        def make_lod_pyramid(*_args: Any, **_kwargs: Any) -> Any:
+            _raise_gsplats_import_error()
+
 
 __all__ = [
     # Culling
@@ -234,9 +239,10 @@ __all__ = [
     "NoiseFloor",
     "HeldOutPeak",
     "CalibrationResult",
-    # LOD (additive + substitutive)
+    # LOD (additive + substitutive + pyramid)
     "compute_additive_order",
     "make_additive_lod",
+    "make_lod_pyramid",
     "make_substitutive_lod",
     # Submodules
     "seeds",
