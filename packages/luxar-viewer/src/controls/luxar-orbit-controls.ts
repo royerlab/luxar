@@ -17,6 +17,10 @@ import type { LuxarCamera } from '../utils/camera-utils';
 import { computeArcballRotation } from './luxar-orbit-controls/math/trackball';
 import { applyPan, type PanCtx } from './luxar-orbit-controls/math/pan';
 import { applyZoomScale, computeZoomScale } from './luxar-orbit-controls/math/zoom';
+import {
+  applyToCamera,
+  initializeFromCamera,
+} from './luxar-orbit-controls/camera-application';
 
 export interface LuxarOrbitControlsConfig {
   enableDamping?: boolean;
@@ -40,7 +44,6 @@ export interface LuxarOrbitControlsConfig {
 export type ControlAction = 'rotate' | 'pan' | 'zoom' | 'none';
 
 const _IDENTITY_QUAT = new THREE.Quaternion();
-const _v = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
 const _q1 = new THREE.Quaternion();
 
@@ -426,39 +429,17 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
   }
 
   // ---------------------------------------------------------------------------
-  // Camera application
+  // Camera application (delegated to luxar-orbit-controls/camera-application.ts)
   // ---------------------------------------------------------------------------
 
   /** Apply orientation + distance + target to camera transform. */
   private applyToCamera(): void {
-    _v.set(0, 0, this.distance).applyQuaternion(this.orientation);
-    this.camera.position.copy(this.target).add(_v);
-    this.camera.up.set(0, 1, 0).applyQuaternion(this.orientation);
-    this.camera.lookAt(this.target);
-    // Ensure camera.matrix is up-to-date (needed by pan math which reads matrix columns)
-    this.camera.updateMatrixWorld();
+    applyToCamera(this.camera, this.target, this.orientation, this.distance);
   }
 
   /** Extract orientation and distance from current camera state. */
   private initializeFromCamera(): void {
-    const offset = new THREE.Vector3().subVectors(this.camera.position, this.target);
-    this.distance = Math.max(offset.length(), 0.001);
-
-    // Derive up from camera quaternion rather than camera.up — the quaternion
-    // is always authoritative, whereas camera.up may be stale (fly controls
-    // only update quaternion, not up). Prevents roll loss on fly→orbit switch.
-    // lookAt() has a singularity when the view direction is parallel to the up vector.
-    // Detect this and use a fallback up vector to prevent NaN.
-    const viewDir = offset.clone().normalize();
-    let up = new THREE.Vector3(0, 1, 0).applyQuaternion(this.camera.quaternion);
-    const upDot = Math.abs(viewDir.dot(up));
-    if (upDot > 0.999) {
-      // Near singularity: pick a fallback up vector perpendicular to view direction
-      up = Math.abs(viewDir.x) < 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 0, 1);
-    }
-
-    const lookMatrix = new THREE.Matrix4().lookAt(this.camera.position, this.target, up);
-    this.orientation.setFromRotationMatrix(lookMatrix);
+    this.distance = initializeFromCamera(this.camera, this.target, this.orientation);
   }
 
   // ---------------------------------------------------------------------------
