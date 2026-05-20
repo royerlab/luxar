@@ -25,7 +25,7 @@ import { PerformanceMonitor } from '../ui/performance-monitor';
 import { DataMonitorManager } from '../ui/data-monitor-manager';
 import { DebugConsole } from '../ui/debug-console';
 import { SceneLoaderManager, getSceneLoader } from '../data/scene-loader-manager';
-import { ScaleBar } from '../ui/scale-bar';
+import type { ScaleBar } from '../ui/scale-bar';
 import type { ColormapLegend } from '../ui/colormap-legend';
 import { RecordingPanel } from '../ui/recording-panel';
 import { LayersPanel } from '../ui/layers';
@@ -58,6 +58,7 @@ import { disposeOverlays as disposeOverlaysImpl } from './app/overlays/dispose-o
 import { initColormapLegend as initColormapLegendImpl } from './app/overlays/init-colormap-legend';
 import { initOverlays as initOverlaysImpl } from './app/overlays/init-overlays';
 import { installFocusHandling } from './app/lifecycle/focus-handling';
+import { initScaleBar as initScaleBarImpl } from './app/overlays/init-scale-bar';
 
 import type { LuxarAppOptions } from './app/options';
 export type { LuxarAppOptions } from './app/options';
@@ -606,27 +607,12 @@ export class LuxarApp {
    * to update it as the camera moves.
    */
   private initScaleBar(): void {
-    // Dispose previous instance if reloading
-    if (this.scaleBar) {
-      this.animationController.removePerFrameCallback('scale-bar');
-      this.scaleBar.dispose();
-    }
-
-    this.scaleBar = new ScaleBar({
-      camera: this.sceneManager.camera,
-      controls: this.sceneManager.controls,
-      canvas: this.sceneManager.renderer.domElement,
-      targetWidthPx: config.ui.scaleBar.targetWidthPx,
-      position: config.ui.scaleBar.position,
+    this.scaleBar = initScaleBarImpl({
+      previous: this.scaleBar,
+      sceneManager: this.sceneManager,
+      animationController: this.animationController,
+      inputHandler: this.inputHandler,
     });
-
-    // Register per-frame update for live camera tracking
-    this.animationController.addPerFrameCallback('scale-bar', () => {
-      this.scaleBar?.update();
-    });
-
-    // Wire to input handler for keyboard toggle
-    this.inputHandler.setScaleBar(this.scaleBar);
   }
 
   /**
