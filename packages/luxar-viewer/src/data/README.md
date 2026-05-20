@@ -139,9 +139,9 @@ The data package uses a **clean singleton pattern** for instance management, com
 
 **Note**: Datasets with Morton/Hilbert ordering (chunk_bounds) will load much faster due to efficient spatial queries. Small 3D datasets without spatial ordering will fall back to loading all points (acceptable for <100K points).
 
-### Architecture Refactoring (Modular Design)
+### Modular Architecture
 
-The SceneLoader has been refactored into focused, testable modules:
+SceneLoader is split into focused, testable modules:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -481,8 +481,8 @@ Benefits:
 ### Attribute Composition
 
 Rendering attributes **compose** along the scene-graph hierarchy (root → leaf),
-as specified in `packages/luxar/src/luxar/core/SPECIFICATIONS.md`. Unset values
-are treated as identity:
+as implemented in `packages/luxar/src/luxar/core/`. Unset values are treated
+as identity:
 
 ```typescript
 effective_opacity   = clamp(∏ opacity_i,   0, 1)

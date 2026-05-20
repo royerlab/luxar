@@ -25,16 +25,13 @@ The Luxar UI package provides a comprehensive set of user interface components f
 ### Package Architecture
 
 All public-API files live at `ui/` root. Sibling folders hold each
-public file's private helpers. Generic-named folders (`components/`,
-`helpers/`, `panels/`, `monitors/`) and buried `index.ts` barrels were
-eliminated in a structural refactor — a developer reading a path can
-now predict the audience, peers, and home for a new sibling without
-opening files.
+public file's private helpers. Folder names describe their concern, so a
+developer reading a path can predict the audience, peers, and home for a
+new sibling without opening files.
 
 ```
 ui/
 ├── README.md
-├── SPECIFICATIONS.md
 │
 │ ── Public-API entrypoints (at root) ──
 ├── gui.ts                              # Re-export entrypoint for the custom GUI library
@@ -108,18 +105,12 @@ ui/
 
 - **Public API at root.** External imports (`from '../ui/<name>'`) always resolve to a real file at the package root. Node resolves the file in preference to a folder of the same name, so the public path stays canonical.
 - **Helpers under their consumer.** A single-consumer helper lives in the consumer's sibling folder — e.g. `dimension-sliders/slider-math.ts` is only used by `dimension-sliders.ts`. The depth signals audience: a sibling folder means "private to this public file".
-- **No generic folder names.** `components/`, `helpers/`, `panels/`, `monitors/`, `utils/` are gone — folders are named by their concern (`overlay-widgets/`, `drivers/`, `setup/`, `metrics/`, `tabs/`, `format/`, `ui/`).
-- **No buried barrels.** A barrel-as-folder (`ui/gui/index.ts`) hid 200+ LOC of re-exports behind a path. Now `ui/gui.ts` is the file; barrels with substantial code are split into focused public files (helpers/index.ts → `loading-indicator.ts`, `error-overlay.ts`, `help-overlay.ts`, `toast.ts`, `ui-cleanup.ts`).
+- **Concern-named folders.** Folders are named by responsibility (`overlay-widgets/`, `drivers/`, `setup/`, `metrics/`, `tabs/`, `format/`, `ui/`) instead of broad buckets.
+- **Public barrels stay shallow.** Public entrypoints are real files at `ui/` root. Subfolders contain private implementation details for those entrypoints.
 
-### Orchestrator shrinkage — pragmatic notes
+### Orchestrator organization
 
-A subset of the original refactor plan asked each oversized orchestrator (`recording-panel.ts`, `data-loading-monitor.ts`, `dimension-sliders.ts`, `layers-panel.ts`) to be shrunk to ≤25% of its pre-refactor LOC by extracting each method body to a `modes/<x>.ts` helper that takes a narrow `Ctx` object.
-
-That target turned out to be unreachable for the coordination-heavy orchestrators without harming the code: a body that touches 25-30 fields/methods on `this` requires a Ctx interface of the same width, plus a per-extraction getter/setter Ctx-builder of ~80-90 LOC. The net effect for `captureScreenshot` / `startVideoRecording` was *more* total LOC across the project for marginal in-orchestrator shrinkage — the boilerplate exceeded the savings, and "narrow Ctx" was narrow only in shape, not in semantic reach.
-
-Only **naturally pure** extractions were kept: those where the body is genuinely a pure helper of a small, well-defined set of inputs (e.g. `recording-panel/ui/gui-construction.ts::buildRecordingGUI(deps)` — DOM construction with a 9-callback `deps` interface, no `this` getters needed). Other coordination-heavy method bodies stay in their orchestrator with clear section markers (`// ========== Foo ==========`).
-
-The structural improvements (public API at root, no generic folders, no buried barrels, locality of helpers) deliver the navigability win; chasing a fixed LOC number per orchestrator is left as a follow-up if and when a section becomes genuinely extractable (e.g., when its dependencies are decoupled).
+Coordination-heavy UI classes (`recording-panel.ts`, `data-loading-monitor.ts`, `dimension-sliders.ts`, `layers-panel.ts`) keep stateful workflows in the orchestrator and delegate naturally pure work to focused helpers. For example, `recording-panel/ui/gui-construction.ts::buildRecordingGUI(deps)` owns DOM construction behind a small callback interface, while capture/session coordination remains on the panel/session classes that own the relevant state.
 
 ---
 
@@ -413,7 +404,7 @@ loader.addEventListener((event: MonitorEvent) => {
    - Query latency tracking
    - Load time analysis
    - Bandwidth utilization
-   - Historical trends
+   - Trend history
 
 4. **Insights Tab**
    - Smart recommendations from LoadingAdvisor
@@ -741,7 +732,7 @@ element.className = 'luxar-dimension-sliders';
 // All styling in CSS file
 ```
 
-### Migrated Components
+### Theme-Aware Components
 
 These components fully support theming:
 
@@ -751,7 +742,7 @@ These components fully support theming:
 - ✅ Dimension Sliders (dimension-sliders.ts)
 - ✅ Debug Console (debug-console.ts) - proper BEM naming (.luxar-debug-console)
 - ✅ Dataset Browser (dataset-browser.ts)
-- ✅ Data Loading Monitor (data-loading-monitor.ts) - CSS complete, core templates refactored
+- ✅ Data Loading Monitor (data-loading-monitor.ts) - CSS complete, core templates theme-aware
 - ✅ Rendering Controls (rendering-controls.ts) - lil-gui theme integration via CSS variables
 
 ---

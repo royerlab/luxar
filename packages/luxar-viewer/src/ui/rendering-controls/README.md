@@ -4,7 +4,7 @@ Modular setup functions for the rendering controls UI. Each module is responsibl
 
 ## Overview
 
-The rendering controls UI was refactored from a monolithic 2,514-line file into focused, maintainable modules. This improves code organization, testability, and makes the codebase easier to navigate.
+The rendering controls UI is split into focused, maintainable modules for better organization, testability, and navigation.
 
 ### Architecture
 
@@ -223,5 +223,4 @@ See the main rendering-controls tests for examples of testing the integrated sys
 ## Related Documentation
 
 - Parent: `../README.md` - UI package overview
-- Specifications: `./SPECIFICATIONS.md` - Technical specifications for setup modules
 - Main class: `../rendering-controls.ts` - RenderingControls class that uses these modules

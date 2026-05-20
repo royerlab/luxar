@@ -204,38 +204,23 @@ try {
 }
 ```
 
-## Migration Guide
+## Range Loading
 
-### All Loaders Use RangeLoader
+All three spatial index loaders use `RangeLoader`:
 
-All three spatial index loaders use RangeLoader:
-
-**Loaders Migrated:**
-
-- ✅ `point-spatial-index-loader.ts` - Uses RangeLoader for all encoding types
-- ✅ `lines-spatial-index-loader.ts` - Uses RangeLoader for vertex attribute loading
-- ✅ `gsplats-spatial-index-loader.ts` - Uses RangeLoader for gsplat array loading
-
-**Code Reduction:** ~600 lines of duplicated encoding dispatch code eliminated
+- `point-spatial-index-loader.ts` uses RangeLoader for all encoding types.
+- `lines-spatial-index-loader.ts` uses RangeLoader for vertex attribute loading.
+- `gsplats-spatial-index-loader.ts` uses RangeLoader for gsplat array loading.
 
 ```typescript
-// Before migration (in each loader)
-private async loadQuantizedRanges(...) { ... }  // 100 lines
-private async loadBroadcastedRanges(...) { ... }  // 50 lines
-private async loadLUTRanges(...) { ... }  // 80 lines
-private async loadDirectRanges(...) { ... }  // 40 lines
-private normalizeDtype(...) { ... }  // 10 lines
-
-// After migration
 import { RangeLoader } from './loaders';
 
 private rangeLoader = new RangeLoader(this.refRegistry);
 
-// Single unified method handles all encodings:
 await this.rangeLoader.loadRanges(array, attrs, ranges, output, total);
 ```
 
-**Key Changes:**
+**Key behavior:**
 
 1. RangeLoader outputs Float32Array for encoded arrays (broadcasted, quantized, lut)
 2. Direct (unencoded) arrays preserve native type in points loader (critical for rendering!)
@@ -356,5 +341,4 @@ pnpm test src/tests/unit/data/loaders/transferable-accumulator.test.ts
 
 ## See Also
 
-- [SPECIFICATIONS.md](../SPECIFICATIONS.md) - Data loading specifications
 - [array-decoder.ts](../array-decoder.ts) - Low-level array decoding
