@@ -760,7 +760,12 @@ export class LuxarApp {
 
   /**
    * Initialize screen-space overlays from zarr metadata.
-   * Creates an OverlayManager if the loaded scene contains overlays.
+   *
+   * Always constructs an `OverlayManager` (even when the scene declares
+   * no overlays) so the rest of the app — input handler, recording panel,
+   * `__luxarDebug.getOverlayManager()` probe — sees a stable, non-null
+   * collaborator. The manager just stays empty until `loadOverlays` (or a
+   * runtime caller, e.g. a test) populates it.
    */
   private async initOverlays(): Promise<void> {
     // Defensive: loadDataset() already disposes overlays upfront, but keep
@@ -774,12 +779,12 @@ export class LuxarApp {
     const overlayConfigs = root?.userData?.overlayConfigs;
     const zarrBaseUrl = root?.userData?.zarrBaseUrl;
 
+    this.overlayManager = new OverlayManager();
     if (overlayConfigs?.length > 0 && zarrBaseUrl) {
-      this.overlayManager = new OverlayManager();
       await this.overlayManager.loadOverlays(overlayConfigs, zarrBaseUrl);
-      this.inputHandler.setOverlayManager(this.overlayManager);
-      this.recordingPanel?.setOverlayManager(this.overlayManager);
     }
+    this.inputHandler.setOverlayManager(this.overlayManager);
+    this.recordingPanel?.setOverlayManager(this.overlayManager);
   }
 
   /**

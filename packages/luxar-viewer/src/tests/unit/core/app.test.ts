@@ -145,6 +145,8 @@ describe('LuxarApp', () => {
       setRecordingPanel: vi.fn(),
       setLayersPanel: vi.fn(),
       setDatasetBrowser: vi.fn(),
+      setOverlayManager: vi.fn(),
+      setColormapLegend: vi.fn(),
       clearDimensionUI: vi.fn(),
       initDimensionSliders: vi.fn(),
       dispose: vi.fn(),
