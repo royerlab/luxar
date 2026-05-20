@@ -12,11 +12,11 @@ import { InputHandler } from '../input/input-handler';
 import { DimensionSliders } from '../ui/dimension-sliders';
 import { RenderingControls } from '../ui/rendering-controls';
 import { cleanupUI } from '../ui/ui-cleanup';
-import { clearError, showError } from '../ui/error-overlay';
+import { showError } from '../ui/error-overlay';
 import { showHelpOverlay } from '../ui/help-overlay';
 import { notifier } from '../utils/cross-layer/notifier';
 import { config } from '../config';
-import { DatasetBrowser } from '../ui/dataset-browser';
+import type { DatasetBrowser } from '../ui/dataset-browser';
 import { log, Modules } from '../utils/log';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
 import { AdaptiveDPRManager } from '../rendering/adaptive-dpr-manager';
@@ -41,8 +41,8 @@ import { consoleInterceptor } from '../utils/console-interceptor';
 import { EventGroup } from '../utils/cross-layer/event-group';
 import { setWasmJsUrl } from '../wasm';
 import { setDataWorkerUrl, disposeWorkerPool, getWorkerPool } from '../workers/worker-pool';
-import { replaceBrowserDataSourceUrl } from '../config/url-params';
 import { shouldShowBrowser as shouldShowBrowserImpl } from './app/dataset/should-show-browser';
+import { showDatasetBrowser as showDatasetBrowserImpl } from './app/dataset/show-browser';
 import { applyViewerConfigState as applyViewerConfigStateHelper } from './app/viewer-config/apply-state';
 import { computeDebugState } from './app/debug/debug-state';
 import { buildDebugCacheHelpers } from './app/debug/debug-cache-helpers';
@@ -421,48 +421,19 @@ export class LuxarApp {
    * Show the dataset browser UI
    */
   private showDatasetBrowser(): void {
-    // Close existing browser if any
-    if (this.datasetBrowser) {
-      return; // Browser already open
-    }
-
-    // Clear any existing error messages when opening the browser
-    clearError();
-
-    this.datasetBrowser = new DatasetBrowser({
-      container: document.body,
+    if (this.datasetBrowser) return; // Browser already open
+    this.datasetBrowser = showDatasetBrowserImpl({
       currentSrc: this.options.src,
-      onDatasetSelect: async (fullUrl: string) => {
-        // The browser now passes full URLs directly, preserving directory context
-        // Strip any trailing slashes to ensure consistent URL format
-        const cleanUrl = fullUrl.replace(/\/+$/, '');
-
-        // Reflect the chosen dataset in the URL bar only for callers that opt in.
-        // The standalone bootstrap opts in; programmatic/embedded usage defaults
-        // to no host-page URL mutation.
-        if (this.options.updateBrowserUrl === true) {
-          replaceBrowserDataSourceUrl(cleanUrl);
-        }
-
-        // Track the new src in our options snapshot so a subsequent browser
-        // open lands in the right directory.
-        this.options = { ...this.options, src: cleanUrl };
-
-        // Load the dataset
-        await this.loadDataset(cleanUrl);
+      updateBrowserUrl: this.options.updateBrowserUrl === true,
+      inputHandler: this.inputHandler,
+      onSrcChange: (src) => {
+        this.options = { ...this.options, src };
       },
+      loadDataset: (src) => this.loadDataset(src),
       onClose: () => {
         this.datasetBrowser = undefined;
-        // Clear the close handle in PanelCoordinator so a follow-on
-        // Escape doesn't try to close an already-closed browser.
-        this.inputHandler?.setDatasetBrowser(undefined);
       },
     });
-
-    // Hand a close handle to the InputHandler/PanelCoordinator so
-    // Escape routes through `close()` (which fires onClose above)
-    // instead of yanking the DOM node and stranding our ref.
-    this.inputHandler?.setDatasetBrowser(this.datasetBrowser);
   }
 
   /**
