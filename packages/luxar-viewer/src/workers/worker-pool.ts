@@ -44,6 +44,7 @@ import {
   type TrackedWorkerHandle,
 } from './worker-pool/selection/least-busy';
 import { nextRoundRobin } from './worker-pool/selection/round-robin';
+import { computeStats, computeQueueDepth, type PoolStats } from './worker-pool/stats';
 export { getWorkerPool, disposeWorkerPool, setDataWorkerUrl };
 
 export class WorkerPool {
@@ -547,27 +548,8 @@ export class WorkerPool {
   /**
    * Get pool statistics for monitoring
    */
-  getStats(): {
-    workerCount: number;
-    activeQueries: number[];
-    /** Aggregate across all workers — sum of per-worker `activeQueries`. */
-    totalActive: number;
-    /** Per-worker peak since init; useful for spotting one hot worker. */
-    peakActive: number;
-  } {
-    const activeQueries = this.workers.map((w) => w.activeQueries);
-    let totalActive = 0;
-    let peakActive = 0;
-    for (const n of activeQueries) {
-      totalActive += n;
-      if (n > peakActive) peakActive = n;
-    }
-    return {
-      workerCount: this.workers.length,
-      activeQueries,
-      totalActive,
-      peakActive,
-    };
+  getStats(): PoolStats {
+    return computeStats(this.workers);
   }
 
   /**
@@ -580,9 +562,7 @@ export class WorkerPool {
    *   idle.
    */
   getQueueDepth(): number {
-    let total = 0;
-    for (const w of this.workers) total += w.activeQueries;
-    return total;
+    return computeQueueDepth(this.workers);
   }
 
   /**
