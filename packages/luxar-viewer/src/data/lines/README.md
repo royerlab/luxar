@@ -60,9 +60,8 @@ Uint8Array | null`; `interpolate_scalars_batch` (the same WASM
   update helpers
 - `src/wasm/typescript/lines.ts` and `lines-clipping.ts` —
   TypeScript fallback that mirrors the Rust WASM kernel
-- `src/data/loaders/SPECIFICATIONS.md` — encoding dispatch /
+- `src/data/loaders/README.md` — encoding dispatch /
   range-loader contract
-- `src/data/SPECIFICATIONS.md` §7 — full Lines spatial-index spec
-  including the worker scalar path and the dual chunk index
+- `src/data/README.md` — Lines spatial-index overview
 - `src/tests/benchmarks/lines-ts-fallback-alloc-bench.ts` —
   performance benchmark for the main-thread fallback

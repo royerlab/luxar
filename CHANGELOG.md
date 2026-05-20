@@ -47,6 +47,20 @@ v2.0 layout (`splats/substitutive_0/additive_<i>/`). The TypeScript viewer's
 `format_version`, `n_substitutive`, `default_substitutive`,
 `n_additive_sublods_default` (the legacy `n_lods` field is dropped).
 
+#### Removed — Per-package `SPECIFICATIONS.md` files (2026-05-19)
+
+Deleted every `SPECIFICATIONS*.md` across the repository — per-package
+specs, the `docs/templates/SPECIFICATIONS_TEMPLATE.md`, and stragglers
+under `gsplats/models/gsplats/cuda/`. The files had drifted from the
+code and were not pulling their weight. References were cleaned from
+`CLAUDE.md`, `AGENTS.md`, all package READMEs, `scripts/check_documentation.py`,
+`scripts/README.md`, `packages/luxar-viewer/CONVENTIONS.md`, the
+gsplats `GLOSSARY.md`, `docs/concepts/architecture.rst`,
+`docs/guides/user/HDR_GUIDE.md`, `docs/guides/developer/BUILD_SYSTEM_SPEC.md`,
+`docs/specs/GSPLATS_ZARR_FORMAT.md`, and inline code comments. READMEs
+remain the canonical per-package documentation; `docs/guides/specs/` is
+unaffected.
+
 #### Changed — Production default renderer flipped back to WebGL (2026-05-16)
 
 The viewer's production rendering path now defaults to

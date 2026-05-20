@@ -178,22 +178,11 @@ cuda/
 │   ├── test_cuda_fp16.py                  # FP16 mode tests
 │   ├── test_cuda_performance.py           # Performance benchmarks
 │   └── test_cuda_review_fixes.py          # Regression tests
-├── SPECIFICATIONS.md                      # Core algorithms spec
-├── SPECIFICATIONS_PYTORCH_INTEGRATION.md  # PyTorch integration spec
-├── SPECIFICATIONS_TESTING.md              # Testing strategy spec
 ├── OPTIMIZATION_REPORT.md                 # Tile-based -> splat-centric transition
 ├── OPTIMIZATION_ROADMAP.md                # Future optimization plans
 ├── EXTENDED_SMEM_PLAN.md                  # Extended shared memory optimization plan
 └── README.md                              # This file
 ```
-
-## Documentation
-
-The technical specification is split into three files:
-
-- **[SPECIFICATIONS.md](SPECIFICATIONS.md)** - Core algorithms: architecture, kernel designs, memory optimization, gradient computation
-- **[SPECIFICATIONS_PYTORCH_INTEGRATION.md](SPECIFICATIONS_PYTORCH_INTEGRATION.md)** - PyTorch integration, performance targets, implementation phases, references
-- **[SPECIFICATIONS_TESTING.md](SPECIFICATIONS_TESTING.md)** - Comprehensive testing strategy, unit tests, benchmarks
 
 ## References
 

@@ -4,7 +4,7 @@ CSS architecture for the Luxar viewer, organized as a four-layer cascade: reset,
 
 ## Architecture
 
-All styles are imported through `index.css` in strict cascade order. See `SPECIFICATIONS.md` for invariants and validation rules.
+All styles are imported through `index.css` in strict cascade order.
 
 ```
 1. reset.css          — Browser normalization (box-sizing, margins, scrollbars)

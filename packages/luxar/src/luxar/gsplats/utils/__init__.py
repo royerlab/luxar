@@ -7,8 +7,6 @@ This package provides utility functions for:
 - Cholesky dimension permutation and embedding for cross-dimensional scenes
 - Gradient dilution compensation for higher-dimensional optimization
 - Triangle matrix size calculations
-
-For detailed documentation, see SPECIFICATIONS.md.
 """
 
 from luxar.gsplats.utils.device import is_mps_available, resolve_torch_device

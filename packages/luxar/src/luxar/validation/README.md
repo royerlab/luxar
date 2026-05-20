@@ -41,7 +41,6 @@ This package ensures data integrity throughout the Luxar pipeline by validating 
 **See Also:**
 - `../core/README.md` - Scene, Points, Lines, GSplats classes that use validation
 - `../typing_utils/README.md` - Constants (GAMMA_MIN, SHARPNESS_MAX, etc.) used in validation
-- `SPECIFICATIONS.md` (this package) - Detailed validation rules and algorithms
 
 ## Modules
 
@@ -371,7 +370,7 @@ Luxar expects RGB colors. If you have RGBA, use colors[:, :3] to extract RGB."
 
 ### Range Warnings
 
-**Note**: While SPECIFICATIONS.md v1.0.2 indicates the typical range warning was removed, the implementation in `types.py` still emits this warning. Only `base.py` write-time validation enforces the full [0, 31] range.
+**Note**: `types.py` still emits a "typical range" warning; `base.py` write-time validation enforces the full [0, 31] range.
 
 ```python
 # Warning from types.py (still present):

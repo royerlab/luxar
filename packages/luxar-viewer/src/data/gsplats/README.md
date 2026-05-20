@@ -41,5 +41,5 @@ imports the concrete class — it goes through `loader-factory.ts`.
 - `src/rendering/gsplat-material.ts` — GPU-side rendering
 - `src/wasm/typescript/gsplats-processing.ts` — TypeScript fallback
   that mirrors the Rust WASM kernel
-- `src/data/loaders/SPECIFICATIONS.md` — encoding dispatch / range
+- `src/data/loaders/README.md` — encoding dispatch / range
   loader contract

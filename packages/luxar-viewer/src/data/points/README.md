@@ -56,5 +56,5 @@ main-thread use (worker-disabled environments, unit tests).
   `syncPointMaterialWithGeometry` propagates dtype scales
 - `src/wasm/typescript/points.ts` and `effective-radii.ts` —
   TypeScript fallback that mirrors the Rust WASM kernel
-- `src/data/loaders/SPECIFICATIONS.md` — encoding dispatch /
+- `src/data/loaders/README.md` — encoding dispatch /
   range-loader contract

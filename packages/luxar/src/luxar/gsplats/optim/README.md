@@ -230,6 +230,6 @@ hatch run pytest packages/luxar/src/luxar/gsplats/optim/tests/ -v
 
 ## Related Documentation
 
-- [Dynamic Operations SPECIFICATIONS.md](../fitting/dynamic_ops/SPECIFICATIONS.md) - Fixed-pool relocation
-- [Fitting SPECIFICATIONS.md](../fitting/SPECIFICATIONS.md) - Complete fitting pipeline
-- [utils/SPECIFICATIONS.md](../utils/SPECIFICATIONS.md) - Gradient dilution calculation
+- [Dynamic Operations README.md](../fitting/dynamic_ops/README.md) - Fixed-pool relocation
+- [Fitting README.md](../fitting/README.md) - Complete fitting pipeline
+- [utils/README.md](../utils/README.md) - Gradient dilution calculation

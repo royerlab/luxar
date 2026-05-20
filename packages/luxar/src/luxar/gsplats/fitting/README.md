@@ -464,4 +464,3 @@ Verify mathematical invariants:
 
 **Documentation:**
 - `../README.md` - Main package documentation
-- `SPECIFICATIONS.md` - Complete technical specification
