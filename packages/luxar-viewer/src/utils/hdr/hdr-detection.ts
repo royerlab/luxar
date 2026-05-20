@@ -9,7 +9,7 @@
  */
 
 import * as THREE from 'three';
-import { log, Modules, LogEmoji } from './log';
+import { log, Modules, LogEmoji } from '../log';
 
 /**
  * HDR capability detection results

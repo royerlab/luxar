@@ -5,7 +5,7 @@
  * format suitable for WebCodecs VideoFrame with HDR metadata.
  */
 
-import { clamp } from './clamp';
+import { clamp } from '../clamp';
 
 // sRGB linear → BT.2020 linear color space matrix (3x3)
 // Source: ITU-R BT.2087 conversion from BT.709 to BT.2020

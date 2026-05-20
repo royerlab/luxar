@@ -16,7 +16,7 @@ import {
   configureHDRRenderer,
   logHDRCapabilities,
   type HDRCapabilities,
-} from '../../../utils/hdr-detection';
+} from '../../../utils/hdr/hdr-detection';
 
 // ---------------------------------------------------------------------
 // matchMedia mock — return true only for the queries the test names.
