@@ -1,9 +1,10 @@
 /**
- * Tests for configuration validation module
+ * Tests for the validateConfig dispatcher + log helpers.
  *
- * These tests verify that validateConfig() correctly identifies invalid,
- * out-of-range, and inconsistent configuration values. The real production
- * config is imported and deep-cloned for mutation in each test.
+ * Per-section validator coverage lives under src/tests/unit/config/sections/.
+ * This file only covers (1) a smoke that the dispatcher accepts the default
+ * config and aggregates errors across sub-validators, and (2) the
+ * logValidationResults / validateAndLog log-side-effect behavior.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
@@ -30,6 +31,8 @@ describe('validateConfig', () => {
 
   describe('multiple errors', () => {
     it('should accumulate multiple errors from different categories', () => {
+      // Smoke test that the dispatcher aggregates errors across sub-validators.
+      // Per-section coverage lives in src/tests/unit/config/sections/.
       const cfg = cloneConfig();
       cfg.renderingControls.defaults.fov = 0; // camera error
       cfg.renderingControls.defaults.exposure = -10; // rendering error
@@ -39,18 +42,6 @@ describe('validateConfig', () => {
 
       expect(result.valid).toBe(false);
       expect(result.errors.length).toBeGreaterThanOrEqual(3);
-    });
-
-    it('should accumulate both errors and warnings', () => {
-      const cfg = cloneConfig();
-      cfg.renderingControls.defaults.fov = 0; // error
-      cfg.renderingControls.defaults.bloomStrength = -1; // warning
-
-      const result = validateConfig(cfg);
-
-      expect(result.valid).toBe(false);
-      expect(result.errors.length).toBeGreaterThanOrEqual(1);
-      expect(result.warnings.length).toBeGreaterThanOrEqual(1);
     });
   });
 });
