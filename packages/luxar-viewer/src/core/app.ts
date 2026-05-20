@@ -1,34 +1,28 @@
 // Main application class for the Luxar scene player
 
-import * as THREE from 'three';
-import { SceneManager } from '../scene/scene-manager';
+import type { SceneManager } from '../scene/scene-manager';
 import {
   captureSnapshot as captureViewerSnapshot,
   restoreSnapshot as restoreViewerSnapshot,
   type ViewerSnapshot,
 } from './app/snapshot/viewer-snapshot';
-import { AnimationController } from '../scene/animation/animation-controller';
-import { InputHandler } from '../input/input-handler';
-import { DimensionSliders } from '../ui/dimension-sliders';
-import { RenderingControls } from '../ui/rendering-controls';
+import type { AnimationController } from '../scene/animation/animation-controller';
+import type { InputHandler } from '../input/input-handler';
+import type { RenderingControls } from '../ui/rendering-controls';
 import { cleanupUI } from '../ui/ui-cleanup';
 import { showHelpOverlay } from '../ui/help-overlay';
-import { notifier } from '../utils/cross-layer/notifier';
-import { config } from '../config';
 import type { DatasetBrowser } from '../ui/dataset-browser';
 import { log, Modules } from '../utils/log';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
-import { AdaptiveDPRManager } from '../rendering/adaptive-dpr-manager';
-import { ResolutionIndicator } from '../ui/resolution-indicator';
-import { PerformanceMonitor } from '../ui/performance-monitor';
+import type { AdaptiveDPRManager } from '../rendering/adaptive-dpr-manager';
+import type { ResolutionIndicator } from '../ui/resolution-indicator';
+import type { PerformanceMonitor } from '../ui/performance-monitor';
 import { DataMonitorManager } from '../ui/data-monitor-manager';
-import { DebugConsole } from '../ui/debug-console';
-import { SceneLoaderManager, getSceneLoader } from '../data/scene-loader-manager';
+import { SceneLoaderManager } from '../data/scene-loader-manager';
 import type { ScaleBar } from '../ui/scale-bar';
 import type { ColormapLegend } from '../ui/colormap-legend';
-import { RecordingPanel } from '../ui/recording-panel';
-import { LayersPanel } from '../ui/layers';
-import { resolveFactories } from './app/factories';
+import type { RecordingPanel } from '../ui/recording-panel';
+import type { LayersPanel } from '../ui/layers';
 import { ThemeManager } from '../themes/theme-manager';
 import type { ZarrViewerConfig } from '../types/zarr';
 import type { OverlayManager } from '../ui/overlay-manager';
@@ -36,8 +30,10 @@ import type { PickingSystem } from '../rendering/picking/picking-system';
 import type { LabelLoader } from '../data/loaders/label-loader';
 import type { ImageLabelLoader } from '../data/loaders/image-label-loader';
 import { EventGroup } from '../utils/cross-layer/event-group';
-import { setWasmJsUrl } from '../wasm';
-import { setDataWorkerUrl, disposeWorkerPool } from '../workers/worker-pool';
+import { disposeWorkerPool } from '../workers/worker-pool';
+import { assertBrowserEnvironment, assertThreeRevision } from './app/init/environment-guards';
+import { applyModuleOverrides } from './app/init/module-overrides';
+import { runInitPipeline, type InitPipelineResult } from './app/init/pipeline';
 import { shouldShowBrowser as shouldShowBrowserImpl } from './app/dataset/should-show-browser';
 import { showDatasetBrowser as showDatasetBrowserImpl } from './app/dataset/show-browser';
 import { loadDataset as loadDatasetImpl } from './app/dataset/load-dataset';
@@ -64,7 +60,6 @@ export class LuxarApp {
   private sceneManager!: SceneManager;
   private animationController!: AnimationController;
   private performanceMonitor!: PerformanceMonitor;
-  private debugConsole!: DebugConsole;
   private inputHandler!: InputHandler;
   private renderingControls!: RenderingControls;
   private adaptiveDPRManager!: AdaptiveDPRManager;
@@ -158,29 +153,8 @@ export class LuxarApp {
       throw new Error('LuxarApp is already initialized. Call dispose() before initializing again.');
     }
 
-    // Browser-environment guard. SceneManager and InputHandler reach for
-    // window/document/localStorage unconditionally, so a friendly upfront
-    // error beats a cryptic ReferenceError half-way through init for SSR
-    // or non-browser callers.
-    if (typeof window === 'undefined' || typeof document === 'undefined') {
-      throw new Error(
-        'LuxarApp requires a browser environment (window and document must be defined).'
-      );
-    }
-
-    // THREE.js peer-dep version guard. The package.json declares
-    // `three@^0.184.0` as a peer; we use APIs (Timer, current
-    // postprocessing ToneMappingEffect shape) that are not present
-    // in older revisions. Fail fast with a clear message instead of a
-    // cryptic "X is not a constructor" deep in initialization.
-    // We check `REVISION` (THREE's published revision string, e.g. `"184"`).
-    const threeRevision = parseInt(THREE.REVISION ?? '0', 10);
-    if (!Number.isFinite(threeRevision) || threeRevision < 184) {
-      throw new Error(
-        `Luxar requires three@>=0.184.0 (found r${THREE.REVISION ?? '?'}). ` +
-          'Update the three peer dependency in your embedder.'
-      );
-    }
+    assertBrowserEnvironment();
+    assertThreeRevision();
 
     // Reset the idempotency guard so a fresh init followed by dispose
     // works even if the same instance was already initialized and
@@ -188,185 +162,40 @@ export class LuxarApp {
     this.isDisposed = false;
     this.options = options;
 
-    // Forward asset-URL overrides to the WASM and worker modules. Skipped
-    // when the option is undefined so the modules use their default
-    // `import.meta.url`-based resolution. NOTE: the override is module-level
-    // and sticks across init() calls — once set, a subsequent init() without
-    // the option does not reset to the default. In practice we only support
-    // one LuxarApp per page in v1, so this is fine.
-    if (options.wasmPath) setWasmJsUrl(options.wasmPath);
-    if (options.workerPath) setDataWorkerUrl(options.workerPath);
+    applyModuleOverrides(options);
+
+    // Mutable accumulator: pipeline writes each subsystem here as it
+    // constructs it, so even if init() throws partway through, the
+    // already-constructed pieces are visible to dispose().
+    const partial: Partial<InitPipelineResult> = {};
+    const assignFromPartial = (): void => {
+      if (partial.sceneManager) this.sceneManager = partial.sceneManager;
+      if (partial.animationController) this.animationController = partial.animationController;
+      if (partial.performanceMonitor) this.performanceMonitor = partial.performanceMonitor;
+      if (partial.adaptiveDPRManager) this.adaptiveDPRManager = partial.adaptiveDPRManager;
+      if (partial.resolutionIndicator) this.resolutionIndicator = partial.resolutionIndicator;
+      if (partial.inputHandler) this.inputHandler = partial.inputHandler;
+      if (partial.renderingControls) this.renderingControls = partial.renderingControls;
+      if (partial.recordingPanel) this.recordingPanel = partial.recordingPanel;
+      if (partial.layersPanel) this.layersPanel = partial.layersPanel;
+    };
 
     try {
-      // Inform users about expected console messages
-      log.info(
-        Modules.LUXAR,
-        'Note: You may see 404 errors for optional features like spatial indexes and array attributes.'
-      );
-      log.info(
-        Modules.LUXAR,
-        'These are expected and do not indicate a problem - the app checks for optional features that may not exist.'
-      );
-
-      const sceneSrc = this.options.src ?? config.defaultZarrPath;
-
-      // Resolve construction-factory overrides once. Without
-      // overrides each entry simply calls the matching `new X(...)`.
-      const factories = resolveFactories(this.options.factories);
-
-      // Initialize scene manager first
-      this.sceneManager = factories.sceneManager();
-      await this.sceneManager.init({
-        canvas: this.options.canvas,
-        debug: this.options.debug,
-        renderer: this.options.renderer,
-        webgpuForceWebGL: this.options.webgpuForceWebGL,
-        perfTimestamp: this.options.perfTimestamp,
-      });
-
-      // Initialize animation controller with HDR post-processing.
-      // The PerformanceMonitor UI panel is constructed up here (not in
-      // the controller) and subscribes to the bus events the
-      // controller emits each frame. Owning it at the app level keeps
-      // the lower scene/ layer free of UI imports.
-      this.animationController = factories.animationController(
-        this.sceneManager.controls,
-        this.sceneManager.postProcessing
-      );
-      // Skip GPU rendering while the WebGL context is lost.
-      // SceneManager flips this flag in its webglcontextlost/restored
-      // handlers; the loop polls each frame.
-      this.animationController.setContextLostPredicate(() =>
-        this.sceneManager.isWebGLContextLost()
-      );
-      this.performanceMonitor = new PerformanceMonitor();
-      this.debugConsole = new DebugConsole();
-
-      // Set up per-frame callback for dynamic clipping plane updates
-      // Uses unique ID so it won't conflict with other per-frame callbacks (e.g., dimension animation)
-      this.animationController.addPerFrameCallback('dynamic-clipping', () => {
-        this.sceneManager.updateDynamicClippingPlanes();
-      });
-
-      // Initialize adaptive DPR manager for dynamic resolution scaling
-      this.adaptiveDPRManager = new AdaptiveDPRManager();
-      this.adaptiveDPRManager.setRenderer(this.sceneManager);
-      this.animationController.setAdaptiveDPRManager(this.adaptiveDPRManager);
-
-      // Initialize resolution indicator and connect to DPR manager
-      this.resolutionIndicator = new ResolutionIndicator();
-      // Display target FPS rounded up from maxFPS (58 → 60) since targetFPS (55) is a hysteresis threshold
-      const displayTargetFPS = Math.ceil(config.adaptiveDPR.maxFPS / 5) * 5;
-      this.resolutionIndicator.setTargetFPS(displayTargetFPS);
-      this.adaptiveDPRManager.setOnDPRChangeCallback((dpr, isReducedResolution) => {
-        if (isReducedResolution) {
-          this.resolutionIndicator.show(dpr);
-        } else {
-          // Reset the indicator so it can show again on next reduced resolution mode activation
-          this.resolutionIndicator.reset();
-        }
-      });
-
-      // Re-register picking-system / GPU-pool resources after a WebGL
-      // context-restore event. SceneManager rebuilds the renderer +
-      // post-processing + material cache before dispatching, then we
-      // call NodeFactory.rebuildAfterContextRestore on the loaded
-      // scene so the picking system gets fresh registrations against
-      // the new context.
-      //
-      // Track the listener via this.events so dispose() removes it.
-      // An untracked anonymous arrow here would leak if sceneManager
-      // outlives app teardown — inconsistent with every other
-      // app-level listener.
-      if (typeof this.sceneManager.addEventListener === 'function') {
-        const onContextRestored = (): void => {
-          const sceneLoader = getSceneLoader('default');
-          if (sceneLoader && this.sceneManager.scene) {
-            sceneLoader.nodeFactory.rebuildAfterContextRestore(this.sceneManager.scene);
-          }
-        };
-        this.sceneManager.addEventListener('webgl-context-restored', onContextRestored);
-        this.events.add(() =>
-          this.sceneManager.removeEventListener('webgl-context-restored', onContextRestored)
-        );
-
-        // WebGPU device-loss is unrecoverable in this release (see
-        // `scene-manager.setupContextLossHandling`). Surface it as a
-        // user-facing error dialog with reload guidance — the only
-        // remediation. Console diagnostics are already emitted by the
-        // scene-manager handler; this listener exists to make sure the
-        // user is told too.
-        const onWebGPUDeviceLost = (event: { reason?: string; message?: string }): void => {
-          const reason = event.reason ? ` (${event.reason})` : '';
-          const detail = event.message ? `: ${event.message}` : '';
-          notifier.error(
-            `WebGPU device lost${reason}${detail}. ` + 'Please reload the page to continue.'
-          );
-        };
-        this.sceneManager.addEventListener('webgpu-device-lost', onWebGPUDeviceLost);
-        this.events.add(() =>
-          this.sceneManager.removeEventListener('webgpu-device-lost', onWebGPUDeviceLost)
-        );
-      }
-
-      // Inject the monitor factory into SceneLoaderManager so each
-      // SceneLoader can resolve its UI monitor without the data/ layer
-      // importing ui/ directly.
-      SceneLoaderManager.getInstance().setMonitorFactory((monitorId) => {
-        if (typeof document === 'undefined') return null;
-        const mgr = DataMonitorManager.getInstance();
-        if (!mgr.hasMonitor(monitorId)) {
-          mgr.createMonitor(monitorId, document.body);
-        }
-        return mgr.getMonitor(monitorId) ?? null;
-      });
-
-      // Initialize input handler. The DimensionSliders factory is
-      // injected here so the input layer never imports the concrete
-      // ui/ panel — input → ui is a layer-cruiser violation.
-      this.inputHandler = new InputHandler(
-        this.sceneManager,
-        this.animationController,
-        this.performanceMonitor,
-        this.debugConsole,
-        (config) => new DimensionSliders(config)
-      );
-      this.inputHandler.init();
-
-      // Initialize rendering controls
-      this.renderingControls = factories.renderingControls(
-        this.sceneManager.postProcessing,
-        this.sceneManager
+      const result = await runInitPipeline(
+        {
+          options: this.options,
+          events: this.events,
+          getPanelVisibilityStates: () => this.getPanelVisibilityStates(),
+          restorePanelVisibilityStates: (states) => this.restorePanelVisibilityStates(states),
+        },
+        partial
       );
 
-      // Connect rendering controls to animation controller
-      this.renderingControls.setAnimationController(this.animationController);
+      assignFromPartial();
 
-      // Connect rendering controls to adaptive DPR manager for performance UI
-      this.renderingControls.setAdaptiveDPRManager(this.adaptiveDPRManager);
-
-      // Connect rendering controls to input handler
-      this.inputHandler.setRenderingControls(this.renderingControls);
-
-      // Initialize recording panel (screenshot/video capture)
-      this.recordingPanel = factories.recordingPanel(this.sceneManager, this.animationController);
-      this.recordingPanel.setPanelStateCallbacks(
-        () => this.getPanelVisibilityStates(),
-        (states) => this.restorePanelVisibilityStates(states)
-      );
-      this.recordingPanel.setAdaptiveDPRManager(this.adaptiveDPRManager);
-      this.inputHandler.setRecordingPanel(this.recordingPanel);
-
-      // Initialize layers panel (per-node controls)
-      this.layersPanel = factories.layersPanel(document.body, this.animationController);
-      this.inputHandler.setLayersPanel(this.layersPanel);
-
-      // Start animation loop first to ensure background is rendered
-      this.animationController.startAnimation();
-
-      // Check if source might be a directory (for navigation)
-      if (await this.shouldShowBrowser(sceneSrc)) {
-        // Show dataset browser for directory navigation
+      // Dataset routing: subsystems are wired up, fields are assigned —
+      // the orchestrator delegates can now safely read `this.*`.
+      if (await this.shouldShowBrowser(result.sceneSrc)) {
         try {
           this.showDatasetBrowser();
         } catch (error) {
@@ -375,33 +204,27 @@ export class LuxarApp {
             'Dataset browser initialization had issues, but browser is shown:',
             error
           );
-          // Browser is shown even if navigation fails - user can use manual entry
         }
       } else {
-        // Load scene data directly
-        await this.loadDataset(sceneSrc);
+        await this.loadDataset(result.sceneSrc);
       }
 
-      // Dispose on page unload (cleans up listeners, workers, GPU resources).
       this.setupDisposeOnUnload();
-
-      // Setup dataset browser keyboard shortcut
       this.setupDatasetBrowserShortcut();
-
-      // Setup window focus handling to trigger render on focus
       this.setupFocusHandling();
-
-      // Expose debug interface for testing and AI-assisted development
       this.setupDebugInterface();
 
       this.isInitialized = true;
     } catch (error) {
       log.error(Modules.APP, 'Failed to initialize Luxar app:', error);
       // Tear down whatever partial state was constructed before the throw.
-      // dispose() is now defensive (per-field `if (this.x)` guards) so it
-      // safely handles a half-built app. The caller's error handler is
-      // expected to surface a fresh, top-level error UI; any in-progress
-      // error UI from sub-loaders is wiped along with everything else.
+      // The pipeline writes each subsystem into `partial` as it builds
+      // it, so a mid-init failure still surfaces every disposable on
+      // this.* before we call dispose() (which uses per-field guards).
+      // The caller's error handler is expected to surface a fresh,
+      // top-level error UI; any in-progress error UI from sub-loaders
+      // is wiped along with everything else.
+      assignFromPartial();
       this.dispose();
       throw error;
     }
