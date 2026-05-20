@@ -13,17 +13,17 @@
  * therefore land directly on `node.value` — no per-render
  * `.onUpdate` callback bridge.
  *
- * @module rendering/picking/gsplat-picking-material-tsl
+ * @module rendering/picking/gsplat/material-tsl
  */
 
 import * as THREE from 'three';
 import { uniform } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-import { gsplatPickWebGPUFactory, type GSplatPickTSLNodes } from './gsplat-pick.tsl';
-import type { CameraAwareMaterial } from '../materials/_shared/camera-aware-material';
-import { computeFocalLength } from '../materials/_shared/camera-uniforms';
-import { proxyIUniform, type TSLNode } from '../materials/_shared/tsl-helpers';
-import type { GSplatPickingMaterialConfig } from './gsplat-picking-material';
+import { gsplatPickWebGPUFactory, type GSplatPickTSLNodes } from './pick.tsl';
+import type { CameraAwareMaterial } from '../../materials/_shared/camera-aware-material';
+import { computeFocalLength } from '../../materials/_shared/camera-uniforms';
+import { proxyIUniform, type TSLNode } from '../../materials/_shared/tsl-helpers';
+import type { GSplatPickingMaterialConfig } from './material';
 
 export class GSplatPickingTSLMaterial extends NodeMaterial implements CameraAwareMaterial {
   uniforms: Record<string, THREE.IUniform>;
