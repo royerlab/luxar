@@ -448,7 +448,7 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
     this.keyboardDisposer = attachKeyboardPan(element, {
       enabled: () => this.enabled,
       enablePan: () => this.enablePan,
-      keyPanSpeed: this.keyPanSpeed,
+      keyPanSpeed: () => this.keyPanSpeed,
       pan: (dx, dy) => this.pan(dx, dy),
     });
   }
