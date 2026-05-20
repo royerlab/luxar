@@ -15,11 +15,11 @@
 import * as THREE from 'three';
 import type { LuxarCamera } from '../utils/camera-utils';
 import { applyPan, type PanCtx } from './luxar-orbit-controls/math/pan';
-import { applyZoomScale } from './luxar-orbit-controls/math/zoom';
 import {
   applyToCamera,
   initializeFromCamera,
 } from './luxar-orbit-controls/camera-application';
+import { runUpdateStep, type OrbitUpdateCtx } from './luxar-orbit-controls/update';
 import {
   type ControlAction,
   type OrbitInputCtx,
@@ -51,10 +51,6 @@ export interface LuxarOrbitControlsConfig {
   screenSpacePanning?: boolean;
   trackballRadius?: number;
 }
-
-const _IDENTITY_QUAT = new THREE.Quaternion();
-const _v2 = new THREE.Vector3();
-const _q1 = new THREE.Quaternion();
 
 export class LuxarOrbitControls extends THREE.EventDispatcher<{
   change: {};
@@ -203,104 +199,41 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
    * @returns true if camera moved (useful for render-on-demand).
    */
   public update(deltaTime?: number): boolean {
-    // 1. Auto-rotation: around the camera's screen-up axis (always appears vertical to the viewer)
-    // Speed=1.0 → one full rotation in 60 seconds (matches THREE.js OrbitControls convention)
-    if (this.autoRotate && this.enableRotate) {
-      const dt = deltaTime ?? 1 / 60;
-      const angle = ((2 * Math.PI) / 60) * this.autoRotateSpeed * dt;
-      // Inline quaternion math (applyOrbitRotation also calls applyToCamera, redundant in update())
-      _v2.set(0, 1, 0).applyQuaternion(this.orientation);
-      _q1.setFromAxisAngle(_v2, angle);
-      this.orientation.premultiply(_q1);
-      this.orientation.normalize();
-    }
+    return runUpdateStep(this.makeUpdateCtx(), deltaTime);
+  }
 
-    // 2. Apply trackball rotation with damping (local frame)
-    if (this.enableDamping) {
-      _q1.slerpQuaternions(_IDENTITY_QUAT, this.rotationDelta, this.dampingFactor);
-      this.orientation.multiply(_q1);
-      this.orientation.normalize();
-      this.rotationDelta.slerp(_IDENTITY_QUAT, this.dampingFactor);
-    } else {
-      this.orientation.multiply(this.rotationDelta);
-      this.orientation.normalize();
-      this.rotationDelta.identity();
-    }
-
-    // 3. Apply view-axis roll with damping
-    if (Math.abs(this.rollDelta) > 1e-6) {
-      _v2.set(0, 0, -1).applyQuaternion(this.orientation).normalize();
-      if (this.enableDamping) {
-        const rollApply = this.rollDelta * this.dampingFactor;
-        _q1.setFromAxisAngle(_v2, rollApply);
-        this.orientation.premultiply(_q1);
-        this.orientation.normalize();
-        this.rollDelta *= 1 - this.dampingFactor;
-      } else {
-        _q1.setFromAxisAngle(_v2, this.rollDelta);
-        this.orientation.premultiply(_q1);
-        this.orientation.normalize();
-        this.rollDelta = 0;
-      }
-    }
-
-    // 4. Apply pan with damping
-    if (this.enableDamping) {
-      this.target.addScaledVector(this.panDelta, this.dampingFactor);
-      this.panDelta.multiplyScalar(1 - this.dampingFactor);
-    } else {
-      this.target.add(this.panDelta);
-      this.panDelta.set(0, 0, 0);
-    }
-
-    // 5. Apply zoom with damping
-    if (Math.abs(this.zoomDelta) > 1e-8) {
-      if (this.enableDamping) {
-        const zoomApply = 1 + this.zoomDelta * this.dampingFactor;
-        this.distance = applyZoomScale(
-          this.camera,
-          this.distance,
-          zoomApply,
-          this.minZoom,
-          this.maxZoom
-        );
-        this.zoomDelta *= 1 - this.dampingFactor;
-      } else {
-        this.distance = applyZoomScale(
-          this.camera,
-          this.distance,
-          1 + this.zoomDelta,
-          this.minZoom,
-          this.maxZoom
-        );
-        this.zoomDelta = 0;
-      }
-    }
-
-    // 6. Clamp distance
-    this.distance = THREE.MathUtils.clamp(this.distance, this.minDistance, this.maxDistance);
-
-    // 7. Clamp ortho zoom
-    if (this.camera instanceof THREE.OrthographicCamera) {
-      this.camera.zoom = THREE.MathUtils.clamp(this.camera.zoom, this.minZoom, this.maxZoom);
-      this.camera.updateProjectionMatrix();
-    }
-
-    // 8. Apply to camera
-    this.applyToCamera();
-
-    // 9. Change detection
-    const moved =
-      !this.camera.position.equals(this.lastPosition) ||
-      !this.camera.quaternion.equals(this.lastQuaternion);
-
-    if (moved) {
-      this.dispatchEvent({ type: 'change' });
-      this.lastPosition.copy(this.camera.position);
-      this.lastQuaternion.copy(this.camera.quaternion);
-    }
-
-    return moved;
+  private makeUpdateCtx(): OrbitUpdateCtx {
+    return {
+      enableRotate: this.enableRotate,
+      enableDamping: this.enableDamping,
+      dampingFactor: this.dampingFactor,
+      autoRotate: this.autoRotate,
+      autoRotateSpeed: this.autoRotateSpeed,
+      orientation: this.orientation,
+      rotationDelta: this.rotationDelta,
+      panDelta: this.panDelta,
+      target: this.target,
+      getRollDelta: () => this.rollDelta,
+      setRollDelta: (v) => {
+        this.rollDelta = v;
+      },
+      getZoomDelta: () => this.zoomDelta,
+      setZoomDelta: (v) => {
+        this.zoomDelta = v;
+      },
+      getDistance: () => this.distance,
+      setDistance: (v) => {
+        this.distance = v;
+      },
+      camera: this.camera,
+      minDistance: this.minDistance,
+      maxDistance: this.maxDistance,
+      minZoom: this.minZoom,
+      maxZoom: this.maxZoom,
+      lastPosition: this.lastPosition,
+      lastQuaternion: this.lastQuaternion,
+      dispatch: (type) => this.dispatchEvent({ type }),
+    };
   }
 
   /** Save current state for reset(). */
