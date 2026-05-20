@@ -641,9 +641,11 @@ class Group(Node):
     ) -> GSplats:
         """Add Gaussian splats from a GSplatData object.
 
-        Multi-LOD data (from progressive fitting) is written with per-LOD
-        subgroups (lod_0/, lod_1/, ...) mirroring the .gsplats.zarr v1.1
-        format.  Single-LOD data uses the flat layout.
+        Multi-LOD data (from progressive fitting or `make_additive_lod`)
+        is written with per-additive-sub-LOD subgroups under a single
+        substitutive level (``substitutive_0/additive_<i>/...``),
+        matching the standalone ``.gsplats.zarr`` v2.0 layout for a
+        ``[1, M]`` pyramid. Single-LOD data uses the flat layout.
 
         Args:
             name: Name of the gsplats node

@@ -465,7 +465,7 @@ class GSplatData(_SplatArrayMixin):
         """Collapse all LODs into a single LOD.
 
         Returns:
-            New GSplatData with ``n_lods == 1`` containing all splats.
+            New GSplatData with ``n_additive_sublods == 1`` containing all splats.
         """
         single = AdditiveSubLOD(
             centers=self.centers,
@@ -522,8 +522,8 @@ class GSplatData(_SplatArrayMixin):
         Args:
             substitutive_levels: Ordered list, finest at index 0.
             stats: Optional top-level statistics.
-            default_substitutive: Which level the legacy ``lods`` /
-                ``n_lods`` accessors return (default: 0 = finest).
+            default_substitutive: Which level the ``additive_sublods`` /
+                ``n_additive_sublods`` accessors return (default: 0 = finest).
 
         Returns:
             New ``GSplatData`` with the given substitutive × additive matrix.

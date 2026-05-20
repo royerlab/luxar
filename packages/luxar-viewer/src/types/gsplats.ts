@@ -113,14 +113,36 @@ export interface GSplatsMetadata {
   extend_to_all?: string[];
 
   /**
-   * Number of LOD levels (v1.1 multi-LOD format).
-   * When present and > 1, the gsplats group contains lod_0/, lod_1/, ... subgroups
-   * instead of flat arrays. Each subgroup is structurally identical to a v1.0 dataset.
-   * LOD 0 is the coarsest (highest-amplitude splats); LODs are additive.
+   * On-disk format version. Present on v2.0+ gsplat nodes. v2.0 uses a
+   * 2-D ``substitutive_<s>/additive_<a>/`` layout under the splats
+   * group; older versions are not loaded by this viewer (use
+   * ``luxar gsplat migrate-format`` to convert).
    */
-  n_lods?: number;
+  format_version?: string;
 
-  /** Total splat count across all LODs (v1.1 multi-LOD format). */
+  /**
+   * Number of substitutive levels (v2.0). At least 1. When > 1 the
+   * splats group contains ``substitutive_0/`` … ``substitutive_<N-1>/``
+   * subgroups; each substitutive level replaces (rather than extends)
+   * the previous one.
+   */
+  n_substitutive?: number;
+
+  /**
+   * Default substitutive level index (v2.0). The viewer renders this
+   * substitutive level by default; user UI may expose a selector to
+   * pick a coarser/finer level.
+   */
+  default_substitutive?: number;
+
+  /**
+   * Number of additive sub-LODs on the default substitutive level
+   * (v2.0). When > 1 the substitutive group contains ``additive_0/`` …
+   * ``additive_<M-1>/`` subgroups for progressive (prefix-sum) loading.
+   */
+  n_additive_sublods_default?: number;
+
+  /** Total splat count across all additive sub-LODs of the default substitutive level. */
   n_splats_total?: number;
 
   /** Gaussian truncation radius in standard deviations (default 3.0 if absent). */

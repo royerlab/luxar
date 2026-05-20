@@ -118,43 +118,48 @@ export function createGSplatsLoader(
 }
 
 /**
- * Create a progressive gsplats loader for a multi-LOD node.
+ * Create a progressive gsplats loader for a multi-additive-LOD cell of
+ * a v2.0 .gsplats.zarr scene node.
  *
- * Opens each `lod_i/` zarr subgroup, reads its attrs to build a
- * synthetic SceneNode, and creates a `GSplatsSpatialIndexLoader` per
- * LOD. Wraps them all in a `GSplatsProgressiveLoader`.
+ * Walks ``substitutive_<defaultSub>/additive_<i>/`` zarr subgroups,
+ * reads each one's attrs to build a synthetic SceneNode, and creates a
+ * ``GSplatsSpatialIndexLoader`` per additive sub-LOD. Wraps them all in
+ * a ``GSplatsProgressiveLoader``.
  *
- * The caller supplies a pre-composed `parentEffectiveAttrs` snapshot —
+ * The caller supplies a pre-composed ``parentEffectiveAttrs`` snapshot —
  * this matches the inline original which calls
- * `applyEffectiveAttrs(node)` once before the loop so each LOD's
+ * ``applyEffectiveAttrs(node)`` once before the loop so each sub-LOD's
  * synthetic node sees rendering attrs already composed through the
  * scene-graph ancestry (not just the parent's raw zarr attrs).
  */
 export async function createProgressiveGSplatsLoader(
   node: SceneNode,
-  nLods: number,
+  nAdditive: number,
+  defaultSub: number,
   parentEffectiveAttrs: SceneNode['attrs'],
   deps: LoaderFactoryDeps
 ): Promise<GSplatsDataLoader> {
   const parentLoc = zarr
     .root(deps.zarrStore)
     .resolve(node.path === '/' ? '' : node.path.slice(1));
+  const subLoc = parentLoc.resolve(`substitutive_${defaultSub}`);
 
   log.query(
     Modules.SCENE_LOADER,
-    `Creating progressive GSplats loader for ${node.path} (${nLods} LODs)`
+    `Creating progressive GSplats loader for ${node.path} ` +
+      `(substitutive ${defaultSub}, ${nAdditive} additive sub-LODs)`
   );
 
   const lodLoaders: GSplatsSpatialIndexLoader[] = [];
 
-  for (let i = 0; i < nLods; i++) {
-    const lodLoc = parentLoc.resolve(`lod_${i}`);
+  for (let i = 0; i < nAdditive; i++) {
+    const lodLoc = subLoc.resolve(`additive_${i}`);
 
     const lodGroup = await zarr.open(lodLoc, { kind: 'group' });
     const lodAttrs = lodGroup.attrs as Record<string, unknown>;
 
     const lodNode: SceneNode = {
-      path: `${node.path}/lod_${i}`,
+      path: `${node.path}/substitutive_${defaultSub}/additive_${i}`,
       type: 'gsplats',
       attrs: {
         ...lodAttrs,
@@ -182,5 +187,5 @@ export async function createProgressiveGSplatsLoader(
     );
   }
 
-  return new GSplatsProgressiveLoader(lodLoaders, nLods);
+  return new GSplatsProgressiveLoader(lodLoaders, nAdditive);
 }
