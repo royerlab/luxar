@@ -10,7 +10,7 @@
  */
 
 import { describe, expect, it, vi } from 'vitest';
-import { EventGroup } from '../../../utils/cross-layer/event-group';
+import { EventGroup } from '../../../../utils/cross-layer/event-group';
 
 describe('EventGroup', () => {
   it('removes registered DOM listeners on dispose()', () => {

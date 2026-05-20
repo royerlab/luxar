@@ -35,11 +35,29 @@ The core package serves as the central orchestrator for the Luxar application, m
 
 ```typescript
 core/
-├── main.ts        # Standalone-app HTML entry point (~20 lines)
-├── bootstrap.ts   # Pre-init sequence (theme, console patch, codec warm,
-│                  #   debug surface) + factory the standalone app uses
-└── app.ts         # LuxarApp — the core embed surface (`init` / `dispose`)
+├── main.ts                   # Standalone-app HTML entry point (~30 lines)
+├── bootstrap.ts              # Pre-init sequence (theme, console patch,
+│                             #   codec warm, debug surface) + the standalone
+│                             #   factory `bootstrapStandalone()`
+├── app.ts                    # `LuxarApp` — the core embed surface
+│                             #   (`init` / `loadDataset` / `dispose`)
+├── app-factories.ts          # Factory helpers used by `app.ts` to construct
+│                             #   scene, controls, monitor, and renderer subsystems
+├── browser-decision.ts       # Decides whether to show the dataset browser
+│                             #   vs. load a dataset directly
+├── debug-cache-helpers.ts    # `__luxarDebug.cache.*` console surface
+├── debug-state.ts            # `__luxarDebug` global state container
+├── panel-visibility.ts       # Centralized panel show/hide coordination
+├── pick-result-handler.ts    # Routes picking results to UI/overlays
+├── viewer-config-applier.ts  # Applies a `ZarrViewerConfig` to live app subsystems
+└── viewer-snapshot.ts        # Captures and restores the active viewer state
 ```
+
+**Public exports**: `class LuxarApp` (with `init(options)`, `loadDataset(src)`,
+`dispose()`) from `app.ts`, and `bootstrapStandalone()` from `bootstrap.ts`.
+
+**Dependencies**: internally couples to `scene`, `controls`, `input`, `data`,
+`rendering`, `ui/*`, `config`, `themes`, and `utils`; externally only `three`.
 
 **Component Dependency Flow**:
 

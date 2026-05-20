@@ -13,10 +13,10 @@
  * (new fields under a higher `version`).
  */
 
-import type { SceneManager } from '../scene/scene-manager';
-import { isPerspectiveCamera, isOrthographicCamera } from '../utils/camera-utils';
-import { sceneDimsManager } from '../scene/scene-dims-manager';
-import { log, Modules } from '../utils/log';
+import type { SceneManager } from '../../../scene/scene-manager';
+import { isPerspectiveCamera, isOrthographicCamera } from '../../../utils/camera-utils';
+import { sceneDimsManager } from '../../../scene/scene-dims-manager';
+import { log, Modules } from '../../../utils/log';
 import * as THREE from 'three';
 
 /** Schema version so future fields can be added without breaking old snapshots. */

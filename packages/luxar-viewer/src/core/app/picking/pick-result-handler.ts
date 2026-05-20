@@ -14,8 +14,8 @@
  * @module core/pick-result-handler
  */
 
-import { log, Modules } from '../utils/log';
-import type { PickResult } from '../rendering/picking/picking-system';
+import { log, Modules } from '../../../utils/log';
+import type { PickResult } from '../../../rendering/picking/picking-system';
 
 /**
  * Narrow port interfaces — the handler only reads the methods it needs

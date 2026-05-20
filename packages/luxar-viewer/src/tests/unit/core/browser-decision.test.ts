@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { classifyBrowserUrl } from '../../../core/browser-decision';
+import { classifyBrowserUrl } from '../../../core/app/dataset/browser-decision';
 
 describe('classifyBrowserUrl', () => {
   describe('must-browse cases', () => {

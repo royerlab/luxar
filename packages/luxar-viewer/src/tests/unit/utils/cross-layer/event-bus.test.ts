@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { createEventBus, eventBus } from '../../../utils/cross-layer/event-bus';
+import { createEventBus, eventBus } from '../../../../utils/cross-layer/event-bus';
 
 // Custom test event-map — keeps tests decoupled from the production
 // LuxarEventMap so renaming/restructuring real events doesn't churn
@@ -156,7 +156,7 @@ describe('TypedEventBus', () => {
   it('singleton eventBus is shared across imports', async () => {
     // Spot-check: importing twice yields the same instance, and a
     // listener registered via one ref sees emits from the other.
-    const { eventBus: again } = await import('../../../utils/cross-layer/event-bus');
+    const { eventBus: again } = await import('../../../../utils/cross-layer/event-bus');
     expect(again).toBe(eventBus);
 
     const listener = vi.fn();

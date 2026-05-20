@@ -17,11 +17,11 @@
  * indirection than it saves.
  */
 
-import { SceneManager } from '../scene/scene-manager';
-import { AnimationController } from '../scene/animation/animation-controller';
-import { RenderingControls } from '../ui/rendering-controls';
-import { RecordingPanel } from '../ui/recording-panel';
-import { LayersPanel } from '../ui/layers';
+import { SceneManager } from '../../scene/scene-manager';
+import { AnimationController } from '../../scene/animation/animation-controller';
+import { RenderingControls } from '../../ui/rendering-controls';
+import { RecordingPanel } from '../../ui/recording-panel';
+import { LayersPanel } from '../../ui/layers';
 
 /**
  * Optional construction overrides. Each entry is a function that
