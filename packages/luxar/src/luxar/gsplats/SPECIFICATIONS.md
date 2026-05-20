@@ -720,8 +720,9 @@ The CLI delegates to `calibrate` with parsed K-grid args, mask args, and `load_f
 ### Purpose
 Post-fit construction of LOD ladders for progressive streaming, view-dependent rendering, and storage-tiered datasets. Two qualitatively different operators live side-by-side:
 
-- **Additive** (`lod/additive.py`) — same N splats, *reordered* so that the prefix sum at any k splats is the best L² approximation of the full scene. Output: a single multi-LOD `GSplatData` where each level *extends* the previous one. Implemented per `manuscript/supp_doc/additive_lod/`.
-- **Substitutive** (`lod/substitutive.py`) — synthesise M < N representative splats per coarser level via Gaussian mixture reduction (k-means + cost-increment Lloyd refinement, optionally hierarchical greedy). Output: a list of flat `GSplatData` (one per level), since each level *replaces* the previous one. Implemented per `manuscript/supp_doc/substitutive_lod/`.
+- **Additive** (`lod/additive.py`) — same N splats, *reordered* so that the prefix sum at any k splats is the best L² approximation of the full scene. Output: a v2.0 `GSplatData` where the selected substitutive level holds the multi-additive ladder. Implemented per `manuscript/supp_doc/additive_lod/`.
+- **Substitutive** (`lod/substitutive.py`) — synthesise M < N representative splats per coarser level via Gaussian mixture reduction (k-means + cost-increment Lloyd refinement, optionally hierarchical greedy). Output: a single v2.0 `GSplatData` with `n_substitutive = levels + 1` substitutive levels (each replacing rather than extending the previous one). Implemented per `manuscript/supp_doc/substitutive_lod/`.
+- **Pyramid** (`lod/__init__.py::make_lod_pyramid`) — chains the two: substitutive (outer) then additive (inner) per level, yielding the full 2-D `[levels+1, n_additive_lods]` matrix in one call.
 
 Both operators are pure post-processes on a fitted `GSplatData`; fitting (single-pass or progressive) returns a single flattened dataset, and an LOD hierarchy is built only on demand.
 
@@ -761,20 +762,34 @@ def make_substitutive_lod(
     device: str | torch.device | None = "auto",
     seed: int | None = None,
     verbose: bool = False,
-) -> list[GSplatData]   # one entry per level (coarsest last)
+) -> GSplatData   # n_substitutive = levels + 1, one additive sub-LOD per level
+
+# Pyramid (luxar.gsplats.lod.__init__)
+def make_lod_pyramid(
+    data: GSplatData,
+    *,
+    compression_factor: int = 4,
+    levels: int = 3,
+    n_additive_lods: int = 4,
+    substitutive_method: Literal[...] = "kmeans_lloyd",
+    additive_method: Literal[...] = "greedy",
+    breakpoints: Literal["equal-count"] | list[int] = "equal-count",
+    ...
+) -> GSplatData   # full [levels+1, n_additive_lods] matrix
 ```
 
 ### CLI integration (`luxar gsplat lod`)
-A Typer subgroup that exposes two subcommands:
-- `luxar gsplat lod additive <in.gsplats.zarr> <out.gsplats.zarr>` — wraps `make_additive_lod` with `--n-lods`, `--method`, `--breakpoints`, `--truncation-sigmas`, `--max-n-dense`, `--seed`.
-- `luxar gsplat lod substitutive <in.gsplats.zarr> <out_dir/>` — wraps `make_substitutive_lod` with `--levels`, `--compression-factor`, `--method`, `--lloyd-iterations`, `--candidate-bins-k`, `--device`, `--seed`.
+A Typer subgroup that exposes three subcommands:
+- `luxar gsplat lod additive <in.gsplats.zarr> <out.gsplats.zarr>` — wraps `make_additive_lod` with `--n-lods`, `--method`, `--breakpoints`, `--truncation-sigmas`, `--max-n-dense`, `--seed`, `--substitutive-level`.
+- `luxar gsplat lod substitutive <in.gsplats.zarr> <out.gsplats.zarr>` — wraps `make_substitutive_lod` with `--K`, `--L`, `--method`, `--lloyd-iters`, `--candidate-bins-k`, `--device`, `--seed`. Output is a single v2.0 .gsplats.zarr (no more directory + manifest.json).
+- `luxar gsplat lod pyramid <in.gsplats.zarr> <out.gsplats.zarr>` — wraps `make_lod_pyramid` with `--substitutive K=<int>,L=<int>`, `--additive <int>`, plus per-axis method/breakpoint flags. Single-shot full-pyramid build.
 
-Both accept `--quiet` (verbose-by-default) for terminal output control.
+All three accept `--quiet` (verbose-by-default) for terminal output control.
 
 ### Relationship to other features
 - **`cal` (Section 8)** — the canonical upstream step. Run `cal` to find a principled splat budget K\*, fit at K\*, then build the LOD ladder.
 - **`cull_by_contribution`** — orthogonal pruning operator (removes splats vs. reorders/synthesises). LOD operators and culling can be composed.
-- **`GSplatData` / `AdditiveSubLOD`** — `make_additive_lod` returns a multi-LOD `GSplatData` whose `up_to_lod(k)` yields a valid additive prefix; `make_substitutive_lod` returns a list of single-LOD `GSplatData` because each level has different splat counts and cannot share a parameter array.
+- **`GSplatData` / `AdditiveSubLOD` / `SubstitutiveLevel`** — `make_additive_lod` returns a `GSplatData` whose `substitutive_levels[s].additive_prefix(k)` yields a valid additive prefix on the chosen level; `make_substitutive_lod` returns a `GSplatData` with `n_substitutive = levels + 1` substitutive levels, each holding a single (replacement) additive sub-LOD with its own splat array.
 
 ### Full specification
 The complete algorithm specifications, mathematical derivations, complexity analyses, and parameter-tuning guidance live in `lod/SPECIFICATIONS.md`. This document only summarises the surface API and integration contract.
