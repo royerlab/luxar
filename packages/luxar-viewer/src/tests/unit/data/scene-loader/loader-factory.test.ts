@@ -140,7 +140,7 @@ describe('createGSplatsLoader', () => {
 });
 
 describe('createProgressiveGSplatsLoader', () => {
-  it('opens N LOD subgroups and constructs N GSplatsSpatialIndexLoaders', async () => {
+  it('opens N additive sub-LOD subgroups and constructs N GSplatsSpatialIndexLoaders', async () => {
     const node = makeNode('/g', 'gsplats');
     const parentEffectiveAttrs = {
       opacity: 0.5,
@@ -150,7 +150,7 @@ describe('createProgressiveGSplatsLoader', () => {
       blending_mode: 'add',
     } as SceneNode['attrs'];
 
-    await createProgressiveGSplatsLoader(node, 3, parentEffectiveAttrs, makeDeps());
+    await createProgressiveGSplatsLoader(node, 3, 0, parentEffectiveAttrs, makeDeps());
 
     expect(zarrOpenMock).toHaveBeenCalledTimes(3);
     expect(gsplatsCtorArgs).toHaveLength(3);
@@ -159,7 +159,7 @@ describe('createProgressiveGSplatsLoader', () => {
     expect(progressiveCtorArgs[0][1]).toBe(3);
   });
 
-  it('synthesizes LOD nodes that inherit parent effective rendering attrs', async () => {
+  it('synthesizes additive sub-LOD nodes that inherit parent effective rendering attrs', async () => {
     const node = makeNode('/g', 'gsplats');
     node.attrs = { extend_to_all: ['t'] };
     const parentEffectiveAttrs = {
@@ -170,11 +170,11 @@ describe('createProgressiveGSplatsLoader', () => {
       blending_mode: 'normal',
     } as SceneNode['attrs'];
 
-    await createProgressiveGSplatsLoader(node, 1, parentEffectiveAttrs, makeDeps());
+    await createProgressiveGSplatsLoader(node, 1, 0, parentEffectiveAttrs, makeDeps());
 
     // Constructor signature: (loc, node, registry, store, profiler?, l0?, prefetcher?)
     const lodNode = gsplatsCtorArgs[0][1] as SceneNode;
-    expect(lodNode.path).toBe('/g/lod_0');
+    expect(lodNode.path).toBe('/g/substitutive_0/additive_0');
     expect(lodNode.type).toBe('gsplats');
     expect(lodNode.attrs.opacity).toBe(0.7);
     expect(lodNode.attrs.gamma).toBe(1.5);
@@ -182,7 +182,7 @@ describe('createProgressiveGSplatsLoader', () => {
     expect(lodNode.attrs.offset).toBe(0.05);
     expect(lodNode.attrs.blending_mode).toBe('normal');
     expect(lodNode.attrs.extend_to_all).toEqual(['t']);
-    // Plus the per-LOD raw zarr attrs (foo from our mock).
+    // Plus the per-additive-sub-LOD raw zarr attrs (foo from our mock).
     expect((lodNode.attrs as { foo?: string }).foo).toBe('bar');
   });
 });

@@ -287,23 +287,46 @@ def save_gsplats(
     store = DirectoryStore(str(zarr_path))
     root = zarr.group(store=store, overwrite=True)
 
-    # Write root attributes
+    # Write root attributes (format v2.0 — 2-D LOD: substitutive × additive)
     timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
     root.attrs.update(
         {
-            "format_version": "1.0",
+            "format_version": "2.0",
             "format_type": "gsplats_zarr",
             "timestamp": timestamp,
             "luxar_gsplats_version": GSPLATS_VERSION,
+            "n_substitutive": 1,
+            "default_substitutive": 0,
         }
     )
     if description:
         root.attrs["description"] = description
 
-    # Create splats group and write arrays
+    # Create splats / substitutive_0 / additive_0 nested group structure.
+    # For the trivial 1×1 case (today's "single splat set"), n_substitutive=1
+    # and there's a single additive sub-LOD at index 0. The same wiring scales
+    # to [N, M_i] when written via GSplatData._save_multi_lod.
     splats_group = root.create_group("splats")
+    splats_group.attrs.update(
+        {
+            "type": "gsplats",
+            "n_substitutive": 1,
+            "default_substitutive": 0,
+            "truncation_radius": truncation_radius,
+        }
+    )
+    sub_group = splats_group.create_group("substitutive_0")
+    sub_group.attrs.update(
+        {
+            "n_additive_sublods": 1,
+            "compression_factor": 1,
+            "parent_method": "",  # "" sentinel == None at the finest level
+            "level_index": 0,
+        }
+    )
+    additive_group = sub_group.create_group("additive_0")
     _save_splat_arrays_to_group(
-        splats_group=splats_group,
+        splats_group=additive_group,
         centers=centers,
         amplitudes=amplitudes,
         cholesky_factors=cholesky_factors,

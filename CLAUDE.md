@@ -266,9 +266,10 @@ luxar gsplat cal volume.zarr cal.json --progression power --power 2  # Polynomia
 # Output: K* + curve type {peak | plateau | signal_limited} + noise-floor σ̂ + PSNR ceiling.
 # Then re-run fit at the recommended K: luxar gsplat fit volume.zarr out.zarr --seeds <K*>
 
-# Canonical end-to-end pipeline: cal → fit (at K*) → lod (additive | substitutive)
+# Canonical end-to-end pipeline: cal → fit (at K*) → lod (additive | substitutive | pyramid)
 # `lod` operates on a pre-fitted .gsplats.zarr (output of `fit`); use `cal` upstream
-# to pick K* in a principled way.
+# to pick K* in a principled way. .gsplats.zarr is format v2.0 (a 2-D
+# substitutive × additive LOD matrix) — see docs/specs/GSPLATS_ZARR_FORMAT.md.
 
 # Build an additive LOD ladder from a fitted gsplat dataset (post-fit ordering)
 # Progressive fitting now returns a single flattened dataset; the LOD ladder is
@@ -283,20 +284,30 @@ luxar gsplat lod additive in.gsplats.zarr out.gsplats.zarr \
     --breakpoints counts:1000,5000,25000                                    # explicit cumulative splat counts
 luxar gsplat lod additive in.gsplats.zarr out.gsplats.zarr --method self_energy  # cheap O(N log N) fallback
 luxar gsplat lod additive in.gsplats.zarr out.gsplats.zarr -m mass -b counts:500,2000,10000
+luxar gsplat lod additive pyr.gsplats.zarr out.gsplats.zarr --substitutive-level 1   # target a single
+                                                                                     # substitutive level of a pyramid
 
 # Build a substitutive LOD hierarchy (synthesised representative splats per level)
-# Each coarser level has ceil(N/K^L) splats that REPLACE the previous level. Output
-# is a directory of per-level .gsplats.zarr + manifest.json. The recommended workhorse
-# `kmeans_lloyd` (k-means warm-start + cost-increment Lloyd refinement) beats
-# amplitude culling at every K on real anisotropic 3D data per supp-doc Experiment C.
-# Greedy hierarchical is quality-leaning at small N but ~8x slower.
-luxar gsplat lod substitutive in.gsplats.zarr out_dir/                       # K=4, L=3 (default), kmeans_lloyd
-luxar gsplat lod substitutive in.gsplats.zarr out_dir/ --K 4 --L 3           # explicit K, L
-luxar gsplat lod substitutive in.gsplats.zarr out_dir/ \
+# Each coarser substitutive level has ceil(N/K^L) splats that REPLACE the previous
+# level. Output is a single v2.0 .gsplats.zarr (substitutive_<s>/additive_0 cells);
+# loadable with `luxar gsplat info`. The recommended workhorse `kmeans_lloyd`
+# (k-means warm-start + cost-increment Lloyd refinement) beats amplitude culling
+# at every K on real anisotropic 3D data per supp-doc Experiment C. Greedy
+# hierarchical is quality-leaning at small N but ~8x slower.
+luxar gsplat lod substitutive in.gsplats.zarr out.gsplats.zarr               # K=4, L=3 (default), kmeans_lloyd
+luxar gsplat lod substitutive in.gsplats.zarr out.gsplats.zarr --K 4 --L 3   # explicit K, L
+luxar gsplat lod substitutive in.gsplats.zarr out.gsplats.zarr \
     --method kmeans-lloyd --lloyd-iters 5                                    # tune Lloyd refinement
-luxar gsplat lod substitutive in.gsplats.zarr out_dir/ --method greedy_lloyd # quality-leaning small N
-luxar gsplat lod substitutive in.gsplats.zarr out_dir/ --device cpu          # skip GPU
-# Each level zarr loadable independently: `luxar gsplat info out_dir/level_1.gsplats.zarr`
+luxar gsplat lod substitutive in.gsplats.zarr out.gsplats.zarr --method greedy_lloyd  # quality-leaning small N
+luxar gsplat lod substitutive in.gsplats.zarr out.gsplats.zarr --device cpu  # skip GPU
+
+# Build the full 2-D LOD pyramid (substitutive × additive) in one shot
+luxar gsplat lod pyramid in.gsplats.zarr out.gsplats.zarr \
+    --substitutive K=4,L=3 --additive 4                                       # [4, 4] pyramid
+
+# Migrate legacy .gsplats.zarr layouts (v1.0 / v1.1 / pre-v2.0 substitutive dir) → v2.0
+luxar gsplat migrate-format legacy.gsplats.zarr v2.gsplats.zarr               # single file
+luxar gsplat migrate-format old_pyr/ v2.gsplats.zarr                          # substitutive directory
 
 # Split into parts
 luxar gsplat split splats.gsplats.zarr output_dir/ --parts 4

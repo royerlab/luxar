@@ -685,7 +685,7 @@ The report module imports matplotlib lazily so it does not inflate cold-start co
 The `lod` subpackage builds streaming-ready LOD hierarchies from a fitted `GSplatData`. Two qualitatively different operators live side-by-side:
 
 - **Additive** — same `N` splats, *reordered* so that the prefix sum at any `k ≤ N` splats is the best L² approximation of the full scene. Output: a single multi-LOD `GSplatData` where each level *extends* the previous one. Use this when you want progressive streaming: the viewer can stop loading at any point and the partial reconstruction is principled.
-- **Substitutive** — synthesise `M < N` representative splats per coarser level via Gaussian mixture reduction (k-means + cost-increment Lloyd refinement, optionally hierarchical greedy). Output: a list of flat `GSplatData` (one per level), since each level *replaces* the previous one. Use this when you want fixed-budget coarse mip-levels for view-dependent rendering.
+- **Substitutive** — synthesise `M < N` representative splats per coarser level via Gaussian mixture reduction (k-means + cost-increment Lloyd refinement, optionally hierarchical greedy). Output: a single `GSplatData` with `n_substitutive = levels + 1` substitutive levels (each *replacing* the previous one). Use this when you want fixed-budget coarse mip-levels for view-dependent rendering.
 
 Both operators are pure post-processes on a fitted dataset; fitting (single-pass or progressive) returns one flat container, and an LOD hierarchy is built on demand.
 
@@ -695,6 +695,7 @@ Both operators are pure post-processes on a fitted dataset; fitting (single-pass
 from luxar.gsplats import (
     fit_gaussian_splats,
     make_additive_lod,
+    make_lod_pyramid,
     make_substitutive_lod,
 )
 
@@ -703,26 +704,41 @@ data = fit_gaussian_splats(volume, seeds=32_000)
 
 # 2a. Additive: same N splats, reordered into 4 prefix-monotone levels
 additive = make_additive_lod(data, n_lods=4, method="greedy")
-# additive.up_to_lod(2) → best L² approximation using levels 0+1+2
+# additive.additive_prefix(2) → best L² approximation using levels 0+1+2
 
 # 2b. Substitutive: 3 coarser levels with 4x compression each
-hierarchy = make_substitutive_lod(
+pyramid = make_substitutive_lod(
     data, compression_factor=4, levels=3, method="kmeans_lloyd",
 )
-# hierarchy[0] = original; hierarchy[3] = coarsest (≈ N / 64 splats)
+# pyramid.substitutive_levels[0] = original; [3] = coarsest (≈ N / 64 splats)
+
+# 2c. Full 2-D pyramid (substitutive × additive) in one call
+matrix = make_lod_pyramid(
+    data,
+    compression_factor=4, levels=3,     # outer (substitutive) axis
+    n_additive_lods=4,                  # inner (additive) axis
+)
 ```
 
 ### CLI
 
 ```bash
-# Additive LOD: writes a single multi-LOD .gsplats.zarr
+# Additive LOD ladder; single v2.0 .gsplats.zarr with [1, M] shape
 luxar gsplat lod additive fit.gsplats.zarr additive.gsplats.zarr --n-lods 4
 luxar gsplat lod additive fit.gsplats.zarr out.gsplats.zarr --method self_energy   # cheap O(N log N)
 luxar gsplat lod additive fit.gsplats.zarr out.gsplats.zarr -m mass -b counts:500,2000,10000
+luxar gsplat lod additive pyr.gsplats.zarr out.gsplats.zarr --substitutive-level 1
 
-# Substitutive LOD: writes a directory of per-level files + manifest.json
-luxar gsplat lod substitutive fit.gsplats.zarr substitutive_dir/ --levels 3 --compression-factor 4
-luxar gsplat lod substitutive fit.gsplats.zarr out_dir/ --method greedy --device cuda
+# Substitutive LOD pyramid; single v2.0 .gsplats.zarr with [L+1, 1] shape
+luxar gsplat lod substitutive fit.gsplats.zarr substitutive.gsplats.zarr --L 3 --K 4
+luxar gsplat lod substitutive fit.gsplats.zarr out.gsplats.zarr --method greedy --device cuda
+
+# Full 2-D pyramid (substitutive × additive) in one shot
+luxar gsplat lod pyramid fit.gsplats.zarr pyramid.gsplats.zarr \
+    --substitutive K=4,L=3 --additive 4
+
+# Migrate legacy v1.0 / v1.1 / pre-v2.0 substitutive-directory layouts → v2.0
+luxar gsplat migrate-format legacy.gsplats.zarr v2.gsplats.zarr
 ```
 
 ### Recommended Workflow
@@ -1047,7 +1063,7 @@ gsplats/
 ├── fit_progressive_gsplats.py     # Progressive fitting (iterative refinement)
 ├── fit_tiled_gsplats.py           # Tiled fitting for large volumes (fit_tile, fit_tiled)
 ├── tiling.py                      # Tile geometry and cosine apodization (TileSpec, cosine_window)
-├── gsplat_data.py                 # GSplatData / GSplatLOD dataclasses, save/load, transforms
+├── gsplat_data.py                 # GSplatData / AdditiveSubLOD dataclasses, save/load, transforms
 ├── culling.py                     # Contribution-based splat culling (CullResult, cull_by_contribution)
 ├── metrics.py                     # Quality metrics (PSNR, SSIM, MSE, relative L2)
 ├── calibration.py                 # Blind-spot CV calibration (cv_mask, donut_median_fill,

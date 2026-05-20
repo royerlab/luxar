@@ -88,7 +88,7 @@ with asection("Progressive Gaussian Splatting Demo (Human Mitosis)"):
     # --- Summary ---
     with asection("Results"):
         aprint(f"Total splats: {result.n_splats:,}")
-        aprint(f"LOD levels (additive ladder): {result.n_lods}")
+        aprint(f"LOD levels (additive ladder): {result.n_additive_sublods}")
         aprint(f"Final PSNR (fit): {result.stats.get('psnr_db', 0):.2f} dB")
         aprint(f"Stop reason: {result.stats.get('stop_reason', '?')}")
         aprint(f"Total time: {result.stats.get('time_seconds', 0):.1f}s")
@@ -101,13 +101,13 @@ with asection("Progressive Gaussian Splatting Demo (Human Mitosis)"):
     # --- Render each LOD level cumulatively for visualization ---
     psnrs: list[float] = []
     with asection("Rendering LOD levels"):
-        n_lods = result.n_lods
+        n_lods = result.n_additive_sublods
         stack_recon = np.zeros((n_lods,) + V.shape, dtype=np.float32)
         stack_resid = np.zeros_like(stack_recon)
 
         for level in range(n_lods):
             # Render splats up to this LOD level (additive prefix).
-            data_at_level = result.up_to_lod(level)
+            data_at_level = result.additive_prefix(level)
             rendered = render_gaussians_numpy(
                 V.shape, data_at_level, truncate=TRUNCATE_SIG
             )
@@ -153,7 +153,7 @@ if not NO_NAPARI:
     def _update_overlay(event=None) -> None:
         t = int(viewer.dims.current_step[0])
         if t < n_lods:
-            n_splats_at_level = result.up_to_lod(t).n_splats
+            n_splats_at_level = result.additive_prefix(t).n_splats
             psnr_val = psnrs[t]
             viewer.text_overlay.visible = True
             viewer.text_overlay.text = (

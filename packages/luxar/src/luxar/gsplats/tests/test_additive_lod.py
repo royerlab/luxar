@@ -130,22 +130,22 @@ def test_self_energy_score_matches_closed_form() -> None:
 def test_make_additive_lod_equal_count() -> None:
     data = _make_random_gsplat(n=20, ndim=3, seed=6)
     ladder = make_additive_lod(data, n_lods=4)
-    assert ladder.n_lods == 4
+    assert ladder.n_additive_sublods == 4
     assert ladder.n_splats == data.n_splats
-    sizes = [ladder.at_lod(i).n_splats for i in range(ladder.n_lods)]
+    sizes = [ladder.additive_sublod(i).n_splats for i in range(ladder.n_additive_sublods)]
     assert sum(sizes) == data.n_splats
     # Equal-count: at most a 1-splat spread across levels for divisible N.
     assert max(sizes) - min(sizes) <= 1
     # up_to_lod prefix should grow monotonically.
-    counts = [ladder.up_to_lod(k).n_splats for k in range(ladder.n_lods)]
+    counts = [ladder.additive_prefix(k).n_splats for k in range(ladder.n_additive_sublods)]
     assert all(counts[i] < counts[i + 1] for i in range(len(counts) - 1))
 
 
 def test_make_additive_lod_explicit_counts() -> None:
     data = _make_random_gsplat(n=20, ndim=3, seed=7)
     ladder = make_additive_lod(data, breakpoints=[5, 10, 15, 20])
-    assert ladder.n_lods == 4
-    sizes = [ladder.at_lod(i).n_splats for i in range(ladder.n_lods)]
+    assert ladder.n_additive_sublods == 4
+    sizes = [ladder.additive_sublod(i).n_splats for i in range(ladder.n_additive_sublods)]
     assert sizes == [5, 5, 5, 5]
     assert ladder.stats["lod_breakpoints_kind"] == "explicit-counts"
 
@@ -155,8 +155,8 @@ def test_make_additive_lod_explicit_counts_partial() -> None:
     cut at N so the ladder always covers all splats."""
     data = _make_random_gsplat(n=20, ndim=3, seed=8)
     ladder = make_additive_lod(data, breakpoints=[5, 10])
-    assert ladder.n_lods == 3
-    sizes = [ladder.at_lod(i).n_splats for i in range(ladder.n_lods)]
+    assert ladder.n_additive_sublods == 3
+    sizes = [ladder.additive_sublod(i).n_splats for i in range(ladder.n_additive_sublods)]
     assert sizes == [5, 5, 10]
 
 
@@ -165,7 +165,7 @@ def test_make_additive_lod_energy_fractions() -> None:
     fracs = [0.5, 0.9, 1.0]
     ladder = make_additive_lod(data, breakpoints=fracs, method="greedy")
     assert ladder.stats["lod_breakpoints_kind"] == "energy-fractions"
-    assert ladder.n_lods >= 1
+    assert ladder.n_additive_sublods >= 1
 
     # Re-derive the residual-energy curve and confirm each cumulative cut
     # achieves the target fraction.
@@ -197,14 +197,14 @@ def test_make_additive_lod_empty() -> None:
     ladder = make_additive_lod(data, n_lods=4)
     # Empty input collapses to a single (empty) LOD.
     assert ladder.n_splats == 0
-    assert ladder.n_lods == 1
+    assert ladder.n_additive_sublods == 1
 
 
 def test_make_additive_lod_n_lods_exceeds_n() -> None:
     """When n_lods > N, we clamp to N (one splat per LOD)."""
     data = _make_random_gsplat(n=3, ndim=2, seed=10)
     ladder = make_additive_lod(data, n_lods=10)
-    assert ladder.n_lods == 3
+    assert ladder.n_additive_sublods == 3
     assert ladder.n_splats == 3
 
 
@@ -216,7 +216,75 @@ def test_lod_stats_recorded() -> None:
     assert ladder.stats["lod_breakpoints_kind"] == "equal-count"
     assert "lod_cutpoints" in ladder.stats
     # Per-LOD stats:
-    for level in range(ladder.n_lods):
-        lod_stats = ladder.at_lod(level).stats
+    for level in range(ladder.n_additive_sublods):
+        lod_stats = ladder.additive_sublod(level).stats
         assert lod_stats["lod_method"] == "self_energy"
         assert lod_stats["lod_level"] == level
+
+
+def test_make_additive_lod_substitutive_level_arg() -> None:
+    """`substitutive_level` selects which substitutive level receives the new ladder."""
+    from luxar.gsplats.lod import make_substitutive_lod
+
+    data = _make_random_gsplat(n=32, ndim=3, seed=12)
+    pyr = make_substitutive_lod(
+        data, compression_factor=4, levels=2, method="kmeans_lloyd", device="cpu", seed=0
+    )
+    # Pyramid has 3 substitutive levels, each with M=1 additive sub-LOD.
+    assert pyr.n_substitutive == 3
+    for s in range(3):
+        assert pyr.substitutive_levels[s].n_additive_lods == 1
+
+    # Build an additive ladder on substitutive level 1 only.
+    ladded = make_additive_lod(
+        pyr,
+        n_lods=3,
+        method="self_energy",
+        substitutive_level=1,
+    )
+    # Same n_substitutive, level 1 has 3 sub-LODs, others unchanged.
+    assert ladded.n_substitutive == 3
+    assert ladded.substitutive_levels[0].n_additive_lods == 1
+    assert ladded.substitutive_levels[1].n_additive_lods <= 3
+    assert ladded.substitutive_levels[2].n_additive_lods == 1
+    # Total splats per level preserved
+    for s in range(3):
+        assert (
+            ladded.substitutive_levels[s].n_splats_total
+            == pyr.substitutive_levels[s].n_splats_total
+        )
+
+
+def test_make_additive_lod_substitutive_level_out_of_bounds() -> None:
+    data = _make_random_gsplat(n=8, ndim=3, seed=13)
+    with pytest.raises(ValueError, match="out of bounds"):
+        make_additive_lod(data, n_lods=2, substitutive_level=2)
+
+
+def test_make_lod_pyramid_full_matrix() -> None:
+    """`make_lod_pyramid` produces a [levels+1, n_additive_lods] matrix."""
+    from luxar.gsplats.lod import make_lod_pyramid
+
+    data = _make_random_gsplat(n=64, ndim=3, seed=14)
+    pyr = make_lod_pyramid(
+        data,
+        compression_factor=4,
+        levels=2,
+        substitutive_method="kmeans_lloyd",
+        n_additive_lods=3,
+        additive_method="self_energy",
+        device="cpu",
+        seed=0,
+    )
+    assert pyr.n_substitutive == 3
+    # Each substitutive level has its own additive ladder (subject to clamping).
+    for s in range(3):
+        lev = pyr.substitutive_levels[s]
+        assert lev.n_additive_lods >= 1
+        # Stats propagated:
+        assert lev.compression_factor == 4**s
+        assert lev.level_index == s
+        if s == 0:
+            assert lev.parent_method is None
+        else:
+            assert lev.parent_method == "kmeans_lloyd"

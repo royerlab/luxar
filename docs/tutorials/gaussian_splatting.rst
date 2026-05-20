@@ -383,23 +383,34 @@ Two complementary operators are available:
    luxar gsplat cal volume.tiff cal.json --device cuda
    luxar gsplat fit volume.tiff fitted.gsplats.zarr --seeds <K*>
 
-   # Additive (single multi-LOD .gsplats.zarr)
+   # Additive ([1, M] shape in a single v2.0 .gsplats.zarr)
    luxar gsplat lod additive fitted.gsplats.zarr scene.gsplats.zarr --n-lods 4
 
-   # Substitutive (directory of per-level files + manifest.json)
-   luxar gsplat lod substitutive fitted.gsplats.zarr scene_dir/ --levels 3 --compression-factor 4
+   # Substitutive ([L+1, 1] shape; single file, no more directory + manifest.json)
+   luxar gsplat lod substitutive fitted.gsplats.zarr scene.gsplats.zarr --L 3 --K 4
+
+   # Full 2-D pyramid ([L+1, M_i]) in one shot
+   luxar gsplat lod pyramid fitted.gsplats.zarr pyramid.gsplats.zarr \
+       --substitutive K=4,L=3 --additive 4
 
 Programmatically:
 
 .. code-block:: python
 
-   from luxar.gsplats import make_additive_lod, make_substitutive_lod
+   from luxar.gsplats import (
+       make_additive_lod, make_substitutive_lod, make_lod_pyramid,
+   )
 
    additive = make_additive_lod(data, n_lods=4, method="greedy")
-   # additive.up_to_lod(2) → prefix of levels 0+1+2
+   # additive.additive_prefix(2) → prefix of additive sub-LODs 0+1+2
 
-   levels = make_substitutive_lod(data, compression_factor=4, levels=3)
-   # levels[0] = original; levels[3] = coarsest
+   pyramid = make_substitutive_lod(data, compression_factor=4, levels=3)
+   # pyramid.n_substitutive == 4 (one GSplatData; finest at index 0, coarsest at 3)
+
+   matrix = make_lod_pyramid(
+       data, compression_factor=4, levels=3, n_additive_lods=4,
+   )
+   # matrix.n_substitutive == 4; each level carries its own 4-step additive ladder
 
 See ``packages/luxar/src/luxar/gsplats/lod/SPECIFICATIONS.md`` for the
 full algorithm spec (greedy vs self-energy vs mass vs amplitude

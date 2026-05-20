@@ -45,9 +45,24 @@ def inspect_gsplats_zarr(path: str | Path) -> Dict[str, Any]:
     if "description" in root.attrs:
         info["description"] = root.attrs["description"]
 
-    # Splats group attributes
+    # Splats group: v2.0 outer attrs (n_substitutive, default_substitutive,
+    # truncation_radius, type) live at /splats; per-cell attrs (n_splats, ndim,
+    # ordering, …) live at /splats/substitutive_<s>/additive_<a>/.  We surface
+    # the default-cell view for the legacy single-set fields.
     splats_group = root["splats"]
-    splats_attrs = dict(splats_group.attrs)
+    info["n_substitutive"] = int(splats_group.attrs.get("n_substitutive", 1))
+    info["default_substitutive"] = int(splats_group.attrs.get("default_substitutive", 0))
+
+    default_sub_idx = info["default_substitutive"]
+    default_cell = splats_group[f"substitutive_{default_sub_idx}"]["additive_0"]
+    splats_attrs = dict(default_cell.attrs)
+
+    # Surface per-substitutive shape (how many additive sub-LODs the default
+    # level holds) — useful for users to spot multi-additive datasets at a glance.
+    default_sub_group = splats_group[f"substitutive_{default_sub_idx}"]
+    info["n_additive_sublods_default"] = int(
+        default_sub_group.attrs.get("n_additive_sublods", 1)
+    )
 
     info["n_splats"] = splats_attrs.get("n_splats")
     info["ndim"] = splats_attrs.get("ndim")

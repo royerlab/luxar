@@ -87,7 +87,7 @@ with asection("Mitosis Progressive Gaussian Splatting Demo"):
     # --- Summary ---
     with asection("Results"):
         aprint(f"Total splats: {result.n_splats:,}")
-        aprint(f"LOD levels (additive ladder): {result.n_lods}")
+        aprint(f"LOD levels (additive ladder): {result.n_additive_sublods}")
         aprint(f"Final PSNR (fit): {result.stats.get('psnr_db', 0):.2f} dB")
         aprint(f"Stop reason: {result.stats.get('stop_reason', '?')}")
         aprint(f"Total time: {result.stats.get('time_seconds', 0):.1f}s")
@@ -100,12 +100,12 @@ with asection("Mitosis Progressive Gaussian Splatting Demo"):
     # --- Render each LOD level cumulatively ---
     psnrs: list[float] = []
     with asection("Rendering LOD levels"):
-        n_lods = result.n_lods
+        n_lods = result.n_additive_sublods
         stack_recon = np.zeros((n_lods,) + V.shape, dtype=np.float32)
         stack_resid = np.zeros_like(stack_recon)
 
         for level in range(n_lods):
-            data_at_level = result.up_to_lod(level)
+            data_at_level = result.additive_prefix(level)
             rendered = render_gaussians_numpy(
                 V.shape, data_at_level, truncate=TRUNCATE_SIG
             )
@@ -113,7 +113,7 @@ with asection("Mitosis Progressive Gaussian Splatting Demo"):
             stack_resid[level] = V - rendered
             psnr_val = _psnr(rendered, V)
             psnrs.append(psnr_val)
-            lod_n = result.at_lod(level).n_splats
+            lod_n = result.additive_sublod(level).n_splats
             aprint(
                 f"  LOD {level}: +{lod_n:,} splats "
                 f"(total: {data_at_level.n_splats:,}), "
@@ -153,7 +153,7 @@ if not NO_NAPARI:
     def _update_overlay(event=None) -> None:
         t = int(viewer.dims.current_step[0])
         if t < n_lods:
-            n_at_level = result.up_to_lod(t).n_splats
+            n_at_level = result.additive_prefix(t).n_splats
             psnr_val = psnrs[t]
             viewer.text_overlay.visible = True
             viewer.text_overlay.text = (
