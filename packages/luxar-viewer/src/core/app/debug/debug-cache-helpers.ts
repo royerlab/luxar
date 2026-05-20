@@ -10,7 +10,7 @@
  * "no loader / no cache / call through" branches can be unit-tested
  * directly without spinning up a full SceneLoaderManager singleton.
  *
- * @module core/debug-cache-helpers
+ * @module core/app/debug/debug-cache-helpers
  */
 
 import type { CacheStatsSnapshot } from '../../../data/scene-loader/cache-api';

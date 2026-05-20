@@ -59,20 +59,16 @@ export interface InitPipelinePorts {
   restorePanelVisibilityStates: (states: Map<string, boolean>) => void;
 }
 
-
 /**
  * Build the complete viewer subsystem graph (scene manager, animation
  * controller, panels, input handler, etc.), wire context-loss /
- * device-loss listeners, kick the animation loop, then either open
- * the dataset browser or load the configured scene.
+ * device-loss listeners, and kick the animation loop. Returns the
+ * constructed components so the orchestrator can store them on its
+ * fields. The order of construction is part of observable behaviour
+ * (e.g. PerformanceMonitor depends on the bus the animation controller
+ * emits each frame), so the helper keeps the steps strictly in their
+ * original order.
  *
- * Returns the constructed components so the orchestrator can store
- * them on its fields. The order of construction is part of observable
- * behaviour (e.g. PerformanceMonitor depends on the bus the animation
- * controller emits each frame), so the helper keeps the steps
- * strictly in their original order.
- */
-/**
  * @param partial Mutable accumulator the pipeline fills as each
  *   subsystem is constructed. The caller pre-allocates and passes it
  *   in so partial state survives an exception: if `sceneManager.init`

@@ -6,8 +6,15 @@ import { log, Modules } from '../../../utils/log';
 /**
  * Register window-focus and document-visibility listeners that pause /
  * resume the animation loop as the page goes background and back. Both
- * listeners early-return when {@link FocusHandlingPorts.recordingPanel}
+ * listeners early-return when {@link FocusHandlingPorts.getRecordingPanel}
  * reports an active capture, so offline recording keeps a stable loop.
+ *
+ * `getRecordingPanel` is a live accessor (not a snapshot) so a focus
+ * event that fires mid-dispose — after the orchestrator cleared its
+ * recordingPanel field but before `events.dispose()` removes the
+ * listener — sees the updated `undefined` and the optional-chain
+ * short-circuits, matching the original `this.recordingPanel?.…`
+ * behaviour.
  *
  * Routed through the supplied {@link EventGroup} so the listeners are
  * cleaned up on dispose.
@@ -15,20 +22,20 @@ import { log, Modules } from '../../../utils/log';
 export interface FocusHandlingPorts {
   events: EventGroup;
   animationController: AnimationController;
-  recordingPanel: RecordingPanel | undefined;
+  getRecordingPanel: () => RecordingPanel | undefined;
 }
 
 export function installFocusHandling(ports: FocusHandlingPorts): void {
   ports.events.on(window, 'focus', () => {
     // Suppress focus-triggered renders during recording — they can interfere
     // with the deterministic capture loop or cause resize side effects
-    if (ports.recordingPanel?.isCurrentlyRecording()) return;
+    if (ports.getRecordingPanel()?.isCurrentlyRecording()) return;
     ports.animationController.startAnimation();
     log.info(Modules.LUXAR, 'Window focused - triggering render refresh');
   });
   ports.events.on(document, 'visibilitychange', () => {
     // Don't stop animation during recording (offline capture needs the loop alive)
-    if (ports.recordingPanel?.isCurrentlyRecording()) return;
+    if (ports.getRecordingPanel()?.isCurrentlyRecording()) return;
     if (document.hidden) {
       ports.animationController.stopAnimation();
       log.info(Modules.LUXAR, 'Document hidden - stopping animation to save resources');

@@ -11,7 +11,7 @@
  * loaders) can be unit-tested with stub ports instead of a real
  * `PickingSystem` + zarr-backed loaders.
  *
- * @module core/pick-result-handler
+ * @module core/app/picking/pick-result-handler
  */
 
 import { log, Modules } from '../../../utils/log';

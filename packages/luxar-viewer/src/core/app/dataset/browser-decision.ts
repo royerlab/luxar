@@ -8,7 +8,7 @@
  * first and only falls through to the network path when this returns
  * false.
  *
- * @module core/browser-decision
+ * @module core/app/dataset/browser-decision
  */
 
 /**
