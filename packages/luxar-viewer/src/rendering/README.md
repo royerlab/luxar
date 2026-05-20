@@ -22,7 +22,7 @@ The default backend is `THREE.WebGLRenderer` (GLSL `ShaderMaterial`). `WebGPURen
 
 ```
 rendering/
-├── post-processing-manager.ts          # Public API — HDR pipeline orchestrator (hoisted to root in step 1)
+├── post-processing-manager.ts          # Public API — HDR pipeline orchestrator
 ├── material-manager.ts                 # Material creation, caching, and global camera updates
 ├── node-factory.ts                     # Scene-node factories for Points / Lines / GSplats
 ├── gpu-buffer-pool.ts                  # Geometry reuse with count and byte-budget eviction
@@ -38,20 +38,20 @@ rendering/
 ├── point-geometry.ts                   # Point unit-quad base geometry
 ├── interleaved-attributes.ts           # InterleavedBufferAttribute helpers
 │
-├── materials/                          # P4: per-geometry stacks co-located by kind
+├── materials/                          # Per-geometry material and shader stacks
 │   ├── point/   { material-glsl, material-tsl, shader-glsl, shader-tsl }
 │   ├── line/    { material-glsl, material-tsl, shader-glsl, shader-tsl }
 │   ├── gsplat/  { material-glsl, material-tsl, shader-glsl, shader-tsl, math }
 │   └── _shared/ { camera-aware-material, colormap-aware-material, camera-uniforms,
 │                  uniform-helpers, material-builder, tsl-helpers, glsl-lib, shader-source }
 │
-├── material-manager/                   # Step 4 helpers
+├── material-manager/                   # MaterialManager helper modules
 │   ├── factories.ts                    # VISUAL/PICKING/MEGA_SHADER_FACTORIES + cache-key fns
 │   ├── lru-cache.ts                    # Generic lruGet / lruSet
 │   ├── lifecycle.ts                    # subscribeToDispose + removeFromRegistries + SOFT_DISPOSE_FLAG
 │   └── stats.ts                        # getCacheStats snapshot
 │
-├── node-factory/                       # Step 6 helpers
+├── node-factory/                       # NodeFactory helper modules
 │   ├── validation.ts                   # validateLoadedPointsData / ColorMode / TransformFormat
 │   ├── transforms.ts                   # applyTransform
 │   ├── create-points-node.ts           # createPointsGeometry + createPointsMaterial
@@ -64,18 +64,18 @@ rendering/
 │   ├── fullscreen-pass / fullscreen-geometry / render-target-sizing
 │   ├── mega-shader-material / mega-shader-material-tsl / mega-shader.glsl / mega.tsl
 │   ├── hdr-pixel-utils / hdr-capture
-│   └── post-processing-manager/        # Step 5 helpers
+│   └── post-processing-manager/        # PostProcessingManager helper modules
 │       ├── resource-lifecycle.ts       # buildTransientResources / disposeTransientResources / sizing
 │       ├── settings.ts                 # bloom / msaa / vignette / chromatic-lens setters
 │       ├── pipeline.ts                 # runPipeline (scene → HDR → bloom → mega → FXAA)
 │       └── capture.ts                  # captureHDRPixels / captureHDRAsEXR / renderToImageData
 │
 ├── picking/                            # GPU picking materials + orchestration
-│   ├── picking-system.ts               # Orchestrator (decomposed in step 7)
+│   ├── picking-system.ts               # Orchestrator
 │   ├── picking-shaders.ts
 │   ├── {point,line,gsplat}-picking-material(-tsl).ts
 │   ├── {point,line,gsplat}-pick.tsl.ts
-│   └── picking-system/                 # Step 7 helpers
+│   └── picking-system/                 # PickingSystem helper modules
 │       ├── registration.ts             # disposePickMaterial / unregisterAllPickMaterials / PickNodeEntry
 │       ├── ray-aabb.ts                 # rayHitsAnyNode / getOrComputeWorldBox / invalidateBoxCache
 │       ├── pick-render.ts              # voteWinner (brightness-weighted majority over 5×5)
@@ -84,13 +84,12 @@ rendering/
 ├── gpu-buffer-pool/                    # Per-type adapters + eviction
 │   ├── {points,lines,gsplats}-adapter.ts
 │   ├── attribute-codec.ts / eviction-policy.ts / pool-stats.ts
-│   └── byte-budget-evictor.ts          # Step 8 — pulled out of gpu-buffer-pool.ts
+│   └── byte-budget-evictor.ts          # Cross-type byte-budget enforcement
 │
 ├── shaders/                            # Barrel only — re-exports GLSL constants from materials/<kind>/shader-glsl.ts
 │   └── index.ts                        # Keeps the tsl-shader-parity e2e harness's import path stable
 │
 ├── index.ts                            # Public-API barrel
-├── SPECIFICATIONS.md                   # Technical specification
 └── README.md                           # This documentation
 ```
 
@@ -156,7 +155,7 @@ postProcessing.setMSAASamples(4);
 
 ### 1. PostProcessing Manager (mega-shader)
 
-The `PostProcessingManager` runs the mega-shader pipeline: a custom fragment shader that fuses tone mapping, EOG, vignette, detector noise, chromatic lens distortion, and sRGB encoding into a single fullscreen pass. Bloom is a separate pre-pass (neighbor reads). FXAA is a separate post-pass (edge detection on the LDR output). See `post-processing/README.md` and `SPECIFICATIONS.md` for the full pipeline.
+The `PostProcessingManager` runs the mega-shader pipeline: a custom fragment shader that fuses tone mapping, EOG, vignette, detector noise, chromatic lens distortion, and sRGB encoding into a single fullscreen pass. Bloom is a separate pre-pass (neighbor reads). FXAA is a separate post-pass (edge detection on the LDR output). See `post-processing/README.md` for the full pipeline.
 
 **Key Advantages:**
 

@@ -377,11 +377,9 @@ ToneMapping (with EOG) → Vignette → sRGB encode
 Bloom remains a separate pre-pass (neighbor reads needed for
 threshold + downsample/upsample). FXAA remains a separate post-pass
 (edge detection runs on the tone-mapped LDR output). SMAA, DoF, and
-SSAO were dropped — they can't fuse cleanly into a single-pass
-shader and the SSAO output was always degenerate for our normal-less
-geometry. See
-`src/rendering/post-processing/MEGA_SHADER_DESIGN.md` for the
-full rationale.
+SSAO are intentionally absent: SMAA and DoF need additional passes,
+and SSAO needs surface normals that Luxar's point, line, and gsplat
+primitives do not provide.
 
 ---
 
@@ -1053,6 +1051,6 @@ mmdc -i ARCHITECTURE-DIAGRAMS.md -o diagrams.pdf
 - Adding new packages
 - Changing initialization order
 - Modifying data flow
-- Refactoring architecture
+- Changing architecture
 
-**Keep aligned with**: SPECIFICATIONS.md files in each package
+**Keep aligned with**: each package's README.md

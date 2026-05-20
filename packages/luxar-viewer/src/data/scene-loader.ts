@@ -76,9 +76,8 @@ import { LoaderRegistry } from './scene-loader/loader-registry';
 // to prevent flickering. These types hold processed data between the async
 // load/process stage and the synchronous commit stage.
 
-// StagedPointsCommit type moved to ./points/handler (step 7 of the
-// god-object refactor). Imported above; re-export skipped because the
-// type is internal to scene-loader + data-processor wiring.
+// StagedPointsCommit is defined in ./points/handler and imported above.
+// It stays internal to scene-loader + data-processor wiring.
 
 /**
  * Classification of a per-node load failure. The actual policy in
@@ -136,7 +135,7 @@ export class SceneLoader {
   private l0Cache: DecompressedChunkCache | null = null;
   private registry = new LoaderRegistry();
 
-  // Delegate to registry for backwards compatibility within this class
+  // Delegate registry-backed maps used by the loader orchestration methods.
   private get loaders() {
     return this.registry.loaders;
   }
@@ -180,8 +179,7 @@ export class SceneLoader {
   /**
    * View-state queue: owns `_pendingViewState` (set/take/has + drain)
    * and the per-loader previous view-state map used by predictive
-   * prefetch (S6). Extracted in step 5 of the god-object refactor —
-   * see ./scene-loader/view-state-queue.ts.
+   * prefetch. See ./scene-loader/view-state-queue.ts.
    *
    * The pending-state slot is overwritten on every queued update, so a
    * burst of view changes during an in-flight retry collapses to a
@@ -255,8 +253,7 @@ export class SceneLoader {
   /**
    * Return a node-attrs record with rendering attributes replaced by the
    * effective values composed along the scene-graph ancestry (root → leaf).
-   * This implements the hierarchical composition described in the Python
-   * core/SPECIFICATIONS.md: opacity/gamma/intensity multiply, offset adds,
+   * Hierarchical composition: opacity/gamma/intensity multiply, offset adds,
    * blending_mode uses the nearest ancestor's choice.
    *
    * If the scene graph is unavailable, falls back to the node's raw attrs.
@@ -282,11 +279,7 @@ export class SceneLoader {
 
     // GPU buffer pool requires Float32Array data; the geometry-update path
     // falls back to the standard route for Uint8/Uint16 attributes.
-    //
-    // B.5: defensively guard against double-init. The current call path
-    // is sequential (constructor only), so this branch runs once today —
-    // but matching the OnceInit pattern used elsewhere prevents a future
-    // re-init refactor from silently leaking the previous pool.
+    // Guard against double-init so repeated setup cannot leak a previous pool.
     if (appConfig.dataLoading.performance.useGPUBufferPool && !this._gpuBufferPool) {
       this._gpuBufferPool = new GPUBufferPool(
         appConfig.dataLoading.performance.gpuPoolMaxSize,
@@ -376,7 +369,6 @@ export class SceneLoader {
    * ```
    *
    * @see {@link MultiLevelCachingStore} for caching implementation
-   * @see SPECIFICATIONS.md - Section 4 for complete scene loading protocol
    */
   async loadScene(url: string): Promise<THREE.Group> {
     return loadSceneHelper(url, this.makeLoadSceneCtx());
@@ -501,10 +493,10 @@ export class SceneLoader {
   async updateView(viewState: Partial<ViewState>): Promise<void> {
     // SERIALIZATION: If an update is already in progress, queue this one and return
     if (this._updateInProgress) {
-      // Store the latest pending state (supersedes any previous pending state).
-      // G.3: log the supersede when a previous pending was already queued so
-      // rapid slider drags surface as "v5 superseded v4, in flight v3"
-      // rather than three identical "Update queued" lines.
+      // Store the latest pending state (supersedes any previous pending
+      // state). Log supersedes so rapid slider drags surface as
+      // "v5 superseded v4, in flight v3" rather than three identical
+      // "Update queued" lines.
       const supersededPrevious = this.viewStateQueue.hasPending();
       this.viewStateQueue.setPending(viewState);
       const newVersion = this._updateVersion + 1;
@@ -657,10 +649,9 @@ export class SceneLoader {
    * Schedule progressive GSplats LOD refinement.
    *
    * Thin wrapper around `runGSplatsRefinement` in
-   * `data/gsplats/lod-refinement.ts` (extracted in step 8 of the
-   * god-object refactor). The full timing semantics — rAF yield per
-   * pass, cancellation hand-off on pending view-state, lock release on
-   * normal completion — live in the extracted module.
+   * `data/gsplats/lod-refinement.ts`. The full timing semantics — rAF
+   * yield per pass, cancellation hand-off on pending view-state, and
+   * lock release on normal completion — live in that module.
    */
   private async scheduleGSplatsRefinement(): Promise<void> {
     return runGSplatsRefinement({
@@ -1013,9 +1004,6 @@ export class SceneLoader {
     }
   }
 
-  // _drainPendingViewState + _dispatchPerLoaderPrefetch moved to
-  // ./scene-loader/view-state-queue (step 5 of the god-object refactor).
-
   /**
    * Dispose of all resources.
    *
@@ -1029,9 +1017,9 @@ export class SceneLoader {
    * `SceneLoaderManager.destroyLoaderAsync` (added in a follow-up
    * commit).
    *
-   * B.7 — worker pool policy: Web Workers used for projection/decoding
-   * live in a MODULE-LEVEL singleton (`workers/worker-pool.ts:
-   * getWorkerPool`), not per-SceneLoader. Dataset switches deliberately
+   * Worker pool policy: Web Workers used for projection/decoding live
+   * in a MODULE-LEVEL singleton (`workers/worker-pool.ts:getWorkerPool`),
+   * not per-SceneLoader. Dataset switches deliberately
    * do NOT terminate workers — the pool is bounded, and tearing it down
    * per switch would force a fresh worker spin-up on the next load
    * (10s of ms of WASM re-init on each cycle). Workers are terminated

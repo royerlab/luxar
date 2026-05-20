@@ -6,7 +6,8 @@
  *
  * **Critical for Compatibility**: Must decode all formats written by Python ArrayEncoder.
  *
- * Reference: luxar.encoding specification (../../luxar/src/luxar/encoding/SPECIFICATIONS.md)
+ * Reference: see the Python `luxar.encoding` package
+ * (../../luxar/src/luxar/encoding/README.md).
  */
 
 import * as zarr from '../zarr';
@@ -53,8 +54,8 @@ export class ArrayDecoder {
     if (enc?.name === 'broadcasted') {
       const broadcastElements = expectedElements ?? enc.n_elements;
       if (broadcastElements === undefined) {
-        // G.1: include zarr path + encoding shape so the diagnostic
-        // points the user at the exact array with broken metadata.
+        // Include zarr path + encoding shape so the diagnostic points
+        // the user at the exact array with broken metadata.
         const path = (zarrArray as { path?: string }).path ?? '<unknown>';
         throw new Error(
           `[ArrayDecoder] broadcasted encoding requires encoding.n_elements (zarr path: ${path}, encoding: ${JSON.stringify(enc)})`

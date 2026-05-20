@@ -1,23 +1,20 @@
 # Post-processing
 
-WebGL post-processing pipeline for the viewer. Built from a custom
+Post-processing pipeline for the viewer. Built from a custom
 mega-shader: tone mapping, bloom, anti-aliasing (FXAA / MSAA / SSAA),
 detector noise, vignette, and chromatic lens distortion.
 
-> **Note**: `PostProcessingManager` (the public API class) was hoisted
-> to `rendering/post-processing-manager.ts` (one level up from this
-> folder) in P1/step 1 of the rendering refactor. This folder now
-> contains only the private helpers that the orchestrator depends on
-> (bloom chain, FXAA pass, fullscreen geometry, mega-shader,
-> HDR-capture helpers) plus the `post-processing-manager/` sub-folder
-> with the four single-concern modules carved out of the orchestrator
-> in P6/steps 5.1–5.4 (resource-lifecycle, settings, pipeline, capture).
+`PostProcessingManager` is the public API class at
+`rendering/post-processing-manager.ts`. This folder contains its private
+helpers: bloom chain, FXAA pass, fullscreen geometry, mega-shader,
+HDR-capture helpers, and the focused modules under
+`post-processing-manager/` for resource lifecycle, settings, pipeline,
+and capture.
 
-This module previously sat on top of `pmndrs/postprocessing` and its
-`EffectComposer`. That was replaced with a hand-written three-stage
-pipeline that fuses all per-pixel effects into a single fullscreen
+The pipeline fuses all per-pixel effects into a single fullscreen
 fragment shader. Net effect: fewer fullscreen passes per frame, no
-third-party dependency, easier path to WebGPU/TSL later.
+third-party dependency, and matching GLSL/TSL implementations for the
+WebGL2 and WebGPU paths.
 
 ## Architecture
 
@@ -131,11 +128,11 @@ pp.withDeferredRebuild(() => {
 });
 ```
 
-This API is kept for source-compatibility with the old pmndrs era. In
+This API remains available for callers that batch setting changes. In
 the mega-shader pipeline individual setters are cheap, so the
 deferred-rebuild path is effectively a no-op pass-through. The
-`try/finally` in `withDeferredRebuild` still protects the depth
-counter against sub-setter throws.
+`try/finally` in `withDeferredRebuild` still protects the depth counter
+against sub-setter throws.
 
 ## Context-restore protocol
 
@@ -157,20 +154,19 @@ post-restore frame doesn't see a multi-second `dt` jump.
 The E2E test `tests/e2e/context-restore.spec.ts` asserts both identity
 preservation and a non-default exposure round-tripping across restore.
 
-## Dropped features
+## Unsupported effects
 
-The mega-shader refactor explicitly removed three effects that don't
-fit a single-pass model:
+Three effects are intentionally unsupported because they do not fit the
+current renderer model:
 
-- **SMAA** — 3-pass edge-detect → weight → blend; can't fuse cleanly.
-  FXAA remains as the inline AA option.
+- **SMAA** — 3-pass edge-detect → weight → blend; FXAA remains as the
+  inline AA option.
 - **Depth of Field** — needs depth-aware multi-pass blur.
-- **Ambient Occlusion** — needs surface normals which point / gsplat /
-  line geometry don't provide. The previous SSAO output was always
-  degenerate for our scenes.
+- **Ambient Occlusion** — needs surface normals, which point / gsplat /
+  line geometry do not provide.
 
-The corresponding `RenderingSettings` fields, viewer-config keys, and
-UI controls were removed in the same change.
+There are no `RenderingSettings`, viewer-config, or UI fields for these
+effects.
 
 ## Troubleshooting
 
@@ -189,5 +185,5 @@ UI controls were removed in the same change.
   `_previousRenderTimestamp` field needs to be cleared in
   `rebuildAfterContextRestore()` (it is).
 
-See `SPECIFICATIONS.md` for the per-effect math and the wider
-operation-ordering invariants.
+See `../README.md` for the rendering-pipeline overview and how the
+post-processing stage fits into it.
