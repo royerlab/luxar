@@ -276,33 +276,13 @@ async function computeNDVisibilityGSplats(params: {
 // PROJECTION FUNCTIONS (nD → 3D, CPU-intensive)
 // ============================================================================
 
-/**
- * Configuration for effective radius calculation (passed from main thread)
- */
-export interface EffectiveRadiusConfig {
-  spatialExtendDims: boolean[];
-  maxRadius: number;
-}
+import type {
+  EffectiveRadiusConfig,
+  ProjectionViewState,
+  PointsOutputBuffers,
+} from './data-worker/types';
 
-/**
- * View state for projection (subset of main thread ViewState)
- */
-export interface ProjectionViewState {
-  displayDims: readonly number[];
-  slicePosition: readonly number[];
-  tolerance: readonly number[];
-}
-
-/**
- * Pre-allocated output buffers for TransferableAccumulator pattern.
- * When provided, projection writes directly to these buffers for zero-allocation.
- */
-interface PointsOutputBuffers {
-  positions3D: Float32Array;
-  colors?: Float32Array | Uint8Array | Uint16Array | null;
-  radii?: Float32Array | null;
-  sharpness?: Float32Array | null;
-}
+export type { EffectiveRadiusConfig, ProjectionViewState };
 
 /**
  * Project Points from nD to 3D with visibility filtering
