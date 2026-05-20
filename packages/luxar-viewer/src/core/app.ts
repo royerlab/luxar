@@ -53,6 +53,7 @@ import {
 } from './app/viewer-config/panel-visibility';
 import { installUnloadHandler } from './app/lifecycle/unload-handling';
 import { installBrowserShortcut } from './app/dataset/browser-shortcut';
+import { openCacheStatsView as openCacheStatsViewImpl } from './app/debug/cache-stats-view';
 
 import type { LuxarAppOptions } from './app/options';
 export type { LuxarAppOptions } from './app/options';
@@ -568,11 +569,7 @@ export class LuxarApp {
    * embedded contexts that disable the monitor).
    */
   private openCacheStatsView(): void {
-    const monitor = DataMonitorManager.getInstance().getDefaultMonitor();
-    if (!monitor) return;
-    monitor.show();
-    monitor.expand();
-    monitor.setActiveTab('cache');
+    openCacheStatsViewImpl();
   }
 
   /**
