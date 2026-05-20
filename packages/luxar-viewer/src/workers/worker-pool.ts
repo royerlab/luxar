@@ -35,6 +35,10 @@ import { combineSignals } from './worker-pool/timeout/combine-signals';
 import { pickTimeoutMs } from './worker-pool/timeout/pick-timeout-ms';
 import { getConfiguredWorkerCount } from './worker-pool/lifecycle/worker-count';
 import { initializeWithGuard } from './worker-pool/lifecycle/init-with-guard';
+import {
+  attachWorkerErrorHandlers,
+  evictFailedWorker,
+} from './worker-pool/lifecycle/error-handlers';
 export { getWorkerPool, disposeWorkerPool, setDataWorkerUrl };
 
 export class WorkerPool {
@@ -290,17 +294,9 @@ export class WorkerPool {
    * timeout that complements this handler.
    */
   private attachWorkerErrorHandlers(worker: Worker, workerNumber: number): void {
-    worker.onerror = (event) => {
-      const message = event instanceof ErrorEvent ? event.message : 'unknown error';
-      log.error(Modules.WORKER_POOL, `Worker ${workerNumber} runtime error: ${message}`);
-      this.handleWorkerFailure(worker, `runtime error: ${message}`);
-      // Don't propagate to window.onerror — we've already logged it.
-      if (typeof event.preventDefault === 'function') event.preventDefault();
-    };
-    worker.onmessageerror = () => {
-      log.error(Modules.WORKER_POOL, `Worker ${workerNumber} produced an unserializable message`);
-      this.handleWorkerFailure(worker, 'unserializable message');
-    };
+    attachWorkerErrorHandlers(worker, workerNumber, (w, reason) =>
+      this.handleWorkerFailure(w, reason)
+    );
   }
 
   /**
@@ -310,29 +306,10 @@ export class WorkerPool {
    * implementation or surface a failure dialog.
    */
   private handleWorkerFailure(worker: Worker, reason: string): void {
-    const idx = this.workers.findIndex((w) => w.worker === worker);
-    if (idx < 0) {
-      // Already removed (idempotent on multiple error events).
-      return;
-    }
-    this.workers.splice(idx, 1);
-    try {
-      worker.terminate();
-    } catch {
-      // Terminating a dead worker can throw on some browsers; swallow.
-    }
-    if (this.workers.length === 0) {
-      log.error(
-        Modules.WORKER_POOL,
-        `All data workers failed (${reason}); subsequent calls will fail until reinitialization`
-      );
+    const outcome = evictFailedWorker(this.workers, worker, reason);
+    if (outcome === 'pool-empty') {
       // Allow the next initialize() call to attempt a fresh pool.
       this.initPromise = null;
-    } else {
-      log.warning(
-        Modules.WORKER_POOL,
-        `Worker removed from pool (${reason}); ${this.workers.length} worker(s) remaining`
-      );
     }
   }
 
