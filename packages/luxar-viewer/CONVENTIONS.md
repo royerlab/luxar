@@ -150,7 +150,7 @@ place.
 ## 7. Event listeners
 
 - For DOM listeners that should be torn down with the owner, use
-  `EventGroup` (`src/utils/event-group.ts`):
+  `EventGroup` (`src/utils/cross-layer/event-group.ts`):
 
   ```typescript
   private events = new EventGroup();
@@ -333,7 +333,7 @@ listeners, WebGL buffers, timers, workers, OPFS handles) must implement
 - **Top-down order**: dispose children first, then null out parent
   references. The reverse can leave a child holding a stale parent
   pointer and re-entering the disposed parent during its own teardown.
-- **Event listeners go through `EventGroup`** (`src/utils/event-group.ts`).
+- **Event listeners go through `EventGroup`** (`src/utils/cross-layer/event-group.ts`).
   Established consumers: `LayersPanel`, `InputHandler`, `SceneManager`.
   Manual `addEventListener` / `removeEventListener` pairs are the
   number-one source of leak regressions; the group ties listener

@@ -319,7 +319,7 @@ const notifierMocks = vi.hoisted(() => ({
   hideLoading: vi.fn(),
   error: vi.fn(),
 }));
-vi.mock('../../../utils/notifier', () => ({
+vi.mock('../../../utils/cross-layer/notifier', () => ({
   notifier: {
     showLoading: notifierMocks.showLoading,
     hideLoading: notifierMocks.hideLoading,
@@ -334,7 +334,7 @@ const mockShowLoading = notifierMocks.showLoading;
 const mockHideLoading = notifierMocks.hideLoading;
 const mockShowError = notifierMocks.error;
 
-vi.mock('../../../utils/hdr-detection', () => ({
+vi.mock('../../../utils/hdr/hdr-detection', () => ({
   detectDisplayCapabilities: vi.fn(() => ({
     p3Gamut: false,
     rec2020Gamut: false,

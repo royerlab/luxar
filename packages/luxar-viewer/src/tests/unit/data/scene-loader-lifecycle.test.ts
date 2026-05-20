@@ -38,7 +38,7 @@ vi.mock('../../../rendering/material-manager', () => ({
   },
 }));
 
-vi.mock('../../../utils/notifier', () => ({
+vi.mock('../../../utils/cross-layer/notifier', () => ({
   notifier: {
     toast: vi.fn(),
     error: vi.fn(),
