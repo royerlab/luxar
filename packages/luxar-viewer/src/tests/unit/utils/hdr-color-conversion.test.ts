@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { rgbaFloatToI420P10 } from '../../../utils/hdr-color-conversion';
+import { rgbaFloatToI420P10 } from '../../../utils/hdr/hdr-color-conversion';
 
 describe('rgbaFloatToI420P10', () => {
   it('should produce correct buffer size for I420P10', () => {
