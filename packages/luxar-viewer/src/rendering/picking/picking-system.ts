@@ -38,6 +38,7 @@ import {
 import { rayHitsAnyNode, invalidateBoxCache } from './picking-system/ray-aabb';
 import { voteWinner, type VoteEntry } from './picking-system/pick-render';
 import { evaluateSettle } from './picking-system/settle-loop';
+import { applyLensDistortion } from './picking-system/lens-distortion';
 import type { Renderer, RendererCapabilities } from '../renderer-capabilities';
 import { readPixelsCompactAsync } from '../post-processing/hdr-pixel-utils';
 import {
@@ -242,6 +243,30 @@ export class PickingSystem {
   /** Number of registered pick nodes. */
   get registeredNodeCount(): number {
     return this.nodeMap.size;
+  }
+
+  /**
+   * Read-only snapshot of settle-scheduler timestamps and registration
+   * count. Exposed for E2E tests (the hover-tooltip spec polls
+   * `lastPickFiredTime` to verify a pick fired without reaching into
+   * private fields). Timestamps are `performance.now()` values; 0
+   * means "never". Not part of the production API surface — treat as
+   * an observability hook, not an interaction point.
+   */
+  getDiagnostics(): {
+    lastPickFiredTime: number;
+    lastMouseMoveTime: number;
+    lastDirtyTime: number;
+    registeredNodeCount: number;
+    suppressed: boolean;
+  } {
+    return {
+      lastPickFiredTime: this._lastPickFiredTime,
+      lastMouseMoveTime: this._lastMouseMoveTime,
+      lastDirtyTime: this._lastDirtyTime,
+      registeredNodeCount: this.nodeMap.size,
+      suppressed: this._suppressed,
+    };
   }
 
   /**
@@ -474,7 +499,7 @@ export class PickingSystem {
     let correctedY = screenY;
     const lensParams = this.postProcessing?.getLensDistortionParams();
     if (lensParams) {
-      const uv = this.applyLensDistortion(screenX / width, screenY / height, lensParams);
+      const uv = applyLensDistortion(screenX / width, screenY / height, lensParams, this._lensUV);
       correctedX = uv.x * width;
       correctedY = uv.y * height;
     }
@@ -579,44 +604,6 @@ export class PickingSystem {
     renderer.setRenderTarget(savedRenderTarget as THREE.WebGLRenderTarget | null);
     renderer.setScissorTest(savedScissorTest);
     renderer.setClearColor(this._savedClearColor, this._savedClearAlpha);
-  }
-
-  /**
-   * Apply Brown-Conrady lens distortion to UV coordinates.
-   * TypeScript port of the GLSL `applyDistortion` in the mega-shader
-   * fragment (`rendering/post-processing/mega-shader.glsl.ts`). Uses
-   * the green-channel distortion (reference, no chromatic offset).
-   *
-   * This maps from distorted screen space to undistorted source space — exactly
-   * what we need to convert mouse coords on the distorted display to pick buffer coords.
-   * Writes result in-place to this._lensUV to avoid per-call allocation.
-   */
-  private applyLensDistortion(
-    u: number,
-    v: number,
-    params: {
-      distortion: THREE.Vector2;
-      principalPoint: THREE.Vector2;
-      focalLength: THREE.Vector2;
-      skew: number;
-    }
-  ): { x: number; y: number } {
-    // UV [0,1] → normalized [-1,1]
-    const xn = 2.0 * (u - 0.5);
-    const yn = 2.0 * (v - 0.5);
-
-    // Brown-Conrady radial distortion: r' = r * (1 + k * r²)
-    const r2 = xn * xn + yn * yn;
-    const xd = (1.0 + params.distortion.x * r2) * xn;
-    const yd = (1.0 + params.distortion.y * r2) * yn;
-
-    // Camera intrinsic matrix K × distorted point → back to [0,1] UV
-    const fx = params.focalLength.x;
-    const fy = params.focalLength.y;
-
-    this._lensUV.x = (fx * xd + params.skew * fx * yd + params.principalPoint.x) * 0.5 + 0.5;
-    this._lensUV.y = (fy * yd + params.principalPoint.y) * 0.5 + 0.5;
-    return this._lensUV;
   }
 
   /**

@@ -167,6 +167,41 @@ describe('PickingSystem — registration', () => {
     expect(() => system.unregisterNode(9999)).not.toThrow();
     expect(system.registeredNodeCount).toBe(0);
   });
+
+  // ---------------------------------------------------------------------
+  // Cache-invalidation wiring: PickingSystem owns the *lifecycle* of the
+  // world-AABB cache (populate on first scan, invalidate on register/
+  // unregister/geometry-commit). The cache-logic semantics themselves
+  // are unit-tested in `picking-system/ray-aabb.test.ts`; the tests
+  // below pin that the orchestrator's public methods reach the cache
+  // correctly. Private-field reach-in is the only option here under
+  // jsdom — driving a real pick would require a WebGL context.
+  // ---------------------------------------------------------------------
+
+  it('invalidateBoxes(pickId) drops just that entry; invalidateBoxes() drops all', () => {
+    const cache = (system as unknown as { _worldBoxCache: Map<number, THREE.Box3> })
+      ._worldBoxCache;
+    cache.set(1, new THREE.Box3());
+    cache.set(2, new THREE.Box3());
+
+    system.invalidateBoxes(1);
+    expect(cache.has(1)).toBe(false);
+    expect(cache.has(2)).toBe(true);
+
+    system.invalidateBoxes();
+    expect(cache.size).toBe(0);
+  });
+
+  it('unregisterNode drops the corresponding cached world AABB', () => {
+    const id = system.allocatePickId();
+    system.registerNode(new THREE.Object3D(), new THREE.Object3D(), id);
+    const cache = (system as unknown as { _worldBoxCache: Map<number, THREE.Box3> })
+      ._worldBoxCache;
+    cache.set(id, new THREE.Box3());
+
+    system.unregisterNode(id);
+    expect(cache.has(id)).toBe(false);
+  });
 });
 
 describe('PickingSystem — context-restore registration drop', () => {
@@ -284,6 +319,27 @@ describe('PickingSystem — camera + suppression', () => {
   it('suppress(true) clears any pending debounce timer', () => {
     expect(() => system.suppress(true)).not.toThrow();
     expect(() => system.suppress(false)).not.toThrow();
+  });
+
+  it('getDiagnostics reports fresh-construction defaults', () => {
+    const d = system.getDiagnostics();
+    expect(d.lastPickFiredTime).toBe(0);
+    expect(d.lastMouseMoveTime).toBe(0);
+    expect(d.lastDirtyTime).toBe(0);
+    expect(d.registeredNodeCount).toBe(0);
+    expect(d.suppressed).toBe(false);
+  });
+
+  it('getDiagnostics reflects suppress + registration state changes', () => {
+    system.suppress(true);
+    system.registerNode(
+      new THREE.Object3D(),
+      new THREE.Object3D(),
+      system.allocatePickId()
+    );
+    const d = system.getDiagnostics();
+    expect(d.suppressed).toBe(true);
+    expect(d.registeredNodeCount).toBe(1);
   });
 });
 
@@ -482,65 +538,14 @@ describe('PickingSystem — settle scheduler', () => {
   });
 });
 
-describe('PickingSystem — world-AABB cache', () => {
-  it('invalidateBoxes(pickId) drops just that entry; invalidateBoxes() drops all', () => {
-    const system = new PickingSystem(
-      makeStubRenderer(),
-      makeStubCapabilities(),
-      makeCamera(),
-      vi.fn()
-    );
-    // The cache is a private Map<pickId, Box3>; populate via the internal field
-    // directly (PickingSystem populates it on cache misses inside performPick,
-    // which we can't drive under jsdom without GL).
-    const cache = (system as unknown as { _worldBoxCache: Map<number, THREE.Box3> })._worldBoxCache;
-    cache.set(1, new THREE.Box3());
-    cache.set(2, new THREE.Box3());
-    expect(cache.size).toBe(2);
-
-    system.invalidateBoxes(1);
-    expect(cache.has(1)).toBe(false);
-    expect(cache.has(2)).toBe(true);
-
-    system.invalidateBoxes();
-    expect(cache.size).toBe(0);
-  });
-
-  it('unregisterNode drops the corresponding cached box', () => {
-    const system = new PickingSystem(
-      makeStubRenderer(),
-      makeStubCapabilities(),
-      makeCamera(),
-      vi.fn()
-    );
-    const id = system.allocatePickId();
-    system.registerNode(new THREE.Object3D(), new THREE.Object3D(), id);
-    const cache = (system as unknown as { _worldBoxCache: Map<number, THREE.Box3> })._worldBoxCache;
-    cache.set(id, new THREE.Box3());
-
-    system.unregisterNode(id);
-    expect(cache.has(id)).toBe(false);
-  });
-});
-
-describe('PickingSystem — votes map reuse', () => {
-  it('votes map is the same instance across the picking-system lifecycle', () => {
-    const system = new PickingSystem(
-      makeStubRenderer(),
-      makeStubCapabilities(),
-      makeCamera(),
-      vi.fn()
-    );
-    const votes = (system as unknown as { _votes: Map<number, unknown> })._votes;
-    expect(votes).toBeInstanceOf(Map);
-    // Insert + clear simulates what readbackAndVote does; the reference
-    // must survive the clear, proving the field is not reassigned per call.
-    votes.set(42, { nodeId: 1, elementId: 2, weight: 0.5 });
-    votes.clear();
-    const after = (system as unknown as { _votes: Map<number, unknown> })._votes;
-    expect(after).toBe(votes);
-  });
-});
+// NOTE: pure-function tests for the world-AABB cache and votes-map reuse live
+// in `picking-system/ray-aabb.test.ts` and `picking-system/pick-render.test.ts`
+// respectively. The orchestrator-level wiring checks that touched private
+// fields here previously have been recycled into the registration describe
+// block above (cache-invalidation API + unregister side-effect). The
+// votes-map-instance check was retired — `pick-render.test.ts` exercises the
+// actual reuse semantics with real pixel inputs, which is the more meaningful
+// guarantee.
 
 describe('PickingSystem.dispose', () => {
   it('disposes the underlying pick render target', () => {
