@@ -40,6 +40,7 @@ import {
   attachControlEventForwarders,
   type ControlEventDispatcher,
 } from './controls-manager/event-forwarders';
+import { deriveScaleLimits } from './controls-manager/scene-scale';
 export type { ControlType };
 
 export interface ControlsManagerConfig {
@@ -465,9 +466,7 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
       return;
     this.sceneScale = diagonal;
 
-    const m = config.controls.scaleMultipliers;
-    const minDist = diagonal * m.minDistanceFactor;
-    const maxDist = diagonal * m.maxDistanceFactor;
+    const { minDist, maxDist, flySpeed } = deriveScaleLimits(diagonal);
 
     // Update active orbit/ortho controls with scale-derived distance limits,
     // but only if auto-frame hasn't set precise limits yet.
@@ -479,9 +478,9 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
     }
 
     // Update fly movement speed
-    this.config.flyMovementSpeed = diagonal * m.flySpeedFactor;
+    this.config.flyMovementSpeed = flySpeed;
     if (this.currentControls instanceof LuxarFlyControls) {
-      this.currentControls.movementSpeed = this.config.flyMovementSpeed;
+      this.currentControls.movementSpeed = flySpeed;
     }
 
     log.custom(
@@ -489,7 +488,7 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
       Modules.CONTROLS,
       `Scale-aware controls: diagonal=${diagonal.toFixed(1)}, ` +
         `dist=[${minDist.toFixed(3)}, ${maxDist.toFixed(1)}], ` +
-        `flySpeed=${this.config.flyMovementSpeed!.toFixed(2)}`
+        `flySpeed=${flySpeed.toFixed(2)}`
     );
   }
 
