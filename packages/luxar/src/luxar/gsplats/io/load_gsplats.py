@@ -210,7 +210,7 @@ def load_gsplats(
                         truncation_radius=truncation_radius,
                     )
                 )
-            data = GSplatData(lods=lods, stats=stats)
+            data = GSplatData(additive_sublods=lods, stats=stats)
         else:
             # v1.0: Flat format (single LOD)
             centers = decoder.decode(splats_group["centers"], root)

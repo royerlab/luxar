@@ -4683,9 +4683,9 @@ def lod_additive(
             with asection("Loading dataset"):
                 data = GSplatData.load(input_path, include_stats=True)
                 aprint(f"Loaded {data.n_splats:,} splats ({data.ndim}D)")
-                if data.n_lods > 1:
+                if data.n_additive_sublods > 1:
                     aprint(
-                        f"Input is multi-LOD ({data.n_lods} LODs); "
+                        f"Input is multi-LOD ({data.n_additive_sublods} LODs); "
                         "operating on the flattened concatenation."
                     )
 
@@ -4700,13 +4700,13 @@ def lod_additive(
                     max_n_dense=max_n_dense,
                     seed=seed,
                 )
-                aprint(f"Built {ladder.n_lods}-level ladder in {time.time() - t0:.2f}s")
+                aprint(f"Built {ladder.n_additive_sublods}-level ladder in {time.time() - t0:.2f}s")
                 cuts = ladder.stats.get("lod_cutpoints", [])
                 kind = ladder.stats.get("lod_breakpoints_kind", "?")
                 if not quiet:
                     aprint(f"Cutpoints ({kind}): {cuts}")
-                    for level in range(ladder.n_lods):
-                        lod = ladder.at_lod(level)
+                    for level in range(ladder.n_additive_sublods):
+                        lod = ladder.additive_sublod(level)
                         aprint(f"  LOD {level}: {lod.n_splats:,} splats")
 
             with asection("Saving"):
@@ -4875,9 +4875,9 @@ def lod_substitutive(
             with asection("Loading dataset"):
                 data = GSplatData.load(input_path, include_stats=True)
                 aprint(f"Loaded {data.n_splats:,} splats ({data.ndim}D)")
-                if data.n_lods > 1:
+                if data.n_additive_sublods > 1:
                     aprint(
-                        f"Input is multi-LOD ({data.n_lods} LODs); "
+                        f"Input is multi-LOD ({data.n_additive_sublods} LODs); "
                         "operating on the flattened concatenation."
                     )
 

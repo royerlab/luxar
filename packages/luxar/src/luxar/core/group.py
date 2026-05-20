@@ -672,7 +672,7 @@ class Group(Node):
             attrs["truncation_radius"] = result.truncation_radius
 
         # Single-LOD: delegate to flat writer
-        if result.n_lods <= 1:
+        if result.n_additive_sublods <= 1:
             return self.add_gsplats(
                 name=name,
                 centers=result.centers,
@@ -721,7 +721,7 @@ class Group(Node):
             ] = []
             lod_stats_list: list[dict[str, Any]] = []
 
-            for lod in result.lods:
+            for lod in result.additive_sublods:
                 ctr_arr = lod.centers.copy()
                 chol_arr = lod.cholesky_factors.copy()
 
@@ -749,7 +749,7 @@ class Group(Node):
             ndim = lod_tuples[0][0].shape[1]
             aprint(
                 f"Adding multi-LOD gsplats node '{name}' with "
-                f"{n_splats:,} splats in {ndim}D ({result.n_lods} LODs)."
+                f"{n_splats:,} splats in {ndim}D ({result.n_additive_sublods} LODs)."
             )
 
             final_extend_dims = scene._resolve_extend_to_all(

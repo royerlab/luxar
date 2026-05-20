@@ -209,7 +209,7 @@ class TestHierarchy:
             seed=0,
         )
         for lev in levels:
-            assert lev.n_lods == 1, f"{method} produced multi-LOD level"
+            assert lev.n_additive_sublods == 1, f"{method} produced multi-LOD level"
 
     def test_levels_eq_one(self):
         data = _make_isotropic_3d(n=20, seed=1)

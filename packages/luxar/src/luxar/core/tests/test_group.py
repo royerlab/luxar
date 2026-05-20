@@ -181,7 +181,7 @@ class TestMultiLODGSplats:
             ),
             stats={"pass_index": 1, "cumulative_psnr_db": 30.0},
         )
-        return GSplatData.from_lods([lod0, lod1])
+        return GSplatData.from_additive_sublods([lod0, lod1])
 
     def test_multi_lod_writes_subgroups(self, tmp_path) -> None:
         """Multi-LOD GSplatData writes per-LOD subgroups (lod_0, lod_1)."""

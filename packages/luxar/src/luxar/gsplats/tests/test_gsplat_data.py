@@ -1631,53 +1631,53 @@ class TestGSplatDataLOD:
 
     def test_from_lods(self):
         lods = self._make_lods()
-        data = GSplatData.from_lods(lods)
-        assert data.n_lods == 3
+        data = GSplatData.from_additive_sublods(lods)
+        assert data.n_additive_sublods == 3
         assert data.n_splats == 30
         assert data.centers.shape == (30, 3)
 
     def test_convenience_constructor_is_single_lod(self):
         gs = _make_3d_gsplat(n=5)
-        assert gs.n_lods == 1
-        assert gs.lods[0].n_splats == 5
+        assert gs.n_additive_sublods == 1
+        assert gs.additive_sublods[0].n_splats == 5
 
     def test_n_lods(self):
         lods = self._make_lods(n_lods=4)
-        data = GSplatData.from_lods(lods)
-        assert data.n_lods == 4
+        data = GSplatData.from_additive_sublods(lods)
+        assert data.n_additive_sublods == 4
 
     def test_at_lod(self):
         lods = self._make_lods()
-        data = GSplatData.from_lods(lods)
-        lod0 = data.at_lod(0)
+        data = GSplatData.from_additive_sublods(lods)
+        lod0 = data.additive_sublod(0)
         assert lod0.n_splats == 10
         assert lod0.stats["pass_index"] == 0
 
     def test_up_to_lod(self):
         lods = self._make_lods(n_lods=4)
-        data = GSplatData.from_lods(lods)
-        trimmed = data.up_to_lod(1)
-        assert trimmed.n_lods == 2
+        data = GSplatData.from_additive_sublods(lods)
+        trimmed = data.additive_prefix(1)
+        assert trimmed.n_additive_sublods == 2
         assert trimmed.n_splats == 20
 
     def test_trim_lods(self):
         lods = self._make_lods()
-        data = GSplatData.from_lods(lods)
-        trimmed = data.trim_lods(0)
-        assert trimmed.n_lods == 1
+        data = GSplatData.from_additive_sublods(lods)
+        trimmed = data.additive_prefix(0)
+        assert trimmed.n_additive_sublods == 1
         assert trimmed.n_splats == 10
 
     def test_flattened(self):
         lods = self._make_lods()
-        data = GSplatData.from_lods(lods)
+        data = GSplatData.from_additive_sublods(lods)
         flat = data.flattened()
-        assert flat.n_lods == 1
+        assert flat.n_additive_sublods == 1
         assert flat.n_splats == data.n_splats
         np.testing.assert_array_equal(flat.centers, data.centers)
 
     def test_lod_psnrs(self):
         lods = self._make_lods()
-        data = GSplatData.from_lods(lods)
+        data = GSplatData.from_additive_sublods(lods)
         psnrs = data.lod_psnrs()
         assert psnrs == [20.0, 25.0, 30.0]
 
@@ -1692,13 +1692,13 @@ class TestGSplatDataLOD:
                 stats={},  # no psnr
             )
         ]
-        data = GSplatData.from_lods(lods)
+        data = GSplatData.from_additive_sublods(lods)
         psnrs = data.lod_psnrs()
         assert np.isnan(psnrs[0])
 
     def test_cached_concat_matches_lods(self):
         lods = self._make_lods()
-        data = GSplatData.from_lods(lods)
+        data = GSplatData.from_additive_sublods(lods)
         expected_centers = np.concatenate([lod.centers for lod in lods], axis=0)
         np.testing.assert_array_equal(data.centers, expected_centers)
 
@@ -1710,14 +1710,14 @@ class TestGSplatDataLOD:
         a = np.ones(5, dtype=np.float32)
         cf = np.tile(np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (5, 1))
         lod = AdditiveSubLOD(centers=c, amplitudes=a, cholesky_factors=cf)
-        data = GSplatData.from_lods([lod])
+        data = GSplatData.from_additive_sublods([lod])
         # Should share memory, not copy
         assert data.centers is c
         assert data.amplitudes is a
 
     def test_repr_multi_lod(self):
         lods = self._make_lods()
-        data = GSplatData.from_lods(lods)
+        data = GSplatData.from_additive_sublods(lods)
         r = repr(data)
         assert "3 LODs" in r
         assert "30 splats" in r
@@ -1730,7 +1730,7 @@ class TestGSplatDataLOD:
     def test_mixin_on_multi_lod(self):
         """Computed properties work on the concatenated view."""
         lods = self._make_lods(n_lods=2, splats_per_lod=5)
-        data = GSplatData.from_lods(lods)
+        data = GSplatData.from_additive_sublods(lods)
         assert data.volumes().shape == (10,)
         assert data.masses().shape == (10,)
         assert data.eccentricities().shape == (10,)
@@ -1738,19 +1738,19 @@ class TestGSplatDataLOD:
     def test_filter_preserves_lods(self):
         """filter() preserves LOD structure on multi-LOD data."""
         lods = self._make_lods()
-        data = GSplatData.from_lods(lods)
+        data = GSplatData.from_additive_sublods(lods)
         mask = data.amplitudes > 0.5
         filtered = data.filter(mask)
-        assert filtered.n_lods == 3  # LODs preserved
+        assert filtered.n_additive_sublods == 3  # LODs preserved
         assert filtered.n_splats == int(mask.sum())
 
     def test_empty_lods_raises(self):
         with pytest.raises(ValueError, match="at least one"):
-            GSplatData(lods=[])
+            GSplatData(additive_sublods=[])
 
     def test_invalid_lod_type_raises(self):
         with pytest.raises(TypeError, match="AdditiveSubLOD"):
-            GSplatData(lods=["not a lod"])  # type: ignore[list-item]
+            GSplatData(additive_sublods=["not a lod"])  # type: ignore[list-item]
 
     def test_no_args_raises(self):
         with pytest.raises(ValueError, match="Provide either"):
@@ -1784,28 +1784,28 @@ class TestLODPreservation:
                     stats={"pass_index": i, "cumulative_psnr_db": 20.0 + i * 5.0},
                 )
             )
-        return GSplatData.from_lods(lods)
+        return GSplatData.from_additive_sublods(lods)
 
     def test_concatenate_preserves_lods(self):
         d1 = self._make_multi_lod(n_lods=3, splats_per_lod=10, seed=1)
         d2 = self._make_multi_lod(n_lods=3, splats_per_lod=15, seed=2)
         result = GSplatData.concatenate([d1, d2])
-        assert result.n_lods == 3
+        assert result.n_additive_sublods == 3
         for level in range(3):
-            lod = result.at_lod(level)
+            lod = result.additive_sublod(level)
             assert lod.n_splats == 25  # 10 + 15
 
     def test_concatenate_mixed_lod_counts(self):
         d1 = self._make_multi_lod(n_lods=2, splats_per_lod=10, seed=1)
         d2 = self._make_multi_lod(n_lods=4, splats_per_lod=8, seed=2)
         result = GSplatData.concatenate([d1, d2])
-        assert result.n_lods == 4
+        assert result.n_additive_sublods == 4
         # Level 0 and 1: both contribute
-        assert result.at_lod(0).n_splats == 18  # 10 + 8
-        assert result.at_lod(1).n_splats == 18
+        assert result.additive_sublod(0).n_splats == 18  # 10 + 8
+        assert result.additive_sublod(1).n_splats == 18
         # Level 2 and 3: only d2 contributes
-        assert result.at_lod(2).n_splats == 8
-        assert result.at_lod(3).n_splats == 8
+        assert result.additive_sublod(2).n_splats == 8
+        assert result.additive_sublod(3).n_splats == 8
 
     def test_concatenate_single_lod_unchanged(self):
         d1 = GSplatData(
@@ -1819,7 +1819,7 @@ class TestLODPreservation:
             cholesky_factors=np.tile([1, 0, 1, 0, 0, 1], (7, 1)).astype(np.float32),
         )
         result = GSplatData.concatenate([d1, d2])
-        assert result.n_lods == 1
+        assert result.n_additive_sublods == 1
         assert result.n_splats == 12
 
     def test_embed_dimension_preserves_lods(self):
@@ -1827,9 +1827,9 @@ class TestLODPreservation:
         assert data.ndim == 3
         embedded = data.embed_dimension(5.0, sigma=0.0)
         assert embedded.ndim == 4
-        assert embedded.n_lods == 3
+        assert embedded.n_additive_sublods == 3
         for level in range(3):
-            lod = embedded.at_lod(level)
+            lod = embedded.additive_sublod(level)
             assert lod.n_splats == 10
             assert lod.centers.shape == (10, 4)
             # Check the new dimension has value 5.0
@@ -1840,20 +1840,20 @@ class TestLODPreservation:
         # Per-splat values: 20 total splats
         values = np.arange(20, dtype=np.float32)
         embedded = data.embed_dimension(values, sigma=0.0)
-        assert embedded.n_lods == 2
+        assert embedded.n_additive_sublods == 2
         # LOD 0 should get values 0-9, LOD 1 should get values 10-19
-        np.testing.assert_allclose(embedded.at_lod(0).centers[:, 3], np.arange(10))
-        np.testing.assert_allclose(embedded.at_lod(1).centers[:, 3], np.arange(10, 20))
+        np.testing.assert_allclose(embedded.additive_sublod(0).centers[:, 3], np.arange(10))
+        np.testing.assert_allclose(embedded.additive_sublod(1).centers[:, 3], np.arange(10, 20))
 
     def test_combine_as_new_dimension_preserves_lods(self):
         d1 = self._make_multi_lod(n_lods=2, splats_per_lod=10, ndim=3, seed=1)
         d2 = self._make_multi_lod(n_lods=2, splats_per_lod=10, ndim=3, seed=2)
         combined = GSplatData.combine_as_new_dimension([d1, d2], sigma=0.0)
         assert combined.ndim == 4
-        assert combined.n_lods == 2
+        assert combined.n_additive_sublods == 2
         # Each LOD should have 20 splats (10 from each dataset)
-        assert combined.at_lod(0).n_splats == 20
-        assert combined.at_lod(1).n_splats == 20
+        assert combined.additive_sublod(0).n_splats == 20
+        assert combined.additive_sublod(1).n_splats == 20
 
     def test_merge_with_channel_colors_preserves_lods(self):
         d1 = self._make_multi_lod(n_lods=2, splats_per_lod=10, seed=1)
@@ -1862,10 +1862,10 @@ class TestLODPreservation:
             [d1, d2],
             channel_colors=[(1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
         )
-        assert merged.n_lods == 2
+        assert merged.n_additive_sublods == 2
         # Each LOD: 10 + 8 = 18 splats
         for level in range(2):
-            lod = merged.at_lod(level)
+            lod = merged.additive_sublod(level)
             assert lod.n_splats == 18
             assert lod.colors is not None
             # First 10 splats should be red, next 8 green
@@ -1874,12 +1874,12 @@ class TestLODPreservation:
 
     def test_translate_preserves_lods(self):
         data = self._make_multi_lod(n_lods=3, splats_per_lod=10)
-        original_centers = [data.at_lod(i).centers.copy() for i in range(3)]
+        original_centers = [data.additive_sublod(i).centers.copy() for i in range(3)]
         offset = np.array([10, 20, 30], dtype=np.float32)
         translated = data.translate(offset)
-        assert translated.n_lods == 3
+        assert translated.n_additive_sublods == 3
         for level in range(3):
-            lod = translated.at_lod(level)
+            lod = translated.additive_sublod(level)
             assert lod.n_splats == 10
             np.testing.assert_allclose(
                 lod.centers, original_centers[level] + offset, atol=1e-5
@@ -1890,10 +1890,10 @@ class TestLODPreservation:
         # Uniform 2x scaling
         scale = np.eye(3) * 2.0
         transformed = data.transform(scale)
-        assert transformed.n_lods == 2
+        assert transformed.n_additive_sublods == 2
         for level in range(2):
-            orig = data.at_lod(level)
-            new = transformed.at_lod(level)
+            orig = data.additive_sublod(level)
+            new = transformed.additive_sublod(level)
             assert new.n_splats == orig.n_splats
             np.testing.assert_allclose(new.centers, orig.centers * 2.0, atol=1e-4)
 
@@ -1913,12 +1913,12 @@ class TestLODPreservation:
         tp1_ch0 = GSplatData.concatenate(make_tiles(10))
         tp0_ch1 = GSplatData.concatenate(make_tiles(20))
         tp1_ch1 = GSplatData.concatenate(make_tiles(30))
-        assert tp0_ch0.n_lods == 2  # LODs preserved through tile concat
+        assert tp0_ch0.n_additive_sublods == 2  # LODs preserved through tile concat
 
         # Level 2: timepoint stacking (combine_as_new_dimension)
         ch0_4d = GSplatData.combine_as_new_dimension([tp0_ch0, tp1_ch0], sigma=0.0)
         ch1_4d = GSplatData.combine_as_new_dimension([tp0_ch1, tp1_ch1], sigma=0.0)
-        assert ch0_4d.n_lods == 2  # LODs preserved through stacking
+        assert ch0_4d.n_additive_sublods == 2  # LODs preserved through stacking
         assert ch0_4d.ndim == 4
 
         # Level 3: channel merge
@@ -1926,11 +1926,11 @@ class TestLODPreservation:
             [ch0_4d, ch1_4d],
             channel_colors=[(1.0, 0.0, 0.0), (0.0, 1.0, 0.0)],
         )
-        assert final.n_lods == 2  # LODs preserved through channel merge
+        assert final.n_additive_sublods == 2  # LODs preserved through channel merge
         assert final.ndim == 4
         # 2 tiles × 5 splats × 2 timepoints × 2 channels = 40 splats per LOD
-        assert final.at_lod(0).n_splats == 40
-        assert final.at_lod(1).n_splats == 40
+        assert final.additive_sublod(0).n_splats == 40
+        assert final.additive_sublod(1).n_splats == 40
 
 
 # ── Sharpness removal regression tests ───────────────────────
@@ -2052,13 +2052,13 @@ class TestTruncationRadius:
         """Default truncation_radius is 3.0."""
         g = self._make_gsplat()
         assert g.truncation_radius == 3.0
-        assert g.lods[0].truncation_radius == 3.0
+        assert g.additive_sublods[0].truncation_radius == 3.0
 
     def test_custom_truncation_radius(self):
         """Custom truncation_radius is propagated to LOD."""
         g = self._make_gsplat(truncation_radius=2.5)
         assert g.truncation_radius == 2.5
-        assert g.lods[0].truncation_radius == 2.5
+        assert g.additive_sublods[0].truncation_radius == 2.5
 
     def test_truncation_preserved_by_filter(self):
         """filter() preserves truncation_radius."""
@@ -2241,11 +2241,11 @@ class TestGSplatData2DAccessors:
     def test_lods_form_yields_single_substitutive(self):
         """``lods=...`` constructor produces ``[1, M]`` matrix shape."""
         sublods = [self._make_additive(3, seed=0), self._make_additive(2, seed=1)]
-        data = GSplatData(lods=sublods)
+        data = GSplatData(additive_sublods=sublods)
         assert data.n_substitutive == 1
         # Existing lods accessor still works and matches default substitutive level
-        assert data.n_lods == 2
-        assert list(data.lods) == list(data.default_substitutive_level.additive_sublods)
+        assert data.n_additive_sublods == 2
+        assert list(data.additive_sublods) == list(data.default_substitutive_level.additive_sublods)
 
     def test_substitutive_levels_form_yields_multi(self):
         """``substitutive_levels=...`` constructor produces ``[N, M_i]`` shape."""
@@ -2257,7 +2257,7 @@ class TestGSplatData2DAccessors:
         assert data.n_substitutive == 2
         assert data.default_substitutive == 0
         # Default substitutive level's additive ladder is the shape of lods
-        assert data.n_lods == 3
+        assert data.n_additive_sublods == 3
         # The coarser level has its own count
         assert data.substitutive_levels[1].n_additive_lods == 1
         assert data.substitutive_levels[1].compression_factor == 4
@@ -2297,12 +2297,12 @@ class TestGSplatData2DAccessors:
         coarse = data.at_substitutive(1)
         assert isinstance(coarse, GSplatData)
         assert coarse.n_substitutive == 1
-        assert coarse.n_lods == 1
+        assert coarse.n_additive_sublods == 1
         # The coarse level's data: 3 splats in one additive sub-LOD
         assert coarse.n_splats == 3
 
     def test_at_substitutive_out_of_range_raises(self):
-        data = GSplatData(lods=[self._make_additive(3)])
+        data = GSplatData(additive_sublods=[self._make_additive(3)])
         with pytest.raises(IndexError, match="substitutive"):
             data.at_substitutive(5)
         with pytest.raises(IndexError, match="substitutive"):
@@ -2322,7 +2322,7 @@ class TestGSplatData2DAccessors:
         assert c11.n_splats == 2
 
     def test_cell_out_of_range_raises(self):
-        data = GSplatData(lods=[self._make_additive(3)])
+        data = GSplatData(additive_sublods=[self._make_additive(3)])
         with pytest.raises(IndexError, match="substitutive"):
             data.cell(5, 0)
         with pytest.raises(IndexError, match="additive"):

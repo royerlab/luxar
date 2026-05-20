@@ -55,7 +55,7 @@ class TestProgressiveFitting:
         assert isinstance(result, GSplatData)
         assert result.n_splats > 0
         # Single flattened LOD post-decoupling.
-        assert result.n_lods == 1
+        assert result.n_additive_sublods == 1
         assert result.ndim == 2
 
     def test_multi_pass(self):

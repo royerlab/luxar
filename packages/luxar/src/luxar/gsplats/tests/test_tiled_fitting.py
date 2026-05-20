@@ -399,7 +399,7 @@ class TestTiledProgressive:
             verbose=False,
         )
         assert result.n_splats > 0
-        assert result.n_lods >= 1  # At least one LOD
+        assert result.n_additive_sublods >= 1  # At least one LOD
         assert result.stats.get("progressive") is True
 
     def test_merge_lods_across_tiles(self) -> None:
@@ -424,18 +424,18 @@ class TestTiledProgressive:
                         ),
                     )
                 )
-            tiles.append(GSplatData.from_lods(lods))
+            tiles.append(GSplatData.from_additive_sublods(lods))
 
         merged = _merge_lods_across_tiles(tiles)
 
         # Should have 2 LODs
-        assert merged.n_lods == 2
+        assert merged.n_additive_sublods == 2
         # LOD 0 = sum of all tiles' LOD 0 splats
-        expected_lod0 = sum(t.at_lod(0).n_splats for t in tiles)
-        assert merged.at_lod(0).n_splats == expected_lod0
+        expected_lod0 = sum(t.additive_sublod(0).n_splats for t in tiles)
+        assert merged.additive_sublod(0).n_splats == expected_lod0
         # LOD 1 = sum of all tiles' LOD 1 splats
-        expected_lod1 = sum(t.at_lod(1).n_splats for t in tiles)
-        assert merged.at_lod(1).n_splats == expected_lod1
+        expected_lod1 = sum(t.additive_sublod(1).n_splats for t in tiles)
+        assert merged.additive_sublod(1).n_splats == expected_lod1
         # Total
         assert merged.n_splats == expected_lod0 + expected_lod1
 
@@ -447,7 +447,7 @@ class TestTiledProgressive:
         rng = np.random.RandomState(42)
 
         # Tile A: 3 LODs, Tile B: 1 LOD
-        tile_a = GSplatData.from_lods(
+        tile_a = GSplatData.from_additive_sublods(
             [
                 AdditiveSubLOD(
                     centers=rng.rand(5, 2).astype(np.float32),
@@ -468,12 +468,12 @@ class TestTiledProgressive:
         merged = _merge_lods_across_tiles([tile_a, tile_b])
 
         # Should pad to max LODs = 3
-        assert merged.n_lods == 3
+        assert merged.n_additive_sublods == 3
         # LOD 0 should have splats from both tiles
-        assert merged.at_lod(0).n_splats == 5 + 8
+        assert merged.additive_sublod(0).n_splats == 5 + 8
         # LOD 1 and 2 should only have tile_a's splats
-        assert merged.at_lod(1).n_splats == 5
-        assert merged.at_lod(2).n_splats == 5
+        assert merged.additive_sublod(1).n_splats == 5
+        assert merged.additive_sublod(2).n_splats == 5
 
     def test_tiled_progressive_stats(self) -> None:
         """Stats reflect progressive tiled fitting."""
@@ -509,4 +509,4 @@ class TestTiledProgressive:
             n_iters=30,
             verbose=False,
         )
-        assert result.n_lods == 1
+        assert result.n_additive_sublods == 1

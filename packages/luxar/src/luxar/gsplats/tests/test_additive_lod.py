@@ -130,22 +130,22 @@ def test_self_energy_score_matches_closed_form() -> None:
 def test_make_additive_lod_equal_count() -> None:
     data = _make_random_gsplat(n=20, ndim=3, seed=6)
     ladder = make_additive_lod(data, n_lods=4)
-    assert ladder.n_lods == 4
+    assert ladder.n_additive_sublods == 4
     assert ladder.n_splats == data.n_splats
-    sizes = [ladder.at_lod(i).n_splats for i in range(ladder.n_lods)]
+    sizes = [ladder.additive_sublod(i).n_splats for i in range(ladder.n_additive_sublods)]
     assert sum(sizes) == data.n_splats
     # Equal-count: at most a 1-splat spread across levels for divisible N.
     assert max(sizes) - min(sizes) <= 1
     # up_to_lod prefix should grow monotonically.
-    counts = [ladder.up_to_lod(k).n_splats for k in range(ladder.n_lods)]
+    counts = [ladder.additive_prefix(k).n_splats for k in range(ladder.n_additive_sublods)]
     assert all(counts[i] < counts[i + 1] for i in range(len(counts) - 1))
 
 
 def test_make_additive_lod_explicit_counts() -> None:
     data = _make_random_gsplat(n=20, ndim=3, seed=7)
     ladder = make_additive_lod(data, breakpoints=[5, 10, 15, 20])
-    assert ladder.n_lods == 4
-    sizes = [ladder.at_lod(i).n_splats for i in range(ladder.n_lods)]
+    assert ladder.n_additive_sublods == 4
+    sizes = [ladder.additive_sublod(i).n_splats for i in range(ladder.n_additive_sublods)]
     assert sizes == [5, 5, 5, 5]
     assert ladder.stats["lod_breakpoints_kind"] == "explicit-counts"
 
@@ -155,8 +155,8 @@ def test_make_additive_lod_explicit_counts_partial() -> None:
     cut at N so the ladder always covers all splats."""
     data = _make_random_gsplat(n=20, ndim=3, seed=8)
     ladder = make_additive_lod(data, breakpoints=[5, 10])
-    assert ladder.n_lods == 3
-    sizes = [ladder.at_lod(i).n_splats for i in range(ladder.n_lods)]
+    assert ladder.n_additive_sublods == 3
+    sizes = [ladder.additive_sublod(i).n_splats for i in range(ladder.n_additive_sublods)]
     assert sizes == [5, 5, 10]
 
 
@@ -165,7 +165,7 @@ def test_make_additive_lod_energy_fractions() -> None:
     fracs = [0.5, 0.9, 1.0]
     ladder = make_additive_lod(data, breakpoints=fracs, method="greedy")
     assert ladder.stats["lod_breakpoints_kind"] == "energy-fractions"
-    assert ladder.n_lods >= 1
+    assert ladder.n_additive_sublods >= 1
 
     # Re-derive the residual-energy curve and confirm each cumulative cut
     # achieves the target fraction.
@@ -197,14 +197,14 @@ def test_make_additive_lod_empty() -> None:
     ladder = make_additive_lod(data, n_lods=4)
     # Empty input collapses to a single (empty) LOD.
     assert ladder.n_splats == 0
-    assert ladder.n_lods == 1
+    assert ladder.n_additive_sublods == 1
 
 
 def test_make_additive_lod_n_lods_exceeds_n() -> None:
     """When n_lods > N, we clamp to N (one splat per LOD)."""
     data = _make_random_gsplat(n=3, ndim=2, seed=10)
     ladder = make_additive_lod(data, n_lods=10)
-    assert ladder.n_lods == 3
+    assert ladder.n_additive_sublods == 3
     assert ladder.n_splats == 3
 
 
@@ -216,7 +216,7 @@ def test_lod_stats_recorded() -> None:
     assert ladder.stats["lod_breakpoints_kind"] == "equal-count"
     assert "lod_cutpoints" in ladder.stats
     # Per-LOD stats:
-    for level in range(ladder.n_lods):
-        lod_stats = ladder.at_lod(level).stats
+    for level in range(ladder.n_additive_sublods):
+        lod_stats = ladder.additive_sublod(level).stats
         assert lod_stats["lod_method"] == "self_energy"
         assert lod_stats["lod_level"] == level

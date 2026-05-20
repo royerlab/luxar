@@ -146,7 +146,7 @@ def _load_dapi_volume() -> np.ndarray:
 
 def _render_data(data: GSplatData, shape: tuple[int, ...]) -> np.ndarray:
     """Render a flat (or already-flat) GSplatData to a volume."""
-    flat = data if data.n_lods == 1 else data.flattened()
+    flat = data if data.n_additive_sublods == 1 else data.flattened()
     return render_gaussians_numpy(shape, flat, truncate=TRUNCATE_SIG).astype(np.float32)
 
 

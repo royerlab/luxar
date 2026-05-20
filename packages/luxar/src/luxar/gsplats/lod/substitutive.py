@@ -148,7 +148,7 @@ def make_substitutive_lod(
     K = int(compression_factor)
     L_levels = int(levels)
 
-    src = data.flattened() if data.n_lods > 1 else data
+    src = data.flattened() if data.n_additive_sublods > 1 else data
     target_device = resolve_torch_device(
         device if not isinstance(device, str) or device != "auto" else None
     )

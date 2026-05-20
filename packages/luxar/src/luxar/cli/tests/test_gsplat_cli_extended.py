@@ -1948,8 +1948,8 @@ class TestLODCommand:
         assert out.exists()
         ladder = GSplatData.load(out)
         # Multi-LOD with 2 levels; sum of per-level counts equals total
-        assert ladder.n_lods == 2
-        per_level = [ladder.at_lod(i).n_splats for i in range(ladder.n_lods)]
+        assert ladder.n_additive_sublods == 2
+        per_level = [ladder.additive_sublod(i).n_splats for i in range(ladder.n_additive_sublods)]
         assert sum(per_level) == ladder.n_splats == 32
 
     def test_lod_additive_quiet_suppresses_per_lod_lines(

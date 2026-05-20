@@ -579,4 +579,4 @@ def make_additive_lod(
             "lod_cutpoints": [int(c) for c in cuts],
         }
     )
-    return GSplatData.from_lods(lods, stats=out_stats)
+    return GSplatData.from_additive_sublods(lods, stats=out_stats)

@@ -400,7 +400,7 @@ def fit_progressive_gaussian_splats(
         # Memory-efficient: render on GPU (CUDA backend is tiled and uses
         # minimal intermediates), compute PSNR in chunks (only ~200 MB of
         # V_original on GPU at a time), then move render to CPU.
-        accumulated_data = GSplatData.from_lods(accumulated_lods)
+        accumulated_data = GSplatData.from_additive_sublods(accumulated_lods)
         with torch.no_grad():
             rendered_gpu = render_to_volume_tensor(
                 accumulated_data,
@@ -500,7 +500,7 @@ def fit_progressive_gaussian_splats(
                     f"to avoid wasting compute on splats that get culled."
                 )
 
-    final_result = GSplatData.from_lods(accumulated_lods, stats=overall_stats)
+    final_result = GSplatData.from_additive_sublods(accumulated_lods, stats=overall_stats)
 
     # Convert to physical coordinates if the caller requested it
     if caller_output_space == "real" and caller_voxel_size is not None:
@@ -508,7 +508,7 @@ def fit_progressive_gaussian_splats(
         d = V.ndim
         # Scale centers and Cholesky factors for every LOD
         converted_lods: list[AdditiveSubLOD] = []
-        for lod in final_result.lods:
+        for lod in final_result.additive_sublods:
             new_centers = lod.centers * vs  # (N, d) * (d,)
             tril_scales = np.concatenate([[vs[i]] * (i + 1) for i in range(d)])
             new_chol = lod.cholesky_factors * tril_scales  # (N, tril) * (tril,)
@@ -522,7 +522,7 @@ def fit_progressive_gaussian_splats(
                     truncation_radius=lod.truncation_radius,
                 )
             )
-        final_result = GSplatData.from_lods(converted_lods, stats=overall_stats)
+        final_result = GSplatData.from_additive_sublods(converted_lods, stats=overall_stats)
         if verbose:
             aprint(
                 f"Converted output to physical coordinates (voxel_size={vs.tolist()})"

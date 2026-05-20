@@ -718,7 +718,7 @@ class TestCompression:
             )
             for n in [50, 80]
         ]
-        g = GSplatData(lods=lods)
+        g = GSplatData(additive_sublods=lods)
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "test.gsplats.zarr"
             g.save(path)
@@ -792,7 +792,7 @@ class TestTruncationRadiusRoundtrip:
             )
             for n in [30, 50]
         ]
-        g = GSplatData(lods=lods)
+        g = GSplatData(additive_sublods=lods)
         assert g.truncation_radius == 2.5
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -800,8 +800,8 @@ class TestTruncationRadiusRoundtrip:
             g.save(path, ordering="none", encoding_mode=EncodingMode.PRECISION)
             g2 = GSplatData.load(path)
             assert g2.truncation_radius == 2.5
-            assert g2.lods[0].truncation_radius == 2.5
-            assert g2.lods[1].truncation_radius == 2.5
+            assert g2.additive_sublods[0].truncation_radius == 2.5
+            assert g2.additive_sublods[1].truncation_radius == 2.5
 
     def test_truncation_radius_in_zarr_metadata(self):
         """truncation_radius is written to zarr splats group attrs."""
