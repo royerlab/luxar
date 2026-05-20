@@ -14,7 +14,9 @@
 
 import * as THREE from 'three';
 import type { LuxarCamera } from '../utils/camera-utils';
-import { clamp } from '../utils/clamp';
+import { computeArcballRotation } from './luxar-orbit-controls/math/trackball';
+import { applyPan, type PanCtx } from './luxar-orbit-controls/math/pan';
+import { applyZoomScale, computeZoomScale } from './luxar-orbit-controls/math/zoom';
 
 export interface LuxarOrbitControlsConfig {
   enableDamping?: boolean;
@@ -244,10 +246,22 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
     if (Math.abs(this.zoomDelta) > 1e-8) {
       if (this.enableDamping) {
         const zoomApply = 1 + this.zoomDelta * this.dampingFactor;
-        this.applyZoomScale(zoomApply);
+        this.distance = applyZoomScale(
+          this.camera,
+          this.distance,
+          zoomApply,
+          this.minZoom,
+          this.maxZoom
+        );
         this.zoomDelta *= 1 - this.dampingFactor;
       } else {
-        this.applyZoomScale(1 + this.zoomDelta);
+        this.distance = applyZoomScale(
+          this.camera,
+          this.distance,
+          1 + this.zoomDelta,
+          this.minZoom,
+          this.maxZoom
+        );
         this.zoomDelta = 0;
       }
     }
@@ -394,102 +408,21 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
   }
 
   // ---------------------------------------------------------------------------
-  // Trackball math (vendored from ArcballControls / Shoemake)
+  // Math delegates (luxar-orbit-controls/math/*)
   // ---------------------------------------------------------------------------
 
-  /** Project NDC coordinates onto virtual trackball (sphere + hyperboloid). */
-  private projectOnTrackball(ndcX: number, ndcY: number): THREE.Vector3 {
-    const r = this.trackballRadius;
-    const r2 = r * r;
-    const d2 = ndcX * ndcX + ndcY * ndcY;
-    let z: number;
-    if (d2 <= r2 * 0.5) {
-      z = Math.sqrt(r2 - d2); // On the sphere
-    } else {
-      z = (r2 * 0.5) / Math.sqrt(d2); // On the hyperboloid (smooth falloff at edges)
-    }
-    return new THREE.Vector3(ndcX, ndcY, z).normalize();
-  }
-
-  /** Compute rotation quaternion from arcball drag (start → end in NDC). */
-  private computeArcballRotation(startNDC: THREE.Vector2, endNDC: THREE.Vector2): THREE.Quaternion {
-    const p1 = this.projectOnTrackball(startNDC.x, startNDC.y);
-    const p2 = this.projectOnTrackball(endNDC.x, endNDC.y);
-
-    const axis = new THREE.Vector3().crossVectors(p1, p2);
-    if (axis.lengthSq() < 1e-10) return new THREE.Quaternion(); // No rotation
-
-    axis.normalize();
-    const angle = Math.acos(THREE.MathUtils.clamp(p1.dot(p2), -1, 1)) * this.rotateSpeed;
-
-    // Negate angle: camera orbits opposite to the drag direction
-    // (dragging right rotates the view rightward = camera moves left around target)
-    return new THREE.Quaternion().setFromAxisAngle(axis, -angle);
-  }
-
-  // ---------------------------------------------------------------------------
-  // Pan math (vendored from OrbitControls)
-  // ---------------------------------------------------------------------------
-
-  private panLeft(distance: number, objectMatrix: THREE.Matrix4): void {
-    _v.setFromMatrixColumn(objectMatrix, 0); // camera X axis
-    _v.multiplyScalar(-distance);
-    this.panDelta.add(_v);
-  }
-
-  private panUp(distance: number, objectMatrix: THREE.Matrix4): void {
-    if (this.screenSpacePanning) {
-      _v.setFromMatrixColumn(objectMatrix, 1); // camera Y axis
-    } else {
-      _v.setFromMatrixColumn(objectMatrix, 0);
-      _v.crossVectors(this.camera.up, _v);
-    }
-    _v.multiplyScalar(distance);
-    this.panDelta.add(_v);
+  private makePanCtx(): PanCtx {
+    return {
+      camera: this.camera,
+      distance: this.distance,
+      panSpeed: this.panSpeed,
+      screenSpacePanning: this.screenSpacePanning,
+      domElement: this.domElement,
+    };
   }
 
   private pan(deltaX: number, deltaY: number): void {
-    if (this.camera instanceof THREE.PerspectiveCamera) {
-      const fovRad = this.camera.fov * (Math.PI / 180);
-      const height = 2 * this.distance * Math.tan(fovRad / 2);
-      this.panLeft(
-        (deltaX * height * this.panSpeed) / this.domElement.clientHeight,
-        this.camera.matrix
-      );
-      this.panUp(
-        (deltaY * height * this.panSpeed) / this.domElement.clientHeight,
-        this.camera.matrix
-      );
-    } else {
-      const cam = this.camera as THREE.OrthographicCamera;
-      this.panLeft(
-        (deltaX * (cam.right - cam.left) * this.panSpeed) / cam.zoom / this.domElement.clientWidth,
-        this.camera.matrix
-      );
-      this.panUp(
-        (deltaY * (cam.top - cam.bottom) * this.panSpeed) / cam.zoom / this.domElement.clientHeight,
-        this.camera.matrix
-      );
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Zoom math (vendored from OrbitControls)
-  // ---------------------------------------------------------------------------
-
-  private getZoomScale(delta: number): number {
-    const normalizedDelta = Math.abs(delta * 0.01);
-    return Math.pow(0.95, this.zoomSpeed * normalizedDelta);
-  }
-
-  private applyZoomScale(scale: number): void {
-    if (this.camera instanceof THREE.PerspectiveCamera) {
-      this.distance *= scale;
-    } else {
-      const cam = this.camera as THREE.OrthographicCamera;
-      cam.zoom = clamp(cam.zoom / scale, this.minZoom, this.maxZoom);
-      cam.updateProjectionMatrix();
-    }
+    applyPan(this.panDelta, deltaX, deltaY, this.makePanCtx());
   }
 
   // ---------------------------------------------------------------------------
@@ -617,7 +550,12 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
 
     if (this.state === 'rotate') {
       const endNDC = this.getPointerNDC(event);
-      const deltaQuat = this.computeArcballRotation(this.rotateStart, endNDC);
+      const deltaQuat = computeArcballRotation(
+        this.rotateStart,
+        endNDC,
+        this.trackballRadius,
+        this.rotateSpeed
+      );
       this.rotationDelta.multiply(deltaQuat);
       this.rotateStart.copy(endNDC);
     } else if (this.state === 'pan') {
@@ -628,9 +566,9 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
     } else if (this.state === 'zoom') {
       const deltaY = event.clientY - this.dollyStart.y;
       if (deltaY > 0) {
-        this.zoomDelta += this.getZoomScale(deltaY) - 1;
+        this.zoomDelta += computeZoomScale(deltaY, this.zoomSpeed) - 1;
       } else if (deltaY < 0) {
-        this.zoomDelta -= this.getZoomScale(-deltaY) - 1;
+        this.zoomDelta -= computeZoomScale(-deltaY, this.zoomSpeed) - 1;
       }
       this.dollyStart.set(event.clientX, event.clientY);
     }
@@ -660,7 +598,7 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
     if (!this.enabled || !this.enableZoom) return;
     event.preventDefault();
 
-    const scale = this.getZoomScale(event.deltaY);
+    const scale = computeZoomScale(event.deltaY, this.zoomSpeed);
     if (event.deltaY < 0) {
       // Scroll up = zoom in
       this.zoomDelta += scale - 1;
@@ -704,7 +642,12 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
   private onTouchMove(_event: PointerEvent): void {
     if (this.pointers.length === 1 && this.state === 'rotate') {
       const endNDC = this.getPointerNDC(this.pointers[0]);
-      const deltaQuat = this.computeArcballRotation(this.rotateStart, endNDC);
+      const deltaQuat = computeArcballRotation(
+        this.rotateStart,
+        endNDC,
+        this.trackballRadius,
+        this.rotateSpeed
+      );
       this.rotationDelta.multiply(deltaQuat);
       this.rotateStart.copy(endNDC);
     } else if (this.pointers.length === 1 && this.state === 'pan') {
