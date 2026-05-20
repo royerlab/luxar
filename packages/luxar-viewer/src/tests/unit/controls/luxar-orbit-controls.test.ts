@@ -5,6 +5,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as THREE from 'three';
 import { LuxarOrbitControls } from '../../../controls/luxar-orbit-controls';
+import { projectOnTrackball } from '../../../controls/luxar-orbit-controls/math/trackball';
 
 describe('LuxarOrbitControls', () => {
   let camera: THREE.PerspectiveCamera;
@@ -306,10 +307,11 @@ describe('LuxarOrbitControls', () => {
   });
 
   describe('trackball projection', () => {
-    it('should project center of screen to sphere cap', () => {
-      controls = new LuxarOrbitControls(camera, domElement);
+    // Default trackball radius matches LuxarOrbitControls' constructor default.
+    const RADIUS = 1.0;
 
-      const point = (controls as any).projectOnTrackball(0, 0);
+    it('should project center of screen to sphere cap', () => {
+      const point = projectOnTrackball(0, 0, RADIUS);
       // At center: z should be maximum (top of sphere)
       expect(point.z).toBeGreaterThan(0.9);
       expect(point.x).toBeCloseTo(0);
@@ -317,18 +319,14 @@ describe('LuxarOrbitControls', () => {
     });
 
     it('should project edge of screen to hyperboloid', () => {
-      controls = new LuxarOrbitControls(camera, domElement);
-
-      const point = (controls as any).projectOnTrackball(0.9, 0);
+      const point = projectOnTrackball(0.9, 0, RADIUS);
       // At edge: z should be smaller than at center (grazing angle)
-      const centerPoint = (controls as any).projectOnTrackball(0, 0);
+      const centerPoint = projectOnTrackball(0, 0, RADIUS);
       expect(point.z).toBeLessThan(centerPoint.z);
       expect(point.x).toBeGreaterThan(0.5);
     });
 
     it('should always return normalized vectors', () => {
-      controls = new LuxarOrbitControls(camera, domElement);
-
       const testPoints = [
         [0, 0],
         [0.5, 0.5],
@@ -337,7 +335,7 @@ describe('LuxarOrbitControls', () => {
         [1.0, 1.0],
       ];
       for (const [x, y] of testPoints) {
-        const point = (controls as any).projectOnTrackball(x, y);
+        const point = projectOnTrackball(x, y, RADIUS);
         expect(point.length()).toBeCloseTo(1.0, 5);
       }
     });
