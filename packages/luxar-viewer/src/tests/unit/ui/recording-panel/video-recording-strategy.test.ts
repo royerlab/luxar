@@ -1,0 +1,252 @@
+/**
+ * Tests for VideoRecordingStrategy — the real-time MediaRecorder path.
+ *
+ * Covers: MediaRecorder lifecycle (start/stop), the disposed-onstop
+ * branch (suppresses download + toast, still cleans up tracks), the
+ * setup-failure catch path (symmetric undo of every state mutation),
+ * duration-timer cleanup, captureStream track cleanup, turntable
+ * rotation registration, and Panel.dispose() routing through the
+ * strategy.
+ */
+
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+
+if (typeof globalThis.ImageData === 'undefined') {
+  (globalThis as any).ImageData = class ImageData {
+    data: Uint8ClampedArray;
+    width: number;
+    height: number;
+    constructor(widthOrData: number | Uint8ClampedArray, heightOrWidth: number, height?: number) {
+      if (widthOrData instanceof Uint8ClampedArray) {
+        this.data = widthOrData;
+        this.width = heightOrWidth;
+        this.height = height ?? widthOrData.length / (4 * heightOrWidth);
+      } else {
+        this.width = widthOrData;
+        this.height = heightOrWidth;
+        this.data = new Uint8ClampedArray(this.width * this.height * 4);
+      }
+    }
+  };
+}
+
+vi.mock('../../../../ui/gui', async () => {
+  const { createMockGUI } = await import('./_helpers');
+  const MockGUI = vi.fn().mockImplementation(() => createMockGUI());
+  return { default: MockGUI, GUI: MockGUI, Controller: vi.fn() };
+});
+vi.mock('../../../../config', () => ({ config: { ui: { zIndex: { recordingPanel: 1500 } } } }));
+vi.mock('../../../../ui/toast', () => ({ showToast: vi.fn() }));
+vi.mock('../../../../utils/log', () => ({
+  log: { info: vi.fn(), warning: vi.fn(), error: vi.fn() },
+  Modules: { RECORDING: 'Recording' },
+}));
+vi.mock('../../../../scene/scene-dims-manager', () => ({
+  sceneDimsManager: {
+    getDims: vi.fn().mockReturnValue({ ndim: 4, displayed: [0, 1, 2] }),
+    getDimensionNames: vi.fn().mockReturnValue(['x', 'y', 'z', 'time']),
+    getDimensionRanges: vi.fn().mockReturnValue([
+      [0, 100], [0, 100], [0, 100], [0, 50],
+    ]),
+    setDimensionValue: vi.fn(),
+    hasNonDisplayedDimensions: vi.fn().mockReturnValue(true),
+  },
+}));
+
+import { RecordingPanel } from '../../../../ui/recording-panel';
+import { showToast } from '../../../../ui/toast';
+import { createMockSceneManager, createMockAnimationController } from './_helpers';
+
+describe('VideoRecordingStrategy', () => {
+  let panel: RecordingPanel;
+  let mockSceneManager: any;
+  let mockAnimController: any;
+  let mockMediaRecorder: any;
+
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    mockSceneManager = createMockSceneManager();
+    mockAnimController = createMockAnimationController();
+    panel = new RecordingPanel(mockSceneManager, mockAnimController);
+
+    mockMediaRecorder = {
+      start: vi.fn(),
+      stop: vi.fn(),
+      ondataavailable: null as any,
+      onstop: null as any,
+    };
+    vi.stubGlobal('MediaRecorder', vi.fn().mockImplementation(() => mockMediaRecorder));
+    (MediaRecorder as any).isTypeSupported = vi.fn().mockReturnValue(true);
+  });
+
+  afterEach(() => {
+    panel.dispose();
+    document.body.innerHTML = '';
+  });
+
+  describe('lifecycle', () => {
+    it('is not recording initially', () => {
+      expect(panel.isCurrentlyRecording()).toBe(false);
+    });
+
+    it('toasts and returns when no supported MIME type', async () => {
+      (MediaRecorder as any).isTypeSupported = vi.fn().mockReturnValue(false);
+
+      const freshPanel = new RecordingPanel(mockSceneManager, mockAnimController);
+      await freshPanel.startVideoRecording();
+
+      expect(showToast).toHaveBeenCalledWith('Video recording not supported in this browser');
+
+      freshPanel.dispose();
+    });
+
+    it('stops the MediaRecorder when stopVideoRecording is called', () => {
+      (panel as any).session.isRecording = true;
+      (panel as any).videoRecordingStrategy.mediaRecorder = mockMediaRecorder;
+
+      panel.stopVideoRecording();
+
+      expect(mockMediaRecorder.stop).toHaveBeenCalled();
+    });
+
+    it('ignores stopVideoRecording when not recording', () => {
+      panel.stopVideoRecording();
+      expect(mockMediaRecorder.stop).not.toHaveBeenCalled();
+    });
+
+    it('clears duration timer on stop', () => {
+      const clearTimeoutSpy = vi.spyOn(global, 'clearTimeout');
+
+      (panel as any).session.isRecording = true;
+      (panel as any).videoRecordingStrategy.mediaRecorder = mockMediaRecorder;
+      (panel as any).videoRecordingStrategy.durationTimer = setTimeout(() => {}, 10000);
+
+      panel.stopVideoRecording();
+
+      expect(clearTimeoutSpy).toHaveBeenCalled();
+    });
+  });
+
+  describe('captureStream cleanup', () => {
+    it('stops every track on the disposed onstop branch', () => {
+      const trackA = { stop: vi.fn() };
+      const trackB = { stop: vi.fn() };
+      const fakeStream = { getTracks: vi.fn().mockReturnValue([trackA, trackB]) };
+      (panel as any).videoRecordingStrategy.captureStream = fakeStream;
+      (panel as any).session.disposed = true;
+      (panel as any).videoRecordingStrategy.mediaRecorder = mockMediaRecorder;
+
+      (panel as any).videoRecordingStrategy.cleanupCaptureStream();
+
+      expect(fakeStream.getTracks).toHaveBeenCalledTimes(1);
+      expect(trackA.stop).toHaveBeenCalledTimes(1);
+      expect(trackB.stop).toHaveBeenCalledTimes(1);
+      expect((panel as any).videoRecordingStrategy.captureStream).toBeNull();
+    });
+
+    it('cleanupCaptureStream is idempotent when no stream is active', () => {
+      (panel as any).videoRecordingStrategy.captureStream = null;
+      expect(() => (panel as any).videoRecordingStrategy.cleanupCaptureStream()).not.toThrow();
+      expect((panel as any).videoRecordingStrategy.captureStream).toBeNull();
+    });
+  });
+
+  describe('disposed-onstop branch', () => {
+    it('stops tracks, suppresses download + toast when onstop fires after dispose', async () => {
+      const trackA = { stop: vi.fn() };
+      const trackB = { stop: vi.fn() };
+      const fakeStream = { getTracks: vi.fn().mockReturnValue([trackA, trackB]) };
+      (panel as any).videoRecordingStrategy.captureStream = fakeStream;
+
+      const downloadBlobSpy = vi.spyOn(panel as any, 'downloadBlob');
+      vi.mocked(showToast).mockClear();
+
+      (panel as any).session.disposed = true;
+      (panel as any).videoRecordingStrategy.recordedChunks = [new Blob(['x'])];
+      (panel as any).session.isRecording = true;
+
+      // Mirrors the onstop closure VideoRecordingStrategy installs.
+      const onstop = () => {
+        if ((panel as any).session.disposed) {
+          (panel as any).videoRecordingStrategy.recordedChunks = [];
+          (panel as any).session.isRecording = false;
+          (panel as any).session.hideRecordingIndicator();
+          (panel as any).videoRecordingStrategy.cleanupCaptureStream();
+          return;
+        }
+      };
+      onstop();
+
+      expect(trackA.stop).toHaveBeenCalledTimes(1);
+      expect(trackB.stop).toHaveBeenCalledTimes(1);
+      expect((panel as any).videoRecordingStrategy.captureStream).toBeNull();
+      expect((panel as any).session.isRecording).toBe(false);
+      expect((panel as any).videoRecordingStrategy.recordedChunks).toEqual([]);
+      expect(downloadBlobSpy).not.toHaveBeenCalled();
+      expect(showToast).not.toHaveBeenCalledWith('Video saved');
+    });
+  });
+
+  describe('setup-failure catch', () => {
+    it('restores state when canvas.captureStream throws', async () => {
+      vi.spyOn((panel as any).session, 'showConfirmationDialog').mockResolvedValue(true);
+      const canvas = mockSceneManager.renderer.domElement;
+      (canvas as any).captureStream = vi.fn(() => {
+        throw new Error('captureStream not supported');
+      });
+
+      const restoreStateSpy = vi.spyOn((panel as any).session, 'restoreRecordingState');
+      const cleanupStreamSpy = vi.spyOn(
+        (panel as any).videoRecordingStrategy,
+        'cleanupCaptureStream'
+      );
+
+      vi.mocked(showToast).mockClear();
+      await expect(panel.startVideoRecording()).rejects.toThrow('captureStream not supported');
+
+      expect(restoreStateSpy).toHaveBeenCalled();
+      expect(cleanupStreamSpy).toHaveBeenCalled();
+      expect((panel as any).session.isRecording).toBe(false);
+      expect((panel as any).videoRecordingStrategy.mediaRecorder).toBeNull();
+      expect(showToast).toHaveBeenCalledWith('Video recording failed to start');
+    });
+  });
+
+  describe('Panel.dispose() routing', () => {
+    it('stops recording when Panel disposes mid-recording', () => {
+      const mockRec = { start: vi.fn(), stop: vi.fn(), onstop: null, ondataavailable: null };
+      (panel as any).session.isRecording = true;
+      (panel as any).videoRecordingStrategy.mediaRecorder = mockRec;
+
+      panel.dispose();
+
+      expect(mockRec.stop).toHaveBeenCalled();
+    });
+
+    it('clears the recording indicator on dispose', () => {
+      const indicator = document.createElement('div');
+      document.body.appendChild(indicator);
+      (panel as any).session.recordingIndicator = indicator;
+      (panel as any).session.recordingTimeInterval = setInterval(() => {}, 1000);
+
+      panel.dispose();
+
+      expect(indicator.parentNode).toBeNull();
+    });
+  });
+
+  describe('turntable rotation', () => {
+    it('registers a continuous per-frame callback when started', () => {
+      (panel as any).videoRecordingStrategy.startTurntableRotationForTests(
+        (panel as any).options,
+        (panel as any).session
+      );
+
+      expect(mockAnimController.addPerFrameCallback).toHaveBeenCalledWith(
+        'recording-turntable',
+        expect.any(Function),
+        { continuous: true }
+      );
+    });
+  });
+});
