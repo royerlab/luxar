@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { nextControlType } from '../../../../input/handlers/control-mode-cycle';
+import { nextControlType } from '../../../../../input/input-handler/commands/control-mode';
 
 describe('nextControlType', () => {
   it('cycles orbit → fly → ortho → orbit', () => {

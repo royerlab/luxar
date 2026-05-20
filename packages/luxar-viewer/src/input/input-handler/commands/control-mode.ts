@@ -6,7 +6,7 @@
  * (which mutates SceneManager + InputContextManager + RenderingControls)
  * stays in input-handler.ts and calls this for the next-state lookup.
  *
- * @module input/handlers/control-mode-cycle
+ * @module input/input-handler/commands/control-mode
  */
 
 /** Camera control modes the V key cycles through. */

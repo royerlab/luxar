@@ -65,7 +65,7 @@ import { WindowEventHandler } from './input-handler/window-events/window-event-h
 import { AnimationShortcuts } from './input-handler/key-bindings/animation-shortcuts';
 import { registerAllKeyBindings } from './input-handler/key-bindings/register-all';
 import { isTypingInInput, isFocusOnSceneCanvas } from './input-handler/commands/focus-utils';
-import { nextControlType } from './handlers/control-mode-cycle';
+import { nextControlType } from './input-handler/commands/control-mode';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { updateSceneForDimensions } from '../data';
 import { eventBus } from '../utils/cross-layer/event-bus';
