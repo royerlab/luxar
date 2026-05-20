@@ -31,6 +31,11 @@ import {
   naturalDragButtonMap,
   type ControlsCreationCtx,
 } from './controls-manager/factories';
+import {
+  saveCameraState,
+  restoreCameraState,
+  type CameraStateCtx,
+} from './controls-manager/camera-state';
 export type { ControlType };
 
 export interface ControlsManagerConfig {
@@ -227,38 +232,27 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   }
 
   // ---------------------------------------------------------------------------
-  // Camera state save/restore
+  // Camera state save/restore (delegated to controls-manager/camera-state.ts)
   // ---------------------------------------------------------------------------
 
-  private saveCameraState(): void {
-    this.savedCameraPosition.copy(this.camera.position);
-    this.savedCameraRotation.copy(this.camera.rotation);
-    this.savedCameraUp.copy(this.camera.up);
+  private makeCameraStateCtx(): CameraStateCtx {
+    return {
+      camera: this.camera,
+      currentControls: this.currentControls,
+      sceneScale: this.sceneScale,
+      savedCameraPosition: this.savedCameraPosition,
+      savedCameraRotation: this.savedCameraRotation,
+      savedCameraUp: this.savedCameraUp,
+      savedTarget: this.savedTarget,
+    };
+  }
 
-    // Save target for all control types.
-    // For orbit/ortho: use the explicit orbit target.
-    // For fly: derive from camera look direction so switching to orbit/ortho
-    // gets a sensible pivot point (not a stale target from a previous mode).
-    if (this.currentControls instanceof LuxarOrbitControls) {
-      this.savedTarget.copy(this.currentControls.target);
-    } else {
-      const forward = new THREE.Vector3();
-      this.camera.getWorldDirection(forward);
-      this.savedTarget
-        .copy(this.camera.position)
-        .add(forward.multiplyScalar(this.sceneScale || 10));
-    }
+  private saveCameraState(): void {
+    saveCameraState(this.makeCameraStateCtx());
   }
 
   private restoreCameraState(): void {
-    if (this.currentControls instanceof LuxarOrbitControls) {
-      // Set the target, then re-derive orientation from the current camera state
-      // (important: the constructor initialized with target=(0,0,0), which is wrong)
-      this.currentControls.target.copy(this.savedTarget);
-      this.currentControls.reinitialize();
-      this.currentControls.update();
-    }
-    // Fly controls automatically initialize from current camera state
+    restoreCameraState(this.makeCameraStateCtx());
   }
 
   private attachControlEventForwarders(controls: ControlEventDispatcher): void {
