@@ -39,6 +39,10 @@ import {
   attachWorkerErrorHandlers,
   evictFailedWorker,
 } from './worker-pool/lifecycle/error-handlers';
+import {
+  selectLeastBusy,
+  type TrackedWorkerHandle,
+} from './worker-pool/selection/least-busy';
 export { getWorkerPool, disposeWorkerPool, setDataWorkerUrl };
 
 export class WorkerPool {
@@ -522,41 +526,14 @@ export class WorkerPool {
    * round-robin fallback would queue new calls on the stalled worker
    * until it timed out individually.
    */
-  async getWorkerWithTracking(): Promise<{
-    api: Remote<DataWorkerAPI>;
-    worker: Worker;
-    markQueryStart: () => void;
-    markQueryEnd: () => void;
-  }> {
+  async getWorkerWithTracking(): Promise<TrackedWorkerHandle> {
     await this.initialize();
 
     if (this.workers.length === 0) {
       throw new Error('[WorkerPool] No workers available after initialization');
     }
 
-    // Find worker with least active queries
-    let leastBusyIndex = 0;
-    let minQueries = this.workers[0].activeQueries;
-
-    for (let i = 1; i < this.workers.length; i++) {
-      if (this.workers[i].activeQueries < minQueries) {
-        minQueries = this.workers[i].activeQueries;
-        leastBusyIndex = i;
-      }
-    }
-
-    const workerInstance = this.workers[leastBusyIndex];
-
-    return {
-      api: workerInstance.api,
-      worker: workerInstance.worker,
-      markQueryStart: () => {
-        workerInstance.activeQueries++;
-      },
-      markQueryEnd: () => {
-        workerInstance.activeQueries = Math.max(0, workerInstance.activeQueries - 1);
-      },
-    };
+    return selectLeastBusy(this.workers);
   }
 
   /**
