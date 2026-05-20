@@ -36,11 +36,6 @@ import { decodeLogScalar as decodeLogScalarImpl } from './data-worker/decode/log
 import { decodeLUT as decodeLUTImpl } from './data-worker/decode/lut';
 import { decodeBroadcasted as decodeBroadcastedImpl } from './data-worker/decode/broadcasted';
 
-// Color helpers re-exported here for the existing unit test
-// (tests/unit/workers/coerce-colors.test.ts imports them through this module).
-import { coerceColorsToFloat32, coerceScalarsToFloat32, fillColorsWhite } from './color-utils';
-export { coerceColorsToFloat32, coerceScalarsToFloat32, fillColorsWhite };
-
 // Re-export the projection/effective-radius types that the loader needs.
 import type {
   EffectiveRadiusConfig,
