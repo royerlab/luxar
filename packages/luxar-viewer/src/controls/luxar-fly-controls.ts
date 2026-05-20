@@ -22,6 +22,11 @@
 import * as THREE from 'three';
 import { config } from '../config';
 import type { LuxarCamera } from '../utils/camera-utils';
+import {
+  initializeFromCamera as initializeFromCameraHelper,
+  updateOrientation as updateOrientationHelper,
+  lookAtSmooth as lookAtSmoothHelper,
+} from './luxar-fly-controls/camera-application';
 
 // Reusable scratch vectors/quaternions to avoid per-frame/per-event allocations.
 // Names are neutral (v0-v3) because these hold different semantic values depending
@@ -447,19 +452,12 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
     this.dispatchEvent({ type: 'change' });
   }
 
-  /**
-   * Initialize orientation from current camera quaternion
-   */
   private initializeFromCamera(): void {
-    // Copy the camera's current orientation
-    this.orientation.copy(this.camera.quaternion);
+    initializeFromCameraHelper(this.camera, this.orientation);
   }
 
   private updateOrientation(): void {
-    // Apply the orientation quaternion to the camera
-    this.camera.quaternion.copy(this.orientation);
-    // Keep camera.up in sync so state export and non-screenSpacePanning pan work correctly
-    this.camera.up.set(0, 1, 0).applyQuaternion(this.orientation);
+    updateOrientationHelper(this.camera, this.orientation);
   }
 
   /**
@@ -618,21 +616,7 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
    * @param smoothness - Smoothing factor (0-1, higher = smoother)
    */
   public lookAtSmooth(target: THREE.Vector3, smoothness: number = 0.9): void {
-    // Calculate desired look direction
-    const direction = new THREE.Vector3();
-    direction.subVectors(target, this.camera.position);
-    direction.normalize();
-
-    // Create a quaternion that looks in the target direction
-    const targetQuaternion = new THREE.Quaternion();
-    const tempMatrix = new THREE.Matrix4();
-    tempMatrix.lookAt(this.camera.position, target, new THREE.Vector3(0, 1, 0));
-    targetQuaternion.setFromRotationMatrix(tempMatrix);
-
-    // Smoothly interpolate to target orientation
-    this.orientation.slerp(targetQuaternion, 1 - smoothness);
-
-    this.updateOrientation();
+    lookAtSmoothHelper(this.camera, this.orientation, target, smoothness);
   }
 
   /**
