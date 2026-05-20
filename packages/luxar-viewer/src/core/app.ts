@@ -32,7 +32,7 @@ import { LayersPanel } from '../ui/layers';
 import { resolveFactories } from './app/factories';
 import { ThemeManager } from '../themes/theme-manager';
 import type { ZarrViewerConfig } from '../types/zarr';
-import { OverlayManager } from '../ui/overlay-manager';
+import type { OverlayManager } from '../ui/overlay-manager';
 import * as zarr from '../data/zarr';
 import { PickingSystem } from '../rendering/picking/picking-system';
 import { LabelLoader } from '../data/loaders/label-loader';
@@ -56,6 +56,7 @@ import { installBrowserShortcut } from './app/dataset/browser-shortcut';
 import { openCacheStatsView as openCacheStatsViewImpl } from './app/debug/cache-stats-view';
 import { disposeOverlays as disposeOverlaysImpl } from './app/overlays/dispose-overlays';
 import { initColormapLegend as initColormapLegendImpl } from './app/overlays/init-colormap-legend';
+import { initOverlays as initOverlaysImpl } from './app/overlays/init-overlays';
 
 import type { LuxarAppOptions } from './app/options';
 export type { LuxarAppOptions } from './app/options';
@@ -661,23 +662,12 @@ export class LuxarApp {
    * runtime caller, e.g. a test) populates it.
    */
   private async initOverlays(): Promise<void> {
-    // Defensive: loadDataset() already disposes overlays upfront, but keep
-    // this idempotent in case initOverlays() is called from another path.
-    this.disposeOverlays();
-
-    const root = this.sceneManager.scene?.children?.find((c) => c.name === 'LuxarScene') as
-      | THREE.Group
-      | undefined;
-
-    const overlayConfigs = root?.userData?.overlayConfigs;
-    const zarrBaseUrl = root?.userData?.zarrBaseUrl;
-
-    this.overlayManager = new OverlayManager();
-    if (overlayConfigs?.length > 0 && zarrBaseUrl) {
-      await this.overlayManager.loadOverlays(overlayConfigs, zarrBaseUrl);
-    }
-    this.inputHandler.setOverlayManager(this.overlayManager);
-    this.recordingPanel?.setOverlayManager(this.overlayManager);
+    this.overlayManager = await initOverlaysImpl({
+      disposePrevious: () => this.disposeOverlays(),
+      sceneManager: this.sceneManager,
+      inputHandler: this.inputHandler,
+      recordingPanel: this.recordingPanel,
+    });
   }
 
   /**
