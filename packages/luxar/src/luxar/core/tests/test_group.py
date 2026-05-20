@@ -162,10 +162,10 @@ class TestMultiLODGSplats:
     @staticmethod
     def _make_multi_lod_gsplat_data():
         """Create a multi-LOD GSplatData with 2 LODs."""
-        from luxar.gsplats.gsplat_data import GSplatData, GSplatLOD
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
 
         rng = np.random.RandomState(42)
-        lod0 = GSplatLOD(
+        lod0 = AdditiveSubLOD(
             centers=rng.rand(5, 3).astype(np.float32) * 100,
             amplitudes=rng.rand(5).astype(np.float32),
             cholesky_factors=np.tile(
@@ -173,7 +173,7 @@ class TestMultiLODGSplats:
             ),
             stats={"pass_index": 0, "cumulative_psnr_db": 25.0},
         )
-        lod1 = GSplatLOD(
+        lod1 = AdditiveSubLOD(
             centers=rng.rand(3, 3).astype(np.float32) * 100,
             amplitudes=rng.rand(3).astype(np.float32),
             cholesky_factors=np.tile(

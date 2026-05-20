@@ -11,7 +11,7 @@ import zarr
 
 from luxar.encoding import ArrayDecoder
 from luxar.gsplats import GSplatData
-from luxar.gsplats.gsplat_data import GSplatLOD
+from luxar.gsplats.gsplat_data import AdditiveSubLOD
 
 
 def _extract_compressed_zarr(compressed_path: Path) -> Path:
@@ -201,7 +201,7 @@ def load_gsplats(
                     lod_stats["ndim"] = lod_group.attrs.get("ndim")
                     lod_stats["ordering"] = lod_group.attrs.get("ordering", "none")
                 lods.append(
-                    GSplatLOD(
+                    AdditiveSubLOD(
                         centers=lod_centers,
                         amplitudes=lod_amplitudes,
                         cholesky_factors=lod_cholesky,

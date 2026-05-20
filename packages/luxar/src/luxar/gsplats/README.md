@@ -1047,7 +1047,7 @@ gsplats/
 ├── fit_progressive_gsplats.py     # Progressive fitting (iterative refinement)
 ├── fit_tiled_gsplats.py           # Tiled fitting for large volumes (fit_tile, fit_tiled)
 ├── tiling.py                      # Tile geometry and cosine apodization (TileSpec, cosine_window)
-├── gsplat_data.py                 # GSplatData / GSplatLOD dataclasses, save/load, transforms
+├── gsplat_data.py                 # GSplatData / AdditiveSubLOD dataclasses, save/load, transforms
 ├── culling.py                     # Contribution-based splat culling (CullResult, cull_by_contribution)
 ├── metrics.py                     # Quality metrics (PSNR, SSIM, MSE, relative L2)
 ├── calibration.py                 # Blind-spot CV calibration (cv_mask, donut_median_fill,

@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from luxar.gsplats.fit_progressive_gsplats import fit_progressive_gaussian_splats
     from luxar.gsplats.fit_tiled_gsplats import fit_tile, fit_tiled
     from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
-    from luxar.gsplats.gsplat_data import GSplatData, GSplatLOD
+    from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData, SubstitutiveLevel
     from luxar.gsplats.lod import (
         compute_additive_order,
         make_additive_lod,
@@ -60,7 +60,11 @@ else:
         )
         from luxar.gsplats.fit_tiled_gsplats import fit_tile, fit_tiled
         from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
-        from luxar.gsplats.gsplat_data import GSplatData, GSplatLOD
+        from luxar.gsplats.gsplat_data import (
+            AdditiveSubLOD,
+            GSplatData,
+            SubstitutiveLevel,
+        )
         from luxar.gsplats.lod import (
             compute_additive_order,
             make_additive_lod,
@@ -106,7 +110,11 @@ else:
             def __init__(self, *_args: Any, **_kwargs: Any) -> None:
                 _raise_gsplats_import_error()
 
-        class GSplatLOD:
+        class AdditiveSubLOD:
+            def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+                _raise_gsplats_import_error()
+
+        class SubstitutiveLevel:
             def __init__(self, *_args: Any, **_kwargs: Any) -> None:
                 _raise_gsplats_import_error()
 
@@ -203,7 +211,8 @@ __all__ = [
     "fit_tiled",
     "GaussianSplatFitter",
     "GSplatData",
-    "GSplatLOD",
+    "AdditiveSubLOD",
+    "SubstitutiveLevel",
     "DynamicOpsConfig",
     # Tiling
     "TileSpec",

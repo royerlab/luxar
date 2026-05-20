@@ -405,7 +405,7 @@ class TestTiledProgressive:
     def test_merge_lods_across_tiles(self) -> None:
         """LOD merge correctly combines LODs from multiple tiles."""
         from luxar.gsplats.fit_tiled_gsplats import _merge_lods_across_tiles
-        from luxar.gsplats.gsplat_data import GSplatData, GSplatLOD
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
 
         rng = np.random.RandomState(42)
 
@@ -416,7 +416,7 @@ class TestTiledProgressive:
             for level in range(2):
                 n = rng.randint(5, 15)
                 lods.append(
-                    GSplatLOD(
+                    AdditiveSubLOD(
                         centers=rng.rand(n, 2).astype(np.float32),
                         amplitudes=rng.rand(n).astype(np.float32),
                         cholesky_factors=np.tile(
@@ -442,14 +442,14 @@ class TestTiledProgressive:
     def test_merge_lods_mismatched_counts(self) -> None:
         """LOD merge handles tiles with different LOD counts (pad to max)."""
         from luxar.gsplats.fit_tiled_gsplats import _merge_lods_across_tiles
-        from luxar.gsplats.gsplat_data import GSplatData, GSplatLOD
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
 
         rng = np.random.RandomState(42)
 
         # Tile A: 3 LODs, Tile B: 1 LOD
         tile_a = GSplatData.from_lods(
             [
-                GSplatLOD(
+                AdditiveSubLOD(
                     centers=rng.rand(5, 2).astype(np.float32),
                     amplitudes=rng.rand(5).astype(np.float32),
                     cholesky_factors=np.tile(

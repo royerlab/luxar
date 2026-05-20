@@ -708,10 +708,10 @@ class TestCompression:
         """Multi-LOD save applies compression to each LOD."""
         from numcodecs import Blosc
 
-        from luxar.gsplats.gsplat_data import GSplatLOD
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD
 
         lods = [
-            GSplatLOD(
+            AdditiveSubLOD(
                 centers=np.random.randn(n, 3).astype(np.float32),
                 amplitudes=np.random.rand(n).astype(np.float32),
                 cholesky_factors=np.random.randn(n, 6).astype(np.float32),
@@ -781,10 +781,10 @@ class TestTruncationRadiusRoundtrip:
 
     def test_custom_truncation_radius_multi_lod(self):
         """Non-default truncation_radius survives multi-LOD save/load."""
-        from luxar.gsplats.gsplat_data import GSplatLOD
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD
 
         lods = [
-            GSplatLOD(
+            AdditiveSubLOD(
                 centers=np.random.randn(n, 3).astype(np.float32),
                 amplitudes=np.random.rand(n).astype(np.float32),
                 cholesky_factors=np.random.randn(n, 6).astype(np.float32),

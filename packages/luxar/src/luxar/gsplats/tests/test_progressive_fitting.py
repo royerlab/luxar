@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 
 from luxar.gsplats.fit_progressive_gsplats import fit_progressive_gaussian_splats
-from luxar.gsplats.gsplat_data import GSplatData, GSplatLOD
+from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
 
 
 def _make_synthetic_volume(shape=(32, 32), seed=42):
@@ -107,7 +107,7 @@ class TestProgressiveFitting:
     def test_per_pass_stats_recorded(self):
         """Per-pass stats are surfaced through ``stats['pass_stats']``.
 
-        The progressive fitter no longer exposes per-pass GSplatLOD
+        The progressive fitter no longer exposes per-pass AdditiveSubLOD
         intermediates on the returned dataset (it is flattened).  We
         therefore verify the per-pass detail through the dedicated
         ``pass_stats`` list, which mirrors what was previously stored
@@ -156,7 +156,7 @@ class TestProgressiveFitting:
         V = _make_synthetic_volume(shape=(32, 32))
         callback_log: list[tuple[int, int, float]] = []
 
-        def my_callback(pass_idx: int, lod_data: GSplatLOD, psnr: float) -> None:
+        def my_callback(pass_idx: int, lod_data: AdditiveSubLOD, psnr: float) -> None:
             callback_log.append((pass_idx, lod_data.n_splats, psnr))
 
         result = fit_progressive_gaussian_splats(
@@ -272,7 +272,7 @@ class TestProgressiveFitting:
         """Per-pass ``seeds_requested`` / ``splats_after_culling`` are
         carried in ``stats['pass_stats']``.
 
-        On the flattened return value, per-pass GSplatLOD intermediates
+        On the flattened return value, per-pass AdditiveSubLOD intermediates
         are not preserved; ``stats['pass_stats']`` is the canonical
         source of per-pass detail.
         """

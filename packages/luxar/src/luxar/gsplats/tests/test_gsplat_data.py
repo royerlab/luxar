@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from luxar.gsplats.gsplat_data import GSplatData
+from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
 
 
 def _make_3d_gsplat(n=5, seed=42):
@@ -1554,13 +1554,13 @@ class TestClampIntensity:
 # ── LOD Tests ──────────────────────────────────────────────
 
 
-class TestGSplatLOD:
-    """Tests for the GSplatLOD frozen dataclass."""
+class TestAdditiveSubLOD:
+    """Tests for the AdditiveSubLOD frozen dataclass."""
 
     def test_creation(self):
-        from luxar.gsplats.gsplat_data import GSplatLOD
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD
 
-        lod = GSplatLOD(
+        lod = AdditiveSubLOD(
             centers=np.array([[1, 2, 3]], dtype=np.float32),
             amplitudes=np.array([0.5], dtype=np.float32),
             cholesky_factors=np.array([[1, 0, 1, 0, 0, 1]], dtype=np.float32),
@@ -1569,9 +1569,9 @@ class TestGSplatLOD:
         assert lod.ndim == 3
 
     def test_frozen(self):
-        from luxar.gsplats.gsplat_data import GSplatLOD
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD
 
-        lod = GSplatLOD(
+        lod = AdditiveSubLOD(
             centers=np.zeros((2, 3), dtype=np.float32),
             amplitudes=np.ones(2, dtype=np.float32),
             cholesky_factors=np.tile(
@@ -1582,9 +1582,9 @@ class TestGSplatLOD:
             lod.centers = np.zeros((2, 3))  # type: ignore[misc]
 
     def test_mixin_properties(self):
-        from luxar.gsplats.gsplat_data import GSplatLOD
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD
 
-        lod = GSplatLOD(
+        lod = AdditiveSubLOD(
             centers=np.array([[10, 20, 30]], dtype=np.float32),
             amplitudes=np.array([2.0], dtype=np.float32),
             cholesky_factors=np.array([[2, 0, 3, 0, 0, 4]], dtype=np.float32),
@@ -1597,10 +1597,10 @@ class TestGSplatLOD:
         assert len(lod.eccentricities()) == 1
 
     def test_validation(self):
-        from luxar.gsplats.gsplat_data import GSplatLOD
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD
 
         with pytest.raises(ValueError, match="Amplitudes shape"):
-            GSplatLOD(
+            AdditiveSubLOD(
                 centers=np.zeros((3, 2), dtype=np.float32),
                 amplitudes=np.ones(2, dtype=np.float32),  # wrong count
                 cholesky_factors=np.zeros((3, 3), dtype=np.float32),
@@ -1611,13 +1611,13 @@ class TestGSplatDataLOD:
     """Tests for LOD functionality in GSplatData."""
 
     def _make_lods(self, n_lods=3, splats_per_lod=10):
-        from luxar.gsplats.gsplat_data import GSplatLOD
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD
 
         rng = np.random.RandomState(42)
         lods = []
         for i in range(n_lods):
             lods.append(
-                GSplatLOD(
+                AdditiveSubLOD(
                     centers=rng.rand(splats_per_lod, 3).astype(np.float32) * 100,
                     amplitudes=rng.rand(splats_per_lod).astype(np.float32),
                     cholesky_factors=np.tile(
@@ -1682,10 +1682,10 @@ class TestGSplatDataLOD:
         assert psnrs == [20.0, 25.0, 30.0]
 
     def test_lod_psnrs_missing(self):
-        from luxar.gsplats.gsplat_data import GSplatLOD
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD
 
         lods = [
-            GSplatLOD(
+            AdditiveSubLOD(
                 centers=np.zeros((1, 2), dtype=np.float32),
                 amplitudes=np.ones(1, dtype=np.float32),
                 cholesky_factors=np.array([[1, 0, 1]], dtype=np.float32),
@@ -1704,12 +1704,12 @@ class TestGSplatDataLOD:
 
     def test_single_lod_no_copy(self):
         """Single-LOD fast path should share array references."""
-        from luxar.gsplats.gsplat_data import GSplatLOD
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD
 
         c = np.zeros((5, 3), dtype=np.float32)
         a = np.ones(5, dtype=np.float32)
         cf = np.tile(np.array([1, 0, 1, 0, 0, 1], dtype=np.float32), (5, 1))
-        lod = GSplatLOD(centers=c, amplitudes=a, cholesky_factors=cf)
+        lod = AdditiveSubLOD(centers=c, amplitudes=a, cholesky_factors=cf)
         data = GSplatData.from_lods([lod])
         # Should share memory, not copy
         assert data.centers is c
@@ -1749,7 +1749,7 @@ class TestGSplatDataLOD:
             GSplatData(lods=[])
 
     def test_invalid_lod_type_raises(self):
-        with pytest.raises(TypeError, match="GSplatLOD"):
+        with pytest.raises(TypeError, match="AdditiveSubLOD"):
             GSplatData(lods=["not a lod"])  # type: ignore[list-item]
 
     def test_no_args_raises(self):
@@ -1762,7 +1762,7 @@ class TestLODPreservation:
 
     def _make_multi_lod(self, n_lods=3, splats_per_lod=10, ndim=3, seed=42):
         """Create a multi-LOD GSplatData for testing."""
-        from luxar.gsplats.gsplat_data import GSplatLOD
+        from luxar.gsplats.gsplat_data import AdditiveSubLOD
 
         rng = np.random.RandomState(seed)
         tril_size = ndim * (ndim + 1) // 2
@@ -1777,7 +1777,7 @@ class TestLODPreservation:
                         chol[:, k] = 1.0
                     k += 1
             lods.append(
-                GSplatLOD(
+                AdditiveSubLOD(
                     centers=rng.rand(splats_per_lod, ndim).astype(np.float32) * 100,
                     amplitudes=rng.rand(splats_per_lod).astype(np.float32) + 0.1,
                     cholesky_factors=chol,
@@ -2035,7 +2035,7 @@ class TestGSplatsWithoutSharpness:
 
 
 class TestTruncationRadius:
-    """Tests for the truncation_radius field on GSplatData and GSplatLOD."""
+    """Tests for the truncation_radius field on GSplatData and AdditiveSubLOD."""
 
     def _make_gsplat(self, n: int = 10, truncation_radius: float = 3.0) -> GSplatData:
         rng = np.random.RandomState(42)
@@ -2095,3 +2095,84 @@ class TestTruncationRadius:
         # filter_by with no filtering criteria returns same data
         filtered = g.filter_by()
         assert filtered.truncation_radius == 2.5
+
+
+# ---------------------------------------------------------------------------
+# SubstitutiveLevel — v2.0 skeleton class (full 2-D wiring in commit 2)
+# ---------------------------------------------------------------------------
+
+
+class TestSubstitutiveLevel:
+    """Skeleton-level tests for the new 2-D LOD wrapper.
+
+    Full ``GSplatData.substitutive_levels`` semantics arrive in the next
+    commit; this class just covers the dataclass itself (construction,
+    validation, ``n_additive_lods`` / ``n_splats_total`` properties).
+    """
+
+    @staticmethod
+    def _make_additive(n: int = 5) -> AdditiveSubLOD:
+        return AdditiveSubLOD(
+            centers=np.zeros((n, 3), dtype=np.float32),
+            amplitudes=np.ones(n, dtype=np.float32),
+            cholesky_factors=np.tile(
+                np.array([1.0, 0, 1.0, 0, 0, 1.0], dtype=np.float32), (n, 1)
+            ),
+        )
+
+    def test_construct_minimal(self):
+        from luxar.gsplats.gsplat_data import SubstitutiveLevel
+
+        sub = self._make_additive(3)
+        level = SubstitutiveLevel(additive_sublods=[sub])
+        assert level.n_additive_lods == 1
+        assert level.n_splats_total == 3
+        assert level.compression_factor == 1
+        assert level.parent_method is None
+        assert level.level_index == 0
+        assert level.stats == {}
+
+    def test_construct_with_metadata(self):
+        from luxar.gsplats.gsplat_data import SubstitutiveLevel
+
+        level = SubstitutiveLevel(
+            additive_sublods=[self._make_additive(4), self._make_additive(2)],
+            compression_factor=4,
+            parent_method="kmeans_lloyd",
+            level_index=1,
+            stats={"psnr_estimate": 33.5},
+        )
+        assert level.n_additive_lods == 2
+        assert level.n_splats_total == 6
+        assert level.compression_factor == 4
+        assert level.parent_method == "kmeans_lloyd"
+        assert level.level_index == 1
+        assert level.stats == {"psnr_estimate": 33.5}
+
+    def test_empty_additive_sublods_rejected(self):
+        from luxar.gsplats.gsplat_data import SubstitutiveLevel
+
+        with pytest.raises(ValueError, match="at least one AdditiveSubLOD"):
+            SubstitutiveLevel(additive_sublods=[])
+
+    def test_non_additive_entry_rejected(self):
+        from luxar.gsplats.gsplat_data import SubstitutiveLevel
+
+        with pytest.raises(TypeError, match="AdditiveSubLOD"):
+            SubstitutiveLevel(additive_sublods=["not a splat set"])  # type: ignore[list-item]
+
+    def test_invalid_compression_factor_rejected(self):
+        from luxar.gsplats.gsplat_data import SubstitutiveLevel
+
+        with pytest.raises(ValueError, match="compression_factor"):
+            SubstitutiveLevel(
+                additive_sublods=[self._make_additive(2)], compression_factor=0
+            )
+
+    def test_frozen(self):
+        from luxar.gsplats.gsplat_data import SubstitutiveLevel
+
+        level = SubstitutiveLevel(additive_sublods=[self._make_additive(2)])
+        # frozen=True dataclass: setting an attribute should raise
+        with pytest.raises((AttributeError, Exception)):
+            level.compression_factor = 4  # type: ignore[misc]

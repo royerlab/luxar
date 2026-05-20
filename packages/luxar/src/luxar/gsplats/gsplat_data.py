@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 
 def _merge_lod_colors(
-    lods: "list[GSplatLOD]",
+    lods: "list[AdditiveSubLOD]",
 ) -> "Optional[np.ndarray]":
     """Merge colors from multiple LODs/datasets using None/all/mixed logic.
 
@@ -138,7 +138,7 @@ class _SplatArrayMixin:
 
 
 @dataclass(frozen=True, eq=False)
-class GSplatLOD(_SplatArrayMixin):
+class AdditiveSubLOD(_SplatArrayMixin):
     """A single Level-of-Detail layer — immutable container for splat arrays.
 
     Attributes
@@ -195,13 +195,75 @@ class GSplatLOD(_SplatArrayMixin):
             amp_range = f"[{float(self.amplitudes.min()):.4g}, {float(self.amplitudes.max()):.4g}]"
         else:
             amp_range = "[]"
-        return f"GSplatLOD({n:,} splats, {ndim}D, amplitudes={amp_range})"
+        return f"AdditiveSubLOD({n:,} splats, {ndim}D, amplitudes={amp_range})"
+
+
+@dataclass(frozen=True, eq=False)
+class SubstitutiveLevel:
+    """One level of a substitutive-LOD ladder — a self-contained splat set.
+
+    Skeleton for the v2.0 2-D LOD model. Each ``SubstitutiveLevel`` carries
+    an additive ladder of its own; ``GSplatData`` holds an ordered list of
+    these levels (finest at index 0). Substitutive levels operate "in
+    parallel" — each is a distinct splat set that *replaces* (not extends)
+    finer-resolution levels at render time.
+
+    Attributes
+    ----------
+    additive_sublods : list[AdditiveSubLOD]
+        The additive ladder *within* this substitutive level. Always ≥ 1
+        entry; a single entry means "no additive sub-ordering at this level".
+    compression_factor : int
+        1 for the finest level (= original splats); K, K², … for coarser
+        levels (where K is the substitutive compression factor).
+    parent_method : str | None
+        How this level was constructed from the next-finer one:
+        ``"kmeans_lloyd"``, ``"greedy"``, etc. ``None`` for the finest level
+        (no parent).
+    level_index : int
+        Redundant convenience: this level's index inside its parent
+        ``GSplatData``. Finest = 0.
+    stats : dict
+        Per-level metadata (``psnr_estimate``, ``n_splats_total``, etc.).
+    """
+
+    additive_sublods: List[AdditiveSubLOD]
+    compression_factor: int = 1
+    parent_method: Optional[str] = None
+    level_index: int = 0
+    stats: Dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not self.additive_sublods:
+            raise ValueError(
+                "SubstitutiveLevel must contain at least one AdditiveSubLOD"
+            )
+        for sub in self.additive_sublods:
+            if not isinstance(sub, AdditiveSubLOD):
+                raise TypeError(
+                    f"Each entry must be an AdditiveSubLOD, got "
+                    f"{type(sub).__name__}"
+                )
+        if self.compression_factor < 1:
+            raise ValueError(
+                f"compression_factor must be >= 1, got {self.compression_factor}"
+            )
+
+    @property
+    def n_additive_lods(self) -> int:
+        """Number of additive sub-LODs in this substitutive level (≥ 1)."""
+        return len(self.additive_sublods)
+
+    @property
+    def n_splats_total(self) -> int:
+        """Sum of ``n_splats`` across this level's additive sub-LODs."""
+        return sum(sub.n_splats for sub in self.additive_sublods)
 
 
 class GSplatData(_SplatArrayMixin):
     """Container for Gaussian splat data with always-LOD structure.
 
-    Every ``GSplatData`` holds one or more LOD levels (``GSplatLOD`` instances).
+    Every ``GSplatData`` holds one or more LOD levels (``AdditiveSubLOD`` instances).
     A single-LOD dataset is simply ``lods=[one_lod]``.
 
     **Construction styles** (convenience constructor preserves old API)::
@@ -218,7 +280,7 @@ class GSplatData(_SplatArrayMixin):
 
     Attributes
     ----------
-    lods : List[GSplatLOD]
+    lods : List[AdditiveSubLOD]
         LOD levels, always >= 1.  ``lods[0]`` is the coarsest level.
     centers : np.ndarray, shape (N_total, d)
         Cached concatenation of all LOD centers.
@@ -240,26 +302,26 @@ class GSplatData(_SplatArrayMixin):
         colors: Optional[np.ndarray] = None,
         stats: Optional[Dict[str, Any]] = None,
         *,
-        lods: Optional[List[GSplatLOD]] = None,
+        lods: Optional[List[AdditiveSubLOD]] = None,
         truncation_radius: float = 3.0,
     ) -> None:
         if lods is not None:
             # Explicit LOD construction
             if len(lods) == 0:
-                raise ValueError("lods must contain at least one GSplatLOD")
+                raise ValueError("lods must contain at least one AdditiveSubLOD")
             for lod in lods:
-                if not isinstance(lod, GSplatLOD):
+                if not isinstance(lod, AdditiveSubLOD):
                     raise TypeError(
-                        f"Each LOD must be a GSplatLOD, got {type(lod).__name__}"
+                        f"Each LOD must be a AdditiveSubLOD, got {type(lod).__name__}"
                     )
-            self.lods: List[GSplatLOD] = list(lods)
+            self.lods: List[AdditiveSubLOD] = list(lods)
         elif (
             centers is not None
             and amplitudes is not None
             and cholesky_factors is not None
         ):
             # Convenience constructor — wrap into single LOD
-            single_lod = GSplatLOD(
+            single_lod = AdditiveSubLOD(
                 centers=centers,
                 amplitudes=amplitudes,
                 cholesky_factors=cholesky_factors,
@@ -326,8 +388,8 @@ class GSplatData(_SplatArrayMixin):
         """Number of LOD levels."""
         return len(self.lods)
 
-    def at_lod(self, level: int) -> GSplatLOD:
-        """Return the GSplatLOD at the given level.
+    def at_lod(self, level: int) -> AdditiveSubLOD:
+        """Return the AdditiveSubLOD at the given level.
 
         Args:
             level: LOD level index (0 = coarsest).
@@ -355,7 +417,7 @@ class GSplatData(_SplatArrayMixin):
         Returns:
             New GSplatData with ``n_lods == 1`` containing all splats.
         """
-        single = GSplatLOD(
+        single = AdditiveSubLOD(
             centers=self.centers,
             amplitudes=self.amplitudes,
             cholesky_factors=self.cholesky_factors,
@@ -378,12 +440,12 @@ class GSplatData(_SplatArrayMixin):
 
     @classmethod
     def from_lods(
-        cls, lods: List[GSplatLOD], stats: Optional[Dict[str, Any]] = None
+        cls, lods: List[AdditiveSubLOD], stats: Optional[Dict[str, Any]] = None
     ) -> "GSplatData":
-        """Construct a multi-LOD GSplatData from a list of GSplatLOD objects.
+        """Construct a multi-LOD GSplatData from a list of AdditiveSubLOD objects.
 
         Args:
-            lods: List of GSplatLOD (at least one, no nesting).
+            lods: List of AdditiveSubLOD (at least one, no nesting).
             stats: Optional top-level statistics.
 
         Returns:
@@ -420,7 +482,7 @@ class GSplatData(_SplatArrayMixin):
                 n = lod.n_splats
                 lod_mask = mask[offset : offset + n]
                 new_lods.append(
-                    GSplatLOD(
+                    AdditiveSubLOD(
                         centers=lod.centers[lod_mask],
                         amplitudes=lod.amplitudes[lod_mask],
                         cholesky_factors=lod.cholesky_factors[lod_mask],
@@ -728,7 +790,7 @@ class GSplatData(_SplatArrayMixin):
                 )
                 colors = _merge_lod_colors(level_lods)
                 merged_lods.append(
-                    GSplatLOD(
+                    AdditiveSubLOD(
                         centers=centers,
                         amplitudes=amplitudes,
                         cholesky_factors=cholesky,
@@ -926,7 +988,7 @@ class GSplatData(_SplatArrayMixin):
                     lod.cholesky_factors, d, d + 1, dim_mapping, fill_sigma
                 )
                 new_lods.append(
-                    GSplatLOD(
+                    AdditiveSubLOD(
                         centers=lod_centers,
                         amplitudes=lod.amplitudes,
                         cholesky_factors=lod_cholesky,
@@ -1018,7 +1080,7 @@ class GSplatData(_SplatArrayMixin):
             if self.n_lods > 1:
                 return GSplatData.from_lods(
                     [
-                        GSplatLOD(
+                        AdditiveSubLOD(
                             centers=lod.centers.copy(),
                             amplitudes=lod.amplitudes,
                             cholesky_factors=lod.cholesky_factors.copy(),
@@ -1065,7 +1127,7 @@ class GSplatData(_SplatArrayMixin):
                 )
                 lod_cholesky = _transform_cholesky(lod.cholesky_factors)
                 new_lods.append(
-                    GSplatLOD(
+                    AdditiveSubLOD(
                         centers=lod_centers,
                         amplitudes=lod.amplitudes,
                         cholesky_factors=lod_cholesky,
@@ -1101,7 +1163,7 @@ class GSplatData(_SplatArrayMixin):
             for lod in self.lods:
                 n = lod.n_splats
                 new_lods.append(
-                    GSplatLOD(
+                    AdditiveSubLOD(
                         centers=lod.centers,
                         amplitudes=new_amplitudes[offset : offset + n],
                         cholesky_factors=lod.cholesky_factors,
@@ -1148,7 +1210,7 @@ class GSplatData(_SplatArrayMixin):
             for lod in self.lods:
                 n = lod.n_splats
                 new_lods.append(
-                    GSplatLOD(
+                    AdditiveSubLOD(
                         centers=lod.centers,
                         amplitudes=lod.amplitudes,
                         cholesky_factors=lod.cholesky_factors,
@@ -1503,7 +1565,7 @@ class GSplatData(_SplatArrayMixin):
         # Multi-LOD path: translate each LOD independently
         if self.n_lods > 1:
             new_lods = [
-                GSplatLOD(
+                AdditiveSubLOD(
                     centers=lod.centers + offset,
                     amplitudes=lod.amplitudes,
                     cholesky_factors=lod.cholesky_factors,
@@ -2054,7 +2116,7 @@ class GSplatData(_SplatArrayMixin):
                     axis=0,
                 )
                 merged_lods.append(
-                    GSplatLOD(
+                    AdditiveSubLOD(
                         centers=centers,
                         amplitudes=amplitudes,
                         cholesky_factors=cholesky,

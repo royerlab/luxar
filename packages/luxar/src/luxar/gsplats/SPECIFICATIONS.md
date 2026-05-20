@@ -774,7 +774,7 @@ Both accept `--quiet` (verbose-by-default) for terminal output control.
 ### Relationship to other features
 - **`cal` (Section 8)** — the canonical upstream step. Run `cal` to find a principled splat budget K\*, fit at K\*, then build the LOD ladder.
 - **`cull_by_contribution`** — orthogonal pruning operator (removes splats vs. reorders/synthesises). LOD operators and culling can be composed.
-- **`GSplatData` / `GSplatLOD`** — `make_additive_lod` returns a multi-LOD `GSplatData` whose `up_to_lod(k)` yields a valid additive prefix; `make_substitutive_lod` returns a list of single-LOD `GSplatData` because each level has different splat counts and cannot share a parameter array.
+- **`GSplatData` / `AdditiveSubLOD`** — `make_additive_lod` returns a multi-LOD `GSplatData` whose `up_to_lod(k)` yields a valid additive prefix; `make_substitutive_lod` returns a list of single-LOD `GSplatData` because each level has different splat counts and cannot share a parameter array.
 
 ### Full specification
 The complete algorithm specifications, mathematical derivations, complexity analyses, and parameter-tuning guidance live in `lod/SPECIFICATIONS.md`. This document only summarises the surface API and integration contract.

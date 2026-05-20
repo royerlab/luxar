@@ -34,7 +34,7 @@ import numpy as np
 from scipy import sparse
 from scipy.sparse.linalg import eigsh
 
-from luxar.gsplats.gsplat_data import GSplatData, GSplatLOD
+from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
 from luxar.gsplats.lod._kernels import (
     gaussian_pair_inner_product_numpy,
     gaussian_self_energy_numpy,
@@ -487,7 +487,7 @@ def make_additive_lod(
     """Permute and split a fitted gsplat dataset into a multi-LOD ladder.
 
     The result is a ``GSplatData`` with ``n_lods`` (or as resolved by
-    ``breakpoints``) ``GSplatLOD`` levels.  ``up_to_lod(k)`` returns the
+    ``breakpoints``) ``AdditiveSubLOD`` levels.  ``up_to_lod(k)`` returns the
     valid additive prefix of size $\\sum_{\\ell \\leq k} N_\\ell$.
 
     Parameters
@@ -545,7 +545,7 @@ def make_additive_lod(
     chol_full = np.asarray(data.cholesky_factors)[order]
     colors_full = np.asarray(data.colors)[order] if data.colors is not None else None
 
-    lods: list[GSplatLOD] = []
+    lods: list[AdditiveSubLOD] = []
     prev = 0
     for level, end in enumerate(cuts):
         end = int(end)
@@ -559,7 +559,7 @@ def make_additive_lod(
             "lod_cumulative_n": end,
         }
         lods.append(
-            GSplatLOD(
+            AdditiveSubLOD(
                 centers=centers_full[prev:end].astype(np.float32, copy=False),
                 amplitudes=amps_full[prev:end].astype(np.float32, copy=False),
                 cholesky_factors=chol_full[prev:end].astype(np.float32, copy=False),
