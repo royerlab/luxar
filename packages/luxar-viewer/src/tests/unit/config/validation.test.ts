@@ -12,11 +12,7 @@ import { config } from '../../../config';
 import type { AppConfig } from '../../../config/types';
 import { validateConfig, logValidationResults, validateAndLog } from '../../../config/validation';
 import type { ValidationResult } from '../../../config/validation';
-
-/** Deep clone the production config for safe mutation */
-function cloneConfig(): AppConfig {
-  return JSON.parse(JSON.stringify(config)) as AppConfig;
-}
+import { cloneConfig } from './_fixtures';
 
 describe('validateConfig', () => {
   describe('default config', () => {

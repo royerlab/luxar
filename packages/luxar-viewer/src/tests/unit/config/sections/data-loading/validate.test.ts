@@ -69,7 +69,7 @@ describe('validateDataLoading', () => {
 
   it('rejects NaN spatial.defaultTolerance', () => {
     const cfg = cloneConfig();
-    if (cfg.dataLoading.spatial) cfg.dataLoading.spatial.defaultTolerance = NaN;
+    cfg.dataLoading.spatial.defaultTolerance = NaN;
     const result = invokeValidator(validateDataLoading, cfg);
     expect(result.valid).toBe(false);
     expect(result.errors).toContainEqual(expect.stringContaining('spatial default tolerance'));
@@ -77,7 +77,7 @@ describe('validateDataLoading', () => {
 
   it('rejects NaN spatial.defaultMaxRadius', () => {
     const cfg = cloneConfig();
-    if (cfg.dataLoading.spatial) cfg.dataLoading.spatial.defaultMaxRadius = NaN;
+    cfg.dataLoading.spatial.defaultMaxRadius = NaN;
     const result = invokeValidator(validateDataLoading, cfg);
     expect(result.valid).toBe(false);
     expect(result.errors).toContainEqual(expect.stringContaining('spatial default max radius'));

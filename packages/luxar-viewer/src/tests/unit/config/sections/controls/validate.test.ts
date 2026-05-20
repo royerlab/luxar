@@ -32,12 +32,6 @@ describe('validateControls', () => {
     expect(result.errors).toContainEqual(expect.stringContaining('orbit.damping.factor'));
   });
 
-  it('should pass with default controls config', () => {
-    const result = invokeValidator(validateControls);
-
-    expect(result.errors.filter((e) => e.includes('controls.'))).toHaveLength(0);
-  });
-
   it('rejects NaN in a controls range field (fly.movement.speed.default)', () => {
     const cfg = cloneConfig();
     cfg.controls.fly.movement.speed.default = NaN;

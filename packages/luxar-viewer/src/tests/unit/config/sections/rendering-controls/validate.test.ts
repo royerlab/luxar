@@ -58,6 +58,43 @@ describe('validateRendering', () => {
     expect(result.valid).toBe(false);
     expect(result.errors).toContainEqual(expect.stringContaining('Invalid globalOffset'));
   });
+
+  it('rejects NaN globalGamma', () => {
+    const cfg = cloneConfig();
+    cfg.renderingControls.defaults.globalGamma = NaN;
+    const result = invokeValidator(validateRendering, cfg);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContainEqual(expect.stringContaining('Invalid globalGamma'));
+  });
+
+  it('should error when globalGamma is below 0.1', () => {
+    const cfg = cloneConfig();
+    cfg.renderingControls.defaults.globalGamma = 0.05;
+    const result = invokeValidator(validateRendering, cfg);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContainEqual(expect.stringContaining('Invalid globalGamma'));
+  });
+
+  it('should error when globalGamma is above 10', () => {
+    const cfg = cloneConfig();
+    cfg.renderingControls.defaults.globalGamma = 11;
+    const result = invokeValidator(validateRendering, cfg);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContainEqual(expect.stringContaining('Invalid globalGamma'));
+  });
+
+  it('should accept globalGamma at boundary values (0.1 and 10)', () => {
+    const cfg = cloneConfig();
+    cfg.renderingControls.defaults.globalGamma = 0.1;
+    expect(
+      invokeValidator(validateRendering, cfg).errors.filter((e) => e.includes('globalGamma'))
+    ).toHaveLength(0);
+
+    cfg.renderingControls.defaults.globalGamma = 10;
+    expect(
+      invokeValidator(validateRendering, cfg).errors.filter((e) => e.includes('globalGamma'))
+    ).toHaveLength(0);
+  });
 });
 
 describe('validateBloomConsistency', () => {

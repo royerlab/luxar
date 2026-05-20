@@ -18,16 +18,14 @@ export function validateDataLoading(
   validateDataLoadingNetwork(config, errors, warnings);
   validateDataLoadingMemory(config, errors, warnings);
 
-  // Spatial validation: same NaN hardening.
-  if (dataLoading.spatial) {
-    const tol = dataLoading.spatial.defaultTolerance;
-    if (!Number.isFinite(tol) || tol <= 0) {
-      errors.push(`Invalid spatial default tolerance: ${tol} (must be a finite positive number)`);
-    }
-    const maxR = dataLoading.spatial.defaultMaxRadius;
-    if (!Number.isFinite(maxR) || maxR <= 0) {
-      errors.push(`Invalid spatial default max radius: ${maxR} (must be a finite positive number)`);
-    }
+  // Spatial validation: NaN hardening (spatial is non-optional in DataLoadingConfig).
+  const tol = dataLoading.spatial.defaultTolerance;
+  if (!Number.isFinite(tol) || tol <= 0) {
+    errors.push(`Invalid spatial default tolerance: ${tol} (must be a finite positive number)`);
+  }
+  const maxR = dataLoading.spatial.defaultMaxRadius;
+  if (!Number.isFinite(maxR) || maxR <= 0) {
+    errors.push(`Invalid spatial default max radius: ${maxR} (must be a finite positive number)`);
   }
 
   validateDataLoadingPerformance(config, errors, warnings);
