@@ -12,8 +12,8 @@
  * declares every cross-layer event; publishers `emit(...)` and
  * subscribers `on(...)` against it with full payload typing.
  *
- * Compared to the `notifier` (utils/notifier.ts) which has a single
- * backend and a fixed method dictionary:
+ * Compared to the `notifier` (utils/cross-layer/notifier.ts) which has a
+ * single backend and a fixed method dictionary:
  *   - the bus has open subscriber sets — many panels can react to
  *     the same event;
  *   - panels can be constructed late without bootstrap-order
@@ -172,7 +172,7 @@ class EventBusImpl<EventMap> implements TypedEventBus<EventMap> {
 
 /**
  * Singleton bus. Most callers should use this — same shape and
- * lifetime as the singleton `notifier` from utils/notifier.ts.
+ * lifetime as the singleton `notifier` from utils/cross-layer/notifier.ts.
  */
 export const eventBus: TypedEventBus<LuxarEventMap> = new EventBusImpl<LuxarEventMap>();
 
