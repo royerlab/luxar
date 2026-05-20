@@ -63,7 +63,7 @@ import { computeDimensionStep, resolveSelectedDimension } from './input-handler/
 import { PanelCoordinator } from './input-handler/commands/panel-coordinator';
 import { WindowEventHandler } from './input-handler/window-events/window-event-handler';
 import { AnimationShortcuts } from './input-handler/key-bindings/animation-shortcuts';
-import { registerAllKeyBindings } from './handlers/key-bindings';
+import { registerAllKeyBindings } from './input-handler/key-bindings/register-all';
 import { isTypingInInput, isFocusOnSceneCanvas } from './input-handler/commands/focus-utils';
 import { nextControlType } from './handlers/control-mode-cycle';
 import { log, Modules, LogEmoji } from '../utils/log';
