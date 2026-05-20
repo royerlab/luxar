@@ -33,7 +33,6 @@ Cross-cutting utility functions and helpers used throughout the Luxar viewer. Th
 - **Result<T, E>**: Discriminated-union return type for fallible operations
 - **WebGPU/WebGL2 Availability Probe**: Page-load-time backend detection (async + sync variants, cached)
 - **Camera Type Helpers**: Unified `LuxarCamera` union and type guards for perspective vs orthographic
-- **Geometry Byte Accounting**: GPU footprint estimation with WeakSet-deduped interleaved buffers
 - **Platform Detection**: Single `isMacPlatform()` helper for OS-conditional defaults
 - **HTML Escaping**: XSS prevention for safe HTML rendering
 - **Storage Keys**: Single registry of `luxar.*` localStorage keys
@@ -46,20 +45,23 @@ utils/
 ├── clamp.ts                 # Generic numeric clamp (optional bounds)
 ├── console-interceptor.ts   # Ring-buffer console capture (Proxy singleton, opt-in patch)
 ├── escape-html.ts           # HTML entity escaping for safe rendering
-├── event-bus.ts             # Typed cross-layer pub/sub (LuxarEventMap, eventBus singleton)
-├── event-group.ts           # DOM-listener group with single dispose() teardown
-├── geometry-utils.ts        # estimateGeometryBytes + cache invalidation
-├── hdr-color-conversion.ts  # Linear sRGB → BT.2020 PQ I420P10 (Uint16 planar)
-├── hdr-detection.ts         # CSS-media-query HDR/gamut probes + decision helpers
 ├── log.ts                   # log object, Modules registry, LogEmoji, createModuleLogger
-├── notifier.ts              # Notifier facade + setNotifierBackend dependency inversion
 ├── platform.ts              # isMacPlatform()
 ├── result.ts                # Result<T, E> + ok/err/isOk/isErr/match/mapOk/mapErr/unwrap/tryAsync
 ├── storage-keys.ts          # luxar.* localStorage key registry
-└── webgpu-availability.ts   # getRendererAPI (async) + getRendererAPISync
+├── webgpu-availability.ts   # getRendererAPI (async) + getRendererAPISync
+├── cross-layer/             # Cross-layer plumbing (typed bus, notifier facade, listener group)
+│   ├── event-bus.ts         # Typed cross-layer pub/sub (LuxarEventMap, eventBus singleton)
+│   ├── event-group.ts       # DOM-listener group with single dispose() teardown
+│   └── notifier.ts          # Notifier facade + setNotifierBackend dependency inversion
+└── hdr/                     # HDR display + color-conversion pipeline
+    ├── hdr-color-conversion.ts  # Linear sRGB → BT.2020 PQ I420P10 (Uint16 planar)
+    └── hdr-detection.ts         # CSS-media-query HDR/gamut probes + decision helpers
 ```
 
-Each module is focused on a specific domain with minimal dependencies. The only intra-`utils/` imports are `event-group.ts`, `notifier.ts`, and `hdr-detection.ts` → `log.ts`, and `hdr-color-conversion.ts` → `clamp.ts`.
+Geometry-byte accounting (`estimateGeometryBytes` / `invalidateCachedByteSize`) used to live here as `geometry-utils.ts`; it has moved to its only consumer at `rendering/gpu-buffer-pool/geometry-bytes.ts` (re-exported by `rendering/gpu-buffer-pool.ts` for the existing test import path).
+
+Each module is focused on a specific domain with minimal dependencies. The only intra-`utils/` imports are `cross-layer/event-group.ts`, `cross-layer/notifier.ts`, and `hdr/hdr-detection.ts` → `log.ts`, and `hdr/hdr-color-conversion.ts` → `clamp.ts`.
 
 ## Modules
 
@@ -150,13 +152,6 @@ The bus caches the last emitted payload per event so `on(..., { replayLast: true
 - `add(cleanup)` — Register an arbitrary teardown callback (e.g. `observer.disconnect()`, `cancelAnimationFrame(handle)`)
 - `dispose()` — Run every registered cleanup in reverse order; idempotent. A throwing cleanup logs via `log.error(Modules.EVENT_GROUP, ...)` and never stops siblings from running.
 - `size` — Pending-cleanup count (for tests)
-
-### geometry-utils.ts - Geometry Byte Accounting
-
-Estimate the GPU-resident footprint of a `THREE.BufferGeometry`:
-
-- `estimateGeometryBytes(geometry)` — Sum the `byteLength` of every attribute's backing array (and the index, if present). Deduplicates `InterleavedBufferAttribute` views that share an `InterleavedBuffer` via a `WeakSet`. Result cached on `geometry.userData.cachedByteSize`.
-- `invalidateCachedByteSize(geometry)` — Clear the cache after a grow/replace so the next call recomputes.
 
 ### notifier.ts - Cross-Layer Notification Facade
 
@@ -325,7 +320,7 @@ import {
   configureHDRRenderer,
   logHDRCapabilities,
   isHDRDisplay,
-} from '../utils/hdr-detection';
+} from '../utils/hdr/hdr-detection';
 
 // Detect display-side capabilities (renderer probes fill float/depth later)
 const hdrCapabilities = detectDisplayCapabilities();
@@ -340,7 +335,7 @@ if (isHDRDisplay(hdrCapabilities)) {
 ### Cross-Layer Event
 
 ```typescript
-import { eventBus } from '../utils/event-bus';
+import { eventBus } from '../utils/cross-layer/event-bus';
 
 // Publisher (animation loop)
 eventBus.emit('frame-start', {});
@@ -354,7 +349,7 @@ off();
 ### Listener Group
 
 ```typescript
-import { EventGroup } from '../utils/event-group';
+import { EventGroup } from '../utils/cross-layer/event-group';
 
 class Panel {
   private events = new EventGroup();
@@ -376,11 +371,6 @@ class Panel {
 - **Fixed Size**: 10,000-message ring buffer prevents unbounded memory growth
 - **Boundary-Safe Wrap**: When `length === maxBufferSize`, the next write goes to index 0 (not `maxBufferSize`, which would have grown the array and stranded the oldest entry)
 - **Listener Set**: `Set<callback>` for O(1) add/remove and snapshot iteration on emit
-
-### Geometry Byte Accounting
-
-- **Cached on `userData`**: `estimateGeometryBytes` memoizes onto `geometry.userData.cachedByteSize`. Call `invalidateCachedByteSize` after a grow/replace.
-- **Interleaved Dedup**: Multiple `InterleavedBufferAttribute` views over one `InterleavedBuffer` are counted once via a `WeakSet`.
 
 ### Event Bus
 
