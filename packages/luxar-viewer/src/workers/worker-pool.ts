@@ -14,12 +14,9 @@ import type { DataWorkerAPI } from './data-worker';
 import DataWorker from './data-worker?worker';
 import { log, Modules } from '../utils/log';
 import { config } from '../config';
+import type { WorkerInstance } from './worker-pool/types';
 
-export interface WorkerInstance {
-  worker: Worker;
-  api: Remote<DataWorkerAPI>;
-  activeQueries: number;
-}
+export type { WorkerInstance };
 
 /**
  * Class of worker call, used to pick a default timeout from config.
