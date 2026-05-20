@@ -39,7 +39,7 @@ async function loadWorkerPool(
   const workers: MockWorker[] = [];
   let nextWorkerIndex = 0;
 
-  vi.doMock('../../../config', () => ({
+  vi.doMock('../../../../../config', () => ({
     config: {
       dataLoading: {
         performance: {
@@ -52,7 +52,7 @@ async function loadWorkerPool(
       },
     },
   }));
-  vi.doMock('../../../utils/log', () => ({
+  vi.doMock('../../../../../utils/log', () => ({
     log,
     Modules: { WORKER_POOL: 'WorkerPool' },
   }));
@@ -74,7 +74,7 @@ async function loadWorkerPool(
       }),
     })),
   }));
-  vi.doMock('../../../workers/data-worker?worker', () => ({
+  vi.doMock('../../../../../workers/data-worker?worker', () => ({
     default: class MockDataWorker {
       index = nextWorkerIndex++;
       terminate = vi.fn();
@@ -86,7 +86,7 @@ async function loadWorkerPool(
     },
   }));
 
-  const module = await import('../../../workers/worker-pool');
+  const module = await import('../../../../../workers/worker-pool');
   return { ...module, log, workers };
 }
 

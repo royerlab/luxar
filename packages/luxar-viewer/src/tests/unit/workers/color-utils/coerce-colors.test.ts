@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { coerceColorsToFloat32, coerceScalarsToFloat32 } from '../../../workers/data-worker';
+import { coerceColorsToFloat32, coerceScalarsToFloat32 } from '../../../../workers/color-utils';
 
 describe('coerceColorsToFloat32', () => {
   it('Float32 input passes through unchanged (same reference)', () => {

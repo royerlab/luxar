@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, afterEach } from 'vitest';
-import { getWorkerPool, disposeWorkerPool } from '../../../workers/worker-pool';
+import { getWorkerPool, disposeWorkerPool } from '../../../../workers/worker-pool';
 
 // Check if Worker API is available (browser environment)
 const hasWorkerAPI = typeof Worker !== 'undefined';

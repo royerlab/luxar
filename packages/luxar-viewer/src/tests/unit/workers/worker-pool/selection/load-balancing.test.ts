@@ -11,7 +11,7 @@
  * so we can run in jsdom without a Worker API.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { WorkerPool } from '../../../workers/worker-pool';
+import { WorkerPool } from '../../../../../workers/worker-pool';
 interface FakeWorkerInstance {
   worker: { terminate: () => void };
   api: { handle: ReturnType<typeof vi.fn> };
