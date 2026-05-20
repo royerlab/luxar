@@ -112,7 +112,7 @@ describe('pointCacheKey', () => {
     expect(half).not.toBe(pointCacheKey({ ...basePoint, opacity: 0.55 }, 'glsl'));
   });
 
-  it("encodes the transparent flag t=1 for non-opaque, t=0 for opaque blending mode", () => {
+  it('encodes the transparent flag t=1 for non-opaque, t=0 for opaque blending mode', () => {
     expect(pointCacheKey({ ...basePoint, blendingMode: 'additive' }, 'glsl')).toMatch(/_t1$/);
     expect(pointCacheKey({ ...basePoint, blendingMode: 'opaque' }, 'glsl')).toMatch(/_t0$/);
   });
