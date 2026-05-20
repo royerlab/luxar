@@ -10,17 +10,17 @@ import {
   getNextDimensionIndex,
   getNonDisplayedDimensions,
   mapKeyToDimension,
-} from '../../../input/input-handler/dimension-navigation/selection';
+} from '../../../../../input/input-handler/dimension-navigation/selection';
 import {
   calculateStepSize,
   calculateNextPosition,
   NavigationConfig,
-} from '../../../input/input-handler/dimension-navigation/step-math';
+} from '../../../../../input/input-handler/dimension-navigation/step-math';
 import {
   formatDimensionValue,
   generateNavigationHelp,
-} from '../../../input/input-handler/dimension-navigation/format';
-import { DimensionsBuilder } from '../../builders/test-data-builders';
+} from '../../../../../input/input-handler/dimension-navigation/format';
+import { DimensionsBuilder } from '../../../../builders/test-data-builders';
 
 describe('nD Navigation Utilities', () => {
   describe('getNextDimensionIndex', () => {

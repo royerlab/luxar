@@ -9,8 +9,8 @@ import { describe, it, expect } from 'vitest';
 import {
   isNavigationKey,
   shouldBlockShortcut,
-} from '../../../input/input-handler/keyboard-validation';
-import { calculateFovChange } from '../../../input/input-handler/window-events/fov-wheel-math';
+} from '../../../../input/input-handler/keyboard-validation';
+import { calculateFovChange } from '../../../../input/input-handler/window-events/fov-wheel-math';
 
 // NOTE: Pure-function tests for isNavigationKey, calculateFovChange, and shouldBlockShortcut
 // also exist in src/tests/unit/input/input-handler.test.ts. That file tests the same
