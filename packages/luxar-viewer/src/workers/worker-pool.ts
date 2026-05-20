@@ -43,6 +43,7 @@ import {
   selectLeastBusy,
   type TrackedWorkerHandle,
 } from './worker-pool/selection/least-busy';
+import { nextRoundRobin } from './worker-pool/selection/round-robin';
 export { getWorkerPool, disposeWorkerPool, setDataWorkerUrl };
 
 export class WorkerPool {
@@ -371,9 +372,9 @@ export class WorkerPool {
       throw new Error('[WorkerPool] No workers available after initialization');
     }
 
-    const wi = this.workers[this.nextWorkerIndex];
-    this.nextWorkerIndex = (this.nextWorkerIndex + 1) % this.workers.length;
-    return wi;
+    const { instance, nextIndex } = nextRoundRobin(this.workers, this.nextWorkerIndex);
+    this.nextWorkerIndex = nextIndex;
+    return instance;
   }
 
   /**
