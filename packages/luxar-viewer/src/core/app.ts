@@ -52,6 +52,7 @@ import {
   restorePanelVisibilityStates as restorePanelVisibilityStatesHelper,
 } from './app/viewer-config/panel-visibility';
 import { installUnloadHandler } from './app/lifecycle/unload-handling';
+import { installBrowserShortcut } from './app/dataset/browser-shortcut';
 
 import type { LuxarAppOptions } from './app/options';
 export type { LuxarAppOptions } from './app/options';
@@ -832,10 +833,10 @@ export class LuxarApp {
    * Setup keyboard shortcut for opening dataset browser
    */
   private setupDatasetBrowserShortcut(): void {
-    this.events.on(window, 'open-dataset-browser', () => {
-      if (!this.datasetBrowser) {
-        this.showDatasetBrowser();
-      }
+    installBrowserShortcut({
+      events: this.events,
+      hasOpenBrowser: () => !!this.datasetBrowser,
+      showBrowser: () => this.showDatasetBrowser(),
     });
   }
 
