@@ -42,7 +42,7 @@ import { EventGroup } from '../utils/cross-layer/event-group';
 import { setWasmJsUrl } from '../wasm';
 import { setDataWorkerUrl, disposeWorkerPool, getWorkerPool } from '../workers/worker-pool';
 import { replaceBrowserDataSourceUrl } from '../config/url-params';
-import { classifyBrowserUrl } from './app/dataset/browser-decision';
+import { shouldShowBrowser as shouldShowBrowserImpl } from './app/dataset/should-show-browser';
 import { applyViewerConfigState as applyViewerConfigStateHelper } from './app/viewer-config/apply-state';
 import { computeDebugState } from './app/debug/debug-state';
 import { buildDebugCacheHelpers } from './app/debug/debug-cache-helpers';
@@ -414,40 +414,7 @@ export class LuxarApp {
    * Check if we should show the dataset browser
    */
   private async shouldShowBrowser(src: string): Promise<boolean> {
-    // Synchronous classification: empty / trailing-slash URLs always
-    // need the browser, no point firing a zarr-metadata probe.
-    if (classifyBrowserUrl(src) === 'must-browse') return true;
-
-    // Check if it's a Zarr dataset by looking for zarr metadata files
-    // Try both v2 (.zgroup) and v3 (zarr.json) formats
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000);
-
-    const zarrChecks = [
-      fetch(src + '/.zgroup', { method: 'HEAD', signal: controller.signal }),
-      fetch(src + '/.zattrs', { method: 'HEAD', signal: controller.signal }),
-      fetch(src + '/zarr.json', { method: 'HEAD', signal: controller.signal }),
-    ];
-
-    try {
-      // Short-circuit: return as soon as any probe confirms zarr metadata exists.
-      // This avoids waiting for the zarr.json 404 on v2 stores (~200ms on slow networks).
-      await Promise.any(
-        zarrChecks.map((p) =>
-          p.then((r) => {
-            if (!r.ok) throw new Error('not ok');
-            return r;
-          })
-        )
-      );
-      return false; // At least one zarr metadata file exists — load directly
-    } catch {
-      // All probes failed or errored — likely a directory, show browser
-    } finally {
-      clearTimeout(timeoutId);
-    }
-
-    return true;
+    return shouldShowBrowserImpl(src);
   }
 
   /**
