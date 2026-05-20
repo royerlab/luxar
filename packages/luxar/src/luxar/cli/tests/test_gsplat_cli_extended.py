@@ -2049,3 +2049,231 @@ class TestLODCommand:
         # The per-level "level 0: ... splats" / "Wrote manifest" lines are gated
         assert "level 0:" not in result.stdout
         assert "Wrote manifest" not in result.stdout
+
+
+class TestMigrateFormatCommand:
+    """`luxar gsplat migrate-format` end-to-end CLI tests.
+
+    Builds legacy fixtures (v1.0, v1.1, substitutive directory) and
+    verifies the CLI handler invokes `migrate_format` and produces a
+    valid v2.0 file. Mirrors the unit tests in
+    `gsplats/io/tests/test_migrate_format.py`.
+    """
+
+    @staticmethod
+    def _identity_chol(n: int):
+        import numpy as np
+
+        row = np.array([1.0, 0.0, 1.0, 0.0, 0.0, 1.0], dtype="float32")
+        return np.tile(row, (n, 1))
+
+    def _make_v1_0(self, path: Path, n: int = 5) -> None:
+        import numpy as np
+        import zarr
+
+        store = zarr.DirectoryStore(str(path))
+        root = zarr.group(store=store, overwrite=True)
+        root.attrs.update(
+            {
+                "format_version": "1.0",
+                "format_type": "gsplats_zarr",
+                "timestamp": "2026-01-01T00:00:00+00:00",
+                "luxar_gsplats_version": "test",
+            }
+        )
+        splats = root.create_group("splats")
+        splats.attrs.update(
+            {
+                "type": "gsplats",
+                "n_splats": n,
+                "ndim": 3,
+                "has_colors": False,
+                "ordering": "none",
+                "truncation_radius": 3.0,
+            }
+        )
+        rng = np.random.default_rng(0)
+        splats.create_dataset(
+            "centers", data=(rng.random((n, 3)) * 10).astype("float32")
+        )
+        splats.create_dataset(
+            "amplitudes", data=rng.random(n).astype("float32")
+        )
+        splats.create_dataset(
+            "cholesky_factors", data=self._identity_chol(n)
+        )
+        splats.create_dataset(
+            "chunk_bounds", data=np.zeros((1, 3, 2), dtype="float32")
+        )
+        zarr.consolidate_metadata(store)
+
+    def _make_v1_1(self, path: Path, lod_sizes=(6, 3)) -> None:
+        import numpy as np
+        import zarr
+
+        store = zarr.DirectoryStore(str(path))
+        root = zarr.group(store=store, overwrite=True)
+        root.attrs.update(
+            {
+                "format_version": "1.1",
+                "format_type": "gsplats_zarr",
+                "timestamp": "2026-01-01T00:00:00+00:00",
+                "luxar_gsplats_version": "test",
+                "n_lods": len(lod_sizes),
+            }
+        )
+        splats = root.create_group("splats")
+        splats.attrs.update(
+            {
+                "type": "gsplats",
+                "n_lods": len(lod_sizes),
+                "truncation_radius": 3.0,
+            }
+        )
+        rng = np.random.default_rng(0)
+        for i, n in enumerate(lod_sizes):
+            lod = splats.create_group(f"lod_{i}")
+            lod.attrs.update(
+                {"n_splats": n, "ndim": 3, "ordering": "none"}
+            )
+            lod.create_dataset(
+                "centers", data=(rng.random((n, 3)) * 10).astype("float32")
+            )
+            lod.create_dataset(
+                "amplitudes", data=rng.random(n).astype("float32")
+            )
+            lod.create_dataset(
+                "cholesky_factors", data=self._identity_chol(n)
+            )
+            lod.create_dataset(
+                "chunk_bounds", data=np.zeros((1, 3, 2), dtype="float32")
+            )
+        zarr.consolidate_metadata(store)
+
+    def _make_sub_dir(self, dir_path: Path, level_sizes=(16, 4, 1)) -> None:
+        import json
+
+        dir_path.mkdir(parents=True, exist_ok=True)
+        levels_data = []
+        for i, n in enumerate(level_sizes):
+            file_name = f"level_{i}.gsplats.zarr"
+            self._make_v1_0(dir_path / file_name, n=n)
+            levels_data.append({"level": i, "file": file_name, "n_splats": n})
+        manifest = {
+            "lod_kind": "substitutive",
+            "compression_factor": 4,
+            "levels": len(level_sizes) - 1,
+            "method": "kmeans_lloyd",
+            "lloyd_iterations": 5,
+            "candidate_bins_k": 12,
+            "seed": None,
+            "input_n_splats": level_sizes[0],
+            "input_ndim": 3,
+            "levels_data": levels_data,
+        }
+        (dir_path / "manifest.json").write_text(json.dumps(manifest))
+
+    def test_migrate_v1_0(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        from luxar.gsplats import GSplatData
+
+        legacy = tmp_path / "legacy.gsplats.zarr"
+        out = tmp_path / "v2.gsplats.zarr"
+        self._make_v1_0(legacy, n=7)
+        result = runner.invoke(
+            app,
+            ["gsplat", "migrate-format", str(legacy), str(out)],
+        )
+        assert result.exit_code == 0, f"migrate-format v1.0 failed:\n{result.stdout}"
+        assert "Detected legacy format: v1.0" in result.stdout
+        data = GSplatData.load(out)
+        assert data.n_substitutive == 1
+        assert data.n_additive_sublods == 1
+        assert data.n_splats == 7
+
+    def test_migrate_v1_1(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        from luxar.gsplats import GSplatData
+
+        legacy = tmp_path / "legacy.gsplats.zarr"
+        out = tmp_path / "v2.gsplats.zarr"
+        self._make_v1_1(legacy, lod_sizes=(8, 4, 2))
+        result = runner.invoke(
+            app,
+            ["gsplat", "migrate-format", str(legacy), str(out)],
+        )
+        assert result.exit_code == 0, f"migrate-format v1.1 failed:\n{result.stdout}"
+        assert "Detected legacy format: v1.1" in result.stdout
+        data = GSplatData.load(out)
+        assert data.n_substitutive == 1
+        assert data.n_additive_sublods == 3
+        assert [s.n_splats for s in data.additive_sublods] == [8, 4, 2]
+
+    def test_migrate_substitutive_directory(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        from luxar.gsplats import GSplatData
+
+        legacy = tmp_path / "pyr"
+        out = tmp_path / "v2.gsplats.zarr"
+        self._make_sub_dir(legacy, level_sizes=(16, 4, 1))
+        result = runner.invoke(
+            app,
+            ["gsplat", "migrate-format", str(legacy), str(out)],
+        )
+        assert result.exit_code == 0, (
+            f"migrate-format substitutive directory failed:\n{result.stdout}"
+        )
+        assert "Detected legacy format: substitutive_dir" in result.stdout
+        data = GSplatData.load(out)
+        assert data.n_substitutive == 3
+        for level in data.substitutive_levels:
+            assert level.n_additive_lods == 1
+        assert [s.n_splats_total for s in data.substitutive_levels] == [16, 4, 1]
+        assert [s.compression_factor for s in data.substitutive_levels] == [1, 4, 16]
+
+    def test_migrate_refuses_existing_output(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        legacy = tmp_path / "legacy.gsplats.zarr"
+        out = tmp_path / "v2.gsplats.zarr"
+        out.mkdir()
+        self._make_v1_0(legacy, n=3)
+        result = runner.invoke(
+            app,
+            ["gsplat", "migrate-format", str(legacy), str(out)],
+        )
+        assert result.exit_code != 0
+        assert "exists" in result.stdout.lower()
+
+    def test_migrate_overwrite(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        from luxar.gsplats import GSplatData
+
+        legacy = tmp_path / "legacy.gsplats.zarr"
+        out = tmp_path / "v2.gsplats.zarr"
+        out.mkdir()
+        self._make_v1_0(legacy, n=4)
+        result = runner.invoke(
+            app,
+            ["gsplat", "migrate-format", str(legacy), str(out), "--overwrite"],
+        )
+        assert result.exit_code == 0, f"--overwrite failed:\n{result.stdout}"
+        assert GSplatData.load(out).n_splats == 4
+
+    def test_migrate_quiet_suppresses_trailing_summary(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        legacy = tmp_path / "legacy.gsplats.zarr"
+        out = tmp_path / "v2.gsplats.zarr"
+        self._make_v1_0(legacy, n=3)
+        result = runner.invoke(
+            app,
+            ["gsplat", "migrate-format", str(legacy), str(out), "--quiet"],
+        )
+        assert result.exit_code == 0, f"--quiet failed:\n{result.stdout}"
+        assert "Detected legacy format: v1.0" in result.stdout
+        assert "Wrote v2.0 file" not in result.stdout

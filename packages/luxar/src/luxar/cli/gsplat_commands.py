@@ -2884,6 +2884,67 @@ def calibrate_command(
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# migrate-format — Convert legacy v1.x layouts to format v2.0
+# ═══════════════════════════════════════════════════════════════════════
+
+
+@app_gsplat.command("migrate-format")
+def migrate_format_command(
+    input_path: Path = typer.Argument(
+        ...,
+        exists=True,
+        help="Legacy .gsplats.zarr (v1.0 or v1.1), .gsplats.zarr.zip/.tar.gz, "
+        "or a substitutive directory (with manifest.json + level_<i>.gsplats.zarr).",
+    ),
+    output_path: Path = typer.Argument(
+        ..., help="Output .gsplats.zarr (v2.0)."
+    ),
+    overwrite: bool = typer.Option(
+        False, "--overwrite", help="Overwrite output if it exists."
+    ),
+    quiet: bool = typer.Option(
+        False, "--quiet", "-q", help="Suppress the trailing 'wrote …' summary."
+    ),
+) -> None:
+    """Convert a legacy .gsplats.zarr layout to format v2.0.
+
+    Three input shapes are auto-detected:
+
+    \b
+    * v1.0  .gsplats.zarr (single flat splat set)
+    * v1.1  .gsplats.zarr (multi-LOD additive, /splats/lod_<i>/ subgroups)
+    * substitutive directory (manifest.json + level_<i>.gsplats.zarr files)
+
+    All three migrate to a single v2.0 ``.gsplats.zarr`` with the
+    appropriate substitutive × additive shape.
+    """
+    try:
+        from luxar.gsplats.io.migrate import migrate_format
+
+        with asection(f"Migrating {input_path.name} → v2.0"):
+            detected = migrate_format(
+                input_path, output_path, overwrite=overwrite
+            )
+            aprint(f"Detected legacy format: {detected}")
+            if not quiet:
+                aprint(f"Wrote v2.0 file to {output_path}")
+    except typer.Exit:
+        raise
+    except FileNotFoundError as exc:
+        aprint(f"Error: {exc}")
+        raise typer.Exit(1)
+    except ValueError as exc:
+        aprint(f"Error: {exc}")
+        raise typer.Exit(1)
+    except Exception as exc:
+        aprint(f"Error: {exc}")
+        import traceback
+
+        traceback.print_exc()
+        raise typer.Exit(1)
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # merge — Combine multiple gsplat datasets
 # ═══════════════════════════════════════════════════════════════════════
 

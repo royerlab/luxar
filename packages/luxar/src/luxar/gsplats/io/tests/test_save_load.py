@@ -585,7 +585,6 @@ class TestColorRoundtrip:
 class TestInspectGsplats:
     """Test inspection functionality."""
 
-    @pytest.mark.xfail(reason='inspect_gsplats_zarr still reads v1.x layout; v2.0 update pending in commit 4 alongside migrate-format', strict=False)
     def test_inspect_basic(self) -> None:
         """Test basic inspection."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -624,7 +623,6 @@ class TestInspectGsplats:
             assert "fitting" in info
             assert info["fitting"]["time_seconds"] == 45.3
 
-    @pytest.mark.xfail(reason='inspect_gsplats_zarr still reads v1.x layout; v2.0 update pending in commit 4 alongside migrate-format', strict=False)
     def test_inspect_format_output(self) -> None:
         """Test formatted inspection output."""
         with tempfile.TemporaryDirectory() as tmpdir:
