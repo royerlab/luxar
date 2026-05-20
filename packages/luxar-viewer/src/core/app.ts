@@ -51,6 +51,7 @@ import {
   getPanelVisibilityStates as getPanelVisibilityStatesHelper,
   restorePanelVisibilityStates as restorePanelVisibilityStatesHelper,
 } from './app/viewer-config/panel-visibility';
+import { installUnloadHandler } from './app/lifecycle/unload-handling';
 
 import type { LuxarAppOptions } from './app/options';
 export type { LuxarAppOptions } from './app/options';
@@ -824,7 +825,7 @@ export class LuxarApp {
    * Register a beforeunload handler that disposes the app on page unload.
    */
   private setupDisposeOnUnload(): void {
-    this.events.on(window, 'beforeunload', () => this.dispose());
+    installUnloadHandler({ events: this.events, dispose: () => this.dispose() });
   }
 
   /**
