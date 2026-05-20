@@ -11,8 +11,8 @@ import {
   InputContext,
   InputContextManager,
   MAX_KEY_EVENT_DEPTH,
-} from '../../../input/input-context-manager';
-import { log } from '../../../utils/log';
+} from '../../../../input/input-handler/context-manager';
+import { log } from '../../../../utils/log';
 
 function makeKeyEvent(key = 'p'): KeyboardEvent {
   // jsdom doesn't ship KeyboardEvent('keydown', ...) with a key property

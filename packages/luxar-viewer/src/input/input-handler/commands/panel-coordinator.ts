@@ -15,12 +15,12 @@
  * @module input/handlers/panel-coordinator
  */
 
-import { notifier } from '../../utils/cross-layer/notifier';
-import { eventBus } from '../../utils/cross-layer/event-bus';
-import type { RenderingControls } from '../../ui/rendering-controls';
-import type { RecordingPanel } from '../../ui/recording-panel';
-import type { DimensionSliders } from '../../ui/dimension-sliders';
-import type { DebugConsole } from '../../ui/debug-console';
+import { notifier } from '../../../utils/cross-layer/notifier';
+import { eventBus } from '../../../utils/cross-layer/event-bus';
+import type { RenderingControls } from '../../../ui/rendering-controls';
+import type { RecordingPanel } from '../../../ui/recording-panel';
+import type { DimensionSliders } from '../../../ui/dimension-sliders';
+import type { DebugConsole } from '../../../ui/debug-console';
 
 // Avoid a hard dependency on Stats.js — only the visible/hide surface we
 // touch is captured here.

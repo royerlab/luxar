@@ -27,9 +27,9 @@
  * @module input/handlers/window-event-handler
  */
 
-import type { SceneManager } from '../../scene/scene-manager';
-import type { AnimationController } from '../../scene/animation/animation-controller';
-import type { RenderingControls } from '../../ui/rendering-controls';
+import type { SceneManager } from '../../../scene/scene-manager';
+import type { AnimationController } from '../../../scene/animation/animation-controller';
+import type { RenderingControls } from '../../../ui/rendering-controls';
 
 export class WindowEventHandler {
   private renderingControls?: RenderingControls;

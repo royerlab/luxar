@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { isFocusOnSceneCanvas, isTypingInInput } from '../../../../input/handlers/focus-utils';
+import { isFocusOnSceneCanvas, isTypingInInput } from '../../../../../input/input-handler/commands/focus-utils';
 
 describe('isTypingInInput', () => {
   beforeEach(() => {

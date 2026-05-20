@@ -13,7 +13,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-vi.mock('../../../../scene/scene-dims-manager', () => ({
+vi.mock('../../../../../scene/scene-dims-manager', () => ({
   sceneDimsManager: {
     getDims: vi.fn(),
     getDimensionRanges: vi.fn(),
@@ -21,14 +21,14 @@ vi.mock('../../../../scene/scene-dims-manager', () => ({
   },
 }));
 
-import { sceneDimsManager } from '../../../../scene/scene-dims-manager';
+import { sceneDimsManager } from '../../../../../scene/scene-dims-manager';
 import {
   AnimationShortcuts,
   type AnimationShortcutsContext,
-} from '../../../../input/handlers/animation-shortcuts';
-import { InputContext, type InputContextManager } from '../../../../input/input-context-manager';
-import type { DimensionAnimationManager } from '../../../../scene/animation/dimension-animation-manager';
-import type { SimpleDims } from '../../../../types/dims';
+} from '../../../../../input/input-handler/key-bindings/animation-shortcuts';
+import { InputContext, type InputContextManager } from '../../../../../input/input-handler/context-manager';
+import type { DimensionAnimationManager } from '../../../../../scene/animation/dimension-animation-manager';
+import type { SimpleDims } from '../../../../../types/dims';
 
 function makeContextManager(): {
   manager: InputContextManager;

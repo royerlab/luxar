@@ -11,7 +11,7 @@ import {
   sortContextsByPriority,
   type KeyFilterConfig,
   type PriorityConfig,
-} from '../../../input/context-routing-utils';
+} from '../../../../../input/input-handler/context-manager/routing-rules';
 
 describe('isKeyAllowedInContext', () => {
   it('allows any key when neither filter is set', () => {

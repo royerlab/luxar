@@ -9,10 +9,10 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { WindowEventHandler } from '../../../../input/handlers/window-event-handler';
-import type { SceneManager } from '../../../../scene/scene-manager';
-import type { AnimationController } from '../../../../scene/animation/animation-controller';
-import type { RenderingControls } from '../../../../ui/rendering-controls';
+import { WindowEventHandler } from '../../../../../input/input-handler/window-events/window-event-handler';
+import type { SceneManager } from '../../../../../scene/scene-manager';
+import type { AnimationController } from '../../../../../scene/animation/animation-controller';
+import type { RenderingControls } from '../../../../../ui/rendering-controls';
 
 function makeSceneManager(): {
   sceneManager: SceneManager;
