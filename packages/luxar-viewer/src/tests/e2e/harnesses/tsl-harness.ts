@@ -50,11 +50,11 @@ import {
   gsplatWebGPUFactory,
   buildGSplatTSLNodesFromUniforms,
 } from '../../../rendering/materials/gsplat/shader-tsl';
-import { GSPLAT_PICK_SOURCE } from '../../../rendering/picking/picking-shaders';
+import { GSPLAT_PICK_SOURCE } from '../../../rendering/picking/gsplat/shaders';
 import {
   gsplatPickWebGPUFactory,
   buildGSplatPickTSLNodesFromUniforms,
-} from '../../../rendering/picking/gsplat-pick.tsl';
+} from '../../../rendering/picking/gsplat/pick.tsl';
 import { createGSplatQuadGeometry } from '../../../rendering/gsplat-geometry';
 import { requireWebGLSources, type ShaderSource } from '../../../rendering/materials/_shared/shader-source';
 

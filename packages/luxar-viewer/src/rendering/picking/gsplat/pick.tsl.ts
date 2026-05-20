@@ -13,7 +13,7 @@
  * Picking always uses max-projection mode — no ray integration boost
  * — so the Σ_cam⁻¹ cofactor expansion is omitted vs gsplat.tsl.
  *
- * @module rendering/picking/gsplat-pick.tsl
+ * @module rendering/picking/gsplat/pick.tsl
  */
 
 import * as THREE from 'three';
@@ -43,7 +43,7 @@ import {
   screenCoordinate,
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-import { invalidFloatTSL, type TSLNode } from '../materials/_shared/tsl-helpers';
+import { invalidFloatTSL, type TSLNode } from '../../materials/_shared/tsl-helpers';
 
 const vec2: (a?: TSLNode, b?: TSLNode) => TSLNode = _vec2 as TSLNode;
 const vec3: (a?: TSLNode, b?: TSLNode, c?: TSLNode) => TSLNode = _vec3 as TSLNode;

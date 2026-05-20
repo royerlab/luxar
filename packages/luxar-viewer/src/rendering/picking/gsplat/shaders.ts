@@ -1,32 +1,24 @@
 /**
- * Picking shader sources for the three first-class geometries.
+ * GLSL3 picking shader source for Gaussian splats + `ShaderSource` record.
  *
- * Each shader pair is based on its visual counterpart in
- * `rendering/shaders/{point,line,gsplat}-shaders.ts` with the
- * following additions:
+ * Mirrors the visual gsplat shader with picking-specific adjustments:
  *   - `uNodeId` uniform + `vNodeId` / `vElementId` varyings, written
  *     into the RGBA32F pick buffer as `(nodeId, elementId, brightness, 1)`.
- *   - Tighter truncation for points (50% radius) and gsplats (1.5σ
- *     instead of 3σ). Lines use full width — they're already narrow.
- *   - Brightness-as-depth so the brightest element at each pixel
- *     wins the depth test (essential for picking through translucent
- *     splats and overlapping line segments).
+ *   - Tighter truncation: 1.5σ (vs 3σ for visual) so the pick footprint
+ *     is the bright core only.
+ *   - Always max-projection (no ray-integral) — picking only needs the
+ *     brightest fragment, not the integrated path.
+ *   - Brightness-as-depth so the brightest overlapping fragment wins.
  *
- * Source-of-truth lives here; the per-material wrappers in
- * `*-picking-material.ts` consume these `ShaderSource` values. When
- * GLSL→TSL porting starts, the `webgpu?` field on each source is
- * filled in alongside.
+ * Source-of-truth for GLSL3; the WebGPU counterpart lives in `./pick.tsl`
+ * and is referenced through the `ShaderSource.webgpu` factory below.
  *
- * @module rendering/picking/picking-shaders
+ * @module rendering/picking/gsplat/shaders
  */
 
-import type { ShaderSource } from '../materials/_shared/shader-source';
-import { GLSL_SANITIZE_FUNCTIONS } from '../materials/_shared/glsl-lib';
-import { gsplatPickWebGPUFactory, buildGSplatPickTSLNodesFromUniforms } from './gsplat-pick.tsl';
-
-// ---------------------------------------------------------------------
-// GSplats
-// ---------------------------------------------------------------------
+import type { ShaderSource } from '../../materials/_shared/shader-source';
+import { GLSL_SANITIZE_FUNCTIONS } from '../../materials/_shared/glsl-lib';
+import { gsplatPickWebGPUFactory, buildGSplatPickTSLNodesFromUniforms } from './pick.tsl';
 
 /**
  * Picking vertex shader for gsplats.
