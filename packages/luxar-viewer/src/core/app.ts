@@ -43,6 +43,7 @@ import { setWasmJsUrl } from '../wasm';
 import { setDataWorkerUrl, disposeWorkerPool, getWorkerPool } from '../workers/worker-pool';
 import { shouldShowBrowser as shouldShowBrowserImpl } from './app/dataset/should-show-browser';
 import { showDatasetBrowser as showDatasetBrowserImpl } from './app/dataset/show-browser';
+import { loadDataset as loadDatasetImpl } from './app/dataset/load-dataset';
 import { applyViewerConfigState as applyViewerConfigStateHelper } from './app/viewer-config/apply-state';
 import { computeDebugState } from './app/debug/debug-state';
 import { buildDebugCacheHelpers } from './app/debug/debug-cache-helpers';
@@ -440,70 +441,22 @@ export class LuxarApp {
    * Load a dataset and initialize UI
    */
   private async loadDataset(src: string): Promise<void> {
-    // Clear any existing dimension UI
-    this.inputHandler.clearDimensionUI();
-
-    // Dispose previous-scene overlays upfront so they are cleared in lockstep
-    // with clearSceneContent() — otherwise a failing scene load leaves the old
-    // overlay DOM elements visible on top of an empty canvas.
-    this.disposeOverlays();
-
-    // Note: Monitor cleanup is handled by SceneLoader.loadScene() which calls
-    // monitor.disconnectAllLoaders() when loading a new scene
-
-    // Set scene ID for rendering controls persistence BEFORE loading scene
-    // This ensures saved settings (like HDR intensity) are applied before materials are created
-    this.renderingControls.setSceneId(src);
-
-    // Load scene data (animation loop will continue even if this fails)
-    await this.sceneManager.loadSceneData(src, this.options.loaderConfig);
-
-    // Pass zarr viewer_config to rendering controls (available after scene loads).
-    // If no localStorage settings exist for this scene, apply zarr defaults.
-    const viewerConfig = this.sceneManager.getSceneViewerConfig();
-    this.renderingControls.setZarrViewerConfig(viewerConfig);
-    if (!this.renderingControls.hasStoredSettings() && viewerConfig) {
-      this.renderingControls.applyZarrDefaults();
-    }
-
-    // Update fly speed slider range and value based on scene scale
-    this.renderingControls.updateSceneScale();
-
-    // Initialize UI components that depend on loaded scene data
-    this.inputHandler.initDimensionSliders();
-    this.initScaleBar();
-
-    const sceneLoader = getSceneLoader('default');
-    if (sceneLoader?.sceneGraph && this.layersPanel) {
-      const root = this.sceneManager.scene.children.find((c) => c.name === 'LuxarScene');
-      if (root) {
-        this.layersPanel.initFromScene(root as THREE.Group, sceneLoader.sceneGraph);
-      }
-    }
-
-    // Initialize colormap legend after layers panel (needs layer state)
-    if (this.layersPanel) {
-      this.initColormapLegend();
-    }
-
-    // Initialize overlays (screen-space annotations from zarr)
-    await this.initOverlays();
-
-    // Initialize GPU picking system (if any node has labels)
-    await this.initPicking();
-
-    // Apply zarr viewer_config: UI visibility, theme, dimension state, animation
-    this.applyViewerConfigState(viewerConfig);
-
-    // ?cache-stats: open the data-loading monitor on the Cache tab. The
-    // monitor was created during sceneManager.loadSceneData() above, so
-    // it's safe to look it up via DataMonitorManager now.
-    if (this.options.openCacheStats) {
-      this.openCacheStatsView();
-    }
-
-    // Trigger animation to ensure scene is rendered immediately
-    this.animationController.startAnimation();
+    await loadDatasetImpl(src, {
+      inputHandler: this.inputHandler,
+      renderingControls: this.renderingControls,
+      sceneManager: this.sceneManager,
+      animationController: this.animationController,
+      layersPanel: this.layersPanel,
+      loaderConfig: this.options.loaderConfig,
+      openCacheStats: !!this.options.openCacheStats,
+      disposeOverlays: () => this.disposeOverlays(),
+      initScaleBar: () => this.initScaleBar(),
+      initColormapLegend: () => this.initColormapLegend(),
+      initOverlays: () => this.initOverlays(),
+      initPicking: () => this.initPicking(),
+      applyViewerConfigState: (config) => this.applyViewerConfigState(config),
+      openCacheStatsView: () => this.openCacheStatsView(),
+    });
   }
 
   /**
