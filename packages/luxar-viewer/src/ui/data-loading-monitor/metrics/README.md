@@ -33,9 +33,7 @@ export function calculateRates(params: CalculateRatesParams): void;
 
 ```typescript
 // cache.ts
-export function aggregateCacheMetrics(
-  params: AggregateCacheMetricsParams
-): CacheMetrics;
+export function aggregateCacheMetrics(params: AggregateCacheMetricsParams): CacheMetrics;
 // Returns a fresh CacheMetrics object. Mutates `params.metricsCache`
 // (refreshes the monitor's per-loader snapshots) and reads `params.rates`
 // for the rolling per-second fields.
@@ -91,8 +89,8 @@ without booting the monitor.
 
 ## See Also
 
-- [`../README.md`](../README.md) — when ready: the data-loading
-  monitor package overview.
+- [`../README.md`](../README.md) — data-loading monitor internals
+  overview (orchestrator wiring, event flow, status-badge source).
 - [`../../README.md`](../../README.md) — UI package overview;
   the Data Loading Monitor section describes the surfaced metrics
   in user-facing terms.

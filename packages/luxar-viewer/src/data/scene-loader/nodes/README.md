@@ -16,18 +16,18 @@ and retry-after-failure.
 
 ## Files
 
-| File                            | Role                                                                                                                                                                                                                                                                                                  |
-| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `build-ctx.ts`                  | `NodeBuildCtx` interface — the per-call snapshot the orchestrator passes down to every leaf loader (viewState, factoryDeps, registry, nodeFactory, plus callback closures for attrs composition, view-state derivation, monitor wiring, and per-type commit). Never carries `this`.                  |
-| `build-scene-graph.ts`          | `buildSceneGraph(rootLoc, rootAttrs, store)` — enumerates the store, walks groups breadth-first by path depth, opens each group's attrs, skips the `/overlays` subtree, and eagerly fetches the sibling `colormap_lut` zarr array for any node declaring `colormap: 'custom'`. Returns the `SceneNode` tree. |
-| `enumerate-store.ts`            | `enumerateStore(store)` — thin wrapper around the consolidated-metadata `contents()` method with a single-root fallback for stores that don't expose it.                                                                                                                                              |
-| `initialize-scene-dimensions.ts`| `initializeSceneDimensions(sceneDims)` — validates a scene-level `scene_dimensions` blob through `ViewStateManager`, logs the validation, and returns a fresh `ViewState`. Returns `null` on invalid input so the caller can leave the previous ViewState untouched.                                  |
-| `load-scene-nodes.ts`           | `loadSceneNodes(node, parentThree, parentLoc, ctx)` — recursive walk. For each leaf, dispatches to the matching per-type loader through `loadLeafNode`. For each group, creates a `THREE.Group`, applies its 4x4 transform via `NodeFactory.applyTransform`, and recurses.                            |
-| `load-points-node.ts`           | `loadPointsNode` — initial-load wrapper for a single Points leaf. Builds the loader, registers it, attaches an empty placeholder, derives the per-node view state (with `applyPartialExtendTolerance: true`), fetches points, and commits through `updatePointsGeometry`. Throws `LoaderError` on failure.   |
-| `load-lines-node.ts`            | `loadLinesNode` — mirror of `loadPointsNode` for Lines. Differs in one place: the data fetch uses `applyPartialExtendTolerance: false` because segment bounds already encode non-displayed spatial extent (the override would double-apply during clipping). Commits via `processLinesData` + `commitLinesGeometry`. |
-| `load-gsplats-node.ts`          | `loadGSplatsNode` — mirror of `loadPointsNode` for GSplats. Branches on `n_lods`: multi-LOD nodes (`n_lods > 1`) use the progressive loader (with parent's composed effective attrs so LOD synthetic nodes inherit opacity/intensity); single-LOD nodes use the standard loader. Commits via `processGSplatsData` + `commitGSplatsGeometry`. |
-| `connect-loader-to-monitor.ts`  | `connectLoaderToMonitor(path, loader, monitor)` — duck-type-guarded wiring. Points loaders always implement the full `LoaderMonitor` surface; Lines/GSplats expose it optionally. Checks for the four-method shape (`addEventListener`/`removeEventListener`/`getMetrics`/`getActiveQueries`) before wiring. Null monitor short-circuits. |
-| `load-leaf-error-dispatch.ts`   | `LoaderError` class + `classifyLoaderError(error)` heuristic + `loadLeafNode(load, path)` wrapper. Catches `LoaderError` thrown by a leaf, logs+toasts by kind (Network warns, Decode/Validation/Unexpected error-logs and toasts), returns `null` so the failing leaf doesn't sink the rest of the scene. Re-throws non-LoaderError exceptions. |
+| File                             | Role                                                                                                                                                                                                                                                                                                                                             |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `build-ctx.ts`                   | `NodeBuildCtx` interface — the per-call snapshot the orchestrator passes down to every leaf loader (viewState, factoryDeps, registry, nodeFactory, plus callback closures for attrs composition, view-state derivation, monitor wiring, and per-type commit). Never carries `this`.                                                              |
+| `build-scene-graph.ts`           | `buildSceneGraph(rootLoc, rootAttrs, store)` — enumerates the store, walks groups breadth-first by path depth, opens each group's attrs, skips the `/overlays` subtree, and eagerly fetches the sibling `colormap_lut` zarr array for any node declaring `colormap: 'custom'`. Returns the `SceneNode` tree.                                     |
+| `enumerate-store.ts`             | `enumerateStore(store)` — thin wrapper around the consolidated-metadata `contents()` method with a single-root fallback for stores that don't expose it.                                                                                                                                                                                         |
+| `initialize-scene-dimensions.ts` | `initializeSceneDimensions(sceneDims)` — validates a scene-level `scene_dimensions` blob through `ViewStateManager`, logs the validation, and returns a fresh `ViewState`. Returns `null` on invalid input so the caller can leave the previous ViewState untouched.                                                                             |
+| `load-scene-nodes.ts`            | `loadSceneNodes(node, parentThree, parentLoc, ctx)` — recursive walk. For each leaf, dispatches to the matching per-type loader through `loadLeafNode`. For each group, creates a `THREE.Group`, applies its 4x4 transform via `NodeFactory.applyTransform`, and recurses.                                                                       |
+| `load-points-node.ts`            | `loadPointsNode` — initial-load wrapper for a single Points leaf. Builds the loader, registers it, attaches an empty placeholder, derives the per-node view state (with `applyPartialExtendTolerance: true`), fetches points, and commits through `updatePointsGeometry`. Throws `LoaderError` on failure.                                       |
+| `load-lines-node.ts`             | `loadLinesNode` — mirror of `loadPointsNode` for Lines. Differs in one place: the data fetch uses `applyPartialExtendTolerance: false` because segment bounds already encode non-displayed spatial extent (the override would double-apply during clipping). Commits via `processLinesData` + `commitLinesGeometry`.                             |
+| `load-gsplats-node.ts`           | `loadGSplatsNode` — mirror of `loadPointsNode` for GSplats. Branches on `n_lods`: multi-LOD nodes (`n_lods > 1`) use the progressive loader (with parent's composed effective attrs so LOD synthetic nodes inherit opacity/intensity); single-LOD nodes use the standard loader. Commits via `processGSplatsData` + `commitGSplatsGeometry`.     |
+| `connect-loader-to-monitor.ts`   | `connectLoaderToMonitor(path, loader, monitor)` — duck-type-guarded wiring. Points loaders always implement the full `LoaderMonitor` surface; Lines/GSplats expose it optionally. Checks for the four-method shape (`addEventListener`/`removeEventListener`/`getMetrics`/`getActiveQueries`) before wiring. Null monitor short-circuits.        |
+| `load-leaf-error-dispatch.ts`    | `LoaderError` class + `classifyLoaderError(error)` heuristic + `loadLeafNode(load, path)` wrapper. Catches `LoaderError` thrown by a leaf, logs+toasts by kind (Network warns, Decode/Validation/Unexpected error-logs and toasts), returns `null` so the failing leaf doesn't sink the rest of the scene. Re-throws non-LoaderError exceptions. |
 
 ## Invariants
 
@@ -40,7 +40,7 @@ and retry-after-failure.
   `throw new LoaderError` on error. Filename matches the single
   exported function.
 - **Placeholder before fetch.** Every leaf attaches an empty
-  placeholder mesh *before* the initial data fetch. A transient fetch
+  placeholder mesh _before_ the initial data fetch. A transient fetch
   failure then leaves a findable, retryable THREE node in the scene
   rather than a hole — `retryFailedLoader(path)` can target it, and
   the placeholder's `userData.attrs` is the source of truth the retry
@@ -55,10 +55,11 @@ and retry-after-failure.
   `applyPartialExtendTolerance: true`; Lines passes `false` (segment
   bounds already encode the equivalent extent).
 - **Initial load never skips.** `deriveNodeViewState` may return
-  `skip: true` to mean "leave the existing node alone" — but on
-  initial load we always want to construct the THREE node so future
-  slice changes can populate it. Each leaf handles the skip return by
-  falling back to the orchestrator's base `ctx.viewState`.
+  `{ skip: 'extend_to_all' }` to mean "leave the existing node
+  alone" — but on initial load we always want to construct the
+  THREE node so future slice changes can populate it. Each leaf
+  handles the skip return by falling back to the orchestrator's
+  base `ctx.viewState`.
 - **ViewState snapshot is captured by value.** `NodeBuildCtx` carries
   a snapshot of the orchestrator's viewState at the time
   `loadSceneNodes` is invoked, not a reference. A concurrent

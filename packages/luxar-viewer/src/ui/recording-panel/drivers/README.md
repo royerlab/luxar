@@ -8,12 +8,12 @@ encoding pipeline.
 
 ## Files
 
-| File                        | Role                                                                                  |
-| --------------------------- | ------------------------------------------------------------------------------------- |
-| `offline-capture-driver.ts` | `OfflineCaptureDriver` interface + `CaptureContext` / `CaptureProgress` types         |
-| `video-mode-driver.ts`      | MP4 / WebM / MKV encoder via [mediabunny](https://www.npmjs.com/package/mediabunny)   |
-| `image-sequence-driver.ts`  | PNG / WebP / JPEG per-frame export, streamed into a ZIP                               |
-| `exr-sequence-driver.ts`    | 16-bit half-float OpenEXR per-frame capture from the HDR post-processing buffer       |
+| File                        | Role                                                                                |
+| --------------------------- | ----------------------------------------------------------------------------------- |
+| `offline-capture-driver.ts` | `OfflineCaptureDriver` interface + `CaptureContext` / `CaptureProgress` types       |
+| `video-mode-driver.ts`      | MP4 / WebM / MKV encoder via [mediabunny](https://www.npmjs.com/package/mediabunny) |
+| `image-sequence-driver.ts`  | PNG / WebP / JPEG per-frame export, streamed into a ZIP                             |
+| `exr-sequence-driver.ts`    | 16-bit half-float OpenEXR per-frame capture from the HDR post-processing buffer     |
 
 ## Driver lifecycle
 
@@ -61,21 +61,21 @@ All drivers implement the same four-method contract defined by
 The panel injects all driver dependencies through `CaptureContext`
 so drivers stay decoupled from `RecordingPanel` internals:
 
-| Field                  | Purpose                                                                  |
-| ---------------------- | ------------------------------------------------------------------------ |
-| `sceneManager`         | Access to renderer / postProcessing for pixel readback                   |
-| `fps`                  | Frame rate (drives video timestamps + ffmpeg script)                     |
-| `renderFrameToCanvas`  | Async readback of the live framebuffer into a 2D canvas                  |
-| `generateFilename`     | Build a recording filename for a given extension                         |
-| `generateFfmpegScript` | Build the bundled `encode_video.sh` for ZIP-based modes                  |
-| `downloadBlob`         | Trigger a browser download                                               |
-| `computeVideoBitrate`  | Compute the H.264/H.265/etc. bitrate for the canvas size                 |
-| `showToast`            | Non-blocking toast notification                                          |
-| `logWarning` / `logError` | Pre-tagged module loggers                                             |
-| `imageQuality`         | `[0, 1]` quality for JPEG / WebP (ignored for PNG)                       |
-| `videoCodec`           | User-selected codec preference                                           |
-| `env`                  | Browser-environment shim (so tests can stub `showSaveFilePicker`)        |
-| `signal`               | `AbortSignal` for the session — drivers MAY short-circuit on `aborted`   |
+| Field                     | Purpose                                                                |
+| ------------------------- | ---------------------------------------------------------------------- |
+| `sceneManager`            | Access to renderer / postProcessing for pixel readback                 |
+| `fps`                     | Frame rate (drives video timestamps + ffmpeg script)                   |
+| `renderFrameToCanvas`     | Async readback of the live framebuffer into a 2D canvas                |
+| `generateFilename`        | Build a recording filename for a given extension                       |
+| `generateFfmpegScript`    | Build the bundled `encode_video.sh` for ZIP-based modes                |
+| `downloadBlob`            | Trigger a browser download                                             |
+| `computeVideoBitrate`     | Compute the H.264/H.265/etc. bitrate for the canvas size               |
+| `showToast`               | Non-blocking toast notification                                        |
+| `logWarning` / `logError` | Pre-tagged module loggers                                              |
+| `imageQuality`            | `[0, 1]` quality for JPEG / WebP (ignored for PNG)                     |
+| `videoCodec`              | User-selected codec preference                                         |
+| `env`                     | Browser-environment shim (so tests can stub `showSaveFilePicker`)      |
+| `signal`                  | `AbortSignal` for the session — drivers MAY short-circuit on `aborted` |
 
 `CaptureProgress` exposes two UI hooks: `setLabel(text)` to update
 the overlay status (e.g. "Packaging ZIP...") and `setPreview(canvas)`

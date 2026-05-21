@@ -9,13 +9,15 @@ Keyboard binding table split per context.
   Includes the `blur` + `visibilitychange` listeners that reset the
   counter when the page loses focus.
 - `navigation-bindings.ts` — every NAVIGATION-context application binding
-  (orbit-mode UI shortcuts: H, P, R, V, F, C, B, L, M, N, O, T, G, [, ],
+  (orbit-mode UI shortcuts: H, P, R, V, I, F, C, B, L, M, N, O, T, G, [, ],
   digit keys, Space, Escape, Ctrl+L, Ctrl+Shift+S).
-- `fly-bindings.ts` — FLY_CONTROLS-context fly-mode bindings (WASD ×
-  modifier combinations, arrow look keys, Shift speed-boost).
+- `fly-bindings.ts` — FLY_CONTROLS-context fly-mode bindings (W/A/S/D/Q/E ×
+  modifier combinations, arrow look keys ± Shift, Shift speed-boost).
 - `animation-shortcuts.ts` — `AnimationShortcuts` class for K / Home /
   End / Shift+↑ / Shift+↓ (registered on NAVIGATION context after the
-  animation manager is constructed).
+  animation manager is constructed; not wired by `registerAllKeyBindings`).
 
-The split is structural — every binding is registered through
-`InputHandler` at startup via `registerAllKeyBindings`.
+The split is structural — `registerAllKeyBindings` wires the FOV
+hold gate, the navigation bindings, and the fly bindings at startup;
+`AnimationShortcuts.register()` is called separately from the
+`InputHandler` once the animation manager exists.

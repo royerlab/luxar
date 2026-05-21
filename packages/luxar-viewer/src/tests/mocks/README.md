@@ -43,6 +43,7 @@ mocks/
    every symbol the production code reaches for (math classes,
    geometries, materials, the `WebGLRenderer`, constants), most tests
    need no per-test plumbing beyond the `vi.mock` line.
+
 3. `orbit-controls.mock.ts` is re-exported by name from `index.ts`
    (`export { OrbitControls } from './orbit-controls.mock'`) so it can
    be supplied alongside `three.mock.ts` when stubbing
@@ -79,13 +80,13 @@ so any `canvas.getContext('webgl' | 'webgl2')` returns a fresh
 
 Five small installers, one aggregator:
 
-| Installer | Globals patched |
-|---|---|
-| `installMatchMediaMock` | `window.matchMedia` (returns `matches: false`, suitable for HDR/P3 negative paths) |
-| `installResizeObserverMock` | `ResizeObserver` |
-| `installIntersectionObserverMock` | `IntersectionObserver` |
-| `installAnimationFrameMock` | `requestAnimationFrame`, `cancelAnimationFrame`, plus a `__clearAllAnimationFrames` helper |
-| `installPerformanceMock` | `performance.now` (delegates to `Date.now`) |
+| Installer                         | Globals patched                                                                            |
+| --------------------------------- | ------------------------------------------------------------------------------------------ |
+| `installMatchMediaMock`           | `window.matchMedia` (returns `matches: false`, suitable for HDR/P3 negative paths)         |
+| `installResizeObserverMock`       | `ResizeObserver`                                                                           |
+| `installIntersectionObserverMock` | `IntersectionObserver`                                                                     |
+| `installAnimationFrameMock`       | `requestAnimationFrame`, `cancelAnimationFrame`, plus a `__clearAllAnimationFrames` helper |
+| `installPerformanceMock`          | `performance.now` (delegates to `Date.now`)                                                |
 
 `installAllBrowserMocks()` runs them all.
 

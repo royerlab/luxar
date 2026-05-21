@@ -100,4 +100,5 @@ These files are activated by the `ThemeManager` when the corresponding theme is 
 
 - [base/](./base/README.md) — Layout primitives, typography, utility classes
 - [components/](./components/README.md) — Per-UI-surface component styles
-- [themes/](./themes/README.md) — Named theme overrides
+- [themes/](./themes/) — Named theme overrides (`frosted-glass.css`, `liquid-glass.css`)
+- [`../themes/`](../themes/README.md) — `ThemeManager` and the `--luxar-*` custom properties consumed by every file here

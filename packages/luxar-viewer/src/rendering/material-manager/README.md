@@ -15,12 +15,12 @@ renderer and keeps `material-manager.ts` focused on orchestration.
 
 ## Module map
 
-| File            | Role                                                                                                                                                                                                                                                                                       |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `factories.ts`  | `VISUAL_FACTORIES`, `PICKING_FACTORIES`, `MEGA_SHADER_FACTORIES` constructor tables keyed by `kind` × `backend`; `resolveMaterialBackend(caps)` (caps.apiSurface → `'glsl' \| 'tsl'`); `pointCacheKey` / `lineCacheKey` / `gsplatCacheKey` with shared integer bucketing; `BlendingMode` type. |
-| `lru-cache.ts`  | Generic `lruGet` / `lruSet` over `Map<string, T>`. `Map` insertion order is the LRU order; hits are promoted by delete + re-insert, misses evict from the front until `maxSize` and fire `onEvict(key, value)` so the caller can dispose the resource.                                       |
-| `lifecycle.ts`  | `subscribeToDispose` wires a `'dispose'` listener that removes the material from every registry and from its kind-matched cache; `removeFromRegistries` is the same teardown reachable from `MaterialManager.unregister`; `SOFT_DISPOSE_FLAG` is the opt-out sentinel.                       |
-| `stats.ts`      | `getCacheStats(ctx)` — diagnostic snapshot (per-cache sizes, total registered, eviction count, cumulative `new XMaterial()` wall-clock, configured `maxSize`, and the list of cache keys).                                                                                                   |
+| File           | Role                                                                                                                                                                                                                                                                                           |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `factories.ts` | `VISUAL_FACTORIES`, `PICKING_FACTORIES`, `MEGA_SHADER_FACTORIES` constructor tables keyed by `kind` × `backend`; `resolveMaterialBackend(caps)` (caps.apiSurface → `'glsl' \| 'tsl'`); `pointCacheKey` / `lineCacheKey` / `gsplatCacheKey` with shared integer bucketing; `BlendingMode` type. |
+| `lru-cache.ts` | Generic `lruGet` / `lruSet` over `Map<string, T>`. `Map` insertion order is the LRU order; hits are promoted by delete + re-insert, misses evict from the front until `maxSize` and fire `onEvict(key, value)` so the caller can dispose the resource.                                         |
+| `lifecycle.ts` | `subscribeToDispose` wires a `'dispose'` listener that removes the material from every registry and from its kind-matched cache; `removeFromRegistries` is the same teardown reachable from `MaterialManager.unregister`; `SOFT_DISPOSE_FLAG` is the opt-out sentinel.                         |
+| `stats.ts`     | `getCacheStats(ctx)` — diagnostic snapshot (per-cache sizes, total registered, eviction count, cumulative `new XMaterial()` wall-clock, configured `maxSize`, and the list of cache keys).                                                                                                     |
 
 ## How the orchestrator composes them
 
@@ -66,8 +66,8 @@ MaterialManager (class)
   `Symbol.for('luxar.invalidateRenderObject.softDispose')` set
   transiently on a material when the caller dispatches `'dispose'`
   purely to evict Three's cached `RenderObject` — used by
-  `data/scene-loader/invalidate-render-object.ts` after the GPU buffer
-  pool rebuilds a geometry's underlying `InstancedInterleavedBuffer`.
+  `data/scene-loader/commit/invalidate-render-object.ts` after the GPU
+  buffer pool rebuilds a geometry's underlying `InstancedInterleavedBuffer`.
   `subscribeToDispose`'s listener checks the flag and skips registry /
   cache cleanup so the material continues to receive camera updates and
   stays in its allocation cache. The flag is symbol-keyed so it can't

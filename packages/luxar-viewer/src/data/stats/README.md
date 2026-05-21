@@ -12,9 +12,9 @@ maps without spinning up WebGL or a zarr store.
 
 ## Files
 
-| File             | Role                                                                                                                                                                                                                                                                                  |
-| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `scene-stats.ts` | Pure scene-graph traversal: `computeSceneStats(scene)` walks the THREE object tree once and returns counts of points/gsplats meshes, total instance counts, and how many of those nodes carry a spatial index. Returns `null` for scenes whose `traverse` is not a function (mocks).   |
+| File             | Role                                                                                                                                                                                                                                                                                          |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `scene-stats.ts` | Pure scene-graph traversal: `computeSceneStats(scene)` walks the THREE object tree once and returns counts of points/gsplats meshes, total instance counts, and how many of those nodes carry a spatial index. Returns `null` for scenes whose `traverse` is not a function (mocks).          |
 | `aggregator.ts`  | Sums `AccumulatorStats` across a `Map<path, loader>` of spatial-index loaders. One per-geometry public wrapper (`getAggregatedPointsAccumulatorStats`, `...Lines...`, `...GSplats...`) calls a shared private `aggregateStats` over any iterable of loaders exposing `getAccumulatorStats()`. |
 
 ## Public surface
@@ -28,9 +28,7 @@ export interface SceneStats {
   totalGSplats: number;
   spatialIndexed: number;
 }
-export function computeSceneStats(
-  scene: THREE.Object3D | null | undefined
-): SceneStats | null;
+export function computeSceneStats(scene: THREE.Object3D | null | undefined): SceneStats | null;
 
 // aggregator.ts — one wrapper per geometry kind, all returning AccumulatorStats
 export function getAggregatedPointsAccumulatorStats(

@@ -6,20 +6,22 @@ to the Points node type.
 
 ## Files
 
-| File                             | Role                                                                                                                                                                                                                                                                               |
-| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `points-spatial-index-loader.ts` | Spatial-index loader for Points: queries the chunk-bounds index, fetches encoded ranges through `RangeLoader`, and emits a `LoadedPointsData` payload. Owns the per-loader `DataAccumulator` for the zero-allocation hot path.                                                     |
-| `projection.ts`                  | nD→3D projection: extracts displayed coordinates, computes effective radii, filters by visibility, and writes through `targetBuffers` when present. Mirrors the WASM kernel (`workers/data-worker.ts::projectPointsTo3D`) so the main-thread fallback stays numerically identical. |
-| `effective-radius-calculator.ts` | Points-only nD effective-radius computation. Combines `maxRadius` with per-dimension extend offsets and hidden-axis distances. Lines and GSplats don't need this — segment bounds and Cholesky factors carry the equivalent info inline.                                           |
-| `chunk-index-loader.ts`          | Loads the Points chunk-bounds index from zarr metadata; exposes `registerPointsArrayBounds` as a per-type wrapper around `ChunkPrefetcher.registerArrayBounds`.                                                                                                                    |
+| File                             | Role                                                                                                                                                                                                                                                                                                                                                      |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `points-spatial-index-loader.ts` | Spatial-index loader for Points: queries the chunk-bounds index, fetches encoded ranges through `RangeLoader`, and emits a `LoadedPointsData` payload. Owns the per-loader `DataAccumulator` for the zero-allocation hot path.                                                                                                                            |
+| `projection.ts`                  | nD→3D projection: extracts displayed coordinates, computes effective radii, filters by visibility, and writes through `targetBuffers` when present. Mirrors the WASM kernel (`workers/data-worker.ts::projectPointsTo3D`) so the main-thread fallback stays numerically identical.                                                                        |
+| `effective-radius-calculator.ts` | Points-only nD effective-radius computation. Combines `maxRadius` with per-dimension extend offsets and hidden-axis distances. Lines and GSplats don't need this — segment bounds and Cholesky factors carry the equivalent info inline.                                                                                                                  |
+| `chunk-index-loader.ts`          | Loads the Points chunk-bounds index from zarr metadata; exposes `registerPointsArrayBounds` as a per-type wrapper around `ChunkPrefetcher.registerArrayBounds`.                                                                                                                                                                                           |
 | `handler.ts`                     | Per-type wiring for the scene-loader's load + stage phase. Exports `loadAndStage` (skip → `loader.updateView` → failure-clear → metadata → predictive-prefetch dispatch), plus `kind`/`label` constants and the `StagedPointsCommit` / `PointsHandlerCtx` shapes. Lines and GSplats mirror this shape so all first-class geometry kinds stay symmetrical. |
 
 ## Public surface
 
-`PointsSpatialIndexLoader` implements the same `SpatialIndexLoader`
-contract as Lines / GSplats (constructor, `loadForView`,
-`prefetchChunks`, `dispose`, monitor events). Scene-loader code never
-imports the concrete class — it goes through `loader-factory.ts`.
+`PointsSpatialIndexLoader` implements the `DataLoader` contract —
+same shape as the Lines and GSplats facades (constructor, `loadPoints`,
+`updateView`, `prefetchChunks`, `dispose`, monitor events via
+`addEventListener` / `getMetrics` / `getActiveQueries`). Scene-loader
+code never imports the concrete class — it goes through
+`loader-factory.ts`.
 
 `projectPointsTo3D` is also exported from `projection.ts` for direct
 main-thread use (worker-disabled environments, unit tests).
@@ -39,12 +41,11 @@ main-thread use (worker-disabled environments, unit tests).
   allocation. The accumulator preserves Uint8/Uint16 dtypes natively
   for colors/radii/sharpness so a Uint8 zarr array round-trips
   without intermediate Float32 widening.
-- **Dtype-aware scale propagation.** `radiusScale` /
-  `sharpnessScale` / `scalarScale` live on
-  `geometry.userData` and are propagated to the material's uniforms
-  via `syncPointMaterialWithGeometry` (the only one of the three
-  material-sync helpers — Lines and GSplats don't have dtype-tagged
-  scalar attributes).
+- **Dtype-aware scale propagation.** `radiusScale` and
+  `sharpnessScale` live on `geometry.userData` and are propagated to
+  the material's uniforms via `syncPointMaterialWithGeometry` (the
+  only one of the three material-sync helpers — Lines and GSplats
+  don't have dtype-tagged scalar attributes).
 - **`MAX_SUPPORTED_DIMS = 16`** from `src/config/constants.ts` bounds
   the WASM stack-array sizes; the TypeScript fallback in
   `wasm/typescript/effective-radii.ts` mirrors this.

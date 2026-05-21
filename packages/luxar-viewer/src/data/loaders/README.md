@@ -281,17 +281,55 @@ accumulator.adopt(result.outputBuffers);
 - Enables BOTH accumulator pattern AND worker CPU offload
 - Buffers cycle between main thread and worker without copying
 
-### (Future) Unified Base Class
+### Other shared helpers
 
-All loaders extend base class:
+Beyond the three top-level abstractions above, this folder also holds the
+narrowly-scoped helpers each spatial-index loader composes:
 
-```typescript
-class PointSpatialIndexLoader extends BaseSpatialLoader<PointsViewState, LoadedPointsData> {
-  protected async projectTo3D(raw, viewState): Promise<LoadedPointsData> {
-    // Type-specific projection
-  }
-}
-```
+- **`chunk-bounds-loader.ts`** — `fetchChunkBoundsArray(location, arrayName,
+logModule, notFoundMessage)`: open a `chunk_bounds` / `vertex_chunk_bounds`
+  / `segment_chunk_bounds` zarr array and return `{ data: Float32Array,
+shape }`. Soft-falls-back to `null` on 404 / Not Found (datasets without
+  spatial ordering legitimately omit the array) and on corrupt-zarr / network
+  errors after a warning.
+- **`color-attribute-utils.ts`** — shared color-range loader with native-dtype
+  preservation. Exports `loadColorRanges()` (end-to-end load with direct /
+  `rgb_uint8` shortcut / encoded-then-restored branches), `allocateColorBuffer`,
+  `restoreOriginalDtype`, `getExpectedColorType`, `colorBufferTypeMatches`,
+  `loadDirectColorRanges`, and the `ColorBuffer` / `ColorBufferKind` /
+  `ColorRange` types.
+- **`extend-to-all-preflight.ts`** — `warnExtendToAllNoDimensions` (warns when
+  `extend_to_all` is set but the view state has no resolved dimensions) +
+  `announceExtendToAllOnce` (one-shot BROADCAST emoji log on first load).
+  Splitting into two functions matches the existing call structure of the
+  loaders (warning → chunkIndex early-return → broadcast).
+- **`image-label-loader.ts`** — `ImageLabelLoader`: lazy per-element image
+  fetching from `image_label_offsets` + `image_label_bytes` arrays. Bulk-loads
+  the offsets table (small), then fetches each image's byte range on demand.
+  Decoded blobs are cached as blob URLs in a 50 MB-default LRU; eviction
+  revokes the URL. Detects JPEG / PNG / WebP from magic bytes.
+- **`label-loader.ts`** — `LabelLoader`: lazy CSR-style string-label fetching
+  from `label_offsets` + `label_bytes`. Bulk-loads the whole node's labels on
+  first hover; concurrent requests for the same node share one in-flight
+  promise.
+- **`overlay-loader.ts`** — `loadOverlayConfigs(store, rootLoc)`: enumerates
+  the `overlays/` group and parses each child's `.zattrs` into an
+  `OverlayConfig` (text / image / html, with per-type fields). Results are
+  z-index-sorted; missing `overlays/` group returns `[]` silently.
+- **`loader-metrics.ts`** — `recordLoadEvent(counters, points, bytes,
+loadTime)` (rolling-mean update of `loads` / `pointsLoaded` / `bytesLoaded`
+  / `avgLoadTime`) + `computeLoadLatency(startMs, nowMs?)` (latency, 0 when
+  start is undefined / 0). Pure helpers, unit-tested without a zarr store.
+  Used by all three geometry facades; the `pointsLoaded` field name is kept
+  for compatibility with the monitor UI, but records vertex / splat
+  throughput for lines / gsplats.
+- **`monitor-events.ts`** — `LoaderEventEmitter`: owns the listener `Set` for
+  a `LoaderMonitor` implementation. Per-listener try/catch isolates one bad
+  listener from the rest; `clear()` is called on dispose.
+- **`once-init.ts`** — `OnceInit.ensure(initFn)`: concurrent callers await a
+  shared in-flight promise; a rejected init clears the cache so the next call
+  can retry from scratch. Centralizes the pattern previously duplicated four
+  times across the three loaders.
 
 ## File Structure
 
@@ -376,4 +414,3 @@ pnpm test src/tests/unit/data/loaders/transferable-accumulator.test.ts
 
 - [../array-decoder/](../array-decoder/) — low-level encoding metadata and decoders consumed by `range-loader.ts`.
 - [../../workers/README.md](../../workers/README.md) — worker pool API and the `runWithTimeout()` contract referenced above.
-

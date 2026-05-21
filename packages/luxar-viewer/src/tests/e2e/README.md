@@ -71,9 +71,9 @@ The fixture merges two signal sources before failing:
 Both flows are filtered against `DEFAULT_ALLOWED_CONSOLE_ERRORS`,
 which is intentionally narrow:
 
-| Pattern | Why allowed |
-|---------|-------------|
-| `/WebGL context lost/` | Headless Chromium occasionally drops the context under GPU pressure; the viewer recovers. Real context-loss bugs surface as black-canvas or frame-count divergences caught by the spec body. |
+| Pattern                                                                                               | Why allowed                                                                                                                                                                                                                                              |
+| ----------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/WebGL context lost/`                                                                                | Headless Chromium occasionally drops the context under GPU pressure; the viewer recovers. Real context-loss bugs surface as black-canvas or frame-count divergences caught by the spec body.                                                             |
 | `Failed to load resource: …status of 4xx/501` (default; off when `LUXAR_E2E_STRICT_CONSOLE=1` is set) | The zarr loader probes optional resources during normal scene loading (`.zattrs` / `.zgroup` / `zarr.json` detection chain, optional overlays, fallback PROPFIND for directory listing). Each miss is a benign 404/501 the loader's `try/catch` handles. |
 
 Specs that **intentionally** trigger console errors (e.g.
@@ -105,69 +105,69 @@ exports group into the categories below.
 
 ### Lifecycle and readiness
 
-| Helper | Use when |
-|--------|----------|
-| `waitForLuxarReady` | Wait for `window.__luxarDebug.getState().initialized` (45 s default). The first thing nearly every spec calls. |
-| `waitForDebugInterfaceReady` | Lighter check that just asserts `window.__luxarDebug` is present. |
-| `waitForConsoleInterceptor` | Wait for the viewer's debug-console interceptor to install before reading captured logs. |
-| `waitForDataLoaded` | Wait for at least one geometry to have committed data. |
-| `waitForPointsLoaded(page, minPoints)` | Wait until `getState().totalPoints >= minPoints`. |
+| Helper                                 | Use when                                                                                                       |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `waitForLuxarReady`                    | Wait for `window.__luxarDebug.getState().initialized` (45 s default). The first thing nearly every spec calls. |
+| `waitForDebugInterfaceReady`           | Lighter check that just asserts `window.__luxarDebug` is present.                                              |
+| `waitForConsoleInterceptor`            | Wait for the viewer's debug-console interceptor to install before reading captured logs.                       |
+| `waitForDataLoaded`                    | Wait for at least one geometry to have committed data.                                                         |
+| `waitForPointsLoaded(page, minPoints)` | Wait until `getState().totalPoints >= minPoints`.                                                              |
 
 ### Render / animation pacing
 
-| Helper | Use when |
-|--------|----------|
-| `renderOnce` | Trigger a single deterministic frame and wait one paint cycle — used before screenshots. |
-| `waitForNextRender(page, frames)` | Yield until N animation frames have passed. |
-| `waitForRenderStable` | Wait until per-frame render counters stop changing (FPS-style settled detection). |
-| `waitForAnimationStep` | Wait for the animation manager to advance one logical step. |
+| Helper                            | Use when                                                                                 |
+| --------------------------------- | ---------------------------------------------------------------------------------------- |
+| `renderOnce`                      | Trigger a single deterministic frame and wait one paint cycle — used before screenshots. |
+| `waitForNextRender(page, frames)` | Yield until N animation frames have passed.                                              |
+| `waitForRenderStable`             | Wait until per-frame render counters stop changing (FPS-style settled detection).        |
+| `waitForAnimationStep`            | Wait for the animation manager to advance one logical step.                              |
 
 ### nD / dimension navigation
 
-| Helper | Use when |
-|--------|----------|
-| `waitForDimensionSystemReady` | Wait for the scene dimensions manager to expose its API. |
-| `waitForDimensionSelected(page, index)` | Wait until a specific dimension is the active one. |
-| `waitForDimensionNavigation` | Wait for a dimension-change to commit (debounce-aware). |
+| Helper                                                           | Use when                                                                                     |
+| ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `waitForDimensionSystemReady`                                    | Wait for the scene dimensions manager to expose its API.                                     |
+| `waitForDimensionSelected(page, index)`                          | Wait until a specific dimension is the active one.                                           |
+| `waitForDimensionNavigation`                                     | Wait for a dimension-change to commit (debounce-aware).                                      |
 | `waitForNavigationComplete` / `waitForNavigationCompleteOrThrow` | Wait for queued navigation events to drain; the `OrThrow` variant fails the test on timeout. |
-| `waitForSpatialQuery` / `waitForSpatialQueryOrThrow` | Wait for the spatial-index query that drives nD slicing. |
+| `waitForSpatialQuery` / `waitForSpatialQueryOrThrow`             | Wait for the spatial-index query that drives nD slicing.                                     |
 
 ### Console and error assertions
 
-| Helper | Use when |
-|--------|----------|
-| `captureConsoleMessages(page)` | Attach a synchronous capture object that accumulates `errors` / `warnings` / `logs`. |
-| `getConsoleMessages(page)` | Read the viewer's debug interceptor (formatted, captured in-app). |
-| `assertConsoleContains(page, pattern)` / `assertConsoleDoesNotContain` | Positive / negative assertion on the captured stream. |
-| `assertNoConsoleErrors(page, allow)` | Strict no-error gate against an allow-list — called automatically by the [shared fixture](#shared-fixture-fixturests), and explicitly by specs that want a tighter gate mid-test. |
-| `assertNoShaderErrors(page)` | Read the debug renderer for shader-compile / link failures specifically. |
-| `getWebGLErrors(page)` | Drain accumulated WebGL errors from the renderer. |
-| `waitForWebGLError(page, pattern)` | Block until a matching WebGL error appears (used by `webgl-errors.spec.ts`). |
+| Helper                                                                 | Use when                                                                                                                                                                          |
+| ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `captureConsoleMessages(page)`                                         | Attach a synchronous capture object that accumulates `errors` / `warnings` / `logs`.                                                                                              |
+| `getConsoleMessages(page)`                                             | Read the viewer's debug interceptor (formatted, captured in-app).                                                                                                                 |
+| `assertConsoleContains(page, pattern)` / `assertConsoleDoesNotContain` | Positive / negative assertion on the captured stream.                                                                                                                             |
+| `assertNoConsoleErrors(page, allow)`                                   | Strict no-error gate against an allow-list — called automatically by the [shared fixture](#shared-fixture-fixturests), and explicitly by specs that want a tighter gate mid-test. |
+| `assertNoShaderErrors(page)`                                           | Read the debug renderer for shader-compile / link failures specifically.                                                                                                          |
+| `getWebGLErrors(page)`                                                 | Drain accumulated WebGL errors from the renderer.                                                                                                                                 |
+| `waitForWebGLError(page, pattern)`                                     | Block until a matching WebGL error appears (used by `webgl-errors.spec.ts`).                                                                                                      |
 
 ### Cache, UI, and input
 
-| Helper | Use when |
-|--------|----------|
-| `waitForCacheStable` | Wait for in-flight prefetch / write-through traffic to drain. |
-| `waitForUIState(page, predicate)` | Generic wait that polls a UI-state predicate. |
-| `dismissDatasetBrowser(page)` | Close the first-time-UX picker so the spec can drive a known dataset. |
-| `focusCanvas(page)` | Move keyboard focus onto the canvas (required before `1-9` / `[]` navigation). |
-| `openLayersPanel(page)` | Open the Layers UI from a known closed state. |
-| `ctrlScroll` / `shiftScroll` | Synthetic modifier-scroll events (used by zoom / depth tests). |
-| `getInputHandler` / `getAnimationManager` / `getSceneDimsManager` | Pull singleton managers off the debug interface for direct inspection. |
+| Helper                                                            | Use when                                                                       |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `waitForCacheStable`                                              | Wait for in-flight prefetch / write-through traffic to drain.                  |
+| `waitForUIState(page, predicate)`                                 | Generic wait that polls a UI-state predicate.                                  |
+| `dismissDatasetBrowser(page)`                                     | Close the first-time-UX picker so the spec can drive a known dataset.          |
+| `focusCanvas(page)`                                               | Move keyboard focus onto the canvas (required before `1-9` / `[]` navigation). |
+| `openLayersPanel(page)`                                           | Open the Layers UI from a known closed state.                                  |
+| `ctrlScroll` / `shiftScroll`                                      | Synthetic modifier-scroll events (used by zoom / depth tests).                 |
+| `getInputHandler` / `getAnimationManager` / `getSceneDimsManager` | Pull singleton managers off the debug interface for direct inspection.         |
 
 ### Scene introspection and pixel sampling
 
-| Helper | Use when |
-|--------|----------|
-| `getLuxarState(page)` | Read `__luxarDebug.getState()` with a clear error if the interface isn't ready. |
-| `getSceneObjectNames(page)` | Flat list of every named object in the scene graph. |
-| `getLayerMaterialState(page, layer)` | Inspect uniforms / blending / depth state of a specific layer's material. |
-| `getPostProcessingState(page)` | Read the post-processing pipeline state (tone mapping mode, bloom, exposure). |
-| `validateSceneAttributes(page)` | Audit every geometry's attribute buffers against the format spec. |
-| `SampledPixel`, `ElementPixelStats` | Types returned by the pixel-sampling helpers. |
-| `samplePixelAt(page, x, y)` / `samplePixelsAt` | Read one or many canvas pixels via `gl.readPixels`. |
-| `getElementPixelStats(page, ...)` | Pixel-statistics rollup used by visual-regression-adjacent specs. |
+| Helper                                         | Use when                                                                        |
+| ---------------------------------------------- | ------------------------------------------------------------------------------- |
+| `getLuxarState(page)`                          | Read `__luxarDebug.getState()` with a clear error if the interface isn't ready. |
+| `getSceneObjectNames(page)`                    | Flat list of every named object in the scene graph.                             |
+| `getLayerMaterialState(page, layer)`           | Inspect uniforms / blending / depth state of a specific layer's material.       |
+| `getPostProcessingState(page)`                 | Read the post-processing pipeline state (tone mapping mode, bloom, exposure).   |
+| `validateSceneAttributes(page)`                | Audit every geometry's attribute buffers against the format spec.               |
+| `SampledPixel`, `ElementPixelStats`            | Types returned by the pixel-sampling helpers.                                   |
+| `samplePixelAt(page, x, y)` / `samplePixelsAt` | Read one or many canvas pixels via `gl.readPixels`.                             |
+| `getElementPixelStats(page, ...)`              | Pixel-statistics rollup used by visual-regression-adjacent specs.               |
 
 ### Pattern for a new helper
 
