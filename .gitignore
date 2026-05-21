@@ -136,6 +136,7 @@ sdist/
 *.so
 *.spec
 stats/project_stats.html
+stats/project_stats.json
 *.swo
 *.swp
 target/

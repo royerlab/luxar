@@ -492,6 +492,7 @@ See [`docs/tutorials/distributing_scenes.rst`](docs/tutorials/distributing_scene
 | [HDR Guide](docs/guides/user/HDR_GUIDE.md) | HDR color workflow |
 | [Gaussian Splatting](packages/luxar/src/luxar/gsplats/README.md) | n-Dimensional Gaussian fitting |
 | [Build System](docs/guides/developer/BUILD_SYSTEM_SPEC.md) | Development environment setup |
+| [Project Statistics](stats/PROJECT_STATS.md) | Codebase size, language mix, test coverage, git activity (see [`project_stats.html`](stats/project_stats.html) for the styled report) |
 | [Contributing](CONTRIBUTING.md) | How to contribute |
 
 ---

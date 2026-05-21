@@ -10,22 +10,27 @@ Generate the statistics report:
 make stats
 ```
 
-Or run directly:
+Or run directly (with options):
 
 ```bash
-python3 stats/generate_stats.py
+hatch run python stats/generate_stats.py                 # full report with tests
+hatch run python stats/generate_stats.py --no-tests      # fast, file counts only
+hatch run python stats/generate_stats.py --no-coverage   # run tests, skip coverage
+hatch run python stats/generate_stats.py --json          # also emit project_stats.json
 ```
 
 Then view the report:
 
 ```bash
-open stats/project_stats.html
+open stats/project_stats.html      # styled, browser-rendered
+cat stats/PROJECT_STATS.md         # GitHub-friendly markdown summary
 ```
 
 ## Files
 
-- **`generate_stats.py`** - Python script that analyzes the codebase and generates statistics
-- **`project_stats.html`** - Generated HTML report with comprehensive project statistics
+- **`generate_stats.py`** — Python script that analyzes the codebase and renders the reports
+- **`project_stats.html`** — Generated HTML report with comprehensive project statistics
+- **`PROJECT_STATS.md`** — GitHub-friendly markdown summary linked from the main README
 
 ## What's Analyzed
 
