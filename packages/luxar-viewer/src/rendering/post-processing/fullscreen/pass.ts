@@ -28,8 +28,8 @@
 
 import * as THREE from 'three';
 
-import { createFullscreenTriangleGeometry } from './fullscreen-geometry';
-import type { Renderer, RendererCapabilities } from '../renderer-capabilities';
+import { createFullscreenTriangleGeometry } from './geometry';
+import type { Renderer, RendererCapabilities } from '../../renderer-capabilities';
 
 /**
  * A scene+camera+mesh triple wrapping a fullscreen-triangle render.

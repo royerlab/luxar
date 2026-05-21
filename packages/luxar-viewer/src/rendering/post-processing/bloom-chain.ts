@@ -26,7 +26,7 @@ import {
   BLOOM_UPSAMPLE_SOURCE,
 } from './bloom-shaders';
 import { buildMaterial } from '../materials/_shared/material-builder';
-import { FullscreenPass } from './fullscreen-pass';
+import { FullscreenPass } from './fullscreen/pass';
 import type { Renderer, RendererCapabilities } from '../renderer-capabilities';
 
 export interface BloomChainConfig {
