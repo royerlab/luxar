@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { OnceInit } from '../../../../data/loaders/once-init';
+import { OnceInit } from '../../../../data/loaders';
 
 describe('OnceInit', () => {
   it('reports isInitialized=false until ensure() is called', () => {

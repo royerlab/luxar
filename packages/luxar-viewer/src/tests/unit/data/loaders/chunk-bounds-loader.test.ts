@@ -15,7 +15,7 @@ vi.mock('zarrita', async () => {
 });
 
 import { open as zarrOpen, get as zarrGet } from 'zarrita';
-import { fetchChunkBoundsArray } from '../../../../data/loaders/chunk-bounds-loader';
+import { fetchChunkBoundsArray } from '../../../../data/loaders';
 import { log, Modules } from '../../../../utils/log';
 
 const mockOpen = vi.mocked(zarrOpen);

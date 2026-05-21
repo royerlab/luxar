@@ -7,7 +7,7 @@ import {
   computeLoadLatency,
   recordLoadEvent,
   type LoaderMetricsCounters,
-} from '../../../../data/loaders/loader-metrics';
+} from '../../../../data/loaders';
 
 function makeCounters(): LoaderMetricsCounters {
   return { loads: 0, pointsLoaded: 0, bytesLoaded: 0, avgLoadTime: 0 };

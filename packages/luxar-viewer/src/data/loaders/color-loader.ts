@@ -22,7 +22,7 @@
 import * as zarr from '../zarr';
 import { get, slice } from '../zarr';
 import { ArrayDecoder, type ArrayMetadata } from '../array-decoder/decoder';
-import type { RangeLoader } from './range-loader';
+import type { RangeLoader } from './spatial-query/range-loader';
 import type { LoadRange } from './base-types';
 import { clamp } from '../../utils/clamp';
 

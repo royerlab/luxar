@@ -20,7 +20,7 @@ vi.mock('zarrita', () => ({
 }));
 
 import * as zarr from 'zarrita';
-import { ImageLabelLoader } from '../../../data/loaders/image-label-loader';
+import { ImageLabelLoader } from '../../../../../data/loaders';
 
 // Helper: create a BigUint64Array of offsets
 function makeOffsets(sizes: number[]): BigUint64Array {

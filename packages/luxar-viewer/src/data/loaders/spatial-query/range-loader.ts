@@ -13,13 +13,13 @@
  * @module data/loaders/range-loader
  */
 
-import * as zarr from '../zarr';
-import { get, slice } from '../zarr';
-import { log, Modules } from '../../utils/log';
-import { config as appConfig } from '../../config';
-import { getWorkerPool } from '../../workers/worker-pool';
-import { ArrayDecoder, ArrayRefRegistry, type ArrayMetadata } from '../array-decoder/decoder';
-import type { LoadRange } from './base-types';
+import * as zarr from '../../zarr';
+import { get, slice } from '../../zarr';
+import { log, Modules } from '../../../utils/log';
+import { config as appConfig } from '../../../config';
+import { getWorkerPool } from '../../../workers/worker-pool';
+import { ArrayDecoder, ArrayRefRegistry, type ArrayMetadata } from '../../array-decoder/decoder';
+import type { LoadRange } from '../base-types';
 
 export type { LoadRange };
 

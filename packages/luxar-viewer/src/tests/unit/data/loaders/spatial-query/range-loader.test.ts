@@ -14,22 +14,22 @@
  */
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import type { ArrayMetadata } from '../../../data/array-decoder/decoder';
-import { ArrayRefRegistry } from '../../../data/array-decoder/decoder';
+import type { ArrayMetadata } from '../../../../../data/array-decoder/decoder';
+import { ArrayRefRegistry } from '../../../../../data/array-decoder/decoder';
 import {
   RangeLoader,
   getSharedRangeLoader,
   getSharedRefRegistry,
   resetSharedRangeLoader,
-} from '../../../data/loaders/range-loader';
-import type { LoadRange } from '../../../data/loaders/range-loader';
+  type LoadRange,
+} from '../../../../../data/loaders';
 
 // ---------------------------------------------------------------------------
 // Mock zarr I/O and worker infrastructure (external dependencies only)
 // ---------------------------------------------------------------------------
 
 // Mock the config to disable workers (test main-thread paths)
-vi.mock('../../../config', () => ({
+vi.mock('../../../../../config', () => ({
   config: {
     dataLoading: {
       performance: {
@@ -40,7 +40,7 @@ vi.mock('../../../config', () => ({
 }));
 
 // Mock worker-pool so it's never called
-vi.mock('../../../workers/worker-pool', () => ({
+vi.mock('../../../../../workers/worker-pool', () => ({
   getWorkerPool: () => {
     throw new Error('Workers should not be used in tests');
   },

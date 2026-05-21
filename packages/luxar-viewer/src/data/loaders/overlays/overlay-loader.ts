@@ -5,9 +5,9 @@
  * overlay metadata from each child group's .zattrs.
  */
 
-import * as zarr from '../zarr';
-import { hasContentsMethod } from '../../types/zarr';
-import { log, Modules } from '../../utils/log';
+import * as zarr from '../../zarr';
+import { hasContentsMethod } from '../../../types/zarr';
+import { log, Modules } from '../../../utils/log';
 
 /** Configuration for a single overlay, as stored in zarr .zattrs */
 export interface OverlayConfig {

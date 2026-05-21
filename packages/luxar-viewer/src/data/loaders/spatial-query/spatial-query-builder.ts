@@ -20,9 +20,9 @@
  * @module data/loaders/spatial-query-builder
  */
 
-import { log, Modules } from '../../utils/log';
+import { log, Modules } from '../../../utils/log';
 import { computeTolerance, type GeometryType, type ToleranceOptions } from './tolerance-computer';
-import type { BaseViewState, LoadRange } from './base-types';
+import type { BaseViewState, LoadRange } from '../base-types';
 
 // ============================================================================
 // Canonical Chunk Spatial Index Type
