@@ -11,7 +11,7 @@
  * @module rendering/post-processing/fxaa-shaders
  */
 
-import type { ShaderSource } from '../materials/_shared/shader-source';
+import type { ShaderSource } from '../../materials/_shared/shader-source';
 import { fxaaWebGPUFactory } from './fxaa.tsl';
 
 // THREE's ShaderMaterial auto-declares `in vec3 position;` in the
