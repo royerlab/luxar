@@ -13,13 +13,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as THREE from 'three';
 
 const createLinesLoaderMock = vi.fn();
-vi.mock('../../../../../data/scene-loader/loader-factory', () => ({
+vi.mock('../../../../../data/scene-loader/loaders/loader-factory', () => ({
   createLinesLoader: (...args: unknown[]) => createLinesLoaderMock(...args),
 }));
 
 import { loadLinesNode } from '../../../../../data/scene-loader/nodes/load-lines-node';
 import { LoaderError } from '../../../../../data/scene-loader/nodes/load-leaf-error-dispatch';
-import { LoaderRegistry } from '../../../../../data/scene-loader/loader-registry';
+import { LoaderRegistry } from '../../../../../data/scene-loader/loaders/loader-registry';
 import type { NodeBuildCtx } from '../../../../../data/scene-loader/nodes/build-ctx';
 import type { SceneNode, ViewState } from '../../../../../data/data-loader-types';
 import type { LinesDataLoader, LoadedLinesData } from '../../../../../types/lines';

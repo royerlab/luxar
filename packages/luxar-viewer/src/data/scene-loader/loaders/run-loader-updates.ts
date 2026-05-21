@@ -8,9 +8,9 @@
  * and Promise.all are identical and live here.
  */
 
-import { log, Modules } from '../../utils/log';
-import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profiler';
-import type { ViewStateQueue } from './view-state-queue';
+import { log, Modules } from '../../../utils/log';
+import type { UpdateProfiler, UpdateSession } from '../../../profiling/update-profiler';
+import type { ViewStateQueue } from '../view-state-queue';
 import type { FailedLoaderInfo } from './loader-registry';
 
 const NOOP_SESSION: UpdateSession = {

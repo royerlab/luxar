@@ -28,7 +28,7 @@ import {
   commitGSplatsGeometry as commitGSplatsGeometryHelper,
   type StagedGSplatsCommit,
 } from './scene-loader/process/data-processor-gsplats';
-import type { LoaderFactoryDeps } from './scene-loader/loader-factory';
+import type { LoaderFactoryDeps } from './scene-loader/loaders/loader-factory';
 import { commitPointsGeometry as commitPointsGeometryHelper } from './scene-loader/commit/commit-points-geometry';
 import { ViewStateQueue } from './scene-loader/view-state-queue';
 import { runGSplatsRefinement } from './gsplats/lod-refinement';
@@ -59,7 +59,7 @@ import type { GSplatsDataLoader, GSplatsViewState, LoadedGSplatsData } from '../
 import { GPUBufferPool } from '../rendering/gpu-buffer-pool';
 import { NodeFactory } from '../rendering/node-factory';
 import { UpdateProfiler, type UpdateSession } from '../profiling/update-profiler';
-import { LoaderRegistry } from './scene-loader/loader-registry';
+import { LoaderRegistry } from './scene-loader/loaders/loader-registry';
 
 // ============================================================================
 // Staged commit types for atomic geometry updates
@@ -87,7 +87,7 @@ import {
   type RetryCtx,
 } from './scene-loader/retry';
 import { deriveNodeViewState as deriveNodeViewStateHelper } from './scene-loader/derive-node-view-state';
-import { runLoaderUpdates as runLoaderUpdatesHelper } from './scene-loader/run-loader-updates';
+import { runLoaderUpdates as runLoaderUpdatesHelper } from './scene-loader/loaders/run-loader-updates';
 import { updateVisibleCountsInMonitor as updateVisibleCountsInMonitorHelper } from './scene-loader/visible-counts';
 import { disposeSceneLoader } from './scene-loader/dispose';
 import { loadScene as loadSceneHelper, type LoadSceneCtx } from './scene-loader/load-scene';

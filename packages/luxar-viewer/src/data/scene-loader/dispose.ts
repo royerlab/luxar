@@ -21,7 +21,7 @@
 import { log, Modules } from '../../utils/log';
 import { disposeCustomColormapTextures } from '../../rendering/colormap-textures';
 import { getWorkerPool } from '../../workers/worker-pool';
-import type { LoaderRegistry } from './loader-registry';
+import type { LoaderRegistry } from './loaders/loader-registry';
 import type { ViewStateQueue } from './view-state-queue';
 import type { GPUBufferPool } from '../../rendering/gpu-buffer-pool';
 import type { MultiLevelCachingStore } from '../../cache/multi-level-caching-store';
