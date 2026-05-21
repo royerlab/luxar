@@ -16,8 +16,8 @@ import {
   halfFloatToFloat32,
   float32ToHalfFloat,
   readPixelsCompactAsync,
-} from '../hdr-pixel-utils';
-import { formatHDRExrLogLine } from '../hdr-capture';
+} from '../hdr/pixel-utils';
+import { formatHDRExrLogLine } from '../hdr/capture';
 import type { Renderer, RendererCapabilities } from '../../renderer-capabilities';
 import type { LuxarMegaShaderMaterial } from '../../material-manager';
 import { runPipeline, type PipelineCtx } from './pipeline';

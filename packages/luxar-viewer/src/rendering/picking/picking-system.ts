@@ -40,7 +40,7 @@ import { voteWinner, type VoteEntry } from './picking-system/pick-render';
 import { SettleScheduler } from './picking-system/settle-scheduler';
 import { applyLensDistortion } from './picking-system/lens-distortion';
 import type { Renderer, RendererCapabilities } from '../renderer-capabilities';
-import { readPixelsCompactAsync } from '../post-processing/hdr-pixel-utils';
+import { readPixelsCompactAsync } from '../post-processing/hdr/pixel-utils';
 import {
   getCameraFovRadians,
   isOrthographicCamera,
@@ -445,7 +445,7 @@ export class PickingSystem {
 
     // Compute cursor position in pick buffer pixels (half res). The
     // readback primitive returns canonical top-down rows on both
-    // backends (see hdr-pixel-utils.ts), so the cursor maps to the
+    // backends (see hdr/pixel-utils.ts), so the cursor maps to the
     // pick buffer with no Y inversion — matches screen Y growing
     // downward.
     const scaleX = pickW / width;
