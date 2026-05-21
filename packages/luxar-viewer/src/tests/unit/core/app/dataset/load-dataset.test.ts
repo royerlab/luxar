@@ -98,6 +98,9 @@ describe('loadDataset', () => {
 
     const setIdIdx = trace.order.indexOf('setSceneId');
     const loadIdx = trace.order.indexOf('loadSceneData');
+    // Guard: indexOf returns -1 when absent; `-1 < N` would vacuously pass.
+    expect(setIdIdx).toBeGreaterThanOrEqual(0);
+    expect(loadIdx).toBeGreaterThanOrEqual(0);
     expect(setIdIdx).toBeLessThan(loadIdx);
   });
 
@@ -177,6 +180,9 @@ describe('loadDataset', () => {
 
     const overlaysIdx = trace.order.indexOf('initOverlays');
     const pickingIdx = trace.order.indexOf('initPicking');
+    // Guard: indexOf returns -1 when absent; `-1 < N` would vacuously pass.
+    expect(overlaysIdx).toBeGreaterThanOrEqual(0);
+    expect(pickingIdx).toBeGreaterThanOrEqual(0);
     expect(overlaysIdx).toBeLessThan(pickingIdx);
   });
 
@@ -186,6 +192,9 @@ describe('loadDataset', () => {
 
     const pickingIdx = trace.order.indexOf('initPicking');
     const applyIdx = trace.order.indexOf('applyViewerConfigState');
+    // Guard: indexOf returns -1 when absent; `-1 < N` would vacuously pass.
+    expect(pickingIdx).toBeGreaterThanOrEqual(0);
+    expect(applyIdx).toBeGreaterThanOrEqual(0);
     expect(pickingIdx).toBeLessThan(applyIdx);
     expect(trace.recordedViewerConfig).toEqual({ theme: 'dark' });
   });
