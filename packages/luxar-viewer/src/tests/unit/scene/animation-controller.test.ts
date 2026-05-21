@@ -14,7 +14,7 @@ vi.mock('../../../controls/controls-manager', () => ({
   ControlsManager: vi.fn(),
 }));
 
-vi.mock('../../../rendering/post-processing-manager', () => ({
+vi.mock('../../../rendering/post-processing/post-processing-manager', () => ({
   PostProcessingManager: vi.fn(),
 }));
 

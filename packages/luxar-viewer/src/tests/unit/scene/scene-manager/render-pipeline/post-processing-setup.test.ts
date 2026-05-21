@@ -11,13 +11,13 @@
 import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
 
-vi.mock('../../../../../rendering/post-processing-manager', () => {
+vi.mock('../../../../../rendering/post-processing/post-processing-manager', () => {
   const PostProcessingManager = vi.fn();
   return { PostProcessingManager };
 });
 
 import { createPostProcessing } from '../../../../../scene/scene-manager/render-pipeline/post-processing-setup';
-import { PostProcessingManager } from '../../../../../rendering/post-processing-manager';
+import { PostProcessingManager } from '../../../../../rendering/post-processing/post-processing-manager';
 import type {
   Renderer,
   RendererCapabilities,
