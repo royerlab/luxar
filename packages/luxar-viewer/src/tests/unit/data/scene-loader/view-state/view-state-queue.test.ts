@@ -7,11 +7,11 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { ViewStateQueue } from '../../../../data/scene-loader/view-state-queue';
-import type { ViewState } from '../../../../data/data-loader-types';
+import { ViewStateQueue } from '../../../../../data/scene-loader/view-state/view-state-queue';
+import type { ViewState } from '../../../../../data/data-loader-types';
 
 const dispatchSpy = vi.fn();
-vi.mock('../../../../data/scene-loader/predicted-view-state', () => ({
+vi.mock('../../../../../data/scene-loader/view-state/predicted-view-state', () => ({
   dispatchPredictivePrefetch: (...args: unknown[]) => dispatchSpy(...args),
 }));
 

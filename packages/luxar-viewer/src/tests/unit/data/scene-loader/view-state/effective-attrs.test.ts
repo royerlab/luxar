@@ -7,8 +7,8 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { applyEffectiveAttrs } from '../../../../data/scene-loader/effective-attrs';
-import type { SceneNode } from '../../../../data/data-loader-types';
+import { applyEffectiveAttrs } from '../../../../../data/scene-loader/view-state/effective-attrs';
+import type { SceneNode } from '../../../../../data/data-loader-types';
 
 function makeNode(path: string, attrs: SceneNode['attrs'] = {}): SceneNode {
   return { path, type: 'points', attrs, hasSpatialIndex: false };

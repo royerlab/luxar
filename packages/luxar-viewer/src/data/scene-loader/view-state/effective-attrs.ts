@@ -14,8 +14,8 @@
  * @module data/scene-loader/effective-attrs
  */
 
-import { getEffectiveAttrs } from '../attrs-composer';
-import type { SceneNode } from '../data-loader-types';
+import { getEffectiveAttrs } from '../../attrs-composer';
+import type { SceneNode } from '../../data-loader-types';
 
 /**
  * Return a node-attrs record with rendering attributes replaced by

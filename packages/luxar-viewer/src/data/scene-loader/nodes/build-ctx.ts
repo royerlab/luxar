@@ -23,7 +23,7 @@ import type {
   LoadedGSplatsData,
 } from '../../../types/gsplats';
 import type { UpdateSession } from '../../../profiling/update-profiler';
-import type { DerivedNodeViewState, DeriveOpts } from '../derive-node-view-state';
+import type { DerivedNodeViewState, DeriveOpts } from '../view-state/derive-node-view-state';
 import type { StagedLinesCommit } from '../process/data-processor-lines';
 import type { StagedGSplatsCommit } from '../process/data-processor-gsplats';
 

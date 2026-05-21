@@ -9,7 +9,7 @@
  * @module data/scene-loader/extend-tolerance
  */
 
-import type { SceneDimensions } from '../view-state-manager';
+import type { SceneDimensions } from '../../view-state-manager';
 
 /**
  * The "infinite" tolerance value used to flag a dimension as

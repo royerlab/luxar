@@ -7,7 +7,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
 import { kind, label, loadAndStage } from '../../../../data/gsplats/handler';
-import { ViewStateQueue } from '../../../../data/scene-loader/view-state-queue';
+import { ViewStateQueue } from '../../../../data/scene-loader/view-state/view-state-queue';
 import type { GSplatsDataLoader } from '../../../../types/gsplats';
 import type { UpdateSession } from '../../../../profiling/update-profiler';
 
